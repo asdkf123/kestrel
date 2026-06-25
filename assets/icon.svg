@@ -1,0 +1,63 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kestrel browser icon">
+  <title>Kestrel</title>
+  <desc>A hovering kestrel falcon silhouette — the Kestrel browser engine icon.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#161a23"/>
+      <stop offset="1" stop-color="#0a0c11"/>
+    </linearGradient>
+    <linearGradient id="plume" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc24d"/>
+      <stop offset="0.55" stop-color="#f2862f"/>
+      <stop offset="1" stop-color="#d24a22"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.4" r="0.55">
+      <stop offset="0" stop-color="#f2862f" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#f2862f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- App-icon rounded square -->
+  <rect x="0" y="0" width="512" height="512" rx="114" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="114" fill="url(#glow)"/>
+
+  <!-- Hover ring: hints at the kestrel's signature hovering flight -->
+  <circle cx="256" cy="250" r="190" fill="none" stroke="#3a4a64" stroke-width="6" stroke-opacity="0.32"/>
+  <circle cx="256" cy="250" r="190" fill="none" stroke="#3a4a64" stroke-width="6" stroke-opacity="0.55"
+          stroke-dasharray="12 1180" stroke-dashoffset="140" stroke-linecap="round"/>
+
+  <!-- Kestrel: hovering raptor seen from below. Long swept wings with drooped pointed tips, slim body, fanned tail. -->
+  <g fill="url(#plume)">
+    <!-- right wing (bent: raised wrist, drooped pointed tip) -->
+    <path d="M268 178
+             C300 168, 330 158, 352 150
+             C392 168, 418 188, 434 206
+             C410 213, 360 221, 322 244
+             C304 234, 286 206, 268 178 Z"/>
+    <!-- left wing (mirror) -->
+    <path d="M244 178
+             C212 168, 182 158, 160 150
+             C120 168, 94 188, 78 206
+             C102 213, 152 221, 190 244
+             C208 234, 226 206, 244 178 Z"/>
+    <!-- slim body + long fanned tail -->
+    <path d="M238 172
+             C234 210, 240 250, 244 292
+             C239 318, 235 350, 232 384
+             C240 392, 248 396, 256 396
+             C264 396, 272 392, 280 384
+             C277 350, 273 318, 268 292
+             C272 250, 278 210, 274 172
+             C268 158, 244 158, 238 172 Z"/>
+    <!-- head -->
+    <ellipse cx="256" cy="150" rx="20" ry="24"/>
+    <!-- small beak -->
+    <path d="M249 168 L263 168 L256 184 Z"/>
+  </g>
+
+  <!-- Dark drooped wingtips: the kestrel's black primaries -->
+  <g fill="#241510" fill-opacity="0.6">
+    <path d="M434 206 C418 207, 402 210, 388 215 C404 209, 420 207, 434 206 Z"/>
+    <path d="M78 206 C94 207, 110 210, 124 215 C108 209, 92 207, 78 206 Z"/>
+  </g>
+</svg>
