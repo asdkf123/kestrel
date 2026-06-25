@@ -6,6 +6,8 @@ use crate::dom::{ElementData, Node, NodeType};
 pub type PropertyMap = HashMap<String, Value>;
 
 pub struct StyledNode<'a> {
+    // M1 에서는 직접 읽지 않지만, M2(텍스트 렌더링)에서 DOM 노드의 텍스트를 가져올 때 사용한다.
+    #[allow(dead_code)]
     pub node: &'a Node,
     pub specified_values: PropertyMap,
     pub children: Vec<StyledNode<'a>>,
