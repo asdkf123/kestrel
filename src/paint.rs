@@ -71,16 +71,49 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
     }
 }
 
-fn paint_box(canvas: &mut Canvas, layout_box: &LayoutBox, fonts: &FontStack, cache: &mut GlyphCache) {
+fn paint_box(
+    canvas: &mut Canvas,
+    layout_box: &LayoutBox,
+    fonts: &FontStack,
+    cache: &mut GlyphCache,
+    images: &[crate::png::Image],
+) {
     if let Some(color) = get_color(layout_box, "background-color") {
         canvas.fill_rect(color, layout_box.dimensions.border_box());
+    }
+    if let Some(idx) = layout_box.image {
+        if let Some(img) = images.get(idx) {
+            blit_image(canvas, img, layout_box.dimensions.content);
+        }
     }
     for gi in &layout_box.glyphs {
         let bm = cache.get(fonts, gi.font_index, gi.glyph_id, gi.px);
         blit_glyph(canvas, bm, gi);
     }
     for child in &layout_box.children {
-        paint_box(canvas, child, fonts, cache);
+        paint_box(canvas, child, fonts, cache, images);
+    }
+}
+
+fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect) {
+    let ox = rect.x.round() as i32;
+    let oy = rect.y.round() as i32;
+    for y in 0..img.height {
+        let cy = oy + y as i32;
+        if cy < 0 || cy as usize >= canvas.height {
+            continue;
+        }
+        for x in 0..img.width {
+            let cx = ox + x as i32;
+            if cx < 0 || cx as usize >= canvas.width {
+                continue;
+            }
+            let s = (y * img.width + x) * 4;
+            let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
+            let alpha = img.rgba[s + 3];
+            let idx = cy as usize * canvas.width + cx as usize;
+            canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
+        }
     }
 }
 
@@ -89,9 +122,10 @@ pub fn paint(
     bounds: Rect,
     fonts: &FontStack,
     cache: &mut GlyphCache,
+    images: &[crate::png::Image],
 ) -> Canvas {
     let mut canvas = Canvas::new(bounds.width as usize, bounds.height as usize);
-    paint_box(&mut canvas, layout_root, fonts, cache);
+    paint_box(&mut canvas, layout_root, fonts, cache, images);
     canvas
 }
 
@@ -113,9 +147,16 @@ mod tests {
         let mut viewport: crate::layout::Dimensions = Default::default();
         viewport.content.width = w;
         let fs = fonts();
-        let layout_root = crate::layout::layout_tree(&styled, viewport, &fs);
+        let imgs = crate::layout::ImageMap::new();
+        let layout_root = crate::layout::layout_tree(&styled, viewport, &fs, &imgs);
         let mut cache = crate::raster::GlyphCache::new();
-        paint(&layout_root, crate::layout::Rect { x: 0.0, y: 0.0, width: w, height: h }, &fs, &mut cache)
+        paint(
+            &layout_root,
+            crate::layout::Rect { x: 0.0, y: 0.0, width: w, height: h },
+            &fs,
+            &mut cache,
+            &[],
+        )
     }
 
     #[test]

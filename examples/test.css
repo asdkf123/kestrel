@@ -3,3 +3,4 @@ body { display: block; padding: 20px; background-color: #101014; }
 .outer { display: block; width: 460px; padding: 24px; background-color: #1e2a44; }
 .title { display: block; font-size: 40px; color: #f4842c; }
 .body { display: block; font-size: 20px; color: #d8dee9; }
+img { display: block; }

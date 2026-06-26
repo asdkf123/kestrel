@@ -89,13 +89,17 @@ fn main() {
 
     let fonts = load_fonts(needs_korean);
     let mut cache = raster::GlyphCache::new();
+    // 로컬 데모도 절대 URL <img> 는 가져온다 (베이스는 상대경로 해석용 임의값).
+    let base = url::Url::parse("https://localhost/").unwrap();
+    let (images, img_map) = load_images(&root_node, &base);
 
-    let layout_root = layout::layout_tree(&style_root, viewport, &fonts);
+    let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
     let canvas = paint::paint(
         &layout_root,
         layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
         &fonts,
         &mut cache,
+        &images,
     );
 
     // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 으로 출력하고 종료.
@@ -127,6 +131,44 @@ fn count_elements(node: &dom::Node, count: &mut usize) {
     for c in &node.children {
         count_elements(c, count);
     }
+}
+
+fn collect_img_srcs(node: &dom::Node, out: &mut Vec<String>) {
+    if let dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "img" {
+            if let Some(src) = e.attributes.get("src") {
+                if !src.is_empty() {
+                    out.push(src.clone());
+                }
+            }
+        }
+    }
+    for c in &node.children {
+        collect_img_srcs(c, out);
+    }
+}
+
+fn load_images(dom: &dom::Node, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
+    let mut srcs = Vec::new();
+    collect_img_srcs(dom, &mut srcs);
+    let mut images = Vec::new();
+    let mut map = layout::ImageMap::new();
+    for src in srcs {
+        if map.contains_key(&src) {
+            continue;
+        }
+        if let Some(u) = base.join(&src) {
+            if let Ok(resp) = http::fetch(&u.as_string()) {
+                if let Some(img) = png::decode(&resp.body) {
+                    let (w, h) = (img.width, img.height);
+                    let idx = images.len();
+                    images.push(img);
+                    map.insert(src, (idx, w, h));
+                }
+            }
+        }
+    }
+    (images, map)
 }
 
 fn collect_links(node: &dom::Node, out: &mut Vec<String>) {
@@ -175,9 +217,15 @@ fn render_url(url: &str) {
     let needs_korean = page_needs_korean(&html);
     let dom = html::parse(html);
 
+    let base = url::Url::parse(url).ok();
+    let (images, img_map) = match &base {
+        Some(b) => load_images(&dom, b),
+        None => (Vec::new(), layout::ImageMap::new()),
+    };
+
     // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침
     let mut sheet = css::user_agent_stylesheet();
-    if let Ok(base) = url::Url::parse(url) {
+    if let Some(base) = &base {
         let mut hrefs = Vec::new();
         collect_links(&dom, &mut hrefs);
         for href in hrefs.iter().take(10) {
@@ -210,12 +258,13 @@ fn render_url(url: &str) {
     );
     let mut cache = raster::GlyphCache::new();
 
-    let layout_root = layout::layout_tree(&style_root, viewport, &fonts);
+    let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
     let canvas = paint::paint(
         &layout_root,
         layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
         &fonts,
         &mut cache,
+        &images,
     );
 
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {

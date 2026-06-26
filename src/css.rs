@@ -73,7 +73,7 @@ pub fn parse(source: String) -> Stylesheet {
     Stylesheet { rules: parser.parse_rules() }
 }
 
-const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, tr, form, figure, figcaption, address, dl, dt, dd { display: block; } head, script, style, title, meta, link, noscript, template { display: none; }";
+const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, tr, form, figure, figcaption, address, dl, dt, dd { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; }";
 
 pub fn user_agent_stylesheet() -> Stylesheet {
     parse(UA_CSS.to_string())

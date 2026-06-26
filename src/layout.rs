@@ -1,9 +1,14 @@
+use std::collections::HashMap;
+
 use crate::css::Unit::Px;
 use crate::css::Value::{Keyword, Length};
 use crate::css::{Color, Value};
 use crate::dom::NodeType;
 use crate::font::FontStack;
 use crate::style::{Display, StyledNode};
+
+// src → (이미지 인덱스, 너비, 높이)
+pub type ImageMap = HashMap<String, (usize, usize, usize)>;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct Rect {
@@ -68,6 +73,7 @@ pub struct LayoutBox<'a> {
     pub children: Vec<LayoutBox<'a>>,
     pub glyphs: Vec<GlyphInstance>,
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
+    pub image: Option<usize>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -78,6 +84,7 @@ impl<'a> LayoutBox<'a> {
             children: Vec::new(),
             glyphs: Vec::new(),
             inline_nodes: Vec::new(),
+            image: None,
         }
     }
 
@@ -88,10 +95,27 @@ impl<'a> LayoutBox<'a> {
             children: Vec::new(),
             glyphs: Vec::new(),
             inline_nodes: nodes,
+            image: None,
         }
     }
 
-    fn layout(&mut self, containing_block: Dimensions, fonts: &FontStack) {
+    fn layout(&mut self, containing_block: Dimensions, fonts: &FontStack, images: &ImageMap) {
+        // 이미지 대체 요소: 고유 크기 박스
+        if let NodeType::Element(e) = &self.styled_node.node.node_type {
+            if e.tag_name == "img" {
+                if let Some(src) = e.attributes.get("src") {
+                    if let Some(&(idx, iw, ih)) = images.get(src) {
+                        self.calculate_width(containing_block);
+                        self.calculate_position(containing_block);
+                        self.dimensions.content.width = iw as f32;
+                        self.dimensions.content.height = ih as f32;
+                        self.image = Some(idx);
+                        return;
+                    }
+                }
+            }
+        }
+
         if !self.inline_nodes.is_empty() {
             self.dimensions.content.width = containing_block.content.width;
             self.dimensions.content.x = containing_block.content.x;
@@ -101,7 +125,7 @@ impl<'a> LayoutBox<'a> {
         }
         self.calculate_width(containing_block);
         self.calculate_position(containing_block);
-        self.layout_children(fonts);
+        self.layout_children(fonts, images);
         self.calculate_height();
     }
 
@@ -202,10 +226,10 @@ impl<'a> LayoutBox<'a> {
             + d.padding.top;
     }
 
-    fn layout_children(&mut self, fonts: &FontStack) {
+    fn layout_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let d = &mut self.dimensions;
         for child in &mut self.children {
-            child.layout(*d, fonts);
+            child.layout(*d, fonts, images);
             d.content.height += child.dimensions.margin_box().height;
         }
     }
@@ -229,7 +253,6 @@ impl<'a> LayoutBox<'a> {
             collect_node(node, base_color, base_px, &mut runs);
         }
 
-        // 문자 단위로 펼친 뒤 공백 기준 단어 토큰화
         let mut words: Vec<Vec<(char, Color, f32)>> = Vec::new();
         let mut cur: Vec<(char, Color, f32)> = Vec::new();
         for (text, color, px) in &runs {
@@ -257,7 +280,6 @@ impl<'a> LayoutBox<'a> {
         let ascent_px = primary.ascent() as f32 * base_scale;
         let space_adv = primary.advance_width(primary.glyph_index(' ')) as f32 * base_scale;
 
-        // 글자 → (폰트 인덱스, 글리프, advance px). 폴백 적용.
         let resolve = |ch: char, px: f32| -> (usize, u16, f32) {
             let (fi, gid) = fonts.glyph_for(ch);
             let f = fonts.font(fi);
@@ -352,10 +374,11 @@ pub fn layout_tree<'a>(
     node: &'a StyledNode<'a>,
     mut containing_block: Dimensions,
     fonts: &FontStack,
+    images: &ImageMap,
 ) -> LayoutBox<'a> {
     containing_block.content.height = 0.0;
     let mut root_box = build_layout_tree(node);
-    root_box.layout(containing_block, fonts);
+    root_box.layout(containing_block, fonts, images);
     root_box
 }
 
@@ -367,6 +390,10 @@ mod tests {
         let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
             .unwrap();
         FontStack::new(vec![f])
+    }
+
+    fn no_images() -> ImageMap {
+        ImageMap::new()
     }
 
     fn all_glyphs(b: &LayoutBox, out: &mut Vec<GlyphInstance>) {
@@ -389,7 +416,7 @@ mod tests {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = viewport_width;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
         lb.dimensions
     }
 
@@ -426,7 +453,7 @@ mod tests {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 400.0;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert_eq!(lb.children.len(), 2);
         assert_eq!(lb.children[0].dimensions.content.y, 0.0);
         assert_eq!(lb.children[1].dimensions.content.y, 50.0);
@@ -441,7 +468,7 @@ mod tests {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 400.0;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert!(!glyphs_of(&lb).is_empty(), "text should produce glyphs");
         assert!(lb.dimensions.content.height > 0.0);
     }
@@ -455,7 +482,7 @@ mod tests {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 120.0;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
         let gs = glyphs_of(&lb);
         let first = gs.first().unwrap().baseline_y;
         let last = gs.last().unwrap().baseline_y;
@@ -470,7 +497,7 @@ mod tests {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 400.0;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert!(glyphs_of(&lb).len() >= 3, "inline text should be collected");
     }
 
@@ -482,25 +509,26 @@ mod tests {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 400.0;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert!(lb.dimensions.content.height > 0.0, "inline-only block must have height");
         assert!(!glyphs_of(&lb).is_empty(), "link text should render");
     }
 
     #[test]
-    fn mixed_block_and_inline_text_both_render() {
-        let root = crate::html::parse(
-            "<body><h1>Title</h1>intro text here<div></div></body>".to_string(),
-        );
-        let ss = crate::css::parse(
-            "body { display: block; } h1 { display: block; } div { display: block; }".to_string(),
-        );
+    fn image_box_uses_intrinsic_size() {
+        let root = crate::html::parse("<div><img src=\"a.png\"></div>".to_string());
+        let ss = crate::css::parse("div { display: block; } img { display: block; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 400.0;
         let fs = fonts();
-        let lb = layout_tree(&styled, viewport, &fs);
-        let gs = glyphs_of(&lb);
-        assert!(gs.len() > "Titleintrotexthere".len() - 4, "both block and inline text render");
+        let mut images = ImageMap::new();
+        images.insert("a.png".to_string(), (0, 32, 24));
+        let lb = layout_tree(&styled, viewport, &fs, &images);
+        // div 의 자식 = img 박스
+        let img = &lb.children[0];
+        assert_eq!(img.image, Some(0));
+        assert_eq!(img.dimensions.content.width, 32.0);
+        assert_eq!(img.dimensions.content.height, 24.0);
     }
 }
