@@ -1,0 +1,8 @@
+Kestrel.ttf is Hack (Hack-Regular.ttf).
+
+Source: https://github.com/source-foundry/Hack
+License: MIT License (Hack project) + Bitstream Vera / DejaVu license for the
+upstream glyph data. Both permit redistribution and bundling.
+
+The font is renamed to Kestrel.ttf only for a stable in-repo path; it is the
+unmodified Hack Regular face. See the upstream project for full license text.
