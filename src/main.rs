@@ -49,8 +49,16 @@ fn main() {
     }
 
     // URL 렌더 모드: kestrel <url>
-    if args.len() >= 2 && args[1].contains("://") {
+    if args.len() >= 2 && (args[1].starts_with("http://") || args[1].starts_with("https://")) {
         render_url(&args[1]);
+        return;
+    }
+    // http 로 시작하지만 형식이 이상하면(예: 슬래시 하나) 조용히 데모로 떨어지지 않고 안내
+    if args.len() >= 2 && args[1].starts_with("http") {
+        println!(
+            "URL 형식이 올바르지 않습니다: {}\n예: cargo run -- https://example.com  (슬래시 두 개)",
+            args[1]
+        );
         return;
     }
 
