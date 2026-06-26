@@ -73,7 +73,7 @@ pub fn parse(source: String) -> Stylesheet {
     Stylesheet { rules: parser.parse_rules() }
 }
 
-const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, tr, form, figure, figcaption, address, dl, dt, dd { display: block; }";
+const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, tr, form, figure, figcaption, address, dl, dt, dd { display: block; } head, script, style, title, meta, link, noscript, template { display: none; }";
 
 pub fn user_agent_stylesheet() -> Stylesheet {
     parse(UA_CSS.to_string())
@@ -373,6 +373,22 @@ mod tests {
         let ss = parse("p { color: rgb(1,2,3); width: 5px; }".to_string());
         assert_eq!(ss.rules[0].declarations.len(), 1);
         assert_eq!(ss.rules[0].declarations[0].name, "width");
+    }
+
+    #[test]
+    fn ua_stylesheet_hides_script_and_style() {
+        let ss = user_agent_stylesheet();
+        for tag in ["script", "style", "head"] {
+            let hidden = ss.rules.iter().any(|r| {
+                r.selectors.iter().any(|s| match s {
+                    Selector::Simple(sel) => sel.tag_name.as_deref() == Some(tag),
+                }) && r
+                    .declarations
+                    .iter()
+                    .any(|d| d.name == "display" && d.value == Value::Keyword("none".to_string()))
+            });
+            assert!(hidden, "{} should be display:none in UA", tag);
+        }
     }
 
     #[test]
