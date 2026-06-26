@@ -7,6 +7,7 @@ mod http;
 mod inflate;
 mod layout;
 mod paint;
+mod png;
 mod raster;
 mod style;
 mod url;
