@@ -4,12 +4,20 @@ mod font;
 mod html;
 mod layout;
 mod paint;
+mod raster;
 mod style;
 mod window;
 
 use std::fs;
 
 fn main() {
+    // 글리프 덤프 모드: KESTREL_GLYPH 문자열을 래스터화해 그레이스케일 PPM으로.
+    if let Ok(text) = std::env::var("KESTREL_GLYPH") {
+        let out = std::env::var("KESTREL_GLYPH_OUT").unwrap_or_else(|_| "glyphs.ppm".to_string());
+        dump_glyphs(&text, &out);
+        return;
+    }
+
     let html_source = fs::read_to_string("examples/test.html").expect("read examples/test.html");
     let css_source = fs::read_to_string("examples/test.css").expect("read examples/test.css");
 
@@ -27,16 +35,10 @@ fn main() {
     let layout_root = layout::layout_tree(&style_root, viewport);
     let canvas = paint::paint(
         &layout_root,
-        layout::Rect {
-            x: 0.0,
-            y: 0.0,
-            width: viewport_width as f32,
-            height: viewport_height as f32,
-        },
+        layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
     );
 
-    // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 이미지로 출력하고 종료.
-    // (GUI 없이 렌더링 결과를 검증할 때 사용. 기본 동작은 창 띄우기.)
+    // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 으로 출력하고 종료.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
         write_ppm(&canvas, &path);
         println!("rendered to {}", path);
@@ -56,4 +58,58 @@ fn write_ppm(canvas: &paint::Canvas, path: &str) {
         data.push(c.b);
     }
     fs::write(path, data).expect("write ppm");
+}
+
+fn dump_glyphs(text: &str, path: &str) {
+    let bytes = fs::read("assets/fonts/Kestrel.ttf").expect("read font");
+    let font = font::Font::from_bytes(bytes).expect("parse font");
+    let px = 96.0f32;
+
+    let mut cells: Vec<raster::CoverageBitmap> = Vec::new();
+    for ch in text.chars() {
+        let gid = font.glyph_index(ch);
+        cells.push(raster::rasterize_glyph(&font, gid, px));
+    }
+
+    // 베이스라인 정렬 + advance 기반 자간 (M2b 인라인 레이아웃 미리보기)
+    let baseline = cells.iter().map(|b| b.top).max().unwrap_or(0).max(0);
+    let below = cells.iter().map(|b| (b.height as i32 - b.top).max(0)).max().unwrap_or(0);
+    let canvas_h = (baseline + below + 2).max(1) as usize;
+    let total_adv: f32 = cells.iter().map(|b| b.advance).sum();
+    let canvas_w = (total_adv.ceil() as usize + 8).max(1);
+
+    // 어두운 배경 + 흰 글자 (커버리지 = 밝기)
+    let mut img = vec![20u8; canvas_w * canvas_h * 3];
+    let mut pen_x = 4.0f32;
+    for bm in &cells {
+        let gx = pen_x + bm.left as f32;
+        let y_off = baseline - bm.top + 1;
+        for y in 0..bm.height {
+            let cy = y_off + y as i32;
+            if cy < 0 || cy as usize >= canvas_h {
+                continue;
+            }
+            for x in 0..bm.width {
+                let v = bm.data[y * bm.width + x];
+                if v == 0 {
+                    continue;
+                }
+                let px_x = gx as i32 + x as i32;
+                if px_x < 0 || px_x as usize >= canvas_w {
+                    continue;
+                }
+                let idx = (cy as usize * canvas_w + px_x as usize) * 3;
+                let g = 20u8.saturating_add(v);
+                img[idx] = g;
+                img[idx + 1] = g;
+                img[idx + 2] = g;
+            }
+        }
+        pen_x += bm.advance;
+    }
+
+    let mut data = format!("P6\n{} {}\n255\n", canvas_w, canvas_h).into_bytes();
+    data.extend_from_slice(&img);
+    fs::write(path, data).expect("write ppm");
+    println!("glyphs rendered to {}", path);
 }
