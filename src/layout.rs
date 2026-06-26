@@ -66,6 +66,8 @@ pub struct LayoutBox<'a> {
     pub styled_node: &'a StyledNode<'a>,
     pub children: Vec<LayoutBox<'a>>,
     pub glyphs: Vec<GlyphInstance>,
+    // 익명 인라인 박스일 때 담는 인라인 형제 노드들. 비어있으면 일반(요소) 박스.
+    pub inline_nodes: Vec<&'a StyledNode<'a>>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -75,14 +77,32 @@ impl<'a> LayoutBox<'a> {
             styled_node,
             children: Vec::new(),
             glyphs: Vec::new(),
+            inline_nodes: Vec::new(),
+        }
+    }
+
+    fn new_anonymous(parent: &'a StyledNode<'a>, nodes: Vec<&'a StyledNode<'a>>) -> LayoutBox<'a> {
+        LayoutBox {
+            dimensions: Default::default(),
+            styled_node: parent,
+            children: Vec::new(),
+            glyphs: Vec::new(),
+            inline_nodes: nodes,
         }
     }
 
     fn layout(&mut self, containing_block: Dimensions, font: &Font) {
+        if !self.inline_nodes.is_empty() {
+            // 익명 인라인 박스: 전체 폭, 박스 모델 없음
+            self.dimensions.content.width = containing_block.content.width;
+            self.dimensions.content.x = containing_block.content.x;
+            self.dimensions.content.y = containing_block.content.height + containing_block.content.y;
+            self.layout_inline(font);
+            return;
+        }
         self.calculate_width(containing_block);
         self.calculate_position(containing_block);
         self.layout_children(font);
-        self.layout_text(font);
         self.calculate_height();
     }
 
@@ -191,34 +211,51 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    fn layout_text(&mut self, font: &Font) {
-        let mut text = String::new();
-        for child in &self.styled_node.children {
-            if let NodeType::Text(t) = &child.node.node_type {
-                text.push_str(t);
-            }
-        }
-        let text = text.trim();
-        if text.is_empty() {
-            return;
-        }
-
-        let style = self.styled_node;
-        let font_size = style
+    fn layout_inline(&mut self, font: &Font) {
+        let upm = font.units_per_em() as f32;
+        let base_px = self
+            .styled_node
             .value("font-size")
             .map(|v| v.to_px())
             .filter(|&p| p > 0.0)
             .unwrap_or(16.0);
-        let color = match style.value("color") {
+        let base_color = match self.styled_node.value("color") {
             Some(Value::Color(c)) => c,
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
 
-        let scale = font_size / font.units_per_em() as f32;
+        // 인라인 형제들에서 (텍스트, 색, 크기) 런 수집
+        let mut runs: Vec<(String, Color, f32)> = Vec::new();
+        for node in &self.inline_nodes {
+            collect_node(node, base_color, base_px, &mut runs);
+        }
+
+        // 문자 단위로 펼친 뒤 공백 기준 단어 토큰화
+        let mut words: Vec<Vec<(char, Color, f32)>> = Vec::new();
+        let mut cur: Vec<(char, Color, f32)> = Vec::new();
+        for (text, color, px) in &runs {
+            for ch in text.chars() {
+                if ch.is_whitespace() {
+                    if !cur.is_empty() {
+                        words.push(std::mem::take(&mut cur));
+                    }
+                } else {
+                    cur.push((ch, *color, *px));
+                }
+            }
+        }
+        if !cur.is_empty() {
+            words.push(cur);
+        }
+        if words.is_empty() {
+            return;
+        }
+
+        let base_scale = base_px / upm;
         let line_height =
-            (font.ascent() as f32 - font.descent() as f32 + font.line_gap() as f32) * scale;
-        let ascent_px = font.ascent() as f32 * scale;
-        let space_adv = font.advance_width(font.glyph_index(' ')) as f32 * scale;
+            (font.ascent() as f32 - font.descent() as f32 + font.line_gap() as f32) * base_scale;
+        let ascent_px = font.ascent() as f32 * base_scale;
+        let space_adv = font.advance_width(font.glyph_index(' ')) as f32 * base_scale;
 
         let content_x = self.dimensions.content.x;
         let content_w = self.dimensions.content.width;
@@ -226,26 +263,26 @@ impl<'a> LayoutBox<'a> {
         let mut baseline = self.dimensions.content.y + ascent_px;
         let mut lines = 1;
 
-        for word in text.split_whitespace() {
+        for word in &words {
             let word_w: f32 = word
-                .chars()
-                .map(|c| font.advance_width(font.glyph_index(c)) as f32 * scale)
+                .iter()
+                .map(|&(ch, _, px)| font.advance_width(font.glyph_index(ch)) as f32 * (px / upm))
                 .sum();
             if pen_x > content_x && pen_x + word_w > content_x + content_w {
                 pen_x = content_x;
                 baseline += line_height;
                 lines += 1;
             }
-            for c in word.chars() {
-                let gid = font.glyph_index(c);
+            for &(ch, color, px) in word {
+                let gid = font.glyph_index(ch);
                 self.glyphs.push(GlyphInstance {
                     glyph_id: gid,
                     x: pen_x,
                     baseline_y: baseline,
-                    px: font_size,
+                    px,
                     color,
                 });
-                pen_x += font.advance_width(gid) as f32 * scale;
+                pen_x += font.advance_width(gid) as f32 * (px / upm);
             }
             pen_x += space_adv;
         }
@@ -260,14 +297,49 @@ impl<'a> LayoutBox<'a> {
     }
 }
 
+// 단일 인라인 노드(텍스트 또는 인라인 요소)에서 런 수집. 인라인 요소는 자손으로 재귀.
+fn collect_node<'a>(node: &StyledNode<'a>, color: Color, px: f32, runs: &mut Vec<(String, Color, f32)>) {
+    match &node.node.node_type {
+        NodeType::Text(t) => runs.push((t.clone(), color, px)),
+        NodeType::Element(_) => match node.display() {
+            Display::Block | Display::None => {}
+            Display::Inline => {
+                let cpx = node
+                    .value("font-size")
+                    .map(|v| v.to_px())
+                    .filter(|&p| p > 0.0)
+                    .unwrap_or(px);
+                let ccolor = match node.value("color") {
+                    Some(Value::Color(c)) => c,
+                    _ => color,
+                };
+                for child in &node.children {
+                    collect_node(child, ccolor, cpx, runs);
+                }
+            }
+        },
+    }
+}
+
 fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     let mut root = LayoutBox::new(style_node);
+    let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
     for child in &style_node.children {
         match child.display() {
-            Display::Block => root.children.push(build_layout_tree(child)),
-            // 인라인/텍스트와 display:none 은 박스를 만들지 않는다.
-            Display::Inline | Display::None => {}
+            Display::Block => {
+                if !pending.is_empty() {
+                    root.children
+                        .push(LayoutBox::new_anonymous(style_node, std::mem::take(&mut pending)));
+                }
+                root.children.push(build_layout_tree(child));
+            }
+            // 인라인/텍스트는 모았다가 익명 박스로
+            Display::Inline => pending.push(child),
+            Display::None => {}
         }
+    }
+    if !pending.is_empty() {
+        root.children.push(LayoutBox::new_anonymous(style_node, pending));
     }
     root
 }
@@ -289,6 +361,19 @@ mod tests {
 
     fn font() -> crate::font::Font {
         crate::font::Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap()).unwrap()
+    }
+
+    fn all_glyphs(b: &LayoutBox, out: &mut Vec<GlyphInstance>) {
+        out.extend(b.glyphs.iter().cloned());
+        for c in &b.children {
+            all_glyphs(c, out);
+        }
+    }
+
+    fn glyphs_of(b: &LayoutBox) -> Vec<GlyphInstance> {
+        let mut v = Vec::new();
+        all_glyphs(b, &mut v);
+        v
     }
 
     fn layout_for(html: &str, css: &str, viewport_width: f32) -> Dimensions {
@@ -351,7 +436,7 @@ mod tests {
         viewport.content.width = 400.0;
         let f = font();
         let lb = layout_tree(&styled, viewport, &f);
-        assert!(!lb.glyphs.is_empty(), "text should produce glyphs");
+        assert!(!glyphs_of(&lb).is_empty(), "text should produce glyphs");
         assert!(lb.dimensions.content.height > 0.0);
     }
 
@@ -365,8 +450,53 @@ mod tests {
         viewport.content.width = 120.0;
         let f = font();
         let lb = layout_tree(&styled, viewport, &f);
-        let first = lb.glyphs.first().unwrap().baseline_y;
-        let last = lb.glyphs.last().unwrap().baseline_y;
+        let gs = glyphs_of(&lb);
+        let first = gs.first().unwrap().baseline_y;
+        let last = gs.last().unwrap().baseline_y;
         assert!(last > first, "later glyphs should be on lower lines");
+    }
+
+    #[test]
+    fn inline_element_text_is_collected() {
+        let root = crate::html::parse("<p>a <span>b</span> c</p>".to_string());
+        let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
+        assert!(glyphs_of(&lb).len() >= 3, "inline text should be collected");
+    }
+
+    #[test]
+    fn inline_only_block_has_nonzero_height() {
+        let root = crate::html::parse("<div><a>link</a></div>".to_string());
+        let ss = crate::css::parse("div { display: block; } a { display: inline; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
+        assert!(lb.dimensions.content.height > 0.0, "inline-only block must have height");
+        assert!(!glyphs_of(&lb).is_empty(), "link text should render");
+    }
+
+    #[test]
+    fn mixed_block_and_inline_text_both_render() {
+        // 블록(h1)과 직접 인라인 텍스트가 섞인 컨테이너 — 둘 다 렌더되어야 (CERN 패턴)
+        let root = crate::html::parse(
+            "<body><h1>Title</h1>intro text here<div></div></body>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "body { display: block; } h1 { display: block; } div { display: block; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
+        let gs = glyphs_of(&lb);
+        // "Title" + "intro text here" 의 글자들이 모두 존재
+        assert!(gs.len() > "Titleintrotexthere".len() - 4, "both block and inline text render");
     }
 }
