@@ -73,6 +73,7 @@ fn main() {
     let html_source = fs::read_to_string("examples/test.html").expect("read examples/test.html");
     let css_source = fs::read_to_string("examples/test.css").expect("read examples/test.css");
 
+    let needs_korean = page_needs_korean(&html_source);
     let root_node = html::parse(html_source);
     let stylesheet = css::parse(css_source);
     let style_root = style::style_tree(&root_node, &stylesheet);
@@ -84,7 +85,7 @@ fn main() {
     viewport.content.width = viewport_width as f32;
     viewport.content.height = viewport_height as f32;
 
-    let fonts = load_fonts();
+    let fonts = load_fonts(needs_korean);
     let mut cache = raster::GlyphCache::new();
 
     let layout_root = layout::layout_tree(&style_root, viewport, &fonts);
@@ -169,6 +170,7 @@ fn render_url(url: &str) {
     println!("fetched {} ({} bytes, http {})", url, resp.body.len(), resp.status);
 
     let html = String::from_utf8_lossy(&resp.body).to_string();
+    let needs_korean = page_needs_korean(&html);
     let dom = html::parse(html);
 
     // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침
@@ -197,7 +199,13 @@ fn render_url(url: &str) {
     viewport.content.width = viewport_width as f32;
     viewport.content.height = viewport_height as f32;
 
-    let fonts = load_fonts();
+    let fonts = load_fonts(needs_korean);
+    println!(
+        "[fonts] page_korean={} → {} font(s) loaded (한글 폰트 {})",
+        needs_korean,
+        fonts.fonts.len(),
+        if needs_korean { "로드" } else { "생략" }
+    );
     let mut cache = raster::GlyphCache::new();
 
     let layout_root = layout::layout_tree(&style_root, viewport, &fonts);
@@ -216,32 +224,47 @@ fn render_url(url: &str) {
     window::run(canvas.to_u32_buffer(), viewport_width, viewport_height);
 }
 
-// 시스템 폰트로 폰트 스택 구성 (번들 없음). 라틴 주 폰트 + 한글 폴백.
-fn load_fonts() -> font::FontStack {
-    let candidates: &[&str] = &[
-        // 라틴/UI (작은 것 우선)
+// 텍스트에 한글(자모/완성형)이 있는지.
+fn page_needs_korean(text: &str) -> bool {
+    text.chars().any(|c| {
+        ('\u{AC00}'..='\u{D7A3}').contains(&c)
+            || ('\u{1100}'..='\u{11FF}').contains(&c)
+            || ('\u{3130}'..='\u{318F}').contains(&c)
+    })
+}
+
+// 시스템 폰트로 폰트 스택 구성 (번들 없음). 라틴 주 폰트 + (필요시) 한글 폴백.
+// 무거운 한글 폰트(수십 MB)는 페이지에 한글이 있을 때만 읽어 RAM 을 아낀다.
+fn load_fonts(needs_korean: bool) -> font::FontStack {
+    let latin: &[&str] = &[
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/HelveticaNeue.ttc",
         "/System/Library/Fonts/SFNS.ttf",
-        // 한글
-        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-        // 최후 폴백: 작은 번들 라틴 (시스템 폰트가 없는 환경)
         "assets/fonts/Latin.ttf",
     ];
-    let mut fonts = Vec::new();
-    let (mut have_latin, mut have_korean) = (false, false);
-    for p in candidates {
-        if have_latin && have_korean {
-            break;
+    let korean: &[&str] = &[
+        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    ];
+    let try_load = |paths: &[&str], probe: char| -> Option<font::Font> {
+        for p in paths {
+            if let Ok(b) = fs::read(p) {
+                if let Ok(f) = font::Font::from_bytes(b) {
+                    if f.glyph_index(probe) != 0 {
+                        return Some(f);
+                    }
+                }
+            }
         }
-        let Ok(bytes) = fs::read(p) else { continue };
-        let Ok(f) = font::Font::from_bytes(bytes) else { continue };
-        let latin = f.glyph_index('A') != 0;
-        let korean = f.glyph_index('한') != 0;
-        if (latin && !have_latin) || (korean && !have_korean) {
-            have_latin |= latin;
-            have_korean |= korean;
+        None
+    };
+
+    let mut fonts = Vec::new();
+    if let Some(f) = try_load(latin, 'A') {
+        fonts.push(f);
+    }
+    if needs_korean {
+        if let Some(f) = try_load(korean, '한') {
             fonts.push(f);
         }
     }
@@ -263,7 +286,7 @@ fn dump_glyphs(text: &str, path: &str) {
             let f = font::Font::from_bytes(fs::read(&p).expect("read font")).expect("parse font");
             font::FontStack::new(vec![f])
         }
-        Err(_) => load_fonts(),
+        Err(_) => load_fonts(page_needs_korean(text)),
     };
     let px = 96.0f32;
 
