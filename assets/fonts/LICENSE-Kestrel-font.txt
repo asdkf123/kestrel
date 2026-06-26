@@ -1,8 +1,8 @@
-Kestrel.ttf is Hack (Hack-Regular.ttf).
+Kestrel.ttf is Noto Sans KR (NotoSansKR[wght].ttf, variable font).
 
-Source: https://github.com/source-foundry/Hack
-License: MIT License (Hack project) + Bitstream Vera / DejaVu license for the
-upstream glyph data. Both permit redistribution and bundling.
+Source: https://github.com/google/fonts/tree/main/ofl/notosanskr
+License: SIL Open Font License 1.1 (OFL). Permits redistribution and bundling.
 
-The font is renamed to Kestrel.ttf only for a stable in-repo path; it is the
-unmodified Hack Regular face. See the upstream project for full license text.
+Renamed to Kestrel.ttf for a stable in-repo path; unmodified upstream file.
+Covers Latin + Korean (Hangul). TrueType (glyf) outlines, so it works with the
+engine's glyf-only font parser (CFF/.otf is not yet supported).
