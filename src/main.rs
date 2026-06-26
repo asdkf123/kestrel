@@ -216,17 +216,43 @@ fn render_url(url: &str) {
     window::run(canvas.to_u32_buffer(), viewport_width, viewport_height);
 }
 
+// 시스템 폰트로 폰트 스택 구성 (번들 없음). 라틴 주 폰트 + 한글 폴백.
 fn load_fonts() -> font::FontStack {
+    let candidates: &[&str] = &[
+        // 라틴/UI (작은 것 우선)
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "/System/Library/Fonts/SFNS.ttf",
+        // 한글
+        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        // 최후 폴백: 작은 번들 라틴 (시스템 폰트가 없는 환경)
+        "assets/fonts/Latin.ttf",
+    ];
     let mut fonts = Vec::new();
-    // 주 폰트 = Noto(비례, 라틴+한글), 폴백 = Hack. 글자별 폴백은 FontStack 이 처리.
-    for path in ["assets/fonts/Kestrel.ttf", "assets/fonts/Latin.ttf"] {
-        if let Ok(bytes) = fs::read(path) {
-            if let Ok(f) = font::Font::from_bytes(bytes) {
+    let (mut have_latin, mut have_korean) = (false, false);
+    for p in candidates {
+        if have_latin && have_korean {
+            break;
+        }
+        let Ok(bytes) = fs::read(p) else { continue };
+        let Ok(f) = font::Font::from_bytes(bytes) else { continue };
+        let latin = f.glyph_index('A') != 0;
+        let korean = f.glyph_index('한') != 0;
+        if (latin && !have_latin) || (korean && !have_korean) {
+            have_latin |= latin;
+            have_korean |= korean;
+            fonts.push(f);
+        }
+    }
+    if fonts.is_empty() {
+        if let Ok(b) = fs::read("assets/fonts/Latin.ttf") {
+            if let Ok(f) = font::Font::from_bytes(b) {
                 fonts.push(f);
             }
         }
     }
-    assert!(!fonts.is_empty(), "no fonts loaded from assets/fonts/");
+    assert!(!fonts.is_empty(), "no usable font found (system or bundled)");
     font::FontStack::new(fonts)
 }
 

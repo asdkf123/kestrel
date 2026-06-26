@@ -1,14 +1,15 @@
-Bundled fonts (font fallback stack):
+Bundled fonts.
 
-1. Kestrel.ttf  — Noto Sans KR (NotoSansKR[wght].ttf, variable). PRIMARY.
-   Source:  https://github.com/google/fonts/tree/main/ofl/notosanskr
-   License: SIL Open Font License 1.1 (OFL).
-   Covers Latin + Korean (Hangul). TrueType (glyf) outlines.
+운영체제의 시스템 폰트(macOS의 Helvetica, Apple SD Gothic Neo 등)를 런타임에
+읽어 쓰므로, 폰트를 저장소에 내장(번들)하지 않는다. 아래는 예외(폴백/테스트용
+소형 폰트)뿐이다.
 
-2. Latin.ttf    — Hack (Hack-Regular.ttf). FALLBACK.
-   Source:  https://github.com/source-foundry/Hack
-   License: MIT + Bitstream Vera. TrueType (glyf), Latin/monospace.
+1. Latin.ttf — Hack (Hack-Regular.ttf). 시스템 폰트가 없는 환경의 최후 폴백 +
+   단위 테스트 픽스처. License: MIT + Bitstream Vera. TrueType(glyf), 라틴.
+   Source: https://github.com/source-foundry/Hack
 
-Both renamed for stable in-repo paths; unmodified upstream files. Used as a
-glyph fallback chain (FontStack): per character, the first font that has the
-glyph is used. CFF/.otf is not yet supported by the engine's font parser.
+2. CffTest.otf — Source Sans 3 (SourceSans3-Regular.otf). CFF/.otf 파서 단위 테스트
+   픽스처 (렌더에는 사용 안 함). License: SIL Open Font License 1.1 (OFL).
+   Source: https://github.com/adobe-fonts/source-sans
+
+둘 다 unmodified upstream files.

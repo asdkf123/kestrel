@@ -66,13 +66,22 @@ pub struct Font {
 
 impl Font {
     pub fn from_bytes(data: Vec<u8>) -> Result<Font, FontError> {
-        if data.len() < 12 {
+        if data.len() < 16 {
             return Err(FontError::TooShort);
         }
-        let num_tables = be_u16(&data, 4) as usize;
+        // .ttc(폰트 컬렉션)이면 첫 번째 폰트의 테이블 디렉터리 오프셋을 base 로.
+        let base = if &data[0..4] == b"ttcf" {
+            be_u32(&data, 12) as usize
+        } else {
+            0
+        };
+        if base + 12 > data.len() {
+            return Err(FontError::TooShort);
+        }
+        let num_tables = be_u16(&data, base + 4) as usize;
         let mut tables = HashMap::new();
         for i in 0..num_tables {
-            let rec = 12 + i * 16;
+            let rec = base + 12 + i * 16;
             if rec + 16 > data.len() {
                 return Err(FontError::TooShort);
             }
@@ -412,7 +421,7 @@ mod tests {
     use super::*;
 
     fn load() -> Font {
-        let bytes = std::fs::read("assets/fonts/Kestrel.ttf").expect("read font");
+        let bytes = std::fs::read("assets/fonts/Latin.ttf").expect("read font");
         Font::from_bytes(bytes).expect("parse font")
     }
 
@@ -445,16 +454,25 @@ mod tests {
     }
 
     #[test]
-    fn fontstack_falls_back_for_korean() {
-        let latin = Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap()).unwrap();
-        let noto = Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap()).unwrap();
-        let stack = FontStack::new(vec![latin, noto]);
-        let (ai, ag) = stack.glyph_for('A');
-        assert_eq!(ai, 0, "Latin 'A' from primary");
-        assert_ne!(ag, 0);
-        let (ki, kg) = stack.glyph_for('한');
-        assert_eq!(ki, 1, "Korean should fall back to Noto");
-        assert_ne!(kg, 0);
+    fn fontstack_falls_back_to_second() {
+        let a = Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap()).unwrap();
+        let b = Font::from_bytes(std::fs::read("assets/fonts/CffTest.otf").unwrap()).unwrap();
+        let stack = FontStack::new(vec![a, b]);
+        assert_eq!(stack.glyph_for('A').0, 0, "'A' from primary");
+        // 주 폰트엔 없고 폴백엔 있는 글자 → 인덱스 1로 폴백
+        let mut fell_back = false;
+        for cp in 0x100u32..0x250 {
+            if let Some(c) = char::from_u32(cp) {
+                let p = stack.fonts[0].glyph_index(c);
+                let q = stack.fonts[1].glyph_index(c);
+                if p == 0 && q != 0 {
+                    assert_eq!(stack.glyph_for(c), (1, q));
+                    fell_back = true;
+                    break;
+                }
+            }
+        }
+        assert!(fell_back, "expected a glyph absent in primary but present in fallback");
     }
 
     #[test]

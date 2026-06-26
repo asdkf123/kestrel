@@ -141,7 +141,7 @@ mod tests {
     use crate::font::Font;
 
     fn load() -> Font {
-        Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap()).unwrap()
+        Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap()).unwrap()
     }
 
     #[test]

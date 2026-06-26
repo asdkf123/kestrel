@@ -101,7 +101,7 @@ mod tests {
     use crate::css::Color;
 
     fn fonts() -> crate::font::FontStack {
-        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap())
+        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
             .unwrap();
         crate::font::FontStack::new(vec![f])
     }

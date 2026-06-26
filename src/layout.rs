@@ -364,7 +364,7 @@ mod tests {
     use super::*;
 
     fn fonts() -> FontStack {
-        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap())
+        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
             .unwrap();
         FontStack::new(vec![f])
     }
