@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 winit = "0.29"
 softbuffer = "0.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"

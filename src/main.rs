@@ -2,15 +2,37 @@ mod css;
 mod dom;
 mod font;
 mod html;
+mod http;
 mod layout;
 mod paint;
 mod raster;
 mod style;
+mod url;
 mod window;
 
 use std::fs;
 
 fn main() {
+    // 네트워크 fetch 모드: kestrel --fetch <url>
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--fetch" {
+        match http::fetch(&args[2]) {
+            Ok(resp) => {
+                println!(
+                    "status {} | {} headers | {} body bytes",
+                    resp.status,
+                    resp.headers.len(),
+                    resp.body.len()
+                );
+                let preview: String =
+                    String::from_utf8_lossy(&resp.body).chars().take(200).collect();
+                println!("--- first 200 chars ---\n{}", preview);
+            }
+            Err(e) => println!("fetch error: {:?}", e),
+        }
+        return;
+    }
+
     // 글리프 덤프 모드: KESTREL_GLYPH 문자열을 래스터화해 그레이스케일 PPM으로.
     if let Ok(text) = std::env::var("KESTREL_GLYPH") {
         let out = std::env::var("KESTREL_GLYPH_OUT").unwrap_or_else(|_| "glyphs.ppm".to_string());
