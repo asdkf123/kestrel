@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::font::{Font, FontStack, Point};
+use crate::font::{Font, FontStack};
 
 pub struct CoverageBitmap {
     pub width: usize,
@@ -14,18 +14,14 @@ pub struct CoverageBitmap {
 pub fn rasterize_glyph(font: &Font, glyph_id: u16, px_per_em: f32) -> CoverageBitmap {
     let scale = px_per_em / font.units_per_em() as f32;
     let advance = font.advance_width(glyph_id) as f32 * scale;
-    let glyph = font.outline(glyph_id);
+    let polylines = font.outline(glyph_id);
 
     let empty = || CoverageBitmap { width: 0, height: 0, data: vec![], left: 0, top: 0, advance };
-    if glyph.contours.is_empty() {
+    if polylines.is_empty() {
         return empty();
     }
 
-    // 1) 윤곽선을 폰트 단위 폴리라인으로 평탄화
-    let polylines: Vec<Vec<(f32, f32)>> =
-        glyph.contours.iter().map(|c| flatten_contour(&c.points)).collect();
-
-    // 2) 바운드 계산
+    // 바운드 계산
     let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for poly in &polylines {
         for &(px, py) in poly {
@@ -114,61 +110,6 @@ fn add_span(cov: &mut [f32], row_off: usize, width: usize, x0: f32, x1: f32, wei
         let overlap = (x1.min(cell1) - x0.max(cell0)).max(0.0);
         cov[row_off + c] += overlap * weight;
     }
-}
-
-fn flatten_quad(poly: &mut Vec<(f32, f32)>, p0: (f32, f32), p1: (f32, f32), p2: (f32, f32)) {
-    const STEPS: usize = 8;
-    for s in 1..=STEPS {
-        let t = s as f32 / STEPS as f32;
-        let mt = 1.0 - t;
-        let x = mt * mt * p0.0 + 2.0 * mt * t * p1.0 + t * t * p2.0;
-        let y = mt * mt * p0.1 + 2.0 * mt * t * p1.1 + t * t * p2.1;
-        poly.push((x, y));
-    }
-}
-
-fn flatten_contour(pts: &[Point]) -> Vec<(f32, f32)> {
-    let n = pts.len();
-    if n == 0 {
-        return vec![];
-    }
-    // 1) 연속 off-curve 사이 암묵 중점(on-curve) 삽입
-    let mut exp: Vec<(f32, f32, bool)> = Vec::with_capacity(n * 2);
-    for i in 0..n {
-        let p = pts[i];
-        let q = pts[(i + 1) % n];
-        exp.push((p.x, p.y, p.on_curve));
-        if !p.on_curve && !q.on_curve {
-            exp.push(((p.x + q.x) / 2.0, (p.y + q.y) / 2.0, true));
-        }
-    }
-    // 2) on-curve 점에서 시작하도록 회전
-    let start = match exp.iter().position(|e| e.2) {
-        Some(s) => s,
-        None => return vec![],
-    };
-    let m = exp.len();
-    let mut ring: Vec<(f32, f32, bool)> = (0..m).map(|i| exp[(start + i) % m]).collect();
-    ring.push(ring[0]); // 닫기 (마지막은 on-curve 시작점)
-
-    // 3) 폴리라인 생성
-    let mut poly = vec![(ring[0].0, ring[0].1)];
-    let mut cur = (ring[0].0, ring[0].1);
-    let mut i = 1;
-    while i < ring.len() {
-        let p = ring[i];
-        if p.2 {
-            poly.push((p.0, p.1));
-            cur = (p.0, p.1);
-            i += 1;
-        } else {
-            let end = ring[i + 1]; // off-curve 다음은 항상 on-curve (확장으로 보장)
-            flatten_quad(&mut poly, cur, (p.0, p.1), (end.0, end.1));
-            cur = (end.0, end.1);
-            i += 2;
-        }
-    }
-    poly
 }
 
 pub struct GlyphCache {

@@ -173,7 +173,14 @@ impl Font {
         }
     }
 
-    pub fn outline(&self, glyph_id: u16) -> Glyph {
+    /// 포맷 무관 평탄화 윤곽선(폰트 단위, Y up). 닫힌 폴리라인들.
+    pub fn outline(&self, glyph_id: u16) -> Vec<Vec<(f32, f32)>> {
+        // (CFF 분기는 Part B 에서 추가)
+        let glyph = self.glyf_outline(glyph_id);
+        glyph.contours.iter().map(|c| flatten_contour(&c.points)).collect()
+    }
+
+    fn glyf_outline(&self, glyph_id: u16) -> Glyph {
         let (glyf, _) = self.tables[b"glyf"];
         let (start, end) = self.glyph_range(glyph_id);
         if end <= start {
@@ -336,6 +343,58 @@ fn parse_cmap(data: &[u8], tables: &HashMap<[u8; 4], (usize, usize)>) -> Result<
     })
 }
 
+fn flatten_quad(poly: &mut Vec<(f32, f32)>, p0: (f32, f32), p1: (f32, f32), p2: (f32, f32)) {
+    const STEPS: usize = 8;
+    for s in 1..=STEPS {
+        let t = s as f32 / STEPS as f32;
+        let mt = 1.0 - t;
+        let x = mt * mt * p0.0 + 2.0 * mt * t * p1.0 + t * t * p2.0;
+        let y = mt * mt * p0.1 + 2.0 * mt * t * p1.1 + t * t * p2.1;
+        poly.push((x, y));
+    }
+}
+
+// glyf 윤곽선(on/off 포인트, 2차 베지어)을 폴리라인으로 평탄화.
+fn flatten_contour(pts: &[Point]) -> Vec<(f32, f32)> {
+    let n = pts.len();
+    if n == 0 {
+        return vec![];
+    }
+    let mut exp: Vec<(f32, f32, bool)> = Vec::with_capacity(n * 2);
+    for i in 0..n {
+        let p = pts[i];
+        let q = pts[(i + 1) % n];
+        exp.push((p.x, p.y, p.on_curve));
+        if !p.on_curve && !q.on_curve {
+            exp.push(((p.x + q.x) / 2.0, (p.y + q.y) / 2.0, true));
+        }
+    }
+    let start = match exp.iter().position(|e| e.2) {
+        Some(s) => s,
+        None => return vec![],
+    };
+    let m = exp.len();
+    let mut ring: Vec<(f32, f32, bool)> = (0..m).map(|i| exp[(start + i) % m]).collect();
+    ring.push(ring[0]);
+    let mut poly = vec![(ring[0].0, ring[0].1)];
+    let mut cur = (ring[0].0, ring[0].1);
+    let mut i = 1;
+    while i < ring.len() {
+        let p = ring[i];
+        if p.2 {
+            poly.push((p.0, p.1));
+            cur = (p.0, p.1);
+            i += 1;
+        } else {
+            let end = ring[i + 1];
+            flatten_quad(&mut poly, cur, (p.0, p.1), (end.0, end.1));
+            cur = (end.0, end.1);
+            i += 2;
+        }
+    }
+    poly
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,11 +449,11 @@ mod tests {
     fn outlines_have_contours() {
         let f = load();
         let o = f.outline(f.glyph_index('o'));
-        assert!(o.contours.len() >= 1, "'o' should have at least one contour");
-        let total_pts: usize = o.contours.iter().map(|c| c.points.len()).sum();
+        assert!(o.len() >= 1, "'o' should have at least one contour");
+        let total_pts: usize = o.iter().map(|c| c.len()).sum();
         assert!(total_pts > 0);
         // space is an empty glyph (advance only, no contours)
         let sp = f.outline(f.glyph_index(' '));
-        assert_eq!(sp.contours.len(), 0);
+        assert_eq!(sp.len(), 0);
     }
 }
