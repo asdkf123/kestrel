@@ -1,3 +1,4 @@
+mod cff;
 mod css;
 mod dom;
 mod font;
@@ -230,7 +231,14 @@ fn load_fonts() -> font::FontStack {
 }
 
 fn dump_glyphs(text: &str, path: &str) {
-    let fonts = load_fonts();
+    // KESTREL_FONT 가 지정되면 그 폰트 하나로(예: CFF .otf 검증). 아니면 기본 스택.
+    let fonts = match std::env::var("KESTREL_FONT") {
+        Ok(p) => {
+            let f = font::Font::from_bytes(fs::read(&p).expect("read font")).expect("parse font");
+            font::FontStack::new(vec![f])
+        }
+        Err(_) => load_fonts(),
+    };
     let px = 96.0f32;
 
     let mut cells: Vec<raster::CoverageBitmap> = Vec::new();

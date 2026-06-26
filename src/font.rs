@@ -61,6 +61,7 @@ pub struct Font {
     line_gap: i16,
     num_h_metrics: u16,
     cmap: Cmap4,
+    cff: Option<crate::cff::Cff>,
 }
 
 impl Font {
@@ -96,8 +97,16 @@ impl Font {
         let num_h_metrics = be_u16(&data, hhea + 34);
 
         tables.get(b"hmtx").ok_or(FontError::MissingTable("hmtx"))?;
-        tables.get(b"loca").ok_or(FontError::MissingTable("loca"))?;
-        tables.get(b"glyf").ok_or(FontError::MissingTable("glyf"))?;
+
+        // glyf(TrueType) 또는 CFF(.otf) 중 하나는 있어야 한다.
+        let cff = tables
+            .get(b"CFF ")
+            .copied()
+            .and_then(|(off, _)| crate::cff::Cff::parse(&data, off));
+        let has_glyf = tables.contains_key(b"glyf") && tables.contains_key(b"loca");
+        if !has_glyf && cff.is_none() {
+            return Err(FontError::MissingTable("glyf or CFF"));
+        }
 
         let cmap = parse_cmap(&data, &tables)?;
 
@@ -112,6 +121,7 @@ impl Font {
             line_gap,
             num_h_metrics,
             cmap,
+            cff,
         })
     }
 
@@ -175,7 +185,9 @@ impl Font {
 
     /// 포맷 무관 평탄화 윤곽선(폰트 단위, Y up). 닫힌 폴리라인들.
     pub fn outline(&self, glyph_id: u16) -> Vec<Vec<(f32, f32)>> {
-        // (CFF 분기는 Part B 에서 추가)
+        if let Some(cff) = &self.cff {
+            return cff.outline(&self.data, glyph_id);
+        }
         let glyph = self.glyf_outline(glyph_id);
         glyph.contours.iter().map(|c| flatten_contour(&c.points)).collect()
     }
@@ -443,6 +455,17 @@ mod tests {
         let (ki, kg) = stack.glyph_for('한');
         assert_eq!(ki, 1, "Korean should fall back to Noto");
         assert_ne!(kg, 0);
+    }
+
+    #[test]
+    fn cff_otf_produces_closed_outline() {
+        let f = Font::from_bytes(std::fs::read("assets/fonts/CffTest.otf").unwrap()).unwrap();
+        let o = f.outline(f.glyph_index('o'));
+        assert!(!o.is_empty(), "CFF 'o' should produce contours");
+        assert!(o.iter().map(|c| c.len()).sum::<usize>() > 0);
+        for c in &o {
+            assert_eq!(c.first(), c.last(), "CFF contour must be closed");
+        }
     }
 
     #[test]
