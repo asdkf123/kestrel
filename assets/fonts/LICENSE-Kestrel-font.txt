@@ -1,8 +1,14 @@
-Kestrel.ttf is Noto Sans KR (NotoSansKR[wght].ttf, variable font).
+Bundled fonts (font fallback stack):
 
-Source: https://github.com/google/fonts/tree/main/ofl/notosanskr
-License: SIL Open Font License 1.1 (OFL). Permits redistribution and bundling.
+1. Kestrel.ttf  — Noto Sans KR (NotoSansKR[wght].ttf, variable). PRIMARY.
+   Source:  https://github.com/google/fonts/tree/main/ofl/notosanskr
+   License: SIL Open Font License 1.1 (OFL).
+   Covers Latin + Korean (Hangul). TrueType (glyf) outlines.
 
-Renamed to Kestrel.ttf for a stable in-repo path; unmodified upstream file.
-Covers Latin + Korean (Hangul). TrueType (glyf) outlines, so it works with the
-engine's glyf-only font parser (CFF/.otf is not yet supported).
+2. Latin.ttf    — Hack (Hack-Regular.ttf). FALLBACK.
+   Source:  https://github.com/source-foundry/Hack
+   License: MIT + Bitstream Vera. TrueType (glyf), Latin/monospace.
+
+Both renamed for stable in-repo paths; unmodified upstream files. Used as a
+glyph fallback chain (FontStack): per character, the first font that has the
+glyph is used. CFF/.otf is not yet supported by the engine's font parser.

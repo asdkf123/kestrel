@@ -266,6 +266,32 @@ impl Font {
     }
 }
 
+pub struct FontStack {
+    pub fonts: Vec<Font>,
+}
+
+impl FontStack {
+    pub fn new(fonts: Vec<Font>) -> FontStack {
+        FontStack { fonts }
+    }
+    pub fn primary(&self) -> &Font {
+        &self.fonts[0]
+    }
+    pub fn font(&self, index: usize) -> &Font {
+        &self.fonts[index]
+    }
+    /// 글자를 가진 첫 폰트의 (인덱스, 글리프 id). 없으면 (0, 0)=.notdef.
+    pub fn glyph_for(&self, c: char) -> (usize, u16) {
+        for (i, f) in self.fonts.iter().enumerate() {
+            let g = f.glyph_index(c);
+            if g != 0 {
+                return (i, g);
+            }
+        }
+        (0, 0)
+    }
+}
+
 fn parse_cmap(data: &[u8], tables: &HashMap<[u8; 4], (usize, usize)>) -> Result<Cmap4, FontError> {
     let cmap_off = tables.get(b"cmap").ok_or(FontError::MissingTable("cmap"))?.0;
     let num_sub = be_u16(data, cmap_off + 2) as usize;
@@ -345,6 +371,19 @@ mod tests {
         let space = f.advance_width(f.glyph_index(' '));
         assert!(a > 0);
         assert!(space > 0, "space should still advance the pen");
+    }
+
+    #[test]
+    fn fontstack_falls_back_for_korean() {
+        let latin = Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap()).unwrap();
+        let noto = Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap()).unwrap();
+        let stack = FontStack::new(vec![latin, noto]);
+        let (ai, ag) = stack.glyph_for('A');
+        assert_eq!(ai, 0, "Latin 'A' from primary");
+        assert_ne!(ag, 0);
+        let (ki, kg) = stack.glyph_for('한');
+        assert_eq!(ki, 1, "Korean should fall back to Noto");
+        assert_ne!(kg, 0);
     }
 
     #[test]

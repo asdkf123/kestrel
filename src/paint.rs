@@ -1,5 +1,5 @@
 use crate::css::{Color, Value};
-use crate::font::Font;
+use crate::font::FontStack;
 use crate::layout::{GlyphInstance, LayoutBox, Rect};
 use crate::raster::{CoverageBitmap, GlyphCache};
 
@@ -71,22 +71,27 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
     }
 }
 
-fn paint_box(canvas: &mut Canvas, layout_box: &LayoutBox, font: &Font, cache: &mut GlyphCache) {
+fn paint_box(canvas: &mut Canvas, layout_box: &LayoutBox, fonts: &FontStack, cache: &mut GlyphCache) {
     if let Some(color) = get_color(layout_box, "background-color") {
         canvas.fill_rect(color, layout_box.dimensions.border_box());
     }
     for gi in &layout_box.glyphs {
-        let bm = cache.get(font, gi.glyph_id, gi.px);
+        let bm = cache.get(fonts, gi.font_index, gi.glyph_id, gi.px);
         blit_glyph(canvas, bm, gi);
     }
     for child in &layout_box.children {
-        paint_box(canvas, child, font, cache);
+        paint_box(canvas, child, fonts, cache);
     }
 }
 
-pub fn paint(layout_root: &LayoutBox, bounds: Rect, font: &Font, cache: &mut GlyphCache) -> Canvas {
+pub fn paint(
+    layout_root: &LayoutBox,
+    bounds: Rect,
+    fonts: &FontStack,
+    cache: &mut GlyphCache,
+) -> Canvas {
     let mut canvas = Canvas::new(bounds.width as usize, bounds.height as usize);
-    paint_box(&mut canvas, layout_root, font, cache);
+    paint_box(&mut canvas, layout_root, fonts, cache);
     canvas
 }
 
@@ -95,8 +100,10 @@ mod tests {
     use super::*;
     use crate::css::Color;
 
-    fn font() -> crate::font::Font {
-        crate::font::Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap()).unwrap()
+    fn fonts() -> crate::font::FontStack {
+        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap())
+            .unwrap();
+        crate::font::FontStack::new(vec![f])
     }
 
     fn canvas_for(html: &str, css: &str, w: f32, h: f32) -> Canvas {
@@ -105,10 +112,10 @@ mod tests {
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: crate::layout::Dimensions = Default::default();
         viewport.content.width = w;
-        let f = font();
-        let layout_root = crate::layout::layout_tree(&styled, viewport, &f);
+        let fs = fonts();
+        let layout_root = crate::layout::layout_tree(&styled, viewport, &fs);
         let mut cache = crate::raster::GlyphCache::new();
-        paint(&layout_root, crate::layout::Rect { x: 0.0, y: 0.0, width: w, height: h }, &f, &mut cache)
+        paint(&layout_root, crate::layout::Rect { x: 0.0, y: 0.0, width: w, height: h }, &fs, &mut cache)
     }
 
     #[test]

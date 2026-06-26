@@ -83,15 +83,14 @@ fn main() {
     viewport.content.width = viewport_width as f32;
     viewport.content.height = viewport_height as f32;
 
-    let font_bytes = fs::read("assets/fonts/Kestrel.ttf").expect("read font");
-    let font = font::Font::from_bytes(font_bytes).expect("parse font");
+    let fonts = load_fonts();
     let mut cache = raster::GlyphCache::new();
 
-    let layout_root = layout::layout_tree(&style_root, viewport, &font);
+    let layout_root = layout::layout_tree(&style_root, viewport, &fonts);
     let canvas = paint::paint(
         &layout_root,
         layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
-        &font,
+        &fonts,
         &mut cache,
     );
 
@@ -197,15 +196,14 @@ fn render_url(url: &str) {
     viewport.content.width = viewport_width as f32;
     viewport.content.height = viewport_height as f32;
 
-    let font = font::Font::from_bytes(fs::read("assets/fonts/Kestrel.ttf").expect("read font"))
-        .expect("parse font");
+    let fonts = load_fonts();
     let mut cache = raster::GlyphCache::new();
 
-    let layout_root = layout::layout_tree(&style_root, viewport, &font);
+    let layout_root = layout::layout_tree(&style_root, viewport, &fonts);
     let canvas = paint::paint(
         &layout_root,
         layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
-        &font,
+        &fonts,
         &mut cache,
     );
 
@@ -217,15 +215,28 @@ fn render_url(url: &str) {
     window::run(canvas.to_u32_buffer(), viewport_width, viewport_height);
 }
 
+fn load_fonts() -> font::FontStack {
+    let mut fonts = Vec::new();
+    // 주 폰트 = Noto(비례, 라틴+한글), 폴백 = Hack. 글자별 폴백은 FontStack 이 처리.
+    for path in ["assets/fonts/Kestrel.ttf", "assets/fonts/Latin.ttf"] {
+        if let Ok(bytes) = fs::read(path) {
+            if let Ok(f) = font::Font::from_bytes(bytes) {
+                fonts.push(f);
+            }
+        }
+    }
+    assert!(!fonts.is_empty(), "no fonts loaded from assets/fonts/");
+    font::FontStack::new(fonts)
+}
+
 fn dump_glyphs(text: &str, path: &str) {
-    let bytes = fs::read("assets/fonts/Kestrel.ttf").expect("read font");
-    let font = font::Font::from_bytes(bytes).expect("parse font");
+    let fonts = load_fonts();
     let px = 96.0f32;
 
     let mut cells: Vec<raster::CoverageBitmap> = Vec::new();
     for ch in text.chars() {
-        let gid = font.glyph_index(ch);
-        cells.push(raster::rasterize_glyph(&font, gid, px));
+        let (fi, gid) = fonts.glyph_for(ch);
+        cells.push(raster::rasterize_glyph(fonts.font(fi), gid, px));
     }
 
     // 베이스라인 정렬 + advance 기반 자간 (M2b 인라인 레이아웃 미리보기)

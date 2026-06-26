@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::font::{Font, Point};
+use crate::font::{Font, FontStack, Point};
 
 pub struct CoverageBitmap {
     pub width: usize,
@@ -172,7 +172,7 @@ fn flatten_contour(pts: &[Point]) -> Vec<(f32, f32)> {
 }
 
 pub struct GlyphCache {
-    map: HashMap<(u16, u32), CoverageBitmap>,
+    map: HashMap<(usize, u16, u32), CoverageBitmap>,
 }
 
 impl GlyphCache {
@@ -180,11 +180,17 @@ impl GlyphCache {
         GlyphCache { map: HashMap::new() }
     }
 
-    pub fn get(&mut self, font: &Font, glyph_id: u16, px_per_em: f32) -> &CoverageBitmap {
-        let key = (glyph_id, px_per_em.to_bits());
+    pub fn get(
+        &mut self,
+        stack: &FontStack,
+        font_index: usize,
+        glyph_id: u16,
+        px_per_em: f32,
+    ) -> &CoverageBitmap {
+        let key = (font_index, glyph_id, px_per_em.to_bits());
         self.map
             .entry(key)
-            .or_insert_with(|| rasterize_glyph(font, glyph_id, px_per_em))
+            .or_insert_with(|| rasterize_glyph(stack.font(font_index), glyph_id, px_per_em))
     }
 }
 
@@ -219,13 +225,15 @@ mod tests {
     #[test]
     fn cache_returns_consistent_bitmap() {
         let f = load();
+        let gid = f.glyph_index('g');
+        let stack = crate::font::FontStack::new(vec![f]);
         let mut cache = GlyphCache::new();
         let (w1, h1) = {
-            let bm = cache.get(&f, f.glyph_index('g'), 48.0);
+            let bm = cache.get(&stack, 0, gid, 48.0);
             (bm.width, bm.height)
         };
         let (w2, h2) = {
-            let bm = cache.get(&f, f.glyph_index('g'), 48.0);
+            let bm = cache.get(&stack, 0, gid, 48.0);
             (bm.width, bm.height)
         };
         assert_eq!((w1, h1), (w2, h2));
