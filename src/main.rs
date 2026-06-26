@@ -33,6 +33,21 @@ fn main() {
         return;
     }
 
+    // 파싱 모드: kestrel --parse <url> (fetch → tolerant parse → 요소 수)
+    if args.len() >= 3 && args[1] == "--parse" {
+        match http::fetch(&args[2]) {
+            Ok(resp) => {
+                let html = String::from_utf8_lossy(&resp.body).to_string();
+                let dom = html::parse(html);
+                let mut count = 0usize;
+                count_elements(&dom, &mut count);
+                println!("parsed OK: {} elements (http {})", count, resp.status);
+            }
+            Err(e) => println!("fetch error: {:?}", e),
+        }
+        return;
+    }
+
     // 글리프 덤프 모드: KESTREL_GLYPH 문자열을 래스터화해 그레이스케일 PPM으로.
     if let Ok(text) = std::env::var("KESTREL_GLYPH") {
         let out = std::env::var("KESTREL_GLYPH_OUT").unwrap_or_else(|_| "glyphs.ppm".to_string());
@@ -86,6 +101,15 @@ fn write_ppm(canvas: &paint::Canvas, path: &str) {
         data.push(c.b);
     }
     fs::write(path, data).expect("write ppm");
+}
+
+fn count_elements(node: &dom::Node, count: &mut usize) {
+    if let dom::NodeType::Element(_) = &node.node_type {
+        *count += 1;
+    }
+    for c in &node.children {
+        count_elements(c, count);
+    }
 }
 
 fn dump_glyphs(text: &str, path: &str) {
