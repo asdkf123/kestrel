@@ -32,10 +32,16 @@ fn main() {
     viewport.content.width = viewport_width as f32;
     viewport.content.height = viewport_height as f32;
 
-    let layout_root = layout::layout_tree(&style_root, viewport);
+    let font_bytes = fs::read("assets/fonts/Kestrel.ttf").expect("read font");
+    let font = font::Font::from_bytes(font_bytes).expect("parse font");
+    let mut cache = raster::GlyphCache::new();
+
+    let layout_root = layout::layout_tree(&style_root, viewport, &font);
     let canvas = paint::paint(
         &layout_root,
         layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
+        &font,
+        &mut cache,
     );
 
     // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 으로 출력하고 종료.

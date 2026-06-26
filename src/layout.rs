@@ -1,5 +1,8 @@
 use crate::css::Unit::Px;
 use crate::css::Value::{Keyword, Length};
+use crate::css::{Color, Value};
+use crate::dom::NodeType;
+use crate::font::Font;
 use crate::style::{Display, StyledNode};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
@@ -49,21 +52,37 @@ impl Dimensions {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct GlyphInstance {
+    pub glyph_id: u16,
+    pub x: f32,
+    pub baseline_y: f32,
+    pub px: f32,
+    pub color: Color,
+}
+
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
     pub styled_node: &'a StyledNode<'a>,
     pub children: Vec<LayoutBox<'a>>,
+    pub glyphs: Vec<GlyphInstance>,
 }
 
 impl<'a> LayoutBox<'a> {
     fn new(styled_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
-        LayoutBox { dimensions: Default::default(), styled_node, children: Vec::new() }
+        LayoutBox {
+            dimensions: Default::default(),
+            styled_node,
+            children: Vec::new(),
+            glyphs: Vec::new(),
+        }
     }
 
-    fn layout(&mut self, containing_block: Dimensions) {
+    fn layout(&mut self, containing_block: Dimensions, font: &Font) {
         self.calculate_width(containing_block);
         self.calculate_position(containing_block);
-        self.layout_children();
+        self.layout_children(font);
+        self.layout_text(font);
         self.calculate_height();
     }
 
@@ -164,12 +183,74 @@ impl<'a> LayoutBox<'a> {
             + d.padding.top;
     }
 
-    fn layout_children(&mut self) {
+    fn layout_children(&mut self, font: &Font) {
         let d = &mut self.dimensions;
         for child in &mut self.children {
-            child.layout(*d);
+            child.layout(*d, font);
             d.content.height += child.dimensions.margin_box().height;
         }
+    }
+
+    fn layout_text(&mut self, font: &Font) {
+        let mut text = String::new();
+        for child in &self.styled_node.children {
+            if let NodeType::Text(t) = &child.node.node_type {
+                text.push_str(t);
+            }
+        }
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+
+        let style = self.styled_node;
+        let font_size = style
+            .value("font-size")
+            .map(|v| v.to_px())
+            .filter(|&p| p > 0.0)
+            .unwrap_or(16.0);
+        let color = match style.value("color") {
+            Some(Value::Color(c)) => c,
+            _ => Color { r: 0, g: 0, b: 0, a: 255 },
+        };
+
+        let scale = font_size / font.units_per_em() as f32;
+        let line_height =
+            (font.ascent() as f32 - font.descent() as f32 + font.line_gap() as f32) * scale;
+        let ascent_px = font.ascent() as f32 * scale;
+        let space_adv = font.advance_width(font.glyph_index(' ')) as f32 * scale;
+
+        let content_x = self.dimensions.content.x;
+        let content_w = self.dimensions.content.width;
+        let mut pen_x = content_x;
+        let mut baseline = self.dimensions.content.y + ascent_px;
+        let mut lines = 1;
+
+        for word in text.split_whitespace() {
+            let word_w: f32 = word
+                .chars()
+                .map(|c| font.advance_width(font.glyph_index(c)) as f32 * scale)
+                .sum();
+            if pen_x > content_x && pen_x + word_w > content_x + content_w {
+                pen_x = content_x;
+                baseline += line_height;
+                lines += 1;
+            }
+            for c in word.chars() {
+                let gid = font.glyph_index(c);
+                self.glyphs.push(GlyphInstance {
+                    glyph_id: gid,
+                    x: pen_x,
+                    baseline_y: baseline,
+                    px: font_size,
+                    color,
+                });
+                pen_x += font.advance_width(gid) as f32 * scale;
+            }
+            pen_x += space_adv;
+        }
+
+        self.dimensions.content.height = lines as f32 * line_height;
     }
 
     fn calculate_height(&mut self) {
@@ -184,18 +265,21 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     for child in &style_node.children {
         match child.display() {
             Display::Block => root.children.push(build_layout_tree(child)),
-            // M1: 인라인/텍스트와 display:none 은 박스를 만들지 않는다 (M2에서 인라인 도입).
+            // 인라인/텍스트와 display:none 은 박스를 만들지 않는다.
             Display::Inline | Display::None => {}
         }
     }
     root
 }
 
-pub fn layout_tree<'a>(node: &'a StyledNode<'a>, mut containing_block: Dimensions) -> LayoutBox<'a> {
-    // 자식 y 위치 누적의 기준점이 되므로 높이를 0으로 초기화.
+pub fn layout_tree<'a>(
+    node: &'a StyledNode<'a>,
+    mut containing_block: Dimensions,
+    font: &Font,
+) -> LayoutBox<'a> {
     containing_block.content.height = 0.0;
     let mut root_box = build_layout_tree(node);
-    root_box.layout(containing_block);
+    root_box.layout(containing_block, font);
     root_box
 }
 
@@ -203,13 +287,18 @@ pub fn layout_tree<'a>(node: &'a StyledNode<'a>, mut containing_block: Dimension
 mod tests {
     use super::*;
 
+    fn font() -> crate::font::Font {
+        crate::font::Font::from_bytes(std::fs::read("assets/fonts/Kestrel.ttf").unwrap()).unwrap()
+    }
+
     fn layout_for(html: &str, css: &str, viewport_width: f32) -> Dimensions {
         let root = crate::html::parse(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = viewport_width;
-        let lb = layout_tree(&styled, viewport);
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
         lb.dimensions
     }
 
@@ -229,15 +318,12 @@ mod tests {
     #[test]
     fn auto_width_fills_containing_block_minus_padding() {
         let d = layout_for("<div></div>", "div { display: block; padding: 10px; }", 300.0);
-        // content width = 300 - left/right padding(10+10) = 280
         assert_eq!(d.content.width, 280.0);
-        // content x offset by left padding
         assert_eq!(d.content.x, 10.0);
     }
 
     #[test]
     fn children_stack_vertically() {
-        // 바깥 div 에는 height 를 주지 않아 자식 합으로 높이가 결정되게 한다.
         let root = crate::html::parse(
             "<div class=\"outer\"><div class=\"inner\"></div><div class=\"inner\"></div></div>"
                 .to_string(),
@@ -248,13 +334,39 @@ mod tests {
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 400.0;
-        let lb = layout_tree(&styled, viewport);
-        // outer has 2 child boxes
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
         assert_eq!(lb.children.len(), 2);
-        // first child at y=0, second child at y=50 (stacked)
         assert_eq!(lb.children[0].dimensions.content.y, 0.0);
         assert_eq!(lb.children[1].dimensions.content.y, 50.0);
-        // outer height = sum of children heights = 100 (height auto → 자식 합)
         assert_eq!(lb.dimensions.content.height, 100.0);
+    }
+
+    #[test]
+    fn text_box_produces_glyphs_and_height() {
+        let root = crate::html::parse("<p>hello world</p>".to_string());
+        let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
+        assert!(!lb.glyphs.is_empty(), "text should produce glyphs");
+        assert!(lb.dimensions.content.height > 0.0);
+    }
+
+    #[test]
+    fn long_text_wraps_to_multiple_lines() {
+        let root =
+            crate::html::parse("<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh</p>".to_string());
+        let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 120.0;
+        let f = font();
+        let lb = layout_tree(&styled, viewport, &f);
+        let first = lb.glyphs.first().unwrap().baseline_y;
+        let last = lb.glyphs.last().unwrap().baseline_y;
+        assert!(last > first, "later glyphs should be on lower lines");
     }
 }
