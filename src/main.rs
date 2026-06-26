@@ -118,6 +118,22 @@ fn count_elements(node: &dom::Node, count: &mut usize) {
     }
 }
 
+fn collect_links(node: &dom::Node, out: &mut Vec<String>) {
+    if let dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "link" {
+            let rel = e.attributes.get("rel").map(|s| s.as_str()).unwrap_or("");
+            if rel.split_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
+                if let Some(href) = e.attributes.get("href") {
+                    out.push(href.clone());
+                }
+            }
+        }
+    }
+    for c in &node.children {
+        collect_links(c, out);
+    }
+}
+
 fn extract_css(node: &dom::Node, out: &mut String) {
     if let dom::NodeType::Element(e) = &node.node_type {
         if e.tag_name == "style" {
@@ -147,11 +163,23 @@ fn render_url(url: &str) {
     let html = String::from_utf8_lossy(&resp.body).to_string();
     let dom = html::parse(html);
 
-    let mut page_css = String::new();
-    extract_css(&dom, &mut page_css);
-
+    // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침
     let mut sheet = css::user_agent_stylesheet();
-    sheet.rules.extend(css::parse(page_css).rules);
+    if let Ok(base) = url::Url::parse(url) {
+        let mut hrefs = Vec::new();
+        collect_links(&dom, &mut hrefs);
+        for href in hrefs.iter().take(10) {
+            if let Some(u) = base.join(href) {
+                if let Ok(r) = http::fetch(&u.as_string()) {
+                    let css_text = String::from_utf8_lossy(&r.body).to_string();
+                    sheet.rules.extend(css::parse(css_text).rules);
+                }
+            }
+        }
+    }
+    let mut inline_css = String::new();
+    extract_css(&dom, &mut inline_css);
+    sheet.rules.extend(css::parse(inline_css).rules);
 
     let style_root = style::style_tree(&dom, &sheet);
 

@@ -39,6 +39,47 @@ impl Url {
         }
         Ok(Url { scheme, host, port, path })
     }
+
+    /// 상대/절대 href 를 이 URL 기준으로 해석한다.
+    pub fn join(&self, href: &str) -> Option<Url> {
+        if href.starts_with("http://") || href.starts_with("https://") {
+            Url::parse(href).ok()
+        } else if let Some(rest) = href.strip_prefix("//") {
+            // 프로토콜 상대 (//host/path)
+            Url::parse(&format!("{}://{}", self.scheme, rest)).ok()
+        } else if href.starts_with('/') {
+            Some(Url {
+                scheme: self.scheme.clone(),
+                host: self.host.clone(),
+                port: self.port,
+                path: href.split('#').next().unwrap_or("/").to_string(),
+            })
+        } else {
+            // 현재 경로의 디렉터리 기준 상대
+            let mut path = self.path.clone();
+            match path.rfind('/') {
+                Some(i) => path.truncate(i + 1),
+                None => path = "/".to_string(),
+            }
+            path.push_str(href.split('#').next().unwrap_or(""));
+            Some(Url {
+                scheme: self.scheme.clone(),
+                host: self.host.clone(),
+                port: self.port,
+                path,
+            })
+        }
+    }
+
+    pub fn as_string(&self) -> String {
+        let default_port = (self.scheme == "http" && self.port == 80)
+            || (self.scheme == "https" && self.port == 443);
+        if default_port {
+            format!("{}://{}{}", self.scheme, self.host, self.path)
+        } else {
+            format!("{}://{}:{}{}", self.scheme, self.host, self.port, self.path)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -73,5 +114,27 @@ mod tests {
     fn rejects_unknown_scheme() {
         assert!(Url::parse("ftp://h/").is_err());
         assert!(Url::parse("noscheme").is_err());
+    }
+
+    #[test]
+    fn joins_relative_and_absolute() {
+        let base = Url::parse("https://site.com/dir/page.html").unwrap();
+        // 절대
+        assert_eq!(base.join("https://o.com/x").unwrap().host, "o.com");
+        // 루트 상대
+        let r = base.join("/style.css").unwrap();
+        assert_eq!(r.host, "site.com");
+        assert_eq!(r.path, "/style.css");
+        // 디렉터리 상대
+        let d = base.join("a.css").unwrap();
+        assert_eq!(d.path, "/dir/a.css");
+        // 프로토콜 상대
+        assert_eq!(base.join("//cdn.com/s.css").unwrap().host, "cdn.com");
+    }
+
+    #[test]
+    fn round_trips_to_string() {
+        assert_eq!(Url::parse("https://a.com/x").unwrap().as_string(), "https://a.com/x");
+        assert_eq!(Url::parse("http://a.com:8080/y").unwrap().as_string(), "http://a.com:8080/y");
     }
 }
