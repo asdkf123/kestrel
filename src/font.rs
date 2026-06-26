@@ -17,6 +17,27 @@ fn be_u32(d: &[u8], off: usize) -> u32 {
     ((be_u16(d, off) as u32) << 16) | be_u16(d, off + 2) as u32
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
+    pub on_curve: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Contour {
+    pub points: Vec<Point>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Glyph {
+    pub contours: Vec<Contour>,
+    pub x_min: i16,
+    pub y_min: i16,
+    pub x_max: i16,
+    pub y_max: i16,
+}
+
 struct Cmap4 {
     seg_count: usize,
     end_code: Vec<u16>,
@@ -103,6 +124,147 @@ impl Font {
     pub fn line_gap(&self) -> i16 {
         self.line_gap
     }
+    pub fn num_glyphs(&self) -> u16 {
+        self.num_glyphs
+    }
+
+    pub fn glyph_index(&self, c: char) -> u16 {
+        let cp = c as u32;
+        if cp > 0xFFFF {
+            return 0;
+        }
+        let c = cp as u16;
+        let cm = &self.cmap;
+        for i in 0..cm.seg_count {
+            if c <= cm.end_code[i] && c >= cm.start_code[i] {
+                if cm.id_range_offset[i] == 0 {
+                    return (c as i32 + cm.id_delta[i] as i32) as u16;
+                }
+                let addr = cm.id_range_offset_pos
+                    + 2 * i
+                    + cm.id_range_offset[i] as usize
+                    + 2 * (c - cm.start_code[i]) as usize;
+                let g = be_u16(&self.data, addr);
+                if g == 0 {
+                    return 0;
+                }
+                return (g as i32 + cm.id_delta[i] as i32) as u16;
+            }
+        }
+        0
+    }
+
+    pub fn advance_width(&self, glyph_id: u16) -> u16 {
+        let (hmtx, _) = self.tables[b"hmtx"];
+        let n = self.num_h_metrics as usize;
+        let i = (glyph_id as usize).min(n.saturating_sub(1));
+        be_u16(&self.data, hmtx + i * 4)
+    }
+
+    fn glyph_range(&self, gid: u16) -> (usize, usize) {
+        let (loca, _) = self.tables[b"loca"];
+        if self.index_to_loc_format == 0 {
+            let a = be_u16(&self.data, loca + gid as usize * 2) as usize * 2;
+            let b = be_u16(&self.data, loca + (gid as usize + 1) * 2) as usize * 2;
+            (a, b)
+        } else {
+            let a = be_u32(&self.data, loca + gid as usize * 4) as usize;
+            let b = be_u32(&self.data, loca + (gid as usize + 1) * 4) as usize;
+            (a, b)
+        }
+    }
+
+    pub fn outline(&self, glyph_id: u16) -> Glyph {
+        let (glyf, _) = self.tables[b"glyf"];
+        let (start, end) = self.glyph_range(glyph_id);
+        if end <= start {
+            return Glyph { contours: vec![], x_min: 0, y_min: 0, x_max: 0, y_max: 0 };
+        }
+        let g = glyf + start;
+        let num_contours = be_i16(&self.data, g);
+        let x_min = be_i16(&self.data, g + 2);
+        let y_min = be_i16(&self.data, g + 4);
+        let x_max = be_i16(&self.data, g + 6);
+        let y_max = be_i16(&self.data, g + 8);
+        if num_contours <= 0 {
+            // composite (<0) is out of scope; 0 contours = empty
+            return Glyph { contours: vec![], x_min, y_min, x_max, y_max };
+        }
+        let num_contours = num_contours as usize;
+        let mut p = g + 10;
+        let mut end_pts = Vec::with_capacity(num_contours);
+        for _ in 0..num_contours {
+            end_pts.push(be_u16(&self.data, p));
+            p += 2;
+        }
+        let num_points = *end_pts.last().unwrap() as usize + 1;
+        let instr_len = be_u16(&self.data, p) as usize;
+        p += 2 + instr_len;
+
+        // flags (with repeat)
+        let mut flags = Vec::with_capacity(num_points);
+        while flags.len() < num_points {
+            let f = self.data[p];
+            p += 1;
+            flags.push(f);
+            if f & 0x08 != 0 {
+                let repeat = self.data[p];
+                p += 1;
+                for _ in 0..repeat {
+                    if flags.len() < num_points {
+                        flags.push(f);
+                    }
+                }
+            }
+        }
+
+        // x coords
+        let mut xs = Vec::with_capacity(num_points);
+        let mut x: i32 = 0;
+        for &f in &flags {
+            if f & 0x02 != 0 {
+                let dx = self.data[p] as i32;
+                p += 1;
+                x += if f & 0x10 != 0 { dx } else { -dx };
+            } else if f & 0x10 == 0 {
+                x += be_i16(&self.data, p) as i32;
+                p += 2;
+            }
+            xs.push(x);
+        }
+        // y coords
+        let mut ys = Vec::with_capacity(num_points);
+        let mut y: i32 = 0;
+        for &f in &flags {
+            if f & 0x04 != 0 {
+                let dy = self.data[p] as i32;
+                p += 1;
+                y += if f & 0x20 != 0 { dy } else { -dy };
+            } else if f & 0x20 == 0 {
+                y += be_i16(&self.data, p) as i32;
+                p += 2;
+            }
+            ys.push(y);
+        }
+
+        // split into contours
+        let mut contours = Vec::with_capacity(num_contours);
+        let mut s = 0usize;
+        for &e in &end_pts {
+            let e = e as usize;
+            let mut points = Vec::with_capacity(e - s + 1);
+            for i in s..=e {
+                points.push(Point {
+                    x: xs[i] as f32,
+                    y: ys[i] as f32,
+                    on_curve: flags[i] & 0x01 != 0,
+                });
+            }
+            contours.push(Contour { points });
+            s = e + 1;
+        }
+        Glyph { contours, x_min, y_min, x_max, y_max }
+    }
 }
 
 fn parse_cmap(data: &[u8], tables: &HashMap<[u8; 4], (usize, usize)>) -> Result<Cmap4, FontError> {
@@ -164,5 +326,37 @@ mod tests {
         assert!((16..=16384).contains(&f.units_per_em()), "upm={}", f.units_per_em());
         assert!(f.ascent() > 0);
         assert!(f.descent() < 0);
+    }
+
+    #[test]
+    fn maps_ascii_to_glyphs() {
+        let f = load();
+        let a = f.glyph_index('A');
+        let b = f.glyph_index('B');
+        assert_ne!(a, 0, "'A' should map to a real glyph");
+        assert_ne!(b, 0);
+        assert_ne!(a, b, "'A' and 'B' should differ");
+        assert_eq!(f.glyph_index('\u{1F600}'), 0, "non-BMP -> .notdef");
+    }
+
+    #[test]
+    fn advance_widths_are_positive() {
+        let f = load();
+        let a = f.advance_width(f.glyph_index('A'));
+        let space = f.advance_width(f.glyph_index(' '));
+        assert!(a > 0);
+        assert!(space > 0, "space should still advance the pen");
+    }
+
+    #[test]
+    fn outlines_have_contours() {
+        let f = load();
+        let o = f.outline(f.glyph_index('o'));
+        assert!(o.contours.len() >= 1, "'o' should have at least one contour");
+        let total_pts: usize = o.contours.iter().map(|c| c.points.len()).sum();
+        assert!(total_pts > 0);
+        // space is an empty glyph (advance only, no contours)
+        let sp = f.outline(f.glyph_index(' '));
+        assert_eq!(sp.contours.len(), 0);
     }
 }
