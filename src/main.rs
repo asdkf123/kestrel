@@ -48,6 +48,12 @@ fn main() {
         return;
     }
 
+    // URL 렌더 모드: kestrel <url>
+    if args.len() >= 2 && args[1].contains("://") {
+        render_url(&args[1]);
+        return;
+    }
+
     // 글리프 덤프 모드: KESTREL_GLYPH 문자열을 래스터화해 그레이스케일 PPM으로.
     if let Ok(text) = std::env::var("KESTREL_GLYPH") {
         let out = std::env::var("KESTREL_GLYPH_OUT").unwrap_or_else(|_| "glyphs.ppm".to_string());
@@ -110,6 +116,69 @@ fn count_elements(node: &dom::Node, count: &mut usize) {
     for c in &node.children {
         count_elements(c, count);
     }
+}
+
+fn extract_css(node: &dom::Node, out: &mut String) {
+    if let dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "style" {
+            for c in &node.children {
+                if let dom::NodeType::Text(t) = &c.node_type {
+                    out.push_str(t);
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    for c in &node.children {
+        extract_css(c, out);
+    }
+}
+
+fn render_url(url: &str) {
+    let resp = match http::fetch(url) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("fetch error: {:?}", e);
+            return;
+        }
+    };
+    println!("fetched {} ({} bytes, http {})", url, resp.body.len(), resp.status);
+
+    let html = String::from_utf8_lossy(&resp.body).to_string();
+    let dom = html::parse(html);
+
+    let mut page_css = String::new();
+    extract_css(&dom, &mut page_css);
+
+    let mut sheet = css::user_agent_stylesheet();
+    sheet.rules.extend(css::parse(page_css).rules);
+
+    let style_root = style::style_tree(&dom, &sheet);
+
+    let viewport_width: u32 = 1000;
+    let viewport_height: u32 = 1400;
+    let mut viewport: layout::Dimensions = Default::default();
+    viewport.content.width = viewport_width as f32;
+    viewport.content.height = viewport_height as f32;
+
+    let font = font::Font::from_bytes(fs::read("assets/fonts/Kestrel.ttf").expect("read font"))
+        .expect("parse font");
+    let mut cache = raster::GlyphCache::new();
+
+    let layout_root = layout::layout_tree(&style_root, viewport, &font);
+    let canvas = paint::paint(
+        &layout_root,
+        layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
+        &font,
+        &mut cache,
+    );
+
+    if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
+        write_ppm(&canvas, &path);
+        println!("rendered to {}", path);
+        return;
+    }
+    window::run(canvas.to_u32_buffer(), viewport_width, viewport_height);
 }
 
 fn dump_glyphs(text: &str, path: &str) {
