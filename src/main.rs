@@ -4,6 +4,7 @@ mod dom;
 mod font;
 mod html;
 mod http;
+mod inflate;
 mod layout;
 mod paint;
 mod raster;
