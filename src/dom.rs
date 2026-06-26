@@ -24,6 +24,7 @@ pub fn text(data: String) -> Node {
     Node { children: Vec::new(), node_type: NodeType::Text(data) }
 }
 
+#[allow(dead_code)]
 pub fn elem(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
     Node {
         children,

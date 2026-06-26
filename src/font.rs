@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum FontError {
     TooShort,
     MissingTable(&'static str),
@@ -30,6 +31,7 @@ pub struct Contour {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct Glyph {
     pub contours: Vec<Contour>,
     pub x_min: i16,
@@ -52,6 +54,7 @@ pub struct Font {
     tables: HashMap<[u8; 4], (usize, usize)>,
     units_per_em: u16,
     index_to_loc_format: i16,
+    #[allow(dead_code)]
     num_glyphs: u16,
     ascent: i16,
     descent: i16,
@@ -124,10 +127,6 @@ impl Font {
     pub fn line_gap(&self) -> i16 {
         self.line_gap
     }
-    pub fn num_glyphs(&self) -> u16 {
-        self.num_glyphs
-    }
-
     pub fn glyph_index(&self, c: char) -> u16 {
         let cp = c as u32;
         if cp > 0xFFFF {

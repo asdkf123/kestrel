@@ -11,6 +11,7 @@ pub struct Response {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum HttpError {
     Url(UrlError),
     Io(std::io::Error),
