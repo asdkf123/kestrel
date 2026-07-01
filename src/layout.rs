@@ -134,76 +134,37 @@ impl<'a> LayoutBox<'a> {
         let auto = Keyword("auto".to_string());
         let zero = Length(0.0, Px);
 
-        let mut width = style.value("width").unwrap_or(auto.clone());
-        let mut margin_left = style.lookup("margin-left", "margin", &zero);
-        let mut margin_right = style.lookup("margin-right", "margin", &zero);
-        let border_left = style.lookup("border-left-width", "border-width", &zero);
-        let border_right = style.lookup("border-right-width", "border-width", &zero);
-        let padding_left = style.lookup("padding-left", "padding", &zero);
-        let padding_right = style.lookup("padding-right", "padding", &zero);
+        let width = style.value("width").unwrap_or(auto.clone());
+        let margin_left = style.lookup("margin-left", "margin", &zero);
+        let margin_right = style.lookup("margin-right", "margin", &zero);
+        let border_left = style.lookup("border-left-width", "border-width", &zero).to_px();
+        let border_right = style.lookup("border-right-width", "border-width", &zero).to_px();
+        let padding_left = style.lookup("padding-left", "padding", &zero).to_px();
+        let padding_right = style.lookup("padding-right", "padding", &zero).to_px();
+        let extra = border_left + border_right + padding_left + padding_right;
+        let avail = containing_block.content.width;
 
-        let total: f32 = [
-            &margin_left,
-            &margin_right,
-            &border_left,
-            &border_right,
-            &padding_left,
-            &padding_right,
-            &width,
-        ]
-        .iter()
-        .map(|v| v.to_px())
-        .sum();
+        let (mut cw, mut ml, mut mr) = resolve_width(&width, &margin_left, &margin_right, extra, avail);
 
-        if width != auto && total > containing_block.content.width {
-            if margin_left == auto {
-                margin_left = Length(0.0, Px);
-            }
-            if margin_right == auto {
-                margin_right = Length(0.0, Px);
-            }
-        }
-
-        let underflow = containing_block.content.width - total;
-
-        match (width == auto, margin_left == auto, margin_right == auto) {
-            (false, false, false) => {
-                margin_right = Length(margin_right.to_px() + underflow, Px);
-            }
-            (false, false, true) => {
-                margin_right = Length(underflow, Px);
-            }
-            (false, true, false) => {
-                margin_left = Length(underflow, Px);
-            }
-            (true, _, _) => {
-                if margin_left == auto {
-                    margin_left = Length(0.0, Px);
-                }
-                if margin_right == auto {
-                    margin_right = Length(0.0, Px);
-                }
-                if underflow >= 0.0 {
-                    width = Length(underflow, Px);
-                } else {
-                    width = Length(0.0, Px);
-                    margin_right = Length(margin_right.to_px() + underflow, Px);
-                }
-            }
-            (false, true, true) => {
-                margin_left = Length(underflow / 2.0, Px);
-                margin_right = Length(underflow / 2.0, Px);
+        // max-width: 계산된 폭이 상한을 넘으면 고정 폭으로 재계산 (auto 마진 → 가운데 정렬)
+        if let Some(Length(mw, Px)) = style.value("max-width") {
+            if cw > mw {
+                let (cw2, ml2, mr2) =
+                    resolve_width(&Length(mw, Px), &margin_left, &margin_right, extra, avail);
+                cw = cw2;
+                ml = ml2;
+                mr = mr2;
             }
         }
 
         let d = &mut self.dimensions;
-        d.content.width = width.to_px();
-        d.padding.left = padding_left.to_px();
-        d.padding.right = padding_right.to_px();
-        d.border.left = border_left.to_px();
-        d.border.right = border_right.to_px();
-        d.margin.left = margin_left.to_px();
-        d.margin.right = margin_right.to_px();
+        d.content.width = cw;
+        d.padding.left = padding_left;
+        d.padding.right = padding_right;
+        d.border.left = border_left;
+        d.border.right = border_right;
+        d.margin.left = ml;
+        d.margin.right = mr;
     }
 
     fn calculate_position(&mut self, containing_block: Dimensions) {
@@ -325,6 +286,66 @@ impl<'a> LayoutBox<'a> {
     }
 }
 
+// 블록의 used width 와 좌우 마진을 CSS §10.3.3 규칙으로 해결한다.
+// (content_width, margin_left, margin_right) 반환. max-width 재계산 시 재사용.
+fn resolve_width(
+    width: &Value,
+    margin_left: &Value,
+    margin_right: &Value,
+    extra: f32,
+    avail: f32,
+) -> (f32, f32, f32) {
+    let auto = Keyword("auto".to_string());
+    let mut width = width.clone();
+    let mut ml = margin_left.clone();
+    let mut mr = margin_right.clone();
+
+    let total = ml.to_px() + mr.to_px() + extra + width.to_px();
+
+    if width != auto && total > avail {
+        if ml == auto {
+            ml = Length(0.0, Px);
+        }
+        if mr == auto {
+            mr = Length(0.0, Px);
+        }
+    }
+
+    let underflow = avail - total;
+
+    match (width == auto, ml == auto, mr == auto) {
+        (false, false, false) => {
+            mr = Length(mr.to_px() + underflow, Px);
+        }
+        (false, false, true) => {
+            mr = Length(underflow, Px);
+        }
+        (false, true, false) => {
+            ml = Length(underflow, Px);
+        }
+        (true, _, _) => {
+            if ml == auto {
+                ml = Length(0.0, Px);
+            }
+            if mr == auto {
+                mr = Length(0.0, Px);
+            }
+            if underflow >= 0.0 {
+                width = Length(underflow, Px);
+            } else {
+                width = Length(0.0, Px);
+                mr = Length(mr.to_px() + underflow, Px);
+            }
+        }
+        (false, true, true) => {
+            ml = Length(underflow / 2.0, Px);
+            mr = Length(underflow / 2.0, Px);
+        }
+    }
+
+    (width.to_px(), ml.to_px(), mr.to_px())
+}
+
 fn collect_node<'a>(node: &StyledNode<'a>, color: Color, px: f32, runs: &mut Vec<(String, Color, f32)>) {
     match &node.node.node_type {
         NodeType::Text(t) => runs.push((t.clone(), color, px)),
@@ -438,6 +459,33 @@ mod tests {
         let d = layout_for("<div></div>", "div { display: block; padding: 10px; }", 300.0);
         assert_eq!(d.content.width, 280.0);
         assert_eq!(d.content.x, 10.0);
+    }
+
+    #[test]
+    fn max_width_clamps_auto_width() {
+        let d = layout_for("<div></div>", "div { display: block; max-width: 200px; }", 800.0);
+        assert_eq!(d.content.width, 200.0);
+    }
+
+    #[test]
+    fn max_width_does_not_grow_smaller_width() {
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; width: 100px; max-width: 200px; }",
+            800.0,
+        );
+        assert_eq!(d.content.width, 100.0);
+    }
+
+    #[test]
+    fn max_width_with_auto_margins_centers() {
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; max-width: 200px; margin: 0 auto; }",
+            800.0,
+        );
+        assert_eq!(d.content.width, 200.0);
+        assert_eq!(d.content.x, 300.0);
     }
 
     #[test]
