@@ -290,13 +290,11 @@ fn interpret_value(text: &str) -> Option<Value> {
     }
     let bytes = text.as_bytes();
     if bytes[0] == b'#' {
-        if text.len() == 7 {
-            let r = u8::from_str_radix(&text[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&text[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&text[5..7], 16).ok()?;
-            return Some(Value::Color(Color { r, g, b, a: 255 }));
-        }
-        return None;
+        return parse_hex_color(text).map(Value::Color);
+    }
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
+        return parse_rgb_func(&lower).map(Value::Color);
     }
     let numeric_start = bytes[0].is_ascii_digit()
         || bytes[0] == b'.'
@@ -307,12 +305,93 @@ fn interpret_value(text: &str) -> Option<Value> {
                 return Some(Value::Length(f, Unit::Px));
             }
         }
-        return None; // em/%/rem/단위없는수 등은 미지원
+        // 단위 없는 0 은 유효한 길이 (예: margin: 0 auto)
+        if let Ok(f) = text.parse::<f32>() {
+            if f == 0.0 {
+                return Some(Value::Length(0.0, Unit::Px));
+            }
+        }
+        return None; // em/%/rem/단위없는 0 아닌 수 등은 미지원
     }
     if text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        if let Some(c) = named_color(&lower) {
+            return Some(Value::Color(c));
+        }
         return Some(Value::Keyword(text.to_string()));
     }
-    None // rgb()/calc()/다중값 등
+    None // calc()/다중값 등
+}
+
+fn parse_hex_color(text: &str) -> Option<Color> {
+    let hex = &text[1..];
+    match hex.len() {
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            // 0xN → 0xNN (N*17)
+            Some(Color { r: r * 17, g: g * 17, b: b * 17, a: 255 })
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(Color { r, g, b, a: 255 })
+        }
+        _ => None,
+    }
+}
+
+fn parse_rgb_func(text: &str) -> Option<Color> {
+    let open = text.find('(')?;
+    let close = text.find(')')?;
+    let inner = &text[open + 1..close];
+    let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+    if parts.len() != 3 && parts.len() != 4 {
+        return None;
+    }
+    let chan = |s: &str| -> Option<u8> { Some(s.parse::<f32>().ok()?.clamp(0.0, 255.0) as u8) };
+    let r = chan(parts[0])?;
+    let g = chan(parts[1])?;
+    let b = chan(parts[2])?;
+    let a = if parts.len() == 4 {
+        (parts[3].parse::<f32>().ok()?.clamp(0.0, 1.0) * 255.0).round() as u8
+    } else {
+        255
+    };
+    Some(Color { r, g, b, a })
+}
+
+fn named_color(name: &str) -> Option<Color> {
+    let rgb = match name {
+        "black" => (0, 0, 0),
+        "silver" => (192, 192, 192),
+        "gray" | "grey" => (128, 128, 128),
+        "white" => (255, 255, 255),
+        "maroon" => (128, 0, 0),
+        "red" => (255, 0, 0),
+        "purple" => (128, 0, 128),
+        "fuchsia" | "magenta" => (255, 0, 255),
+        "green" => (0, 128, 0),
+        "lime" => (0, 255, 0),
+        "olive" => (128, 128, 0),
+        "yellow" => (255, 255, 0),
+        "navy" => (0, 0, 128),
+        "blue" => (0, 0, 255),
+        "teal" => (0, 128, 128),
+        "aqua" | "cyan" => (0, 255, 255),
+        "orange" => (255, 165, 0),
+        "pink" => (255, 192, 203),
+        "gold" => (255, 215, 0),
+        "brown" => (165, 42, 42),
+        "darkgray" | "darkgrey" => (169, 169, 169),
+        "lightgray" | "lightgrey" => (211, 211, 211),
+        "dimgray" | "dimgrey" => (105, 105, 105),
+        "whitesmoke" => (245, 245, 245),
+        "transparent" => return Some(Color { r: 0, g: 0, b: 0, a: 0 }),
+        _ => return None,
+    };
+    Some(Color { r: rgb.0, g: rgb.1, b: rgb.2, a: 255 })
 }
 
 fn valid_identifier_char(c: char) -> bool {
@@ -369,10 +448,49 @@ mod tests {
     }
 
     #[test]
-    fn skips_unsupported_values() {
-        let ss = parse("p { color: rgb(1,2,3); width: 5px; }".to_string());
-        assert_eq!(ss.rules[0].declarations.len(), 1);
-        assert_eq!(ss.rules[0].declarations[0].name, "width");
+    fn parses_named_color() {
+        let ss = parse("p { color: red; }".to_string());
+        assert_eq!(
+            ss.rules[0].declarations[0].value,
+            Value::Color(Color { r: 255, g: 0, b: 0, a: 255 })
+        );
+    }
+
+    #[test]
+    fn parses_short_hex_color() {
+        let ss = parse("p { color: #f80; }".to_string());
+        // #f80 → #ff8800
+        assert_eq!(
+            ss.rules[0].declarations[0].value,
+            Value::Color(Color { r: 255, g: 136, b: 0, a: 255 })
+        );
+    }
+
+    #[test]
+    fn parses_rgb_function() {
+        let ss = parse("p { color: rgb(1, 2, 3); }".to_string());
+        assert_eq!(
+            ss.rules[0].declarations[0].value,
+            Value::Color(Color { r: 1, g: 2, b: 3, a: 255 })
+        );
+    }
+
+    #[test]
+    fn parses_rgba_function_alpha() {
+        let ss = parse("p { color: rgba(10, 20, 30, 0.5); }".to_string());
+        assert_eq!(
+            ss.rules[0].declarations[0].value,
+            Value::Color(Color { r: 10, g: 20, b: 30, a: 128 })
+        );
+    }
+
+    #[test]
+    fn unknown_keyword_stays_keyword() {
+        let ss = parse("p { display: flex; }".to_string());
+        assert_eq!(
+            ss.rules[0].declarations[0].value,
+            Value::Keyword("flex".to_string())
+        );
     }
 
     #[test]
