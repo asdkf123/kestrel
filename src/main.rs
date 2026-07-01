@@ -1,3 +1,4 @@
+mod bench;
 mod cff;
 mod css;
 mod dom;
@@ -15,9 +16,19 @@ mod window;
 
 use std::fs;
 
+// 힙 사용량을 항상 추적하는 자작 allocator (측정 하네스가 읽는다).
+#[global_allocator]
+static GLOBAL: bench::CountingAllocator = bench::CountingAllocator;
+
 fn main() {
     // 네트워크 fetch 모드: kestrel --fetch <url>
     let args: Vec<String> = std::env::args().collect();
+
+    // 측정 하네스: kestrel --bench
+    if args.len() >= 2 && args[1] == "--bench" {
+        bench::run_bench();
+        return;
+    }
     if args.len() >= 3 && args[1] == "--fetch" {
         match http::fetch(&args[2]) {
             Ok(resp) => {
