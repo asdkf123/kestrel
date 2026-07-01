@@ -174,21 +174,19 @@ impl Parser {
                     break;
                 }
                 _ => {
-                    if let Some(decl) = self.parse_declaration() {
-                        declarations.push(decl);
-                    }
+                    declarations.extend(self.parse_declaration());
                 }
             }
         }
         declarations
     }
 
-    fn parse_declaration(&mut self) -> Option<Declaration> {
+    fn parse_declaration(&mut self) -> Vec<Declaration> {
         let name = self.parse_identifier().trim().to_ascii_lowercase();
         self.consume_whitespace();
         if self.peek() != Some(':') {
             self.skip_to_decl_end();
-            return None;
+            return Vec::new();
         }
         self.consume_char(); // ':'
         self.consume_whitespace();
@@ -197,10 +195,9 @@ impl Parser {
             self.consume_char();
         }
         if name.is_empty() {
-            return None;
+            return Vec::new();
         }
-        let value = interpret_value(value_text.trim())?;
-        Some(Declaration { name, value })
+        expand_declaration(&name, value_text.trim())
     }
 
     fn skip_to_decl_end(&mut self) {
@@ -320,6 +317,37 @@ fn interpret_value(text: &str) -> Option<Value> {
         return Some(Value::Keyword(text.to_string()));
     }
     None // calc()/다중값 등
+}
+
+// 선언 하나를 (경우에 따라 여러) longhand 선언으로 확장한다.
+fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
+    match name {
+        "margin" | "padding" => box_shorthand(name, "", value_text),
+        "border-width" => box_shorthand("border", "-width", value_text),
+        _ => match interpret_value(value_text) {
+            Some(value) => vec![Declaration { name: name.to_string(), value }],
+            None => Vec::new(),
+        },
+    }
+}
+
+// CSS 박스 단축값(1~4개)을 top/right/bottom/left longhand 로 확장.
+// prefix="margin", suffix=""  → margin-top ...
+// prefix="border", suffix="-width" → border-top-width ...
+fn box_shorthand(prefix: &str, suffix: &str, value_text: &str) -> Vec<Declaration> {
+    let tokens: Vec<Value> = value_text.split_whitespace().filter_map(interpret_value).collect();
+    let (top, right, bottom, left) = match tokens.len() {
+        1 => (tokens[0].clone(), tokens[0].clone(), tokens[0].clone(), tokens[0].clone()),
+        2 => (tokens[0].clone(), tokens[1].clone(), tokens[0].clone(), tokens[1].clone()),
+        3 => (tokens[0].clone(), tokens[1].clone(), tokens[2].clone(), tokens[1].clone()),
+        4 => (tokens[0].clone(), tokens[1].clone(), tokens[2].clone(), tokens[3].clone()),
+        _ => return Vec::new(),
+    };
+    let mk = |side: &str, value: Value| Declaration {
+        name: format!("{}-{}{}", prefix, side, suffix),
+        value,
+    };
+    vec![mk("top", top), mk("right", right), mk("bottom", bottom), mk("left", left)]
 }
 
 fn parse_hex_color(text: &str) -> Option<Color> {
@@ -491,6 +519,52 @@ mod tests {
             ss.rules[0].declarations[0].value,
             Value::Keyword("flex".to_string())
         );
+    }
+
+    // 캐스케이드: 같은 이름이 여러 번이면 마지막 선언이 이긴다
+    fn decl<'a>(ss: &'a Stylesheet, name: &str) -> Option<&'a Value> {
+        ss.rules[0].declarations.iter().rev().find(|d| d.name == name).map(|d| &d.value)
+    }
+
+    #[test]
+    fn margin_shorthand_one_value_expands_to_four() {
+        let ss = parse("div { margin: 10px; }".to_string());
+        for side in ["margin-top", "margin-right", "margin-bottom", "margin-left"] {
+            assert_eq!(decl(&ss, side), Some(&Value::Length(10.0, Unit::Px)), "{}", side);
+        }
+    }
+
+    #[test]
+    fn margin_shorthand_two_values() {
+        let ss = parse("div { margin: 10px 20px; }".to_string());
+        assert_eq!(decl(&ss, "margin-top"), Some(&Value::Length(10.0, Unit::Px)));
+        assert_eq!(decl(&ss, "margin-bottom"), Some(&Value::Length(10.0, Unit::Px)));
+        assert_eq!(decl(&ss, "margin-left"), Some(&Value::Length(20.0, Unit::Px)));
+        assert_eq!(decl(&ss, "margin-right"), Some(&Value::Length(20.0, Unit::Px)));
+    }
+
+    #[test]
+    fn margin_zero_auto_keeps_auto_sides() {
+        let ss = parse("div { margin: 0 auto; }".to_string());
+        assert_eq!(decl(&ss, "margin-top"), Some(&Value::Length(0.0, Unit::Px)));
+        assert_eq!(decl(&ss, "margin-left"), Some(&Value::Keyword("auto".to_string())));
+        assert_eq!(decl(&ss, "margin-right"), Some(&Value::Keyword("auto".to_string())));
+    }
+
+    #[test]
+    fn padding_shorthand_four_values_clockwise() {
+        let ss = parse("div { padding: 1px 2px 3px 4px; }".to_string());
+        assert_eq!(decl(&ss, "padding-top"), Some(&Value::Length(1.0, Unit::Px)));
+        assert_eq!(decl(&ss, "padding-right"), Some(&Value::Length(2.0, Unit::Px)));
+        assert_eq!(decl(&ss, "padding-bottom"), Some(&Value::Length(3.0, Unit::Px)));
+        assert_eq!(decl(&ss, "padding-left"), Some(&Value::Length(4.0, Unit::Px)));
+    }
+
+    #[test]
+    fn longhand_after_shorthand_overrides() {
+        let ss = parse("div { margin: 10px; margin-left: 5px; }".to_string());
+        assert_eq!(decl(&ss, "margin-left"), Some(&Value::Length(5.0, Unit::Px)));
+        assert_eq!(decl(&ss, "margin-top"), Some(&Value::Length(10.0, Unit::Px)));
     }
 
     #[test]
