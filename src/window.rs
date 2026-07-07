@@ -57,7 +57,10 @@ pub fn run_page(
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
-            let viewport_h = (window.inner_size().height.max(1) as f32 - CHROME_H).max(1.0);
+            // 물리(픽셀)/논리 배율. 레이아웃·스크롤·히트 테스트는 전부 논리 좌표로.
+            let scale = window.scale_factor() as f32;
+            let viewport_h =
+                (window.inner_size().height.max(1) as f32 / scale - CHROME_H).max(1.0);
             let max_scroll = (page.doc_height - viewport_h).max(0.0);
             match event {
                 Event::Resumed => {
@@ -65,8 +68,11 @@ pub fn run_page(
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => elwt.exit(),
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        window.request_redraw();
+                    }
                     WindowEvent::CursorMoved { position, .. } => {
-                        cursor = (position.x as f32, position.y as f32);
+                        cursor = (position.x as f32 / scale, position.y as f32 / scale);
                         let icon = if cursor.1 < CHROME_H {
                             CursorIcon::Text
                         } else if hit_link(&page.links, cursor.0, cursor.1 - CHROME_H + scroll_y)
@@ -123,7 +129,7 @@ pub fn run_page(
                     WindowEvent::MouseWheel { delta, .. } => {
                         let dy = match delta {
                             MouseScrollDelta::LineDelta(_, y) => -y * LINE_SCROLL,
-                            MouseScrollDelta::PixelDelta(p) => -p.y as f32,
+                            MouseScrollDelta::PixelDelta(p) => -p.y as f32 / scale,
                         };
                         let next = (scroll_y + dy).clamp(0.0, max_scroll);
                         if next != scroll_y {
@@ -237,15 +243,17 @@ pub fn run_page(
                             w as usize,
                             h as usize,
                             scroll_y - CHROME_H,
+                            scale,
                             &page.fonts,
                             &mut cache,
                             &page.images,
                         );
-                        // 크롬 (주소창)
+                        // 크롬 (주소창) — 물리 좌표로 직접 그림
+                        let s = scale;
                         let wf = w as f32;
                         canvas.fill_rect(
                             Color { r: 32, g: 32, b: 38, a: 255 },
-                            Rect { x: 0.0, y: 0.0, width: wf, height: CHROME_H },
+                            Rect { x: 0.0, y: 0.0, width: wf, height: CHROME_H * s },
                         );
                         let field_bg = if focused {
                             Color { r: 14, g: 14, b: 20, a: 255 }
@@ -254,22 +262,32 @@ pub fn run_page(
                         };
                         canvas.fill_rect(
                             field_bg,
-                            Rect { x: 8.0, y: 6.0, width: wf - 16.0, height: CHROME_H - 12.0 },
+                            Rect {
+                                x: 8.0 * s,
+                                y: 6.0 * s,
+                                width: wf - 16.0 * s,
+                                height: (CHROME_H - 12.0) * s,
+                            },
                         );
                         let end_x = crate::paint::draw_text(
                             &mut canvas,
                             &page.fonts,
                             &mut cache,
                             &url_input,
-                            16.0,
-                            24.0,
-                            14.0,
+                            16.0 * s,
+                            24.0 * s,
+                            14.0 * s,
                             Color { r: 214, g: 218, b: 228, a: 255 },
                         );
                         if focused {
                             canvas.fill_rect(
                                 Color { r: 244, g: 132, b: 44, a: 255 },
-                                Rect { x: end_x + 2.0, y: 10.0, width: 2.0, height: CHROME_H - 20.0 },
+                                Rect {
+                                    x: end_x + 2.0 * s,
+                                    y: 10.0 * s,
+                                    width: 2.0 * s,
+                                    height: (CHROME_H - 20.0) * s,
+                                },
                             );
                         }
 

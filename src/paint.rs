@@ -105,45 +105,54 @@ fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
     }
 }
 
-// 디스플레이 리스트를 scroll_y 만큼 위로 민 상태로 (width x height) 캔버스에 그린다.
-// 뷰포트 밖 아이템은 건너뛴다 (스크롤 반복 렌더 대비 컬링).
+// 디스플레이 리스트를 scroll_y(논리 px) 만큼 위로 민 상태로 (width x height 물리 px)
+// 캔버스에 그린다. scale = 물리/논리 배율 (레티나 2.0). 글리프는 scale 배 크기로
+// 다시 래스터화되어 HiDPI 에서 선명하다. 뷰포트 밖 아이템은 컬링.
 pub fn rasterize(
     items: &[DisplayItem],
     width: usize,
     height: usize,
     scroll_y: f32,
+    scale: f32,
     fonts: &FontStack,
     cache: &mut GlyphCache,
     images: &[crate::png::Image],
 ) -> Canvas {
     let mut canvas = Canvas::new(width, height);
     let vh = height as f32;
+    let scale_rect = |rect: &Rect| Rect {
+        x: rect.x * scale,
+        y: (rect.y - scroll_y) * scale,
+        width: rect.width * scale,
+        height: rect.height * scale,
+    };
     for item in items {
         match item {
             DisplayItem::Rect { color, rect } => {
-                let r = Rect { y: rect.y - scroll_y, ..*rect };
+                let r = scale_rect(rect);
                 if r.y + r.height < 0.0 || r.y > vh {
                     continue;
                 }
                 canvas.fill_rect(*color, r);
             }
             DisplayItem::Image { image, rect } => {
-                let r = Rect { y: rect.y - scroll_y, ..*rect };
+                let r = scale_rect(rect);
                 if r.y + r.height < 0.0 || r.y > vh {
                     continue;
                 }
                 if let Some(img) = images.get(*image) {
-                    blit_image(&mut canvas, img, r);
+                    blit_image(&mut canvas, img, r, scale);
                 }
             }
             DisplayItem::Glyph(gi) => {
-                let baseline = gi.baseline_y - scroll_y;
+                let baseline = (gi.baseline_y - scroll_y) * scale;
+                let px = gi.px * scale;
                 // 대략적 글리프 세로 범위로 컬링 (ascent ~1.2em, descent ~0.4em)
-                if baseline + 0.4 * gi.px < 0.0 || baseline - 1.2 * gi.px > vh {
+                if baseline + 0.4 * px < 0.0 || baseline - 1.2 * px > vh {
                     continue;
                 }
-                let shifted = GlyphInstance { baseline_y: baseline, ..*gi };
-                let bm = cache.get(fonts, gi.font_index, gi.glyph_id, gi.px);
+                let shifted = GlyphInstance { x: gi.x * scale, baseline_y: baseline, px, ..*gi };
+                let bm = cache.get(fonts, gi.font_index, gi.glyph_id, px);
                 blit_glyph(&mut canvas, bm, &shifted);
             }
         }
@@ -151,23 +160,26 @@ pub fn rasterize(
     canvas
 }
 
-// rect 좌상단에 이미지를 그린다. rect 크기로 클리핑 (<img> 는 rect == 고유 크기라 무손실).
-fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect) {
+// rect(물리 px) 좌상단에 이미지를 scale 배로 그린다 (최근접 샘플링).
+// rect 크기로 클리핑 (<img> 는 rect == 고유 크기 × scale 이라 무손실).
+fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f32) {
     let ox = rect.x.round() as i32;
     let oy = rect.y.round() as i32;
-    let clip_w = img.width.min(rect.width.round() as usize);
-    let clip_h = img.height.min(rect.height.round() as usize);
+    let clip_w = ((img.width as f32 * scale).min(rect.width).round()) as usize;
+    let clip_h = ((img.height as f32 * scale).min(rect.height).round()) as usize;
     for y in 0..clip_h {
         let cy = oy + y as i32;
         if cy < 0 || cy as usize >= canvas.height {
             continue;
         }
+        let sy = ((y as f32 / scale) as usize).min(img.height - 1);
         for x in 0..clip_w {
             let cx = ox + x as i32;
             if cx < 0 || cx as usize >= canvas.width {
                 continue;
             }
-            let s = (y * img.width + x) * 4;
+            let sx = ((x as f32 / scale) as usize).min(img.width - 1);
+            let s = (sy * img.width + sx) * 4;
             let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
             let alpha = img.rgba[s + 3];
             let idx = cy as usize * canvas.width + cx as usize;
@@ -210,7 +222,7 @@ pub fn paint(
     images: &[crate::png::Image],
 ) -> Canvas {
     let items = build_display_list(layout_root);
-    rasterize(&items, bounds.width as usize, bounds.height as usize, 0.0, fonts, cache, images)
+    rasterize(&items, bounds.width as usize, bounds.height as usize, 0.0, 1.0, fonts, cache, images)
 }
 
 #[cfg(test)]
@@ -278,12 +290,31 @@ mod tests {
         let fs = fonts();
         let mut cache = crate::raster::GlyphCache::new();
         // 스크롤 0: y=10 은 4px 캔버스 밖 → 전부 흰색
-        let c0 = rasterize(&items, 4, 4, 0.0, &fs, &mut cache, &[]);
+        let c0 = rasterize(&items, 4, 4, 0.0, 1.0, &fs, &mut cache, &[]);
         assert!(c0.pixels.iter().all(|p| *p == white));
         // 스크롤 10: 사각형이 y=0 으로 올라옴
-        let c1 = rasterize(&items, 4, 4, 10.0, &fs, &mut cache, &[]);
+        let c1 = rasterize(&items, 4, 4, 10.0, 1.0, &fs, &mut cache, &[]);
         assert_eq!(c1.pixels[0], red);
         assert_eq!(c1.pixels[2 * 4 + 0], white, "높이 2px 이후는 흰색");
+    }
+
+    #[test]
+    fn rasterize_scale_doubles_rect() {
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let items = vec![DisplayItem::Rect {
+            color: red,
+            rect: crate::layout::Rect { x: 1.0, y: 0.0, width: 1.0, height: 1.0 },
+        }];
+        let fs = fonts();
+        let mut cache = crate::raster::GlyphCache::new();
+        // scale 2: 논리 (1,0,1x1) → 물리 (2,0,2x2)
+        let c = rasterize(&items, 6, 4, 0.0, 2.0, &fs, &mut cache, &[]);
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        assert_eq!(c.pixels[1], white, "x=1 은 스케일된 사각형 왼쪽 밖");
+        assert_eq!(c.pixels[2], red, "x=2..4 가 사각형");
+        assert_eq!(c.pixels[3], red);
+        assert_eq!(c.pixels[6 + 2], red, "두 번째 행도 채워짐 (2x2)");
+        assert_eq!(c.pixels[4], white);
     }
 
     #[test]

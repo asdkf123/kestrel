@@ -121,6 +121,7 @@ fn main() {
             viewport_width as usize,
             viewport_height as usize,
             0.0,
+            1.0,
             &fonts,
             &mut cache,
             &images,
@@ -355,8 +356,16 @@ fn render_url(url: &str) {
             .unwrap_or(0.0)
             .clamp(0.0, (page.doc_height - vh as f32).max(0.0));
         let mut cache = raster::GlyphCache::new();
-        let canvas =
-            paint::rasterize(&page.items, vw, vh, scroll, &page.fonts, &mut cache, &page.images);
+        let canvas = paint::rasterize(
+            &page.items,
+            vw,
+            vh,
+            scroll,
+            1.0,
+            &page.fonts,
+            &mut cache,
+            &page.images,
+        );
         write_ppm(&canvas, &path);
         println!("rendered to {}", path);
         return;
