@@ -142,7 +142,11 @@ impl<'a> LayoutBox<'a> {
                 self.background_image = Some(idx);
             }
         }
-        self.layout_children(fonts, images);
+        if matches!(self.styled_node.display(), Display::Flex) {
+            self.layout_flex_children(fonts, images);
+        } else {
+            self.layout_children(fonts, images);
+        }
         self.calculate_height();
     }
 
@@ -210,6 +214,45 @@ impl<'a> LayoutBox<'a> {
             child.layout(*d, fonts, images);
             d.content.height += child.dimensions.margin_box().height;
         }
+    }
+
+    // flexbox 부분 지원: 단일 행(row, nowrap). 고정 폭 아이템은 그대로,
+    // auto 아이템은 남은 공간을 균등 분배. gap 지원. 컨테이너 높이 = 최고 아이템.
+    // 미지원: column/wrap/justify-content/align-items/flex-grow 비율.
+    fn layout_flex_children(&mut self, fonts: &FontStack, images: &ImageMap) {
+        let n = self.children.len();
+        if n == 0 {
+            return;
+        }
+        let gap = self.styled_node.value("gap").map(|v| v.to_px()).unwrap_or(0.0);
+        let d = self.dimensions;
+        let total_gap = gap * (n as f32 - 1.0);
+
+        let fixed_width = |child: &LayoutBox| -> Option<f32> {
+            match child.styled_node.value("width") {
+                Some(Length(w, Px)) => Some(w),
+                _ => None,
+            }
+        };
+        let fixed_total: f32 = self.children.iter().filter_map(&fixed_width).sum();
+        let auto_count = self.children.iter().filter(|c| fixed_width(c).is_none()).count();
+        let remaining = (d.content.width - total_gap - fixed_total).max(0.0);
+        let share = if auto_count > 0 { remaining / auto_count as f32 } else { 0.0 };
+
+        let mut pen_x = d.content.x;
+        let mut max_h = 0.0f32;
+        for child in &mut self.children {
+            let w = fixed_width(child).unwrap_or(share);
+            // 아이템 전용 컨테이닝 블록: 폭 w, 원점 (pen_x, 컨테이너 y)
+            let mut cb: Dimensions = Default::default();
+            cb.content.x = pen_x;
+            cb.content.y = d.content.y;
+            cb.content.width = w;
+            child.layout(cb, fonts, images);
+            pen_x += child.dimensions.margin_box().width + gap;
+            max_h = max_h.max(child.dimensions.margin_box().height);
+        }
+        self.dimensions.content.height = max_h;
     }
 
     fn layout_inline(&mut self, fonts: &FontStack) {
@@ -390,7 +433,7 @@ fn collect_node<'a>(
     match &node.node.node_type {
         NodeType::Text(t) => runs.push((t.clone(), color, px, link)),
         NodeType::Element(e) => match node.display() {
-            Display::Block | Display::None => {}
+            Display::Block | Display::Flex | Display::None => {}
             Display::Inline => {
                 let cpx = node
                     .value("font-size")
@@ -430,15 +473,26 @@ pub fn hit_link<'a>(links: &'a [(Rect, String)], x: f32, y: f32) -> Option<&'a s
     links.iter().find(|(r, _)| r.contains(x, y)).map(|(_, h)| h.as_str())
 }
 
+// 공백뿐인 인라인 묶음인지 (태그 사이 줄바꿈 등). 이런 익명 박스는 만들지 않는다 —
+// 블록 흐름에선 높이 0 으로 무해하지만 flex 에선 아이템이 되어 공간을 차지한다.
+fn all_whitespace(nodes: &[&StyledNode]) -> bool {
+    nodes.iter().all(|n| match &n.node.node_type {
+        NodeType::Text(t) => t.trim().is_empty(),
+        _ => false,
+    })
+}
+
 fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     let mut root = LayoutBox::new(style_node);
     let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
     for child in &style_node.children {
         match child.display() {
-            Display::Block => {
+            Display::Block | Display::Flex => {
                 if !pending.is_empty() {
-                    root.children
-                        .push(LayoutBox::new_anonymous(style_node, std::mem::take(&mut pending)));
+                    let nodes = std::mem::take(&mut pending);
+                    if !all_whitespace(&nodes) {
+                        root.children.push(LayoutBox::new_anonymous(style_node, nodes));
+                    }
                 }
                 root.children.push(build_layout_tree(child));
             }
@@ -446,7 +500,7 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
             Display::None => {}
         }
     }
-    if !pending.is_empty() {
+    if !pending.is_empty() && !all_whitespace(&pending) {
         root.children.push(LayoutBox::new_anonymous(style_node, pending));
     }
     root
@@ -621,6 +675,92 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert!(lb.dimensions.content.height > 0.0, "inline-only block must have height");
         assert!(!glyphs_of(&lb).is_empty(), "link text should render");
+    }
+
+    fn flex_layout(html: &str, css: &str, width: f32) -> Vec<Dimensions> {
+        let root = crate::html::parse(html.to_string());
+        let ss = crate::css::parse(css.to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = width;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        lb.children.iter().map(|c| c.dimensions).collect()
+    }
+
+    #[test]
+    fn flex_row_places_fixed_children_side_by_side() {
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            ".row { display: flex; } \
+             .a { display: block; width: 50px; height: 30px; } \
+             .b { display: block; width: 70px; height: 20px; }",
+            300.0,
+        );
+        assert_eq!(d[0].content.x, 0.0);
+        assert_eq!(d[0].content.width, 50.0);
+        assert_eq!(d[1].content.x, 50.0, "두 번째 아이템은 첫 아이템 오른쪽");
+        assert_eq!(d[0].content.y, d[1].content.y, "같은 행 = 같은 y");
+    }
+
+    #[test]
+    fn flex_auto_items_share_remaining_space() {
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"i\"></div><div class=\"i\"></div></div>",
+            ".row { display: flex; } .i { display: block; height: 10px; }",
+            300.0,
+        );
+        assert_eq!(d[0].content.width, 150.0);
+        assert_eq!(d[1].content.width, 150.0);
+        assert_eq!(d[1].content.x, 150.0);
+    }
+
+    #[test]
+    fn flex_gap_and_mixed_widths() {
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"f\"></div><div class=\"i\"></div><div class=\"i\"></div></div>",
+            ".row { display: flex; gap: 10px; } \
+             .f { display: block; width: 80px; height: 10px; } \
+             .i { display: block; height: 10px; }",
+            300.0,
+        );
+        // 남은 공간 = 300 - 80 - 20(gap 2개) = 200 → auto 2개 각 100
+        assert_eq!(d[0].content.width, 80.0);
+        assert_eq!(d[1].content.width, 100.0);
+        assert_eq!(d[1].content.x, 90.0, "80 + gap 10");
+        assert_eq!(d[2].content.x, 200.0, "90 + 100 + gap 10");
+    }
+
+    #[test]
+    fn flex_ignores_whitespace_between_items() {
+        // 태그 사이 줄바꿈이 익명 아이템으로 끼어들어 공간을 나누면 안 된다
+        let d = flex_layout(
+            "<div class=\"row\">\n  <div class=\"i\"></div>\n  <div class=\"i\"></div>\n</div>",
+            ".row { display: flex; } .i { display: block; height: 10px; }",
+            300.0,
+        );
+        assert_eq!(d.len(), 2, "공백 텍스트는 아이템이 아님");
+        assert_eq!(d[0].content.width, 150.0);
+        assert_eq!(d[1].content.width, 150.0);
+    }
+
+    #[test]
+    fn flex_container_height_is_tallest_item() {
+        let root = crate::html::parse(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".row { display: flex; } \
+             .a { display: block; width: 50px; height: 30px; } \
+             .b { display: block; width: 50px; height: 80px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 300.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        assert_eq!(lb.dimensions.content.height, 80.0);
     }
 
     #[test]
