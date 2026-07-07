@@ -7,6 +7,9 @@ mod html;
 mod http;
 mod inflate;
 mod jpeg;
+// M4a 진행 중: run_scripts 가 파이프라인에 연결되기 전까지 dead_code 허용
+#[allow(dead_code)]
+mod js;
 mod layout;
 mod paint;
 mod png;
