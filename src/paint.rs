@@ -15,7 +15,7 @@ impl Canvas {
         Canvas { pixels: vec![white; width * height], width, height }
     }
 
-    fn fill_rect(&mut self, color: Color, rect: Rect) {
+    pub fn fill_rect(&mut self, color: Color, rect: Rect) {
         let x0 = rect.x.clamp(0.0, self.width as f32) as usize;
         let y0 = rect.y.clamp(0.0, self.height as f32) as usize;
         let x1 = (rect.x + rect.width).clamp(0.0, self.width as f32) as usize;
@@ -174,6 +174,32 @@ fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect) {
             canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
         }
     }
+}
+
+// UI 크롬용 단순 텍스트 드로잉 (주소창 등). 끝 pen x 를 반환한다 (캐럿 위치).
+pub fn draw_text(
+    canvas: &mut Canvas,
+    fonts: &FontStack,
+    cache: &mut GlyphCache,
+    text: &str,
+    x: f32,
+    baseline_y: f32,
+    px: f32,
+    color: Color,
+) -> f32 {
+    let mut pen = x;
+    for ch in text.chars() {
+        let (fi, gid) = fonts.glyph_for(ch);
+        let f = fonts.font(fi);
+        let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+        if !ch.is_whitespace() {
+            let gi = GlyphInstance { font_index: fi, glyph_id: gid, x: pen, baseline_y, px, color };
+            let bm = cache.get(fonts, fi, gid, px);
+            blit_glyph(canvas, bm, &gi);
+        }
+        pen += adv;
+    }
+    pen
 }
 
 pub fn paint(

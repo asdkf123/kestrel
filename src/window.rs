@@ -4,9 +4,10 @@ use std::rc::Rc;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
 use winit::window::{CursorIcon, WindowBuilder};
 
+use crate::css::Color;
 use crate::layout::{hit_link, Rect};
 use crate::paint::DisplayItem;
 
@@ -21,9 +22,10 @@ pub struct Page {
 }
 
 const LINE_SCROLL: f32 = 48.0;
+// 상단 크롬(주소창) 높이. 페이지는 이 아래에 렌더된다.
+const CHROME_H: f32 = 36.0;
 
-/// 스크롤 + 링크 클릭이 되는 페이지 창.
-/// 클릭한 링크는 현재 페이지 URL 기준으로 해석해 `load` 로 새 페이지를 받아 교체한다.
+/// 스크롤 + 링크 클릭 + 주소창이 있는 브라우저 창.
 pub fn run_page(
     page: Page,
     width: u32,
@@ -48,11 +50,14 @@ pub fn run_page(
     let mut cursor: (f32, f32) = (0.0, 0.0);
     // 뒤로 가기 스택: (URL, 떠날 때 스크롤 위치)
     let mut history: Vec<(String, f32)> = Vec::new();
+    // 주소창 상태
+    let mut url_input: String = page.url.as_string();
+    let mut focused = false;
 
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
-            let viewport_h = window.inner_size().height.max(1) as f32;
+            let viewport_h = (window.inner_size().height.max(1) as f32 - CHROME_H).max(1.0);
             let max_scroll = (page.doc_height - viewport_h).max(0.0);
             match event {
                 Event::Resumed => {
@@ -62,21 +67,37 @@ pub fn run_page(
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::CursorMoved { position, .. } => {
                         cursor = (position.x as f32, position.y as f32);
-                        let over =
-                            hit_link(&page.links, cursor.0, cursor.1 + scroll_y).is_some();
-                        window.set_cursor_icon(if over {
+                        let icon = if cursor.1 < CHROME_H {
+                            CursorIcon::Text
+                        } else if hit_link(&page.links, cursor.0, cursor.1 - CHROME_H + scroll_y)
+                            .is_some()
+                        {
                             CursorIcon::Pointer
                         } else {
                             CursorIcon::Default
-                        });
+                        };
+                        window.set_cursor_icon(icon);
                     }
                     WindowEvent::MouseInput {
                         state: ElementState::Pressed,
                         button: MouseButton::Left,
                         ..
                     } => {
+                        // 주소창 클릭 → 포커스
+                        if cursor.1 < CHROME_H {
+                            if !focused {
+                                focused = true;
+                                window.request_redraw();
+                            }
+                            return;
+                        }
+                        if focused {
+                            focused = false;
+                            url_input = page.url.as_string();
+                            window.request_redraw();
+                        }
                         if let Some(href) =
-                            hit_link(&page.links, cursor.0, cursor.1 + scroll_y)
+                            hit_link(&page.links, cursor.0, cursor.1 - CHROME_H + scroll_y)
                         {
                             if href.starts_with('#') {
                                 return; // 페이지 내 앵커는 아직 미지원
@@ -89,6 +110,7 @@ pub fn run_page(
                                     page = new_page;
                                     scroll_y = 0.0;
                                     cache = crate::raster::GlyphCache::new(); // 폰트 인덱스가 바뀔 수 있음
+                                    url_input = page.url.as_string();
                                     window.set_title(&format!(
                                         "Kestrel — {}",
                                         page.url.as_string()
@@ -112,16 +134,62 @@ pub fn run_page(
                     WindowEvent::KeyboardInput { event: key, .. }
                         if key.state == ElementState::Pressed =>
                     {
-                        // 뒤로 가기: Backspace (스크롤 위치까지 복원)
+                        // ── 주소창 편집 모드 ──
+                        if focused {
+                            match &key.logical_key {
+                                Key::Named(NamedKey::Enter) => {
+                                    let t = url_input.trim().to_string();
+                                    let target = if t.starts_with("http://")
+                                        || t.starts_with("https://")
+                                    {
+                                        t
+                                    } else {
+                                        format!("https://{}", t)
+                                    };
+                                    println!("→ {}", target);
+                                    focused = false;
+                                    if let Some(new_page) = load(&target) {
+                                        history.push((page.url.as_string(), scroll_y));
+                                        page = new_page;
+                                        scroll_y = 0.0;
+                                        cache = crate::raster::GlyphCache::new();
+                                        url_input = page.url.as_string();
+                                        window.set_title(&format!(
+                                            "Kestrel — {}",
+                                            page.url.as_string()
+                                        ));
+                                    } else {
+                                        url_input = page.url.as_string();
+                                    }
+                                    window.request_redraw();
+                                }
+                                Key::Named(NamedKey::Escape) => {
+                                    focused = false;
+                                    url_input = page.url.as_string();
+                                    window.request_redraw();
+                                }
+                                Key::Named(NamedKey::Backspace) => {
+                                    url_input.pop();
+                                    window.request_redraw();
+                                }
+                                Key::Character(s) => {
+                                    url_input.push_str(s);
+                                    window.request_redraw();
+                                }
+                                _ => {}
+                            }
+                            return;
+                        }
+                        // ── 뒤로 가기: Backspace (스크롤 위치까지 복원) ──
                         if key.physical_key == PhysicalKey::Code(KeyCode::Backspace) {
                             if let Some((prev_url, prev_scroll)) = history.pop() {
                                 println!("← {}", prev_url);
                                 if let Some(new_page) = load(&prev_url) {
                                     page = new_page;
-                                    let vh = window.inner_size().height.max(1) as f32;
-                                    scroll_y =
-                                        prev_scroll.clamp(0.0, (page.doc_height - vh).max(0.0));
+                                    scroll_y = prev_scroll
+                                        .clamp(0.0, (page.doc_height - viewport_h).max(0.0));
                                     cache = crate::raster::GlyphCache::new();
+                                    url_input = page.url.as_string();
                                     window.set_title(&format!(
                                         "Kestrel — {}",
                                         page.url.as_string()
@@ -133,6 +201,7 @@ pub fn run_page(
                             }
                             return;
                         }
+                        // ── 스크롤 키 ──
                         let dy = match key.physical_key {
                             PhysicalKey::Code(KeyCode::ArrowDown) => Some(LINE_SCROLL),
                             PhysicalKey::Code(KeyCode::ArrowUp) => Some(-LINE_SCROLL),
@@ -162,15 +231,48 @@ pub fn run_page(
                             .resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap())
                             .unwrap();
 
-                        let canvas = crate::paint::rasterize(
+                        // 페이지: 크롬 아래부터 그린다 (scroll 을 CHROME_H 만큼 당겨서)
+                        let mut canvas = crate::paint::rasterize(
                             &page.items,
                             w as usize,
                             h as usize,
-                            scroll_y,
+                            scroll_y - CHROME_H,
                             &page.fonts,
                             &mut cache,
                             &page.images,
                         );
+                        // 크롬 (주소창)
+                        let wf = w as f32;
+                        canvas.fill_rect(
+                            Color { r: 32, g: 32, b: 38, a: 255 },
+                            Rect { x: 0.0, y: 0.0, width: wf, height: CHROME_H },
+                        );
+                        let field_bg = if focused {
+                            Color { r: 14, g: 14, b: 20, a: 255 }
+                        } else {
+                            Color { r: 22, g: 22, b: 28, a: 255 }
+                        };
+                        canvas.fill_rect(
+                            field_bg,
+                            Rect { x: 8.0, y: 6.0, width: wf - 16.0, height: CHROME_H - 12.0 },
+                        );
+                        let end_x = crate::paint::draw_text(
+                            &mut canvas,
+                            &page.fonts,
+                            &mut cache,
+                            &url_input,
+                            16.0,
+                            24.0,
+                            14.0,
+                            Color { r: 214, g: 218, b: 228, a: 255 },
+                        );
+                        if focused {
+                            canvas.fill_rect(
+                                Color { r: 244, g: 132, b: 44, a: 255 },
+                                Rect { x: end_x + 2.0, y: 10.0, width: 2.0, height: CHROME_H - 20.0 },
+                            );
+                        }
+
                         let buffer = canvas.to_u32_buffer();
                         let mut frame = surface.buffer_mut().unwrap();
                         frame.copy_from_slice(&buffer);
