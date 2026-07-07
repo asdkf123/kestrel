@@ -186,6 +186,25 @@ fn synth_boxes(n: usize) -> String {
     s
 }
 
+// 규칙 많은 페이지: elements 개 요소 + decoys 개 미적용 규칙.
+// 실제 프레임워크 CSS(수백~수천 규칙, 요소당 극소수 매칭)를 흉내 → 선택자 매칭 스케일링 노출.
+fn synth_styled(elements: usize, decoys: usize) -> String {
+    let mut style = String::from(
+        "div{display:block;margin:2px 0;max-width:760px}.row{height:12px}\
+         .hi{background-color:navy}.lo{background-color:teal}",
+    );
+    for i in 0..decoys {
+        style.push_str(&format!(".deco{}{{width:{}px;color:#010101}}", i, i % 200));
+    }
+    let mut s = format!("<html><head><style>{}</style></head><body>", style);
+    for i in 0..elements {
+        let cls = if i % 2 == 0 { "hi" } else { "lo" };
+        s.push_str(&format!("<div class=\"row {}\"></div>", cls));
+    }
+    s.push_str("</body></html>");
+    s
+}
+
 pub fn run_bench() {
     let iters = 50;
     let fonts = crate::load_fonts(false);
@@ -205,7 +224,11 @@ pub fn run_bench() {
     }
     println!();
 
-    let cases = [("text-200", synth_text(200)), ("boxes-600", synth_boxes(600))];
+    let cases = [
+        ("text-200", synth_text(200)),
+        ("boxes-600", synth_boxes(600)),
+        ("styled-400", synth_styled(400, 400)),
+    ];
 
     println!(
         "{:<12} {:>9} {:>9} {:>9}   {:>10}",
