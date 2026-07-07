@@ -6,6 +6,7 @@ mod font;
 mod html;
 mod http;
 mod inflate;
+mod jpeg;
 mod layout;
 mod paint;
 mod png;
@@ -159,6 +160,17 @@ fn collect_img_srcs(node: &dom::Node, out: &mut Vec<String>) {
     }
 }
 
+// 매직 바이트로 포맷 판별 → 해당 디코더 (PNG / JPEG)
+fn decode_image(bytes: &[u8]) -> Option<png::Image> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        png::decode(bytes)
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        jpeg::decode(bytes)
+    } else {
+        None
+    }
+}
+
 fn load_images(dom: &dom::Node, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
     let mut srcs = Vec::new();
     collect_img_srcs(dom, &mut srcs);
@@ -170,7 +182,7 @@ fn load_images(dom: &dom::Node, base: &url::Url) -> (Vec<png::Image>, layout::Im
         }
         if let Some(u) = base.join(&src) {
             if let Ok(resp) = http::fetch(&u.as_string()) {
-                if let Some(img) = png::decode(&resp.body) {
+                if let Some(img) = decode_image(&resp.body) {
                     let (w, h) = (img.width, img.height);
                     let idx = images.len();
                     images.push(img);
