@@ -46,6 +46,8 @@ pub fn run_page(
     let mut cache = crate::raster::GlyphCache::new();
     let mut scroll_y: f32 = 0.0;
     let mut cursor: (f32, f32) = (0.0, 0.0);
+    // 뒤로 가기 스택: (URL, 떠날 때 스크롤 위치)
+    let mut history: Vec<(String, f32)> = Vec::new();
 
     event_loop
         .run(move |event, elwt| {
@@ -83,6 +85,7 @@ pub fn run_page(
                                 let url_str = target.as_string();
                                 println!("→ {}", url_str);
                                 if let Some(new_page) = load(&url_str) {
+                                    history.push((page.url.as_string(), scroll_y));
                                     page = new_page;
                                     scroll_y = 0.0;
                                     cache = crate::raster::GlyphCache::new(); // 폰트 인덱스가 바뀔 수 있음
@@ -109,6 +112,27 @@ pub fn run_page(
                     WindowEvent::KeyboardInput { event: key, .. }
                         if key.state == ElementState::Pressed =>
                     {
+                        // 뒤로 가기: Backspace (스크롤 위치까지 복원)
+                        if key.physical_key == PhysicalKey::Code(KeyCode::Backspace) {
+                            if let Some((prev_url, prev_scroll)) = history.pop() {
+                                println!("← {}", prev_url);
+                                if let Some(new_page) = load(&prev_url) {
+                                    page = new_page;
+                                    let vh = window.inner_size().height.max(1) as f32;
+                                    scroll_y =
+                                        prev_scroll.clamp(0.0, (page.doc_height - vh).max(0.0));
+                                    cache = crate::raster::GlyphCache::new();
+                                    window.set_title(&format!(
+                                        "Kestrel — {}",
+                                        page.url.as_string()
+                                    ));
+                                    window.request_redraw();
+                                } else {
+                                    history.push((prev_url, prev_scroll)); // 실패 시 스택 보존
+                                }
+                            }
+                            return;
+                        }
                         let dy = match key.physical_key {
                             PhysicalKey::Code(KeyCode::ArrowDown) => Some(LINE_SCROLL),
                             PhysicalKey::Code(KeyCode::ArrowUp) => Some(-LINE_SCROLL),
