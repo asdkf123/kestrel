@@ -81,6 +81,12 @@ fn paint_box(
     if let Some(color) = get_color(layout_box, "background-color") {
         canvas.fill_rect(color, layout_box.dimensions.border_box());
     }
+    // 배경 이미지: 박스 좌상단에 1회, 박스 크기로 클리핑 (repeat/position 미지원)
+    if let Some(idx) = layout_box.background_image {
+        if let Some(img) = images.get(idx) {
+            blit_image(canvas, img, layout_box.dimensions.border_box());
+        }
+    }
     if let Some(idx) = layout_box.image {
         if let Some(img) = images.get(idx) {
             blit_image(canvas, img, layout_box.dimensions.content);
@@ -95,15 +101,18 @@ fn paint_box(
     }
 }
 
+// rect 좌상단에 이미지를 그린다. rect 크기로 클리핑 (<img> 는 rect == 고유 크기라 무손실).
 fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect) {
     let ox = rect.x.round() as i32;
     let oy = rect.y.round() as i32;
-    for y in 0..img.height {
+    let clip_w = img.width.min(rect.width.round() as usize);
+    let clip_h = img.height.min(rect.height.round() as usize);
+    for y in 0..clip_h {
         let cy = oy + y as i32;
         if cy < 0 || cy as usize >= canvas.height {
             continue;
         }
-        for x in 0..img.width {
+        for x in 0..clip_w {
             let cx = ox + x as i32;
             if cx < 0 || cx as usize >= canvas.width {
                 continue;
@@ -181,6 +190,35 @@ mod tests {
         );
         let buf = canvas.to_u32_buffer();
         assert_eq!(buf[0], 0x00_ff_00_00);
+    }
+
+    #[test]
+    fn background_image_paints_clipped_to_box() {
+        let root = crate::html::parse("<div></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; width: 2px; height: 2px; background-image: url(bg.png); }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: crate::layout::Dimensions = Default::default();
+        viewport.content.width = 4.0;
+        let fs = fonts();
+        let mut map = crate::layout::ImageMap::new();
+        map.insert("bg.png".to_string(), (0, 3, 1)); // 3x1 이미지, 박스는 2x2
+        let img = crate::png::Image { width: 3, height: 1, rgba: vec![255, 0, 0, 255].repeat(3) };
+        let layout_root = crate::layout::layout_tree(&styled, viewport, &fs, &map);
+        let mut cache = crate::raster::GlyphCache::new();
+        let canvas = paint(
+            &layout_root,
+            crate::layout::Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 },
+            &fs,
+            &mut cache,
+            &[img],
+        );
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        assert_eq!(canvas.pixels[0], red, "박스 안 (0,0) 은 배경 이미지");
+        assert_eq!(canvas.pixels[2], white, "(2,0) 은 박스 폭 2px 로 클리핑되어야 함");
     }
 
     #[test]

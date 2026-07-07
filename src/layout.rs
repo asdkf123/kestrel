@@ -74,6 +74,7 @@ pub struct LayoutBox<'a> {
     pub glyphs: Vec<GlyphInstance>,
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
     pub image: Option<usize>,
+    pub background_image: Option<usize>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -85,6 +86,7 @@ impl<'a> LayoutBox<'a> {
             glyphs: Vec::new(),
             inline_nodes: Vec::new(),
             image: None,
+            background_image: None,
         }
     }
 
@@ -96,6 +98,7 @@ impl<'a> LayoutBox<'a> {
             glyphs: Vec::new(),
             inline_nodes: nodes,
             image: None,
+            background_image: None,
         }
     }
 
@@ -125,6 +128,12 @@ impl<'a> LayoutBox<'a> {
         }
         self.calculate_width(containing_block);
         self.calculate_position(containing_block);
+        // 배경 이미지 해결 (블록 박스만 — 익명 인라인 박스는 부모 스타일 공유라 제외)
+        if let Some(Value::Url(u)) = self.styled_node.value("background-image") {
+            if let Some(&(idx, _, _)) = images.get(&u) {
+                self.background_image = Some(idx);
+            }
+        }
         self.layout_children(fonts, images);
         self.calculate_height();
     }
@@ -560,6 +569,25 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert!(lb.dimensions.content.height > 0.0, "inline-only block must have height");
         assert!(!glyphs_of(&lb).is_empty(), "link text should render");
+    }
+
+    #[test]
+    fn background_image_resolves_from_map() {
+        let root = crate::html::parse("<div class=\"hero\"></div>".to_string());
+        let ss = crate::css::parse(
+            ".hero { display: block; height: 40px; background-image: url(bg.jpg); }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let mut images = ImageMap::new();
+        images.insert("bg.jpg".to_string(), (3, 100, 50));
+        let lb = layout_tree(&styled, viewport, &fs, &images);
+        assert_eq!(lb.background_image, Some(3));
+        // 맵에 없으면 None
+        let lb2 = layout_tree(&styled, viewport, &fs, &no_images());
+        assert_eq!(lb2.background_image, None);
     }
 
     #[test]

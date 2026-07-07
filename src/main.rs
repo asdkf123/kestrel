@@ -101,9 +101,12 @@ fn main() {
 
     let fonts = load_fonts(needs_korean);
     let mut cache = raster::GlyphCache::new();
-    // 로컬 데모도 절대 URL <img> 는 가져온다 (베이스는 상대경로 해석용 임의값).
+    // 로컬 데모도 절대 URL <img>/배경 이미지는 가져온다 (베이스는 상대경로 해석용 임의값).
     let base = url::Url::parse("https://localhost/").unwrap();
-    let (images, img_map) = load_images(&root_node, &base);
+    let mut srcs = Vec::new();
+    collect_img_srcs(&root_node, &mut srcs);
+    collect_bg_urls(&style_root, &mut srcs);
+    let (images, img_map) = load_images(srcs, &base);
 
     let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
     let canvas = paint::paint(
@@ -171,9 +174,17 @@ fn decode_image(bytes: &[u8]) -> Option<png::Image> {
     }
 }
 
-fn load_images(dom: &dom::Node, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
-    let mut srcs = Vec::new();
-    collect_img_srcs(dom, &mut srcs);
+// 스타일 트리에서 적용된 background-image url 수집 (매칭된 규칙만 — 시트 전체가 아님)
+fn collect_bg_urls(node: &style::StyledNode, out: &mut Vec<String>) {
+    if let Some(css::Value::Url(u)) = node.value("background-image") {
+        out.push(u);
+    }
+    for c in &node.children {
+        collect_bg_urls(c, out);
+    }
+}
+
+fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
     let mut images = Vec::new();
     let mut map = layout::ImageMap::new();
     for src in srcs {
@@ -241,10 +252,6 @@ fn render_url(url: &str) {
     let dom = html::parse(html);
 
     let base = url::Url::parse(url).ok();
-    let (images, img_map) = match &base {
-        Some(b) => load_images(&dom, b),
-        None => (Vec::new(), layout::ImageMap::new()),
-    };
 
     // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침
     let mut sheet = css::user_agent_stylesheet();
@@ -265,6 +272,17 @@ fn render_url(url: &str) {
     sheet.rules.extend(css::parse(inline_css).rules);
 
     let style_root = style::style_tree(&dom, &sheet);
+
+    // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리)
+    let (images, img_map) = match &base {
+        Some(b) => {
+            let mut srcs = Vec::new();
+            collect_img_srcs(&dom, &mut srcs);
+            collect_bg_urls(&style_root, &mut srcs);
+            load_images(srcs, b)
+        }
+        None => (Vec::new(), layout::ImageMap::new()),
+    };
 
     let viewport_width: u32 = 1000;
     let viewport_height: u32 = 1400;

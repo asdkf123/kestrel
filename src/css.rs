@@ -32,6 +32,7 @@ pub enum Value {
     Keyword(String),
     Length(f32, Unit),
     Color(Color),
+    Url(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -293,6 +294,14 @@ fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
         return parse_rgb_func(&lower).map(Value::Color);
     }
+    // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
+    if lower.starts_with("url(") && text.ends_with(')') {
+        let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
+        if inner.is_empty() {
+            return None;
+        }
+        return Some(Value::Url(inner.to_string()));
+    }
     let numeric_start = bytes[0].is_ascii_digit()
         || bytes[0] == b'.'
         || (bytes[0] == b'-' && bytes.len() > 1 && (bytes[1].is_ascii_digit() || bytes[1] == b'.'));
@@ -519,6 +528,17 @@ mod tests {
             ss.rules[0].declarations[0].value,
             Value::Keyword("flex".to_string())
         );
+    }
+
+    #[test]
+    fn parses_url_value() {
+        let ss = parse("div { background-image: url(https://a.com/B.jpg); }".to_string());
+        assert_eq!(
+            ss.rules[0].declarations[0].value,
+            Value::Url("https://a.com/B.jpg".to_string())
+        );
+        let ss = parse("div { background-image: url(\"img/x.png\"); }".to_string());
+        assert_eq!(ss.rules[0].declarations[0].value, Value::Url("img/x.png".to_string()));
     }
 
     // 캐스케이드: 같은 이름이 여러 번이면 마지막 선언이 이긴다
