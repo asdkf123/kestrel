@@ -2,12 +2,25 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::WindowBuilder;
 
-/// 미리 렌더된 픽셀 버퍼(0x00RRGGBB, width*height)를 창에 표시한다.
-pub fn run(buffer: Vec<u32>, width: u32, height: u32) {
+use crate::paint::DisplayItem;
+
+/// 창에 띄울 페이지: 소유된 디스플레이 리스트 + 리소스. 스크롤 시 재래스터화한다.
+pub struct Page {
+    pub items: Vec<DisplayItem>,
+    pub images: Vec<crate::png::Image>,
+    pub fonts: crate::font::FontStack,
+    pub doc_height: f32,
+}
+
+const LINE_SCROLL: f32 = 48.0;
+
+/// 스크롤 가능한 페이지 창. 휠/트랙패드/방향키/PageUp·Down/Home/End/Space 지원.
+pub fn run_page(page: Page, width: u32, height: u32) {
     let event_loop = EventLoop::new().unwrap();
     let window = Rc::new(
         WindowBuilder::new()
@@ -20,15 +33,56 @@ pub fn run(buffer: Vec<u32>, width: u32, height: u32) {
     let context = softbuffer::Context::new(window.clone()).unwrap();
     let mut surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
 
+    let mut cache = crate::raster::GlyphCache::new();
+    let mut scroll_y: f32 = 0.0;
+
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
+            let viewport_h = window.inner_size().height.max(1) as f32;
+            let max_scroll = (page.doc_height - viewport_h).max(0.0);
             match event {
                 Event::Resumed => {
                     window.request_redraw();
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => elwt.exit(),
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let dy = match delta {
+                            MouseScrollDelta::LineDelta(_, y) => -y * LINE_SCROLL,
+                            MouseScrollDelta::PixelDelta(p) => -p.y as f32,
+                        };
+                        let next = (scroll_y + dy).clamp(0.0, max_scroll);
+                        if next != scroll_y {
+                            scroll_y = next;
+                            window.request_redraw();
+                        }
+                    }
+                    WindowEvent::KeyboardInput { event: key, .. }
+                        if key.state == ElementState::Pressed =>
+                    {
+                        let dy = match key.physical_key {
+                            PhysicalKey::Code(KeyCode::ArrowDown) => Some(LINE_SCROLL),
+                            PhysicalKey::Code(KeyCode::ArrowUp) => Some(-LINE_SCROLL),
+                            PhysicalKey::Code(KeyCode::PageDown)
+                            | PhysicalKey::Code(KeyCode::Space) => Some(viewport_h * 0.9),
+                            PhysicalKey::Code(KeyCode::PageUp) => Some(-viewport_h * 0.9),
+                            PhysicalKey::Code(KeyCode::Home) => Some(-scroll_y),
+                            PhysicalKey::Code(KeyCode::End) => Some(max_scroll - scroll_y),
+                            _ => None,
+                        };
+                        if let Some(dy) = dy {
+                            let next = (scroll_y + dy).clamp(0.0, max_scroll);
+                            if next != scroll_y {
+                                scroll_y = next;
+                                window.request_redraw();
+                            }
+                        }
+                    }
+                    WindowEvent::Resized(_) => {
+                        scroll_y = scroll_y.clamp(0.0, max_scroll);
+                        window.request_redraw();
+                    }
                     WindowEvent::RedrawRequested => {
                         let size = window.inner_size();
                         let (w, h) = (size.width.max(1), size.height.max(1));
@@ -36,18 +90,18 @@ pub fn run(buffer: Vec<u32>, width: u32, height: u32) {
                             .resize(NonZeroU32::new(w).unwrap(), NonZeroU32::new(h).unwrap())
                             .unwrap();
 
+                        let canvas = crate::paint::rasterize(
+                            &page.items,
+                            w as usize,
+                            h as usize,
+                            scroll_y,
+                            &page.fonts,
+                            &mut cache,
+                            &page.images,
+                        );
+                        let buffer = canvas.to_u32_buffer();
                         let mut frame = surface.buffer_mut().unwrap();
-                        for y in 0..h as usize {
-                            for x in 0..w as usize {
-                                let dst = y * w as usize + x;
-                                let val = if x < width as usize && y < height as usize {
-                                    buffer[y * width as usize + x]
-                                } else {
-                                    0x00_1e_1e_1e // 캔버스 밖은 어두운 회색
-                                };
-                                frame[dst] = val;
-                            }
-                        }
+                        frame.copy_from_slice(&buffer);
                         frame.present().unwrap();
                     }
                     _ => {}

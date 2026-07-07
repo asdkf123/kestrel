@@ -109,23 +109,30 @@ fn main() {
     let (images, img_map) = load_images(srcs, &base);
 
     let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
-    let canvas = paint::paint(
-        &layout_root,
-        layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
-        &fonts,
-        &mut cache,
-        &images,
-    );
+    let items = paint::build_display_list(&layout_root);
+    let doc_height = layout_root.dimensions.margin_box().height;
 
     // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 으로 출력하고 종료.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
+        let canvas = paint::rasterize(
+            &items,
+            viewport_width as usize,
+            viewport_height as usize,
+            0.0,
+            &fonts,
+            &mut cache,
+            &images,
+        );
         write_ppm(&canvas, &path);
         println!("rendered to {}", path);
         return;
     }
 
-    let buffer = canvas.to_u32_buffer();
-    window::run(buffer, viewport_width, viewport_height);
+    window::run_page(
+        window::Page { items, images, fonts, doc_height },
+        viewport_width,
+        viewport_height,
+    );
 }
 
 fn write_ppm(canvas: &paint::Canvas, path: &str) {
@@ -300,20 +307,35 @@ fn render_url(url: &str) {
     let mut cache = raster::GlyphCache::new();
 
     let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
-    let canvas = paint::paint(
-        &layout_root,
-        layout::Rect { x: 0.0, y: 0.0, width: viewport_width as f32, height: viewport_height as f32 },
-        &fonts,
-        &mut cache,
-        &images,
-    );
+    let items = paint::build_display_list(&layout_root);
+    let doc_height = layout_root.dimensions.margin_box().height;
 
+    // 헤드리스: (viewport 크기) 슬라이스를 PPM 으로. KESTREL_SCROLL 로 시작 오프셋 지정.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
+        let scroll = std::env::var("KESTREL_SCROLL")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            .clamp(0.0, (doc_height - viewport_height as f32).max(0.0));
+        let canvas = paint::rasterize(
+            &items,
+            viewport_width as usize,
+            viewport_height as usize,
+            scroll,
+            &fonts,
+            &mut cache,
+            &images,
+        );
         write_ppm(&canvas, &path);
         println!("rendered to {}", path);
         return;
     }
-    window::run(canvas.to_u32_buffer(), viewport_width, viewport_height);
+    println!("[문서 높이 {}px] 휠/트랙패드/방향키/PageUp·Down/Home/End 로 스크롤", doc_height as u32);
+    window::run_page(
+        window::Page { items, images, fonts, doc_height },
+        viewport_width,
+        800,
+    );
 }
 
 // 텍스트에 한글(자모/완성형)이 있는지.
