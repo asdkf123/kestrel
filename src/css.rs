@@ -12,6 +12,8 @@ pub struct Rule {
 #[derive(Debug, PartialEq)]
 pub enum Selector {
     Simple(SimpleSelector),
+    // 공백 결합자 체인: [조상, ..., 대상] (예: ".a .b" → [.a, .b])
+    Descendant(Vec<SimpleSelector>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -51,11 +53,23 @@ pub struct Color {
 pub type Specificity = (usize, usize, usize);
 
 impl Selector {
+    fn parts(&self) -> &[SimpleSelector] {
+        match self {
+            Selector::Simple(s) => std::slice::from_ref(s),
+            Selector::Descendant(v) => v,
+        }
+    }
+
+    // 대상(가장 오른쪽) 단순 선택자
+    pub fn subject(&self) -> &SimpleSelector {
+        self.parts().last().unwrap()
+    }
+
     pub fn specificity(&self) -> Specificity {
-        let Selector::Simple(ref simple) = *self;
-        let a = simple.id.iter().count();
-        let b = simple.class.len();
-        let c = simple.tag_name.iter().count();
+        let parts = self.parts();
+        let a = parts.iter().map(|s| s.id.iter().count()).sum();
+        let b = parts.iter().map(|s| s.class.len()).sum();
+        let c = parts.iter().map(|s| s.tag_name.iter().count()).sum();
         (a, b, c)
     }
 }
@@ -120,8 +134,7 @@ impl Parser {
     fn parse_selectors(&mut self) -> Option<Vec<Selector>> {
         let mut selectors = Vec::new();
         loop {
-            selectors.push(Selector::Simple(self.parse_simple_selector()));
-            self.consume_whitespace();
+            selectors.push(self.parse_complex_selector()?);
             match self.peek() {
                 Some(',') => {
                     self.consume_char();
@@ -131,12 +144,31 @@ impl Parser {
                     self.consume_char();
                     break;
                 }
-                // 자손 결합자/의사클래스/속성/eof 등은 미지원 → 규칙 스킵
+                // '>'/'+'/'~'/의사클래스/속성/eof 등은 미지원 → 규칙 스킵
                 _ => return None,
             }
         }
         selectors.sort_by(|a, b| b.specificity().cmp(&a.specificity()));
         Some(selectors)
+    }
+
+    // 공백으로 이어진 단순 선택자 체인 (자손 결합자). 종료 후 peek 은 ','/'{'/미지원 문자.
+    fn parse_complex_selector(&mut self) -> Option<Selector> {
+        let mut parts = vec![self.parse_simple_selector()];
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                Some(c) if c == '.' || c == '#' || c == '*' || valid_identifier_char(c) => {
+                    parts.push(self.parse_simple_selector());
+                }
+                _ => break,
+            }
+        }
+        if parts.len() == 1 {
+            Some(Selector::Simple(parts.pop().unwrap()))
+        } else {
+            Some(Selector::Descendant(parts))
+        }
     }
 
     fn parse_simple_selector(&mut self) -> SimpleSelector {
@@ -459,6 +491,7 @@ mod tests {
                 assert_eq!(s.class, vec!["note".to_string()]);
                 assert_eq!(s.id, None);
             }
+            other => panic!("expected Simple, got {:?}", other),
         }
     }
 
@@ -477,11 +510,33 @@ mod tests {
 
     #[test]
     fn skips_unsupported_selectors() {
-        let ss = parse(".a .b { color: #ff0000; } div { width: 5px; }".to_string());
+        // '>' (자식 결합자) 는 아직 미지원 → 규칙 스킵
+        let ss = parse(".a > .b { color: #ff0000; } div { width: 5px; }".to_string());
         assert_eq!(ss.rules.len(), 1);
         match &ss.rules[0].selectors[0] {
             Selector::Simple(s) => assert_eq!(s.tag_name.as_deref(), Some("div")),
+            other => panic!("unexpected selector: {:?}", other),
         }
+    }
+
+    #[test]
+    fn parses_descendant_selector_chain() {
+        let ss = parse("div .note p { width: 5px; }".to_string());
+        match &ss.rules[0].selectors[0] {
+            Selector::Descendant(parts) => {
+                assert_eq!(parts.len(), 3);
+                assert_eq!(parts[0].tag_name.as_deref(), Some("div"));
+                assert_eq!(parts[1].class, vec!["note".to_string()]);
+                assert_eq!(parts[2].tag_name.as_deref(), Some("p"));
+            }
+            other => panic!("expected Descendant, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn descendant_specificity_sums_parts() {
+        let ss = parse("#a .b p { width: 1px; }".to_string());
+        assert_eq!(ss.rules[0].selectors[0].specificity(), (1, 1, 1));
     }
 
     #[test]
@@ -592,9 +647,7 @@ mod tests {
         let ss = user_agent_stylesheet();
         for tag in ["script", "style", "head"] {
             let hidden = ss.rules.iter().any(|r| {
-                r.selectors.iter().any(|s| match s {
-                    Selector::Simple(sel) => sel.tag_name.as_deref() == Some(tag),
-                }) && r
+                r.selectors.iter().any(|s| s.subject().tag_name.as_deref() == Some(tag)) && r
                     .declarations
                     .iter()
                     .any(|d| d.name == "display" && d.value == Value::Keyword("none".to_string()))
@@ -607,9 +660,7 @@ mod tests {
     fn ua_stylesheet_has_display_block_for_div() {
         let ss = user_agent_stylesheet();
         let matches_div = ss.rules.iter().any(|r| {
-            r.selectors.iter().any(|s| match s {
-                Selector::Simple(sel) => sel.tag_name.as_deref() == Some("div"),
-            }) && r
+            r.selectors.iter().any(|s| s.subject().tag_name.as_deref() == Some("div")) && r
                 .declarations
                 .iter()
                 .any(|d| d.name == "display" && d.value == Value::Keyword("block".to_string()))

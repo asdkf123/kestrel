@@ -39,9 +39,27 @@ impl<'a> StyledNode<'a> {
     }
 }
 
-fn matches(elem: &ElementData, selector: &Selector) -> bool {
-    match *selector {
-        Selector::Simple(ref simple) => matches_simple_selector(elem, simple),
+// ancestors: 루트→부모 순. 자손 체인은 오른쪽(대상)부터 왼쪽으로,
+// 조상은 가까운 쪽부터 위로 탐욕 매칭한다 (자손 결합자 표준 의미).
+fn matches(elem: &ElementData, ancestors: &[&ElementData], selector: &Selector) -> bool {
+    match selector {
+        Selector::Simple(simple) => matches_simple_selector(elem, simple),
+        Selector::Descendant(parts) => {
+            let (subject, rest) = parts.split_last().unwrap();
+            if !matches_simple_selector(elem, subject) {
+                return false;
+            }
+            let mut i = rest.len();
+            for anc in ancestors.iter().rev() {
+                if i == 0 {
+                    break;
+                }
+                if matches_simple_selector(anc, &rest[i - 1]) {
+                    i -= 1;
+                }
+            }
+            i == 0
+        }
     }
 }
 
@@ -61,10 +79,14 @@ fn matches_simple_selector(elem: &ElementData, selector: &SimpleSelector) -> boo
 
 type MatchedRule<'a> = (Specificity, &'a Rule);
 
-fn match_rule<'a>(elem: &ElementData, rule: &'a Rule) -> Option<MatchedRule<'a>> {
+fn match_rule<'a>(
+    elem: &ElementData,
+    ancestors: &[&ElementData],
+    rule: &'a Rule,
+) -> Option<MatchedRule<'a>> {
     rule.selectors
         .iter()
-        .find(|selector| matches(elem, selector))
+        .find(|selector| matches(elem, ancestors, selector))
         .map(|selector| (selector.specificity(), rule))
 }
 
@@ -90,7 +112,8 @@ impl<'a> RuleIndex<'a> {
         };
         for (i, rule) in sheet.rules.iter().enumerate() {
             for selector in &rule.selectors {
-                let Selector::Simple(s) = selector;
+                // 자손 체인은 대상(가장 오른쪽) 선택자 키로 버킷팅
+                let s = selector.subject();
                 if let Some(id) = &s.id {
                     idx.by_id.entry(id.clone()).or_default().push(i);
                 } else if let Some(class) = s.class.first() {
@@ -128,12 +151,12 @@ impl<'a> RuleIndex<'a> {
     }
 }
 
-fn specified_values(elem: &ElementData, index: &RuleIndex) -> PropertyMap {
+fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &RuleIndex) -> PropertyMap {
     let mut values = HashMap::new();
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
-        .filter_map(|i| match_rule(elem, &index.rules[i]))
+        .filter_map(|i| match_rule(elem, ancestors, &index.rules[i]))
         .collect();
     // 오름차순 특이도, 안정 정렬 → 동일 특이도는 문서 순서 유지 (뒤 규칙이 이김)
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
@@ -147,17 +170,29 @@ fn specified_values(elem: &ElementData, index: &RuleIndex) -> PropertyMap {
 
 pub fn style_tree<'a>(root: &'a Node, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
-    style_node(root, &index)
+    let mut ancestors: Vec<&ElementData> = Vec::new();
+    style_node(root, &index, &mut ancestors)
 }
 
-fn style_node<'a>(node: &'a Node, index: &RuleIndex<'a>) -> StyledNode<'a> {
-    StyledNode {
-        node,
-        specified_values: match node.node_type {
-            NodeType::Element(ref elem) => specified_values(elem, index),
-            NodeType::Text(_) => HashMap::new(),
+fn style_node<'a>(
+    node: &'a Node,
+    index: &RuleIndex<'a>,
+    ancestors: &mut Vec<&'a ElementData>,
+) -> StyledNode<'a> {
+    match node.node_type {
+        NodeType::Element(ref elem) => {
+            let specified_values = specified_values(elem, ancestors, index);
+            ancestors.push(elem);
+            let children =
+                node.children.iter().map(|child| style_node(child, index, ancestors)).collect();
+            ancestors.pop();
+            StyledNode { node, specified_values, children }
+        }
+        NodeType::Text(_) => StyledNode {
+            node,
+            specified_values: HashMap::new(),
+            children: node.children.iter().map(|child| style_node(child, index, ancestors)).collect(),
         },
-        children: node.children.iter().map(|child| style_node(child, index)).collect(),
     }
 }
 
@@ -209,6 +244,52 @@ mod tests {
             Some(Value::Length(5.0, Unit::Px)),
             "<p class=note> must match p.note"
         );
+    }
+
+    #[test]
+    fn descendant_selector_matches_only_nested() {
+        let root = crate::html::parse(
+            "<div><section class=\"a\"><p>in</p></section><p>out</p></div>".to_string(),
+        );
+        let ss = crate::css::parse(".a p { width: 9px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        let section = &styled.children[0];
+        let p_in = &section.children[0];
+        let p_out = &styled.children[1];
+        assert_eq!(p_in.value("width"), Some(Value::Length(9.0, Unit::Px)), ".a 안의 p 는 매칭");
+        assert_eq!(p_out.value("width"), None, ".a 밖의 p 는 비매칭");
+    }
+
+    #[test]
+    fn descendant_selector_skips_levels() {
+        // 자손 결합자는 중간 단계를 건너뛴다 (자식 한정이 아님)
+        let root = crate::html::parse(
+            "<div class=\"wrap\"><section><p>deep</p></section></div>".to_string(),
+        );
+        let ss = crate::css::parse(".wrap p { width: 7px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        let p = &styled.children[0].children[0];
+        assert_eq!(p.value("width"), Some(Value::Length(7.0, Unit::Px)));
+    }
+
+    #[test]
+    fn descendant_out_of_order_does_not_match() {
+        // "div .x" 인데 .x 가 div 의 조상인 경우 → 비매칭
+        let root = crate::html::parse("<span class=\"x\"><div><p>t</p></div></span>".to_string());
+        let ss = crate::css::parse("div .x { width: 3px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.value("width"), None);
+    }
+
+    #[test]
+    fn descendant_specificity_beats_single_class() {
+        let root = crate::html::parse(
+            "<div class=\"a\"><p class=\"b\">t</p></div>".to_string(),
+        );
+        let ss = crate::css::parse(".b { width: 1px; } .a .b { width: 2px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        let p = &styled.children[0];
+        assert_eq!(p.value("width"), Some(Value::Length(2.0, Unit::Px)), "(0,2,0) 이 (0,1,0) 을 이김");
     }
 
     #[test]
