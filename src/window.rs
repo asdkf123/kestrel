@@ -2,11 +2,12 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::WindowBuilder;
+use winit::window::{CursorIcon, WindowBuilder};
 
+use crate::layout::{hit_link, Rect};
 use crate::paint::DisplayItem;
 
 /// 창에 띄울 페이지: 소유된 디스플레이 리스트 + 리소스. 스크롤 시 재래스터화한다.
@@ -15,16 +16,24 @@ pub struct Page {
     pub images: Vec<crate::png::Image>,
     pub fonts: crate::font::FontStack,
     pub doc_height: f32,
+    pub links: Vec<(Rect, String)>,
+    pub url: crate::url::Url,
 }
 
 const LINE_SCROLL: f32 = 48.0;
 
-/// 스크롤 가능한 페이지 창. 휠/트랙패드/방향키/PageUp·Down/Home/End/Space 지원.
-pub fn run_page(page: Page, width: u32, height: u32) {
+/// 스크롤 + 링크 클릭이 되는 페이지 창.
+/// 클릭한 링크는 현재 페이지 URL 기준으로 해석해 `load` 로 새 페이지를 받아 교체한다.
+pub fn run_page(
+    page: Page,
+    width: u32,
+    height: u32,
+    mut load: impl FnMut(&str) -> Option<Page> + 'static,
+) {
     let event_loop = EventLoop::new().unwrap();
     let window = Rc::new(
         WindowBuilder::new()
-            .with_title("Kestrel")
+            .with_title(format!("Kestrel — {}", page.url.as_string()))
             .with_inner_size(LogicalSize::new(width, height))
             .build(&event_loop)
             .unwrap(),
@@ -33,8 +42,10 @@ pub fn run_page(page: Page, width: u32, height: u32) {
     let context = softbuffer::Context::new(window.clone()).unwrap();
     let mut surface = softbuffer::Surface::new(&context, window.clone()).unwrap();
 
+    let mut page = page;
     let mut cache = crate::raster::GlyphCache::new();
     let mut scroll_y: f32 = 0.0;
+    let mut cursor: (f32, f32) = (0.0, 0.0);
 
     event_loop
         .run(move |event, elwt| {
@@ -47,6 +58,43 @@ pub fn run_page(page: Page, width: u32, height: u32) {
                 }
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => elwt.exit(),
+                    WindowEvent::CursorMoved { position, .. } => {
+                        cursor = (position.x as f32, position.y as f32);
+                        let over =
+                            hit_link(&page.links, cursor.0, cursor.1 + scroll_y).is_some();
+                        window.set_cursor_icon(if over {
+                            CursorIcon::Pointer
+                        } else {
+                            CursorIcon::Default
+                        });
+                    }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        if let Some(href) =
+                            hit_link(&page.links, cursor.0, cursor.1 + scroll_y)
+                        {
+                            if href.starts_with('#') {
+                                return; // 페이지 내 앵커는 아직 미지원
+                            }
+                            if let Some(target) = page.url.join(href) {
+                                let url_str = target.as_string();
+                                println!("→ {}", url_str);
+                                if let Some(new_page) = load(&url_str) {
+                                    page = new_page;
+                                    scroll_y = 0.0;
+                                    cache = crate::raster::GlyphCache::new(); // 폰트 인덱스가 바뀔 수 있음
+                                    window.set_title(&format!(
+                                        "Kestrel — {}",
+                                        page.url.as_string()
+                                    ));
+                                    window.request_redraw();
+                                }
+                            }
+                        }
+                    }
                     WindowEvent::MouseWheel { delta, .. } => {
                         let dy = match delta {
                             MouseScrollDelta::LineDelta(_, y) => -y * LINE_SCROLL,

@@ -43,6 +43,10 @@ impl Rect {
             height: self.height + edge.top + edge.bottom,
         }
     }
+
+    pub fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
+    }
 }
 
 impl Dimensions {
@@ -75,6 +79,8 @@ pub struct LayoutBox<'a> {
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
     pub image: Option<usize>,
     pub background_image: Option<usize>,
+    // 클릭 히트 영역: (단어 단위 사각형, href)
+    pub links: Vec<(Rect, String)>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -87,6 +93,7 @@ impl<'a> LayoutBox<'a> {
             inline_nodes: Vec::new(),
             image: None,
             background_image: None,
+            links: Vec::new(),
         }
     }
 
@@ -99,6 +106,7 @@ impl<'a> LayoutBox<'a> {
             inline_nodes: nodes,
             image: None,
             background_image: None,
+            links: Vec::new(),
         }
     }
 
@@ -218,21 +226,22 @@ impl<'a> LayoutBox<'a> {
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
 
-        let mut runs: Vec<(String, Color, f32)> = Vec::new();
+        let mut runs: Vec<(String, Color, f32, Option<usize>)> = Vec::new();
+        let mut hrefs: Vec<String> = Vec::new();
         for node in &self.inline_nodes {
-            collect_node(node, base_color, base_px, &mut runs);
+            collect_node(node, base_color, base_px, None, &mut runs, &mut hrefs);
         }
 
-        let mut words: Vec<Vec<(char, Color, f32)>> = Vec::new();
-        let mut cur: Vec<(char, Color, f32)> = Vec::new();
-        for (text, color, px) in &runs {
+        let mut words: Vec<Vec<(char, Color, f32, Option<usize>)>> = Vec::new();
+        let mut cur: Vec<(char, Color, f32, Option<usize>)> = Vec::new();
+        for (text, color, px, link) in &runs {
             for ch in text.chars() {
                 if ch.is_whitespace() {
                     if !cur.is_empty() {
                         words.push(std::mem::take(&mut cur));
                     }
                 } else {
-                    cur.push((ch, *color, *px));
+                    cur.push((ch, *color, *px, *link));
                 }
             }
         }
@@ -264,13 +273,15 @@ impl<'a> LayoutBox<'a> {
         let mut lines = 1;
 
         for word in &words {
-            let word_w: f32 = word.iter().map(|&(ch, _, px)| resolve(ch, px).2).sum();
+            let word_w: f32 = word.iter().map(|&(ch, _, px, _)| resolve(ch, px).2).sum();
             if pen_x > content_x && pen_x + word_w > content_x + content_w {
                 pen_x = content_x;
                 baseline += line_height;
                 lines += 1;
             }
-            for &(ch, color, px) in word {
+            let word_x0 = pen_x;
+            let mut word_px_max = 0.0f32;
+            for &(ch, color, px, _) in word {
                 let (fi, gid, adv) = resolve(ch, px);
                 self.glyphs.push(GlyphInstance {
                     font_index: fi,
@@ -281,6 +292,19 @@ impl<'a> LayoutBox<'a> {
                     color,
                 });
                 pen_x += adv;
+                word_px_max = word_px_max.max(px);
+            }
+            // 링크 히트 영역: 단어 단위 사각형 (공백 절반 포함해 클릭 여유)
+            if let Some(li) = word.iter().find_map(|&(_, _, _, l)| l) {
+                self.links.push((
+                    Rect {
+                        x: word_x0,
+                        y: baseline - 0.9 * word_px_max,
+                        width: pen_x - word_x0 + space_adv * 0.5,
+                        height: 1.2 * word_px_max,
+                    },
+                    hrefs[li].clone(),
+                ));
             }
             pen_x += space_adv;
         }
@@ -355,10 +379,17 @@ fn resolve_width(
     (width.to_px(), ml.to_px(), mr.to_px())
 }
 
-fn collect_node<'a>(node: &StyledNode<'a>, color: Color, px: f32, runs: &mut Vec<(String, Color, f32)>) {
+fn collect_node<'a>(
+    node: &StyledNode<'a>,
+    color: Color,
+    px: f32,
+    link: Option<usize>,
+    runs: &mut Vec<(String, Color, f32, Option<usize>)>,
+    hrefs: &mut Vec<String>,
+) {
     match &node.node.node_type {
-        NodeType::Text(t) => runs.push((t.clone(), color, px)),
-        NodeType::Element(_) => match node.display() {
+        NodeType::Text(t) => runs.push((t.clone(), color, px, link)),
+        NodeType::Element(e) => match node.display() {
             Display::Block | Display::None => {}
             Display::Inline => {
                 let cpx = node
@@ -370,12 +401,33 @@ fn collect_node<'a>(node: &StyledNode<'a>, color: Color, px: f32, runs: &mut Vec
                     Some(Value::Color(c)) => c,
                     _ => color,
                 };
+                // <a href> 는 하위 텍스트에 링크 컨텍스트를 물려준다
+                let clink = match e.attributes.get("href") {
+                    Some(h) if e.tag_name == "a" && !h.is_empty() => {
+                        hrefs.push(h.clone());
+                        Some(hrefs.len() - 1)
+                    }
+                    _ => link,
+                };
                 for child in &node.children {
-                    collect_node(child, ccolor, cpx, runs);
+                    collect_node(child, ccolor, cpx, clink, runs, hrefs);
                 }
             }
         },
     }
+}
+
+// 트리 전체의 링크 히트 영역 수집 (문서 좌표계)
+pub fn collect_link_regions(root: &LayoutBox, out: &mut Vec<(Rect, String)>) {
+    out.extend(root.links.iter().cloned());
+    for child in &root.children {
+        collect_link_regions(child, out);
+    }
+}
+
+// (x, y) 문서 좌표가 가리키는 링크 href
+pub fn hit_link<'a>(links: &'a [(Rect, String)], x: f32, y: f32) -> Option<&'a str> {
+    links.iter().find(|(r, _)| r.contains(x, y)).map(|(_, h)| h.as_str())
 }
 
 fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
@@ -569,6 +621,30 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert!(lb.dimensions.content.height > 0.0, "inline-only block must have height");
         assert!(!glyphs_of(&lb).is_empty(), "link text should render");
+    }
+
+    #[test]
+    fn link_regions_cover_anchor_words_only() {
+        let root = crate::html::parse(
+            "<p>plain <a href=\"https://x.com/a\">click here</a> tail</p>".to_string(),
+        );
+        let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 600.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let mut links = Vec::new();
+        collect_link_regions(&lb, &mut links);
+        assert_eq!(links.len(), 2, "'click' 'here' 두 단어 = 히트 영역 2개");
+        assert!(links.iter().all(|(_, h)| h == "https://x.com/a"));
+        // 링크 단어 중심점은 히트, 문서 시작(plain 위치)은 미스
+        let (r, _) = &links[0];
+        assert!(
+            hit_link(&links, r.x + r.width / 2.0, r.y + r.height / 2.0).is_some(),
+            "링크 단어 중심은 히트"
+        );
+        assert!(hit_link(&links, 1.0, r.y + r.height / 2.0).is_none(), "'plain' 쪽은 미스");
     }
 
     #[test]
