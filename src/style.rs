@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use crate::css::{Rule, Selector, SimpleSelector, Specificity, Stylesheet, Value};
+use crate::css::{Rule, Selector, SimpleSelector, Specificity, Stylesheet, Unit, Value};
 use crate::dom::{ElementData, Node, NodeType};
+
+pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub type PropertyMap = HashMap<String, Value>;
 
@@ -171,27 +173,57 @@ fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &Rule
 pub fn style_tree<'a>(root: &'a Node, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(root, &index, &mut ancestors)
+    style_node(root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE)
 }
 
 fn style_node<'a>(
     node: &'a Node,
     index: &RuleIndex<'a>,
     ancestors: &mut Vec<&'a ElementData>,
+    parent_color: Option<&Value>,
+    parent_fs: f32,
 ) -> StyledNode<'a> {
     match node.node_type {
         NodeType::Element(ref elem) => {
-            let specified_values = specified_values(elem, ancestors, index);
+            let mut values = specified_values(elem, ancestors, index);
+            // font-size: 상대 단위를 부모 기준으로 해석해 px 로 확정 (computed value)
+            let fs = match values.get("font-size") {
+                Some(Value::Length(n, Unit::Px)) => *n,
+                Some(Value::Length(n, Unit::Em)) => n * parent_fs,
+                Some(Value::Length(n, Unit::Rem)) => n * DEFAULT_FONT_SIZE,
+                Some(Value::Length(n, Unit::Percent)) => n / 100.0 * parent_fs,
+                _ => parent_fs, // 미지정/키워드 → 상속
+            };
+            values.insert("font-size".to_string(), Value::Length(fs, Unit::Px));
+            // color: 명시 없으면 상속
+            if !values.contains_key("color") {
+                if let Some(c) = parent_color {
+                    values.insert("color".to_string(), c.clone());
+                }
+            }
+            // font-size 외 속성의 상대 단위는 아직 미해석 → 드롭 (미지원과 동일: auto 취급)
+            values.retain(|k, v| {
+                k == "font-size"
+                    || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem | Unit::Percent))
+            });
+            let my_color = values.get("color").cloned();
             ancestors.push(elem);
-            let children =
-                node.children.iter().map(|child| style_node(child, index, ancestors)).collect();
+            let children = node
+                .children
+                .iter()
+                .map(|child| style_node(child, index, ancestors, my_color.as_ref(), fs))
+                .collect();
             ancestors.pop();
-            StyledNode { node, specified_values, children }
+            StyledNode { node, specified_values: values, children }
         }
         NodeType::Text(_) => StyledNode {
             node,
             specified_values: HashMap::new(),
-            children: node.children.iter().map(|child| style_node(child, index, ancestors)).collect(),
+            children: node
+                .children
+                .iter()
+                .map(|child| style_node(child, index, ancestors, parent_color, parent_fs))
+                .collect(),
         },
     }
 }
@@ -290,6 +322,60 @@ mod tests {
         let styled = style_tree(&root, &ss);
         let p = &styled.children[0];
         assert_eq!(p.value("width"), Some(Value::Length(2.0, Unit::Px)), "(0,2,0) 이 (0,1,0) 을 이김");
+    }
+
+    #[test]
+    fn color_inherits_to_descendants() {
+        let root = crate::html::parse("<div><p>t</p></div>".to_string());
+        let ss = crate::css::parse("div { color: #ff0000; }".to_string());
+        let styled = style_tree(&root, &ss);
+        let p = &styled.children[0];
+        assert_eq!(
+            p.value("color"),
+            Some(Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 })),
+            "color 는 부모에서 상속"
+        );
+    }
+
+    #[test]
+    fn own_color_overrides_inherited() {
+        let root = crate::html::parse("<div><p>t</p></div>".to_string());
+        let ss = crate::css::parse("div { color: #ff0000; } p { color: #0000ff; }".to_string());
+        let styled = style_tree(&root, &ss);
+        let p = &styled.children[0];
+        assert_eq!(
+            p.value("color"),
+            Some(Value::Color(crate::css::Color { r: 0, g: 0, b: 255, a: 255 }))
+        );
+    }
+
+    #[test]
+    fn font_size_relative_units_resolve() {
+        let root = crate::html::parse(
+            "<div><p class=\"em\">a</p><p class=\"pc\">b</p><p class=\"rem\">c</p><p>d</p></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            "div { font-size: 20px; } .em { font-size: 1.5em; } .pc { font-size: 50%; } \
+             .rem { font-size: 2rem; }"
+                .to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        // root = div, children = p 4개
+        let fs = |i: usize| styled.children[i].value("font-size");
+        assert_eq!(fs(0), Some(Value::Length(30.0, Unit::Px)), "1.5em × 20px");
+        assert_eq!(fs(1), Some(Value::Length(10.0, Unit::Px)), "50% × 20px");
+        assert_eq!(fs(2), Some(Value::Length(32.0, Unit::Px)), "2rem × 16px 루트");
+        assert_eq!(fs(3), Some(Value::Length(20.0, Unit::Px)), "미지정 → 상속");
+    }
+
+    #[test]
+    fn relative_units_dropped_outside_font_size() {
+        let root = crate::html::parse("<div></div>".to_string());
+        let ss = crate::css::parse("div { width: 50%; margin-top: 2em; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.value("width"), None, "width % 는 미해석 → 드롭(auto)");
+        assert_eq!(styled.value("margin-top"), None);
     }
 
     #[test]

@@ -40,6 +40,9 @@ pub enum Value {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Unit {
     Px,
+    Em,      // 부모 font-size 배수
+    Rem,     // 루트 font-size 배수
+    Percent, // 문맥 의존 (현재 font-size 에서만 해석)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -338,9 +341,15 @@ fn interpret_value(text: &str) -> Option<Value> {
         || bytes[0] == b'.'
         || (bytes[0] == b'-' && bytes.len() > 1 && (bytes[1].is_ascii_digit() || bytes[1] == b'.'));
     if numeric_start {
-        if let Some(num) = text.strip_suffix("px") {
-            if let Ok(f) = num.trim().parse::<f32>() {
-                return Some(Value::Length(f, Unit::Px));
+        // 주의: "rem" 을 "em" 보다 먼저 검사
+        for (suffix, unit) in
+            [("px", Unit::Px), ("rem", Unit::Rem), ("em", Unit::Em), ("%", Unit::Percent)]
+        {
+            if let Some(num) = text.strip_suffix(suffix) {
+                if let Ok(f) = num.trim().parse::<f32>() {
+                    return Some(Value::Length(f, unit));
+                }
+                return None;
             }
         }
         // 단위 없는 0 은 유효한 길이 (예: margin: 0 auto)
@@ -349,7 +358,7 @@ fn interpret_value(text: &str) -> Option<Value> {
                 return Some(Value::Length(0.0, Unit::Px));
             }
         }
-        return None; // em/%/rem/단위없는 0 아닌 수 등은 미지원
+        return None; // pt/vh/단위없는 0 아닌 수 등은 미지원
     }
     if text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         if let Some(c) = named_color(&lower) {
@@ -583,6 +592,15 @@ mod tests {
             ss.rules[0].declarations[0].value,
             Value::Keyword("flex".to_string())
         );
+    }
+
+    #[test]
+    fn parses_relative_units() {
+        let ss = parse("p { font-size: 1.5em; width: 50%; margin-top: 2rem; }".to_string());
+        let d = &ss.rules[0].declarations;
+        assert_eq!(d[0].value, Value::Length(1.5, Unit::Em));
+        assert_eq!(d[1].value, Value::Length(50.0, Unit::Percent));
+        assert_eq!(d[2].value, Value::Length(2.0, Unit::Rem));
     }
 
     #[test]
