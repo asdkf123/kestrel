@@ -195,23 +195,51 @@ fn collect_bg_urls(node: &style::StyledNode, out: &mut Vec<String>) {
 }
 
 fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
-    let mut images = Vec::new();
-    let mut map = layout::ImageMap::new();
-    for src in srcs {
-        if map.contains_key(&src) {
-            continue;
-        }
-        if let Some(u) = base.join(&src) {
-            if let Ok(resp) = http::fetch(&u.as_string()) {
-                if let Some(img) = decode_image(&resp.body) {
-                    let (w, h) = (img.width, img.height);
-                    let idx = images.len();
-                    images.push(img);
-                    map.insert(src, (idx, w, h));
-                }
-            }
+    // 중복 제거 (순서 보존)
+    let mut uniq: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for s in srcs {
+        if seen.insert(s.clone()) {
+            uniq.push(s);
         }
     }
+    if uniq.is_empty() {
+        return (Vec::new(), layout::ImageMap::new());
+    }
+    println!("[이미지] {}개 다운로드 중...", uniq.len());
+
+    // 워커 스레드들이 공유 인덱스에서 작업을 가져간다 (최대 8 동시 연결)
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let results: std::sync::Mutex<Vec<Option<png::Image>>> =
+        std::sync::Mutex::new((0..uniq.len()).map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for _ in 0..uniq.len().min(8) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= uniq.len() {
+                    break;
+                }
+                let img = base
+                    .join(&uniq[i])
+                    .and_then(|u| http::fetch(&u.as_string()).ok())
+                    .and_then(|resp| decode_image(&resp.body));
+                results.lock().unwrap()[i] = img;
+            });
+        }
+    });
+
+    let mut images = Vec::new();
+    let mut map = layout::ImageMap::new();
+    for (src, img) in uniq.into_iter().zip(results.into_inner().unwrap()) {
+        if let Some(img) = img {
+            let (w, h) = (img.width, img.height);
+            let idx = images.len();
+            images.push(img);
+            map.insert(src, (idx, w, h));
+        }
+    }
+    println!("[이미지] {}개 디코드 성공", images.len());
     (images, map)
 }
 
@@ -268,6 +296,9 @@ fn build_page(url: &str) -> Option<window::Page> {
     let mut sheet = css::user_agent_stylesheet();
     let mut hrefs = Vec::new();
     collect_links(&dom, &mut hrefs);
+    if !hrefs.is_empty() {
+        println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
+    }
     for href in hrefs.iter().take(10) {
         if let Some(u) = base.join(href) {
             if let Ok(r) = http::fetch(&u.as_string()) {

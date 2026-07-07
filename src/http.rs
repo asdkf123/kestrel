@@ -1,8 +1,13 @@
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::url::{Url, UrlError};
+
+// 응답 없는 서버에 영원히 매달리지 않기 위한 소켓 타임아웃
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct Response {
     pub status: u16,
@@ -41,7 +46,16 @@ pub fn fetch(url: &str) -> Result<Response, HttpError> {
 }
 
 fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
-    let tcp = TcpStream::connect((url.host.as_str(), url.port)).map_err(HttpError::Io)?;
+    let addr = (url.host.as_str(), url.port)
+        .to_socket_addrs()
+        .map_err(HttpError::Io)?
+        .next()
+        .ok_or_else(|| {
+            HttpError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "no address"))
+        })?;
+    let tcp = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT).map_err(HttpError::Io)?;
+    tcp.set_read_timeout(Some(IO_TIMEOUT)).map_err(HttpError::Io)?;
+    tcp.set_write_timeout(Some(IO_TIMEOUT)).map_err(HttpError::Io)?;
     let mut stream: Box<dyn Stream> = match url.scheme.as_str() {
         "http" => Box::new(tcp),
         "https" => Box::new(tls_wrap(tcp, &url.host)?),
