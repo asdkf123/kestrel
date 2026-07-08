@@ -259,6 +259,20 @@ pub fn run_bench() {
         }
     }
 
+    // JS 마이크로벤치: 10만 회 루프 산술 (인터프리터 기준선 — 바이트코드 전환 판단용)
+    let js_src = "var s = 0; for (var i = 0; i < 100000; i++) { s += i * 2 % 7; } s";
+    let mut js_times = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let t = Instant::now();
+        crate::js::interp::Interp::new().run(js_src).expect("js bench 실행 실패");
+        js_times.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    let js_st = stats(&js_times);
+    println!(
+        "\njs-loop-100k: median {:>7.3}ms  mean {:>7.3}ms  min {:>7.3}ms",
+        js_st.median, js_st.mean, js_st.min
+    );
+
     println!("\n단계별 (마지막 실행, 단위 ms):");
     println!("{:<12} {:>8} {:>8} {:>8} {:>8} {:>8}", "case", "html", "css", "style", "layout", "paint");
     for (name, ph) in &breakdowns {

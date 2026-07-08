@@ -229,6 +229,10 @@ impl Interp {
         let mut console = HashMap::new();
         console.insert("log".to_string(), Value::Native(Native::ConsoleLog));
         env_declare(&global, "console", Value::Obj(Rc::new(RefCell::new(console))));
+        // document (dom 포인터 미설정 시 호출하면 런타임 에러)
+        let mut document = HashMap::new();
+        document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
+        env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         Interp { global, console: Vec::new(), steps: 0, dom: None }
     }
 

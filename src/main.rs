@@ -7,8 +7,6 @@ mod html;
 mod http;
 mod inflate;
 mod jpeg;
-// M4a 진행 중: run_scripts 가 파이프라인에 연결되기 전까지 dead_code 허용
-#[allow(dead_code)]
 mod js;
 mod layout;
 mod paint;
@@ -91,7 +89,8 @@ fn main() {
     let css_source = fs::read_to_string("examples/test.css").expect("read examples/test.css");
 
     let needs_korean = page_needs_korean(&html_source);
-    let root_node = html::parse(html_source);
+    let mut root_node = html::parse(html_source);
+    js::run_scripts(&mut root_node);
     let stylesheet = css::parse(css_source);
     let style_root = style::style_tree(&root_node, &stylesheet);
 
@@ -292,7 +291,10 @@ fn build_page(url: &str) -> Option<window::Page> {
 
     let html = String::from_utf8_lossy(&resp.body).to_string();
     let needs_korean = page_needs_korean(&html);
-    let dom = html::parse(html);
+    let mut dom = html::parse(html);
+
+    // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능)
+    js::run_scripts(&mut dom);
 
     let base = url::Url::parse(url).ok()?;
 
