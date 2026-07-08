@@ -9,6 +9,8 @@ use super::ast::*;
 use super::parser::parse;
 
 const STEP_LIMIT: u64 = 5_000_000;
+// 이 접두사의 에러는 try/catch 로 잡을 수 없다 (무한 루프 가드가 무력화되지 않게)
+const STEP_LIMIT_MSG: &str = "실행 한도 초과";
 
 #[derive(Clone)]
 pub enum Value {
@@ -177,6 +179,15 @@ pub fn to_bool(v: &Value) -> bool {
         Value::Str(s) => !s.is_empty(),
         _ => true,
     }
+}
+
+// JS ToInt32: 2^32 모듈로 후 부호 있는 32비트로 (비트 연산 의미론)
+fn to_i32(v: &Value) -> i32 {
+    let n = to_num(v);
+    if !n.is_finite() {
+        return 0;
+    }
+    (n.trunc().rem_euclid(4294967296.0)) as u32 as i32
 }
 
 fn to_num(v: &Value) -> f64 {
@@ -468,6 +479,8 @@ pub struct Interp {
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
     // Math.random 용 xorshift 상태
     rng: u64,
+    // throw 된 값 (에러 채널은 String 이라 값은 사이드 채널로 전달)
+    thrown: Option<Value>,
 }
 
 impl Interp {
@@ -526,6 +539,7 @@ impl Interp {
             dom: None,
             handlers: Vec::new(),
             rng: seed,
+            thrown: None,
         }
     }
 
@@ -573,7 +587,7 @@ impl Interp {
     fn tick(&mut self) -> Result<(), String> {
         self.steps += 1;
         if self.steps > STEP_LIMIT {
-            return Err("실행 한도 초과 (무한 루프?)".to_string());
+            return Err(format!("{} (무한 루프?)", STEP_LIMIT_MSG));
         }
         Ok(())
     }
@@ -676,6 +690,68 @@ impl Interp {
                 self.exec_block(stmts, &scope)
             }
             Stmt::Expr(e) => Ok(Flow::Normal(self.eval(e, env)?)),
+            Stmt::Throw(e) => {
+                let v = self.eval(e, env)?;
+                let msg = to_display(&v);
+                self.thrown = Some(v);
+                Err(msg)
+            }
+            Stmt::Try { body, catch, finally } => {
+                let scope = Env::new(Some(env.clone()));
+                let mut result = self.exec_block(body, &scope);
+                if let Err(e) = &result {
+                    // 스텝 한도 초과는 잡을 수 없음 (가드 무력화 방지)
+                    if !e.starts_with(STEP_LIMIT_MSG) {
+                        if let Some((param, cbody)) = catch {
+                            // throw 된 값이 있으면 그 값, 네이티브 에러면 메시지 문자열
+                            let caught =
+                                self.thrown.take().unwrap_or(Value::Str(e.clone()));
+                            let cscope = Env::new(Some(env.clone()));
+                            if let Some(p) = param {
+                                env_declare(&cscope, p, caught);
+                            }
+                            result = self.exec_block(cbody, &cscope);
+                        }
+                    }
+                }
+                if let Some(fbody) = finally {
+                    let fscope = Env::new(Some(env.clone()));
+                    // finally 의 에러/제어 흐름이 우선
+                    match self.exec_block(fbody, &fscope)? {
+                        Flow::Normal(_) => {}
+                        flow => return Ok(flow),
+                    }
+                }
+                result
+            }
+            Stmt::Switch { disc, cases } => {
+                let d = self.eval(disc, env)?;
+                let scope = Env::new(Some(env.clone()));
+                let mut start = None;
+                for (i, (test, _)) in cases.iter().enumerate() {
+                    if let Some(t) = test {
+                        let tv = self.eval(t, &scope)?;
+                        if strict_eq(&d, &tv) {
+                            start = Some(i);
+                            break;
+                        }
+                    }
+                }
+                if start.is_none() {
+                    start = cases.iter().position(|(t, _)| t.is_none()); // default
+                }
+                if let Some(s) = start {
+                    for (_, stmts) in &cases[s..] {
+                        // 폴스루: break 가 나올 때까지 다음 케이스도 실행
+                        match self.exec_block(stmts, &scope)? {
+                            Flow::Break => return Ok(Flow::Normal(Value::Undefined)),
+                            Flow::Normal(_) => {}
+                            other => return Ok(other),
+                        }
+                    }
+                }
+                Ok(Flow::Normal(Value::Undefined))
+            }
         }
     }
 
@@ -709,12 +785,23 @@ impl Interp {
                 body: body.clone(),
                 env: env.clone(),
             }))),
+            Expr::Template(parts) => {
+                let mut s = String::new();
+                for part in parts {
+                    match part {
+                        TemplatePart::Lit(t) => s.push_str(t),
+                        TemplatePart::Expr(e) => s.push_str(&to_display(&self.eval(e, env)?)),
+                    }
+                }
+                Ok(Value::Str(s))
+            }
             Expr::Unary { op, expr } => {
                 let v = self.eval(expr, env)?;
                 Ok(match op {
                     UnOp::Neg => Value::Num(-to_num(&v)),
                     UnOp::Not => Value::Bool(!to_bool(&v)),
                     UnOp::Typeof => Value::Str(type_of(&v).to_string()),
+                    UnOp::BitNot => Value::Num(!to_i32(&v) as f64),
                 })
             }
             Expr::Update { op, prefix, target } => {
@@ -1203,6 +1290,12 @@ impl Interp {
             BinOp::Mul => Value::Num(to_num(&l) * to_num(&r)),
             BinOp::Div => Value::Num(to_num(&l) / to_num(&r)),
             BinOp::Mod => Value::Num(to_num(&l) % to_num(&r)),
+            BinOp::BitAnd => Value::Num((to_i32(&l) & to_i32(&r)) as f64),
+            BinOp::BitOr => Value::Num((to_i32(&l) | to_i32(&r)) as f64),
+            BinOp::BitXor => Value::Num((to_i32(&l) ^ to_i32(&r)) as f64),
+            BinOp::Shl => Value::Num((to_i32(&l) << (to_i32(&r) & 31)) as f64),
+            BinOp::Shr => Value::Num((to_i32(&l) >> (to_i32(&r) & 31)) as f64),
+            BinOp::UShr => Value::Num(((to_i32(&l) as u32) >> (to_i32(&r) & 31)) as f64),
             BinOp::EqEq => Value::Bool(loose_eq(&l, &r)),
             BinOp::NotEq => Value::Bool(!loose_eq(&l, &r)),
             BinOp::EqEqEq => Value::Bool(strict_eq(&l, &r)),
@@ -1570,6 +1663,101 @@ mod tests {
         );
         // 파싱 실패는 스크립트 에러
         assert!(Interp::new().run("JSON.parse('{oops')").is_err());
+    }
+
+    #[test]
+    fn bitwise_operators() {
+        assert_eq!(run_num("5 ^ 3"), 6.0);
+        assert_eq!(run_num("5 & 3"), 1.0);
+        assert_eq!(run_num("5 | 2"), 7.0);
+        assert_eq!(run_num("~5"), -6.0);
+        assert_eq!(run_num("1 << 8"), 256.0);
+        assert_eq!(run_num("-8 >> 1"), -4.0);
+        assert_eq!(run_num("-1 >>> 28"), 15.0);
+        assert_eq!(run_num("4294967296 | 0"), 0.0, "ToInt32 랩어라운드");
+        assert_eq!(run_num("3.9 | 0"), 3.0, "| 0 절삭 관용구");
+        // 우선순위: & > ^ > | , 시프트 > 비교
+        assert_eq!(run_num("1 | 2 & 3"), 3.0);
+        assert!(run_bool("1 << 2 > 3"));
+        assert!(run_bool("(5 & 3) === 1 && true"));
+    }
+
+    #[test]
+    fn template_literals() {
+        assert_eq!(run_str("var x = 3; `a ${x + 1} b`"), "a 4 b");
+        assert_eq!(run_str("`no interp`"), "no interp");
+        assert_eq!(run_str("``"), "");
+        assert_eq!(run_str("`line1\nline2`"), "line1\nline2", "리터럴 줄바꿈 허용");
+        assert_eq!(run_str("`\\`tick\\` ${'and'} \\${notinterp}`"), "`tick` and ${notinterp}");
+        // 보간 안에 중괄호 포함 문자열
+        assert_eq!(run_str("`v=${ '{'.length }`"), "v=1");
+        // 중첩 식
+        assert_eq!(run_str("var f = n => n * 2; `r=${f(3) + 1}`"), "r=7");
+    }
+
+    #[test]
+    fn try_catch_finally_throw() {
+        assert_eq!(run_str("try { throw 'boom'; } catch (e) { 'caught ' + e }"), "caught boom");
+        // throw 된 값 그대로 바인딩 (객체)
+        assert_eq!(
+            run_num("try { throw { code: 42 }; } catch (e) { e.code }"),
+            42.0
+        );
+        // 네이티브 런타임 에러도 잡힘
+        assert_eq!(run_str("try { undefinedVar + 1; } catch (e) { 'survived' }"), "survived");
+        // finally 는 항상 실행
+        assert_eq!(
+            run_str("var log = ''; try { log += 'a'; throw 1; } catch (e) { log += 'b'; } finally { log += 'c'; } log"),
+            "abc"
+        );
+        // catch 없는 try/finally: 에러 전파 + finally 실행
+        assert!(Interp::new()
+            .run("var x = 0; try { throw 'up'; } finally { x = 1; }")
+            .is_err());
+        // 바인딩 생략 catch (ES2019)
+        assert_eq!(run_num("try { throw 9; } catch { 7 }"), 7.0);
+        // 함수 경계 넘는 전파
+        assert_eq!(
+            run_str("function f() { throw 'deep'; } try { f(); } catch (e) { e }"),
+            "deep"
+        );
+        // 스텝 한도는 잡을 수 없음
+        assert!(Interp::new().run("try { while (true) {} } catch (e) { 'nope' }").is_err());
+    }
+
+    #[test]
+    fn switch_statement() {
+        let src = "function grade(n) { \
+             switch (n) { \
+               case 1: return 'one'; \
+               case 2: \
+               case 3: return 'few'; \
+               default: return 'many'; \
+             } \
+           }";
+        assert_eq!(run_str(&format!("{} grade(1)", src)), "one");
+        assert_eq!(run_str(&format!("{} grade(2)", src)), "few", "폴스루");
+        assert_eq!(run_str(&format!("{} grade(3)", src)), "few");
+        assert_eq!(run_str(&format!("{} grade(99)", src)), "many");
+        // break 로 탈출, 문자열 판별, 스위치 뒤 계속 실행
+        assert_eq!(
+            run_num("var r = 0; switch ('b') { case 'a': r = 1; break; case 'b': r = 2; break; case 'c': r = 3; } r"),
+            2.0
+        );
+        // 엄격 비교 (1 !== '1')
+        assert_eq!(
+            run_num("var r = 0; switch ('1') { case 1: r = 10; break; default: r = 20; } r"),
+            20.0
+        );
+    }
+
+    #[test]
+    fn object_method_shorthand() {
+        assert_eq!(run_num("var o = { double(n) { return n * 2; } }; o.double(4)"), 8.0);
+        assert_eq!(
+            run_str("var api = { name: 'k', hello() { return 'hi'; }, }; api.hello() + api.name"),
+            "hik"
+        );
     }
 
     #[test]

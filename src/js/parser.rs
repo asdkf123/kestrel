@@ -2,7 +2,18 @@
 // 세미콜론은 있으면 소비, 없어도 관용 (단순화된 ASI).
 
 use super::ast::*;
-use super::lexer::{tokenize, Tok};
+use super::lexer::{tokenize, Tok, TplPart};
+
+// 템플릿 보간 ${...} 소스를 독립적으로 식 파싱
+fn parse_expr_source(src: &str) -> Result<Expr, String> {
+    let toks = tokenize(src)?;
+    let mut p = Parser { toks, pos: 0 };
+    let e = p.expr()?;
+    if !p.eof() {
+        return Err("템플릿 보간 식 뒤에 잉여 토큰".to_string());
+    }
+    Ok(e)
+}
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
     let toks = tokenize(src)?;
@@ -90,6 +101,14 @@ impl Parser {
                 self.eat(&Tok::Semi);
                 Ok(Stmt::Continue)
             }
+            Some(Tok::Throw) => {
+                self.pos += 1;
+                let e = self.expr()?;
+                self.eat(&Tok::Semi);
+                Ok(Stmt::Throw(e))
+            }
+            Some(Tok::Try) => self.try_stmt(),
+            Some(Tok::Switch) => self.switch_stmt(),
             Some(Tok::LBrace) => Ok(Stmt::Block(self.block()?)),
             Some(Tok::Semi) => {
                 self.pos += 1;
@@ -202,6 +221,65 @@ impl Parser {
         Ok(Stmt::For { init, cond, step, body: self.body_of_clause()? })
     }
 
+    fn try_stmt(&mut self) -> Result<Stmt, String> {
+        self.expect(&Tok::Try)?;
+        let body = self.block()?;
+        let catch = if self.eat(&Tok::Catch) {
+            let param = if self.eat(&Tok::LParen) {
+                let p = self.ident()?;
+                self.expect(&Tok::RParen)?;
+                Some(p)
+            } else {
+                None // ES2019: catch { } 바인딩 생략
+            };
+            Some((param, self.block()?))
+        } else {
+            None
+        };
+        let finally = if self.eat(&Tok::Finally) { Some(self.block()?) } else { None };
+        if catch.is_none() && finally.is_none() {
+            return Err("try 에는 catch 나 finally 가 필요".to_string());
+        }
+        Ok(Stmt::Try { body, catch, finally })
+    }
+
+    fn switch_stmt(&mut self) -> Result<Stmt, String> {
+        self.expect(&Tok::Switch)?;
+        self.expect(&Tok::LParen)?;
+        let disc = self.expr()?;
+        self.expect(&Tok::RParen)?;
+        self.expect(&Tok::LBrace)?;
+        let mut cases: Vec<(Option<Expr>, Vec<Stmt>)> = Vec::new();
+        loop {
+            match self.peek() {
+                Some(Tok::RBrace) => {
+                    self.pos += 1;
+                    break;
+                }
+                Some(Tok::Case) => {
+                    self.pos += 1;
+                    let test = self.expr()?;
+                    self.expect(&Tok::Colon)?;
+                    cases.push((Some(test), Vec::new()));
+                }
+                Some(Tok::Default) => {
+                    self.pos += 1;
+                    self.expect(&Tok::Colon)?;
+                    cases.push((None, Vec::new()));
+                }
+                None => return Err("닫히지 않은 switch".to_string()),
+                _ => {
+                    let stmt = self.stmt()?;
+                    match cases.last_mut() {
+                        Some((_, stmts)) => stmts.push(stmt),
+                        None => return Err("switch 안 문은 case 뒤에 와야 함".to_string()),
+                    }
+                }
+            }
+        }
+        Ok(Stmt::Switch { disc, cases })
+    }
+
     // if/while/for 의 본문: 블록 또는 단일 문
     fn body_of_clause(&mut self) -> Result<Vec<Stmt>, String> {
         if self.peek() == Some(&Tok::LBrace) {
@@ -298,10 +376,37 @@ impl Parser {
     }
 
     fn logical_and(&mut self) -> Result<Expr, String> {
-        let mut left = self.equality()?;
+        let mut left = self.bit_or()?;
         while self.eat(&Tok::AndAnd) {
-            let right = self.equality()?;
+            let right = self.bit_or()?;
             left = Expr::Logical { op: LogOp::And, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn bit_or(&mut self) -> Result<Expr, String> {
+        let mut left = self.bit_xor()?;
+        while self.eat(&Tok::Pipe) {
+            let right = self.bit_xor()?;
+            left = Expr::Binary { op: BinOp::BitOr, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn bit_xor(&mut self) -> Result<Expr, String> {
+        let mut left = self.bit_and()?;
+        while self.eat(&Tok::Caret) {
+            let right = self.bit_and()?;
+            left = Expr::Binary { op: BinOp::BitXor, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn bit_and(&mut self) -> Result<Expr, String> {
+        let mut left = self.equality()?;
+        while self.eat(&Tok::Amp) {
+            let right = self.equality()?;
+            left = Expr::Binary { op: BinOp::BitAnd, left: Box::new(left), right: Box::new(right) };
         }
         Ok(left)
     }
@@ -324,13 +429,29 @@ impl Parser {
     }
 
     fn relational(&mut self) -> Result<Expr, String> {
-        let mut left = self.additive()?;
+        let mut left = self.shift()?;
         loop {
             let op = match self.peek() {
                 Some(Tok::Lt) => BinOp::Lt,
                 Some(Tok::Gt) => BinOp::Gt,
                 Some(Tok::Le) => BinOp::Le,
                 Some(Tok::Ge) => BinOp::Ge,
+                _ => break,
+            };
+            self.pos += 1;
+            let right = self.shift()?;
+            left = Expr::Binary { op, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn shift(&mut self) -> Result<Expr, String> {
+        let mut left = self.additive()?;
+        loop {
+            let op = match self.peek() {
+                Some(Tok::Shl) => BinOp::Shl,
+                Some(Tok::Shr) => BinOp::Shr,
+                Some(Tok::UShr) => BinOp::UShr,
                 _ => break,
             };
             self.pos += 1;
@@ -376,6 +497,7 @@ impl Parser {
             Some(Tok::Minus) => Some(UnOp::Neg),
             Some(Tok::Not) => Some(UnOp::Not),
             Some(Tok::Typeof) => Some(UnOp::Typeof),
+            Some(Tok::Tilde) => Some(UnOp::BitNot),
             _ => None,
         };
         if let Some(op) = op {
@@ -448,6 +570,18 @@ impl Parser {
         match self.next()? {
             Tok::Num(n) => Ok(Expr::Num(n)),
             Tok::Str(s) => Ok(Expr::Str(s)),
+            Tok::Template(parts) => {
+                let mut out = Vec::new();
+                for part in parts {
+                    out.push(match part {
+                        TplPart::Lit(s) => TemplatePart::Lit(s),
+                        TplPart::Expr(src) => {
+                            TemplatePart::Expr(Box::new(parse_expr_source(&src)?))
+                        }
+                    });
+                }
+                Ok(Expr::Template(out))
+            }
             Tok::True => Ok(Expr::Bool(true)),
             Tok::False => Ok(Expr::Bool(false)),
             Tok::Null => Ok(Expr::Null),
@@ -487,6 +621,11 @@ impl Parser {
                         };
                         let value = if self.eat(&Tok::Colon) {
                             self.assignment()?
+                        } else if self.peek() == Some(&Tok::LParen) {
+                            // 메서드 단축 { foo(a) { ... } }
+                            let params = self.param_list()?;
+                            let body = self.block()?;
+                            Expr::Func { params, body }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };

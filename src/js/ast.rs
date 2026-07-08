@@ -20,6 +20,14 @@ pub enum Expr {
     Assign { op: AssignOp, target: Box<Expr>, value: Box<Expr> },
     Member { obj: Box<Expr>, prop: Box<Expr>, computed: bool },
     Call { callee: Box<Expr>, args: Vec<Expr> },
+    // 템플릿 리터럴: 리터럴/보간 식 조각의 연결
+    Template(Vec<TemplatePart>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemplatePart {
+    Lit(String),
+    Expr(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,6 +45,12 @@ pub enum BinOp {
     Gt,
     Le,
     Ge,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    UShr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,6 +64,7 @@ pub enum UnOp {
     Neg,
     Not,
     Typeof,
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,4 +101,13 @@ pub enum Stmt {
     Continue,
     Block(Vec<Stmt>),
     Expr(Expr),
+    Throw(Expr),
+    // catch: (바인딩 이름 — ES2019 생략 가능, 몸통)
+    Try {
+        body: Vec<Stmt>,
+        catch: Option<(Option<String>, Vec<Stmt>)>,
+        finally: Option<Vec<Stmt>>,
+    },
+    // cases: (판별식 — None 은 default, 문 목록). 폴스루 의미론.
+    Switch { disc: Expr, cases: Vec<(Option<Expr>, Vec<Stmt>)> },
 }

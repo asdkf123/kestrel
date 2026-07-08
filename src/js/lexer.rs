@@ -1,11 +1,19 @@
 // JS 렉서: 소스 → 토큰열. 최대 munch (=== 이 == 보다 우선).
 // 미지원: 템플릿 리터럴, 정규식 리터럴, \u 이스케이프 (에러로 보고).
 
+// 템플릿 리터럴 조각: 리터럴 텍스트 / ${...} 안의 식 소스 (파서가 재귀 파싱)
+#[derive(Debug, Clone, PartialEq)]
+pub enum TplPart {
+    Lit(String),
+    Expr(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Num(f64),
     Str(String),
     Ident(String),
+    Template(Vec<TplPart>),
     // 키워드
     Var,
     Let,
@@ -23,6 +31,13 @@ pub enum Tok {
     Null,
     Undefined,
     Typeof,
+    Try,
+    Catch,
+    Finally,
+    Throw,
+    Switch,
+    Case,
+    Default,
     // 구두점
     LParen,
     RParen,
@@ -60,6 +75,14 @@ pub enum Tok {
     Not,
     PlusPlus,
     MinusMinus,
+    // 비트 연산자
+    Amp,
+    Pipe,
+    Caret,
+    Tilde,
+    Shl,
+    Shr,
+    UShr,
 }
 
 fn keyword(word: &str) -> Option<Tok> {
@@ -80,6 +103,13 @@ fn keyword(word: &str) -> Option<Tok> {
         "null" => Tok::Null,
         "undefined" => Tok::Undefined,
         "typeof" => Tok::Typeof,
+        "try" => Tok::Try,
+        "catch" => Tok::Catch,
+        "finally" => Tok::Finally,
+        "throw" => Tok::Throw,
+        "switch" => Tok::Switch,
+        "case" => Tok::Case,
+        "default" => Tok::Default,
         _ => return None,
     })
 }
@@ -181,6 +211,81 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             out.push(Tok::Str(s));
             continue;
         }
+        // 템플릿 리터럴: `text ${expr} text`
+        if c == '`' {
+            i += 1;
+            let mut parts: Vec<TplPart> = Vec::new();
+            let mut lit = String::new();
+            loop {
+                if i >= b.len() {
+                    return Err("닫히지 않은 템플릿 리터럴".to_string());
+                }
+                let ch = b[i];
+                if ch == '`' {
+                    i += 1;
+                    break;
+                }
+                if ch == '\\' {
+                    i += 1;
+                    if i >= b.len() {
+                        return Err("템플릿 끝의 역슬래시".to_string());
+                    }
+                    lit.push(match b[i] {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        other => other, // \` \$ \\ 등: 그대로
+                    });
+                    i += 1;
+                    continue;
+                }
+                if ch == '$' && b.get(i + 1) == Some(&'{') {
+                    if !lit.is_empty() {
+                        parts.push(TplPart::Lit(std::mem::take(&mut lit)));
+                    }
+                    i += 2;
+                    // ${...} 식 소스 추출: 중괄호 깊이 추적 + 내부 문자열 스킵
+                    let start = i;
+                    let mut depth = 1usize;
+                    while i < b.len() {
+                        match b[i] {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            '\'' | '"' => {
+                                let q = b[i];
+                                i += 1;
+                                while i < b.len() && b[i] != q {
+                                    if b[i] == '\\' {
+                                        i += 1;
+                                    }
+                                    i += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    if depth != 0 {
+                        return Err("닫히지 않은 ${ } 보간".to_string());
+                    }
+                    parts.push(TplPart::Expr(b[start..i].iter().collect()));
+                    i += 1; // '}'
+                    continue;
+                }
+                lit.push(ch);
+                i += 1;
+            }
+            if !lit.is_empty() || parts.is_empty() {
+                parts.push(TplPart::Lit(lit));
+            }
+            out.push(Tok::Template(parts));
+            continue;
+        }
         // 식별자/키워드
         if c.is_ascii_alphabetic() || c == '_' || c == '$' {
             let start = i;
@@ -203,6 +308,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             i += 3;
             continue;
         }
+        if three == ">>>" {
+            out.push(Tok::UShr);
+            i += 3;
+            continue;
+        }
         let two: String = b[i..(i + 2).min(b.len())].iter().collect();
         let two_tok = match two.as_str() {
             "=>" => Some(Tok::Arrow),
@@ -218,6 +328,8 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             "-=" => Some(Tok::MinusAssign),
             "*=" => Some(Tok::StarAssign),
             "/=" => Some(Tok::SlashAssign),
+            "<<" => Some(Tok::Shl),
+            ">>" => Some(Tok::Shr),
             _ => None,
         };
         if let Some(t) = two_tok {
@@ -246,6 +358,10 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             '<' => Tok::Lt,
             '>' => Tok::Gt,
             '!' => Tok::Not,
+            '&' => Tok::Amp,
+            '|' => Tok::Pipe,
+            '^' => Tok::Caret,
+            '~' => Tok::Tilde,
             other => return Err(format!("알 수 없는 문자: {:?} (위치 {})", other, i)),
         };
         out.push(one);
