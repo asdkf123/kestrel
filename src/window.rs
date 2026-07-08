@@ -467,6 +467,34 @@ mod tests {
     }
 
     #[test]
+    fn click_appends_list_items_and_hit_regions_grow() {
+        let mut page = make_page(
+            "<ul id=\"list\"></ul><button id=\"add\">add</button>\
+             <script>var n = 0; \
+             document.getElementById('add').addEventListener('click', function() { \
+               n++; \
+               var li = document.createElement('li'); \
+               li.textContent = 'row ' + n; \
+               document.getElementById('list').appendChild(li); \
+             });</script>",
+        );
+        let before = page.element_rects.len();
+        // 리스트가 자라면 버튼이 아래로 밀리므로 매 클릭마다 좌표를 다시 잡는다
+        let (x, y) = center_of_tag(&page, "button");
+        assert!(page.dispatch_click(x, y));
+        let (x2, y2) = center_of_tag(&page, "button");
+        assert!(y2 > y, "리스트가 자라서 버튼이 아래로 이동");
+        assert!(page.dispatch_click(x2, y2));
+        let list = page.dom.find_by_attr_id("list").unwrap();
+        assert_eq!(page.dom.get(list).children.len(), 2);
+        assert_eq!(page.dom.text_content(list), "row 1row 2");
+        assert!(
+            page.element_rects.len() >= before + 2,
+            "rebuild 후 새 li 들이 히트 영역에 반영"
+        );
+    }
+
+    #[test]
     fn click_bubbles_to_ancestor_handler() {
         let mut page = make_page(
             "<div id=\"wrap\"><p id=\"inner\">child text</p></div>\

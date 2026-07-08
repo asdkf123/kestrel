@@ -37,6 +37,11 @@ pub enum Native {
     ArrayPush,
     GetElementById,
     AddEventListener,
+    CreateElement,
+    AppendChild,
+    RemoveElement,
+    SetAttribute,
+    GetAttribute,
 }
 
 impl std::fmt::Debug for Value {
@@ -235,6 +240,7 @@ impl Interp {
         // document (dom 포인터 미설정 시 호출하면 런타임 에러)
         let mut document = HashMap::new();
         document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
+        document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         Interp { global, console: Vec::new(), steps: 0, dom: None, handlers: Vec::new() }
     }
@@ -552,8 +558,16 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Value::Dom(id) => {
-                if key == "addEventListener" {
-                    return Ok(Value::Native(Native::AddEventListener));
+                let native = match key {
+                    "addEventListener" => Some(Native::AddEventListener),
+                    "appendChild" => Some(Native::AppendChild),
+                    "remove" => Some(Native::RemoveElement),
+                    "setAttribute" => Some(Native::SetAttribute),
+                    "getAttribute" => Some(Native::GetAttribute),
+                    _ => None,
+                };
+                if let Some(n) = native {
+                    return Ok(Value::Native(n));
                 }
                 self.dom_get(*id, key)
             }
@@ -617,6 +631,58 @@ impl Interp {
                     Ok(Value::Undefined)
                 }
                 _ => Err("addEventListener 는 요소 메서드".to_string()),
+            },
+            Native::CreateElement => {
+                let tag = args.first().map(to_display).unwrap_or_default();
+                if tag.is_empty() {
+                    return Err("createElement 에 태그 이름이 필요".to_string());
+                }
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_element(&tag)))
+            }
+            Native::AppendChild => match (recv, args.first()) {
+                (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
+                    let child = *child;
+                    let dom = self.dom_arena()?;
+                    dom.append_child(parent, child);
+                    Ok(Value::Dom(child))
+                }
+                _ => Err("appendChild 는 요소 인자가 필요".to_string()),
+            },
+            Native::RemoveElement => match recv {
+                Some(Value::Dom(id)) => {
+                    let dom = self.dom_arena()?;
+                    dom.detach(id);
+                    Ok(Value::Undefined)
+                }
+                _ => Err("remove 는 요소 메서드".to_string()),
+            },
+            Native::SetAttribute => match recv {
+                Some(Value::Dom(id)) => {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let value = args.get(1).map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                        e.attributes.insert(name, value);
+                    }
+                    Ok(Value::Undefined)
+                }
+                _ => Err("setAttribute 는 요소 메서드".to_string()),
+            },
+            Native::GetAttribute => match recv {
+                Some(Value::Dom(id)) => {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    match &dom.get(id).node_type {
+                        crate::dom::NodeType::Element(e) => Ok(e
+                            .attributes
+                            .get(&name)
+                            .map(|v| Value::Str(v.clone()))
+                            .unwrap_or(Value::Null)),
+                        _ => Ok(Value::Null),
+                    }
+                }
+                _ => Err("getAttribute 는 요소 메서드".to_string()),
             },
         }
     }
@@ -734,6 +800,15 @@ impl Interp {
         match key {
             "textContent" | "innerText" => {
                 dom.set_text_content(id, text);
+                Ok(())
+            }
+            "innerHTML" => {
+                // 조각 파싱 (관용 파서) → 자식 교체
+                dom.clear_children(id);
+                for tree in crate::html::parse_fragment(text) {
+                    let sub = dom.insert_tree(tree, Some(id));
+                    dom.get_mut(id).children.push(sub);
+                }
                 Ok(())
             }
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)

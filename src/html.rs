@@ -17,7 +17,6 @@ pub fn parse_dom(source: String) -> crate::dom::Dom {
 }
 
 // innerHTML 용: 다중 루트를 html 로 감싸지 않고 그대로 반환
-#[allow(dead_code)] // TODO(M4c 2/2): innerHTML 연결 시 제거
 pub fn parse_fragment(source: String) -> Vec<Node> {
     parse_roots(source)
 }

@@ -64,8 +64,6 @@ pub struct Dom {
     pub root: NodeId,
 }
 
-// TODO(M4c 2/2): createElement 등 DOM 생성 API 가 연결되면 allow 제거
-#[allow(dead_code)]
 impl Dom {
     pub fn from_tree(tree: Node) -> Dom {
         let mut dom = Dom { nodes: Vec::new(), root: 0 };
