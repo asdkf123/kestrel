@@ -67,7 +67,15 @@ fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
     );
     stream.write_all(req.as_bytes()).map_err(HttpError::Io)?;
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).map_err(HttpError::Io)?;
+    match stream.read_to_end(&mut buf) {
+        Ok(_) => {}
+        // close_notify 없이 연결을 닫는 서버 관용 (구글 등 다수).
+        // 절단 여부는 HTTP 프레이밍이 판단한다: parse_response 가
+        // Content-Length 미달이면 BadResponse 로 거른다 (절단 공격 방어).
+        // 모든 클라이언트(브라우저/curl)가 같은 판단을 한다.
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof && !buf.is_empty() => {}
+        Err(e) => return Err(HttpError::Io(e)),
+    }
     Ok(buf)
 }
 
@@ -111,6 +119,17 @@ fn parse_response(raw: &[u8]) -> Result<Response, HttpError> {
     let chunked = header(&headers, "transfer-encoding")
         .map_or(false, |v| v.to_ascii_lowercase().contains("chunked"));
     let body = if chunked { dechunk(body_raw)? } else { body_raw.to_vec() };
+
+    // 절단 방어: Content-Length 선언보다 짧으면 불완전한 응답으로 거부.
+    // (close_notify 관용의 안전핀 — 프레이밍 완결성 검증)
+    if !chunked {
+        if let Some(cl) = header(&headers, "content-length").and_then(|v| v.parse::<usize>().ok())
+        {
+            if body.len() < cl {
+                return Err(HttpError::BadResponse);
+            }
+        }
+    }
 
     Ok(Response { status, headers, body })
 }
@@ -198,5 +217,15 @@ mod tests {
     fn header_lookup_is_case_insensitive() {
         let h = vec![("Content-Type".to_string(), "x".to_string())];
         assert_eq!(header(&h, "content-type").as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn truncated_body_is_rejected() {
+        // Content-Length 10 인데 5바이트만 → 절단으로 판단
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello";
+        assert!(matches!(parse_response(raw), Err(HttpError::BadResponse)));
+        // 정확히 도착하면 통과
+        let ok = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+        assert_eq!(parse_response(ok).unwrap().body, b"hello");
     }
 }
