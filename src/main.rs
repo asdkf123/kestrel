@@ -54,10 +54,8 @@ fn main() {
         match http::fetch(&args[2]) {
             Ok(resp) => {
                 let html = String::from_utf8_lossy(&resp.body).to_string();
-                let dom = html::parse(html);
-                let mut count = 0usize;
-                count_elements(&dom, &mut count);
-                println!("parsed OK: {} elements (http {})", count, resp.status);
+                let dom = html::parse_dom(html);
+                println!("parsed OK: {} elements (http {})", count_elements(&dom), resp.status);
             }
             Err(e) => println!("fetch error: {:?}", e),
         }
@@ -89,7 +87,7 @@ fn main() {
     let css_source = fs::read_to_string("examples/test.css").expect("read examples/test.css");
 
     let needs_korean = page_needs_korean(&html_source);
-    let mut root_node = html::parse(html_source);
+    let mut root_node = html::parse_dom(html_source);
     let js_rt = js::run_scripts(&mut root_node);
     let stylesheet = css::parse(css_source);
 
@@ -155,28 +153,37 @@ fn write_ppm(canvas: &paint::Canvas, path: &str) {
     fs::write(path, data).expect("write ppm");
 }
 
-fn count_elements(node: &dom::Node, count: &mut usize) {
-    if let dom::NodeType::Element(_) = &node.node_type {
-        *count += 1;
-    }
-    for c in &node.children {
-        count_elements(c, count);
+// 아레나 DOM 을 문서 순서(DFS)로 방문
+fn walk_dom(dom: &dom::Dom, id: dom::NodeId, f: &mut impl FnMut(&dom::NodeData)) {
+    let node = dom.get(id);
+    f(node);
+    for &c in &node.children {
+        walk_dom(dom, c, f);
     }
 }
 
-fn collect_img_srcs(node: &dom::Node, out: &mut Vec<String>) {
-    if let dom::NodeType::Element(e) = &node.node_type {
-        if e.tag_name == "img" {
-            if let Some(src) = e.attributes.get("src") {
-                if !src.is_empty() {
-                    out.push(src.clone());
+fn count_elements(dom: &dom::Dom) -> usize {
+    let mut count = 0;
+    walk_dom(dom, dom.root, &mut |n| {
+        if matches!(n.node_type, dom::NodeType::Element(_)) {
+            count += 1;
+        }
+    });
+    count
+}
+
+fn collect_img_srcs(dom: &dom::Dom, out: &mut Vec<String>) {
+    walk_dom(dom, dom.root, &mut |n| {
+        if let dom::NodeType::Element(e) = &n.node_type {
+            if e.tag_name == "img" {
+                if let Some(src) = e.attributes.get("src") {
+                    if !src.is_empty() {
+                        out.push(src.clone());
+                    }
                 }
             }
         }
-    }
-    for c in &node.children {
-        collect_img_srcs(c, out);
-    }
+    });
 }
 
 // 매직 바이트로 포맷 판별 → 해당 디코더 (PNG / JPEG)
@@ -249,35 +256,40 @@ fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::
     (images, map)
 }
 
-fn collect_links(node: &dom::Node, out: &mut Vec<String>) {
-    if let dom::NodeType::Element(e) = &node.node_type {
-        if e.tag_name == "link" {
-            let rel = e.attributes.get("rel").map(|s| s.as_str()).unwrap_or("");
-            if rel.split_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
-                if let Some(href) = e.attributes.get("href") {
-                    out.push(href.clone());
+fn collect_links(dom: &dom::Dom, out: &mut Vec<String>) {
+    walk_dom(dom, dom.root, &mut |n| {
+        if let dom::NodeType::Element(e) = &n.node_type {
+            if e.tag_name == "link" {
+                let rel = e.attributes.get("rel").map(|s| s.as_str()).unwrap_or("");
+                if rel.split_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
+                    if let Some(href) = e.attributes.get("href") {
+                        out.push(href.clone());
+                    }
                 }
             }
         }
-    }
-    for c in &node.children {
-        collect_links(c, out);
+    });
+}
+
+fn extract_css(dom: &dom::Dom, out: &mut String) {
+    let mut style_ids = Vec::new();
+    walk_dom_ids(dom, dom.root, &mut |id| {
+        if let dom::NodeType::Element(e) = &dom.get(id).node_type {
+            if e.tag_name == "style" {
+                style_ids.push(id);
+            }
+        }
+    });
+    for id in style_ids {
+        out.push_str(&dom.text_content(id));
+        out.push('\n');
     }
 }
 
-fn extract_css(node: &dom::Node, out: &mut String) {
-    if let dom::NodeType::Element(e) = &node.node_type {
-        if e.tag_name == "style" {
-            for c in &node.children {
-                if let dom::NodeType::Text(t) = &c.node_type {
-                    out.push_str(t);
-                    out.push('\n');
-                }
-            }
-        }
-    }
-    for c in &node.children {
-        extract_css(c, out);
+fn walk_dom_ids(dom: &dom::Dom, id: dom::NodeId, f: &mut impl FnMut(dom::NodeId)) {
+    f(id);
+    for &c in &dom.get(id).children {
+        walk_dom_ids(dom, c, f);
     }
 }
 
@@ -294,7 +306,7 @@ fn build_page(url: &str) -> Option<window::Page> {
 
     let html = String::from_utf8_lossy(&resp.body).to_string();
     let needs_korean = page_needs_korean(&html);
-    let mut dom = html::parse(html);
+    let mut dom = html::parse_dom(html);
 
     // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능).
     // 반환된 JS 런타임은 이벤트 핸들러(클로저)를 들고 Page 에 보관된다.

@@ -237,7 +237,7 @@ mod tests {
     }
 
     fn canvas_for(html: &str, css: &str, w: f32, h: f32) -> Canvas {
-        let root = crate::html::parse(html.to_string());
+        let root = crate::html::parse_dom(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: crate::layout::Dimensions = Default::default();
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn display_list_emits_rect_and_glyphs() {
-        let root = crate::html::parse("<p>hi</p>".to_string());
+        let root = crate::html::parse_dom("<p>hi</p>".to_string());
         let ss = crate::css::parse(
             "p { display: block; font-size: 20px; background-color: #101010; }".to_string(),
         );
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn background_image_paints_clipped_to_box() {
-        let root = crate::html::parse("<div></div>".to_string());
+        let root = crate::html::parse_dom("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; width: 2px; height: 2px; background-image: url(bg.png); }"
                 .to_string(),

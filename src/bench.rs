@@ -110,7 +110,7 @@ const VH: f32 = 600.0;
 // 파이프라인 1회 실행 (폰트는 미리 로드해 재사용 — 파일 I/O 는 측정 대상이 아님).
 fn render_once(html: &str, fonts: &crate::font::FontStack) -> Phases {
     let t = Instant::now();
-    let dom = crate::html::parse(html.to_string());
+    let dom = crate::html::parse_dom(html.to_string());
     let html_t = t.elapsed();
 
     let t = Instant::now();

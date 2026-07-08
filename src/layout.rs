@@ -473,29 +473,37 @@ pub fn hit_link<'a>(links: &'a [(Rect, String)], x: f32, y: f32) -> Option<&'a s
     links.iter().find(|(r, _)| r.contains(x, y)).map(|(_, h)| h.as_str())
 }
 
-// 이벤트 히트 테스트용: 요소 박스의 (border box, DOM 경로) 수집.
-// 익명 인라인 박스는 부모 요소의 경로를 공유하므로 텍스트 클릭도 매칭된다.
-pub fn collect_element_rects(root: &LayoutBox, out: &mut Vec<(Rect, Vec<usize>)>) {
+// 이벤트 히트 테스트용: 요소 박스의 (border box, NodeId, 깊이) 수집.
+// 익명 인라인 박스는 부모 요소의 id 를 공유하므로 텍스트 클릭도 매칭된다.
+pub fn collect_element_rects(
+    root: &LayoutBox,
+    depth: usize,
+    out: &mut Vec<(Rect, crate::dom::NodeId, usize)>,
+) {
     if matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
-        out.push((root.dimensions.border_box(), root.styled_node.path.clone()));
+        out.push((root.dimensions.border_box(), root.styled_node.id, depth));
     }
     for child in &root.children {
-        collect_element_rects(child, out);
+        collect_element_rects(child, depth + 1, out);
     }
 }
 
-// 클릭 지점을 포함하는 가장 깊은 요소의 경로 (동률이면 나중에 그려진 쪽)
-pub fn hit_element(rects: &[(Rect, Vec<usize>)], x: f32, y: f32) -> Option<Vec<usize>> {
-    let mut best: Option<&(Rect, Vec<usize>)> = None;
+// 클릭 지점을 포함하는 가장 깊은 요소의 NodeId (동률이면 나중에 그려진 쪽)
+pub fn hit_element(
+    rects: &[(Rect, crate::dom::NodeId, usize)],
+    x: f32,
+    y: f32,
+) -> Option<crate::dom::NodeId> {
+    let mut best: Option<&(Rect, crate::dom::NodeId, usize)> = None;
     for er in rects {
         if er.0.contains(x, y) {
             match best {
-                Some(b) if b.1.len() > er.1.len() => {}
+                Some(b) if b.2 > er.2 => {}
                 _ => best = Some(er),
             }
         }
     }
-    best.map(|(_, p)| p.clone())
+    best.map(|&(_, id, _)| id)
 }
 
 // 공백뿐인 인라인 묶음인지 (태그 사이 줄바꿈 등). 이런 익명 박스는 만들지 않는다 —
@@ -571,7 +579,7 @@ mod tests {
     }
 
     fn layout_for(html: &str, css: &str, viewport_width: f32) -> Dimensions {
-        let root = crate::html::parse(html.to_string());
+        let root = crate::html::parse_dom(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -630,7 +638,7 @@ mod tests {
 
     #[test]
     fn children_stack_vertically() {
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<div class=\"outer\"><div class=\"inner\"></div><div class=\"inner\"></div></div>"
                 .to_string(),
         );
@@ -650,7 +658,7 @@ mod tests {
 
     #[test]
     fn text_box_produces_glyphs_and_height() {
-        let root = crate::html::parse("<p>hello world</p>".to_string());
+        let root = crate::html::parse_dom("<p>hello world</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -664,7 +672,7 @@ mod tests {
     #[test]
     fn long_text_wraps_to_multiple_lines() {
         let root =
-            crate::html::parse("<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh</p>".to_string());
+            crate::html::parse_dom("<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -679,7 +687,7 @@ mod tests {
 
     #[test]
     fn inline_element_text_is_collected() {
-        let root = crate::html::parse("<p>a <span>b</span> c</p>".to_string());
+        let root = crate::html::parse_dom("<p>a <span>b</span> c</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -691,7 +699,7 @@ mod tests {
 
     #[test]
     fn inline_only_block_has_nonzero_height() {
-        let root = crate::html::parse("<div><a>link</a></div>".to_string());
+        let root = crate::html::parse_dom("<div><a>link</a></div>".to_string());
         let ss = crate::css::parse("div { display: block; } a { display: inline; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -703,7 +711,7 @@ mod tests {
     }
 
     fn flex_layout(html: &str, css: &str, width: f32) -> Vec<Dimensions> {
-        let root = crate::html::parse(html.to_string());
+        let root = crate::html::parse_dom(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -771,7 +779,7 @@ mod tests {
 
     #[test]
     fn flex_container_height_is_tallest_item() {
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -790,7 +798,7 @@ mod tests {
 
     #[test]
     fn link_regions_cover_anchor_words_only() {
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<p>plain <a href=\"https://x.com/a\">click here</a> tail</p>".to_string(),
         );
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
@@ -814,7 +822,7 @@ mod tests {
 
     #[test]
     fn background_image_resolves_from_map() {
-        let root = crate::html::parse("<div class=\"hero\"></div>".to_string());
+        let root = crate::html::parse_dom("<div class=\"hero\"></div>".to_string());
         let ss = crate::css::parse(
             ".hero { display: block; height: 40px; background-image: url(bg.jpg); }".to_string(),
         );
@@ -833,7 +841,7 @@ mod tests {
 
     #[test]
     fn image_box_uses_intrinsic_size() {
-        let root = crate::html::parse("<div><img src=\"a.png\"></div>".to_string());
+        let root = crate::html::parse_dom("<div><img src=\"a.png\"></div>".to_string());
         let ss = crate::css::parse("div { display: block; } img { display: block; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();

@@ -3,6 +3,26 @@ use std::collections::HashMap;
 use crate::dom::{self, AttrMap, ElementData, Node, NodeType};
 
 pub fn parse(source: String) -> Node {
+    let mut roots = parse_roots(source);
+    if roots.len() == 1 {
+        roots.pop().unwrap()
+    } else {
+        elem_node("html".to_string(), HashMap::new(), roots)
+    }
+}
+
+// 파스 후 바로 아레나로 (일반 경로)
+pub fn parse_dom(source: String) -> crate::dom::Dom {
+    crate::dom::Dom::from_tree(parse(source))
+}
+
+// innerHTML 용: 다중 루트를 html 로 감싸지 않고 그대로 반환
+#[allow(dead_code)] // TODO(M4c 2/2): innerHTML 연결 시 제거
+pub fn parse_fragment(source: String) -> Vec<Node> {
+    parse_roots(source)
+}
+
+fn parse_roots(source: String) -> Vec<Node> {
     let mut t = Tokenizer { input: source.into_bytes(), pos: 0 };
     let mut b = Builder { stack: Vec::new(), roots: Vec::new() };
 
@@ -34,12 +54,7 @@ pub fn parse(source: String) -> Node {
         }
     }
     b.close_all();
-
-    if b.roots.len() == 1 {
-        b.roots.pop().unwrap()
-    } else {
-        elem_node("html".to_string(), HashMap::new(), b.roots)
-    }
+    b.roots
 }
 
 fn elem_node(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {

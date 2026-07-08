@@ -15,7 +15,7 @@ use crate::paint::DisplayItem;
 /// 재생성한다. 이벤트 핸들러가 DOM 을 바꾸면 rebuild 로 화면이 갱신된다.
 /// 스타일/레이아웃 트리는 rebuild 안에서만 사는 일시 산물 (borrow 격리).
 pub struct Page {
-    pub dom: crate::dom::Node,
+    pub dom: crate::dom::Dom,
     pub sheet: crate::css::Stylesheet,
     pub images: Vec<crate::png::Image>,
     pub img_map: crate::layout::ImageMap,
@@ -26,16 +26,8 @@ pub struct Page {
     // ── rebuild() 산출물 ──
     pub items: Vec<DisplayItem>,
     pub links: Vec<(Rect, String)>,
-    pub element_rects: Vec<(Rect, Vec<usize>)>,
+    pub element_rects: Vec<(Rect, crate::dom::NodeId, usize)>,
     pub doc_height: f32,
-}
-
-fn node_at<'a>(root: &'a crate::dom::Node, path: &[usize]) -> Option<&'a crate::dom::Node> {
-    let mut cur = root;
-    for &i in path {
-        cur = cur.children.get(i)?;
-    }
-    Some(cur)
 }
 
 impl Page {
@@ -49,7 +41,7 @@ impl Page {
         self.links.clear();
         crate::layout::collect_link_regions(&layout_root, &mut self.links);
         self.element_rects.clear();
-        crate::layout::collect_element_rects(&layout_root, &mut self.element_rects);
+        crate::layout::collect_element_rects(&layout_root, 0, &mut self.element_rects);
         self.doc_height = layout_root.dimensions.margin_box().height;
     }
 
@@ -59,17 +51,16 @@ impl Page {
         let Some(target) = crate::layout::hit_element(&self.element_rects, x, y) else {
             return false;
         };
-        self.js.dom = Some(&mut self.dom as *mut crate::dom::Node);
-        let mut fired = self.js.fire_handlers(&target, "click");
+        self.js.dom = Some(&mut self.dom as *mut crate::dom::Dom);
+        let mut fired = self.js.fire_handlers(target, "click");
         // onclick 속성: 타깃부터 조상 순서로 평가
-        for k in (0..=target.len()).rev() {
-            let src = node_at(&self.dom, &target[..k]).and_then(|n| {
-                if let crate::dom::NodeType::Element(e) = &n.node_type {
-                    e.attributes.get("onclick").cloned()
-                } else {
-                    None
-                }
-            });
+        let mut chain = vec![target];
+        chain.extend(self.dom.ancestors(target));
+        for id in chain {
+            let src = match &self.dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => e.attributes.get("onclick").cloned(),
+                _ => None,
+            };
             if let Some(src) = src {
                 fired = true;
                 self.js.run_inline_handler(&src);
@@ -377,10 +368,10 @@ pub fn run_page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::{Node, NodeType};
+    use crate::dom::{Dom, NodeType};
 
     fn make_page(html: &str) -> Page {
-        let mut dom = crate::html::parse(html.to_string());
+        let mut dom = crate::html::parse_dom(html.to_string());
         let js = crate::js::run_scripts(&mut dom);
         let sheet = crate::css::user_agent_stylesheet();
         let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
@@ -404,33 +395,16 @@ mod tests {
         page
     }
 
-    fn text_of_id(node: &Node, id: &str) -> Option<String> {
-        if let NodeType::Element(e) = &node.node_type {
-            if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
-                let mut s = String::new();
-                fn collect(n: &Node, out: &mut String) {
-                    if let NodeType::Text(t) = &n.node_type {
-                        out.push_str(t);
-                    }
-                    for c in &n.children {
-                        collect(c, out);
-                    }
-                }
-                collect(node, &mut s);
-                return Some(s);
-            }
-        }
-        node.children.iter().find_map(|c| text_of_id(c, id))
+    fn text_of_id(dom: &Dom, id: &str) -> Option<String> {
+        dom.find_by_attr_id(id).map(|n| dom.text_content(n))
     }
 
     // 태그 이름으로 요소 히트 영역 중심점 찾기
     fn center_of_tag(page: &Page, tag: &str) -> (f32, f32) {
-        for (r, path) in &page.element_rects {
-            if let Some(n) = node_at(&page.dom, path) {
-                if let NodeType::Element(e) = &n.node_type {
-                    if e.tag_name == tag {
-                        return (r.x + r.width / 2.0, r.y + r.height / 2.0);
-                    }
+        for (r, id, _) in &page.element_rects {
+            if let NodeType::Element(e) = &page.dom.get(*id).node_type {
+                if e.tag_name == tag {
+                    return (r.x + r.width / 2.0, r.y + r.height / 2.0);
                 }
             }
         }

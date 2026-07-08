@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 
 use crate::css::{Rule, Selector, SimpleSelector, Specificity, Stylesheet, Unit, Value};
-use crate::dom::{ElementData, Node, NodeType};
+use crate::dom::{Dom, ElementData, NodeData, NodeId, NodeType};
 
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub type PropertyMap = HashMap<String, Value>;
 
 pub struct StyledNode<'a> {
-    pub node: &'a Node,
+    pub node: &'a NodeData,
+    // 아레나 NodeId — JS DOM 핸들과 같은 좌표계 (구조 변형에도 안정)
+    pub id: NodeId,
     pub specified_values: PropertyMap,
     pub children: Vec<StyledNode<'a>>,
-    // 루트로부터의 자식 인덱스 경로 — JS DOM 핸들과 같은 좌표계 (이벤트 히트 매칭용)
-    pub path: Vec<usize>,
 }
 
 pub enum Display {
@@ -174,25 +174,21 @@ fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &Rule
     values
 }
 
-pub fn style_tree<'a>(root: &'a Node, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
+pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE, Vec::new())
+    style_node(dom, dom.root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE)
 }
 
 fn style_node<'a>(
-    node: &'a Node,
+    dom: &'a Dom,
+    id: NodeId,
     index: &RuleIndex<'a>,
     ancestors: &mut Vec<&'a ElementData>,
     parent_color: Option<&Value>,
     parent_fs: f32,
-    path: Vec<usize>,
 ) -> StyledNode<'a> {
-    let child_path = |i: usize| {
-        let mut p = path.clone();
-        p.push(i);
-        p
-    };
+    let node = dom.get(id);
     match node.node_type {
         NodeType::Element(ref elem) => {
             let mut values = specified_values(elem, ancestors, index);
@@ -221,26 +217,20 @@ fn style_node<'a>(
             let children = node
                 .children
                 .iter()
-                .enumerate()
-                .map(|(i, child)| {
-                    style_node(child, index, ancestors, my_color.as_ref(), fs, child_path(i))
-                })
+                .map(|&child| style_node(dom, child, index, ancestors, my_color.as_ref(), fs))
                 .collect();
             ancestors.pop();
-            StyledNode { node, specified_values: values, children, path }
+            StyledNode { node, id, specified_values: values, children }
         }
         NodeType::Text(_) => StyledNode {
             node,
+            id,
             specified_values: HashMap::new(),
             children: node
                 .children
                 .iter()
-                .enumerate()
-                .map(|(i, child)| {
-                    style_node(child, index, ancestors, parent_color, parent_fs, child_path(i))
-                })
+                .map(|&child| style_node(dom, child, index, ancestors, parent_color, parent_fs))
                 .collect(),
-            path,
         },
     }
 }
@@ -252,7 +242,7 @@ mod tests {
 
     #[test]
     fn matching_class_rule_is_applied() {
-        let root = crate::html::parse("<div class=\"box\"></div>".to_string());
+        let root = crate::html::parse_dom("<div class=\"box\"></div>".to_string());
         let ss = crate::css::parse(".box { width: 50px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Px)));
@@ -260,7 +250,7 @@ mod tests {
 
     #[test]
     fn higher_specificity_wins() {
-        let root = crate::html::parse("<div id=\"a\" class=\"b\"></div>".to_string());
+        let root = crate::html::parse_dom("<div id=\"a\" class=\"b\"></div>".to_string());
         let ss = crate::css::parse(".b { width: 10px; } #a { width: 99px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(99.0, Unit::Px)));
@@ -268,7 +258,7 @@ mod tests {
 
     #[test]
     fn universal_selector_applies_to_all() {
-        let root = crate::html::parse("<div></div>".to_string());
+        let root = crate::html::parse_dom("<div></div>".to_string());
         let ss = crate::css::parse("* { width: 7px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(7.0, Unit::Px)));
@@ -276,7 +266,7 @@ mod tests {
 
     #[test]
     fn later_rule_wins_at_equal_specificity() {
-        let root = crate::html::parse("<p class=\"x\"></p>".to_string());
+        let root = crate::html::parse_dom("<p class=\"x\"></p>".to_string());
         let ss = crate::css::parse(".x { width: 1px; } .x { width: 2px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(2.0, Unit::Px)));
@@ -284,7 +274,7 @@ mod tests {
 
     #[test]
     fn compound_selector_needs_both_parts() {
-        let root = crate::html::parse("<div><p></p><p class=\"note\"></p></div>".to_string());
+        let root = crate::html::parse_dom("<div><p></p><p class=\"note\"></p></div>".to_string());
         let ss = crate::css::parse("p.note { width: 5px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.children[0].value("width"), None, "plain <p> must not match p.note");
@@ -297,7 +287,7 @@ mod tests {
 
     #[test]
     fn descendant_selector_matches_only_nested() {
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<div><section class=\"a\"><p>in</p></section><p>out</p></div>".to_string(),
         );
         let ss = crate::css::parse(".a p { width: 9px; }".to_string());
@@ -312,7 +302,7 @@ mod tests {
     #[test]
     fn descendant_selector_skips_levels() {
         // 자손 결합자는 중간 단계를 건너뛴다 (자식 한정이 아님)
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<div class=\"wrap\"><section><p>deep</p></section></div>".to_string(),
         );
         let ss = crate::css::parse(".wrap p { width: 7px; }".to_string());
@@ -324,7 +314,7 @@ mod tests {
     #[test]
     fn descendant_out_of_order_does_not_match() {
         // "div .x" 인데 .x 가 div 의 조상인 경우 → 비매칭
-        let root = crate::html::parse("<span class=\"x\"><div><p>t</p></div></span>".to_string());
+        let root = crate::html::parse_dom("<span class=\"x\"><div><p>t</p></div></span>".to_string());
         let ss = crate::css::parse("div .x { width: 3px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), None);
@@ -332,7 +322,7 @@ mod tests {
 
     #[test]
     fn descendant_specificity_beats_single_class() {
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<div class=\"a\"><p class=\"b\">t</p></div>".to_string(),
         );
         let ss = crate::css::parse(".b { width: 1px; } .a .b { width: 2px; }".to_string());
@@ -343,7 +333,7 @@ mod tests {
 
     #[test]
     fn color_inherits_to_descendants() {
-        let root = crate::html::parse("<div><p>t</p></div>".to_string());
+        let root = crate::html::parse_dom("<div><p>t</p></div>".to_string());
         let ss = crate::css::parse("div { color: #ff0000; }".to_string());
         let styled = style_tree(&root, &ss);
         let p = &styled.children[0];
@@ -356,7 +346,7 @@ mod tests {
 
     #[test]
     fn own_color_overrides_inherited() {
-        let root = crate::html::parse("<div><p>t</p></div>".to_string());
+        let root = crate::html::parse_dom("<div><p>t</p></div>".to_string());
         let ss = crate::css::parse("div { color: #ff0000; } p { color: #0000ff; }".to_string());
         let styled = style_tree(&root, &ss);
         let p = &styled.children[0];
@@ -368,7 +358,7 @@ mod tests {
 
     #[test]
     fn font_size_relative_units_resolve() {
-        let root = crate::html::parse(
+        let root = crate::html::parse_dom(
             "<div><p class=\"em\">a</p><p class=\"pc\">b</p><p class=\"rem\">c</p><p>d</p></div>"
                 .to_string(),
         );
@@ -388,7 +378,7 @@ mod tests {
 
     #[test]
     fn relative_units_dropped_outside_font_size() {
-        let root = crate::html::parse("<div></div>".to_string());
+        let root = crate::html::parse_dom("<div></div>".to_string());
         let ss = crate::css::parse("div { width: 50%; margin-top: 2em; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), None, "width % 는 미해석 → 드롭(auto)");
@@ -397,7 +387,7 @@ mod tests {
 
     #[test]
     fn target_wins_among_many_irrelevant_rules() {
-        let root = crate::html::parse("<div class=\"target\"></div>".to_string());
+        let root = crate::html::parse_dom("<div class=\"target\"></div>".to_string());
         let mut css = String::new();
         for i in 0..200 {
             css.push_str(&format!(".n{} {{ width: {}px; }}", i, i));

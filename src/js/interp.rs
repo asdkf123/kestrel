@@ -21,8 +21,8 @@ pub enum Value {
     Arr(Rc<RefCell<Vec<Value>>>),
     Fn(Rc<JsFn>),
     Native(Native),
-    // DOM 요소 핸들: 루트로부터의 자식 인덱스 경로 (M4a 스펙)
-    Dom(Rc<Vec<usize>>),
+    // DOM 요소 핸들: 아레나 NodeId (구조 변형에도 안정)
+    Dom(crate::dom::NodeId),
 }
 
 pub struct JsFn {
@@ -219,10 +219,10 @@ pub struct Interp {
     pub global: EnvRef,
     pub console: Vec<String>, // console.log 캡처 (호출측이 터미널에 출력)
     steps: u64,
-    // JS4 에서 DOM 바인딩이 사용 (getElementById / textContent)
-    pub dom: Option<*mut crate::dom::Node>,
-    // 이벤트 핸들러 레지스트리: (요소 경로, 이벤트 타입, 핸들러 함수)
-    pub handlers: Vec<(Vec<usize>, String, Value)>,
+    // DOM 바인딩이 사용 (실행 동안만 유효한 아레나 포인터)
+    pub dom: Option<*mut crate::dom::Dom>,
+    // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
+    pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
 }
 
 impl Interp {
@@ -239,14 +239,18 @@ impl Interp {
         Interp { global, console: Vec::new(), steps: 0, dom: None, handlers: Vec::new() }
     }
 
-    // 이벤트 디스패치: 등록 경로가 타깃 경로의 접두사면 실행 (조상 = 버블링).
+    // 이벤트 디스패치: 타깃과 그 조상 체인에 등록된 핸들러 실행 (버블링).
     // 하나라도 실행되면 true. 핸들러 에러는 [js error] 로 격리.
-    pub fn fire_handlers(&mut self, target: &[usize], event: &str) -> bool {
+    pub fn fire_handlers(&mut self, target: crate::dom::NodeId, event: &str) -> bool {
         self.steps = 0; // 이벤트마다 실행 한도 리셋
+        let mut chain = vec![target];
+        if let Some(p) = self.dom {
+            chain.extend(unsafe { (*p).ancestors(target) });
+        }
         let to_run: Vec<Value> = self
             .handlers
             .iter()
-            .filter(|(p, t, _)| t == event && target.starts_with(p))
+            .filter(|(id, t, _)| t == event && chain.contains(id))
             .map(|(_, _, f)| f.clone())
             .collect();
         let fired = !to_run.is_empty();
@@ -547,11 +551,11 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
-            Value::Dom(path) => {
+            Value::Dom(id) => {
                 if key == "addEventListener" {
                     return Ok(Value::Native(Native::AddEventListener));
                 }
-                self.dom_get(path, key)
+                self.dom_get(*id, key)
             }
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
@@ -605,10 +609,10 @@ impl Interp {
             },
             Native::GetElementById => self.dom_get_element_by_id(args),
             Native::AddEventListener => match recv {
-                Some(Value::Dom(path)) => {
+                Some(Value::Dom(id)) => {
                     let event = args.first().map(to_display).unwrap_or_default();
                     if let Some(f @ Value::Fn(_)) = args.get(1) {
-                        self.handlers.push((path.as_ref().clone(), event, f.clone()));
+                        self.handlers.push((id, event, f.clone()));
                     }
                     Ok(Value::Undefined)
                 }
@@ -682,7 +686,7 @@ impl Interp {
                             Ok(()) // 배열 비인덱스 프로퍼티는 무시 (단순화)
                         }
                     }
-                    Value::Dom(path) => self.dom_set(&path, &key, value),
+                    Value::Dom(id) => self.dom_set(id, &key, value),
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
             }
@@ -690,11 +694,11 @@ impl Interp {
         }
     }
 
-    // ── DOM 바인딩 (JS4 에서 dom 포인터가 설정됨; 미설정 시 에러) ──
+    // ── DOM 바인딩 (아레나; dom 포인터는 실행 동안만 유효, 미설정 시 에러) ──
 
-    fn dom_root(&mut self) -> Result<&mut crate::dom::Node, String> {
+    fn dom_arena(&mut self) -> Result<&mut crate::dom::Dom, String> {
         match self.dom {
-            // 안전성: run_scripts 가 실행 동안에만 유효한 포인터를 설정/해제한다.
+            // 안전성: run_scripts/dispatch 가 실행 동안에만 유효한 포인터를 설정/해제한다.
             Some(p) => unsafe { Ok(&mut *p) },
             None => Err("document 를 사용할 수 없음".to_string()),
         }
@@ -702,74 +706,34 @@ impl Interp {
 
     fn dom_get_element_by_id(&mut self, args: Vec<Value>) -> Result<Value, String> {
         let id = args.first().map(to_display).unwrap_or_default();
-        let root = self.dom_root()?;
-        fn find(node: &crate::dom::Node, id: &str, path: &mut Vec<usize>) -> Option<Vec<usize>> {
-            if let crate::dom::NodeType::Element(e) = &node.node_type {
-                if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
-                    return Some(path.clone());
-                }
-            }
-            for (i, c) in node.children.iter().enumerate() {
-                path.push(i);
-                if let Some(found) = find(c, id, path) {
-                    return Some(found);
-                }
-                path.pop();
-            }
-            None
-        }
-        match find(root, &id, &mut Vec::new()) {
-            Some(path) => Ok(Value::Dom(Rc::new(path))),
+        let dom = self.dom_arena()?;
+        match dom.find_by_attr_id(&id) {
+            Some(node_id) => Ok(Value::Dom(node_id)),
             None => Ok(Value::Null),
         }
     }
 
-    fn dom_node<'a>(
-        root: &'a mut crate::dom::Node,
-        path: &[usize],
-    ) -> Result<&'a mut crate::dom::Node, String> {
-        let mut cur = root;
-        for &i in path {
-            cur = cur.children.get_mut(i).ok_or("유효하지 않은 DOM 핸들")?;
-        }
-        Ok(cur)
-    }
-
-    fn dom_get(&mut self, path: &[usize], key: &str) -> Result<Value, String> {
-        let root = self.dom_root()?;
-        let node = Self::dom_node(root, path)?;
+    fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
+        let dom = self.dom_arena()?;
         match key {
-            "textContent" | "innerText" => {
-                fn collect(n: &crate::dom::Node, out: &mut String) {
-                    if let crate::dom::NodeType::Text(t) = &n.node_type {
-                        out.push_str(t);
-                    }
-                    for c in &n.children {
-                        collect(c, out);
-                    }
-                }
-                let mut s = String::new();
-                collect(node, &mut s);
-                Ok(Value::Str(s))
-            }
+            "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
             _ => Ok(Value::Undefined),
         }
     }
 
-    fn dom_set(&mut self, path: &[usize], key: &str, value: Value) -> Result<(), String> {
+    fn dom_set(&mut self, id: crate::dom::NodeId, key: &str, value: Value) -> Result<(), String> {
         // el.onclick = fn → 핸들러 등록
         if let Some(event) = key.strip_prefix("on") {
             if matches!(value, Value::Fn(_)) {
-                self.handlers.push((path.to_vec(), event.to_string(), value));
+                self.handlers.push((id, event.to_string(), value));
             }
             return Ok(());
         }
         let text = to_display(&value);
-        let root = self.dom_root()?;
-        let node = Self::dom_node(root, path)?;
+        let dom = self.dom_arena()?;
         match key {
             "textContent" | "innerText" => {
-                node.children = vec![crate::dom::text(text)];
+                dom.set_text_content(id, text);
                 Ok(())
             }
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)
