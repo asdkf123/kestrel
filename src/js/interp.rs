@@ -36,6 +36,7 @@ pub enum Native {
     ConsoleLog,
     ArrayPush,
     GetElementById,
+    AddEventListener,
 }
 
 impl std::fmt::Debug for Value {
@@ -220,6 +221,8 @@ pub struct Interp {
     steps: u64,
     // JS4 에서 DOM 바인딩이 사용 (getElementById / textContent)
     pub dom: Option<*mut crate::dom::Node>,
+    // 이벤트 핸들러 레지스트리: (요소 경로, 이벤트 타입, 핸들러 함수)
+    pub handlers: Vec<(Vec<usize>, String, Value)>,
 }
 
 impl Interp {
@@ -233,10 +236,38 @@ impl Interp {
         let mut document = HashMap::new();
         document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
-        Interp { global, console: Vec::new(), steps: 0, dom: None }
+        Interp { global, console: Vec::new(), steps: 0, dom: None, handlers: Vec::new() }
+    }
+
+    // 이벤트 디스패치: 등록 경로가 타깃 경로의 접두사면 실행 (조상 = 버블링).
+    // 하나라도 실행되면 true. 핸들러 에러는 [js error] 로 격리.
+    pub fn fire_handlers(&mut self, target: &[usize], event: &str) -> bool {
+        self.steps = 0; // 이벤트마다 실행 한도 리셋
+        let to_run: Vec<Value> = self
+            .handlers
+            .iter()
+            .filter(|(p, t, _)| t == event && target.starts_with(p))
+            .map(|(_, _, f)| f.clone())
+            .collect();
+        let fired = !to_run.is_empty();
+        for f in to_run {
+            if let Err(e) = self.call_value(f, None, Vec::new()) {
+                println!("[js error] {}", e);
+            }
+        }
+        fired
+    }
+
+    // onclick 속성 등 인라인 핸들러 소스 실행 (전역 환경에서)
+    pub fn run_inline_handler(&mut self, src: &str) {
+        self.steps = 0;
+        if let Err(e) = self.run(src) {
+            println!("[js error] {}", e);
+        }
     }
 
     pub fn run(&mut self, src: &str) -> Result<Value, String> {
+        self.steps = 0; // 실행 단위(스크립트/핸들러)마다 한도 리셋
         let program = parse(src)?;
         let env = self.global.clone();
         match self.exec_block(&program, &env)? {
@@ -516,7 +547,12 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
-            Value::Dom(path) => self.dom_get(path, key),
+            Value::Dom(path) => {
+                if key == "addEventListener" {
+                    return Ok(Value::Native(Native::AddEventListener));
+                }
+                self.dom_get(path, key)
+            }
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
             }
@@ -568,6 +604,16 @@ impl Interp {
                 _ => Err("push 는 배열 메서드".to_string()),
             },
             Native::GetElementById => self.dom_get_element_by_id(args),
+            Native::AddEventListener => match recv {
+                Some(Value::Dom(path)) => {
+                    let event = args.first().map(to_display).unwrap_or_default();
+                    if let Some(f @ Value::Fn(_)) = args.get(1) {
+                        self.handlers.push((path.as_ref().clone(), event, f.clone()));
+                    }
+                    Ok(Value::Undefined)
+                }
+                _ => Err("addEventListener 는 요소 메서드".to_string()),
+            },
         }
     }
 
@@ -711,6 +757,13 @@ impl Interp {
     }
 
     fn dom_set(&mut self, path: &[usize], key: &str, value: Value) -> Result<(), String> {
+        // el.onclick = fn → 핸들러 등록
+        if let Some(event) = key.strip_prefix("on") {
+            if matches!(value, Value::Fn(_)) {
+                self.handlers.push((path.to_vec(), event.to_string(), value));
+            }
+            return Ok(());
+        }
         let text = to_display(&value);
         let root = self.dom_root()?;
         let node = Self::dom_node(root, path)?;

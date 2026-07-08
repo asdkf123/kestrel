@@ -11,14 +11,79 @@ use crate::css::Color;
 use crate::layout::{hit_link, Rect};
 use crate::paint::DisplayItem;
 
-/// 창에 띄울 페이지: 소유된 디스플레이 리스트 + 리소스. 스크롤 시 재래스터화한다.
+/// 페이지: 원본(DOM/스타일시트/JS 런타임)을 소유하고, rebuild() 로 렌더 산출물을
+/// 재생성한다. 이벤트 핸들러가 DOM 을 바꾸면 rebuild 로 화면이 갱신된다.
+/// 스타일/레이아웃 트리는 rebuild 안에서만 사는 일시 산물 (borrow 격리).
 pub struct Page {
-    pub items: Vec<DisplayItem>,
+    pub dom: crate::dom::Node,
+    pub sheet: crate::css::Stylesheet,
     pub images: Vec<crate::png::Image>,
+    pub img_map: crate::layout::ImageMap,
     pub fonts: crate::font::FontStack,
-    pub doc_height: f32,
-    pub links: Vec<(Rect, String)>,
+    pub js: crate::js::interp::Interp,
     pub url: crate::url::Url,
+    pub viewport_width: f32,
+    // ── rebuild() 산출물 ──
+    pub items: Vec<DisplayItem>,
+    pub links: Vec<(Rect, String)>,
+    pub element_rects: Vec<(Rect, Vec<usize>)>,
+    pub doc_height: f32,
+}
+
+fn node_at<'a>(root: &'a crate::dom::Node, path: &[usize]) -> Option<&'a crate::dom::Node> {
+    let mut cur = root;
+    for &i in path {
+        cur = cur.children.get(i)?;
+    }
+    Some(cur)
+}
+
+impl Page {
+    pub fn rebuild(&mut self) {
+        let style_root = crate::style::style_tree(&self.dom, &self.sheet);
+        let mut viewport: crate::layout::Dimensions = Default::default();
+        viewport.content.width = self.viewport_width;
+        let layout_root =
+            crate::layout::layout_tree(&style_root, viewport, &self.fonts, &self.img_map);
+        self.items = crate::paint::build_display_list(&layout_root);
+        self.links.clear();
+        crate::layout::collect_link_regions(&layout_root, &mut self.links);
+        self.element_rects.clear();
+        crate::layout::collect_element_rects(&layout_root, &mut self.element_rects);
+        self.doc_height = layout_root.dimensions.margin_box().height;
+    }
+
+    // (x, y): 문서 좌표. 클릭 지점의 가장 깊은 요소를 타깃으로 핸들러를 버블링
+    // 실행하고, 하나라도 실행됐으면 rebuild 후 true.
+    pub fn dispatch_click(&mut self, x: f32, y: f32) -> bool {
+        let Some(target) = crate::layout::hit_element(&self.element_rects, x, y) else {
+            return false;
+        };
+        self.js.dom = Some(&mut self.dom as *mut crate::dom::Node);
+        let mut fired = self.js.fire_handlers(&target, "click");
+        // onclick 속성: 타깃부터 조상 순서로 평가
+        for k in (0..=target.len()).rev() {
+            let src = node_at(&self.dom, &target[..k]).and_then(|n| {
+                if let crate::dom::NodeType::Element(e) = &n.node_type {
+                    e.attributes.get("onclick").cloned()
+                } else {
+                    None
+                }
+            });
+            if let Some(src) = src {
+                fired = true;
+                self.js.run_inline_handler(&src);
+            }
+        }
+        for line in self.js.console.drain(..) {
+            println!("[console] {}", line);
+        }
+        self.js.dom = None;
+        if fired {
+            self.rebuild();
+        }
+        fired
+    }
 }
 
 const LINE_SCROLL: f32 = 48.0;
@@ -100,6 +165,11 @@ pub fn run_page(
                         if focused {
                             focused = false;
                             url_input = page.url.as_string();
+                            window.request_redraw();
+                        }
+                        // 이벤트 핸들러 먼저 (실행되면 rebuild 됨), 링크 기본 동작은 그 다음
+                        if page.dispatch_click(cursor.0, cursor.1 - CHROME_H + scroll_y) {
+                            scroll_y = scroll_y.clamp(0.0, (page.doc_height - viewport_h).max(0.0));
                             window.request_redraw();
                         }
                         if let Some(href) =
@@ -302,4 +372,137 @@ pub fn run_page(
             }
         })
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dom::{Node, NodeType};
+
+    fn make_page(html: &str) -> Page {
+        let mut dom = crate::html::parse(html.to_string());
+        let js = crate::js::run_scripts(&mut dom);
+        let sheet = crate::css::user_agent_stylesheet();
+        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
+            .unwrap();
+        let fonts = crate::font::FontStack::new(vec![f]);
+        let mut page = Page {
+            dom,
+            sheet,
+            images: Vec::new(),
+            img_map: crate::layout::ImageMap::new(),
+            fonts,
+            js,
+            url: crate::url::Url::parse("https://localhost/").unwrap(),
+            viewport_width: 400.0,
+            items: Vec::new(),
+            links: Vec::new(),
+            element_rects: Vec::new(),
+            doc_height: 0.0,
+        };
+        page.rebuild();
+        page
+    }
+
+    fn text_of_id(node: &Node, id: &str) -> Option<String> {
+        if let NodeType::Element(e) = &node.node_type {
+            if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+                let mut s = String::new();
+                fn collect(n: &Node, out: &mut String) {
+                    if let NodeType::Text(t) = &n.node_type {
+                        out.push_str(t);
+                    }
+                    for c in &n.children {
+                        collect(c, out);
+                    }
+                }
+                collect(node, &mut s);
+                return Some(s);
+            }
+        }
+        node.children.iter().find_map(|c| text_of_id(c, id))
+    }
+
+    // 태그 이름으로 요소 히트 영역 중심점 찾기
+    fn center_of_tag(page: &Page, tag: &str) -> (f32, f32) {
+        for (r, path) in &page.element_rects {
+            if let Some(n) = node_at(&page.dom, path) {
+                if let NodeType::Element(e) = &n.node_type {
+                    if e.tag_name == tag {
+                        return (r.x + r.width / 2.0, r.y + r.height / 2.0);
+                    }
+                }
+            }
+        }
+        panic!("{} 요소를 찾지 못함", tag);
+    }
+
+    #[test]
+    fn click_fires_add_event_listener_and_rerenders() {
+        let mut page = make_page(
+            "<p id=\"out\">count 0</p><button>inc</button>\
+             <script>var n = 0; \
+             document.getElementById('out').textContent = 'count 0'; \
+             var b = document.getElementById('out'); \
+             </script>",
+        );
+        // 핸들러를 스크립트로 등록하는 완전한 흐름은 아래 카운터 테스트에서;
+        // 여기선 등록 없는 클릭이 false 를 반환하는지부터
+        let (x, y) = center_of_tag(&page, "button");
+        assert!(!page.dispatch_click(x, y), "핸들러 없으면 false");
+    }
+
+    #[test]
+    fn counter_button_increments_on_clicks() {
+        let mut page = make_page(
+            "<p id=\"out\">count 0</p><button id=\"b\">inc</button>\
+             <script>var n = 0; \
+             document.getElementById('b').addEventListener('click', function() { \
+               n++; document.getElementById('out').textContent = 'count ' + n; \
+             });</script>",
+        );
+        let (x, y) = center_of_tag(&page, "button");
+        assert!(page.dispatch_click(x, y));
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "count 1");
+        assert!(page.dispatch_click(x, y));
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "count 2", "클로저 상태 유지");
+        assert!(!page.items.is_empty(), "rebuild 후 디스플레이 리스트 존재");
+    }
+
+    #[test]
+    fn onclick_property_and_attribute_fire() {
+        // el.onclick = fn
+        let mut page = make_page(
+            "<p id=\"out\">no</p><button id=\"b\">go</button>\
+             <script>document.getElementById('b').onclick = function() { \
+               document.getElementById('out').textContent = 'via property'; \
+             };</script>",
+        );
+        let (x, y) = center_of_tag(&page, "button");
+        assert!(page.dispatch_click(x, y));
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "via property");
+
+        // onclick="..." 속성
+        let mut page2 = make_page(
+            "<p id=\"out\">no</p>\
+             <button onclick=\"document.getElementById('out').textContent = 'via attr'\">go</button>",
+        );
+        let (x2, y2) = center_of_tag(&page2, "button");
+        assert!(page2.dispatch_click(x2, y2));
+        assert_eq!(text_of_id(&page2.dom, "out").unwrap(), "via attr");
+    }
+
+    #[test]
+    fn click_bubbles_to_ancestor_handler() {
+        let mut page = make_page(
+            "<div id=\"wrap\"><p id=\"inner\">child text</p></div>\
+             <script>document.getElementById('wrap').addEventListener('click', function() { \
+               document.getElementById('inner').textContent = 'bubbled'; \
+             });</script>",
+        );
+        // 안쪽 p 를 클릭해도 조상 div 핸들러가 실행 (버블링)
+        let (x, y) = center_of_tag(&page, "p");
+        assert!(page.dispatch_click(x, y));
+        assert_eq!(text_of_id(&page.dom, "inner").unwrap(), "bubbled");
+    }
 }

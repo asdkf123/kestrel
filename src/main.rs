@@ -90,16 +90,11 @@ fn main() {
 
     let needs_korean = page_needs_korean(&html_source);
     let mut root_node = html::parse(html_source);
-    js::run_scripts(&mut root_node);
+    let js_rt = js::run_scripts(&mut root_node);
     let stylesheet = css::parse(css_source);
-    let style_root = style::style_tree(&root_node, &stylesheet);
 
     let viewport_width: u32 = 800;
     let viewport_height: u32 = 600;
-
-    let mut viewport: layout::Dimensions = Default::default();
-    viewport.content.width = viewport_width as f32;
-    viewport.content.height = viewport_height as f32;
 
     let fonts = load_fonts(needs_korean);
     let mut cache = raster::GlyphCache::new();
@@ -107,38 +102,46 @@ fn main() {
     let base = url::Url::parse("https://localhost/").unwrap();
     let mut srcs = Vec::new();
     collect_img_srcs(&root_node, &mut srcs);
-    collect_bg_urls(&style_root, &mut srcs);
+    {
+        let style_root = style::style_tree(&root_node, &stylesheet);
+        collect_bg_urls(&style_root, &mut srcs);
+    }
     let (images, img_map) = load_images(srcs, &base);
 
-    let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
-    let items = paint::build_display_list(&layout_root);
-    let doc_height = layout_root.dimensions.margin_box().height;
-    let mut links = Vec::new();
-    layout::collect_link_regions(&layout_root, &mut links);
+    let mut page = window::Page {
+        dom: root_node,
+        sheet: stylesheet,
+        images,
+        img_map,
+        fonts,
+        js: js_rt,
+        url: base,
+        viewport_width: viewport_width as f32,
+        items: Vec::new(),
+        links: Vec::new(),
+        element_rects: Vec::new(),
+        doc_height: 0.0,
+    };
+    page.rebuild();
 
     // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 으로 출력하고 종료.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
         let canvas = paint::rasterize(
-            &items,
+            &page.items,
             viewport_width as usize,
             viewport_height as usize,
             0.0,
             1.0,
-            &fonts,
+            &page.fonts,
             &mut cache,
-            &images,
+            &page.images,
         );
         write_ppm(&canvas, &path);
         println!("rendered to {}", path);
         return;
     }
 
-    window::run_page(
-        window::Page { items, images, fonts, doc_height, links, url: base },
-        viewport_width,
-        viewport_height,
-        build_page,
-    );
+    window::run_page(page, viewport_width, viewport_height, build_page);
 }
 
 fn write_ppm(canvas: &paint::Canvas, path: &str) {
@@ -293,8 +296,9 @@ fn build_page(url: &str) -> Option<window::Page> {
     let needs_korean = page_needs_korean(&html);
     let mut dom = html::parse(html);
 
-    // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능)
-    js::run_scripts(&mut dom);
+    // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능).
+    // 반환된 JS 런타임은 이벤트 핸들러(클로저)를 들고 Page 에 보관된다.
+    let js_rt = js::run_scripts(&mut dom);
 
     let base = url::Url::parse(url).ok()?;
 
@@ -317,19 +321,14 @@ fn build_page(url: &str) -> Option<window::Page> {
     extract_css(&dom, &mut inline_css);
     sheet.rules.extend(css::parse(inline_css).rules);
 
-    let style_root = style::style_tree(&dom, &sheet);
-
-    // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리)
-    let (images, img_map) = {
-        let mut srcs = Vec::new();
-        collect_img_srcs(&dom, &mut srcs);
+    // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리는 일시 사용)
+    let mut srcs = Vec::new();
+    collect_img_srcs(&dom, &mut srcs);
+    {
+        let style_root = style::style_tree(&dom, &sheet);
         collect_bg_urls(&style_root, &mut srcs);
-        load_images(srcs, &base)
-    };
-
-    let viewport_width: u32 = 1000;
-    let mut viewport: layout::Dimensions = Default::default();
-    viewport.content.width = viewport_width as f32;
+    }
+    let (images, img_map) = load_images(srcs, &base);
 
     let fonts = load_fonts(needs_korean);
     println!(
@@ -339,18 +338,39 @@ fn build_page(url: &str) -> Option<window::Page> {
         if needs_korean { "로드" } else { "생략" }
     );
 
-    let layout_root = layout::layout_tree(&style_root, viewport, &fonts, &img_map);
-    let items = paint::build_display_list(&layout_root);
-    let doc_height = layout_root.dimensions.margin_box().height;
-    let mut links = Vec::new();
-    layout::collect_link_regions(&layout_root, &mut links);
-    println!("[문서 높이 {}px, 링크 {}개]", doc_height as u32, links.len());
-
-    Some(window::Page { items, images, fonts, doc_height, links, url: base })
+    let mut page = window::Page {
+        dom,
+        sheet,
+        images,
+        img_map,
+        fonts,
+        js: js_rt,
+        url: base,
+        viewport_width: 1000.0,
+        items: Vec::new(),
+        links: Vec::new(),
+        element_rects: Vec::new(),
+        doc_height: 0.0,
+    };
+    page.rebuild();
+    println!("[문서 높이 {}px, 링크 {}개]", page.doc_height as u32, page.links.len());
+    Some(page)
 }
 
 fn render_url(url: &str) {
-    let Some(page) = build_page(url) else { return };
+    let Some(mut page) = build_page(url) else { return };
+
+    // 헤드리스 클릭 (검증용): KESTREL_CLICK=x,y → 문서 좌표에 클릭 디스패치
+    if let Ok(spec) = std::env::var("KESTREL_CLICK") {
+        for one in spec.split(';') {
+            if let Some((xs, ys)) = one.split_once(',') {
+                if let (Ok(x), Ok(y)) = (xs.trim().parse::<f32>(), ys.trim().parse::<f32>()) {
+                    let fired = page.dispatch_click(x, y);
+                    println!("[click] ({}, {}) fired={}", x, y, fired);
+                }
+            }
+        }
+    }
 
     // 헤드리스: (viewport 크기) 슬라이스를 PPM 으로. KESTREL_SCROLL 로 시작 오프셋 지정.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {

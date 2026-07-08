@@ -473,6 +473,31 @@ pub fn hit_link<'a>(links: &'a [(Rect, String)], x: f32, y: f32) -> Option<&'a s
     links.iter().find(|(r, _)| r.contains(x, y)).map(|(_, h)| h.as_str())
 }
 
+// 이벤트 히트 테스트용: 요소 박스의 (border box, DOM 경로) 수집.
+// 익명 인라인 박스는 부모 요소의 경로를 공유하므로 텍스트 클릭도 매칭된다.
+pub fn collect_element_rects(root: &LayoutBox, out: &mut Vec<(Rect, Vec<usize>)>) {
+    if matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
+        out.push((root.dimensions.border_box(), root.styled_node.path.clone()));
+    }
+    for child in &root.children {
+        collect_element_rects(child, out);
+    }
+}
+
+// 클릭 지점을 포함하는 가장 깊은 요소의 경로 (동률이면 나중에 그려진 쪽)
+pub fn hit_element(rects: &[(Rect, Vec<usize>)], x: f32, y: f32) -> Option<Vec<usize>> {
+    let mut best: Option<&(Rect, Vec<usize>)> = None;
+    for er in rects {
+        if er.0.contains(x, y) {
+            match best {
+                Some(b) if b.1.len() > er.1.len() => {}
+                _ => best = Some(er),
+            }
+        }
+    }
+    best.map(|(_, p)| p.clone())
+}
+
 // 공백뿐인 인라인 묶음인지 (태그 사이 줄바꿈 등). 이런 익명 박스는 만들지 않는다 —
 // 블록 흐름에선 높이 0 으로 무해하지만 flex 에선 아이템이 되어 공간을 차지한다.
 fn all_whitespace(nodes: &[&StyledNode]) -> bool {

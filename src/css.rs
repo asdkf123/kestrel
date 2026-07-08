@@ -91,7 +91,8 @@ pub fn parse(source: String) -> Stylesheet {
     Stylesheet { rules: parser.parse_rules() }
 }
 
-const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, tr, form, figure, figcaption, address, dl, dt, dd { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; } a { color: #0645ad; }";
+// button: inline-block 미지원 대체로 block (클릭 히트 영역을 갖게 함)
+const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, tr, form, figure, figcaption, address, dl, dt, dd, button { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; } a { color: #0645ad; }";
 
 pub fn user_agent_stylesheet() -> Stylesheet {
     parse(UA_CSS.to_string())

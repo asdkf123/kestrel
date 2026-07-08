@@ -11,6 +11,8 @@ pub struct StyledNode<'a> {
     pub node: &'a Node,
     pub specified_values: PropertyMap,
     pub children: Vec<StyledNode<'a>>,
+    // 루트로부터의 자식 인덱스 경로 — JS DOM 핸들과 같은 좌표계 (이벤트 히트 매칭용)
+    pub path: Vec<usize>,
 }
 
 pub enum Display {
@@ -175,7 +177,7 @@ fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &Rule
 pub fn style_tree<'a>(root: &'a Node, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE)
+    style_node(root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE, Vec::new())
 }
 
 fn style_node<'a>(
@@ -184,7 +186,13 @@ fn style_node<'a>(
     ancestors: &mut Vec<&'a ElementData>,
     parent_color: Option<&Value>,
     parent_fs: f32,
+    path: Vec<usize>,
 ) -> StyledNode<'a> {
+    let child_path = |i: usize| {
+        let mut p = path.clone();
+        p.push(i);
+        p
+    };
     match node.node_type {
         NodeType::Element(ref elem) => {
             let mut values = specified_values(elem, ancestors, index);
@@ -213,10 +221,13 @@ fn style_node<'a>(
             let children = node
                 .children
                 .iter()
-                .map(|child| style_node(child, index, ancestors, my_color.as_ref(), fs))
+                .enumerate()
+                .map(|(i, child)| {
+                    style_node(child, index, ancestors, my_color.as_ref(), fs, child_path(i))
+                })
                 .collect();
             ancestors.pop();
-            StyledNode { node, specified_values: values, children }
+            StyledNode { node, specified_values: values, children, path }
         }
         NodeType::Text(_) => StyledNode {
             node,
@@ -224,8 +235,12 @@ fn style_node<'a>(
             children: node
                 .children
                 .iter()
-                .map(|child| style_node(child, index, ancestors, parent_color, parent_fs))
+                .enumerate()
+                .map(|(i, child)| {
+                    style_node(child, index, ancestors, parent_color, parent_fs, child_path(i))
+                })
                 .collect(),
+            path,
         },
     }
 }

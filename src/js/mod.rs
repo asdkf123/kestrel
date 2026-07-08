@@ -8,14 +8,15 @@ pub mod parser;
 
 // 인라인 <script> 를 문서 순서로 실행한다 (렌더 전, DOM 변형 가능).
 // 실제 브라우저처럼 전역 환경은 페이지의 모든 스크립트가 공유한다.
-// 에러는 해당 스크립트만 중단하고 보고 (관용 원칙). 외부 src 는 M4a 미지원.
-pub fn run_scripts(dom: &mut crate::dom::Node) {
+// 에러는 해당 스크립트만 중단하고 보고 (관용 원칙). 외부 src 는 미지원.
+// 반환된 Interp 는 페이지가 보관한다 — 등록된 이벤트 핸들러(클로저 포함)가 살아있음.
+pub fn run_scripts(dom: &mut crate::dom::Node) -> interp::Interp {
+    let mut it = interp::Interp::new();
     let mut sources = Vec::new();
     collect_scripts(dom, &mut sources);
     if sources.is_empty() {
-        return;
+        return it;
     }
-    let mut it = interp::Interp::new();
     it.dom = Some(dom as *mut crate::dom::Node); // 실행 동안만 유효
     for src in &sources {
         if let Err(e) = it.run(src) {
@@ -26,6 +27,7 @@ pub fn run_scripts(dom: &mut crate::dom::Node) {
         }
     }
     it.dom = None;
+    it
 }
 
 fn collect_scripts(node: &crate::dom::Node, out: &mut Vec<String>) {
