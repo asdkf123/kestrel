@@ -511,6 +511,10 @@ impl Interp {
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        // window: 전역 객체 스텁 — 프로퍼티 읽기/쓰기는 되지만 전역 변수와
+        // 연동되진 않음 (window.x = 1 후 x 로 읽기 미지원). 존재 자체가
+        // "window 미정의" 즉사를 막는다. 필드 테스트 최다 런타임 에러.
+        env_declare(&global, "window", Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)

@@ -38,7 +38,10 @@ impl<'a> StyledNode<'a> {
                 "block" => Display::Block,
                 "flex" => Display::Flex,
                 "none" => Display::None,
-                _ => Display::Inline,
+                "inline" | "inline-block" | "inline-flex" => Display::Inline,
+                // grid/table/flow-root/list-item 등 미지원 값은 블록으로 —
+                // 인라인 폴백이면 블록 자식이 통째로 버려져 페이지가 사라진다
+                _ => Display::Block,
             },
             _ => Display::Inline,
         }
@@ -392,6 +395,19 @@ mod tests {
         assert_eq!(fs(1), Some(Value::Length(10.0, Unit::Px)), "50% × 20px");
         assert_eq!(fs(2), Some(Value::Length(32.0, Unit::Px)), "2rem × 16px 루트");
         assert_eq!(fs(3), Some(Value::Length(20.0, Unit::Px)), "미지정 → 상속");
+    }
+
+    #[test]
+    fn unknown_display_falls_back_to_block() {
+        // display: grid 인 body 가 인라인이 되면 블록 자식이 통째로 사라진다 (MDN 사례)
+        let root = crate::html::parse_dom("<body><div>content</div></body>".to_string());
+        let ss = crate::css::parse("body { display: grid; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert!(matches!(styled.display(), Display::Block));
+        // inline-block 은 인라인 쪽으로
+        let root2 = crate::html::parse_dom("<span></span>".to_string());
+        let ss2 = crate::css::parse("span { display: inline-block; }".to_string());
+        assert!(matches!(style_tree(&root2, &ss2).display(), Display::Inline));
     }
 
     #[test]
