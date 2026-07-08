@@ -86,8 +86,9 @@ fn main() {
     let html_source = fs::read_to_string("examples/test.html").expect("read examples/test.html");
     let css_source = fs::read_to_string("examples/test.css").expect("read examples/test.css");
 
-    let needs_korean = page_needs_korean(&html_source);
+    let source_korean = page_needs_korean(&html_source);
     let mut root_node = html::parse_dom(html_source);
+    let needs_korean = source_korean || page_needs_korean(&root_node.text_content(root_node.root));
     let js_rt = js::run_scripts(&mut root_node);
     let stylesheet = css::parse(css_source);
 
@@ -305,8 +306,10 @@ fn build_page(url: &str) -> Option<window::Page> {
     println!("fetched {} ({} bytes, http {})", url, resp.body.len(), resp.status);
 
     let html = String::from_utf8_lossy(&resp.body).to_string();
-    let needs_korean = page_needs_korean(&html);
+    let source_korean = page_needs_korean(&html);
     let mut dom = html::parse_dom(html);
+    // 원문엔 없어도 엔티티(&#51060; 등) 디코드 후 한글이 나올 수 있다 (google.co.kr)
+    let needs_korean = source_korean || page_needs_korean(&dom.text_content(dom.root));
 
     // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능).
     // 반환된 JS 런타임은 이벤트 핸들러(클로저)를 들고 Page 에 보관된다.

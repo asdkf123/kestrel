@@ -418,3 +418,13 @@ mod tests {
         assert!(names.contains(&"img".to_string()));
     }
 }
+
+#[cfg(test)]
+mod entity_korean_tests {
+    // 한글이 숫자 엔티티로만 온 경우 (google.co.kr) — 디코드 후 텍스트에 한글이 있어야
+    #[test]
+    fn numeric_entities_decode_to_hangul() {
+        let dom = super::parse_dom("<p>&#51060;&#48120;&#51648;</p>".to_string());
+        assert_eq!(dom.text_content(dom.root), "이미지");
+    }
+}
