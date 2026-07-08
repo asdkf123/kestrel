@@ -174,6 +174,24 @@ fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &Rule
     values
 }
 
+// querySelector 용: 아레나 요소가 선택자 목록 중 하나와 매칭되는가.
+// 조상 체인은 아레나 parent 링크에서 구성 (루트→부모 순).
+pub fn element_matches(dom: &Dom, id: NodeId, selectors: &[Selector]) -> bool {
+    let NodeType::Element(elem) = &dom.get(id).node_type else {
+        return false;
+    };
+    let ancestors: Vec<&ElementData> = dom
+        .ancestors(id)
+        .into_iter()
+        .rev()
+        .filter_map(|a| match &dom.get(a).node_type {
+            NodeType::Element(e) => Some(e),
+            _ => None,
+        })
+        .collect();
+    selectors.iter().any(|s| matches(elem, &ancestors, s))
+}
+
 pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();

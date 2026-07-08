@@ -98,6 +98,13 @@ pub fn user_agent_stylesheet() -> Stylesheet {
     parse(UA_CSS.to_string())
 }
 
+// querySelector 용: 선택자 목록만 파싱. 빈 규칙 몸통을 붙여 기존 파서를 재사용.
+// 미지원 선택자(:hover, > 등)면 None (관용).
+pub fn parse_selector_list(text: &str) -> Option<Vec<Selector>> {
+    let ss = parse(format!("{} {{}}", text));
+    ss.rules.into_iter().next().map(|r| r.selectors)
+}
+
 struct Parser {
     pos: usize,
     input: String,

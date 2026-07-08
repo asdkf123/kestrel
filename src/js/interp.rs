@@ -42,6 +42,8 @@ pub enum Native {
     RemoveElement,
     SetAttribute,
     GetAttribute,
+    QuerySelector,
+    QuerySelectorAll,
 }
 
 impl std::fmt::Debug for Value {
@@ -241,6 +243,8 @@ impl Interp {
         let mut document = HashMap::new();
         document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
         document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
+        document.insert("querySelector".to_string(), Value::Native(Native::QuerySelector));
+        document.insert("querySelectorAll".to_string(), Value::Native(Native::QuerySelectorAll));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         Interp { global, console: Vec::new(), steps: 0, dom: None, handlers: Vec::new() }
     }
@@ -564,6 +568,8 @@ impl Interp {
                     "remove" => Some(Native::RemoveElement),
                     "setAttribute" => Some(Native::SetAttribute),
                     "getAttribute" => Some(Native::GetAttribute),
+                    "querySelector" => Some(Native::QuerySelector),
+                    "querySelectorAll" => Some(Native::QuerySelectorAll),
                     _ => None,
                 };
                 if let Some(n) = native {
@@ -669,6 +675,16 @@ impl Interp {
                 }
                 _ => Err("setAttribute 는 요소 메서드".to_string()),
             },
+            Native::QuerySelector | Native::QuerySelectorAll => {
+                let all = n == Native::QuerySelectorAll;
+                let sel = args.first().map(to_display).unwrap_or_default();
+                // 요소 수신자면 그 서브트리(자신 제외), document 면 문서 전체
+                let scope = match recv {
+                    Some(Value::Dom(id)) => Some(id),
+                    _ => None,
+                };
+                self.dom_query(scope, &sel, all)
+            }
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
                     let name = args.first().map(to_display).unwrap_or_default();
@@ -776,6 +792,51 @@ impl Interp {
         match dom.find_by_attr_id(&id) {
             Some(node_id) => Ok(Value::Dom(node_id)),
             None => Ok(Value::Null),
+        }
+    }
+
+    // CSS 선택자로 문서/서브트리 검색 (문서 순서 DFS). 미지원 선택자는 관용:
+    // querySelector → null, querySelectorAll → 빈 배열.
+    fn dom_query(
+        &mut self,
+        scope: Option<crate::dom::NodeId>,
+        sel_src: &str,
+        all: bool,
+    ) -> Result<Value, String> {
+        let selectors = crate::css::parse_selector_list(sel_src);
+        let dom = self.dom_arena()?;
+        let mut out: Vec<Value> = Vec::new();
+        if let Some(selectors) = selectors {
+            fn rec(
+                dom: &crate::dom::Dom,
+                id: crate::dom::NodeId,
+                selectors: &[crate::css::Selector],
+                out: &mut Vec<Value>,
+                all: bool,
+            ) -> bool {
+                if crate::style::element_matches(dom, id, selectors) {
+                    out.push(Value::Dom(id));
+                    if !all {
+                        return true; // 첫 매칭에서 중단
+                    }
+                }
+                dom.get(id).children.iter().any(|&c| rec(dom, c, selectors, out, all))
+            }
+            match scope {
+                // 요소 스코프: 자손만 (자신 제외)
+                Some(el) => {
+                    let children = dom.get(el).children.clone();
+                    children.iter().any(|&c| rec(dom, c, &selectors, &mut out, all));
+                }
+                None => {
+                    rec(dom, dom.root, &selectors, &mut out, all);
+                }
+            }
+        }
+        if all {
+            Ok(Value::Arr(Rc::new(RefCell::new(out))))
+        } else {
+            Ok(out.into_iter().next().unwrap_or(Value::Null))
         }
     }
 

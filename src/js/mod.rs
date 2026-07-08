@@ -172,6 +172,67 @@ mod tests {
     }
 
     #[test]
+    fn query_selector_finds_by_id_class_tag_and_descendant() {
+        let mut dom = crate::html::parse_dom(
+            "<div class=\"card\"><p class=\"note\">inside</p></div>\
+             <p class=\"note\">outside</p><p id=\"out\">x</p>\
+             <script>\
+             var a = document.querySelector('#out'); \
+             var b = document.querySelector('.card .note'); \
+             var c = document.querySelector('p'); \
+             a.textContent = b.textContent + '/' + c.textContent;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom);
+        // '.card .note' 는 안쪽만, 'p' 는 문서 순서 첫 p
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "inside/inside");
+    }
+
+    #[test]
+    fn query_selector_all_returns_array_of_handles() {
+        let mut dom = crate::html::parse_dom(
+            "<p class=\"i\">a</p><p class=\"i\">b</p><p class=\"i\">c</p><p id=\"out\">x</p>\
+             <script>var list = document.querySelectorAll('.i'); \
+             var s = list.length + ':'; \
+             for (var k = 0; k < list.length; k++) { s += list[k].textContent; } \
+             document.getElementById('out').textContent = s;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom);
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "3:abc");
+    }
+
+    #[test]
+    fn scoped_query_selector_searches_descendants_only() {
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"box\"><span class=\"t\">in</span></div><span class=\"t\">out</span>\
+             <p id=\"res\">x</p>\
+             <script>var box = document.getElementById('box'); \
+             var hit = box.querySelector('.t'); \
+             var miss = box.querySelector('#box'); \
+             document.getElementById('res').textContent = \
+               hit.textContent + '/' + (miss === null ? 'null' : 'self');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom);
+        assert_eq!(text_of_id(&dom, "res").unwrap(), "in/null", "자신은 제외, 자손만");
+    }
+
+    #[test]
+    fn unsupported_selector_is_tolerant() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>var a = document.querySelector('p:hover'); \
+             var b = document.querySelectorAll('a > b'); \
+             document.getElementById('out').textContent = \
+               (a === null ? 'null' : 'oops') + '/' + b.length;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom);
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "null/0");
+    }
+
+    #[test]
     fn text_content_reads_existing_text() {
         let mut dom = crate::html::parse_dom(
             "<p id=\"a\">left</p><p id=\"b\">right</p>\
