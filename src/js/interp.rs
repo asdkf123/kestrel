@@ -44,6 +44,53 @@ pub enum Native {
     GetAttribute,
     QuerySelector,
     QuerySelectorAll,
+    Math(MathOp),
+    Str(StrOp),
+    Arr(ArrOp),
+    JsonParse,
+    JsonStringify,
+    ParseInt,
+    ParseFloat,
+    IsNaN,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MathOp {
+    Floor,
+    Ceil,
+    Round,
+    Abs,
+    Min,
+    Max,
+    Sqrt,
+    Pow,
+    Random,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StrOp {
+    IndexOf,
+    Slice,
+    Split,
+    Upper,
+    Lower,
+    Trim,
+    Replace,
+    CharAt,
+    Includes,
+    StartsWith,
+    EndsWith,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ArrOp {
+    Join,
+    Pop,
+    IndexOf,
+    Slice,
+    ForEach,
+    Map,
+    Filter,
 }
 
 impl std::fmt::Debug for Value {
@@ -211,6 +258,195 @@ fn loose_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
+// ── JSON ──────────────────────────────────────────────────────────
+
+fn json_parse(src: &str) -> Result<Value, String> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut pos = 0usize;
+    let v = json_value(&chars, &mut pos)?;
+    json_ws(&chars, &mut pos);
+    if pos != chars.len() {
+        return Err("JSON: 값 뒤에 잉여 문자".to_string());
+    }
+    Ok(v)
+}
+
+fn json_ws(c: &[char], p: &mut usize) {
+    while *p < c.len() && c[*p].is_whitespace() {
+        *p += 1;
+    }
+}
+
+fn json_lit(c: &[char], p: &mut usize, lit: &str) -> bool {
+    if c[*p..].starts_with(&lit.chars().collect::<Vec<_>>()[..]) {
+        *p += lit.chars().count();
+        true
+    } else {
+        false
+    }
+}
+
+fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
+    json_ws(c, p);
+    match c.get(*p) {
+        None => Err("JSON 이 갑자기 끝남".to_string()),
+        Some('{') => {
+            *p += 1;
+            let mut map = HashMap::new();
+            json_ws(c, p);
+            if c.get(*p) == Some(&'}') {
+                *p += 1;
+                return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+            }
+            loop {
+                json_ws(c, p);
+                let key = json_string(c, p)?;
+                json_ws(c, p);
+                if c.get(*p) != Some(&':') {
+                    return Err("JSON: ':' 필요".to_string());
+                }
+                *p += 1;
+                map.insert(key, json_value(c, p)?);
+                json_ws(c, p);
+                match c.get(*p) {
+                    Some(',') => *p += 1,
+                    Some('}') => {
+                        *p += 1;
+                        return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+                    }
+                    _ => return Err("JSON: ',' 나 '}' 필요".to_string()),
+                }
+            }
+        }
+        Some('[') => {
+            *p += 1;
+            let mut items = Vec::new();
+            json_ws(c, p);
+            if c.get(*p) == Some(&']') {
+                *p += 1;
+                return Ok(Value::Arr(Rc::new(RefCell::new(items))));
+            }
+            loop {
+                items.push(json_value(c, p)?);
+                json_ws(c, p);
+                match c.get(*p) {
+                    Some(',') => *p += 1,
+                    Some(']') => {
+                        *p += 1;
+                        return Ok(Value::Arr(Rc::new(RefCell::new(items))));
+                    }
+                    _ => return Err("JSON: ',' 나 ']' 필요".to_string()),
+                }
+            }
+        }
+        Some('"') => Ok(Value::Str(json_string(c, p)?)),
+        Some('t') if json_lit(c, p, "true") => Ok(Value::Bool(true)),
+        Some('f') if json_lit(c, p, "false") => Ok(Value::Bool(false)),
+        Some('n') if json_lit(c, p, "null") => Ok(Value::Null),
+        Some(&ch) if ch == '-' || ch.is_ascii_digit() => {
+            let start = *p;
+            while *p < c.len()
+                && matches!(c[*p], '-' | '+' | '.' | 'e' | 'E' | '0'..='9')
+            {
+                *p += 1;
+            }
+            let s: String = c[start..*p].iter().collect();
+            s.parse::<f64>().map(Value::Num).map_err(|_| format!("JSON: 잘못된 수 {}", s))
+        }
+        Some(other) => Err(format!("JSON: 예상 못한 문자 {:?}", other)),
+    }
+}
+
+fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
+    if c.get(*p) != Some(&'"') {
+        return Err("JSON: 문자열 필요".to_string());
+    }
+    *p += 1;
+    let mut s = String::new();
+    loop {
+        match c.get(*p) {
+            None => return Err("JSON: 닫히지 않은 문자열".to_string()),
+            Some('"') => {
+                *p += 1;
+                return Ok(s);
+            }
+            Some('\\') => {
+                *p += 1;
+                match c.get(*p) {
+                    Some('n') => s.push('\n'),
+                    Some('t') => s.push('\t'),
+                    Some('r') => s.push('\r'),
+                    Some('b') => s.push('\u{8}'),
+                    Some('f') => s.push('\u{c}'),
+                    Some('u') => {
+                        let hex: String = c[*p + 1..(*p + 5).min(c.len())].iter().collect();
+                        let code = u32::from_str_radix(&hex, 16)
+                            .map_err(|_| "JSON: 잘못된 \\u".to_string())?;
+                        s.push(char::from_u32(code).unwrap_or('\u{fffd}'));
+                        *p += 4;
+                    }
+                    Some(&other) => s.push(other), // \" \\ \/ 등
+                    None => return Err("JSON: 문자열 끝의 역슬래시".to_string()),
+                }
+                *p += 1;
+            }
+            Some(&ch) => {
+                s.push(ch);
+                *p += 1;
+            }
+        }
+    }
+}
+
+// 직렬화 불가(함수/undefined 등)는 None. 객체 키는 정렬 (HashMap 순서 비결정 대비).
+fn json_stringify(v: &Value) -> Option<String> {
+    match v {
+        Value::Undefined | Value::Fn(_) | Value::Native(_) | Value::Dom(_) => None,
+        Value::Null => Some("null".to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Num(n) => {
+            Some(if n.is_finite() { num_to_str(*n) } else { "null".to_string() })
+        }
+        Value::Str(s) => Some(json_quote(s)),
+        Value::Arr(a) => {
+            let items: Vec<String> = a
+                .borrow()
+                .iter()
+                .map(|v| json_stringify(v).unwrap_or("null".to_string()))
+                .collect();
+            Some(format!("[{}]", items.join(",")))
+        }
+        Value::Obj(map) => {
+            let m = map.borrow();
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .into_iter()
+                .filter_map(|k| json_stringify(&m[k]).map(|v| format!("{}:{}", json_quote(k), v)))
+                .collect();
+            Some(format!("{{{}}}", parts.join(",")))
+        }
+    }
+}
+
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 // ── 제어 흐름 ──────────────────────────────────────────────────────
 
 enum Flow {
@@ -230,6 +466,8 @@ pub struct Interp {
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
+    // Math.random 용 xorshift 상태
+    rng: u64,
 }
 
 impl Interp {
@@ -246,7 +484,45 @@ impl Interp {
         document.insert("querySelector".to_string(), Value::Native(Native::QuerySelector));
         document.insert("querySelectorAll".to_string(), Value::Native(Native::QuerySelectorAll));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
-        Interp { global, console: Vec::new(), steps: 0, dom: None, handlers: Vec::new() }
+        // Math
+        let mut math = HashMap::new();
+        for (name, op) in [
+            ("floor", MathOp::Floor),
+            ("ceil", MathOp::Ceil),
+            ("round", MathOp::Round),
+            ("abs", MathOp::Abs),
+            ("min", MathOp::Min),
+            ("max", MathOp::Max),
+            ("sqrt", MathOp::Sqrt),
+            ("pow", MathOp::Pow),
+            ("random", MathOp::Random),
+        ] {
+            math.insert(name.to_string(), Value::Native(Native::Math(op)));
+        }
+        math.insert("PI".to_string(), Value::Num(std::f64::consts::PI));
+        math.insert("E".to_string(), Value::Num(std::f64::consts::E));
+        env_declare(&global, "Math", Value::Obj(Rc::new(RefCell::new(math))));
+        // JSON
+        let mut json = HashMap::new();
+        json.insert("parse".to_string(), Value::Native(Native::JsonParse));
+        json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
+        env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
+        // 전역 함수
+        env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
+        env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
+        env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64 | 1)
+            .unwrap_or(0x9e3779b9);
+        Interp {
+            global,
+            console: Vec::new(),
+            steps: 0,
+            dom: None,
+            handlers: Vec::new(),
+            rng: seed,
+        }
     }
 
     // 이벤트 디스패치: 타깃과 그 조상 체인에 등록된 핸들러 실행 (버블링).
@@ -543,6 +819,19 @@ impl Interp {
                 if key == "push" {
                     return Ok(Value::Native(Native::ArrayPush));
                 }
+                let op = match key {
+                    "join" => Some(ArrOp::Join),
+                    "pop" => Some(ArrOp::Pop),
+                    "indexOf" => Some(ArrOp::IndexOf),
+                    "slice" => Some(ArrOp::Slice),
+                    "forEach" => Some(ArrOp::ForEach),
+                    "map" => Some(ArrOp::Map),
+                    "filter" => Some(ArrOp::Filter),
+                    _ => None,
+                };
+                if let Some(op) = op {
+                    return Ok(Value::Native(Native::Arr(op)));
+                }
                 if let Ok(i) = key.parse::<usize>() {
                     return Ok(a.borrow().get(i).cloned().unwrap_or(Value::Undefined));
                 }
@@ -551,6 +840,23 @@ impl Interp {
             Value::Str(s) => {
                 if key == "length" {
                     return Ok(Value::Num(s.chars().count() as f64));
+                }
+                let op = match key {
+                    "indexOf" => Some(StrOp::IndexOf),
+                    "slice" | "substring" => Some(StrOp::Slice),
+                    "split" => Some(StrOp::Split),
+                    "toUpperCase" => Some(StrOp::Upper),
+                    "toLowerCase" => Some(StrOp::Lower),
+                    "trim" => Some(StrOp::Trim),
+                    "replace" => Some(StrOp::Replace),
+                    "charAt" => Some(StrOp::CharAt),
+                    "includes" => Some(StrOp::Includes),
+                    "startsWith" => Some(StrOp::StartsWith),
+                    "endsWith" => Some(StrOp::EndsWith),
+                    _ => None,
+                };
+                if let Some(op) = op {
+                    return Ok(Value::Native(Native::Str(op)));
                 }
                 if let Ok(i) = key.parse::<usize>() {
                     return Ok(s
@@ -684,6 +990,184 @@ impl Interp {
                     _ => None,
                 };
                 self.dom_query(scope, &sel, all)
+            }
+            Native::Math(op) => {
+                let a = args.first().map(to_num).unwrap_or(f64::NAN);
+                Ok(Value::Num(match op {
+                    MathOp::Floor => a.floor(),
+                    MathOp::Ceil => a.ceil(),
+                    MathOp::Round => a.round(),
+                    MathOp::Abs => a.abs(),
+                    MathOp::Sqrt => a.sqrt(),
+                    MathOp::Pow => a.powf(args.get(1).map(to_num).unwrap_or(f64::NAN)),
+                    MathOp::Min => args.iter().map(to_num).fold(f64::INFINITY, f64::min),
+                    MathOp::Max => args.iter().map(to_num).fold(f64::NEG_INFINITY, f64::max),
+                    MathOp::Random => {
+                        // xorshift64*
+                        self.rng ^= self.rng << 13;
+                        self.rng ^= self.rng >> 7;
+                        self.rng ^= self.rng << 17;
+                        (self.rng >> 11) as f64 / (1u64 << 53) as f64
+                    }
+                }))
+            }
+            Native::Str(op) => {
+                let Some(Value::Str(s)) = recv else {
+                    return Err("문자열 메서드".to_string());
+                };
+                let chars: Vec<char> = s.chars().collect();
+                let arg_str = |i: usize| args.get(i).map(to_display).unwrap_or_default();
+                Ok(match op {
+                    StrOp::Upper => Value::Str(s.to_uppercase()),
+                    StrOp::Lower => Value::Str(s.to_lowercase()),
+                    StrOp::Trim => Value::Str(s.trim().to_string()),
+                    StrOp::CharAt => {
+                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
+                        Value::Str(
+                            chars
+                                .get(i.max(0) as usize)
+                                .map(|c| c.to_string())
+                                .unwrap_or_default(),
+                        )
+                    }
+                    StrOp::IndexOf => {
+                        // 문자(char) 인덱스 기준 (UTF-16 이 아님 — 단순화)
+                        let needle = arg_str(0);
+                        match s.find(&needle) {
+                            Some(byte_i) => Value::Num(s[..byte_i].chars().count() as f64),
+                            None => Value::Num(-1.0),
+                        }
+                    }
+                    StrOp::Includes => Value::Bool(s.contains(&arg_str(0))),
+                    StrOp::StartsWith => Value::Bool(s.starts_with(&arg_str(0))),
+                    StrOp::EndsWith => Value::Bool(s.ends_with(&arg_str(0))),
+                    StrOp::Replace => {
+                        Value::Str(s.replacen(&arg_str(0), &arg_str(1), 1)) // 첫 1회 (JS 동일)
+                    }
+                    StrOp::Slice => {
+                        let len = chars.len() as isize;
+                        let clampi = |v: f64| -> usize {
+                            let i = v as isize;
+                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        };
+                        let start = clampi(args.first().map(to_num).unwrap_or(0.0));
+                        let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
+                        Value::Str(chars[start..end.max(start)].iter().collect())
+                    }
+                    StrOp::Split => {
+                        let sep = arg_str(0);
+                        let parts: Vec<Value> = if args.is_empty() {
+                            vec![Value::Str(s.clone())]
+                        } else if sep.is_empty() {
+                            chars.iter().map(|c| Value::Str(c.to_string())).collect()
+                        } else {
+                            s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
+                        };
+                        Value::Arr(Rc::new(RefCell::new(parts)))
+                    }
+                })
+            }
+            Native::Arr(op) => {
+                let Some(Value::Arr(a)) = recv else {
+                    return Err("배열 메서드".to_string());
+                };
+                Ok(match op {
+                    ArrOp::Join => {
+                        let sep = args.first().map(to_display).unwrap_or(",".to_string());
+                        Value::Str(
+                            a.borrow().iter().map(to_display).collect::<Vec<_>>().join(&sep),
+                        )
+                    }
+                    ArrOp::Pop => a.borrow_mut().pop().unwrap_or(Value::Undefined),
+                    ArrOp::IndexOf => {
+                        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                        match a.borrow().iter().position(|v| strict_eq(v, &needle)) {
+                            Some(i) => Value::Num(i as f64),
+                            None => Value::Num(-1.0),
+                        }
+                    }
+                    ArrOp::Slice => {
+                        let items = a.borrow();
+                        let len = items.len() as isize;
+                        let clampi = |v: f64| -> usize {
+                            let i = v as isize;
+                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        };
+                        let start = clampi(args.first().map(to_num).unwrap_or(0.0));
+                        let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
+                        Value::Arr(Rc::new(RefCell::new(items[start..end.max(start)].to_vec())))
+                    }
+                    ArrOp::ForEach | ArrOp::Map | ArrOp::Filter => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut out = Vec::new();
+                        for (i, item) in snapshot.into_iter().enumerate() {
+                            let r = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![item.clone(), Value::Num(i as f64)],
+                            )?;
+                            match op {
+                                ArrOp::Map => out.push(r),
+                                ArrOp::Filter => {
+                                    if to_bool(&r) {
+                                        out.push(item);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        match op {
+                            ArrOp::ForEach => Value::Undefined,
+                            _ => Value::Arr(Rc::new(RefCell::new(out))),
+                        }
+                    }
+                })
+            }
+            Native::JsonParse => {
+                let src = args.first().map(to_display).unwrap_or_default();
+                json_parse(&src)
+            }
+            Native::JsonStringify => {
+                Ok(json_stringify(args.first().unwrap_or(&Value::Undefined))
+                    .map(Value::Str)
+                    .unwrap_or(Value::Undefined))
+            }
+            Native::ParseInt => {
+                let s = args.first().map(to_display).unwrap_or_default();
+                let t = s.trim();
+                let (neg, t) = match t.strip_prefix('-') {
+                    Some(rest) => (true, rest),
+                    None => (false, t.strip_prefix('+').unwrap_or(t)),
+                };
+                let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+                Ok(match digits.parse::<f64>() {
+                    Ok(n) => Value::Num(if neg { -n } else { n }),
+                    Err(_) => Value::Num(f64::NAN),
+                })
+            }
+            Native::ParseFloat => {
+                let s = args.first().map(to_display).unwrap_or_default();
+                let t = s.trim();
+                // 앞부분의 유효한 수 프리픽스만
+                let mut end = 0;
+                let bytes = t.as_bytes();
+                let mut seen_dot = false;
+                if end < bytes.len() && (bytes[end] == b'-' || bytes[end] == b'+') {
+                    end += 1;
+                }
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_digit() || (bytes[end] == b'.' && !seen_dot))
+                {
+                    if bytes[end] == b'.' {
+                        seen_dot = true;
+                    }
+                    end += 1;
+                }
+                Ok(t[..end].parse::<f64>().map(Value::Num).unwrap_or(Value::Num(f64::NAN)))
+            }
+            Native::IsNaN => {
+                Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))
             }
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
@@ -1014,5 +1498,83 @@ mod tests {
     #[test]
     fn infinite_loop_is_bounded() {
         assert!(Interp::new().run("while (true) {}").is_err());
+    }
+
+    #[test]
+    fn math_builtins() {
+        assert_eq!(run_num("Math.floor(3.7)"), 3.0);
+        assert_eq!(run_num("Math.ceil(3.1)"), 4.0);
+        assert_eq!(run_num("Math.round(2.5)"), 3.0);
+        assert_eq!(run_num("Math.abs(-5)"), 5.0);
+        assert_eq!(run_num("Math.min(3, 1, 2)"), 1.0);
+        assert_eq!(run_num("Math.max(3, 1, 2)"), 3.0);
+        assert_eq!(run_num("Math.sqrt(16)"), 4.0);
+        assert_eq!(run_num("Math.pow(2, 10)"), 1024.0);
+        assert!(run_bool("Math.PI > 3.14 && Math.PI < 3.15"));
+        assert!(run_bool("var r = Math.random(); r >= 0 && r < 1"));
+        assert!(run_bool("Math.random() !== Math.random()"));
+    }
+
+    #[test]
+    fn string_methods() {
+        assert_eq!(run_num("'hello world'.indexOf('world')"), 6.0);
+        assert_eq!(run_num("'abc'.indexOf('z')"), -1.0);
+        assert_eq!(run_str("'hello'.slice(1, 3)"), "el");
+        assert_eq!(run_str("'hello'.slice(-3)"), "llo");
+        assert_eq!(run_str("'a,b,c'.split(',').join('|')"), "a|b|c");
+        assert_eq!(run_num("'abc'.split('').length"), 3.0);
+        assert_eq!(run_str("'  x  '.trim()"), "x");
+        assert_eq!(run_str("'AbC'.toUpperCase()"), "ABC");
+        assert_eq!(run_str("'AbC'.toLowerCase()"), "abc");
+        assert_eq!(run_str("'aaa'.replace('a', 'b')"), "baa");
+        assert_eq!(run_str("'hey'.charAt(1)"), "e");
+        assert!(run_bool("'hello'.includes('ell')"));
+        assert!(run_bool("'hello'.startsWith('he') && 'hello'.endsWith('lo')"));
+        // 한글도 문자 단위로
+        assert_eq!(run_str("'황조롱이'.slice(0, 2)"), "황조");
+    }
+
+    #[test]
+    fn array_methods() {
+        assert_eq!(run_str("[1,2,3].join('-')"), "1-2-3");
+        assert_eq!(run_num("var a = [1,2,3]; a.pop(); a.length"), 2.0);
+        assert_eq!(run_num("[5,6,7].indexOf(6)"), 1.0);
+        assert_eq!(run_num("[1,2,3,4].slice(1, 3).length"), 2.0);
+        assert_eq!(run_num("var s = 0; [1,2,3].forEach(function(x) { s += x; }); s"), 6.0);
+        assert_eq!(run_str("[1,2,3].map(x => x * 10).join(',')"), "10,20,30");
+        assert_eq!(run_str("[1,2,3,4,5].filter(x => x % 2).join(',')"), "1,3,5");
+        assert_eq!(
+            run_num("[1,2,3].map((x, i) => x + i).indexOf(5)"),
+            2.0,
+            "콜백 두 번째 인자 = 인덱스"
+        );
+    }
+
+    #[test]
+    fn json_roundtrip() {
+        assert_eq!(run_num("JSON.parse('42')"), 42.0);
+        assert_eq!(run_str("JSON.parse('\"hi\\\\n\"')"), "hi\n");
+        assert_eq!(run_num("JSON.parse('[1, 2, 3]')[1]"), 2.0);
+        assert_eq!(run_num("JSON.parse('{\"a\": {\"b\": 7}}').a.b"), 7.0);
+        assert!(run_bool("JSON.parse('true') === true && JSON.parse('null') === null"));
+        assert_eq!(run_str("JSON.stringify({ b: 2, a: 'x' })"), "{\"a\":\"x\",\"b\":2}");
+        assert_eq!(run_str("JSON.stringify([1, 'two', null, true])"), "[1,\"two\",null,true]");
+        // 라운드트립
+        assert_eq!(
+            run_str("JSON.stringify(JSON.parse('{\"k\":[1,2,{\"n\":null}]}'))"),
+            "{\"k\":[1,2,{\"n\":null}]}"
+        );
+        // 파싱 실패는 스크립트 에러
+        assert!(Interp::new().run("JSON.parse('{oops')").is_err());
+    }
+
+    #[test]
+    fn global_number_functions() {
+        assert_eq!(run_num("parseInt('42px')"), 42.0);
+        assert_eq!(run_num("parseInt('-7')"), -7.0);
+        assert!(run_bool("isNaN(parseInt('abc'))"));
+        assert_eq!(run_num("parseFloat('3.14 rad')"), 3.14);
+        assert!(run_bool("isNaN('x' * 2)"));
+        assert!(run_bool("!isNaN(5)"));
     }
 }
