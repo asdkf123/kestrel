@@ -2,5 +2,6 @@
 // 스펙: docs/superpowers/specs/2026-07-07-m4a-js-engine-design.md
 
 pub mod ast;
+pub mod interp;
 pub mod lexer;
 pub mod parser;
