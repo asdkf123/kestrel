@@ -1114,6 +1114,22 @@ impl Interp {
                 }
                 self.construct(class, arg_vals)
             }
+            // await expr: 대상이 promise 면 마이크로태스크를 드레인해 이행시킨 뒤 값.
+            // (우리 promise 는 동기 resolve 모델이라 드레인만으로 이행됨)
+            Expr::Await(inner) => {
+                let v = self.eval(inner, env)?;
+                if !is_promise(&v) {
+                    return Ok(v);
+                }
+                self.drain_microtasks();
+                if let Value::Obj(o) = &v {
+                    let m = o.borrow();
+                    if matches!(m.get("__state"), Some(Value::Str(s)) if s == "fulfilled") {
+                        return Ok(m.get("__value").cloned().unwrap_or(Value::Undefined));
+                    }
+                }
+                Ok(Value::Undefined) // 펜딩(미이행) — 관용
+            }
             Expr::Class(def) => self.make_class(def, env),
             Expr::Sequence(items) => {
                 let mut last = Value::Undefined;

@@ -37,6 +37,8 @@ pub enum Expr {
     Super,
     New { callee: Box<Expr>, args: Vec<Expr> },
     Class(Box<ClassDef>),
+    // await expr — 대상이 promise 면 이행될 때까지 마이크로태스크 드레인 후 값
+    Await(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

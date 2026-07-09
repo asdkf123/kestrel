@@ -132,6 +132,13 @@ impl Parser {
     // ── 문 ──────────────────────────────────────────────────────────
 
     fn stmt(&mut self) -> Result<Stmt, String> {
+        // async function 선언: async 수식어 무시하고 함수 선언으로
+        if matches!(self.peek(), Some(Tok::Ident(n)) if n == "async")
+            && self.toks.get(self.pos + 1) == Some(&Tok::Function)
+        {
+            self.pos += 1;
+            return self.func_decl();
+        }
         match self.peek() {
             Some(Tok::Var) | Some(Tok::Let) | Some(Tok::Const) => self.var_decl(),
             Some(Tok::Function) => self.func_decl(),
@@ -448,6 +455,16 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, String> {
+        // async 수식어(식 위치): async () => / async x => / async function(){} — 무시
+        if matches!(self.peek(), Some(Tok::Ident(n)) if n == "async") {
+            let n1 = self.toks.get(self.pos + 1);
+            let n2 = self.toks.get(self.pos + 2);
+            let is_async_fn = matches!(n1, Some(Tok::Function) | Some(Tok::LParen))
+                || matches!((n1, n2), (Some(Tok::Ident(_)), Some(Tok::Arrow)));
+            if is_async_fn {
+                self.pos += 1;
+            }
+        }
         // 화살표 함수 먼저 시도 (백트래킹)
         if let Some(f) = self.try_arrow()? {
             return Ok(f);
@@ -664,6 +681,19 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
+        // await expr (async 함수 내). await 뒤가 식 시작일 때만 연산자로 취급
+        // (그 외엔 'await' 를 일반 식별자로 — 관용).
+        if matches!(self.peek(), Some(Tok::Ident(n)) if n == "await") {
+            let follows = self.toks.get(self.pos + 1);
+            let terminator = matches!(follows,
+                None | Some(Tok::Semi) | Some(Tok::Comma) | Some(Tok::RParen)
+                    | Some(Tok::RBrace) | Some(Tok::RBracket) | Some(Tok::Colon)
+                    | Some(Tok::Assign) | Some(Tok::Arrow) | Some(Tok::Dot));
+            if !terminator {
+                self.pos += 1;
+                return Ok(Expr::Await(Box::new(self.unary()?)));
+            }
+        }
         let op = match self.peek() {
             Some(Tok::Minus) => Some(UnOp::Neg),
             Some(Tok::Plus) => Some(UnOp::Pos),

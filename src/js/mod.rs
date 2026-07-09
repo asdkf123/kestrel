@@ -323,6 +323,36 @@ mod tests {
     }
 
     #[test]
+    fn async_await_unwraps_and_chains() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>\
+             async function run() { \
+               var a = await Promise.resolve(2); \
+               var b = await Promise.resolve(a + 3); \
+               document.getElementById('out').textContent = 'r' + b; \
+             } \
+             run();</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "r5", "await 로 순차 언랩: 2→5");
+    }
+
+    #[test]
+    fn async_arrow_parses_and_awaits() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>var f = async (n) => { \
+               document.getElementById('out').textContent = 'got' + (await Promise.resolve(n)); \
+             }; f(7);</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "got7");
+    }
+
+    #[test]
     fn text_content_reads_existing_text() {
         let mut dom = crate::html::parse_dom(
             "<p id=\"a\">left</p><p id=\"b\">right</p>\
