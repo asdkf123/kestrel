@@ -241,16 +241,34 @@ impl<'a> LayoutBox<'a> {
             .map(|v| v.to_px())
             .filter(|&p| p > 0.0)
             .unwrap_or(16.0);
-        // CSS width 지정이 없으면 (auto → 컨테이너 폭이 됨) size/기본값으로 교체
+        let value = e.attributes.get("value").cloned().unwrap_or_default();
+        let is_button = matches!(
+            e.attributes.get("type").map(|t| t.as_str()),
+            Some("submit") | Some("button") | Some("reset")
+        );
+        // CSS width 지정이 없으면 (auto → 컨테이너 폭이 됨) 유형별 폭으로 교체
         if self.styled_node.value("width").is_none() {
-            let size_chars =
-                e.attributes.get("size").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
-            self.dimensions.content.width =
-                if size_chars > 0.0 { size_chars * px * 0.55 } else { 180.0 };
+            if is_button {
+                // 버튼: value 텍스트 폭 + 좌우 여백 (shrink-to-fit)
+                let text_w: f32 = value
+                    .chars()
+                    .map(|c| {
+                        let (fi, gid) = fonts.glyph_for(c);
+                        let f = fonts.font(fi);
+                        f.advance_width(gid) as f32 * (px / f.units_per_em() as f32)
+                    })
+                    .sum();
+                self.dimensions.content.width = text_w + px * 1.6;
+            } else {
+                let size_chars =
+                    e.attributes.get("size").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+                self.dimensions.content.width =
+                    if size_chars > 0.0 { size_chars * px * 0.55 } else { 180.0 };
+            }
         }
         self.dimensions.content.height = px * 1.5;
-        // value 텍스트
-        let value = e.attributes.get("value").cloned().unwrap_or_default();
+        // inline-block 흐름에서 shrink-to-fit 폭으로 쓰이도록 노출
+        self.used_width = self.dimensions.content.width;
         let color = match self.styled_node.value("color") {
             Some(Value::Color(c)) => c,
             _ => Color { r: 20, g: 20, b: 24, a: 255 },
@@ -619,11 +637,20 @@ impl<'a> LayoutBox<'a> {
                 self.dimensions.content.height = below;
             }
         }
-        // shrink-to-fit 부모용 내용 폭: 정상 자식 최대 폭, float 밴드, inline-block 줄 중 최대.
+        // shrink-to-fit 부모용 내재 폭(preferred width): 정상 자식 최대 폭, float 밴드,
+        // inline-block 줄 중 최대. auto 폭 자식은 avail 을 채우므로 border_box 대신
+        // 내용 preferred(used_width)+좌우 padding/border 로 재구성해야 실제 내용 폭이 된다.
         let child_max = self
             .children
             .iter()
-            .map(|c| c.dimensions.border_box().width)
+            .map(|c| {
+                let explicit = matches!(c.styled_node.value("width"), Some(Length(_, _)));
+                if explicit {
+                    c.dimensions.border_box().width
+                } else {
+                    c.used_width + (c.dimensions.border_box().width - c.dimensions.content.width)
+                }
+            })
             .fold(0.0f32, f32::max);
         self.used_width = child_max.max(float_extent).max(inline_extent);
     }
@@ -1454,6 +1481,37 @@ mod tests {
         assert_eq!(lb.children[1].dimensions.content.x, 150.0);
         assert_eq!(lb.children[2].dimensions.content.x, 0.0, "셋째는 줄바꿈으로 왼쪽");
         assert_eq!(lb.children[2].dimensions.content.y, 20.0, "셋째는 둘째 줄(y=20)");
+    }
+
+    #[test]
+    fn inline_block_shrinks_to_nested_auto_block() {
+        // 구글 버튼 구조: inline-block 안에 auto 폭 블록, 그 안에 고정 폭 리프.
+        // inline-block 은 avail 을 채우지 않고 내부 리프 폭으로 줄어들어 나란히 놓여야 함.
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\">\
+             <div class=\"ib\"><div class=\"inner\"><div class=\"leaf\"></div></div></div>\
+             <div class=\"ib\"><div class=\"inner\"><div class=\"leaf\"></div></div></div>\
+             </div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .ib { display: inline-block; } \
+             .inner { display: block; } \
+             .leaf { display: block; width: 40px; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        assert_eq!(lb.children[0].dimensions.content.x, 0.0);
+        assert_eq!(lb.children[1].dimensions.content.x, 40.0, "둘째 버튼은 첫째 오른쪽 (avail 안 채움)");
+        assert_eq!(
+            lb.children[0].dimensions.content.y, lb.children[1].dimensions.content.y,
+            "나란히 = 같은 y"
+        );
     }
 
     #[test]
