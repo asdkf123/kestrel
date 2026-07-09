@@ -372,7 +372,7 @@ mod tests {
 
     fn make_page(html: &str) -> Page {
         let mut dom = crate::html::parse_dom(html.to_string());
-        let js = crate::js::run_scripts(&mut dom);
+        let js = crate::js::run_scripts(&mut dom, "https://localhost/");
         let sheet = crate::css::user_agent_stylesheet();
         let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
             .unwrap();

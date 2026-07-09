@@ -54,6 +54,13 @@ pub enum Native {
     ParseInt,
     ParseFloat,
     IsNaN,
+    LsGetItem,
+    LsSetItem,
+    LsRemoveItem,
+    LsClear,
+    Alert,
+    // 받고 아무것도 안 함 (window.addEventListener 등 — 창 이벤트는 아직 없음)
+    Noop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -481,6 +488,8 @@ pub struct Interp {
     rng: u64,
     // throw 된 값 (에러 채널은 String 이라 값은 사이드 채널로 전달)
     thrown: Option<Value>,
+    // localStorage 스텁 저장소 (페이지 수명)
+    storage: HashMap<String, String>,
 }
 
 impl Interp {
@@ -496,6 +505,9 @@ impl Interp {
         document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
         document.insert("querySelector".to_string(), Value::Native(Native::QuerySelector));
         document.insert("querySelectorAll".to_string(), Value::Native(Native::QuerySelectorAll));
+        // 문서 레벨 이벤트(DOMContentLoaded 등)는 아직 발화 안 함 — no-op 수용
+        document.insert("addEventListener".to_string(), Value::Native(Native::Noop));
+        document.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         // Math
         let mut math = HashMap::new();
@@ -524,10 +536,30 @@ impl Interp {
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
+        let mut ls = HashMap::new();
+        ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
+        ls.insert("setItem".to_string(), Value::Native(Native::LsSetItem));
+        ls.insert("removeItem".to_string(), Value::Native(Native::LsRemoveItem));
+        ls.insert("clear".to_string(), Value::Native(Native::LsClear));
+        let ls = Value::Obj(Rc::new(RefCell::new(ls)));
+        env_declare(&global, "localStorage", ls.clone());
+        env_declare(&global, "sessionStorage", ls.clone());
+        // navigator / alert
+        let mut nav = HashMap::new();
+        nav.insert("userAgent".to_string(), Value::Str("Kestrel/0.1".to_string()));
+        let nav = Value::Obj(Rc::new(RefCell::new(nav)));
+        env_declare(&global, "navigator", nav.clone());
+        env_declare(&global, "alert", Value::Native(Native::Alert));
         // window: 전역 객체 스텁 — 프로퍼티 읽기/쓰기는 되지만 전역 변수와
         // 연동되진 않음 (window.x = 1 후 x 로 읽기 미지원). 존재 자체가
         // "window 미정의" 즉사를 막는다. 필드 테스트 최다 런타임 에러.
-        env_declare(&global, "window", Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
+        let mut window = HashMap::new();
+        window.insert("localStorage".to_string(), ls);
+        window.insert("navigator".to_string(), nav);
+        window.insert("addEventListener".to_string(), Value::Native(Native::Noop));
+        window.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        env_declare(&global, "window", Value::Obj(Rc::new(RefCell::new(window))));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -540,6 +572,23 @@ impl Interp {
             handlers: Vec::new(),
             rng: seed,
             thrown: None,
+            storage: HashMap::new(),
+        }
+    }
+
+    // location 전역 설치 (페이지 URL 기반). window.location 에도 공유.
+    pub fn install_location(&mut self, url: &str) {
+        let Ok(u) = crate::url::Url::parse(url) else { return };
+        let mut loc = HashMap::new();
+        loc.insert("href".to_string(), Value::Str(u.as_string()));
+        loc.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
+        loc.insert("host".to_string(), Value::Str(u.host.clone()));
+        loc.insert("hostname".to_string(), Value::Str(u.host.clone()));
+        loc.insert("pathname".to_string(), Value::Str(u.path.clone()));
+        let loc = Value::Obj(Rc::new(RefCell::new(loc)));
+        env_declare(&self.global, "location", loc.clone());
+        if let Some(Value::Obj(w)) = env_get(&self.global, "window") {
+            w.borrow_mut().insert("location".to_string(), loc);
         }
     }
 
@@ -785,6 +834,14 @@ impl Interp {
                 body: body.clone(),
                 env: env.clone(),
             }))),
+            Expr::Regex { source, flags } => {
+                // 매칭 엔진 없음: {source, flags} 객체. test/exec 호출 시 런타임 에러
+                // (해당 스크립트만 중단 — try/catch 로 생존 가능)
+                let mut map = HashMap::new();
+                map.insert("source".to_string(), Value::Str(source.clone()));
+                map.insert("flags".to_string(), Value::Str(flags.clone()));
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
             Expr::Template(parts) => {
                 let mut s = String::new();
                 for part in parts {
@@ -1260,6 +1317,31 @@ impl Interp {
             Native::IsNaN => {
                 Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))
             }
+            Native::LsGetItem => {
+                let k = args.first().map(to_display).unwrap_or_default();
+                Ok(self.storage.get(&k).map(|v| Value::Str(v.clone())).unwrap_or(Value::Null))
+            }
+            Native::LsSetItem => {
+                let k = args.first().map(to_display).unwrap_or_default();
+                let v = args.get(1).map(to_display).unwrap_or_default();
+                self.storage.insert(k, v);
+                Ok(Value::Undefined)
+            }
+            Native::LsRemoveItem => {
+                let k = args.first().map(to_display).unwrap_or_default();
+                self.storage.remove(&k);
+                Ok(Value::Undefined)
+            }
+            Native::LsClear => {
+                self.storage.clear();
+                Ok(Value::Undefined)
+            }
+            Native::Alert => {
+                let msg = args.iter().map(to_display).collect::<Vec<_>>().join(" ");
+                self.console.push(format!("[alert] {}", msg));
+                Ok(Value::Undefined)
+            }
+            Native::Noop => Ok(Value::Undefined),
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
                     let name = args.first().map(to_display).unwrap_or_default();
@@ -1758,6 +1840,84 @@ mod tests {
             run_str("var api = { name: 'k', hello() { return 'hi'; }, }; api.hello() + api.name"),
             "hik"
         );
+    }
+
+    #[test]
+    fn regex_literal_tolerated_and_division_intact() {
+        // 정규식 리터럴이 렉서를 죽이지 않고 {source, flags} 객체가 됨
+        assert_eq!(run_str("var re = /a[/]b+/gi; re.source"), "a[/]b+");
+        assert_eq!(run_str("var re = /x/; re.flags !== undefined ? 'obj' : 'no'"), "obj");
+        // 나눗셈은 그대로
+        assert_eq!(run_num("10 / 2"), 5.0);
+        assert_eq!(run_num("var a = 8; a / 2 / 2"), 2.0);
+        assert_eq!(run_num("(4 + 4) / 2"), 4.0);
+        assert_eq!(run_num("var x = 9; x /= 3; x"), 3.0);
+        // return 뒤는 정규식 문맥
+        assert_eq!(run_str("function f() { return /ok/.source; } f()"), "ok");
+    }
+
+    #[test]
+    fn labeled_statements_and_labeled_break() {
+        // 레이블은 파싱만 하고 무시 (break label = 일반 break)
+        assert_eq!(
+            run_num("var n = 0; outer: for (var i = 0; i < 3; i++) { n++; break outer; } n"),
+            1.0
+        );
+        assert_eq!(
+            run_num("var s = 0; loop: while (s < 5) { s++; continue loop; } s"),
+            5.0
+        );
+    }
+
+    #[test]
+    fn array_holes() {
+        assert_eq!(run_num("[1,,2].length"), 3.0);
+        assert!(run_bool("[1,,2][1] === undefined"));
+        assert_eq!(run_num("[,,].length"), 2.0);
+    }
+
+    #[test]
+    fn hash_identifiers_tolerated() {
+        // 클래스 미지원이지만 #priv 가 렉서를 죽이진 않음
+        assert!(super::super::lexer::tokenize("obj.#priv").is_ok());
+    }
+
+    #[test]
+    fn storage_and_misc_stubs() {
+        // localStorage 는 실제로 동작 (페이지 수명)
+        assert_eq!(
+            run_str("localStorage.setItem('k', 'v1'); localStorage.getItem('k')"),
+            "v1"
+        );
+        assert!(run_bool("localStorage.getItem('none') === null"));
+        assert!(run_bool(
+            "localStorage.setItem('x', 1); localStorage.removeItem('x'); localStorage.getItem('x') === null"
+        ));
+        // window 를 통해서도 같은 스토리지
+        assert_eq!(
+            run_str("window.localStorage.setItem('w', 'ok'); localStorage.getItem('w')"),
+            "ok"
+        );
+        assert!(run_bool("typeof navigator.userAgent === 'string'"));
+        // alert 는 콘솔로
+        let mut it = Interp::new();
+        it.run("alert('hi', 2)").unwrap();
+        assert_eq!(it.console, vec!["[alert] hi 2"]);
+        // window.addEventListener 는 no-op (죽지 않음)
+        assert!(Interp::new().run("window.addEventListener('load', x => x)").is_ok());
+    }
+
+    #[test]
+    fn location_reflects_page_url() {
+        let mut it = Interp::new();
+        it.install_location("https://example.com/a/b?q=1");
+        let v = it.run("location.hostname + location.pathname").unwrap();
+        match v {
+            Value::Str(s) => assert_eq!(s, "example.com/a/b?q=1"),
+            other => panic!("{:?}", other),
+        }
+        let w = it.run("window.location.href").unwrap();
+        assert!(matches!(w, Value::Str(s) if s.starts_with("https://example.com")));
     }
 
     #[test]

@@ -14,6 +14,8 @@ pub enum Tok {
     Str(String),
     Ident(String),
     Template(Vec<TplPart>),
+    // 정규식 리터럴 (소스, 플래그) — 매칭 엔진은 없고 파싱만 수용 (관용)
+    Regex(String, String),
     // 키워드
     Var,
     Let,
@@ -114,6 +116,28 @@ fn keyword(word: &str) -> Option<Tok> {
     })
 }
 
+// '/' 위치에서 정규식이 시작될 수 있는가: 직전 토큰이 값으로 끝나면 나눗셈.
+fn regex_can_start(prev: Option<&Tok>) -> bool {
+    !matches!(
+        prev,
+        Some(
+            Tok::Num(_)
+                | Tok::Str(_)
+                | Tok::Ident(_)
+                | Tok::Template(_)
+                | Tok::Regex(_, _)
+                | Tok::RParen
+                | Tok::RBracket
+                | Tok::PlusPlus
+                | Tok::MinusMinus
+                | Tok::True
+                | Tok::False
+                | Tok::Null
+                | Tok::Undefined
+        )
+    )
+}
+
 pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
     let b: Vec<char> = src.chars().collect();
     let mut i = 0usize;
@@ -144,6 +168,40 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
                 i += 2;
                 continue;
             }
+        }
+        // 정규식 리터럴 vs 나눗셈: 직전 토큰이 식을 끝낼 수 있으면 나눗셈
+        if c == '/' && regex_can_start(out.last()) {
+            let start = i;
+            i += 1;
+            let mut in_class = false; // [...] 안의 / 는 종료가 아님
+            loop {
+                match b.get(i) {
+                    None => return Err("닫히지 않은 정규식 리터럴".to_string()),
+                    Some('\n') => return Err("정규식 리터럴 안의 줄바꿈".to_string()),
+                    Some('\\') => i += 2,
+                    Some('[') => {
+                        in_class = true;
+                        i += 1;
+                    }
+                    Some(']') => {
+                        in_class = false;
+                        i += 1;
+                    }
+                    Some('/') if !in_class => {
+                        i += 1;
+                        break;
+                    }
+                    Some(_) => i += 1,
+                }
+            }
+            let source: String = b[start + 1..i - 1].iter().collect();
+            let fstart = i;
+            while i < b.len() && b[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            let flags: String = b[fstart..i].iter().collect();
+            out.push(Tok::Regex(source, flags));
+            continue;
         }
         // 숫자 (10진 + 0x 16진)
         if c.is_ascii_digit() {
@@ -286,9 +344,10 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             out.push(Tok::Template(parts));
             continue;
         }
-        // 식별자/키워드
-        if c.is_ascii_alphabetic() || c == '_' || c == '$' {
+        // 식별자/키워드 ('#' 은 private 필드 수용용 — 클래스 미지원이라 관용 처리)
+        if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '#' {
             let start = i;
+            i += 1;
             while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == '_' || b[i] == '$') {
                 i += 1;
             }

@@ -10,8 +10,9 @@ pub mod parser;
 // 실제 브라우저처럼 전역 환경은 페이지의 모든 스크립트가 공유한다.
 // 에러는 해당 스크립트만 중단하고 보고 (관용 원칙). 외부 src 는 미지원.
 // 반환된 Interp 는 페이지가 보관한다 — 등록된 이벤트 핸들러(클로저 포함)가 살아있음.
-pub fn run_scripts(dom: &mut crate::dom::Dom) -> interp::Interp {
+pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp {
     let mut it = interp::Interp::new();
+    it.install_location(page_url);
     let mut sources = Vec::new();
     collect_scripts(dom, dom.root, &mut sources);
     if sources.is_empty() {
@@ -61,7 +62,7 @@ mod tests {
              <script>document.getElementById('t').textContent = 'new ' + (1 + 2);</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "t").unwrap(), "new 3");
     }
 
@@ -73,7 +74,7 @@ mod tests {
              <script>document.getElementById('t').textContent = msg;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "t").unwrap(), "from first");
     }
 
@@ -85,7 +86,7 @@ mod tests {
              <script>document.getElementById('t').textContent = 'survived';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "t").unwrap(), "survived");
     }
 
@@ -97,7 +98,7 @@ mod tests {
              if (el === null) { document.getElementById('t').textContent = 'was null'; }</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "t").unwrap(), "was null");
     }
 
@@ -113,7 +114,7 @@ mod tests {
              }</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         let ul = dom.find_by_attr_id("list").unwrap();
         assert_eq!(dom.get(ul).children.len(), 3);
         assert_eq!(dom.text_content(ul), "item 1item 2item 3");
@@ -129,7 +130,7 @@ mod tests {
              b.textContent = 'still me';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert!(dom.find_by_attr_id("a").is_none(), "a 는 트리에서 제거됨");
         assert_eq!(text_of_id(&dom, "b").unwrap(), "still me");
     }
@@ -144,7 +145,7 @@ mod tests {
                + (el.getAttribute('nope') === null ? 'null' : 'oops');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "out").unwrap(), "fancy/null");
     }
 
@@ -156,7 +157,7 @@ mod tests {
                '<p>one</p><p class=\"hi\">two <b>bold</b></p>';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         let boxid = dom.find_by_attr_id("box").unwrap();
         assert_eq!(dom.get(boxid).children.len(), 2, "다중 루트 조각");
         assert_eq!(dom.text_content(boxid), "onetwo bold");
@@ -183,7 +184,7 @@ mod tests {
              a.textContent = b.textContent + '/' + c.textContent;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         // '.card .note' 는 안쪽만, 'p' 는 문서 순서 첫 p
         assert_eq!(text_of_id(&dom, "out").unwrap(), "inside/inside");
     }
@@ -198,7 +199,7 @@ mod tests {
              document.getElementById('out').textContent = s;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "out").unwrap(), "3:abc");
     }
 
@@ -214,7 +215,7 @@ mod tests {
                hit.textContent + '/' + (miss === null ? 'null' : 'self');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "res").unwrap(), "in/null", "자신은 제외, 자손만");
     }
 
@@ -228,7 +229,7 @@ mod tests {
                (a === null ? 'null' : 'oops') + '/' + b.length;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "out").unwrap(), "null/0");
     }
 
@@ -240,7 +241,7 @@ mod tests {
              a.textContent = a.textContent + '+' + document.getElementById('b').textContent;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom);
+        run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "a").unwrap(), "left+right");
     }
 }

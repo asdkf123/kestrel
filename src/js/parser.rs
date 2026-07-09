@@ -69,6 +69,18 @@ impl Parser {
         }
     }
 
+    // break/continue 뒤의 레이블: 다음이 문 종결이면 레이블로 보고 소비 (무시)
+    fn eat_label(&mut self) {
+        if matches!(self.peek(), Some(Tok::Ident(_)))
+            && matches!(
+                self.toks.get(self.pos + 1),
+                Some(Tok::Semi) | Some(Tok::RBrace) | Some(Tok::Case) | Some(Tok::Default) | None
+            )
+        {
+            self.pos += 1;
+        }
+    }
+
     // ── 문 ──────────────────────────────────────────────────────────
 
     fn stmt(&mut self) -> Result<Stmt, String> {
@@ -93,13 +105,21 @@ impl Parser {
             }
             Some(Tok::Break) => {
                 self.pos += 1;
+                self.eat_label();
                 self.eat(&Tok::Semi);
                 Ok(Stmt::Break)
             }
             Some(Tok::Continue) => {
                 self.pos += 1;
+                self.eat_label();
                 self.eat(&Tok::Semi);
                 Ok(Stmt::Continue)
+            }
+            // 레이블 문 (foo: stmt) — 레이블은 파싱만 하고 버림.
+            // break/continue 의 레이블도 무시되므로 다중 중첩 탈출 의미는 다를 수 있음 (관용)
+            Some(Tok::Ident(_)) if self.toks.get(self.pos + 1) == Some(&Tok::Colon) => {
+                self.pos += 2;
+                self.stmt()
             }
             Some(Tok::Throw) => {
                 self.pos += 1;
@@ -570,6 +590,7 @@ impl Parser {
         match self.next()? {
             Tok::Num(n) => Ok(Expr::Num(n)),
             Tok::Str(s) => Ok(Expr::Str(s)),
+            Tok::Regex(source, flags) => Ok(Expr::Regex { source, flags }),
             Tok::Template(parts) => {
                 let mut out = Vec::new();
                 for part in parts {
@@ -596,6 +617,15 @@ impl Parser {
                 let mut items = Vec::new();
                 if !self.eat(&Tok::RBracket) {
                     loop {
+                        // 배열 구멍 [1,,2] → undefined
+                        if self.peek() == Some(&Tok::Comma) {
+                            items.push(Expr::Undefined);
+                            self.pos += 1;
+                            if self.eat(&Tok::RBracket) {
+                                break;
+                            }
+                            continue;
+                        }
                         items.push(self.assignment()?);
                         if self.eat(&Tok::Comma) {
                             if self.eat(&Tok::RBracket) {

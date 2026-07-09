@@ -22,6 +22,8 @@ pub enum Expr {
     Call { callee: Box<Expr>, args: Vec<Expr> },
     // 템플릿 리터럴: 리터럴/보간 식 조각의 연결
     Template(Vec<TemplatePart>),
+    // 정규식 리터럴 — 매칭 엔진 없이 {source, flags} 객체로 평가 (관용)
+    Regex { source: String, flags: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]

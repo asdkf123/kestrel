@@ -89,7 +89,7 @@ fn main() {
     let source_korean = page_needs_korean(&html_source);
     let mut root_node = html::parse_dom(html_source);
     let needs_korean = source_korean || page_needs_korean(&root_node.text_content(root_node.root));
-    let js_rt = js::run_scripts(&mut root_node);
+    let js_rt = js::run_scripts(&mut root_node, "https://localhost/");
     let stylesheet = css::parse(css_source);
 
     let viewport_width: u32 = 800;
@@ -313,7 +313,7 @@ fn build_page(url: &str) -> Option<window::Page> {
 
     // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능).
     // 반환된 JS 런타임은 이벤트 핸들러(클로저)를 들고 Page 에 보관된다.
-    let js_rt = js::run_scripts(&mut dom);
+    let js_rt = js::run_scripts(&mut dom, url);
 
     let base = url::Url::parse(url).ok()?;
 
