@@ -30,6 +30,23 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
             println!("[console] {}", line);
         }
     }
+    // 모든 스크립트 실행 후 문서/윈도우 이벤트 발화: 프레임워크가 여기서
+    // 콘텐츠를 구성한다(DOMContentLoaded → load 순). dom 포인터는 아직 유효.
+    if std::env::var("KESTREL_JS_DEBUG").is_ok() {
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (t, _) in &it.global_handlers {
+            *counts.entry(t.as_str()).or_default() += 1;
+        }
+        eprintln!("[js debug] 전역 핸들러 {}개: {:?}", it.global_handlers.len(), counts);
+        eprintln!("[js debug] 요소 핸들러 {}개, 타이머 {}개", it.handlers.len(), it.timers.len());
+    }
+    it.set_ready_state("interactive");
+    it.fire_global("DOMContentLoaded");
+    it.set_ready_state("complete");
+    it.fire_global("load");
+    for line in it.console.drain(..) {
+        println!("[console] {}", line);
+    }
     it.dom = None;
     it
 }

@@ -27,6 +27,8 @@ pub enum Value {
     Dom(crate::dom::NodeId),
     Class(Rc<JsClass>),
     Instance(Rc<Instance>),
+    // bind 로 만든 바운드 함수: (대상, this, 선행 인자)
+    Bound(Rc<(Value, Value, Vec<Value>)>),
 }
 
 pub struct JsFn {
@@ -37,6 +39,8 @@ pub struct JsFn {
     pub this: Option<Box<Value>>, // 화살표가 정의 시점에 캡처한 this
     // 이 함수가 클래스 메서드면 그 클래스의 부모 (super.x 해석용)
     pub super_class: Option<Rc<JsClass>>,
+    // 함수도 객체: F.prototype / F.staticProp 등 (Rc 공유 → 변경 반영)
+    pub props: RefCell<HashMap<String, Value>>,
 }
 
 pub struct JsClass {
@@ -68,6 +72,10 @@ pub enum Native {
     ArrayPush,
     GetElementById,
     AddEventListener,
+    AddGlobalListener,
+    FnCall,
+    FnApply,
+    FnBind,
     CreateElement,
     AppendChild,
     RemoveElement,
@@ -171,6 +179,7 @@ impl std::fmt::Debug for Value {
             Value::Dom(p) => write!(f, "[dom {:?}]", p),
             Value::Class(c) => write!(f, "[class {}]", c.name),
             Value::Instance(i) => write!(f, "[instance {}]", i.class.name),
+            Value::Bound(_) => write!(f, "[bound function]"),
         }
     }
 }
@@ -278,7 +287,7 @@ fn to_num(v: &Value) -> f64 {
 }
 
 fn is_callable(v: &Value) -> bool {
-    matches!(v, Value::Fn(_) | Value::Native(_) | Value::Class(_))
+    matches!(v, Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_))
 }
 
 // Obj 기반 Promise 판별 (__isPromise 마커)
@@ -297,7 +306,9 @@ pub fn to_display(v: &Value) -> String {
         Value::Arr(a) => {
             a.borrow().iter().map(to_display).collect::<Vec<_>>().join(",")
         }
-        Value::Fn(_) | Value::Native(_) | Value::Class(_) => "function".to_string(),
+        Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => {
+            "function".to_string()
+        }
         Value::Dom(_) => "[object Element]".to_string(),
         Value::Instance(i) => format!("[object {}]", i.class.name),
     }
@@ -310,7 +321,7 @@ fn type_of(v: &Value) -> &'static str {
         Value::Bool(_) => "boolean",
         Value::Num(_) => "number",
         Value::Str(_) => "string",
-        Value::Fn(_) | Value::Native(_) | Value::Class(_) => "function",
+        Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => "function",
         _ => "object",
     }
 }
@@ -487,9 +498,12 @@ fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
 // 직렬화 불가(함수/undefined 등)는 None. 객체 키는 정렬 (HashMap 순서 비결정 대비).
 fn json_stringify(v: &Value) -> Option<String> {
     match v {
-        Value::Undefined | Value::Fn(_) | Value::Native(_) | Value::Dom(_) | Value::Class(_) => {
-            None
-        }
+        Value::Undefined
+        | Value::Fn(_)
+        | Value::Native(_)
+        | Value::Dom(_)
+        | Value::Class(_)
+        | Value::Bound(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();
@@ -565,6 +579,8 @@ pub struct Interp {
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
+    // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
+    pub global_handlers: Vec<(String, Value)>,
     // Math.random 용 xorshift 상태
     rng: u64,
     // throw 된 값 (에러 채널은 String 이라 값은 사이드 채널로 전달)
@@ -592,9 +608,13 @@ impl Interp {
         document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
         document.insert("querySelector".to_string(), Value::Native(Native::QuerySelector));
         document.insert("querySelectorAll".to_string(), Value::Native(Native::QuerySelectorAll));
-        // 문서 레벨 이벤트(DOMContentLoaded 등)는 아직 발화 안 함 — no-op 수용
-        document.insert("addEventListener".to_string(), Value::Native(Native::Noop));
+        // 문서 레벨 이벤트(DOMContentLoaded/load): 핸들러를 등록하고 스크립트
+        // 실행 후 발화한다(run_scripts). 프레임워크가 여기서 콘텐츠를 구성.
+        document.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
         document.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        // 스크립트 실행 중엔 "loading" — 프레임워크가 DOMContentLoaded 리스너를
+        // 등록하도록. run_scripts 가 이후 interactive → complete 로 갱신.
+        document.insert("readyState".to_string(), Value::Str("loading".to_string()));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         // Math
         let mut math = HashMap::new();
@@ -661,7 +681,7 @@ impl Interp {
         let mut window = HashMap::new();
         window.insert("localStorage".to_string(), ls);
         window.insert("navigator".to_string(), nav);
-        window.insert("addEventListener".to_string(), Value::Native(Native::Noop));
+        window.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
         window.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
         let window = Value::Obj(Rc::new(RefCell::new(window)));
         // self / globalThis 는 전역 객체(window) 별칭 (구글/워커 코드)
@@ -684,6 +704,7 @@ impl Interp {
             steps: 0,
             dom: None,
             handlers: Vec::new(),
+            global_handlers: Vec::new(),
             rng: seed,
             thrown: None,
             storage: HashMap::new(),
@@ -819,6 +840,33 @@ impl Interp {
         fired
     }
 
+    // document.readyState 갱신 (loading → interactive → complete)
+    pub fn set_ready_state(&mut self, state: &str) {
+        if let Some(Value::Obj(m)) = env_get(&self.global, "document") {
+            m.borrow_mut().insert("readyState".to_string(), Value::Str(state.to_string()));
+        }
+    }
+
+    // document/window 레벨 이벤트 발화 (DOMContentLoaded/load). 프레임워크가
+    // 여기 등록한 콜백에서 콘텐츠를 구성한다. 호출측이 dom 포인터를 잡고 있어야 함.
+    pub fn fire_global(&mut self, event: &str) -> bool {
+        self.steps = 0;
+        let to_run: Vec<Value> = self
+            .global_handlers
+            .iter()
+            .filter(|(t, _)| t == event)
+            .map(|(_, f)| f.clone())
+            .collect();
+        let fired = !to_run.is_empty();
+        for f in to_run {
+            if let Err(e) = self.call_value(f, None, Vec::new()) {
+                println!("[js error] {}", e);
+            }
+            self.drain_microtasks();
+        }
+        fired
+    }
+
     // 타이머 콜백 실행 (호출측이 dom 포인터 설정/해제). 에러는 격리.
     pub fn run_callback(&mut self, cb: Value) {
         self.steps = 0;
@@ -887,6 +935,7 @@ impl Interp {
                     is_arrow: false,
                     this: None,
                     super_class: None,
+                    props: RefCell::new(HashMap::new()),
                 }));
                 env_declare(env, name, f);
             }
@@ -1126,6 +1175,7 @@ impl Interp {
                     is_arrow: *is_arrow,
                     this,
                     super_class: None,
+                    props: RefCell::new(HashMap::new()),
                 })))
             }
             Expr::This => Ok(env_get(env, "this").unwrap_or(Value::Undefined)),
@@ -1467,6 +1517,36 @@ impl Interp {
                 // 정적 멤버
                 Ok(c.statics.borrow().get(key).cloned().unwrap_or(Value::Undefined))
             }
+            Value::Fn(func) => {
+                // 함수도 객체: 속성 백 우선, 그다음 call/apply/bind, prototype/name/length
+                if let Some(v) = func.props.borrow().get(key) {
+                    return Ok(v.clone());
+                }
+                match key {
+                    "call" => Ok(Value::Native(Native::FnCall)),
+                    "apply" => Ok(Value::Native(Native::FnApply)),
+                    "bind" => Ok(Value::Native(Native::FnBind)),
+                    "name" => Ok(Value::Str(String::new())),
+                    "length" => Ok(Value::Num(func.params.len() as f64)),
+                    // F.prototype 지연 생성: 접근 시 빈 객체를 만들어 저장
+                    // (F.prototype.method = ... 패턴 지원)
+                    "prototype" => {
+                        let proto = Value::Obj(Rc::new(RefCell::new(HashMap::new())));
+                        func.props.borrow_mut().insert("prototype".to_string(), proto.clone());
+                        Ok(proto)
+                    }
+                    _ => Ok(Value::Undefined),
+                }
+            }
+            // 네이티브/바운드 함수도 호출 어댑터 제공
+            Value::Native(_) | Value::Bound(_) => match key {
+                "call" => Ok(Value::Native(Native::FnCall)),
+                "apply" => Ok(Value::Native(Native::FnApply)),
+                "bind" => Ok(Value::Native(Native::FnBind)),
+                "name" => Ok(Value::Str(String::new())),
+                "length" => Ok(Value::Num(0.0)),
+                _ => Ok(Value::Undefined),
+            },
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
             }
@@ -1505,6 +1585,13 @@ impl Interp {
             }
             Value::Native(n) => self.call_native(n, recv, args),
             Value::Class(_) => self.construct(f, args), // 클래스를 함수처럼 호출 = new (관용)
+            // 바운드 함수: 캡처한 this + 선행 인자 앞에 붙여 대상 호출
+            Value::Bound(b) => {
+                let (target, this_val, partial) = (*b).clone();
+                let mut all = partial;
+                all.extend(args);
+                self.call_value(target, Some(this_val), all)
+            }
             other => Err(format!("{} 은(는) 함수가 아님", to_display(&other))),
         }
     }
@@ -1577,6 +1664,7 @@ impl Interp {
                 is_arrow: false,
                 this: None,
                 super_class: parent.clone(), // super.x → 이 클래스의 부모
+                props: RefCell::new(HashMap::new()),
             })
         };
         let ctor = def.ctor.as_ref().map(|(p, b)| mk(p, b));
@@ -1631,6 +1719,42 @@ impl Interp {
                 }
                 _ => Err("addEventListener 는 요소 메서드".to_string()),
             },
+            // document/window.addEventListener — 전역 핸들러로 등록 (recv 무시)
+            Native::AddGlobalListener => {
+                let event = args.first().map(to_display).unwrap_or_default();
+                if let Some(f) = args.get(1) {
+                    if is_callable(f) {
+                        self.global_handlers.push((event, f.clone()));
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            // fn.call(thisArg, a, b, ...) — recv 가 대상 함수
+            Native::FnCall => {
+                let target = recv.ok_or("call 대상 함수 없음")?;
+                let mut it = args.into_iter();
+                let this_arg = it.next().unwrap_or(Value::Undefined);
+                self.call_value(target, Some(this_arg), it.collect())
+            }
+            // fn.apply(thisArg, [args]) — 두 번째 인자는 배열
+            Native::FnApply => {
+                let target = recv.ok_or("apply 대상 함수 없음")?;
+                let mut it = args.into_iter();
+                let this_arg = it.next().unwrap_or(Value::Undefined);
+                let call_args = match it.next() {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                self.call_value(target, Some(this_arg), call_args)
+            }
+            // fn.bind(thisArg, ...partial) → 바운드 함수
+            Native::FnBind => {
+                let target = recv.ok_or("bind 대상 함수 없음")?;
+                let mut it = args.into_iter();
+                let this_arg = it.next().unwrap_or(Value::Undefined);
+                let partial: Vec<Value> = it.collect();
+                Ok(Value::Bound(Rc::new((target, this_arg, partial))))
+            }
             Native::CreateElement => {
                 let tag = args.first().map(to_display).unwrap_or_default();
                 if tag.is_empty() {
@@ -2159,6 +2283,11 @@ impl Interp {
                         c.statics.borrow_mut().insert(key, value);
                         Ok(())
                     }
+                    // 함수 프로퍼티 (F.prototype, F.staticProp = ...)
+                    Value::Fn(func) => {
+                        func.props.borrow_mut().insert(key, value);
+                        Ok(())
+                    }
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
             }
@@ -2428,6 +2557,21 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn functions_are_objects() {
+        // 함수 프로퍼티 (정적 + prototype)
+        assert_eq!(run_num("function F(){}; F.x = 5; F.x"), 5.0);
+        assert_eq!(run_num("function F(){}; F.prototype.v = 9; F.prototype.v"), 9.0);
+        // call / apply / bind
+        assert_eq!(run_num("function add(a,b){return a+b} add.call(null, 2, 3)"), 5.0);
+        assert_eq!(run_num("function add(a,b){return a+b} add.apply(null, [4,5])"), 9.0);
+        assert_eq!(run_num("function add(a,b){return a+b} add.bind(null,10)(5)"), 15.0);
+        // this 바인딩 (call)
+        assert_eq!(run_num("function f(){return this.x} f.call({x:7})"), 7.0);
+        // bind 로 this 고정
+        assert_eq!(run_num("function f(){return this.x} let g=f.bind({x:3}); g()"), 3.0);
     }
 
     #[test]
