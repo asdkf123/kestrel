@@ -42,6 +42,12 @@ pub enum Tok {
     Default,
     Instanceof,
     In,
+    Class,
+    New,
+    This,
+    Extends,
+    Super,
+    Static,
     // 구두점
     LParen,
     RParen,
@@ -116,6 +122,12 @@ fn keyword(word: &str) -> Option<Tok> {
         "default" => Tok::Default,
         "instanceof" => Tok::Instanceof,
         "in" => Tok::In,
+        "class" => Tok::Class,
+        "new" => Tok::New,
+        "this" => Tok::This,
+        "extends" => Tok::Extends,
+        "super" => Tok::Super,
+        "static" => Tok::Static,
         _ => return None,
     })
 }
@@ -138,6 +150,8 @@ fn regex_can_start(prev: Option<&Tok>) -> bool {
                 | Tok::False
                 | Tok::Null
                 | Tok::Undefined
+                | Tok::This
+                | Tok::Super
         )
     )
 }

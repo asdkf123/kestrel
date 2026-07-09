@@ -135,6 +135,10 @@ impl Parser {
                 Ok(Stmt::Throw(e))
             }
             Some(Tok::Try) => self.try_stmt(),
+            Some(Tok::Class) => {
+                self.pos += 1; // 'class'
+                Ok(Stmt::ClassDecl(self.class_def(true)?))
+            }
             Some(Tok::Switch) => self.switch_stmt(),
             Some(Tok::LBrace) => Ok(Stmt::Block(self.block()?)),
             Some(Tok::Semi) => {
@@ -409,7 +413,7 @@ impl Parser {
         } else {
             vec![Stmt::Return(Some(self.assignment()?))] // 식 본문 → return desugar
         };
-        Ok(Some(Expr::Func { params, body }))
+        Ok(Some(Expr::Func { params, body, is_arrow: true }))
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
@@ -601,18 +605,7 @@ impl Parser {
                     e = Expr::Member { obj: Box::new(e), prop: Box::new(idx), computed: true };
                 }
                 Some(Tok::LParen) => {
-                    self.pos += 1;
-                    let mut args = Vec::new();
-                    if !self.eat(&Tok::RParen) {
-                        loop {
-                            args.push(self.assignment()?);
-                            if self.eat(&Tok::Comma) {
-                                continue;
-                            }
-                            self.expect(&Tok::RParen)?;
-                            break;
-                        }
-                    }
+                    let args = self.arg_list()?;
                     e = Expr::Call { callee: Box::new(e), args };
                 }
                 Some(Tok::PlusPlus) => {
@@ -627,6 +620,110 @@ impl Parser {
             }
         }
         Ok(e)
+    }
+
+    // ( arg, arg, ... ) — 여는 괄호에서 시작해 닫는 괄호까지 소비
+    fn arg_list(&mut self) -> Result<Vec<Expr>, String> {
+        self.expect(&Tok::LParen)?;
+        let mut args = Vec::new();
+        if self.eat(&Tok::RParen) {
+            return Ok(args);
+        }
+        loop {
+            args.push(self.assignment()?);
+            if self.eat(&Tok::Comma) {
+                continue;
+            }
+            self.expect(&Tok::RParen)?;
+            break;
+        }
+        Ok(args)
+    }
+
+    // new 뒤 콜리: primary + 멤버 접근(.a, [b])만. 호출 괄호는 new 인자로.
+    fn new_callee(&mut self) -> Result<Expr, String> {
+        let mut e = self.primary()?;
+        loop {
+            match self.peek() {
+                Some(Tok::Dot) => {
+                    self.pos += 1;
+                    let name = self.ident()?;
+                    e = Expr::Member {
+                        obj: Box::new(e),
+                        prop: Box::new(Expr::Str(name)),
+                        computed: false,
+                    };
+                }
+                Some(Tok::LBracket) => {
+                    self.pos += 1;
+                    let idx = self.expr()?;
+                    self.expect(&Tok::RBracket)?;
+                    e = Expr::Member { obj: Box::new(e), prop: Box::new(idx), computed: true };
+                }
+                _ => break,
+            }
+        }
+        Ok(e)
+    }
+
+    // class 몸통 파싱. `class` 키워드는 호출자가 이미 소비함.
+    // is_decl 이면 이름 필수 (문), 아니면 선택 (식).
+    fn class_def(&mut self, is_decl: bool) -> Result<ClassDef, String> {
+        let name = if matches!(self.peek(), Some(Tok::Ident(_))) {
+            Some(self.ident()?)
+        } else if is_decl {
+            return Err("class 선언에 이름 필요".to_string());
+        } else {
+            None
+        };
+        let parent = if self.eat(&Tok::Extends) {
+            Some(Box::new(self.new_callee()?)) // extends Base / extends ns.Base
+        } else {
+            None
+        };
+        self.expect(&Tok::LBrace)?;
+        let mut ctor = None;
+        let mut methods = Vec::new();
+        let mut statics = Vec::new();
+        while self.peek() != Some(&Tok::RBrace) {
+            if self.eof() {
+                return Err("닫히지 않은 class".to_string());
+            }
+            if self.eat(&Tok::Semi) {
+                continue; // 멤버 사이 세미콜론 허용
+            }
+            let is_static = self.eat(&Tok::Static);
+            // get/set 접근자: 키워드만 소비하고 일반 메서드로 취급 (근사)
+            if let Some(Tok::Ident(w)) = self.peek() {
+                if (w == "get" || w == "set")
+                    && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(_)))
+                {
+                    self.pos += 1;
+                }
+            }
+            let mname = self.member_name()?;
+            let params = self.param_list()?;
+            let body = self.block()?;
+            if !is_static && mname == "constructor" {
+                ctor = Some((params, body));
+            } else if is_static {
+                statics.push((mname, params, body));
+            } else {
+                methods.push((mname, params, body));
+            }
+        }
+        self.pos += 1; // '}'
+        Ok(ClassDef { name, parent, ctor, methods, statics })
+    }
+
+    // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드
+    fn member_name(&mut self) -> Result<String, String> {
+        match self.next()? {
+            Tok::Ident(s) => Ok(s),
+            Tok::Str(s) => Ok(s),
+            // 키워드도 메서드 이름이 될 수 있음 (new/delete 등)
+            other => Err(format!("메서드 이름이 필요한데 {:?}{}", other, self.ctx())),
+        }
     }
 
     fn primary(&mut self) -> Result<Expr, String> {
@@ -700,7 +797,7 @@ impl Parser {
                             // 메서드 단축 { foo(a) { ... } }
                             let params = self.param_list()?;
                             let body = self.block()?;
-                            Expr::Func { params, body }
+                            Expr::Func { params, body, is_arrow: false }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };
@@ -724,7 +821,23 @@ impl Parser {
                 }
                 let params = self.param_list()?;
                 let body = self.block()?;
-                Ok(Expr::Func { params, body })
+                Ok(Expr::Func { params, body, is_arrow: false })
+            }
+            Tok::This => Ok(Expr::This),
+            Tok::Super => Ok(Expr::Super),
+            Tok::New => {
+                // new Callee(args) — callee 는 멤버 접근까지 (호출은 별도)
+                let callee = self.new_callee()?;
+                let args = if self.peek() == Some(&Tok::LParen) {
+                    self.arg_list()?
+                } else {
+                    Vec::new() // new Foo (괄호 생략)
+                };
+                Ok(Expr::New { callee: Box::new(callee), args })
+            }
+            Tok::Class => {
+                let def = self.class_def(false)?;
+                Ok(Expr::Class(Box::new(def)))
             }
             other => Err(format!("식이 필요한데 {:?}{}", other, self.ctx())),
         }
@@ -790,8 +903,9 @@ mod tests {
     fn arrow_functions() {
         let e = expr_of("x => x + 1");
         match e {
-            Expr::Func { params, body } => {
+            Expr::Func { params, body, is_arrow } => {
                 assert_eq!(params, vec!["x"]);
+                assert!(is_arrow);
                 assert!(matches!(body[0], Stmt::Return(Some(_))));
             }
             other => panic!("{:?}", other),

@@ -11,7 +11,8 @@ pub enum Expr {
     Array(Vec<Expr>),
     Object(Vec<(String, Expr)>),
     // function 식과 화살표 함수 공용. 화살표의 식 본문은 Return 문 하나로 desugar.
-    Func { params: Vec<String>, body: Vec<Stmt> },
+    // is_arrow: 화살표는 this 를 렉시컬로 캡처 (호출 시 재바인딩 안 함)
+    Func { params: Vec<String>, body: Vec<Stmt>, is_arrow: bool },
     Unary { op: UnOp, expr: Box<Expr> },
     Update { op: UpdOp, prefix: bool, target: Box<Expr> },
     Binary { op: BinOp, left: Box<Expr>, right: Box<Expr> },
@@ -26,6 +27,20 @@ pub enum Expr {
     Regex { source: String, flags: String },
     // 콤마 연산자 (a, b, c) — 전부 평가, 마지막 값
     Sequence(Vec<Expr>),
+    This,
+    Super,
+    New { callee: Box<Expr>, args: Vec<Expr> },
+    Class(Box<ClassDef>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDef {
+    pub name: Option<String>,
+    pub parent: Option<Box<Expr>>,
+    pub ctor: Option<(Vec<String>, Vec<Stmt>)>,
+    // (이름, 파라미터, 몸통)
+    pub methods: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    pub statics: Vec<(String, Vec<String>, Vec<Stmt>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,4 +134,5 @@ pub enum Stmt {
     Switch { disc: Expr, cases: Vec<(Option<Expr>, Vec<Stmt>)> },
     // for (k in obj) — 객체 키 / 배열 인덱스 순회
     ForIn { name: String, obj: Expr, body: Vec<Stmt> },
+    ClassDecl(ClassDef),
 }

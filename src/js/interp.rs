@@ -25,12 +25,41 @@ pub enum Value {
     Native(Native),
     // DOM 요소 핸들: 아레나 NodeId (구조 변형에도 안정)
     Dom(crate::dom::NodeId),
+    Class(Rc<JsClass>),
+    Instance(Rc<Instance>),
 }
 
 pub struct JsFn {
     pub params: Vec<String>,
     pub body: Vec<Stmt>,
     pub env: EnvRef, // 클로저가 캡처한 렉시컬 환경
+    pub is_arrow: bool,
+    pub this: Option<Box<Value>>, // 화살표가 정의 시점에 캡처한 this
+    // 이 함수가 클래스 메서드면 그 클래스의 부모 (super.x 해석용)
+    pub super_class: Option<Rc<JsClass>>,
+}
+
+pub struct JsClass {
+    pub name: String,
+    pub parent: Option<Rc<JsClass>>,
+    pub ctor: Option<Rc<JsFn>>,
+    pub methods: HashMap<String, Rc<JsFn>>,
+    pub statics: RefCell<HashMap<String, Value>>,
+}
+
+impl JsClass {
+    // 자신부터 조상까지 메서드 탐색
+    fn find_method(&self, name: &str) -> Option<Rc<JsFn>> {
+        if let Some(m) = self.methods.get(name) {
+            return Some(m.clone());
+        }
+        self.parent.as_ref().and_then(|p| p.find_method(name))
+    }
+}
+
+pub struct Instance {
+    pub class: Rc<JsClass>,
+    pub fields: RefCell<HashMap<String, Value>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,6 +147,8 @@ impl std::fmt::Debug for Value {
             Value::Fn(_) => write!(f, "[function]"),
             Value::Native(n) => write!(f, "[native {:?}]", n),
             Value::Dom(p) => write!(f, "[dom {:?}]", p),
+            Value::Class(c) => write!(f, "[class {}]", c.name),
+            Value::Instance(i) => write!(f, "[instance {}]", i.class.name),
         }
     }
 }
@@ -235,8 +266,9 @@ pub fn to_display(v: &Value) -> String {
         Value::Arr(a) => {
             a.borrow().iter().map(to_display).collect::<Vec<_>>().join(",")
         }
-        Value::Fn(_) | Value::Native(_) => "function".to_string(),
+        Value::Fn(_) | Value::Native(_) | Value::Class(_) => "function".to_string(),
         Value::Dom(_) => "[object Element]".to_string(),
+        Value::Instance(i) => format!("[object {}]", i.class.name),
     }
 }
 
@@ -247,7 +279,7 @@ fn type_of(v: &Value) -> &'static str {
         Value::Bool(_) => "boolean",
         Value::Num(_) => "number",
         Value::Str(_) => "string",
-        Value::Fn(_) | Value::Native(_) => "function",
+        Value::Fn(_) | Value::Native(_) | Value::Class(_) => "function",
         _ => "object",
     }
 }
@@ -262,6 +294,8 @@ fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Arr(x), Value::Arr(y)) => Rc::ptr_eq(x, y),
         (Value::Fn(x), Value::Fn(y)) => Rc::ptr_eq(x, y),
         (Value::Dom(x), Value::Dom(y)) => x == y,
+        (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+        (Value::Instance(x), Value::Instance(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }
 }
@@ -422,7 +456,20 @@ fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
 // 직렬화 불가(함수/undefined 등)는 None. 객체 키는 정렬 (HashMap 순서 비결정 대비).
 fn json_stringify(v: &Value) -> Option<String> {
     match v {
-        Value::Undefined | Value::Fn(_) | Value::Native(_) | Value::Dom(_) => None,
+        Value::Undefined | Value::Fn(_) | Value::Native(_) | Value::Dom(_) | Value::Class(_) => {
+            None
+        }
+        // 인스턴스는 필드를 일반 객체처럼 직렬화
+        Value::Instance(inst) => {
+            let m = inst.fields.borrow();
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .into_iter()
+                .filter_map(|k| json_stringify(&m[k]).map(|v| format!("{}:{}", json_quote(k), v)))
+                .collect();
+            Some(format!("{{{}}}", parts.join(",")))
+        }
         Value::Null => Some("null".to_string()),
         Value::Bool(b) => Some(b.to_string()),
         Value::Num(n) => {
@@ -663,6 +710,9 @@ impl Interp {
                     params: params.clone(),
                     body: body.clone(),
                     env: env.clone(),
+                    is_arrow: false,
+                    this: None,
+                    super_class: None,
                 }));
                 env_declare(env, name, f);
             }
@@ -691,6 +741,13 @@ impl Interp {
                 Ok(Flow::Normal(Value::Undefined))
             }
             Stmt::FuncDecl { .. } => Ok(Flow::Normal(Value::Undefined)), // 호이스팅됨
+            Stmt::ClassDecl(def) => {
+                let cls = self.make_class(def, env)?;
+                if let Some(name) = &def.name {
+                    env_declare(env, name, cls);
+                }
+                Ok(Flow::Normal(Value::Undefined))
+            }
             Stmt::If { cond, then, other } => {
                 let c = self.eval(cond, env)?;
                 let scope = Env::new(Some(env.clone()));
@@ -865,11 +922,32 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
-            Expr::Func { params, body } => Ok(Value::Fn(Rc::new(JsFn {
-                params: params.clone(),
-                body: body.clone(),
-                env: env.clone(),
-            }))),
+            Expr::Func { params, body, is_arrow } => {
+                // 화살표는 정의 시점 this 를 캡처 (렉시컬)
+                let this = if *is_arrow { env_get(env, "this").map(Box::new) } else { None };
+                Ok(Value::Fn(Rc::new(JsFn {
+                    params: params.clone(),
+                    body: body.clone(),
+                    env: env.clone(),
+                    is_arrow: *is_arrow,
+                    this,
+                    super_class: None,
+                })))
+            }
+            Expr::This => Ok(env_get(env, "this").unwrap_or(Value::Undefined)),
+            Expr::Super => {
+                // super 단독은 거의 안 쓰임 — super.method()/super() 는 특수 처리됨
+                Ok(Value::Undefined)
+            }
+            Expr::New { callee, args } => {
+                let class = self.eval(callee, env)?;
+                let mut arg_vals = Vec::new();
+                for a in args {
+                    arg_vals.push(self.eval(a, env)?);
+                }
+                self.construct(class, arg_vals)
+            }
+            Expr::Class(def) => self.make_class(def, env),
             Expr::Sequence(items) => {
                 let mut last = Value::Undefined;
                 for item in items {
@@ -969,9 +1047,36 @@ impl Interp {
             }
             Expr::Call { callee, args } => {
                 let mut arg_vals = Vec::new();
-                // 인자 평가는 수신자 결정 후가 아닌 JS 순서(콜리 먼저)지만
-                // 우리 서브셋에선 차이가 관찰되지 않아 단순화한다.
+                // super(...) — 부모 생성자를 현재 this 로 실행
+                if matches!(&**callee, Expr::Super) {
+                    for a in args {
+                        arg_vals.push(self.eval(a, env)?);
+                    }
+                    let (Some(Value::Class(parent)), Some(this)) =
+                        (env_get(env, "__superclass__"), env_get(env, "this"))
+                    else {
+                        return Err("super() 는 파생 클래스 생성자에서만".to_string());
+                    };
+                    self.run_constructor(&parent, &this, arg_vals)?;
+                    return Ok(Value::Undefined);
+                }
+                // super.method(...) — 부모 메서드를 현재 this 로 실행
                 if let Expr::Member { obj, prop, computed } = &**callee {
+                    if matches!(&**obj, Expr::Super) {
+                        let key = self.member_key(prop, *computed, env)?;
+                        let (Some(Value::Class(parent)), Some(this)) =
+                            (env_get(env, "__superclass__"), env_get(env, "this"))
+                        else {
+                            return Err("super.x 는 파생 클래스에서만".to_string());
+                        };
+                        let m = parent
+                            .find_method(&key)
+                            .ok_or_else(|| format!("부모에 메서드 {} 없음", key))?;
+                        for a in args {
+                            arg_vals.push(self.eval(a, env)?);
+                        }
+                        return self.call_value(Value::Fn(m), Some(this), arg_vals);
+                    }
                     let recv = self.eval(obj, env)?;
                     let key = self.member_key(prop, *computed, env)?;
                     let f = self.member_get(&recv, &key)?;
@@ -1074,6 +1179,20 @@ impl Interp {
                 }
                 self.dom_get(*id, key)
             }
+            Value::Instance(inst) => {
+                // 필드 우선, 없으면 클래스 메서드 체인
+                if let Some(v) = inst.fields.borrow().get(key) {
+                    return Ok(v.clone());
+                }
+                if let Some(m) = inst.class.find_method(key) {
+                    return Ok(Value::Fn(m));
+                }
+                Ok(Value::Undefined)
+            }
+            Value::Class(c) => {
+                // 정적 멤버
+                Ok(c.statics.borrow().get(key).cloned().unwrap_or(Value::Undefined))
+            }
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
             }
@@ -1090,6 +1209,18 @@ impl Interp {
         match f {
             Value::Fn(func) => {
                 let scope = Env::new(Some(func.env.clone()));
+                // this 바인딩: 화살표는 캡처한 this (없으면 체인 상속), 일반 함수는 수신자
+                if func.is_arrow {
+                    if let Some(t) = &func.this {
+                        env_declare(&scope, "this", (**t).clone());
+                    }
+                } else {
+                    env_declare(&scope, "this", recv.unwrap_or(Value::Undefined));
+                }
+                // 메서드 안 super.x 해석용
+                if let Some(sc) = &func.super_class {
+                    env_declare(&scope, "__superclass__", Value::Class(sc.clone()));
+                }
                 for (i, p) in func.params.iter().enumerate() {
                     env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
                 }
@@ -1099,8 +1230,99 @@ impl Interp {
                 }
             }
             Value::Native(n) => self.call_native(n, recv, args),
+            Value::Class(_) => self.construct(f, args), // 클래스를 함수처럼 호출 = new (관용)
             other => Err(format!("{} 은(는) 함수가 아님", to_display(&other))),
         }
+    }
+
+    // new Class(args) / 클래스 호출: 인스턴스 생성 → 생성자 체인 실행 → 인스턴스 반환.
+    fn construct(&mut self, class: Value, args: Vec<Value>) -> Result<Value, String> {
+        let cls = match class {
+            Value::Class(c) => c,
+            // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
+            Value::Obj(_) | Value::Native(_) => {
+                let mut map = HashMap::new();
+                if let Some(a0) = args.first() {
+                    map.insert("message".to_string(), a0.clone());
+                }
+                return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+            }
+            other => return Err(format!("{} 은(는) 생성자가 아님", to_display(&other))),
+        };
+        let inst = Value::Instance(Rc::new(Instance {
+            class: cls.clone(),
+            fields: RefCell::new(HashMap::new()),
+        }));
+        self.run_constructor(&cls, &inst, args)?;
+        Ok(inst)
+    }
+
+    // 생성자 실행 (super() 는 명시 호출로 부모 생성자 실행 — 자동 체인 아님, ES 동일)
+    fn run_constructor(
+        &mut self,
+        cls: &Rc<JsClass>,
+        inst: &Value,
+        args: Vec<Value>,
+    ) -> Result<(), String> {
+        match &cls.ctor {
+            Some(ctor) => {
+                let scope = Env::new(Some(ctor.env.clone()));
+                env_declare(&scope, "this", inst.clone());
+                // super 참조용: 현재 클래스의 부모를 스코프에 숨겨둠
+                if let Some(parent) = &cls.parent {
+                    env_declare(&scope, "__superclass__", Value::Class(parent.clone()));
+                }
+                for (i, p) in ctor.params.iter().enumerate() {
+                    env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
+                }
+                self.exec_block(&ctor.body, &scope)?;
+            }
+            None => {
+                // 암묵 생성자: 부모가 있으면 부모 생성자를 같은 인자로 실행
+                if let Some(parent) = &cls.parent {
+                    self.run_constructor(parent, inst, args)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn make_class(&mut self, def: &crate::js::ast::ClassDef, env: &EnvRef) -> Result<Value, String> {
+        let parent = match &def.parent {
+            Some(e) => match self.eval(e, env)? {
+                Value::Class(c) => Some(c),
+                other => return Err(format!("{} 은(는) 확장할 클래스가 아님", to_display(&other))),
+            },
+            None => None,
+        };
+        let mk = |params: &Vec<String>, body: &Vec<Stmt>| {
+            Rc::new(JsFn {
+                params: params.clone(),
+                body: body.clone(),
+                env: env.clone(),
+                is_arrow: false,
+                this: None,
+                super_class: parent.clone(), // super.x → 이 클래스의 부모
+            })
+        };
+        let ctor = def.ctor.as_ref().map(|(p, b)| mk(p, b));
+        let mut methods = HashMap::new();
+        for (name, p, b) in &def.methods {
+            methods.insert(name.clone(), mk(p, b));
+        }
+        // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
+        let mut statics = HashMap::new();
+        for (name, p, b) in &def.statics {
+            statics.insert(name.clone(), Value::Fn(mk(p, b)));
+        }
+        let cls = Rc::new(JsClass {
+            name: def.name.clone().unwrap_or_else(|| "(anonymous)".to_string()),
+            parent,
+            ctor,
+            methods,
+            statics: RefCell::new(statics),
+        });
+        Ok(Value::Class(cls))
     }
 
     fn call_native(
@@ -1458,7 +1680,20 @@ impl Interp {
                 _ => Value::Bool(false),
             },
             BinOp::Instanceof => {
-                // 프로토타입 체계 없음 — 전역 생성자 스텁과의 대응만 판단 (관용)
+                // 사용자 클래스: 인스턴스의 클래스 체인에 r 이 있는가
+                if let (Value::Instance(inst), Value::Class(rc)) = (&l, &r) {
+                    let mut cur = Some(inst.class.clone());
+                    let mut found = false;
+                    while let Some(c) = cur {
+                        if Rc::ptr_eq(&c, rc) {
+                            found = true;
+                            break;
+                        }
+                        cur = c.parent.clone();
+                    }
+                    return Ok(Value::Bool(found));
+                }
+                // 전역 생성자 스텁과의 대응 판단 (관용)
                 let global_is = |name: &str| -> bool {
                     matches!(
                         (env_get(&self.global, name), &r),
@@ -1530,6 +1765,14 @@ impl Interp {
                         }
                     }
                     Value::Dom(id) => self.dom_set(id, &key, value),
+                    Value::Instance(inst) => {
+                        inst.fields.borrow_mut().insert(key, value);
+                        Ok(())
+                    }
+                    Value::Class(c) => {
+                        c.statics.borrow_mut().insert(key, value);
+                        Ok(())
+                    }
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
             }
@@ -2015,6 +2258,84 @@ mod tests {
         assert_eq!(it.console, vec!["[alert] hi 2"]);
         // window.addEventListener 는 no-op (죽지 않음)
         assert!(Interp::new().run("window.addEventListener('load', x => x)").is_ok());
+    }
+
+    #[test]
+    fn class_basics_this_and_methods() {
+        let src = "class Counter { \
+             constructor(start) { this.n = start; } \
+             inc() { this.n = this.n + 1; return this.n; } \
+             get() { return this.n; } \
+           }";
+        assert_eq!(run_num(&format!("{} var c = new Counter(10); c.inc(); c.inc()", src)), 12.0);
+        assert_eq!(run_num(&format!("{} var c = new Counter(5); c.get()", src)), 5.0);
+        // 각 인스턴스는 독립 상태
+        assert_eq!(
+            run_num(&format!(
+                "{} var a = new Counter(0), b = new Counter(100); a.inc(); b.get()",
+                src
+            )),
+            100.0
+        );
+    }
+
+    #[test]
+    fn class_this_in_arrow_is_lexical() {
+        // 메서드 안 화살표가 바깥 this 를 캡처
+        let src = "class Box { \
+             constructor(v) { this.v = v; } \
+             mapped(arr) { return arr.map(x => x + this.v); } \
+           }";
+        assert_eq!(
+            run_str(&format!("{} new Box(10).mapped([1, 2, 3]).join(',')", src)),
+            "11,12,13"
+        );
+    }
+
+    #[test]
+    fn class_inheritance_and_super() {
+        let src = "class Animal { \
+             constructor(name) { this.name = name; } \
+             speak() { return this.name + ' makes a sound'; } \
+           } \
+           class Dog extends Animal { \
+             constructor(name) { super(name); this.legs = 4; } \
+             speak() { return super.speak() + ' (woof)'; } \
+           }";
+        assert_eq!(
+            run_str(&format!("{} new Dog('Rex').speak()", src)),
+            "Rex makes a sound (woof)"
+        );
+        assert_eq!(run_num(&format!("{} new Dog('Rex').legs", src)), 4.0);
+        // 상속받은 필드 접근
+        assert_eq!(run_str(&format!("{} new Dog('Fido').name", src)), "Fido");
+        // instanceof 는 체인 전체
+        assert!(run_bool(&format!("{} var d = new Dog('x'); d instanceof Dog", src)));
+        assert!(run_bool(&format!("{} var d = new Dog('x'); d instanceof Animal", src)));
+    }
+
+    #[test]
+    fn class_static_members() {
+        let src = "class MathUtil { \
+             static double(n) { return n * 2; } \
+           }";
+        assert_eq!(run_num(&format!("{} MathUtil.double(21)", src)), 42.0);
+    }
+
+    #[test]
+    fn class_expression_and_new_error() {
+        // 클래스 식
+        assert_eq!(
+            run_num("var C = class { constructor() { this.x = 7; } }; new C().x"),
+            7.0
+        );
+        // 네이티브 생성자 스텁: new Error('msg') → message
+        assert_eq!(run_str("var e = new Error('boom'); e.message"), "boom");
+        // throw new + try/catch 조합
+        assert_eq!(
+            run_str("try { throw new Error('bad'); } catch (e) { e.message }"),
+            "bad"
+        );
     }
 
     #[test]
