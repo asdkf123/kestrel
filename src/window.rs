@@ -28,6 +28,23 @@ pub struct Page {
     pub links: Vec<(Rect, String)>,
     pub element_rects: Vec<(Rect, crate::dom::NodeId, usize)>,
     pub doc_height: f32,
+    // 포커스된 <input> (타이핑 대상)
+    pub focused_input: Option<crate::dom::NodeId>,
+}
+
+// application/x-www-form-urlencoded (공백은 +)
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 impl Page {
@@ -74,6 +91,82 @@ impl Page {
             self.rebuild();
         }
         fired
+    }
+
+    // ── <input> 포커스/편집/폼 제출 ──
+
+    // 클릭 지점의 input (텍스트를 눌러도 매칭되도록 조상 포함)
+    pub fn input_at(&self, x: f32, y: f32) -> Option<crate::dom::NodeId> {
+        let id = crate::layout::hit_element(&self.element_rects, x, y)?;
+        std::iter::once(id).chain(self.dom.ancestors(id)).find(|&n| {
+            matches!(&self.dom.get(n).node_type,
+                crate::dom::NodeType::Element(e) if e.tag_name == "input"
+                    && e.attributes.get("type").map(|t| t.as_str()) != Some("hidden"))
+        })
+    }
+
+    pub fn input_value(&self, id: crate::dom::NodeId) -> String {
+        match &self.dom.get(id).node_type {
+            crate::dom::NodeType::Element(e) => {
+                e.attributes.get("value").cloned().unwrap_or_default()
+            }
+            _ => String::new(),
+        }
+    }
+
+    pub fn set_input_value(&mut self, id: crate::dom::NodeId, v: String) {
+        if let crate::dom::NodeType::Element(e) = &mut self.dom.get_mut(id).node_type {
+            e.attributes.insert("value".to_string(), v);
+        }
+        self.rebuild();
+    }
+
+    // Enter 제출: 조상 form 의 input[name] 수집 → GET URL. POST/폼 없음은 None.
+    pub fn submit_url(&self, input_id: crate::dom::NodeId) -> Option<String> {
+        let form = std::iter::once(input_id).chain(self.dom.ancestors(input_id)).find(|&n| {
+            matches!(&self.dom.get(n).node_type,
+                crate::dom::NodeType::Element(e) if e.tag_name == "form")
+        })?;
+        let crate::dom::NodeType::Element(fe) = &self.dom.get(form).node_type else {
+            return None;
+        };
+        let method =
+            fe.attributes.get("method").map(|m| m.to_ascii_lowercase()).unwrap_or_default();
+        if !(method.is_empty() || method == "get") {
+            return None; // POST 미지원
+        }
+        let action = fe.attributes.get("action").cloned().unwrap_or_default();
+        // form 하위 input 의 name=value (submit/button 류 제외)
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        fn collect(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<(String, String)>) {
+            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                if e.tag_name == "input" {
+                    let ty = e.attributes.get("type").map(|t| t.as_str()).unwrap_or("");
+                    if !matches!(ty, "submit" | "button" | "image" | "reset" | "checkbox" | "radio")
+                    {
+                        if let Some(name) = e.attributes.get("name") {
+                            let value =
+                                e.attributes.get("value").cloned().unwrap_or_default();
+                            out.push((name.clone(), value));
+                        }
+                    }
+                }
+            }
+            for &c in &dom.get(id).children {
+                collect(dom, c, out);
+            }
+        }
+        collect(&self.dom, form, &mut pairs);
+        let qs = pairs
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let mut target =
+            if action.is_empty() { self.url.clone() } else { self.url.join(&action)? };
+        let path = target.path.split('?').next().unwrap_or("/").to_string();
+        target.path = if qs.is_empty() { path } else { format!("{}?{}", path, qs) };
+        Some(target.as_string())
     }
 }
 
@@ -163,6 +256,12 @@ pub fn run_page(
                             scroll_y = scroll_y.clamp(0.0, (page.doc_height - viewport_h).max(0.0));
                             window.request_redraw();
                         }
+                        // <input> 클릭 → 포커스 (다른 곳 클릭 → 해제)
+                        let new_focus = page.input_at(cursor.0, cursor.1 - CHROME_H + scroll_y);
+                        if new_focus != page.focused_input {
+                            page.focused_input = new_focus;
+                            window.request_redraw();
+                        }
                         if let Some(href) =
                             hit_link(&page.links, cursor.0, cursor.1 - CHROME_H + scroll_y)
                         {
@@ -247,6 +346,50 @@ pub fn run_page(
                             }
                             return;
                         }
+                        // ── <input> 편집 모드 ──
+                        if let Some(fid) = page.focused_input {
+                            match &key.logical_key {
+                                Key::Named(NamedKey::Enter) => {
+                                    if let Some(url_str) = page.submit_url(fid) {
+                                        println!("→ {} (폼 제출)", url_str);
+                                        if let Some(new_page) = load(&url_str) {
+                                            history.push((page.url.as_string(), scroll_y));
+                                            page = new_page;
+                                            scroll_y = 0.0;
+                                            cache = crate::raster::GlyphCache::new();
+                                            url_input = page.url.as_string();
+                                            window.set_title(&format!(
+                                                "Kestrel — {}",
+                                                page.url.as_string()
+                                            ));
+                                        }
+                                    }
+                                    window.request_redraw();
+                                }
+                                Key::Named(NamedKey::Escape) => {
+                                    page.focused_input = None;
+                                    window.request_redraw();
+                                }
+                                Key::Named(NamedKey::Backspace) => {
+                                    let mut v = page.input_value(fid);
+                                    v.pop();
+                                    page.set_input_value(fid, v);
+                                    window.request_redraw();
+                                }
+                                Key::Named(NamedKey::Space) => {
+                                    let v = page.input_value(fid) + " ";
+                                    page.set_input_value(fid, v);
+                                    window.request_redraw();
+                                }
+                                Key::Character(s) => {
+                                    let v = page.input_value(fid) + s;
+                                    page.set_input_value(fid, v);
+                                    window.request_redraw();
+                                }
+                                _ => {}
+                            }
+                            return;
+                        }
                         // ── 뒤로 가기: Backspace (스크롤 위치까지 복원) ──
                         if key.physical_key == PhysicalKey::Code(KeyCode::Backspace) {
                             if let Some((prev_url, prev_scroll)) = history.pop() {
@@ -309,6 +452,29 @@ pub fn run_page(
                             &mut cache,
                             &page.images,
                         );
+                        // 포커스된 input 캐럿 (문서 좌표 → 화면 좌표, 스케일 반영)
+                        if let Some(fid) = page.focused_input {
+                            if let Some((r, _, _)) =
+                                page.element_rects.iter().find(|(_, id, _)| *id == fid)
+                            {
+                                let text_w = crate::paint::measure_text(
+                                    &page.fonts,
+                                    &page.input_value(fid),
+                                    16.0,
+                                );
+                                let cx = (r.x + 5.0 + text_w + 1.0) * scale;
+                                let cy = (r.y - scroll_y + CHROME_H + 4.0) * scale;
+                                canvas.fill_rect(
+                                    Color { r: 40, g: 90, b: 220, a: 255 },
+                                    Rect {
+                                        x: cx,
+                                        y: cy,
+                                        width: 2.0 * scale,
+                                        height: (r.height - 8.0).max(4.0) * scale,
+                                    },
+                                );
+                            }
+                        }
                         // 크롬 (주소창) — 물리 좌표로 직접 그림
                         let s = scale;
                         let wf = w as f32;
@@ -389,6 +555,7 @@ mod tests {
             items: Vec::new(),
             links: Vec::new(),
             element_rects: Vec::new(),
+            focused_input: None,
             doc_height: 0.0,
         };
         page.rebuild();
@@ -492,6 +659,55 @@ mod tests {
             page.element_rects.len() >= before + 2,
             "rebuild 후 새 li 들이 히트 영역에 반영"
         );
+    }
+
+    #[test]
+    fn input_focus_typing_and_submit_url() {
+        let mut page = make_page(
+            "<form action=\"/search\" method=\"get\">\
+             <input type=\"hidden\" name=\"src\" value=\"kestrel\">\
+             <input name=\"q\" value=\"\">\
+             <input type=\"submit\" value=\"go\">\
+             </form>",
+        );
+        // 보이는 input 을 좌표로 포커스 (hidden 은 0 크기라 히트 안 됨)
+        let vis = page
+            .element_rects
+            .iter()
+            .find(|(r, id, _)| {
+                r.height > 0.0
+                    && matches!(&page.dom.get(*id).node_type,
+                        crate::dom::NodeType::Element(e) if e.tag_name == "input"
+                            && e.attributes.get("type").is_none())
+            })
+            .map(|(r, _, _)| (r.x + r.width / 2.0, r.y + r.height / 2.0))
+            .expect("보이는 input 필요");
+        let fid = page.input_at(vis.0, vis.1).expect("input 포커스");
+        // 타이핑 시뮬레이션
+        page.set_input_value(fid, "hello world".to_string());
+        assert_eq!(page.input_value(fid), "hello world");
+        // 제출 URL: hidden 포함, submit 제외, 인코딩(공백 +)
+        let url = page.submit_url(fid).expect("GET 제출");
+        assert_eq!(url, "https://localhost/search?src=kestrel&q=hello+world");
+        // rebuild 후 value 글리프가 디스플레이 리스트에 반영
+        let glyphs = page
+            .items
+            .iter()
+            .filter(|i| matches!(i, crate::paint::DisplayItem::Glyph(_)))
+            .count();
+        assert!(glyphs >= 10, "타이핑한 텍스트가 렌더됨 (glyphs={})", glyphs);
+    }
+
+    #[test]
+    fn submit_without_form_or_post_is_none() {
+        let page = make_page("<input id=\"lonely\" name=\"x\">");
+        let id = page.dom.find_by_attr_id("lonely").unwrap();
+        assert!(page.submit_url(id).is_none(), "form 없으면 None");
+        let page2 = make_page(
+            "<form action=\"/p\" method=\"post\"><input id=\"i\" name=\"x\"></form>",
+        );
+        let id2 = page2.dom.find_by_attr_id("i").unwrap();
+        assert!(page2.submit_url(id2).is_none(), "POST 미지원");
     }
 
     #[test]

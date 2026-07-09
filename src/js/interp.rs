@@ -1605,6 +1605,12 @@ impl Interp {
         let dom = self.dom_arena()?;
         match key {
             "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
+            "value" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => Ok(Value::Str(
+                    e.attributes.get("value").cloned().unwrap_or_default(),
+                )),
+                _ => Ok(Value::Undefined),
+            },
             _ => Ok(Value::Undefined),
         }
     }
@@ -1630,6 +1636,12 @@ impl Interp {
                 for tree in crate::html::parse_fragment(text) {
                     let sub = dom.insert_tree(tree, Some(id));
                     dom.get_mut(id).children.push(sub);
+                }
+                Ok(())
+            }
+            "value" => {
+                if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                    e.attributes.insert("value".to_string(), text);
                 }
                 Ok(())
             }

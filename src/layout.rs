@@ -125,6 +125,10 @@ impl<'a> LayoutBox<'a> {
                     }
                 }
             }
+            if e.tag_name == "input" {
+                self.layout_input(containing_block, fonts);
+                return;
+            }
         }
 
         if !self.inline_nodes.is_empty() {
@@ -148,6 +152,55 @@ impl<'a> LayoutBox<'a> {
             self.layout_children(fonts, images);
         }
         self.calculate_height();
+    }
+
+    // <input> 대체 요소: 폭 = CSS width > size 속성 > 기본 180px,
+    // 높이 = font-size × 1.5. value 속성을 글리프로 렌더. type=hidden 은 0 크기.
+    fn layout_input(&mut self, containing_block: Dimensions, fonts: &FontStack) {
+        let NodeType::Element(e) = &self.styled_node.node.node_type else { return };
+        if e.attributes.get("type").map(|t| t.as_str()) == Some("hidden") {
+            return; // 0 크기, 글리프 없음
+        }
+        self.calculate_width(containing_block);
+        self.calculate_position(containing_block);
+        let px = self
+            .styled_node
+            .value("font-size")
+            .map(|v| v.to_px())
+            .filter(|&p| p > 0.0)
+            .unwrap_or(16.0);
+        // CSS width 지정이 없으면 (auto → 컨테이너 폭이 됨) size/기본값으로 교체
+        if self.styled_node.value("width").is_none() {
+            let size_chars =
+                e.attributes.get("size").and_then(|s| s.parse::<f32>().ok()).unwrap_or(0.0);
+            self.dimensions.content.width =
+                if size_chars > 0.0 { size_chars * px * 0.55 } else { 180.0 };
+        }
+        self.dimensions.content.height = px * 1.5;
+        // value 텍스트
+        let value = e.attributes.get("value").cloned().unwrap_or_default();
+        let color = match self.styled_node.value("color") {
+            Some(Value::Color(c)) => c,
+            _ => Color { r: 20, g: 20, b: 24, a: 255 },
+        };
+        let mut pen = self.dimensions.content.x + 5.0;
+        let baseline = self.dimensions.content.y + px * 1.1;
+        for ch in value.chars() {
+            let (fi, gid) = fonts.glyph_for(ch);
+            let f = fonts.font(fi);
+            let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+            if !ch.is_whitespace() {
+                self.glyphs.push(GlyphInstance {
+                    font_index: fi,
+                    glyph_id: gid,
+                    x: pen,
+                    baseline_y: baseline,
+                    px,
+                    color,
+                });
+            }
+            pen += adv;
+        }
     }
 
     fn calculate_width(&mut self, containing_block: Dimensions) {

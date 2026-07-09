@@ -90,6 +90,17 @@ fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
     if let Some(color) = get_color(layout_box, "background-color") {
         items.push(DisplayItem::Rect { color, rect: layout_box.dimensions.border_box() });
     }
+    // <input> 필드 시각: 외곽선 + 흰 내부 (value 글리프는 아래 공통 경로)
+    if let crate::dom::NodeType::Element(e) = &layout_box.styled_node.node.node_type {
+        if e.tag_name == "input" && layout_box.dimensions.content.width > 0.0 {
+            let b = layout_box.dimensions.border_box();
+            items.push(DisplayItem::Rect { color: Color { r: 140, g: 144, b: 152, a: 255 }, rect: b });
+            items.push(DisplayItem::Rect {
+                color: Color { r: 252, g: 252, b: 253, a: 255 },
+                rect: Rect { x: b.x + 1.0, y: b.y + 1.0, width: b.width - 2.0, height: b.height - 2.0 },
+            });
+        }
+    }
     // 배경 이미지: 박스 좌상단에 1회, 박스 크기로 클리핑 (repeat/position 미지원)
     if let Some(idx) = layout_box.background_image {
         items.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.border_box() });
@@ -186,6 +197,17 @@ fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f
             canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
         }
     }
+}
+
+// 텍스트 폭 측정 (캐럿 위치 계산용)
+pub fn measure_text(fonts: &FontStack, text: &str, px: f32) -> f32 {
+    let mut w = 0.0;
+    for ch in text.chars() {
+        let (fi, gid) = fonts.glyph_for(ch);
+        let f = fonts.font(fi);
+        w += f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+    }
+    w
 }
 
 // UI 크롬용 단순 텍스트 드로잉 (주소창 등). 끝 pen x 를 반환한다 (캐럿 위치).

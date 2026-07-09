@@ -34,6 +34,9 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
 fn collect_scripts(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<String>) {
     let node = dom.get(id);
     if let crate::dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "noscript" {
+            return; // JS 실행 브라우저: noscript 내용 무시
+        }
         if e.tag_name == "script" && e.attributes.get("src").map_or(true, |s| s.is_empty()) {
             // type 이 JS 일 때만 실행. application/json(데이터 임베드),
             // ld+json, text/template 등은 실행 대상이 아니다 (github 등).
@@ -257,6 +260,27 @@ mod tests {
         );
         run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "out").unwrap(), "null/0");
+    }
+
+    #[test]
+    fn input_value_binding() {
+        let mut dom = crate::html::parse_dom(
+            "<input id=\"f\" value=\"initial\"><p id=\"out\">x</p>\
+             <script>var f = document.getElementById('f'); \
+             var was = f.value; f.value = 'changed'; \
+             document.getElementById('out').textContent = was + '/' + f.value;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "initial/changed");
+        // 속성에도 반영 (레이아웃/제출이 읽는 단일 진실)
+        let f = dom.find_by_attr_id("f").unwrap();
+        match &dom.get(f).node_type {
+            crate::dom::NodeType::Element(e) => {
+                assert_eq!(e.attributes.get("value").map(|s| s.as_str()), Some("changed"));
+            }
+            _ => panic!(),
+        }
     }
 
     #[test]

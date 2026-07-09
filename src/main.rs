@@ -120,6 +120,7 @@ fn main() {
         links: Vec::new(),
         element_rects: Vec::new(),
         doc_height: 0.0,
+        focused_input: None,
     };
     page.rebuild();
 
@@ -154,10 +155,17 @@ fn write_ppm(canvas: &paint::Canvas, path: &str) {
     fs::write(path, data).expect("write ppm");
 }
 
-// 아레나 DOM 을 문서 순서(DFS)로 방문
+// 아레나 DOM 을 문서 순서(DFS)로 방문.
+// noscript 하위는 건너뛴다 — 우리는 JS 를 실행하는 브라우저 (구글 결과 페이지가
+// noscript 안에 "전부 display:none" 스타일을 넣어 무 JS 브라우저를 숨긴다)
 fn walk_dom(dom: &dom::Dom, id: dom::NodeId, f: &mut impl FnMut(&dom::NodeData)) {
     let node = dom.get(id);
     f(node);
+    if let dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "noscript" {
+            return;
+        }
+    }
     for &c in &node.children {
         walk_dom(dom, c, f);
     }
@@ -289,6 +297,11 @@ fn extract_css(dom: &dom::Dom, out: &mut String) {
 
 fn walk_dom_ids(dom: &dom::Dom, id: dom::NodeId, f: &mut impl FnMut(dom::NodeId)) {
     f(id);
+    if let dom::NodeType::Element(e) = &dom.get(id).node_type {
+        if e.tag_name == "noscript" {
+            return;
+        }
+    }
     for &c in &dom.get(id).children {
         walk_dom_ids(dom, c, f);
     }
@@ -366,6 +379,7 @@ fn build_page(url: &str) -> Option<window::Page> {
         links: Vec::new(),
         element_rects: Vec::new(),
         doc_height: 0.0,
+        focused_input: None,
     };
     page.rebuild();
     println!("[문서 높이 {}px, 링크 {}개]", page.doc_height as u32, page.links.len());
@@ -383,6 +397,38 @@ fn render_url(url: &str) {
                     let fired = page.dispatch_click(x, y);
                     println!("[click] ({}, {}) fired={}", x, y, fired);
                 }
+            }
+        }
+    }
+
+    // 헤드리스 폼 입력/제출 (검증용): KESTREL_TYPE="name=값" [+ KESTREL_SUBMIT=1]
+    if let Ok(spec) = std::env::var("KESTREL_TYPE") {
+        if let Some((name, val)) = spec.split_once('=') {
+            let mut found = None;
+            walk_dom_ids(&page.dom, page.dom.root, &mut |id| {
+                if found.is_none() {
+                    if let dom::NodeType::Element(e) = &page.dom.get(id).node_type {
+                        if e.tag_name == "input"
+                            && e.attributes.get("name").map(|n| n.as_str()) == Some(name)
+                        {
+                            found = Some(id);
+                        }
+                    }
+                }
+            });
+            if let Some(nid) = found {
+                page.set_input_value(nid, val.to_string());
+                println!("[type] {} = {:?}", name, val);
+                if std::env::var("KESTREL_SUBMIT").is_ok() {
+                    if let Some(u) = page.submit_url(nid) {
+                        println!("[submit] → {}", u);
+                        if let Some(p2) = build_page(&u) {
+                            page = p2;
+                        }
+                    }
+                }
+            } else {
+                println!("[type] name={} 인 input 없음", name);
             }
         }
     }
