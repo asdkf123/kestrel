@@ -2431,6 +2431,18 @@ mod tests {
     }
 
     #[test]
+    fn default_parameters() {
+        // 기본값 파라미터: 인자 없으면 기본값, 있으면 그 값
+        assert_eq!(run_num("function f(a, b=10){ return a+b; } f(5)"), 15.0);
+        assert_eq!(run_num("function f(a, b=10){ return a+b; } f(5, 2)"), 7.0);
+        // 화살표 기본값
+        assert_eq!(run_num("let f=(x=3)=>x*2; f()"), 6.0);
+        assert_eq!(run_num("let f=(x=3)=>x*2; f(5)"), 10.0);
+        // undefined 명시 전달도 기본값
+        assert_eq!(run_num("function f(a=7){ return a; } f(undefined)"), 7.0);
+    }
+
+    #[test]
     fn reserved_and_computed_object_keys() {
         // 예약어를 객체 키로 (미니파이 코드에 흔함)
         assert_eq!(run_str("let o={return:'r', class:'c'}; o.return"), "r");

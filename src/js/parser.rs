@@ -284,27 +284,87 @@ impl Parser {
 
     fn func_decl(&mut self) -> Result<Stmt, String> {
         self.expect(&Tok::Function)?;
+        // 제너레이터 function* 는 * 를 무시하고 일반 함수로 (관용)
+        self.eat(&Tok::Star);
         let name = self.ident()?;
-        let params = self.param_list()?;
-        let body = self.block()?;
+        let (params, mut body) = self.param_list()?;
+        body.extend(self.block()?); // 프롤로그(기본값) 뒤에 실제 본문
         Ok(Stmt::FuncDecl { name, params, body })
     }
 
-    fn param_list(&mut self) -> Result<Vec<String>, String> {
+    // 파라미터 목록 → (이름들, 본문 프롤로그).
+    // 기본값 파라미터 name=expr 는 `if(name===undefined) name=expr;` 로 디슈가해
+    // 프롤로그로 반환(호출자가 본문 앞에 붙임). 파라미터 타입 변경 없이 정확히 동작.
+    // rest ...name 은 이름만 바인딩(간이). 구조분해 파라미터는 자리표시 이름으로 수용.
+    fn param_list(&mut self) -> Result<(Vec<String>, Vec<Stmt>), String> {
         self.expect(&Tok::LParen)?;
         let mut params = Vec::new();
+        let mut prologue = Vec::new();
         if self.eat(&Tok::RParen) {
-            return Ok(params);
+            return Ok((params, prologue));
         }
         loop {
-            params.push(self.ident()?);
+            // rest 파라미터 ...name (…는 Dot 3개로 렉싱됨)
+            if self.peek() == Some(&Tok::Dot)
+                && self.toks.get(self.pos + 1) == Some(&Tok::Dot)
+                && self.toks.get(self.pos + 2) == Some(&Tok::Dot)
+            {
+                self.pos += 3;
+            }
+            // 구조분해 파라미터 { .. } / [ .. ] — 균형 맞춰 건너뛰고 자리표시 이름
+            let name = if matches!(self.peek(), Some(Tok::LBrace | Tok::LBracket)) {
+                self.skip_balanced()?;
+                format!("__pat{}__", params.len())
+            } else {
+                self.ident()?
+            };
+            if self.eat(&Tok::Assign) {
+                let default = self.assignment()?;
+                prologue.push(Stmt::If {
+                    cond: Expr::Binary {
+                        op: BinOp::EqEqEq,
+                        left: Box::new(Expr::Ident(name.clone())),
+                        right: Box::new(Expr::Undefined),
+                    },
+                    then: vec![Stmt::Expr(Expr::Assign {
+                        op: AssignOp::Set,
+                        target: Box::new(Expr::Ident(name.clone())),
+                        value: Box::new(default),
+                    })],
+                    other: None,
+                });
+            }
+            params.push(name);
             if self.eat(&Tok::Comma) {
+                if self.eat(&Tok::RParen) {
+                    break; // 트레일링 콤마
+                }
                 continue;
             }
             self.expect(&Tok::RParen)?;
             break;
         }
-        Ok(params)
+        Ok((params, prologue))
+    }
+
+    // 여는 괄호 종류에 맞춰 짝이 맞을 때까지 토큰을 소비 (구조분해 파라미터 스킵용)
+    fn skip_balanced(&mut self) -> Result<(), String> {
+        let open = self.next()?;
+        let close = match open {
+            Tok::LBrace => Tok::RBrace,
+            Tok::LBracket => Tok::RBracket,
+            Tok::LParen => Tok::RParen,
+            other => return Err(format!("여는 괄호가 아님: {:?}{}", other, self.ctx())),
+        };
+        let mut depth = 1;
+        while depth > 0 {
+            match self.next()? {
+                ref t if *t == open => depth += 1,
+                ref t if *t == close => depth -= 1,
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn if_stmt(&mut self) -> Result<Stmt, String> {
@@ -515,11 +575,11 @@ impl Parser {
     // `x => ...` / `(a, b) => ...`. 화살표가 아니면 위치를 되돌리고 None.
     fn try_arrow(&mut self) -> Result<Option<Expr>, String> {
         let save = self.pos;
-        let params = match self.peek() {
+        let (params, prologue) = match self.peek() {
             Some(Tok::Ident(_)) => {
                 let name = self.ident()?;
                 if self.peek() == Some(&Tok::Arrow) {
-                    vec![name]
+                    (vec![name], Vec::new())
                 } else {
                     self.pos = save;
                     return Ok(None);
@@ -535,11 +595,12 @@ impl Parser {
             _ => return Ok(None),
         };
         self.expect(&Tok::Arrow)?;
-        let body = if self.peek() == Some(&Tok::LBrace) {
-            self.block()?
+        let mut body = prologue;
+        if self.peek() == Some(&Tok::LBrace) {
+            body.extend(self.block()?);
         } else {
-            vec![Stmt::Return(Some(self.assignment()?))] // 식 본문 → return desugar
-        };
+            body.push(Stmt::Return(Some(self.assignment()?))); // 식 본문 → return desugar
+        }
         Ok(Some(Expr::Func { params, body, is_arrow: true }))
     }
 
@@ -897,8 +958,8 @@ impl Parser {
                 }
             }
             let mname = self.member_name()?;
-            let params = self.param_list()?;
-            let body = self.block()?;
+            let (params, mut body) = self.param_list()?;
+            body.extend(self.block()?);
             if !is_static && mname == "constructor" {
                 ctor = Some((params, body));
             } else if is_static {
@@ -1020,8 +1081,8 @@ impl Parser {
                             self.assignment()?
                         } else if self.peek() == Some(&Tok::LParen) {
                             // 메서드 단축 { foo(a) { ... } }
-                            let params = self.param_list()?;
-                            let body = self.block()?;
+                            let (params, mut body) = self.param_list()?;
+                            body.extend(self.block()?);
                             Expr::Func { params, body, is_arrow: false }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
@@ -1040,12 +1101,13 @@ impl Parser {
                 Ok(Expr::Object(props))
             }
             Tok::Function => {
-                // 함수 식 (이름은 무시 가능)
+                // 함수 식 (제너레이터 * 와 이름은 무시 가능)
+                self.eat(&Tok::Star);
                 if matches!(self.peek(), Some(Tok::Ident(_))) {
                     self.pos += 1;
                 }
-                let params = self.param_list()?;
-                let body = self.block()?;
+                let (params, mut body) = self.param_list()?;
+                body.extend(self.block()?);
                 Ok(Expr::Func { params, body, is_arrow: false })
             }
             Tok::This => Ok(Expr::This),
