@@ -15,6 +15,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             _ => Vec::new(),
         },
+        // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
+        "z-index" => match value_text.trim().parse::<f32>() {
+            Ok(n) => vec![Declaration { name: "z-index".to_string(), value: Value::Length(n, Unit::Px) }],
+            _ => Vec::new(),
+        },
         // font-weight: bold/bolder/숫자>=600 → "bold", 그 외 → "normal" 로 정규화
         // (숫자 weight 는 interpret_value 로 안 살아남아 여기서 처리)
         "font-weight" => {

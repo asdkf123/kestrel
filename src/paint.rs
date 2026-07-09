@@ -293,33 +293,50 @@ fn border_side_drawn(lb: &LayoutBox, side: &str) -> bool {
 }
 
 pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
-    let mut items = Vec::new();
-    collect_items(root, &mut items);
-    items
+    // (스택 레벨, 아이템) 수집 후 레벨로 안정 정렬 → 높은 z-index 가 위에 그려짐.
+    // 같은 레벨은 문서 순서 유지(안정 정렬). 정식 스태킹 컨텍스트의 근사.
+    let mut buf: Vec<(i32, DisplayItem)> = Vec::new();
+    collect_items(root, 0, &mut buf);
+    buf.sort_by_key(|(z, _)| *z);
+    buf.into_iter().map(|(_, it)| it).collect()
 }
 
-fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
-    // 그림자는 박스 뒤(가장 먼저)에 그린다.
-    emit_box_shadow(layout_box, items);
-    // 배경 + 테두리 (border-radius 포함). input/button 도 UA CSS 로 테두리/배경을
-    // 받으므로 이 공통 경로로 그려진다 (하드코딩 외형 제거 — 저작자 CSS 가 덮을 수 있음).
-    emit_box_decorations(layout_box, items);
-    // 배경 이미지: 박스 좌상단에 1회, 박스 크기로 클리핑 (repeat/position 미지원)
+// positioned 요소의 z-index 를 서브트리 스택 레벨로 전파. static 은 부모 레벨 유지.
+fn stack_level(lb: &LayoutBox, parent_z: i32) -> i32 {
+    let positioned = matches!(lb.styled_node.value("position"),
+        Some(Value::Keyword(ref k)) if k == "relative" || k == "absolute"
+            || k == "fixed" || k == "sticky");
+    if positioned {
+        if let Some(Value::Length(n, _)) = lb.styled_node.value("z-index") {
+            return n as i32;
+        }
+    }
+    parent_z
+}
+
+fn collect_items(layout_box: &LayoutBox, parent_z: i32, buf: &mut Vec<(i32, DisplayItem)>) {
+    let z = stack_level(layout_box, parent_z);
+    let mut local: Vec<DisplayItem> = Vec::new();
+    // 그림자 → 배경/테두리(border-radius 포함) → 배경이미지 → 이미지 → 글리프 → 장식
+    emit_box_shadow(layout_box, &mut local);
+    emit_box_decorations(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
-        items.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.border_box() });
+        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.border_box() });
     }
     if let Some(idx) = layout_box.image {
-        items.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content });
+        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content });
     }
     for gi in &layout_box.glyphs {
-        items.push(DisplayItem::Glyph(*gi));
+        local.push(DisplayItem::Glyph(*gi));
     }
-    // 링크 밑줄 등 장식 (글리프 위에 그려도 얇아 무해)
     for (rect, color) in &layout_box.decorations {
-        items.push(DisplayItem::Rect { color: *color, rect: *rect });
+        local.push(DisplayItem::Rect { color: *color, rect: *rect });
+    }
+    for it in local {
+        buf.push((z, it));
     }
     for child in &layout_box.children {
-        collect_items(child, items);
+        collect_items(child, z, buf);
     }
 }
 

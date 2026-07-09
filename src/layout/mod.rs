@@ -1661,6 +1661,34 @@ mod tests {
     }
 
     #[test]
+    fn z_index_paints_higher_on_top() {
+        // 문서상 먼저인 A(z:2)가 나중인 B(z:1)보다 디스플레이 리스트 뒤(=위)에 와야 함
+        let root = crate::html::parse_dom(
+            "<div class=\"w\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".w { display: block; position: relative; } \
+             .a { display: block; position: absolute; z-index: 2; background-color: #ff0000; width: 10px; height: 10px; } \
+             .b { display: block; position: absolute; z-index: 1; background-color: #0000ff; width: 10px; height: 10px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 200.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let dl = crate::paint::build_display_list(&lb);
+        let red = dl.iter().position(|it| {
+            matches!(it, crate::paint::DisplayItem::Rect { color, .. } if color.r == 255 && color.b == 0)
+        });
+        let blue = dl.iter().position(|it| {
+            matches!(it, crate::paint::DisplayItem::Rect { color, .. } if color.b == 255 && color.r == 0)
+        });
+        assert!(red.is_some() && blue.is_some(), "두 배경 사각형이 있어야");
+        assert!(red > blue, "z-index:2(빨강)가 z-index:1(파랑)보다 나중에(위에) 그려짐");
+    }
+
+    #[test]
     fn white_space_nowrap_stays_one_line() {
         let long = "<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii</p>";
         let height = |css: &str| -> f32 {
