@@ -23,6 +23,7 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
         if let Err(e) = it.run(src) {
             println!("[js error] {}", e);
         }
+        it.drain_microtasks(); // Promise .then 콜백 실행 (fetch 등)
         for line in it.console.drain(..) {
             println!("[console] {}", line);
         }
@@ -281,6 +282,44 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn promise_then_runs_via_microtask() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>Promise.resolve(5).then(function(v){ \
+               document.getElementById('out').textContent = 'got ' + v; });</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "got 5");
+    }
+
+    #[test]
+    fn promise_then_chains_results() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>Promise.resolve(2)\
+               .then(function(v){ return v * 10; })\
+               .then(function(v){ document.getElementById('out').textContent = 'r' + v; });</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "r20", "체인: 2→20");
+    }
+
+    #[test]
+    fn promise_then_runs_after_sync_code() {
+        // .then 콜백은 마이크로태스크라 동기 코드 뒤에 실행 (순서 보장)
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>var log=''; Promise.resolve().then(function(){ log+='B'; \
+               document.getElementById('out').textContent = log; }); log+='A';</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "AB", "동기 A 먼저, 마이크로태스크 B 나중");
     }
 
     #[test]

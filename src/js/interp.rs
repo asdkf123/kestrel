@@ -96,6 +96,14 @@ pub enum Native {
     SetTimeout,
     SetInterval,
     ClearTimer,
+    // Promise/fetch
+    PromiseResolve,
+    PromiseThen,
+    PromiseCatch,
+    Identity, // 값 통과 (promise 체이닝용)
+    Fetch,
+    ResponseText,
+    ResponseJson,
 }
 
 // 예약된 타이머 (창 이벤트 루프 / 헤드리스 flush 가 실행)
@@ -264,6 +272,11 @@ fn to_num(v: &Value) -> f64 {
         }
         _ => f64::NAN,
     }
+}
+
+// Obj 기반 Promise 판별 (__isPromise 마커)
+fn is_promise(v: &Value) -> bool {
+    matches!(v, Value::Obj(o) if matches!(o.borrow().get("__isPromise"), Some(Value::Bool(true))))
 }
 
 pub fn to_display(v: &Value) -> String {
@@ -555,6 +568,8 @@ pub struct Interp {
     pub timers: Vec<Timer>,
     pub cleared: std::collections::HashSet<u64>,
     next_timer_id: u64,
+    // Promise 마이크로태스크 큐: (콜백, 인자, 의존 promise). 스크립트/타이머 후 드레인.
+    microtasks: std::collections::VecDeque<(Value, Value, Value)>,
 }
 
 impl Interp {
@@ -646,6 +661,12 @@ impl Interp {
         env_declare(&global, "window", window.clone());
         env_declare(&global, "self", window.clone());
         env_declare(&global, "globalThis", window);
+        // Promise.resolve / Promise.reject (생성자 호출은 미지원, 정적 메서드만)
+        let mut promise = HashMap::new();
+        promise.insert("resolve".to_string(), Value::Native(Native::PromiseResolve));
+        env_declare(&global, "Promise", Value::Obj(Rc::new(RefCell::new(promise))));
+        // fetch(url) — 동기 HTTP 후 resolved Promise(Response) 반환
+        env_declare(&global, "fetch", Value::Native(Native::Fetch));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -662,6 +683,93 @@ impl Interp {
             timers: Vec::new(),
             cleared: std::collections::HashSet::new(),
             next_timer_id: 1,
+            microtasks: std::collections::VecDeque::new(),
+        }
+    }
+
+    // 새 pending Promise (Obj 표현: 상태·값·대기콜백을 맵에 저장, then/catch 는 Native)
+    fn new_promise(&self) -> Value {
+        let mut m = HashMap::new();
+        m.insert("__isPromise".to_string(), Value::Bool(true));
+        m.insert("__state".to_string(), Value::Str("pending".to_string()));
+        m.insert("__value".to_string(), Value::Undefined);
+        m.insert("__cbs".to_string(), Value::Arr(Rc::new(RefCell::new(Vec::new()))));
+        m.insert("then".to_string(), Value::Native(Native::PromiseThen));
+        m.insert("catch".to_string(), Value::Native(Native::PromiseCatch));
+        Value::Obj(Rc::new(RefCell::new(m)))
+    }
+
+    // promise 를 값으로 이행. 값이 또 promise 면 그것이 이행될 때 이어서 이행(체이닝).
+    fn resolve_promise(&mut self, p: &Value, v: Value) {
+        if is_promise(&v) {
+            // v 가 이행되면 p 도 같은 값으로 (Identity 콜백으로 위임)
+            self.promise_then(&v, Value::Native(Native::Identity), p.clone());
+            return;
+        }
+        let Value::Obj(o) = p else { return };
+        {
+            let mut m = o.borrow_mut();
+            m.insert("__state".to_string(), Value::Str("fulfilled".to_string()));
+            m.insert("__value".to_string(), v.clone());
+        }
+        // 대기 콜백을 마이크로태스크로
+        let cbs = {
+            let m = o.borrow();
+            match m.get("__cbs") {
+                Some(Value::Arr(a)) => a.borrow().clone(),
+                _ => Vec::new(),
+            }
+        };
+        for cb in cbs {
+            if let Value::Obj(c) = cb {
+                let (f, dep) = {
+                    let cm = c.borrow();
+                    (cm.get("cb").cloned().unwrap_or(Value::Undefined),
+                     cm.get("dep").cloned().unwrap_or(Value::Undefined))
+                };
+                self.microtasks.push_back((f, v.clone(), dep));
+            }
+        }
+        if let Some(Value::Arr(a)) = o.borrow().get("__cbs") {
+            a.borrow_mut().clear();
+        }
+    }
+
+    // p.then(cb) → dep promise 반환. p 가 이미 이행이면 마이크로태스크로, 아니면 대기열에.
+    fn promise_then(&mut self, p: &Value, cb: Value, dep: Value) -> Value {
+        let Value::Obj(o) = p else { return Value::Undefined };
+        let (state, value) = {
+            let m = o.borrow();
+            (
+                match m.get("__state") { Some(Value::Str(s)) => s.clone(), _ => "pending".into() },
+                m.get("__value").cloned().unwrap_or(Value::Undefined),
+            )
+        };
+        if state == "fulfilled" {
+            self.microtasks.push_back((cb, value, dep.clone()));
+        } else {
+            // 대기: {cb, dep} 를 __cbs 에 추가
+            let mut entry = HashMap::new();
+            entry.insert("cb".to_string(), cb);
+            entry.insert("dep".to_string(), dep.clone());
+            let entry = Value::Obj(Rc::new(RefCell::new(entry)));
+            if let Some(Value::Arr(a)) = o.borrow().get("__cbs") {
+                a.borrow_mut().push(entry);
+            }
+        }
+        dep
+    }
+
+    // 마이크로태스크 드레인: 콜백 실행 → 그 결과로 의존 promise 이행 (체이닝).
+    pub fn drain_microtasks(&mut self) {
+        let mut guard = 0;
+        while let Some((cb, arg, dep)) = self.microtasks.pop_front() {
+            guard += 1;
+            if guard > 100_000 {
+                break; // 폭주 방지
+            }
+            let r = self.call_value(cb, None, vec![arg]).unwrap_or(Value::Undefined);
+            self.resolve_promise(&dep, r);
         }
     }
 
@@ -1770,6 +1878,63 @@ impl Interp {
                     self.timers.retain(|t| t.id != id);
                 }
                 Ok(Value::Undefined)
+            }
+            Native::PromiseResolve => {
+                let v = args.into_iter().next().unwrap_or(Value::Undefined);
+                let p = self.new_promise();
+                self.resolve_promise(&p, v);
+                Ok(p)
+            }
+            Native::PromiseThen => {
+                let p = recv.unwrap_or(Value::Undefined);
+                let cb = args.into_iter().next().unwrap_or(Value::Undefined);
+                let dep = self.new_promise();
+                Ok(self.promise_then(&p, cb, dep))
+            }
+            // 이행만 지원 → catch 는 자신 반환(no-op)
+            Native::PromiseCatch => Ok(recv.unwrap_or(Value::Undefined)),
+            Native::Identity => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
+            Native::Fetch => {
+                let url = args.first().map(to_display).unwrap_or_default();
+                let resp = self.new_promise();
+                match crate::http::fetch(&url) {
+                    Ok(r) => {
+                        let body = String::from_utf8_lossy(&r.body).to_string();
+                        let mut m = HashMap::new();
+                        m.insert("status".to_string(), Value::Num(r.status as f64));
+                        m.insert(
+                            "ok".to_string(),
+                            Value::Bool(r.status >= 200 && r.status < 300),
+                        );
+                        m.insert("__body".to_string(), Value::Str(body));
+                        m.insert("text".to_string(), Value::Native(Native::ResponseText));
+                        m.insert("json".to_string(), Value::Native(Native::ResponseJson));
+                        let response = Value::Obj(Rc::new(RefCell::new(m)));
+                        self.resolve_promise(&resp, response);
+                    }
+                    Err(e) => {
+                        self.console.push(format!("fetch 실패: {:?}", e));
+                        self.resolve_promise(&resp, Value::Undefined);
+                    }
+                }
+                Ok(resp)
+            }
+            Native::ResponseText | Native::ResponseJson => {
+                let body = match &recv {
+                    Some(Value::Obj(o)) => match o.borrow().get("__body") {
+                        Some(Value::Str(s)) => s.clone(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                let val = if matches!(n, Native::ResponseJson) {
+                    json_parse(&body).unwrap_or(Value::Null)
+                } else {
+                    Value::Str(body)
+                };
+                let p = self.new_promise();
+                self.resolve_promise(&p, val);
+                Ok(p)
             }
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
