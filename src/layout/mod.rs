@@ -324,10 +324,24 @@ impl<'a> LayoutBox<'a> {
         let padding_right = len_px(style.lookup("padding-right", "padding", &zero), avail).to_px();
         let extra = border_left + border_right + padding_left + padding_right;
 
+        // box-sizing: border-box → 지정 width 는 border box(패딩·테두리 포함).
+        // content = width - extra 로 환산 (auto/퍼센트-잔여는 그대로).
+        let border_box = matches!(style.value("box-sizing"),
+            Some(Value::Keyword(ref k)) if k == "border-box");
+        let width = if border_box {
+            match width {
+                Length(w, Px) => Length((w - extra).max(0.0), Px),
+                other => other,
+            }
+        } else {
+            width
+        };
+
         let (mut cw, mut ml, mut mr) = resolve_width(&width, &margin_left, &margin_right, extra, avail);
 
         // max-width: 계산된 폭이 상한을 넘으면 고정 폭으로 재계산 (auto 마진 → 가운데 정렬)
         if let Some(Length(mw, Px)) = style.value("max-width") {
+            let mw = if border_box { (mw - extra).max(0.0) } else { mw };
             if cw > mw {
                 let (cw2, ml2, mr2) =
                     resolve_width(&Length(mw, Px), &margin_left, &margin_right, extra, avail);
@@ -739,7 +753,16 @@ impl<'a> LayoutBox<'a> {
 
     fn calculate_height(&mut self) {
         if let Some(Length(h, Px)) = self.styled_node.value("height") {
-            self.dimensions.content.height = h;
+            // box-sizing: border-box → 지정 height 는 border box. content = height - 세로 extra.
+            let border_box = matches!(self.styled_node.value("box-sizing"),
+                Some(Value::Keyword(ref k)) if k == "border-box");
+            let vextra = if border_box {
+                let d = &self.dimensions;
+                d.padding.top + d.padding.bottom + d.border.top + d.border.bottom
+            } else {
+                0.0
+            };
+            self.dimensions.content.height = (h - vextra).max(0.0);
         }
     }
 }
@@ -1658,6 +1681,29 @@ mod tests {
         let al = ul_markers("li { list-style-type: lower-alpha; }");
         assert_eq!(al[0].as_deref(), Some("a."));
         assert_eq!(al[2].as_deref(), Some("c."));
+    }
+
+    #[test]
+    fn box_sizing_border_box_subtracts_padding_border() {
+        let mk = |css: &str| -> (f32, f32) {
+            let root = crate::html::parse_dom("<div class=\"b\"></div>".to_string());
+            let ss = crate::css::parse(css.to_string());
+            let styled = crate::style::style_tree(&root, &ss);
+            let mut vp: Dimensions = Default::default();
+            vp.content.width = 500.0;
+            let fs = fonts();
+            let lb = layout_tree(&styled, vp, &fs, &no_images());
+            (lb.dimensions.content.width, lb.dimensions.border_box().width)
+        };
+        // content-box(기본): content=100, border box=100+패딩20+테두리10=130
+        let (cw, bw) = mk(".b { display: block; width: 100px; padding: 10px; border: 5px solid #000; }");
+        assert_eq!(cw, 100.0);
+        assert_eq!(bw, 130.0);
+        // border-box: 지정 100 이 border box → content = 100-20-10 = 70
+        let (cw2, bw2) =
+            mk(".b { display: block; box-sizing: border-box; width: 100px; padding: 10px; border: 5px solid #000; }");
+        assert_eq!(bw2, 100.0, "border-box: 지정 width=border box");
+        assert_eq!(cw2, 70.0, "content = 100 - 패딩 - 테두리");
     }
 
     #[test]
