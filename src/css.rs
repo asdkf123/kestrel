@@ -101,9 +101,13 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
     Stylesheet { rules: parser.parse_rules() }
 }
 
-// button: inline-block 미지원 대체로 block (클릭 히트 영역을 갖게 함)
-// 테이블 계열(td 등)도 block — 진짜 테이블 레이아웃 전까지 세로로라도 렌더되게
-const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, thead, tbody, tfoot, tr, td, th, caption, center, form, fieldset, hr, figure, figcaption, address, dl, dt, dd, button, select, textarea, input { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; } a { color: #0645ad; } ul, ol { padding-left: 24px; } li { padding-left: 18px; } td, th { padding: 4px 6px; } th { color: #202020; } center { text-align: center; }";
+// UA 기본 스타일시트. HTML 표준 §15 Rendering 을 근거로 함
+// (https://html.spec.whatwg.org/multipage/rendering.html). 표준은 폼 컨트롤을
+// appearance:auto(네이티브 위젯)로 두지만, 우리는 appearance 미구현이라 기본
+// 테두리/배경을 여기 CSS 로 넣는다 — 캐스케이드상 저작자 CSS 가 덮을 수 있어
+// 하드코딩(무조건 그림)과 달리 구글 등의 커스텀 스타일이 이긴다.
+// 테이블 계열은 진짜 테이블 레이아웃 전까지 block 으로 근사(레이아웃은 tr 태그로 분기).
+const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, thead, tbody, tfoot, tr, td, th, caption, center, form, fieldset, hr, figure, figcaption, address, dl, dt, dd, select, textarea { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; } a { color: #0645ad; } ul, ol { padding-left: 24px; } li { padding-left: 18px; } td, th { padding: 4px 6px; } th { color: #202020; } center { text-align: center; } input, button { display: inline-block; } input, textarea, select { border: 1px solid #767676; background-color: #ffffff; padding: 1px 2px; } button, input[type=submit], input[type=reset], input[type=button] { border: 1px solid #767676; background-color: #e9e9ed; padding: 2px 8px; text-align: center; }";
 
 pub fn user_agent_stylesheet() -> Stylesheet {
     parse(UA_CSS.to_string())

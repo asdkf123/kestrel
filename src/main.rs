@@ -90,7 +90,9 @@ fn main() {
     let mut root_node = html::parse_dom(html_source);
     let needs_korean = source_korean || page_needs_korean(&root_node.text_content(root_node.root));
     let js_rt = js::run_scripts(&mut root_node, "https://localhost/");
-    let stylesheet = css::parse(css_source);
+    // 실제 페이지처럼 UA 스타일시트를 먼저 깔고 그 위에 저작자 CSS 를 얹는다.
+    let mut stylesheet = css::user_agent_stylesheet();
+    stylesheet.rules.extend(css::parse(css_source).rules);
 
     let viewport_width: u32 = 800;
     let viewport_height: u32 = 600;

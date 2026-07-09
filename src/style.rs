@@ -35,7 +35,7 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn display(&self) -> Display {
-        let d = match self.value("display") {
+        match self.value("display") {
             Some(Value::Keyword(s)) => match &*s {
                 "block" => Display::Block,
                 "flex" => Display::Flex,
@@ -51,26 +51,7 @@ impl<'a> StyledNode<'a> {
                 _ => Display::Block,
             },
             _ => Display::Inline,
-        };
-        // 버튼류 폼 컨트롤은 기본 block(UA)을 inline-block 으로 승격해 나란히 배치.
-        // (텍스트 input 은 block 유지 — 검색창처럼 폭을 채워야 함)
-        if matches!(d, Display::Block) && self.is_button_control() {
-            return Display::InlineBlock;
         }
-        d
-    }
-
-    // <button> 또는 input[type=submit|button|reset] 인가.
-    fn is_button_control(&self) -> bool {
-        let NodeType::Element(e) = &self.node.node_type else { return false };
-        if e.tag_name == "button" {
-            return true;
-        }
-        e.tag_name == "input"
-            && matches!(
-                e.attributes.get("type").map(|t| t.as_str()),
-                Some("submit") | Some("button") | Some("reset")
-            )
     }
 }
 

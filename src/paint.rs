@@ -301,19 +301,9 @@ pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
 fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
     // 그림자는 박스 뒤(가장 먼저)에 그린다.
     emit_box_shadow(layout_box, items);
-    // 배경 + 테두리 (border-radius 포함). 콘텐츠(글리프/이미지)는 이 아래에 그려진다.
+    // 배경 + 테두리 (border-radius 포함). input/button 도 UA CSS 로 테두리/배경을
+    // 받으므로 이 공통 경로로 그려진다 (하드코딩 외형 제거 — 저작자 CSS 가 덮을 수 있음).
     emit_box_decorations(layout_box, items);
-    // <input> 필드 시각: 외곽선 + 흰 내부 (value 글리프는 아래 공통 경로)
-    if let crate::dom::NodeType::Element(e) = &layout_box.styled_node.node.node_type {
-        if e.tag_name == "input" && layout_box.dimensions.content.width > 0.0 {
-            let b = layout_box.dimensions.border_box();
-            items.push(DisplayItem::Rect { color: Color { r: 140, g: 144, b: 152, a: 255 }, rect: b });
-            items.push(DisplayItem::Rect {
-                color: Color { r: 252, g: 252, b: 253, a: 255 },
-                rect: Rect { x: b.x + 1.0, y: b.y + 1.0, width: b.width - 2.0, height: b.height - 2.0 },
-            });
-        }
-    }
     // 배경 이미지: 박스 좌상단에 1회, 박스 크기로 클리핑 (repeat/position 미지원)
     if let Some(idx) = layout_box.background_image {
         items.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.border_box() });
