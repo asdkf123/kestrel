@@ -109,6 +109,19 @@ fn matches_simple_selector(elem: &ElementData, selector: &SimpleSelector) -> boo
     if selector.class.iter().any(|class| !elem_classes.contains(&**class)) {
         return false;
     }
+    // 속성 선택자: [name] 은 존재, [name=val] 은 값 일치
+    for (name, val) in &selector.attrs {
+        match elem.attributes.get(name) {
+            Some(av) => {
+                if let Some(v) = val {
+                    if av != v {
+                        return false;
+                    }
+                }
+            }
+            None => return false,
+        }
+    }
     true
 }
 
@@ -472,6 +485,32 @@ mod tests {
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Percent)));
         // em/rem 은 여전히 미해석 → 드롭
         assert_eq!(styled.value("margin-top"), None);
+    }
+
+    #[test]
+    fn attribute_selector_matches_by_value() {
+        let root = crate::html::parse_dom(
+            "<div><input type=\"submit\"><input type=\"text\"></div>".to_string(),
+        );
+        let ss = crate::css::parse("input[type=submit] { width: 5px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(
+            styled.children[0].value("width"),
+            Some(Value::Length(5.0, Unit::Px)),
+            "input[type=submit] 매칭"
+        );
+        assert_eq!(styled.children[1].value("width"), None, "input[type=text] 비매칭");
+    }
+
+    #[test]
+    fn attribute_presence_selector() {
+        let root = crate::html::parse_dom(
+            "<div><input disabled=\"\"><input></div>".to_string(),
+        );
+        let ss = crate::css::parse("input[disabled] { width: 3px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.children[0].value("width"), Some(Value::Length(3.0, Unit::Px)));
+        assert_eq!(styled.children[1].value("width"), None);
     }
 
     #[test]

@@ -21,6 +21,8 @@ pub struct SimpleSelector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
     pub class: Vec<String>,
+    // 속성 선택자: (이름, 값). 값 None = [attr] 존재만, Some = [attr=val] 정확 일치.
+    pub attrs: Vec<(String, Option<String>)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -71,7 +73,8 @@ impl Selector {
     pub fn specificity(&self) -> Specificity {
         let parts = self.parts();
         let a = parts.iter().map(|s| s.id.iter().count()).sum();
-        let b = parts.iter().map(|s| s.class.len()).sum();
+        // 속성 선택자는 클래스와 동일 특이도 (CSS 표준)
+        let b = parts.iter().map(|s| s.class.len() + s.attrs.len()).sum();
         let c = parts.iter().map(|s| s.tag_name.iter().count()).sum();
         (a, b, c)
     }
@@ -220,7 +223,7 @@ impl Parser {
         loop {
             self.consume_whitespace();
             match self.peek() {
-                Some(c) if c == '.' || c == '#' || c == '*' || valid_identifier_char(c) => {
+                Some(c) if c == '.' || c == '#' || c == '*' || c == '[' || valid_identifier_char(c) => {
                     parts.push(self.parse_simple_selector());
                 }
                 _ => break,
@@ -234,7 +237,8 @@ impl Parser {
     }
 
     fn parse_simple_selector(&mut self) -> SimpleSelector {
-        let mut selector = SimpleSelector { tag_name: None, id: None, class: Vec::new() };
+        let mut selector =
+            SimpleSelector { tag_name: None, id: None, class: Vec::new(), attrs: Vec::new() };
         while !self.eof() {
             match self.input[self.pos..].chars().next().unwrap() {
                 '#' => {
@@ -248,6 +252,11 @@ impl Parser {
                 '*' => {
                     self.consume_char();
                 }
+                '[' => {
+                    if let Some(attr) = self.parse_attr_selector() {
+                        selector.attrs.push(attr);
+                    }
+                }
                 c if valid_identifier_char(c) => {
                     selector.tag_name = Some(self.parse_identifier());
                 }
@@ -255,6 +264,47 @@ impl Parser {
             }
         }
         selector
+    }
+
+    // [name] 또는 [name=value] / [name="value"]. =/따옴표 파싱, 그 외 연산자(~= 등)는
+    // value 없는 존재 검사로 관용 처리. name 은 소문자화.
+    fn parse_attr_selector(&mut self) -> Option<(String, Option<String>)> {
+        self.consume_char(); // '['
+        self.consume_whitespace();
+        let name = self.parse_identifier().to_ascii_lowercase();
+        self.consume_whitespace();
+        let value = if self.peek() == Some('=') {
+            self.consume_char();
+            self.consume_whitespace();
+            Some(self.parse_attr_value())
+        } else {
+            None
+        };
+        // ']' 까지 소비 (미지원 연산자 잔여 포함)
+        self.consume_while(|c| c != ']');
+        if self.peek() == Some(']') {
+            self.consume_char();
+        }
+        if name.is_empty() {
+            None
+        } else {
+            Some((name, value))
+        }
+    }
+
+    // 속성값: 따옴표 있으면 그 안, 없으면 다음 공백/']' 까지.
+    fn parse_attr_value(&mut self) -> String {
+        match self.peek() {
+            Some(q @ ('"' | '\'')) => {
+                self.consume_char();
+                let v = self.consume_while(|c| c != q);
+                if self.peek() == Some(q) {
+                    self.consume_char();
+                }
+                v
+            }
+            _ => self.consume_while(|c| c != ']' && !c.is_whitespace()),
+        }
     }
 
     fn parse_declarations(&mut self) -> Vec<Declaration> {
