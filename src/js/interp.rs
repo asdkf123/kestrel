@@ -2204,6 +2204,14 @@ impl Interp {
                 }
                 Ok(())
             }
+            // className/id 는 대응 속성으로 (스타일 매칭이 읽음)
+            "className" | "id" => {
+                let attr = if key == "className" { "class" } else { "id" };
+                if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                    e.attributes.insert(attr.to_string(), text);
+                }
+                Ok(())
+            }
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)
         }
     }
