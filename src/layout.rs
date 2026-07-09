@@ -83,6 +83,8 @@ pub struct LayoutBox<'a> {
     pub links: Vec<(Rect, String)>,
     // 링크 밑줄/리스트 불릿 등 (사각형, 색)
     pub decorations: Vec<(Rect, Color)>,
+    // 리스트 마커 텍스트 (ol: "1." / ul: "•"). build 시 부모 리스트가 부여.
+    pub list_marker: Option<String>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -97,6 +99,7 @@ impl<'a> LayoutBox<'a> {
             background_image: None,
             links: Vec::new(),
             decorations: Vec::new(),
+            list_marker: None,
         }
     }
 
@@ -111,6 +114,7 @@ impl<'a> LayoutBox<'a> {
             background_image: None,
             links: Vec::new(),
             decorations: Vec::new(),
+            list_marker: None,
         }
     }
 
@@ -159,13 +163,14 @@ impl<'a> LayoutBox<'a> {
         self.add_list_marker(fonts);
     }
 
-    // <li> 앞에 불릿 마커 (콘텐츠 박스 왼쪽 패딩 영역, 첫 줄 baseline 정렬).
-    // ul/ol 구분은 아직 안 함 — 전부 불릿 (근사). 실제 번호 매기기는 후속.
+    // <li> 앞에 리스트 마커 (콘텐츠 왼쪽 패딩 영역, 첫 줄 baseline 우측정렬).
+    // ol → "1." 등 부여된 마커, ul/고아 li → 불릿.
     fn add_list_marker(&mut self, fonts: &FontStack) {
         let NodeType::Element(e) = &self.styled_node.node.node_type else { return };
         if e.tag_name != "li" {
             return;
         }
+        let marker = self.list_marker.clone().unwrap_or_else(|| "\u{2022}".to_string());
         let px = self
             .styled_node
             .value("font-size")
@@ -176,16 +181,32 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Color(c)) => c,
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
-        let (fi, gid) = fonts.glyph_for('\u{2022}'); // •
-        let d = &self.dimensions.content;
-        self.glyphs.push(GlyphInstance {
-            font_index: fi,
-            glyph_id: gid,
-            x: d.x - px * 0.9,
-            baseline_y: d.y + px * 0.95,
-            px,
-            color,
-        });
+        // 마커 폭 측정 → 콘텐츠 왼쪽에서 gap 만큼 떨어져 우측정렬
+        let width: f32 = marker
+            .chars()
+            .map(|c| {
+                let (fi, gid) = fonts.glyph_for(c);
+                let f = fonts.font(fi);
+                f.advance_width(gid) as f32 * (px / f.units_per_em() as f32)
+            })
+            .sum();
+        let d = self.dimensions.content;
+        let mut pen = d.x - px * 0.45 - width;
+        let baseline = d.y + px * 0.95;
+        for c in marker.chars() {
+            let (fi, gid) = fonts.glyph_for(c);
+            let f = fonts.font(fi);
+            let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+            self.glyphs.push(GlyphInstance {
+                font_index: fi,
+                glyph_id: gid,
+                x: pen,
+                baseline_y: baseline,
+                px,
+                color,
+            });
+            pen += adv;
+        }
     }
 
     // <input> 대체 요소: 폭 = CSS width > size 속성 > 기본 180px,
@@ -633,6 +654,22 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     }
     if !pending.is_empty() && !all_whitespace(&pending) {
         root.children.push(LayoutBox::new_anonymous(style_node, pending));
+    }
+    // 리스트면 직속 li 자식에 마커 부여 (ol: 1. 2. 3. / ul: 불릿)
+    if let NodeType::Element(e) = &style_node.node.node_type {
+        let ordered = e.tag_name == "ol";
+        if ordered || e.tag_name == "ul" {
+            let mut n = 0;
+            for child in &mut root.children {
+                if matches!(&child.styled_node.node.node_type,
+                    NodeType::Element(ce) if ce.tag_name == "li")
+                {
+                    n += 1;
+                    child.list_marker =
+                        Some(if ordered { format!("{}.", n) } else { "\u{2022}".to_string() });
+                }
+            }
+        }
     }
     root
 }
