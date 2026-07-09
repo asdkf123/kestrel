@@ -80,6 +80,54 @@ pub enum DisplayItem {
     Glyph(GlyphInstance),
 }
 
+// CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
+// 이고 border-<side>-style 이 명시되고 none/hidden 이 아님 (기본 none → 안 그림).
+// 색은 border-<side>-color > border-color > 요소 color(currentColor) 순.
+fn emit_borders(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let bw = lb.dimensions.border;
+    if bw.top <= 0.0 && bw.right <= 0.0 && bw.bottom <= 0.0 && bw.left <= 0.0 {
+        return;
+    }
+    let b = lb.dimensions.border_box();
+    let default_color = get_color(lb, "color").unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 });
+    let side_color = |side: &str| -> Color {
+        get_color(lb, &format!("border-{}-color", side))
+            .or_else(|| get_color(lb, "border-color"))
+            .unwrap_or(default_color)
+    };
+    let drawn = |side: &str| -> bool {
+        let style = lb
+            .styled_node
+            .value(&format!("border-{}-style", side))
+            .or_else(|| lb.styled_node.value("border-style"));
+        matches!(style, Some(Value::Keyword(ref k)) if k != "none" && k != "hidden")
+    };
+    if bw.top > 0.0 && drawn("top") {
+        items.push(DisplayItem::Rect {
+            color: side_color("top"),
+            rect: Rect { x: b.x, y: b.y, width: b.width, height: bw.top },
+        });
+    }
+    if bw.bottom > 0.0 && drawn("bottom") {
+        items.push(DisplayItem::Rect {
+            color: side_color("bottom"),
+            rect: Rect { x: b.x, y: b.y + b.height - bw.bottom, width: b.width, height: bw.bottom },
+        });
+    }
+    if bw.left > 0.0 && drawn("left") {
+        items.push(DisplayItem::Rect {
+            color: side_color("left"),
+            rect: Rect { x: b.x, y: b.y, width: bw.left, height: b.height },
+        });
+    }
+    if bw.right > 0.0 && drawn("right") {
+        items.push(DisplayItem::Rect {
+            color: side_color("right"),
+            rect: Rect { x: b.x + b.width - bw.right, y: b.y, width: bw.right, height: b.height },
+        });
+    }
+}
+
 pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
     let mut items = Vec::new();
     collect_items(root, &mut items);
@@ -108,6 +156,8 @@ fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
     if let Some(idx) = layout_box.image {
         items.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content });
     }
+    // CSS 테두리: 각 변을 레이아웃이 계산한 border 폭만큼 채운다 (배경 위, 콘텐츠 아래).
+    emit_borders(layout_box, items);
     for gi in &layout_box.glyphs {
         items.push(DisplayItem::Glyph(*gi));
     }

@@ -383,11 +383,46 @@ fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
     match name {
         "margin" | "padding" => box_shorthand(name, "", value_text),
         "border-width" => box_shorthand("border", "-width", value_text),
+        "border-color" => box_shorthand("border", "-color", value_text),
+        "border-style" => box_shorthand("border", "-style", value_text),
+        // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
+        "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
+        "border-top" => border_shorthand(&["top"], value_text),
+        "border-right" => border_shorthand(&["right"], value_text),
+        "border-bottom" => border_shorthand(&["bottom"], value_text),
+        "border-left" => border_shorthand(&["left"], value_text),
         _ => match interpret_value(value_text) {
             Some(value) => vec![Declaration { name: name.to_string(), value }],
             None => Vec::new(),
         },
     }
+}
+
+// `border[-side]: <width> <style> <color>` 단축값(임의 순서, 일부 생략 가능)을
+// 지정한 변들의 width/style/color longhand 로 확장한다.
+fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
+    let (mut width, mut style, mut color) = (None, None, None);
+    for tok in value_text.split_whitespace() {
+        match interpret_value(tok) {
+            Some(v @ Value::Length(..)) => width = Some(v),
+            Some(v @ Value::Color(..)) => color = Some(v),
+            Some(Value::Keyword(k)) => style = Some(Value::Keyword(k)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for &side in sides {
+        if let Some(w) = &width {
+            out.push(Declaration { name: format!("border-{}-width", side), value: w.clone() });
+        }
+        if let Some(s) = &style {
+            out.push(Declaration { name: format!("border-{}-style", side), value: s.clone() });
+        }
+        if let Some(c) = &color {
+            out.push(Declaration { name: format!("border-{}-color", side), value: c.clone() });
+        }
+    }
+    out
 }
 
 // CSS 박스 단축값(1~4개)을 top/right/bottom/left longhand 로 확장.
@@ -660,6 +695,36 @@ mod tests {
         assert_eq!(decl(&ss, "padding-right"), Some(&Value::Length(2.0, Unit::Px)));
         assert_eq!(decl(&ss, "padding-bottom"), Some(&Value::Length(3.0, Unit::Px)));
         assert_eq!(decl(&ss, "padding-left"), Some(&Value::Length(4.0, Unit::Px)));
+    }
+
+    #[test]
+    fn border_shorthand_expands_to_width_style_color() {
+        let ss = parse("div { border: 1px solid #cccccc; }".to_string());
+        for side in ["top", "right", "bottom", "left"] {
+            assert_eq!(decl(&ss, &format!("border-{}-width", side)), Some(&Value::Length(1.0, Unit::Px)));
+            assert_eq!(
+                decl(&ss, &format!("border-{}-style", side)),
+                Some(&Value::Keyword("solid".to_string()))
+            );
+            assert_eq!(
+                decl(&ss, &format!("border-{}-color", side)),
+                Some(&Value::Color(Color { r: 204, g: 204, b: 204, a: 255 }))
+            );
+        }
+    }
+
+    #[test]
+    fn border_side_and_color_shorthands() {
+        // 변별 단축값 + border-color 4값
+        let ss = parse(
+            "div { border-left: 4px solid #f4b400; border-color: #111111 #222222 #333333 #444444; }"
+                .to_string(),
+        );
+        assert_eq!(decl(&ss, "border-left-width"), Some(&Value::Length(4.0, Unit::Px)));
+        assert_eq!(decl(&ss, "border-left-style"), Some(&Value::Keyword("solid".to_string())));
+        // border-color 4값이 border-left-color 를 덮어씀 (문서 순서상 뒤)
+        assert_eq!(decl(&ss, "border-top-color"), Some(&Value::Color(Color { r: 17, g: 17, b: 17, a: 255 })));
+        assert_eq!(decl(&ss, "border-left-color"), Some(&Value::Color(Color { r: 68, g: 68, b: 68, a: 255 })));
     }
 
     #[test]
