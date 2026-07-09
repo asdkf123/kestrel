@@ -19,6 +19,7 @@ pub enum Display {
     Inline,
     Block,
     Flex,
+    Grid,
     InlineBlock,
     None,
 }
@@ -39,6 +40,8 @@ impl<'a> StyledNode<'a> {
                 "block" => Display::Block,
                 "flex" => Display::Flex,
                 "inline-flex" => Display::Flex,
+                "grid" => Display::Grid,
+                "inline-grid" => Display::Grid,
                 "none" => Display::None,
                 "inline" => Display::Inline,
                 // inline-block: 자체 블록 박스를 갖되(내부 블록 자식 보존) 형제와
@@ -445,9 +448,9 @@ mod tests {
 
     #[test]
     fn unknown_display_falls_back_to_block() {
-        // display: grid 인 body 가 인라인이 되면 블록 자식이 통째로 사라진다 (MDN 사례)
+        // 미지원 display 값(table-cell 등)은 블록으로 폴백 — 자식 보존
         let root = crate::html::parse_dom("<body><div>content</div></body>".to_string());
-        let ss = crate::css::parse("body { display: grid; }".to_string());
+        let ss = crate::css::parse("body { display: table-cell; }".to_string());
         let styled = style_tree(&root, &ss);
         assert!(matches!(styled.display(), Display::Block));
         // inline-block 은 전용 Display (자체 박스 + 가로 흐름)

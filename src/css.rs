@@ -509,6 +509,15 @@ fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
             };
             vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) }]
         }
+        // grid 트랙 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
+        "grid-template-columns" | "grid-template-rows" => {
+            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
+        }
+        // grid-gap 은 gap 의 레거시 별칭
+        "grid-gap" | "grid-column-gap" | "grid-row-gap" => {
+            let mapped = name.strip_prefix("grid-").unwrap();
+            expand_declaration(mapped, value_text)
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
