@@ -40,6 +40,8 @@ pub enum Tok {
     Switch,
     Case,
     Default,
+    Instanceof,
+    In,
     // 구두점
     LParen,
     RParen,
@@ -112,6 +114,8 @@ fn keyword(word: &str) -> Option<Tok> {
         "switch" => Tok::Switch,
         "case" => Tok::Case,
         "default" => Tok::Default,
+        "instanceof" => Tok::Instanceof,
+        "in" => Tok::In,
         _ => return None,
     })
 }

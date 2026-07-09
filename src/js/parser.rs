@@ -58,14 +58,21 @@ impl Parser {
         if self.eat(t) {
             Ok(())
         } else {
-            Err(format!("{:?} 이 필요한데 {:?} (위치 {})", t, self.peek(), self.pos))
+            Err(format!("{:?} 이 필요한데 {:?}{}", t, self.peek(), self.ctx()))
         }
+    }
+
+    // 에러 진단용: 현재 위치 주변 토큰 덤프 (필드 로그에서 원인 규명)
+    fn ctx(&self) -> String {
+        let lo = self.pos.saturating_sub(4);
+        let hi = (self.pos + 3).min(self.toks.len());
+        format!(" (토큰 {} 근처: {:?})", self.pos, &self.toks[lo..hi])
     }
 
     fn ident(&mut self) -> Result<String, String> {
         match self.next()? {
             Tok::Ident(s) => Ok(s),
-            other => Err(format!("식별자가 필요한데 {:?}", other)),
+            other => Err(format!("식별자가 필요한데 {:?}{}", other, self.ctx())),
         }
     }
 
@@ -161,10 +168,18 @@ impl Parser {
             Tok::Let => DeclKind::Let,
             _ => DeclKind::Const,
         };
-        let name = self.ident()?;
-        let init = if self.eat(&Tok::Assign) { Some(self.expr()?) } else { None };
+        // 다중 선언자: var a = 1, b, c = 3;  (초기화식은 콤마 연산자 미포함 → assignment)
+        let mut decls = Vec::new();
+        loop {
+            let name = self.ident()?;
+            let init = if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
+            decls.push((name, init));
+            if !self.eat(&Tok::Comma) {
+                break;
+            }
+        }
         self.eat(&Tok::Semi);
-        Ok(Stmt::VarDecl { kind, name, init })
+        Ok(Stmt::VarDecl { kind, decls })
     }
 
     fn func_decl(&mut self) -> Result<Stmt, String> {
@@ -221,6 +236,22 @@ impl Parser {
     fn for_stmt(&mut self) -> Result<Stmt, String> {
         self.expect(&Tok::For)?;
         self.expect(&Tok::LParen)?;
+        // for (k in obj) / for (var k in obj)
+        let is_decl_in = matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const))
+            && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(_)))
+            && self.toks.get(self.pos + 2) == Some(&Tok::In);
+        let is_bare_in = matches!(self.peek(), Some(Tok::Ident(_)))
+            && self.toks.get(self.pos + 1) == Some(&Tok::In);
+        if is_decl_in || is_bare_in {
+            if is_decl_in {
+                self.pos += 1; // var/let/const
+            }
+            let name = self.ident()?;
+            self.expect(&Tok::In)?;
+            let obj = self.expr()?;
+            self.expect(&Tok::RParen)?;
+            return Ok(Stmt::ForIn { name, obj, body: self.body_of_clause()? });
+        }
         let init = if self.eat(&Tok::Semi) {
             None
         } else {
@@ -311,8 +342,18 @@ impl Parser {
 
     // ── 식 (우선순위 낮은 → 높은) ───────────────────────────────────
 
+    // 콤마 연산자 (최저 우선순위): a = 1, b = 2 → 전부 평가, 마지막 값.
+    // 인자 목록/배열/객체/삼항 가지는 assignment 를 직접 쓰므로 영향 없음 (JS 동일)
     fn expr(&mut self) -> Result<Expr, String> {
-        self.assignment()
+        let first = self.assignment()?;
+        if self.peek() != Some(&Tok::Comma) {
+            return Ok(first);
+        }
+        let mut items = vec![first];
+        while self.eat(&Tok::Comma) {
+            items.push(self.assignment()?);
+        }
+        Ok(Expr::Sequence(items))
     }
 
     fn assignment(&mut self) -> Result<Expr, String> {
@@ -456,6 +497,8 @@ impl Parser {
                 Some(Tok::Gt) => BinOp::Gt,
                 Some(Tok::Le) => BinOp::Le,
                 Some(Tok::Ge) => BinOp::Ge,
+                Some(Tok::Instanceof) => BinOp::Instanceof,
+                Some(Tok::In) => BinOp::In,
                 _ => break,
             };
             self.pos += 1;
@@ -647,7 +690,9 @@ impl Parser {
                             Tok::Ident(s) => s,
                             Tok::Str(s) => s,
                             Tok::Num(n) => n.to_string(),
-                            other => return Err(format!("객체 키가 아님: {:?}", other)),
+                            other => {
+                                return Err(format!("객체 키가 아님: {:?}{}", other, self.ctx()))
+                            }
                         };
                         let value = if self.eat(&Tok::Colon) {
                             self.assignment()?
@@ -681,7 +726,7 @@ impl Parser {
                 let body = self.block()?;
                 Ok(Expr::Func { params, body })
             }
-            other => Err(format!("식이 필요한데 {:?}", other)),
+            other => Err(format!("식이 필요한데 {:?}{}", other, self.ctx())),
         }
     }
 }

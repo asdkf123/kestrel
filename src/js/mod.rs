@@ -35,9 +35,21 @@ fn collect_scripts(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<
     let node = dom.get(id);
     if let crate::dom::NodeType::Element(e) = &node.node_type {
         if e.tag_name == "script" && e.attributes.get("src").map_or(true, |s| s.is_empty()) {
-            let text = dom.text_content(id);
-            if !text.trim().is_empty() {
-                out.push(text);
+            // type 이 JS 일 때만 실행. application/json(데이터 임베드),
+            // ld+json, text/template 등은 실행 대상이 아니다 (github 등).
+            // module 은 import/export 미지원이라 스킵 (관용).
+            let ty = e
+                .attributes
+                .get("type")
+                .map(|s| s.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            let is_js =
+                ty.is_empty() || ty == "text/javascript" || ty == "application/javascript";
+            if is_js {
+                let text = dom.text_content(id);
+                if !text.trim().is_empty() {
+                    out.push(text);
+                }
             }
         }
     }
@@ -76,6 +88,20 @@ mod tests {
         );
         run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "t").unwrap(), "from first");
+    }
+
+    #[test]
+    fn non_js_script_types_are_not_executed() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">keep</p>\
+             <script type=\"application/json\">{\"locale\": \"en\"}</script>\
+             <script type=\"text/template\"><div>tpl</div></script>\
+             <script type=\"module\">import x from 'y';</script>\
+             <script type=\"text/javascript\">document.getElementById('t').textContent = 'ran';</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "ran", "JS 타입만 실행, JSON/템플릿/모듈 스킵");
     }
 
     #[test]

@@ -24,6 +24,8 @@ pub enum Expr {
     Template(Vec<TemplatePart>),
     // 정규식 리터럴 — 매칭 엔진 없이 {source, flags} 객체로 평가 (관용)
     Regex { source: String, flags: String },
+    // 콤마 연산자 (a, b, c) — 전부 평가, 마지막 값
+    Sequence(Vec<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +55,8 @@ pub enum BinOp {
     Shl,
     Shr,
     UShr,
+    Instanceof,
+    In,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,7 +97,8 @@ pub enum DeclKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    VarDecl { kind: DeclKind, name: String, init: Option<Expr> },
+    // 다중 선언자 지원: var a = 1, b = 2;
+    VarDecl { kind: DeclKind, decls: Vec<(String, Option<Expr>)> },
     FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt> },
     If { cond: Expr, then: Vec<Stmt>, other: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },
@@ -112,4 +117,6 @@ pub enum Stmt {
     },
     // cases: (판별식 — None 은 default, 문 목록). 폴스루 의미론.
     Switch { disc: Expr, cases: Vec<(Option<Expr>, Vec<Stmt>)> },
+    // for (k in obj) — 객체 키 / 배열 인덱스 순회
+    ForIn { name: String, obj: Expr, body: Vec<Stmt> },
 }

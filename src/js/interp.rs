@@ -61,6 +61,9 @@ pub enum Native {
     Alert,
     // 받고 아무것도 안 함 (window.addEventListener 등 — 창 이벤트는 아직 없음)
     Noop,
+    ObjectKeys,
+    ObjectAssign,
+    ArrayIsArray,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -536,6 +539,17 @@ impl Interp {
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
+        let mut object_ns = HashMap::new();
+        object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
+        object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
+        env_declare(&global, "Object", Value::Obj(Rc::new(RefCell::new(object_ns))));
+        let mut array_ns = HashMap::new();
+        array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
+        env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
+        for name in ["RegExp", "Error", "Function"] {
+            env_declare(&global, name, Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
+        }
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
         let mut ls = HashMap::new();
         ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
@@ -666,12 +680,14 @@ impl Interp {
     fn exec_stmt(&mut self, stmt: &Stmt, env: &EnvRef) -> Result<Flow, String> {
         self.tick()?;
         match stmt {
-            Stmt::VarDecl { name, init, .. } => {
-                let v = match init {
-                    Some(e) => self.eval(e, env)?,
-                    None => Value::Undefined,
-                };
-                env_declare(env, name, v);
+            Stmt::VarDecl { decls, .. } => {
+                for (name, init) in decls {
+                    let v = match init {
+                        Some(e) => self.eval(e, env)?,
+                        None => Value::Undefined,
+                    };
+                    env_declare(env, name, v);
+                }
                 Ok(Flow::Normal(Value::Undefined))
             }
             Stmt::FuncDecl { .. } => Ok(Flow::Normal(Value::Undefined)), // 호이스팅됨
@@ -773,6 +789,26 @@ impl Interp {
                 }
                 result
             }
+            Stmt::ForIn { name, obj, body } => {
+                let target = self.eval(obj, env)?;
+                let keys: Vec<String> = match &target {
+                    Value::Obj(m) => m.borrow().keys().cloned().collect(),
+                    Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
+                    Value::Str(s) => (0..s.chars().count()).map(|i| i.to_string()).collect(),
+                    _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
+                };
+                for k in keys {
+                    self.tick()?;
+                    let scope = Env::new(Some(env.clone()));
+                    env_declare(&scope, name, Value::Str(k));
+                    match self.exec_block(body, &scope)? {
+                        Flow::Break => break,
+                        Flow::Continue | Flow::Normal(_) => {}
+                        ret => return Ok(ret),
+                    }
+                }
+                Ok(Flow::Normal(Value::Undefined))
+            }
             Stmt::Switch { disc, cases } => {
                 let d = self.eval(disc, env)?;
                 let scope = Env::new(Some(env.clone()));
@@ -834,6 +870,13 @@ impl Interp {
                 body: body.clone(),
                 env: env.clone(),
             }))),
+            Expr::Sequence(items) => {
+                let mut last = Value::Undefined;
+                for item in items {
+                    last = self.eval(item, env)?;
+                }
+                Ok(last)
+            }
             Expr::Regex { source, flags } => {
                 // 매칭 엔진 없음: {source, flags} 객체. test/exec 호출 시 런타임 에러
                 // (해당 스크립트만 중단 — try/catch 로 생존 가능)
@@ -1342,6 +1385,35 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Native::Noop => Ok(Value::Undefined),
+            Native::ObjectKeys => match args.first() {
+                Some(Value::Obj(m)) => {
+                    let keys: Vec<Value> =
+                        m.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                    Ok(Value::Arr(Rc::new(RefCell::new(keys))))
+                }
+                Some(Value::Arr(a)) => {
+                    let keys: Vec<Value> =
+                        (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
+                    Ok(Value::Arr(Rc::new(RefCell::new(keys))))
+                }
+                _ => Ok(Value::Arr(Rc::new(RefCell::new(Vec::new())))),
+            },
+            Native::ObjectAssign => {
+                let Some(Value::Obj(target)) = args.first() else {
+                    return Err("Object.assign 대상은 객체".to_string());
+                };
+                for src in &args[1..] {
+                    if let Value::Obj(m) = src {
+                        for (k, v) in m.borrow().iter() {
+                            target.borrow_mut().insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                Ok(args.into_iter().next().unwrap())
+            }
+            Native::ArrayIsArray => {
+                Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
+            }
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
                     let name = args.first().map(to_display).unwrap_or_default();
@@ -1378,6 +1450,32 @@ impl Interp {
             BinOp::Shl => Value::Num((to_i32(&l) << (to_i32(&r) & 31)) as f64),
             BinOp::Shr => Value::Num((to_i32(&l) >> (to_i32(&r) & 31)) as f64),
             BinOp::UShr => Value::Num(((to_i32(&l) as u32) >> (to_i32(&r) & 31)) as f64),
+            BinOp::In => match &r {
+                Value::Obj(m) => Value::Bool(m.borrow().contains_key(&to_display(&l))),
+                Value::Arr(a) => Value::Bool(
+                    to_display(&l).parse::<usize>().map_or(false, |i| i < a.borrow().len()),
+                ),
+                _ => Value::Bool(false),
+            },
+            BinOp::Instanceof => {
+                // 프로토타입 체계 없음 — 전역 생성자 스텁과의 대응만 판단 (관용)
+                let global_is = |name: &str| -> bool {
+                    matches!(
+                        (env_get(&self.global, name), &r),
+                        (Some(Value::Obj(a)), Value::Obj(b)) if Rc::ptr_eq(&a, b)
+                    )
+                };
+                let hit = if global_is("Array") {
+                    matches!(l, Value::Arr(_))
+                } else if global_is("Object") {
+                    matches!(l, Value::Obj(_) | Value::Arr(_))
+                } else if global_is("Function") {
+                    matches!(l, Value::Fn(_) | Value::Native(_))
+                } else {
+                    false
+                };
+                Value::Bool(hit)
+            }
             BinOp::EqEq => Value::Bool(loose_eq(&l, &r)),
             BinOp::NotEq => Value::Bool(!loose_eq(&l, &r)),
             BinOp::EqEqEq => Value::Bool(strict_eq(&l, &r)),
@@ -1905,6 +2003,61 @@ mod tests {
         assert_eq!(it.console, vec!["[alert] hi 2"]);
         // window.addEventListener 는 no-op (죽지 않음)
         assert!(Interp::new().run("window.addEventListener('load', x => x)").is_ok());
+    }
+
+    #[test]
+    fn multi_declarator_and_comma_operator() {
+        // 미니파이 코드의 두 필수 패턴
+        assert_eq!(run_num("var a = 1, b = 2, c; c = a + b; c"), 3.0);
+        assert_eq!(run_num("let x = 1, y = x + 1; y"), 2.0);
+        assert_eq!(run_num("var a; a = (1, 2, 3)"), 3.0, "콤마 연산자: 마지막 값");
+        assert_eq!(
+            run_num("var s = 0; for (var i = 0, j = 10; i < j; i++, j--) s++; s"),
+            5.0
+        );
+        // 함수 인자의 콤마는 구분자 그대로
+        assert_eq!(run_num("Math.max(1, 2, 3)"), 3.0);
+    }
+
+    #[test]
+    fn for_in_iterates_keys_and_indices() {
+        assert_eq!(
+            run_num("var o = { a: 1, b: 2, c: 3 }; var n = 0; for (var k in o) n += o[k]; n"),
+            6.0
+        );
+        assert_eq!(
+            run_str("var out = ''; for (var i in ['x', 'y']) out += i; out"),
+            "01"
+        );
+        assert_eq!(run_num("var n = 0; for (k in null) n++; n"), 0.0);
+    }
+
+    #[test]
+    fn instanceof_and_in_operators() {
+        assert!(run_bool("[1] instanceof Array"));
+        assert!(run_bool("({}) instanceof Object"));
+        assert!(!run_bool("'str' instanceof Array"));
+        assert!(!run_bool("[] instanceof RegExp"));
+        assert!(run_bool("'a' in { a: 1 }"));
+        assert!(!run_bool("'z' in { a: 1 }"));
+        assert!(run_bool("0 in [7]"));
+        assert!(!run_bool("3 in [7]"));
+    }
+
+    #[test]
+    fn object_array_statics() {
+        assert_eq!(run_num("Object.keys({ a: 1, b: 2 }).length"), 2.0);
+        assert_eq!(
+            run_num("var t = { a: 1 }; Object.assign(t, { b: 2 }, { c: 3 }); Object.keys(t).length"),
+            3.0
+        );
+        assert!(run_bool("Array.isArray([1]) && !Array.isArray('no')"));
+    }
+
+    #[test]
+    fn parse_errors_include_token_context() {
+        let err = Interp::new().run("var x = ;").unwrap_err();
+        assert!(err.contains("근처"), "에러에 토큰 문맥 포함: {}", err);
     }
 
     #[test]
