@@ -161,6 +161,9 @@ pub enum DisplayItem {
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     Image { image: usize, rect: Rect },
     Glyph(GlyphInstance),
+    // position: sticky — 스크롤 시 뷰포트 상단 top 만큼 아래에 고정. top=스티키 임계,
+    // y0=요소의 자연 문서 y. 렌더 시 inner 를 보정된 스크롤로 그린다.
+    Sticky { top: f32, y0: f32, inner: Box<DisplayItem> },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -296,9 +299,13 @@ pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
     // (스택 레벨, 아이템) 수집 후 레벨로 안정 정렬 → 높은 z-index 가 위에 그려짐.
     // 같은 레벨은 문서 순서 유지(안정 정렬). 정식 스태킹 컨텍스트의 근사.
     let mut buf: Vec<(i32, DisplayItem)> = Vec::new();
-    collect_items(root, 0, None, &mut buf);
+    collect_items(root, 0, None, None, &mut buf);
     buf.sort_by_key(|(z, _)| *z);
     buf.into_iter().map(|(_, it)| it).collect()
+}
+
+fn is_sticky(lb: &LayoutBox) -> bool {
+    matches!(lb.styled_node.value("position"), Some(Value::Keyword(ref k)) if k == "sticky")
 }
 
 // positioned 요소의 z-index 를 서브트리 스택 레벨로 전파. static 은 부모 레벨 유지.
@@ -372,6 +379,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
             };
             rect_intersect(gbox, c).map(|_| DisplayItem::Glyph(gi))
         }
+        // sticky 래퍼는 클립 전에 감싸지 않으므로 여기 도달 안 함 (exhaustive 용)
+        sticky @ DisplayItem::Sticky { .. } => Some(sticky),
     }
 }
 
@@ -379,9 +388,20 @@ fn collect_items(
     layout_box: &LayoutBox,
     parent_z: i32,
     clip: Option<Rect>,
+    sticky: Option<(f32, f32)>,
     buf: &mut Vec<(i32, DisplayItem)>,
 ) {
     let z = stack_level(layout_box, parent_z);
+    // 이 박스가 position:sticky 면 서브트리 sticky 파라미터 갱신 (top, 자연 y0)
+    let sticky_here = if is_sticky(layout_box) {
+        let top = match layout_box.styled_node.value("top") {
+            Some(Value::Length(v, _)) => v,
+            _ => 0.0,
+        };
+        Some((top, layout_box.dimensions.border_box().y))
+    } else {
+        sticky
+    };
     let mut local: Vec<DisplayItem> = Vec::new();
     // 그림자 → 배경/테두리(border-radius 포함) → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
@@ -398,10 +418,14 @@ fn collect_items(
     for (rect, color) in &layout_box.decorations {
         local.push(DisplayItem::Rect { color: *color, rect: *rect });
     }
-    // 이 박스 자신의 아이템은 부모 클립으로 자름
+    // 이 박스 자신의 아이템은 부모 클립으로 자르고, sticky 면 래핑
     for it in local {
         if let Some(clipped) = clip_apply(it, clip) {
-            buf.push((z, clipped));
+            let final_it = match sticky_here {
+                Some((top, y0)) => DisplayItem::Sticky { top, y0, inner: Box::new(clipped) },
+                None => clipped,
+            };
+            buf.push((z, final_it));
         }
     }
     // 자손 클립: overflow 면 이 박스 padding box 와 교집합
@@ -415,7 +439,7 @@ fn collect_items(
         clip
     };
     for child in &layout_box.children {
-        collect_items(child, z, child_clip, buf);
+        collect_items(child, z, child_clip, sticky_here, buf);
     }
 }
 
@@ -434,59 +458,78 @@ pub fn rasterize(
 ) -> Canvas {
     let mut canvas = Canvas::new(width, height);
     let vh = height as f32;
+    for item in items {
+        draw_item(&mut canvas, item, scroll_y, scale, vh, fonts, cache, images);
+    }
+    canvas
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_item(
+    canvas: &mut Canvas,
+    item: &DisplayItem,
+    scroll_y: f32,
+    scale: f32,
+    vh: f32,
+    fonts: &FontStack,
+    cache: &mut GlyphCache,
+    images: &[crate::png::Image],
+) {
     let scale_rect = |rect: &Rect| Rect {
         x: rect.x * scale,
         y: (rect.y - scroll_y) * scale,
         width: rect.width * scale,
         height: rect.height * scale,
     };
-    for item in items {
-        match item {
-            DisplayItem::Rect { color, rect } => {
-                let r = scale_rect(rect);
-                if r.y + r.height < 0.0 || r.y > vh {
-                    continue;
-                }
-                canvas.fill_rect(*color, r);
+    match item {
+        DisplayItem::Rect { color, rect } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
             }
-            DisplayItem::RoundRect { color, rect, radius } => {
-                let r = scale_rect(rect);
-                if r.y + r.height < 0.0 || r.y > vh {
-                    continue;
-                }
-                canvas.fill_round_rect(*color, r, radius * scale);
+            canvas.fill_rect(*color, r);
+        }
+        DisplayItem::RoundRect { color, rect, radius } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
             }
-            DisplayItem::Shadow { color, rect, radius, blur } => {
-                let r = scale_rect(rect);
-                let m = blur * scale;
-                if r.y + r.height + m < 0.0 || r.y - m > vh {
-                    continue;
-                }
-                canvas.fill_soft_round_rect(*color, r, radius * scale, blur * scale);
+            canvas.fill_round_rect(*color, r, radius * scale);
+        }
+        DisplayItem::Shadow { color, rect, radius, blur } => {
+            let r = scale_rect(rect);
+            let m = blur * scale;
+            if r.y + r.height + m < 0.0 || r.y - m > vh {
+                return;
             }
-            DisplayItem::Image { image, rect } => {
-                let r = scale_rect(rect);
-                if r.y + r.height < 0.0 || r.y > vh {
-                    continue;
-                }
-                if let Some(img) = images.get(*image) {
-                    blit_image(&mut canvas, img, r, scale);
-                }
+            canvas.fill_soft_round_rect(*color, r, radius * scale, blur * scale);
+        }
+        DisplayItem::Image { image, rect } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
             }
-            DisplayItem::Glyph(gi) => {
-                let baseline = (gi.baseline_y - scroll_y) * scale;
-                let px = gi.px * scale;
-                // 대략적 글리프 세로 범위로 컬링 (ascent ~1.2em, descent ~0.4em)
-                if baseline + 0.4 * px < 0.0 || baseline - 1.2 * px > vh {
-                    continue;
-                }
-                let shifted = GlyphInstance { x: gi.x * scale, baseline_y: baseline, px, ..*gi };
-                let bm = cache.get(fonts, gi.font_index, gi.glyph_id, px, gi.bold, gi.italic);
-                blit_glyph(&mut canvas, bm, &shifted);
+            if let Some(img) = images.get(*image) {
+                blit_image(canvas, img, r, scale);
             }
         }
+        DisplayItem::Glyph(gi) => {
+            let baseline = (gi.baseline_y - scroll_y) * scale;
+            let px = gi.px * scale;
+            // 대략적 글리프 세로 범위로 컬링 (ascent ~1.2em, descent ~0.4em)
+            if baseline + 0.4 * px < 0.0 || baseline - 1.2 * px > vh {
+                return;
+            }
+            let shifted = GlyphInstance { x: gi.x * scale, baseline_y: baseline, px, ..*gi };
+            let bm = cache.get(fonts, gi.font_index, gi.glyph_id, px, gi.bold, gi.italic);
+            blit_glyph(canvas, bm, &shifted);
+        }
+        DisplayItem::Sticky { top, y0, inner } => {
+            // 스크롤이 요소 위쪽을 지나가면 뷰포트 top 에 고정 (dy 만큼 아래로 유지).
+            let dy = (scroll_y + top - y0).max(0.0);
+            draw_item(canvas, inner, scroll_y - dy, scale, vh, fonts, cache, images);
+        }
     }
-    canvas
 }
 
 // rect(물리 px) 좌상단에 이미지를 scale 배로 그린다 (최근접 샘플링).

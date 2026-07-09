@@ -1839,6 +1839,29 @@ mod tests {
     }
 
     #[test]
+    fn sticky_wraps_items_with_offset() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"h\">x</div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .h { display: block; position: sticky; top: 5px; background-color: #0000ff; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 200.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let dl = crate::paint::build_display_list(&lb);
+        let sticky_top = dl.iter().find_map(|it| match it {
+            crate::paint::DisplayItem::Sticky { top, .. } => Some(*top),
+            _ => None,
+        });
+        assert_eq!(sticky_top, Some(5.0), "position:sticky 가 top=5 Sticky 아이템 생성");
+    }
+
+    #[test]
     fn overflow_hidden_clips_child() {
         // overflow:hidden 부모(100px) 안의 넓은 자식(300px) 배경이 부모로 클리핑됨
         let root = crate::html::parse_dom(
