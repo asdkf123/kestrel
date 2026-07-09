@@ -16,13 +16,19 @@ impl Canvas {
     }
 
     pub fn fill_rect(&mut self, color: Color, rect: Rect) {
+        // 색의 알파로 블렌드한다. 예전엔 픽셀에 색을 그대로 덮어써서
+        // rgba(0,0,0,0)/반투명 배경이 불투명 검정으로 찍혔다(캔버스는 RGB 출력).
+        if color.a == 0 {
+            return;
+        }
         let x0 = rect.x.clamp(0.0, self.width as f32) as usize;
         let y0 = rect.y.clamp(0.0, self.height as f32) as usize;
         let x1 = (rect.x + rect.width).clamp(0.0, self.width as f32) as usize;
         let y1 = (rect.y + rect.height).clamp(0.0, self.height as f32) as usize;
         for y in y0..y1 {
             for x in x0..x1 {
-                self.pixels[y * self.width + x] = color;
+                let idx = y * self.width + x;
+                self.pixels[idx] = blend(self.pixels[idx], color, color.a);
             }
         }
     }
@@ -64,8 +70,14 @@ impl Canvas {
                 if cov <= 0.0 {
                     continue;
                 }
+                // 색의 알파를 엣지 커버리지와 곱한다. 이걸 빼먹으면
+                // rgba(0,0,0,0)/반투명 오버레이가 불투명 검정으로 칠해진다.
+                let a = (cov * (color.a as f32 / 255.0) * 255.0).round() as u8;
+                if a == 0 {
+                    continue;
+                }
                 let idx = py * self.width + px;
-                self.pixels[idx] = blend(self.pixels[idx], color, (cov * 255.0).round() as u8);
+                self.pixels[idx] = blend(self.pixels[idx], color, a);
             }
         }
     }
@@ -458,7 +470,21 @@ pub fn rasterize(
 ) -> Canvas {
     let mut canvas = Canvas::new(width, height);
     let vh = height as f32;
+    let dbg = std::env::var("KESTREL_PAINT_DEBUG").is_ok();
     for item in items {
+        if dbg {
+            match item {
+                DisplayItem::Rect { color, rect } => eprintln!(
+                    "[paint] Rect  ({:.0},{:.0} {:.0}x{:.0}) rgba({},{},{},{})",
+                    rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, color.a
+                ),
+                DisplayItem::Image { image, rect } => eprintln!(
+                    "[paint] Image#{} ({:.0},{:.0} {:.0}x{:.0})",
+                    image, rect.x, rect.y, rect.width, rect.height
+                ),
+                _ => {}
+            }
+        }
         draw_item(&mut canvas, item, scroll_y, scale, vh, fonts, cache, images);
     }
     canvas
@@ -657,6 +683,33 @@ mod tests {
         );
         assert_eq!(canvas.pixels[0], Color { r: 255, g: 0, b: 0, a: 255 });
         assert_eq!(canvas.pixels[3 * 4 + 3], Color { r: 255, g: 255, b: 255, a: 255 });
+    }
+
+    #[test]
+    fn transparent_background_does_not_paint_black() {
+        // rgba(0,0,0,0) 은 완전 투명 — 흰 배경 그대로여야 (검정 박스 버그 회귀 방지)
+        let canvas = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 2px; height: 2px; background-color: rgba(0,0,0,0); }",
+            4.0,
+            4.0,
+        );
+        assert_eq!(canvas.pixels[0], Color { r: 255, g: 255, b: 255, a: 255 });
+    }
+
+    #[test]
+    fn semitransparent_background_blends() {
+        // rgba(0,0,0,0.5) 를 흰 위에 → 회색(약 128)
+        let canvas = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 2px; height: 2px; background-color: rgba(0,0,0,0.5); }",
+            4.0,
+            4.0,
+        );
+        let p = canvas.pixels[0];
+        assert!((p.r as i32 - 128).abs() <= 2, "기대 ~128, 실제 {}", p.r);
+        assert_eq!(p.r, p.g);
+        assert_eq!(p.g, p.b);
     }
 
     #[test]
