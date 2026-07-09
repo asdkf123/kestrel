@@ -279,7 +279,8 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Color(c)) => c,
             _ => Color { r: 20, g: 20, b: 24, a: 255 },
         };
-        let mut pen = self.dimensions.content.x + 5.0;
+        // content.x 는 이미 CSS padding 만큼 안쪽 — 별도 하드코딩 inset 없음
+        let mut pen = self.dimensions.content.x;
         let baseline = self.dimensions.content.y + px * 1.1;
         for ch in value.chars() {
             let (fi, gid) = fonts.glyph_for(ch);
@@ -905,23 +906,74 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     if !pending.is_empty() && !all_whitespace(&pending) {
         root.children.push(LayoutBox::new_anonymous(style_node, pending));
     }
-    // 리스트면 직속 li 자식에 마커 부여 (ol: 1. 2. 3. / ul: 불릿)
+    // 리스트면 직속 li 자식에 마커 부여. 종류는 list-style-type 에서 결정.
     if let NodeType::Element(e) = &style_node.node.node_type {
-        let ordered = e.tag_name == "ol";
-        if ordered || e.tag_name == "ul" {
+        if e.tag_name == "ol" || e.tag_name == "ul" {
+            let ordered = e.tag_name == "ol";
             let mut n = 0;
             for child in &mut root.children {
                 if matches!(&child.styled_node.node.node_type,
                     NodeType::Element(ce) if ce.tag_name == "li")
                 {
                     n += 1;
-                    child.list_marker =
-                        Some(if ordered { format!("{}.", n) } else { "\u{2022}".to_string() });
+                    child.list_marker = list_marker_text(child.styled_node, style_node, ordered, n);
                 }
             }
         }
     }
     root
+}
+
+// list-style-type(li → ul/ol → 기본) 에 따라 마커 문자열. none 이면 마커 없음.
+fn list_marker_text(li: &StyledNode, list: &StyledNode, ordered: bool, index: usize) -> Option<String> {
+    let ty = li
+        .value("list-style-type")
+        .or_else(|| li.value("list-style"))
+        .or_else(|| list.value("list-style-type"))
+        .or_else(|| list.value("list-style"))
+        .and_then(|v| if let Value::Keyword(k) = v { Some(k) } else { None })
+        .unwrap_or_else(|| if ordered { "decimal".to_string() } else { "disc".to_string() });
+    match ty.as_str() {
+        "none" => None,
+        "disc" => Some("\u{2022}".to_string()),   // •
+        "circle" => Some("\u{25E6}".to_string()),  // ◦
+        "square" => Some("\u{25AA}".to_string()),  // ▪
+        "decimal" => Some(format!("{}.", index)),
+        "lower-alpha" | "lower-latin" => Some(format!("{}.", alpha_marker(index, false))),
+        "upper-alpha" | "upper-latin" => Some(format!("{}.", alpha_marker(index, true))),
+        "lower-roman" => Some(format!("{}.", roman_marker(index, false))),
+        "upper-roman" => Some(format!("{}.", roman_marker(index, true))),
+        _ => Some(format!("{}.", index)), // 미지원 종류 → decimal 근사
+    }
+}
+
+// 1→a, 26→z, 27→aa (알파벳 리스트 마커)
+fn alpha_marker(index: usize, upper: bool) -> String {
+    let mut n = index;
+    let mut s = String::new();
+    while n > 0 {
+        n -= 1;
+        s.insert(0, (b'a' + (n % 26) as u8) as char);
+        n /= 26;
+    }
+    if upper { s.to_ascii_uppercase() } else { s }
+}
+
+// 로마 숫자 마커 (1→i, 4→iv, 9→ix ...)
+fn roman_marker(index: usize, upper: bool) -> String {
+    const VALS: [(usize, &str); 13] = [
+        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"),
+        (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+    ];
+    let mut n = index;
+    let mut s = String::new();
+    for (v, r) in VALS {
+        while n >= v {
+            s.push_str(r);
+            n -= v;
+        }
+    }
+    if upper { s.to_ascii_uppercase() } else { s }
 }
 
 pub fn layout_tree<'a>(
@@ -1567,6 +1619,37 @@ mod tests {
         // (220 - 20 gap) / 2 = 100 each; 둘째는 100 + 20 = 120
         assert_eq!(d[0].content.width, 100.0);
         assert_eq!(d[1].content.x, 120.0, "열 사이 gap 20");
+    }
+
+    fn ul_markers(css: &str) -> Vec<Option<String>> {
+        let root = crate::html::parse_dom("<ul><li></li><li></li><li></li></ul>".to_string());
+        // 실제 렌더처럼 UA 스타일시트(li→block 등) 위에 테스트 CSS 를 얹는다
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(crate::css::parse(css.to_string()).rules);
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 300.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        lb.children.iter().map(|c| c.list_marker.clone()).collect()
+    }
+
+    #[test]
+    fn list_markers_default_and_types() {
+        // 기본 ul → disc(•)
+        assert_eq!(ul_markers("")[0].as_deref(), Some("\u{2022}"));
+        // square 지정
+        assert_eq!(ul_markers("li { list-style-type: square; }")[0].as_deref(), Some("\u{25AA}"));
+        // none → 마커 없음
+        assert_eq!(ul_markers("li { list-style-type: none; }")[0], None);
+        // decimal → "1." "2." "3."
+        let dec = ul_markers("li { list-style-type: decimal; }");
+        assert_eq!(dec[0].as_deref(), Some("1."));
+        assert_eq!(dec[2].as_deref(), Some("3."));
+        // lower-alpha → a. b. c.
+        let al = ul_markers("li { list-style-type: lower-alpha; }");
+        assert_eq!(al[0].as_deref(), Some("a."));
+        assert_eq!(al[2].as_deref(), Some("c."));
     }
 
     #[test]
