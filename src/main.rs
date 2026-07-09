@@ -331,7 +331,9 @@ fn build_page(url: &str) -> Option<window::Page> {
 
     let base = url::Url::parse(url).ok()?;
 
-    // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침
+    // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침.
+    // 저작자 CSS 는 실제 뷰포트 폭으로 파싱해 @media 를 평가한다.
+    let page_vw = 1000.0f32;
     let mut sheet = css::user_agent_stylesheet();
     let mut hrefs = Vec::new();
     collect_links(&dom, &mut hrefs);
@@ -342,13 +344,13 @@ fn build_page(url: &str) -> Option<window::Page> {
         if let Some(u) = base.join(href) {
             if let Ok(r) = http::fetch(&u.as_string()) {
                 let css_text = String::from_utf8_lossy(&r.body).to_string();
-                sheet.rules.extend(css::parse(css_text).rules);
+                sheet.rules.extend(css::parse_viewport(css_text, page_vw).rules);
             }
         }
     }
     let mut inline_css = String::new();
     extract_css(&dom, &mut inline_css);
-    sheet.rules.extend(css::parse(inline_css).rules);
+    sheet.rules.extend(css::parse_viewport(inline_css, page_vw).rules);
 
     // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리는 일시 사용)
     let mut srcs = Vec::new();
@@ -375,7 +377,7 @@ fn build_page(url: &str) -> Option<window::Page> {
         fonts,
         js: js_rt,
         url: base,
-        viewport_width: 1000.0,
+        viewport_width: page_vw,
         items: Vec::new(),
         links: Vec::new(),
         element_rects: Vec::new(),

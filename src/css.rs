@@ -86,8 +86,15 @@ impl Value {
     }
 }
 
+// @media 없는 시트/테스트/UA 용 기본 파스. 데스크톱 폭(1024)으로 미디어 평가.
 pub fn parse(source: String) -> Stylesheet {
-    let mut parser = Parser { pos: 0, input: source };
+    parse_viewport(source, 1024.0)
+}
+
+// 뷰포트 폭을 알고 파스 — @media (min/max-width) 를 이 폭에 대해 평가해
+// 매칭되는 규칙만 포함한다. 페이지 스타일시트는 실제 뷰포트 폭으로 호출.
+pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
+    let mut parser = Parser { pos: 0, input: source, viewport_width };
     Stylesheet { rules: parser.parse_rules() }
 }
 
@@ -109,6 +116,7 @@ pub fn parse_selector_list(text: &str) -> Option<Vec<Selector>> {
 struct Parser {
     pos: usize,
     input: String,
+    viewport_width: f32,
 }
 
 impl Parser {
@@ -120,7 +128,14 @@ impl Parser {
                 break;
             }
             if self.peek() == Some('@') {
-                self.skip_at_rule();
+                self.consume_char(); // '@'
+                let ident = self.parse_identifier().to_ascii_lowercase();
+                if ident == "media" {
+                    let media_rules = self.parse_media_block();
+                    rules.extend(media_rules);
+                } else {
+                    self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
+                }
                 continue;
             }
             if let Some(rule) = self.parse_rule() {
@@ -128,6 +143,41 @@ impl Parser {
             }
         }
         rules
+    }
+
+    // '@media' 뒤: 조건 텍스트 → '{' → 내부 규칙들 → '}'. 조건이 뷰포트에 맞으면
+    // 내부 규칙을 반환, 아니면 빈 목록. (내부 규칙은 항상 파싱해 위치를 넘겨야 함)
+    fn parse_media_block(&mut self) -> Vec<Rule> {
+        let query = self.consume_while(|c| c != '{' && c != ';' && c != '}');
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return Vec::new();
+        }
+        self.consume_char(); // '{'
+        let mut inner = Vec::new();
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                Some('@') => self.skip_at_rule(), // 중첩 @rule 은 스킵
+                _ => {
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
+                }
+            }
+        }
+        if media_matches(&query, self.viewport_width) {
+            inner
+        } else {
+            Vec::new()
+        }
     }
 
     fn parse_rule(&mut self) -> Option<Rule> {
@@ -379,6 +429,57 @@ fn interpret_value(text: &str) -> Option<Value> {
 }
 
 // 선언 하나를 (경우에 따라 여러) longhand 선언으로 확장한다.
+// 미디어 쿼리 매칭 (콤마 = OR). min-width/max-width(px) 와 print 타입만 평가.
+// 그 외 특성(orientation, resolution 등)은 제약 없음으로 간주(관용적으로 매칭).
+fn media_matches(query: &str, vw: f32) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return true; // '@media { }' (타입 생략) → 매칭
+    }
+    q.split(',').any(|one| media_query_matches(one.trim(), vw))
+}
+
+fn media_query_matches(q: &str, vw: f32) -> bool {
+    let ql = q.to_ascii_lowercase();
+    let negate = ql.starts_with("not ");
+    let body = ql.trim_start_matches("not ").trim();
+    // print 전용은 화면에서 불일치
+    if body.starts_with("print") {
+        return negate;
+    }
+    let mut ok = true;
+    if let Some(px) = media_feature_px(body, "min-width") {
+        ok = ok && vw >= px;
+    }
+    if let Some(px) = media_feature_px(body, "max-width") {
+        ok = ok && vw <= px;
+    }
+    if negate {
+        !ok
+    } else {
+        ok
+    }
+}
+
+// "(min-width: 768px)" 같은 특성에서 px 값을 추출. em 등 비-px 는 None.
+fn media_feature_px(q: &str, feature: &str) -> Option<f32> {
+    let idx = q.find(feature)?;
+    let after = &q[idx + feature.len()..];
+    let colon = after.find(':')?;
+    let val = after[colon + 1..].trim_start();
+    let num: String = val.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    if num.is_empty() {
+        return None;
+    }
+    // px 단위이거나 단위 없을 때만 (em/rem/vw 등은 무시)
+    let rest = val[num.len()..].trim_start();
+    if rest.starts_with("px") || rest.starts_with(')') || rest.is_empty() {
+        num.parse::<f32>().ok()
+    } else {
+        None
+    }
+}
+
 fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
     match name {
         "margin" | "padding" => box_shorthand(name, "", value_text),
@@ -623,10 +724,43 @@ mod tests {
     }
 
     #[test]
-    fn skips_at_rules() {
-        let ss = parse("@media screen { p { color: #ff0000; } } div { width: 5px; }".to_string());
+    fn skips_non_media_at_rules() {
+        // @font-face 등은 여전히 스킵, 뒤 규칙은 파싱
+        let ss = parse("@font-face { font-family: x; } div { width: 5px; }".to_string());
         assert_eq!(ss.rules.len(), 1);
         assert_eq!(ss.rules[0].declarations[0].name, "width");
+    }
+
+    #[test]
+    fn media_min_width_included_when_viewport_wide_enough() {
+        // 뷰포트 1000 → min-width:768 매칭 → 내부 규칙 포함
+        let ss = parse_viewport(
+            "@media (min-width: 768px) { p { color: #ff0000; } } div { width: 5px; }".to_string(),
+            1000.0,
+        );
+        assert_eq!(ss.rules.len(), 2);
+        assert!(ss.rules.iter().any(|r| r.declarations.iter().any(|d| d.name == "color")));
+    }
+
+    #[test]
+    fn media_min_width_excluded_when_viewport_too_narrow() {
+        // 뷰포트 600 → min-width:768 불일치 → 내부 규칙 드롭
+        let ss = parse_viewport(
+            "@media (min-width: 768px) { p { color: #ff0000; } } div { width: 5px; }".to_string(),
+            600.0,
+        );
+        assert_eq!(ss.rules.len(), 1);
+        assert_eq!(ss.rules[0].declarations[0].name, "width");
+    }
+
+    #[test]
+    fn media_max_width_and_print() {
+        // max-width:600 은 뷰포트 500 에서 매칭
+        let ss = parse_viewport("@media (max-width: 600px) { p { width: 1px; } }".to_string(), 500.0);
+        assert_eq!(ss.rules.len(), 1);
+        // print 전용은 화면(어떤 폭이든)에서 제외
+        let ss2 = parse_viewport("@media print { p { width: 1px; } }".to_string(), 1000.0);
+        assert_eq!(ss2.rules.len(), 0);
     }
 
     #[test]
