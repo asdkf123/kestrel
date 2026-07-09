@@ -2209,12 +2209,92 @@ impl Interp {
 
     fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
         let dom = self.dom_arena()?;
+        let is_el = |d: &crate::dom::Dom, c: crate::dom::NodeId| {
+            matches!(d.get(c).node_type, crate::dom::NodeType::Element(_))
+        };
         match key {
             "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
             "value" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(
                     e.attributes.get("value").cloned().unwrap_or_default(),
                 )),
+                _ => Ok(Value::Undefined),
+            },
+            // 트리 순회 프로퍼티 (프레임워크/앱 코드가 광범위하게 사용)
+            "children" => {
+                let arr: Vec<Value> = dom
+                    .get(id)
+                    .children
+                    .clone()
+                    .into_iter()
+                    .filter(|&c| is_el(dom, c))
+                    .map(Value::Dom)
+                    .collect();
+                Ok(Value::Arr(Rc::new(RefCell::new(arr))))
+            }
+            "childNodes" => {
+                let arr: Vec<Value> =
+                    dom.get(id).children.iter().copied().map(Value::Dom).collect();
+                Ok(Value::Arr(Rc::new(RefCell::new(arr))))
+            }
+            "childElementCount" => {
+                let n = dom.get(id).children.iter().filter(|&&c| is_el(dom, c)).count();
+                Ok(Value::Num(n as f64))
+            }
+            "firstElementChild" => Ok(dom
+                .get(id)
+                .children
+                .iter()
+                .copied()
+                .find(|&c| is_el(dom, c))
+                .map(Value::Dom)
+                .unwrap_or(Value::Null)),
+            "lastElementChild" => Ok(dom
+                .get(id)
+                .children
+                .iter()
+                .copied()
+                .rev()
+                .find(|&c| is_el(dom, c))
+                .map(Value::Dom)
+                .unwrap_or(Value::Null)),
+            "firstChild" => {
+                Ok(dom.get(id).children.first().copied().map(Value::Dom).unwrap_or(Value::Null))
+            }
+            "lastChild" => {
+                Ok(dom.get(id).children.last().copied().map(Value::Dom).unwrap_or(Value::Null))
+            }
+            "parentElement" | "parentNode" => {
+                Ok(dom.get(id).parent.map(Value::Dom).unwrap_or(Value::Null))
+            }
+            "nextElementSibling" | "previousElementSibling" => {
+                let next = key.starts_with("next");
+                let result = dom.get(id).parent.and_then(|p| {
+                    let sibs = dom.get(p).children.clone();
+                    let idx = sibs.iter().position(|&c| c == id)?;
+                    let order: Vec<usize> = if next {
+                        (idx + 1..sibs.len()).collect()
+                    } else {
+                        (0..idx).rev().collect()
+                    };
+                    order.into_iter().map(|i| sibs[i]).find(|&c| is_el(dom, c))
+                });
+                Ok(result.map(Value::Dom).unwrap_or(Value::Null))
+            }
+            "tagName" | "nodeName" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => Ok(Value::Str(e.tag_name.to_ascii_uppercase())),
+                _ => Ok(Value::Undefined),
+            },
+            "id" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => {
+                    Ok(Value::Str(e.attributes.get("id").cloned().unwrap_or_default()))
+                }
+                _ => Ok(Value::Undefined),
+            },
+            "className" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => {
+                    Ok(Value::Str(e.attributes.get("class").cloned().unwrap_or_default()))
+                }
                 _ => Ok(Value::Undefined),
             },
             _ => Ok(Value::Undefined),

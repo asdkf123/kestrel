@@ -13,14 +13,16 @@ pub mod parser;
 pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp {
     let mut it = interp::Interp::new();
     it.install_location(page_url);
+    let base = crate::url::Url::parse(page_url).ok();
     let mut sources = Vec::new();
-    collect_scripts(dom, dom.root, &mut sources);
+    collect_scripts(dom, dom.root, base.as_ref(), &mut sources);
     if sources.is_empty() {
         return it;
     }
     it.dom = Some(dom as *mut crate::dom::Dom); // 실행 동안만 유효
     for src in &sources {
-        if let Err(e) = it.run(src) {
+        let code = src.strip_prefix(EXT_TAG).unwrap_or(src);
+        if let Err(e) = it.run(code) {
             println!("[js error] {}", e);
         }
         it.drain_microtasks(); // Promise .then 콜백 실행 (fetch 등)
@@ -32,13 +34,21 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
     it
 }
 
-fn collect_scripts(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<String>) {
+// 상한: 외부 스크립트 네트워크 요청 폭주 방지 (실사이트는 수십 개까지 흔함).
+const MAX_EXTERNAL_SCRIPTS: usize = 30;
+
+fn collect_scripts(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    base: Option<&crate::url::Url>,
+    out: &mut Vec<String>,
+) {
     let node = dom.get(id);
     if let crate::dom::NodeType::Element(e) = &node.node_type {
         if e.tag_name == "noscript" {
             return; // JS 실행 브라우저: noscript 내용 무시
         }
-        if e.tag_name == "script" && e.attributes.get("src").map_or(true, |s| s.is_empty()) {
+        if e.tag_name == "script" {
             // type 이 JS 일 때만 실행. application/json(데이터 임베드),
             // ld+json, text/template 등은 실행 대상이 아니다 (github 등).
             // module 은 import/export 미지원이라 스킵 (관용).
@@ -49,18 +59,45 @@ fn collect_scripts(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<
                 .unwrap_or_default();
             let is_js =
                 ty.is_empty() || ty == "text/javascript" || ty == "application/javascript";
+            let src = e.attributes.get("src").map(|s| s.trim()).filter(|s| !s.is_empty());
             if is_js {
-                let text = dom.text_content(id);
-                if !text.trim().is_empty() {
-                    out.push(text);
+                match src {
+                    // 외부 스크립트: 문서 순서대로 fetch 해 인라인처럼 실행.
+                    // 클래식 스크립트 의미론(동기 실행). async/defer 구분은 생략.
+                    Some(href) => {
+                        if let Some(b) = base {
+                            let n_ext = out.iter().filter(|s| s.starts_with(EXT_TAG)).count();
+                            if n_ext < MAX_EXTERNAL_SCRIPTS {
+                                if let Some(u) = b.join(href) {
+                                    if let Ok(r) = crate::http::fetch(&u.as_string()) {
+                                        let text =
+                                            String::from_utf8_lossy(&r.body).to_string();
+                                        if !text.trim().is_empty() {
+                                            // 외부임을 표시(카운트용) — 앞의 마커는 실행 전 제거.
+                                            out.push(format!("{}{}", EXT_TAG, text));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        let text = dom.text_content(id);
+                        if !text.trim().is_empty() {
+                            out.push(text);
+                        }
+                    }
                 }
             }
         }
     }
     for &c in &node.children {
-        collect_scripts(dom, c, out);
+        collect_scripts(dom, c, base, out);
     }
 }
+
+// 외부 스크립트 소스를 카운트하기 위한 내부 마커. 실행 직전 제거한다.
+const EXT_TAG: &str = "\u{0}ext\u{0}";
 
 #[cfg(test)]
 mod tests {
