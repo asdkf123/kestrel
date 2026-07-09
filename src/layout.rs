@@ -154,8 +154,12 @@ impl<'a> LayoutBox<'a> {
                 self.background_image = Some(idx);
             }
         }
+        let is_row = matches!(&self.styled_node.node.node_type,
+            NodeType::Element(e) if e.tag_name == "tr");
         if matches!(self.styled_node.display(), Display::Flex) {
             self.layout_flex_children(fonts, images);
+        } else if is_row {
+            self.layout_table_row(fonts, images);
         } else {
             self.layout_children(fonts, images);
         }
@@ -358,6 +362,29 @@ impl<'a> LayoutBox<'a> {
             cb.content.width = w;
             child.layout(cb, fonts, images);
             pen_x += child.dimensions.margin_box().width + gap;
+            max_h = max_h.max(child.dimensions.margin_box().height);
+        }
+        self.dimensions.content.height = max_h;
+    }
+
+    // <tr> 의 셀(td/th)을 가로 컬럼으로 배치. 컬럼 폭 = 행 폭 / 셀 수 (균등 근사).
+    // colspan/rowspan, 콘텐츠 기반 폭은 미지원. 행 높이 = 최고 셀.
+    fn layout_table_row(&mut self, fonts: &FontStack, images: &ImageMap) {
+        let n = self.children.len();
+        if n == 0 {
+            return;
+        }
+        let d = self.dimensions;
+        let col_w = d.content.width / n as f32;
+        let mut pen_x = d.content.x;
+        let mut max_h = 0.0f32;
+        for child in &mut self.children {
+            let mut cb: Dimensions = Default::default();
+            cb.content.x = pen_x;
+            cb.content.y = d.content.y;
+            cb.content.width = col_w;
+            child.layout(cb, fonts, images);
+            pen_x += col_w;
             max_h = max_h.max(child.dimensions.margin_box().height);
         }
         self.dimensions.content.height = max_h;
