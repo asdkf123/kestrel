@@ -694,24 +694,35 @@ impl<'a> LayoutBox<'a> {
         max_w
     }
 
-    // <tr> 의 셀(td/th)을 가로 컬럼으로 배치. 컬럼 폭 = 행 폭 / 셀 수 (균등 근사).
-    // colspan/rowspan, 콘텐츠 기반 폭은 미지원. 행 높이 = 최고 셀.
+    // <tr> 의 셀(td/th)을 가로 컬럼으로 배치. 셀의 지정 폭(CSS width 또는 HTML
+    // width 속성, px/%)은 존중하고, 지정 없는 셀은 남은 폭을 균등 분배.
+    // 미지원: colspan/rowspan, 내용 기반 자동 폭. 행 높이 = 최고 셀.
     fn layout_table_row(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
             return;
         }
         let d = self.dimensions;
-        let col_w = d.content.width / n as f32;
+        let avail = d.content.width;
+        let widths: Vec<Option<f32>> =
+            self.children.iter().map(|c| cell_width(c, avail)).collect();
+        let fixed_total: f32 = widths.iter().flatten().sum();
+        let auto_count = widths.iter().filter(|w| w.is_none()).count();
+        let auto_w = if auto_count > 0 {
+            (avail - fixed_total).max(0.0) / auto_count as f32
+        } else {
+            0.0
+        };
         let mut pen_x = d.content.x;
         let mut max_h = 0.0f32;
-        for child in &mut self.children {
+        for (child, w) in self.children.iter_mut().zip(widths.iter()) {
+            let cw = w.unwrap_or(auto_w);
             let mut cb: Dimensions = Default::default();
             cb.content.x = pen_x;
             cb.content.y = d.content.y;
-            cb.content.width = col_w;
+            cb.content.width = cw;
             child.layout(cb, fonts, images);
-            pen_x += col_w;
+            pen_x += cw;
             max_h = max_h.max(child.dimensions.margin_box().height);
         }
         self.dimensions.content.height = max_h;
@@ -725,6 +736,29 @@ impl<'a> LayoutBox<'a> {
 }
 
 
+
+// 테이블 셀의 지정 폭(px). CSS width(px/%) 우선, 없으면 HTML width 속성(px/%).
+// 지정 없으면 None(auto → 남은 폭 균등 분배 대상).
+fn cell_width(child: &LayoutBox, avail: f32) -> Option<f32> {
+    match child.styled_node.value("width") {
+        Some(Length(w, Px)) => return Some(w),
+        Some(Length(p, crate::css::Unit::Percent)) => return Some(p / 100.0 * avail),
+        _ => {}
+    }
+    if let NodeType::Element(e) = &child.styled_node.node.node_type {
+        if let Some(w) = e.attributes.get("width") {
+            let w = w.trim();
+            if let Some(pct) = w.strip_suffix('%') {
+                if let Ok(p) = pct.trim().parse::<f32>() {
+                    return Some(p / 100.0 * avail);
+                }
+            } else if let Ok(px) = w.trim_end_matches("px").parse::<f32>() {
+                return Some(px);
+            }
+        }
+    }
+    None
+}
 
 // 퍼센트 길이를 컨테이닝 블록 폭 기준 px 로 해석. auto/px/기타는 그대로.
 // (모든 퍼센트 — 세로 margin/padding 포함 — 은 CSS 상 컨테이닝 블록 '폭' 기준)
@@ -1533,6 +1567,21 @@ mod tests {
         // (220 - 20 gap) / 2 = 100 each; 둘째는 100 + 20 = 120
         assert_eq!(d[0].content.width, 100.0);
         assert_eq!(d[1].content.x, 120.0, "열 사이 gap 20");
+    }
+
+    #[test]
+    fn table_row_respects_cell_width_attribute() {
+        // 구글 검색 테이블 사례: 25% | auto | 25% (HTML width 속성)
+        let d = flex_layout(
+            "<tr><td width=\"25%\"></td><td></td><td width=\"25%\"></td></tr>",
+            "tr, td { display: block; padding: 0; }",
+            400.0,
+        );
+        assert_eq!(d[0].content.width, 100.0, "25% of 400");
+        assert_eq!(d[0].content.x, 0.0);
+        assert_eq!(d[1].content.x, 100.0);
+        assert_eq!(d[1].content.width, 200.0, "auto 셀 = 남은 200");
+        assert_eq!(d[2].content.x, 300.0, "우측 25% 셀");
     }
 
     #[test]
