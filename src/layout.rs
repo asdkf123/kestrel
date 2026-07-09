@@ -437,11 +437,43 @@ impl<'a> LayoutBox<'a> {
         // 이 컨테이너가 float 로 shrink-to-fit 될 때의 내용 폭: float 밴드가
         // 실제로 차지한 가로 범위 (좌 float 누적 + 우 float 누적).
         let mut float_extent = 0.0f32;
-        for child in &mut self.children {
+        // inline-block 런 상태: 연속된 inline-block 자식을 좌→우로 패킹, 폭 초과 시 줄바꿈.
+        // ib_lines: 정렬 후처리용 (줄별 자식 인덱스, 줄 폭). ib_cur: 현재 줄.
+        let mut ib_active = false;
+        let mut ib_pen_x = cx;
+        let mut ib_line_top = cy;
+        let mut ib_line_h = 0.0f32;
+        let mut ib_bottom = cy;
+        let mut ib_lines: Vec<(Vec<usize>, f32)> = Vec::new();
+        let mut ib_cur: Vec<usize> = Vec::new();
+        let mut inline_extent = 0.0f32;
+        let n = self.children.len();
+        for i in 0..n {
+            let cpos = self.children[i].position();
+            let cfloat = self.children[i].float();
+            let is_ib =
+                matches!(self.children[i].styled_node.display(), Display::InlineBlock) && cfloat == "none";
+
+            // 다른 종류의 자식을 만나면 진행 중이던 inline-block 런을 마감(정렬 + 높이 반영)
+            if ib_active && !is_ib {
+                ib_lines.push((std::mem::take(&mut ib_cur), ib_pen_x - cx));
+                let w = self.finish_inline_block_run(
+                    std::mem::take(&mut ib_lines),
+                    align,
+                    avail,
+                    ib_bottom,
+                    cy,
+                );
+                inline_extent = inline_extent.max(w);
+                ib_active = false;
+                ib_pen_x = cx;
+                ib_line_h = 0.0;
+            }
+
             // position: absolute/fixed — 흐름에서 제거. 컨테이닝 블록(=이 컨테이너,
             // 정상적으론 가장 가까운 positioned 조상)의 패딩 박스 기준으로 배치.
-            let cpos = child.position();
             if cpos == "absolute" || cpos == "fixed" {
+                let child = &mut self.children[i];
                 let mut cb: Dimensions = Default::default();
                 cb.content.x = cx;
                 cb.content.y = cy;
@@ -463,7 +495,6 @@ impl<'a> LayoutBox<'a> {
             }
 
             // float: left/right — 밴드에 좌/우로 패킹 (shrink-to-fit).
-            let cfloat = child.float();
             if cfloat != "none" {
                 let flow_y = self.dimensions.content.height + cy;
                 if !band_active {
@@ -474,6 +505,7 @@ impl<'a> LayoutBox<'a> {
                     fr_next = cx + avail;
                 }
                 let avail_band = (fr_next - fl_next).max(0.0);
+                let child = &mut self.children[i];
                 // 1차(probe) 배치: 밴드 잔여 폭으로 레이아웃해 내용 폭(used_width) 측정
                 let mut probe: Dimensions = Default::default();
                 probe.content.x = fl_next;
@@ -506,6 +538,52 @@ impl<'a> LayoutBox<'a> {
                 continue; // 정상 흐름 높이엔 직접 미반영 (밴드로 관리)
             }
 
+            // inline-block: 가로로 흐르며 폭 초과 시 줄바꿈 (shrink-to-fit).
+            if is_ib {
+                if !ib_active {
+                    ib_active = true;
+                    ib_line_top = self.dimensions.content.height + cy;
+                    ib_bottom = ib_line_top;
+                    ib_pen_x = cx;
+                    ib_line_h = 0.0;
+                }
+                let child = &mut self.children[i];
+                // 폭 측정용 probe (위치는 폭 결정에 무관)
+                let mut probe: Dimensions = Default::default();
+                probe.content.x = ib_pen_x;
+                probe.content.y = ib_line_top;
+                probe.content.width = avail;
+                child.layout(probe, fonts, images);
+                let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
+                let bp = child.dimensions.border_box().width - child.dimensions.content.width;
+                let ow = if explicit {
+                    child.dimensions.border_box().width.min(avail)
+                } else {
+                    (child.used_width + bp).min(avail)
+                };
+                // 줄 초과면 다음 줄로 (줄 시작이 아닐 때만)
+                if ib_pen_x + ow > cx + avail + 0.5 && ib_pen_x > cx + 0.5 {
+                    ib_lines.push((std::mem::take(&mut ib_cur), ib_pen_x - cx));
+                    ib_pen_x = cx;
+                    ib_line_top = ib_bottom;
+                    ib_line_h = 0.0;
+                }
+                // 확정 폭·위치로 재배치
+                child.clear_render();
+                let mut cb: Dimensions = Default::default();
+                cb.content.x = ib_pen_x;
+                cb.content.y = ib_line_top;
+                cb.content.width = ow;
+                child.layout(cb, fonts, images);
+                let mw = child.dimensions.margin_box().width;
+                let mh = child.dimensions.margin_box().height;
+                ib_cur.push(i);
+                ib_pen_x += mw;
+                ib_line_h = ib_line_h.max(mh);
+                ib_bottom = ib_bottom.max(ib_line_top + ib_line_h);
+                continue;
+            }
+
             // 정상 블록: 앞선 float 밴드가 있으면 그 아래로 clear
             if band_active {
                 let below = band_bottom - cy;
@@ -516,6 +594,7 @@ impl<'a> LayoutBox<'a> {
             }
             // 정상 흐름: 누적 높이가 반영된 live dimensions 로 스택
             let d = self.dimensions;
+            let child = &mut self.children[i];
             child.layout(d, fonts, images);
             if align != "left" {
                 let cw = child.dimensions.border_box().width;
@@ -526,6 +605,13 @@ impl<'a> LayoutBox<'a> {
             }
             self.dimensions.content.height += child.dimensions.margin_box().height;
         }
+        // 마지막이 inline-block 런이면 마감
+        if ib_active {
+            ib_lines.push((std::mem::take(&mut ib_cur), ib_pen_x - cx));
+            let w =
+                self.finish_inline_block_run(std::mem::take(&mut ib_lines), align, avail, ib_bottom, cy);
+            inline_extent = inline_extent.max(w);
+        }
         // float 로 끝난 경우 밴드 높이를 컨테이너에 반영
         if band_active {
             let below = band_bottom - cy;
@@ -533,14 +619,42 @@ impl<'a> LayoutBox<'a> {
                 self.dimensions.content.height = below;
             }
         }
-        // shrink-to-fit float 부모용 내용 폭: 정상 자식의 최대 폭과
-        // float 밴드가 차지한 가로 범위 중 큰 값.
+        // shrink-to-fit 부모용 내용 폭: 정상 자식 최대 폭, float 밴드, inline-block 줄 중 최대.
         let child_max = self
             .children
             .iter()
             .map(|c| c.dimensions.border_box().width)
             .fold(0.0f32, f32::max);
-        self.used_width = child_max.max(float_extent);
+        self.used_width = child_max.max(float_extent).max(inline_extent);
+    }
+
+    // inline-block 런 마감: 각 줄을 text-align 에 맞춰 가로 정렬하고, 런 전체 높이를
+    // 컨테이너 흐름 높이에 반영. 반환값은 런의 최대 줄 폭 (shrink-to-fit used_width 용).
+    fn finish_inline_block_run(
+        &mut self,
+        lines: Vec<(Vec<usize>, f32)>,
+        align: &str,
+        avail: f32,
+        bottom: f32,
+        cy: f32,
+    ) -> f32 {
+        let mut max_w = 0.0f32;
+        for (idxs, w) in &lines {
+            max_w = max_w.max(*w);
+            if align != "left" && *w < avail - 0.5 {
+                let off = if align == "center" { (avail - w) / 2.0 } else { avail - w };
+                if off > 0.5 {
+                    for &idx in idxs {
+                        self.children[idx].translate_x(off);
+                    }
+                }
+            }
+        }
+        let below = bottom - cy;
+        if below > self.dimensions.content.height {
+            self.dimensions.content.height = below;
+        }
+        max_w
     }
 
     // flexbox 부분 지원: 단일 행(row, nowrap). 고정 폭 아이템은 그대로,
@@ -833,7 +947,7 @@ fn collect_node<'a>(
     match &node.node.node_type {
         NodeType::Text(t) => runs.push((t.clone(), color, px, link)),
         NodeType::Element(e) => match node.display() {
-            Display::Block | Display::Flex | Display::None => {}
+            Display::Block | Display::Flex | Display::InlineBlock | Display::None => {}
             Display::Inline => {
                 let cpx = node
                     .value("font-size")
@@ -920,7 +1034,7 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
     for child in &style_node.children {
         match child.display() {
-            Display::Block | Display::Flex => {
+            Display::Block | Display::Flex | Display::InlineBlock => {
                 if !pending.is_empty() {
                     let nodes = std::mem::take(&mut pending);
                     if !all_whitespace(&nodes) {
@@ -1292,6 +1406,73 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         let r = &lb.children[0];
         assert_eq!(r.dimensions.content.x, 300.0, "float:right → 오른쪽 정렬 (400-100)");
+    }
+
+    #[test]
+    fn inline_block_flows_horizontally() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .a { display: inline-block; width: 100px; height: 20px; } \
+             .b { display: inline-block; width: 80px; height: 30px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let a = &lb.children[0];
+        let b = &lb.children[1];
+        assert_eq!(a.dimensions.content.x, 0.0, "첫 inline-block 은 왼쪽");
+        assert_eq!(b.dimensions.content.x, 100.0, "둘째는 첫 것 오른쪽에 나란히");
+        assert_eq!(a.dimensions.content.y, b.dimensions.content.y, "같은 줄 = 같은 y");
+        // 줄 높이 = 최고 아이템(30) → 컨테이너 높이 30
+        assert_eq!(lb.dimensions.content.height, 30.0);
+    }
+
+    #[test]
+    fn inline_block_wraps_when_exceeding_width() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"i\"></div><div class=\"i\"></div><div class=\"i\"></div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .i { display: inline-block; width: 150px; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // 150*3 = 450 > 400 → 셋째는 다음 줄
+        assert_eq!(lb.children[0].dimensions.content.x, 0.0);
+        assert_eq!(lb.children[1].dimensions.content.x, 150.0);
+        assert_eq!(lb.children[2].dimensions.content.x, 0.0, "셋째는 줄바꿈으로 왼쪽");
+        assert_eq!(lb.children[2].dimensions.content.y, 20.0, "셋째는 둘째 줄(y=20)");
+    }
+
+    #[test]
+    fn inline_block_line_centers_with_text_align() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"i\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; text-align: center; } \
+             .i { display: inline-block; width: 100px; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // (400-100)/2 = 150
+        assert_eq!(lb.children[0].dimensions.content.x, 150.0, "inline-block 줄 가운데 정렬");
     }
 
     #[test]
