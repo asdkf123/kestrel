@@ -104,6 +104,9 @@ pub enum Native {
     Fetch,
     ResponseText,
     ResponseJson,
+    RemoveAttribute,
+    HasAttribute,
+    RemoveChild,
 }
 
 // 예약된 타이머 (창 이벤트 루프 / 헤드리스 flush 가 실행)
@@ -272,6 +275,10 @@ fn to_num(v: &Value) -> f64 {
         }
         _ => f64::NAN,
     }
+}
+
+fn is_callable(v: &Value) -> bool {
+    matches!(v, Value::Fn(_) | Value::Native(_) | Value::Class(_))
 }
 
 // Obj 기반 Promise 판별 (__isPromise 마커)
@@ -1318,11 +1325,18 @@ impl Interp {
                     for a in args {
                         arg_vals.push(self.eval(a, env)?);
                     }
+                    if !is_callable(&f) {
+                        return Err(format!("{}(…) — .{} 이(가) {} (함수 아님)", key, key, to_display(&f)));
+                    }
                     self.call_value(f, Some(recv), arg_vals)
                 } else {
                     let f = self.eval(callee, env)?;
                     for a in args {
                         arg_vals.push(self.eval(a, env)?);
+                    }
+                    if !is_callable(&f) {
+                        let name = if let Expr::Ident(n) = &**callee { n.as_str() } else { "?" };
+                        return Err(format!("{}(…) — {} 이(가) {} (함수 아님)", name, name, to_display(&f)));
                     }
                     self.call_value(f, None, arg_vals)
                 }
@@ -1405,6 +1419,9 @@ impl Interp {
                     "remove" => Some(Native::RemoveElement),
                     "setAttribute" => Some(Native::SetAttribute),
                     "getAttribute" => Some(Native::GetAttribute),
+                    "removeAttribute" => Some(Native::RemoveAttribute),
+                    "hasAttribute" => Some(Native::HasAttribute),
+                    "removeChild" => Some(Native::RemoveChild),
                     "querySelector" => Some(Native::QuerySelector),
                     "querySelectorAll" => Some(Native::QuerySelectorAll),
                     _ => None,
@@ -1617,6 +1634,36 @@ impl Interp {
                 }
                 _ => Err("remove 는 요소 메서드".to_string()),
             },
+            Native::RemoveAttribute => {
+                if let Some(Value::Dom(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                        e.attributes.remove(&name);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::HasAttribute => {
+                let has = if let Some(Value::Dom(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    matches!(&dom.get(id).node_type,
+                        crate::dom::NodeType::Element(e) if e.attributes.contains_key(&name))
+                } else {
+                    false
+                };
+                Ok(Value::Bool(has))
+            }
+            Native::RemoveChild => {
+                // parent.removeChild(child) → child 를 트리에서 분리, child 반환
+                let child = args.into_iter().next().unwrap_or(Value::Undefined);
+                if let Value::Dom(cid) = child {
+                    let dom = self.dom_arena()?;
+                    dom.detach(cid);
+                }
+                Ok(child)
+            }
             Native::SetAttribute => match recv {
                 Some(Value::Dom(id)) => {
                     let name = args.first().map(to_display).unwrap_or_default();
