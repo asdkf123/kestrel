@@ -70,6 +70,44 @@ impl Canvas {
         }
     }
 
+    // 부드러운 둥근 사각형(드롭 섀도). 둥근 박스 SDF 로 경계에서 blur 폭에 걸쳐
+    // 커버리지를 선형 감쇠시킨다. color 의 알파와 곱해 반투명 그림자를 만든다.
+    pub fn fill_soft_round_rect(&mut self, color: Color, rect: Rect, radius: f32, blur: f32) {
+        if rect.width <= 0.0 || rect.height <= 0.0 {
+            return;
+        }
+        let soft = blur.max(0.75);
+        let (hw, hh) = (rect.width / 2.0, rect.height / 2.0);
+        let (ccx, ccy) = (rect.x + hw, rect.y + hh);
+        let r = radius.min(hw).min(hh).max(0.0);
+        let x0 = (rect.x - soft).floor().max(0.0) as usize;
+        let y0 = (rect.y - soft).floor().max(0.0) as usize;
+        let x1 = ((rect.x + rect.width + soft).ceil().max(0.0) as usize).min(self.width);
+        let y1 = ((rect.y + rect.height + soft).ceil().max(0.0) as usize).min(self.height);
+        let base_a = color.a as f32 / 255.0;
+        for py in y0..y1 {
+            let fy = py as f32 + 0.5;
+            for px in x0..x1 {
+                let fx = px as f32 + 0.5;
+                // 둥근 박스 SDF (내부 음수, 외부 양수)
+                let qx = (fx - ccx).abs() - (hw - r);
+                let qy = (fy - ccy).abs() - (hh - r);
+                let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+                let sdf = outside + qx.max(qy).min(0.0) - r;
+                let cov = (0.5 - sdf / soft).clamp(0.0, 1.0);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let a = (cov * base_a * 255.0).round() as u8;
+                if a == 0 {
+                    continue;
+                }
+                let idx = py * self.width + px;
+                self.pixels[idx] = blend(self.pixels[idx], color, a);
+            }
+        }
+    }
+
     pub fn to_u32_buffer(&self) -> Vec<u32> {
         self.pixels
             .iter()
@@ -120,6 +158,7 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
 pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
     RoundRect { color: Color, rect: Rect, radius: f32 },
+    Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     Image { image: usize, rect: Rect },
     Glyph(GlyphInstance),
 }
@@ -171,6 +210,33 @@ fn uniform_radius(lb: &LayoutBox) -> f32 {
         }
         _ => 0.0,
     }
+}
+
+// box-shadow(outset) 를 박스 뒤에 발행. rect = border_box + spread, (x,y) 만큼 이동.
+fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let len = |name: &str| match lb.styled_node.value(name) {
+        Some(Value::Length(v, crate::css::Unit::Px)) => Some(v),
+        _ => None,
+    };
+    let (dx, dy) = match (len("box-shadow-x"), len("box-shadow-y")) {
+        (Some(x), Some(y)) => (x, y),
+        _ => return,
+    };
+    let blur = len("box-shadow-blur").unwrap_or(0.0);
+    let spread = len("box-shadow-spread").unwrap_or(0.0);
+    let color = match lb.styled_node.value("box-shadow-color") {
+        Some(Value::Color(c)) => c,
+        _ => Color { r: 0, g: 0, b: 0, a: 128 },
+    };
+    let b = lb.dimensions.border_box();
+    let rect = Rect {
+        x: b.x + dx - spread,
+        y: b.y + dy - spread,
+        width: b.width + 2.0 * spread,
+        height: b.height + 2.0 * spread,
+    };
+    let radius = (uniform_radius(lb) + spread).max(0.0);
+    items.push(DisplayItem::Shadow { color, rect, radius, blur });
 }
 
 // 박스 배경 + 테두리를 발행. border-radius 가 있으면 둥근 사각형으로,
@@ -233,6 +299,8 @@ pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
 }
 
 fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    // 그림자는 박스 뒤(가장 먼저)에 그린다.
+    emit_box_shadow(layout_box, items);
     // 배경 + 테두리 (border-radius 포함). 콘텐츠(글리프/이미지)는 이 아래에 그려진다.
     emit_box_decorations(layout_box, items);
     // <input> 필드 시각: 외곽선 + 흰 내부 (value 글리프는 아래 공통 경로)
@@ -301,6 +369,14 @@ pub fn rasterize(
                     continue;
                 }
                 canvas.fill_round_rect(*color, r, radius * scale);
+            }
+            DisplayItem::Shadow { color, rect, radius, blur } => {
+                let r = scale_rect(rect);
+                let m = blur * scale;
+                if r.y + r.height + m < 0.0 || r.y - m > vh {
+                    continue;
+                }
+                canvas.fill_soft_round_rect(*color, r, radius * scale, blur * scale);
             }
             DisplayItem::Image { image, rect } => {
                 let r = scale_rect(rect);

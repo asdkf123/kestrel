@@ -393,6 +393,8 @@ fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
             }
             _ => Vec::new(),
         },
+        // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
+        "box-shadow" => box_shadow_shorthand(value_text),
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
         "border-top" => border_shorthand(&["top"], value_text),
         "border-right" => border_shorthand(&["right"], value_text),
@@ -403,6 +405,50 @@ fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
             None => Vec::new(),
         },
     }
+}
+
+// `box-shadow: <dx> <dy> [blur] [spread] <color>` 를 커스텀 longhand 로 확장.
+// 다중 그림자는 첫 번째만, inset 은 미지원(드롭). paint 가 이 longhand 를 읽는다.
+fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
+    // 최상위(괄호 밖) 첫 콤마까지가 첫 그림자 — rgba(...) 안의 콤마는 보존.
+    let mut depth = 0i32;
+    let mut end = value_text.len();
+    for (i, c) in value_text.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
+    let first = value_text[..end].trim();
+    let mut lens: Vec<f32> = Vec::new();
+    let mut color: Option<Value> = None;
+    for tok in first.split_whitespace() {
+        if tok == "inset" {
+            return Vec::new(); // inset 그림자 미지원
+        }
+        match interpret_value(tok) {
+            Some(Value::Length(v, Unit::Px)) => lens.push(v),
+            Some(c @ Value::Color(..)) => color = Some(c),
+            _ => {}
+        }
+    }
+    if lens.len() < 2 {
+        return Vec::new(); // dx, dy 필수
+    }
+    let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
+    let px = |v: f32| Value::Length(v, Unit::Px);
+    vec![
+        Declaration { name: "box-shadow-x".to_string(), value: px(lens[0]) },
+        Declaration { name: "box-shadow-y".to_string(), value: px(lens[1]) },
+        Declaration { name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
+        Declaration { name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
+        Declaration { name: "box-shadow-color".to_string(), value: color },
+    ]
 }
 
 // `border[-side]: <width> <style> <color>` 단축값(임의 순서, 일부 생략 가능)을
@@ -718,6 +764,24 @@ mod tests {
                 Some(&Value::Color(Color { r: 204, g: 204, b: 204, a: 255 }))
             );
         }
+    }
+
+    #[test]
+    fn box_shadow_expands_to_longhands() {
+        let ss = parse("div { box-shadow: 0 2px 8px rgba(0,0,0,0.15); }".to_string());
+        assert_eq!(decl(&ss, "box-shadow-x"), Some(&Value::Length(0.0, Unit::Px)));
+        assert_eq!(decl(&ss, "box-shadow-y"), Some(&Value::Length(2.0, Unit::Px)));
+        assert_eq!(decl(&ss, "box-shadow-blur"), Some(&Value::Length(8.0, Unit::Px)));
+        assert_eq!(
+            decl(&ss, "box-shadow-color"),
+            Some(&Value::Color(Color { r: 0, g: 0, b: 0, a: 38 }))
+        );
+    }
+
+    #[test]
+    fn box_shadow_inset_dropped() {
+        let ss = parse("div { box-shadow: inset 0 2px 4px #000000; }".to_string());
+        assert_eq!(decl(&ss, "box-shadow-x"), None, "inset 는 미지원 → 드롭");
     }
 
     #[test]
