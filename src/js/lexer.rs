@@ -1,6 +1,24 @@
 // JS 렉서: 소스 → 토큰열. 최대 munch (=== 이 == 보다 우선).
 // 미지원: 템플릿 리터럴, 정규식 리터럴, \u 이스케이프 (에러로 보고).
 
+// 지수부(e/E [+/-] 숫자)를 있으면 소비. 뒤에 숫자가 있을 때만 지수로 취급
+// (그래야 `1 .e` 같은 경우에 e 를 식별자로 안 삼킴). i 를 전진시킨다.
+fn lex_exponent(b: &[char], i: &mut usize) {
+    if *i < b.len() && (b[*i] == 'e' || b[*i] == 'E') {
+        let mut j = *i + 1;
+        if j < b.len() && (b[j] == '+' || b[j] == '-') {
+            j += 1;
+        }
+        if j < b.len() && b[j].is_ascii_digit() {
+            j += 1;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            *i = j;
+        }
+    }
+}
+
 // 템플릿 리터럴 조각: 리터럴 텍스트 / ${...} 안의 식 소스 (파서가 재귀 파싱)
 #[derive(Debug, Clone, PartialEq)]
 pub enum TplPart {
@@ -25,6 +43,7 @@ pub enum Tok {
     If,
     Else,
     While,
+    Do,
     For,
     Break,
     Continue,
@@ -75,6 +94,9 @@ pub enum Tok {
     CaretAssign,
     ShlAssign,
     ShrAssign,
+    UShrAssign,
+    StarStar,       // **
+    StarStarAssign, // **=
     AndAndAssign,
     OrOrAssign,
     QuestionQuestion,
@@ -117,6 +139,7 @@ fn keyword(word: &str) -> Option<Tok> {
         "if" => Tok::If,
         "else" => Tok::Else,
         "while" => Tok::While,
+        "do" => Tok::Do,
         "for" => Tok::For,
         "break" => Tok::Break,
         "continue" => Tok::Continue,
@@ -235,33 +258,46 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             out.push(Tok::Regex(source, flags));
             continue;
         }
-        // 선행 소수점 숫자 (.5) — 뒤에 숫자가 오면 수, 아니면 Dot
+        // 선행 소수점 숫자 (.5, .5e3) — 뒤에 숫자가 오면 수, 아니면 Dot
         if c == '.' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
             let start = i;
             i += 1;
             while i < b.len() && b[i].is_ascii_digit() {
                 i += 1;
             }
+            lex_exponent(&b, &mut i);
             let s: String = b[start..i].iter().collect();
             out.push(Tok::Num(s.parse::<f64>().map_err(|e| e.to_string())?));
             continue;
         }
-        // 숫자 (10진 + 0x 16진)
+        // 숫자 (10진 + 0x/0b/0o 진법 접두 + 지수부 + BigInt n 접미)
         if c.is_ascii_digit() {
-            if c == '0' && i + 1 < b.len() && (b[i + 1] == 'x' || b[i + 1] == 'X') {
-                let start = i + 2;
-                let mut j = start;
-                while j < b.len() && b[j].is_ascii_hexdigit() {
-                    j += 1;
+            // 진법 접두: 0x(16) 0b(2) 0o(8). 최소 한 자리 필요.
+            if c == '0' && i + 1 < b.len() {
+                let radix = match b[i + 1] {
+                    'x' | 'X' => Some((16u32, "잘못된 16진 리터럴")),
+                    'b' | 'B' => Some((2u32, "잘못된 2진 리터럴")),
+                    'o' | 'O' => Some((8u32, "잘못된 8진 리터럴")),
+                    _ => None,
+                };
+                if let Some((radix, err)) = radix {
+                    let start = i + 2;
+                    let mut j = start;
+                    while j < b.len() && b[j].is_digit(radix) {
+                        j += 1;
+                    }
+                    if j == start {
+                        return Err(err.to_string());
+                    }
+                    let s: String = b[start..j].iter().collect();
+                    let v = u64::from_str_radix(&s, radix).map_err(|e| e.to_string())?;
+                    i = j;
+                    if i < b.len() && b[i] == 'n' {
+                        i += 1; // BigInt 접미 — f64 로 근사
+                    }
+                    out.push(Tok::Num(v as f64));
+                    continue;
                 }
-                if j == start {
-                    return Err("잘못된 16진 리터럴".to_string());
-                }
-                let s: String = b[start..j].iter().collect();
-                let v = u64::from_str_radix(&s, 16).map_err(|e| e.to_string())?;
-                out.push(Tok::Num(v as f64));
-                i = j;
-                continue;
             }
             let start = i;
             while i < b.len() && b[i].is_ascii_digit() {
@@ -273,8 +309,13 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
                     i += 1;
                 }
             }
+            lex_exponent(&b, &mut i);
             let s: String = b[start..i].iter().collect();
-            out.push(Tok::Num(s.parse::<f64>().map_err(|e| e.to_string())?));
+            let v = s.parse::<f64>().map_err(|e| e.to_string())?;
+            if i < b.len() && b[i] == 'n' {
+                i += 1; // BigInt 접미
+            }
+            out.push(Tok::Num(v));
             continue;
         }
         // 문자열
@@ -398,7 +439,17 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             out.push(keyword(&word).unwrap_or(Tok::Ident(word)));
             continue;
         }
-        // 연산자/구두점 (최대 munch: 3글자 → 2글자 → 1글자)
+        // 연산자/구두점 (최대 munch: 4글자 → 3글자 → 2글자 → 1글자)
+        let four: String = b[i..(i + 4).min(b.len())].iter().collect();
+        let four_tok = match four.as_str() {
+            ">>>=" => Some(Tok::UShrAssign),
+            _ => None,
+        };
+        if let Some(t) = four_tok {
+            out.push(t);
+            i += 4;
+            continue;
+        }
         let three: String = b[i..(i + 3).min(b.len())].iter().collect();
         if three == "===" {
             out.push(Tok::EqEqEq);
@@ -414,6 +465,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             ">>>" => Some(Tok::UShr),
             "<<=" => Some(Tok::ShlAssign),
             ">>=" => Some(Tok::ShrAssign),
+            "**=" => Some(Tok::StarStarAssign),
             "&&=" => Some(Tok::AndAndAssign),
             "||=" => Some(Tok::OrOrAssign),
             _ => None,
@@ -452,6 +504,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             "^=" => Some(Tok::CaretAssign),
             "<<" => Some(Tok::Shl),
             ">>" => Some(Tok::Shr),
+            "**" => Some(Tok::StarStar),
             _ => None,
         };
         if let Some(t) = two_tok {

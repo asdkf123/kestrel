@@ -9,7 +9,8 @@ pub enum Expr {
     Undefined,
     Ident(String),
     Array(Vec<Expr>),
-    Object(Vec<(String, Expr)>),
+    // 프로퍼티: 정적 키(식별자/문자열/숫자) 또는 계산된 키 [expr]
+    Object(Vec<(PropKey, Expr)>),
     // function 식과 화살표 함수 공용. 화살표의 식 본문은 Return 문 하나로 desugar.
     // is_arrow: 화살표는 this 를 렉시컬로 캡처 (호출 시 재바인딩 안 함)
     Func { params: Vec<String>, body: Vec<Stmt>, is_arrow: bool },
@@ -41,6 +42,13 @@ pub enum Expr {
     Await(Box<Expr>),
 }
 
+// 객체 리터럴 프로퍼티 키. 계산된 키 { [expr]: v } 는 런타임에 평가.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropKey {
+    Static(String),
+    Computed(Box<Expr>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDef {
     pub name: Option<String>,
@@ -64,6 +72,7 @@ pub enum BinOp {
     Mul,
     Div,
     Mod,
+    Pow,
     EqEq,
     EqEqEq,
     NotEq,
@@ -113,13 +122,15 @@ pub enum AssignOp {
     Mul,
     Div,
     Mod,
+    Pow, // **=
     BitAnd,
     BitOr,
     BitXor,
     Shl,
     Shr,
-    And, // &&=
-    Or,  // ||=
+    UShr, // >>>=
+    And,  // &&=
+    Or,   // ||=
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,6 +157,7 @@ pub enum Stmt {
     FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt> },
     If { cond: Expr, then: Vec<Stmt>, other: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },
+    DoWhile { body: Vec<Stmt>, cond: Expr },
     For { init: Option<Box<Stmt>>, cond: Option<Expr>, step: Option<Expr>, body: Vec<Stmt> },
     Return(Option<Expr>),
     Break,

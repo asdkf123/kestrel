@@ -948,6 +948,21 @@ impl Interp {
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
+            Stmt::DoWhile { body, cond } => {
+                loop {
+                    self.tick()?;
+                    let scope = Env::new(Some(env.clone()));
+                    match self.exec_block(body, &scope)? {
+                        Flow::Break => break,
+                        Flow::Continue | Flow::Normal(_) => {}
+                        ret => return Ok(ret),
+                    }
+                    if !to_bool(&self.eval(cond, env)?) {
+                        break;
+                    }
+                }
+                Ok(Flow::Normal(Value::Undefined))
+            }
             Stmt::For { init, cond, step, body } => {
                 let outer = Env::new(Some(env.clone())); // for(let i...) 스코프
                 if let Some(init) = init {
@@ -1092,7 +1107,12 @@ impl Interp {
             Expr::Object(props) => {
                 let mut map = HashMap::new();
                 for (k, e) in props {
-                    map.insert(k.clone(), self.eval(e, env)?);
+                    let key = match k {
+                        PropKey::Static(s) => s.clone(),
+                        PropKey::Computed(ke) => to_display(&self.eval(ke, env)?),
+                    };
+                    let val = self.eval(e, env)?;
+                    map.insert(key, val);
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
@@ -1242,11 +1262,13 @@ impl Interp {
                             AssignOp::Mul => BinOp::Mul,
                             AssignOp::Div => BinOp::Div,
                             AssignOp::Mod => BinOp::Mod,
+                            AssignOp::Pow => BinOp::Pow,
                             AssignOp::BitAnd => BinOp::BitAnd,
                             AssignOp::BitOr => BinOp::BitOr,
                             AssignOp::BitXor => BinOp::BitXor,
                             AssignOp::Shl => BinOp::Shl,
                             AssignOp::Shr => BinOp::Shr,
+                            AssignOp::UShr => BinOp::UShr,
                             _ => BinOp::Add, // Set/And/Or 는 위에서 처리됨
                         };
                         self.binary(bin, old, rhs)?
@@ -2029,6 +2051,7 @@ impl Interp {
             BinOp::Mul => Value::Num(to_num(&l) * to_num(&r)),
             BinOp::Div => Value::Num(to_num(&l) / to_num(&r)),
             BinOp::Mod => Value::Num(to_num(&l) % to_num(&r)),
+            BinOp::Pow => Value::Num(to_num(&l).powf(to_num(&r))),
             BinOp::BitAnd => Value::Num((to_i32(&l) & to_i32(&r)) as f64),
             BinOp::BitOr => Value::Num((to_i32(&l) | to_i32(&r)) as f64),
             BinOp::BitXor => Value::Num((to_i32(&l) ^ to_i32(&r)) as f64),
@@ -2379,6 +2402,41 @@ mod tests {
         assert_eq!(run_num("(1 + 2) * 3"), 9.0);
         assert_eq!(run_num("7 % 3"), 1.0);
         assert_eq!(run_num("-3 + 1"), -2.0);
+    }
+
+    #[test]
+    fn exponent_literals_and_operator() {
+        // 지수 표기 숫자 리터럴 (미니파이 코드에 필수)
+        assert_eq!(run_num("1e3"), 1000.0);
+        assert_eq!(run_num("1.5e-1"), 0.15);
+        assert_eq!(run_num(".5e2"), 50.0);
+        assert_eq!(run_num("0b101"), 5.0);
+        assert_eq!(run_num("0o17"), 15.0);
+        // ** 연산자: 곱셈보다 강하고 우결합
+        assert_eq!(run_num("2 ** 10"), 1024.0);
+        assert_eq!(run_num("2 ** 3 ** 2"), 512.0); // 2**(3**2)=2**9
+        assert_eq!(run_num("3 * 2 ** 2"), 12.0); // 3*(2**2)
+        assert_eq!(run_num("let x=3; x**=2; x"), 9.0);
+    }
+
+    #[test]
+    fn ushr_assign_and_do_while() {
+        // >>>= (부호 없는 우시프트 대입)
+        assert_eq!(run_num("let x=-1; x>>>=28; x"), 15.0);
+        // do-while: 조건 거짓이어도 최소 1회 실행
+        assert_eq!(run_num("let n=0; do { n++; } while(false); n"), 1.0);
+        assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
+        // do-while 안 break/continue
+        assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn reserved_and_computed_object_keys() {
+        // 예약어를 객체 키로 (미니파이 코드에 흔함)
+        assert_eq!(run_str("let o={return:'r', class:'c'}; o.return"), "r");
+        assert_eq!(run_str("let o={in:'x', for:'y'}; o.for"), "y");
+        // 정적 계산 키
+        assert_eq!(run_str("let o={['a'+'b']:'v'}; o.ab"), "v");
     }
 
     #[test]

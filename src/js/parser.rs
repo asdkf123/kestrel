@@ -15,6 +15,7 @@ fn keyword_word(t: &Tok) -> Option<String> {
         Tok::If => "if",
         Tok::Else => "else",
         Tok::While => "while",
+        Tok::Do => "do",
         Tok::For => "for",
         Tok::Break => "break",
         Tok::Continue => "continue",
@@ -144,6 +145,7 @@ impl Parser {
             Some(Tok::Function) => self.func_decl(),
             Some(Tok::If) => self.if_stmt(),
             Some(Tok::While) => self.while_stmt(),
+            Some(Tok::Do) => self.do_while_stmt(),
             Some(Tok::For) => self.for_stmt(),
             Some(Tok::Return) => {
                 self.pos += 1;
@@ -331,6 +333,17 @@ impl Parser {
         Ok(Stmt::While { cond, body: self.body_of_clause()? })
     }
 
+    fn do_while_stmt(&mut self) -> Result<Stmt, String> {
+        self.expect(&Tok::Do)?;
+        let body = self.body_of_clause()?;
+        self.expect(&Tok::While)?;
+        self.expect(&Tok::LParen)?;
+        let cond = self.expr()?;
+        self.expect(&Tok::RParen)?;
+        self.eat(&Tok::Semi); // do-while 뒤 세미콜론 (있으면 소비)
+        Ok(Stmt::DoWhile { body, cond })
+    }
+
     fn for_stmt(&mut self) -> Result<Stmt, String> {
         self.expect(&Tok::For)?;
         self.expect(&Tok::LParen)?;
@@ -482,6 +495,8 @@ impl Parser {
             Some(Tok::CaretAssign) => Some(AssignOp::BitXor),
             Some(Tok::ShlAssign) => Some(AssignOp::Shl),
             Some(Tok::ShrAssign) => Some(AssignOp::Shr),
+            Some(Tok::UShrAssign) => Some(AssignOp::UShr),
+            Some(Tok::StarStarAssign) => Some(AssignOp::Pow),
             Some(Tok::AndAndAssign) => Some(AssignOp::And),
             Some(Tok::OrOrAssign) => Some(AssignOp::Or),
             _ => None,
@@ -665,7 +680,7 @@ impl Parser {
     }
 
     fn multiplicative(&mut self) -> Result<Expr, String> {
-        let mut left = self.unary()?;
+        let mut left = self.exponent()?;
         loop {
             let op = match self.peek() {
                 Some(Tok::Star) => BinOp::Mul,
@@ -674,10 +689,25 @@ impl Parser {
                 _ => break,
             };
             self.pos += 1;
-            let right = self.unary()?;
+            let right = self.exponent()?;
             left = Expr::Binary { op, left: Box::new(left), right: Box::new(right) };
         }
         Ok(left)
+    }
+
+    // 거듭제곱 ** — 곱셈보다 강하게 결합하고 우결합(2**3**2 = 2**9)
+    fn exponent(&mut self) -> Result<Expr, String> {
+        let base = self.unary()?;
+        if self.peek() == Some(&Tok::StarStar) {
+            self.pos += 1;
+            let exp = self.exponent()?;
+            return Ok(Expr::Binary {
+                op: BinOp::Pow,
+                left: Box::new(base),
+                right: Box::new(exp),
+            });
+        }
+        Ok(base)
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
@@ -957,10 +987,31 @@ impl Parser {
                 let mut props = Vec::new();
                 if !self.eat(&Tok::RBrace) {
                     loop {
+                        // 계산된 키 { [expr]: v } — 키 식은 런타임에 평가.
+                        if self.peek() == Some(&Tok::LBracket) {
+                            self.pos += 1;
+                            let key_expr = self.assignment()?;
+                            self.expect(&Tok::RBracket)?;
+                            self.expect(&Tok::Colon)?;
+                            let value = self.assignment()?;
+                            props.push((PropKey::Computed(Box::new(key_expr)), value));
+                            if self.eat(&Tok::Comma) {
+                                if self.eat(&Tok::RBrace) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            self.expect(&Tok::RBrace)?;
+                            break;
+                        }
                         let key = match self.next()? {
                             Tok::Ident(s) => s,
                             Tok::Str(s) => s,
                             Tok::Num(n) => n.to_string(),
+                            // 예약어를 키로: { return: 1, class: 2 } (미니파이 코드에 흔함)
+                            ref other if keyword_word(other).is_some() => {
+                                keyword_word(other).unwrap()
+                            }
                             other => {
                                 return Err(format!("객체 키가 아님: {:?}{}", other, self.ctx()))
                             }
@@ -975,7 +1026,7 @@ impl Parser {
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };
-                        props.push((key, value));
+                        props.push((PropKey::Static(key), value));
                         if self.eat(&Tok::Comma) {
                             if self.eat(&Tok::RBrace) {
                                 break;
@@ -1098,7 +1149,7 @@ mod tests {
         match e {
             Expr::Object(props) => {
                 assert_eq!(props.len(), 3);
-                assert_eq!(props[2].0, "c");
+                assert_eq!(props[2].0, PropKey::Static("c".to_string()));
                 assert!(matches!(props[2].1, Expr::Ident(_)));
             }
             other => panic!("{:?}", other),
