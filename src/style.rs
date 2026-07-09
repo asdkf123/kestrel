@@ -37,10 +37,14 @@ impl<'a> StyledNode<'a> {
             Some(Value::Keyword(s)) => match &*s {
                 "block" => Display::Block,
                 "flex" => Display::Flex,
+                "inline-flex" => Display::Flex,
                 "none" => Display::None,
-                "inline" | "inline-block" | "inline-flex" => Display::Inline,
-                // grid/table/flow-root/list-item 등 미지원 값은 블록으로 —
-                // 인라인 폴백이면 블록 자식이 통째로 버려져 페이지가 사라진다
+                "inline" => Display::Inline,
+                // inline-block: 순수 인라인으로 두면 내부 블록 자식이 버려진다
+                // (구글 검색창 = inline-block div 안의 input). 블록으로 근사 —
+                // 콘텐츠 보존이 가로 흐름보다 우선. block-in-inline 정식 분할은 후속.
+                "inline-block" => Display::Block,
+                // grid/table/flow-root/list-item 등 미지원 값도 블록으로
                 _ => Display::Block,
             },
             _ => Display::Inline,
@@ -404,10 +408,14 @@ mod tests {
         let ss = crate::css::parse("body { display: grid; }".to_string());
         let styled = style_tree(&root, &ss);
         assert!(matches!(styled.display(), Display::Block));
-        // inline-block 은 인라인 쪽으로
+        // inline-block 은 블록으로 (내부 블록 자식 보존 — 구글 검색창 사례)
         let root2 = crate::html::parse_dom("<span></span>".to_string());
         let ss2 = crate::css::parse("span { display: inline-block; }".to_string());
-        assert!(matches!(style_tree(&root2, &ss2).display(), Display::Inline));
+        assert!(matches!(style_tree(&root2, &ss2).display(), Display::Block));
+        // 순수 inline 은 그대로
+        let root3 = crate::html::parse_dom("<span></span>".to_string());
+        let ss3 = crate::css::parse("span { display: inline; }".to_string());
+        assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
     }
 
     #[test]
