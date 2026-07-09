@@ -385,7 +385,7 @@ pub fn rasterize(
                     continue;
                 }
                 let shifted = GlyphInstance { x: gi.x * scale, baseline_y: baseline, px, ..*gi };
-                let bm = cache.get(fonts, gi.font_index, gi.glyph_id, px);
+                let bm = cache.get(fonts, gi.font_index, gi.glyph_id, px, gi.bold, gi.italic);
                 blit_glyph(&mut canvas, bm, &shifted);
             }
         }
@@ -449,8 +449,17 @@ pub fn draw_text(
         let f = fonts.font(fi);
         let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
         if !ch.is_whitespace() {
-            let gi = GlyphInstance { font_index: fi, glyph_id: gid, x: pen, baseline_y, px, color };
-            let bm = cache.get(fonts, fi, gid, px);
+            let gi = GlyphInstance {
+                font_index: fi,
+                glyph_id: gid,
+                x: pen,
+                baseline_y,
+                px,
+                color,
+                bold: false,
+                italic: false,
+            };
+            let bm = cache.get(fonts, fi, gid, px, false, false);
             blit_glyph(canvas, bm, &gi);
         }
         pen += adv;

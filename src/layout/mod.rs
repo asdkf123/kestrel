@@ -73,6 +73,9 @@ pub struct GlyphInstance {
     pub baseline_y: f32,
     pub px: f32,
     pub color: Color,
+    // 합성 볼드/이탤릭 (전용 볼드/이탤릭 폰트 부재 시 faux). raster 가 반영.
+    pub bold: bool,
+    pub italic: bool,
 }
 
 pub struct LayoutBox<'a> {
@@ -227,6 +230,8 @@ impl<'a> LayoutBox<'a> {
                 baseline_y: baseline,
                 px,
                 color,
+                bold: false,
+                italic: false,
             });
             pen += adv;
         }
@@ -282,6 +287,7 @@ impl<'a> LayoutBox<'a> {
         // content.x 는 이미 CSS padding 만큼 안쪽 — 별도 하드코딩 inset 없음
         let mut pen = self.dimensions.content.x;
         let baseline = self.dimensions.content.y + px * 1.1;
+        let (bold, italic) = (self.styled_node.is_bold(), self.styled_node.is_italic());
         for ch in value.chars() {
             let (fi, gid) = fonts.glyph_for(ch);
             let f = fonts.font(fi);
@@ -294,6 +300,8 @@ impl<'a> LayoutBox<'a> {
                     baseline_y: baseline,
                     px,
                     color,
+                    bold,
+                    italic,
                 });
             }
             pen += adv;

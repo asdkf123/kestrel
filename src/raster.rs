@@ -12,14 +12,34 @@ pub struct CoverageBitmap {
 }
 
 pub fn rasterize_glyph(font: &Font, glyph_id: u16, px_per_em: f32) -> CoverageBitmap {
+    rasterize_glyph_styled(font, glyph_id, px_per_em, false, false)
+}
+
+// 전용 볼드/이탤릭 폰트가 없을 때의 합성(faux):
+//  - italic: 아웃라인을 베이스라인 위쪽일수록 오른쪽으로 전단(shear).
+//  - bold: 스캔 스팬을 좌우로 약간 늘려 가로로 두껍게.
+pub fn rasterize_glyph_styled(
+    font: &Font,
+    glyph_id: u16,
+    px_per_em: f32,
+    bold: bool,
+    italic: bool,
+) -> CoverageBitmap {
     let scale = px_per_em / font.units_per_em() as f32;
     let advance = font.advance_width(glyph_id) as f32 * scale;
-    let polylines = font.outline(glyph_id);
+    let slant = if italic { 0.25 } else { 0.0 }; // ≈14° 오블리크
+    let polylines: Vec<Vec<(f32, f32)>> = font
+        .outline(glyph_id)
+        .into_iter()
+        .map(|poly| poly.into_iter().map(|(x, y)| (x + slant * y, y)).collect())
+        .collect();
 
     let empty = || CoverageBitmap { width: 0, height: 0, data: vec![], left: 0, top: 0, advance };
     if polylines.is_empty() {
         return empty();
     }
+    // 합성 볼드: 디바이스 px 기준 좌우 확장량
+    let grow = if bold { 0.03 * px_per_em } else { 0.0 };
 
     // 바운드 계산
     let (mut minx, mut miny, mut maxx, mut maxy) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
@@ -35,7 +55,7 @@ pub fn rasterize_glyph(font: &Font, glyph_id: u16, px_per_em: f32) -> CoverageBi
         return empty();
     }
 
-    let pad = 1.0f32;
+    let pad = (1.0f32 + grow).ceil(); // 정수값 f32 (offset/width/left 일관)
     let width = ((maxx - minx) * scale).ceil() as usize + 2 * pad as usize;
     let height = ((maxy - miny) * scale).ceil() as usize + 2 * pad as usize;
     if width == 0 || height == 0 {
@@ -84,8 +104,8 @@ pub fn rasterize_glyph(font: &Font, glyph_id: u16, px_per_em: f32) -> CoverageBi
             for w in 0..xs.len() - 1 {
                 winding += xs[w].1;
                 if winding != 0 {
-                    let x0 = xs[w].0.max(0.0);
-                    let x1 = xs[w + 1].0.min(width as f32);
+                    let x0 = (xs[w].0 - grow).max(0.0);
+                    let x1 = (xs[w + 1].0 + grow).min(width as f32);
                     if x1 > x0 {
                         add_span(&mut cov, row * width, width, x0, x1, 1.0 / SUB as f32);
                     }
@@ -113,7 +133,7 @@ fn add_span(cov: &mut [f32], row_off: usize, width: usize, x0: f32, x1: f32, wei
 }
 
 pub struct GlyphCache {
-    map: HashMap<(usize, u16, u32), CoverageBitmap>,
+    map: HashMap<(usize, u16, u32, u8), CoverageBitmap>,
 }
 
 impl GlyphCache {
@@ -127,11 +147,14 @@ impl GlyphCache {
         font_index: usize,
         glyph_id: u16,
         px_per_em: f32,
+        bold: bool,
+        italic: bool,
     ) -> &CoverageBitmap {
-        let key = (font_index, glyph_id, px_per_em.to_bits());
-        self.map
-            .entry(key)
-            .or_insert_with(|| rasterize_glyph(stack.font(font_index), glyph_id, px_per_em))
+        let synth = (bold as u8) | ((italic as u8) << 1);
+        let key = (font_index, glyph_id, px_per_em.to_bits(), synth);
+        self.map.entry(key).or_insert_with(|| {
+            rasterize_glyph_styled(stack.font(font_index), glyph_id, px_per_em, bold, italic)
+        })
     }
 }
 
@@ -170,11 +193,11 @@ mod tests {
         let stack = crate::font::FontStack::new(vec![f]);
         let mut cache = GlyphCache::new();
         let (w1, h1) = {
-            let bm = cache.get(&stack, 0, gid, 48.0);
+            let bm = cache.get(&stack, 0, gid, 48.0, false, false);
             (bm.width, bm.height)
         };
         let (w2, h2) = {
-            let bm = cache.get(&stack, 0, gid, 48.0);
+            let bm = cache.get(&stack, 0, gid, 48.0, false, false);
             (bm.width, bm.height)
         };
         assert_eq!((w1, h1), (w2, h2));

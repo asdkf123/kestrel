@@ -15,6 +15,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             _ => Vec::new(),
         },
+        // font-weight: bold/bolder/숫자>=600 → "bold", 그 외 → "normal" 로 정규화
+        // (숫자 weight 는 interpret_value 로 안 살아남아 여기서 처리)
+        "font-weight" => {
+            let v = value_text.trim();
+            let bold = v == "bold"
+                || v == "bolder"
+                || v.parse::<f32>().map(|n| n >= 600.0).unwrap_or(false);
+            vec![Declaration {
+                name: "font-weight".to_string(),
+                value: Value::Keyword(if bold { "bold" } else { "normal" }.to_string()),
+            }]
+        }
         // flex-grow: 단위 없는 수 → Length(n, Px) 로 저장(레이아웃이 to_px 로 읽음)
         "flex-grow" => match value_text.trim().parse::<f32>() {
             Ok(n) => vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(n, Unit::Px) }],

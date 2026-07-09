@@ -34,6 +34,14 @@ impl<'a> StyledNode<'a> {
             .unwrap_or_else(|| self.value(fallback_name).unwrap_or_else(|| default.clone()))
     }
 
+    pub fn is_bold(&self) -> bool {
+        matches!(self.value("font-weight"), Some(Value::Keyword(k)) if k == "bold")
+    }
+
+    pub fn is_italic(&self) -> bool {
+        matches!(self.value("font-style"), Some(Value::Keyword(k)) if k == "italic" || k == "oblique")
+    }
+
     pub fn display(&self) -> Display {
         match self.value("display") {
             Some(Value::Keyword(s)) => match &*s {
@@ -221,25 +229,54 @@ pub fn element_matches(dom: &Dom, id: NodeId, selectors: &[Selector]) -> bool {
     selectors.iter().any(|s| matches(elem, &ancestors, s))
 }
 
+// CSS 상속 속성 (자식이 명시 안 하면 부모 계산값을 물려받음). font-size 는
+// 상대 단위 해석 때문에 아래에서 별도 처리하므로 여기 목록엔 없음.
+const INHERITED: &[&str] = &[
+    "color",
+    "text-align",
+    "font-family",
+    "font-weight",
+    "font-style",
+    "font-variant",
+    "line-height",
+    "letter-spacing",
+    "word-spacing",
+    "white-space",
+    "text-transform",
+    "text-indent",
+    "list-style-type",
+    "list-style",
+    "list-style-position",
+    "visibility",
+    "direction",
+    "cursor",
+];
+
 pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE, None)
+    style_node(dom, dom.root, &index, &mut ancestors, None)
 }
 
+// parent: 부모 요소의 계산값(상속 원천). 루트는 None.
 fn style_node<'a>(
     dom: &'a Dom,
     id: NodeId,
     index: &RuleIndex<'a>,
     ancestors: &mut Vec<&'a ElementData>,
-    parent_color: Option<&Value>,
-    parent_fs: f32,
-    parent_align: Option<&Value>,
+    parent: Option<&PropertyMap>,
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
         NodeType::Element(ref elem) => {
             let mut values = specified_values(elem, ancestors, index);
+            let parent_fs = parent
+                .and_then(|p| p.get("font-size"))
+                .and_then(|v| match v {
+                    Value::Length(n, Unit::Px) => Some(*n),
+                    _ => None,
+                })
+                .unwrap_or(DEFAULT_FONT_SIZE);
             // font-size: 상대 단위를 부모 기준으로 해석해 px 로 확정 (computed value)
             let fs = match values.get("font-size") {
                 Some(Value::Length(n, Unit::Px)) => *n,
@@ -249,13 +286,8 @@ fn style_node<'a>(
                 _ => parent_fs, // 미지정/키워드 → 상속
             };
             values.insert("font-size".to_string(), Value::Length(fs, Unit::Px));
-            // color: 명시 없으면 상속
-            if !values.contains_key("color") {
-                if let Some(c) = parent_color {
-                    values.insert("color".to_string(), c.clone());
-                }
-            }
-            // text-align: CSS > align 속성 > <center> 요소 > 상속 (text-align 은 상속 속성)
+            // align 속성 / <center> 요소 → text-align (CSS 미지정 시). 표준의
+            // presentational hint. 여기서 안 잡히면 아래 상속 루프가 부모값 물려줌.
             if !values.contains_key("text-align") {
                 let from_attr = elem.attributes.get("align").and_then(|a| match a.as_str() {
                     "center" | "right" | "left" => Some(a.clone()),
@@ -268,8 +300,16 @@ fn style_node<'a>(
                 };
                 if let Some(a) = resolved {
                     values.insert("text-align".to_string(), Value::Keyword(a));
-                } else if let Some(a) = parent_align {
-                    values.insert("text-align".to_string(), a.clone());
+                }
+            }
+            // 상속: 상속 속성이 명시 안 됐으면 부모 계산값 복사
+            if let Some(p) = parent {
+                for &name in INHERITED {
+                    if !values.contains_key(name) {
+                        if let Some(v) = p.get(name) {
+                            values.insert(name.to_string(), v.clone());
+                        }
+                    }
                 }
             }
             // font-size 외 속성의 em/rem 은 아직 미해석 → 드롭 (미지원과 동일: auto 취급).
@@ -277,15 +317,11 @@ fn style_node<'a>(
             values.retain(|k, v| {
                 k == "font-size" || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem))
             });
-            let my_color = values.get("color").cloned();
-            let my_align = values.get("text-align").cloned();
             ancestors.push(elem);
             let children = node
                 .children
                 .iter()
-                .map(|&child| {
-                    style_node(dom, child, index, ancestors, my_color.as_ref(), fs, my_align.as_ref())
-                })
+                .map(|&child| style_node(dom, child, index, ancestors, Some(&values)))
                 .collect();
             ancestors.pop();
             StyledNode { node, id, specified_values: values, children }
@@ -297,9 +333,7 @@ fn style_node<'a>(
             children: node
                 .children
                 .iter()
-                .map(|&child| {
-                    style_node(dom, child, index, ancestors, parent_color, parent_fs, parent_align)
-                })
+                .map(|&child| style_node(dom, child, index, ancestors, parent))
                 .collect(),
         },
     }
@@ -472,6 +506,24 @@ mod tests {
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Percent)));
         // em/rem 은 여전히 미해석 → 드롭
         assert_eq!(styled.value("margin-top"), None);
+    }
+
+    #[test]
+    fn bold_italic_from_ua_and_inheritance() {
+        // <b>/<i> 는 UA 로 볼드/이탤릭
+        let root = crate::html::parse_dom("<p><b>x</b><i>y</i></p>".to_string());
+        let ss = crate::css::user_agent_stylesheet();
+        let p = style_tree(&root, &ss);
+        assert!(p.children[0].is_bold(), "<b> 볼드");
+        assert!(p.children[1].is_italic(), "<i> 이탤릭");
+
+        // font-weight: 700(숫자) → bold 정규화 + 자식 상속
+        let root2 = crate::html::parse_dom("<div><span>t</span></div>".to_string());
+        let mut ss2 = crate::css::user_agent_stylesheet();
+        ss2.rules.extend(crate::css::parse("div { font-weight: 700; }".to_string()).rules);
+        let div = style_tree(&root2, &ss2);
+        assert!(div.is_bold(), "font-weight:700 → bold");
+        assert!(div.children[0].is_bold(), "span 이 볼드 상속");
     }
 
     #[test]

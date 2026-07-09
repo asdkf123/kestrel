@@ -4,6 +4,16 @@ use crate::dom::NodeType;
 use crate::font::FontStack;
 use crate::style::{Display, StyledNode};
 
+// 인라인 텍스트 조각의 계산된 스타일 (런/단어/글리프에 실림).
+#[derive(Clone, Copy)]
+struct TextStyle {
+    color: Color,
+    px: f32,
+    link: Option<usize>,
+    bold: bool,
+    italic: bool,
+}
+
 impl<'a> LayoutBox<'a> {
     pub(super) fn layout_inline(&mut self, fonts: &FontStack) {
         let primary = fonts.primary();
@@ -18,23 +28,30 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Color(c)) => c,
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
+        let base = TextStyle {
+            color: base_color,
+            px: base_px,
+            link: None,
+            bold: self.styled_node.is_bold(),
+            italic: self.styled_node.is_italic(),
+        };
 
-        let mut runs: Vec<(String, Color, f32, Option<usize>)> = Vec::new();
+        let mut runs: Vec<(String, TextStyle)> = Vec::new();
         let mut hrefs: Vec<String> = Vec::new();
         for node in &self.inline_nodes {
-            collect_node(node, base_color, base_px, None, &mut runs, &mut hrefs);
+            collect_node(node, base, &mut runs, &mut hrefs);
         }
 
-        let mut words: Vec<Vec<(char, Color, f32, Option<usize>)>> = Vec::new();
-        let mut cur: Vec<(char, Color, f32, Option<usize>)> = Vec::new();
-        for (text, color, px, link) in &runs {
+        let mut words: Vec<Vec<(char, TextStyle)>> = Vec::new();
+        let mut cur: Vec<(char, TextStyle)> = Vec::new();
+        for (text, st) in &runs {
             for ch in text.chars() {
                 if ch.is_whitespace() {
                     if !cur.is_empty() {
                         words.push(std::mem::take(&mut cur));
                     }
                 } else {
-                    cur.push((ch, *color, *px, *link));
+                    cur.push((ch, *st));
                 }
             }
         }
@@ -68,7 +85,7 @@ impl<'a> LayoutBox<'a> {
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
 
         for word in &words {
-            let word_w: f32 = word.iter().map(|&(ch, _, px, _)| resolve(ch, px).2).sum();
+            let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2).sum();
             if pen_x > content_x && pen_x + word_w > content_x + content_w {
                 pen_x = content_x;
                 baseline += line_height;
@@ -78,22 +95,24 @@ impl<'a> LayoutBox<'a> {
             let word_x0 = pen_x;
             let mut word_px_max = 0.0f32;
             let mut word_color = Color { r: 0, g: 0, b: 0, a: 255 };
-            for &(ch, color, px, _) in word {
-                let (fi, gid, adv) = resolve(ch, px);
+            for &(ch, st) in word {
+                let (fi, gid, adv) = resolve(ch, st.px);
                 self.glyphs.push(GlyphInstance {
                     font_index: fi,
                     glyph_id: gid,
                     x: pen_x,
                     baseline_y: baseline,
-                    px,
-                    color,
+                    px: st.px,
+                    color: st.color,
+                    bold: st.bold,
+                    italic: st.italic,
                 });
                 pen_x += adv;
-                word_px_max = word_px_max.max(px);
-                word_color = color;
+                word_px_max = word_px_max.max(st.px);
+                word_color = st.color;
             }
             // 링크: 히트 영역 + 밑줄 (단어 폭, baseline 약간 아래)
-            if let Some(li) = word.iter().find_map(|&(_, _, _, l)| l) {
+            if let Some(li) = word.iter().find_map(|&(_, st)| st.link) {
                 self.links.push((
                     Rect {
                         x: word_x0,
@@ -149,25 +168,24 @@ impl<'a> LayoutBox<'a> {
 
 fn collect_node<'a>(
     node: &StyledNode<'a>,
-    color: Color,
-    px: f32,
-    link: Option<usize>,
-    runs: &mut Vec<(String, Color, f32, Option<usize>)>,
+    style: TextStyle,
+    runs: &mut Vec<(String, TextStyle)>,
     hrefs: &mut Vec<String>,
 ) {
     match &node.node.node_type {
-        NodeType::Text(t) => runs.push((t.clone(), color, px, link)),
+        NodeType::Text(t) => runs.push((t.clone(), style)),
         NodeType::Element(e) => match node.display() {
             Display::Block | Display::Flex | Display::Grid | Display::InlineBlock | Display::None => {}
             Display::Inline => {
+                // 요소의 계산값(상속 반영)으로 자식 텍스트 스타일 갱신
                 let cpx = node
                     .value("font-size")
                     .map(|v| v.to_px())
                     .filter(|&p| p > 0.0)
-                    .unwrap_or(px);
+                    .unwrap_or(style.px);
                 let ccolor = match node.value("color") {
                     Some(Value::Color(c)) => c,
-                    _ => color,
+                    _ => style.color,
                 };
                 // <a href> 는 하위 텍스트에 링크 컨텍스트를 물려준다
                 let clink = match e.attributes.get("href") {
@@ -175,10 +193,17 @@ fn collect_node<'a>(
                         hrefs.push(h.clone());
                         Some(hrefs.len() - 1)
                     }
-                    _ => link,
+                    _ => style.link,
+                };
+                let cstyle = TextStyle {
+                    color: ccolor,
+                    px: cpx,
+                    link: clink,
+                    bold: node.is_bold(),
+                    italic: node.is_italic(),
                 };
                 for child in &node.children {
-                    collect_node(child, ccolor, cpx, clink, runs, hrefs);
+                    collect_node(child, cstyle, runs, hrefs);
                 }
             }
         },
