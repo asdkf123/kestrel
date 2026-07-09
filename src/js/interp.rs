@@ -698,6 +698,29 @@ impl Interp {
         }
     }
 
+    // 구조분해 바인딩: 패턴 각 이름에 값을 꺼내 선언
+    fn bind_pattern(&mut self, pat: &crate::js::ast::Pattern, value: Value, env: &EnvRef) {
+        use crate::js::ast::Pattern;
+        match pat {
+            Pattern::Name(n) => env_declare(env, n, value),
+            Pattern::Object(props) => {
+                for (key, alias) in props {
+                    let v = self.member_get(&value, key).unwrap_or(Value::Undefined);
+                    env_declare(env, alias, v);
+                }
+            }
+            Pattern::Array(names) => {
+                for (i, slot) in names.iter().enumerate() {
+                    if let Some(name) = slot {
+                        let v =
+                            self.member_get(&value, &i.to_string()).unwrap_or(Value::Undefined);
+                        env_declare(env, name, v);
+                    }
+                }
+            }
+        }
+    }
+
     fn tick(&mut self) -> Result<(), String> {
         self.steps += 1;
         if self.steps > STEP_LIMIT {
@@ -735,12 +758,12 @@ impl Interp {
         self.tick()?;
         match stmt {
             Stmt::VarDecl { decls, .. } => {
-                for (name, init) in decls {
+                for (pat, init) in decls {
                     let v = match init {
                         Some(e) => self.eval(e, env)?,
                         None => Value::Undefined,
                     };
-                    env_declare(env, name, v);
+                    self.bind_pattern(pat, v, env);
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
@@ -1031,6 +1054,20 @@ impl Interp {
                 }
             }
             Expr::Assign { op, target, value } => {
+                // &&= / ||= 는 단락: 조건 만족 안 하면 대입도 안 함
+                if matches!(op, AssignOp::And | AssignOp::Or) {
+                    let old = self.eval(target, env)?;
+                    let do_assign = match op {
+                        AssignOp::And => to_bool(&old),
+                        _ => !to_bool(&old),
+                    };
+                    if !do_assign {
+                        return Ok(old);
+                    }
+                    let rhs = self.eval(value, env)?;
+                    self.assign_to(target, rhs.clone(), env)?;
+                    return Ok(rhs);
+                }
                 let rhs = self.eval(value, env)?;
                 let new = match op {
                     AssignOp::Set => rhs,
@@ -1040,7 +1077,14 @@ impl Interp {
                             AssignOp::Add => BinOp::Add,
                             AssignOp::Sub => BinOp::Sub,
                             AssignOp::Mul => BinOp::Mul,
-                            _ => BinOp::Div,
+                            AssignOp::Div => BinOp::Div,
+                            AssignOp::Mod => BinOp::Mod,
+                            AssignOp::BitAnd => BinOp::BitAnd,
+                            AssignOp::BitOr => BinOp::BitOr,
+                            AssignOp::BitXor => BinOp::BitXor,
+                            AssignOp::Shl => BinOp::Shl,
+                            AssignOp::Shr => BinOp::Shr,
+                            _ => BinOp::Add, // Set/And/Or 는 위에서 처리됨
                         };
                         self.binary(bin, old, rhs)?
                     }
@@ -1052,6 +1096,33 @@ impl Interp {
                 let recv = self.eval(obj, env)?;
                 let key = self.member_key(prop, *computed, env)?;
                 self.member_get(&recv, &key)
+            }
+            Expr::Nullish { left, right } => {
+                let l = self.eval(left, env)?;
+                if matches!(l, Value::Undefined | Value::Null) {
+                    self.eval(right, env)
+                } else {
+                    Ok(l)
+                }
+            }
+            Expr::OptMember { obj, prop, computed } => {
+                let recv = self.eval(obj, env)?;
+                if matches!(recv, Value::Undefined | Value::Null) {
+                    return Ok(Value::Undefined);
+                }
+                let key = self.member_key(prop, *computed, env)?;
+                self.member_get(&recv, &key)
+            }
+            Expr::OptCall { callee, args } => {
+                let f = self.eval(callee, env)?;
+                if matches!(f, Value::Undefined | Value::Null) {
+                    return Ok(Value::Undefined);
+                }
+                let mut arg_vals = Vec::new();
+                for a in args {
+                    arg_vals.push(self.eval(a, env)?);
+                }
+                self.call_value(f, None, arg_vals)
             }
             Expr::Call { callee, args } => {
                 let mut arg_vals = Vec::new();
@@ -2361,6 +2432,54 @@ mod tests {
         assert_eq!(
             run_str("try { throw new Error('bad'); } catch (e) { e.message }"),
             "bad"
+        );
+    }
+
+    #[test]
+    fn compound_assignments() {
+        assert_eq!(run_num("var x = 10; x %= 3; x"), 1.0);
+        assert_eq!(run_num("var x = 6; x &= 3; x"), 2.0);
+        assert_eq!(run_num("var x = 5; x |= 2; x"), 7.0);
+        assert_eq!(run_num("var x = 5; x ^= 1; x"), 4.0);
+        assert_eq!(run_num("var x = 1; x <<= 4; x"), 16.0);
+        assert_eq!(run_num("var x = 64; x >>= 2; x"), 16.0);
+        // 멤버 복합 대입
+        assert_eq!(run_num("var o = { n: 10 }; o.n += 5; o.n"), 15.0);
+        // 논리 대입 (단락)
+        assert_eq!(run_str("var a = ''; a ||= 'fallback'; a"), "fallback");
+        assert_eq!(run_num("var a = 5; a &&= 9; a"), 9.0);
+        assert_eq!(run_str("var a = 'keep'; a ||= 'no'; a"), "keep");
+    }
+
+    #[test]
+    fn optional_chaining_and_nullish() {
+        assert!(run_bool("var o = null; o?.x === undefined"));
+        assert!(run_bool("var o = { a: { b: 5 } }; o?.a?.b === 5"));
+        assert!(run_bool("var o = {}; o?.a?.b === undefined"));
+        // 옵셔널 인덱스/호출
+        assert!(run_bool("var o = null; o?.['x'] === undefined"));
+        assert!(run_bool("var f = null; f?.(1, 2) === undefined"));
+        assert_eq!(run_num("var o = { f: function() { return 7; } }; o.f?.()"), 7.0);
+        // nullish 병합: null/undefined 만 폴백 (0/'' 는 그대로)
+        assert_eq!(run_num("var x = 0; x ?? 9"), 0.0);
+        assert_eq!(run_str("null ?? 'd'"), "d");
+        assert_eq!(run_str("undefined ?? 'd'"), "d");
+        assert_eq!(run_num("var o = {}; o.missing ?? 42"), 42.0);
+    }
+
+    #[test]
+    fn destructuring_declarations() {
+        assert_eq!(run_num("var { a, b } = { a: 1, b: 2 }; a + b"), 3.0);
+        assert_eq!(run_str("var { x: first } = { x: 'hi' }; first"), "hi");
+        assert_eq!(run_num("var [p, q] = [10, 20]; p + q"), 30.0);
+        assert_eq!(run_num("var [, second] = [1, 2]; second"), 2.0);
+        // 중첩 없는 혼합/누락
+        assert!(run_bool("var { z } = {}; z === undefined"));
+        assert_eq!(run_num("var [a, b, c] = [1, 2]; a + b + (c === undefined ? 100 : 0)"), 103.0);
+        // 함수 반환값 구조분해
+        assert_eq!(
+            run_num("function pair() { return { lo: 3, hi: 7 }; } var { lo, hi } = pair(); hi - lo"),
+            4.0
         );
     }
 

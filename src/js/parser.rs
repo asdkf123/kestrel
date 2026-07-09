@@ -216,15 +216,61 @@ impl Parser {
         // 다중 선언자: var a = 1, b, c = 3;  (초기화식은 콤마 연산자 미포함 → assignment)
         let mut decls = Vec::new();
         loop {
-            let name = self.ident()?;
+            let pat = self.binding_pattern()?;
             let init = if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
-            decls.push((name, init));
+            decls.push((pat, init));
             if !self.eat(&Tok::Comma) {
                 break;
             }
         }
         self.eat(&Tok::Semi);
         Ok(Stmt::VarDecl { kind, decls })
+    }
+
+    // 바인딩 대상: 이름 / {a, b: c} / [a, , b]
+    fn binding_pattern(&mut self) -> Result<Pattern, String> {
+        match self.peek() {
+            Some(Tok::LBrace) => {
+                self.pos += 1;
+                let mut props = Vec::new();
+                while self.peek() != Some(&Tok::RBrace) {
+                    let key = self.prop_name()?;
+                    // { key: alias } 또는 { key }
+                    let alias = if self.eat(&Tok::Colon) { self.ident()? } else { key.clone() };
+                    // 기본값 { a = 1 } 은 미지원 — 스킵
+                    if self.eat(&Tok::Assign) {
+                        self.assignment()?; // 기본값 식은 파싱만 하고 버림
+                    }
+                    props.push((key, alias));
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&Tok::RBrace)?;
+                Ok(Pattern::Object(props))
+            }
+            Some(Tok::LBracket) => {
+                self.pos += 1;
+                let mut names = Vec::new();
+                while self.peek() != Some(&Tok::RBracket) {
+                    if self.peek() == Some(&Tok::Comma) {
+                        names.push(None); // 구멍 [a, , b]
+                        self.pos += 1;
+                        continue;
+                    }
+                    names.push(Some(self.ident()?));
+                    if self.eat(&Tok::Assign) {
+                        self.assignment()?; // 기본값 버림
+                    }
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&Tok::RBracket)?;
+                Ok(Pattern::Array(names))
+            }
+            _ => Ok(Pattern::Name(self.ident()?)),
+        }
     }
 
     fn func_decl(&mut self) -> Result<Stmt, String> {
@@ -413,6 +459,14 @@ impl Parser {
             Some(Tok::MinusAssign) => Some(AssignOp::Sub),
             Some(Tok::StarAssign) => Some(AssignOp::Mul),
             Some(Tok::SlashAssign) => Some(AssignOp::Div),
+            Some(Tok::PercentAssign) => Some(AssignOp::Mod),
+            Some(Tok::AmpAssign) => Some(AssignOp::BitAnd),
+            Some(Tok::PipeAssign) => Some(AssignOp::BitOr),
+            Some(Tok::CaretAssign) => Some(AssignOp::BitXor),
+            Some(Tok::ShlAssign) => Some(AssignOp::Shl),
+            Some(Tok::ShrAssign) => Some(AssignOp::Shr),
+            Some(Tok::AndAndAssign) => Some(AssignOp::And),
+            Some(Tok::OrOrAssign) => Some(AssignOp::Or),
             _ => None,
         };
         if let Some(op) = op {
@@ -458,7 +512,7 @@ impl Parser {
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
-        let cond = self.logical_or()?;
+        let cond = self.nullish()?;
         if self.eat(&Tok::Question) {
             let then = self.assignment()?;
             self.expect(&Tok::Colon)?;
@@ -470,6 +524,15 @@ impl Parser {
             });
         }
         Ok(cond)
+    }
+
+    fn nullish(&mut self) -> Result<Expr, String> {
+        let mut left = self.logical_or()?;
+        while self.eat(&Tok::QuestionQuestion) {
+            let right = self.logical_or()?;
+            left = Expr::Nullish { left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn logical_or(&mut self) -> Result<Expr, String> {
@@ -651,6 +714,34 @@ impl Parser {
                 Some(Tok::LParen) => {
                     let args = self.arg_list()?;
                     e = Expr::Call { callee: Box::new(e), args };
+                }
+                // 옵셔널 체이닝: ?.prop / ?.[expr] / ?.(args)
+                Some(Tok::OptChain) => {
+                    self.pos += 1;
+                    match self.peek() {
+                        Some(Tok::LParen) => {
+                            let args = self.arg_list()?;
+                            e = Expr::OptCall { callee: Box::new(e), args };
+                        }
+                        Some(Tok::LBracket) => {
+                            self.pos += 1;
+                            let idx = self.expr()?;
+                            self.expect(&Tok::RBracket)?;
+                            e = Expr::OptMember {
+                                obj: Box::new(e),
+                                prop: Box::new(idx),
+                                computed: true,
+                            };
+                        }
+                        _ => {
+                            let name = self.prop_name()?;
+                            e = Expr::OptMember {
+                                obj: Box::new(e),
+                                prop: Box::new(Expr::Str(name)),
+                                computed: false,
+                            };
+                        }
+                    }
                 }
                 Some(Tok::PlusPlus) => {
                     self.pos += 1;

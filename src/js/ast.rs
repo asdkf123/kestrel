@@ -20,7 +20,13 @@ pub enum Expr {
     Ternary { cond: Box<Expr>, then: Box<Expr>, other: Box<Expr> },
     Assign { op: AssignOp, target: Box<Expr>, value: Box<Expr> },
     Member { obj: Box<Expr>, prop: Box<Expr>, computed: bool },
+    // 옵셔널 접근: obj?.prop / obj?.[expr] — obj 가 null/undefined 면 전체 undefined
+    OptMember { obj: Box<Expr>, prop: Box<Expr>, computed: bool },
     Call { callee: Box<Expr>, args: Vec<Expr> },
+    // 옵셔널 호출: fn?.(args) — fn 이 null/undefined 면 undefined
+    OptCall { callee: Box<Expr>, args: Vec<Expr> },
+    // nullish 병합: a ?? b — a 가 null/undefined 일 때만 b
+    Nullish { left: Box<Expr>, right: Box<Expr> },
     // 템플릿 리터럴: 리터럴/보간 식 조각의 연결
     Template(Vec<TemplatePart>),
     // 정규식 리터럴 — 매칭 엔진 없이 {source, flags} 객체로 평가 (관용)
@@ -104,6 +110,14 @@ pub enum AssignOp {
     Sub,
     Mul,
     Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    And, // &&=
+    Or,  // ||=
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,10 +127,20 @@ pub enum DeclKind {
     Const,
 }
 
+// 선언 바인딩 대상: 단순 이름 또는 구조분해 패턴
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Name(String),
+    // { a, b: c } → (원본 키, 바인딩 이름)
+    Object(Vec<(String, String)>),
+    // [a, , b] → 각 자리 바인딩 이름 (None = 건너뜀)
+    Array(Vec<Option<String>>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    // 다중 선언자 지원: var a = 1, b = 2;
-    VarDecl { kind: DeclKind, decls: Vec<(String, Option<Expr>)> },
+    // 다중 선언자 지원: var a = 1, b = 2; / 구조분해 const {a} = o
+    VarDecl { kind: DeclKind, decls: Vec<(Pattern, Option<Expr>)> },
     FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt> },
     If { cond: Expr, then: Vec<Stmt>, other: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },

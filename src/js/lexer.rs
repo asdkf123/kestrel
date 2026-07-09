@@ -69,6 +69,16 @@ pub enum Tok {
     MinusAssign,
     StarAssign,
     SlashAssign,
+    PercentAssign,
+    AmpAssign,
+    PipeAssign,
+    CaretAssign,
+    ShlAssign,
+    ShrAssign,
+    AndAndAssign,
+    OrOrAssign,
+    QuestionQuestion,
+    OptChain, // ?.
     Plus,
     Minus,
     Star,
@@ -400,9 +410,24 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             i += 3;
             continue;
         }
-        if three == ">>>" {
-            out.push(Tok::UShr);
+        let three_tok = match three.as_str() {
+            ">>>" => Some(Tok::UShr),
+            "<<=" => Some(Tok::ShlAssign),
+            ">>=" => Some(Tok::ShrAssign),
+            "&&=" => Some(Tok::AndAndAssign),
+            "||=" => Some(Tok::OrOrAssign),
+            _ => None,
+        };
+        if let Some(t) = three_tok {
+            out.push(t);
             i += 3;
+            continue;
+        }
+        // ?. 은 뒤가 숫자면 옵셔널 체이닝 아님 (삼항 + .5 소수)
+        if c == '?' && b.get(i + 1) == Some(&'.') && !b.get(i + 2).is_some_and(|d| d.is_ascii_digit())
+        {
+            out.push(Tok::OptChain);
+            i += 2;
             continue;
         }
         let two: String = b[i..(i + 2).min(b.len())].iter().collect();
@@ -414,12 +439,17 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             ">=" => Some(Tok::Ge),
             "&&" => Some(Tok::AndAnd),
             "||" => Some(Tok::OrOr),
+            "??" => Some(Tok::QuestionQuestion),
             "++" => Some(Tok::PlusPlus),
             "--" => Some(Tok::MinusMinus),
             "+=" => Some(Tok::PlusAssign),
             "-=" => Some(Tok::MinusAssign),
             "*=" => Some(Tok::StarAssign),
             "/=" => Some(Tok::SlashAssign),
+            "%=" => Some(Tok::PercentAssign),
+            "&=" => Some(Tok::AmpAssign),
+            "|=" => Some(Tok::PipeAssign),
+            "^=" => Some(Tok::CaretAssign),
             "<<" => Some(Tok::Shl),
             ">>" => Some(Tok::Shr),
             _ => None,
