@@ -620,7 +620,11 @@ impl Interp {
         window.insert("navigator".to_string(), nav);
         window.insert("addEventListener".to_string(), Value::Native(Native::Noop));
         window.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
-        env_declare(&global, "window", Value::Obj(Rc::new(RefCell::new(window))));
+        let window = Value::Obj(Rc::new(RefCell::new(window)));
+        // self / globalThis 는 전역 객체(window) 별칭 (구글/워커 코드)
+        env_declare(&global, "window", window.clone());
+        env_declare(&global, "self", window.clone());
+        env_declare(&global, "globalThis", window);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -977,9 +981,13 @@ impl Interp {
                 let v = self.eval(expr, env)?;
                 Ok(match op {
                     UnOp::Neg => Value::Num(-to_num(&v)),
+                    UnOp::Pos => Value::Num(to_num(&v)),
                     UnOp::Not => Value::Bool(!to_bool(&v)),
                     UnOp::Typeof => Value::Str(type_of(&v).to_string()),
                     UnOp::BitNot => Value::Num(!to_i32(&v) as f64),
+                    // void: 피연산자 평가 후 undefined. delete: 근사(항상 true)
+                    UnOp::Void => Value::Undefined,
+                    UnOp::Delete => Value::Bool(true),
                 })
             }
             Expr::Update { op, prefix, target } => {
@@ -2312,6 +2320,24 @@ mod tests {
         // instanceof 는 체인 전체
         assert!(run_bool(&format!("{} var d = new Dog('x'); d instanceof Dog", src)));
         assert!(run_bool(&format!("{} var d = new Dog('x'); d instanceof Animal", src)));
+    }
+
+    #[test]
+    fn unary_plus_and_self_global() {
+        assert_eq!(run_num("+'42'"), 42.0);
+        assert_eq!(run_num("var a = '3'; a = +a; a + 1"), 4.0);
+        assert!(run_bool("+true === 1"));
+        // self / globalThis 는 window 별칭
+        assert!(run_bool("self.localStorage !== undefined"));
+        assert!(run_bool("typeof globalThis === 'object'"));
+        // void 0 === undefined 관용구
+        assert!(run_bool("void 0 === undefined"));
+        assert!(run_bool("var x = 5; (x === void 0) === false"));
+        // 선행 소수점 숫자
+        assert_eq!(run_num(".5 + .25"), 0.75);
+        assert!(run_bool("0.3 >= .1"));
+        // 예약어를 프로퍼티 이름으로
+        assert_eq!(run_num("var o = {}; o.for = 3; o['default'] = 4; o.for + o.default"), 7.0);
     }
 
     #[test]

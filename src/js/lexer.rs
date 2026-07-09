@@ -33,6 +33,8 @@ pub enum Tok {
     Null,
     Undefined,
     Typeof,
+    Void,
+    Delete,
     Try,
     Catch,
     Finally,
@@ -113,6 +115,8 @@ fn keyword(word: &str) -> Option<Tok> {
         "null" => Tok::Null,
         "undefined" => Tok::Undefined,
         "typeof" => Tok::Typeof,
+        "void" => Tok::Void,
+        "delete" => Tok::Delete,
         "try" => Tok::Try,
         "catch" => Tok::Catch,
         "finally" => Tok::Finally,
@@ -219,6 +223,17 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             }
             let flags: String = b[fstart..i].iter().collect();
             out.push(Tok::Regex(source, flags));
+            continue;
+        }
+        // 선행 소수점 숫자 (.5) — 뒤에 숫자가 오면 수, 아니면 Dot
+        if c == '.' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
+            let start = i;
+            i += 1;
+            while i < b.len() && b[i].is_ascii_digit() {
+                i += 1;
+            }
+            let s: String = b[start..i].iter().collect();
+            out.push(Tok::Num(s.parse::<f64>().map_err(|e| e.to_string())?));
             continue;
         }
         // 숫자 (10진 + 0x 16진)

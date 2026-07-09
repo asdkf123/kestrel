@@ -4,6 +4,47 @@
 use super::ast::*;
 use super::lexer::{tokenize, Tok, TplPart};
 
+// 예약어를 프로퍼티/메서드 이름으로 쓸 때 원래 문자열 (obj.for, Symbol.for 등)
+fn keyword_word(t: &Tok) -> Option<String> {
+    let s = match t {
+        Tok::Var => "var",
+        Tok::Let => "let",
+        Tok::Const => "const",
+        Tok::Function => "function",
+        Tok::Return => "return",
+        Tok::If => "if",
+        Tok::Else => "else",
+        Tok::While => "while",
+        Tok::For => "for",
+        Tok::Break => "break",
+        Tok::Continue => "continue",
+        Tok::True => "true",
+        Tok::False => "false",
+        Tok::Null => "null",
+        Tok::Undefined => "undefined",
+        Tok::Typeof => "typeof",
+        Tok::Void => "void",
+        Tok::Delete => "delete",
+        Tok::Try => "try",
+        Tok::Catch => "catch",
+        Tok::Finally => "finally",
+        Tok::Throw => "throw",
+        Tok::Switch => "switch",
+        Tok::Case => "case",
+        Tok::Default => "default",
+        Tok::Instanceof => "instanceof",
+        Tok::In => "in",
+        Tok::Class => "class",
+        Tok::New => "new",
+        Tok::This => "this",
+        Tok::Extends => "extends",
+        Tok::Super => "super",
+        Tok::Static => "static",
+        _ => return None,
+    };
+    Some(s.to_string())
+}
+
 // 템플릿 보간 ${...} 소스를 독립적으로 식 파싱
 fn parse_expr_source(src: &str) -> Result<Expr, String> {
     let toks = tokenize(src)?;
@@ -562,9 +603,12 @@ impl Parser {
     fn unary(&mut self) -> Result<Expr, String> {
         let op = match self.peek() {
             Some(Tok::Minus) => Some(UnOp::Neg),
+            Some(Tok::Plus) => Some(UnOp::Pos),
             Some(Tok::Not) => Some(UnOp::Not),
             Some(Tok::Typeof) => Some(UnOp::Typeof),
             Some(Tok::Tilde) => Some(UnOp::BitNot),
+            Some(Tok::Void) => Some(UnOp::Void),
+            Some(Tok::Delete) => Some(UnOp::Delete),
             _ => None,
         };
         if let Some(op) = op {
@@ -591,7 +635,7 @@ impl Parser {
             match self.peek() {
                 Some(Tok::Dot) => {
                     self.pos += 1;
-                    let name = self.ident()?;
+                    let name = self.prop_name()?;
                     e = Expr::Member {
                         obj: Box::new(e),
                         prop: Box::new(Expr::Str(name)),
@@ -647,7 +691,7 @@ impl Parser {
             match self.peek() {
                 Some(Tok::Dot) => {
                     self.pos += 1;
-                    let name = self.ident()?;
+                    let name = self.prop_name()?;
                     e = Expr::Member {
                         obj: Box::new(e),
                         prop: Box::new(Expr::Str(name)),
@@ -721,8 +765,17 @@ impl Parser {
         match self.next()? {
             Tok::Ident(s) => Ok(s),
             Tok::Str(s) => Ok(s),
-            // 키워드도 메서드 이름이 될 수 있음 (new/delete 등)
-            other => Err(format!("메서드 이름이 필요한데 {:?}{}", other, self.ctx())),
+            other => keyword_word(&other)
+                .ok_or_else(|| format!("메서드 이름이 필요한데 {:?}{}", other, self.ctx())),
+        }
+    }
+
+    // 프로퍼티 접근 이름: 식별자 또는 예약어 (Symbol.for, x.default 등)
+    fn prop_name(&mut self) -> Result<String, String> {
+        match self.next()? {
+            Tok::Ident(s) => Ok(s),
+            other => keyword_word(&other)
+                .ok_or_else(|| format!("프로퍼티 이름이 필요한데 {:?}{}", other, self.ctx())),
         }
     }
 

@@ -83,9 +83,12 @@ pub enum LogOp {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnOp {
     Neg,
+    Pos,
     Not,
     Typeof,
     BitNot,
+    Void,
+    Delete,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
