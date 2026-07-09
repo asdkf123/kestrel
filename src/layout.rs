@@ -320,11 +320,47 @@ impl<'a> LayoutBox<'a> {
             + d.padding.top;
     }
 
+    // text-align 키워드 ("center"/"right"/else left)
+    fn align(&self) -> &'static str {
+        match self.styled_node.value("text-align") {
+            Some(Value::Keyword(s)) if s == "center" => "center",
+            Some(Value::Keyword(s)) if s == "right" => "right",
+            _ => "left",
+        }
+    }
+
+    // 서브트리 전체를 dx 만큼 가로 이동 (중앙/우측 정렬 후처리)
+    fn translate_x(&mut self, dx: f32) {
+        self.dimensions.content.x += dx;
+        for g in &mut self.glyphs {
+            g.x += dx;
+        }
+        for (r, _) in &mut self.links {
+            r.x += dx;
+        }
+        for (r, _) in &mut self.decorations {
+            r.x += dx;
+        }
+        for c in &mut self.children {
+            c.translate_x(dx);
+        }
+    }
+
     fn layout_children(&mut self, fonts: &FontStack, images: &ImageMap) {
-        let d = &mut self.dimensions;
+        let align = self.align();
+        let avail = self.dimensions.content.width;
         for child in &mut self.children {
-            child.layout(*d, fonts, images);
-            d.content.height += child.dimensions.margin_box().height;
+            let d = self.dimensions;
+            child.layout(d, fonts, images);
+            // 부모가 center/right 이고 자식이 좁으면 (고정폭/이미지) 가로 정렬
+            if align != "left" {
+                let cw = child.dimensions.border_box().width;
+                if cw < avail - 0.5 {
+                    let dx = if align == "center" { (avail - cw) / 2.0 } else { avail - cw };
+                    child.translate_x(dx);
+                }
+            }
+            self.dimensions.content.height += child.dimensions.margin_box().height;
         }
     }
 
@@ -449,6 +485,8 @@ impl<'a> LayoutBox<'a> {
         let mut pen_x = content_x;
         let mut baseline = self.dimensions.content.y + ascent_px;
         let mut lines = 1;
+        // 줄별 시작 인덱스 + 폭 (center/right 정렬 후처리용): (glyph, link, deco, width)
+        let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
 
         for word in &words {
             let word_w: f32 = word.iter().map(|&(ch, _, px, _)| resolve(ch, px).2).sum();
@@ -456,6 +494,7 @@ impl<'a> LayoutBox<'a> {
                 pen_x = content_x;
                 baseline += line_height;
                 lines += 1;
+                line_bounds.push((self.glyphs.len(), self.links.len(), self.decorations.len(), 0.0));
             }
             let word_x0 = pen_x;
             let mut word_px_max = 0.0f32;
@@ -495,7 +534,32 @@ impl<'a> LayoutBox<'a> {
                     word_color,
                 ));
             }
+            line_bounds.last_mut().unwrap().3 = pen_x - content_x; // 줄 폭 (trailing space 제외)
             pen_x += space_adv;
+        }
+
+        // center/right 정렬: 줄마다 남는 폭만큼 그 줄의 글리프/링크/밑줄을 이동
+        let align = self.align();
+        if align != "left" {
+            for i in 0..line_bounds.len() {
+                let (g0, l0, d0, w) = line_bounds[i];
+                let off = if align == "center" { (content_w - w) / 2.0 } else { content_w - w };
+                if off <= 0.5 {
+                    continue;
+                }
+                let g1 = line_bounds.get(i + 1).map(|b| b.0).unwrap_or(self.glyphs.len());
+                let l1 = line_bounds.get(i + 1).map(|b| b.1).unwrap_or(self.links.len());
+                let d1 = line_bounds.get(i + 1).map(|b| b.2).unwrap_or(self.decorations.len());
+                for g in &mut self.glyphs[g0..g1] {
+                    g.x += off;
+                }
+                for (r, _) in &mut self.links[l0..l1] {
+                    r.x += off;
+                }
+                for (r, _) in &mut self.decorations[d0..d1] {
+                    r.x += off;
+                }
+            }
         }
 
         self.dimensions.content.height = lines as f32 * line_height;
@@ -881,6 +945,43 @@ mod tests {
         let fs = fonts();
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         lb.children.iter().map(|c| c.dimensions).collect()
+    }
+
+    #[test]
+    fn text_align_center_offsets_inline_line() {
+        // 가운데 정렬 문단: 글리프가 왼쪽 밖으로 밀려 시작 (content_x 보다 큼)
+        let root = crate::html::parse_dom("<p>hi</p>".to_string());
+        let ss = crate::css::parse(
+            "p { display: block; font-size: 20px; text-align: center; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let first_x = glyphs_of(&lb).first().unwrap().x;
+        assert!(first_x > 100.0, "가운데 정렬로 글리프가 오른쪽으로 밀림, got {}", first_x);
+    }
+
+    #[test]
+    fn center_element_centers_narrow_block_child() {
+        // <center> 안의 고정폭 블록이 가로 중앙으로 이동
+        let root = crate::html::parse_dom(
+            "<center><div class=\"box\"></div></center>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "center { display: block; text-align: center; } \
+             .box { display: block; width: 100px; height: 10px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 500.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // center > div(box). box 의 x 는 (500-100)/2 = 200 근처
+        let box_x = lb.children[0].dimensions.content.x;
+        assert!((box_x - 200.0).abs() < 1.0, "블록이 중앙 정렬, got x={}", box_x);
     }
 
     #[test]

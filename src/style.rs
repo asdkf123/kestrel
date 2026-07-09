@@ -202,7 +202,7 @@ pub fn element_matches(dom: &Dom, id: NodeId, selectors: &[Selector]) -> bool {
 pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE)
+    style_node(dom, dom.root, &index, &mut ancestors, None, DEFAULT_FONT_SIZE, None)
 }
 
 fn style_node<'a>(
@@ -212,6 +212,7 @@ fn style_node<'a>(
     ancestors: &mut Vec<&'a ElementData>,
     parent_color: Option<&Value>,
     parent_fs: f32,
+    parent_align: Option<&Value>,
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
@@ -232,17 +233,37 @@ fn style_node<'a>(
                     values.insert("color".to_string(), c.clone());
                 }
             }
+            // text-align: CSS > align 속성 > <center> 요소 > 상속 (text-align 은 상속 속성)
+            if !values.contains_key("text-align") {
+                let from_attr = elem.attributes.get("align").and_then(|a| match a.as_str() {
+                    "center" | "right" | "left" => Some(a.clone()),
+                    _ => None,
+                });
+                let resolved = if elem.tag_name == "center" {
+                    Some("center".to_string())
+                } else {
+                    from_attr
+                };
+                if let Some(a) = resolved {
+                    values.insert("text-align".to_string(), Value::Keyword(a));
+                } else if let Some(a) = parent_align {
+                    values.insert("text-align".to_string(), a.clone());
+                }
+            }
             // font-size 외 속성의 상대 단위는 아직 미해석 → 드롭 (미지원과 동일: auto 취급)
             values.retain(|k, v| {
                 k == "font-size"
                     || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem | Unit::Percent))
             });
             let my_color = values.get("color").cloned();
+            let my_align = values.get("text-align").cloned();
             ancestors.push(elem);
             let children = node
                 .children
                 .iter()
-                .map(|&child| style_node(dom, child, index, ancestors, my_color.as_ref(), fs))
+                .map(|&child| {
+                    style_node(dom, child, index, ancestors, my_color.as_ref(), fs, my_align.as_ref())
+                })
                 .collect();
             ancestors.pop();
             StyledNode { node, id, specified_values: values, children }
@@ -254,7 +275,9 @@ fn style_node<'a>(
             children: node
                 .children
                 .iter()
-                .map(|&child| style_node(dom, child, index, ancestors, parent_color, parent_fs))
+                .map(|&child| {
+                    style_node(dom, child, index, ancestors, parent_color, parent_fs, parent_align)
+                })
                 .collect(),
         },
     }
