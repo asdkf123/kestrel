@@ -93,6 +93,17 @@ pub enum Native {
     ObjectKeys,
     ObjectAssign,
     ArrayIsArray,
+    SetTimeout,
+    SetInterval,
+    ClearTimer,
+}
+
+// 예약된 타이머 (창 이벤트 루프 / 헤드리스 flush 가 실행)
+pub struct Timer {
+    pub id: u64,
+    pub callback: Value,
+    pub delay_ms: f64,
+    pub repeat: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -540,6 +551,10 @@ pub struct Interp {
     thrown: Option<Value>,
     // localStorage 스텁 저장소 (페이지 수명)
     storage: HashMap<String, String>,
+    // setTimeout/setInterval 로 등록된 미처리 타이머 (호출측이 드레인해 실행)
+    pub timers: Vec<Timer>,
+    pub cleared: std::collections::HashSet<u64>,
+    next_timer_id: u64,
 }
 
 impl Interp {
@@ -586,6 +601,12 @@ impl Interp {
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        // 타이머
+        env_declare(&global, "setTimeout", Value::Native(Native::SetTimeout));
+        env_declare(&global, "setInterval", Value::Native(Native::SetInterval));
+        env_declare(&global, "clearTimeout", Value::Native(Native::ClearTimer));
+        env_declare(&global, "clearInterval", Value::Native(Native::ClearTimer));
+        env_declare(&global, "requestAnimationFrame", Value::Native(Native::SetTimeout));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = HashMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
@@ -638,6 +659,9 @@ impl Interp {
             rng: seed,
             thrown: None,
             storage: HashMap::new(),
+            timers: Vec::new(),
+            cleared: std::collections::HashSet::new(),
+            next_timer_id: 1,
         }
     }
 
@@ -678,6 +702,14 @@ impl Interp {
             }
         }
         fired
+    }
+
+    // 타이머 콜백 실행 (호출측이 dom 포인터 설정/해제). 에러는 격리.
+    pub fn run_callback(&mut self, cb: Value) {
+        self.steps = 0;
+        if let Err(e) = self.call_value(cb, None, Vec::new()) {
+            println!("[js error] {}", e);
+        }
     }
 
     // onclick 속성 등 인라인 핸들러 소스 실행 (전역 환경에서)
@@ -1715,6 +1747,30 @@ impl Interp {
             Native::ArrayIsArray => {
                 Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
             }
+            Native::SetTimeout | Native::SetInterval => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if !matches!(callback, Value::Fn(_) | Value::Native(_)) {
+                    return Ok(Value::Num(0.0)); // 콜백 아니면 무시
+                }
+                let delay_ms = args.get(1).map(to_num).unwrap_or(0.0).max(0.0);
+                let id = self.next_timer_id;
+                self.next_timer_id += 1;
+                self.timers.push(Timer {
+                    id,
+                    callback,
+                    delay_ms,
+                    repeat: n == Native::SetInterval,
+                });
+                Ok(Value::Num(id as f64))
+            }
+            Native::ClearTimer => {
+                if let Some(id) = args.first().map(to_num) {
+                    let id = id as u64;
+                    self.cleared.insert(id);
+                    self.timers.retain(|t| t.id != id);
+                }
+                Ok(Value::Undefined)
+            }
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
                     let name = args.first().map(to_display).unwrap_or_default();
@@ -2433,6 +2489,28 @@ mod tests {
             run_str("try { throw new Error('bad'); } catch (e) { e.message }"),
             "bad"
         );
+    }
+
+    #[test]
+    fn set_timeout_registers_and_clear_cancels() {
+        let mut it = Interp::new();
+        it.run("setTimeout(function() {}, 100); setInterval(function() {}, 50)").unwrap();
+        assert_eq!(it.timers.len(), 2);
+        assert_eq!(it.timers[0].delay_ms, 100.0);
+        assert!(!it.timers[0].repeat);
+        assert!(it.timers[1].repeat);
+        // clearTimeout 은 id 로 취소
+        let mut it2 = Interp::new();
+        it2.run("var id = setTimeout(function() {}, 10); clearTimeout(id);").unwrap();
+        assert!(it2.timers.is_empty(), "취소된 타이머 제거");
+    }
+
+    #[test]
+    fn set_timeout_returns_incrementing_ids() {
+        let mut it = Interp::new();
+        let a = it.run("setTimeout(function() {}, 0)").unwrap();
+        let b = it.run("setTimeout(function() {}, 0)").unwrap();
+        assert!(matches!((a, b), (Value::Num(x), Value::Num(y)) if y > x));
     }
 
     #[test]

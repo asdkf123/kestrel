@@ -126,6 +126,7 @@ fn main() {
 
     // 헤드리스 렌더 모드: KESTREL_RENDER_TO 가 설정되면 창 대신 PPM 으로 출력하고 종료.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
+        page.flush_timers_headless();
         let canvas = paint::rasterize(
             &page.items,
             viewport_width as usize,
@@ -435,6 +436,7 @@ fn render_url(url: &str) {
 
     // 헤드리스: (viewport 크기) 슬라이스를 PPM 으로. KESTREL_SCROLL 로 시작 오프셋 지정.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
+        page.flush_timers_headless();
         let (vw, vh) = (1000usize, 1400usize);
         let scroll = std::env::var("KESTREL_SCROLL")
             .ok()

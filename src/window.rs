@@ -1,5 +1,6 @@
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
@@ -91,6 +92,46 @@ impl Page {
             self.rebuild();
         }
         fired
+    }
+
+    // ── 타이머 (setTimeout/setInterval) ──
+
+    pub fn take_timers(&mut self) -> Vec<crate::js::interp::Timer> {
+        std::mem::take(&mut self.js.timers)
+    }
+
+    pub fn is_cleared(&self, id: u64) -> bool {
+        self.js.cleared.contains(&id)
+    }
+
+    // 타이머 콜백 실행 → DOM 변형 가능 → rebuild
+    pub fn fire_timer(&mut self, callback: crate::js::interp::Value) {
+        self.js.dom = Some(&mut self.dom as *mut crate::dom::Dom);
+        self.js.run_callback(callback);
+        for line in self.js.console.drain(..) {
+            println!("[console] {}", line);
+        }
+        self.js.dom = None;
+        self.rebuild();
+    }
+
+    // 헤드리스: 대기 타이머를 지연 오름차순으로 실행 (interval 도 1회, 라운드 제한).
+    // setTimeout(fn, 0) 지연 초기화 등을 렌더 전에 반영한다.
+    pub fn flush_timers_headless(&mut self) {
+        for _round in 0..50 {
+            let mut pending = self.take_timers();
+            pending.retain(|t| !self.js.cleared.contains(&t.id));
+            if pending.is_empty() {
+                break;
+            }
+            pending.sort_by(|a, b| a.delay_ms.partial_cmp(&b.delay_ms).unwrap());
+            for t in pending {
+                if self.js.cleared.contains(&t.id) {
+                    continue;
+                }
+                self.fire_timer(t.callback);
+            }
+        }
     }
 
     // ── <input> 포커스/편집/폼 제출 ──
@@ -202,10 +243,62 @@ pub fn run_page(
     // 주소창 상태
     let mut url_input: String = page.url.as_string();
     let mut focused = false;
+    // 예약된 타이머: (발화 시각, Timer)
+    let mut scheduled: Vec<(Instant, crate::js::interp::Timer)> = Vec::new();
 
     event_loop
         .run(move |event, elwt| {
             elwt.set_control_flow(ControlFlow::Wait);
+            // 새로 등록된 타이머를 예약 (초기 스크립트 + 콜백이 만든 것)
+            {
+                let now = Instant::now();
+                for t in page.take_timers() {
+                    scheduled.push((now + Duration::from_millis(t.delay_ms as u64), t));
+                }
+            }
+            // 타이머 발화 (AboutToWait 뿐 아니라 매 이벤트마다 확인)
+            if let Event::AboutToWait = &event {
+                let now = Instant::now();
+                let mut due = Vec::new();
+                let mut i = 0;
+                while i < scheduled.len() {
+                    if scheduled[i].0 <= now {
+                        due.push(scheduled.remove(i));
+                    } else {
+                        i += 1;
+                    }
+                }
+                let mut fired = false;
+                for (_, timer) in due {
+                    if page.is_cleared(timer.id) {
+                        continue;
+                    }
+                    page.fire_timer(timer.callback.clone());
+                    fired = true;
+                    if timer.repeat && !page.is_cleared(timer.id) {
+                        scheduled.push((
+                            now + Duration::from_millis(timer.delay_ms.max(4.0) as u64),
+                            timer,
+                        ));
+                    }
+                }
+                // 콜백이 만든 타이머도 예약
+                let now2 = Instant::now();
+                for t in page.take_timers() {
+                    scheduled.push((now2 + Duration::from_millis(t.delay_ms as u64), t));
+                }
+                if fired {
+                    let vh = (window.inner_size().height.max(1) as f32 / window.scale_factor() as f32
+                        - CHROME_H)
+                        .max(1.0);
+                    scroll_y = scroll_y.clamp(0.0, (page.doc_height - vh).max(0.0));
+                    window.request_redraw();
+                }
+                // 다음 타이머까지 대기
+                if let Some(next) = scheduled.iter().map(|(d, _)| *d).min() {
+                    elwt.set_control_flow(ControlFlow::WaitUntil(next));
+                }
+            }
             // 물리(픽셀)/논리 배율. 레이아웃·스크롤·히트 테스트는 전부 논리 좌표로.
             let scale = window.scale_factor() as f32;
             let viewport_h =
@@ -591,6 +684,41 @@ mod tests {
         // 여기선 등록 없는 클릭이 false 를 반환하는지부터
         let (x, y) = center_of_tag(&page, "button");
         assert!(!page.dispatch_click(x, y), "핸들러 없으면 false");
+    }
+
+    #[test]
+    fn headless_timer_flush_runs_deferred_set_timeout() {
+        // setTimeout(fn, 0) 로 미룬 DOM 초기화가 flush 로 반영
+        let mut page = make_page(
+            "<p id=\"out\">before</p>\
+             <script>setTimeout(function() { \
+               document.getElementById('out').textContent = 'deferred ran'; \
+             }, 0);</script>",
+        );
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "before", "flush 전엔 미실행");
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "deferred ran");
+    }
+
+    #[test]
+    fn headless_timer_chain_and_clear() {
+        // 타이머가 또 타이머를 만드는 체인 + clearTimeout 취소
+        let mut page = make_page(
+            "<p id=\"out\">0</p>\
+             <script>\
+             setTimeout(function() { \
+               document.getElementById('out').textContent = '1'; \
+               setTimeout(function() { \
+                 document.getElementById('out').textContent = '2'; \
+               }, 0); \
+             }, 0); \
+             var cancel = setTimeout(function() { \
+               document.getElementById('out').textContent = 'SHOULD NOT RUN'; \
+             }, 5); \
+             clearTimeout(cancel);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "2", "체인 실행, 취소된 것 미실행");
     }
 
     #[test]
