@@ -532,7 +532,9 @@ impl<'a> LayoutBox<'a> {
                 child.layout(probe, fonts, images);
                 // 점유 폭 결정: 명시 width(퍼센트 포함, 이미 px)면 border box, 아니면 shrink-to-fit
                 let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
-                let bp = child.dimensions.border_box().width - child.dimensions.content.width;
+                // auto 폭 shrink-to-fit 시 재배치 폭(ow)에 margin 도 포함해야 재계산에서
+                // margin 이 content 를 깎지 않는다 (auto 폭엔 phantom margin 이 없음).
+                let bp = child.dimensions.margin_box().width - child.dimensions.content.width;
                 let ow = if explicit {
                     child.dimensions.border_box().width.min(avail_band)
                 } else {
@@ -573,7 +575,9 @@ impl<'a> LayoutBox<'a> {
                 probe.content.width = avail;
                 child.layout(probe, fonts, images);
                 let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
-                let bp = child.dimensions.border_box().width - child.dimensions.content.width;
+                // auto 폭 shrink-to-fit 시 재배치 폭(ow)에 margin 도 포함해야 재계산에서
+                // margin 이 content 를 깎지 않는다 (auto 폭엔 phantom margin 이 없음).
+                let bp = child.dimensions.margin_box().width - child.dimensions.content.width;
                 let ow = if explicit {
                     child.dimensions.border_box().width.min(avail)
                 } else {
@@ -1512,6 +1516,35 @@ mod tests {
             lb.children[0].dimensions.content.y, lb.children[1].dimensions.content.y,
             "나란히 = 같은 y"
         );
+    }
+
+    #[test]
+    fn inline_block_margin_absorbed_not_stolen_from_content() {
+        // margin-right 가 있는 auto 폭 inline-block: margin 이 내부 content 를 깎지 않고
+        // (내부 40px 리프 유지), 다음 형제는 리프폭+margin 만큼 뒤에 놓여야 함.
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\">\
+             <div class=\"ib\"><div class=\"leaf\"></div></div>\
+             <div class=\"ib\"><div class=\"leaf\"></div></div>\
+             </div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .ib { display: inline-block; margin-right: 10px; } \
+             .leaf { display: block; width: 40px; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // 첫 리프는 40px 유지 (margin 이 깎지 않음)
+        assert_eq!(lb.children[0].children[0].dimensions.content.width, 40.0);
+        assert_eq!(lb.children[0].dimensions.content.x, 0.0);
+        // 둘째는 40(리프) + 10(margin) = 50
+        assert_eq!(lb.children[1].dimensions.content.x, 50.0, "리프폭+margin 뒤에 배치");
     }
 
     #[test]

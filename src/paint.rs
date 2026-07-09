@@ -27,6 +27,49 @@ impl Canvas {
         }
     }
 
+    // 둥근 사각형 채우기 (모서리 안티에일리어싱). radius 는 물리 px.
+    pub fn fill_round_rect(&mut self, color: Color, rect: Rect, radius: f32) {
+        if rect.width <= 0.0 || rect.height <= 0.0 {
+            return;
+        }
+        let r = radius.min(rect.width / 2.0).min(rect.height / 2.0).max(0.0);
+        if r <= 0.0 {
+            self.fill_rect(color, rect);
+            return;
+        }
+        let (x0, y0) = (rect.x, rect.y);
+        let (x1, y1) = (rect.x + rect.width, rect.y + rect.height);
+        let px0 = x0.floor().max(0.0) as usize;
+        let py0 = y0.floor().max(0.0) as usize;
+        let px1 = (x1.ceil().max(0.0) as usize).min(self.width);
+        let py1 = (y1.ceil().max(0.0) as usize).min(self.height);
+        let clamp01 = |v: f32| v.clamp(0.0, 1.0);
+        for py in py0..py1 {
+            let fy = py as f32 + 0.5;
+            for px in px0..px1 {
+                let fx = px as f32 + 0.5;
+                // 모서리 밴드(양축 모두 반경 안)면 코너 중심까지 거리로 커버리지,
+                // 아니면 직선 변 안티에일리어싱.
+                let in_x = fx < x0 + r || fx > x1 - r;
+                let in_y = fy < y0 + r || fy > y1 - r;
+                let cov = if in_x && in_y {
+                    let ncx = if fx < x0 + r { x0 + r } else { x1 - r };
+                    let ncy = if fy < y0 + r { y0 + r } else { y1 - r };
+                    clamp01(r - ((fx - ncx).powi(2) + (fy - ncy).powi(2)).sqrt() + 0.5)
+                } else {
+                    let cx = clamp01(fx - x0 + 0.5).min(clamp01(x1 - fx + 0.5));
+                    let cy = clamp01(fy - y0 + 0.5).min(clamp01(y1 - fy + 0.5));
+                    cx.min(cy)
+                };
+                if cov <= 0.0 {
+                    continue;
+                }
+                let idx = py * self.width + px;
+                self.pixels[idx] = blend(self.pixels[idx], color, (cov * 255.0).round() as u8);
+            }
+        }
+    }
+
     pub fn to_u32_buffer(&self) -> Vec<u32> {
         self.pixels
             .iter()
@@ -76,6 +119,7 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
+    RoundRect { color: Color, rect: Rect, radius: f32 },
     Image { image: usize, rect: Rect },
     Glyph(GlyphInstance),
 }
@@ -89,19 +133,8 @@ fn emit_borders(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         return;
     }
     let b = lb.dimensions.border_box();
-    let default_color = get_color(lb, "color").unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 });
-    let side_color = |side: &str| -> Color {
-        get_color(lb, &format!("border-{}-color", side))
-            .or_else(|| get_color(lb, "border-color"))
-            .unwrap_or(default_color)
-    };
-    let drawn = |side: &str| -> bool {
-        let style = lb
-            .styled_node
-            .value(&format!("border-{}-style", side))
-            .or_else(|| lb.styled_node.value("border-style"));
-        matches!(style, Some(Value::Keyword(ref k)) if k != "none" && k != "hidden")
-    };
+    let side_color = |side: &str| border_side_color(lb, side);
+    let drawn = |side: &str| border_side_drawn(lb, side);
     if bw.top > 0.0 && drawn("top") {
         items.push(DisplayItem::Rect {
             color: side_color("top"),
@@ -128,6 +161,71 @@ fn emit_borders(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     }
 }
 
+// 균일 border-radius (물리 아님, 논리 px). 퍼센트는 박스 짧은 변 기준.
+fn uniform_radius(lb: &LayoutBox) -> f32 {
+    let b = lb.dimensions.border_box();
+    match lb.styled_node.value("border-radius") {
+        Some(Value::Length(v, crate::css::Unit::Px)) => v.max(0.0),
+        Some(Value::Length(v, crate::css::Unit::Percent)) => {
+            v / 100.0 * b.width.min(b.height)
+        }
+        _ => 0.0,
+    }
+}
+
+// 박스 배경 + 테두리를 발행. border-radius 가 있으면 둥근 사각형으로,
+// 균일 테두리는 "테두리색 라운드 → 안쪽 배경 라운드" 레이어링으로 둥근 테두리 근사.
+fn emit_box_decorations(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let bg = get_color(lb, "background-color");
+    let r = uniform_radius(lb);
+    let bw = lb.dimensions.border;
+    let b = lb.dimensions.border_box();
+    let border_uniform = bw.top > 0.0
+        && bw.top == bw.right
+        && bw.top == bw.bottom
+        && bw.top == bw.left
+        && border_side_drawn(lb, "top");
+
+    // 라운드 + 균일 테두리 + 배경: 레이어드로 둥근 테두리
+    if r > 0.0 && border_uniform && bg.is_some() {
+        items.push(DisplayItem::RoundRect { color: border_side_color(lb, "top"), rect: b, radius: r });
+        let inner_r = (r - bw.top).max(0.0);
+        items.push(DisplayItem::RoundRect {
+            color: bg.unwrap(),
+            rect: lb.dimensions.padding_box(),
+            radius: inner_r,
+        });
+        return;
+    }
+    // 라운드 + 배경(테두리 없음/비균일): 배경만 둥글게, 테두리는 사각으로
+    if r > 0.0 && bg.is_some() {
+        items.push(DisplayItem::RoundRect { color: bg.unwrap(), rect: b, radius: r });
+        emit_borders(lb, items);
+        return;
+    }
+    // 그 외: 기존 사각 경로
+    if let Some(color) = bg {
+        items.push(DisplayItem::Rect { color, rect: b });
+    }
+    emit_borders(lb, items);
+}
+
+// emit_borders 와 공유되는 변별 색/그리기 판정.
+fn border_side_color(lb: &LayoutBox, side: &str) -> Color {
+    let default_color = get_color(lb, "color").unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 });
+    get_color(lb, &format!("border-{}-color", side))
+        .or_else(|| get_color(lb, "border-color"))
+        .unwrap_or(default_color)
+}
+
+fn border_side_drawn(lb: &LayoutBox, side: &str) -> bool {
+    let style = lb
+        .styled_node
+        .value(&format!("border-{}-style", side))
+        .or_else(|| lb.styled_node.value("border-style"));
+    matches!(style, Some(Value::Keyword(ref k)) if k != "none" && k != "hidden")
+}
+
 pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
     let mut items = Vec::new();
     collect_items(root, &mut items);
@@ -135,9 +233,8 @@ pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
 }
 
 fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
-    if let Some(color) = get_color(layout_box, "background-color") {
-        items.push(DisplayItem::Rect { color, rect: layout_box.dimensions.border_box() });
-    }
+    // 배경 + 테두리 (border-radius 포함). 콘텐츠(글리프/이미지)는 이 아래에 그려진다.
+    emit_box_decorations(layout_box, items);
     // <input> 필드 시각: 외곽선 + 흰 내부 (value 글리프는 아래 공통 경로)
     if let crate::dom::NodeType::Element(e) = &layout_box.styled_node.node.node_type {
         if e.tag_name == "input" && layout_box.dimensions.content.width > 0.0 {
@@ -156,8 +253,6 @@ fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
     if let Some(idx) = layout_box.image {
         items.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content });
     }
-    // CSS 테두리: 각 변을 레이아웃이 계산한 border 폭만큼 채운다 (배경 위, 콘텐츠 아래).
-    emit_borders(layout_box, items);
     for gi in &layout_box.glyphs {
         items.push(DisplayItem::Glyph(*gi));
     }
@@ -199,6 +294,13 @@ pub fn rasterize(
                     continue;
                 }
                 canvas.fill_rect(*color, r);
+            }
+            DisplayItem::RoundRect { color, rect, radius } => {
+                let r = scale_rect(rect);
+                if r.y + r.height < 0.0 || r.y > vh {
+                    continue;
+                }
+                canvas.fill_round_rect(*color, r, radius * scale);
             }
             DisplayItem::Image { image, rect } => {
                 let r = scale_rect(rect);

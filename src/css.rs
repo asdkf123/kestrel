@@ -386,6 +386,13 @@ fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
         "border-color" => box_shorthand("border", "-color", value_text),
         "border-style" => box_shorthand("border", "-style", value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
+        // border-radius: 첫 토큰만 균일 반경으로 (다중/타원 반경은 근사)
+        "border-radius" => match value_text.split_whitespace().next().and_then(interpret_value) {
+            Some(v @ Value::Length(..)) => {
+                vec![Declaration { name: "border-radius".to_string(), value: v }]
+            }
+            _ => Vec::new(),
+        },
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
         "border-top" => border_shorthand(&["top"], value_text),
         "border-right" => border_shorthand(&["right"], value_text),
@@ -711,6 +718,15 @@ mod tests {
                 Some(&Value::Color(Color { r: 204, g: 204, b: 204, a: 255 }))
             );
         }
+    }
+
+    #[test]
+    fn border_radius_single_value_kept() {
+        let ss = parse("div { border-radius: 12px; }".to_string());
+        assert_eq!(decl(&ss, "border-radius"), Some(&Value::Length(12.0, Unit::Px)));
+        // 다중값은 첫 토큰만 (균일 근사)
+        let ss2 = parse("div { border-radius: 8px 4px 8px 4px; }".to_string());
+        assert_eq!(decl(&ss2, "border-radius"), Some(&Value::Length(8.0, Unit::Px)));
     }
 
     #[test]
