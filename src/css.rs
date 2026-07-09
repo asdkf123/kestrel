@@ -393,6 +393,21 @@ fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
             }
             _ => Vec::new(),
         },
+        // flex-grow: 단위 없는 수 → Length(n, Px) 로 저장(레이아웃이 to_px 로 읽음)
+        "flex-grow" => match value_text.trim().parse::<f32>() {
+            Ok(n) => vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(n, Unit::Px) }],
+            _ => Vec::new(),
+        },
+        // flex 단축값: 첫 토큰의 grow 만 취함 (flex:1 → grow 1, none → 0, auto → 1)
+        "flex" => {
+            let first = value_text.split_whitespace().next().unwrap_or("");
+            let grow = match first {
+                "none" | "initial" => 0.0,
+                "auto" => 1.0,
+                _ => first.parse::<f32>().unwrap_or(0.0),
+            };
+            vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) }]
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),

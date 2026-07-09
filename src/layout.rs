@@ -688,43 +688,185 @@ impl<'a> LayoutBox<'a> {
         max_w
     }
 
-    // flexbox 부분 지원: 단일 행(row, nowrap). 고정 폭 아이템은 그대로,
-    // auto 아이템은 남은 공간을 균등 분배. gap 지원. 컨테이너 높이 = 최고 아이템.
-    // 미지원: column/wrap/justify-content/align-items/flex-grow 비율.
+    fn flex_keyword(&self, prop: &str) -> String {
+        match self.styled_node.value(prop) {
+            Some(Value::Keyword(k)) => k,
+            _ => String::new(),
+        }
+    }
+
+    // flexbox: row/column, flex-wrap, justify-content, align-items, gap, flex-grow.
+    // 미지원: flex-shrink(음수 공간은 넘침 허용), flex-basis(폭/높이 or 내용폭으로 근사),
+    // align-self, align-content, order, wrap-reverse 세부.
     fn layout_flex_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
             return;
         }
+        let row = self.flex_keyword("flex-direction") != "column";
+        let wrap = matches!(self.styled_node.value("flex-wrap"),
+            Some(Value::Keyword(ref k)) if k == "wrap" || k == "wrap-reverse");
+        let justify = self.flex_keyword("justify-content");
+        let align = self.flex_keyword("align-items");
         let gap = self.styled_node.value("gap").map(|v| v.to_px()).unwrap_or(0.0);
         let d = self.dimensions;
-        let total_gap = gap * (n as f32 - 1.0);
+        let (ox, oy) = (d.content.x, d.content.y);
 
-        let fixed_width = |child: &LayoutBox| -> Option<f32> {
-            match child.styled_node.value("width") {
-                Some(Length(w, Px)) => Some(w),
-                _ => None,
-            }
+        // 컨테이너 main 크기 (row=폭 확정, column=height 명시 시 확정 아니면 무한)
+        let height_px = match self.styled_node.value("height") {
+            Some(Length(h, Px)) => Some(h),
+            _ => None,
         };
-        let fixed_total: f32 = self.children.iter().filter_map(&fixed_width).sum();
-        let auto_count = self.children.iter().filter(|c| fixed_width(c).is_none()).count();
-        let remaining = (d.content.width - total_gap - fixed_total).max(0.0);
-        let share = if auto_count > 0 { remaining / auto_count as f32 } else { 0.0 };
+        let cont_main = if row { d.content.width } else { height_px.unwrap_or(f32::INFINITY) };
+        // 컨테이너 cross 크기 (row=height 명시 시, column=폭 확정)
+        let cont_cross = if row { height_px } else { Some(d.content.width) };
 
-        let mut pen_x = d.content.x;
-        let mut max_h = 0.0f32;
-        for child in &mut self.children {
-            let w = fixed_width(child).unwrap_or(share);
-            // 아이템 전용 컨테이닝 블록: 폭 w, 원점 (pen_x, 컨테이너 y)
+        // 1) 측정: 각 아이템 base main / cross (margin box 기준)
+        let main_prop = if row { "width" } else { "height" };
+        let cross_prop = if row { "height" } else { "width" };
+        let mut basis = vec![0.0f32; n];
+        let mut cross = vec![0.0f32; n];
+        let mut grow = vec![0.0f32; n];
+        let mut main_fixed = vec![false; n];
+        let mut cross_fixed = vec![false; n];
+        let measure_w = if row {
+            if cont_main.is_finite() { cont_main } else { 100000.0 }
+        } else {
+            cont_cross.unwrap_or(100000.0)
+        };
+        for (i, child) in self.children.iter_mut().enumerate() {
             let mut cb: Dimensions = Default::default();
-            cb.content.x = pen_x;
-            cb.content.y = d.content.y;
-            cb.content.width = w;
+            cb.content.x = ox;
+            cb.content.y = oy;
+            cb.content.width = measure_w;
             child.layout(cb, fonts, images);
-            pen_x += child.dimensions.margin_box().width + gap;
-            max_h = max_h.max(child.dimensions.margin_box().height);
+            let mbox = child.dimensions.margin_box();
+            main_fixed[i] = matches!(child.styled_node.value(main_prop), Some(Length(_, Px)));
+            cross_fixed[i] = matches!(child.styled_node.value(cross_prop), Some(Length(_, Px)));
+            // 고정 main 은 border_box (phantom margin 배제), auto 는 내용 preferred+box.
+            basis[i] = if row {
+                if main_fixed[i] {
+                    child.dimensions.border_box().width
+                } else {
+                    child.used_width + (mbox.width - child.dimensions.content.width)
+                }
+            } else if main_fixed[i] {
+                child.dimensions.border_box().height
+            } else {
+                mbox.height
+            };
+            // cross: row=높이(내용), column=폭(고정이면 border_box, auto 는 shrink-to-fit)
+            cross[i] = if row {
+                mbox.height
+            } else if cross_fixed[i] {
+                child.dimensions.border_box().width
+            } else {
+                child.used_width + (mbox.width - child.dimensions.content.width)
+            };
+            grow[i] = child.styled_node.value("flex-grow").map(|v| v.to_px()).unwrap_or(0.0);
         }
-        self.dimensions.content.height = max_h;
+
+        // 2) 줄 나누기 (wrap 이고 main 확정일 때만)
+        let mut lines: Vec<Vec<usize>> = Vec::new();
+        if wrap && cont_main.is_finite() {
+            let mut cur: Vec<usize> = Vec::new();
+            let mut cur_main = 0.0f32;
+            for i in 0..n {
+                let add = basis[i] + if cur.is_empty() { 0.0 } else { gap };
+                if !cur.is_empty() && cur_main + add > cont_main + 0.5 {
+                    lines.push(std::mem::take(&mut cur));
+                    cur_main = 0.0;
+                }
+                cur_main += basis[i] + if cur.is_empty() { 0.0 } else { gap };
+                cur.push(i);
+            }
+            if !cur.is_empty() {
+                lines.push(cur);
+            }
+        } else {
+            lines.push((0..n).collect());
+        }
+
+        // 3) 줄마다 main 크기 배분(grow) + justify/align 배치
+        let mut cross_pen = if row { oy } else { ox };
+        let mut max_main = 0.0f32;
+        let mut natural_main = 0.0f32; // 내용 기반 main 폭 (shrink-to-fit used_width 용)
+        for line in &lines {
+            let cnt = line.len();
+            let sum_basis: f32 = line.iter().map(|&i| basis[i]).sum();
+            let sum_gap = gap * (cnt as f32 - 1.0).max(0.0);
+            natural_main = natural_main.max(sum_basis + sum_gap);
+            let free = if cont_main.is_finite() { cont_main - sum_basis - sum_gap } else { 0.0 };
+            let total_grow: f32 = line.iter().map(|&i| grow[i]).sum();
+            let mut sizes: Vec<f32> = line.iter().map(|&i| basis[i]).collect();
+            if free > 0.0 && total_grow > 0.0 {
+                for (k, &i) in line.iter().enumerate() {
+                    sizes[k] += free * grow[i] / total_grow;
+                }
+            }
+            // justify: grow 가 free 를 소진 못했을 때만 남은 공간 분배
+            let leftover = if total_grow > 0.0 { 0.0 } else { free.max(0.0) };
+            let (start_off, between_extra) = justify_offsets(&justify, leftover, cnt);
+            let mut main_pen = if row { ox } else { oy } + start_off;
+
+            // 줄 cross 크기
+            let line_cross_natural = line.iter().map(|&i| cross[i]).fold(0.0f32, f32::max);
+            let line_cross = if lines.len() == 1 {
+                cont_cross.unwrap_or(line_cross_natural).max(line_cross_natural)
+            } else {
+                line_cross_natural
+            };
+
+            for (k, &i) in line.iter().enumerate() {
+                let msize = sizes[k];
+                let stretch = (align.is_empty() || align == "stretch") && !cross_fixed[i];
+                let item_cross = if stretch { line_cross } else { cross[i] };
+                let cross_off = match align.as_str() {
+                    "center" => (line_cross - item_cross) / 2.0,
+                    "flex-end" | "end" => line_cross - item_cross,
+                    _ => 0.0,
+                };
+                let child = &mut self.children[i];
+                let mut cb: Dimensions = Default::default();
+                if row {
+                    cb.content.x = main_pen;
+                    cb.content.y = cross_pen + cross_off;
+                    cb.content.width = msize;
+                } else {
+                    cb.content.x = cross_pen + cross_off;
+                    cb.content.y = main_pen;
+                    cb.content.width = item_cross;
+                }
+                child.clear_render(); // 측정 패스에서 쌓인 글리프 제거 (이중 렌더 방지)
+                child.layout(cb, fonts, images);
+                // stretch: cross 크기를 줄 cross 로 강제 (내용보다 클 때만 늘림)
+                if stretch {
+                    if row {
+                        let vextra =
+                            child.dimensions.margin_box().height - child.dimensions.content.height;
+                        let target = (line_cross - vextra).max(child.dimensions.content.height);
+                        child.dimensions.content.height = target;
+                    }
+                    // column stretch 는 위에서 cb.width=item_cross 로 이미 폭이 늘어남
+                }
+                main_pen += msize + gap + between_extra;
+            }
+            max_main = max_main.max(sum_basis + sum_gap + if total_grow > 0.0 { free.max(0.0) } else { 0.0 });
+            cross_pen += line_cross + gap;
+        }
+
+        // 컨테이너 cross(=흐름) 크기 반영. calculate_height 가 명시 height 로 나중에 덮음.
+        if row {
+            self.dimensions.content.height = (cross_pen - oy - gap).max(0.0);
+        } else {
+            self.dimensions.content.height = max_main.max(0.0);
+        }
+        // shrink-to-fit 부모용 내용 폭: row=내용 main 폭, column=가장 넓은 아이템 cross.
+        self.used_width = if row {
+            natural_main
+        } else {
+            cross.iter().cloned().fold(0.0f32, f32::max)
+        };
     }
 
     // <tr> 의 셀(td/th)을 가로 컬럼으로 배치. 컬럼 폭 = 행 폭 / 셀 수 (균등 근사).
@@ -895,6 +1037,19 @@ impl<'a> LayoutBox<'a> {
         if let Some(Length(h, Px)) = self.styled_node.value("height") {
             self.dimensions.content.height = h;
         }
+    }
+}
+
+// justify-content 의 (시작 오프셋, 아이템 사이 추가 간격) 을 남는 공간 free 로부터 계산.
+fn justify_offsets(justify: &str, free: f32, cnt: usize) -> (f32, f32) {
+    let n = cnt as f32;
+    match justify {
+        "center" => (free / 2.0, 0.0),
+        "flex-end" | "end" | "right" => (free, 0.0),
+        "space-between" if cnt > 1 => (0.0, free / (n - 1.0)),
+        "space-around" if cnt > 0 => (free / n / 2.0, free / n),
+        "space-evenly" if cnt > 0 => (free / (n + 1.0), free / (n + 1.0)),
+        _ => (0.0, 0.0), // flex-start / start / 기본
     }
 }
 
@@ -1589,9 +1744,10 @@ mod tests {
 
     #[test]
     fn flex_auto_items_share_remaining_space() {
+        // flex-grow: 1 인 두 아이템이 남은 공간을 균등 분배 (spec: grow 없으면 안 늘어남)
         let d = flex_layout(
             "<div class=\"row\"><div class=\"i\"></div><div class=\"i\"></div></div>",
-            ".row { display: flex; } .i { display: block; height: 10px; }",
+            ".row { display: flex; } .i { display: block; height: 10px; flex-grow: 1; }",
             300.0,
         );
         assert_eq!(d[0].content.width, 150.0);
@@ -1605,10 +1761,10 @@ mod tests {
             "<div class=\"row\"><div class=\"f\"></div><div class=\"i\"></div><div class=\"i\"></div></div>",
             ".row { display: flex; gap: 10px; } \
              .f { display: block; width: 80px; height: 10px; } \
-             .i { display: block; height: 10px; }",
+             .i { display: block; height: 10px; flex-grow: 1; }",
             300.0,
         );
-        // 남은 공간 = 300 - 80 - 20(gap 2개) = 200 → auto 2개 각 100
+        // 남은 공간 = 300 - 80 - 20(gap 2개) = 200 → grow 아이템 2개 각 100
         assert_eq!(d[0].content.width, 80.0);
         assert_eq!(d[1].content.width, 100.0);
         assert_eq!(d[1].content.x, 90.0, "80 + gap 10");
@@ -1620,7 +1776,7 @@ mod tests {
         // 태그 사이 줄바꿈이 익명 아이템으로 끼어들어 공간을 나누면 안 된다
         let d = flex_layout(
             "<div class=\"row\">\n  <div class=\"i\"></div>\n  <div class=\"i\"></div>\n</div>",
-            ".row { display: flex; } .i { display: block; height: 10px; }",
+            ".row { display: flex; } .i { display: block; height: 10px; flex-grow: 1; }",
             300.0,
         );
         assert_eq!(d.len(), 2, "공백 텍스트는 아이템이 아님");
@@ -1645,6 +1801,61 @@ mod tests {
         let fs = fonts();
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         assert_eq!(lb.dimensions.content.height, 80.0);
+    }
+
+    #[test]
+    fn flex_column_stacks_vertically() {
+        let d = flex_layout(
+            "<div class=\"col\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            ".col { display: flex; flex-direction: column; } \
+             .a { display: block; width: 40px; height: 20px; } \
+             .b { display: block; width: 40px; height: 30px; }",
+            300.0,
+        );
+        assert_eq!(d[0].content.y, 0.0);
+        assert_eq!(d[1].content.y, 20.0, "column 은 세로로 쌓임");
+    }
+
+    #[test]
+    fn flex_justify_space_between() {
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            ".row { display: flex; justify-content: space-between; } \
+             .a { display: block; width: 50px; height: 10px; } \
+             .b { display: block; width: 50px; height: 10px; }",
+            300.0,
+        );
+        assert_eq!(d[0].content.x, 0.0);
+        assert_eq!(d[1].content.x, 250.0, "space-between: 마지막은 오른쪽 끝");
+    }
+
+    #[test]
+    fn flex_align_items_center_row() {
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"tall\"></div><div class=\"short\"></div></div>",
+            ".row { display: flex; align-items: center; } \
+             .tall { display: block; width: 20px; height: 40px; } \
+             .short { display: block; width: 20px; height: 10px; }",
+            300.0,
+        );
+        // 줄 cross = 40. short(10)는 (40-10)/2 = 15 만큼 내려 중앙정렬
+        assert_eq!(d[0].content.y, 0.0);
+        assert_eq!(d[1].content.y, 15.0, "align-items center 세로 중앙");
+    }
+
+    #[test]
+    fn flex_wrap_moves_overflow_to_next_line() {
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"i\"></div><div class=\"i\"></div><div class=\"i\"></div></div>",
+            ".row { display: flex; flex-wrap: wrap; } \
+             .i { display: block; width: 150px; height: 20px; }",
+            400.0,
+        );
+        // 150*3 = 450 > 400 → 셋째는 다음 줄
+        assert_eq!(d[0].content.x, 0.0);
+        assert_eq!(d[1].content.x, 150.0);
+        assert_eq!(d[2].content.x, 0.0, "셋째는 줄바꿈");
+        assert_eq!(d[2].content.y, 20.0, "둘째 줄(y=20)");
     }
 
     #[test]
