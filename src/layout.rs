@@ -81,6 +81,8 @@ pub struct LayoutBox<'a> {
     pub background_image: Option<usize>,
     // 클릭 히트 영역: (단어 단위 사각형, href)
     pub links: Vec<(Rect, String)>,
+    // 링크 밑줄/리스트 불릿 등 (사각형, 색)
+    pub decorations: Vec<(Rect, Color)>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -94,6 +96,7 @@ impl<'a> LayoutBox<'a> {
             image: None,
             background_image: None,
             links: Vec::new(),
+            decorations: Vec::new(),
         }
     }
 
@@ -107,6 +110,7 @@ impl<'a> LayoutBox<'a> {
             image: None,
             background_image: None,
             links: Vec::new(),
+            decorations: Vec::new(),
         }
     }
 
@@ -152,6 +156,36 @@ impl<'a> LayoutBox<'a> {
             self.layout_children(fonts, images);
         }
         self.calculate_height();
+        self.add_list_marker(fonts);
+    }
+
+    // <li> 앞에 불릿 마커 (콘텐츠 박스 왼쪽 패딩 영역, 첫 줄 baseline 정렬).
+    // ul/ol 구분은 아직 안 함 — 전부 불릿 (근사). 실제 번호 매기기는 후속.
+    fn add_list_marker(&mut self, fonts: &FontStack) {
+        let NodeType::Element(e) = &self.styled_node.node.node_type else { return };
+        if e.tag_name != "li" {
+            return;
+        }
+        let px = self
+            .styled_node
+            .value("font-size")
+            .map(|v| v.to_px())
+            .filter(|&p| p > 0.0)
+            .unwrap_or(16.0);
+        let color = match self.styled_node.value("color") {
+            Some(Value::Color(c)) => c,
+            _ => Color { r: 0, g: 0, b: 0, a: 255 },
+        };
+        let (fi, gid) = fonts.glyph_for('\u{2022}'); // •
+        let d = &self.dimensions.content;
+        self.glyphs.push(GlyphInstance {
+            font_index: fi,
+            glyph_id: gid,
+            x: d.x - px * 0.9,
+            baseline_y: d.y + px * 0.95,
+            px,
+            color,
+        });
     }
 
     // <input> 대체 요소: 폭 = CSS width > size 속성 > 기본 180px,
@@ -377,6 +411,7 @@ impl<'a> LayoutBox<'a> {
             }
             let word_x0 = pen_x;
             let mut word_px_max = 0.0f32;
+            let mut word_color = Color { r: 0, g: 0, b: 0, a: 255 };
             for &(ch, color, px, _) in word {
                 let (fi, gid, adv) = resolve(ch, px);
                 self.glyphs.push(GlyphInstance {
@@ -389,8 +424,9 @@ impl<'a> LayoutBox<'a> {
                 });
                 pen_x += adv;
                 word_px_max = word_px_max.max(px);
+                word_color = color;
             }
-            // 링크 히트 영역: 단어 단위 사각형 (공백 절반 포함해 클릭 여유)
+            // 링크: 히트 영역 + 밑줄 (단어 폭, baseline 약간 아래)
             if let Some(li) = word.iter().find_map(|&(_, _, _, l)| l) {
                 self.links.push((
                     Rect {
@@ -400,6 +436,15 @@ impl<'a> LayoutBox<'a> {
                         height: 1.2 * word_px_max,
                     },
                     hrefs[li].clone(),
+                ));
+                self.decorations.push((
+                    Rect {
+                        x: word_x0,
+                        y: baseline + 0.08 * word_px_max,
+                        width: pen_x - word_x0,
+                        height: (word_px_max * 0.06).max(1.0),
+                    },
+                    word_color,
                 ));
             }
             pen_x += space_adv;

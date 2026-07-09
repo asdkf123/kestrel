@@ -111,6 +111,10 @@ fn collect_items(layout_box: &LayoutBox, items: &mut Vec<DisplayItem>) {
     for gi in &layout_box.glyphs {
         items.push(DisplayItem::Glyph(*gi));
     }
+    // 링크 밑줄 등 장식 (글리프 위에 그려도 얇아 무해)
+    for (rect, color) in &layout_box.decorations {
+        items.push(DisplayItem::Rect { color: *color, rect: *rect });
+    }
     for child in &layout_box.children {
         collect_items(child, items);
     }
