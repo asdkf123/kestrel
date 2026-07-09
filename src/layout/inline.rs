@@ -56,7 +56,7 @@ impl<'a> LayoutBox<'a> {
         let mut words: Vec<(Vec<(char, TextStyle)>, bool)> = Vec::new();
         let mut cur: Vec<(char, TextStyle)> = Vec::new();
         let mut break_before = false; // 다음에 확정될 단어 앞에 강제 개행
-        let mut flush = |cur: &mut Vec<(char, TextStyle)>, words: &mut Vec<_>, brk: &mut bool| {
+        let flush = |cur: &mut Vec<(char, TextStyle)>, words: &mut Vec<_>, brk: &mut bool| {
             if !cur.is_empty() {
                 words.push((std::mem::take(cur), *brk));
                 *brk = false;
