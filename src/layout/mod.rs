@@ -1661,6 +1661,24 @@ mod tests {
     }
 
     #[test]
+    fn white_space_nowrap_stays_one_line() {
+        let long = "<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii</p>";
+        let height = |css: &str| -> f32 {
+            let root = crate::html::parse_dom(long.to_string());
+            let mut ss = crate::css::user_agent_stylesheet();
+            ss.rules.extend(crate::css::parse(css.to_string()).rules);
+            let styled = crate::style::style_tree(&root, &ss);
+            let mut vp: Dimensions = Default::default();
+            vp.content.width = 80.0;
+            let fs = fonts();
+            layout_tree(&styled, vp, &fs, &no_images()).dimensions.content.height
+        };
+        let normal = height("");
+        let nowrap = height("p { white-space: nowrap; }");
+        assert!(nowrap < normal, "nowrap 은 한 줄 → normal(여러 줄)보다 낮음: {} < {}", nowrap, normal);
+    }
+
+    #[test]
     fn table_row_respects_cell_width_attribute() {
         // 구글 검색 테이블 사례: 25% | auto | 25% (HTML width 속성)
         let d = flex_layout(

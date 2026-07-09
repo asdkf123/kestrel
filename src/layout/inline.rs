@@ -36,28 +36,49 @@ impl<'a> LayoutBox<'a> {
             italic: self.styled_node.is_italic(),
         };
 
+        // white-space: nowrap/pre 는 폭 기반 줄바꿈 안 함. pre 계열은 \n 을 강제 개행,
+        // 공백 보존. (상속 속성이라 self.styled_node 값이 곧 이 인라인 문맥의 값)
+        let ws = match self.styled_node.value("white-space") {
+            Some(Value::Keyword(k)) => k,
+            _ => "normal".to_string(),
+        };
+        let can_wrap = ws != "nowrap" && ws != "pre";
+        let keep_newlines = ws == "pre" || ws == "pre-wrap" || ws == "pre-line";
+        let keep_spaces = ws == "pre" || ws == "pre-wrap";
+
         let mut runs: Vec<(String, TextStyle)> = Vec::new();
         let mut hrefs: Vec<String> = Vec::new();
         for node in &self.inline_nodes {
             collect_node(node, base, &mut runs, &mut hrefs);
         }
 
-        let mut words: Vec<Vec<(char, TextStyle)>> = Vec::new();
+        // 단어 목록 + 각 단어 앞의 강제 개행 여부(pre 의 \n).
+        let mut words: Vec<(Vec<(char, TextStyle)>, bool)> = Vec::new();
         let mut cur: Vec<(char, TextStyle)> = Vec::new();
+        let mut break_before = false; // 다음에 확정될 단어 앞에 강제 개행
+        let mut flush = |cur: &mut Vec<(char, TextStyle)>, words: &mut Vec<_>, brk: &mut bool| {
+            if !cur.is_empty() {
+                words.push((std::mem::take(cur), *brk));
+                *brk = false;
+            }
+        };
         for (text, st) in &runs {
             for ch in text.chars() {
-                if ch.is_whitespace() {
-                    if !cur.is_empty() {
-                        words.push(std::mem::take(&mut cur));
+                if keep_newlines && ch == '\n' {
+                    flush(&mut cur, &mut words, &mut break_before);
+                    break_before = true; // 다음 단어(또는 빈 줄)는 개행 후
+                } else if ch.is_whitespace() {
+                    if keep_spaces {
+                        cur.push((ch, *st)); // 공백 보존 (들여쓰기 등)
+                    } else {
+                        flush(&mut cur, &mut words, &mut break_before); // 공백 접기 → 단어 경계
                     }
                 } else {
                     cur.push((ch, *st));
                 }
             }
         }
-        if !cur.is_empty() {
-            words.push(cur);
-        }
+        flush(&mut cur, &mut words, &mut break_before);
         if words.is_empty() {
             return;
         }
@@ -84,9 +105,11 @@ impl<'a> LayoutBox<'a> {
         // 줄별 시작 인덱스 + 폭 (center/right 정렬 후처리용): (glyph, link, deco, width)
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
 
-        for word in &words {
+        for (word, force_break) in &words {
             let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2).sum();
-            if pen_x > content_x && pen_x + word_w > content_x + content_w {
+            let need_wrap =
+                can_wrap && pen_x > content_x && pen_x + word_w > content_x + content_w;
+            if *force_break || need_wrap {
                 pen_x = content_x;
                 baseline += line_height;
                 lines += 1;
