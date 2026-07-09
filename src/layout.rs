@@ -165,6 +165,15 @@ impl<'a> LayoutBox<'a> {
         }
         self.calculate_height();
         self.add_list_marker(fonts);
+        // position: relative — 정상 흐름 위치를 유지한 채 시각적으로만 offset 이동
+        // (형제 배치엔 영향 없음). absolute/fixed 는 layout_children 에서 흐름 제거 처리
+        if self.position() == "relative" {
+            let dx = self.offset("left", "right");
+            let dy = self.offset("top", "bottom");
+            if dx != 0.0 || dy != 0.0 {
+                self.translate(dx, dy);
+            }
+        }
     }
 
     // <li> 앞에 리스트 마커 (콘텐츠 왼쪽 패딩 영역, 첫 줄 baseline 우측정렬).
@@ -329,30 +338,92 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    // 서브트리 전체를 dx 만큼 가로 이동 (중앙/우측 정렬 후처리)
-    fn translate_x(&mut self, dx: f32) {
+    // 서브트리 전체를 (dx, dy) 만큼 이동 (정렬/relative 위치 후처리)
+    fn translate(&mut self, dx: f32, dy: f32) {
         self.dimensions.content.x += dx;
+        self.dimensions.content.y += dy;
         for g in &mut self.glyphs {
             g.x += dx;
+            g.baseline_y += dy;
         }
         for (r, _) in &mut self.links {
             r.x += dx;
+            r.y += dy;
         }
         for (r, _) in &mut self.decorations {
             r.x += dx;
+            r.y += dy;
         }
         for c in &mut self.children {
-            c.translate_x(dx);
+            c.translate(dx, dy);
+        }
+    }
+
+    fn translate_x(&mut self, dx: f32) {
+        self.translate(dx, 0.0);
+    }
+
+    // position 키워드
+    fn position(&self) -> &'static str {
+        match self.styled_node.value("position") {
+            Some(Value::Keyword(s)) if s == "relative" => "relative",
+            Some(Value::Keyword(s)) if s == "absolute" => "absolute",
+            Some(Value::Keyword(s)) if s == "fixed" => "fixed",
+            _ => "static",
+        }
+    }
+
+    // top/left 등 오프셋 px (prop 우선, 없으면 반대편 opp 의 음수, 둘 다 없으면 0)
+    fn offset(&self, prop: &str, opp: &str) -> f32 {
+        match self.styled_node.value(prop) {
+            Some(Length(v, Px)) => v,
+            _ => match self.styled_node.value(opp) {
+                Some(Length(v, Px)) => -v,
+                _ => 0.0,
+            },
+        }
+    }
+
+    // 단일 오프셋 길이 (미지정 0)
+    fn offset_val(&self, prop: &str) -> f32 {
+        match self.styled_node.value(prop) {
+            Some(Length(v, Px)) => v,
+            _ => 0.0,
         }
     }
 
     fn layout_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let align = self.align();
-        let avail = self.dimensions.content.width;
+        // 컨테이너의 안정된 원점/폭 (height 만 흐름 중 누적)
+        let (cx, cy, avail) =
+            (self.dimensions.content.x, self.dimensions.content.y, self.dimensions.content.width);
         for child in &mut self.children {
+            // position: absolute/fixed — 흐름에서 제거. 컨테이닝 블록(=이 컨테이너,
+            // 정상적으론 가장 가까운 positioned 조상)의 패딩 박스 기준으로 배치.
+            let cpos = child.position();
+            if cpos == "absolute" || cpos == "fixed" {
+                let mut cb: Dimensions = Default::default();
+                cb.content.x = cx;
+                cb.content.y = cy;
+                cb.content.width = avail;
+                child.layout(cb, fonts, images);
+                let bw = child.dimensions.border_box().width;
+                let has = |p: &str| child.styled_node.value(p).is_some();
+                let cur = child.dimensions.border_box();
+                let tx = if has("right") && !has("left") {
+                    cx + avail - bw - child.offset_val("right")
+                } else if has("left") {
+                    cx + child.offset_val("left")
+                } else {
+                    cur.x
+                };
+                let ty = if has("top") { cy + child.offset_val("top") } else { cur.y };
+                child.translate(tx - cur.x, ty - cur.y);
+                continue; // 흐름 높이에 미반영
+            }
+            // 정상 흐름: 누적 높이가 반영된 live dimensions 로 스택
             let d = self.dimensions;
             child.layout(d, fonts, images);
-            // 부모가 center/right 이고 자식이 좁으면 (고정폭/이미지) 가로 정렬
             if align != "left" {
                 let cw = child.dimensions.border_box().width;
                 if cw < avail - 0.5 {
@@ -945,6 +1016,55 @@ mod tests {
         let fs = fonts();
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         lb.children.iter().map(|c| c.dimensions).collect()
+    }
+
+    #[test]
+    fn position_relative_offsets_without_affecting_siblings() {
+        let root = crate::html::parse_dom(
+            "<div class=\"a\"></div><div class=\"b\"></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".a { display: block; height: 20px; position: relative; top: 10px; left: 15px; } \
+             .b { display: block; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 300.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // a 는 (15, 10) 으로 이동
+        assert_eq!(lb.children[0].dimensions.content.x, 15.0);
+        assert_eq!(lb.children[0].dimensions.content.y, 10.0);
+        // b 는 a 의 정상 흐름 위치(y=20) 유지 — relative 는 형제에 영향 없음
+        assert_eq!(lb.children[1].dimensions.content.y, 20.0);
+    }
+
+    #[test]
+    fn position_absolute_out_of_flow_and_placed() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"abs\"></div><div class=\"flow\"></div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; position: relative; } \
+             .abs { display: block; position: absolute; top: 5px; right: 0; width: 40px; height: 30px; } \
+             .flow { display: block; height: 25px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 200.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // 단일 루트라 lb 자체가 wrap
+        assert_eq!(lb.dimensions.content.height, 25.0, "wrap 높이 = flow 만 (abs 흐름 제외)");
+        let abs = &lb.children[0];
+        // right:0 → x = 200 - 40 = 160, top:5 → y = 5
+        assert_eq!(abs.dimensions.content.x, 160.0);
+        assert_eq!(abs.dimensions.content.y, 5.0);
+        // flow 는 y=0 (abs 가 공간을 안 차지하므로 맨 위)
+        assert_eq!(lb.children[1].dimensions.content.y, 0.0);
     }
 
     #[test]
