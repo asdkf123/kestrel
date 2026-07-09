@@ -85,6 +85,8 @@ pub struct LayoutBox<'a> {
     pub decorations: Vec<(Rect, Color)>,
     // 리스트 마커 텍스트 (ol: "1." / ul: "•"). build 시 부모 리스트가 부여.
     pub list_marker: Option<String>,
+    // 콘텐츠의 실제 사용 폭 (shrink-to-fit float 배치용)
+    pub used_width: f32,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -100,6 +102,7 @@ impl<'a> LayoutBox<'a> {
             links: Vec::new(),
             decorations: Vec::new(),
             list_marker: None,
+            used_width: 0.0,
         }
     }
 
@@ -115,6 +118,7 @@ impl<'a> LayoutBox<'a> {
             links: Vec::new(),
             decorations: Vec::new(),
             list_marker: None,
+            used_width: 0.0,
         }
     }
 
@@ -276,15 +280,16 @@ impl<'a> LayoutBox<'a> {
         let auto = Keyword("auto".to_string());
         let zero = Length(0.0, Px);
 
-        let width = style.value("width").unwrap_or(auto.clone());
-        let margin_left = style.lookup("margin-left", "margin", &zero);
-        let margin_right = style.lookup("margin-right", "margin", &zero);
+        let avail = containing_block.content.width;
+        // 퍼센트 → px (컨테이닝 블록 content 폭 기준). auto 는 보존.
+        let width = len_px(style.value("width").unwrap_or(auto.clone()), avail);
+        let margin_left = len_px(style.lookup("margin-left", "margin", &zero), avail);
+        let margin_right = len_px(style.lookup("margin-right", "margin", &zero), avail);
         let border_left = style.lookup("border-left-width", "border-width", &zero).to_px();
         let border_right = style.lookup("border-right-width", "border-width", &zero).to_px();
-        let padding_left = style.lookup("padding-left", "padding", &zero).to_px();
-        let padding_right = style.lookup("padding-right", "padding", &zero).to_px();
+        let padding_left = len_px(style.lookup("padding-left", "padding", &zero), avail).to_px();
+        let padding_right = len_px(style.lookup("padding-right", "padding", &zero), avail).to_px();
         let extra = border_left + border_right + padding_left + padding_right;
-        let avail = containing_block.content.width;
 
         let (mut cw, mut ml, mut mr) = resolve_width(&width, &margin_left, &margin_right, extra, avail);
 
@@ -363,6 +368,21 @@ impl<'a> LayoutBox<'a> {
         self.translate(dx, 0.0);
     }
 
+    // 재레이아웃 전 누적 페인트 상태를 초기화 (glyphs/links/decorations 는 push 로
+    // 쌓이므로, float shrink-to-fit 2차 배치 시 중복 방지를 위해 서브트리를 비운다)
+    fn clear_render(&mut self) {
+        self.glyphs.clear();
+        self.links.clear();
+        self.decorations.clear();
+        self.image = None;
+        self.background_image = None;
+        self.dimensions = Default::default();
+        self.used_width = 0.0;
+        for c in &mut self.children {
+            c.clear_render();
+        }
+    }
+
     // position 키워드
     fn position(&self) -> &'static str {
         match self.styled_node.value("position") {
@@ -370,6 +390,15 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Keyword(s)) if s == "absolute" => "absolute",
             Some(Value::Keyword(s)) if s == "fixed" => "fixed",
             _ => "static",
+        }
+    }
+
+    // float 키워드
+    fn float(&self) -> &'static str {
+        match self.styled_node.value("float") {
+            Some(Value::Keyword(s)) if s == "left" => "left",
+            Some(Value::Keyword(s)) if s == "right" => "right",
+            _ => "none",
         }
     }
 
@@ -397,6 +426,17 @@ impl<'a> LayoutBox<'a> {
         // 컨테이너의 안정된 원점/폭 (height 만 흐름 중 누적)
         let (cx, cy, avail) =
             (self.dimensions.content.x, self.dimensions.content.y, self.dimensions.content.width);
+        // 실용적 float 밴드 상태: 연속된 float 들이 현재 흐름 y 에서 좌/우로 패킹된다.
+        // fl_next: 다음 left float 이 놓일 왼쪽 x, fr_next: 다음 right float 의 오른쪽 경계.
+        // band_bottom: 밴드 내 float 들의 최대 하단. 이후 정상 블록은 밴드 아래로 clear.
+        let mut fl_next = cx;
+        let mut fr_next = cx + avail;
+        let mut band_top = cy;
+        let mut band_bottom = cy;
+        let mut band_active = false;
+        // 이 컨테이너가 float 로 shrink-to-fit 될 때의 내용 폭: float 밴드가
+        // 실제로 차지한 가로 범위 (좌 float 누적 + 우 float 누적).
+        let mut float_extent = 0.0f32;
         for child in &mut self.children {
             // position: absolute/fixed — 흐름에서 제거. 컨테이닝 블록(=이 컨테이너,
             // 정상적으론 가장 가까운 positioned 조상)의 패딩 박스 기준으로 배치.
@@ -421,6 +461,59 @@ impl<'a> LayoutBox<'a> {
                 child.translate(tx - cur.x, ty - cur.y);
                 continue; // 흐름 높이에 미반영
             }
+
+            // float: left/right — 밴드에 좌/우로 패킹 (shrink-to-fit).
+            let cfloat = child.float();
+            if cfloat != "none" {
+                let flow_y = self.dimensions.content.height + cy;
+                if !band_active {
+                    band_active = true;
+                    band_top = flow_y;
+                    band_bottom = flow_y;
+                    fl_next = cx;
+                    fr_next = cx + avail;
+                }
+                let avail_band = (fr_next - fl_next).max(0.0);
+                // 1차(probe) 배치: 밴드 잔여 폭으로 레이아웃해 내용 폭(used_width) 측정
+                let mut probe: Dimensions = Default::default();
+                probe.content.x = fl_next;
+                probe.content.y = band_top;
+                probe.content.width = avail_band;
+                child.layout(probe, fonts, images);
+                // 점유 폭 결정: 명시 width(퍼센트 포함, 이미 px)면 border box, 아니면 shrink-to-fit
+                let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
+                let bp = child.dimensions.border_box().width - child.dimensions.content.width;
+                let ow = if explicit {
+                    child.dimensions.border_box().width.min(avail_band)
+                } else {
+                    (child.used_width + bp).min(avail_band)
+                };
+                // 2차 배치: 확정 폭·위치로 재배치 (1차 페인트 상태는 비우고 다시)
+                let x = if cfloat == "left" { fl_next } else { fr_next - ow };
+                child.clear_render();
+                let mut cb: Dimensions = Default::default();
+                cb.content.x = x;
+                cb.content.y = band_top;
+                cb.content.width = ow;
+                child.layout(cb, fonts, images);
+                if cfloat == "left" {
+                    fl_next += ow;
+                } else {
+                    fr_next -= ow;
+                }
+                float_extent = float_extent.max((fl_next - cx) + ((cx + avail) - fr_next));
+                band_bottom = band_bottom.max(band_top + child.dimensions.margin_box().height);
+                continue; // 정상 흐름 높이엔 직접 미반영 (밴드로 관리)
+            }
+
+            // 정상 블록: 앞선 float 밴드가 있으면 그 아래로 clear
+            if band_active {
+                let below = band_bottom - cy;
+                if below > self.dimensions.content.height {
+                    self.dimensions.content.height = below;
+                }
+                band_active = false;
+            }
             // 정상 흐름: 누적 높이가 반영된 live dimensions 로 스택
             let d = self.dimensions;
             child.layout(d, fonts, images);
@@ -433,6 +526,21 @@ impl<'a> LayoutBox<'a> {
             }
             self.dimensions.content.height += child.dimensions.margin_box().height;
         }
+        // float 로 끝난 경우 밴드 높이를 컨테이너에 반영
+        if band_active {
+            let below = band_bottom - cy;
+            if below > self.dimensions.content.height {
+                self.dimensions.content.height = below;
+            }
+        }
+        // shrink-to-fit float 부모용 내용 폭: 정상 자식의 최대 폭과
+        // float 밴드가 차지한 가로 범위 중 큰 값.
+        let child_max = self
+            .children
+            .iter()
+            .map(|c| c.dimensions.border_box().width)
+            .fold(0.0f32, f32::max);
+        self.used_width = child_max.max(float_extent);
     }
 
     // flexbox 부분 지원: 단일 행(row, nowrap). 고정 폭 아이템은 그대로,
@@ -634,12 +742,23 @@ impl<'a> LayoutBox<'a> {
         }
 
         self.dimensions.content.height = lines as f32 * line_height;
+        // shrink-to-fit float 용: 가장 긴 줄 폭을 내용 폭으로 노출
+        self.used_width = line_bounds.iter().map(|b| b.3).fold(0.0f32, f32::max);
     }
 
     fn calculate_height(&mut self) {
         if let Some(Length(h, Px)) = self.styled_node.value("height") {
             self.dimensions.content.height = h;
         }
+    }
+}
+
+// 퍼센트 길이를 컨테이닝 블록 폭 기준 px 로 해석. auto/px/기타는 그대로.
+// (모든 퍼센트 — 세로 margin/padding 포함 — 은 CSS 상 컨테이닝 블록 '폭' 기준)
+fn len_px(v: Value, pct_base: f32) -> Value {
+    match v {
+        Length(f, crate::css::Unit::Percent) => Length(pct_base * f / 100.0, Px),
+        other => other,
     }
 }
 
@@ -1117,6 +1236,83 @@ mod tests {
         assert_eq!(d[0].content.width, 50.0);
         assert_eq!(d[1].content.x, 50.0, "두 번째 아이템은 첫 아이템 오른쪽");
         assert_eq!(d[0].content.y, d[1].content.y, "같은 행 = 같은 y");
+    }
+
+    #[test]
+    fn percentage_width_resolves_against_container() {
+        let root = crate::html::parse_dom("<div class=\"half\"></div>".to_string());
+        let ss = crate::css::parse(
+            ".half { display: block; width: 50%; height: 10px; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        assert_eq!(lb.dimensions.content.width, 200.0, "50% of 400 = 200");
+    }
+
+    #[test]
+    fn float_left_packs_side_by_side() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .a { display: block; float: left; width: 100px; height: 30px; } \
+             .b { display: block; float: left; width: 80px; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let a = &lb.children[0];
+        let b = &lb.children[1];
+        assert_eq!(a.dimensions.content.x, 0.0, "첫 left float 은 왼쪽");
+        assert_eq!(b.dimensions.content.x, 100.0, "둘째 left float 은 첫 것 오른쪽");
+        assert_eq!(a.dimensions.content.y, b.dimensions.content.y, "같은 밴드 = 같은 y");
+    }
+
+    #[test]
+    fn float_right_anchors_right_edge() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"r\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .r { display: block; float: right; width: 100px; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let r = &lb.children[0];
+        assert_eq!(r.dimensions.content.x, 300.0, "float:right → 오른쪽 정렬 (400-100)");
+    }
+
+    #[test]
+    fn float_band_clears_following_block() {
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"f\"></div><div class=\"after\"></div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .f { display: block; float: left; width: 100px; height: 40px; } \
+             .after { display: block; height: 15px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        // after 는 float 밴드(높이 40) 아래로 clear
+        assert_eq!(lb.children[1].dimensions.content.y, 40.0, "정상 블록은 float 밴드 아래");
     }
 
     #[test]

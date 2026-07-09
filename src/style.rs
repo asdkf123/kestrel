@@ -250,10 +250,10 @@ fn style_node<'a>(
                     values.insert("text-align".to_string(), a.clone());
                 }
             }
-            // font-size 외 속성의 상대 단위는 아직 미해석 → 드롭 (미지원과 동일: auto 취급)
+            // font-size 외 속성의 em/rem 은 아직 미해석 → 드롭 (미지원과 동일: auto 취급).
+            // 퍼센트는 레이아웃(calculate_width)이 컨테이닝 블록 폭 기준으로 해석하므로 보존.
             values.retain(|k, v| {
-                k == "font-size"
-                    || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem | Unit::Percent))
+                k == "font-size" || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem))
             });
             let my_color = values.get("color").cloned();
             let my_align = values.get("text-align").cloned();
@@ -442,11 +442,13 @@ mod tests {
     }
 
     #[test]
-    fn relative_units_dropped_outside_font_size() {
+    fn em_rem_dropped_but_percent_kept_for_layout() {
         let root = crate::html::parse_dom("<div></div>".to_string());
         let ss = crate::css::parse("div { width: 50%; margin-top: 2em; }".to_string());
         let styled = style_tree(&root, &ss);
-        assert_eq!(styled.value("width"), None, "width % 는 미해석 → 드롭(auto)");
+        // 퍼센트 width 는 보존 → 레이아웃이 컨테이닝 블록 폭 기준으로 해석
+        assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Percent)));
+        // em/rem 은 여전히 미해석 → 드롭
         assert_eq!(styled.value("margin-top"), None);
     }
 
