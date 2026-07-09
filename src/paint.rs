@@ -296,7 +296,7 @@ pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
     // (스택 레벨, 아이템) 수집 후 레벨로 안정 정렬 → 높은 z-index 가 위에 그려짐.
     // 같은 레벨은 문서 순서 유지(안정 정렬). 정식 스태킹 컨텍스트의 근사.
     let mut buf: Vec<(i32, DisplayItem)> = Vec::new();
-    collect_items(root, 0, &mut buf);
+    collect_items(root, 0, None, &mut buf);
     buf.sort_by_key(|(z, _)| *z);
     buf.into_iter().map(|(_, it)| it).collect()
 }
@@ -314,7 +314,73 @@ fn stack_level(lb: &LayoutBox, parent_z: i32) -> i32 {
     parent_z
 }
 
-fn collect_items(layout_box: &LayoutBox, parent_z: i32, buf: &mut Vec<(i32, DisplayItem)>) {
+// overflow 가 hidden/clip/scroll/auto 면 자손을 이 박스로 클리핑.
+fn overflow_clips(lb: &LayoutBox) -> bool {
+    for prop in ["overflow", "overflow-x", "overflow-y"] {
+        if let Some(Value::Keyword(k)) = lb.styled_node.value(prop) {
+            if k == "hidden" || k == "clip" || k == "scroll" || k == "auto" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn rect_intersect(a: Rect, b: Rect) -> Option<Rect> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.width).min(b.x + b.width);
+    let y1 = (a.y + a.height).min(b.y + b.height);
+    if x1 > x0 && y1 > y0 {
+        Some(Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
+    } else {
+        None
+    }
+}
+
+// 클립 사각형에 아이템을 맞춰 자른다. 사각형/이미지는 교집합, 글리프는 완전히
+// 밖이면 컬링(부분 픽셀 클립은 근사로 생략). clip=None 이면 그대로.
+fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
+    let Some(c) = clip else { return Some(item) };
+    match item {
+        DisplayItem::Rect { color, rect } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Rect { color, rect: r })
+        }
+        DisplayItem::Image { image, rect } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r })
+        }
+        DisplayItem::RoundRect { color, rect, radius } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radius })
+        }
+        DisplayItem::Shadow { color, rect, radius, blur } => {
+            // 그림자는 blur 만큼 넉넉히 — 경계 밖이면 컬링만
+            let expanded = Rect {
+                x: rect.x - blur,
+                y: rect.y - blur,
+                width: rect.width + 2.0 * blur,
+                height: rect.height + 2.0 * blur,
+            };
+            rect_intersect(expanded, c).map(|_| DisplayItem::Shadow { color, rect, radius, blur })
+        }
+        DisplayItem::Glyph(gi) => {
+            // 글리프 대략 bbox: x..x+px, baseline 위 1.1em ~ 아래 0.4em
+            let gbox = Rect {
+                x: gi.x,
+                y: gi.baseline_y - 1.1 * gi.px,
+                width: gi.px,
+                height: 1.5 * gi.px,
+            };
+            rect_intersect(gbox, c).map(|_| DisplayItem::Glyph(gi))
+        }
+    }
+}
+
+fn collect_items(
+    layout_box: &LayoutBox,
+    parent_z: i32,
+    clip: Option<Rect>,
+    buf: &mut Vec<(i32, DisplayItem)>,
+) {
     let z = stack_level(layout_box, parent_z);
     let mut local: Vec<DisplayItem> = Vec::new();
     // 그림자 → 배경/테두리(border-radius 포함) → 배경이미지 → 이미지 → 글리프 → 장식
@@ -332,11 +398,24 @@ fn collect_items(layout_box: &LayoutBox, parent_z: i32, buf: &mut Vec<(i32, Disp
     for (rect, color) in &layout_box.decorations {
         local.push(DisplayItem::Rect { color: *color, rect: *rect });
     }
+    // 이 박스 자신의 아이템은 부모 클립으로 자름
     for it in local {
-        buf.push((z, it));
+        if let Some(clipped) = clip_apply(it, clip) {
+            buf.push((z, clipped));
+        }
     }
+    // 자손 클립: overflow 면 이 박스 padding box 와 교집합
+    let child_clip = if overflow_clips(layout_box) {
+        let pad = layout_box.dimensions.padding_box();
+        match clip {
+            Some(c) => rect_intersect(c, pad).or(Some(Rect::default())),
+            None => Some(pad),
+        }
+    } else {
+        clip
+    };
     for child in &layout_box.children {
-        collect_items(child, z, buf);
+        collect_items(child, z, child_clip, buf);
     }
 }
 

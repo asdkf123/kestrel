@@ -1839,6 +1839,31 @@ mod tests {
     }
 
     #[test]
+    fn overflow_hidden_clips_child() {
+        // overflow:hidden 부모(100px) 안의 넓은 자식(300px) 배경이 부모로 클리핑됨
+        let root = crate::html::parse_dom(
+            "<div class=\"clip\"><div class=\"big\"></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".clip { display: block; width: 100px; height: 50px; overflow: hidden; } \
+             .big { display: block; width: 300px; height: 50px; background-color: #ff0000; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let dl = crate::paint::build_display_list(&lb);
+        let red = dl.iter().find_map(|it| match it {
+            crate::paint::DisplayItem::Rect { color, rect } if color.r == 255 && color.b == 0 => Some(*rect),
+            _ => None,
+        });
+        assert!(red.is_some(), "빨강 배경 사각형이 있어야");
+        assert!(red.unwrap().width <= 100.5, "300px 자식이 100px 부모로 클리핑: {}", red.unwrap().width);
+    }
+
+    #[test]
     fn z_index_paints_higher_on_top() {
         // 문서상 먼저인 A(z:2)가 나중인 B(z:1)보다 디스플레이 리스트 뒤(=위)에 와야 함
         let root = crate::html::parse_dom(
