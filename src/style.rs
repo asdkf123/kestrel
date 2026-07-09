@@ -194,6 +194,12 @@ fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &Rule
             values.insert(declaration.name.clone(), declaration.value.clone());
         }
     }
+    // 인라인 style="..." 속성: 어떤 선택자보다 우선 (마지막에 얹어 이김)
+    if let Some(style) = elem.attributes.get("style") {
+        for declaration in crate::css::parse_inline_style(style) {
+            values.insert(declaration.name, declaration.value);
+        }
+    }
     values
 }
 
@@ -466,6 +472,21 @@ mod tests {
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Percent)));
         // em/rem 은 여전히 미해석 → 드롭
         assert_eq!(styled.value("margin-top"), None);
+    }
+
+    #[test]
+    fn inline_style_attribute_beats_selectors() {
+        let root = crate::html::parse_dom(
+            "<div id=\"a\" style=\"color: #00ff00; width: 5px\"></div>".to_string(),
+        );
+        // #id 선택자가 있어도 인라인 style 이 이겨야 함 (최고 우선순위)
+        let ss = crate::css::parse("#a { color: #ff0000; width: 99px; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(
+            styled.value("color"),
+            Some(Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 }))
+        );
+        assert_eq!(styled.value("width"), Some(Value::Length(5.0, Unit::Px)));
     }
 
     #[test]

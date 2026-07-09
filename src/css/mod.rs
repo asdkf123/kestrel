@@ -109,6 +109,13 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
     Stylesheet { rules: parser.parse_rules() }
 }
 
+// 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
+// 캐스케이드에서 어떤 선택자보다 높은 우선순위 (스타일 적용 시 마지막에 얹음).
+pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
+    let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0 };
+    parser.parse_declarations()
+}
+
 // UA 기본 스타일시트. HTML 표준 §15 Rendering 을 근거로 함
 // (https://html.spec.whatwg.org/multipage/rendering.html). 표준은 폼 컨트롤을
 // appearance:auto(네이티브 위젯)로 두지만, 우리는 appearance 미구현이라 기본
