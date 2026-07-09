@@ -165,13 +165,17 @@ impl<'a> LayoutBox<'a> {
                 self.background_image = Some(idx);
             }
         }
-        let is_row = matches!(&self.styled_node.node.node_type,
-            NodeType::Element(e) if e.tag_name == "tr");
+        let tag = match &self.styled_node.node.node_type {
+            NodeType::Element(e) => e.tag_name.as_str(),
+            _ => "",
+        };
         if matches!(self.styled_node.display(), Display::Flex) {
             self.layout_flex_children(fonts, images);
         } else if matches!(self.styled_node.display(), Display::Grid) {
             self.layout_grid_children(fonts, images);
-        } else if is_row {
+        } else if tag == "table" {
+            self.layout_table(fonts, images);
+        } else if tag == "tr" {
             self.layout_table_row(fonts, images);
         } else {
             self.layout_children(fonts, images);
@@ -717,9 +721,128 @@ impl<'a> LayoutBox<'a> {
         max_w
     }
 
+    // <table>: 모든 행의 셀을 모아 공통 열 폭을 계산해 열을 정렬한다.
+    // 열 폭 = 지정 폭(있으면) 아니면 내용 기반(max-content) 선호 폭. 남는/부족한
+    // 폭은 auto 열에 선호 비율로 분배해 테이블 폭을 채움. 행 높이 = 최고 셀.
+    // 미지원: colspan/rowspan, border-collapse, border-spacing.
+    fn layout_table(&mut self, fonts: &FontStack, images: &ImageMap) {
+        let d = self.dimensions;
+        let (ox, oy, avail) = (d.content.x, d.content.y, d.content.width);
+        // 행 위치: 직속 tr, 또는 tbody/thead/tfoot 안의 tr
+        let mut rows: Vec<(usize, Option<usize>)> = Vec::new();
+        for i in 0..self.children.len() {
+            if is_tr(&self.children[i]) {
+                rows.push((i, None));
+            } else if is_row_group(&self.children[i]) {
+                for j in 0..self.children[i].children.len() {
+                    if is_tr(&self.children[i].children[j]) {
+                        rows.push((i, Some(j)));
+                    }
+                }
+            }
+        }
+        if rows.is_empty() {
+            self.layout_children(fonts, images);
+            return;
+        }
+        // 행 박스 접근 (매크로 대용 인라인 매치)
+        macro_rules! row_at {
+            ($self:ident, $i:expr, $j:expr) => {
+                match $j {
+                    None => &mut $self.children[$i],
+                    Some(j) => &mut $self.children[$i].children[j],
+                }
+            };
+        }
+        // 1) 열 수 + 열별 선호/지정 폭 측정 (셀을 avail 로 probe 레이아웃해 used_width 얻음)
+        let ncols = rows.iter().map(|&(i, j)| row_at!(self, i, j).children.len()).max().unwrap_or(0);
+        if ncols == 0 {
+            self.dimensions.content.height = 0.0;
+            return;
+        }
+        let mut col_pref = vec![0.0f32; ncols];
+        let mut col_fixed: Vec<Option<f32>> = vec![None; ncols];
+        for &(i, j) in &rows {
+            let row = row_at!(self, i, j);
+            for (c, cell) in row.children.iter_mut().enumerate() {
+                if c >= ncols {
+                    break;
+                }
+                if let Some(w) = cell_width(cell, avail) {
+                    col_fixed[c] = Some(col_fixed[c].map_or(w, |e: f32| e.max(w)));
+                }
+                let mut probe: Dimensions = Default::default();
+                probe.content.x = ox;
+                probe.content.y = oy;
+                probe.content.width = avail;
+                cell.layout(probe, fonts, images);
+                let bp = cell.dimensions.border_box().width - cell.dimensions.content.width;
+                col_pref[c] = col_pref[c].max(cell.used_width + bp);
+            }
+        }
+        // 2) 열 폭 확정: 고정 열은 그대로, auto 열은 남은 폭을 선호 비율로 분배(테이블 폭 채움)
+        let total_fixed: f32 = col_fixed.iter().flatten().sum();
+        let auto_cols: Vec<usize> = (0..ncols).filter(|&c| col_fixed[c].is_none()).collect();
+        let auto_pref_sum: f32 = auto_cols.iter().map(|&c| col_pref[c]).sum();
+        let remaining = (avail - total_fixed).max(0.0);
+        let mut col_w = vec![0.0f32; ncols];
+        for c in 0..ncols {
+            col_w[c] = match col_fixed[c] {
+                Some(w) => w,
+                None => {
+                    if auto_pref_sum > 0.0 {
+                        remaining * col_pref[c] / auto_pref_sum
+                    } else if !auto_cols.is_empty() {
+                        remaining / auto_cols.len() as f32
+                    } else {
+                        0.0
+                    }
+                }
+            };
+        }
+        let mut col_x = vec![ox; ncols];
+        {
+            let mut x = ox;
+            for c in 0..ncols {
+                col_x[c] = x;
+                x += col_w[c];
+            }
+        }
+        // 3) 행별 배치 (공통 열 폭). 측정 패스 글리프는 clear 후 재배치. 행 높이=최고 셀.
+        let mut y = oy;
+        for &(i, j) in &rows {
+            let row = row_at!(self, i, j);
+            let mut row_h = 0.0f32;
+            for (c, cell) in row.children.iter_mut().enumerate() {
+                if c >= ncols {
+                    break;
+                }
+                cell.clear_render();
+                let mut cb: Dimensions = Default::default();
+                cb.content.x = col_x[c];
+                cb.content.y = y;
+                cb.content.width = col_w[c];
+                cell.layout(cb, fonts, images);
+                row_h = row_h.max(cell.dimensions.margin_box().height);
+            }
+            // 셀 높이를 행 높이로 stretch (세로 정렬 top 근사)
+            for cell in row.children.iter_mut() {
+                let vextra = cell.dimensions.margin_box().height - cell.dimensions.content.height;
+                cell.dimensions.content.height = (row_h - vextra).max(cell.dimensions.content.height);
+            }
+            // 행 박스 자체 크기 (행 배경/테두리용)
+            row.dimensions.content.x = ox;
+            row.dimensions.content.y = y;
+            row.dimensions.content.width = avail;
+            row.dimensions.content.height = row_h;
+            y += row_h;
+        }
+        self.dimensions.content.height = (y - oy).max(0.0);
+    }
+
     // <tr> 의 셀(td/th)을 가로 컬럼으로 배치. 셀의 지정 폭(CSS width 또는 HTML
     // width 속성, px/%)은 존중하고, 지정 없는 셀은 남은 폭을 균등 분배.
-    // 미지원: colspan/rowspan, 내용 기반 자동 폭. 행 높이 = 최고 셀.
+    // (테이블 안의 tr 은 layout_table 이 처리; 이건 고아 tr 용)
     fn layout_table_row(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
@@ -768,6 +891,15 @@ impl<'a> LayoutBox<'a> {
 }
 
 
+
+fn is_tr(b: &LayoutBox) -> bool {
+    matches!(&b.styled_node.node.node_type, NodeType::Element(e) if e.tag_name == "tr")
+}
+
+fn is_row_group(b: &LayoutBox) -> bool {
+    matches!(&b.styled_node.node.node_type,
+        NodeType::Element(e) if e.tag_name == "tbody" || e.tag_name == "thead" || e.tag_name == "tfoot")
+}
 
 // 테이블 셀의 지정 폭(px). CSS width(px/%) 우선, 없으면 HTML width 속성(px/%).
 // 지정 없으면 None(auto → 남은 폭 균등 분배 대상).
@@ -1750,6 +1882,34 @@ mod tests {
         let normal = height("");
         let nowrap = height("p { white-space: nowrap; }");
         assert!(nowrap < normal, "nowrap 은 한 줄 → normal(여러 줄)보다 낮음: {} < {}", nowrap, normal);
+    }
+
+    #[test]
+    fn table_columns_align_across_rows() {
+        // 내용 폭이 다른 셀이 행마다 있어도 열은 공통 폭으로 정렬돼야 함
+        let root = crate::html::parse_dom(
+            "<table><tbody><tr><td>a</td><td>bbbbbbbbbb</td></tr><tr><td>cccc</td><td>d</td></tr></tbody></table>"
+                .to_string(),
+        );
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(crate::css::parse("table { width: 300px; } td { padding: 0; }".to_string()).rules);
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let tbody = &lb.children[0];
+        let r0 = &tbody.children[0];
+        let r1 = &tbody.children[1];
+        assert_eq!(r0.children[1].dimensions.content.x, r1.children[1].dimensions.content.x, "2열 x 정렬");
+        assert_eq!(
+            r0.children[1].dimensions.content.width, r1.children[1].dimensions.content.width,
+            "2열 폭 동일"
+        );
+        assert_eq!(
+            r0.children[0].dimensions.content.width, r1.children[0].dimensions.content.width,
+            "1열 폭 동일"
+        );
     }
 
     #[test]
