@@ -1,0 +1,774 @@
+// call_native: 모든 네이티브(내장) 메서드/함수 디스패치. interp/mod.rs 에서 분리.
+use super::*;
+use super::value::*;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+impl Interp {
+    pub(super) fn call_native(
+        &mut self,
+        n: Native,
+        recv: Option<Value>,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        match n {
+            Native::ConsoleLog => {
+                let line = args.iter().map(to_display).collect::<Vec<_>>().join(" ");
+                self.console.push(line);
+                Ok(Value::Undefined)
+            }
+            Native::ArrayPush => match recv {
+                Some(Value::Arr(a)) => {
+                    for v in args {
+                        a.borrow_mut().push(v);
+                    }
+                    Ok(Value::Num(a.borrow().len() as f64))
+                }
+                _ => Err("push 는 배열 메서드".to_string()),
+            },
+            Native::GetElementById => self.dom_get_element_by_id(args),
+            Native::AddEventListener => match recv {
+                Some(Value::Dom(id)) => {
+                    let event = args.first().map(to_display).unwrap_or_default();
+                    if let Some(f @ Value::Fn(_)) = args.get(1) {
+                        self.handlers.push((id, event, f.clone()));
+                    }
+                    Ok(Value::Undefined)
+                }
+                _ => Err("addEventListener 는 요소 메서드".to_string()),
+            },
+            // document/window.addEventListener — 전역 핸들러로 등록 (recv 무시)
+            Native::AddGlobalListener => {
+                let event = args.first().map(to_display).unwrap_or_default();
+                if let Some(f) = args.get(1) {
+                    if is_callable(f) {
+                        self.global_handlers.push((event, f.clone()));
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            // fn.call(thisArg, a, b, ...) — recv 가 대상 함수
+            Native::FnCall => {
+                let target = recv.ok_or("call 대상 함수 없음")?;
+                let mut it = args.into_iter();
+                let this_arg = it.next().unwrap_or(Value::Undefined);
+                self.call_value(target, Some(this_arg), it.collect())
+            }
+            // fn.apply(thisArg, [args]) — 두 번째 인자는 배열
+            Native::FnApply => {
+                let target = recv.ok_or("apply 대상 함수 없음")?;
+                let mut it = args.into_iter();
+                let this_arg = it.next().unwrap_or(Value::Undefined);
+                let call_args = match it.next() {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                self.call_value(target, Some(this_arg), call_args)
+            }
+            // fn.bind(thisArg, ...partial) → 바운드 함수
+            Native::FnBind => {
+                let target = recv.ok_or("bind 대상 함수 없음")?;
+                let mut it = args.into_iter();
+                let this_arg = it.next().unwrap_or(Value::Undefined);
+                let partial: Vec<Value> = it.collect();
+                Ok(Value::Bound(Rc::new((target, this_arg, partial))))
+            }
+            Native::FunctionCtor => self.make_function(args),
+            // Object.defineProperty(target, key, {get|value}) — 접근자/값 정의
+            Native::ObjectDefineProperty => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                let entry = if let Some(Value::Obj(d)) = args.get(2) {
+                    let d = d.borrow();
+                    if let Some(g) = d.get("get") {
+                        Some(Value::Getter(Rc::new(g.clone())))
+                    } else {
+                        d.get("value").cloned()
+                    }
+                } else {
+                    None
+                };
+                if let Some(val) = entry {
+                    match &target {
+                        Value::Obj(map) => {
+                            map.borrow_mut().insert(key, val);
+                        }
+                        // require.n 은 함수에 접근자를 정의 (getter.a = ...)
+                        Value::Fn(func) => {
+                            func.props.borrow_mut().insert(key, val);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(target)
+            }
+            // Object.create(proto) — proto 의 얕은 복사 기반 새 객체 (관용)
+            Native::ObjectCreate => {
+                let mut map = HashMap::new();
+                if let Some(Value::Obj(proto)) = args.first() {
+                    for (k, v) in proto.borrow().iter() {
+                        map.insert(k.clone(), v.clone());
+                    }
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
+            // freeze 는 그대로 반환(불변성 미구현), getPrototypeOf 는 null
+            Native::ObjectFreeze => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
+            Native::ObjectGetPrototypeOf => Ok(Value::Null),
+            // Object.prototype.hasOwnProperty.call(obj, key) / obj.hasOwnProperty(key)
+            Native::HasOwnProperty => {
+                let key = args.first().map(to_display).unwrap_or_default();
+                let has = match &recv {
+                    Some(Value::Obj(m)) => m.borrow().contains_key(&key),
+                    Some(Value::Arr(a)) => {
+                        key.parse::<usize>().map(|i| i < a.borrow().len()).unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                Ok(Value::Bool(has))
+            }
+            // Object.prototype.toString.call(x) → "[object Array]" 등 (타입 판별 관용)
+            Native::ObjToString => {
+                let tag = match &recv {
+                    Some(Value::Arr(_)) => "Array",
+                    None | Some(Value::Undefined) => "Undefined",
+                    Some(Value::Null) => "Null",
+                    Some(Value::Str(_)) => "String",
+                    Some(Value::Num(_)) => "Number",
+                    Some(Value::Bool(_)) => "Boolean",
+                    Some(Value::Fn(_))
+                    | Some(Value::Native(_))
+                    | Some(Value::Bound(_))
+                    | Some(Value::Class(_)) => "Function",
+                    Some(Value::MapVal(_)) => "Map",
+                    Some(Value::SetVal(_)) => "Set",
+                    _ => "Object",
+                };
+                Ok(Value::Str(format!("[object {}]", tag)))
+            }
+            Native::ReturnFalse => Ok(Value::Bool(false)),
+            // obj[Symbol.iterator]() → 반복자 객체 { next(), value/done }
+            Native::MakeIter => {
+                let items: Vec<Value> = match &recv {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    Some(Value::Str(s)) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
+                    Some(Value::SetVal(s)) => s.borrow().clone(),
+                    Some(Value::MapVal(m)) => m
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let mut it = HashMap::new();
+                it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
+                it.insert("__i".to_string(), Value::Num(0.0));
+                it.insert("next".to_string(), Value::Native(Native::IterNext));
+                Ok(Value::Obj(Rc::new(RefCell::new(it))))
+            }
+            // 반복자.next() → { value, done }
+            Native::IterNext => {
+                let mut res = HashMap::new();
+                if let Some(Value::Obj(o)) = &recv {
+                    let (items, i) = {
+                        let b = o.borrow();
+                        (b.get("__items").cloned(), b.get("__i").cloned())
+                    };
+                    if let (Some(Value::Arr(items)), Some(Value::Num(i))) = (items, i) {
+                        let idx = i as usize;
+                        let len = items.borrow().len();
+                        if idx < len {
+                            res.insert("value".to_string(), items.borrow()[idx].clone());
+                            res.insert("done".to_string(), Value::Bool(false));
+                            o.borrow_mut().insert("__i".to_string(), Value::Num((idx + 1) as f64));
+                        } else {
+                            res.insert("value".to_string(), Value::Undefined);
+                            res.insert("done".to_string(), Value::Bool(true));
+                        }
+                    }
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(res))))
+            }
+            Native::MapCtor => self.make_map(args),
+            Native::SetCtor => self.make_set(args),
+            Native::ErrorCtor(name) => {
+                let mut map = HashMap::new();
+                map.insert("name".to_string(), Value::Str(name.to_string()));
+                map.insert(
+                    "message".to_string(),
+                    Value::Str(args.first().map(to_display).unwrap_or_default()),
+                );
+                map.insert("stack".to_string(), Value::Str(String::new()));
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
+            Native::Map(op) => {
+                let Some(Value::MapVal(m)) = recv else {
+                    return Err("Map 메서드".to_string());
+                };
+                self.map_method(m, op, args)
+            }
+            Native::Set(op) => {
+                let Some(Value::SetVal(s)) = recv else {
+                    return Err("Set 메서드".to_string());
+                };
+                Ok(self.set_method(s, op, args))
+            }
+            Native::CreateElement => {
+                let tag = args.first().map(to_display).unwrap_or_default();
+                if tag.is_empty() {
+                    return Err("createElement 에 태그 이름이 필요".to_string());
+                }
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_element(&tag)))
+            }
+            Native::CreateTextNode => {
+                let text = args.first().map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_text(text)))
+            }
+            // document.body/head/documentElement (라이브 접근자)
+            Native::DocQuery(tag) => {
+                let dom = self.dom_arena()?;
+                let root = dom.root;
+                Ok(find_tag(dom, root, tag).map(Value::Dom).unwrap_or(Value::Null))
+            }
+            // parent.insertBefore(newNode, referenceNode)
+            Native::InsertBefore => match (recv, args.first()) {
+                (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
+                    let child = *child;
+                    let reference = match args.get(1) {
+                        Some(Value::Dom(r)) => Some(*r),
+                        _ => None,
+                    };
+                    let dom = self.dom_arena()?;
+                    dom.insert_before(parent, child, reference);
+                    Ok(Value::Dom(child))
+                }
+                _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
+            },
+            Native::AppendChild => match (recv, args.first()) {
+                (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
+                    let child = *child;
+                    let dom = self.dom_arena()?;
+                    dom.append_child(parent, child);
+                    Ok(Value::Dom(child))
+                }
+                _ => Err("appendChild 는 요소 인자가 필요".to_string()),
+            },
+            Native::RemoveElement => match recv {
+                Some(Value::Dom(id)) => {
+                    let dom = self.dom_arena()?;
+                    dom.detach(id);
+                    Ok(Value::Undefined)
+                }
+                _ => Err("remove 는 요소 메서드".to_string()),
+            },
+            Native::RemoveAttribute => {
+                if let Some(Value::Dom(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                        e.attributes.remove(&name);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::HasAttribute => {
+                let has = if let Some(Value::Dom(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    matches!(&dom.get(id).node_type,
+                        crate::dom::NodeType::Element(e) if e.attributes.contains_key(&name))
+                } else {
+                    false
+                };
+                Ok(Value::Bool(has))
+            }
+            Native::RemoveChild => {
+                // parent.removeChild(child) → child 를 트리에서 분리, child 반환
+                let child = args.into_iter().next().unwrap_or(Value::Undefined);
+                if let Value::Dom(cid) = child {
+                    let dom = self.dom_arena()?;
+                    dom.detach(cid);
+                }
+                Ok(child)
+            }
+            Native::SetAttribute => match recv {
+                Some(Value::Dom(id)) => {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let value = args.get(1).map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                        e.attributes.insert(name, value);
+                    }
+                    Ok(Value::Undefined)
+                }
+                _ => Err("setAttribute 는 요소 메서드".to_string()),
+            },
+            Native::QuerySelector | Native::QuerySelectorAll => {
+                let all = n == Native::QuerySelectorAll;
+                let sel = args.first().map(to_display).unwrap_or_default();
+                // 요소 수신자면 그 서브트리(자신 제외), document 면 문서 전체
+                let scope = match recv {
+                    Some(Value::Dom(id)) => Some(id),
+                    _ => None,
+                };
+                self.dom_query(scope, &sel, all)
+            }
+            Native::Math(op) => {
+                let a = args.first().map(to_num).unwrap_or(f64::NAN);
+                Ok(Value::Num(match op {
+                    MathOp::Floor => a.floor(),
+                    MathOp::Ceil => a.ceil(),
+                    MathOp::Round => a.round(),
+                    MathOp::Abs => a.abs(),
+                    MathOp::Sqrt => a.sqrt(),
+                    MathOp::Pow => a.powf(args.get(1).map(to_num).unwrap_or(f64::NAN)),
+                    MathOp::Min => args.iter().map(to_num).fold(f64::INFINITY, f64::min),
+                    MathOp::Max => args.iter().map(to_num).fold(f64::NEG_INFINITY, f64::max),
+                    MathOp::Random => {
+                        // xorshift64*
+                        self.rng ^= self.rng << 13;
+                        self.rng ^= self.rng >> 7;
+                        self.rng ^= self.rng << 17;
+                        (self.rng >> 11) as f64 / (1u64 << 53) as f64
+                    }
+                }))
+            }
+            Native::Str(op) => {
+                let Some(Value::Str(s)) = recv else {
+                    return Err("문자열 메서드".to_string());
+                };
+                let chars: Vec<char> = s.chars().collect();
+                let arg_str = |i: usize| args.get(i).map(to_display).unwrap_or_default();
+                Ok(match op {
+                    StrOp::Upper => Value::Str(s.to_uppercase()),
+                    StrOp::Lower => Value::Str(s.to_lowercase()),
+                    StrOp::Trim => Value::Str(s.trim().to_string()),
+                    StrOp::CharAt => {
+                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
+                        Value::Str(
+                            chars
+                                .get(i.max(0) as usize)
+                                .map(|c| c.to_string())
+                                .unwrap_or_default(),
+                        )
+                    }
+                    StrOp::IndexOf => {
+                        // 문자(char) 인덱스 기준 (UTF-16 이 아님 — 단순화)
+                        let needle = arg_str(0);
+                        match s.find(&needle) {
+                            Some(byte_i) => Value::Num(s[..byte_i].chars().count() as f64),
+                            None => Value::Num(-1.0),
+                        }
+                    }
+                    StrOp::Includes => Value::Bool(s.contains(&arg_str(0))),
+                    StrOp::StartsWith => Value::Bool(s.starts_with(&arg_str(0))),
+                    StrOp::EndsWith => Value::Bool(s.ends_with(&arg_str(0))),
+                    StrOp::Replace => {
+                        Value::Str(s.replacen(&arg_str(0), &arg_str(1), 1)) // 첫 1회 (JS 동일)
+                    }
+                    StrOp::Slice => {
+                        let len = chars.len() as isize;
+                        let clampi = |v: f64| -> usize {
+                            let i = v as isize;
+                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        };
+                        let start = clampi(args.first().map(to_num).unwrap_or(0.0));
+                        let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
+                        Value::Str(chars[start..end.max(start)].iter().collect())
+                    }
+                    StrOp::Split => {
+                        let sep = arg_str(0);
+                        let parts: Vec<Value> = if args.is_empty() {
+                            vec![Value::Str(s.clone())]
+                        } else if sep.is_empty() {
+                            chars.iter().map(|c| Value::Str(c.to_string())).collect()
+                        } else {
+                            s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
+                        };
+                        Value::Arr(ArrayObj::new(parts))
+                    }
+                })
+            }
+            Native::Arr(op) => {
+                let Some(Value::Arr(a)) = recv else {
+                    return Err("배열 메서드".to_string());
+                };
+                Ok(match op {
+                    ArrOp::Join => {
+                        let sep = args.first().map(to_display).unwrap_or(",".to_string());
+                        Value::Str(
+                            a.borrow().iter().map(to_display).collect::<Vec<_>>().join(&sep),
+                        )
+                    }
+                    ArrOp::Pop => a.borrow_mut().pop().unwrap_or(Value::Undefined),
+                    ArrOp::IndexOf => {
+                        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                        match a.borrow().iter().position(|v| strict_eq(v, &needle)) {
+                            Some(i) => Value::Num(i as f64),
+                            None => Value::Num(-1.0),
+                        }
+                    }
+                    ArrOp::Slice => {
+                        let items = a.borrow();
+                        let len = items.len() as isize;
+                        let clampi = |v: f64| -> usize {
+                            let i = v as isize;
+                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        };
+                        let start = clampi(args.first().map(to_num).unwrap_or(0.0));
+                        let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
+                        Value::Arr(ArrayObj::new(items[start..end.max(start)].to_vec()))
+                    }
+                    ArrOp::ForEach | ArrOp::Map | ArrOp::Filter => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut out = Vec::new();
+                        for (i, item) in snapshot.into_iter().enumerate() {
+                            let r = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![item.clone(), Value::Num(i as f64)],
+                            )?;
+                            match op {
+                                ArrOp::Map => out.push(r),
+                                ArrOp::Filter => {
+                                    if to_bool(&r) {
+                                        out.push(item);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        match op {
+                            ArrOp::ForEach => Value::Undefined,
+                            _ => Value::Arr(ArrayObj::new(out)),
+                        }
+                    }
+                    ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut result = Value::Undefined;
+                        let mut found = false;
+                        for (i, item) in snapshot.into_iter().enumerate() {
+                            let r = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![item.clone(), Value::Num(i as f64)],
+                            )?;
+                            let truthy = to_bool(&r);
+                            match op {
+                                ArrOp::Some if truthy => {
+                                    result = Value::Bool(true);
+                                    found = true;
+                                    break;
+                                }
+                                ArrOp::Every if !truthy => {
+                                    result = Value::Bool(false);
+                                    found = true;
+                                    break;
+                                }
+                                ArrOp::Find if truthy => {
+                                    result = item;
+                                    found = true;
+                                    break;
+                                }
+                                ArrOp::FindIndex if truthy => {
+                                    result = Value::Num(i as f64);
+                                    found = true;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if found {
+                            result
+                        } else {
+                            match op {
+                                ArrOp::Some => Value::Bool(false),
+                                ArrOp::Every => Value::Bool(true),
+                                ArrOp::FindIndex => Value::Num(-1.0),
+                                _ => Value::Undefined,
+                            }
+                        }
+                    }
+                    ArrOp::Reduce => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut iter = snapshot.into_iter().enumerate();
+                        let mut acc = match args.get(1) {
+                            Some(init) => init.clone(),
+                            None => match iter.next() {
+                                Some((_, v)) => v,
+                                None => return Err("빈 배열 reduce (초기값 없음)".to_string()),
+                            },
+                        };
+                        for (i, item) in iter {
+                            acc = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![acc, item, Value::Num(i as f64)],
+                            )?;
+                        }
+                        acc
+                    }
+                    ArrOp::Concat => {
+                        let mut out: Vec<Value> = a.borrow().clone();
+                        for arg in &args {
+                            match arg {
+                                Value::Arr(b) => out.extend(b.borrow().iter().cloned()),
+                                other => out.push(other.clone()),
+                            }
+                        }
+                        Value::Arr(ArrayObj::new(out))
+                    }
+                    ArrOp::Includes => {
+                        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                        Value::Bool(a.borrow().iter().any(|v| strict_eq(v, &needle)))
+                    }
+                    ArrOp::Splice => {
+                        // splice(start, deleteCount, ...items) → 제거분 배열 반환, 원본 변형
+                        let mut arr = a.borrow_mut();
+                        let len = arr.len() as isize;
+                        let start = {
+                            let s = args.first().map(to_num).unwrap_or(0.0) as isize;
+                            (if s < 0 { len + s } else { s }).clamp(0, len) as usize
+                        };
+                        let del = match args.get(1) {
+                            Some(v) => (to_num(v) as isize).clamp(0, len - start as isize) as usize,
+                            None => arr.len() - start,
+                        };
+                        let removed: Vec<Value> = arr.splice(
+                            start..start + del,
+                            args.iter().skip(2).cloned(),
+                        ).collect();
+                        Value::Arr(ArrayObj::new(removed))
+                    }
+                    ArrOp::Shift => {
+                        let mut arr = a.borrow_mut();
+                        if arr.is_empty() {
+                            Value::Undefined
+                        } else {
+                            arr.remove(0)
+                        }
+                    }
+                    ArrOp::Unshift => {
+                        let mut arr = a.borrow_mut();
+                        for (i, v) in args.iter().cloned().enumerate() {
+                            arr.insert(i, v);
+                        }
+                        Value::Num(arr.len() as f64)
+                    }
+                    ArrOp::Reverse => {
+                        a.borrow_mut().reverse();
+                        Value::Arr(a.clone())
+                    }
+                    ArrOp::Keys => {
+                        let n = a.borrow().len();
+                        Value::Arr(ArrayObj::new(
+                            (0..n).map(|i| Value::Num(i as f64)).collect(),
+                        ))
+                    }
+                    ArrOp::Values => Value::Arr(ArrayObj::new(a.borrow().clone())),
+                })
+            }
+            Native::JsonParse => {
+                let src = args.first().map(to_display).unwrap_or_default();
+                json_parse(&src)
+            }
+            Native::JsonStringify => {
+                Ok(json_stringify(args.first().unwrap_or(&Value::Undefined))
+                    .map(Value::Str)
+                    .unwrap_or(Value::Undefined))
+            }
+            Native::ParseInt => {
+                let s = args.first().map(to_display).unwrap_or_default();
+                let t = s.trim();
+                let (neg, t) = match t.strip_prefix('-') {
+                    Some(rest) => (true, rest),
+                    None => (false, t.strip_prefix('+').unwrap_or(t)),
+                };
+                let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+                Ok(match digits.parse::<f64>() {
+                    Ok(n) => Value::Num(if neg { -n } else { n }),
+                    Err(_) => Value::Num(f64::NAN),
+                })
+            }
+            Native::ParseFloat => {
+                let s = args.first().map(to_display).unwrap_or_default();
+                let t = s.trim();
+                // 앞부분의 유효한 수 프리픽스만
+                let mut end = 0;
+                let bytes = t.as_bytes();
+                let mut seen_dot = false;
+                if end < bytes.len() && (bytes[end] == b'-' || bytes[end] == b'+') {
+                    end += 1;
+                }
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_digit() || (bytes[end] == b'.' && !seen_dot))
+                {
+                    if bytes[end] == b'.' {
+                        seen_dot = true;
+                    }
+                    end += 1;
+                }
+                Ok(t[..end].parse::<f64>().map(Value::Num).unwrap_or(Value::Num(f64::NAN)))
+            }
+            Native::IsNaN => {
+                Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))
+            }
+            Native::LsGetItem => {
+                let k = args.first().map(to_display).unwrap_or_default();
+                Ok(self.storage.get(&k).map(|v| Value::Str(v.clone())).unwrap_or(Value::Null))
+            }
+            Native::LsSetItem => {
+                let k = args.first().map(to_display).unwrap_or_default();
+                let v = args.get(1).map(to_display).unwrap_or_default();
+                self.storage.insert(k, v);
+                Ok(Value::Undefined)
+            }
+            Native::LsRemoveItem => {
+                let k = args.first().map(to_display).unwrap_or_default();
+                self.storage.remove(&k);
+                Ok(Value::Undefined)
+            }
+            Native::LsClear => {
+                self.storage.clear();
+                Ok(Value::Undefined)
+            }
+            Native::Alert => {
+                let msg = args.iter().map(to_display).collect::<Vec<_>>().join(" ");
+                self.console.push(format!("[alert] {}", msg));
+                Ok(Value::Undefined)
+            }
+            Native::Noop => Ok(Value::Undefined),
+            Native::ObjectKeys => match args.first() {
+                Some(Value::Obj(m)) => {
+                    let keys: Vec<Value> =
+                        m.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                    Ok(Value::Arr(ArrayObj::new(keys)))
+                }
+                Some(Value::Arr(a)) => {
+                    let keys: Vec<Value> =
+                        (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
+                    Ok(Value::Arr(ArrayObj::new(keys)))
+                }
+                _ => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
+            },
+            Native::ObjectAssign => {
+                let Some(Value::Obj(target)) = args.first() else {
+                    return Err("Object.assign 대상은 객체".to_string());
+                };
+                for src in &args[1..] {
+                    if let Value::Obj(m) = src {
+                        for (k, v) in m.borrow().iter() {
+                            target.borrow_mut().insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                Ok(args.into_iter().next().unwrap())
+            }
+            Native::ArrayIsArray => {
+                Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
+            }
+            Native::SetTimeout | Native::SetInterval => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if !matches!(callback, Value::Fn(_) | Value::Native(_)) {
+                    return Ok(Value::Num(0.0)); // 콜백 아니면 무시
+                }
+                let delay_ms = args.get(1).map(to_num).unwrap_or(0.0).max(0.0);
+                let id = self.next_timer_id;
+                self.next_timer_id += 1;
+                self.timers.push(Timer {
+                    id,
+                    callback,
+                    delay_ms,
+                    repeat: n == Native::SetInterval,
+                });
+                Ok(Value::Num(id as f64))
+            }
+            Native::ClearTimer => {
+                if let Some(id) = args.first().map(to_num) {
+                    let id = id as u64;
+                    self.cleared.insert(id);
+                    self.timers.retain(|t| t.id != id);
+                }
+                Ok(Value::Undefined)
+            }
+            Native::PromiseResolve => {
+                let v = args.into_iter().next().unwrap_or(Value::Undefined);
+                let p = self.new_promise();
+                self.resolve_promise(&p, v);
+                Ok(p)
+            }
+            Native::PromiseThen => {
+                let p = recv.unwrap_or(Value::Undefined);
+                let cb = args.into_iter().next().unwrap_or(Value::Undefined);
+                let dep = self.new_promise();
+                Ok(self.promise_then(&p, cb, dep))
+            }
+            // 이행만 지원 → catch 는 자신 반환(no-op)
+            Native::PromiseCatch => Ok(recv.unwrap_or(Value::Undefined)),
+            Native::Identity => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
+            Native::Fetch => {
+                let url = args.first().map(to_display).unwrap_or_default();
+                let resp = self.new_promise();
+                match crate::http::fetch(&url) {
+                    Ok(r) => {
+                        let body = String::from_utf8_lossy(&r.body).to_string();
+                        let mut m = HashMap::new();
+                        m.insert("status".to_string(), Value::Num(r.status as f64));
+                        m.insert(
+                            "ok".to_string(),
+                            Value::Bool(r.status >= 200 && r.status < 300),
+                        );
+                        m.insert("__body".to_string(), Value::Str(body));
+                        m.insert("text".to_string(), Value::Native(Native::ResponseText));
+                        m.insert("json".to_string(), Value::Native(Native::ResponseJson));
+                        let response = Value::Obj(Rc::new(RefCell::new(m)));
+                        self.resolve_promise(&resp, response);
+                    }
+                    Err(e) => {
+                        self.console.push(format!("fetch 실패: {:?}", e));
+                        self.resolve_promise(&resp, Value::Undefined);
+                    }
+                }
+                Ok(resp)
+            }
+            Native::ResponseText | Native::ResponseJson => {
+                let body = match &recv {
+                    Some(Value::Obj(o)) => match o.borrow().get("__body") {
+                        Some(Value::Str(s)) => s.clone(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                let val = if matches!(n, Native::ResponseJson) {
+                    json_parse(&body).unwrap_or(Value::Null)
+                } else {
+                    Value::Str(body)
+                };
+                let p = self.new_promise();
+                self.resolve_promise(&p, val);
+                Ok(p)
+            }
+            Native::GetAttribute => match recv {
+                Some(Value::Dom(id)) => {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let dom = self.dom_arena()?;
+                    match &dom.get(id).node_type {
+                        crate::dom::NodeType::Element(e) => Ok(e
+                            .attributes
+                            .get(&name)
+                            .map(|v| Value::Str(v.clone()))
+                            .unwrap_or(Value::Null)),
+                        _ => Ok(Value::Null),
+                    }
+                }
+                _ => Err("getAttribute 는 요소 메서드".to_string()),
+            },
+        }
+    }
+}
