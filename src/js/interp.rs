@@ -76,6 +76,7 @@ pub enum Native {
     FnCall,
     FnApply,
     FnBind,
+    FunctionCtor,
     CreateElement,
     AppendChild,
     RemoveElement,
@@ -657,9 +658,11 @@ impl Interp {
         let mut array_ns = HashMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
-        for name in ["RegExp", "Error", "Function"] {
+        for name in ["RegExp", "Error"] {
             env_declare(&global, name, Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
         }
+        // Function 생성자: Function(params.., body) 를 실제로 컴파일 (호출/ new 둘 다)
+        env_declare(&global, "Function", Value::Native(Native::FunctionCtor));
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
         let mut ls = HashMap::new();
         ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
@@ -838,6 +841,34 @@ impl Interp {
             }
         }
         fired
+    }
+
+    // Function(p1, p2, ..., body) 를 실제 함수로 컴파일. 마지막 인자가 본문,
+    // 앞 인자들은 파라미터 이름(각각 콤마로 여러 개 가능). new/호출 공용.
+    fn make_function(&self, args: Vec<Value>) -> Result<Value, String> {
+        let (body_src, param_args) = match args.split_last() {
+            Some((last, rest)) => (to_display(last), rest.to_vec()),
+            None => (String::new(), Vec::new()),
+        };
+        let mut params = Vec::new();
+        for p in &param_args {
+            for name in to_display(p).split(',') {
+                let name = name.trim();
+                if !name.is_empty() {
+                    params.push(name.to_string());
+                }
+            }
+        }
+        let body = parse(&body_src).map_err(|e| format!("Function 본문 파싱 실패: {}", e))?;
+        Ok(Value::Fn(Rc::new(JsFn {
+            params,
+            body,
+            env: self.global.clone(),
+            is_arrow: false,
+            this: None,
+            super_class: None,
+            props: RefCell::new(HashMap::new()),
+        })))
     }
 
     // document.readyState 갱신 (loading → interactive → complete)
@@ -1600,6 +1631,8 @@ impl Interp {
     fn construct(&mut self, class: Value, args: Vec<Value>) -> Result<Value, String> {
         let cls = match class {
             Value::Class(c) => c,
+            // new Function(params.., body) → 실제 함수로 컴파일
+            Value::Native(Native::FunctionCtor) => return self.make_function(args),
             // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
             Value::Obj(_) | Value::Native(_) => {
                 let mut map = HashMap::new();
@@ -1755,6 +1788,7 @@ impl Interp {
                 let partial: Vec<Value> = it.collect();
                 Ok(Value::Bound(Rc::new((target, this_arg, partial))))
             }
+            Native::FunctionCtor => self.make_function(args),
             Native::CreateElement => {
                 let tag = args.first().map(to_display).unwrap_or_default();
                 if tag.is_empty() {
@@ -2214,8 +2248,8 @@ impl Interp {
                     matches!(l, Value::Arr(_))
                 } else if global_is("Object") {
                     matches!(l, Value::Obj(_) | Value::Arr(_))
-                } else if global_is("Function") {
-                    matches!(l, Value::Fn(_) | Value::Native(_))
+                } else if matches!(&r, Value::Native(Native::FunctionCtor)) {
+                    matches!(l, Value::Fn(_) | Value::Native(_) | Value::Bound(_))
                 } else {
                     false
                 };
@@ -2557,6 +2591,15 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn function_constructor_compiles() {
+        // Function 생성자가 문자열 본문을 실제 함수로 컴파일
+        assert_eq!(run_num("var f = Function('return 42'); f()"), 42.0);
+        assert_eq!(run_num("var f = new Function('a','b','return a+b'); f(2,3)"), 5.0);
+        // 한 인자에 콤마로 여러 파라미터
+        assert_eq!(run_num("var f = new Function('a,b','return a*b'); f(4,5)"), 20.0);
     }
 
     #[test]
