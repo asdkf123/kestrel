@@ -29,6 +29,9 @@ pub enum Value {
     Instance(Rc<Instance>),
     // bind 로 만든 바운드 함수: (대상, this, 선행 인자)
     Bound(Rc<(Value, Value, Vec<Value>)>),
+    // Object.defineProperty 의 접근자(get). 객체 맵에만 저장되고, 멤버 읽기 때
+    // 호출돼 실제 값을 낸다. 다른 경로엔 노출되지 않음.
+    Getter(Rc<Value>),
 }
 
 pub struct JsFn {
@@ -77,6 +80,11 @@ pub enum Native {
     FnApply,
     FnBind,
     FunctionCtor,
+    ObjectDefineProperty,
+    ObjectCreate,
+    ObjectFreeze,
+    ObjectGetPrototypeOf,
+    HasOwnProperty,
     CreateElement,
     AppendChild,
     RemoveElement,
@@ -163,6 +171,19 @@ pub enum ArrOp {
     ForEach,
     Map,
     Filter,
+    Some,
+    Every,
+    Reduce,
+    Find,
+    FindIndex,
+    Concat,
+    Includes,
+    Splice,
+    Shift,
+    Unshift,
+    Reverse,
+    Keys,
+    Values,
 }
 
 impl std::fmt::Debug for Value {
@@ -181,6 +202,7 @@ impl std::fmt::Debug for Value {
             Value::Class(c) => write!(f, "[class {}]", c.name),
             Value::Instance(i) => write!(f, "[instance {}]", i.class.name),
             Value::Bound(_) => write!(f, "[bound function]"),
+            Value::Getter(_) => write!(f, "[getter]"),
         }
     }
 }
@@ -310,6 +332,7 @@ pub fn to_display(v: &Value) -> String {
         Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => {
             "function".to_string()
         }
+        Value::Getter(_) => "[getter]".to_string(),
         Value::Dom(_) => "[object Element]".to_string(),
         Value::Instance(i) => format!("[object {}]", i.class.name),
     }
@@ -504,7 +527,8 @@ fn json_stringify(v: &Value) -> Option<String> {
         | Value::Native(_)
         | Value::Dom(_)
         | Value::Class(_)
-        | Value::Bound(_) => None,
+        | Value::Bound(_)
+        | Value::Getter(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();
@@ -654,6 +678,18 @@ impl Interp {
         let mut object_ns = HashMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
+        object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
+        object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperty));
+        object_ns.insert("create".to_string(), Value::Native(Native::ObjectCreate));
+        object_ns.insert("freeze".to_string(), Value::Native(Native::ObjectFreeze));
+        object_ns.insert(
+            "getPrototypeOf".to_string(),
+            Value::Native(Native::ObjectGetPrototypeOf),
+        );
+        // Object.prototype.hasOwnProperty (webpack __webpack_require__.o 가 사용)
+        let mut object_proto = HashMap::new();
+        object_proto.insert("hasOwnProperty".to_string(), Value::Native(Native::HasOwnProperty));
+        object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
         env_declare(&global, "Object", Value::Obj(Rc::new(RefCell::new(object_ns))));
         let mut array_ns = HashMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
@@ -1459,7 +1495,21 @@ impl Interp {
 
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         match recv {
-            Value::Obj(map) => Ok(map.borrow().get(key).cloned().unwrap_or(Value::Undefined)),
+            Value::Obj(map) => {
+                let v = map.borrow().get(key).cloned();
+                match v {
+                    // 접근자면 this=객체로 호출해 실제 값 산출 (defineProperty get)
+                    Some(Value::Getter(g)) => {
+                        self.call_value((*g).clone(), Some(recv.clone()), vec![])
+                    }
+                    Some(v) => Ok(v),
+                    // 내장 메서드 폴백
+                    None => match key {
+                        "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
+                        _ => Ok(Value::Undefined),
+                    },
+                }
+            }
             Value::Arr(a) => {
                 if key == "length" {
                     return Ok(Value::Num(a.borrow().len() as f64));
@@ -1475,10 +1525,26 @@ impl Interp {
                     "forEach" => Some(ArrOp::ForEach),
                     "map" => Some(ArrOp::Map),
                     "filter" => Some(ArrOp::Filter),
+                    "some" => Some(ArrOp::Some),
+                    "every" => Some(ArrOp::Every),
+                    "reduce" => Some(ArrOp::Reduce),
+                    "find" => Some(ArrOp::Find),
+                    "findIndex" => Some(ArrOp::FindIndex),
+                    "concat" => Some(ArrOp::Concat),
+                    "includes" => Some(ArrOp::Includes),
+                    "splice" => Some(ArrOp::Splice),
+                    "shift" => Some(ArrOp::Shift),
+                    "unshift" => Some(ArrOp::Unshift),
+                    "reverse" => Some(ArrOp::Reverse),
+                    "keys" => Some(ArrOp::Keys),
+                    "values" => Some(ArrOp::Values),
                     _ => None,
                 };
                 if let Some(op) = op {
                     return Ok(Value::Native(Native::Arr(op)));
+                }
+                if key == "hasOwnProperty" {
+                    return Ok(Value::Native(Native::HasOwnProperty));
                 }
                 if let Ok(i) = key.parse::<usize>() {
                     return Ok(a.borrow().get(i).cloned().unwrap_or(Value::Undefined));
@@ -1550,8 +1616,14 @@ impl Interp {
             }
             Value::Fn(func) => {
                 // 함수도 객체: 속성 백 우선, 그다음 call/apply/bind, prototype/name/length
-                if let Some(v) = func.props.borrow().get(key) {
-                    return Ok(v.clone());
+                let stored = func.props.borrow().get(key).cloned();
+                if let Some(v) = stored {
+                    return match v {
+                        Value::Getter(g) => {
+                            self.call_value((*g).clone(), Some(recv.clone()), vec![])
+                        }
+                        other => Ok(other),
+                    };
                 }
                 match key {
                     "call" => Ok(Value::Native(Native::FnCall)),
@@ -1789,6 +1861,59 @@ impl Interp {
                 Ok(Value::Bound(Rc::new((target, this_arg, partial))))
             }
             Native::FunctionCtor => self.make_function(args),
+            // Object.defineProperty(target, key, {get|value}) — 접근자/값 정의
+            Native::ObjectDefineProperty => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                let entry = if let Some(Value::Obj(d)) = args.get(2) {
+                    let d = d.borrow();
+                    if let Some(g) = d.get("get") {
+                        Some(Value::Getter(Rc::new(g.clone())))
+                    } else {
+                        d.get("value").cloned()
+                    }
+                } else {
+                    None
+                };
+                if let Some(val) = entry {
+                    match &target {
+                        Value::Obj(map) => {
+                            map.borrow_mut().insert(key, val);
+                        }
+                        // require.n 은 함수에 접근자를 정의 (getter.a = ...)
+                        Value::Fn(func) => {
+                            func.props.borrow_mut().insert(key, val);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(target)
+            }
+            // Object.create(proto) — proto 의 얕은 복사 기반 새 객체 (관용)
+            Native::ObjectCreate => {
+                let mut map = HashMap::new();
+                if let Some(Value::Obj(proto)) = args.first() {
+                    for (k, v) in proto.borrow().iter() {
+                        map.insert(k.clone(), v.clone());
+                    }
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
+            // freeze 는 그대로 반환(불변성 미구현), getPrototypeOf 는 null
+            Native::ObjectFreeze => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
+            Native::ObjectGetPrototypeOf => Ok(Value::Null),
+            // Object.prototype.hasOwnProperty.call(obj, key) / obj.hasOwnProperty(key)
+            Native::HasOwnProperty => {
+                let key = args.first().map(to_display).unwrap_or_default();
+                let has = match &recv {
+                    Some(Value::Obj(m)) => m.borrow().contains_key(&key),
+                    Some(Value::Arr(a)) => {
+                        key.parse::<usize>().map(|i| i < a.borrow().len()).unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                Ok(Value::Bool(has))
+            }
             Native::CreateElement => {
                 let tag = args.first().map(to_display).unwrap_or_default();
                 if tag.is_empty() {
@@ -1997,6 +2122,131 @@ impl Interp {
                             _ => Value::Arr(Rc::new(RefCell::new(out))),
                         }
                     }
+                    ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut result = Value::Undefined;
+                        let mut found = false;
+                        for (i, item) in snapshot.into_iter().enumerate() {
+                            let r = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![item.clone(), Value::Num(i as f64)],
+                            )?;
+                            let truthy = to_bool(&r);
+                            match op {
+                                ArrOp::Some if truthy => {
+                                    result = Value::Bool(true);
+                                    found = true;
+                                    break;
+                                }
+                                ArrOp::Every if !truthy => {
+                                    result = Value::Bool(false);
+                                    found = true;
+                                    break;
+                                }
+                                ArrOp::Find if truthy => {
+                                    result = item;
+                                    found = true;
+                                    break;
+                                }
+                                ArrOp::FindIndex if truthy => {
+                                    result = Value::Num(i as f64);
+                                    found = true;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if found {
+                            result
+                        } else {
+                            match op {
+                                ArrOp::Some => Value::Bool(false),
+                                ArrOp::Every => Value::Bool(true),
+                                ArrOp::FindIndex => Value::Num(-1.0),
+                                _ => Value::Undefined,
+                            }
+                        }
+                    }
+                    ArrOp::Reduce => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut iter = snapshot.into_iter().enumerate();
+                        let mut acc = match args.get(1) {
+                            Some(init) => init.clone(),
+                            None => match iter.next() {
+                                Some((_, v)) => v,
+                                None => return Err("빈 배열 reduce (초기값 없음)".to_string()),
+                            },
+                        };
+                        for (i, item) in iter {
+                            acc = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![acc, item, Value::Num(i as f64)],
+                            )?;
+                        }
+                        acc
+                    }
+                    ArrOp::Concat => {
+                        let mut out: Vec<Value> = a.borrow().clone();
+                        for arg in &args {
+                            match arg {
+                                Value::Arr(b) => out.extend(b.borrow().iter().cloned()),
+                                other => out.push(other.clone()),
+                            }
+                        }
+                        Value::Arr(Rc::new(RefCell::new(out)))
+                    }
+                    ArrOp::Includes => {
+                        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+                        Value::Bool(a.borrow().iter().any(|v| strict_eq(v, &needle)))
+                    }
+                    ArrOp::Splice => {
+                        // splice(start, deleteCount, ...items) → 제거분 배열 반환, 원본 변형
+                        let mut arr = a.borrow_mut();
+                        let len = arr.len() as isize;
+                        let start = {
+                            let s = args.first().map(to_num).unwrap_or(0.0) as isize;
+                            (if s < 0 { len + s } else { s }).clamp(0, len) as usize
+                        };
+                        let del = match args.get(1) {
+                            Some(v) => (to_num(v) as isize).clamp(0, len - start as isize) as usize,
+                            None => arr.len() - start,
+                        };
+                        let removed: Vec<Value> = arr.splice(
+                            start..start + del,
+                            args.iter().skip(2).cloned(),
+                        ).collect();
+                        Value::Arr(Rc::new(RefCell::new(removed)))
+                    }
+                    ArrOp::Shift => {
+                        let mut arr = a.borrow_mut();
+                        if arr.is_empty() {
+                            Value::Undefined
+                        } else {
+                            arr.remove(0)
+                        }
+                    }
+                    ArrOp::Unshift => {
+                        let mut arr = a.borrow_mut();
+                        for (i, v) in args.iter().cloned().enumerate() {
+                            arr.insert(i, v);
+                        }
+                        Value::Num(arr.len() as f64)
+                    }
+                    ArrOp::Reverse => {
+                        a.borrow_mut().reverse();
+                        Value::Arr(a.clone())
+                    }
+                    ArrOp::Keys => {
+                        let n = a.borrow().len();
+                        Value::Arr(Rc::new(RefCell::new(
+                            (0..n).map(|i| Value::Num(i as f64)).collect(),
+                        )))
+                    }
+                    ArrOp::Values => Value::Arr(Rc::new(RefCell::new(a.borrow().clone()))),
                 })
             }
             Native::JsonParse => {
@@ -2591,6 +2841,35 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn define_property_getter_and_value() {
+        // Object.defineProperty 값
+        assert_eq!(run_num("var o={}; Object.defineProperty(o,'x',{value:7}); o.x"), 7.0);
+        // 접근자(get) — 읽을 때 호출
+        assert_eq!(
+            run_num("var o={}; var n=0; Object.defineProperty(o,'g',{get:function(){return ++n}}); o.g; o.g"),
+            2.0
+        );
+        // hasOwnProperty
+        assert!(run_bool("var o={a:1}; Object.prototype.hasOwnProperty.call(o,'a')"));
+        assert!(!run_bool("var o={a:1}; o.hasOwnProperty('b')"));
+    }
+
+    #[test]
+    fn array_methods_batch() {
+        assert!(run_bool("[1,2,3].some(function(x){return x>2})"));
+        assert!(run_bool("[1,2,3].every(function(x){return x>0})"));
+        assert_eq!(run_num("[1,2,3,4].reduce(function(a,b){return a+b},0)"), 10.0);
+        assert_eq!(run_num("[1,2,3].find(function(x){return x>1})"), 2.0);
+        assert_eq!(run_num("[5,6,7].findIndex(function(x){return x===7})"), 2.0);
+        assert!(run_bool("[1,2,3].includes(2)"));
+        assert_eq!(run_num("[1,2].concat([3,4]).length"), 4.0);
+        // splice: 원본 변형 + 제거분 반환
+        assert_eq!(run_num("var a=[1,2,3,4]; a.splice(1,2); a.length"), 2.0);
+        assert_eq!(run_num("var a=[1,2,3]; a.unshift(0); a[0]"), 0.0);
+        assert_eq!(run_num("var a=[1,2,3]; a.shift(); a[0]"), 2.0);
     }
 
     #[test]

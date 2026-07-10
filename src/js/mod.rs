@@ -19,6 +19,12 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
     if sources.is_empty() {
         return it;
     }
+    // webpack 청크 런타임을 맨 앞에 주입 — 청크가 webpackChunkpc.push([...]) 로
+    // 넘긴 모듈을 실제로 등록/실행한다(웹의 사실상 표준 번들 포맷).
+    sources.insert(0, WEBPACK_RUNTIME.to_string());
+    if std::env::var("KESTREL_JS_DEBUG").is_ok() {
+        sources.insert(0, "self.__KESTREL_WP_DEBUG__=1;".to_string());
+    }
     it.dom = Some(dom as *mut crate::dom::Dom); // 실행 동안만 유효
     for src in &sources {
         let code = src.strip_prefix(EXT_TAG).unwrap_or(src);
@@ -115,6 +121,79 @@ fn collect_scripts(
 
 // 외부 스크립트 소스를 카운트하기 위한 내부 마커. 실행 직전 제거한다.
 const EXT_TAG: &str = "\u{0}ext\u{0}";
+
+// webpack 5 청크 런타임(간소화). 청크는 self.webpackChunkpc.push([chunkIds,
+// modules, runtime]) 로 모듈을 넘기는데, 이 런타임이 push 를 가로채 모듈을
+// 등록하고 준비된 진입점을 실행한다. 배열 push 오버라이드 대신 push 메서드를
+// 가진 객체를 쓴다(엔진이 배열 메서드 재정의를 지원 안 하므로).
+const WEBPACK_RUNTIME: &str = r#"
+(function(){
+  var modules = {};
+  var cache = {};
+  function req(id){
+    if (cache[id]) return cache[id].exports;
+    var m = cache[id] = { i: id, id: id, loaded: false, exports: {} };
+    modules[id].call(m.exports, m, m.exports, req);
+    m.loaded = true;
+    return m.exports;
+  }
+  req.m = modules;
+  req.c = cache;
+  req.o = function(o, p){ return Object.prototype.hasOwnProperty.call(o, p); };
+  req.d = function(exports, def){
+    for (var key in def) {
+      if (req.o(def, key) && !req.o(exports, key)) {
+        Object.defineProperty(exports, key, { enumerable: true, get: def[key] });
+      }
+    }
+  };
+  req.r = function(exports){
+    if (typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+      Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+    }
+    Object.defineProperty(exports, '__esModule', { value: true });
+  };
+  req.n = function(mod){
+    var getter = (mod && mod.__esModule) ? function(){ return mod['default']; } : function(){ return mod; };
+    req.d(getter, { a: getter });
+    return getter;
+  };
+  req.g = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : this);
+  req.p = '';
+  req.e = function(){ return { then: function(f){ if (f) f(); return this; }, catch: function(){ return this; } }; };
+  req.f = {};
+  req.u = function(id){ return id + '.js'; };
+  req.hmd = function(m){ return m; };
+  req.nc = undefined;
+  var installed = {};
+  var deferred = [];
+  req.O = function(result, chunkIds, fn, priority){
+    if (chunkIds) { deferred.push([chunkIds, fn, priority || 0]); return; }
+    for (var i = 0; i < deferred.length; i++) {
+      var cids = deferred[i][0], f = deferred[i][1], ok = true;
+      for (var j = 0; j < cids.length; j++) {
+        if (installed[cids[j]] === 0) { cids.splice(j, 1); j--; }
+        else { ok = false; }
+      }
+      if (ok) { deferred.splice(i, 1); i--; var rr = f(req); if (rr !== undefined) result = rr; }
+    }
+    return result;
+  };
+  var DBG = (typeof self !== 'undefined' && self.__KESTREL_WP_DEBUG__);
+  function jsonp(data){
+    var chunkIds = data[0], moreModules = data[1], runtime = data[2], result;
+    var n = 0; for (var mid in moreModules) { if (req.o(moreModules, mid)) { modules[mid] = moreModules[mid]; n++; } }
+    if (DBG) console.log('[wp] chunk ' + JSON.stringify(chunkIds) + ' modules=' + n + ' runtime=' + (runtime?'y':'n'));
+    if (runtime) result = runtime(req);
+    for (var k = 0; k < chunkIds.length; k++) { installed[chunkIds[k]] = 0; }
+    return req.O(result);
+  }
+  var arr = self.webpackChunkpc;
+  if (arr && arr.length) { for (var i = 0; i < arr.length; i++) jsonp(arr[i]); }
+  self.webpackChunkpc = { push: jsonp };
+  self.__webpack_require__ = req;
+})();
+"#;
 
 #[cfg(test)]
 mod tests {
