@@ -32,6 +32,9 @@ pub enum Value {
     // Object.defineProperty 의 접근자(get). 객체 맵에만 저장되고, 멤버 읽기 때
     // 호출돼 실제 값을 낸다. 다른 경로엔 노출되지 않음.
     Getter(Rc<Value>),
+    // Map/Set — 삽입 순서 보존. 키 비교는 strict_eq (객체는 참조 동일).
+    MapVal(Rc<RefCell<Vec<(Value, Value)>>>),
+    SetVal(Rc<RefCell<Vec<Value>>>),
 }
 
 pub struct JsFn {
@@ -85,6 +88,11 @@ pub enum Native {
     ObjectFreeze,
     ObjectGetPrototypeOf,
     HasOwnProperty,
+    MapCtor,
+    SetCtor,
+    Map(MapOp),
+    Set(SetOp),
+    ErrorCtor(&'static str),
     CreateElement,
     AppendChild,
     RemoveElement,
@@ -163,6 +171,29 @@ pub enum StrOp {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MapOp {
+    Get,
+    Set,
+    Has,
+    Delete,
+    Clear,
+    ForEach,
+    Keys,
+    Values,
+    Entries,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SetOp {
+    Add,
+    Has,
+    Delete,
+    Clear,
+    ForEach,
+    Values,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ArrOp {
     Join,
     Pop,
@@ -203,6 +234,8 @@ impl std::fmt::Debug for Value {
             Value::Instance(i) => write!(f, "[instance {}]", i.class.name),
             Value::Bound(_) => write!(f, "[bound function]"),
             Value::Getter(_) => write!(f, "[getter]"),
+            Value::MapVal(_) => write!(f, "[object Map]"),
+            Value::SetVal(_) => write!(f, "[object Set]"),
         }
     }
 }
@@ -352,6 +385,8 @@ pub fn to_display(v: &Value) -> String {
             "function".to_string()
         }
         Value::Getter(_) => "[getter]".to_string(),
+        Value::MapVal(_) => "[object Map]".to_string(),
+        Value::SetVal(_) => "[object Set]".to_string(),
         Value::Dom(_) => "[object Element]".to_string(),
         Value::Instance(i) => format!("[object {}]", i.class.name),
     }
@@ -381,6 +416,9 @@ fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Dom(x), Value::Dom(y)) => x == y,
         (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
         (Value::Instance(x), Value::Instance(y)) => Rc::ptr_eq(x, y),
+        (Value::MapVal(x), Value::MapVal(y)) => Rc::ptr_eq(x, y),
+        (Value::SetVal(x), Value::SetVal(y)) => Rc::ptr_eq(x, y),
+        (Value::Bound(x), Value::Bound(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }
 }
@@ -547,7 +585,9 @@ fn json_stringify(v: &Value) -> Option<String> {
         | Value::Dom(_)
         | Value::Class(_)
         | Value::Bound(_)
-        | Value::Getter(_) => None,
+        | Value::Getter(_)
+        | Value::MapVal(_)
+        | Value::SetVal(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();
@@ -713,11 +753,27 @@ impl Interp {
         let mut array_ns = HashMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
-        for name in ["RegExp", "Error"] {
-            env_declare(&global, name, Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
+        env_declare(&global, "RegExp", Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
+        // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
+        for name in [
+            "Error",
+            "TypeError",
+            "RangeError",
+            "SyntaxError",
+            "ReferenceError",
+            "EvalError",
+            "URIError",
+            "AggregateError",
+        ] {
+            env_declare(&global, name, Value::Native(Native::ErrorCtor(name)));
         }
         // Function 생성자: Function(params.., body) 를 실제로 컴파일 (호출/ new 둘 다)
         env_declare(&global, "Function", Value::Native(Native::FunctionCtor));
+        // Map / Set / WeakMap / WeakSet (약한 참조는 일반 Map/Set 으로 근사)
+        env_declare(&global, "Map", Value::Native(Native::MapCtor));
+        env_declare(&global, "WeakMap", Value::Native(Native::MapCtor));
+        env_declare(&global, "Set", Value::Native(Native::SetCtor));
+        env_declare(&global, "WeakSet", Value::Native(Native::SetCtor));
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
         let mut ls = HashMap::new();
         ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
@@ -924,6 +980,126 @@ impl Interp {
             super_class: None,
             props: RefCell::new(HashMap::new()),
         })))
+    }
+
+    // new Map(iterable): [[k,v],...] 로 초기화
+    fn make_map(&mut self, args: Vec<Value>) -> Result<Value, String> {
+        let store: Vec<(Value, Value)> = Vec::new();
+        let map = Rc::new(RefCell::new(store));
+        if let Some(Value::Arr(a)) = args.first() {
+            for entry in a.borrow().iter() {
+                if let Value::Arr(pair) = entry {
+                    let p = pair.borrow();
+                    let k = p.first().cloned().unwrap_or(Value::Undefined);
+                    let v = p.get(1).cloned().unwrap_or(Value::Undefined);
+                    map.borrow_mut().push((k, v));
+                }
+            }
+        }
+        Ok(Value::MapVal(map))
+    }
+
+    // new Set(iterable): 배열로 초기화 (중복 제거)
+    fn make_set(&mut self, args: Vec<Value>) -> Result<Value, String> {
+        let set = Rc::new(RefCell::new(Vec::<Value>::new()));
+        if let Some(Value::Arr(a)) = args.first() {
+            for v in a.borrow().iter() {
+                if !set.borrow().iter().any(|e| strict_eq(e, v)) {
+                    set.borrow_mut().push(v.clone());
+                }
+            }
+        }
+        Ok(Value::SetVal(set))
+    }
+
+    fn map_method(
+        &mut self,
+        m: Rc<RefCell<Vec<(Value, Value)>>>,
+        op: MapOp,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let key = args.first().cloned().unwrap_or(Value::Undefined);
+        Ok(match op {
+            MapOp::Get => m
+                .borrow()
+                .iter()
+                .find(|(k, _)| strict_eq(k, &key))
+                .map(|(_, v)| v.clone())
+                .unwrap_or(Value::Undefined),
+            MapOp::Has => Value::Bool(m.borrow().iter().any(|(k, _)| strict_eq(k, &key))),
+            MapOp::Set => {
+                let val = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let pos = m.borrow().iter().position(|(k, _)| strict_eq(k, &key));
+                match pos {
+                    Some(i) => m.borrow_mut()[i].1 = val,
+                    None => m.borrow_mut().push((key, val)),
+                }
+                Value::MapVal(m) // set 은 map 반환 (체이닝)
+            }
+            MapOp::Delete => {
+                let before = m.borrow().len();
+                m.borrow_mut().retain(|(k, _)| !strict_eq(k, &key));
+                Value::Bool(m.borrow().len() < before)
+            }
+            MapOp::Clear => {
+                m.borrow_mut().clear();
+                Value::Undefined
+            }
+            MapOp::ForEach => {
+                let f = args.first().cloned().ok_or("콜백 필요")?;
+                let snapshot: Vec<(Value, Value)> = m.borrow().clone();
+                for (k, v) in snapshot {
+                    self.call_value(f.clone(), None, vec![v, k])?;
+                }
+                Value::Undefined
+            }
+            MapOp::Keys => Value::Arr(Rc::new(RefCell::new(
+                m.borrow().iter().map(|(k, _)| k.clone()).collect(),
+            ))),
+            MapOp::Values => Value::Arr(Rc::new(RefCell::new(
+                m.borrow().iter().map(|(_, v)| v.clone()).collect(),
+            ))),
+            MapOp::Entries => Value::Arr(Rc::new(RefCell::new(
+                m.borrow()
+                    .iter()
+                    .map(|(k, v)| Value::Arr(Rc::new(RefCell::new(vec![k.clone(), v.clone()]))))
+                    .collect(),
+            ))),
+        })
+    }
+
+    fn set_method(&mut self, s: Rc<RefCell<Vec<Value>>>, op: SetOp, args: Vec<Value>) -> Value {
+        let val = args.first().cloned().unwrap_or(Value::Undefined);
+        match op {
+            SetOp::Add => {
+                if !s.borrow().iter().any(|e| strict_eq(e, &val)) {
+                    s.borrow_mut().push(val);
+                }
+                Value::SetVal(s)
+            }
+            SetOp::Has => Value::Bool(s.borrow().iter().any(|e| strict_eq(e, &val))),
+            SetOp::Delete => {
+                let before = s.borrow().len();
+                s.borrow_mut().retain(|e| !strict_eq(e, &val));
+                Value::Bool(s.borrow().len() < before)
+            }
+            SetOp::Clear => {
+                s.borrow_mut().clear();
+                Value::Undefined
+            }
+            SetOp::ForEach => {
+                let f = match args.first() {
+                    Some(f) => f.clone(),
+                    None => return Value::Undefined,
+                };
+                let snapshot: Vec<Value> = s.borrow().clone();
+                for v in snapshot {
+                    let _ = self.call_value(f.clone(), None, vec![v.clone(), v]);
+                }
+                Value::Undefined
+            }
+            SetOp::Values => Value::Arr(Rc::new(RefCell::new(s.borrow().clone()))),
+        }
     }
 
     // document.readyState 갱신 (loading → interactive → complete)
@@ -1577,6 +1753,39 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
+            Value::MapVal(m) => {
+                if key == "size" {
+                    return Ok(Value::Num(m.borrow().len() as f64));
+                }
+                let op = match key {
+                    "get" => Some(MapOp::Get),
+                    "set" => Some(MapOp::Set),
+                    "has" => Some(MapOp::Has),
+                    "delete" => Some(MapOp::Delete),
+                    "clear" => Some(MapOp::Clear),
+                    "forEach" => Some(MapOp::ForEach),
+                    "keys" => Some(MapOp::Keys),
+                    "values" => Some(MapOp::Values),
+                    "entries" => Some(MapOp::Entries),
+                    _ => None,
+                };
+                Ok(op.map(|o| Value::Native(Native::Map(o))).unwrap_or(Value::Undefined))
+            }
+            Value::SetVal(s) => {
+                if key == "size" {
+                    return Ok(Value::Num(s.borrow().len() as f64));
+                }
+                let op = match key {
+                    "add" => Some(SetOp::Add),
+                    "has" => Some(SetOp::Has),
+                    "delete" => Some(SetOp::Delete),
+                    "clear" => Some(SetOp::Clear),
+                    "forEach" => Some(SetOp::ForEach),
+                    "values" | "keys" => Some(SetOp::Values),
+                    _ => None,
+                };
+                Ok(op.map(|o| Value::Native(Native::Set(o))).unwrap_or(Value::Undefined))
+            }
             Value::Str(s) => {
                 if key == "length" {
                     return Ok(Value::Num(s.chars().count() as f64));
@@ -1731,6 +1940,17 @@ impl Interp {
             Value::Class(c) => c,
             // new Function(params.., body) → 실제 함수로 컴파일
             Value::Native(Native::FunctionCtor) => return self.make_function(args),
+            Value::Native(Native::MapCtor) => return self.make_map(args),
+            Value::Native(Native::SetCtor) => return self.make_set(args),
+            Value::Native(Native::ErrorCtor(name)) => {
+                let mut map = HashMap::new();
+                map.insert("name".to_string(), Value::Str(name.to_string()));
+                map.insert(
+                    "message".to_string(),
+                    Value::Str(args.first().map(to_display).unwrap_or_default()),
+                );
+                return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+            }
             // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
             Value::Obj(_) | Value::Native(_) => {
                 let mut map = HashMap::new();
@@ -1939,6 +2159,30 @@ impl Interp {
                     _ => false,
                 };
                 Ok(Value::Bool(has))
+            }
+            Native::MapCtor => self.make_map(args),
+            Native::SetCtor => self.make_set(args),
+            Native::ErrorCtor(name) => {
+                let mut map = HashMap::new();
+                map.insert("name".to_string(), Value::Str(name.to_string()));
+                map.insert(
+                    "message".to_string(),
+                    Value::Str(args.first().map(to_display).unwrap_or_default()),
+                );
+                map.insert("stack".to_string(), Value::Str(String::new()));
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
+            Native::Map(op) => {
+                let Some(Value::MapVal(m)) = recv else {
+                    return Err("Map 메서드".to_string());
+                };
+                self.map_method(m, op, args)
+            }
+            Native::Set(op) => {
+                let Some(Value::SetVal(s)) = recv else {
+                    return Err("Set 메서드".to_string());
+                };
+                Ok(self.set_method(s, op, args))
             }
             Native::CreateElement => {
                 let tag = args.first().map(to_display).unwrap_or_default();
@@ -2867,6 +3111,25 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn map_and_set() {
+        assert_eq!(run_num("var m=new Map(); m.set('a',1); m.set('b',2); m.get('b')"), 2.0);
+        assert_eq!(run_num("var m=new Map(); m.set('a',1); m.set('a',9); m.size"), 1.0);
+        assert!(run_bool("var m=new Map([['x',1]]); m.has('x')"));
+        assert_eq!(run_num("var m=new Map(); m.set(1,'a'); m.delete(1); m.size"), 0.0);
+        assert_eq!(run_num("var s=new Set([1,2,2,3]); s.size"), 3.0);
+        assert!(run_bool("var s=new Set(); s.add(5); s.has(5)"));
+        assert_eq!(
+            run_num("var s=new Set([1,2,3]); var t=0; s.forEach(function(v){t+=v}); t"),
+            6.0
+        );
+        // Map.forEach (value, key)
+        assert_eq!(
+            run_num("var m=new Map([['a',10],['b',20]]); var t=0; m.forEach(function(v){t+=v}); t"),
+            30.0
+        );
     }
 
     #[test]
