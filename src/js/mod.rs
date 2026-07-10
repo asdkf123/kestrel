@@ -22,6 +22,9 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
     // webpack 청크 런타임을 맨 앞에 주입 — 청크가 webpackChunkpc.push([...]) 로
     // 넘긴 모듈을 실제로 등록/실행한다(웹의 사실상 표준 번들 포맷).
     sources.insert(0, WEBPACK_RUNTIME.to_string());
+    // 그 앞에 폴리필 프렐류드(Symbol, Object.entries, 옵저버 스텁 등) — 프레임워크
+    // 부트스트랩이 기대하는 공통 전역을 채운다.
+    sources.insert(0, JS_PRELUDE.to_string());
     if std::env::var("KESTREL_JS_DEBUG").is_ok() {
         sources.insert(0, "self.__KESTREL_WP_DEBUG__=1;".to_string());
     }
@@ -122,6 +125,46 @@ fn collect_scripts(
 // 외부 스크립트 소스를 카운트하기 위한 내부 마커. 실행 직전 제거한다.
 const EXT_TAG: &str = "\u{0}ext\u{0}";
 
+// 폴리필 프렐류드: 프레임워크(React 등)가 기대하는 공통 전역/메서드를 채운다.
+// 순수 JS 로 엔진의 기존 기능만 사용. 최상위 var 선언이라 진짜 전역이 된다.
+const JS_PRELUDE: &str = r#"
+var __kNoop = function(){};
+var __kObs = function(){ return { observe: __kNoop, unobserve: __kNoop, disconnect: __kNoop, takeRecords: function(){ return []; } }; };
+var Symbol = window.Symbol;
+if (!Symbol) {
+  Symbol = function(d){ return { __isSymbol: true, description: d }; };
+  Symbol.iterator = Symbol('Symbol.iterator');
+  Symbol.asyncIterator = Symbol('Symbol.asyncIterator');
+  Symbol.toStringTag = Symbol('Symbol.toStringTag');
+  Symbol.hasInstance = Symbol('Symbol.hasInstance');
+  Symbol.__reg = {};
+  Symbol.for = function(k){ if (!Symbol.__reg[k]) Symbol.__reg[k] = Symbol('@@' + k); return Symbol.__reg[k]; };
+  Symbol.keyFor = function(){ return undefined; };
+  window.Symbol = Symbol;
+}
+if (!Object.entries) Object.entries = function(o){ var k = Object.keys(o || {}), r = []; for (var i = 0; i < k.length; i++) r.push([k[i], o[k[i]]]); return r; };
+if (!Object.values) Object.values = function(o){ var k = Object.keys(o || {}), r = []; for (var i = 0; i < k.length; i++) r.push(o[k[i]]); return r; };
+if (!Object.getOwnPropertyNames) Object.getOwnPropertyNames = function(o){ return Object.keys(o || {}); };
+if (!Object.getOwnPropertySymbols) Object.getOwnPropertySymbols = function(){ return []; };
+if (!Object.getOwnPropertyDescriptor) Object.getOwnPropertyDescriptor = function(o, k){ if (o && Object.prototype.hasOwnProperty.call(o, k)) return { value: o[k], writable: true, enumerable: true, configurable: true }; return undefined; };
+if (!Object.setPrototypeOf) Object.setPrototypeOf = function(o){ return o; };
+if (!Array.from) Array.from = function(x, fn){ var r = []; if (x === null || x === undefined) return r; var len = x.length; if (typeof len === 'number') { for (var i = 0; i < len; i++) r.push(fn ? fn(x[i], i) : x[i]); } return r; };
+if (typeof console !== 'undefined') { var __klg = console.log; if (!console.warn) console.warn = __klg; if (!console.error) console.error = __klg; if (!console.info) console.info = __klg; if (!console.debug) console.debug = __klg; if (!console.trace) console.trace = __klg; if (!console.group) console.group = __kNoop; if (!console.groupEnd) console.groupEnd = __kNoop; if (!console.groupCollapsed) console.groupCollapsed = __kNoop; if (!console.table) console.table = __klg; if (!console.dir) console.dir = __klg; if (!console.assert) console.assert = __kNoop; if (!console.count) console.count = __kNoop; if (!console.time) console.time = __kNoop; if (!console.timeEnd) console.timeEnd = __kNoop; }
+var MutationObserver = window.MutationObserver; if (!MutationObserver) { MutationObserver = __kObs; window.MutationObserver = MutationObserver; }
+var IntersectionObserver = window.IntersectionObserver; if (!IntersectionObserver) { IntersectionObserver = __kObs; window.IntersectionObserver = IntersectionObserver; }
+var ResizeObserver = window.ResizeObserver; if (!ResizeObserver) { ResizeObserver = __kObs; window.ResizeObserver = ResizeObserver; }
+var PerformanceObserver = window.PerformanceObserver; if (!PerformanceObserver) { PerformanceObserver = __kObs; window.PerformanceObserver = PerformanceObserver; }
+if (!window.matchMedia) window.matchMedia = function(q){ return { matches: false, media: q || '', onchange: null, addListener: __kNoop, removeListener: __kNoop, addEventListener: __kNoop, removeEventListener: __kNoop, dispatchEvent: function(){ return false; } }; };
+var matchMedia = window.matchMedia;
+if (!window.requestIdleCallback) window.requestIdleCallback = function(cb){ return setTimeout(function(){ cb({ didTimeout: false, timeRemaining: function(){ return 0; } }); }, 1); };
+var requestIdleCallback = window.requestIdleCallback;
+if (!window.cancelIdleCallback) window.cancelIdleCallback = function(id){ clearTimeout(id); };
+if (!window.cancelAnimationFrame) window.cancelAnimationFrame = function(id){ clearTimeout(id); };
+var cancelAnimationFrame = window.cancelAnimationFrame;
+if (!window.getComputedStyle) window.getComputedStyle = function(){ return { getPropertyValue: function(){ return ''; } }; };
+var getComputedStyle = window.getComputedStyle;
+"#;
+
 // webpack 5 청크 런타임(간소화). 청크는 self.webpackChunkpc.push([chunkIds,
 // modules, runtime]) 로 모듈을 넘기는데, 이 런타임이 push 를 가로채 모듈을
 // 등록하고 준비된 진입점을 실행한다. 배열 push 오버라이드 대신 push 메서드를
@@ -133,6 +176,10 @@ const WEBPACK_RUNTIME: &str = r#"
   function req(id){
     if (cache[id]) return cache[id].exports;
     var m = cache[id] = { i: id, id: id, loaded: false, exports: {} };
+    if (!modules[id]) {
+      if (typeof self !== 'undefined' && self.__KESTREL_WP_DEBUG__) console.log('[wp] MISSING module ' + id);
+      return m.exports;
+    }
     modules[id].call(m.exports, m, m.exports, req);
     m.loaded = true;
     return m.exports;

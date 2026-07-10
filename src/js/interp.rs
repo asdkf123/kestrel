@@ -309,6 +309,25 @@ fn to_num(v: &Value) -> f64 {
     }
 }
 
+// 진단용: 멤버 접근 대상 식을 짧은 소스 문자열로 (에러 메시지에 사용)
+fn obj_hint(e: &crate::js::ast::Expr) -> String {
+    use crate::js::ast::Expr;
+    match e {
+        Expr::Ident(n) => n.clone(),
+        Expr::Member { obj, prop, computed: false } => {
+            if let Expr::Str(p) = &**prop {
+                format!("{}.{}", obj_hint(obj), p)
+            } else {
+                format!("{}.?", obj_hint(obj))
+            }
+        }
+        Expr::Member { obj, computed: true, .. } => format!("{}[..]", obj_hint(obj)),
+        Expr::Call { callee, .. } => format!("{}()", obj_hint(callee)),
+        Expr::This => "this".to_string(),
+        _ => "?".to_string(),
+    }
+}
+
 fn is_callable(v: &Value) -> bool {
     matches!(v, Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_))
 }
@@ -1465,7 +1484,14 @@ impl Interp {
                         arg_vals.push(self.eval(a, env)?);
                     }
                     if !is_callable(&f) {
-                        return Err(format!("{}(…) — .{} 이(가) {} (함수 아님)", key, key, to_display(&f)));
+                        return Err(format!(
+                            "{}(…) — {}.{} 이(가) {} (함수 아님, 수신자={})",
+                            key,
+                            obj_hint(obj),
+                            key,
+                            to_display(&f),
+                            type_of(&recv)
+                        ));
                     }
                     self.call_value(f, Some(recv), arg_vals)
                 } else {
