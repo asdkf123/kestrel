@@ -119,6 +119,9 @@ pub enum Native {
     ReturnFalse,
     MakeIter,
     IterNext,
+    DocQuery(&'static str),
+    CreateTextNode,
+    InsertBefore,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -390,6 +393,25 @@ fn obj_hint(e: &crate::js::ast::Expr) -> String {
         Expr::This => "this".to_string(),
         _ => "?".to_string(),
     }
+}
+
+// DOM 트리에서 태그명으로 첫 요소 찾기 (document.body/head 등)
+fn find_tag(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    tag: &str,
+) -> Option<crate::dom::NodeId> {
+    if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+        if e.tag_name == tag {
+            return Some(id);
+        }
+    }
+    for &c in &dom.get(id).children {
+        if let Some(r) = find_tag(dom, c, tag) {
+            return Some(r);
+        }
+    }
+    None
 }
 
 fn is_callable(v: &Value) -> bool {
@@ -732,6 +754,12 @@ impl Interp {
         // 스크립트 실행 중엔 "loading" — 프레임워크가 DOMContentLoaded 리스너를
         // 등록하도록. run_scripts 가 이후 interactive → complete 로 갱신.
         document.insert("readyState".to_string(), Value::Str("loading".to_string()));
+        document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
+        // 라이브 접근자: document.body/head/documentElement → DOM 요소 핸들
+        let live = |tag| Value::Getter(Rc::new(Value::Native(Native::DocQuery(tag))));
+        document.insert("body".to_string(), live("body"));
+        document.insert("head".to_string(), live("head"));
+        document.insert("documentElement".to_string(), live("html"));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         // Math
         let mut math = HashMap::new();
@@ -1935,6 +1963,8 @@ impl Interp {
                 let native = match key {
                     "addEventListener" => Some(Native::AddEventListener),
                     "appendChild" => Some(Native::AppendChild),
+                    "insertBefore" => Some(Native::InsertBefore),
+                    "createTextNode" => Some(Native::CreateTextNode),
                     "remove" => Some(Native::RemoveElement),
                     "setAttribute" => Some(Native::SetAttribute),
                     "getAttribute" => Some(Native::GetAttribute),
@@ -2378,6 +2408,31 @@ impl Interp {
                 let dom = self.dom_arena()?;
                 Ok(Value::Dom(dom.create_element(&tag)))
             }
+            Native::CreateTextNode => {
+                let text = args.first().map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_text(text)))
+            }
+            // document.body/head/documentElement (라이브 접근자)
+            Native::DocQuery(tag) => {
+                let dom = self.dom_arena()?;
+                let root = dom.root;
+                Ok(find_tag(dom, root, tag).map(Value::Dom).unwrap_or(Value::Null))
+            }
+            // parent.insertBefore(newNode, referenceNode)
+            Native::InsertBefore => match (recv, args.first()) {
+                (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
+                    let child = *child;
+                    let reference = match args.get(1) {
+                        Some(Value::Dom(r)) => Some(*r),
+                        _ => None,
+                    };
+                    let dom = self.dom_arena()?;
+                    dom.insert_before(parent, child, reference);
+                    Ok(Value::Dom(child))
+                }
+                _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
+            },
             Native::AppendChild => match (recv, args.first()) {
                 (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
                     let child = *child;

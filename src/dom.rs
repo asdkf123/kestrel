@@ -130,6 +130,21 @@ impl Dom {
         }
     }
 
+    // parent.insertBefore(child, reference): reference 앞에 삽입.
+    // reference 가 없거나 parent 의 자식이 아니면 끝에 추가(appendChild 동일).
+    pub fn insert_before(&mut self, parent: NodeId, child: NodeId, reference: Option<NodeId>) {
+        if parent == child || self.ancestors(parent).contains(&child) {
+            return;
+        }
+        self.detach(child);
+        self.nodes[child].parent = Some(parent);
+        let pos = reference.and_then(|r| self.nodes[parent].children.iter().position(|&c| c == r));
+        match pos {
+            Some(idx) => self.nodes[parent].children.insert(idx, child),
+            None => self.nodes[parent].children.push(child),
+        }
+    }
+
     // 부모 → 루트 순 조상 체인
     pub fn ancestors(&self, id: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
