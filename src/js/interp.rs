@@ -2038,6 +2038,13 @@ impl Interp {
             Value::Native(Native::FunctionCtor) => return self.make_function(args),
             Value::Native(Native::MapCtor) => return self.make_map(args),
             Value::Native(Native::SetCtor) => return self.make_set(args),
+            // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
+            Value::Bound(b) => {
+                let (target, _this, partial) = (*b).clone();
+                let mut all = partial;
+                all.extend(args);
+                return self.construct(target, all);
+            }
             Value::Native(Native::ErrorCtor(name)) => {
                 let mut map = HashMap::new();
                 map.insert("name".to_string(), Value::Str(name.to_string()));

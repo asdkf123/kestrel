@@ -158,6 +158,22 @@ if (!window.cancelAnimationFrame) window.cancelAnimationFrame = function(id){ cl
 var cancelAnimationFrame = window.cancelAnimationFrame;
 if (!window.getComputedStyle) window.getComputedStyle = function(){ return { getPropertyValue: function(){ return ''; } }; };
 var getComputedStyle = window.getComputedStyle;
+var Reflect = window.Reflect;
+if (!Reflect) {
+  Reflect = {};
+  Reflect.get = function(t, k){ return t[k]; };
+  Reflect.set = function(t, k, v){ t[k] = v; return true; };
+  Reflect.has = function(t, k){ return k in t; };
+  Reflect.deleteProperty = function(t, k){ delete t[k]; return true; };
+  Reflect.ownKeys = function(t){ return Object.keys(t || {}); };
+  Reflect.getPrototypeOf = function(){ return null; };
+  Reflect.setPrototypeOf = function(){ return true; };
+  Reflect.defineProperty = function(t, k, d){ Object.defineProperty(t, k, d); return true; };
+  Reflect.getOwnPropertyDescriptor = function(t, k){ return Object.getOwnPropertyDescriptor(t, k); };
+  Reflect.apply = function(fn, thisArg, args){ return fn.apply(thisArg, args); };
+  Reflect.construct = function(fn, args){ return new (Function.prototype.bind.apply(fn, [null].concat(args || [])))(); };
+  window.Reflect = Reflect;
+}
 "#;
 
 
