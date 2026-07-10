@@ -117,6 +117,8 @@ pub enum Native {
     HasOwnProperty,
     ObjToString,
     ReturnFalse,
+    MakeIter,
+    IterNext,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -1777,7 +1779,14 @@ impl Interp {
 
     fn member_key(&mut self, prop: &Expr, computed: bool, env: &EnvRef) -> Result<String, String> {
         if computed {
-            Ok(to_display(&self.eval(prop, env)?))
+            let v = self.eval(prop, env)?;
+            // 심볼 키(Symbol.iterator 등)는 고유 __key 문자열로 매핑
+            if let Value::Obj(o) = &v {
+                if let Some(Value::Str(k)) = o.borrow().get("__key") {
+                    return Ok(k.clone());
+                }
+            }
+            Ok(to_display(&v))
         } else if let Expr::Str(s) = prop {
             Ok(s.clone())
         } else {
@@ -1842,12 +1851,18 @@ impl Interp {
                 if key == "hasOwnProperty" {
                     return Ok(Value::Native(Native::HasOwnProperty));
                 }
+                if key == "@@iterator" {
+                    return Ok(Value::Native(Native::MakeIter));
+                }
                 if let Ok(i) = key.parse::<usize>() {
                     return Ok(a.borrow().get(i).cloned().unwrap_or(Value::Undefined));
                 }
                 Ok(Value::Undefined)
             }
             Value::MapVal(m) => {
+                if key == "@@iterator" {
+                    return Ok(Value::Native(Native::MakeIter));
+                }
                 if key == "size" {
                     return Ok(Value::Num(m.borrow().len() as f64));
                 }
@@ -1869,6 +1884,9 @@ impl Interp {
                 if key == "size" {
                     return Ok(Value::Num(s.borrow().len() as f64));
                 }
+                if key == "@@iterator" {
+                    return Ok(Value::Native(Native::MakeIter));
+                }
                 let op = match key {
                     "add" => Some(SetOp::Add),
                     "has" => Some(SetOp::Has),
@@ -1883,6 +1901,9 @@ impl Interp {
             Value::Str(s) => {
                 if key == "length" {
                     return Ok(Value::Num(s.chars().count() as f64));
+                }
+                if key == "@@iterator" {
+                    return Ok(Value::Native(Native::MakeIter));
                 }
                 let op = match key {
                     "indexOf" => Some(StrOp::IndexOf),
@@ -2283,6 +2304,48 @@ impl Interp {
                 Ok(Value::Str(format!("[object {}]", tag)))
             }
             Native::ReturnFalse => Ok(Value::Bool(false)),
+            // obj[Symbol.iterator]() → 반복자 객체 { next(), value/done }
+            Native::MakeIter => {
+                let items: Vec<Value> = match &recv {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    Some(Value::Str(s)) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
+                    Some(Value::SetVal(s)) => s.borrow().clone(),
+                    Some(Value::MapVal(m)) => m
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let mut it = HashMap::new();
+                it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
+                it.insert("__i".to_string(), Value::Num(0.0));
+                it.insert("next".to_string(), Value::Native(Native::IterNext));
+                Ok(Value::Obj(Rc::new(RefCell::new(it))))
+            }
+            // 반복자.next() → { value, done }
+            Native::IterNext => {
+                let mut res = HashMap::new();
+                if let Some(Value::Obj(o)) = &recv {
+                    let (items, i) = {
+                        let b = o.borrow();
+                        (b.get("__items").cloned(), b.get("__i").cloned())
+                    };
+                    if let (Some(Value::Arr(items)), Some(Value::Num(i))) = (items, i) {
+                        let idx = i as usize;
+                        let len = items.borrow().len();
+                        if idx < len {
+                            res.insert("value".to_string(), items.borrow()[idx].clone());
+                            res.insert("done".to_string(), Value::Bool(false));
+                            o.borrow_mut().insert("__i".to_string(), Value::Num((idx + 1) as f64));
+                        } else {
+                            res.insert("value".to_string(), Value::Undefined);
+                            res.insert("done".to_string(), Value::Bool(true));
+                        }
+                    }
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(res))))
+            }
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {
@@ -3238,6 +3301,28 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn iterator_protocol() {
+        // Symbol 은 실제 페이지에선 프렐류드가 주입 — 테스트는 인라인 정의.
+        // 계산된 심볼 키가 __key("@@iterator")로 매핑돼 반복자에 연결된다.
+        let sym = "var Symbol={iterator:{__isSymbol:true,__key:'@@iterator'}};";
+        assert_eq!(
+            run_num(&format!(
+                "{sym} var a=[10,20,30]; var it=a[Symbol.iterator](); var s=0,r; \
+                 while(!(r=it.next()).done){{ s+=r.value; }} s"
+            )),
+            60.0
+        );
+        // Set 반복자
+        assert_eq!(
+            run_num(&format!(
+                "{sym} var it=new Set([1,2,3])[Symbol.iterator](); var s=0,r; \
+                 while(!(r=it.next()).done){{ s+=r.value; }} s"
+            )),
+            6.0
+        );
     }
 
     #[test]
