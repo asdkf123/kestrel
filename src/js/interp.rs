@@ -115,6 +115,8 @@ pub enum Native {
     ObjectFreeze,
     ObjectGetPrototypeOf,
     HasOwnProperty,
+    ObjToString,
+    ReturnFalse,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -704,6 +706,8 @@ pub struct Interp {
     next_timer_id: u64,
     // Promise 마이크로태스크 큐: (콜백, 인자, 의존 promise). 스크립트/타이머 후 드레인.
     microtasks: std::collections::VecDeque<(Value, Value, Value)>,
+    // Function.prototype (call/apply/bind). 정체성 보존 위해 보관.
+    fn_proto: Value,
 }
 
 impl Interp {
@@ -772,13 +776,46 @@ impl Interp {
             "getPrototypeOf".to_string(),
             Value::Native(Native::ObjectGetPrototypeOf),
         );
-        // Object.prototype.hasOwnProperty (webpack __webpack_require__.o 가 사용)
+        // Object.prototype: hasOwnProperty(webpack .o), toString(타입 판별 관용),
+        // isPrototypeOf/propertyIsEnumerable/valueOf
         let mut object_proto = HashMap::new();
         object_proto.insert("hasOwnProperty".to_string(), Value::Native(Native::HasOwnProperty));
+        object_proto.insert("toString".to_string(), Value::Native(Native::ObjToString));
+        object_proto.insert("isPrototypeOf".to_string(), Value::Native(Native::ReturnFalse));
+        object_proto
+            .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
         object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
         env_declare(&global, "Object", Value::Obj(Rc::new(RefCell::new(object_ns))));
+        // Array.prototype: 모든 배열 메서드를 담아 Array.prototype.slice.call(x) 지원
         let mut array_ns = HashMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
+        let mut array_proto = HashMap::new();
+        for (name, op) in [
+            ("forEach", ArrOp::ForEach),
+            ("map", ArrOp::Map),
+            ("filter", ArrOp::Filter),
+            ("slice", ArrOp::Slice),
+            ("join", ArrOp::Join),
+            ("indexOf", ArrOp::IndexOf),
+            ("pop", ArrOp::Pop),
+            ("some", ArrOp::Some),
+            ("every", ArrOp::Every),
+            ("reduce", ArrOp::Reduce),
+            ("find", ArrOp::Find),
+            ("findIndex", ArrOp::FindIndex),
+            ("concat", ArrOp::Concat),
+            ("includes", ArrOp::Includes),
+            ("splice", ArrOp::Splice),
+            ("shift", ArrOp::Shift),
+            ("unshift", ArrOp::Unshift),
+            ("reverse", ArrOp::Reverse),
+            ("keys", ArrOp::Keys),
+            ("values", ArrOp::Values),
+        ] {
+            array_proto.insert(name.to_string(), Value::Native(Native::Arr(op)));
+        }
+        array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
+        array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
         env_declare(&global, "RegExp", Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
         // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
@@ -835,6 +872,13 @@ impl Interp {
         env_declare(&global, "Promise", Value::Obj(Rc::new(RefCell::new(promise))));
         // fetch(url) — 동기 HTTP 후 resolved Promise(Response) 반환
         env_declare(&global, "fetch", Value::Native(Native::Fetch));
+        // Function.prototype (call/apply/bind) — 폴리필이 Function.prototype.call.apply
+        // 등으로 광범위하게 참조. 정체성 보존 위해 필드로 보관.
+        let mut fn_proto = HashMap::new();
+        fn_proto.insert("call".to_string(), Value::Native(Native::FnCall));
+        fn_proto.insert("apply".to_string(), Value::Native(Native::FnApply));
+        fn_proto.insert("bind".to_string(), Value::Native(Native::FnBind));
+        let fn_proto = Value::Obj(Rc::new(RefCell::new(fn_proto)));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -853,6 +897,7 @@ impl Interp {
             cleared: std::collections::HashSet::new(),
             next_timer_id: 1,
             microtasks: std::collections::VecDeque::new(),
+            fn_proto,
         }
     }
 
@@ -1619,6 +1664,15 @@ impl Interp {
             Expr::Member { obj, prop, computed } => {
                 let recv = self.eval(obj, env)?;
                 let key = self.member_key(prop, *computed, env)?;
+                if matches!(recv, Value::Undefined | Value::Null) {
+                    return Err(format!(
+                        "{}.{} — {} 이(가) {} (읽을 수 없음)",
+                        obj_hint(obj),
+                        key,
+                        obj_hint(obj),
+                        to_display(&recv)
+                    ));
+                }
                 self.member_get(&recv, &key)
             }
             Expr::Nullish { left, right } => {
@@ -1682,6 +1736,15 @@ impl Interp {
                     }
                     let recv = self.eval(obj, env)?;
                     let key = self.member_key(prop, *computed, env)?;
+                    if matches!(recv, Value::Undefined | Value::Null) {
+                        return Err(format!(
+                            "{}.{}(…) — {} 이(가) {}",
+                            obj_hint(obj),
+                            key,
+                            obj_hint(obj),
+                            to_display(&recv)
+                        ));
+                    }
                     let f = self.member_get(&recv, &key)?;
                     for a in args {
                         arg_vals.push(self.eval(a, env)?);
@@ -1907,6 +1970,8 @@ impl Interp {
                     _ => Ok(Value::Undefined),
                 }
             }
+            // Function.prototype (정체성 보존된 객체)
+            Value::Native(Native::FunctionCtor) if key == "prototype" => Ok(self.fn_proto.clone()),
             // 네이티브/바운드 함수도 호출 어댑터 제공
             Value::Native(_) | Value::Bound(_) => match key {
                 "call" => Ok(Value::Native(Native::FnCall)),
@@ -2191,6 +2256,26 @@ impl Interp {
                 };
                 Ok(Value::Bool(has))
             }
+            // Object.prototype.toString.call(x) → "[object Array]" 등 (타입 판별 관용)
+            Native::ObjToString => {
+                let tag = match &recv {
+                    Some(Value::Arr(_)) => "Array",
+                    None | Some(Value::Undefined) => "Undefined",
+                    Some(Value::Null) => "Null",
+                    Some(Value::Str(_)) => "String",
+                    Some(Value::Num(_)) => "Number",
+                    Some(Value::Bool(_)) => "Boolean",
+                    Some(Value::Fn(_))
+                    | Some(Value::Native(_))
+                    | Some(Value::Bound(_))
+                    | Some(Value::Class(_)) => "Function",
+                    Some(Value::MapVal(_)) => "Map",
+                    Some(Value::SetVal(_)) => "Set",
+                    _ => "Object",
+                };
+                Ok(Value::Str(format!("[object {}]", tag)))
+            }
+            Native::ReturnFalse => Ok(Value::Bool(false)),
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {
@@ -3146,6 +3231,20 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn builtin_prototypes() {
+        // Function.prototype.call/apply/bind
+        assert_eq!(run_num("Function.prototype.call.call(function(){return 5})"), 5.0);
+        // Array.prototype.slice.call (배열형 → 배열)
+        assert_eq!(run_num("var a=[1,2,3]; Array.prototype.slice.call(a,1).length"), 2.0);
+        assert_eq!(run_num("Array.prototype.indexOf.call([7,8,9], 8)"), 1.0);
+        // Object.prototype.toString.call (타입 판별 관용)
+        assert_eq!(run_str("Object.prototype.toString.call([])"), "[object Array]");
+        assert_eq!(run_str("Object.prototype.toString.call({})"), "[object Object]");
+        assert_eq!(run_str("Object.prototype.toString.call('x')"), "[object String]");
+        assert_eq!(run_str("Object.prototype.toString.call(5)"), "[object Number]");
     }
 
     #[test]
