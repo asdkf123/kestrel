@@ -20,7 +20,8 @@ pub enum Value {
     Num(f64),
     Str(String),
     Obj(Rc<RefCell<HashMap<String, Value>>>),
-    Arr(Rc<RefCell<Vec<Value>>>),
+    // 배열은 항목 + own-property 맵을 가진 객체(표준). arr.push 재정의 등 지원.
+    Arr(Rc<ArrayObj>),
     Fn(Rc<JsFn>),
     Native(Native),
     // DOM 요소 핸들: 아레나 NodeId (구조 변형에도 안정)
@@ -35,6 +36,32 @@ pub enum Value {
     // Map/Set — 삽입 순서 보존. 키 비교는 strict_eq (객체는 참조 동일).
     MapVal(Rc<RefCell<Vec<(Value, Value)>>>),
     SetVal(Rc<RefCell<Vec<Value>>>),
+}
+
+// 배열 객체: 인덱스 항목(items)과 own-property(props)를 분리 보관.
+// borrow()/borrow_mut() 는 items 로 위임 — 기존 접근 코드가 그대로 동작한다.
+// props 는 arr.push=fn 재정의나 arr.customProp=x 같은 표준 동작을 위한 것.
+pub struct ArrayObj {
+    items: RefCell<Vec<Value>>,
+    props: RefCell<HashMap<String, Value>>,
+}
+
+impl ArrayObj {
+    pub fn new(items: Vec<Value>) -> Rc<ArrayObj> {
+        Rc::new(ArrayObj { items: RefCell::new(items), props: RefCell::new(HashMap::new()) })
+    }
+    pub fn borrow(&self) -> std::cell::Ref<'_, Vec<Value>> {
+        self.items.borrow()
+    }
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<Value>> {
+        self.items.borrow_mut()
+    }
+    pub fn get_prop(&self, k: &str) -> Option<Value> {
+        self.props.borrow().get(k).cloned()
+    }
+    pub fn set_prop(&self, k: String, v: Value) {
+        self.props.borrow_mut().insert(k, v);
+    }
 }
 
 pub struct JsFn {
@@ -502,7 +529,7 @@ fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
             json_ws(c, p);
             if c.get(*p) == Some(&']') {
                 *p += 1;
-                return Ok(Value::Arr(Rc::new(RefCell::new(items))));
+                return Ok(Value::Arr(ArrayObj::new(items)));
             }
             loop {
                 items.push(json_value(c, p)?);
@@ -511,7 +538,7 @@ fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
                     Some(',') => *p += 1,
                     Some(']') => {
                         *p += 1;
-                        return Ok(Value::Arr(Rc::new(RefCell::new(items))));
+                        return Ok(Value::Arr(ArrayObj::new(items)));
                     }
                     _ => return Err("JSON: ',' 나 ']' 필요".to_string()),
                 }
@@ -835,7 +862,7 @@ impl Interp {
         m.insert("__isPromise".to_string(), Value::Bool(true));
         m.insert("__state".to_string(), Value::Str("pending".to_string()));
         m.insert("__value".to_string(), Value::Undefined);
-        m.insert("__cbs".to_string(), Value::Arr(Rc::new(RefCell::new(Vec::new()))));
+        m.insert("__cbs".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
         m.insert("then".to_string(), Value::Native(Native::PromiseThen));
         m.insert("catch".to_string(), Value::Native(Native::PromiseCatch));
         Value::Obj(Rc::new(RefCell::new(m)))
@@ -1053,18 +1080,18 @@ impl Interp {
                 }
                 Value::Undefined
             }
-            MapOp::Keys => Value::Arr(Rc::new(RefCell::new(
+            MapOp::Keys => Value::Arr(ArrayObj::new(
                 m.borrow().iter().map(|(k, _)| k.clone()).collect(),
-            ))),
-            MapOp::Values => Value::Arr(Rc::new(RefCell::new(
+            )),
+            MapOp::Values => Value::Arr(ArrayObj::new(
                 m.borrow().iter().map(|(_, v)| v.clone()).collect(),
-            ))),
-            MapOp::Entries => Value::Arr(Rc::new(RefCell::new(
+            )),
+            MapOp::Entries => Value::Arr(ArrayObj::new(
                 m.borrow()
                     .iter()
-                    .map(|(k, v)| Value::Arr(Rc::new(RefCell::new(vec![k.clone(), v.clone()]))))
+                    .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
                     .collect(),
-            ))),
+            )),
         })
     }
 
@@ -1098,7 +1125,7 @@ impl Interp {
                 }
                 Value::Undefined
             }
-            SetOp::Values => Value::Arr(Rc::new(RefCell::new(s.borrow().clone()))),
+            SetOp::Values => Value::Arr(ArrayObj::new(s.borrow().clone())),
         }
     }
 
@@ -1413,7 +1440,7 @@ impl Interp {
                 for item in items {
                     v.push(self.eval(item, env)?);
                 }
-                Ok(Value::Arr(Rc::new(RefCell::new(v))))
+                Ok(Value::Arr(ArrayObj::new(v)))
             }
             Expr::Object(props) => {
                 let mut map = HashMap::new();
@@ -1713,6 +1740,10 @@ impl Interp {
                 }
             }
             Value::Arr(a) => {
+                // 재정의된 own-property 가 내장 메서드를 가린다 (arr.push = fn 등)
+                if let Some(v) = a.get_prop(key) {
+                    return Ok(v);
+                }
                 if key == "length" {
                     return Ok(Value::Num(a.borrow().len() as f64));
                 }
@@ -2333,7 +2364,7 @@ impl Interp {
                         } else {
                             s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
                         };
-                        Value::Arr(Rc::new(RefCell::new(parts)))
+                        Value::Arr(ArrayObj::new(parts))
                     }
                 })
             }
@@ -2365,7 +2396,7 @@ impl Interp {
                         };
                         let start = clampi(args.first().map(to_num).unwrap_or(0.0));
                         let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
-                        Value::Arr(Rc::new(RefCell::new(items[start..end.max(start)].to_vec())))
+                        Value::Arr(ArrayObj::new(items[start..end.max(start)].to_vec()))
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
@@ -2389,7 +2420,7 @@ impl Interp {
                         }
                         match op {
                             ArrOp::ForEach => Value::Undefined,
-                            _ => Value::Arr(Rc::new(RefCell::new(out))),
+                            _ => Value::Arr(ArrayObj::new(out)),
                         }
                     }
                     ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
@@ -2467,7 +2498,7 @@ impl Interp {
                                 other => out.push(other.clone()),
                             }
                         }
-                        Value::Arr(Rc::new(RefCell::new(out)))
+                        Value::Arr(ArrayObj::new(out))
                     }
                     ArrOp::Includes => {
                         let needle = args.first().cloned().unwrap_or(Value::Undefined);
@@ -2489,7 +2520,7 @@ impl Interp {
                             start..start + del,
                             args.iter().skip(2).cloned(),
                         ).collect();
-                        Value::Arr(Rc::new(RefCell::new(removed)))
+                        Value::Arr(ArrayObj::new(removed))
                     }
                     ArrOp::Shift => {
                         let mut arr = a.borrow_mut();
@@ -2512,11 +2543,11 @@ impl Interp {
                     }
                     ArrOp::Keys => {
                         let n = a.borrow().len();
-                        Value::Arr(Rc::new(RefCell::new(
+                        Value::Arr(ArrayObj::new(
                             (0..n).map(|i| Value::Num(i as f64)).collect(),
-                        )))
+                        ))
                     }
-                    ArrOp::Values => Value::Arr(Rc::new(RefCell::new(a.borrow().clone()))),
+                    ArrOp::Values => Value::Arr(ArrayObj::new(a.borrow().clone())),
                 })
             }
             Native::JsonParse => {
@@ -2593,14 +2624,14 @@ impl Interp {
                 Some(Value::Obj(m)) => {
                     let keys: Vec<Value> =
                         m.borrow().keys().map(|k| Value::Str(k.clone())).collect();
-                    Ok(Value::Arr(Rc::new(RefCell::new(keys))))
+                    Ok(Value::Arr(ArrayObj::new(keys)))
                 }
                 Some(Value::Arr(a)) => {
                     let keys: Vec<Value> =
                         (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
-                    Ok(Value::Arr(Rc::new(RefCell::new(keys))))
+                    Ok(Value::Arr(ArrayObj::new(keys)))
                 }
-                _ => Ok(Value::Arr(Rc::new(RefCell::new(Vec::new())))),
+                _ => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
             },
             Native::ObjectAssign => {
                 let Some(Value::Obj(target)) = args.first() else {
@@ -2823,10 +2854,14 @@ impl Interp {
                                 arr.resize(i + 1, Value::Undefined);
                             }
                             arr[i] = value;
-                            Ok(())
+                        } else if key == "length" {
+                            let n = to_num(&value).max(0.0) as usize;
+                            a.borrow_mut().resize(n, Value::Undefined);
                         } else {
-                            Ok(()) // 배열 비인덱스 프로퍼티는 무시 (단순화)
+                            // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
+                            a.set_prop(key, value);
                         }
+                        Ok(())
                     }
                     Value::Dom(id) => self.dom_set(id, &key, value),
                     Value::Instance(inst) => {
@@ -2907,7 +2942,7 @@ impl Interp {
             }
         }
         if all {
-            Ok(Value::Arr(Rc::new(RefCell::new(out))))
+            Ok(Value::Arr(ArrayObj::new(out)))
         } else {
             Ok(out.into_iter().next().unwrap_or(Value::Null))
         }
@@ -2936,12 +2971,12 @@ impl Interp {
                     .filter(|&c| is_el(dom, c))
                     .map(Value::Dom)
                     .collect();
-                Ok(Value::Arr(Rc::new(RefCell::new(arr))))
+                Ok(Value::Arr(ArrayObj::new(arr)))
             }
             "childNodes" => {
                 let arr: Vec<Value> =
                     dom.get(id).children.iter().copied().map(Value::Dom).collect();
-                Ok(Value::Arr(Rc::new(RefCell::new(arr))))
+                Ok(Value::Arr(ArrayObj::new(arr)))
             }
             "childElementCount" => {
                 let n = dom.get(id).children.iter().filter(|&&c| is_el(dom, c)).count();
@@ -3111,6 +3146,23 @@ mod tests {
         assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
         // do-while 안 break/continue
         assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+    }
+
+    #[test]
+    fn arrays_are_objects() {
+        // push 재정의 (webpack 청크 배열이 하는 핵심 동작)
+        assert_eq!(
+            run_num("var a=[]; var n=0; a.push=function(){n++;}; a.push(1); a.push(2); n"),
+            2.0
+        );
+        // 커스텀 프로퍼티
+        assert_eq!(run_num("var a=[1,2]; a.foo=42; a.foo"), 42.0);
+        // 커스텀 프로퍼티가 항목/length 를 안 건드림
+        assert_eq!(run_num("var a=[1,2]; a.foo=42; a.length"), 2.0);
+        // length 대입으로 절단
+        assert_eq!(run_num("var a=[1,2,3,4]; a.length=2; a.length"), 2.0);
+        // 재정의 안 하면 내장 메서드 그대로
+        assert_eq!(run_num("var a=[3,1,2]; a.push(9); a.length"), 4.0);
     }
 
     #[test]
