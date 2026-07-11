@@ -431,6 +431,37 @@ impl<'a> LayoutBox<'a> {
         self.translate(dx, 0.0);
     }
 
+    // 서브트리 전체를 (ox, oy) 원점 기준 (sx, sy) 배로 스케일 (transform: scale).
+    // 축 정렬 유지 → 사각형/글리프 위치·크기만 조정, 글리프 px 도 스케일해 재래스터.
+    fn scale_subtree(&mut self, ox: f32, oy: f32, sx: f32, sy: f32) {
+        let sc = |v: f32, o: f32, s: f32| o + (v - o) * s;
+        let d = &mut self.dimensions;
+        d.content.x = sc(d.content.x, ox, sx);
+        d.content.y = sc(d.content.y, oy, sy);
+        d.content.width *= sx;
+        d.content.height *= sy;
+        for g in &mut self.glyphs {
+            g.x = sc(g.x, ox, sx);
+            g.baseline_y = sc(g.baseline_y, oy, sy);
+            g.px *= (sx + sy) / 2.0; // 비균일 스케일은 평균으로 근사
+        }
+        for (r, _) in &mut self.links {
+            r.x = sc(r.x, ox, sx);
+            r.y = sc(r.y, oy, sy);
+            r.width *= sx;
+            r.height *= sy;
+        }
+        for (r, _) in &mut self.decorations {
+            r.x = sc(r.x, ox, sx);
+            r.y = sc(r.y, oy, sy);
+            r.width *= sx;
+            r.height *= sy;
+        }
+        for c in &mut self.children {
+            c.scale_subtree(ox, oy, sx, sy);
+        }
+    }
+
     // 재레이아웃 전 누적 페인트 상태를 초기화 (glyphs/links/decorations 는 push 로
     // 쌓이므로, float shrink-to-fit 2차 배치 시 중복 방지를 위해 서브트리를 비운다)
     fn clear_render(&mut self) {
@@ -1217,57 +1248,66 @@ pub fn layout_tree<'a>(
     root_box
 }
 
-// 후위 순회로 transform: translate* 을 서브트리 오프셋으로 적용한다.
-// 흐름/형제 위치에는 영향 없음(레이아웃 후 순수 시각 이동). scale/rotate/matrix 는 미적용.
+// 후위 순회로 transform 의 translate/scale 을 서브트리에 적용한다.
+// 흐름/형제 위치에는 영향 없음(레이아웃 후 순수 시각 변환). rotate/matrix 는 미적용.
 fn apply_transforms(b: &mut LayoutBox) {
     for c in &mut b.children {
         apply_transforms(c);
     }
     if let Some(Value::Keyword(t)) = b.styled_node.value("transform") {
-        let bb = b.dimensions.border_box();
-        if let Some((dx, dy)) = parse_translate(&t, bb.width, bb.height) {
-            if dx != 0.0 || dy != 0.0 {
-                b.translate(dx, dy);
-            }
-        }
+        apply_transform_functions(b, &t);
     }
 }
 
-// transform 함수 목록에서 translate/translateX/translateY 의 누적 (dx, dy) 를 구한다.
-// 퍼센트는 요소 자신의 border-box 크기 기준. 다른 함수(scale/rotate 등)는 무시.
-fn parse_translate(text: &str, w: f32, h: f32) -> Option<(f32, f32)> {
-    let (mut dx, mut dy) = (0.0f32, 0.0f32);
+// transform 함수 목록을 순서대로 적용 (translate*, scale*). 원점은 border-box 중앙.
+fn apply_transform_functions(b: &mut LayoutBox, text: &str) {
     let mut rest = text;
     while let Some(open) = rest.find('(') {
         let name = rest[..open]
             .trim()
             .rsplit(|c: char| c.is_whitespace() || c == ')')
-            .next()?
+            .next()
+            .unwrap_or("")
             .to_ascii_lowercase();
-        let close = rest[open..].find(')')? + open;
+        let Some(close_rel) = rest[open..].find(')') else { break };
+        let close = close_rel + open;
         let args = &rest[open + 1..close];
         let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-        let resolve = |tok: &str, base: f32| -> f32 {
+        let bb = b.dimensions.border_box();
+        let len = |tok: &str, base: f32| -> f32 {
             if let Some(p) = tok.strip_suffix('%') {
                 p.trim().parse::<f32>().map(|v| v / 100.0 * base).unwrap_or(0.0)
             } else {
                 crate::css::parse_len_px(tok).unwrap_or(0.0)
             }
         };
+        let num = |tok: &str| tok.parse::<f32>().unwrap_or(1.0);
         match name.as_str() {
             "translate" => {
-                dx += resolve(parts[0], w);
-                if let Some(p) = parts.get(1) {
-                    dy += resolve(p, h);
-                }
+                let dx = len(parts[0], bb.width);
+                let dy = parts.get(1).map(|p| len(p, bb.height)).unwrap_or(0.0);
+                b.translate(dx, dy);
             }
-            "translatex" => dx += resolve(parts[0], w),
-            "translatey" => dy += resolve(parts[0], h),
-            _ => {} // scale/rotate/matrix 등 미적용
+            "translatex" => b.translate_x(len(parts[0], bb.width)),
+            "translatey" => b.translate(0.0, len(parts[0], bb.height)),
+            "scale" => {
+                let sx = num(parts[0]);
+                let sy = parts.get(1).map(|p| num(p)).unwrap_or(sx);
+                let (ox, oy) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
+                b.scale_subtree(ox, oy, sx, sy);
+            }
+            "scalex" => {
+                let (ox, oy) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
+                b.scale_subtree(ox, oy, num(parts[0]), 1.0);
+            }
+            "scaley" => {
+                let (ox, oy) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
+                b.scale_subtree(ox, oy, 1.0, num(parts[0]));
+            }
+            _ => {} // rotate/matrix/skew 등 미적용
         }
         rest = &rest[close + 1..];
     }
-    Some((dx, dy))
 }
 
 #[cfg(test)]
@@ -1341,6 +1381,21 @@ mod tests {
             800.0,
         );
         assert_eq!(d2.content.x, 50.0, "50% × 100px = 50px");
+    }
+
+    #[test]
+    fn transform_scale_grows_box_from_center() {
+        // scale(2) → 폭/높이 2배, 중앙 원점 유지 (100x50 중앙 (50,25) 고정)
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; width: 100px; height: 50px; transform: scale(2); }",
+            800.0,
+        );
+        assert_eq!(d.content.width, 200.0, "폭 2배");
+        assert_eq!(d.content.height, 100.0, "높이 2배");
+        // 중앙 (50,25) 고정 → 좌상단은 (50-100, 25-50) = (-50, -25)
+        assert_eq!(d.content.x, -50.0, "중앙 원점 기준 x");
+        assert_eq!(d.content.y, -25.0, "중앙 원점 기준 y");
     }
 
     #[test]
