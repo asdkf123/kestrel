@@ -671,10 +671,30 @@ impl Interp {
         window.insert("navigator".to_string(), nav);
         window.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
         window.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        // 뷰포트/화면 메트릭 (반응형 스크립트가 흔히 읽음). 렌더 뷰포트에 맞춤.
+        for (k, v) in [
+            ("innerWidth", 1000.0),
+            ("innerHeight", 800.0),
+            ("outerWidth", 1000.0),
+            ("outerHeight", 800.0),
+            ("devicePixelRatio", 1.0),
+            ("scrollX", 0.0),
+            ("scrollY", 0.0),
+            ("pageXOffset", 0.0),
+            ("pageYOffset", 0.0),
+        ] {
+            window.insert(k.to_string(), Value::Num(v));
+        }
+        let mut screen = HashMap::new();
+        for (k, v) in [("width", 1000.0), ("height", 800.0), ("availWidth", 1000.0), ("availHeight", 800.0), ("colorDepth", 24.0), ("pixelDepth", 24.0)] {
+            screen.insert(k.to_string(), Value::Num(v));
+        }
+        window.insert("screen".to_string(), Value::Obj(Rc::new(RefCell::new(screen.clone()))));
         let window = Value::Obj(Rc::new(RefCell::new(window)));
         // self / globalThis 는 전역 객체(window) 별칭 (구글/워커 코드)
         env_declare(&global, "window", window.clone());
         env_declare(&global, "self", window.clone());
+        env_declare(&global, "screen", Value::Obj(Rc::new(RefCell::new(screen))));
         // 최상위 this = window (sloppy 스크립트: `(function(){this.x=…}).call(this)` 등)
         env_declare(&global, "this", window.clone());
         env_declare(&global, "globalThis", window);
@@ -3678,6 +3698,15 @@ mod tests {
     fn parse_errors_include_token_context() {
         let err = Interp::new().run("var x = ;").unwrap_err();
         assert!(err.contains("근처"), "에러에 토큰 문맥 포함: {}", err);
+    }
+
+    #[test]
+    fn window_and_screen_metrics() {
+        let mut it = Interp::new();
+        assert!(matches!(it.run("window.innerWidth").unwrap(), Value::Num(n) if n == 1000.0));
+        assert!(matches!(it.run("window.devicePixelRatio").unwrap(), Value::Num(n) if n == 1.0));
+        assert!(matches!(it.run("screen.width").unwrap(), Value::Num(n) if n == 1000.0));
+        assert!(matches!(it.run("window.screen.height").unwrap(), Value::Num(n) if n == 800.0));
     }
 
     #[test]
