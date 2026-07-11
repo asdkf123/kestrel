@@ -675,6 +675,21 @@ fn style_node<'a>(
                     }
                 }
             }
+            // currentColor 를 요소 계산 color 로 치환 (border-color/background-color 등).
+            let cur_color = match values.get("color") {
+                Some(Value::Color(c)) => Some(*c),
+                _ => None,
+            };
+            if let Some(cc) = cur_color {
+                for (k, v) in values.iter_mut() {
+                    if k == "color" {
+                        continue;
+                    }
+                    if matches!(v, Value::Keyword(s) if s.eq_ignore_ascii_case("currentcolor")) {
+                        *v = Value::Color(cc);
+                    }
+                }
+            }
             ancestors.push(elem);
             // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제.
             // 합성 의사요소(::before/::after)는 구조적 선택자에서 제외(요소 트리에 없음).
@@ -778,6 +793,19 @@ mod tests {
         // ::before 는 소유 div 의 첫 자식 (span 앞)
         let div = &styled;
         assert!(matches!(&div.children[0].node.node_type, NodeType::Element(e) if is_synthetic_pseudo(e)));
+    }
+
+    #[test]
+    fn current_color_resolves_to_element_color() {
+        let root = crate::html::parse_dom("<div></div>".to_string());
+        let ss = crate::css::parse(
+            "div { color: #ff0000; border-top-color: currentColor; background-color: currentcolor; }"
+                .to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        let red = Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 });
+        assert_eq!(styled.value("border-top-color"), Some(red.clone()), "currentColor → color");
+        assert_eq!(styled.value("background-color"), Some(red), "대소문자 무시");
     }
 
     #[test]
