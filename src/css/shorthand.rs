@@ -174,6 +174,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "filter" | "-webkit-filter" => {
             vec![Declaration { name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // animation 단축: 이름 토큰만 추출 (정적 렌더가 @keyframes 최종 상태를 적용하기 위함).
+        "animation" | "-webkit-animation" => {
+            let name = value_text.split_whitespace().find(|t| is_animation_name(t));
+            match name {
+                Some(n) => vec![Declaration { name: "animation-name".to_string(), value: Value::Keyword(n.to_string()) }],
+                None => Vec::new(),
+            }
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
@@ -213,6 +221,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             None => Vec::new(),
         },
     }
+}
+
+// animation 단축 토큰이 애니메이션 이름인지 (시간·타이밍·방향·반복 등 키워드 제외).
+fn is_animation_name(t: &str) -> bool {
+    if t.ends_with("ms") || t.ends_with('s') && t[..t.len() - 1].chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return false; // 시간
+    }
+    if t.parse::<f32>().is_ok() {
+        return false; // 반복 횟수
+    }
+    !matches!(
+        t,
+        "ease" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end"
+            | "infinite" | "normal" | "reverse" | "alternate" | "alternate-reverse" | "none"
+            | "forwards" | "backwards" | "both" | "running" | "paused" | "initial" | "inherit"
+    ) && t.chars().next().map(|c| c.is_ascii_alphabetic() || c == '-' || c == '_').unwrap_or(false)
 }
 
 // CSS 문자열 이스케이프 해석: \XXXX(최대 6자리 16진 코드포인트, 뒤 공백 1개 흡수)와

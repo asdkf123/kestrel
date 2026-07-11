@@ -523,7 +523,7 @@ pub fn style_tree_full<'a>(
 ) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp, pseudo)
+    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes)
 }
 
 pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
@@ -643,6 +643,7 @@ fn style_node<'a>(
     sib: &SiblingCtx,
     vp: Viewport,
     pseudo: &PseudoStyles,
+    keyframes: &std::collections::HashMap<String, Vec<(String, Value)>>,
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
@@ -758,6 +759,17 @@ fn style_node<'a>(
                     }
                 }
             }
+            // animation: @keyframes 최종(100%/to) 프레임을 적용 (정적 렌더 = 애니메이션 종료 근사).
+            // 진입 애니메이션의 opacity:0/off-screen 초기상태로 콘텐츠가 안 보이던 문제를 완화.
+            if let Some(Value::Keyword(name)) = values.get("animation-name").cloned() {
+                if let Some(frame) = keyframes.get(&name) {
+                    for (k, v) in frame {
+                        let mut vv = v.clone();
+                        resolve_units(&mut vv, fs, vp);
+                        values.insert(k.clone(), vv);
+                    }
+                }
+            }
             ancestors.push(elem);
             // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제.
             // 합성 의사요소(::before/::after)는 구조적 선택자에서 제외(요소 트리에 없음).
@@ -787,7 +799,7 @@ fn style_node<'a>(
                         // 구조적 문맥에 포함하지 않고 스타일만 (기본 형제 문맥)
                         children.push(style_node(
                             dom, child, index, ancestors, Some(&values),
-                            &SiblingCtx::default(), vp, pseudo,
+                            &SiblingCtx::default(), vp, pseudo, keyframes,
                         ));
                         continue;
                     }
@@ -805,7 +817,7 @@ fn style_node<'a>(
                         prev: &prev_elems,
                         has_children,
                     };
-                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo));
+                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo, keyframes));
                     prev_elems.push(ce);
                 } else {
                     children.push(style_node(
@@ -817,6 +829,7 @@ fn style_node<'a>(
                         &SiblingCtx::default(),
                         vp,
                         pseudo,
+                        keyframes,
                     ));
                 }
             }
@@ -831,7 +844,7 @@ fn style_node<'a>(
                 .children
                 .iter()
                 .map(|&child| {
-                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp, pseudo)
+                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp, pseudo, keyframes)
                 })
                 .collect(),
         },
@@ -880,6 +893,27 @@ mod tests {
         // ::before 는 소유 div 의 첫 자식 (span 앞)
         let div = &styled;
         assert!(matches!(&div.children[0].node.node_type, NodeType::Element(e) if is_synthetic_pseudo(e)));
+    }
+
+    #[test]
+    fn animation_applies_final_keyframe() {
+        // 진입 애니메이션: 초기 opacity:0 이지만 @keyframes 최종(to)에서 1 → 정적 렌더는 1
+        let root = crate::html::parse_dom("<div class=\"a\"></div>".to_string());
+        let ss = crate::css::parse(
+            "@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } } \
+             .a { opacity: 0; animation: fadeIn 1s ease forwards; }"
+                .to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        fn find_tag<'a>(n: &'a StyledNode<'a>, tag: &str) -> Option<&'a StyledNode<'a>> {
+            if matches!(&n.node.node_type, NodeType::Element(e) if e.tag_name == tag) {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find_tag(c, tag))
+        }
+        let div = find_tag(&styled, "div").unwrap();
+        // 최종 opacity 1 이 적용됨 (초기 0 을 덮음)
+        assert_eq!(div.value("opacity"), Some(Value::Length(1.0, Unit::Px)));
     }
 
     #[test]

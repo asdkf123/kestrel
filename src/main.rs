@@ -359,6 +359,7 @@ fn build_page(url: &str) -> Option<window::Page> {
                 let parsed = css::parse_viewport(css_text, page_vw);
                 sheet.rules.extend(parsed.rules);
                 sheet.font_faces.extend(parsed.font_faces);
+                sheet.keyframes.extend(parsed.keyframes);
             }
         }
     }
@@ -367,6 +368,7 @@ fn build_page(url: &str) -> Option<window::Page> {
     let parsed_inline = css::parse_viewport(inline_css, page_vw);
     sheet.rules.extend(parsed_inline.rules);
     sheet.font_faces.extend(parsed_inline.font_faces);
+    sheet.keyframes.extend(parsed_inline.keyframes);
 
     // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리는 일시 사용)
     let mut srcs = Vec::new();

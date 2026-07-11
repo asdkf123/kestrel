@@ -12,6 +12,8 @@ use values::valid_identifier_char;
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
     pub font_faces: Vec<FontFace>,
+    // @keyframes 이름 → 최종(100%/to) 프레임 선언. 정적 렌더는 애니메이션 종료 상태를 적용.
+    pub keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
 }
 
 // @font-face 규칙: 패밀리 이름 + src URL 목록(우선순위 순).
@@ -239,6 +241,25 @@ pub fn parse_len_px(tok: &str) -> Option<f32> {
     }
 }
 
+// @keyframes 프레임 셀렉터의 최대 offset (0..1). "100%"/"to" → 1.0, "from"/"0%" → 0.
+fn frame_offset(sel: &str) -> f32 {
+    let mut max = 0.0f32;
+    for part in sel.split(',') {
+        let p = part.trim().to_ascii_lowercase();
+        let o = if p == "to" {
+            1.0
+        } else if p == "from" {
+            0.0
+        } else if let Some(n) = p.strip_suffix('%') {
+            n.trim().parse::<f32>().map(|v| v / 100.0).unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        max = max.max(o);
+    }
+    max
+}
+
 // 텍스트에서 url(...) 안의 URL 들을 순서대로 추출 (따옴표 제거). @font-face src 용.
 fn extract_urls(text: &str, out: &mut Vec<String>) {
     let mut rest = text;
@@ -272,9 +293,9 @@ pub fn parse(source: String) -> Stylesheet {
 // 뷰포트 폭을 알고 파스 — @media (min/max-width) 를 이 폭에 대해 평가해
 // 매칭되는 규칙만 포함한다. 페이지 스타일시트는 실제 뷰포트 폭으로 호출.
 pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
-    let mut parser = Parser { pos: 0, input: source, viewport_width, font_faces: Vec::new() };
+    let mut parser = Parser { pos: 0, input: source, viewport_width, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
     let rules = parser.parse_rules();
-    Stylesheet { rules, font_faces: parser.font_faces }
+    Stylesheet { rules, font_faces: parser.font_faces, keyframes: parser.keyframes }
 }
 
 // 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
@@ -302,7 +323,7 @@ fn parse_nth(s: &str) -> Option<(i32, i32)> {
 }
 
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
-    let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0, font_faces: Vec::new() };
+    let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
     parser.parse_declarations()
 }
 
@@ -397,6 +418,7 @@ struct Parser {
     input: String,
     viewport_width: f32,
     font_faces: Vec<FontFace>,
+    keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
 }
 
 impl Parser {
@@ -420,6 +442,8 @@ impl Parser {
                     if let Some(ff) = self.parse_font_face() {
                         self.font_faces.push(ff);
                     }
+                } else if ident == "keyframes" || ident == "-webkit-keyframes" {
+                    self.parse_keyframes();
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -536,6 +560,47 @@ impl Parser {
             return None;
         }
         Some(FontFace { family, srcs })
+    }
+
+    // '@keyframes name { 0%{...} 100%{...} }' — 최종(100%/to) 프레임 선언만 보관.
+    // 정적 렌더는 애니메이션 완료 상태를 근사(진입 애니메이션의 숨김 초기상태 회피).
+    fn parse_keyframes(&mut self) {
+        self.consume_whitespace();
+        let name = self.parse_identifier();
+        self.consume_whitespace();
+        if self.peek() != Some('{') {
+            self.skip_at_rule();
+            return;
+        }
+        self.consume_char(); // '{'
+        let mut final_decls: Vec<(String, Value)> = Vec::new();
+        let mut best_offset = -1.0f32;
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                _ => {
+                    // 프레임 셀렉터 (0%, 100%, from, to, 콤마 목록) → 최대 offset 추출
+                    let sel = self.consume_while(|c| c != '{' && c != '}');
+                    let offset = frame_offset(&sel);
+                    if self.peek() == Some('{') {
+                        self.consume_char();
+                        let decls = self.parse_declarations();
+                        if offset >= best_offset {
+                            best_offset = offset;
+                            final_decls = decls.into_iter().map(|d| (d.name, d.value)).collect();
+                        }
+                    }
+                }
+            }
+        }
+        if !name.is_empty() && !final_decls.is_empty() {
+            self.keyframes.insert(name, final_decls);
+        }
     }
 
     fn parse_rule(&mut self) -> Option<Rule> {
@@ -697,7 +762,7 @@ impl Parser {
                 if p.is_empty() {
                     return None;
                 }
-                let mut inner = Parser { pos: 0, input: p.to_string(), viewport_width: 0.0, font_faces: Vec::new() };
+                let mut inner = Parser { pos: 0, input: p.to_string(), viewport_width: 0.0, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
                 inner.parse_simple_selector()
             })
             .collect()
