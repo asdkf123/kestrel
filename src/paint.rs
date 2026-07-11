@@ -1196,6 +1196,43 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
     }
 }
 
+// clip-path: inset(t r b l [round …]) → 클립 사각형 (border box 기준). inset 만 지원
+// (circle/ellipse/polygon 은 픽셀 마스크가 필요해 미지원 → 클립 안 함).
+fn clip_path_rect(lb: &LayoutBox) -> Option<Rect> {
+    let raw = match lb.styled_node.value("clip-path") {
+        Some(Value::Keyword(s)) => s,
+        _ => return None,
+    };
+    let inner = raw.trim().strip_prefix("inset(")?.strip_suffix(')')?;
+    let inner = inner.split("round").next().unwrap_or(inner).trim();
+    let b = lb.dimensions.border_box();
+    let resolve = |t: &str, base: f32| -> Option<f32> {
+        if let Some(p) = t.strip_suffix('%') {
+            p.trim().parse::<f32>().ok().map(|v| v / 100.0 * base)
+        } else {
+            t.trim_end_matches("px").parse::<f32>().ok()
+        }
+    };
+    let toks: Vec<&str> = inner.split_whitespace().collect();
+    let (top, right, bottom, left) = match toks.len() {
+        1 => (resolve(toks[0], b.height)?, resolve(toks[0], b.width)?, resolve(toks[0], b.height)?, resolve(toks[0], b.width)?),
+        2 => {
+            let tb = resolve(toks[0], b.height)?;
+            let lr = resolve(toks[1], b.width)?;
+            (tb, lr, tb, lr)
+        }
+        3 => (resolve(toks[0], b.height)?, resolve(toks[1], b.width)?, resolve(toks[2], b.height)?, resolve(toks[1], b.width)?),
+        n if n >= 4 => (resolve(toks[0], b.height)?, resolve(toks[1], b.width)?, resolve(toks[2], b.height)?, resolve(toks[3], b.width)?),
+        _ => return None,
+    };
+    Some(Rect {
+        x: b.x + left,
+        y: b.y + top,
+        width: (b.width - left - right).max(0.0),
+        height: (b.height - top - bottom).max(0.0),
+    })
+}
+
 fn collect_items(
     layout_box: &LayoutBox,
     parent_z: i32,
@@ -1217,6 +1254,14 @@ fn collect_items(
     // opacity: 이 서브트리(자신+자손)의 모든 아이템 알파에 곱해질 지점 표시.
     // 근사(그룹 합성 아님): 겹치는 자손은 개별 블렌드되지만 대다수 UI 엔 충분.
     let subtree_start = buf.len();
+    // clip-path: 이 서브트리(자신+자손) 전체를 inset 사각형으로 클립 (기존 clip 과 교집합).
+    let clip = match clip_path_rect(layout_box) {
+        Some(cp) => match clip {
+            Some(c) => rect_intersect(c, cp).or(Some(Rect::default())),
+            None => Some(cp),
+        },
+        None => clip,
+    };
     let mut local: Vec<DisplayItem> = Vec::new();
     // 그림자 → 배경/테두리(border-radius 포함) → 안쪽그림자 → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
@@ -1885,6 +1930,23 @@ mod tests {
         assert_eq!(sh[1].spread, 1.0);
         assert!(sh[2].inset, "셋째는 inset");
         assert_eq!(sh[2].blur, 5.0);
+    }
+
+    #[test]
+    fn clip_path_inset_clips_subtree() {
+        // 40x40 빨강 박스에 clip-path: inset(10px) → 중앙 20x20 만 남음
+        let c = canvas_for(
+            "<div class=\"b\"></div>",
+            "html,body{display:block} .b{display:block;width:40px;height:40px;\
+             background-color:#ff0000;clip-path:inset(10px)}",
+            40.0,
+            40.0,
+        );
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let at = |x: usize, y: usize| c.pixels[y * c.width + x];
+        assert_ne!(at(5, 5), red, "좌상단 모서리 클립됨");
+        assert_eq!(at(20, 20), red, "중앙 채워짐");
+        assert_ne!(at(35, 35), red, "우하단 모서리 클립됨");
     }
 
     #[test]

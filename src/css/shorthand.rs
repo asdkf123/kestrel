@@ -325,6 +325,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "background-position" | "object-position" => {
             vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // clip-path: 함수 표기(inset(...) 등) 원문 보존, paint 가 파싱.
+        "clip-path" => {
+            vec![Declaration { name: "clip-path".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
         "outline" => {
             let (mut width, mut style, mut color) = (None, None, None);
