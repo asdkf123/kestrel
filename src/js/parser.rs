@@ -1011,6 +1011,22 @@ impl Parser {
                     let args = self.arg_list()?;
                     e = Expr::Call { callee: Box::new(e), args };
                 }
+                // 태그드 템플릿: tag`a${x}b` → tag(["a","b"], x). 보간식은 소스라 재파싱.
+                Some(Tok::Template(parts)) => {
+                    let parts = parts.clone();
+                    self.pos += 1;
+                    let mut strings = Vec::new();
+                    let mut values = Vec::new();
+                    for part in parts {
+                        match part {
+                            TplPart::Lit(s) => strings.push(Expr::Str(s)),
+                            TplPart::Expr(src) => values.push(parse_expr_source(&src)?),
+                        }
+                    }
+                    let mut args = vec![Expr::Array(strings)];
+                    args.extend(values);
+                    e = Expr::Call { callee: Box::new(e), args };
+                }
                 // 옵셔널 체이닝: ?.prop / ?.[expr] / ?.(args)
                 Some(Tok::OptChain) => {
                     self.pos += 1;

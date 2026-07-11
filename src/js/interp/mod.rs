@@ -3417,6 +3417,19 @@ mod tests {
     }
 
     #[test]
+    fn tagged_template_literals() {
+        // tag`a${1}b${2}c` → tag(["a","b","c"], 1, 2)
+        assert_eq!(
+            run_str("function t(s){return s.join('|');} t`a${1}b${2}c`"),
+            "a|b|c"
+        );
+        assert_eq!(
+            run_str("function t(s,x,y){return s[0]+x+s[1]+y+s[2];} t`(${5})[${6}]`"),
+            "(5)[6]"
+        );
+    }
+
+    #[test]
     fn object_literal_getters_are_invoked() {
         // { get x(){..} } 접근자는 접근 시 호출 (this=객체)
         assert_eq!(run_num("var o={n:10, get d(){return this.n*2;}}; o.d"), 20.0);
