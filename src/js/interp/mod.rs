@@ -1571,10 +1571,17 @@ impl Interp {
                     }
                     let key = match k {
                         PropKey::Static(s) => s.clone(),
+                        PropKey::Getter(s) => s.clone(),
                         PropKey::Computed(ke) => to_display(&self.eval(ke, env)?),
                         PropKey::Spread => unreachable!(),
                     };
                     let val = self.eval(e, env)?;
+                    // 접근자: 함수를 Getter 로 감싸 멤버 접근 시 호출되게
+                    let val = if matches!(k, PropKey::Getter(_)) {
+                        Value::Getter(Rc::new(val))
+                    } else {
+                        val
+                    };
                     map.insert(key, val);
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
@@ -3407,6 +3414,15 @@ mod tests {
         assert_eq!(run_num("(function(a, ...r){return a + r.length;})(1,2,3,4)"), 4.0);
         assert_eq!(run_num("((...n) => n.reduce((a,b)=>a+b,0))(1,2,3,4,5)"), 15.0);
         assert_eq!(run_str("(function(a, ...r){return a + r.join('');})('X','Y','Z')"), "XYZ");
+    }
+
+    #[test]
+    fn object_literal_getters_are_invoked() {
+        // { get x(){..} } 접근자는 접근 시 호출 (this=객체)
+        assert_eq!(run_num("var o={n:10, get d(){return this.n*2;}}; o.d"), 20.0);
+        assert_eq!(run_str("({get g(){return 'ok';}}).g"), "ok");
+        // getter + setter 공존 (setter 는 무시)
+        assert_eq!(run_num("({base:5, set v(x){}, get v(){return this.base+1;}}).v"), 6.0);
     }
 
     #[test]

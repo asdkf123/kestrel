@@ -53,6 +53,7 @@ pub enum PropKey {
     Static(String),
     Computed(Box<Expr>),
     Spread, // {...obj} — value 식의 프로퍼티를 병합
+    Getter(String), // { get x() {..} } — 접근 시 호출되는 접근자
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1268,6 +1268,37 @@ impl Parser {
                             self.expect(&Tok::RBrace)?;
                             break;
                         }
+                        // 접근자 { get x(){..} } / { set x(v){..} }: get/set 뒤에 이름+'(' 이면
+                        if matches!(self.peek(), Some(Tok::Ident(w)) if w == "get" || w == "set")
+                            && matches!(self.toks.get(self.pos + 1),
+                                Some(Tok::Ident(_) | Tok::Str(_) | Tok::Num(_)))
+                            && self.toks.get(self.pos + 2) == Some(&Tok::LParen)
+                        {
+                            let is_get = matches!(self.peek(), Some(Tok::Ident(w)) if w == "get");
+                            self.pos += 1; // get/set
+                            let name = self.member_name()?;
+                            let (params, mut body) = self.param_list()?;
+                            body.extend(self.block()?);
+                            let f = Expr::Func {
+                                params,
+                                body,
+                                is_arrow: false,
+                                is_generator: false,
+                                is_async: false,
+                            };
+                            if is_get {
+                                props.push((PropKey::Getter(name), f));
+                            }
+                            // setter 는 할당 훅 미지원 → 버림(파싱만)
+                            if self.eat(&Tok::Comma) {
+                                if self.eat(&Tok::RBrace) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            self.expect(&Tok::RBrace)?;
+                            break;
+                        }
                         let key = match self.next()? {
                             Tok::Ident(s) => s,
                             Tok::Str(s) => s,
