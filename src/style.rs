@@ -348,6 +348,205 @@ fn pseudo_specified_values(
     values
 }
 
+// 레거시 색 속성 값을 CSS 색 문자열로 정규화 (bgcolor="ff6600" → "#ff6600").
+fn norm_color(v: &str) -> Option<String> {
+    let v = v.trim();
+    if v.is_empty() {
+        return None;
+    }
+    if v.starts_with('#') {
+        return Some(v.to_string());
+    }
+    let hexish = v.chars().all(|c| c.is_ascii_hexdigit());
+    if hexish && matches!(v.len(), 3 | 4 | 6 | 8) {
+        return Some(format!("#{}", v));
+    }
+    Some(v.to_ascii_lowercase()) // 이름 색 (red 등)은 그대로 색 파서에 위임
+}
+
+// 레거시 길이 속성: 순수 숫자는 px, "50%" 는 그대로.
+fn norm_len(v: &str) -> String {
+    let v = v.trim();
+    if v.ends_with('%') || v.ends_with("px") {
+        return v.to_string();
+    }
+    if v.parse::<f32>().is_ok() {
+        return format!("{}px", v);
+    }
+    v.to_string()
+}
+
+fn attr_text_align(v: &str) -> Option<&'static str> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "left" => Some("left"),
+        "right" => Some("right"),
+        "center" | "middle" => Some("center"),
+        "justify" => Some("justify"),
+        _ => None,
+    }
+}
+
+// <font size="1".."7"> → 픽셀 (상대 +/- 는 미지원)
+fn attr_font_size(v: &str) -> Option<f32> {
+    const SIZES: [f32; 7] = [10.0, 13.0, 16.0, 18.0, 24.0, 32.0, 48.0];
+    let n: usize = v.trim().parse().ok()?;
+    if (1..=7).contains(&n) {
+        Some(SIZES[n - 1])
+    } else {
+        None
+    }
+}
+
+// HTML 표현 속성(presentational hints, 표준 §15)을 CSS 선언 문자열로.
+// 저작자/UA 규칙보다 낮은 기본 레이어로 얹혀 캐스케이드에서 덮일 수 있다.
+fn presentational_css(elem: &ElementData) -> String {
+    let a = &elem.attributes;
+    let get = |k: &str| a.get(k).map(|s| s.trim()).filter(|s| !s.is_empty());
+    let tag = elem.tag_name.as_str();
+    let mut out: Vec<String> = Vec::new();
+
+    if let Some(v) = get("bgcolor") {
+        if let Some(c) = norm_color(v) {
+            out.push(format!("background-color:{}", c));
+        }
+    }
+    // 테이블 자체의 width/height 만 CSS 로. 셀/행/열(td/th/tr/col)의 width 는
+    // 테이블 레이아웃 알고리즘이 속성을 직접 읽어 열 폭을 계산하므로 CSS 로 넣으면
+    // 셀 박스가 열 폭을 기준으로 % 를 재해석해 어긋난다 (cell_width 참고).
+    if tag == "table" {
+        if let Some(v) = get("width") {
+            out.push(format!("width:{}", norm_len(v)));
+        }
+        if let Some(v) = get("height") {
+            out.push(format!("height:{}", norm_len(v)));
+        }
+    }
+    match tag {
+        "body" => {
+            if let Some(v) = get("text") {
+                if let Some(c) = norm_color(v) {
+                    out.push(format!("color:{}", c));
+                }
+            }
+            if let Some(v) = get("background") {
+                out.push(format!("background-image:url({})", v));
+            }
+        }
+        "font" | "basefont" => {
+            if let Some(v) = get("color") {
+                if let Some(c) = norm_color(v) {
+                    out.push(format!("color:{}", c));
+                }
+            }
+            if let Some(v) = get("face") {
+                out.push(format!("font-family:{}", v));
+            }
+            if let Some(v) = get("size") {
+                if let Some(px) = attr_font_size(v) {
+                    out.push(format!("font-size:{}px", px));
+                }
+            }
+        }
+        "td" | "th" => {
+            if let Some(v) = get("align") {
+                if let Some(t) = attr_text_align(v) {
+                    out.push(format!("text-align:{}", t));
+                }
+            }
+            if let Some(v) = get("valign") {
+                out.push(format!("vertical-align:{}", v.to_ascii_lowercase()));
+            }
+            if a.contains_key("nowrap") {
+                out.push("white-space:nowrap".into());
+            }
+        }
+        "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "caption" | "tr" | "thead"
+        | "tbody" | "tfoot" | "col" | "colgroup" => {
+            if let Some(v) = get("align") {
+                if let Some(t) = attr_text_align(v) {
+                    out.push(format!("text-align:{}", t));
+                }
+            }
+        }
+        "table" => {
+            if let Some(v) = get("align") {
+                match v.to_ascii_lowercase().as_str() {
+                    "center" => out.push("margin-left:auto;margin-right:auto".into()),
+                    "left" => out.push("float:left".into()),
+                    "right" => out.push("float:right".into()),
+                    _ => {}
+                }
+            }
+            if let Some(v) = get("border") {
+                out.push(format!("border:{} solid #808080", norm_len(v)));
+            }
+            if let Some(v) = get("cellspacing") {
+                out.push(format!("border-spacing:{}", norm_len(v)));
+            }
+        }
+        "img" => {
+            if let Some(v) = get("width") {
+                out.push(format!("width:{}", norm_len(v)));
+            }
+            if let Some(v) = get("height") {
+                out.push(format!("height:{}", norm_len(v)));
+            }
+            if let Some(v) = get("align") {
+                match v.to_ascii_lowercase().as_str() {
+                    "left" => out.push("float:left".into()),
+                    "right" => out.push("float:right".into()),
+                    t @ ("top" | "middle" | "bottom") => {
+                        out.push(format!("vertical-align:{}", t))
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(v) = get("border") {
+                out.push(format!("border:{} solid #000000", norm_len(v)));
+            }
+            if let Some(v) = get("hspace") {
+                let n = norm_len(v);
+                out.push(format!("margin-left:{0};margin-right:{0}", n));
+            }
+            if let Some(v) = get("vspace") {
+                let n = norm_len(v);
+                out.push(format!("margin-top:{0};margin-bottom:{0}", n));
+            }
+        }
+        "hr" => {
+            if let Some(v) = get("width") {
+                out.push(format!("width:{}", norm_len(v)));
+            }
+            if let Some(v) = get("size") {
+                out.push(format!("height:{}", norm_len(v)));
+            }
+            if let Some(v) = get("color") {
+                if let Some(c) = norm_color(v) {
+                    out.push(format!("background-color:{0};color:{0}", c));
+                }
+            }
+        }
+        "ol" | "ul" => {
+            if let Some(v) = get("type") {
+                let t = match v {
+                    "1" => "decimal",
+                    "a" => "lower-alpha",
+                    "A" => "upper-alpha",
+                    "i" => "lower-roman",
+                    "I" => "upper-roman",
+                    "disc" | "circle" | "square" => v,
+                    _ => "",
+                };
+                if !t.is_empty() {
+                    out.push(format!("list-style-type:{}", t));
+                }
+            }
+        }
+        _ => {}
+    }
+    out.join(";")
+}
+
 fn specified_values(
     elem: &ElementData,
     ancestors: &[&ElementData],
@@ -355,6 +554,13 @@ fn specified_values(
     index: &RuleIndex,
 ) -> PropertyMap {
     let mut values = HashMap::new();
+    // 표현 속성(presentational hints)을 기본 레이어로 먼저 얹는다 (규칙이 덮을 수 있음)
+    let hints = presentational_css(elem);
+    if !hints.is_empty() {
+        for declaration in crate::css::parse_inline_style(&hints) {
+            values.insert(declaration.name, declaration.value);
+        }
+    }
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
@@ -1324,6 +1530,36 @@ mod tests {
         let root3 = crate::html::parse_dom("<span></span>".to_string());
         let ss3 = crate::css::parse("span { display: inline; }".to_string());
         assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
+    }
+
+    #[test]
+    fn presentational_hints_map_and_lose_to_author() {
+        let ss = crate::css::parse(String::new());
+        // <div align="center"> → text-align:center
+        let root = crate::html::parse_dom("<div align=\"center\">x</div>".to_string());
+        assert!(
+            matches!(style_tree(&root, &ss).value("text-align"),
+                Some(crate::css::Value::Keyword(k)) if k == "center"),
+            "align 속성 → text-align"
+        );
+        // <font color="red"> → color 지정됨
+        let rf = crate::html::parse_dom("<font color=\"red\">x</font>".to_string());
+        assert!(style_tree(&rf, &ss).value("color").is_some(), "font color 매핑");
+        // <table bgcolor="00ff00" width="300"> → background-color + width:300px
+        let rt = crate::html::parse_dom("<table bgcolor=\"00ff00\" width=\"300\"></table>".to_string());
+        let st = style_tree(&rt, &ss);
+        assert!(st.value("background-color").is_some(), "bgcolor 매핑");
+        assert!(
+            matches!(st.value("width"), Some(crate::css::Value::Length(w, _)) if (w - 300.0).abs() < 0.1),
+            "width=300 → 300px"
+        );
+        // 저작자 규칙이 표현 속성을 이긴다 (기본 레이어)
+        let ss2 = crate::css::parse("div { text-align: right; }".to_string());
+        assert!(
+            matches!(style_tree(&root, &ss2).value("text-align"),
+                Some(crate::css::Value::Keyword(k)) if k == "right"),
+            "author 규칙이 힌트를 덮는다"
+        );
     }
 
     #[test]
