@@ -1704,12 +1704,26 @@ fn collect_items(
             }
         }
     }
-    // filter: 서브트리 아이템 색을 함수 체인으로 변환 (grayscale/brightness/invert/sepia/contrast).
+    // filter: 서브트리 아이템 색을 함수 체인으로 변환 (grayscale/brightness/invert/sepia/contrast/saturate/hue-rotate).
     if let Some(Value::Keyword(f)) = layout_box.styled_node.value("filter") {
         let funcs = parse_filters(&f);
         if !funcs.is_empty() {
             for (_, item) in buf[subtree_start..].iter_mut() {
                 filter_item(item, &funcs);
+            }
+        }
+        // blur(N): 색변환 뒤, 서브트리 콘텐츠 영역을 흐린다 (불투명 요소 근사; 반경만큼 번짐).
+        if let Some(radius) = funcs.iter().find(|(n, _)| n == "blur").map(|(_, r)| *r) {
+            if radius > 0.0 {
+                let b = layout_box.dimensions.border_box();
+                let ex = Rect {
+                    x: b.x - radius,
+                    y: b.y - radius,
+                    width: b.width + 2.0 * radius,
+                    height: b.height + 2.0 * radius,
+                };
+                let maxz = buf[subtree_start..].iter().map(|(zz, _)| *zz).max().unwrap_or(z);
+                buf.push((maxz, DisplayItem::BackdropBlur { rect: ex, radius }));
             }
         }
     }
