@@ -216,12 +216,13 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 12. ~~**`element.style` (CSSStyleDeclaration)**~~ ✓ (eaab20b) 라이브 프록시, 렌더 반영.
 13. ~~**`classList`** (add/remove/toggle/contains)~~ ✓ (e8a37f3) 라이브, CSS 재매칭.
 14. ~~**정규식 매칭 엔진**~~ ✓ (c49432d) 백트래킹 VM + test/exec/match/replace/split/search.
-15. **이벤트 객체 모델** — event.target/preventDefault/stopPropagation, dispatchEvent,
-    버블/캡처. + 타이머/이벤트 콜백 **후 리플로우**(로드 후 SPA 갱신). ← 다음
-16. **`XMLHttpRequest`** — naver 등 데이터 로딩. (fetch 는 있음)
-17. **`Date`** — Date.now/new Date. 독립 항목, 프레임워크가 광범위 사용.
-18. 레이아웃 측정(getBoundingClientRect/offset*/client*), 제너레이터/for-of,
-    Proxy, Array.sort 등 잔여 빌트인.
+15. ~~**이벤트 객체 모델**~~ ✓ (d976fe8) target/currentTarget/preventDefault/
+    stopPropagation + 버블링. (dispatchEvent/Event 생성자, 콜백 후 리플로우는 후속)
+16. ~~**`XMLHttpRequest`**~~ ✓ (f3952bd) 동기 open/send/onreadystatechange/onload.
+17. ~~**`Date`**~~ ✓ (a7ae04f) now/생성자/get*/toISOString/파싱(UTC).
+18. **남은 빌트인/DOM**: String/Number/Boolean ✓ (a6df353). 레이아웃 측정
+    (getBoundingClientRect/offset*/client*), 제너레이터/for-of, Proxy, Array.sort,
+    dispatchEvent/CustomEvent, DocumentFragment 등.
 
 **naver 잔여 블로커**: polyfill.js(core-js)가 내부 `e.call`(e=undefined)에서
 크래시 → 모듈 미등록. 이건 넓은 플랫폼 이슈가 아니라 **미니파이 core-js의 특정
