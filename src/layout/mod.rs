@@ -2783,11 +2783,19 @@ mod tests {
     #[test]
     fn table_row_respects_cell_width_attribute() {
         // 구글 검색 테이블 사례: 25% | auto | 25% (HTML width 속성)
-        let d = flex_layout(
-            "<tr><td width=\"25%\"></td><td></td><td width=\"25%\"></td></tr>",
-            "tr, td { display: block; padding: 0; }",
-            400.0,
+        // §13 정식 파서는 bare <tr> 을 무시하므로 <table> 로 감싼다.
+        let root = crate::html::parse_dom(
+            "<table><tr><td width=\"25%\"></td><td></td><td width=\"25%\"></td></tr></table>"
+                .to_string(),
         );
+        let ss = crate::css::parse("table, tbody, tr, td { display: block; padding: 0; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let tr = &lb.children[0].children[0]; // table > tbody > tr
+        let d: Vec<Dimensions> = tr.children.iter().map(|c| c.dimensions).collect();
         assert_eq!(d[0].content.width, 100.0, "25% of 400");
         assert_eq!(d[0].content.x, 0.0);
         assert_eq!(d[1].content.x, 100.0);

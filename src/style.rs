@@ -1312,8 +1312,8 @@ mod tests {
     #[test]
     fn unknown_display_falls_back_to_block() {
         // 미지원 display 값(table-cell 등)은 블록으로 폴백 — 자식 보존
-        let root = crate::html::parse_dom("<body><div>content</div></body>".to_string());
-        let ss = crate::css::parse("body { display: table-cell; }".to_string());
+        let root = crate::html::parse_dom("<div>content</div>".to_string());
+        let ss = crate::css::parse("div { display: table-cell; }".to_string());
         let styled = style_tree(&root, &ss);
         assert!(matches!(styled.display(), Display::Block));
         // inline-block 은 전용 Display (자체 박스 + 가로 흐름)
