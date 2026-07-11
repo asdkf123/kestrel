@@ -502,6 +502,35 @@ impl<'a> LayoutBox<'a> {
         self.translate(dx, 0.0);
     }
 
+    // 테이블 셀이 행 높이로 늘어났을 때 vertical-align 에 따라 내부 콘텐츠만 아래로.
+    // (셀 박스 자체 위치는 유지, 글리프/자식만 이동). middle=중앙, bottom=하단.
+    fn valign_content(&mut self, extra: f32) {
+        if extra <= 0.0 {
+            return;
+        }
+        let factor = match self.styled_node.value("vertical-align") {
+            Some(Value::Keyword(ref k)) if k == "middle" => 0.5,
+            Some(Value::Keyword(ref k)) if k == "bottom" => 1.0,
+            _ => 0.0, // top/baseline(기본) → 이동 없음
+        };
+        if factor == 0.0 {
+            return;
+        }
+        let dy = extra * factor;
+        for g in &mut self.glyphs {
+            g.baseline_y += dy;
+        }
+        for (r, _) in &mut self.links {
+            r.y += dy;
+        }
+        for (r, _) in &mut self.decorations {
+            r.y += dy;
+        }
+        for c in &mut self.children {
+            c.translate(0.0, dy);
+        }
+    }
+
     // 서브트리 전체를 (ox, oy) 원점 기준 (sx, sy) 배로 스케일 (transform: scale).
     // 축 정렬 유지 → 사각형/글리프 위치·크기만 조정, 글리프 px 도 스케일해 재래스터.
     fn scale_subtree(&mut self, ox: f32, oy: f32, sx: f32, sy: f32) {
@@ -1037,7 +1066,9 @@ impl<'a> LayoutBox<'a> {
                     continue;
                 }
                 let vextra = cell.dimensions.margin_box().height - cell.dimensions.content.height;
-                cell.dimensions.content.height = (row_h - vextra).max(cell.dimensions.content.height);
+                let old_h = cell.dimensions.content.height;
+                cell.dimensions.content.height = (row_h - vextra).max(old_h);
+                cell.valign_content(cell.dimensions.content.height - old_h);
             }
             // 행 박스 자체 크기 (행 배경/테두리용)
             row.dimensions.content.x = ox;
@@ -1057,7 +1088,9 @@ impl<'a> LayoutBox<'a> {
             let span_h = (row_tops[end] + row_heights[end]) - row_tops[ridx];
             let cell = &mut row_at!(self, i, j).children[cell_pos];
             let vextra = cell.dimensions.margin_box().height - cell.dimensions.content.height;
-            cell.dimensions.content.height = (span_h - vextra).max(cell.dimensions.content.height);
+            let old_h = cell.dimensions.content.height;
+            cell.dimensions.content.height = (span_h - vextra).max(old_h);
+            cell.valign_content(cell.dimensions.content.height - old_h);
         }
         self.dimensions.content.height = (y - oy).max(0.0);
     }
@@ -1092,6 +1125,13 @@ impl<'a> LayoutBox<'a> {
             child.layout(cb, fonts, images);
             pen_x += cw;
             max_h = max_h.max(child.dimensions.margin_box().height);
+        }
+        // 셀을 행 높이로 stretch 하고 vertical-align 적용 (CSS 테이블 수직 정렬)
+        for child in self.children.iter_mut() {
+            let vextra = child.dimensions.margin_box().height - child.dimensions.content.height;
+            let old_h = child.dimensions.content.height;
+            child.dimensions.content.height = (max_h - vextra).max(old_h);
+            child.valign_content(child.dimensions.content.height - old_h);
         }
         self.dimensions.content.height = max_h;
     }
@@ -2873,6 +2913,38 @@ mod tests {
         assert!(d[1].content.x > d[0].content.x, "둘째 셀이 오른쪽");
         assert!(d[2].content.x > d[1].content.x, "셋째 셀이 더 오른쪽");
         assert_eq!(d[0].content.y, d[1].content.y, "같은 행이라 y 동일");
+    }
+
+    #[test]
+    fn table_cell_vertical_align_middle() {
+        // 짧은 셀 내용이 행 높이(60) 안에서 vertical-align:middle 로 내려감
+        let root = crate::html::parse_dom(
+            "<div class=\"t\"><div class=\"r\"><div class=\"tall\"></div>\
+             <div class=\"mid\"><div class=\"inner\">x</div></div></div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".t{display:table;width:200px} .r{display:table-row} \
+             .tall{display:table-cell;width:100px;height:60px} \
+             .mid{display:table-cell;width:100px;vertical-align:middle} \
+             .inner{display:block;height:10px}"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let row = &lb.children[0];
+        let mid = &row.children[1];
+        assert!(
+            (mid.dimensions.content.height - 60.0).abs() < 2.0,
+            "셀이 행 높이 60 으로 stretch, 실제 {}",
+            mid.dimensions.content.height
+        );
+        let inner = &mid.children[0];
+        let rel_y = inner.dimensions.content.y - mid.dimensions.content.y;
+        assert!(rel_y > 15.0, "vertical-align:middle 로 내부가 중앙으로, rel_y={}", rel_y);
     }
 
     #[test]
