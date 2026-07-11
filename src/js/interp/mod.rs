@@ -138,6 +138,9 @@ pub enum Native {
     ClassRemove,
     ClassToggle,
     ClassContains,
+    RegExpCtor,
+    RegexTest,
+    RegexExec,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -214,10 +217,22 @@ pub enum StrOp {
     Lower,
     Trim,
     Replace,
+    ReplaceAll,
     CharAt,
     Includes,
     StartsWith,
     EndsWith,
+    Match,
+    MatchAll,
+    Search,
+    PadStart,
+    PadEnd,
+    Repeat,
+    TrimStart,
+    TrimEnd,
+    CharCodeAt,
+    CodePointAt,
+    Concat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -490,7 +505,7 @@ impl Interp {
         array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
-        env_declare(&global, "RegExp", Value::Obj(Rc::new(RefCell::new(HashMap::new()))));
+        env_declare(&global, "RegExp", Value::Native(Native::RegExpCtor));
         // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
         for name in [
             "Error",
@@ -1222,14 +1237,7 @@ impl Interp {
                 }
                 Ok(last)
             }
-            Expr::Regex { source, flags } => {
-                // 매칭 엔진 없음: {source, flags} 객체. test/exec 호출 시 런타임 에러
-                // (해당 스크립트만 중단 — try/catch 로 생존 가능)
-                let mut map = HashMap::new();
-                map.insert("source".to_string(), Value::Str(source.clone()));
-                map.insert("flags".to_string(), Value::Str(flags.clone()));
-                Ok(Value::Obj(Rc::new(RefCell::new(map))))
-            }
+            Expr::Regex { source, flags } => Ok(make_regex_obj(source, flags)),
             Expr::Template(parts) => {
                 let mut s = String::new();
                 for part in parts {
@@ -1478,6 +1486,8 @@ impl Interp {
                     // 내장 메서드 폴백
                     None => match key {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
+                        "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
+                        "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
                         _ => Ok(Value::Undefined),
                     },
                 }
@@ -1626,10 +1636,27 @@ impl Interp {
                     "includes" => Some(StrOp::Includes),
                     "startsWith" => Some(StrOp::StartsWith),
                     "endsWith" => Some(StrOp::EndsWith),
+                    "replaceAll" => Some(StrOp::ReplaceAll),
+                    "match" => Some(StrOp::Match),
+                    "matchAll" => Some(StrOp::MatchAll),
+                    "search" => Some(StrOp::Search),
+                    "padStart" => Some(StrOp::PadStart),
+                    "padEnd" => Some(StrOp::PadEnd),
+                    "repeat" => Some(StrOp::Repeat),
+                    "trimStart" | "trimLeft" => Some(StrOp::TrimStart),
+                    "trimEnd" | "trimRight" => Some(StrOp::TrimEnd),
+                    "charCodeAt" => Some(StrOp::CharCodeAt),
+                    "codePointAt" => Some(StrOp::CodePointAt),
+                    "concat" => Some(StrOp::Concat),
+                    "toString" | "valueOf" => return Ok(Value::Str(s.clone())),
+                    "substr" => Some(StrOp::Slice),
                     _ => None,
                 };
                 if let Some(op) = op {
                     return Ok(Value::Native(Native::Str(op)));
+                }
+                if key == "@@iterator" {
+                    return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
                     return Ok(s
@@ -1770,6 +1797,9 @@ impl Interp {
             Value::Native(Native::FunctionCtor) => return self.make_function(args),
             Value::Native(Native::MapCtor) => return self.make_map(args),
             Value::Native(Native::SetCtor) => return self.make_set(args),
+            Value::Native(Native::RegExpCtor) => {
+                return self.call_native(Native::RegExpCtor, None, args)
+            }
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {
                 let (target, _this, partial) = (*b).clone();
@@ -2139,6 +2169,31 @@ mod tests {
         assert_eq!(run_num("var a=[1,2,3,4]; a.length=2; a.length"), 2.0);
         // 재정의 안 하면 내장 메서드 그대로
         assert_eq!(run_num("var a=[3,1,2]; a.push(9); a.length"), 4.0);
+    }
+
+    #[test]
+    fn regex_and_string_methods() {
+        // test/exec
+        assert!(run_bool("/\\d+/.test('abc123')"));
+        assert!(!run_bool("/^\\d+$/.test('ab12')"));
+        assert_eq!(run_str("/(\\d+)-(\\d+)/.exec('x 12-34')[2]"), "34");
+        // new RegExp + i 플래그
+        assert!(run_bool("new RegExp('abc','i').test('XABC')"));
+        // replace: 전역, 그룹 $1, 함수
+        assert_eq!(run_str("'a1b2c3'.replace(/\\d/g,'#')"), "a#b#c#");
+        assert_eq!(
+            run_str("'2026-07-11'.replace(/(\\d+)-(\\d+)-(\\d+)/,'$3/$2/$1')"),
+            "11/07/2026"
+        );
+        assert_eq!(run_str("'abc'.replace(/[a-z]/g,function(m){return m.toUpperCase()})"), "ABC");
+        // match/search/split
+        assert_eq!(run_num("'a1b2'.match(/\\d/g).length"), 2.0);
+        assert_eq!(run_num("'hello world'.search(/wor/)"), 6.0);
+        assert_eq!(run_num("'a,b;c'.split(/[,;]/).length"), 3.0);
+        // 문자열 유틸
+        assert_eq!(run_str("'5'.padStart(3,'0')"), "005");
+        assert_eq!(run_str("'ab'.repeat(3)"), "ababab");
+        assert_eq!(run_num("'A'.charCodeAt(0)"), 65.0);
     }
 
     #[test]

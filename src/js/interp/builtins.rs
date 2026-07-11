@@ -6,6 +6,130 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 impl Interp {
+    // 정규식 매치 → [full, g1, ...] 배열 (+ index/input own-property)
+    pub(super) fn regex_match_array(
+        &self,
+        chars: &[char],
+        mt: &crate::js::regex::Match,
+    ) -> Value {
+        let mut items = Vec::new();
+        for g in &mt.groups {
+            match g {
+                Some((a, b)) => items.push(Value::Str(chars[*a..*b].iter().collect())),
+                None => items.push(Value::Undefined),
+            }
+        }
+        let arr = ArrayObj::new(items);
+        arr.set_prop("index".to_string(), Value::Num(mt.start as f64));
+        arr.set_prop("input".to_string(), Value::Str(chars.iter().collect()));
+        Value::Arr(arr)
+    }
+
+    // str.replace/replaceAll: 패턴(문자열/정규식) + 치환(문자열/함수)
+    fn str_replace(
+        &mut self,
+        s: &str,
+        pat: &Value,
+        repl: &Value,
+        all: bool,
+    ) -> Result<String, String> {
+        let chars: Vec<char> = s.chars().collect();
+        if let Some((src, flags)) = regex_src_flags(pat) {
+            let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                .map_err(|e| format!("정규식: {}", e))?;
+            let global = all || re.global;
+            let mut out = String::new();
+            let mut pos = 0usize;
+            loop {
+                match re.find(&chars, pos) {
+                    Some(mt) => {
+                        out.extend(&chars[pos..mt.start]);
+                        let rep = if is_callable(repl) {
+                            let mut cargs =
+                                vec![Value::Str(chars[mt.start..mt.end].iter().collect())];
+                            for g in mt.groups.iter().skip(1) {
+                                cargs.push(match g {
+                                    Some((a, b)) => Value::Str(chars[*a..*b].iter().collect()),
+                                    None => Value::Undefined,
+                                });
+                            }
+                            cargs.push(Value::Num(mt.start as f64));
+                            cargs.push(Value::Str(s.to_string()));
+                            to_display(&self.call_value(repl.clone(), None, cargs)?)
+                        } else {
+                            expand_replacement(&to_display(repl), &chars, &mt)
+                        };
+                        out.push_str(&rep);
+                        // 빈 매치는 한 글자 진행(무한 루프 방지)
+                        if mt.end > mt.start {
+                            pos = mt.end;
+                        } else {
+                            if mt.end < chars.len() {
+                                out.push(chars[mt.end]);
+                            }
+                            pos = mt.end + 1;
+                        }
+                        if !global {
+                            out.extend(chars.get(pos.min(chars.len())..).unwrap_or(&[]));
+                            break;
+                        }
+                        if pos > chars.len() {
+                            break;
+                        }
+                    }
+                    None => {
+                        out.extend(chars.get(pos.min(chars.len())..).unwrap_or(&[]));
+                        break;
+                    }
+                }
+            }
+            Ok(out)
+        } else {
+            let needle = to_display(pat);
+            if needle.is_empty() {
+                return Ok(s.to_string());
+            }
+            let rep_fn = is_callable(repl);
+            let mut out = String::new();
+            let mut rest = s;
+            let mut consumed = 0usize;
+            loop {
+                match rest.find(&needle) {
+                    Some(idx) => {
+                        out.push_str(&rest[..idx]);
+                        let at = consumed + idx;
+                        if rep_fn {
+                            let r = self.call_value(
+                                repl.clone(),
+                                None,
+                                vec![
+                                    Value::Str(needle.clone()),
+                                    Value::Num(s[..at].chars().count() as f64),
+                                    Value::Str(s.to_string()),
+                                ],
+                            )?;
+                            out.push_str(&to_display(&r));
+                        } else {
+                            out.push_str(&to_display(repl));
+                        }
+                        let adv = idx + needle.len();
+                        consumed = at + needle.len();
+                        rest = &rest[adv..];
+                        if !all {
+                            out.push_str(rest);
+                            break;
+                        }
+                    }
+                    None => {
+                        out.push_str(rest);
+                        break;
+                    }
+                }
+            }
+            Ok(out)
+        }
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -294,6 +418,67 @@ impl Interp {
                 }
                 Ok(Value::Bool(false))
             }
+            // RegExp(pattern, flags) — 문자열/정규식 → 정규식 객체
+            Native::RegExpCtor => {
+                let (src, flags) = match args.first() {
+                    Some(v) if regex_src_flags(v).is_some() => {
+                        let (s, f) = regex_src_flags(v).unwrap();
+                        let f = args.get(1).map(to_display).unwrap_or(f);
+                        (s, f)
+                    }
+                    Some(v) => (to_display(v), args.get(1).map(to_display).unwrap_or_default()),
+                    None => (String::new(), String::new()),
+                };
+                Ok(make_regex_obj(&src, &flags))
+            }
+            // regex.test(str) → bool
+            Native::RegexTest => {
+                let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("test 대상이 정규식 아님")?;
+                let text = args.first().map(to_display).unwrap_or_default();
+                let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                    .map_err(|e| format!("정규식 컴파일 실패: {}", e))?;
+                let chars: Vec<char> = text.chars().collect();
+                Ok(Value::Bool(re.find(&chars, 0).is_some()))
+            }
+            // regex.exec(str) → [full, g1, ...] with .index, or null. global 이면 lastIndex 갱신.
+            Native::RegexExec => {
+                let recv_obj = recv.clone();
+                let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("exec 대상이 정규식 아님")?;
+                let text = args.first().map(to_display).unwrap_or_default();
+                let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                    .map_err(|e| format!("정규식 컴파일 실패: {}", e))?;
+                let chars: Vec<char> = text.chars().collect();
+                let from = if re.global {
+                    match &recv_obj {
+                        Some(Value::Obj(m)) => match m.borrow().get("lastIndex") {
+                            Some(Value::Num(n)) => *n as usize,
+                            _ => 0,
+                        },
+                        _ => 0,
+                    }
+                } else {
+                    0
+                };
+                match re.find(&chars, from.min(chars.len())) {
+                    Some(mt) => {
+                        if re.global {
+                            if let Some(Value::Obj(m)) = &recv_obj {
+                                m.borrow_mut()
+                                    .insert("lastIndex".to_string(), Value::Num(mt.end as f64));
+                            }
+                        }
+                        Ok(self.regex_match_array(&chars, &mt))
+                    }
+                    None => {
+                        if re.global {
+                            if let Some(Value::Obj(m)) = &recv_obj {
+                                m.borrow_mut().insert("lastIndex".to_string(), Value::Num(0.0));
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                }
+            }
             // document.body/head/documentElement (라이브 접근자)
             Native::DocQuery(tag) => {
                 let dom = self.dom_arena()?;
@@ -434,7 +619,74 @@ impl Interp {
                     StrOp::StartsWith => Value::Bool(s.starts_with(&arg_str(0))),
                     StrOp::EndsWith => Value::Bool(s.ends_with(&arg_str(0))),
                     StrOp::Replace => {
-                        Value::Str(s.replacen(&arg_str(0), &arg_str(1), 1)) // 첫 1회 (JS 동일)
+                        let pat = args.first().cloned().unwrap_or(Value::Undefined);
+                        let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
+                        Value::Str(self.str_replace(&s, &pat, &repl, false)?)
+                    }
+                    StrOp::ReplaceAll => {
+                        let pat = args.first().cloned().unwrap_or(Value::Undefined);
+                        let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
+                        Value::Str(self.str_replace(&s, &pat, &repl, true)?)
+                    }
+                    StrOp::Search => {
+                        let (src, flags) = args
+                            .first()
+                            .and_then(regex_src_flags)
+                            .unwrap_or_else(|| (regex_escape(&arg_str(0)), String::new()));
+                        let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                            .map_err(|e| format!("정규식: {}", e))?;
+                        match re.find(&chars, 0) {
+                            Some(mt) => Value::Num(mt.start as f64),
+                            None => Value::Num(-1.0),
+                        }
+                    }
+                    StrOp::Match => {
+                        let (src, flags) = args
+                            .first()
+                            .and_then(regex_src_flags)
+                            .unwrap_or_else(|| (regex_escape(&arg_str(0)), String::new()));
+                        let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                            .map_err(|e| format!("정규식: {}", e))?;
+                        if re.global {
+                            // 전역: 매치 문자열들의 배열
+                            let mut out = Vec::new();
+                            let mut pos = 0;
+                            while let Some(mt) = re.find(&chars, pos) {
+                                out.push(Value::Str(chars[mt.start..mt.end].iter().collect()));
+                                pos = if mt.end > mt.start { mt.end } else { mt.end + 1 };
+                                if pos > chars.len() {
+                                    break;
+                                }
+                            }
+                            if out.is_empty() {
+                                Value::Null
+                            } else {
+                                Value::Arr(ArrayObj::new(out))
+                            }
+                        } else {
+                            match re.find(&chars, 0) {
+                                Some(mt) => self.regex_match_array(&chars, &mt),
+                                None => Value::Null,
+                            }
+                        }
+                    }
+                    StrOp::MatchAll => {
+                        let (src, flags) = args
+                            .first()
+                            .and_then(regex_src_flags)
+                            .unwrap_or_else(|| (regex_escape(&arg_str(0)), String::new()));
+                        let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                            .map_err(|e| format!("정규식: {}", e))?;
+                        let mut out = Vec::new();
+                        let mut pos = 0;
+                        while let Some(mt) = re.find(&chars, pos) {
+                            out.push(self.regex_match_array(&chars, &mt));
+                            pos = if mt.end > mt.start { mt.end } else { mt.end + 1 };
+                            if pos > chars.len() {
+                                break;
+                            }
+                        }
+                        Value::Arr(ArrayObj::new(out))
                     }
                     StrOp::Slice => {
                         let len = chars.len() as isize;
@@ -447,15 +699,78 @@ impl Interp {
                         Value::Str(chars[start..end.max(start)].iter().collect())
                     }
                     StrOp::Split => {
-                        let sep = arg_str(0);
-                        let parts: Vec<Value> = if args.is_empty() {
-                            vec![Value::Str(s.clone())]
-                        } else if sep.is_empty() {
-                            chars.iter().map(|c| Value::Str(c.to_string())).collect()
+                        // 정규식 구분자 지원
+                        if let Some((src, flags)) = args.first().and_then(regex_src_flags) {
+                            let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
+                                .map_err(|e| format!("정규식: {}", e))?;
+                            let mut parts = Vec::new();
+                            let mut last = 0;
+                            let mut pos = 0;
+                            while pos <= chars.len() {
+                                match re.find(&chars, pos) {
+                                    Some(mt) if mt.end > mt.start => {
+                                        parts.push(Value::Str(chars[last..mt.start].iter().collect()));
+                                        last = mt.end;
+                                        pos = mt.end;
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            parts.push(Value::Str(chars[last..].iter().collect()));
+                            Value::Arr(ArrayObj::new(parts))
                         } else {
-                            s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
-                        };
-                        Value::Arr(ArrayObj::new(parts))
+                            let sep = arg_str(0);
+                            let parts: Vec<Value> = if args.is_empty() {
+                                vec![Value::Str(s.clone())]
+                            } else if sep.is_empty() {
+                                chars.iter().map(|c| Value::Str(c.to_string())).collect()
+                            } else {
+                                s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
+                            };
+                            Value::Arr(ArrayObj::new(parts))
+                        }
+                    }
+                    StrOp::TrimStart => Value::Str(s.trim_start().to_string()),
+                    StrOp::TrimEnd => Value::Str(s.trim_end().to_string()),
+                    StrOp::Repeat => {
+                        let n = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                        Value::Str(s.repeat(n))
+                    }
+                    StrOp::PadStart | StrOp::PadEnd => {
+                        let target = args.first().map(to_num).unwrap_or(0.0) as usize;
+                        let pad = if args.len() > 1 { arg_str(1) } else { " ".to_string() };
+                        let cur = chars.len();
+                        if cur >= target || pad.is_empty() {
+                            Value::Str(s.clone())
+                        } else {
+                            let need = target - cur;
+                            let padchars: Vec<char> = pad.chars().collect();
+                            let fill: String =
+                                (0..need).map(|i| padchars[i % padchars.len()]).collect();
+                            Value::Str(if matches!(op, StrOp::PadStart) {
+                                format!("{}{}", fill, s)
+                            } else {
+                                format!("{}{}", s, fill)
+                            })
+                        }
+                    }
+                    StrOp::CharCodeAt | StrOp::CodePointAt => {
+                        let i = args.first().map(to_num).unwrap_or(0.0);
+                        if i < 0.0 {
+                            Value::Num(f64::NAN)
+                        } else {
+                            match chars.get(i as usize) {
+                                Some(c) => Value::Num(*c as u32 as f64),
+                                None => Value::Num(f64::NAN),
+                            }
+                        }
+                    }
+                    StrOp::Concat => {
+                        let mut out = s.clone();
+                        for a in &args {
+                            out.push_str(&to_display(a));
+                        }
+                        Value::Str(out)
                     }
                 })
             }

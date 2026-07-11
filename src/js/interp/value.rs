@@ -146,6 +146,115 @@ pub(super) fn style_serialize(pairs: &[(String, String)]) -> String {
         .join("; ")
 }
 
+// 치환 문자열의 $& $1 $$ $` $' 확장 (정규식 replace)
+pub(super) fn expand_replacement(
+    templ: &str,
+    chars: &[char],
+    mt: &crate::js::regex::Match,
+) -> String {
+    let full: String = chars[mt.start..mt.end].iter().collect();
+    let t: Vec<char> = templ.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < t.len() {
+        if t[i] == '$' && i + 1 < t.len() {
+            match t[i + 1] {
+                '$' => {
+                    out.push('$');
+                    i += 2;
+                }
+                '&' => {
+                    out.push_str(&full);
+                    i += 2;
+                }
+                '`' => {
+                    out.push_str(&chars[..mt.start].iter().collect::<String>());
+                    i += 2;
+                }
+                '\'' => {
+                    out.push_str(&chars[mt.end..].iter().collect::<String>());
+                    i += 2;
+                }
+                d if d.is_ascii_digit() => {
+                    let mut j = i + 1;
+                    let mut num = String::new();
+                    while j < t.len() && t[j].is_ascii_digit() && num.len() < 2 {
+                        num.push(t[j]);
+                        j += 1;
+                    }
+                    let gi: usize = num.parse().unwrap_or(0);
+                    if gi >= 1 && gi < mt.groups.len() {
+                        if let Some((a, b)) = mt.groups[gi] {
+                            out.push_str(&chars[a..b].iter().collect::<String>());
+                        }
+                        i = j;
+                    } else {
+                        out.push('$');
+                        i += 1;
+                    }
+                }
+                _ => {
+                    out.push('$');
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(t[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+// 문자열을 정규식 리터럴로 이스케이프 (str.match('a.b') 처럼 문자열 인자용)
+pub(super) fn regex_escape(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if "\\^$.|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+// 정규식 리터럴/RegExp → {source, flags, __isRegex, global, lastIndex} 객체
+pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
+    let mut map = HashMap::new();
+    map.insert("source".to_string(), Value::Str(source.to_string()));
+    map.insert("flags".to_string(), Value::Str(flags.to_string()));
+    map.insert("__isRegex".to_string(), Value::Bool(true));
+    map.insert("global".to_string(), Value::Bool(flags.contains('g')));
+    map.insert("ignoreCase".to_string(), Value::Bool(flags.contains('i')));
+    map.insert("multiline".to_string(), Value::Bool(flags.contains('m')));
+    map.insert("lastIndex".to_string(), Value::Num(0.0));
+    Value::Obj(Rc::new(RefCell::new(map)))
+}
+
+// 객체가 정규식인지 (__isRegex == true)
+pub(super) fn is_regex_obj(map: &Rc<RefCell<HashMap<String, Value>>>) -> bool {
+    matches!(map.borrow().get("__isRegex"), Some(Value::Bool(true)))
+}
+
+// 정규식 객체에서 (source, flags) 추출
+pub(super) fn regex_src_flags(v: &Value) -> Option<(String, String)> {
+    if let Value::Obj(m) = v {
+        if is_regex_obj(m) {
+            let b = m.borrow();
+            let s = match b.get("source") {
+                Some(Value::Str(s)) => s.clone(),
+                _ => return None,
+            };
+            let f = match b.get("flags") {
+                Some(Value::Str(f)) => f.clone(),
+                _ => String::new(),
+            };
+            return Some((s, f));
+        }
+    }
+    None
+}
+
 pub(super) fn to_display(v: &Value) -> String {
     match v {
         Value::Undefined => "undefined".to_string(),
