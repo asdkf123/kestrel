@@ -9,6 +9,8 @@ pub struct Canvas {
     pub height: usize,
     // 활성 클립 마스크 (물리 좌표). 설정되면 모든 픽셀 쓰기가 커버리지로 감쇠된다.
     clip: Option<ClipShape>,
+    // 활성 mix-blend-mode. Normal 이면 일반 알파합성.
+    blend_mode: BlendMode,
 }
 
 // 픽셀 마스크 도형 (물리 px). 둥근 사각형(사각/원 포함)과 타원.
@@ -69,7 +71,7 @@ fn round_rect_coverage(rect: Rect, radii: [f32; 4], fx: f32, fy: f32) -> f32 {
 impl Canvas {
     fn new(width: usize, height: usize) -> Canvas {
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        Canvas { pixels: vec![white; width * height], width, height, clip: None }
+        Canvas { pixels: vec![white; width * height], width, height, clip: None, blend_mode: BlendMode::Normal }
     }
 
     // 픽셀 쓰기 관문: 활성 클립 커버리지를 알파에 곱해 블렌드. 모든 그리기가 이걸 통한다.
@@ -92,7 +94,11 @@ impl Canvas {
             return;
         }
         let idx = py * self.width + px;
-        self.pixels[idx] = blend(self.pixels[idx], color, a);
+        self.pixels[idx] = if self.blend_mode == BlendMode::Normal {
+            blend(self.pixels[idx], color, a)
+        } else {
+            blend_mode_compose(self.pixels[idx], color, a, self.blend_mode)
+        };
     }
 
     pub fn fill_rect(&mut self, color: Color, rect: Rect) {
@@ -328,6 +334,72 @@ fn blend(bg: Color, fg: Color, a: u8) -> Color {
     Color { r: mix(bg.r, fg.r), g: mix(bg.g, fg.g), b: mix(bg.b, fg.b), a: 255 }
 }
 
+// mix-blend-mode 블렌드 모드.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    Difference,
+    Exclusion,
+    HardLight,
+}
+
+fn parse_blend_mode(s: &str) -> Option<BlendMode> {
+    Some(match s.trim() {
+        "multiply" => BlendMode::Multiply,
+        "screen" => BlendMode::Screen,
+        "overlay" => BlendMode::Overlay,
+        "darken" => BlendMode::Darken,
+        "lighten" => BlendMode::Lighten,
+        "difference" => BlendMode::Difference,
+        "exclusion" => BlendMode::Exclusion,
+        "hard-light" => BlendMode::HardLight,
+        _ => return None, // normal 등은 일반 알파합성
+    })
+}
+
+// 한 채널(0..1) 블렌드. B(backdrop, source).
+fn blend_channel(mode: BlendMode, b: f32, f: f32) -> f32 {
+    match mode {
+        BlendMode::Normal => f,
+        BlendMode::Multiply => b * f,
+        BlendMode::Screen => 1.0 - (1.0 - b) * (1.0 - f),
+        BlendMode::Darken => b.min(f),
+        BlendMode::Lighten => b.max(f),
+        BlendMode::Difference => (b - f).abs(),
+        BlendMode::Exclusion => b + f - 2.0 * b * f,
+        BlendMode::Overlay => {
+            if b < 0.5 {
+                2.0 * b * f
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - f)
+            }
+        }
+        BlendMode::HardLight => {
+            if f < 0.5 {
+                2.0 * b * f
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - f)
+            }
+        }
+    }
+}
+
+// mix-blend-mode 로 합성: 결과 = backdrop*(1-a) + B(backdrop,src)*a
+fn blend_mode_compose(bg: Color, fg: Color, a: u8, mode: BlendMode) -> Color {
+    let af = a as f32 / 255.0;
+    let ch = |d: u8, s: u8| {
+        let (df, sf) = (d as f32 / 255.0, s as f32 / 255.0);
+        let bl = blend_channel(mode, df, sf).clamp(0.0, 1.0);
+        ((df * (1.0 - af) + bl * af) * 255.0).round() as u8
+    };
+    Color { r: ch(bg.r, fg.r), g: ch(bg.g, fg.g), b: ch(bg.b, fg.b), a: 255 }
+}
+
 // 위치 p(0..1)에서 그라디언트 색을 선형 보간. stops 는 위치 오름차순 가정.
 fn gradient_color_at(stops: &[(Color, f32)], p: f32) -> Color {
     if stops.is_empty() {
@@ -534,6 +606,8 @@ pub enum DisplayItem {
     Sticky { top: f32, y0: f32, inner: Box<DisplayItem> },
     // 픽셀 마스크 클립 (둥근 overflow / clip-path circle·ellipse). inner 를 shape 로 마스킹.
     Clipped { shape: ClipShape, inner: Box<DisplayItem> },
+    // mix-blend-mode: inner 를 backdrop 과 mode 로 합성.
+    Blended { mode: BlendMode, inner: Box<DisplayItem> },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -1232,6 +1306,7 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         // sticky 래퍼는 클립 전에 감싸지 않으므로 여기 도달 안 함 (exhaustive 용)
         sticky @ DisplayItem::Sticky { .. } => Some(sticky),
         clipped @ DisplayItem::Clipped { .. } => Some(clipped),
+        blended @ DisplayItem::Blended { .. } => Some(blended),
     }
 }
 
@@ -1513,6 +1588,18 @@ fn collect_items(
             scale_item_alpha(item, op);
         }
     }
+    // mix-blend-mode: 이 서브트리 아이템들을 backdrop 과 지정 모드로 합성 래핑.
+    if let Some(Value::Keyword(m)) = layout_box.styled_node.value("mix-blend-mode") {
+        if let Some(mode) = parse_blend_mode(&m) {
+            for (_, item) in buf[subtree_start..].iter_mut() {
+                let taken = std::mem::replace(item, DisplayItem::Rect {
+                    color: Color { r: 0, g: 0, b: 0, a: 0 },
+                    rect: Rect::default(),
+                });
+                *item = DisplayItem::Blended { mode, inner: Box::new(taken) };
+            }
+        }
+    }
 }
 
 // filter 함수 목록 파싱 → (이름, 강도 0..) 벡터. 퍼센트는 0..1, 무단위 수 그대로.
@@ -1607,6 +1694,7 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
+        DisplayItem::Blended { inner, .. } => filter_item(inner, funcs),
     }
 }
 
@@ -1681,6 +1769,7 @@ fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
         }
         DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Clipped { inner, .. } => rotate_item(inner, cx, cy, angle),
+        DisplayItem::Blended { inner, .. } => rotate_item(inner, cx, cy, angle),
     }
 }
 
@@ -1710,6 +1799,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 알파는 별도 — 근사로 스킵
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Clipped { inner, .. } => scale_item_alpha(inner, f),
+        DisplayItem::Blended { inner, .. } => scale_item_alpha(inner, f),
     }
 }
 
@@ -1850,6 +1940,12 @@ fn draw_item(
             canvas.clip = Some(phys);
             draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
             canvas.clip = prev;
+        }
+        DisplayItem::Blended { mode, inner } => {
+            let prev = canvas.blend_mode;
+            canvas.blend_mode = *mode;
+            draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
+            canvas.blend_mode = prev;
         }
     }
 }
@@ -2054,6 +2150,21 @@ mod tests {
         assert_eq!(sh[1].spread, 1.0);
         assert!(sh[2].inset, "셋째는 inset");
         assert_eq!(sh[2].blur, 5.0);
+    }
+
+    #[test]
+    fn mix_blend_mode_multiply() {
+        // 노랑 배경 위 시안 박스 multiply → 초록 (255,255,0)×(0,255,255)=(0,255,0)
+        let c = canvas_for(
+            "<div class=\"bg\"><div class=\"fg\"></div></div>",
+            "html,body{display:block} \
+             .bg{display:block;width:4px;height:4px;background-color:#ffff00} \
+             .fg{display:block;width:4px;height:4px;background-color:#00ffff;mix-blend-mode:multiply}",
+            4.0,
+            4.0,
+        );
+        let p = c.pixels[c.width + 1];
+        assert!(p.r < 40 && p.g > 200 && p.b < 40, "multiply → 초록, 실제 {:?}", p);
     }
 
     #[test]
