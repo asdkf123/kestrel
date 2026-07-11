@@ -983,6 +983,8 @@ fn cell_width(child: &LayoutBox, avail: f32) -> Option<f32> {
 fn len_px(v: Value, pct_base: f32) -> Value {
     match v {
         Length(f, crate::css::Unit::Percent) => Length(pct_base * f / 100.0, Px),
+        // calc(pct% + px) → 기준 폭으로 해석
+        Value::Calc(pct, px) => Length(pct_base * pct / 100.0 + px, Px),
         other => other,
     }
 }
@@ -1474,6 +1476,31 @@ mod tests {
         assert_eq!(d[0].content.width, 50.0);
         assert_eq!(d[1].content.x, 50.0, "두 번째 아이템은 첫 아이템 오른쪽");
         assert_eq!(d[0].content.y, d[1].content.y, "같은 행 = 같은 y");
+    }
+
+    #[test]
+    fn calc_resolves_width() {
+        // calc(100% - 40px) of 400 = 360
+        let d = layout_for(
+            "<div class=\"b\"></div>",
+            ".b { display: block; width: calc(100% - 40px); height: 10px; }",
+            400.0,
+        );
+        assert_eq!(d.content.width, 360.0, "calc(100% - 40px)");
+        // 순수 px calc
+        let d2 = layout_for(
+            "<div class=\"b\"></div>",
+            ".b { display: block; width: calc(50px + 10px); height: 10px; }",
+            400.0,
+        );
+        assert_eq!(d2.content.width, 60.0, "calc(50px + 10px)");
+        // 곱셈
+        let d3 = layout_for(
+            "<div class=\"b\"></div>",
+            ".b { display: block; width: calc(25% * 2); height: 10px; }",
+            400.0,
+        );
+        assert_eq!(d3.content.width, 200.0, "calc(25% * 2) = 50% = 200");
     }
 
     #[test]

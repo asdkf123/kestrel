@@ -17,6 +17,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
         return parse_hsl_func(&lower).map(Value::Color);
     }
+    if lower.starts_with("calc(") && text.ends_with(')') {
+        return eval_calc(&text[5..text.len() - 1]);
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
@@ -55,6 +58,142 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         return Some(Value::Keyword(text.to_string()));
     }
     None // calc()/다중값 등
+}
+
+// calc() 평가 → (percent 계수, px 계수) 선형식. px 만이면 Length(px), 혼합이면
+// Calc(pct, px). em/rem 등 미지원 단위나 단위 불일치 곱셈이면 None.
+// 지원: + - * /, 괄호, px/%/단위없는 수.
+#[derive(Clone, Copy)]
+struct CalcVal {
+    pct: f32,
+    px: f32,
+    num: f32,
+    is_num: bool,
+}
+
+fn eval_calc(inner: &str) -> Option<Value> {
+    let toks: Vec<char> = inner.chars().collect();
+    let mut p = 0usize;
+    let v = calc_expr(&toks, &mut p)?;
+    skip_ws(&toks, &mut p);
+    if p != toks.len() {
+        return None;
+    }
+    if v.is_num {
+        return Some(Value::Length(v.num, Unit::Px));
+    }
+    if v.pct == 0.0 {
+        Some(Value::Length(v.px, Unit::Px))
+    } else {
+        Some(Value::Calc(v.pct, v.px))
+    }
+}
+
+fn skip_ws(t: &[char], p: &mut usize) {
+    while *p < t.len() && t[*p].is_whitespace() {
+        *p += 1;
+    }
+}
+
+// expr = term (('+'|'-') term)*
+fn calc_expr(t: &[char], p: &mut usize) -> Option<CalcVal> {
+    let mut acc = calc_term(t, p)?;
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('+') => '+',
+            Some('-') => '-',
+            _ => break,
+        };
+        *p += 1;
+        let rhs = calc_term(t, p)?;
+        // 덧셈/뺄셈은 길이+길이 또는 수+수만
+        if acc.is_num != rhs.is_num {
+            return None;
+        }
+        let s = if op == '+' { 1.0 } else { -1.0 };
+        acc = CalcVal {
+            pct: acc.pct + s * rhs.pct,
+            px: acc.px + s * rhs.px,
+            num: acc.num + s * rhs.num,
+            is_num: acc.is_num,
+        };
+    }
+    Some(acc)
+}
+
+// term = factor (('*'|'/') factor)*
+fn calc_term(t: &[char], p: &mut usize) -> Option<CalcVal> {
+    let mut acc = calc_factor(t, p)?;
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('*') => '*',
+            Some('/') => '/',
+            _ => break,
+        };
+        *p += 1;
+        let rhs = calc_factor(t, p)?;
+        acc = match op {
+            '*' => {
+                // 하나는 반드시 수(단위 없음)
+                if acc.is_num {
+                    CalcVal { pct: rhs.pct * acc.num, px: rhs.px * acc.num, num: rhs.num * acc.num, is_num: rhs.is_num }
+                } else if rhs.is_num {
+                    CalcVal { pct: acc.pct * rhs.num, px: acc.px * rhs.num, num: acc.num * rhs.num, is_num: false }
+                } else {
+                    return None;
+                }
+            }
+            _ => {
+                // 나눗셈: 우변은 수
+                if !rhs.is_num || rhs.num == 0.0 {
+                    return None;
+                }
+                CalcVal { pct: acc.pct / rhs.num, px: acc.px / rhs.num, num: acc.num / rhs.num, is_num: acc.is_num }
+            }
+        };
+    }
+    Some(acc)
+}
+
+// factor = '(' expr ')' | number[unit]
+fn calc_factor(t: &[char], p: &mut usize) -> Option<CalcVal> {
+    skip_ws(t, p);
+    if t.get(*p) == Some(&'(') {
+        *p += 1;
+        let v = calc_expr(t, p)?;
+        skip_ws(t, p);
+        if t.get(*p) != Some(&')') {
+            return None;
+        }
+        *p += 1;
+        return Some(v);
+    }
+    // 숫자 + 선택적 단위
+    let start = *p;
+    if t.get(*p) == Some(&'-') || t.get(*p) == Some(&'+') {
+        *p += 1;
+    }
+    while *p < t.len() && (t[*p].is_ascii_digit() || t[*p] == '.') {
+        *p += 1;
+    }
+    if *p == start || (*p == start + 1 && !t[start].is_ascii_digit()) {
+        return None;
+    }
+    let num: f32 = t[start..*p].iter().collect::<String>().parse().ok()?;
+    // 단위
+    let ustart = *p;
+    while *p < t.len() && (t[*p].is_ascii_alphabetic() || t[*p] == '%') {
+        *p += 1;
+    }
+    let unit: String = t[ustart..*p].iter().collect::<String>().to_ascii_lowercase();
+    match unit.as_str() {
+        "" => Some(CalcVal { pct: 0.0, px: 0.0, num, is_num: true }),
+        "px" => Some(CalcVal { pct: 0.0, px: num, num: 0.0, is_num: false }),
+        "%" => Some(CalcVal { pct: num, px: 0.0, num: 0.0, is_num: false }),
+        _ => None, // em/rem/vw 등 미지원
+    }
 }
 
 fn parse_hex_color(text: &str) -> Option<Color> {

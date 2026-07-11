@@ -47,6 +47,8 @@ pub enum Value {
     Url(String),
     // var() 를 포함한 미해석 원문. 스타일 계산 시 커스텀 프로퍼티로 치환 후 재파싱.
     Var(String),
+    // calc() 를 (percent 계수, px 계수) 선형식으로 축약. 레이아웃이 len_px 로 해석.
+    Calc(f32, f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
