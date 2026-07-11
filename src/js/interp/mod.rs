@@ -3483,7 +3483,7 @@ mod tests {
     #[test]
     fn class_fields_and_numeric_separators() {
         // 인스턴스 필드 (this 참조 가능) + 상속 + static
-        assert_eq!(run_num("class C{x=5; y=this.x+1;} var c=new C(); c.x+c.y"), 16.0);
+        assert_eq!(run_num("class C{x=5; y=this.x+1;} var c=new C(); c.x+c.y"), 11.0);
         assert_eq!(run_num("class B{a=1;} class D extends B{b=2;} var d=new D(); d.a+d.b"), 3.0);
         assert_eq!(run_num("class E{static v=7;} E.v"), 7.0);
         // 숫자 구분자
