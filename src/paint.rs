@@ -1439,8 +1439,14 @@ fn stack_level(lb: &LayoutBox, parent_z: i32) -> i32 {
         Some(Value::Keyword(ref k)) if k == "relative" || k == "absolute"
             || k == "fixed" || k == "sticky");
     if positioned {
-        if let Some(Value::Length(n, _)) = lb.styled_node.value("z-index") {
-            return n as i32;
+        match lb.styled_node.value("z-index") {
+            Some(Value::Length(n, _)) => return n as i32,
+            Some(Value::Keyword(ref k)) => {
+                if let Ok(n) = k.trim().parse::<i32>() {
+                    return n;
+                }
+            }
+            _ => {}
         }
     }
     parent_z

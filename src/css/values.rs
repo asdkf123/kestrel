@@ -100,8 +100,11 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
             if f == 0.0 {
                 return Some(Value::Length(0.0, Unit::Px));
             }
+            // 단위 없는 수(column-count/z-index/order 등)는 Keyword 로 보존.
+            // Length(px)로 두면 line-height:1.5 가 1.5px 가 되는 등 오작동하므로 Keyword.
+            return Some(Value::Keyword(text.to_string()));
         }
-        return None; // vw/vh/단위없는 0 아닌 수 등은 미지원
+        return None;
     }
     if text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         if let Some(c) = named_color(&lower) {

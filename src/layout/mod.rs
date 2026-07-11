@@ -279,7 +279,12 @@ impl<'a> LayoutBox<'a> {
         } else if is_tr(self) {
             self.layout_table_row(fonts, images);
         } else {
-            self.layout_children(fonts, images);
+            let ncols = self.column_count();
+            if ncols >= 2 {
+                self.layout_columns(fonts, images, ncols);
+            } else {
+                self.layout_children(fonts, images);
+            }
         }
         self.calculate_height();
         self.add_list_marker(fonts);
@@ -1129,6 +1134,56 @@ impl<'a> LayoutBox<'a> {
             self.dimensions.content.height = below;
         }
         max_w
+    }
+
+    // column-count (>=2 면 다단). 숫자는 Length 또는 Keyword 로 파싱될 수 있음.
+    fn column_count(&self) -> usize {
+        match self.styled_node.value("column-count") {
+            Some(Length(n, _)) if n >= 1.0 => n as usize,
+            Some(Value::Keyword(ref k)) => k.trim().parse::<usize>().unwrap_or(1),
+            _ => 1,
+        }
+    }
+
+    fn column_gap(&self) -> f32 {
+        match self.styled_node.value("column-gap") {
+            Some(Length(v, Px)) => v,
+            _ => 16.0, // normal ≈ 1em
+        }
+    }
+
+    // CSS 다단(column-count): 자식을 열 폭으로 단일 열 배치한 뒤, 균형 잡히도록
+    // 자식 경계에서 여러 열로 분배한다(한 자식을 열 사이로 쪼개진 않음 — 실용 근사).
+    fn layout_columns(&mut self, fonts: &FontStack, images: &ImageMap, ncols: usize) {
+        let full_w = self.dimensions.content.width;
+        let gap = self.column_gap();
+        let col_w = ((full_w - gap * (ncols as f32 - 1.0)) / ncols as f32).max(0.0);
+        // 1) 자식을 열 폭으로 단일 열 스택 배치
+        self.dimensions.content.width = col_w;
+        self.layout_children(fonts, images);
+        self.dimensions.content.width = full_w;
+        let oy = self.dimensions.content.y;
+        let total_h = self.dimensions.content.height;
+        if total_h <= 0.0 || self.children.is_empty() {
+            return;
+        }
+        let target = total_h / ncols as f32;
+        // 2) 그리디로 자식을 열에 분배
+        let mut col = 0usize;
+        let mut col_start = 0.0f32; // 현재 열 시작 y (oy 상대)
+        let mut max_h = 0.0f32;
+        for child in &mut self.children {
+            let cy = child.dimensions.content.y - oy;
+            if col + 1 < ncols && cy - col_start >= target && cy > col_start + 0.1 {
+                col += 1;
+                col_start = cy;
+            }
+            let dx = col as f32 * (col_w + gap);
+            child.translate(dx, -col_start);
+            let bottom = (cy - col_start) + child.dimensions.margin_box().height;
+            max_h = max_h.max(bottom);
+        }
+        self.dimensions.content.height = max_h;
     }
 
     // <table>: 모든 행의 셀을 모아 공통 열 폭을 계산해 열을 정렬한다.
@@ -2539,6 +2594,33 @@ mod tests {
         // h1 = 2em = 32px, h2 = 1.5em = 24px (기본 16 기준)
         assert!((find(&styled, "h1").unwrap() - 32.0).abs() < 0.5, "h1=2em");
         assert!((find(&styled, "h2").unwrap() - 24.0).abs() < 0.5, "h2=1.5em");
+    }
+
+    #[test]
+    fn column_count_distributes_children_into_columns() {
+        let fs = fonts();
+        let mut html = String::from("<div class=\"c\">");
+        for i in 0..6 {
+            html.push_str(&format!("<div class=\"b\">{}</div>", i));
+        }
+        html.push_str("</div>");
+        let ss = crate::css::parse(
+            ".c{display:block;column-count:3;column-gap:10px;} .b{display:block;height:20px;}"
+                .to_string(),
+        );
+        let root = crate::html::parse_dom(html);
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 330.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        assert_eq!(lb.children.len(), 6);
+        let x = |i: usize| lb.children[i].dimensions.content.x;
+        let y = |i: usize| lb.children[i].dimensions.content.y;
+        // 6개 → 3열에 2개씩: (0,1),(2,3),(4,5)
+        assert!((x(0) - x(1)).abs() < 0.5, "0,1 같은 열");
+        assert!(x(2) > x(0) + 50.0, "2 는 둘째 열 (실제 {} vs {})", x(2), x(0));
+        assert!(x(4) > x(2) + 50.0, "4 는 셋째 열");
+        assert!((y(0) - y(2)).abs() < 0.5 && (y(0) - y(4)).abs() < 0.5, "각 열 top 정렬");
     }
 
     #[test]
