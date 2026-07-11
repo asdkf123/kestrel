@@ -466,11 +466,21 @@ fn style_node<'a>(
                     values.insert(decl.name, decl.value);
                 }
             }
-            // font-size 외 속성의 em/rem 은 아직 미해석 → 드롭 (미지원과 동일: auto 취급).
+            // font-size 외 속성의 em/rem 을 px 로 확정한다 (computed value).
+            // em 은 요소 자신의 font-size(fs), rem 은 루트 기준(DEFAULT_FONT_SIZE).
             // 퍼센트는 레이아웃(calculate_width)이 컨테이닝 블록 폭 기준으로 해석하므로 보존.
-            values.retain(|k, v| {
-                k == "font-size" || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem))
-            });
+            for (k, v) in values.iter_mut() {
+                if k == "font-size" {
+                    continue;
+                }
+                if let Value::Length(n, unit) = v {
+                    match unit {
+                        Unit::Em => *v = Value::Length(*n * fs, Unit::Px),
+                        Unit::Rem => *v = Value::Length(*n * DEFAULT_FONT_SIZE, Unit::Px),
+                        _ => {}
+                    }
+                }
+            }
             ancestors.push(elem);
             // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제
             let elem_children: Vec<NodeId> = node
@@ -677,14 +687,19 @@ mod tests {
     }
 
     #[test]
-    fn em_rem_dropped_but_percent_kept_for_layout() {
+    fn em_rem_resolved_to_px_percent_kept_for_layout() {
         let root = crate::html::parse_dom("<div></div>".to_string());
-        let ss = crate::css::parse("div { width: 50%; margin-top: 2em; }".to_string());
+        let ss = crate::css::parse(
+            "div { width: 50%; font-size: 20px; margin-top: 2em; padding-left: 1rem; }"
+                .to_string(),
+        );
         let styled = style_tree(&root, &ss);
         // 퍼센트 width 는 보존 → 레이아웃이 컨테이닝 블록 폭 기준으로 해석
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Percent)));
-        // em/rem 은 여전히 미해석 → 드롭
-        assert_eq!(styled.value("margin-top"), None);
+        // em 은 요소 자신의 font-size(20px) 기준 → 2em = 40px
+        assert_eq!(styled.value("margin-top"), Some(Value::Length(40.0, Unit::Px)));
+        // rem 은 루트(16px) 기준 → 1rem = 16px
+        assert_eq!(styled.value("padding-left"), Some(Value::Length(16.0, Unit::Px)));
     }
 
     #[test]
