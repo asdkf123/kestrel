@@ -327,7 +327,14 @@ impl Parser {
             Some(Tok::LBrace) => {
                 self.pos += 1;
                 let mut props = Vec::new();
+                let mut rest = None;
                 while self.peek() != Some(&Tok::RBrace) {
+                    // rest { a, ...others }
+                    if self.eat_spread() {
+                        rest = Some(self.ident()?);
+                        self.eat(&Tok::Comma);
+                        break;
+                    }
                     let key = self.prop_name()?;
                     // { key: subpattern } (중첩 가능) 또는 { key }
                     let sub = if self.eat(&Tok::Colon) {
@@ -344,16 +351,23 @@ impl Parser {
                     }
                 }
                 self.expect(&Tok::RBrace)?;
-                Ok(Pattern::Object(props))
+                Ok(Pattern::Object(props, rest))
             }
             Some(Tok::LBracket) => {
                 self.pos += 1;
                 let mut elems = Vec::new();
+                let mut rest = None;
                 while self.peek() != Some(&Tok::RBracket) {
                     if self.peek() == Some(&Tok::Comma) {
                         elems.push(None); // 구멍 [a, , b]
                         self.pos += 1;
                         continue;
+                    }
+                    // rest [a, ...others]
+                    if self.eat_spread() {
+                        rest = Some(self.ident()?);
+                        self.eat(&Tok::Comma);
+                        break;
                     }
                     let sub = self.binding_pattern()?; // 중첩/이름
                     let default =
@@ -364,7 +378,7 @@ impl Parser {
                     }
                 }
                 self.expect(&Tok::RBracket)?;
-                Ok(Pattern::Array(elems))
+                Ok(Pattern::Array(elems, rest))
             }
             _ => Ok(Pattern::Name(self.ident()?)),
         }

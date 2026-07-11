@@ -157,10 +157,10 @@ pub enum DeclKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Name(String),
-    // { key: sub = default, ... } — 중첩 패턴과 기본값 지원
-    Object(Vec<(String, Pattern, Option<Expr>)>),
-    // [ sub = default, , ... ] — None = 홀(건너뜀)
-    Array(Vec<Option<(Pattern, Option<Expr>)>>),
+    // { key: sub = default, ..., ...rest } — 중첩/기본값/rest 지원
+    Object(Vec<(String, Pattern, Option<Expr>)>, Option<String>),
+    // [ sub = default, , ..., ...rest ] — None = 홀(건너뜀)
+    Array(Vec<Option<(Pattern, Option<Expr>)>>, Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

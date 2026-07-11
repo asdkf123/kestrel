@@ -1243,7 +1243,7 @@ impl Interp {
         use crate::js::ast::Pattern;
         match pat {
             Pattern::Name(n) => env_declare(env, n, value),
-            Pattern::Object(props) => {
+            Pattern::Object(props, rest) => {
                 for (key, sub, default) in props {
                     let mut v = self.member_get(&value, key).unwrap_or(Value::Undefined);
                     if matches!(v, Value::Undefined) {
@@ -1253,8 +1253,27 @@ impl Interp {
                     }
                     self.bind_pattern(sub, v, env)?;
                 }
+                // { a, ...rest } — 분해되지 않은 나머지 own 프로퍼티를 객체로
+                if let Some(rest_name) = rest {
+                    let consumed: std::collections::HashSet<&str> =
+                        props.iter().map(|(k, _, _)| k.as_str()).collect();
+                    let mut map = HashMap::new();
+                    let collect = |src: &HashMap<String, Value>, map: &mut HashMap<String, Value>| {
+                        for (k, v) in src.iter() {
+                            if !consumed.contains(k.as_str()) {
+                                map.insert(k.clone(), v.clone());
+                            }
+                        }
+                    };
+                    match &value {
+                        Value::Obj(o) => collect(&o.borrow(), &mut map),
+                        Value::Instance(i) => collect(&i.fields.borrow(), &mut map),
+                        _ => {}
+                    }
+                    env_declare(env, rest_name, Value::Obj(Rc::new(RefCell::new(map))));
+                }
             }
-            Pattern::Array(elems) => {
+            Pattern::Array(elems, rest) => {
                 for (i, slot) in elems.iter().enumerate() {
                     if let Some((sub, default)) = slot {
                         let mut v =
@@ -1266,6 +1285,14 @@ impl Interp {
                         }
                         self.bind_pattern(sub, v, env)?;
                     }
+                }
+                // [a, ...rest] — elems.len() 부터 남은 요소를 배열로
+                if let Some(rest_name) = rest {
+                    let items: Vec<Value> = match &value {
+                        Value::Arr(a) => a.borrow().iter().skip(elems.len()).cloned().collect(),
+                        _ => Vec::new(),
+                    };
+                    env_declare(env, rest_name, Value::Arr(ArrayObj::new(items)));
                 }
             }
         }
@@ -3428,6 +3455,15 @@ mod tests {
         // for-of 루프 변수 구조분해 (배열/entries 순회의 핵심 패턴)
         assert_eq!(run_num("var s=0; for(var [a,b] of [[1,2],[3,4]]){s+=a+b;} s"), 10.0);
         assert_eq!(run_str("var r=''; for(const [k,v] of [['x',1],['y',2]]){r+=k+v;} r"), "x1y2");
+    }
+
+    #[test]
+    fn destructuring_rest() {
+        // { a, ...rest } / [ f, ...tail ]
+        assert_eq!(run_num("var {a,...r}={a:1,b:2,c:3}; a + r.b + r.c"), 6.0);
+        assert_eq!(run_num("var [f,...t]=[1,2,3,4]; f + t.length"), 4.0);
+        // 기본값 + rest 조합 (소비된 키는 rest 에서 제외)
+        assert_eq!(run_num("var {x,y=9,...o}={x:1,z:5}; x + y + o.z"), 15.0);
     }
 
     #[test]
