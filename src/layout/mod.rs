@@ -639,13 +639,38 @@ impl<'a> LayoutBox<'a> {
                 continue;
             }
 
-            // 정상 블록: 앞선 float 밴드가 있으면 그 아래로 clear
+            // 정상 블록. float 밴드가 있을 때: 이 블록이 (margin 등으로) float 을
+            // 가로로 클리어하면 밴드 옆(같은 y)에 배치, 아니면 밴드 아래로 clear(겹침 방지).
+            // 이것이 float 사이드바 + margin 본문 다단을 살린다.
             if band_active {
+                let d0 = self.dimensions; // content.height = 밴드 top 레벨 (float 은 흐름 미반영)
+                self.children[i].layout(d0, fonts, images);
+                let bb = self.children[i].dimensions.border_box();
+                let beside = bb.x >= fl_next - 0.5 && bb.x + bb.width <= fr_next + 0.5;
+                if beside {
+                    // 옆에 배치 — probe 가 최종. 정렬 후 흐름 높이 갱신.
+                    if align != "left" {
+                        let cw = self.children[i].dimensions.border_box().width;
+                        if cw < avail - 0.5 {
+                            let dx =
+                                if align == "center" { (avail - cw) / 2.0 } else { avail - cw };
+                            self.children[i].translate_x(dx);
+                        }
+                    }
+                    let mh = self.children[i].dimensions.margin_box().height;
+                    // 이 블록 하단과 float 밴드 하단 중 큰 쪽까지 진행 (후속은 둘 다 클리어)
+                    let block_bottom = self.dimensions.content.height + mh;
+                    self.dimensions.content.height = block_bottom.max(band_bottom - cy);
+                    band_active = false;
+                    continue;
+                }
+                // 겹침 → 밴드 아래로 clear 후 재배치
                 let below = band_bottom - cy;
                 if below > self.dimensions.content.height {
                     self.dimensions.content.height = below;
                 }
                 band_active = false;
+                self.children[i].clear_render();
             }
             // 정상 흐름: 누적 높이가 반영된 live dimensions 로 스택
             let d = self.dimensions;
@@ -1624,6 +1649,34 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         // after 는 float 밴드(높이 40) 아래로 clear
         assert_eq!(lb.children[1].dimensions.content.y, 40.0, "정상 블록은 float 밴드 아래");
+    }
+
+    #[test]
+    fn float_column_main_sits_beside_with_margin() {
+        // float 사이드바 + margin 으로 float 을 클리어하는 본문 → 같은 y 에 나란히
+        // (clear 되어 아래로 밀리지 않음). 고전 float 다단 레이아웃.
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"side\"></div><div class=\"main\"></div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; } \
+             .side { display: block; float: left; width: 100px; height: 40px; } \
+             .main { display: block; margin-left: 120px; height: 15px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let side = &lb.children[0];
+        let main = &lb.children[1];
+        assert_eq!(side.dimensions.content.y, 0.0, "float 사이드바는 밴드 top");
+        assert_eq!(main.dimensions.content.y, 0.0, "본문은 float 옆(같은 y), 아래로 안 밀림");
+        assert!(main.dimensions.content.x >= 120.0, "본문은 margin 으로 float 우측: {}", main.dimensions.content.x);
+        // wrap 높이 = float(40) 과 본문(15) 중 큰 쪽 = 40
+        assert_eq!(lb.dimensions.content.height, 40.0, "컨테이너는 float 밴드 하단까지");
     }
 
     #[test]
