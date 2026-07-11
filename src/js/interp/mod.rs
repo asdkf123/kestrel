@@ -3163,6 +3163,25 @@ mod tests {
     }
 
     #[test]
+    fn module_import_export_syntax() {
+        // import 는 스킵, export 는 벗겨져 선언이 정상 동작 → 파싱 실패로 스크립트가 죽지 않음
+        assert_eq!(
+            run_num(
+                "import foo from './foo.js'; \
+                 import { a, b } from './x.js'; \
+                 export const N = 42; \
+                 export function add(x, y) { return x + y; } \
+                 add(N, 8)"
+            ),
+            50.0
+        );
+        // export default
+        assert_eq!(run_num("export default 5; var z = 7; z"), 7.0);
+        // export { ... } 재익스포트 스킵
+        assert_eq!(run_num("var q = 3; export { q }; q"), 3.0);
+    }
+
+    #[test]
     fn spread_array_call_object() {
         // 배열 스프레드
         assert_eq!(run_str("var a=[1,2]; var b=[0,...a,3]; b.join(',')"), "0,1,2,3");

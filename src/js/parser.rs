@@ -146,6 +146,15 @@ impl Parser {
     // ── 문 ──────────────────────────────────────────────────────────
 
     fn stmt(&mut self) -> Result<Stmt, String> {
+        // ES 모듈: import 는 스킵(로딩 미지원), export 는 수식어 벗겨 선언 유지.
+        if matches!(self.peek(), Some(Tok::Ident(n)) if n == "import")
+            && !matches!(self.toks.get(self.pos + 1), Some(Tok::LParen) | Some(Tok::Dot))
+        {
+            return self.skip_import();
+        }
+        if matches!(self.peek(), Some(Tok::Ident(n)) if n == "export") {
+            return self.export_stmt();
+        }
         // async function 선언: async 수식어 무시하고 함수 선언으로
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "async")
             && self.toks.get(self.pos + 1) == Some(&Tok::Function)
@@ -214,6 +223,67 @@ impl Parser {
                 Ok(Stmt::Expr(e))
             }
         }
+    }
+
+    // import ... (from '...') — 모듈 로딩 미지원. 명세자 문자열까지 소비하고 no-op.
+    fn skip_import(&mut self) -> Result<Stmt, String> {
+        self.pos += 1; // import
+        // 명세자 문자열(들)까지 토큰 소비. 최대 32 토큰 안전장치.
+        let mut steps = 0;
+        while !self.eof() && steps < 32 {
+            let t = self.next()?;
+            steps += 1;
+            if matches!(t, Tok::Str(_)) {
+                break; // 명세자 = import 끝
+            }
+            if matches!(t, Tok::Semi) {
+                break;
+            }
+        }
+        self.eat(&Tok::Semi);
+        Ok(Stmt::Block(Vec::new())) // no-op
+    }
+
+    // export [default] <decl|expr> / export { ... } — 수식어를 벗기고 선언은 유지.
+    fn export_stmt(&mut self) -> Result<Stmt, String> {
+        self.pos += 1; // export
+        // export default <expr|decl>
+        if matches!(self.peek(), Some(Tok::Default)) {
+            self.pos += 1;
+            // default 뒤가 함수/클래스면 선언, 아니면 식(부수효과 위해 실행)
+            return match self.peek() {
+                Some(Tok::Function) => self.func_decl(),
+                Some(Tok::Class) => {
+                    self.pos += 1;
+                    Ok(Stmt::ClassDecl(self.class_def(true)?))
+                }
+                _ => {
+                    let e = self.expr()?;
+                    self.eat(&Tok::Semi);
+                    Ok(Stmt::Expr(e))
+                }
+            };
+        }
+        // export { a, b } [from '...'] / export * from '...' — 스킵
+        if matches!(self.peek(), Some(Tok::LBrace) | Some(Tok::Star)) {
+            let mut steps = 0;
+            while !self.eof() && steps < 64 {
+                let t = self.next()?;
+                steps += 1;
+                if matches!(t, Tok::Semi | Tok::Str(_)) {
+                    break;
+                }
+                if matches!(t, Tok::RBrace)
+                    && !matches!(self.peek(), Some(Tok::Ident(n)) if n == "from")
+                {
+                    break;
+                }
+            }
+            self.eat(&Tok::Semi);
+            return Ok(Stmt::Block(Vec::new()));
+        }
+        // export const/let/var/function/class/async — 그냥 선언으로
+        self.stmt()
     }
 
     fn block(&mut self) -> Result<Vec<Stmt>, String> {
