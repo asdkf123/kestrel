@@ -1231,27 +1231,43 @@ impl Interp {
         }
     }
 
-    // 구조분해 바인딩: 패턴 각 이름에 값을 꺼내 선언
-    fn bind_pattern(&mut self, pat: &crate::js::ast::Pattern, value: Value, env: &EnvRef) {
+    // 구조분해 바인딩: 패턴을 재귀적으로 풀어 값을 선언. 값이 undefined 면 기본값 사용.
+    fn bind_pattern(
+        &mut self,
+        pat: &crate::js::ast::Pattern,
+        value: Value,
+        env: &EnvRef,
+    ) -> Result<(), String> {
         use crate::js::ast::Pattern;
         match pat {
             Pattern::Name(n) => env_declare(env, n, value),
             Pattern::Object(props) => {
-                for (key, alias) in props {
-                    let v = self.member_get(&value, key).unwrap_or(Value::Undefined);
-                    env_declare(env, alias, v);
+                for (key, sub, default) in props {
+                    let mut v = self.member_get(&value, key).unwrap_or(Value::Undefined);
+                    if matches!(v, Value::Undefined) {
+                        if let Some(d) = default {
+                            v = self.eval(d, env)?;
+                        }
+                    }
+                    self.bind_pattern(sub, v, env)?;
                 }
             }
-            Pattern::Array(names) => {
-                for (i, slot) in names.iter().enumerate() {
-                    if let Some(name) = slot {
-                        let v =
+            Pattern::Array(elems) => {
+                for (i, slot) in elems.iter().enumerate() {
+                    if let Some((sub, default)) = slot {
+                        let mut v =
                             self.member_get(&value, &i.to_string()).unwrap_or(Value::Undefined);
-                        env_declare(env, name, v);
+                        if matches!(v, Value::Undefined) {
+                            if let Some(d) = default {
+                                v = self.eval(d, env)?;
+                            }
+                        }
+                        self.bind_pattern(sub, v, env)?;
                     }
                 }
             }
         }
+        Ok(())
     }
 
     fn tick(&mut self) -> Result<(), String> {
@@ -1299,7 +1315,7 @@ impl Interp {
                         Some(e) => self.eval(e, env)?,
                         None => Value::Undefined,
                     };
-                    self.bind_pattern(pat, v, env);
+                    self.bind_pattern(pat, v, env)?;
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
@@ -3356,6 +3372,18 @@ mod tests {
         );
         // 파싱 실패는 스크립트 에러
         assert!(Interp::new().run("JSON.parse('{oops')").is_err());
+    }
+
+    #[test]
+    fn destructuring_defaults_and_nesting() {
+        // 기본값: 없는 프로퍼티/슬롯은 default 사용
+        assert_eq!(run_num("var {a=3,b=4}={a:1}; a+b"), 5.0);
+        assert_eq!(run_num("var [p=1,q=2]=[7]; p+q"), 9.0);
+        // 중첩 구조분해
+        assert_eq!(run_num("var {x:{y}}={x:{y:9}}; y"), 9.0);
+        assert_eq!(run_num("var [[m],[n]]=[[3],[4]]; m+n"), 7.0);
+        // 중첩 + 기본값 (없는 서브객체에 기본값 후 내부 분해)
+        assert_eq!(run_num("var {d:{k=5}={}}={}; k"), 5.0);
     }
 
     #[test]

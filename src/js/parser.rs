@@ -329,13 +329,16 @@ impl Parser {
                 let mut props = Vec::new();
                 while self.peek() != Some(&Tok::RBrace) {
                     let key = self.prop_name()?;
-                    // { key: alias } 또는 { key }
-                    let alias = if self.eat(&Tok::Colon) { self.ident()? } else { key.clone() };
-                    // 기본값 { a = 1 } 은 미지원 — 스킵
-                    if self.eat(&Tok::Assign) {
-                        self.assignment()?; // 기본값 식은 파싱만 하고 버림
-                    }
-                    props.push((key, alias));
+                    // { key: subpattern } (중첩 가능) 또는 { key }
+                    let sub = if self.eat(&Tok::Colon) {
+                        self.binding_pattern()?
+                    } else {
+                        Pattern::Name(key.clone())
+                    };
+                    // 기본값 { a = 1 } / { a: b = 1 }
+                    let default =
+                        if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
+                    props.push((key, sub, default));
                     if !self.eat(&Tok::Comma) {
                         break;
                     }
@@ -345,23 +348,23 @@ impl Parser {
             }
             Some(Tok::LBracket) => {
                 self.pos += 1;
-                let mut names = Vec::new();
+                let mut elems = Vec::new();
                 while self.peek() != Some(&Tok::RBracket) {
                     if self.peek() == Some(&Tok::Comma) {
-                        names.push(None); // 구멍 [a, , b]
+                        elems.push(None); // 구멍 [a, , b]
                         self.pos += 1;
                         continue;
                     }
-                    names.push(Some(self.ident()?));
-                    if self.eat(&Tok::Assign) {
-                        self.assignment()?; // 기본값 버림
-                    }
+                    let sub = self.binding_pattern()?; // 중첩/이름
+                    let default =
+                        if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
+                    elems.push(Some((sub, default)));
                     if !self.eat(&Tok::Comma) {
                         break;
                     }
                 }
                 self.expect(&Tok::RBracket)?;
-                Ok(Pattern::Array(names))
+                Ok(Pattern::Array(elems))
             }
             _ => Ok(Pattern::Name(self.ident()?)),
         }
