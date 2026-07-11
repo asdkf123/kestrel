@@ -94,6 +94,9 @@ pub struct LayoutBox<'a> {
     pub list_marker: Option<String>,
     // 콘텐츠의 실제 사용 폭 (shrink-to-fit float 배치용)
     pub used_width: f32,
+    // float 컨텍스트(절대 좌표): (좌 float 우측 x, 우 float 좌측 x, 밴드 하단 y).
+    // 텍스트 줄 상자가 이 밴드 안(y < 하단)에서 float 을 피해 짧아진다(text-wrap).
+    pub float_ctx: Option<(f32, f32, f32)>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -110,6 +113,7 @@ impl<'a> LayoutBox<'a> {
             decorations: Vec::new(),
             list_marker: None,
             used_width: 0.0,
+            float_ctx: None,
         }
     }
 
@@ -126,6 +130,7 @@ impl<'a> LayoutBox<'a> {
             decorations: Vec::new(),
             list_marker: None,
             used_width: 0.0,
+            float_ctx: None,
         }
     }
 
@@ -654,6 +659,19 @@ impl<'a> LayoutBox<'a> {
             // 가로로 클리어하면 밴드 옆(같은 y)에 배치, 아니면 밴드 아래로 clear(겹침 방지).
             // 이것이 float 사이드바 + margin 본문 다단을 살린다.
             if band_active {
+                // 익명 텍스트 박스는 float 주위로 흐른다(text-wrap): float_ctx 설정 후
+                // 밴드 top 에서 배치. 줄 상자가 float 을 피해 짧아진다.
+                if is_anon {
+                    self.children[i].float_ctx = Some((fl_next, fr_next, band_bottom));
+                    let d0 = self.dimensions;
+                    self.children[i].layout(d0, fonts, images);
+                    self.children[i].float_ctx = None;
+                    let mh = self.children[i].dimensions.margin_box().height;
+                    let block_bottom = self.dimensions.content.height + mh;
+                    self.dimensions.content.height = block_bottom.max(band_bottom - cy);
+                    band_active = false;
+                    continue;
+                }
                 let d0 = self.dimensions; // content.height = 밴드 top 레벨 (float 은 흐름 미반영)
                 self.children[i].layout(d0, fonts, images);
                 let bb = self.children[i].dimensions.border_box();
@@ -1685,6 +1703,35 @@ mod tests {
         assert!(btn.dimensions.content.y < 8.0, "버튼은 첫 줄(텍스트와 같은 줄): {}", btn.dimensions.content.y);
         // 컨테이너 높이 = 한 줄 (~18px). 세로로 쌓였다면 3줄(~54px).
         assert!(lb.dimensions.content.height < 30.0, "한 줄이어야: {}", lb.dimensions.content.height);
+    }
+
+    #[test]
+    fn text_wraps_around_left_float() {
+        // float left(100px, 30px 높이) + 텍스트: 초반 줄은 float 우측(x>=95),
+        // float 아래 줄은 전체폭(x<95). 이미지 주위 텍스트 흐름.
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><div class=\"f\"></div>aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz a1 b2 c3 d4 e5 f6 g7 h8 i9</div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".wrap { display: block; font-size: 16px; } \
+             .f { display: block; float: left; width: 100px; height: 30px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // wrap children: [.f(float), anon(text)]
+        let gs = glyphs_of(&lb.children[1]);
+        let first = gs.first().unwrap();
+        assert!(first.x >= 95.0, "첫 줄 텍스트는 float 우측에서 시작: {}", first.x);
+        let below = gs
+            .iter()
+            .find(|g| g.baseline_y > 40.0)
+            .expect("float(30px) 아래로 흐르는 줄이 있어야");
+        assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
     }
 
     #[test]

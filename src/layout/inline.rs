@@ -99,19 +99,34 @@ impl<'a> LayoutBox<'a> {
 
         let content_x = self.dimensions.content.x;
         let content_w = self.dimensions.content.width;
-        let mut pen_x = content_x;
+        // float 컨텍스트: 줄이 밴드 안(baseline-ascent < 하단)이면 float 을 피해 좌우 축소.
+        let fctx = self.float_ctx;
+        let line_range = |baseline: f32| -> (f32, f32) {
+            if let Some((fl, fr, bb)) = fctx {
+                if baseline - ascent_px < bb {
+                    let left = fl.max(content_x);
+                    let right = (fr.min(content_x + content_w)).max(left + 1.0);
+                    return (left, right);
+                }
+            }
+            (content_x, content_x + content_w)
+        };
         let mut baseline = self.dimensions.content.y + ascent_px;
+        let (mut line_left, mut line_right) = line_range(baseline);
+        let mut pen_x = line_left;
         let mut lines = 1;
         // 줄별 시작 인덱스 + 폭 (center/right 정렬 후처리용): (glyph, link, deco, width)
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
 
         for (word, force_break) in &words {
             let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2).sum();
-            let need_wrap =
-                can_wrap && pen_x > content_x && pen_x + word_w > content_x + content_w;
+            let need_wrap = can_wrap && pen_x > line_left && pen_x + word_w > line_right;
             if *force_break || need_wrap {
-                pen_x = content_x;
                 baseline += line_height;
+                let (l, r) = line_range(baseline);
+                line_left = l;
+                line_right = r;
+                pen_x = line_left;
                 lines += 1;
                 line_bounds.push((self.glyphs.len(), self.links.len(), self.decorations.len(), 0.0));
             }
