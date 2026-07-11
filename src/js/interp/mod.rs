@@ -814,6 +814,20 @@ impl Interp {
 
     // 이벤트 객체 생성: type/target + preventDefault/stopPropagation 등.
     // 내부 플래그(__defaultPrevented/__stopProp)를 네이티브가 갱신.
+    // 호출/생성 인자 평가 (스프레드 ...arr 전개).
+    fn eval_args(&mut self, args: &[crate::js::ast::Expr], env: &EnvRef) -> Result<Vec<Value>, String> {
+        let mut out = Vec::new();
+        for a in args {
+            if let crate::js::ast::Expr::Spread(inner) = a {
+                let v = self.eval(inner, env)?;
+                out.extend(self.iterate_to_vec(&v));
+            } else {
+                out.push(self.eval(a, env)?);
+            }
+        }
+        Ok(out)
+    }
+
     // 값들의 Vec 을 반복자 객체로 (MakeIter 와 동일 구조: __items/__i/next).
     fn make_iter_from_vec(&self, items: Vec<Value>) -> Value {
         let mut it = HashMap::new();
@@ -1424,16 +1438,46 @@ impl Interp {
             Expr::Array(items) => {
                 let mut v = Vec::new();
                 for item in items {
-                    v.push(self.eval(item, env)?);
+                    if let Expr::Spread(inner) = item {
+                        let val = self.eval(inner, env)?;
+                        v.extend(self.iterate_to_vec(&val));
+                    } else {
+                        v.push(self.eval(item, env)?);
+                    }
                 }
                 Ok(Value::Arr(ArrayObj::new(v)))
             }
+            // 스프레드가 배열/호출 밖에 홀로 나오면 값 그대로 (관용)
+            Expr::Spread(inner) => self.eval(inner, env),
             Expr::Object(props) => {
                 let mut map = HashMap::new();
                 for (k, e) in props {
+                    if matches!(k, PropKey::Spread) {
+                        // {...obj} — obj/배열/인스턴스의 own 프로퍼티 병합
+                        match self.eval(e, env)? {
+                            Value::Obj(o) => {
+                                for (k, v) in o.borrow().iter() {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            Value::Instance(inst) => {
+                                for (k, v) in inst.fields.borrow().iter() {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                            }
+                            Value::Arr(a) => {
+                                for (i, v) in a.borrow().iter().enumerate() {
+                                    map.insert(i.to_string(), v.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     let key = match k {
                         PropKey::Static(s) => s.clone(),
                         PropKey::Computed(ke) => to_display(&self.eval(ke, env)?),
+                        PropKey::Spread => unreachable!(),
                     };
                     let val = self.eval(e, env)?;
                     map.insert(key, val);
@@ -1479,9 +1523,7 @@ impl Interp {
             Expr::New { callee, args } => {
                 let class = self.eval(callee, env)?;
                 let mut arg_vals = Vec::new();
-                for a in args {
-                    arg_vals.push(self.eval(a, env)?);
-                }
+                arg_vals.extend(self.eval_args(args, env)?);
                 self.construct(class, arg_vals)
             }
             // await expr: 대상이 promise 면 마이크로태스크를 드레인해 이행시킨 뒤 값.
@@ -1653,18 +1695,14 @@ impl Interp {
                     return Ok(Value::Undefined);
                 }
                 let mut arg_vals = Vec::new();
-                for a in args {
-                    arg_vals.push(self.eval(a, env)?);
-                }
+                arg_vals.extend(self.eval_args(args, env)?);
                 self.call_value(f, None, arg_vals)
             }
             Expr::Call { callee, args } => {
                 let mut arg_vals = Vec::new();
                 // super(...) — 부모 생성자를 현재 this 로 실행
                 if matches!(&**callee, Expr::Super) {
-                    for a in args {
-                        arg_vals.push(self.eval(a, env)?);
-                    }
+                    arg_vals.extend(self.eval_args(args, env)?);
                     let (Some(Value::Class(parent)), Some(this)) =
                         (env_get(env, "__superclass__"), env_get(env, "this"))
                     else {
@@ -1685,9 +1723,7 @@ impl Interp {
                         let m = parent
                             .find_method(&key)
                             .ok_or_else(|| format!("부모에 메서드 {} 없음", key))?;
-                        for a in args {
-                            arg_vals.push(self.eval(a, env)?);
-                        }
+                        arg_vals.extend(self.eval_args(args, env)?);
                         return self.call_value(Value::Fn(m), Some(this), arg_vals);
                     }
                     let recv = self.eval(obj, env)?;
@@ -1709,9 +1745,7 @@ impl Interp {
                         ));
                     }
                     let f = self.member_get(&recv, &key)?;
-                    for a in args {
-                        arg_vals.push(self.eval(a, env)?);
-                    }
+                    arg_vals.extend(self.eval_args(args, env)?);
                     if !is_callable(&f) {
                         if self.lenient {
                             *self.lenient_hits.entry(format!("{}() 비함수", key)).or_default() += 1;
@@ -1729,9 +1763,7 @@ impl Interp {
                     self.call_value(f, Some(recv), arg_vals)
                 } else {
                     let f = self.eval(callee, env)?;
-                    for a in args {
-                        arg_vals.push(self.eval(a, env)?);
-                    }
+                    arg_vals.extend(self.eval_args(args, env)?);
                     if !is_callable(&f) {
                         if self.lenient {
                             let name =
@@ -3069,6 +3101,20 @@ mod tests {
             .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
             .unwrap();
         assert_eq!(to_display(&o), "100,50,10,20");
+    }
+
+    #[test]
+    fn spread_array_call_object() {
+        // 배열 스프레드
+        assert_eq!(run_str("var a=[1,2]; var b=[0,...a,3]; b.join(',')"), "0,1,2,3");
+        // 호출 인자 스프레드
+        assert_eq!(run_num("function add(x,y,z){return x+y+z;} var a=[1,2,3]; add(...a)"), 6.0);
+        // Math.max(...arr)
+        assert_eq!(run_num("var a=[3,7,2]; Math.max(...a)"), 7.0);
+        // 객체 스프레드 (병합, 뒤가 이김)
+        assert_eq!(run_num("var o={a:1,b:2}; var p={...o, b:9, c:3}; p.a + p.b + p.c"), 13.0);
+        // 문자열/Set 스프레드
+        assert_eq!(run_str("[...'ab', 'c'].join('-')"), "a-b-c");
     }
 
     #[test]

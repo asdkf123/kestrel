@@ -96,6 +96,19 @@ impl Parser {
         }
     }
 
+    // 스프레드 ... (Dot 3개) 를 확인하고 소비.
+    fn eat_spread(&mut self) -> bool {
+        if self.peek() == Some(&Tok::Dot)
+            && self.toks.get(self.pos + 1) == Some(&Tok::Dot)
+            && self.toks.get(self.pos + 2) == Some(&Tok::Dot)
+        {
+            self.pos += 3;
+            true
+        } else {
+            false
+        }
+    }
+
     fn expect(&mut self, t: &Tok) -> Result<(), String> {
         if self.eat(t) {
             Ok(())
@@ -916,7 +929,11 @@ impl Parser {
             return Ok(args);
         }
         loop {
-            args.push(self.assignment()?);
+            if self.eat_spread() {
+                args.push(Expr::Spread(Box::new(self.assignment()?)));
+            } else {
+                args.push(self.assignment()?);
+            }
             if self.eat(&Tok::Comma) {
                 continue;
             }
@@ -1061,7 +1078,11 @@ impl Parser {
                             }
                             continue;
                         }
-                        items.push(self.assignment()?);
+                        if self.eat_spread() {
+                            items.push(Expr::Spread(Box::new(self.assignment()?)));
+                        } else {
+                            items.push(self.assignment()?);
+                        }
                         if self.eat(&Tok::Comma) {
                             if self.eat(&Tok::RBracket) {
                                 break; // 트레일링 콤마
@@ -1078,6 +1099,19 @@ impl Parser {
                 let mut props = Vec::new();
                 if !self.eat(&Tok::RBrace) {
                     loop {
+                        // 스프레드 { ...obj }
+                        if self.eat_spread() {
+                            let e = self.assignment()?;
+                            props.push((PropKey::Spread, e));
+                            if self.eat(&Tok::Comma) {
+                                if self.eat(&Tok::RBrace) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            self.expect(&Tok::RBrace)?;
+                            break;
+                        }
                         // 계산된 키 { [expr]: v } — 키 식은 런타임에 평가.
                         if self.peek() == Some(&Tok::LBracket) {
                             self.pos += 1;
