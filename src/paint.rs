@@ -198,6 +198,56 @@ impl Canvas {
         }
     }
 
+    // 폴리곤 채우기 (nonzero winding 스캔라인). contours 는 물리 좌표. 홀(안쪽 윤곽) 지원.
+    pub fn fill_polygon(&mut self, color: Color, contours: &[Vec<(f32, f32)>]) {
+        if color.a == 0 {
+            return;
+        }
+        let mut ymin = f32::INFINITY;
+        let mut ymax = f32::NEG_INFINITY;
+        for c in contours {
+            for &(_, y) in c {
+                ymin = ymin.min(y);
+                ymax = ymax.max(y);
+            }
+        }
+        let y0 = ymin.floor().max(0.0) as usize;
+        let y1 = (ymax.ceil().max(0.0) as usize).min(self.height);
+        for py in y0..y1 {
+            let yc = py as f32 + 0.5;
+            // 교차점 (x, winding 방향) 수집
+            let mut xs: Vec<(f32, i32)> = Vec::new();
+            for c in contours {
+                let m = c.len();
+                for k in 0..m {
+                    let (ax, ay) = c[k];
+                    let (bx, by) = c[(k + 1) % m];
+                    if (ay <= yc && by > yc) || (by <= yc && ay > yc) {
+                        let t = (yc - ay) / (by - ay);
+                        let x = ax + t * (bx - ax);
+                        xs.push((x, if by > ay { 1 } else { -1 }));
+                    }
+                }
+            }
+            if xs.len() < 2 {
+                continue;
+            }
+            xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let mut wind = 0;
+            for w in xs.windows(2) {
+                wind += w[0].1;
+                if wind != 0 {
+                    let xa = w[0].0.max(0.0) as usize;
+                    let xb = (w[1].0.max(0.0) as usize).min(self.width);
+                    for px in xa..xb {
+                        let idx = py * self.width + px;
+                        self.pixels[idx] = blend(self.pixels[idx], color, color.a);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn to_u32_buffer(&self) -> Vec<u32> {
         self.pixels
             .iter()
@@ -297,6 +347,8 @@ pub enum DisplayItem {
     Image { image: usize, rect: Rect, fit: ImageFit },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, stops: (색, 위치 0-1).
     Gradient { rect: Rect, angle: f32, radial: bool, stops: Vec<(Color, f32)> },
+    // SVG path 채우기 (여러 윤곽선, nonzero winding). points 는 논리 좌표.
+    Polygon { color: Color, contours: Vec<Vec<(f32, f32)>> },
     Glyph(GlyphInstance),
     // position: sticky — 스크롤 시 뷰포트 상단 top 만큼 아래에 고정. top=스티키 임계,
     // y0=요소의 자연 문서 y. 렌더 시 inner 를 보정된 스크롤로 그린다.
@@ -384,6 +436,214 @@ fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     items.push(DisplayItem::Shadow { color, rect, radius, blur });
 }
 
+// SVG path d 속성 → 서브패스(윤곽선) 폴리라인 목록. 베지어는 평탄화, 상대/절대 지원.
+// 지원: M/L/H/V/C/S/Q/T/Z (대소문자). A(호)는 끝점으로 직선 근사.
+fn flatten_path(d: &str) -> Vec<Vec<(f32, f32)>> {
+    // 1) 명령 그룹으로 토큰화
+    struct Group {
+        cmd: char,
+        nums: Vec<f32>,
+    }
+    let mut groups: Vec<Group> = Vec::new();
+    let ch: Vec<char> = d.chars().collect();
+    let n = ch.len();
+    let mut i = 0;
+    while i < n {
+        let c = ch[i];
+        if c.is_whitespace() || c == ',' {
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_alphabetic() {
+            groups.push(Group { cmd: c, nums: Vec::new() });
+            i += 1;
+            continue;
+        }
+        // 숫자: 부호/소수/지수
+        let start = i;
+        if ch[i] == '+' || ch[i] == '-' {
+            i += 1;
+        }
+        while i < n && ch[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i < n && ch[i] == '.' {
+            i += 1;
+            while i < n && ch[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        if i < n && (ch[i] == 'e' || ch[i] == 'E') {
+            i += 1;
+            if i < n && (ch[i] == '+' || ch[i] == '-') {
+                i += 1;
+            }
+            while i < n && ch[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        if i == start {
+            i += 1; // 진행 보장
+            continue;
+        }
+        if let Ok(v) = ch[start..i].iter().collect::<String>().parse::<f32>() {
+            if let Some(g) = groups.last_mut() {
+                g.nums.push(v);
+            }
+        }
+    }
+    // 2) 그룹 해석 (명령별 인자 개수만큼 반복)
+    let arity = |c: char| match c.to_ascii_uppercase() {
+        'M' | 'L' | 'T' => 2,
+        'H' | 'V' => 1,
+        'C' => 6,
+        'S' | 'Q' => 4,
+        'A' => 7,
+        _ => 0,
+    };
+    let mut subs: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut cur: Vec<(f32, f32)> = Vec::new();
+    let (mut x, mut y) = (0.0f32, 0.0f32);
+    let (mut startx, mut starty) = (0.0f32, 0.0f32);
+    let (mut ctrlx, mut ctrly) = (0.0f32, 0.0f32); // S/T 반사용 직전 제어점
+    let mut prev_cmd = ' ';
+    let flatten_cubic =
+        |p: &mut Vec<(f32, f32)>, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32| {
+            for s in 1..=16 {
+                let t = s as f32 / 16.0;
+                let u = 1.0 - t;
+                let bx = u * u * u * x0 + 3.0 * u * u * t * x1 + 3.0 * u * t * t * x2 + t * t * t * x3;
+                let by = u * u * u * y0 + 3.0 * u * u * t * y1 + 3.0 * u * t * t * y2 + t * t * t * y3;
+                p.push((bx, by));
+            }
+        };
+    let flatten_quad = |p: &mut Vec<(f32, f32)>, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32| {
+        for s in 1..=12 {
+            let t = s as f32 / 12.0;
+            let u = 1.0 - t;
+            let bx = u * u * x0 + 2.0 * u * t * x1 + t * t * x2;
+            let by = u * u * y0 + 2.0 * u * t * y1 + t * t * y2;
+            p.push((bx, by));
+        }
+    };
+    for g in &groups {
+        let up = g.cmd.to_ascii_uppercase();
+        let rel = g.cmd.is_ascii_lowercase();
+        if up == 'Z' {
+            if !cur.is_empty() {
+                cur.push((startx, starty));
+                subs.push(std::mem::take(&mut cur));
+            }
+            x = startx;
+            y = starty;
+            prev_cmd = up;
+            continue;
+        }
+        let ar = arity(up);
+        if ar == 0 {
+            continue;
+        }
+        let mut idx = 0;
+        let mut first = true;
+        while idx + ar <= g.nums.len() {
+            let a = &g.nums[idx..idx + ar];
+            let eff = if first {
+                up
+            } else if up == 'M' {
+                'L'
+            } else {
+                up
+            };
+            match eff {
+                'M' => {
+                    if !cur.is_empty() {
+                        subs.push(std::mem::take(&mut cur));
+                    }
+                    x = if rel { x + a[0] } else { a[0] };
+                    y = if rel { y + a[1] } else { a[1] };
+                    startx = x;
+                    starty = y;
+                    cur.push((x, y));
+                }
+                'L' => {
+                    x = if rel { x + a[0] } else { a[0] };
+                    y = if rel { y + a[1] } else { a[1] };
+                    cur.push((x, y));
+                }
+                'H' => {
+                    x = if rel { x + a[0] } else { a[0] };
+                    cur.push((x, y));
+                }
+                'V' => {
+                    y = if rel { y + a[0] } else { a[0] };
+                    cur.push((x, y));
+                }
+                'C' => {
+                    let (x1, y1) = (if rel { x + a[0] } else { a[0] }, if rel { y + a[1] } else { a[1] });
+                    let (x2, y2) = (if rel { x + a[2] } else { a[2] }, if rel { y + a[3] } else { a[3] });
+                    let (x3, y3) = (if rel { x + a[4] } else { a[4] }, if rel { y + a[5] } else { a[5] });
+                    flatten_cubic(&mut cur, x, y, x1, y1, x2, y2, x3, y3);
+                    ctrlx = x2;
+                    ctrly = y2;
+                    x = x3;
+                    y = y3;
+                }
+                'S' => {
+                    // 부드러운 3차: 첫 제어점 = 직전 제어점의 반사 (C/S 뒤일 때)
+                    let (rx, ry) = if matches!(prev_cmd, 'C' | 'S') {
+                        (2.0 * x - ctrlx, 2.0 * y - ctrly)
+                    } else {
+                        (x, y)
+                    };
+                    let (x2, y2) = (if rel { x + a[0] } else { a[0] }, if rel { y + a[1] } else { a[1] });
+                    let (x3, y3) = (if rel { x + a[2] } else { a[2] }, if rel { y + a[3] } else { a[3] });
+                    flatten_cubic(&mut cur, x, y, rx, ry, x2, y2, x3, y3);
+                    ctrlx = x2;
+                    ctrly = y2;
+                    x = x3;
+                    y = y3;
+                }
+                'Q' => {
+                    let (x1, y1) = (if rel { x + a[0] } else { a[0] }, if rel { y + a[1] } else { a[1] });
+                    let (x2, y2) = (if rel { x + a[2] } else { a[2] }, if rel { y + a[3] } else { a[3] });
+                    flatten_quad(&mut cur, x, y, x1, y1, x2, y2);
+                    ctrlx = x1;
+                    ctrly = y1;
+                    x = x2;
+                    y = y2;
+                }
+                'T' => {
+                    let (rx, ry) = if matches!(prev_cmd, 'Q' | 'T') {
+                        (2.0 * x - ctrlx, 2.0 * y - ctrly)
+                    } else {
+                        (x, y)
+                    };
+                    let (x2, y2) = (if rel { x + a[0] } else { a[0] }, if rel { y + a[1] } else { a[1] });
+                    flatten_quad(&mut cur, x, y, rx, ry, x2, y2);
+                    ctrlx = rx;
+                    ctrly = ry;
+                    x = x2;
+                    y = y2;
+                }
+                'A' => {
+                    // 호는 끝점으로 직선 근사 (정확한 호 평탄화는 후속)
+                    x = if rel { x + a[5] } else { a[5] };
+                    y = if rel { y + a[6] } else { a[6] };
+                    cur.push((x, y));
+                }
+                _ => {}
+            }
+            prev_cmd = eff;
+            idx += ar;
+            first = false;
+        }
+    }
+    if !cur.is_empty() {
+        subs.push(cur);
+    }
+    subs
+}
+
 // 인라인 SVG 의 기본 도형(rect/circle/ellipse/line)을 viewBox 매핑으로 발행한다.
 // path 등 복잡 도형은 미지원(후속). 대각선 line 은 근사(수평/수직만 정확).
 fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
@@ -458,7 +718,36 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
                     items.push(DisplayItem::Rect { color, rect });
                 }
             }
-            _ => {} // path/polygon/text 등 미지원
+            "path" => {
+                if let Some(color) = fill {
+                    if let Some(d) = e.attributes.get("d") {
+                        let contours: Vec<Vec<(f32, f32)>> = flatten_path(d)
+                            .into_iter()
+                            .filter(|c| c.len() >= 3)
+                            .map(|c| c.iter().map(|&(px, py)| (mx(px), my(py))).collect())
+                            .collect();
+                        if !contours.is_empty() {
+                            items.push(DisplayItem::Polygon { color, contours });
+                        }
+                    }
+                }
+            }
+            "polygon" | "polyline" => {
+                if let Some(color) = fill {
+                    if let Some(pts) = e.attributes.get("points") {
+                        let nums: Vec<f32> = pts
+                            .split(|c: char| c == ',' || c.is_whitespace())
+                            .filter_map(|t| t.parse::<f32>().ok())
+                            .collect();
+                        let contour: Vec<(f32, f32)> =
+                            nums.chunks(2).filter(|p| p.len() == 2).map(|p| (mx(p[0]), my(p[1]))).collect();
+                        if contour.len() >= 3 {
+                            items.push(DisplayItem::Polygon { color, contours: vec![contour] });
+                        }
+                    }
+                }
+            }
+            _ => {} // text 등 미지원
         }
     }
 }
@@ -645,6 +934,21 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         DisplayItem::RoundRect { color, rect, radius } => {
             rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radius })
         }
+        DisplayItem::Polygon { color, contours } => {
+            // bbox 로 컬링만 (윤곽 좌표는 유지)
+            let (mut x0, mut y0, mut x1, mut y1) =
+                (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+            for ct in &contours {
+                for &(x, y) in ct {
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x);
+                    y1 = y1.max(y);
+                }
+            }
+            let bbox = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            rect_intersect(bbox, c).map(|_| DisplayItem::Polygon { color, contours })
+        }
         DisplayItem::Shadow { color, rect, radius, blur } => {
             // 그림자는 blur 만큼 넉넉히 — 경계 밖이면 컬링만
             let expanded = Rect {
@@ -790,6 +1094,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
                 c.a = s(c.a);
             }
         }
+        DisplayItem::Polygon { color, .. } => color.a = s(color.a),
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 알파는 별도 — 근사로 스킵
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
     }
@@ -892,6 +1197,13 @@ fn draw_item(
                 return;
             }
             canvas.fill_gradient(r, *angle, *radial, stops);
+        }
+        DisplayItem::Polygon { color, contours } => {
+            let scaled: Vec<Vec<(f32, f32)>> = contours
+                .iter()
+                .map(|ct| ct.iter().map(|&(x, y)| (x * scale, (y - scroll_y) * scale)).collect())
+                .collect();
+            canvas.fill_polygon(*color, &scaled);
         }
         DisplayItem::Glyph(gi) => {
             let baseline = (gi.baseline_y - scroll_y) * scale;
@@ -1108,6 +1420,24 @@ mod tests {
         // circle 중심 cx=7,cy=5 → 박스 (14,10). 파랑
         let c = canvas.pixels[10 * 20 + 14];
         assert!(c.b > 200 && c.r < 60, "circle 파랑, 실제 {:?}", c);
+    }
+
+    #[test]
+    fn svg_path_triangle_fills() {
+        // viewBox 0 0 10 10, 삼각형 path (0,0)-(10,0)-(0,10) 채움 → 좌상 삼각형 안이 초록
+        let canvas = canvas_for(
+            "<svg width=\"20\" height=\"20\" viewBox=\"0 0 10 10\">\
+             <path d=\"M0 0 L10 0 L0 10 Z\" fill=\"#00ff00\"></path>\
+             </svg>",
+            "svg { display: block; }",
+            20.0,
+            20.0,
+        );
+        // (2,2) 는 삼각형 안 (좌상) → 초록
+        let inside = canvas.pixels[2 * 20 + 2];
+        assert!(inside.g > 200 && inside.r < 60, "삼각형 안 초록, 실제 {:?}", inside);
+        // (18,18) 우하단은 삼각형 밖 → 흰색
+        assert_eq!(canvas.pixels[18 * 20 + 18], Color { r: 255, g: 255, b: 255, a: 255 }, "밖은 흰색");
     }
 
     #[test]
