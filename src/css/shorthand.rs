@@ -132,6 +132,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // aspect-ratio: "w / h" 또는 단일 수 → 비율(w/h)을 Length(r, Px)로 저장.
+        "aspect-ratio" => {
+            let v = value_text.trim();
+            let ratio = if let Some((a, b)) = v.split_once('/') {
+                match (a.trim().parse::<f32>(), b.trim().parse::<f32>()) {
+                    (Ok(a), Ok(b)) if b != 0.0 => Some(a / b),
+                    _ => None,
+                }
+            } else {
+                v.parse::<f32>().ok()
+            };
+            match ratio {
+                Some(r) if r > 0.0 => vec![Declaration {
+                    name: "aspect-ratio".to_string(),
+                    value: Value::Length(r, Unit::Px),
+                }],
+                _ => Vec::new(),
+            }
+        }
         // transform: 함수 목록(translate/scale/rotate...) 원문 보존, 레이아웃이 파싱.
         // (translate 만 시각 오프셋으로 적용, 나머지는 근사/무시)
         "transform" => {

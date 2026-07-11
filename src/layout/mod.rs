@@ -998,6 +998,13 @@ impl<'a> LayoutBox<'a> {
                 0.0
             };
             self.dimensions.content.height = (h - vextra).max(0.0);
+            return;
+        }
+        // aspect-ratio: 명시 height 없을 때 content 높이 = 폭 / 비율
+        if let Some(Length(ratio, Px)) = self.styled_node.value("aspect-ratio") {
+            if ratio > 0.0 && self.dimensions.content.width > 0.0 {
+                self.dimensions.content.height = self.dimensions.content.width / ratio;
+            }
         }
     }
 }
@@ -1483,6 +1490,25 @@ mod tests {
         let fs = fonts();
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         lb.dimensions
+    }
+
+    #[test]
+    fn aspect_ratio_derives_height_from_width() {
+        // width 200px, aspect-ratio 2/1 → 높이 100px
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; width: 200px; aspect-ratio: 2 / 1; }",
+            800.0,
+        );
+        assert_eq!(d.content.width, 200.0);
+        assert_eq!(d.content.height, 100.0, "200 / 2 = 100");
+        // 명시 height 는 aspect-ratio 를 이긴다
+        let d2 = layout_for(
+            "<div></div>",
+            "div { display: block; width: 200px; height: 30px; aspect-ratio: 2 / 1; }",
+            800.0,
+        );
+        assert_eq!(d2.content.height, 30.0, "명시 height 우선");
     }
 
     #[test]
