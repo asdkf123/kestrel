@@ -943,6 +943,37 @@ fn style_node<'a>(
                 Some(v) => v.clone(),
                 None => specified_values(elem, ancestors, sib, index),
             };
+            // CSS 전역 키워드: inherit → 부모 계산값, unset → 제거(상속 속성이면 아래
+            // 상속 루프가 부모값 복사, 아니면 기본값), initial → 제거(기본값 근사).
+            {
+                let wide: Vec<String> = values
+                    .iter()
+                    .filter(|(_, v)| {
+                        matches!(v, Value::Keyword(k)
+                            if k == "inherit" || k == "initial" || k == "unset")
+                    })
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for k in wide {
+                    let kw = match values.get(&k) {
+                        Some(Value::Keyword(s)) => s.clone(),
+                        _ => continue,
+                    };
+                    match kw.as_str() {
+                        "inherit" => match parent.and_then(|p| p.get(&k)) {
+                            Some(v) => {
+                                values.insert(k.clone(), v.clone());
+                            }
+                            None => {
+                                values.remove(&k);
+                            }
+                        },
+                        _ => {
+                            values.remove(&k);
+                        }
+                    }
+                }
+            }
             let parent_fs = parent
                 .and_then(|p| p.get("font-size"))
                 .and_then(|v| match v {
@@ -1535,6 +1566,34 @@ mod tests {
         let root3 = crate::html::parse_dom("<span></span>".to_string());
         let ss3 = crate::css::parse("span { display: inline; }".to_string());
         assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
+    }
+
+    #[test]
+    fn css_wide_inherit_and_unset() {
+        // background-color 는 비상속 속성 → inherit 키워드로 부모값을 가져와야
+        let root = crate::html::parse_dom(
+            "<div class=\"p\"><span class=\"c\">x</span></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".p { background-color: #ff0000; } .c { background-color: inherit; }".to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        assert!(
+            styled.children[0].value("background-color").is_some(),
+            "inherit → 부모 background-color 복사"
+        );
+        // 대조: inherit 없으면 비상속이라 자식엔 없음
+        let ss2 = crate::css::parse(".p { background-color: #ff0000; }".to_string());
+        assert!(
+            style_tree(&root, &ss2).children[0].value("background-color").is_none(),
+            "비상속 속성은 기본적으로 자식에 안 옴"
+        );
+        // color(상속 속성)에 unset → 부모값 상속 (초기값 아님 근사)
+        let ss3 = crate::css::parse(".p { color: #00ff00; } .c { color: unset; }".to_string());
+        assert!(
+            style_tree(&root, &ss3).children[0].value("color").is_some(),
+            "unset 상속 속성 → 부모 color 상속"
+        );
     }
 
     #[test]
