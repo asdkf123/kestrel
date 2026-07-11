@@ -284,12 +284,11 @@ impl Parser {
 
     fn func_decl(&mut self) -> Result<Stmt, String> {
         self.expect(&Tok::Function)?;
-        // 제너레이터 function* 는 * 를 무시하고 일반 함수로 (관용)
-        self.eat(&Tok::Star);
+        let is_generator = self.eat(&Tok::Star); // function* 제너레이터
         let name = self.ident()?;
         let (params, mut body) = self.param_list()?;
         body.extend(self.block()?); // 프롤로그(기본값) 뒤에 실제 본문
-        Ok(Stmt::FuncDecl { name, params, body })
+        Ok(Stmt::FuncDecl { name, params, body, is_generator })
     }
 
     // 파라미터 목록 → (이름들, 본문 프롤로그).
@@ -545,6 +544,20 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Expr, String> {
+        // yield [*] [expr] — 제너레이터 본문. (yield 를 변수명으로 쓰는 경우는 드묾)
+        if matches!(self.peek(), Some(Tok::Ident(n)) if n == "yield")
+            && !matches!(self.toks.get(self.pos + 1), Some(Tok::Assign) | Some(Tok::Dot) | Some(Tok::Colon))
+        {
+            self.pos += 1; // yield
+            let star = self.eat(&Tok::Star);
+            // 인자 없는 yield (문 끝/닫는 괄호/콤마 앞)
+            let arg = match self.peek() {
+                None | Some(Tok::Semi) | Some(Tok::RBrace) | Some(Tok::RParen)
+                | Some(Tok::RBracket) | Some(Tok::Comma) => None,
+                _ => Some(Box::new(self.assignment()?)),
+            };
+            return Ok(Expr::Yield { star, arg });
+        }
         // async 수식어(식 위치): async () => / async x => / async function(){} — 무시
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "async") {
             let n1 = self.toks.get(self.pos + 1);
@@ -618,7 +631,7 @@ impl Parser {
         } else {
             body.push(Stmt::Return(Some(self.assignment()?))); // 식 본문 → return desugar
         }
-        Ok(Some(Expr::Func { params, body, is_arrow: true }))
+        Ok(Some(Expr::Func { params, body, is_arrow: true, is_generator: false }))
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
@@ -1100,7 +1113,7 @@ impl Parser {
                             // 메서드 단축 { foo(a) { ... } }
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
-                            Expr::Func { params, body, is_arrow: false }
+                            Expr::Func { params, body, is_arrow: false, is_generator: false }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };
@@ -1118,14 +1131,14 @@ impl Parser {
                 Ok(Expr::Object(props))
             }
             Tok::Function => {
-                // 함수 식 (제너레이터 * 와 이름은 무시 가능)
-                self.eat(&Tok::Star);
+                // 함수 식 (이름은 무시 가능). function* 는 제너레이터.
+                let is_generator = self.eat(&Tok::Star);
                 if matches!(self.peek(), Some(Tok::Ident(_))) {
                     self.pos += 1;
                 }
                 let (params, mut body) = self.param_list()?;
                 body.extend(self.block()?);
-                Ok(Expr::Func { params, body, is_arrow: false })
+                Ok(Expr::Func { params, body, is_arrow: false, is_generator })
             }
             Tok::This => Ok(Expr::This),
             Tok::Super => Ok(Expr::Super),
@@ -1207,7 +1220,7 @@ mod tests {
     fn arrow_functions() {
         let e = expr_of("x => x + 1");
         match e {
-            Expr::Func { params, body, is_arrow } => {
+            Expr::Func { params, body, is_arrow, .. } => {
                 assert_eq!(params, vec!["x"]);
                 assert!(is_arrow);
                 assert!(matches!(body[0], Stmt::Return(Some(_))));

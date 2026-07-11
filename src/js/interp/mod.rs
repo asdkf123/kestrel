@@ -80,6 +80,7 @@ pub struct JsFn {
     pub body: Vec<Stmt>,
     pub env: EnvRef, // 클로저가 캡처한 렉시컬 환경
     pub is_arrow: bool,
+    pub is_generator: bool, // function* — 호출 시 yield 값을 모아 반복자 반환(eager)
     pub this: Option<Box<Value>>, // 화살표가 정의 시점에 캡처한 this
     // 이 함수가 클래스 메서드면 그 클래스의 부모 (super.x 해석용)
     pub super_class: Option<Rc<JsClass>>,
@@ -430,6 +431,8 @@ pub struct Interp {
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
     // getBoundingClientRect/offsetWidth 등이 읽는다. 빈 맵이면 0 을 돌려준다.
     pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
+    // 제너레이터 호출 스택별 yield 값 수집기 (eager). Expr::Yield 가 top 에 쌓는다.
+    yield_sink: Vec<Vec<Value>>,
     // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
     pub global_handlers: Vec<(String, Value)>,
     // Math.random 용 xorshift 상태
@@ -689,6 +692,7 @@ impl Interp {
             dom: None,
             handlers: Vec::new(),
             layout_rects: std::collections::HashMap::new(),
+            yield_sink: Vec::new(),
             global_handlers: Vec::new(),
             rng: seed,
             thrown: None,
@@ -810,6 +814,60 @@ impl Interp {
 
     // 이벤트 객체 생성: type/target + preventDefault/stopPropagation 등.
     // 내부 플래그(__defaultPrevented/__stopProp)를 네이티브가 갱신.
+    // 값들의 Vec 을 반복자 객체로 (MakeIter 와 동일 구조: __items/__i/next).
+    fn make_iter_from_vec(&self, items: Vec<Value>) -> Value {
+        let mut it = HashMap::new();
+        it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
+        it.insert("__i".to_string(), Value::Num(0.0));
+        it.insert("next".to_string(), Value::Native(Native::IterNext));
+        Value::Obj(Rc::new(RefCell::new(it)))
+    }
+
+    // 이터러블(배열/문자열/Set/Map/반복자 객체)을 값 Vec 으로. yield* 와 for-of 공용.
+    fn iterate_to_vec(&mut self, v: &Value) -> Vec<Value> {
+        match v {
+            Value::Arr(a) => a.borrow().clone(),
+            Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
+            Value::SetVal(s) => s.borrow().clone(),
+            Value::MapVal(m) => m
+                .borrow()
+                .iter()
+                .map(|(k, val)| Value::Arr(ArrayObj::new(vec![k.clone(), val.clone()])))
+                .collect(),
+            // 반복자 객체: __items 있으면 그대로, 아니면 next() 반복 호출
+            Value::Obj(o) => {
+                if let Some(Value::Arr(items)) = o.borrow().get("__items") {
+                    return items.borrow().clone();
+                }
+                let mut out = Vec::new();
+                let next = o.borrow().get("next").cloned();
+                if let Some(next) = next {
+                    // next() 를 done 까지 반복 (무한 방지: step 카운터가 상한)
+                    loop {
+                        let r = match self.call_value(next.clone(), Some(v.clone()), vec![]) {
+                            Ok(r) => r,
+                            Err(_) => break,
+                        };
+                        if let Value::Obj(res) = &r {
+                            let b = res.borrow();
+                            if matches!(b.get("done"), Some(Value::Bool(true))) {
+                                break;
+                            }
+                            out.push(b.get("value").cloned().unwrap_or(Value::Undefined));
+                        } else {
+                            break;
+                        }
+                        if self.tick().is_err() {
+                            break;
+                        }
+                    }
+                }
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn make_event(&self, event: &str, target: crate::dom::NodeId) -> Value {
         let mut m = HashMap::new();
         m.insert("type".to_string(), Value::Str(event.to_string()));
@@ -898,6 +956,7 @@ impl Interp {
             body,
             env: self.global.clone(),
             is_arrow: false,
+            is_generator: false,
             this: None,
             super_class: None,
             props: RefCell::new(HashMap::new()),
@@ -1114,12 +1173,13 @@ impl Interp {
     // 함수 선언 호이스팅: 블록 실행 전에 FuncDecl 을 먼저 바인딩
     fn exec_block(&mut self, stmts: &[Stmt], env: &EnvRef) -> Result<Flow, String> {
         for s in stmts {
-            if let Stmt::FuncDecl { name, params, body } = s {
+            if let Stmt::FuncDecl { name, params, body, is_generator } = s {
                 let f = Value::Fn(Rc::new(JsFn {
                     params: params.clone(),
                     body: body.clone(),
                     env: env.clone(),
                     is_arrow: false,
+                    is_generator: *is_generator,
                     this: None,
                     super_class: None,
                     props: RefCell::new(HashMap::new()),
@@ -1293,18 +1353,15 @@ impl Interp {
             }
             Stmt::ForOf { name, iter, body } => {
                 let target = self.eval(iter, env)?;
-                let values: Vec<Value> = match &target {
-                    Value::Arr(a) => a.borrow().clone(),
-                    Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
-                    Value::SetVal(s) => s.borrow().clone(),
-                    // Map: [key, value] 쌍 배열을 순회
-                    Value::MapVal(m) => m
-                        .borrow()
-                        .iter()
-                        .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
-                        .collect(),
-                    _ => return Err(format!("{} 은(는) 반복 가능하지 않음", type_of(&target))),
-                };
+                // 배열/문자열/Set/Map + 반복자 객체(제너레이터 포함) 지원
+                let iterable = matches!(&target,
+                    Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
+                    || matches!(&target, Value::Obj(o)
+                        if o.borrow().contains_key("__items") || o.borrow().contains_key("next"));
+                if !iterable {
+                    return Err(format!("{} 은(는) 반복 가능하지 않음", type_of(&target)));
+                }
+                let values = self.iterate_to_vec(&target);
                 for v in values {
                     self.tick()?;
                     let scope = Env::new(Some(env.clone()));
@@ -1383,7 +1440,7 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
-            Expr::Func { params, body, is_arrow } => {
+            Expr::Func { params, body, is_arrow, is_generator } => {
                 // 화살표는 정의 시점 this 를 캡처 (렉시컬)
                 let this = if *is_arrow { env_get(env, "this").map(Box::new) } else { None };
                 Ok(Value::Fn(Rc::new(JsFn {
@@ -1391,10 +1448,28 @@ impl Interp {
                     body: body.clone(),
                     env: env.clone(),
                     is_arrow: *is_arrow,
+                    is_generator: *is_generator,
                     this,
                     super_class: None,
                     props: RefCell::new(HashMap::new()),
                 })))
+            }
+            Expr::Yield { star, arg } => {
+                // eager 제너레이터: 값을 현재 yield sink 에 쌓는다. yield 식 자체는 undefined.
+                let val = match arg {
+                    Some(e) => self.eval(e, env)?,
+                    None => Value::Undefined,
+                };
+                if *star {
+                    // yield* iterable — 값들을 전개
+                    let items = self.iterate_to_vec(&val);
+                    if let Some(sink) = self.yield_sink.last_mut() {
+                        sink.extend(items);
+                    }
+                } else if let Some(sink) = self.yield_sink.last_mut() {
+                    sink.push(val);
+                }
+                Ok(Value::Undefined)
             }
             Expr::This => Ok(env_get(env, "this").unwrap_or(Value::Undefined)),
             Expr::Super => {
@@ -2095,6 +2170,14 @@ impl Interp {
                 for (i, p) in func.params.iter().enumerate() {
                     env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
                 }
+                // 제너레이터(eager): 본문을 즉시 실행해 yield 값을 모으고 반복자 반환.
+                if func.is_generator {
+                    self.yield_sink.push(Vec::new());
+                    let result = self.exec_block(&func.body, &scope);
+                    let items = self.yield_sink.pop().unwrap_or_default();
+                    result?; // 본문 에러 전파(수집 후)
+                    return Ok(self.make_iter_from_vec(items));
+                }
                 match self.exec_block(&func.body, &scope)? {
                     Flow::Return(v) => Ok(v),
                     _ => Ok(Value::Undefined),
@@ -2216,6 +2299,7 @@ impl Interp {
                 body: body.clone(),
                 env: env.clone(),
                 is_arrow: false,
+                is_generator: false,
                 this: None,
                 super_class: parent.clone(), // super.x → 이 클래스의 부모
                 props: RefCell::new(HashMap::new()),
@@ -2985,6 +3069,37 @@ mod tests {
             .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
             .unwrap();
         assert_eq!(to_display(&o), "100,50,10,20");
+    }
+
+    #[test]
+    fn generators_eager() {
+        // 기본 제너레이터: for-of 로 소비
+        assert_eq!(
+            run_num("function* g(){ yield 1; yield 2; yield 3; } var s=0; for(const x of g()) s+=x; s"),
+            6.0
+        );
+        // .next() 직접 호출
+        assert_eq!(
+            run_num("function* g(){ yield 10; yield 20; } var it=g(); it.next().value + it.next().value"),
+            30.0
+        );
+        // done 플래그
+        assert!(run_bool("function* g(){ yield 1; } var it=g(); it.next(); it.next().done"));
+        // yield* 위임
+        assert_eq!(
+            run_str("function* inner(){ yield 'a'; yield 'b'; } function* g(){ yield* inner(); yield 'c'; } var out=''; for(const x of g()) out+=x; out"),
+            "abc"
+        );
+        // 루프 안 yield
+        assert_eq!(
+            run_num("function* range(n){ for(var i=0;i<n;i++) yield i; } var s=0; for(const x of range(4)) s+=x; s"),
+            6.0
+        );
+        // 함수 식 제너레이터
+        assert_eq!(
+            run_num("var g = function*(){ yield 5; yield 7; }; var s=0; for(const x of g()) s+=x; s"),
+            12.0
+        );
     }
 
     #[test]
