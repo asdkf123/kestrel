@@ -445,6 +445,20 @@ mod tests {
     }
 
     #[test]
+    fn element_dataset_reads_data_attributes() {
+        // element.dataset.userName → data-user-name (camelCase 변환)
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"a\" data-count=\"5\" data-user-name=\"ada\"></div>\
+             <p id=\"out\">x</p>\
+             <script>var a=document.getElementById('a'); \
+               document.getElementById('out').textContent = a.dataset.count + '/' + a.dataset.userName;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "5/ada");
+    }
+
+    #[test]
     fn promise_all_resolves_with_values() {
         let mut dom = crate::html::parse_dom(
             "<p id=\"out\">x</p>\

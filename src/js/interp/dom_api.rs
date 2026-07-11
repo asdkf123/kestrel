@@ -155,6 +155,19 @@ impl Interp {
                 let y = self.layout_rects.get(&id).map(|r| r.1).unwrap_or(0.0);
                 return Ok(Value::Num(y as f64));
             }
+            // element.dataset — data-* 속성을 camelCase 키 객체로 (읽기 스냅샷)
+            "dataset" => {
+                let dom = self.dom_arena()?;
+                let mut map = std::collections::HashMap::new();
+                if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                    for (k, v) in e.attributes.iter() {
+                        if let Some(rest) = k.strip_prefix("data-") {
+                            map.insert(kebab_to_camel(rest), Value::Str(v.clone()));
+                        }
+                    }
+                }
+                return Ok(Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(map))));
+            }
             _ => {}
         }
         let dom = self.dom_arena()?;
@@ -294,4 +307,21 @@ impl Interp {
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)
         }
     }
+}
+
+// data-foo-bar → fooBar (dataset 키 변환)
+fn kebab_to_camel(s: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for c in s.chars() {
+        if c == '-' {
+            upper = true;
+        } else if upper {
+            out.extend(c.to_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
