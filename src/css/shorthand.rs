@@ -161,6 +161,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // @font-face src / font-family: 원문 보존(다중 url()·format() 포함). font-face 파서가 해석.
+        "src" | "font-family" => {
+            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // transform: 함수 목록(translate/scale/rotate...) 원문 보존, 레이아웃이 파싱.
         // (translate 만 시각 오프셋으로 적용, 나머지는 근사/무시)
         "transform" => {

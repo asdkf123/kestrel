@@ -124,8 +124,18 @@ impl<'a> LayoutBox<'a> {
         let space_adv =
             primary.advance_width(primary.glyph_index(' ')) as f32 * base_scale + word_spacing;
 
+        // font-family 첫 이름 (@font-face 아이콘 폰트 선택용). 따옴표 제거.
+        let font_family: Option<String> = match self.styled_node.value("font-family") {
+            Some(Value::Keyword(k)) => k
+                .split(',')
+                .next()
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+                .filter(|s| !s.is_empty()),
+            _ => None,
+        };
+        let fam = font_family.as_deref();
         let resolve = |ch: char, px: f32| -> (usize, u16, f32) {
-            let (fi, gid) = fonts.glyph_for(ch);
+            let (fi, gid) = fonts.glyph_for_family(fam, ch);
             let f = fonts.font(fi);
             let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
             (fi, gid, adv)

@@ -11,6 +11,14 @@ use values::valid_identifier_char;
 #[derive(Debug, PartialEq)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
+    pub font_faces: Vec<FontFace>,
+}
+
+// @font-face 규칙: 패밀리 이름 + src URL 목록(우선순위 순).
+#[derive(Debug, PartialEq, Clone)]
+pub struct FontFace {
+    pub family: String,
+    pub srcs: Vec<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -229,6 +237,23 @@ pub fn parse_len_px(tok: &str) -> Option<f32> {
     }
 }
 
+// 텍스트에서 url(...) 안의 URL 들을 순서대로 추출 (따옴표 제거). @font-face src 용.
+fn extract_urls(text: &str, out: &mut Vec<String>) {
+    let mut rest = text;
+    while let Some(p) = rest.find("url(") {
+        let after = &rest[p + 4..];
+        if let Some(end) = after.find(')') {
+            let u = after[..end].trim().trim_matches(|c| c == '"' || c == '\'');
+            if !u.is_empty() {
+                out.push(u.to_string());
+            }
+            rest = &after[end + 1..];
+        } else {
+            break;
+        }
+    }
+}
+
 // 색 문자열(hex/named/rgb 등) → Color. SVG fill/stroke 파싱 등에 쓴다.
 pub fn parse_color(s: &str) -> Option<Color> {
     match values::interpret_value(s.trim()) {
@@ -245,8 +270,9 @@ pub fn parse(source: String) -> Stylesheet {
 // 뷰포트 폭을 알고 파스 — @media (min/max-width) 를 이 폭에 대해 평가해
 // 매칭되는 규칙만 포함한다. 페이지 스타일시트는 실제 뷰포트 폭으로 호출.
 pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
-    let mut parser = Parser { pos: 0, input: source, viewport_width };
-    Stylesheet { rules: parser.parse_rules() }
+    let mut parser = Parser { pos: 0, input: source, viewport_width, font_faces: Vec::new() };
+    let rules = parser.parse_rules();
+    Stylesheet { rules, font_faces: parser.font_faces }
 }
 
 // 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
@@ -274,7 +300,7 @@ fn parse_nth(s: &str) -> Option<(i32, i32)> {
 }
 
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
-    let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0 };
+    let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0, font_faces: Vec::new() };
     parser.parse_declarations()
 }
 
@@ -368,6 +394,7 @@ struct Parser {
     pos: usize,
     input: String,
     viewport_width: f32,
+    font_faces: Vec<FontFace>,
 }
 
 impl Parser {
@@ -387,6 +414,10 @@ impl Parser {
                 } else if ident == "supports" {
                     let supported = self.parse_supports_block();
                     rules.extend(supported);
+                } else if ident == "font-face" {
+                    if let Some(ff) = self.parse_font_face() {
+                        self.font_faces.push(ff);
+                    }
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -467,6 +498,42 @@ impl Parser {
         } else {
             Vec::new()
         }
+    }
+
+    // '@font-face { font-family: ...; src: url(...) ...; }' → FontFace.
+    // 블록 선언에서 font-family(따옴표 제거)와 src 의 url() 들을 추출.
+    fn parse_font_face(&mut self) -> Option<FontFace> {
+        self.consume_while(|c| c != '{' && c != ';' && c != '}');
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return None;
+        }
+        self.consume_char(); // '{' (parse_declarations 는 소비된 상태를 기대)
+        let decls = self.parse_declarations();
+        let mut family = String::new();
+        let mut srcs = Vec::new();
+        for d in &decls {
+            if d.name == "font-family" {
+                if let Value::Keyword(f) = &d.value {
+                    family = f.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+                } else if let Value::Url(u) = &d.value {
+                    family = u.clone();
+                }
+            } else if d.name == "src" {
+                // src 원문에서 url() 추출 (Keyword/Url 로 저장됐을 수 있음)
+                match &d.value {
+                    Value::Url(u) => srcs.push(u.clone()),
+                    Value::Keyword(raw) => extract_urls(raw, &mut srcs),
+                    _ => {}
+                }
+            }
+        }
+        if family.is_empty() {
+            return None;
+        }
+        Some(FontFace { family, srcs })
     }
 
     fn parse_rule(&mut self) -> Option<Rule> {
@@ -648,7 +715,7 @@ impl Parser {
                 }
                 "not" => {
                     // :not(단순) — 단일 compound 만 (근사)
-                    let mut inner = Parser { pos: 0, input: arg, viewport_width: 0.0 };
+                    let mut inner = Parser { pos: 0, input: arg, viewport_width: 0.0, font_faces: Vec::new() };
                     let s = inner.parse_simple_selector()?;
                     Some(Pseudo::Not(vec![s]))
                 }
@@ -892,10 +959,24 @@ mod tests {
 
     #[test]
     fn skips_non_media_at_rules() {
-        // @font-face 등은 여전히 스킵, 뒤 규칙은 파싱
-        let ss = parse("@font-face { font-family: x; } div { width: 5px; }".to_string());
+        // @keyframes 등은 스킵, 뒤 규칙은 파싱
+        let ss = parse("@keyframes spin { from {} to {} } div { width: 5px; }".to_string());
         assert_eq!(ss.rules.len(), 1);
         assert_eq!(ss.rules[0].declarations[0].name, "width");
+    }
+
+    #[test]
+    fn font_face_captured() {
+        // @font-face 는 rules 가 아니라 font_faces 로. family + src url 추출.
+        let ss = parse(
+            "@font-face { font-family: \"Icons\"; src: url(icons.ttf) format(\"truetype\"); } \
+             div { width: 5px; }"
+                .to_string(),
+        );
+        assert_eq!(ss.rules.len(), 1, "일반 규칙은 그대로");
+        assert_eq!(ss.font_faces.len(), 1);
+        assert_eq!(ss.font_faces[0].family, "Icons");
+        assert_eq!(ss.font_faces[0].srcs, vec!["icons.ttf".to_string()]);
     }
 
     #[test]

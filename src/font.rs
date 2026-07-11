@@ -296,11 +296,19 @@ impl Font {
 
 pub struct FontStack {
     pub fonts: Vec<Font>,
+    // fonts 와 평행. @font-face 로 로드된 폰트는 Some(패밀리명), 기본 폰트는 None.
+    pub families: Vec<Option<String>>,
 }
 
 impl FontStack {
     pub fn new(fonts: Vec<Font>) -> FontStack {
-        FontStack { fonts }
+        let families = vec![None; fonts.len()];
+        FontStack { fonts, families }
+    }
+    // @font-face 폰트를 패밀리명과 함께 추가.
+    pub fn add_named_font(&mut self, font: Font, family: String) {
+        self.fonts.push(font);
+        self.families.push(Some(family));
     }
     pub fn primary(&self) -> &Font {
         &self.fonts[0]
@@ -317,6 +325,21 @@ impl FontStack {
             }
         }
         (0, 0)
+    }
+    /// font-family 우선: 일치하는 @font-face 폰트를 먼저 시도, 없으면 기본 폴백.
+    pub fn glyph_for_family(&self, family: Option<&str>, c: char) -> (usize, u16) {
+        if let Some(fam) = family {
+            for (i, f) in self.fonts.iter().enumerate() {
+                let named = self.families[i].as_deref().map(|n| n.eq_ignore_ascii_case(fam)).unwrap_or(false);
+                if named {
+                    let g = f.glyph_index(c);
+                    if g != 0 {
+                        return (i, g);
+                    }
+                }
+            }
+        }
+        self.glyph_for(c)
     }
 }
 
@@ -423,6 +446,22 @@ mod tests {
     fn load() -> Font {
         let bytes = std::fs::read("assets/fonts/Latin.ttf").expect("read font");
         Font::from_bytes(bytes).expect("parse font")
+    }
+
+    #[test]
+    fn glyph_for_family_prefers_named_font() {
+        // 기본 폰트 + 같은 폰트를 "Icons" 패밀리로 추가
+        let mut stack = FontStack::new(vec![load()]);
+        stack.add_named_font(load(), "Icons".to_string());
+        // 패밀리 지정 시 명명 폰트(index 1) 우선
+        let (fi, gid) = stack.glyph_for_family(Some("Icons"), 'A');
+        assert_eq!(fi, 1, "Icons 패밀리 폰트(index 1) 선택");
+        assert_ne!(gid, 0);
+        // 대소문자 무시
+        assert_eq!(stack.glyph_for_family(Some("icons"), 'A').0, 1);
+        // 미지정/미일치 → 기본 폴백(index 0)
+        assert_eq!(stack.glyph_for_family(None, 'A').0, 0);
+        assert_eq!(stack.glyph_for_family(Some("Nope"), 'A').0, 0);
     }
 
     #[test]

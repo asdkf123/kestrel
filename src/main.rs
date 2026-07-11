@@ -373,12 +373,28 @@ fn build_page(url: &str) -> Option<window::Page> {
     }
     let (images, img_map) = load_images(srcs, &base);
 
-    let fonts = load_fonts(needs_korean);
+    let mut fonts = load_fonts(needs_korean);
+    // @font-face 웹폰트 로드 (ttf/otf 만 — woff/woff2 미지원). 각 패밀리 첫 성공 src 사용.
+    let mut loaded_faces = 0;
+    for ff in &sheet.font_faces {
+        for src in &ff.srcs {
+            if let Some(u) = base.join(src) {
+                if let Ok(r) = http::fetch(&u.as_string()) {
+                    if let Ok(font) = font::Font::from_bytes(r.body) {
+                        fonts.add_named_font(font, ff.family.clone());
+                        loaded_faces += 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
     println!(
-        "[fonts] page_korean={} → {} font(s) loaded (한글 폰트 {})",
+        "[fonts] page_korean={} → {} font(s) loaded (한글 {}, @font-face {}개)",
         needs_korean,
         fonts.fonts.len(),
-        if needs_korean { "로드" } else { "생략" }
+        if needs_korean { "로드" } else { "생략" },
+        loaded_faces
     );
 
     // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
