@@ -1270,6 +1270,22 @@ mod tests {
     }
 
     #[test]
+    fn before_pseudo_content_renders_glyphs() {
+        let fs = fonts();
+        // ::before content 가 있으면 글리프가 늘어난다 (생성 텍스트가 흐름에 들어감)
+        let mut dom = crate::html::parse_dom("<p class=\"a\">x</p>".to_string());
+        let ss = crate::css::parse(
+            "p { display: block; } .a::before { content: \"AB\"; }".to_string(),
+        );
+        let map = crate::style::generate_pseudo_elements(&mut dom, &ss);
+        let styled = crate::style::style_tree_full(&dom, &ss, crate::style::Viewport::default(), &map);
+        let lb = layout_tree_for(&styled, &fs);
+        let glyphs = glyphs_of(&lb);
+        // "AB" (2) + "x" (1) = 3 글리프
+        assert_eq!(glyphs.len(), 3, "생성 콘텐츠 AB + 본문 x = 3 글리프, 실제 {}", glyphs.len());
+    }
+
+    #[test]
     fn letter_spacing_widens_text() {
         let fs = fonts();
         let base = crate::html::parse_dom("<p>hello</p>".to_string());

@@ -290,6 +290,30 @@ impl<'a> RuleIndex<'a> {
     }
 }
 
+// 특정 의사요소(::before/::after)에 매칭되는 규칙들만 모아 계산값 맵을 만든다.
+// 매칭 대상은 소유 요소 elem, want_pseudo 로 의사요소 규칙만 필터.
+fn pseudo_specified_values(
+    elem: &ElementData,
+    ancestors: &[&ElementData],
+    sib: &SiblingCtx,
+    index: &RuleIndex,
+    which: PseudoElement,
+) -> PropertyMap {
+    let mut values = HashMap::new();
+    let mut rules: Vec<MatchedRule> = index
+        .candidate_indices(elem)
+        .into_iter()
+        .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i], Some(which)))
+        .collect();
+    rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
+    for (_, rule) in rules {
+        for declaration in &rule.declarations {
+            values.insert(declaration.name.clone(), declaration.value.clone());
+        }
+    }
+    values
+}
+
 fn specified_values(
     elem: &ElementData,
     ancestors: &[&ElementData],
@@ -412,12 +436,114 @@ pub fn style_tree_vp<'a>(
     stylesheet: &'a Stylesheet,
     vp: Viewport,
 ) -> StyledNode<'a> {
+    style_tree_full(dom, stylesheet, vp, &HashMap::new())
+}
+
+// pseudo: 합성 의사요소 노드 id → 그 노드의 명시값(생성 콘텐츠 규칙에서). 이 노드들은
+// 일반 캐스케이드를 건너뛰고 이 맵의 값을 쓴다. generate_pseudo_elements 가 만든다.
+pub fn style_tree_full<'a>(
+    dom: &'a Dom,
+    stylesheet: &'a Stylesheet,
+    vp: Viewport,
+    pseudo: &PseudoStyles,
+) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp)
+    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp, pseudo)
+}
+
+pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
+
+// 생성 콘텐츠 여부: none/normal/이스케이프 키워드/미지원 함수(attr()/counter())/빈 문자열 제외.
+fn is_generated_content(s: &str) -> bool {
+    !s.is_empty()
+        && !matches!(s, "none" | "normal" | "inherit" | "initial" | "unset")
+        && !s.contains('(')
+}
+
+fn is_synthetic_pseudo(elem: &ElementData) -> bool {
+    elem.tag_name.starts_with("::")
+}
+
+// ::before/::after 생성 콘텐츠를 위한 합성 노드를 DOM 에 주입하고, 그 노드의 명시값
+// 맵을 돌려준다. 스타일/레이아웃 전에 한 번 호출한다(재빌드 때 재주입 안 하도록 결과 보관).
+// 합성 노드는 소유 요소의 첫/마지막 자식으로 삽입되며 tag 는 "::before"/"::after".
+pub fn generate_pseudo_elements(dom: &mut Dom, sheet: &Stylesheet) -> PseudoStyles {
+    let index = RuleIndex::build(sheet);
+    let mut plans: Vec<(NodeId, PseudoElement, PropertyMap)> = Vec::new();
+    {
+        let mut ancestors: Vec<&ElementData> = Vec::new();
+        collect_pseudo_plans(dom, dom.root, &index, &mut ancestors, &SiblingCtx::default(), &mut plans);
+    }
+    let mut map = HashMap::new();
+    for (owner, which, mut vals) in plans {
+        let content = match vals.get("content") {
+            Some(Value::Keyword(s)) if is_generated_content(s) => s.clone(),
+            _ => continue,
+        };
+        vals.entry("display".to_string()).or_insert(Value::Keyword("inline".to_string()));
+        let tag = match which {
+            PseudoElement::Before => "::before",
+            PseudoElement::After => "::after",
+        };
+        let el = dom.create_element(tag);
+        let txt = dom.create_text(content);
+        dom.append_child(el, txt);
+        match which {
+            PseudoElement::Before => {
+                let first = dom.get(owner).children.first().copied();
+                dom.insert_before(owner, el, first);
+            }
+            PseudoElement::After => dom.append_child(owner, el),
+        }
+        map.insert(el, vals);
+    }
+    map
+}
+
+// style_node 구조 순회를 미러링하며 각 요소의 ::before/::after 명시값을 수집.
+fn collect_pseudo_plans<'a>(
+    dom: &'a Dom,
+    id: NodeId,
+    index: &RuleIndex<'a>,
+    ancestors: &mut Vec<&'a ElementData>,
+    sib: &SiblingCtx,
+    out: &mut Vec<(NodeId, PseudoElement, PropertyMap)>,
+) {
+    let node = dom.get(id);
+    let NodeType::Element(ref elem) = node.node_type else {
+        return;
+    };
+    for which in [PseudoElement::Before, PseudoElement::After] {
+        let vals = pseudo_specified_values(elem, ancestors, sib, index, which);
+        if vals.contains_key("content") {
+            out.push((id, which, vals));
+        }
+    }
+    ancestors.push(elem);
+    let elem_children: Vec<NodeId> = node
+        .children
+        .iter()
+        .copied()
+        .filter(|&c| matches!(dom.get(c).node_type, NodeType::Element(_)))
+        .collect();
+    let total = elem_children.len();
+    let mut prev_elems: Vec<&ElementData> = Vec::new();
+    for &child in &node.children {
+        if let NodeType::Element(ref ce) = dom.get(child).node_type {
+            let idx = prev_elems.len() + 1;
+            let has_children = !dom.get(child).children.is_empty();
+            let csib = SiblingCtx { index: idx, total, prev: &prev_elems, has_children };
+            collect_pseudo_plans(dom, child, index, ancestors, &csib, out);
+            prev_elems.push(ce);
+        }
+    }
+    ancestors.pop();
 }
 
 // parent: 부모 요소의 계산값(상속 원천). 루트는 None. sib: 형제 문맥. vp: 뷰포트 크기.
+// pseudo: 합성 의사요소 노드의 명시값 맵.
+#[allow(clippy::too_many_arguments)]
 fn style_node<'a>(
     dom: &'a Dom,
     id: NodeId,
@@ -426,11 +552,16 @@ fn style_node<'a>(
     parent: Option<&PropertyMap>,
     sib: &SiblingCtx,
     vp: Viewport,
+    pseudo: &PseudoStyles,
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
         NodeType::Element(ref elem) => {
-            let mut values = specified_values(elem, ancestors, sib, index);
+            // 합성 의사요소 노드: 캐스케이드 대신 사전 계산된 명시값 사용.
+            let mut values = match pseudo.get(&id) {
+                Some(v) => v.clone(),
+                None => specified_values(elem, ancestors, sib, index),
+            };
             let parent_fs = parent
                 .and_then(|p| p.get("font-size"))
                 .and_then(|v| match v {
@@ -523,22 +654,34 @@ fn style_node<'a>(
                 }
             }
             ancestors.push(elem);
-            // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제
+            // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제.
+            // 합성 의사요소(::before/::after)는 구조적 선택자에서 제외(요소 트리에 없음).
             let elem_children: Vec<NodeId> = node
                 .children
                 .iter()
                 .copied()
-                .filter(|&c| matches!(dom.get(c).node_type, NodeType::Element(_)))
+                .filter(|&c| match &dom.get(c).node_type {
+                    NodeType::Element(e) => !is_synthetic_pseudo(e),
+                    _ => false,
+                })
                 .collect();
             let total = elem_children.len();
             let mut prev_elems: Vec<&ElementData> = Vec::new();
             let mut children = Vec::with_capacity(node.children.len());
             for &child in &node.children {
                 if let NodeType::Element(ref ce) = dom.get(child).node_type {
+                    if is_synthetic_pseudo(ce) {
+                        // 구조적 문맥에 포함하지 않고 스타일만 (기본 형제 문맥)
+                        children.push(style_node(
+                            dom, child, index, ancestors, Some(&values),
+                            &SiblingCtx::default(), vp, pseudo,
+                        ));
+                        continue;
+                    }
                     let idx = prev_elems.len() + 1;
                     let has_children = !dom.get(child).children.is_empty();
                     let csib = SiblingCtx { index: idx, total, prev: &prev_elems, has_children };
-                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp));
+                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo));
                     prev_elems.push(ce);
                 } else {
                     children.push(style_node(
@@ -549,6 +692,7 @@ fn style_node<'a>(
                         Some(&values),
                         &SiblingCtx::default(),
                         vp,
+                        pseudo,
                     ));
                 }
             }
@@ -563,7 +707,7 @@ fn style_node<'a>(
                 .children
                 .iter()
                 .map(|&child| {
-                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp)
+                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp, pseudo)
                 })
                 .collect(),
         },
@@ -581,6 +725,46 @@ mod tests {
         let ss = crate::css::parse(".box { width: 50px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Px)));
+    }
+
+    fn find_synthetic<'a>(n: &'a StyledNode<'a>) -> Option<&'a StyledNode<'a>> {
+        if let NodeType::Element(e) = &n.node.node_type {
+            if is_synthetic_pseudo(e) {
+                return Some(n);
+            }
+        }
+        n.children.iter().find_map(find_synthetic)
+    }
+
+    #[test]
+    fn before_pseudo_generates_content_box() {
+        let mut dom =
+            crate::html::parse_dom("<div class=\"a\"><span>x</span></div>".to_string());
+        let ss = crate::css::parse(
+            ".a::before { content: \"\\2022\"; color: #ff0000; }".to_string(),
+        );
+        let map = generate_pseudo_elements(&mut dom, &ss);
+        assert_eq!(map.len(), 1, "::before 노드 1개 생성");
+        let styled = style_tree_full(&dom, &ss, Viewport::default(), &map);
+        let synth = find_synthetic(&styled).expect("합성 ::before 노드");
+        // 색은 규칙에서, 텍스트 자식은 디코드된 content
+        assert_eq!(synth.value("color"), Some(Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 })));
+        match &synth.children[0].node.node_type {
+            NodeType::Text(t) => assert_eq!(t, "\u{2022}"),
+            other => panic!("텍스트 자식 기대, {:?}", other),
+        }
+        // ::before 는 소유 div 의 첫 자식 (span 앞)
+        let div = &styled;
+        assert!(matches!(&div.children[0].node.node_type, NodeType::Element(e) if is_synthetic_pseudo(e)));
+    }
+
+    #[test]
+    fn no_pseudo_without_content() {
+        let mut dom = crate::html::parse_dom("<div class=\"a\"></div>".to_string());
+        // content 없는 ::before 규칙 → 생성 안 함
+        let ss = crate::css::parse(".a::before { color: #ff0000; }".to_string());
+        let map = generate_pseudo_elements(&mut dom, &ss);
+        assert_eq!(map.len(), 0, "content 없으면 생성 안 함");
     }
 
     #[test]

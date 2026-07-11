@@ -25,6 +25,8 @@ pub struct Page {
     pub url: crate::url::Url,
     pub viewport_width: f32,
     pub viewport_height: f32,
+    // ::before/::after 합성 노드 id → 명시값 (페이지 빌드 시 1회 생성, 재빌드마다 재사용)
+    pub pseudo_styles: crate::style::PseudoStyles,
     // ── rebuild() 산출물 ──
     pub items: Vec<DisplayItem>,
     pub links: Vec<(Rect, String)>,
@@ -52,7 +54,8 @@ fn urlencode(s: &str) -> String {
 impl Page {
     pub fn rebuild(&mut self) {
         let vp = crate::style::Viewport { w: self.viewport_width, h: self.viewport_height };
-        let style_root = crate::style::style_tree_vp(&self.dom, &self.sheet, vp);
+        let style_root =
+            crate::style::style_tree_full(&self.dom, &self.sheet, vp, &self.pseudo_styles);
         let mut viewport: crate::layout::Dimensions = Default::default();
         viewport.content.width = self.viewport_width;
         let layout_root =
@@ -648,6 +651,7 @@ mod tests {
             url: crate::url::Url::parse("https://localhost/").unwrap(),
             viewport_width: 400.0,
             viewport_height: 600.0,
+            pseudo_styles: crate::style::PseudoStyles::new(),
             items: Vec::new(),
             links: Vec::new(),
             element_rects: Vec::new(),

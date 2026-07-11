@@ -105,7 +105,7 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - 자식 `>`, 형제 `+`/`~`.
 - 의사 클래스: `:hover :focus :active :first-child :last-child :nth-child()
   :not() :checked :disabled :root` 등.
-- 의사 요소: `::before ::after ::marker ::placeholder ::first-line`.
+- ~~의사 요소 `::before ::after`~~ ✓ (생성 콘텐츠 박스 주입). `::marker ::placeholder ::first-line` 남음.
 - 속성 연산자 `^= $= *= ~= |=`, 대소문자 플래그.
 
 ### CSS — 값·캐스케이드

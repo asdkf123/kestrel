@@ -109,6 +109,9 @@ fn main() {
     }
     let (images, img_map) = load_images(srcs, &base);
 
+    // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
+    let pseudo_styles = style::generate_pseudo_elements(&mut root_node, &stylesheet);
+
     let mut page = window::Page {
         dom: root_node,
         sheet: stylesheet,
@@ -119,6 +122,7 @@ fn main() {
         url: base,
         viewport_width: viewport_width as f32,
         viewport_height: viewport_height as f32,
+        pseudo_styles,
         items: Vec::new(),
         links: Vec::new(),
         element_rects: Vec::new(),
@@ -377,6 +381,9 @@ fn build_page(url: &str) -> Option<window::Page> {
         if needs_korean { "로드" } else { "생략" }
     );
 
+    // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
+    let pseudo_styles = style::generate_pseudo_elements(&mut dom, &sheet);
+
     let mut page = window::Page {
         dom,
         sheet,
@@ -387,6 +394,7 @@ fn build_page(url: &str) -> Option<window::Page> {
         url: base,
         viewport_width: page_vw,
         viewport_height: page_vh,
+        pseudo_styles,
         items: Vec::new(),
         links: Vec::new(),
         element_rects: Vec::new(),
