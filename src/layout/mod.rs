@@ -1621,6 +1621,21 @@ mod tests {
     }
 
     #[test]
+    fn vertical_align_super_raises_glyph() {
+        let fs = fonts();
+        // "a<sup>1</sup>" — sup 글리프가 baseline 위로(작은 y)
+        let root = crate::html::parse_dom("<p>a<sup>1</sup></p>".to_string());
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(crate::css::parse("p { display: block; } sup { vertical-align: super; }".to_string()).rules);
+        let styled = crate::style::style_tree(&root, &ss);
+        let lb = layout_tree_for(&styled, &fs);
+        let g = glyphs_of(&lb);
+        assert_eq!(g.len(), 2, "'a' + '1'");
+        // 두 번째 글리프(1, sup)의 baseline_y 가 첫 글리프(a)보다 작다(위로 올라감)
+        assert!(g[1].baseline_y < g[0].baseline_y, "sup 이 위로 ({} < {})", g[1].baseline_y, g[0].baseline_y);
+    }
+
+    #[test]
     fn text_indent_offsets_first_line() {
         let fs = fonts();
         let root = crate::html::parse_dom("<p>hello</p>".to_string());

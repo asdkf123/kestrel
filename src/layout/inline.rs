@@ -13,6 +13,23 @@ struct TextStyle {
     bold: bool,
     italic: bool,
     deco: u8, // text-decoration 비트: 1=underline 2=line-through 4=overline
+    voffset: f32, // vertical-align 세로 오프셋(px, 양수=아래). super/sub/length.
+}
+
+// vertical-align → baseline 오프셋(px, 양수=아래로). CSS 양수는 위로 올림.
+fn vertical_offset(node: &StyledNode, px: f32) -> f32 {
+    match node.value("vertical-align") {
+        Some(Value::Keyword(k)) => match k.as_str() {
+            "super" => -0.35 * px,
+            "sub" => 0.2 * px,
+            "top" | "text-top" => -0.4 * px,
+            "middle" => -0.25 * px,
+            "bottom" | "text-bottom" => 0.25 * px,
+            _ => 0.0, // baseline
+        },
+        Some(Value::Length(v, crate::css::Unit::Px)) => -v, // 양수 = 위로
+        _ => 0.0,
+    }
 }
 
 // text-decoration-line Keyword("underline overline" 등) → 비트플래그
@@ -49,6 +66,7 @@ impl<'a> LayoutBox<'a> {
             bold: self.styled_node.is_bold(),
             italic: self.styled_node.is_italic(),
             deco: deco_flags(self.styled_node.value("text-decoration-line")),
+            voffset: vertical_offset(self.styled_node, base_px),
         };
 
         // white-space: nowrap/pre 는 폭 기반 줄바꿈 안 함. pre 계열은 \n 을 강제 개행,
@@ -225,7 +243,7 @@ impl<'a> LayoutBox<'a> {
                     font_index: fi,
                     glyph_id: gid,
                     x: pen_x,
-                    baseline_y: baseline,
+                    baseline_y: baseline + st.voffset,
                     px: st.px,
                     color: st.color,
                     bold: st.bold,
@@ -393,6 +411,7 @@ fn collect_node<'a>(
                     italic: node.is_italic(),
                     // 데코는 조상에서 자손으로 누적(자손이 끌 수 없음 — CSS 전파 규칙)
                     deco: style.deco | deco_flags(node.value("text-decoration-line")),
+                    voffset: vertical_offset(node, cpx),
                 };
                 for child in &node.children {
                     collect_node(child, cstyle, runs, hrefs);
