@@ -891,6 +891,18 @@ impl Interp {
     }
 
     // 마이크로태스크 드레인: 콜백 실행 → 그 결과로 의존 promise 이행 (체이닝).
+    // window(전역 객체) 프로퍼티 조회 — 브라우저처럼 window.X 를 맨 X 로 읽게 하는 폴백.
+    fn window_prop(&self, name: &str) -> Option<Value> {
+        if let Some(Value::Obj(m)) = env_get(&self.global, "window") {
+            let v = m.borrow().get(name).cloned();
+            // window.window 등 자기참조로 인한 무의미 순환 방지: window 자신은 제외
+            if name != "window" {
+                return v;
+            }
+        }
+        None
+    }
+
     // promise 면 마이크로태스크를 비운 뒤 이행값을, 아니면 값 그대로 (Promise.all 등).
     fn promise_value(&mut self, v: &Value) -> Value {
         if !is_promise(v) {
@@ -1609,11 +1621,19 @@ impl Interp {
             Expr::Undefined => Ok(Value::Undefined),
             Expr::Ident(name) => match env_get(env, name) {
                 Some(v) => Ok(v),
-                None if self.lenient => {
-                    *self.lenient_hits.entry(name.clone()).or_default() += 1;
-                    Ok(Value::Undefined)
+                None => {
+                    // window(전역 객체) 프로퍼티 폴백 — window.X = v 를 맨 X 로 읽게 함.
+                    // 브라우저에선 window 가 곧 전역 객체 (naver 의 ndpsdk 등).
+                    if let Some(v) = self.window_prop(name) {
+                        return Ok(v);
+                    }
+                    if self.lenient {
+                        *self.lenient_hits.entry(name.clone()).or_default() += 1;
+                        Ok(Value::Undefined)
+                    } else {
+                        Err(format!("{} 은(는) 정의되지 않음", name))
+                    }
                 }
-                None => Err(format!("{} 은(는) 정의되지 않음", name)),
             },
             Expr::Array(items) => {
                 let mut v = Vec::new();
@@ -3628,6 +3648,15 @@ mod tests {
             run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
             "b"
         );
+    }
+
+    #[test]
+    fn window_is_global_object() {
+        // window.X = v 를 맨 X 로 읽음 (브라우저에서 window 는 전역 객체)
+        assert_eq!(run_num("window.foo = 42; foo"), 42.0);
+        assert_eq!(run_num("window.obj = {n:7}; obj.n"), 7.0);
+        // naver 패턴: window.X = window.X || {} 후 맨 X 사용
+        assert_eq!(run_num("window.sdk = window.sdk || {cmd:[]}; sdk.cmd.push(1); sdk.cmd.length"), 1.0);
     }
 
     #[test]
