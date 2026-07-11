@@ -1747,11 +1747,12 @@ impl Interp {
                 }
             }
             Expr::Assign { op, target, value } => {
-                // &&= / ||= 는 단락: 조건 만족 안 하면 대입도 안 함
-                if matches!(op, AssignOp::And | AssignOp::Or) {
+                // &&= / ||= / ??= 는 단락: 조건 만족 안 하면 대입도 안 함
+                if matches!(op, AssignOp::And | AssignOp::Or | AssignOp::Nullish) {
                     let old = self.eval(target, env)?;
                     let do_assign = match op {
                         AssignOp::And => to_bool(&old),
+                        AssignOp::Nullish => matches!(old, Value::Null | Value::Undefined),
                         _ => !to_bool(&old),
                     };
                     if !do_assign {
@@ -3539,6 +3540,17 @@ mod tests {
             run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
             "b"
         );
+    }
+
+    #[test]
+    fn logical_assignment_operators() {
+        // ??= 는 null/undefined 일 때만, ||= 는 falsy 일 때만, &&= 는 truthy 일 때만 대입
+        assert_eq!(run_num("var a=null; a??=10; a"), 10.0);
+        assert_eq!(run_num("var b=5; b??=10; b"), 5.0);
+        assert_eq!(run_num("var c=0; c||=99; c"), 99.0);
+        assert_eq!(run_num("var d=1; d&&=7; d"), 7.0);
+        // 멤버 타깃 + 단락 (두 번째 ??= 는 이미 값이 있어 무시)
+        assert_eq!(run_num("var o={}; o.x??=3; o.x??=4; o.x"), 3.0);
     }
 
     #[test]

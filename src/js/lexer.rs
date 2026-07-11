@@ -99,6 +99,7 @@ pub enum Tok {
     StarStarAssign, // **=
     AndAndAssign,
     OrOrAssign,
+    QQAssign, // ??=
     QuestionQuestion,
     OptChain, // ?.
     Plus,
@@ -470,6 +471,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             "**=" => Some(Tok::StarStarAssign),
             "&&=" => Some(Tok::AndAndAssign),
             "||=" => Some(Tok::OrOrAssign),
+            "??=" => Some(Tok::QQAssign),
             _ => None,
         };
         if let Some(t) = three_tok {

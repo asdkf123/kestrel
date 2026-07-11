@@ -747,6 +747,7 @@ impl Parser {
             Some(Tok::StarStarAssign) => Some(AssignOp::Pow),
             Some(Tok::AndAndAssign) => Some(AssignOp::And),
             Some(Tok::OrOrAssign) => Some(AssignOp::Or),
+            Some(Tok::QQAssign) => Some(AssignOp::Nullish),
             _ => None,
         };
         if let Some(op) = op {

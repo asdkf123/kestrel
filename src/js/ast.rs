@@ -142,8 +142,9 @@ pub enum AssignOp {
     Shl,
     Shr,
     UShr, // >>>=
-    And,  // &&=
-    Or,   // ||=
+    And,     // &&=
+    Or,      // ||=
+    Nullish, // ??=
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
