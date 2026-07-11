@@ -242,6 +242,10 @@ pub enum Native {
     ClearTimer,
     // Promise/fetch
     PromiseResolve,
+    PromiseReject,
+    PromiseAll,
+    PromiseRace,
+    PromiseAllSettled,
     PromiseThen,
     PromiseCatch,
     Identity, // 값 통과 (promise 체이닝용)
@@ -713,6 +717,10 @@ impl Interp {
         // Promise.resolve / Promise.reject (생성자 호출은 미지원, 정적 메서드만)
         let mut promise = HashMap::new();
         promise.insert("resolve".to_string(), Value::Native(Native::PromiseResolve));
+        promise.insert("reject".to_string(), Value::Native(Native::PromiseReject));
+        promise.insert("all".to_string(), Value::Native(Native::PromiseAll));
+        promise.insert("race".to_string(), Value::Native(Native::PromiseRace));
+        promise.insert("allSettled".to_string(), Value::Native(Native::PromiseAllSettled));
         env_declare(&global, "Promise", Value::Obj(Rc::new(RefCell::new(promise))));
         // fetch(url) — 동기 HTTP 후 resolved Promise(Response) 반환
         env_declare(&global, "fetch", Value::Native(Native::Fetch));
@@ -850,6 +858,21 @@ impl Interp {
     }
 
     // 마이크로태스크 드레인: 콜백 실행 → 그 결과로 의존 promise 이행 (체이닝).
+    // promise 면 마이크로태스크를 비운 뒤 이행값을, 아니면 값 그대로 (Promise.all 등).
+    fn promise_value(&mut self, v: &Value) -> Value {
+        if !is_promise(v) {
+            return v.clone();
+        }
+        self.drain_microtasks();
+        if let Value::Obj(o) = v {
+            let m = o.borrow();
+            if matches!(m.get("__state"), Some(Value::Str(s)) if s == "fulfilled") {
+                return m.get("__value").cloned().unwrap_or(Value::Undefined);
+            }
+        }
+        Value::Undefined
+    }
+
     pub fn drain_microtasks(&mut self) {
         let mut guard = 0;
         while let Some((cb, arg, dep)) = self.microtasks.pop_front() {

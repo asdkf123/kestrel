@@ -430,6 +430,18 @@ mod tests {
     }
 
     #[test]
+    fn promise_all_resolves_with_values() {
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p>\
+             <script>Promise.all([Promise.resolve(1),Promise.resolve(2),3]).then(function(a){ \
+               document.getElementById('out').textContent = a.join('-'); });</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "1-2-3");
+    }
+
+    #[test]
     fn async_function_returns_awaitable_promise() {
         // async 함수는 이행된 Promise 를 반환, await 로 언랩되고 .then 으로 체이닝됨
         let mut dom = crate::html::parse_dom(

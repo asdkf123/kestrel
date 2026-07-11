@@ -1681,6 +1681,49 @@ impl Interp {
                 self.resolve_promise(&p, v);
                 Ok(p)
             }
+            Native::PromiseReject => {
+                let v = args.into_iter().next().unwrap_or(Value::Undefined);
+                let p = self.new_promise();
+                if let Value::Obj(o) = &p {
+                    let mut m = o.borrow_mut();
+                    m.insert("__state".to_string(), Value::Str("rejected".to_string()));
+                    m.insert("__value".to_string(), v);
+                }
+                Ok(p)
+            }
+            Native::PromiseAll | Native::PromiseAllSettled => {
+                let settled = matches!(n, Native::PromiseAllSettled);
+                let items = match args.into_iter().next() {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                let mut out = Vec::new();
+                for item in items {
+                    let v = self.promise_value(&item);
+                    if settled {
+                        let mut m = std::collections::HashMap::new();
+                        m.insert("status".to_string(), Value::Str("fulfilled".to_string()));
+                        m.insert("value".to_string(), v);
+                        out.push(Value::Obj(Rc::new(RefCell::new(m))));
+                    } else {
+                        out.push(v);
+                    }
+                }
+                let p = self.new_promise();
+                self.resolve_promise(&p, Value::Arr(ArrayObj::new(out)));
+                Ok(p)
+            }
+            Native::PromiseRace => {
+                let items = match args.into_iter().next() {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                let first =
+                    items.first().map(|i| self.promise_value(i)).unwrap_or(Value::Undefined);
+                let p = self.new_promise();
+                self.resolve_promise(&p, first);
+                Ok(p)
+            }
             Native::PromiseThen => {
                 let p = recv.unwrap_or(Value::Undefined);
                 let cb = args.into_iter().next().unwrap_or(Value::Undefined);
