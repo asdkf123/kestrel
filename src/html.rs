@@ -2122,11 +2122,42 @@ fn decode_entities(s: &str) -> String {
                 }
             }
         }
+        // 세미콜론 없는 레거시 명명 참조 (&copy, &reg, &amp 등 — HTML 표준의 no-semicolon 목록)
+        if let Some((ch, len)) = decode_legacy(&after[1..]) {
+            out.push_str(&ch);
+            rest = &after[1 + len..];
+            continue;
+        }
         out.push('&');
         rest = &after[1..];
     }
     out.push_str(rest);
     out
+}
+
+// 세미콜론 없이도 해석되는 레거시 명명 참조 여부 (HTML 표준 no-semicolon 목록 중 실사용분).
+// 이 이름들만 세미콜론 없이 해석한다 (mdash/trade/hellip 등은 세미콜론 필수).
+fn is_legacy_entity(name: &str) -> bool {
+    matches!(
+        name,
+        "amp" | "lt" | "gt" | "quot" | "nbsp" | "copy" | "reg" | "laquo" | "raquo" | "middot"
+            | "deg" | "times" | "divide" | "para" | "sect" | "pound" | "cent" | "yen" | "shy"
+    )
+}
+
+// '&' 다음 문자열에서 세미콜론 없는 레거시 참조를 최장 일치로 해석.
+// 반환: (해석 문자열, 소비한 이름 바이트 수). 뒤가 '=' 면 URL 쿼리로 보고 해석 안 함.
+fn decode_legacy(body: &str) -> Option<(String, usize)> {
+    let name_len = body.bytes().take_while(|b| b.is_ascii_alphabetic()).count();
+    for len in (1..=name_len).rev() {
+        if is_legacy_entity(&body[..len]) {
+            if body[len..].starts_with('=') {
+                return None;
+            }
+            return decode_one(&body[..len]).map(|s| (s, len));
+        }
+    }
+    None
 }
 
 fn decode_one(entity: &str) -> Option<String> {
@@ -2208,6 +2239,15 @@ mod tests {
         }
     }
 
+    fn find_href(node: &Node) -> Option<String> {
+        if let NodeType::Element(e) = &node.node_type {
+            if let Some(h) = e.attributes.get("href") {
+                return Some(h.clone());
+            }
+        }
+        node.children.iter().find_map(find_href)
+    }
+
     #[test]
     fn parses_single_element_with_text() {
         let node = parse("<p>hello</p>".to_string());
@@ -2277,6 +2317,24 @@ mod tests {
         let mut s = String::new();
         all_text(&n, &mut s);
         assert!(s.contains("a & b A"), "got {:?}", s);
+    }
+
+    #[test]
+    fn decodes_legacy_entities_without_semicolon() {
+        // &copy, &reg 등 레거시 참조는 세미콜론 없이도 해석 (NPR 푸터 "&copy NPR")
+        let n = parse("<p>&copy 2026 &reg &amp x</p>".to_string());
+        let mut s = String::new();
+        all_text(&n, &mut s);
+        assert!(s.contains("\u{00A9} 2026 \u{00AE} & x"), "got {:?}", s);
+        // 세미콜론 필수 엔티티는 세미콜론 없이 해석하지 않음
+        let n2 = parse("<p>&mdash x</p>".to_string());
+        let mut s2 = String::new();
+        all_text(&n2, &mut s2);
+        assert!(s2.contains("&mdash x"), "mdash 는 세미콜론 필수: {:?}", s2);
+        // URL 쿼리 보호: &copy= 는 해석 안 함
+        let n3 = parse("<a href=\"/x?a=1&copy=2\">l</a>".to_string());
+        let href = find_href(&n3);
+        assert_eq!(href.as_deref(), Some("/x?a=1&copy=2"), "쿼리스트링 &copy= 보존");
     }
 
     #[test]
