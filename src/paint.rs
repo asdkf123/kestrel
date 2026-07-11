@@ -1111,6 +1111,13 @@ fn collect_items(
     for (rect, color) in &layout_box.decorations {
         local.push(DisplayItem::Rect { color: *color, rect: *rect });
     }
+    // visibility: hidden/collapse — 이 박스 자신의 아이템은 그리지 않는다(자식은 상속으로
+    // 함께 숨거나 visible 로 재정의 가능하므로 각자 판단). 공간은 유지.
+    if matches!(layout_box.styled_node.value("visibility"),
+        Some(Value::Keyword(ref k)) if k == "hidden" || k == "collapse")
+    {
+        local.clear();
+    }
     // 이 박스 자신의 아이템은 부모 클립으로 자르고, sticky 면 래핑
     for it in local {
         if let Some(clipped) = clip_apply(it, clip) {
@@ -1678,6 +1685,18 @@ mod tests {
         // circle 중심 cx=7,cy=5 → 박스 (14,10). 파랑
         let c = canvas.pixels[10 * 20 + 14];
         assert!(c.b > 200 && c.r < 60, "circle 파랑, 실제 {:?}", c);
+    }
+
+    #[test]
+    fn visibility_hidden_not_painted() {
+        // visibility: hidden 박스의 배경은 안 그려짐 (공간은 유지 → 흰색)
+        let canvas = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 2px; height: 2px; background-color: #ff0000; visibility: hidden; }",
+            4.0,
+            4.0,
+        );
+        assert_eq!(canvas.pixels[0], Color { r: 255, g: 255, b: 255, a: 255 }, "숨긴 박스는 안 칠해짐");
     }
 
     #[test]
