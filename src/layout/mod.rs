@@ -86,6 +86,7 @@ pub struct LayoutBox<'a> {
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
     pub image: Option<usize>,
     pub background_image: Option<usize>,
+    pub gradient: Option<crate::css::Gradient>,
     // 클릭 히트 영역: (단어 단위 사각형, href)
     pub links: Vec<(Rect, String)>,
     // 링크 밑줄/리스트 불릿 등 (사각형, 색)
@@ -109,6 +110,7 @@ impl<'a> LayoutBox<'a> {
             inline_nodes: Vec::new(),
             image: None,
             background_image: None,
+            gradient: None,
             links: Vec::new(),
             decorations: Vec::new(),
             list_marker: None,
@@ -126,6 +128,7 @@ impl<'a> LayoutBox<'a> {
             inline_nodes: nodes,
             image: None,
             background_image: None,
+            gradient: None,
             links: Vec::new(),
             decorations: Vec::new(),
             list_marker: None,
@@ -164,11 +167,15 @@ impl<'a> LayoutBox<'a> {
         }
         self.calculate_width(containing_block);
         self.calculate_position(containing_block);
-        // 배경 이미지 해결 (블록 박스만 — 익명 인라인 박스는 부모 스타일 공유라 제외)
-        if let Some(Value::Url(u)) = self.styled_node.value("background-image") {
-            if let Some(&(idx, _, _)) = images.get(&u) {
-                self.background_image = Some(idx);
+        // 배경 이미지/그라디언트 해결 (블록 박스만)
+        match self.styled_node.value("background-image") {
+            Some(Value::Url(u)) => {
+                if let Some(&(idx, _, _)) = images.get(&u) {
+                    self.background_image = Some(idx);
+                }
             }
+            Some(Value::Gradient(g)) => self.gradient = Some(g),
+            _ => {}
         }
         let tag = match &self.styled_node.node.node_type {
             NodeType::Element(e) => e.tag_name.as_str(),
@@ -432,6 +439,7 @@ impl<'a> LayoutBox<'a> {
         self.decorations.clear();
         self.image = None;
         self.background_image = None;
+        self.gradient = None;
         self.dimensions = Default::default();
         self.used_width = 0.0;
         for c in &mut self.children {

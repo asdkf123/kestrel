@@ -84,6 +84,14 @@ pub enum Value {
     Var(String),
     // calc() 를 (percent 계수, px 계수) 선형식으로 축약. 레이아웃이 len_px 로 해석.
     Calc(f32, f32),
+    // linear-gradient. 페인트가 축을 따라 색 보간.
+    Gradient(Gradient),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gradient {
+    pub angle_deg: f32,          // CSS 각도 (0=위, 90=오른쪽, 180=아래)
+    pub stops: Vec<(Color, f32)>, // (색, 위치 0-1)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

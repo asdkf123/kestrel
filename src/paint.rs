@@ -33,6 +33,37 @@ impl Canvas {
         }
     }
 
+    // linear-gradient 채우기. angle 은 CSS 각도(0deg=위쪽, 90deg=오른쪽).
+    // 각 픽셀을 그라디언트 축에 투영해 0..1 위치를 구하고 스톱 사이를 보간한다.
+    // 그라디언트 선 길이 = |w*sin| + |h*cos| (CSS: 모서리가 0/1 에 대응).
+    pub fn fill_gradient(&mut self, rect: Rect, angle_deg: f32, stops: &[(Color, f32)]) {
+        if rect.width <= 0.0 || rect.height <= 0.0 || stops.is_empty() {
+            return;
+        }
+        let a = angle_deg.to_radians();
+        let (dx, dy) = (a.sin(), -a.cos());
+        let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+        let len = ((rect.width * dx).abs() + (rect.height * dy).abs()).max(1.0);
+        let x0 = rect.x.clamp(0.0, self.width as f32) as usize;
+        let y0 = rect.y.clamp(0.0, self.height as f32) as usize;
+        let x1 = (rect.x + rect.width).clamp(0.0, self.width as f32) as usize;
+        let y1 = (rect.y + rect.height).clamp(0.0, self.height as f32) as usize;
+        for y in y0..y1 {
+            let fy = y as f32 + 0.5;
+            for x in x0..x1 {
+                let fx = x as f32 + 0.5;
+                let t = (fx - cx) * dx + (fy - cy) * dy;
+                let p = ((t + len / 2.0) / len).clamp(0.0, 1.0);
+                let color = gradient_color_at(stops, p);
+                if color.a == 0 {
+                    continue;
+                }
+                let idx = y * self.width + x;
+                self.pixels[idx] = blend(self.pixels[idx], color, color.a);
+            }
+        }
+    }
+
     // 둥근 사각형 채우기 (모서리 안티에일리어싱). radius 는 물리 px.
     pub fn fill_round_rect(&mut self, color: Color, rect: Rect, radius: f32) {
         if rect.width <= 0.0 || rect.height <= 0.0 {
@@ -141,6 +172,34 @@ fn blend(bg: Color, fg: Color, a: u8) -> Color {
     Color { r: mix(bg.r, fg.r), g: mix(bg.g, fg.g), b: mix(bg.b, fg.b), a: 255 }
 }
 
+// 위치 p(0..1)에서 그라디언트 색을 선형 보간. stops 는 위치 오름차순 가정.
+fn gradient_color_at(stops: &[(Color, f32)], p: f32) -> Color {
+    if stops.is_empty() {
+        return Color { r: 0, g: 0, b: 0, a: 0 };
+    }
+    if p <= stops[0].1 {
+        return stops[0].0;
+    }
+    if p >= stops[stops.len() - 1].1 {
+        return stops[stops.len() - 1].0;
+    }
+    for w in stops.windows(2) {
+        let (c0, p0) = w[0];
+        let (c1, p1) = w[1];
+        if p >= p0 && p <= p1 {
+            let f = if p1 > p0 { (p - p0) / (p1 - p0) } else { 0.0 };
+            let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * f).round() as u8;
+            return Color {
+                r: lerp(c0.r, c1.r),
+                g: lerp(c0.g, c1.g),
+                b: lerp(c0.b, c1.b),
+                a: lerp(c0.a, c1.a),
+            };
+        }
+    }
+    stops[stops.len() - 1].0
+}
+
 fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
     let ox = (gi.x + bm.left as f32).round() as i32;
     let oy = (gi.baseline_y - bm.top as f32).round() as i32;
@@ -172,6 +231,8 @@ pub enum DisplayItem {
     RoundRect { color: Color, rect: Rect, radius: f32 },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     Image { image: usize, rect: Rect },
+    // linear-gradient 배경. angle: CSS 각도, stops: (색, 위치 0-1).
+    Gradient { rect: Rect, angle: f32, stops: Vec<(Color, f32)> },
     Glyph(GlyphInstance),
     // position: sticky — 스크롤 시 뷰포트 상단 top 만큼 아래에 고정. top=스티키 임계,
     // y0=요소의 자연 문서 y. 렌더 시 inner 를 보정된 스크롤로 그린다.
@@ -368,6 +429,11 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         DisplayItem::Image { image, rect } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r })
         }
+        // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
+        // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
+        DisplayItem::Gradient { rect, angle, stops } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, stops })
+        }
         DisplayItem::RoundRect { color, rect, radius } => {
             rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radius })
         }
@@ -420,6 +486,13 @@ fn collect_items(
     emit_box_decorations(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
         local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.border_box() });
+    }
+    if let Some(g) = &layout_box.gradient {
+        local.push(DisplayItem::Gradient {
+            rect: layout_box.dimensions.border_box(),
+            angle: g.angle_deg,
+            stops: g.stops.clone(),
+        });
     }
     if let Some(idx) = layout_box.image {
         local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content });
@@ -538,6 +611,13 @@ fn draw_item(
             if let Some(img) = images.get(*image) {
                 blit_image(canvas, img, r, scale);
             }
+        }
+        DisplayItem::Gradient { rect, angle, stops } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
+            }
+            canvas.fill_gradient(r, *angle, stops);
         }
         DisplayItem::Glyph(gi) => {
             let baseline = (gi.baseline_y - scroll_y) * scale;
@@ -760,6 +840,33 @@ mod tests {
         assert_eq!(c.pixels[3], red);
         assert_eq!(c.pixels[6 + 2], red, "두 번째 행도 채워짐 (2x2)");
         assert_eq!(c.pixels[4], white);
+    }
+
+    #[test]
+    fn gradient_color_interpolates_between_stops() {
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        let stops = vec![(black, 0.0), (white, 1.0)];
+        assert_eq!(gradient_color_at(&stops, 0.0), black);
+        assert_eq!(gradient_color_at(&stops, 1.0), white);
+        let mid = gradient_color_at(&stops, 0.5);
+        assert!((mid.r as i32 - 128).abs() <= 1, "중간은 ~128, 실제 {}", mid.r);
+        // 범위 밖은 양끝으로 클램프
+        assert_eq!(gradient_color_at(&stops, -1.0), black);
+        assert_eq!(gradient_color_at(&stops, 2.0), white);
+    }
+
+    #[test]
+    fn fill_gradient_90deg_varies_left_to_right() {
+        // 90deg = 오른쪽 방향 → 왼쪽은 첫 스톱, 오른쪽은 마지막 스톱
+        let mut canvas = Canvas::new(4, 1);
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        let stops = vec![(black, 0.0), (white, 1.0)];
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 }, 90.0, &stops);
+        assert!(canvas.pixels[0].r < canvas.pixels[3].r, "왼쪽이 오른쪽보다 어두워야 함");
+        assert!(canvas.pixels[0].r < 64, "왼쪽 끝은 검정에 가까움");
+        assert!(canvas.pixels[3].r > 192, "오른쪽 끝은 흰색에 가까움");
     }
 
     #[test]

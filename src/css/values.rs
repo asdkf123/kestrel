@@ -20,6 +20,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("calc(") && text.ends_with(')') {
         return eval_calc(&text[5..text.len() - 1]);
     }
+    if lower.starts_with("linear-gradient(") && text.ends_with(')') {
+        return parse_linear_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
@@ -194,6 +197,126 @@ fn calc_factor(t: &[char], p: &mut usize) -> Option<CalcVal> {
         "%" => Some(CalcVal { pct: num, px: 0.0, num: 0.0, is_num: false }),
         _ => None, // em/rem/vw 등 미지원
     }
+}
+
+// linear-gradient 인자 파싱: [<angle|to side>,] <color> [pos%], ...
+fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
+    // 최상위 콤마로 분리 (색함수 안 콤마 보존)
+    let parts = split_top_commas(inner);
+    if parts.is_empty() {
+        return None;
+    }
+    let mut idx = 0;
+    let mut angle = 180.0f32; // 기본: to bottom
+    let first = parts[0].trim();
+    let fl = first.to_ascii_lowercase();
+    if let Some(deg) = fl.strip_suffix("deg") {
+        if let Ok(a) = deg.trim().parse::<f32>() {
+            angle = a;
+            idx = 1;
+        }
+    } else if fl.starts_with("to ") {
+        angle = match fl.trim() {
+            "to top" => 0.0,
+            "to right" => 90.0,
+            "to bottom" => 180.0,
+            "to left" => 270.0,
+            "to top right" | "to right top" => 45.0,
+            "to bottom right" | "to right bottom" => 135.0,
+            "to bottom left" | "to left bottom" => 225.0,
+            "to top left" | "to left top" => 315.0,
+            _ => 180.0,
+        };
+        idx = 1;
+    } else if fl.starts_with("turn") || fl.ends_with("turn") {
+        if let Ok(t) = fl.trim_end_matches("turn").trim().parse::<f32>() {
+            angle = t * 360.0;
+            idx = 1;
+        }
+    }
+    // 색 스톱
+    let mut stops: Vec<(Color, Option<f32>)> = Vec::new();
+    for p in &parts[idx..] {
+        let toks = split_top_level(p.trim());
+        if toks.is_empty() {
+            continue;
+        }
+        let color = match interpret_value(&toks[0]) {
+            Some(Value::Color(c)) => c,
+            _ => continue,
+        };
+        let pos = toks
+            .get(1)
+            .and_then(|t| t.strip_suffix('%'))
+            .and_then(|n| n.trim().parse::<f32>().ok())
+            .map(|p| p / 100.0);
+        stops.push((color, pos));
+    }
+    if stops.len() < 2 {
+        return None;
+    }
+    // 위치 미지정 스톱은 균등 분배
+    let n = stops.len();
+    let resolved: Vec<(Color, f32)> = stops
+        .iter()
+        .enumerate()
+        .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
+        .collect();
+    Some(crate::css::Gradient { angle_deg: angle, stops: resolved })
+}
+
+// 최상위(괄호 밖) 콤마로 분리
+fn split_top_commas(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// 공백으로 최상위 토큰 분리 (색함수 괄호 보존)
+fn split_top_level(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 fn parse_hex_color(text: &str) -> Option<Color> {
