@@ -791,7 +791,7 @@ impl Parser {
         } else {
             body.push(Stmt::Return(Some(self.assignment()?))); // 식 본문 → return desugar
         }
-        Ok(Some(Expr::Func { params, body, is_arrow: true, is_generator: false, is_async }))
+        Ok(Some(Expr::Func { name: None, params, body, is_arrow: true, is_generator: false, is_async }))
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
@@ -1324,6 +1324,7 @@ impl Parser {
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
                             let f = Expr::Func {
+                                name: None,
                                 params,
                                 body,
                                 is_arrow: false,
@@ -1361,7 +1362,7 @@ impl Parser {
                             // 메서드 단축 { foo(a) { ... } }
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
-                            Expr::Func { params, body, is_arrow: false, is_generator: false, is_async: false }
+                            Expr::Func { name: None, params, body, is_arrow: false, is_generator: false, is_async: false }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };
@@ -1379,15 +1380,19 @@ impl Parser {
                 Ok(Expr::Object(props))
             }
             Tok::Function => {
-                // 함수 식 (이름은 무시 가능). function* 는 제너레이터.
+                // 함수 식. function* 는 제너레이터. 이름 있으면 재귀용 자기 참조로 보존.
                 let is_async = std::mem::take(&mut self.pending_async);
                 let is_generator = self.eat(&Tok::Star);
-                if matches!(self.peek(), Some(Tok::Ident(_))) {
+                let name = if let Some(Tok::Ident(n)) = self.peek() {
+                    let n = n.clone();
                     self.pos += 1;
-                }
+                    Some(n)
+                } else {
+                    None
+                };
                 let (params, mut body) = self.param_list()?;
                 body.extend(self.block()?);
-                Ok(Expr::Func { params, body, is_arrow: false, is_generator, is_async })
+                Ok(Expr::Func { name, params, body, is_arrow: false, is_generator, is_async })
             }
             Tok::This => Ok(Expr::This),
             Tok::Super => Ok(Expr::Super),

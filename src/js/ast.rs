@@ -14,7 +14,8 @@ pub enum Expr {
     // function 식과 화살표 함수 공용. 화살표의 식 본문은 Return 문 하나로 desugar.
     // is_arrow: 화살표는 this 를 렉시컬로 캡처 (호출 시 재바인딩 안 함)
     // is_generator: function* — 호출 시 본문을 즉시 실행해 yield 값을 모아 반복자 반환(eager)
-    Func { params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool },
+    // name: 명명 함수식 이름 (재귀용 자기 참조). 익명/화살표는 None.
+    Func { name: Option<String>, params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool },
     // yield [*] expr — 제너레이터 본문에서 값을 산출. star 면 iterable 을 위임 전개.
     Yield { star: bool, arg: Option<Box<Expr>> },
     // ...expr — 스프레드. 배열/호출 인자/객체 리터럴에서 전개.

@@ -1671,20 +1671,29 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
-            Expr::Func { params, body, is_arrow, is_generator, is_async } => {
+            Expr::Func { name, params, body, is_arrow, is_generator, is_async } => {
                 // 화살표는 정의 시점 this 를 캡처 (렉시컬)
                 let this = if *is_arrow { env_get(env, "this").map(Box::new) } else { None };
-                Ok(Value::Fn(Rc::new(JsFn {
+                // 명명 함수식: 자기 이름을 감싸는 스코프에 바인딩(재귀용). 외부엔 미노출.
+                let fn_env = match name {
+                    Some(_) => Env::new(Some(env.clone())),
+                    None => env.clone(),
+                };
+                let f = Rc::new(JsFn {
                     params: params.clone(),
                     body: body.clone(),
-                    env: env.clone(),
+                    env: fn_env.clone(),
                     is_arrow: *is_arrow,
                     is_generator: *is_generator,
                     is_async: *is_async,
                     this,
                     super_class: None,
                     props: RefCell::new(HashMap::new()),
-                })))
+                });
+                if let Some(n) = name {
+                    env_declare(&fn_env, n, Value::Fn(f.clone()));
+                }
+                Ok(Value::Fn(f))
             }
             Expr::Yield { star, arg } => {
                 // eager 제너레이터: 값을 현재 yield sink 에 쌓는다. yield 식 자체는 undefined.
@@ -3597,6 +3606,14 @@ mod tests {
         // 숫자 구분자
         assert_eq!(run_num("1_000_000 + 2_500"), 1002500.0);
         assert_eq!(run_num("0xff_ff"), 65535.0);
+    }
+
+    #[test]
+    fn named_function_expression_self_reference() {
+        // 명명 함수식은 자기 이름으로 재귀 가능, 이름은 외부로 누출 안 됨
+        assert_eq!(run_num("var f=function fac(n){return n<=1?1:n*fac(n-1)}; f(5)"), 120.0);
+        assert_eq!(run_num("(function fib(n){return n<2?n:fib(n-1)+fib(n-2)})(10)"), 55.0);
+        assert_eq!(run_str("var f=function g(){return typeof g}; typeof g"), "undefined");
     }
 
     #[test]
