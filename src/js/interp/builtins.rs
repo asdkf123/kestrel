@@ -217,6 +217,8 @@ impl Interp {
         args: Vec<Value>,
     ) -> Result<Value, String> {
         match n {
+            // Proxy 는 new 로만 생성 (construct 에서 처리). 함수 호출은 무의미.
+            Native::ProxyCtor => Err("Proxy 는 new 로 생성해야 함".to_string()),
             Native::ConsoleLog => {
                 let line = args.iter().map(to_display).collect::<Vec<_>>().join(" ");
                 self.console.push(line);

@@ -45,6 +45,8 @@ pub enum Value {
     Style(crate::dom::NodeId),
     // element.classList — 요소의 class 속성에 대한 라이브 프록시(DOMTokenList).
     ClassList(crate::dom::NodeId),
+    // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
+    Proxy(Rc<(Value, Value)>),
 }
 
 // 배열 객체: 인덱스 항목(items)과 own-property(props)를 분리 보관.
@@ -178,6 +180,7 @@ pub enum Native {
     Closest,
     DomContains,
     CreateDocumentFragment,
+    ProxyCtor,
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -352,6 +355,7 @@ impl std::fmt::Debug for Value {
             Value::SetVal(_) => write!(f, "[object Set]"),
             Value::Style(id) => write!(f, "[style {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
+            Value::Proxy(_) => write!(f, "[object Proxy]"),
         }
     }
 }
@@ -608,6 +612,7 @@ impl Interp {
         env_declare(&global, "WeakSet", Value::Native(Native::SetCtor));
         env_declare(&global, "Event", Value::Native(Native::EventCtor));
         env_declare(&global, "CustomEvent", Value::Native(Native::EventCtor));
+        env_declare(&global, "Proxy", Value::Native(Native::ProxyCtor));
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
         let mut ls = HashMap::new();
         ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
@@ -1687,6 +1692,20 @@ impl Interp {
 
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         match recv {
+            // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
+            Value::Proxy(p) => {
+                let (target, handler) = (&p.0, &p.1);
+                let trap = self.member_get(handler, "get")?;
+                if !matches!(trap, Value::Undefined) {
+                    return self.call_value(
+                        trap,
+                        Some(handler.clone()),
+                        vec![target.clone(), Value::Str(key.to_string()), recv.clone()],
+                    );
+                }
+                let target = target.clone();
+                self.member_get(&target, key)
+            }
             Value::Obj(map) => {
                 let v = map.borrow().get(key).cloned();
                 match v {
@@ -2087,6 +2106,11 @@ impl Interp {
             Value::Native(Native::EventCtor) => {
                 return self.call_native(Native::EventCtor, None, args)
             }
+            Value::Native(Native::ProxyCtor) => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let handler = args.get(1).cloned().unwrap_or(Value::Undefined);
+                return Ok(Value::Proxy(Rc::new((target, handler))));
+            }
             Value::Native(Native::RegExpCtor) => {
                 return self.call_native(Native::RegExpCtor, None, args)
             }
@@ -2295,6 +2319,39 @@ impl Interp {
                 let recv = self.eval(obj, env)?;
                 let key = self.member_key(prop, *computed, env)?;
                 match recv {
+                    // Proxy: set 트랩 있으면 handler.set(target, key, value, receiver), 없으면 target 에 위임
+                    Value::Proxy(p) => {
+                        let (target, handler) = (p.0.clone(), p.1.clone());
+                        let trap = self.member_get(&handler, "set")?;
+                        if !matches!(trap, Value::Undefined) {
+                            let receiver = Value::Proxy(p.clone());
+                            self.call_value(
+                                trap,
+                                Some(handler),
+                                vec![target, Value::Str(key), value, receiver],
+                            )?;
+                            return Ok(());
+                        }
+                        // 트랩 없음 → target(Obj/Arr)에 직접 저장
+                        match &target {
+                            Value::Obj(map) => {
+                                map.borrow_mut().insert(key, value);
+                            }
+                            Value::Arr(a) => {
+                                if let Ok(i) = key.parse::<usize>() {
+                                    let mut arr = a.borrow_mut();
+                                    if i >= arr.len() {
+                                        arr.resize(i + 1, Value::Undefined);
+                                    }
+                                    arr[i] = value;
+                                } else {
+                                    a.set_prop(key, value);
+                                }
+                            }
+                            _ => {}
+                        }
+                        Ok(())
+                    }
                     Value::Obj(map) => {
                         map.borrow_mut().insert(key, value);
                         Ok(())
@@ -2763,6 +2820,35 @@ mod tests {
             run_num("[1,2,3].map((x, i) => x + i).indexOf(5)"),
             2.0,
             "콜백 두 번째 인자 = 인덱스"
+        );
+    }
+
+    #[test]
+    fn proxy_get_set_traps() {
+        // get 트랩: 없는 키에 기본값
+        assert_eq!(
+            run_num(
+                "var p = new Proxy({a: 1}, { get: function(t, k) { return k in t ? t[k] : 99; } }); p.a + p.zzz"
+            ),
+            100.0
+        );
+        // set 트랩: 값 가로채 변형 후 저장
+        assert_eq!(
+            run_num(
+                "var log = 0; \
+                 var p = new Proxy({}, { set: function(t, k, v) { log = v * 2; t[k] = v; return true; } }); \
+                 p.x = 5; log"
+            ),
+            10.0
+        );
+        // 트랩 없으면 target 위임
+        assert_eq!(
+            run_num("var p = new Proxy({n: 7}, {}); p.n"),
+            7.0
+        );
+        assert_eq!(
+            run_num("var p = new Proxy({}, {}); p.k = 3; p.k"),
+            3.0
         );
     }
 
