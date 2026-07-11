@@ -102,16 +102,15 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - `<template>`, `<svg>`/`<math>` 통합, form 연결 규칙, `<noscript>` 처리 세부.
 
 ### CSS — 선택자
-- 자식 `>`, 형제 `+`/`~`.
-- 의사 클래스: `:hover :focus :active :first-child :last-child :nth-child()
-  :not() :checked :disabled :root` 등.
+- 자식 `>` ✓, 형제 `+`/`~` ✓, 속성 연산자 `^= $= *= ~= |=` ✓.
+- 의사 클래스: `:first/last-child :nth-child() :nth-of-type() :nth-last-*
+  :not() :is() :where() :checked :disabled :required :root :empty` ✓.
+  남음: `:hover :focus :active`(상호작용), `:has()`.
 - ~~의사 요소 `::before ::after`~~ ✓ (생성 콘텐츠 박스 주입). `::marker ::placeholder ::first-line` 남음.
-- 속성 연산자 `^= $= *= ~= |=`, 대소문자 플래그.
 
 ### CSS — 값·캐스케이드
-- ~~`calc()`, 커스텀 속성 `var()`, `min()/max()/clamp()`~~ ✓.
-- ~~단위: `vw/vh/vmin/vmax ch ex pt pc in cm mm Q`~~ ✓.
-- `!important`, `@import`, ~~`@supports`~~ ✓, `@font-face`, `@keyframes`, cascade layers.
+- ~~`calc()`, `var()`, `min()/max()/clamp()`, 단위 전부(vw/vh/ch/pt/cm...)~~ ✓.
+- ~~`@supports`, `@font-face`(ttf/otf)~~ ✓. 남음: `!important`, `@import`, `@keyframes`, cascade layers, woff2.
 - 상속 확대: 현재 color/font-size/text-align 만. font-family/weight/style/
   line-height/letter-spacing/white-space/visibility/list-style/direction 등 다수 미상속.
 
@@ -136,10 +135,10 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
   (리가처, 결합 문자, 아랍 접합, 인도계 재배열 — HarfBuzz 급).
 
 ### CSS — 페인트·효과
-- ~~그라디언트 linear/radial~~ ✓, ~~`opacity`~~ ✓, hsl() ✓. conic/currentColor 정식 남음.
-- 배경: position/repeat/size/다중 배경. (background 단축 ✓)
-- transform: ~~translate/scale~~ ✓. rotate/matrix/3D, transition/animation 남음.
-- ~~box-shadow inset~~ ✓, ~~outline~~ ✓. 남음: filter, mix-blend-mode, clip-path, mask, border-image.
+- ~~그라디언트 linear/radial/conic, opacity, hsl(), currentColor~~ ✓.
+- 배경: ~~background-size cover/contain~~ ✓. position/repeat/다중 배경 남음.
+- transform: ~~translate/scale/rotate~~ ✓. matrix/3D, transition/animation 남음.
+- ~~box-shadow inset, outline, filter(색변환)~~ ✓. 남음: filter blur, mix-blend-mode, clip-path, mask, border-image.
 
 ### 대체·임베드 콘텐츠
 - ~~**SVG 렌더링**(rect/circle/ellipse/line/path/polygon, viewBox, fill/stroke)~~ ✓.
@@ -149,8 +148,8 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 
 ### JavaScript / DOM / Web API
 - **ECMAScript**: 클래스, Promise/async-await, 정규식 엔진, ~~Proxy(get/set)~~ ✓,
-  Reflect, Symbol, ~~이터레이터/for-of~~ ✓ 완료. 남음: 모듈(import/export),
-  제너레이터/yield, BigInt, Intl.
+  Reflect, Symbol, ~~이터레이터/for-of, 제너레이터(function*/yield, eager), 스프레드 ...~~ ✓.
+  남음: 모듈(import/export), BigInt, Intl, 양방향 제너레이터.
 - **DOM**: createElement/appendChild/removeChild ✓, 속성 조작 ✓, 이벤트 모델
   (addEventListener/버블/위임/dispatchEvent) ✓, ~~cloneNode/matches/closest/contains/
   DocumentFragment/getBoundingClientRect~~ ✓. 남음: MutationObserver, 캡처 단계.
