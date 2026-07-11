@@ -60,6 +60,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
+        // background 단축: 색 → background-color, url() → background-image.
+        // position/repeat/size/attachment/gradient 등은 근사(드롭).
+        "background" => background_shorthand(value_text),
         "border-top" => border_shorthand(&["top"], value_text),
         "border-right" => border_shorthand(&["right"], value_text),
         "border-bottom" => border_shorthand(&["bottom"], value_text),
@@ -69,6 +72,52 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             None => Vec::new(),
         },
     }
+}
+
+// 괄호 깊이를 고려해 공백으로 최상위 토큰 분리 (rgb(1, 2, 3) 는 한 토큰).
+fn split_top_level(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in text.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// background 단축 → background-color / background-image longhand.
+fn background_shorthand(value_text: &str) -> Vec<Declaration> {
+    let mut out = Vec::new();
+    for tok in split_top_level(value_text) {
+        let t = tok.trim();
+        if t.starts_with("url(") {
+            if let Some(v) = interpret_value(t) {
+                out.push(Declaration { name: "background-image".to_string(), value: v });
+            }
+        } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
+            out.push(Declaration { name: "background-color".to_string(), value: v });
+        }
+        // position/repeat/size/attachment/none/transparent/gradient → 무시
+    }
+    out
 }
 
 // `box-shadow: <dx> <dy> [blur] [spread] <color>` 를 커스텀 longhand 로 확장.
