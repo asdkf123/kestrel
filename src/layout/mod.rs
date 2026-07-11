@@ -529,6 +529,43 @@ impl<'a> LayoutBox<'a> {
         self.translate(dx, 0.0);
     }
 
+    // 절대/고정 위치 후처리: 각 absolute 요소를 "가장 가까운 positioned 조상"의,
+    // 각 fixed 요소를 뷰포트의 패딩 박스 기준으로 재배치한다. 레이아웃 단계에선
+    // 직속 컨테이너 기준 정적 위치에 둔 뒤, 여기서 올바른 컨테이닝 블록으로 원점만
+    // 옮긴다(서브트리째 translate). 흐름/형제 위치엔 영향 없음.
+    fn reposition_abs(&mut self, abs_cb: Rect, fixed_cb: Rect) {
+        // self 가 positioned 면 그 패딩 박스가 자식 absolute 의 컨테이닝 블록이 된다.
+        let child_abs_cb =
+            if self.position() != "static" { self.dimensions.padding_box() } else { abs_cb };
+        for child in &mut self.children {
+            let cpos = child.position();
+            if cpos == "absolute" || cpos == "fixed" {
+                let cb = if cpos == "fixed" { fixed_cb } else { child_abs_cb };
+                let cur = child.dimensions.border_box();
+                let has_left = child.styled_node.value("left").is_some();
+                let has_right = child.styled_node.value("right").is_some();
+                let has_top = child.styled_node.value("top").is_some();
+                let has_bottom = child.styled_node.value("bottom").is_some();
+                let tx = if has_right && !has_left {
+                    cb.x + cb.width - cur.width - child.offset_val("right")
+                } else if has_left {
+                    cb.x + child.offset_val("left")
+                } else {
+                    cur.x // 정적 위치 유지 (auto)
+                };
+                let ty = if has_top {
+                    cb.y + child.offset_val("top")
+                } else if has_bottom {
+                    cb.y + cb.height - cur.height - child.offset_val("bottom")
+                } else {
+                    cur.y
+                };
+                child.translate(tx - cur.x, ty - cur.y);
+            }
+            child.reposition_abs(child_abs_cb, fixed_cb);
+        }
+    }
+
     // 테이블 셀이 행 높이로 늘어났을 때 vertical-align 에 따라 내부 콘텐츠만 아래로.
     // (셀 박스 자체 위치는 유지, 글리프/자식만 이동). middle=중앙, bottom=하단.
     fn valign_content(&mut self, extra: f32) {
@@ -701,8 +738,9 @@ impl<'a> LayoutBox<'a> {
                 ib_line_h = 0.0;
             }
 
-            // position: absolute/fixed — 흐름에서 제거. 컨테이닝 블록(=이 컨테이너,
-            // 정상적으론 가장 가까운 positioned 조상)의 패딩 박스 기준으로 배치.
+            // position: absolute/fixed — 흐름에서 제거. 여기선 직속 컨테이너 기준
+            // 정적 위치에 레이아웃만 하고, 최종 원점은 reposition_abs 후처리에서
+            // "가장 가까운 positioned 조상"(absolute) 또는 뷰포트(fixed) 기준으로 옮긴다.
             if cpos == "absolute" || cpos == "fixed" {
                 let child = &mut self.children[i];
                 let mut cb: Dimensions = Default::default();
@@ -710,18 +748,6 @@ impl<'a> LayoutBox<'a> {
                 cb.content.y = cy;
                 cb.content.width = avail;
                 child.layout(cb, fonts, images);
-                let bw = child.dimensions.border_box().width;
-                let has = |p: &str| child.styled_node.value(p).is_some();
-                let cur = child.dimensions.border_box();
-                let tx = if has("right") && !has("left") {
-                    cx + avail - bw - child.offset_val("right")
-                } else if has("left") {
-                    cx + child.offset_val("left")
-                } else {
-                    cur.x
-                };
-                let ty = if has("top") { cy + child.offset_val("top") } else { cur.y };
-                child.translate(tx - cur.x, ty - cur.y);
                 continue; // 흐름 높이에 미반영
             }
 
@@ -1580,9 +1606,13 @@ pub fn layout_tree<'a>(
     fonts: &FontStack,
     images: &ImageMap,
 ) -> LayoutBox<'a> {
+    // 초기 컨테이닝 블록(뷰포트) — absolute/fixed 후처리 기준. height 0 화 전에 보존.
+    let viewport_rect = containing_block.content;
     containing_block.content.height = 0.0;
     let mut root_box = build_layout_tree(node);
     root_box.layout(containing_block, fonts, images);
+    // 절대/고정 위치를 올바른 컨테이닝 블록 기준으로 재배치 (transform 적용 전)
+    root_box.reposition_abs(viewport_rect, viewport_rect);
     // 레이아웃 완료 후 CSS transform(translate) 을 시각 오프셋으로 적용 (흐름 불변)
     apply_transforms(&mut root_box);
     root_box
@@ -2169,6 +2199,29 @@ mod tests {
         assert_eq!(abs.dimensions.content.y, 5.0);
         // flow 는 y=0 (abs 가 공간을 안 차지하므로 맨 위)
         assert_eq!(lb.children[1].dimensions.content.y, 0.0);
+    }
+
+    #[test]
+    fn position_absolute_uses_nearest_positioned_ancestor() {
+        // abs 는 정적 wrapper(.mid)를 건너뛰고 positioned 조상(.rel) 기준으로 배치돼야.
+        let root = crate::html::parse_dom(
+            "<div class=\"rel\"><div class=\"mid\"><div class=\"abs\"></div></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".rel { display: block; position: relative; width: 300px; height: 150px; } \
+             .mid { display: block; margin-left: 100px; width: 120px; } \
+             .abs { display: block; position: absolute; top: 0; right: 0; width: 40px; height: 24px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 500.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let abs = &lb.children[0].children[0];
+        // right:0 을 .rel(폭300) 기준으로 → x = 0 + 300 - 40 = 260 (.mid 기준이면 180)
+        assert_eq!(abs.dimensions.content.x, 260.0, "가장 가까운 positioned 조상(.rel) 기준이어야");
+        assert_eq!(abs.dimensions.content.y, 0.0);
     }
 
     #[test]
