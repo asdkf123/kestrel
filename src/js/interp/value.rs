@@ -164,6 +164,8 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::MapVal(_) => "[object Map]".to_string(),
         Value::SetVal(_) => "[object Set]".to_string(),
         Value::Style(_) => "[object CSSStyleDeclaration]".to_string(),
+        // classList 를 문자열화하면 class 값 (DOMTokenList.toString)
+        Value::ClassList(_) => "[object DOMTokenList]".to_string(),
         Value::Dom(_) => "[object Element]".to_string(),
         Value::Instance(i) => format!("[object {}]", i.class.name),
     }
@@ -197,6 +199,7 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::SetVal(x), Value::SetVal(y)) => Rc::ptr_eq(x, y),
         (Value::Bound(x), Value::Bound(y)) => Rc::ptr_eq(x, y),
         (Value::Style(x), Value::Style(y)) => x == y,
+        (Value::ClassList(x), Value::ClassList(y)) => x == y,
         _ => false,
     }
 }
@@ -366,7 +369,8 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         | Value::Getter(_)
         | Value::MapVal(_)
         | Value::SetVal(_)
-        | Value::Style(_) => None,
+        | Value::Style(_)
+        | Value::ClassList(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();

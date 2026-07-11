@@ -250,6 +250,50 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
+            // classList.add(...names) / remove(...names) / toggle(name[,force]) / contains(name)
+            Native::ClassAdd | Native::ClassRemove => {
+                if let Some(Value::ClassList(id)) = recv {
+                    let mut tokens = self.class_tokens(id);
+                    for a in &args {
+                        let name = to_display(a);
+                        if name.is_empty() {
+                            continue;
+                        }
+                        tokens.retain(|t| t != &name);
+                        if matches!(n, Native::ClassAdd) {
+                            tokens.push(name);
+                        }
+                    }
+                    self.set_class_tokens(id, tokens);
+                }
+                Ok(Value::Undefined)
+            }
+            Native::ClassToggle => {
+                if let Some(Value::ClassList(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let mut tokens = self.class_tokens(id);
+                    let present = tokens.iter().any(|t| t == &name);
+                    // 두 번째 인자(force)가 있으면 강제 설정
+                    let want = match args.get(1) {
+                        Some(v) => to_bool(v),
+                        None => !present,
+                    };
+                    tokens.retain(|t| t != &name);
+                    if want && !name.is_empty() {
+                        tokens.push(name);
+                    }
+                    self.set_class_tokens(id, tokens);
+                    return Ok(Value::Bool(want));
+                }
+                Ok(Value::Bool(false))
+            }
+            Native::ClassContains => {
+                if let Some(Value::ClassList(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    return Ok(Value::Bool(self.class_tokens(id).iter().any(|t| t == &name)));
+                }
+                Ok(Value::Bool(false))
+            }
             // document.body/head/documentElement (라이브 접근자)
             Native::DocQuery(tag) => {
                 let dom = self.dom_arena()?;

@@ -110,14 +110,40 @@ impl Interp {
         self.set_style_attr(id, s);
     }
 
+    // element.classList: class 속성을 공백 구분 토큰 목록으로
+    pub(super) fn class_tokens(&mut self, id: crate::dom::NodeId) -> Vec<String> {
+        if let Ok(dom) = self.dom_arena() {
+            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                if let Some(c) = e.attributes.get("class") {
+                    return c.split_whitespace().map(|s| s.to_string()).collect();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    pub(super) fn set_class_tokens(&mut self, id: crate::dom::NodeId, tokens: Vec<String>) {
+        let joined = tokens.join(" ");
+        if let Ok(dom) = self.dom_arena() {
+            if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                if joined.is_empty() {
+                    e.attributes.remove("class");
+                } else {
+                    e.attributes.insert("class".to_string(), joined);
+                }
+            }
+        }
+    }
+
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
         let dom = self.dom_arena()?;
         let is_el = |d: &crate::dom::Dom, c: crate::dom::NodeId| {
             matches!(d.get(c).node_type, crate::dom::NodeType::Element(_))
         };
         match key {
-            // element.style → inline style 속성에 대한 라이브 프록시
+            // element.style/classList → 속성에 대한 라이브 프록시
             "style" => Ok(Value::Style(id)),
+            "classList" => Ok(Value::ClassList(id)),
             "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
             "value" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(

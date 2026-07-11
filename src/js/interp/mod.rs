@@ -43,6 +43,8 @@ pub enum Value {
     SetVal(Rc<RefCell<Vec<Value>>>),
     // element.style — 요소의 inline style 속성에 대한 라이브 프록시(CSSStyleDeclaration).
     Style(crate::dom::NodeId),
+    // element.classList — 요소의 class 속성에 대한 라이브 프록시(DOMTokenList).
+    ClassList(crate::dom::NodeId),
 }
 
 // 배열 객체: 인덱스 항목(items)과 own-property(props)를 분리 보관.
@@ -132,6 +134,10 @@ pub enum Native {
     StyleSetProperty,
     StyleGetProperty,
     StyleRemoveProperty,
+    ClassAdd,
+    ClassRemove,
+    ClassToggle,
+    ClassContains,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -281,6 +287,7 @@ impl std::fmt::Debug for Value {
             Value::MapVal(_) => write!(f, "[object Map]"),
             Value::SetVal(_) => write!(f, "[object Set]"),
             Value::Style(id) => write!(f, "[style {:?}]", id),
+            Value::ClassList(id) => write!(f, "[classList {:?}]", id),
         }
     }
 }
@@ -1573,6 +1580,30 @@ impl Interp {
                     _ => {
                         let prop = camel_to_kebab(key);
                         Ok(Value::Str(self.style_get(id, &prop)))
+                    }
+                }
+            }
+            // element.classList.add/remove/toggle/contains + length/value
+            Value::ClassList(id) => {
+                let id = *id;
+                match key {
+                    "add" => Ok(Value::Native(Native::ClassAdd)),
+                    "remove" => Ok(Value::Native(Native::ClassRemove)),
+                    "toggle" => Ok(Value::Native(Native::ClassToggle)),
+                    "contains" => Ok(Value::Native(Native::ClassContains)),
+                    "length" => Ok(Value::Num(self.class_tokens(id).len() as f64)),
+                    "value" => Ok(Value::Str(self.class_tokens(id).join(" "))),
+                    _ => {
+                        if let Ok(i) = key.parse::<usize>() {
+                            Ok(self
+                                .class_tokens(id)
+                                .get(i)
+                                .cloned()
+                                .map(Value::Str)
+                                .unwrap_or(Value::Undefined))
+                        } else {
+                            Ok(Value::Undefined)
+                        }
                     }
                 }
             }
