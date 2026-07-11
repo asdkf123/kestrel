@@ -604,10 +604,20 @@ fn collect_pseudo_plans<'a>(
     }
     for which in [PseudoElement::Before, PseudoElement::After] {
         let mut vals = pseudo_specified_values(elem, ancestors, sib, index, which);
-        // content 의 counter()/counters() 를 현재 값으로 치환
+        // content 의 counter()/counters() 를 현재 값으로 치환, open-quote/close-quote 를 인용부호로
         if let Some(Value::Keyword(c)) = vals.get("content") {
-            if c.contains("counter(") || c.contains("counters(") {
-                let resolved = resolve_counters(c, counters);
+            let resolved = if c.contains("counter(") || c.contains("counters(") {
+                resolve_counters(c, counters)
+            } else {
+                c.clone()
+            };
+            let resolved = match resolved.as_str() {
+                "open-quote" => "\u{201C}".to_string(),  // "
+                "close-quote" => "\u{201D}".to_string(), // "
+                "no-open-quote" | "no-close-quote" => String::new(),
+                _ => resolved,
+            };
+            if resolved != *c {
                 vals.insert("content".to_string(), Value::Keyword(resolved));
             }
         }
@@ -940,6 +950,26 @@ mod tests {
             }
         }
         n.children.iter().find_map(find_synthetic)
+    }
+
+    #[test]
+    fn content_open_close_quote() {
+        let mut dom = crate::html::parse_dom("<q>hi</q>".to_string());
+        let ss = crate::css::parse(
+            "q::before { content: open-quote; } q::after { content: close-quote; }".to_string(),
+        );
+        let map = generate_pseudo_elements(&mut dom, &ss);
+        let texts: Vec<String> = map
+            .keys()
+            .filter_map(|&nid| {
+                dom.get(nid).children.first().and_then(|&c| match &dom.get(c).node_type {
+                    NodeType::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+        assert!(texts.contains(&"\u{201C}".to_string()), "여는 인용부호");
+        assert!(texts.contains(&"\u{201D}".to_string()), "닫는 인용부호");
     }
 
     #[test]
