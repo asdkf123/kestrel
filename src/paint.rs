@@ -7,12 +7,92 @@ pub struct Canvas {
     pub pixels: Vec<Color>,
     pub width: usize,
     pub height: usize,
+    // 활성 클립 마스크 (물리 좌표). 설정되면 모든 픽셀 쓰기가 커버리지로 감쇠된다.
+    clip: Option<ClipShape>,
+}
+
+// 픽셀 마스크 도형 (물리 px). 둥근 사각형(사각/원 포함)과 타원.
+#[derive(Debug, Clone, Copy)]
+pub enum ClipShape {
+    RoundRect { rect: Rect, radii: [f32; 4] },
+    Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
+}
+
+impl ClipShape {
+    // 픽셀 중심 (x,y) 의 클립 커버리지 0..1 (경계 안티에일리어싱).
+    fn coverage(&self, x: f32, y: f32) -> f32 {
+        match self {
+            ClipShape::RoundRect { rect, radii } => round_rect_coverage(*rect, *radii, x, y),
+            ClipShape::Ellipse { cx, cy, rx, ry } => {
+                if *rx <= 0.0 || *ry <= 0.0 {
+                    return 0.0;
+                }
+                let nx = (x - cx) / rx;
+                let ny = (y - cy) / ry;
+                let d = (nx * nx + ny * ny).sqrt();
+                ((1.0 - d) * rx.min(*ry) + 0.5).clamp(0.0, 1.0)
+            }
+        }
+    }
+}
+
+// 둥근 사각형의 (fx,fy) 픽셀 커버리지 0..1. 코너별 반경, 경계 AA. 채우기·클립 공용.
+fn round_rect_coverage(rect: Rect, radii: [f32; 4], fx: f32, fy: f32) -> f32 {
+    let maxr = (rect.width / 2.0).min(rect.height / 2.0).max(0.0);
+    let r = [
+        radii[0].clamp(0.0, maxr),
+        radii[1].clamp(0.0, maxr),
+        radii[2].clamp(0.0, maxr),
+        radii[3].clamp(0.0, maxr),
+    ];
+    let (x0, y0) = (rect.x, rect.y);
+    let (x1, y1) = (rect.x + rect.width, rect.y + rect.height);
+    let clamp01 = |v: f32| v.clamp(0.0, 1.0);
+    let corner = |ncx: f32, ncy: f32, rr: f32| {
+        clamp01(rr - ((fx - ncx).powi(2) + (fy - ncy).powi(2)).sqrt() + 0.5)
+    };
+    if fx < x0 + r[0] && fy < y0 + r[0] {
+        corner(x0 + r[0], y0 + r[0], r[0])
+    } else if fx > x1 - r[1] && fy < y0 + r[1] {
+        corner(x1 - r[1], y0 + r[1], r[1])
+    } else if fx > x1 - r[2] && fy > y1 - r[2] {
+        corner(x1 - r[2], y1 - r[2], r[2])
+    } else if fx < x0 + r[3] && fy > y1 - r[3] {
+        corner(x0 + r[3], y1 - r[3], r[3])
+    } else {
+        let cx = clamp01(fx - x0 + 0.5).min(clamp01(x1 - fx + 0.5));
+        let cy = clamp01(fy - y0 + 0.5).min(clamp01(y1 - fy + 0.5));
+        cx.min(cy)
+    }
 }
 
 impl Canvas {
     fn new(width: usize, height: usize) -> Canvas {
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        Canvas { pixels: vec![white; width * height], width, height }
+        Canvas { pixels: vec![white; width * height], width, height, clip: None }
+    }
+
+    // 픽셀 쓰기 관문: 활성 클립 커버리지를 알파에 곱해 블렌드. 모든 그리기가 이걸 통한다.
+    #[inline]
+    fn put(&mut self, px: usize, py: usize, color: Color, alpha: u8) {
+        if alpha == 0 || px >= self.width || py >= self.height {
+            return;
+        }
+        let a = match &self.clip {
+            Some(shape) => {
+                let cov = shape.coverage(px as f32 + 0.5, py as f32 + 0.5);
+                if cov <= 0.0 {
+                    return;
+                }
+                ((alpha as f32) * cov).round() as u8
+            }
+            None => alpha,
+        };
+        if a == 0 {
+            return;
+        }
+        let idx = py * self.width + px;
+        self.pixels[idx] = blend(self.pixels[idx], color, a);
     }
 
     pub fn fill_rect(&mut self, color: Color, rect: Rect) {
@@ -27,8 +107,7 @@ impl Canvas {
         let y1 = (rect.y + rect.height).clamp(0.0, self.height as f32) as usize;
         for y in y0..y1 {
             for x in x0..x1 {
-                let idx = y * self.width + x;
-                self.pixels[idx] = blend(self.pixels[idx], color, color.a);
+                self.put(x, y, color, color.a);
             }
         }
     }
@@ -69,8 +148,7 @@ impl Canvas {
                 if color.a == 0 {
                     continue;
                 }
-                let idx = y * self.width + x;
-                self.pixels[idx] = blend(self.pixels[idx], color, color.a);
+                self.put(x, y, color, color.a);
             }
         }
     }
@@ -85,56 +163,19 @@ impl Canvas {
         if rect.width <= 0.0 || rect.height <= 0.0 {
             return;
         }
-        let maxr = (rect.width / 2.0).min(rect.height / 2.0).max(0.0);
-        let r = [
-            radii[0].clamp(0.0, maxr),
-            radii[1].clamp(0.0, maxr),
-            radii[2].clamp(0.0, maxr),
-            radii[3].clamp(0.0, maxr),
-        ];
-        if r.iter().all(|&v| v <= 0.0) {
-            self.fill_rect(color, rect);
-            return;
-        }
-        let (x0, y0) = (rect.x, rect.y);
-        let (x1, y1) = (rect.x + rect.width, rect.y + rect.height);
-        let px0 = x0.floor().max(0.0) as usize;
-        let py0 = y0.floor().max(0.0) as usize;
-        let px1 = (x1.ceil().max(0.0) as usize).min(self.width);
-        let py1 = (y1.ceil().max(0.0) as usize).min(self.height);
-        let clamp01 = |v: f32| v.clamp(0.0, 1.0);
-        // 코너 중심까지 거리로 커버리지 (0.5 는 픽셀 중심 보정)
-        let corner = |fx: f32, fy: f32, ncx: f32, ncy: f32, rr: f32| {
-            clamp01(rr - ((fx - ncx).powi(2) + (fy - ncy).powi(2)).sqrt() + 0.5)
-        };
+        let px0 = rect.x.floor().max(0.0) as usize;
+        let py0 = rect.y.floor().max(0.0) as usize;
+        let px1 = ((rect.x + rect.width).ceil().max(0.0) as usize).min(self.width);
+        let py1 = ((rect.y + rect.height).ceil().max(0.0) as usize).min(self.height);
         for py in py0..py1 {
-            let fy = py as f32 + 0.5;
             for px in px0..px1 {
-                let fx = px as f32 + 0.5;
-                // 각 모서리는 자기 반경으로 밴드/커버리지 판정 (r=0 코너는 직각)
-                let cov = if fx < x0 + r[0] && fy < y0 + r[0] {
-                    corner(fx, fy, x0 + r[0], y0 + r[0], r[0])
-                } else if fx > x1 - r[1] && fy < y0 + r[1] {
-                    corner(fx, fy, x1 - r[1], y0 + r[1], r[1])
-                } else if fx > x1 - r[2] && fy > y1 - r[2] {
-                    corner(fx, fy, x1 - r[2], y1 - r[2], r[2])
-                } else if fx < x0 + r[3] && fy > y1 - r[3] {
-                    corner(fx, fy, x0 + r[3], y1 - r[3], r[3])
-                } else {
-                    let cx = clamp01(fx - x0 + 0.5).min(clamp01(x1 - fx + 0.5));
-                    let cy = clamp01(fy - y0 + 0.5).min(clamp01(y1 - fy + 0.5));
-                    cx.min(cy)
-                };
+                let cov = round_rect_coverage(rect, radii, px as f32 + 0.5, py as f32 + 0.5);
                 if cov <= 0.0 {
                     continue;
                 }
                 // 색의 알파를 엣지 커버리지와 곱한다 (반투명 오버레이 정확도).
                 let a = (cov * (color.a as f32 / 255.0) * 255.0).round() as u8;
-                if a == 0 {
-                    continue;
-                }
-                let idx = py * self.width + px;
-                self.pixels[idx] = blend(self.pixels[idx], color, a);
+                self.put(px, py, color, a);
             }
         }
     }
@@ -171,8 +212,7 @@ impl Canvas {
                 if a == 0 {
                     continue;
                 }
-                let idx = py * self.width + px;
-                self.pixels[idx] = blend(self.pixels[idx], color, a);
+                self.put(px, py, color, a);
             }
         }
     }
@@ -212,8 +252,7 @@ impl Canvas {
                 if a == 0 {
                     continue;
                 }
-                let idx = py * self.width + px;
-                self.pixels[idx] = blend(self.pixels[idx], color, a);
+                self.put(px, py, color, a);
             }
         }
     }
@@ -261,8 +300,7 @@ impl Canvas {
                     let xa = w[0].0.round().max(0.0) as usize;
                     let xb = (w[1].0.round().max(0.0) as usize).min(self.width);
                     for px in xa..xb {
-                        let idx = py * self.width + px;
-                        self.pixels[idx] = blend(self.pixels[idx], color, color.a);
+                        self.put(px, py, color, color.a);
                     }
                 }
             }
@@ -344,8 +382,7 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
             if a == 0 {
                 continue;
             }
-            let idx = cy as usize * canvas.width + cx as usize;
-            canvas.pixels[idx] = blend(canvas.pixels[idx], gi.color, a);
+            canvas.put(cx as usize, cy as usize, gi.color, a);
         }
     }
 }
@@ -398,8 +435,7 @@ fn blit_glyph_rotated(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstan
             if a == 0 {
                 continue;
             }
-            let idx = py * canvas.width + px;
-            canvas.pixels[idx] = blend(canvas.pixels[idx], gi.color, a);
+            canvas.put(px, py, gi.color, a);
         }
     }
 }
@@ -496,6 +532,8 @@ pub enum DisplayItem {
     // position: sticky — 스크롤 시 뷰포트 상단 top 만큼 아래에 고정. top=스티키 임계,
     // y0=요소의 자연 문서 y. 렌더 시 inner 를 보정된 스크롤로 그린다.
     Sticky { top: f32, y0: f32, inner: Box<DisplayItem> },
+    // 픽셀 마스크 클립 (둥근 overflow / clip-path circle·ellipse). inner 를 shape 로 마스킹.
+    Clipped { shape: ClipShape, inner: Box<DisplayItem> },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -1087,7 +1125,7 @@ pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
     // (스택 레벨, 아이템) 수집 후 레벨로 안정 정렬 → 높은 z-index 가 위에 그려짐.
     // 같은 레벨은 문서 순서 유지(안정 정렬). 정식 스태킹 컨텍스트의 근사.
     let mut buf: Vec<(i32, DisplayItem)> = Vec::new();
-    collect_items(root, 0, None, None, &mut buf);
+    collect_items(root, 0, None, None, None, &mut buf);
     buf.sort_by_key(|(z, _)| *z);
     buf.into_iter().map(|(_, it)| it).collect()
 }
@@ -1193,6 +1231,7 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         }
         // sticky 래퍼는 클립 전에 감싸지 않으므로 여기 도달 안 함 (exhaustive 용)
         sticky @ DisplayItem::Sticky { .. } => Some(sticky),
+        clipped @ DisplayItem::Clipped { .. } => Some(clipped),
     }
 }
 
@@ -1233,10 +1272,70 @@ fn clip_path_rect(lb: &LayoutBox) -> Option<Rect> {
     })
 }
 
+// 이 박스가 세우는 둥근 픽셀 마스크: clip-path circle()/ellipse()/inset(...round),
+// 또는 overflow 클립 + border-radius(둥근 카드가 자식을 코너에서 자름).
+fn round_clip_shape(lb: &LayoutBox) -> Option<ClipShape> {
+    let b = lb.dimensions.border_box();
+    if let Some(Value::Keyword(raw)) = lb.styled_node.value("clip-path") {
+        let s = raw.trim();
+        // 위치("at ...") 분리 후 반경 토큰 파싱
+        let pos_center = |rest: &str| -> (f32, f32) {
+            if let Some(at) = rest.find("at ") {
+                let p = parse_bg_position(rest[at + 3..].trim());
+                (b.x + p.0.resolve(b.width, 0.0), b.y + p.1.resolve(b.height, 0.0))
+            } else {
+                (b.x + b.width / 2.0, b.y + b.height / 2.0)
+            }
+        };
+        let len = |t: &str, base: f32| -> Option<f32> {
+            match t {
+                "closest-side" => Some(b.width.min(b.height) / 2.0),
+                "farthest-side" => Some(b.width.max(b.height) / 2.0),
+                _ if t.ends_with('%') => t.trim_end_matches('%').parse::<f32>().ok().map(|v| v / 100.0 * base),
+                _ => t.trim_end_matches("px").parse::<f32>().ok(),
+            }
+        };
+        if let Some(inner) = s.strip_prefix("circle(").and_then(|x| x.strip_suffix(')')) {
+            let (cx, cy) = pos_center(inner);
+            let rpart = inner.split("at").next().unwrap_or("").trim();
+            let r = if rpart.is_empty() {
+                b.width.min(b.height) / 2.0
+            } else {
+                len(rpart, b.width.min(b.height))?
+            };
+            return Some(ClipShape::Ellipse { cx, cy, rx: r, ry: r });
+        }
+        if let Some(inner) = s.strip_prefix("ellipse(").and_then(|x| x.strip_suffix(')')) {
+            let (cx, cy) = pos_center(inner);
+            let radii: Vec<&str> = inner.split("at").next().unwrap_or("").split_whitespace().collect();
+            let rx = radii.first().and_then(|t| len(t, b.width)).unwrap_or(b.width / 2.0);
+            let ry = radii.get(1).and_then(|t| len(t, b.height)).unwrap_or(b.height / 2.0);
+            return Some(ClipShape::Ellipse { cx, cy, rx, ry });
+        }
+        // inset(... round R): 둥근 사각형
+        if s.starts_with("inset(") && s.contains("round") {
+            if let Some(rect) = clip_path_rect(lb) {
+                let rpart = s.rsplit("round").next().unwrap_or("").trim_end_matches(')').trim();
+                let r = len(rpart.split_whitespace().next().unwrap_or(""), rect.width.min(rect.height)).unwrap_or(0.0);
+                return Some(ClipShape::RoundRect { rect, radii: [r; 4] });
+            }
+        }
+    }
+    // overflow 클립 + border-radius → 둥근 사각형으로 자손 코너 클립
+    if overflow_clips(lb) {
+        let radii = corner_radii(lb);
+        if radii.iter().any(|&r| r > 0.0) {
+            return Some(ClipShape::RoundRect { rect: lb.dimensions.padding_box(), radii });
+        }
+    }
+    None
+}
+
 fn collect_items(
     layout_box: &LayoutBox,
     parent_z: i32,
     clip: Option<Rect>,
+    round_clip: Option<ClipShape>,
     sticky: Option<(f32, f32)>,
     buf: &mut Vec<(i32, DisplayItem)>,
 ) {
@@ -1262,6 +1361,8 @@ fn collect_items(
         },
         None => clip,
     };
+    // 둥근 픽셀 마스크(둥근 overflow / clip-path circle·ellipse). 안쪽(자신) 우선.
+    let round_clip = round_clip_shape(layout_box).or(round_clip);
     let mut local: Vec<DisplayItem> = Vec::new();
     // 그림자 → 배경/테두리(border-radius 포함) → 안쪽그림자 → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
@@ -1358,12 +1459,16 @@ fn collect_items(
     {
         local.clear();
     }
-    // 이 박스 자신의 아이템은 부모 클립으로 자르고, sticky 면 래핑
+    // 이 박스 자신의 아이템은 부모 클립으로 자르고, 둥근 클립·sticky 면 래핑
     for it in local {
         if let Some(clipped) = clip_apply(it, clip) {
-            let final_it = match sticky_here {
-                Some((top, y0)) => DisplayItem::Sticky { top, y0, inner: Box::new(clipped) },
+            let masked = match round_clip {
+                Some(shape) => DisplayItem::Clipped { shape, inner: Box::new(clipped) },
                 None => clipped,
+            };
+            let final_it = match sticky_here {
+                Some((top, y0)) => DisplayItem::Sticky { top, y0, inner: Box::new(masked) },
+                None => masked,
             };
             buf.push((z, final_it));
         }
@@ -1379,7 +1484,7 @@ fn collect_items(
         clip
     };
     for child in &layout_box.children {
-        collect_items(child, z, child_clip, sticky_here, buf);
+        collect_items(child, z, child_clip, round_clip, sticky_here, buf);
     }
     // transform: rotate — 서브트리 아이템을 border-box 중심 기준으로 회전.
     // (translate/scale 는 레이아웃 단계에서 이미 박스에 반영됨.)
@@ -1501,6 +1606,7 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         }
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
+        DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
     }
 }
 
@@ -1574,6 +1680,7 @@ fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
             rect.y = ny - rect.height / 2.0;
         }
         DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
+        DisplayItem::Clipped { inner, .. } => rotate_item(inner, cx, cy, angle),
     }
 }
 
@@ -1602,6 +1709,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
         DisplayItem::Polygon { color, .. } => color.a = s(color.a),
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 알파는 별도 — 근사로 스킵
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
+        DisplayItem::Clipped { inner, .. } => scale_item_alpha(inner, f),
     }
 }
 
@@ -1725,6 +1833,24 @@ fn draw_item(
             let dy = (scroll_y + top - y0).max(0.0);
             draw_item(canvas, inner, scroll_y - dy, scale, vh, fonts, cache, images);
         }
+        DisplayItem::Clipped { shape, inner } => {
+            // 논리 좌표 shape 를 물리 좌표로 변환해 활성 클립으로 설정, inner 그린 뒤 복원.
+            let phys = match shape {
+                ClipShape::RoundRect { rect, radii } => {
+                    ClipShape::RoundRect { rect: scale_rect(rect), radii: radii.map(|r| r * scale) }
+                }
+                ClipShape::Ellipse { cx, cy, rx, ry } => ClipShape::Ellipse {
+                    cx: cx * scale,
+                    cy: (cy - scroll_y) * scale,
+                    rx: rx * scale,
+                    ry: ry * scale,
+                },
+            };
+            let prev = canvas.clip;
+            canvas.clip = Some(phys);
+            draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
+            canvas.clip = prev;
+        }
     }
 }
 
@@ -1779,8 +1905,7 @@ fn blit_image(
                     continue;
                 }
                 let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
-                let idx = py * canvas.width + px;
-                canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
+                canvas.put(px, py, fg, alpha);
             }
         }
         return;
@@ -1827,8 +1952,7 @@ fn blit_image(
             let s = (sy * img.width + sx) * 4;
             let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
             let alpha = img.rgba[s + 3];
-            let idx = py * canvas.width + px;
-            canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
+            canvas.put(px, py, fg, alpha);
         }
     }
 }
@@ -1930,6 +2054,38 @@ mod tests {
         assert_eq!(sh[1].spread, 1.0);
         assert!(sh[2].inset, "셋째는 inset");
         assert_eq!(sh[2].blur, 5.0);
+    }
+
+    #[test]
+    fn rounded_overflow_clips_child_corner() {
+        // 반경 20(=원) overflow:hidden 컨테이너 안 자식 배경이 코너에서 잘림
+        let c = canvas_for(
+            "<div class=\"card\"><div class=\"fill\"></div></div>",
+            "html,body{display:block} \
+             .card{display:block;width:40px;height:40px;border-radius:20px;overflow:hidden} \
+             .fill{display:block;width:40px;height:40px;background-color:#ff0000}",
+            40.0,
+            40.0,
+        );
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let at = |x: usize, y: usize| c.pixels[y * c.width + x];
+        assert_ne!(at(2, 2), red, "코너는 둥근 클립으로 잘림");
+        assert_eq!(at(20, 20), red, "중앙은 채워짐");
+    }
+
+    #[test]
+    fn clip_path_circle_masks_corners() {
+        let c = canvas_for(
+            "<div class=\"b\"></div>",
+            "html,body{display:block} \
+             .b{display:block;width:40px;height:40px;background-color:#0000ff;clip-path:circle(20px)}",
+            40.0,
+            40.0,
+        );
+        let blue = Color { r: 0, g: 0, b: 255, a: 255 };
+        let at = |x: usize, y: usize| c.pixels[y * c.width + x];
+        assert_ne!(at(2, 2), blue, "원 밖 코너 잘림");
+        assert_eq!(at(20, 20), blue, "원 중앙 채워짐");
     }
 
     #[test]
