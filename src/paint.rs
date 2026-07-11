@@ -1178,7 +1178,11 @@ fn collect_items(
             },
             _ => ImageFit::Fill, // object-fit 기본값
         };
-        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit, pos: None });
+        let pos = layout_box.styled_node.value("object-position").and_then(|v| match v {
+            Value::Keyword(s) => Some(parse_bg_position(&s)),
+            _ => None,
+        });
+        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit, pos });
     }
     // text-shadow: 글리프 뒤에 오프셋+색으로 복제 (blur 미지원, 단일 그림자)
     let text_shadow = {
@@ -1648,7 +1652,7 @@ fn blit_image(
     }
     let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
     // 그려질 목적지 사각형 dr (이미지 전체가 매핑되는 영역; rect 밖은 클립)
-    let dr = match fit {
+    let mut dr = match fit {
         ImageFit::Fill | ImageFit::Tile | ImageFit::TileX | ImageFit::TileY => rect,
         ImageFit::Contain => {
             let s = (rect.width / iw).min(rect.height / ih);
@@ -1665,10 +1669,15 @@ fn blit_image(
             Rect { x: cx - w / 2.0, y: cy - h / 2.0, width: w, height: h }
         }
         ImageFit::Natural => {
-            // no-repeat: background-position 오프셋만큼 이동, rect 로 클립
-            Rect { x: rect.x + off_x, y: rect.y + off_y, width: iw * scale, height: ih * scale }
+            Rect { x: rect.x, y: rect.y, width: iw * scale, height: ih * scale }
         }
     };
+    // background-position / object-position: 지정 시 중앙 정렬 대신 위치 오프셋으로 배치.
+    // (Fill 은 dr=rect 라 오프셋 0 → 무영향.)
+    if let Some((px, py)) = pos {
+        dr.x = rect.x + px.resolve(rect.width, dr.width);
+        dr.y = rect.y + py.resolve(rect.height, dr.height);
+    }
     // 실제로 칠할 영역 = dr ∩ rect ∩ 캔버스
     let x0 = dr.x.max(rect.x).max(0.0) as usize;
     let y0 = dr.y.max(rect.y).max(0.0) as usize;

@@ -290,12 +290,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // background 단축: 색 → background-color, url() → background-image.
         // position/repeat/size/attachment/gradient 등은 근사(드롭).
         "background" => background_shorthand(value_text),
-        // background-position: 다중 토큰("center top" 등) 원문 보존, paint 가 파싱.
-        "background-position" => {
-            vec![Declaration {
-                name: "background-position".to_string(),
-                value: Value::Keyword(value_text.trim().to_string()),
-            }]
+        // background-position/object-position: 다중 토큰("center top" 등) 원문 보존,
+        // paint 가 파싱. (position 계열은 축별 다값이라 interpret_value 로 못 담음)
+        "background-position" | "object-position" => {
+            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
         "outline" => {
@@ -634,6 +632,14 @@ mod tests {
             matches!(find(&d, "background-position"), Some(Value::Keyword(k)) if k == "center"),
             "position center"
         );
+    }
+
+    #[test]
+    fn position_longhands_preserve_raw_multivalue() {
+        let d = expand_declaration("object-position", "right bottom");
+        assert!(matches!(d.first().map(|x| &x.value), Some(Value::Keyword(k)) if k == "right bottom"));
+        let d2 = expand_declaration("background-position", "center top");
+        assert!(matches!(d2.first().map(|x| &x.value), Some(Value::Keyword(k)) if k == "center top"));
     }
 
     #[test]
