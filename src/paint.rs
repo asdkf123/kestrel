@@ -1791,6 +1791,10 @@ fn collect_items(
             _ => None,
         }
     };
+    // 인라인 요소 배경(<mark> 등) — 글리프/장식보다 뒤에 칠한다
+    for (rect, color) in &layout_box.inline_bgs {
+        local.push(DisplayItem::Rect { color: *color, rect: *rect });
+    }
     if let Some((dx, dy, color)) = text_shadow {
         for gi in &layout_box.glyphs {
             let mut sh = *gi;

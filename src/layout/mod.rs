@@ -104,6 +104,8 @@ pub struct LayoutBox<'a> {
     pub links: Vec<(Rect, String)>,
     // 링크 밑줄/리스트 불릿 등 (사각형, 색)
     pub decorations: Vec<(Rect, Color)>,
+    // 인라인 요소 배경(<mark>, background 있는 <span>/<code> 등) — 글리프 뒤에 칠함
+    pub inline_bgs: Vec<(Rect, Color)>,
     // 리스트 마커 텍스트 (ol: "1." / ul: "•"). build 시 부모 리스트가 부여.
     pub list_marker: Option<String>,
     // 콘텐츠의 실제 사용 폭 (shrink-to-fit float 배치용)
@@ -126,6 +128,7 @@ impl<'a> LayoutBox<'a> {
             gradient: None,
             links: Vec::new(),
             decorations: Vec::new(),
+            inline_bgs: Vec::new(),
             list_marker: None,
             used_width: 0.0,
             float_ctx: None,
@@ -145,6 +148,7 @@ impl<'a> LayoutBox<'a> {
             gradient: None,
             links: Vec::new(),
             decorations: Vec::new(),
+            inline_bgs: Vec::new(),
             list_marker: None,
             used_width: 0.0,
             float_ctx: None,
@@ -675,6 +679,10 @@ impl<'a> LayoutBox<'a> {
             r.x += dx;
             r.y += dy;
         }
+        for (r, _) in &mut self.inline_bgs {
+            r.x += dx;
+            r.y += dy;
+        }
         for c in &mut self.children {
             c.translate(dx, dy);
         }
@@ -745,6 +753,9 @@ impl<'a> LayoutBox<'a> {
         for (r, _) in &mut self.decorations {
             r.y += dy;
         }
+        for (r, _) in &mut self.inline_bgs {
+            r.y += dy;
+        }
         for c in &mut self.children {
             c.translate(0.0, dy);
         }
@@ -776,6 +787,12 @@ impl<'a> LayoutBox<'a> {
             r.width *= sx;
             r.height *= sy;
         }
+        for (r, _) in &mut self.inline_bgs {
+            r.x = sc(r.x, ox, sx);
+            r.y = sc(r.y, oy, sy);
+            r.width *= sx;
+            r.height *= sy;
+        }
         for c in &mut self.children {
             c.scale_subtree(ox, oy, sx, sy);
         }
@@ -787,6 +804,7 @@ impl<'a> LayoutBox<'a> {
         self.glyphs.clear();
         self.links.clear();
         self.decorations.clear();
+        self.inline_bgs.clear();
         self.image = None;
         self.background_image = None;
         self.gradient = None;
@@ -2708,6 +2726,33 @@ mod tests {
         let mut dd = Vec::new();
         find(&lb, "dd", &mut dd);
         assert!((dd[0].0 - 40.0).abs() < 0.5, "dd 좌여백 40 (실제 {})", dd[0].0);
+    }
+
+    #[test]
+    fn inline_element_background_paints() {
+        let fs = fonts();
+        let ss = crate::css::user_agent_stylesheet();
+        let root = crate::html::parse_dom("<p>a <mark>hi</mark> b</p>".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        fn collect(b: &LayoutBox, out: &mut Vec<Color>) {
+            for (_, c) in &b.inline_bgs {
+                out.push(*c);
+            }
+            for c in &b.children {
+                collect(c, out);
+            }
+        }
+        let mut bgs = Vec::new();
+        collect(&lb, &mut bgs);
+        // UA mark { background-color: #ffff00 } → 노랑 inline 배경
+        assert!(
+            bgs.iter().any(|c| c.r == 255 && c.g == 255 && c.b == 0),
+            "mark 노랑 배경 (실제 {:?})",
+            bgs
+        );
     }
 
     #[test]

@@ -97,6 +97,7 @@ struct TextStyle {
     deco: u8, // text-decoration 비트: 1=underline 2=line-through 4=overline
     deco_color: Option<Color>, // text-decoration-color (없으면 글자색 사용)
     voffset: f32, // vertical-align 세로 오프셋(px, 양수=아래). super/sub/length.
+    bg: Option<Color>, // 인라인 요소 배경(<mark>/background 있는 span 등). 글리프 뒤에 칠함.
 }
 
 // text-decoration-color 명시값 (currentColor/미지정 → None)
@@ -159,6 +160,7 @@ impl<'a> LayoutBox<'a> {
             deco: deco_flags(self.styled_node.value("text-decoration-line")),
             deco_color: deco_color_of(self.styled_node),
             voffset: vertical_offset(self.styled_node, base_px),
+            bg: None, // 블록 자체 배경은 paint 가 따로 칠함 — 인라인 자손만 여기서
         };
 
         // white-space: nowrap/pre 는 폭 기반 줄바꿈 안 함. pre 계열은 \n 을 강제 개행,
@@ -370,6 +372,19 @@ impl<'a> LayoutBox<'a> {
                 word_px_max = word_px_max.max(st.px);
                 word_color = st.color;
             }
+            // 인라인 배경(<mark> 등): 단어 뒤에 칠할 사각형. 단어 사이 공백까지 이어지도록
+            // space_adv 만큼 확장해 인접 강조 단어가 끊기지 않게 한다.
+            if let Some(bg) = word.iter().find_map(|&(_, st)| st.bg) {
+                self.inline_bgs.push((
+                    Rect {
+                        x: word_x0,
+                        y: baseline - ascent_px,
+                        width: (pen_x - word_x0) + space_adv,
+                        height: ascent_px - descent_px,
+                    },
+                    bg,
+                ));
+            }
             // 링크: 히트 영역 (단어 폭, baseline 위아래로)
             if let Some(li) = word.iter().find_map(|&(_, st)| st.link) {
                 self.links.push((
@@ -575,6 +590,12 @@ fn collect_node<'a>(
                     }
                     _ => style.link,
                 };
+                // 배경색은 상속 안 됨: 이 요소가 지정하면 그 색, 아니면 조상의 칠 배경 유지
+                // (예: <mark> 안 <span> 은 mark 노랑을 그대로 보이게).
+                let cbg = match node.value("background-color") {
+                    Some(Value::Color(c)) if c.a > 0 => Some(c),
+                    _ => style.bg,
+                };
                 let cstyle = TextStyle {
                     color: ccolor,
                     px: cpx,
@@ -585,6 +606,7 @@ fn collect_node<'a>(
                     deco: style.deco | deco_flags(node.value("text-decoration-line")),
                     deco_color: deco_color_of(node).or(style.deco_color),
                     voffset: vertical_offset(node, cpx),
+                    bg: cbg,
                 };
                 for child in &node.children {
                     collect_node(child, cstyle, runs, hrefs);
