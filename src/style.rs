@@ -205,6 +205,7 @@ fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&Sibli
     match p {
         Pseudo::Dynamic => false, // hover/focus/active/visited 등 정적 렌더에선 비매칭
         Pseudo::Not(inner) => !inner.iter().any(|s| matches_compound(elem, s, sib)),
+        Pseudo::Is(inner) => inner.iter().any(|s| matches_compound(elem, s, sib)),
         // 구조적: 대상(sib=Some)만 정확 평가, 비대상은 통과(근사)
         Pseudo::FirstChild => sib.map(|s| s.index == 1).unwrap_or(true),
         Pseudo::LastChild => sib.map(|s| s.index == s.total).unwrap_or(true),
@@ -879,6 +880,35 @@ mod tests {
         // ::before 는 소유 div 의 첫 자식 (span 앞)
         let div = &styled;
         assert!(matches!(&div.children[0].node.node_type, NodeType::Element(e) if is_synthetic_pseudo(e)));
+    }
+
+    #[test]
+    fn is_where_selectors() {
+        let root = crate::html::parse_dom(
+            "<div><h2 class=\"t\">a</h2><p>b</p><span>c</span></div>".to_string(),
+        );
+        // :is(h2, p) → h2 와 p 만 매칭, span 은 아님
+        let ss = crate::css::parse(
+            ":is(h2, p) { color: #ff0000; } :where(span) { width: 3px; } \
+             :not(h2, span) { height: 5px; }"
+                .to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        fn find_tag<'a>(n: &'a StyledNode<'a>, tag: &str) -> Option<&'a StyledNode<'a>> {
+            if matches!(&n.node.node_type, NodeType::Element(e) if e.tag_name == tag) {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find_tag(c, tag))
+        }
+        let red = Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 });
+        assert_eq!(find_tag(&styled, "h2").unwrap().value("color"), Some(red.clone()), ":is h2");
+        assert_eq!(find_tag(&styled, "p").unwrap().value("color"), Some(red), ":is p");
+        assert_eq!(find_tag(&styled, "span").unwrap().value("color"), None, ":is 는 span 제외");
+        // :where(span) → span width
+        assert_eq!(find_tag(&styled, "span").unwrap().value("width"), Some(Value::Length(3.0, Unit::Px)));
+        // :not(h2, span) → p 만 height (h2/span 제외)
+        assert_eq!(find_tag(&styled, "p").unwrap().value("height"), Some(Value::Length(5.0, Unit::Px)));
+        assert_eq!(find_tag(&styled, "h2").unwrap().value("height"), None, ":not 이 h2 제외");
     }
 
     #[test]

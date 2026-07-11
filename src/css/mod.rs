@@ -55,6 +55,7 @@ pub enum Pseudo {
     NthLastOfType(i32, i32), // 같은 타입 중 an+b (뒤에서)
     OnlyOfType,              // 같은 타입 형제가 자기 하나뿐
     Not(Vec<SimpleSelector>),
+    Is(Vec<SimpleSelector>), // :is()/:where()/:matches() — 인자 중 하나라도 매칭
     Root,
     Empty,
     // 폼 상태 (요소 속성으로 정적 판별)
@@ -687,6 +688,20 @@ impl Parser {
     }
 
     // 의사 클래스 파싱. 함수형(nth-child(..)/not(..))과 키워드형.
+    // :is()/:not() 인자: 콤마로 구분된 compound 선택자 목록을 파싱 (복합 결합자는 근사로 첫 compound).
+    fn parse_selector_arg_list(arg: &str) -> Vec<SimpleSelector> {
+        arg.split(',')
+            .filter_map(|part| {
+                let p = part.trim();
+                if p.is_empty() {
+                    return None;
+                }
+                let mut inner = Parser { pos: 0, input: p.to_string(), viewport_width: 0.0, font_faces: Vec::new() };
+                inner.parse_simple_selector()
+            })
+            .collect()
+    }
+
     fn parse_pseudo(&mut self) -> Option<Pseudo> {
         let name = self.parse_identifier().to_ascii_lowercase();
         // 함수형: 괄호 안 인자
@@ -714,12 +729,24 @@ impl Parser {
                     Some(Pseudo::NthLastOfType(a, b))
                 }
                 "not" => {
-                    // :not(단순) — 단일 compound 만 (근사)
-                    let mut inner = Parser { pos: 0, input: arg, viewport_width: 0.0, font_faces: Vec::new() };
-                    let s = inner.parse_simple_selector()?;
-                    Some(Pseudo::Not(vec![s]))
+                    // :not(a, b, ...) — 콤마 목록 중 하나라도 매칭되면 제외
+                    let sels = Self::parse_selector_arg_list(&arg);
+                    if sels.is_empty() {
+                        Some(Pseudo::Dynamic)
+                    } else {
+                        Some(Pseudo::Not(sels))
+                    }
                 }
-                _ => Some(Pseudo::Dynamic), // is/where/lang 등 미지원 → 근사
+                "is" | "where" | "matches" => {
+                    // :is(a, b, ...) — 인자 중 하나라도 매칭
+                    let sels = Self::parse_selector_arg_list(&arg);
+                    if sels.is_empty() {
+                        Some(Pseudo::Dynamic)
+                    } else {
+                        Some(Pseudo::Is(sels))
+                    }
+                }
+                _ => Some(Pseudo::Dynamic), // lang/has 등 미지원 → 근사
             };
         }
         Some(match name.as_str() {
