@@ -397,7 +397,10 @@ pub enum ImageFit {
     Contain, // 종횡비 유지, 박스 안에 들어가게 (레터박스)
     Cover,   // 종횡비 유지, 박스를 덮게 (넘치는 부분 크롭)
     None,    // 고유 크기, 중앙, 클립
-    Natural, // 배경 이미지: 좌상단 고유 크기, 클립
+    Natural, // 배경 이미지 no-repeat: 좌상단 고유 크기, 클립
+    Tile,    // background-repeat: repeat — 양축 타일
+    TileX,   // repeat-x — 가로만 타일
+    TileY,   // repeat-y — 세로만 타일
 }
 
 // 트리 borrow 없이 스크롤 오프셋만 바꿔 반복 래스터화할 수 있다 (실제 브라우저 구조).
@@ -1071,11 +1074,17 @@ fn collect_items(
     emit_outline(layout_box, &mut local);
     emit_svg(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
-        // background-size: cover/contain 지원. 그 외/미지정은 Natural(좌상단 고유크기).
+        // background-size: cover/contain 우선. 아니면 background-repeat 로 타일 여부 결정
+        // (CSS 기본은 repeat → Tile; no-repeat 이면 Natural).
         let fit = match layout_box.styled_node.value("background-size") {
             Some(Value::Keyword(ref k)) if k == "cover" => ImageFit::Cover,
             Some(Value::Keyword(ref k)) if k == "contain" => ImageFit::Contain,
-            _ => ImageFit::Natural,
+            _ => match layout_box.styled_node.value("background-repeat") {
+                Some(Value::Keyword(ref k)) if k == "no-repeat" => ImageFit::Natural,
+                Some(Value::Keyword(ref k)) if k == "repeat-x" => ImageFit::TileX,
+                Some(Value::Keyword(ref k)) if k == "repeat-y" => ImageFit::TileY,
+                _ => ImageFit::Tile, // 기본 repeat
+            },
         };
         local.push(DisplayItem::Image {
             image: idx,
@@ -1497,10 +1506,47 @@ fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f
     if iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
+    // 타일링(background-repeat): 고유 크기(×scale)로 rect 안을 반복. 좌상단 기준 모듈로 샘플.
+    if matches!(fit, ImageFit::Tile | ImageFit::TileX | ImageFit::TileY) {
+        let (tile_x, tile_y) = (
+            matches!(fit, ImageFit::Tile | ImageFit::TileX),
+            matches!(fit, ImageFit::Tile | ImageFit::TileY),
+        );
+        let (tw, th) = (iw * scale, ih * scale);
+        let x0 = rect.x.max(0.0) as usize;
+        let y0 = rect.y.max(0.0) as usize;
+        let x1 = ((rect.x + rect.width).min(canvas.width as f32)).max(0.0) as usize;
+        let y1 = ((rect.y + rect.height).min(canvas.height as f32)).max(0.0) as usize;
+        for py in y0..y1 {
+            let ty = (py as f32 + 0.5 - rect.y) / th;
+            if !tile_y && ty >= 1.0 {
+                continue; // 세로 미반복: 한 이미지 높이까지만
+            }
+            let fy = if tile_y { ty - ty.floor() } else { ty };
+            let sy = ((fy * ih) as i32).clamp(0, img.height as i32 - 1) as usize;
+            for px in x0..x1 {
+                let tx = (px as f32 + 0.5 - rect.x) / tw;
+                if !tile_x && tx >= 1.0 {
+                    continue;
+                }
+                let fx = if tile_x { tx - tx.floor() } else { tx };
+                let sx = ((fx * iw) as i32).clamp(0, img.width as i32 - 1) as usize;
+                let s = (sy * img.width + sx) * 4;
+                let alpha = img.rgba[s + 3];
+                if alpha == 0 {
+                    continue;
+                }
+                let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
+                let idx = py * canvas.width + px;
+                canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
+            }
+        }
+        return;
+    }
     let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
     // 그려질 목적지 사각형 dr (이미지 전체가 매핑되는 영역; rect 밖은 클립)
     let dr = match fit {
-        ImageFit::Fill => rect,
+        ImageFit::Fill | ImageFit::Tile | ImageFit::TileX | ImageFit::TileY => rect,
         ImageFit::Contain => {
             let s = (rect.width / iw).min(rect.height / ih);
             let (w, h) = (iw * s, ih * s);
@@ -1685,6 +1731,22 @@ mod tests {
         // circle 중심 cx=7,cy=5 → 박스 (14,10). 파랑
         let c = canvas.pixels[10 * 20 + 14];
         assert!(c.b > 200 && c.r < 60, "circle 파랑, 실제 {:?}", c);
+    }
+
+    #[test]
+    fn background_tile_fills_box() {
+        // 1x1 빨강 이미지를 4x4 rect 에 Tile → 전체가 빨강
+        let img = crate::png::Image { width: 1, height: 1, rgba: vec![255, 0, 0, 255] };
+        let mut canvas = Canvas::new(4, 4);
+        blit_image(&mut canvas, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::Tile);
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        assert_eq!(canvas.pixels[0], red);
+        assert_eq!(canvas.pixels[3 * 4 + 3], red, "우하단도 타일로 채워짐");
+        // TileX: 세로는 한 줄만 (1px 높이) → (0,2)는 안 칠해짐(흰색)
+        let mut c2 = Canvas::new(4, 4);
+        blit_image(&mut c2, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::TileX);
+        assert_eq!(c2.pixels[0], red, "가로 타일 첫 줄");
+        assert_eq!(c2.pixels[2 * 4 + 0], Color { r: 255, g: 255, b: 255, a: 255 }, "TileX 는 세로 미반복");
     }
 
     #[test]
