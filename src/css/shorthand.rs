@@ -88,6 +88,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // opacity: 0..1 수 또는 퍼센트(50%). 스칼라를 Length(op, Px)로 실어 paint 가 읽음.
+        // (미지원 단위 아님 — 파서가 0 아닌 단위없는 수를 드롭하므로 여기서 처리.)
+        "opacity" => {
+            let v = value_text.trim();
+            let n = if let Some(p) = v.strip_suffix('%') {
+                p.trim().parse::<f32>().ok().map(|x| x / 100.0)
+            } else {
+                v.parse::<f32>().ok()
+            };
+            match n {
+                Some(op) => vec![Declaration {
+                    name: "opacity".to_string(),
+                    value: Value::Length(op.clamp(0.0, 1.0), Unit::Px),
+                }],
+                None => Vec::new(),
+            }
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로

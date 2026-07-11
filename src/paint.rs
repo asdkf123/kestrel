@@ -209,12 +209,17 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
             continue;
         }
         for x in 0..bm.width {
-            let a = bm.data[y * bm.width + x];
-            if a == 0 {
+            let cov = bm.data[y * bm.width + x];
+            if cov == 0 {
                 continue;
             }
             let cx = ox + x as i32;
             if cx < 0 || cx as usize >= canvas.width {
+                continue;
+            }
+            // 커버리지(안티에일리어싱)와 글리프 색 알파(opacity 반영)를 결합
+            let a = (cov as u32 * gi.color.a as u32 / 255) as u8;
+            if a == 0 {
                 continue;
             }
             let idx = cy as usize * canvas.width + cx as usize;
@@ -480,6 +485,9 @@ fn collect_items(
     } else {
         sticky
     };
+    // opacity: 이 서브트리(자신+자손)의 모든 아이템 알파에 곱해질 지점 표시.
+    // 근사(그룹 합성 아님): 겹치는 자손은 개별 블렌드되지만 대다수 UI 엔 충분.
+    let subtree_start = buf.len();
     let mut local: Vec<DisplayItem> = Vec::new();
     // 그림자 → 배경/테두리(border-radius 포함) → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
@@ -525,6 +533,39 @@ fn collect_items(
     };
     for child in &layout_box.children {
         collect_items(child, z, child_clip, sticky_here, buf);
+    }
+    // opacity < 1: 방금 채운 서브트리 구간의 알파에 opacity 를 곱한다.
+    // 중첩 opacity 는 자연히 누적(자식 패스 ×op_child 후 부모 패스 ×op_parent).
+    if let Some(op) = element_opacity(layout_box) {
+        for (_, item) in buf[subtree_start..].iter_mut() {
+            scale_item_alpha(item, op);
+        }
+    }
+}
+
+// opacity 프로퍼티 (Length 로 실려옴). 1 미만일 때만 Some.
+fn element_opacity(lb: &LayoutBox) -> Option<f32> {
+    match lb.styled_node.value("opacity") {
+        Some(Value::Length(op, _)) if op < 1.0 => Some(op.max(0.0)),
+        _ => None,
+    }
+}
+
+// 디스플레이 아이템의 색 알파에 factor(0..1)를 곱한다 (이미지는 근사로 스킵).
+fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
+    let s = |a: u8| (a as f32 * f).round().clamp(0.0, 255.0) as u8;
+    match item {
+        DisplayItem::Rect { color, .. } => color.a = s(color.a),
+        DisplayItem::RoundRect { color, .. } => color.a = s(color.a),
+        DisplayItem::Shadow { color, .. } => color.a = s(color.a),
+        DisplayItem::Glyph(gi) => gi.color.a = s(gi.color.a),
+        DisplayItem::Gradient { stops, .. } => {
+            for (c, _) in stops.iter_mut() {
+                c.a = s(c.a);
+            }
+        }
+        DisplayItem::Image { .. } => {} // 이미지 per-pixel 알파는 별도 — 근사로 스킵
+        DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
     }
 }
 
@@ -763,6 +804,35 @@ mod tests {
         );
         assert_eq!(canvas.pixels[0], Color { r: 255, g: 0, b: 0, a: 255 });
         assert_eq!(canvas.pixels[3 * 4 + 3], Color { r: 255, g: 255, b: 255, a: 255 });
+    }
+
+    #[test]
+    fn opacity_fades_background_toward_white() {
+        // opacity: 0.5 인 빨강 박스를 흰 배경 위에 → 분홍(약 255,128,128)
+        let canvas = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 2px; height: 2px; background-color: #ff0000; opacity: 0.5; }",
+            4.0,
+            4.0,
+        );
+        let p = canvas.pixels[0];
+        assert_eq!(p.r, 255, "빨강 채널은 유지");
+        assert!((p.g as i32 - 128).abs() <= 2, "초록 ~128 (흰색과 블렌드), 실제 {}", p.g);
+        assert!((p.b as i32 - 128).abs() <= 2, "파랑 ~128, 실제 {}", p.b);
+    }
+
+    #[test]
+    fn opacity_multiplies_through_descendants() {
+        // 부모 opacity:0.5, 자식 배경 검정 → 자식도 반투명 (약 128 회색)
+        let canvas = canvas_for(
+            "<div><span></span></div>",
+            "div { display: block; opacity: 0.5; } \
+             span { display: block; width: 2px; height: 2px; background-color: #000000; }",
+            4.0,
+            4.0,
+        );
+        let p = canvas.pixels[0];
+        assert!((p.r as i32 - 128).abs() <= 2, "자손도 부모 opacity 적용, 실제 {}", p.r);
     }
 
     #[test]
