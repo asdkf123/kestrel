@@ -1123,6 +1123,31 @@ impl Interp {
                     MathOp::Pow => a.powf(args.get(1).map(to_num).unwrap_or(f64::NAN)),
                     MathOp::Min => args.iter().map(to_num).fold(f64::INFINITY, f64::min),
                     MathOp::Max => args.iter().map(to_num).fold(f64::NEG_INFINITY, f64::max),
+                    MathOp::Trunc => a.trunc(),
+                    MathOp::Sign => {
+                        if a.is_nan() {
+                            f64::NAN
+                        } else if a > 0.0 {
+                            1.0
+                        } else if a < 0.0 {
+                            -1.0
+                        } else {
+                            a // ±0 유지
+                        }
+                    }
+                    MathOp::Cbrt => a.cbrt(),
+                    MathOp::Log => a.ln(),
+                    MathOp::Log2 => a.log2(),
+                    MathOp::Log10 => a.log10(),
+                    MathOp::Exp => a.exp(),
+                    MathOp::Sin => a.sin(),
+                    MathOp::Cos => a.cos(),
+                    MathOp::Tan => a.tan(),
+                    MathOp::Asin => a.asin(),
+                    MathOp::Acos => a.acos(),
+                    MathOp::Atan => a.atan(),
+                    MathOp::Atan2 => a.atan2(args.get(1).map(to_num).unwrap_or(f64::NAN)),
+                    MathOp::Hypot => args.iter().map(to_num).fold(0.0f64, |acc, x| acc.hypot(x)),
                     MathOp::Random => {
                         // xorshift64*
                         self.rng ^= self.rng << 13;

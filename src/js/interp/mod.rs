@@ -276,6 +276,21 @@ pub enum MathOp {
     Sqrt,
     Pow,
     Random,
+    Trunc,
+    Sign,
+    Cbrt,
+    Log,
+    Log2,
+    Log10,
+    Exp,
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    Hypot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -561,11 +576,29 @@ impl Interp {
             ("sqrt", MathOp::Sqrt),
             ("pow", MathOp::Pow),
             ("random", MathOp::Random),
+            ("trunc", MathOp::Trunc),
+            ("sign", MathOp::Sign),
+            ("cbrt", MathOp::Cbrt),
+            ("log", MathOp::Log),
+            ("log2", MathOp::Log2),
+            ("log10", MathOp::Log10),
+            ("exp", MathOp::Exp),
+            ("sin", MathOp::Sin),
+            ("cos", MathOp::Cos),
+            ("tan", MathOp::Tan),
+            ("asin", MathOp::Asin),
+            ("acos", MathOp::Acos),
+            ("atan", MathOp::Atan),
+            ("atan2", MathOp::Atan2),
+            ("hypot", MathOp::Hypot),
         ] {
             math.insert(name.to_string(), Value::Native(Native::Math(op)));
         }
         math.insert("PI".to_string(), Value::Num(std::f64::consts::PI));
         math.insert("E".to_string(), Value::Num(std::f64::consts::E));
+        math.insert("SQRT2".to_string(), Value::Num(std::f64::consts::SQRT_2));
+        math.insert("LN2".to_string(), Value::Num(std::f64::consts::LN_2));
+        math.insert("LN10".to_string(), Value::Num(std::f64::consts::LN_10));
         env_declare(&global, "Math", Value::Obj(Rc::new(RefCell::new(math))));
         // JSON
         let mut json = HashMap::new();
@@ -1957,8 +1990,10 @@ impl Interp {
     // 예: proto_method("Array", "flatMap") → Array.prototype.flatMap.
     fn proto_method(&self, ctor: &str, key: &str) -> Option<Value> {
         let ns = env_get(&self.global, ctor)?;
-        let proto = match ns {
+        let proto = match &ns {
             Value::Obj(m) => m.borrow().get("prototype").cloned(),
+            // String 은 Native 생성자 — prototype 은 보관된 string_proto (폴리필이 여기 얹힘)
+            Value::Native(Native::StringCtor) => Some(self.string_proto.clone()),
             _ => None,
         }?;
         match proto {
@@ -2202,6 +2237,10 @@ impl Interp {
                         .nth(i)
                         .map(|c| Value::Str(c.to_string()))
                         .unwrap_or(Value::Undefined));
+                }
+                // String.prototype 폴리필(at 등) — 원시 문자열에도 적용 (배열과 동일)
+                if let Some(m) = self.proto_method("String", key) {
+                    return Ok(m);
                 }
                 Ok(Value::Undefined)
             }
@@ -3574,6 +3613,16 @@ mod tests {
         assert_eq!(run_num("var d=1; d&&=7; d"), 7.0);
         // 멤버 타깃 + 단락 (두 번째 ??= 는 이미 값이 있어 무시)
         assert_eq!(run_num("var o={}; o.x??=3; o.x??=4; o.x"), 3.0);
+    }
+
+    #[test]
+    fn math_extended_methods() {
+        assert_eq!(run_num("Math.trunc(4.7)"), 4.0);
+        assert_eq!(run_num("Math.sign(-3)"), -1.0);
+        assert_eq!(run_num("Math.hypot(3,4)"), 5.0);
+        assert_eq!(run_num("Math.log2(8)"), 3.0);
+        assert_eq!(run_num("Math.cbrt(27)"), 3.0);
+        assert_eq!(run_num("Math.log10(1000)"), 3.0);
     }
 
     #[test]

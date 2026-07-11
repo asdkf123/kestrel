@@ -159,6 +159,9 @@ if (!Array.from) Array.from = function(x, fn){ var r = []; if (x === null || x =
 if (!Object.fromEntries) Object.fromEntries = function(e){ var r = {}; for (var p of e) { r[p[0]] = p[1]; } return r; };
 if (!Array.prototype.at) Array.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this[i]; };
 if (!String.prototype.at) String.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this.charAt(i); };
+if (!Array.of) Array.of = function(...a){ return a; };
+if (!Array.prototype.entries) Array.prototype.entries = function(){ var r = []; for (var i = 0; i < this.length; i++) r.push([i, this[i]]); return r; };
+if (!Array.prototype.fill) Array.prototype.fill = function(v, s, e){ s = s === undefined ? 0 : (s < 0 ? this.length + s : s); e = e === undefined ? this.length : (e < 0 ? this.length + e : e); for (var i = s; i < e; i++) this[i] = v; return this; };
 if (!Array.prototype.flatMap) Array.prototype.flatMap = function(fn){ return this.map(fn).flat(); };
 if (!Array.prototype.findLast) Array.prototype.findLast = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return this[i]; return undefined; };
 if (!Array.prototype.findLastIndex) Array.prototype.findLastIndex = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return i; return -1; };
@@ -427,6 +430,18 @@ mod tests {
         );
         run_scripts(&mut dom, "https://localhost/");
         assert_eq!(text_of_id(&dom, "out").unwrap(), "got 5");
+    }
+
+    #[test]
+    fn extended_builtins_via_prelude() {
+        // Array.of / String.prototype.at(원시) / Array.prototype.fill 폴리필
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"out\">x</p><script>document.getElementById('out').textContent = \
+             Array.of(1,2).join('') + '/' + 'ab'.at(-1) + '/' + [9,9].fill(5).join('');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "12/b/55");
     }
 
     #[test]
