@@ -101,6 +101,66 @@ impl Canvas {
         Canvas { pixels: vec![white; width * height], width, height, clip: None, blend_mode: BlendMode::Normal }
     }
 
+    // 지역 박스 블러 (분리형 2패스). backdrop-filter: blur() 용. 물리 px 반경.
+    fn blur_region(&mut self, rect: Rect, radius: f32) {
+        let r = (radius.round() as i32).max(1) as usize;
+        let x0 = rect.x.floor().max(0.0) as i32;
+        let y0 = rect.y.floor().max(0.0) as i32;
+        let x1 = ((rect.x + rect.width).ceil() as i32).min(self.width as i32);
+        let y1 = ((rect.y + rect.height).ceil() as i32).min(self.height as i32);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let (x0, y0) = (x0 as usize, y0 as usize);
+        let (rw, rh) = ((x1 as usize - x0), (y1 as usize - y0));
+        let w = self.width;
+        let mut a = vec![(0f32, 0f32, 0f32); rw * rh];
+        for yy in 0..rh {
+            for xx in 0..rw {
+                let p = self.pixels[(y0 + yy) * w + (x0 + xx)];
+                a[yy * rw + xx] = (p.r as f32, p.g as f32, p.b as f32);
+            }
+        }
+        let mut b = a.clone();
+        // 가로 패스 a → b
+        for yy in 0..rh {
+            for xx in 0..rw {
+                let (mut sr, mut sg, mut sb, mut cnt) = (0.0, 0.0, 0.0, 0.0);
+                let lo = xx.saturating_sub(r);
+                let hi = (xx + r).min(rw - 1);
+                for k in lo..=hi {
+                    let c = a[yy * rw + k];
+                    sr += c.0;
+                    sg += c.1;
+                    sb += c.2;
+                    cnt += 1.0;
+                }
+                b[yy * rw + xx] = (sr / cnt, sg / cnt, sb / cnt);
+            }
+        }
+        // 세로 패스 b → canvas
+        for yy in 0..rh {
+            for xx in 0..rw {
+                let (mut sr, mut sg, mut sb, mut cnt) = (0.0, 0.0, 0.0, 0.0);
+                let lo = yy.saturating_sub(r);
+                let hi = (yy + r).min(rh - 1);
+                for k in lo..=hi {
+                    let c = b[k * rw + xx];
+                    sr += c.0;
+                    sg += c.1;
+                    sb += c.2;
+                    cnt += 1.0;
+                }
+                self.pixels[(y0 + yy) * w + (x0 + xx)] = Color {
+                    r: (sr / cnt).round() as u8,
+                    g: (sg / cnt).round() as u8,
+                    b: (sb / cnt).round() as u8,
+                    a: 255,
+                };
+            }
+        }
+    }
+
     // 픽셀 쓰기 관문: 활성 클립 커버리지를 알파에 곱해 블렌드. 모든 그리기가 이걸 통한다.
     #[inline]
     fn put(&mut self, px: usize, py: usize, color: Color, alpha: u8) {
@@ -635,6 +695,8 @@ pub enum DisplayItem {
     Clipped { shape: ClipShape, inner: Box<DisplayItem> },
     // mix-blend-mode: inner 를 backdrop 과 mode 로 합성.
     Blended { mode: BlendMode, inner: Box<DisplayItem> },
+    // backdrop-filter: blur() — 뒤 배경(이미 그려진 캔버스)을 rect 영역에서 흐린다.
+    BackdropBlur { rect: Rect, radius: f32 },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -1283,6 +1345,9 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         DisplayItem::Image { image, rect, fit, pos } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit, pos })
         }
+        DisplayItem::BackdropBlur { rect, radius } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::BackdropBlur { rect: r, radius })
+        }
         // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
         // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
         DisplayItem::Gradient { rect, angle, radial, conic, stops } => {
@@ -1372,6 +1437,16 @@ fn clip_path_rect(lb: &LayoutBox) -> Option<Rect> {
         width: (b.width - left - right).max(0.0),
         height: (b.height - top - bottom).max(0.0),
     })
+}
+
+// backdrop-filter: blur(Npx) 의 반경(논리 px). blur 함수만 지원.
+fn backdrop_blur_radius(lb: &LayoutBox) -> Option<f32> {
+    let raw = match lb.styled_node.value("backdrop-filter") {
+        Some(Value::Keyword(s)) => s,
+        _ => return None,
+    };
+    let inner = raw.trim().strip_prefix("blur(")?.strip_suffix(')')?;
+    inner.trim().trim_end_matches("px").trim().parse::<f32>().ok().filter(|&r| r > 0.0)
 }
 
 // 이 박스가 세우는 둥근 픽셀 마스크: clip-path circle()/ellipse()/inset(...round),
@@ -1492,6 +1567,10 @@ fn collect_items(
     // 둥근 픽셀 마스크(둥근 overflow / clip-path circle·ellipse). 안쪽(자신) 우선.
     let round_clip = round_clip_shape(layout_box).or(round_clip);
     let mut local: Vec<DisplayItem> = Vec::new();
+    // backdrop-filter: blur() — 배경(뒤 캔버스)을 이 박스 영역에서 흐린다. 배경 그리기 전에.
+    if let Some(radius) = backdrop_blur_radius(layout_box) {
+        local.push(DisplayItem::BackdropBlur { rect: layout_box.dimensions.border_box(), radius });
+    }
     // 그림자 → 배경/테두리(border-radius 포함) → 안쪽그림자 → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
     emit_box_decorations(layout_box, &mut local);
@@ -1748,6 +1827,7 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Blended { inner, .. } => filter_item(inner, funcs),
+        DisplayItem::BackdropBlur { .. } => {}
     }
 }
 
@@ -1823,6 +1903,7 @@ fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
         DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Clipped { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Blended { inner, .. } => rotate_item(inner, cx, cy, angle),
+        DisplayItem::BackdropBlur { .. } => {}
     }
 }
 
@@ -1853,6 +1934,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Clipped { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Blended { inner, .. } => scale_item_alpha(inner, f),
+        DisplayItem::BackdropBlur { .. } => {}
     }
 }
 
@@ -2002,6 +2084,13 @@ fn draw_item(
             canvas.blend_mode = *mode;
             draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
             canvas.blend_mode = prev;
+        }
+        DisplayItem::BackdropBlur { rect, radius } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
+            }
+            canvas.blur_region(r, radius * scale);
         }
     }
 }
