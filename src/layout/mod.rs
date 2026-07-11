@@ -2205,6 +2205,20 @@ mod tests {
     }
 
     #[test]
+    fn flex_align_self_overrides_container() {
+        // 컨테이너 align-items: flex-start, 둘째 아이템만 align-self: center
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"tall\"></div><div class=\"s\"></div></div>",
+            ".row { display: flex; align-items: flex-start; } \
+             .tall { display: block; width: 20px; height: 40px; } \
+             .s { display: block; width: 20px; height: 10px; align-self: center; }",
+            300.0,
+        );
+        assert_eq!(d[0].content.y, 0.0, "tall 은 flex-start");
+        assert_eq!(d[1].content.y, 15.0, "s 는 align-self center → (40-10)/2");
+    }
+
+    #[test]
     fn flex_shrink_zero_keeps_size() {
         // flex-shrink: 0 → 줄지 않고 넘침 허용
         let d = flex_layout(

@@ -13,8 +13,8 @@ impl<'a> LayoutBox<'a> {
     }
 
     // flexbox: row/column, flex-wrap, justify-content, align-items, gap, flex-grow, flex-shrink.
-    // 미지원: flex-basis(폭/높이 or 내용폭으로 근사), align-self, align-content, order,
-    // wrap-reverse 세부.
+    // align-self(아이템별 cross 정렬) 지원. 미지원: flex-basis(폭/높이 or 내용폭 근사),
+    // align-content, order, wrap-reverse 세부.
     pub(super) fn layout_flex_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
@@ -147,9 +147,14 @@ impl<'a> LayoutBox<'a> {
 
             for (k, &i) in line.iter().enumerate() {
                 let msize = sizes[k];
-                let stretch = (align.is_empty() || align == "stretch") && !cross_fixed[i];
+                // align-self 가 있으면 컨테이너 align-items 를 덮는다 (auto = 상속)
+                let self_align = match self.children[i].styled_node.value("align-self") {
+                    Some(Value::Keyword(ref k)) if k != "auto" => k.clone(),
+                    _ => align.clone(),
+                };
+                let stretch = (self_align.is_empty() || self_align == "stretch") && !cross_fixed[i];
                 let item_cross = if stretch { line_cross } else { cross[i] };
-                let cross_off = match align.as_str() {
+                let cross_off = match self_align.as_str() {
                     "center" => (line_cross - item_cross) / 2.0,
                     "flex-end" | "end" => line_cross - item_cross,
                     _ => 0.0,
