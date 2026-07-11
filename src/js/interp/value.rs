@@ -218,6 +218,132 @@ pub(super) fn regex_escape(s: &str) -> String {
     out
 }
 
+// epoch millis → (year, month[1-12], day, hours, min, sec, ms, weekday[0=일])
+// UTC 기준 (타임존 미구현). Howard Hinnant 의 civil_from_days 알고리즘.
+pub(super) fn date_parts(millis: f64) -> (i64, u32, u32, u32, u32, u32, u32, u32) {
+    let ms_total = millis as i64;
+    let days = ms_total.div_euclid(86_400_000);
+    let ms_of_day = ms_total.rem_euclid(86_400_000);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as i64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let year = if m <= 2 { y + 1 } else { y };
+    let secs = ms_of_day / 1000;
+    let hours = (secs / 3600) as u32;
+    let min = ((secs % 3600) / 60) as u32;
+    let sec = (secs % 60) as u32;
+    let ms = (ms_of_day % 1000) as u32;
+    // 1970-01-01 = 목요일(4). weekday = (days + 4) mod 7
+    let weekday = (days.rem_euclid(7) + 4).rem_euclid(7) as u32;
+    (year, m, d, hours, min, sec, ms, weekday)
+}
+
+// (year, month[1-12], day, h, m, s, ms) → epoch millis (UTC)
+pub(super) fn date_to_millis(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64) -> f64 {
+    // days_from_civil
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as i64;
+    let mp = if mo > 2 { mo - 3 } else { mo + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    (days * 86_400_000 + h * 3_600_000 + mi * 60_000 + s * 1000 + ms) as f64
+}
+
+// 현재 epoch millis
+pub(super) fn now_millis() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+
+// ISO 8601 근사 파싱: "2026-07-11" / "2026-07-11T10:30:00[.mmm][Z]"
+pub(super) fn parse_date_string(s: &str) -> Option<f64> {
+    let s = s.trim();
+    let (date, time) = match s.split_once(['T', ' ']) {
+        Some((d, t)) => (d, Some(t)),
+        None => (s, None),
+    };
+    let mut dp = date.split('-');
+    let y: i64 = dp.next()?.parse().ok()?;
+    let mo: i64 = dp.next().and_then(|x| x.parse().ok()).unwrap_or(1);
+    let d: i64 = dp.next().and_then(|x| x.parse().ok()).unwrap_or(1);
+    let (mut h, mut mi, mut sec, mut ms) = (0i64, 0i64, 0i64, 0i64);
+    if let Some(t) = time {
+        let t = t.trim_end_matches('Z');
+        let (hms, frac) = match t.split_once('.') {
+            Some((a, b)) => (a, Some(b)),
+            None => (t, None),
+        };
+        let mut tp = hms.split(':');
+        h = tp.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        mi = tp.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        sec = tp.next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        if let Some(f) = frac {
+            let f: String = f.chars().take(3).collect();
+            ms = format!("{:0<3}", f).parse().unwrap_or(0);
+        }
+    }
+    Some(date_to_millis(y, mo, d, h, mi, sec, ms))
+}
+
+pub(super) fn make_date(millis: f64) -> Value {
+    let mut m = HashMap::new();
+    m.insert("__isDate".to_string(), Value::Bool(true));
+    m.insert("__time".to_string(), Value::Num(millis));
+    Value::Obj(Rc::new(RefCell::new(m)))
+}
+
+pub(super) fn is_date_obj(map: &Rc<RefCell<HashMap<String, Value>>>) -> bool {
+    matches!(map.borrow().get("__isDate"), Some(Value::Bool(true)))
+}
+
+fn two(n: u32) -> String {
+    format!("{:02}", n)
+}
+
+// Date → ISO 8601 문자열
+pub(super) fn date_iso(millis: f64) -> String {
+    let (y, mo, d, h, mi, s, ms, _) = date_parts(millis);
+    format!(
+        "{:04}-{}-{}T{}:{}:{}.{:03}Z",
+        y,
+        two(mo),
+        two(d),
+        two(h),
+        two(mi),
+        two(s),
+        ms
+    )
+}
+
+// Date → 사람이 읽는 문자열 (간이 UTC)
+pub(super) fn date_string(millis: f64) -> String {
+    const DOW: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MON: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let (y, mo, d, h, mi, s, _, wd) = date_parts(millis);
+    format!(
+        "{} {} {:02} {} {}:{}:{} GMT+0000",
+        DOW[wd as usize % 7],
+        MON[(mo as usize - 1) % 12],
+        d,
+        y,
+        two(h),
+        two(mi),
+        two(s)
+    )
+}
+
 // 정규식 리터럴/RegExp → {source, flags, __isRegex, global, lastIndex} 객체
 pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
     let mut map = HashMap::new();

@@ -151,6 +151,9 @@ pub enum Native {
     NumToFixed,
     ValueToStr, // recv.toString([radix]) → 문자열
     ValueOfSelf, // recv.valueOf() → recv
+    DateNow,
+    DateCtor,
+    DateMethod(DateField),
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -243,6 +246,23 @@ pub enum StrOp {
     CharCodeAt,
     CodePointAt,
     Concat,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DateField {
+    Time,
+    FullYear,
+    Month,
+    Date,
+    Day,
+    Hours,
+    Minutes,
+    Seconds,
+    Ms,
+    TimezoneOffset,
+    ToIso,
+    ToStr,
+    ToDateStr,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -525,6 +545,7 @@ impl Interp {
         env_declare(&global, "String", Value::Native(Native::StringCtor));
         env_declare(&global, "Number", Value::Native(Native::NumberCtor));
         env_declare(&global, "Boolean", Value::Native(Native::BooleanCtor));
+        env_declare(&global, "Date", Value::Native(Native::DateCtor));
         // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
         for name in [
             "Error",
@@ -1560,6 +1581,28 @@ impl Interp {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
+                        _ if is_date_obj(map) => {
+                            let field = match key {
+                                "getTime" | "valueOf" => Some(DateField::Time),
+                                "getFullYear" | "getUTCFullYear" => Some(DateField::FullYear),
+                                "getMonth" | "getUTCMonth" => Some(DateField::Month),
+                                "getDate" | "getUTCDate" => Some(DateField::Date),
+                                "getDay" | "getUTCDay" => Some(DateField::Day),
+                                "getHours" | "getUTCHours" => Some(DateField::Hours),
+                                "getMinutes" | "getUTCMinutes" => Some(DateField::Minutes),
+                                "getSeconds" | "getUTCSeconds" => Some(DateField::Seconds),
+                                "getMilliseconds" => Some(DateField::Ms),
+                                "getTimezoneOffset" => Some(DateField::TimezoneOffset),
+                                "toISOString" | "toJSON" => Some(DateField::ToIso),
+                                "toString" | "toUTCString" | "toGMTString" => Some(DateField::ToStr),
+                                "toDateString" | "toLocaleDateString" | "toLocaleString"
+                                | "toLocaleTimeString" => Some(DateField::ToDateStr),
+                                _ => None,
+                            };
+                            Ok(field
+                                .map(|f| Value::Native(Native::DateMethod(f)))
+                                .unwrap_or(Value::Undefined))
+                        }
                         _ => Ok(Value::Undefined),
                     },
                 }
@@ -1805,6 +1848,11 @@ impl Interp {
             }
             // Function.prototype (정체성 보존된 객체)
             Value::Native(Native::FunctionCtor) if key == "prototype" => Ok(self.fn_proto.clone()),
+            // Date.now / Date.parse / Date.UTC
+            Value::Native(Native::DateCtor) => Ok(match key {
+                "now" => Value::Native(Native::DateNow),
+                _ => Value::Undefined,
+            }),
             // String.fromCharCode/prototype
             Value::Native(Native::StringCtor) => Ok(match key {
                 "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
@@ -1914,6 +1962,7 @@ impl Interp {
             Value::Native(n @ (Native::StringCtor | Native::NumberCtor | Native::BooleanCtor)) => {
                 return self.call_native(n, None, args)
             }
+            Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {
                 let (target, _this, partial) = (*b).clone();
@@ -2283,6 +2332,19 @@ mod tests {
         assert_eq!(run_num("var a=[1,2,3,4]; a.length=2; a.length"), 2.0);
         // 재정의 안 하면 내장 메서드 그대로
         assert_eq!(run_num("var a=[3,1,2]; a.push(9); a.length"), 4.0);
+    }
+
+    #[test]
+    fn date_object() {
+        assert_eq!(run_num("new Date(2026, 6, 11).getFullYear()"), 2026.0);
+        assert_eq!(run_num("new Date(2026, 6, 11).getMonth()"), 6.0); // 0 기준(7월)
+        assert_eq!(run_num("new Date(2026, 6, 11).getDate()"), 11.0);
+        assert_eq!(run_str("new Date('2020-01-15T00:00:00Z').toISOString()"), "2020-01-15T00:00:00.000Z");
+        assert_eq!(run_num("new Date('2020-01-15T00:00:00Z').getTime()"), 1579046400000.0);
+        assert_eq!(run_num("new Date(0).getUTCFullYear()"), 1970.0);
+        assert_eq!(run_str("typeof Date.now()"), "number");
+        // 왕복
+        assert_eq!(run_num("new Date(new Date(1234567890000).getTime()).getTime()"), 1234567890000.0);
     }
 
     #[test]

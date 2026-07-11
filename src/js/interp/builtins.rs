@@ -130,6 +130,36 @@ impl Interp {
         }
     }
 
+    // new Date(...) / Date(...) 인자 처리
+    fn make_date_from_args(&self, args: &[Value]) -> Value {
+        let millis = match args.len() {
+            0 => now_millis(),
+            1 => match &args[0] {
+                Value::Num(n) => *n,
+                Value::Str(s) => parse_date_string(s).unwrap_or(f64::NAN),
+                Value::Obj(m) if is_date_obj(m) => match m.borrow().get("__time") {
+                    Some(Value::Num(n)) => *n,
+                    _ => f64::NAN,
+                },
+                v => to_num(v),
+            },
+            _ => {
+                let g = |i: usize, dflt: f64| args.get(i).map(to_num).unwrap_or(dflt);
+                // (year, month[0기준], day, h, m, s, ms)
+                date_to_millis(
+                    g(0, 1970.0) as i64,
+                    g(1, 0.0) as i64 + 1,
+                    g(2, 1.0) as i64,
+                    g(3, 0.0) as i64,
+                    g(4, 0.0) as i64,
+                    g(5, 0.0) as i64,
+                    g(6, 0.0) as i64,
+                )
+            }
+        };
+        make_date(millis)
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -417,6 +447,34 @@ impl Interp {
                     return Ok(Value::Bool(self.class_tokens(id).iter().any(|t| t == &name)));
                 }
                 Ok(Value::Bool(false))
+            }
+            Native::DateNow => Ok(Value::Num(now_millis())),
+            Native::DateCtor => Ok(self.make_date_from_args(&args)),
+            // date.getFullYear() 등 — recv 가 Date 객체
+            Native::DateMethod(field) => {
+                let millis = match &recv {
+                    Some(Value::Obj(m)) => match m.borrow().get("__time") {
+                        Some(Value::Num(n)) => *n,
+                        _ => f64::NAN,
+                    },
+                    _ => f64::NAN,
+                };
+                let (y, mo, d, h, mi, s, ms, wd) = date_parts(millis);
+                Ok(match field {
+                    DateField::Time => Value::Num(millis),
+                    DateField::FullYear => Value::Num(y as f64),
+                    DateField::Month => Value::Num((mo - 1) as f64), // JS 는 0 기준
+                    DateField::Date => Value::Num(d as f64),
+                    DateField::Day => Value::Num(wd as f64),
+                    DateField::Hours => Value::Num(h as f64),
+                    DateField::Minutes => Value::Num(mi as f64),
+                    DateField::Seconds => Value::Num(s as f64),
+                    DateField::Ms => Value::Num(ms as f64),
+                    DateField::TimezoneOffset => Value::Num(0.0),
+                    DateField::ToIso => Value::Str(date_iso(millis)),
+                    DateField::ToStr => Value::Str(date_string(millis)),
+                    DateField::ToDateStr => Value::Str(date_string(millis)),
+                })
             }
             // String(x)/Number(x)/Boolean(x) 변환 생성자
             Native::StringCtor => Ok(Value::Str(match args.first() {
