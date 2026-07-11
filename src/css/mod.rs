@@ -66,6 +66,7 @@ pub enum Pseudo {
     Enabled,  // 폼 요소 && !disabled
     Required, // 폼 필드[required]
     Optional, // 폼 필드 && !required
+    Link,     // :link — href 있는 a/area/link (정적 렌더에선 방문 이력 없어 모든 링크가 매칭)
     Dynamic,  // hover/focus/active/visited 등 — 정적 렌더에선 비매칭
 }
 
@@ -829,7 +830,8 @@ impl Parser {
             "enabled" => Pseudo::Enabled,
             "required" => Pseudo::Required,
             "optional" => Pseudo::Optional,
-            // 상호작용/링크 상태 → 정적 렌더에선 비매칭
+            "link" => Pseudo::Link,
+            // 상호작용/방문 상태(hover/focus/active/visited) → 정적 렌더에선 비매칭
             _ => Pseudo::Dynamic,
         })
     }

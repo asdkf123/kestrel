@@ -230,6 +230,11 @@ fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&Sibli
         Pseudo::Enabled => is_form_element(elem) && elem.attributes.get("disabled").is_none(),
         Pseudo::Required => elem.attributes.get("required").is_some(),
         Pseudo::Optional => is_form_field(elem) && elem.attributes.get("required").is_none(),
+        // :link — href 있는 하이퍼링크. 정적 렌더엔 방문 이력이 없어 모든 링크가 unvisited.
+        Pseudo::Link => {
+            matches!(elem.tag_name.as_str(), "a" | "area" | "link")
+                && elem.attributes.contains_key("href")
+        }
     }
 }
 
@@ -1530,6 +1535,17 @@ mod tests {
         let root3 = crate::html::parse_dom("<span></span>".to_string());
         let ss3 = crate::css::parse("span { display: inline; }".to_string());
         assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
+    }
+
+    #[test]
+    fn link_pseudo_matches_href_anchors() {
+        // a:link 는 href 있는 링크에 적용 (정적 렌더에선 모든 링크가 unvisited)
+        let ss = crate::css::parse("a:link { color: #ff0000; }".to_string());
+        let linked = crate::html::parse_dom("<a href=\"/x\">go</a>".to_string());
+        assert!(style_tree(&linked, &ss).value("color").is_some(), "href 링크 → :link 매칭");
+        // href 없는 <a> 는 :link 아님
+        let bare = crate::html::parse_dom("<a>text</a>".to_string());
+        assert!(style_tree(&bare, &ss).value("color").is_none(), "href 없으면 :link 아님");
     }
 
     #[test]
