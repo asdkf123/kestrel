@@ -86,6 +86,7 @@ pub enum FormControl {
     Checkbox(bool), // checked
     Radio(bool),
     SelectArrow,
+    Gauge { frac: f32, meter: bool }, // progress / meter (채움 비율)
 }
 
 pub struct LayoutBox<'a> {
@@ -191,6 +192,10 @@ impl<'a> LayoutBox<'a> {
             }
             if e.tag_name == "select" {
                 self.layout_select(containing_block, fonts);
+                return;
+            }
+            if e.tag_name == "progress" || e.tag_name == "meter" {
+                self.layout_gauge(containing_block, e.tag_name == "meter");
                 return;
             }
             if e.tag_name == "canvas" {
@@ -510,6 +515,39 @@ impl<'a> LayoutBox<'a> {
             pen += adv;
         }
         self.form_control = Some(FormControl::SelectArrow);
+    }
+
+    // <progress>/<meter>: 트랙 + 채움 막대. paint 가 프리미티브로 그린다.
+    fn layout_gauge(&mut self, containing_block: Dimensions, meter: bool) {
+        let NodeType::Element(e) = &self.styled_node.node.node_type else { return };
+        let attr = |k: &str| e.attributes.get(k).and_then(|s| s.trim().parse::<f32>().ok());
+        let frac = if meter {
+            let (min, max, val) =
+                (attr("min").unwrap_or(0.0), attr("max").unwrap_or(1.0), attr("value").unwrap_or(0.0));
+            if max > min { ((val - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 }
+        } else {
+            let max = attr("max").unwrap_or(1.0);
+            match attr("value") {
+                Some(v) if max > 0.0 => (v / max).clamp(0.0, 1.0),
+                _ => 0.0, // value 없으면 indeterminate → 빈 트랙
+            }
+        };
+        self.calculate_width(containing_block);
+        self.calculate_position(containing_block);
+        let px = self
+            .styled_node
+            .value("font-size")
+            .map(|v| v.to_px())
+            .filter(|&p| p > 0.0)
+            .unwrap_or(16.0);
+        if self.styled_node.value("width").is_none() {
+            self.dimensions.content.width = 160.0;
+        }
+        self.dimensions.content.height = (px * 0.9).max(12.0);
+        self.dimensions.border = EdgeSizes::default();
+        self.dimensions.padding = EdgeSizes::default();
+        self.used_width = self.dimensions.content.width;
+        self.form_control = Some(FormControl::Gauge { frac, meter });
     }
 
     fn calculate_width(&mut self, containing_block: Dimensions) {
@@ -2588,6 +2626,37 @@ mod tests {
         let mut dd = Vec::new();
         find(&lb, "dd", &mut dd);
         assert!((dd[0].0 - 40.0).abs() < 0.5, "dd 좌여백 40 (실제 {})", dd[0].0);
+    }
+
+    #[test]
+    fn progress_and_meter_render_as_gauges() {
+        let fs = fonts();
+        let ss = crate::css::user_agent_stylesheet();
+        let root = crate::html::parse_dom(
+            "<progress value=\"70\" max=\"100\"></progress><meter value=\"30\" min=\"0\" max=\"100\"></meter>"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        fn collect(b: &LayoutBox, out: &mut Vec<crate::layout::FormControl>) {
+            if let Some(fc) = b.form_control {
+                out.push(fc);
+            }
+            for c in &b.children {
+                collect(c, out);
+            }
+        }
+        let mut fcs = Vec::new();
+        collect(&lb, &mut fcs);
+        let has = |frac: f32, meter: bool| {
+            fcs.iter().any(|fc| matches!(fc,
+                crate::layout::FormControl::Gauge { frac: f, meter: m }
+                if (*f - frac).abs() < 0.01 && *m == meter))
+        };
+        assert!(has(0.7, false), "progress 70/100=0.7");
+        assert!(has(0.3, true), "meter 30/100=0.3");
     }
 
     #[test]

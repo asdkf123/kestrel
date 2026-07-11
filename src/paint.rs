@@ -1326,6 +1326,21 @@ fn emit_form_control(lb: &LayoutBox, fc: crate::layout::FormControl, items: &mut
                 });
             }
         }
+        FormControl::Gauge { frac, meter } => {
+            let track = Color { r: 225, g: 225, b: 227, a: 255 };
+            let fill = if meter {
+                Color { r: 70, g: 180, b: 80, a: 255 }
+            } else {
+                Color { r: 40, g: 120, b: 230, a: 255 }
+            };
+            let radii = [b.height / 2.0; 4];
+            items.push(DisplayItem::RoundRect { color: track, rect: b, radii });
+            let fw = b.width * frac.clamp(0.0, 1.0);
+            if fw > 0.5 {
+                let fr = Rect { x: b.x, y: b.y, width: fw, height: b.height };
+                items.push(DisplayItem::RoundRect { color: fill, rect: fr, radii });
+            }
+        }
         FormControl::SelectArrow => {
             let cx = b.x + b.width - 14.0;
             let cy = b.y + b.height / 2.0;
@@ -1344,10 +1359,11 @@ fn emit_form_control(lb: &LayoutBox, fc: crate::layout::FormControl, items: &mut
 }
 
 fn emit_box_decorations(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
-    // 체크박스/라디오는 기본 배경·테두리 대신 네이티브 컨트롤을 직접 그린다.
+    // 체크박스/라디오/게이지는 기본 배경·테두리 대신 네이티브 컨트롤을 직접 그린다.
     match lb.form_control {
         Some(fc @ crate::layout::FormControl::Checkbox(_))
-        | Some(fc @ crate::layout::FormControl::Radio(_)) => {
+        | Some(fc @ crate::layout::FormControl::Radio(_))
+        | Some(fc @ crate::layout::FormControl::Gauge { .. }) => {
             emit_form_control(lb, fc, items);
             return;
         }
