@@ -480,11 +480,21 @@ impl<'a> LayoutBox<'a> {
 
     // text-align 키워드 ("center"/"right"/else left)
     fn align(&self) -> &'static str {
+        // direction:rtl 이면 start/end 및 미지정 기본이 반대로 (start=right).
+        let rtl = matches!(self.styled_node.value("direction"), Some(Value::Keyword(ref k)) if k == "rtl");
+        let start = if rtl { "right" } else { "left" };
+        let end = if rtl { "left" } else { "right" };
         match self.styled_node.value("text-align") {
-            Some(Value::Keyword(s)) if s == "center" => "center",
-            Some(Value::Keyword(s)) if s == "right" || s == "end" => "right",
-            Some(Value::Keyword(s)) if s == "justify" => "justify",
-            _ => "left",
+            Some(Value::Keyword(s)) => match s.as_str() {
+                "center" => "center",
+                "justify" => "justify",
+                "right" => "right",
+                "left" => "left",
+                "end" => end,
+                "start" => start,
+                _ => start,
+            },
+            _ => start, // 미지정 = start (rtl 이면 오른쪽)
         }
     }
 
@@ -2139,6 +2149,20 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         let first_x = glyphs_of(&lb).first().unwrap().x;
         assert!(first_x > 100.0, "가운데 정렬로 글리프가 오른쪽으로 밀림, got {}", first_x);
+    }
+
+    #[test]
+    fn rtl_block_right_aligns_text() {
+        // dir="rtl" 블록은 text-align 미지정 시 오른쪽 정렬(start=right)
+        let root = crate::html::parse_dom("<p dir=\"rtl\">hi</p>".to_string());
+        let ss = crate::css::parse("p { display: block; font-size: 20px; width: 400px; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        let first_x = glyphs_of(&lb).first().unwrap().x;
+        assert!(first_x > 300.0, "rtl 블록은 오른쪽 정렬, first_x={}", first_x);
     }
 
     #[test]

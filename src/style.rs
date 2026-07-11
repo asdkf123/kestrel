@@ -415,6 +415,14 @@ fn presentational_css(elem: &ElementData) -> String {
             out.push(format!("background-color:{}", c));
         }
     }
+    // dir 속성 → direction (전역 속성, 모든 요소). auto 는 콘텐츠 판별이라 생략.
+    if let Some(v) = get("dir") {
+        match v.to_ascii_lowercase().as_str() {
+            "rtl" => out.push("direction:rtl".into()),
+            "ltr" => out.push("direction:ltr".into()),
+            _ => {}
+        }
+    }
     // 테이블 자체의 width/height 만 CSS 로. 셀/행/열(td/th/tr/col)의 width 는
     // 테이블 레이아웃 알고리즘이 속성을 직접 읽어 열 폭을 계산하므로 CSS 로 넣으면
     // 셀 박스가 열 폭을 기준으로 % 를 재해석해 어긋난다 (cell_width 참고).
