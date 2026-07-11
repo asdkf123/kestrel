@@ -155,7 +155,13 @@ if (!Object.getOwnPropertyNames) Object.getOwnPropertyNames = function(o){ retur
 if (!Object.getOwnPropertySymbols) Object.getOwnPropertySymbols = function(){ return []; };
 if (!Object.getOwnPropertyDescriptor) Object.getOwnPropertyDescriptor = function(o, k){ if (o && Object.prototype.hasOwnProperty.call(o, k)) return { value: o[k], writable: true, enumerable: true, configurable: true }; return undefined; };
 if (!Object.setPrototypeOf) Object.setPrototypeOf = function(o){ return o; };
-if (!Array.from) Array.from = function(x, fn){ var r = []; if (x === null || x === undefined) return r; var len = x.length; if (typeof len === 'number') { for (var i = 0; i < len; i++) r.push(fn ? fn(x[i], i) : x[i]); } return r; };
+if (!Array.from) Array.from = function(x, fn){ var r = []; if (x === null || x === undefined) return r; var i = 0; if (typeof x.length === 'number') { for (i = 0; i < x.length; i++) r.push(fn ? fn(x[i], i) : x[i]); return r; } for (var v of x) { r.push(fn ? fn(v, i) : v); i++; } return r; };
+if (!Object.fromEntries) Object.fromEntries = function(e){ var r = {}; for (var p of e) { r[p[0]] = p[1]; } return r; };
+if (!Array.prototype.at) Array.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this[i]; };
+if (!String.prototype.at) String.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this.charAt(i); };
+if (!Array.prototype.flatMap) Array.prototype.flatMap = function(fn){ return this.map(fn).flat(); };
+if (!Array.prototype.findLast) Array.prototype.findLast = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return this[i]; return undefined; };
+if (!Array.prototype.findLastIndex) Array.prototype.findLastIndex = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return i; return -1; };
 if (typeof console !== 'undefined') { var __klg = console.log; if (!console.warn) console.warn = __klg; if (!console.error) console.error = __klg; if (!console.info) console.info = __klg; if (!console.debug) console.debug = __klg; if (!console.trace) console.trace = __klg; if (!console.group) console.group = __kNoop; if (!console.groupEnd) console.groupEnd = __kNoop; if (!console.groupCollapsed) console.groupCollapsed = __kNoop; if (!console.table) console.table = __klg; if (!console.dir) console.dir = __klg; if (!console.assert) console.assert = __kNoop; if (!console.count) console.count = __kNoop; if (!console.time) console.time = __kNoop; if (!console.timeEnd) console.timeEnd = __kNoop; }
 var MutationObserver = window.MutationObserver; if (!MutationObserver) { MutationObserver = __kObs; window.MutationObserver = MutationObserver; }
 var IntersectionObserver = window.IntersectionObserver; if (!IntersectionObserver) { IntersectionObserver = __kObs; window.IntersectionObserver = IntersectionObserver; }

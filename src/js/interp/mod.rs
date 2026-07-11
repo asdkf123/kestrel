@@ -1690,6 +1690,20 @@ impl Interp {
         }
     }
 
+    // 전역 생성자(ctor)의 prototype 에서 메서드를 찾는다 (폴리필 조회용).
+    // 예: proto_method("Array", "flatMap") → Array.prototype.flatMap.
+    fn proto_method(&self, ctor: &str, key: &str) -> Option<Value> {
+        let ns = env_get(&self.global, ctor)?;
+        let proto = match ns {
+            Value::Obj(m) => m.borrow().get("prototype").cloned(),
+            _ => None,
+        }?;
+        match proto {
+            Value::Obj(m) => m.borrow().get(key).cloned(),
+            _ => None,
+        }
+    }
+
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         match recv {
             // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
@@ -1792,6 +1806,10 @@ impl Interp {
                 }
                 if let Ok(i) = key.parse::<usize>() {
                     return Ok(a.borrow().get(i).cloned().unwrap_or(Value::Undefined));
+                }
+                // Array.prototype 폴리필 메서드 (at/flatMap/findLast 등) 조회
+                if let Some(m) = self.proto_method("Array", key) {
+                    return Ok(m);
                 }
                 Ok(Value::Undefined)
             }
@@ -2979,6 +2997,19 @@ mod tests {
         assert_eq!(run_num("var s = 0; for (const x of new Set([2,2,3])) s += x; s"), 5.0);
         // break 동작
         assert_eq!(run_num("var n = 0; for (const x of [1,2,3,4]) { if (x === 3) break; n++; } n"), 2.0);
+    }
+
+    #[test]
+    fn array_prototype_method_dispatch() {
+        // 배열 인스턴스가 Array.prototype 폴리필 메서드를 호출 (this 바인딩)
+        assert_eq!(
+            run_num("Array.prototype.at = function(i){ return this[i < 0 ? this.length + i : i]; }; [1,2,3].at(-1)"),
+            3.0
+        );
+        assert_eq!(
+            run_str("Array.prototype.flatMap = function(f){ return this.map(f).flat(); }; [1,2].flatMap(x => [x, x*10]).join(',')"),
+            "1,10,2,20"
+        );
     }
 
     #[test]
