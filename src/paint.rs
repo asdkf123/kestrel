@@ -235,13 +235,23 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
 }
 
 // 디스플레이 리스트: 레이아웃 트리에서 뽑아낸 소유(owned) 그리기 명령 목록.
+// 이미지를 박스에 맞추는 방식. Natural 은 배경용(좌상단 고유크기, 클립).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ImageFit {
+    Fill,    // 박스에 늘려 채움 (object-fit 기본)
+    Contain, // 종횡비 유지, 박스 안에 들어가게 (레터박스)
+    Cover,   // 종횡비 유지, 박스를 덮게 (넘치는 부분 크롭)
+    None,    // 고유 크기, 중앙, 클립
+    Natural, // 배경 이미지: 좌상단 고유 크기, 클립
+}
+
 // 트리 borrow 없이 스크롤 오프셋만 바꿔 반복 래스터화할 수 있다 (실제 브라우저 구조).
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
     RoundRect { color: Color, rect: Rect, radius: f32 },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
-    Image { image: usize, rect: Rect },
+    Image { image: usize, rect: Rect, fit: ImageFit },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, stops: (색, 위치 0-1).
     Gradient { rect: Rect, angle: f32, radial: bool, stops: Vec<(Color, f32)> },
     Glyph(GlyphInstance),
@@ -437,8 +447,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         DisplayItem::Rect { color, rect } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Rect { color, rect: r })
         }
-        DisplayItem::Image { image, rect } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r })
+        DisplayItem::Image { image, rect, fit } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit })
         }
         // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
         // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
@@ -499,7 +509,11 @@ fn collect_items(
     emit_box_shadow(layout_box, &mut local);
     emit_box_decorations(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
-        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.border_box() });
+        local.push(DisplayItem::Image {
+            image: idx,
+            rect: layout_box.dimensions.border_box(),
+            fit: ImageFit::Natural,
+        });
     }
     if let Some(g) = &layout_box.gradient {
         local.push(DisplayItem::Gradient {
@@ -510,7 +524,17 @@ fn collect_items(
         });
     }
     if let Some(idx) = layout_box.image {
-        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content });
+        let fit = match layout_box.styled_node.value("object-fit") {
+            Some(Value::Keyword(k)) => match k.as_str() {
+                "contain" => ImageFit::Contain,
+                "cover" => ImageFit::Cover,
+                "none" => ImageFit::None,
+                "scale-down" => ImageFit::Contain, // scale-down ≈ contain(축소만) 근사
+                _ => ImageFit::Fill,
+            },
+            _ => ImageFit::Fill, // object-fit 기본값
+        };
+        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit });
     }
     for gi in &layout_box.glyphs {
         local.push(DisplayItem::Glyph(*gi));
@@ -599,7 +623,7 @@ pub fn rasterize(
                     "[paint] Rect  ({:.0},{:.0} {:.0}x{:.0}) rgba({},{},{},{})",
                     rect.x, rect.y, rect.width, rect.height, color.r, color.g, color.b, color.a
                 ),
-                DisplayItem::Image { image, rect } => eprintln!(
+                DisplayItem::Image { image, rect, .. } => eprintln!(
                     "[paint] Image#{} ({:.0},{:.0} {:.0}x{:.0})",
                     image, rect.x, rect.y, rect.width, rect.height
                 ),
@@ -651,13 +675,13 @@ fn draw_item(
             }
             canvas.fill_soft_round_rect(*color, r, radius * scale, blur * scale);
         }
-        DisplayItem::Image { image, rect } => {
+        DisplayItem::Image { image, rect, fit } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
             if let Some(img) = images.get(*image) {
-                blit_image(canvas, img, r, scale);
+                blit_image(canvas, img, r, scale, *fit);
             }
         }
         DisplayItem::Gradient { rect, angle, radial, stops } => {
@@ -688,27 +712,50 @@ fn draw_item(
 
 // rect(물리 px) 좌상단에 이미지를 scale 배로 그린다 (최근접 샘플링).
 // rect 크기로 클리핑 (<img> 는 rect == 고유 크기 × scale 이라 무손실).
-fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f32) {
-    let ox = rect.x.round() as i32;
-    let oy = rect.y.round() as i32;
-    let clip_w = ((img.width as f32 * scale).min(rect.width).round()) as usize;
-    let clip_h = ((img.height as f32 * scale).min(rect.height).round()) as usize;
-    for y in 0..clip_h {
-        let cy = oy + y as i32;
-        if cy < 0 || cy as usize >= canvas.height {
-            continue;
+// rect(물리 px)에 이미지를 fit 방식으로 그린다. 목적지 하위영역 `dr` 을 구하고,
+// dr 안 각 픽셀의 상대 위치로 소스 픽셀을 샘플(최근접), rect 로 클립한다.
+fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f32, fit: ImageFit) {
+    let (iw, ih) = (img.width as f32, img.height as f32);
+    if iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0 {
+        return;
+    }
+    let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+    // 그려질 목적지 사각형 dr (이미지 전체가 매핑되는 영역; rect 밖은 클립)
+    let dr = match fit {
+        ImageFit::Fill => rect,
+        ImageFit::Contain => {
+            let s = (rect.width / iw).min(rect.height / ih);
+            let (w, h) = (iw * s, ih * s);
+            Rect { x: cx - w / 2.0, y: cy - h / 2.0, width: w, height: h }
         }
-        let sy = ((y as f32 / scale) as usize).min(img.height - 1);
-        for x in 0..clip_w {
-            let cx = ox + x as i32;
-            if cx < 0 || cx as usize >= canvas.width {
-                continue;
-            }
-            let sx = ((x as f32 / scale) as usize).min(img.width - 1);
+        ImageFit::Cover => {
+            let s = (rect.width / iw).max(rect.height / ih);
+            let (w, h) = (iw * s, ih * s);
+            Rect { x: cx - w / 2.0, y: cy - h / 2.0, width: w, height: h }
+        }
+        ImageFit::None => {
+            let (w, h) = (iw * scale, ih * scale);
+            Rect { x: cx - w / 2.0, y: cy - h / 2.0, width: w, height: h }
+        }
+        ImageFit::Natural => {
+            Rect { x: rect.x, y: rect.y, width: iw * scale, height: ih * scale }
+        }
+    };
+    // 실제로 칠할 영역 = dr ∩ rect ∩ 캔버스
+    let x0 = dr.x.max(rect.x).max(0.0) as usize;
+    let y0 = dr.y.max(rect.y).max(0.0) as usize;
+    let x1 = (dr.x + dr.width).min(rect.x + rect.width).min(canvas.width as f32).max(0.0) as usize;
+    let y1 = (dr.y + dr.height).min(rect.y + rect.height).min(canvas.height as f32).max(0.0) as usize;
+    for py in y0..y1 {
+        let fy = (py as f32 + 0.5 - dr.y) / dr.height;
+        let sy = ((fy * ih) as i32).clamp(0, img.height as i32 - 1) as usize;
+        for px in x0..x1 {
+            let fx = (px as f32 + 0.5 - dr.x) / dr.width;
+            let sx = ((fx * iw) as i32).clamp(0, img.width as i32 - 1) as usize;
             let s = (sy * img.width + sx) * 4;
             let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
             let alpha = img.rgba[s + 3];
-            let idx = cy as usize * canvas.width + cx as usize;
+            let idx = py * canvas.width + px;
             canvas.pixels[idx] = blend(canvas.pixels[idx], fg, alpha);
         }
     }

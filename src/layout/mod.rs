@@ -143,10 +143,29 @@ impl<'a> LayoutBox<'a> {
             if e.tag_name == "img" {
                 if let Some(src) = e.attributes.get("src") {
                     if let Some(&(idx, iw, ih)) = images.get(src) {
-                        self.calculate_width(containing_block);
                         self.calculate_position(containing_block);
-                        self.dimensions.content.width = iw as f32;
-                        self.dimensions.content.height = ih as f32;
+                        let (iw, ih) = (iw as f32, ih as f32);
+                        let cbw = containing_block.content.width;
+                        // CSS width/height > HTML width/height 속성 > None
+                        let dim = |css: &str, attr: &str, base: f32| -> Option<f32> {
+                            if let Some(v) = self.styled_node.value(css) {
+                                if !matches!(v, Value::Keyword(_)) {
+                                    return Some(len_px(v, base).to_px());
+                                }
+                            }
+                            e.attributes.get(attr).and_then(|s| s.trim().parse::<f32>().ok())
+                        };
+                        let cw = dim("width", "width", cbw);
+                        let ch = dim("height", "height", cbw);
+                        // 한 축만 지정되면 종횡비 유지, 둘 다 없으면 고유 크기
+                        let (w, h) = match (cw, ch) {
+                            (Some(w), Some(h)) => (w, h),
+                            (Some(w), None) => (w, if iw > 0.0 { w * ih / iw } else { ih }),
+                            (None, Some(h)) => (if ih > 0.0 { h * iw / ih } else { iw }, h),
+                            (None, None) => (iw, ih),
+                        };
+                        self.dimensions.content.width = w;
+                        self.dimensions.content.height = h;
                         self.image = Some(idx);
                         return;
                     }
@@ -2461,5 +2480,43 @@ mod tests {
         assert_eq!(img.image, Some(0));
         assert_eq!(img.dimensions.content.width, 32.0);
         assert_eq!(img.dimensions.content.height, 24.0);
+    }
+
+    #[test]
+    fn image_css_width_preserves_aspect_ratio() {
+        // 고유 32x24, CSS width:64px → 높이는 종횡비 유지로 48px
+        let root = crate::html::parse_dom("<div><img src=\"a.png\"></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; } img { display: block; width: 64px; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let mut images = ImageMap::new();
+        images.insert("a.png".to_string(), (0, 32, 24));
+        let lb = layout_tree(&styled, viewport, &fs, &images);
+        let img = &lb.children[0];
+        assert_eq!(img.dimensions.content.width, 64.0);
+        assert_eq!(img.dimensions.content.height, 48.0, "종횡비 유지 (64 × 24/32)");
+    }
+
+    #[test]
+    fn image_html_width_height_attrs() {
+        // HTML width/height 속성으로 크기 지정
+        let root = crate::html::parse_dom(
+            "<div><img src=\"a.png\" width=\"100\" height=\"40\"></div>".to_string(),
+        );
+        let ss = crate::css::parse("div { display: block; } img { display: block; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let mut images = ImageMap::new();
+        images.insert("a.png".to_string(), (0, 32, 24));
+        let lb = layout_tree(&styled, viewport, &fs, &images);
+        let img = &lb.children[0];
+        assert_eq!(img.dimensions.content.width, 100.0);
+        assert_eq!(img.dimensions.content.height, 40.0);
     }
 }
