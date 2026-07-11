@@ -49,7 +49,7 @@ fn keyword_word(t: &Tok) -> Option<String> {
 // 템플릿 보간 ${...} 소스를 독립적으로 식 파싱
 fn parse_expr_source(src: &str) -> Result<Expr, String> {
     let toks = tokenize(src)?;
-    let mut p = Parser { toks, pos: 0 };
+    let mut p = Parser { toks, pos: 0, pending_async: false };
     let e = p.expr()?;
     if !p.eof() {
         return Err("템플릿 보간 식 뒤에 잉여 토큰".to_string());
@@ -59,7 +59,7 @@ fn parse_expr_source(src: &str) -> Result<Expr, String> {
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
     let toks = tokenize(src)?;
-    let mut p = Parser { toks, pos: 0 };
+    let mut p = Parser { toks, pos: 0, pending_async: false };
     let mut stmts = Vec::new();
     while !p.eof() {
         stmts.push(p.stmt()?);
@@ -70,6 +70,7 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 struct Parser {
     toks: Vec<Tok>,
     pos: usize,
+    pending_async: bool,
 }
 
 impl Parser {
@@ -155,11 +156,12 @@ impl Parser {
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "export") {
             return self.export_stmt();
         }
-        // async function 선언: async 수식어 무시하고 함수 선언으로
+        // async function 선언: async 표시 후 함수 선언으로 (func_decl 이 is_async 로 반영)
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "async")
             && self.toks.get(self.pos + 1) == Some(&Tok::Function)
         {
             self.pos += 1;
+            self.pending_async = true;
             return self.func_decl();
         }
         match self.peek() {
@@ -369,9 +371,10 @@ impl Parser {
         self.expect(&Tok::Function)?;
         let is_generator = self.eat(&Tok::Star); // function* 제너레이터
         let name = self.ident()?;
+        let is_async = std::mem::take(&mut self.pending_async);
         let (params, mut body) = self.param_list()?;
         body.extend(self.block()?); // 프롤로그(기본값) 뒤에 실제 본문
-        Ok(Stmt::FuncDecl { name, params, body, is_generator })
+        Ok(Stmt::FuncDecl { name, params, body, is_generator, is_async })
     }
 
     // 파라미터 목록 → (이름들, 본문 프롤로그).
@@ -656,6 +659,7 @@ impl Parser {
                 || matches!((n1, n2), (Some(Tok::Ident(_)), Some(Tok::Arrow)));
             if is_async_fn {
                 self.pos += 1;
+                self.pending_async = true;
             }
         }
         // 화살표 함수 먼저 시도 (백트래킹)
@@ -715,13 +719,14 @@ impl Parser {
             _ => return Ok(None),
         };
         self.expect(&Tok::Arrow)?;
+        let is_async = std::mem::take(&mut self.pending_async); // 본문 파싱 전에 캡처
         let mut body = prologue;
         if self.peek() == Some(&Tok::LBrace) {
             body.extend(self.block()?);
         } else {
             body.push(Stmt::Return(Some(self.assignment()?))); // 식 본문 → return desugar
         }
-        Ok(Some(Expr::Func { params, body, is_arrow: true, is_generator: false }))
+        Ok(Some(Expr::Func { params, body, is_arrow: true, is_generator: false, is_async }))
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
@@ -1231,7 +1236,7 @@ impl Parser {
                             // 메서드 단축 { foo(a) { ... } }
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
-                            Expr::Func { params, body, is_arrow: false, is_generator: false }
+                            Expr::Func { params, body, is_arrow: false, is_generator: false, is_async: false }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };
@@ -1250,13 +1255,14 @@ impl Parser {
             }
             Tok::Function => {
                 // 함수 식 (이름은 무시 가능). function* 는 제너레이터.
+                let is_async = std::mem::take(&mut self.pending_async);
                 let is_generator = self.eat(&Tok::Star);
                 if matches!(self.peek(), Some(Tok::Ident(_))) {
                     self.pos += 1;
                 }
                 let (params, mut body) = self.param_list()?;
                 body.extend(self.block()?);
-                Ok(Expr::Func { params, body, is_arrow: false, is_generator })
+                Ok(Expr::Func { params, body, is_arrow: false, is_generator, is_async })
             }
             Tok::This => Ok(Expr::This),
             Tok::Super => Ok(Expr::Super),

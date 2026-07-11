@@ -81,6 +81,7 @@ pub struct JsFn {
     pub env: EnvRef, // 클로저가 캡처한 렉시컬 환경
     pub is_arrow: bool,
     pub is_generator: bool, // function* — 호출 시 yield 값을 모아 반복자 반환(eager)
+    pub is_async: bool, // async — 반환값을 이행된 Promise 로 감싼다
     pub this: Option<Box<Value>>, // 화살표가 정의 시점에 캡처한 this
     // 이 함수가 클래스 메서드면 그 클래스의 부모 (super.x 해석용)
     pub super_class: Option<Rc<JsClass>>,
@@ -1047,6 +1048,7 @@ impl Interp {
             env: self.global.clone(),
             is_arrow: false,
             is_generator: false,
+            is_async: false,
             this: None,
             super_class: None,
             props: RefCell::new(HashMap::new()),
@@ -1263,13 +1265,14 @@ impl Interp {
     // 함수 선언 호이스팅: 블록 실행 전에 FuncDecl 을 먼저 바인딩
     fn exec_block(&mut self, stmts: &[Stmt], env: &EnvRef) -> Result<Flow, String> {
         for s in stmts {
-            if let Stmt::FuncDecl { name, params, body, is_generator } = s {
+            if let Stmt::FuncDecl { name, params, body, is_generator, is_async } = s {
                 let f = Value::Fn(Rc::new(JsFn {
                     params: params.clone(),
                     body: body.clone(),
                     env: env.clone(),
                     is_arrow: false,
                     is_generator: *is_generator,
+                    is_async: *is_async,
                     this: None,
                     super_class: None,
                     props: RefCell::new(HashMap::new()),
@@ -1560,7 +1563,7 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
-            Expr::Func { params, body, is_arrow, is_generator } => {
+            Expr::Func { params, body, is_arrow, is_generator, is_async } => {
                 // 화살표는 정의 시점 this 를 캡처 (렉시컬)
                 let this = if *is_arrow { env_get(env, "this").map(Box::new) } else { None };
                 Ok(Value::Fn(Rc::new(JsFn {
@@ -1569,6 +1572,7 @@ impl Interp {
                     env: env.clone(),
                     is_arrow: *is_arrow,
                     is_generator: *is_generator,
+                    is_async: *is_async,
                     this,
                     super_class: None,
                     props: RefCell::new(HashMap::new()),
@@ -2293,10 +2297,21 @@ impl Interp {
                     result?; // 본문 에러 전파(수집 후)
                     return Ok(self.make_iter_from_vec(items));
                 }
-                match self.exec_block(&func.body, &scope)? {
-                    Flow::Return(v) => Ok(v),
-                    _ => Ok(Value::Undefined),
+                let result = match self.exec_block(&func.body, &scope)? {
+                    Flow::Return(v) => v,
+                    _ => Value::Undefined,
+                };
+                // async: 반환값을 이행된 Promise 로 감싼다 (await/then 대상이 되도록).
+                // 이미 Promise 면 그대로 (thenable 위임).
+                if func.is_async {
+                    if is_promise(&result) {
+                        return Ok(result);
+                    }
+                    let p = self.new_promise();
+                    self.resolve_promise(&p, result);
+                    return Ok(p);
                 }
+                Ok(result)
             }
             Value::Native(n) => self.call_native(n, recv, args),
             Value::Class(_) => self.construct(f, args), // 클래스를 함수처럼 호출 = new (관용)
@@ -2415,6 +2430,7 @@ impl Interp {
                 env: env.clone(),
                 is_arrow: false,
                 is_generator: false,
+                is_async: false,
                 this: None,
                 super_class: parent.clone(), // super.x → 이 클래스의 부모
                 props: RefCell::new(HashMap::new()),

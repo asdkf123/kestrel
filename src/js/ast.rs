@@ -14,7 +14,7 @@ pub enum Expr {
     // function 식과 화살표 함수 공용. 화살표의 식 본문은 Return 문 하나로 desugar.
     // is_arrow: 화살표는 this 를 렉시컬로 캡처 (호출 시 재바인딩 안 함)
     // is_generator: function* — 호출 시 본문을 즉시 실행해 yield 값을 모아 반복자 반환(eager)
-    Func { params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool },
+    Func { params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool },
     // yield [*] expr — 제너레이터 본문에서 값을 산출. star 면 iterable 을 위임 전개.
     Yield { star: bool, arg: Option<Box<Expr>> },
     // ...expr — 스프레드. 배열/호출 인자/객체 리터럴에서 전개.
@@ -162,7 +162,7 @@ pub enum Pattern {
 pub enum Stmt {
     // 다중 선언자 지원: var a = 1, b = 2; / 구조분해 const {a} = o
     VarDecl { kind: DeclKind, decls: Vec<(Pattern, Option<Expr>)> },
-    FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt>, is_generator: bool },
+    FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt>, is_generator: bool, is_async: bool },
     If { cond: Expr, then: Vec<Stmt>, other: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },
     DoWhile { body: Vec<Stmt>, cond: Expr },
