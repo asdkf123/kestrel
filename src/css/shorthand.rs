@@ -43,6 +43,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 value: Value::Keyword(if bold { "bold" } else { "normal" }.to_string()),
             }]
         }
+        // order: 정수(음수 가능) → Length(n, Px) (flex 아이템 재정렬용)
+        "order" => match value_text.trim().parse::<f32>() {
+            Ok(n) => vec![Declaration { name: "order".to_string(), value: Value::Length(n, Unit::Px) }],
+            _ => Vec::new(),
+        },
         // flex-grow/flex-shrink: 단위 없는 수 → Length(n, Px) (레이아웃이 to_px 로 읽음)
         "flex-grow" | "flex-shrink" => match value_text.trim().parse::<f32>() {
             Ok(n) => vec![Declaration { name: name.to_string(), value: Value::Length(n, Unit::Px) }],

@@ -13,8 +13,8 @@ impl<'a> LayoutBox<'a> {
     }
 
     // flexbox: row/column, flex-wrap, justify-content, align-items, gap, flex-grow, flex-shrink.
-    // align-self(아이템별 cross 정렬) 지원. 미지원: flex-basis(폭/높이 or 내용폭 근사),
-    // align-content, order, wrap-reverse 세부.
+    // align-self, order(재정렬) 지원. 미지원: flex-basis(폭/높이 or 내용폭 근사),
+    // align-content, wrap-reverse 세부.
     pub(super) fn layout_flex_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
@@ -85,12 +85,19 @@ impl<'a> LayoutBox<'a> {
             shrink[i] = child.styled_node.value("flex-shrink").map(|v| v.to_px()).unwrap_or(1.0);
         }
 
-        // 2) 줄 나누기 (wrap 이고 main 확정일 때만)
+        // order: 아이템을 order 값 오름차순으로 재정렬 (안정 정렬 → 동일 order 는 DOM 순서)
+        let mut order_seq: Vec<usize> = (0..n).collect();
+        let orders: Vec<i32> = (0..n)
+            .map(|i| self.children[i].styled_node.value("order").map(|v| v.to_px() as i32).unwrap_or(0))
+            .collect();
+        order_seq.sort_by_key(|&i| orders[i]);
+
+        // 2) 줄 나누기 (wrap 이고 main 확정일 때만). order_seq 순서로 배치.
         let mut lines: Vec<Vec<usize>> = Vec::new();
         if wrap && cont_main.is_finite() {
             let mut cur: Vec<usize> = Vec::new();
             let mut cur_main = 0.0f32;
-            for i in 0..n {
+            for &i in &order_seq {
                 let add = basis[i] + if cur.is_empty() { 0.0 } else { gap };
                 if !cur.is_empty() && cur_main + add > cont_main + 0.5 {
                     lines.push(std::mem::take(&mut cur));
@@ -103,7 +110,7 @@ impl<'a> LayoutBox<'a> {
                 lines.push(cur);
             }
         } else {
-            lines.push((0..n).collect());
+            lines.push(order_seq.clone());
         }
 
         // 3) 줄마다 main 크기 배분(grow) + justify/align 배치

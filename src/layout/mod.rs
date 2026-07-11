@@ -2367,6 +2367,21 @@ mod tests {
     }
 
     #[test]
+    fn flex_order_reorders_items() {
+        // order 로 시각 순서 재정렬: b(order 1) 가 a(order 2) 보다 앞
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            ".row { display: flex; } \
+             .a { display: block; width: 20px; height: 10px; order: 2; } \
+             .b { display: block; width: 20px; height: 10px; order: 1; }",
+            300.0,
+        );
+        // b(order1)가 x=0, a(order2)가 x=20
+        assert_eq!(d[1].content.x, 0.0, "b(order 1)가 먼저");
+        assert_eq!(d[0].content.x, 20.0, "a(order 2)가 나중");
+    }
+
+    #[test]
     fn flex_align_self_overrides_container() {
         // 컨테이너 align-items: flex-start, 둘째 아이템만 align-self: center
         let d = flex_layout(
