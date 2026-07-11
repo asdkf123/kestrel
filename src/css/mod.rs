@@ -291,10 +291,47 @@ pub fn parse(source: String) -> Stylesheet {
     parse_viewport(source, 1024.0)
 }
 
+// CSS 주석 /* ... */ 제거. 문자열(따옴표) 안은 보존. 토큰 붙음 방지로 공백 치환.
+// 미압축 스타일시트(문서/개발 사이트)엔 주석이 흔해, 없으면 선언이 통째로 유실된다.
+pub fn strip_comments(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let mut quote: Option<char> = None;
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                out.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => {
+                if c == '/' && chars.peek() == Some(&'*') {
+                    chars.next(); // '*'
+                    let mut prev = ' ';
+                    for cc in chars.by_ref() {
+                        if prev == '*' && cc == '/' {
+                            break;
+                        }
+                        prev = cc;
+                    }
+                    out.push(' ');
+                } else {
+                    if c == '"' || c == '\'' {
+                        quote = Some(c);
+                    }
+                    out.push(c);
+                }
+            }
+        }
+    }
+    out
+}
+
 // 뷰포트 폭을 알고 파스 — @media (min/max-width) 를 이 폭에 대해 평가해
 // 매칭되는 규칙만 포함한다. 페이지 스타일시트는 실제 뷰포트 폭으로 호출.
 pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
-    let mut parser = Parser { pos: 0, input: source, viewport_width, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
+    let mut parser = Parser { pos: 0, input: strip_comments(&source), viewport_width, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
     let rules = parser.parse_rules();
     Stylesheet { rules, font_faces: parser.font_faces, keyframes: parser.keyframes }
 }
@@ -324,7 +361,7 @@ fn parse_nth(s: &str) -> Option<(i32, i32)> {
 }
 
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
-    let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
+    let mut parser = Parser { pos: 0, input: strip_comments(text), viewport_width: 0.0, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
     parser.parse_declarations()
 }
 
@@ -1021,6 +1058,24 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn css_comments_stripped_declarations_survive() {
+        // 주석이 섞인 규칙(미압축 CSS)에서 선언이 유실되지 않아야 (mdBook #help 사례)
+        let ss = parse(
+            "#x { /* pos */ position: fixed; /* hide me */ display: none; width: 10px; }".to_string(),
+        );
+        let d = &ss.rules[0].declarations;
+        assert!(
+            d.iter().any(|x| x.name == "display" && matches!(&x.value, Value::Keyword(k) if k == "none")),
+            "display:none 이 주석 뒤에서 살아남아야: {:?}",
+            d.iter().map(|x| &x.name).collect::<Vec<_>>()
+        );
+        assert!(d.iter().any(|x| x.name == "width"));
+        // 문자열 안 /* 는 주석 아님
+        let s = strip_comments("a { content: \"/* not comment */\"; }");
+        assert!(s.contains("not comment"), "문자열 안 보존: {}", s);
+    }
 
     #[test]
     fn parses_rule_with_length_and_color() {
