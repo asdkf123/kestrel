@@ -260,8 +260,8 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     out
 }
 
-// `box-shadow: <dx> <dy> [blur] [spread] <color>` 를 커스텀 longhand 로 확장.
-// 다중 그림자는 첫 번째만, inset 은 미지원(드롭). paint 가 이 longhand 를 읽는다.
+// `box-shadow: [inset] <dx> <dy> [blur] [spread] <color>` 를 커스텀 longhand 로 확장.
+// 다중 그림자는 첫 번째만. paint 가 이 longhand 를 읽는다.
 fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
     // 최상위(괄호 밖) 첫 콤마까지가 첫 그림자 — rgba(...) 안의 콤마는 보존.
     let mut depth = 0i32;
@@ -280,9 +280,11 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
     let first = value_text[..end].trim();
     let mut lens: Vec<f32> = Vec::new();
     let mut color: Option<Value> = None;
+    let mut inset = false;
     for tok in first.split_whitespace() {
         if tok == "inset" {
-            return Vec::new(); // inset 그림자 미지원
+            inset = true;
+            continue;
         }
         match interpret_value(tok) {
             Some(Value::Length(v, Unit::Px)) => lens.push(v),
@@ -301,6 +303,10 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
         Declaration { name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
         Declaration { name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
         Declaration { name: "box-shadow-color".to_string(), value: color },
+        Declaration {
+            name: "box-shadow-inset".to_string(),
+            value: Value::Keyword(if inset { "inset" } else { "outset" }.to_string()),
+        },
     ]
 }
 

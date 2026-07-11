@@ -157,6 +157,47 @@ impl Canvas {
         }
     }
 
+    // 안쪽 그림자: 박스 내부에서 경계(오프셋 반영)로부터 blur 만큼 안으로 감쇠.
+    // 경계 근처가 가장 진하고 중심으로 갈수록 옅어진다. rect(=border box)로 클립.
+    pub fn fill_inner_shadow(&mut self, color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32) {
+        if rect.width <= 0.0 || rect.height <= 0.0 {
+            return;
+        }
+        let soft = blur.max(1.0);
+        let (hw, hh) = (rect.width / 2.0, rect.height / 2.0);
+        let (ccx, ccy) = (rect.x + hw, rect.y + hh);
+        let r = radius.min(hw).min(hh).max(0.0);
+        let base_a = color.a as f32 / 255.0;
+        let x0 = rect.x.max(0.0) as usize;
+        let y0 = rect.y.max(0.0) as usize;
+        let x1 = ((rect.x + rect.width).min(self.width as f32)).max(0.0) as usize;
+        let y1 = ((rect.y + rect.height).min(self.height as f32)).max(0.0) as usize;
+        for py in y0..y1 {
+            let fy = py as f32 + 0.5;
+            for px in x0..x1 {
+                let fx = px as f32 + 0.5;
+                // 오프셋 반영 샘플점의 둥근 박스 SDF (내부 음수). 오프셋 반대편 경계에서 진함.
+                let sx = fx - dx;
+                let sy = fy - dy;
+                let qx = (sx - ccx).abs() - (hw - r);
+                let qy = (sy - ccy).abs() - (hh - r);
+                let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+                let sdf = outside + qx.max(qy).min(0.0) - r;
+                // 경계(sdf~0)에서 1, 안으로 soft 만큼 들어가면(sdf=-soft) 0
+                let cov = (1.0 + sdf / soft).clamp(0.0, 1.0);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let a = (cov * base_a * 255.0).round() as u8;
+                if a == 0 {
+                    continue;
+                }
+                let idx = py * self.width + px;
+                self.pixels[idx] = blend(self.pixels[idx], color, a);
+            }
+        }
+    }
+
     pub fn to_u32_buffer(&self) -> Vec<u32> {
         self.pixels
             .iter()
@@ -251,6 +292,8 @@ pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
     RoundRect { color: Color, rect: Rect, radius: f32 },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
+    // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
+    InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
     Image { image: usize, rect: Rect, fit: ImageFit },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, stops: (색, 위치 0-1).
     Gradient { rect: Rect, angle: f32, radial: bool, stops: Vec<(Color, f32)> },
@@ -325,6 +368,11 @@ fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         Some(Value::Color(c)) => c,
         _ => Color { r: 0, g: 0, b: 0, a: 128 },
     };
+    let inset = matches!(lb.styled_node.value("box-shadow-inset"),
+        Some(Value::Keyword(ref k)) if k == "inset");
+    if inset {
+        return; // 안쪽 그림자는 emit_inner_shadow 가 배경 이후에 발행
+    }
     let b = lb.dimensions.border_box();
     let rect = Rect {
         x: b.x + dx - spread,
@@ -334,6 +382,37 @@ fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     };
     let radius = (uniform_radius(lb) + spread).max(0.0);
     items.push(DisplayItem::Shadow { color, rect, radius, blur });
+}
+
+// 안쪽 그림자(inset): 박스 내부 경계에서 안으로 번진다. 배경/테두리 위에 그린다.
+fn emit_inner_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let len = |name: &str| match lb.styled_node.value(name) {
+        Some(Value::Length(v, crate::css::Unit::Px)) => Some(v),
+        _ => None,
+    };
+    let (dx, dy) = match (len("box-shadow-x"), len("box-shadow-y")) {
+        (Some(x), Some(y)) => (x, y),
+        _ => return,
+    };
+    if !matches!(lb.styled_node.value("box-shadow-inset"),
+        Some(Value::Keyword(ref k)) if k == "inset")
+    {
+        return;
+    }
+    let blur = len("box-shadow-blur").unwrap_or(0.0);
+    let color = match lb.styled_node.value("box-shadow-color") {
+        Some(Value::Color(c)) => c,
+        _ => Color { r: 0, g: 0, b: 0, a: 128 },
+    };
+    let radius = uniform_radius(lb).max(0.0);
+    items.push(DisplayItem::InnerShadow {
+        color,
+        rect: lb.dimensions.border_box(),
+        radius,
+        blur,
+        dx,
+        dy,
+    });
 }
 
 // 박스 배경 + 테두리를 발행. border-radius 가 있으면 둥근 사각형으로,
@@ -468,6 +547,10 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
             };
             rect_intersect(expanded, c).map(|_| DisplayItem::Shadow { color, rect, radius, blur })
         }
+        DisplayItem::InnerShadow { color, rect, radius, blur, dx, dy } => {
+            // 박스 안에만 그려지므로 rect 로 컬링만 (SDF 파라미터 유지)
+            rect_intersect(rect, c).map(|_| DisplayItem::InnerShadow { color, rect, radius, blur, dx, dy })
+        }
         DisplayItem::Glyph(gi) => {
             // 글리프 대략 bbox: x..x+px, baseline 위 1.1em ~ 아래 0.4em
             let gbox = Rect {
@@ -505,9 +588,10 @@ fn collect_items(
     // 근사(그룹 합성 아님): 겹치는 자손은 개별 블렌드되지만 대다수 UI 엔 충분.
     let subtree_start = buf.len();
     let mut local: Vec<DisplayItem> = Vec::new();
-    // 그림자 → 배경/테두리(border-radius 포함) → 배경이미지 → 이미지 → 글리프 → 장식
+    // 그림자 → 배경/테두리(border-radius 포함) → 안쪽그림자 → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
     emit_box_decorations(layout_box, &mut local);
+    emit_inner_shadow(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
         local.push(DisplayItem::Image {
             image: idx,
@@ -589,6 +673,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
         DisplayItem::Rect { color, .. } => color.a = s(color.a),
         DisplayItem::RoundRect { color, .. } => color.a = s(color.a),
         DisplayItem::Shadow { color, .. } => color.a = s(color.a),
+        DisplayItem::InnerShadow { color, .. } => color.a = s(color.a),
         DisplayItem::Glyph(gi) => gi.color.a = s(gi.color.a),
         DisplayItem::Gradient { stops, .. } => {
             for (c, _) in stops.iter_mut() {
@@ -674,6 +759,13 @@ fn draw_item(
                 return;
             }
             canvas.fill_soft_round_rect(*color, r, radius * scale, blur * scale);
+        }
+        DisplayItem::InnerShadow { color, rect, radius, blur, dx, dy } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
+            }
+            canvas.fill_inner_shadow(*color, r, radius * scale, blur * scale, dx * scale, dy * scale);
         }
         DisplayItem::Image { image, rect, fit } => {
             let r = scale_rect(rect);
@@ -991,6 +1083,21 @@ mod tests {
         assert!(canvas.pixels[0].r < canvas.pixels[3].r, "왼쪽이 오른쪽보다 어두워야 함");
         assert!(canvas.pixels[0].r < 64, "왼쪽 끝은 검정에 가까움");
         assert!(canvas.pixels[3].r > 192, "오른쪽 끝은 흰색에 가까움");
+    }
+
+    #[test]
+    fn inner_shadow_darkens_near_edge() {
+        // 흰 배경에 검정 inset 그림자(오프셋 0, blur 넉넉) → 가장자리가 중심보다 어둡다
+        let mut canvas = Canvas::new(20, 20);
+        for p in canvas.pixels.iter_mut() {
+            *p = Color { r: 255, g: 255, b: 255, a: 255 };
+        }
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        canvas.fill_inner_shadow(black, Rect { x: 0.0, y: 0.0, width: 20.0, height: 20.0 }, 0.0, 8.0, 0.0, 0.0);
+        let edge = canvas.pixels[10 * 20 + 0]; // 왼쪽 가장자리 (0,10)
+        let center = canvas.pixels[10 * 20 + 10]; // 중심 (10,10)
+        assert!(edge.r < center.r, "가장자리({})가 중심({})보다 어두워야", edge.r, center.r);
+        assert!(edge.r < 80, "가장자리는 꽤 어둡다");
     }
 
     #[test]

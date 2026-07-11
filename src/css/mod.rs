@@ -1069,9 +1069,11 @@ mod tests {
     }
 
     #[test]
-    fn box_shadow_inset_dropped() {
+    fn box_shadow_inset_parsed() {
         let ss = parse("div { box-shadow: inset 0 2px 4px #000000; }".to_string());
-        assert_eq!(decl(&ss, "box-shadow-x"), None, "inset 는 미지원 → 드롭");
+        assert_eq!(decl(&ss, "box-shadow-x"), Some(&Value::Length(0.0, Unit::Px)));
+        assert_eq!(decl(&ss, "box-shadow-y"), Some(&Value::Length(2.0, Unit::Px)));
+        assert_eq!(decl(&ss, "box-shadow-inset"), Some(&Value::Keyword("inset".to_string())));
     }
 
     #[test]
