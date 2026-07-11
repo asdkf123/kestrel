@@ -175,18 +175,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
-        // text-decoration[-line]: line 키워드만 추출 (style/color/thickness 무시).
+        // text-decoration[-line]: line 키워드 + 색 추출 (style/thickness 는 미사용).
         // none/키워드 없음 → "none". 인라인 레이아웃이 밑줄/취소선/윗줄로 그린다.
         "text-decoration" | "text-decoration-line" => {
-            let lines: Vec<&str> = value_text
-                .split_whitespace()
-                .filter(|t| matches!(*t, "underline" | "overline" | "line-through"))
-                .collect();
+            let mut lines: Vec<&str> = Vec::new();
+            let mut color: Option<Value> = None;
+            for t in value_text.split_whitespace() {
+                if matches!(t, "underline" | "overline" | "line-through") {
+                    lines.push(t);
+                } else if matches!(t, "solid" | "double" | "dotted" | "dashed" | "wavy" | "none") {
+                    // style 키워드 / none 은 line 판정에 영향 없음 (none 은 lines 비우기)
+                } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
+                    color = Some(v);
+                }
+            }
             let joined = lines.join(" ");
-            vec![Declaration {
+            let mut out = vec![Declaration {
                 name: "text-decoration-line".to_string(),
                 value: Value::Keyword(if joined.is_empty() { "none".to_string() } else { joined }),
-            }]
+            }];
+            if let Some(c) = color {
+                out.push(Declaration { name: "text-decoration-color".to_string(), value: c });
+            }
+            out
         }
         // content (::before/::after 생성 콘텐츠): 따옴표 문자열은 벗기고 CSS 이스케이프
         // (\2022 등)를 해석. none/normal/attr()/counter() 는 원문 Keyword 로(생성 판단은 style).
@@ -659,6 +670,16 @@ mod tests {
             matches!(find(&d, "background-position"), Some(Value::Keyword(k)) if k == "center"),
             "position center"
         );
+    }
+
+    #[test]
+    fn text_decoration_extracts_line_and_color() {
+        let d = expand_declaration("text-decoration", "underline wavy red");
+        assert!(
+            matches!(find(&d, "text-decoration-line"), Some(Value::Keyword(k)) if k == "underline"),
+            "line"
+        );
+        assert!(matches!(find(&d, "text-decoration-color"), Some(Value::Color(_))), "color 추출");
     }
 
     #[test]

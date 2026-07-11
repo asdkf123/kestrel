@@ -13,7 +13,16 @@ struct TextStyle {
     bold: bool,
     italic: bool,
     deco: u8, // text-decoration 비트: 1=underline 2=line-through 4=overline
+    deco_color: Option<Color>, // text-decoration-color (없으면 글자색 사용)
     voffset: f32, // vertical-align 세로 오프셋(px, 양수=아래). super/sub/length.
+}
+
+// text-decoration-color 명시값 (currentColor/미지정 → None)
+fn deco_color_of(node: &StyledNode) -> Option<Color> {
+    match node.value("text-decoration-color") {
+        Some(Value::Color(c)) => Some(c),
+        _ => None,
+    }
 }
 
 // vertical-align → baseline 오프셋(px, 양수=아래로). CSS 양수는 위로 올림.
@@ -66,6 +75,7 @@ impl<'a> LayoutBox<'a> {
             bold: self.styled_node.is_bold(),
             italic: self.styled_node.is_italic(),
             deco: deco_flags(self.styled_node.value("text-decoration-line")),
+            deco_color: deco_color_of(self.styled_node),
             voffset: vertical_offset(self.styled_node, base_px),
         };
 
@@ -275,9 +285,11 @@ impl<'a> LayoutBox<'a> {
             if deco != 0 {
                 let thick = (word_px_max * 0.06).max(1.0);
                 let w = pen_x - word_x0;
+                // text-decoration-color 우선, 없으면 글자색
+                let dcolor = word.iter().find_map(|&(_, st)| st.deco_color).unwrap_or(word_color);
                 let mut line_at = |y: f32| self.decorations.push((
                     Rect { x: word_x0, y, width: w, height: thick },
-                    word_color,
+                    dcolor,
                 ));
                 if deco & 1 != 0 {
                     line_at(baseline + 0.08 * word_px_max); // underline
@@ -442,6 +454,7 @@ fn collect_node<'a>(
                     italic: node.is_italic(),
                     // 데코는 조상에서 자손으로 누적(자손이 끌 수 없음 — CSS 전파 규칙)
                     deco: style.deco | deco_flags(node.value("text-decoration-line")),
+                    deco_color: deco_color_of(node).or(style.deco_color),
                     voffset: vertical_offset(node, cpx),
                 };
                 for child in &node.children {
