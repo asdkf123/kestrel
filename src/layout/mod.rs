@@ -1267,6 +1267,20 @@ mod tests {
     }
 
     #[test]
+    fn line_height_sets_line_box_height() {
+        // 단위 없는 line-height:2 는 font-size(20px) 배수 → 줄 높이 40px
+        let tall = layout_for(
+            "<p>hi</p>",
+            "p { display: block; font-size: 20px; line-height: 2; }",
+            800.0,
+        );
+        assert!((tall.content.height - 40.0).abs() < 0.5, "2 × 20px = 40, 실제 {}", tall.content.height);
+        // 명시 안 하면 폰트 메트릭 기반(더 작음)
+        let normal = layout_for("<p>hi</p>", "p { display: block; font-size: 20px; }", 800.0);
+        assert!(normal.content.height < tall.content.height, "기본이 line-height:2 보다 작아야");
+    }
+
+    #[test]
     fn auto_width_fills_containing_block_minus_padding() {
         let d = layout_for("<div></div>", "div { display: block; padding: 10px; }", 300.0);
         assert_eq!(d.content.width, 280.0);

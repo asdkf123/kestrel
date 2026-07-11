@@ -90,10 +90,16 @@ impl<'a> LayoutBox<'a> {
         }
 
         let base_scale = base_px / upm;
-        let line_height =
-            (primary.ascent() as f32 - primary.descent() as f32 + primary.line_gap() as f32)
-                * base_scale;
         let ascent_px = primary.ascent() as f32 * base_scale;
+        let descent_px = primary.descent() as f32 * base_scale; // 보통 음수
+        let natural_lh = ascent_px - descent_px + primary.line_gap() as f32 * base_scale;
+        // CSS line-height: 지정되면(px 로 확정된 값) 사용, 아니면 폰트 메트릭.
+        // 반-리딩(half-leading)만큼 baseline 을 내려 줄 상자 안에서 세로 중앙 정렬.
+        let line_height = match self.styled_node.value("line-height") {
+            Some(Value::Length(px, crate::css::Unit::Px)) if px > 0.0 => px,
+            _ => natural_lh,
+        };
+        let half_leading = (line_height - (ascent_px - descent_px)) / 2.0;
         let space_adv = primary.advance_width(primary.glyph_index(' ')) as f32 * base_scale;
 
         let resolve = |ch: char, px: f32| -> (usize, u16, f32) {
@@ -117,7 +123,7 @@ impl<'a> LayoutBox<'a> {
             }
             (content_x, content_x + content_w)
         };
-        let mut baseline = self.dimensions.content.y + ascent_px;
+        let mut baseline = self.dimensions.content.y + half_leading + ascent_px;
         let (mut line_left, mut line_right) = line_range(baseline);
         let mut pen_x = line_left;
         let mut lines = 1;

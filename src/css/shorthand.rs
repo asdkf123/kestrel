@@ -68,6 +68,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let mapped = name.strip_prefix("grid-").unwrap();
             expand_declaration(mapped, value_text)
         }
+        // line-height: 단위 없는 수(1.5)와 퍼센트(150%)는 font-size 배수 → em 으로 저장
+        // (스타일 계산 시 요소 font-size 기준 px 로 확정). normal/길이단위는 그대로.
+        "line-height" => {
+            let v = value_text.trim();
+            if v == "normal" {
+                return vec![Declaration { name: name.to_string(), value: Value::Keyword("normal".to_string()) }];
+            }
+            if let Some(pct) = v.strip_suffix('%') {
+                if let Ok(n) = pct.trim().parse::<f32>() {
+                    return vec![Declaration { name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }];
+                }
+            }
+            if let Ok(n) = v.parse::<f32>() {
+                return vec![Declaration { name: name.to_string(), value: Value::Length(n, Unit::Em) }];
+            }
+            match interpret_value(v) {
+                Some(value) => vec![Declaration { name: name.to_string(), value }],
+                None => Vec::new(),
+            }
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
