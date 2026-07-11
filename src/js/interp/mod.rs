@@ -1750,6 +1750,15 @@ impl Interp {
                 Ok(Value::Str(s))
             }
             Expr::Unary { op, expr } => {
+                // typeof 는 미선언 식별자에 던지지 않고 "undefined" 반환 (기능 탐지 관용:
+                // typeof window !== 'undefined', typeof require !== 'undefined' 등)
+                if matches!(op, UnOp::Typeof) {
+                    if let Expr::Ident(name) = expr.as_ref() {
+                        if env_get(env, name).is_none() {
+                            return Ok(Value::Str("undefined".to_string()));
+                        }
+                    }
+                }
                 let v = self.eval(expr, env)?;
                 Ok(match op {
                     UnOp::Neg => Value::Num(-to_num(&v)),
@@ -3602,6 +3611,15 @@ mod tests {
             run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
             "b"
         );
+    }
+
+    #[test]
+    fn typeof_undeclared_returns_undefined() {
+        // 미선언 식별자에 typeof 는 던지지 않고 "undefined" (기능 탐지 관용)
+        assert_eq!(run_str("typeof someUndeclaredGlobal"), "undefined");
+        assert_eq!(run_str("typeof require"), "undefined");
+        assert_eq!(run_str("var x=5; typeof x"), "number");
+        assert!(run_bool("typeof module !== 'undefined' ? false : true"));
     }
 
     #[test]
