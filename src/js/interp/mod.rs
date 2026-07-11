@@ -93,6 +93,7 @@ pub struct JsClass {
     pub parent: Option<Rc<JsClass>>,
     pub ctor: Option<Rc<JsFn>>,
     pub methods: HashMap<String, Rc<JsFn>>,
+    pub getters: HashMap<String, Rc<JsFn>>,
     pub statics: RefCell<HashMap<String, Value>>,
 }
 
@@ -103,6 +104,14 @@ impl JsClass {
             return Some(m.clone());
         }
         self.parent.as_ref().and_then(|p| p.find_method(name))
+    }
+
+    // get 접근자 탐색 (자신 → 조상)
+    fn find_getter(&self, name: &str) -> Option<Rc<JsFn>> {
+        if let Some(g) = self.getters.get(name) {
+            return Some(g.clone());
+        }
+        self.parent.as_ref().and_then(|p| p.find_getter(name))
     }
 }
 
@@ -2147,9 +2156,12 @@ impl Interp {
                 self.dom_get(*id, key)
             }
             Value::Instance(inst) => {
-                // 필드 우선, 없으면 클래스 메서드 체인
+                // 필드 우선, 그다음 get 접근자(호출해 값 산출), 그다음 메서드 체인
                 if let Some(v) = inst.fields.borrow().get(key) {
                     return Ok(v.clone());
+                }
+                if let Some(g) = inst.class.find_getter(key) {
+                    return self.call_value(Value::Fn(g), Some(recv.clone()), vec![]);
                 }
                 if let Some(m) = inst.class.find_method(key) {
                     return Ok(Value::Fn(m));
@@ -2413,6 +2425,10 @@ impl Interp {
         for (name, p, b) in &def.methods {
             methods.insert(name.clone(), mk(p, b));
         }
+        let mut getters = HashMap::new();
+        for (name, p, b) in &def.getters {
+            getters.insert(name.clone(), mk(p, b));
+        }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
         for (name, p, b) in &def.statics {
@@ -2423,6 +2439,7 @@ impl Interp {
             parent,
             ctor,
             methods,
+            getters,
             statics: RefCell::new(statics),
         });
         Ok(Value::Class(cls))
@@ -3317,6 +3334,20 @@ mod tests {
         );
         // 파싱 실패는 스크립트 에러
         assert!(Interp::new().run("JSON.parse('{oops')").is_err());
+    }
+
+    #[test]
+    fn class_getters_are_invoked() {
+        // get 접근자는 프로퍼티 접근 시 호출돼 값을 낸다 (함수가 아니라)
+        assert_eq!(
+            run_num("class C{constructor(){this.n=20;} get double(){return this.n*2;}} new C().double"),
+            40.0
+        );
+        // 상속된 getter
+        assert_eq!(
+            run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
+            "b"
+        );
     }
 
     #[test]

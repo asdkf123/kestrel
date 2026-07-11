@@ -1058,6 +1058,7 @@ impl Parser {
         let mut ctor = None;
         let mut methods = Vec::new();
         let mut statics = Vec::new();
+        let mut getters = Vec::new();
         while self.peek() != Some(&Tok::RBrace) {
             if self.eof() {
                 return Err("닫히지 않은 class".to_string());
@@ -1066,11 +1067,13 @@ impl Parser {
                 continue; // 멤버 사이 세미콜론 허용
             }
             let is_static = self.eat(&Tok::Static);
-            // get/set 접근자: 키워드만 소비하고 일반 메서드로 취급 (근사)
+            // get/set 접근자: get 은 접근자로 분리, set 은 소비만(할당 시 미호출 근사)
+            let mut accessor = None; // Some("get") | Some("set")
             if let Some(Tok::Ident(w)) = self.peek() {
                 if (w == "get" || w == "set")
                     && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(_)))
                 {
+                    accessor = Some(w.clone());
                     self.pos += 1;
                 }
             }
@@ -1079,6 +1082,10 @@ impl Parser {
             body.extend(self.block()?);
             if !is_static && mname == "constructor" {
                 ctor = Some((params, body));
+            } else if accessor.as_deref() == Some("get") && !is_static {
+                getters.push((mname, params, body));
+            } else if accessor.as_deref() == Some("set") {
+                // setter: 할당 훅 미지원 → 조용히 버림(메서드로 오인 방지)
             } else if is_static {
                 statics.push((mname, params, body));
             } else {
@@ -1086,7 +1093,7 @@ impl Parser {
             }
         }
         self.pos += 1; // '}'
-        Ok(ClassDef { name, parent, ctor, methods, statics })
+        Ok(ClassDef { name, parent, ctor, methods, statics, getters })
     }
 
     // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드
