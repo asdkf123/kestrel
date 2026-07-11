@@ -1,9 +1,11 @@
 mod media;
 mod shorthand;
+mod supports;
 mod values;
 
 use media::media_matches;
 use shorthand::expand_declaration;
+use supports::supports_condition;
 use values::valid_identifier_char;
 
 #[derive(Debug, PartialEq)]
@@ -302,6 +304,9 @@ impl Parser {
                 if ident == "media" {
                     let media_rules = self.parse_media_block();
                     rules.extend(media_rules);
+                } else if ident == "supports" {
+                    let supported = self.parse_supports_block();
+                    rules.extend(supported);
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -343,6 +348,41 @@ impl Parser {
             }
         }
         if media_matches(&query, self.viewport_width) {
+            inner
+        } else {
+            Vec::new()
+        }
+    }
+
+    // '@supports <condition> { rules }'. 조건이 참이면 내부 규칙 포함, 아니면 버림.
+    // (내부 규칙은 항상 파싱해 위치를 넘긴다.)
+    fn parse_supports_block(&mut self) -> Vec<Rule> {
+        let cond = self.consume_while(|c| c != '{' && c != ';' && c != '}');
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return Vec::new();
+        }
+        self.consume_char(); // '{'
+        let mut inner = Vec::new();
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                Some('@') => self.skip_at_rule(),
+                _ => {
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
+                }
+            }
+        }
+        if supports_condition(cond.trim()) {
             inner
         } else {
             Vec::new()
