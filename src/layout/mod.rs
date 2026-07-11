@@ -504,9 +504,18 @@ impl<'a> LayoutBox<'a> {
             let cfloat = self.children[i].float();
             let is_ib =
                 matches!(self.children[i].styled_node.display(), Display::InlineBlock) && cfloat == "none";
+            // 익명 인라인 박스(텍스트 런): inline-block 과 같은 줄에 흘러야 한다.
+            // 단, 인접한 inline-block 이 있을 때만 atom 으로(홀로 있는 텍스트 블록은 정상 유지).
+            let is_anon = !self.children[i].inline_nodes.is_empty() && cfloat == "none";
+            let next_is_ib = self
+                .children
+                .get(i + 1)
+                .map(|c| matches!(c.styled_node.display(), Display::InlineBlock) && c.float() == "none")
+                .unwrap_or(false);
+            let is_atom = is_ib || (is_anon && (ib_active || next_is_ib));
 
-            // 다른 종류의 자식을 만나면 진행 중이던 inline-block 런을 마감(정렬 + 높이 반영)
-            if ib_active && !is_ib {
+            // 인라인 atom 이 아닌 자식을 만나면 진행 중이던 런을 마감(정렬 + 높이 반영)
+            if ib_active && !is_atom {
                 ib_lines.push((std::mem::take(&mut ib_cur), ib_pen_x - cx));
                 let w = self.finish_inline_block_run(
                     std::mem::take(&mut ib_lines),
@@ -592,7 +601,7 @@ impl<'a> LayoutBox<'a> {
             }
 
             // inline-block: 가로로 흐르며 폭 초과 시 줄바꿈 (shrink-to-fit).
-            if is_ib {
+            if is_atom {
                 if !ib_active {
                     ib_active = true;
                     ib_line_top = self.dimensions.content.height + cy;
@@ -607,7 +616,9 @@ impl<'a> LayoutBox<'a> {
                 probe.content.y = ib_line_top;
                 probe.content.width = avail;
                 child.layout(probe, fonts, images);
-                let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
+                // 익명 텍스트 박스는 항상 shrink-to-fit(내용 폭). inline-block 은 명시 width 존중.
+                let explicit =
+                    !is_anon && matches!(child.styled_node.value("width"), Some(Length(_, _)));
                 // auto 폭 shrink-to-fit 시 재배치 폭(ow)에 margin 도 포함해야 재계산에서
                 // margin 이 content 를 깎지 않는다 (auto 폭엔 phantom margin 이 없음).
                 let bp = child.dimensions.margin_box().width - child.dimensions.content.width;
@@ -1649,6 +1660,31 @@ mod tests {
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         // after 는 float 밴드(높이 40) 아래로 clear
         assert_eq!(lb.children[1].dimensions.content.y, 40.0, "정상 블록은 float 밴드 아래");
+    }
+
+    #[test]
+    fn text_and_inline_block_share_line() {
+        // "Home" 텍스트 + inline-block 버튼 + "tail" 이 같은 줄에 (세로로 안 쌓임).
+        // 네비게이션 바/버튼 그룹의 기본 패턴.
+        let root = crate::html::parse_dom(
+            "<div class=\"nav\">Home <span class=\"btn\"></span> tail</div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".nav { display: block; font-size: 16px; } \
+             .btn { display: inline-block; width: 30px; height: 16px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // children: anon("Home "), btn, anon(" tail")
+        let btn = &lb.children[1];
+        assert!(btn.dimensions.content.x > 20.0, "버튼은 'Home ' 텍스트 뒤: {}", btn.dimensions.content.x);
+        assert!(btn.dimensions.content.y < 8.0, "버튼은 첫 줄(텍스트와 같은 줄): {}", btn.dimensions.content.y);
+        // 컨테이너 높이 = 한 줄 (~18px). 세로로 쌓였다면 3줄(~54px).
+        assert!(lb.dimensions.content.height < 30.0, "한 줄이어야: {}", lb.dimensions.content.height);
     }
 
     #[test]
