@@ -12,6 +12,20 @@ struct TextStyle {
     link: Option<usize>,
     bold: bool,
     italic: bool,
+    deco: u8, // text-decoration 비트: 1=underline 2=line-through 4=overline
+}
+
+// text-decoration-line Keyword("underline overline" 등) → 비트플래그
+fn deco_flags(v: Option<Value>) -> u8 {
+    match v {
+        Some(Value::Keyword(k)) => k.split_whitespace().fold(0u8, |f, t| match t {
+            "underline" => f | 1,
+            "line-through" => f | 2,
+            "overline" => f | 4,
+            _ => f,
+        }),
+        _ => 0,
+    }
 }
 
 impl<'a> LayoutBox<'a> {
@@ -34,6 +48,7 @@ impl<'a> LayoutBox<'a> {
             link: None,
             bold: self.styled_node.is_bold(),
             italic: self.styled_node.is_italic(),
+            deco: deco_flags(self.styled_node.value("text-decoration-line")),
         };
 
         // white-space: nowrap/pre 는 폭 기반 줄바꿈 안 함. pre 계열은 \n 을 강제 개행,
@@ -161,7 +176,7 @@ impl<'a> LayoutBox<'a> {
                 word_px_max = word_px_max.max(st.px);
                 word_color = st.color;
             }
-            // 링크: 히트 영역 + 밑줄 (단어 폭, baseline 약간 아래)
+            // 링크: 히트 영역 (단어 폭, baseline 위아래로)
             if let Some(li) = word.iter().find_map(|&(_, st)| st.link) {
                 self.links.push((
                     Rect {
@@ -172,15 +187,25 @@ impl<'a> LayoutBox<'a> {
                     },
                     hrefs[li].clone(),
                 ));
-                self.decorations.push((
-                    Rect {
-                        x: word_x0,
-                        y: baseline + 0.08 * word_px_max,
-                        width: pen_x - word_x0,
-                        height: (word_px_max * 0.06).max(1.0),
-                    },
+            }
+            // text-decoration: 밑줄/취소선/윗줄 (링크 밑줄도 UA a{underline} 로 여기서)
+            let deco = word.iter().fold(0u8, |f, &(_, st)| f | st.deco);
+            if deco != 0 {
+                let thick = (word_px_max * 0.06).max(1.0);
+                let w = pen_x - word_x0;
+                let mut line_at = |y: f32| self.decorations.push((
+                    Rect { x: word_x0, y, width: w, height: thick },
                     word_color,
                 ));
+                if deco & 1 != 0 {
+                    line_at(baseline + 0.08 * word_px_max); // underline
+                }
+                if deco & 2 != 0 {
+                    line_at(baseline - 0.30 * word_px_max); // line-through
+                }
+                if deco & 4 != 0 {
+                    line_at(baseline - 0.80 * word_px_max); // overline
+                }
             }
             line_bounds.last_mut().unwrap().3 = pen_x - content_x; // 줄 폭 (trailing space 제외)
             pen_x += space_adv;
@@ -275,6 +300,8 @@ fn collect_node<'a>(
                     link: clink,
                     bold: node.is_bold(),
                     italic: node.is_italic(),
+                    // 데코는 조상에서 자손으로 누적(자손이 끌 수 없음 — CSS 전파 규칙)
+                    deco: style.deco | deco_flags(node.value("text-decoration-line")),
                 };
                 for child in &node.children {
                     collect_node(child, cstyle, runs, hrefs);

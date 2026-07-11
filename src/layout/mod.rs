@@ -1242,6 +1242,44 @@ mod tests {
         v
     }
 
+    fn count_decorations(b: &LayoutBox) -> usize {
+        b.decorations.len() + b.children.iter().map(count_decorations).sum::<usize>()
+    }
+
+    fn layout_tree_for<'a>(root: &'a StyledNode<'a>, fs: &FontStack) -> LayoutBox<'a> {
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 800.0;
+        layout_tree(root, viewport, fs, &no_images())
+    }
+
+    #[test]
+    fn text_decoration_line_through_emits_decoration() {
+        let fs = fonts();
+        // line-through 지정 → 장식 1개 이상
+        let root = crate::html::parse_dom("<p>hi</p>".to_string());
+        let ss = crate::css::parse("p { display: block; text-decoration: line-through; }".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let lb = layout_tree_for(&styled, &fs);
+        assert!(count_decorations(&lb) >= 1, "line-through 장식이 있어야");
+        // 데코 없는 문단은 장식 0
+        let root2 = crate::html::parse_dom("<p>hi</p>".to_string());
+        let ss2 = crate::css::parse("p { display: block; }".to_string());
+        let styled2 = crate::style::style_tree(&root2, &ss2);
+        let lb2 = layout_tree_for(&styled2, &fs);
+        assert_eq!(count_decorations(&lb2), 0, "장식 없어야");
+    }
+
+    #[test]
+    fn ua_underlines_links() {
+        let fs = fonts();
+        let root = crate::html::parse_dom("<p><a href=\"/x\">link</a></p>".to_string());
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(crate::css::parse("p { display: block; }".to_string()).rules);
+        let styled = crate::style::style_tree(&root, &ss);
+        let lb = layout_tree_for(&styled, &fs);
+        assert!(count_decorations(&lb) >= 1, "UA 스타일시트로 링크에 밑줄이 있어야");
+    }
+
     fn layout_for(html: &str, css: &str, viewport_width: f32) -> Dimensions {
         let root = crate::html::parse_dom(html.to_string());
         let ss = crate::css::parse(css.to_string());

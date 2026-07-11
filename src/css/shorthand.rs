@@ -88,6 +88,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // text-decoration[-line]: line 키워드만 추출 (style/color/thickness 무시).
+        // none/키워드 없음 → "none". 인라인 레이아웃이 밑줄/취소선/윗줄로 그린다.
+        "text-decoration" | "text-decoration-line" => {
+            let lines: Vec<&str> = value_text
+                .split_whitespace()
+                .filter(|t| matches!(*t, "underline" | "overline" | "line-through"))
+                .collect();
+            let joined = lines.join(" ");
+            vec![Declaration {
+                name: "text-decoration-line".to_string(),
+                value: Value::Keyword(if joined.is_empty() { "none".to_string() } else { joined }),
+            }]
+        }
         // opacity: 0..1 수 또는 퍼센트(50%). 스칼라를 Length(op, Px)로 실어 paint 가 읽음.
         // (미지원 단위 아님 — 파서가 0 아닌 단위없는 수를 드롭하므로 여기서 처리.)
         "opacity" => {
