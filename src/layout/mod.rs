@@ -836,7 +836,7 @@ impl<'a> LayoutBox<'a> {
     // <table>: 모든 행의 셀을 모아 공통 열 폭을 계산해 열을 정렬한다.
     // 열 폭 = 지정 폭(있으면) 아니면 내용 기반(max-content) 선호 폭. 남는/부족한
     // 폭은 auto 열에 선호 비율로 분배해 테이블 폭을 채움. 행 높이 = 최고 셀.
-    // 미지원: colspan/rowspan, border-collapse, border-spacing.
+    // colspan 지원. 미지원: rowspan, border-collapse, border-spacing.
     fn layout_table(&mut self, fonts: &FontStack, images: &ImageMap) {
         let d = self.dimensions;
         let (ox, oy, avail) = (d.content.x, d.content.y, d.content.width);
@@ -866,8 +866,12 @@ impl<'a> LayoutBox<'a> {
                 }
             };
         }
-        // 1) 열 수 + 열별 선호/지정 폭 측정 (셀을 avail 로 probe 레이아웃해 used_width 얻음)
-        let ncols = rows.iter().map(|&(i, j)| row_at!(self, i, j).children.len()).max().unwrap_or(0);
+        // 1) 열 수(colspan 합의 최대) + 열별 선호/지정 폭 측정
+        let ncols = rows
+            .iter()
+            .map(|&(i, j)| row_at!(self, i, j).children.iter().map(cell_colspan).sum::<usize>())
+            .max()
+            .unwrap_or(0);
         if ncols == 0 {
             self.dimensions.content.height = 0.0;
             return;
@@ -876,12 +880,18 @@ impl<'a> LayoutBox<'a> {
         let mut col_fixed: Vec<Option<f32>> = vec![None; ncols];
         for &(i, j) in &rows {
             let row = row_at!(self, i, j);
-            for (c, cell) in row.children.iter_mut().enumerate() {
+            let mut c = 0usize; // 현재 열 커서 (colspan 반영)
+            for cell in row.children.iter_mut() {
                 if c >= ncols {
                     break;
                 }
+                let span = cell_colspan(cell).min(ncols - c);
+                // 고정 폭/선호 폭은 스팬한 열에 균등 분배
                 if let Some(w) = cell_width(cell, avail) {
-                    col_fixed[c] = Some(col_fixed[c].map_or(w, |e: f32| e.max(w)));
+                    let per = w / span as f32;
+                    for k in 0..span {
+                        col_fixed[c + k] = Some(col_fixed[c + k].map_or(per, |e: f32| e.max(per)));
+                    }
                 }
                 let mut probe: Dimensions = Default::default();
                 probe.content.x = ox;
@@ -889,7 +899,11 @@ impl<'a> LayoutBox<'a> {
                 probe.content.width = avail;
                 cell.layout(probe, fonts, images);
                 let bp = cell.dimensions.border_box().width - cell.dimensions.content.width;
-                col_pref[c] = col_pref[c].max(cell.used_width + bp);
+                let per_pref = (cell.used_width + bp) / span as f32;
+                for k in 0..span {
+                    col_pref[c + k] = col_pref[c + k].max(per_pref);
+                }
+                c += span;
             }
         }
         // 2) 열 폭 확정: 고정 열은 그대로, auto 열은 남은 폭을 선호 비율로 분배(테이블 폭 채움)
@@ -925,17 +939,22 @@ impl<'a> LayoutBox<'a> {
         for &(i, j) in &rows {
             let row = row_at!(self, i, j);
             let mut row_h = 0.0f32;
-            for (c, cell) in row.children.iter_mut().enumerate() {
+            let mut c = 0usize;
+            for cell in row.children.iter_mut() {
                 if c >= ncols {
                     break;
                 }
+                let span = cell_colspan(cell).min(ncols - c);
+                // colspan 셀 폭 = 스팬한 열 폭의 합
+                let cell_w: f32 = (0..span).map(|k| col_w[c + k]).sum();
                 cell.clear_render();
                 let mut cb: Dimensions = Default::default();
                 cb.content.x = col_x[c];
                 cb.content.y = y;
-                cb.content.width = col_w[c];
+                cb.content.width = cell_w;
                 cell.layout(cb, fonts, images);
                 row_h = row_h.max(cell.dimensions.margin_box().height);
+                c += span;
             }
             // 셀 높이를 행 높이로 stretch (세로 정렬 top 근사)
             for cell in row.children.iter_mut() {
@@ -1018,6 +1037,18 @@ fn is_tr(b: &LayoutBox) -> bool {
 fn is_row_group(b: &LayoutBox) -> bool {
     matches!(&b.styled_node.node.node_type,
         NodeType::Element(e) if e.tag_name == "tbody" || e.tag_name == "thead" || e.tag_name == "tfoot")
+}
+
+// 셀의 colspan (HTML 속성). 기본 1, 최소 1.
+fn cell_colspan(child: &LayoutBox) -> usize {
+    if let NodeType::Element(e) = &child.styled_node.node.node_type {
+        if let Some(v) = e.attributes.get("colspan") {
+            if let Ok(n) = v.trim().parse::<usize>() {
+                return n.max(1);
+            }
+        }
+    }
+    1
 }
 
 // 테이블 셀의 지정 폭(px). CSS width(px/%) 우선, 없으면 HTML width 속성(px/%).
@@ -2402,6 +2433,32 @@ mod tests {
         let normal = height("");
         let nowrap = height("p { white-space: nowrap; }");
         assert!(nowrap < normal, "nowrap 은 한 줄 → normal(여러 줄)보다 낮음: {} < {}", nowrap, normal);
+    }
+
+    #[test]
+    fn table_colspan_spans_columns() {
+        // 첫 행: colspan=2 헤더. 둘째 행: 두 셀. 헤더 폭 = 두 열 합
+        let root = crate::html::parse_dom(
+            "<table><tbody><tr><td colspan=\"2\">head</td></tr><tr><td>a</td><td>b</td></tr></tbody></table>"
+                .to_string(),
+        );
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(crate::css::parse("table { width: 200px; } td { padding: 0; }".to_string()).rules);
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let tbody = &lb.children[0];
+        let head = &tbody.children[0].children[0]; // colspan=2 셀
+        let a = &tbody.children[1].children[0];
+        let b = &tbody.children[1].children[1];
+        // colspan 셀 폭 ≈ 두 열(a+b) 폭 합
+        let sum = a.dimensions.content.width + b.dimensions.content.width;
+        assert!((head.dimensions.content.width - sum).abs() < 0.5,
+            "colspan=2 폭({}) ≈ 두 열 합({})", head.dimensions.content.width, sum);
+        // 둘째 셀 b 는 첫째 셀 a 오른쪽
+        assert!(b.dimensions.content.x > a.dimensions.content.x);
     }
 
     #[test]
