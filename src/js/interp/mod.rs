@@ -2287,7 +2287,13 @@ impl Interp {
                     env_declare(&scope, "__superclass__", Value::Class(sc.clone()));
                 }
                 for (i, p) in func.params.iter().enumerate() {
-                    env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
+                    if let Some(rest) = p.strip_prefix("...") {
+                        // rest 파라미터: i 번째부터 남은 인자를 배열로 모은다
+                        let items = args.get(i..).map(|s| s.to_vec()).unwrap_or_default();
+                        env_declare(&scope, rest, Value::Arr(ArrayObj::new(items)));
+                    } else {
+                        env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
+                    }
                 }
                 // 제너레이터(eager): 본문을 즉시 실행해 yield 값을 모으고 반복자 반환.
                 if func.is_generator {
@@ -3358,6 +3364,14 @@ mod tests {
         assert_eq!(run_num("(function({a,b}){return a+b;})({a:3,b:4})"), 7.0);
         assert_eq!(run_num("(({x,y})=>x*y)({x:5,y:6})"), 30.0);
         assert_eq!(run_num("(function([p,,q]){return p+q;})([1,2,3])"), 4.0);
+    }
+
+    #[test]
+    fn rest_parameters_collect_remaining_args() {
+        // ...rest 는 남은 인자를 배열로 모은다 (기존엔 단일 인자만 받았음)
+        assert_eq!(run_num("(function(a, ...r){return a + r.length;})(1,2,3,4)"), 4.0);
+        assert_eq!(run_num("((...n) => n.reduce((a,b)=>a+b,0))(1,2,3,4,5)"), 15.0);
+        assert_eq!(run_str("(function(a, ...r){return a + r.join('');})('X','Y','Z')"), "XYZ");
     }
 
     #[test]

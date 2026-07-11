@@ -390,10 +390,10 @@ impl Parser {
         }
         loop {
             // rest 파라미터 ...name (…는 Dot 3개로 렉싱됨)
-            if self.peek() == Some(&Tok::Dot)
+            let is_rest = self.peek() == Some(&Tok::Dot)
                 && self.toks.get(self.pos + 1) == Some(&Tok::Dot)
-                && self.toks.get(self.pos + 2) == Some(&Tok::Dot)
-            {
+                && self.toks.get(self.pos + 2) == Some(&Tok::Dot);
+            if is_rest {
                 self.pos += 3;
             }
             // 구조분해 파라미터 { .. } / [ .. ] — 자리표시 이름으로 받고 프롤로그에서 분해
@@ -426,7 +426,9 @@ impl Parser {
                     decls: vec![(pat, Some(Expr::Ident(name.clone())))],
                 });
             }
-            params.push(name);
+            // rest 는 "...이름" 으로 저장 — 호출 시 남은 인자를 배열로 모은다.
+            // (프롤로그는 위에서 깨끗한 이름을 쓰고, 저장 이름에만 표시를 붙인다)
+            params.push(if is_rest { format!("...{}", name) } else { name });
             if self.eat(&Tok::Comma) {
                 if self.eat(&Tok::RParen) {
                     break; // 트레일링 콤마
