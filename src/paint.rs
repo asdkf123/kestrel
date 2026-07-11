@@ -1796,7 +1796,37 @@ fn apply_filters(c: Color, funcs: &[(String, f32)]) -> Color {
                 g += (ng - g) * amt;
                 b += (nb - b) * amt;
             }
-            _ => {} // blur/drop-shadow/hue-rotate/saturate 등 미지원
+            "saturate" => {
+                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                r = luma + (r - luma) * amt;
+                g = luma + (g - luma) * amt;
+                b = luma + (b - luma) * amt;
+            }
+            "hue-rotate" => {
+                let rad = amt * std::f32::consts::PI / 180.0;
+                let (co, si) = (rad.cos(), rad.sin());
+                // 휘도 보존 색상 회전 행렬 (SVG feColorMatrix hueRotate)
+                let m = [
+                    0.213 + co * 0.787 - si * 0.213,
+                    0.715 - co * 0.715 - si * 0.715,
+                    0.072 - co * 0.072 + si * 0.928,
+                    0.213 - co * 0.213 + si * 0.143,
+                    0.715 + co * 0.285 + si * 0.140,
+                    0.072 - co * 0.072 - si * 0.283,
+                    0.213 - co * 0.213 - si * 0.787,
+                    0.715 - co * 0.715 + si * 0.715,
+                    0.072 + co * 0.928 + si * 0.072,
+                ];
+                let (nr, ng, nb) = (
+                    r * m[0] + g * m[1] + b * m[2],
+                    r * m[3] + g * m[4] + b * m[5],
+                    r * m[6] + g * m[7] + b * m[8],
+                );
+                r = nr;
+                g = ng;
+                b = nb;
+            }
+            _ => {} // blur/drop-shadow 등은 별도 (색변환 아님)
         }
     }
     let clamp = |v: f32| v.clamp(0.0, 255.0) as u8;
@@ -2295,6 +2325,17 @@ mod tests {
         assert_eq!(sh[1].spread, 1.0);
         assert!(sh[2].inset, "셋째는 inset");
         assert_eq!(sh[2].blur, 5.0);
+    }
+
+    #[test]
+    fn filter_saturate_and_hue_rotate() {
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        // saturate(0) → 회색 (빨강 휘도 ≈ 76)
+        let g = apply_filters(red, &[("saturate".to_string(), 0.0)]);
+        assert!(g.r == g.g && g.g == g.b && (g.r as i32 - 76).abs() <= 3, "saturate(0)→회색 {:?}", g);
+        // hue-rotate(120deg) 로 빨강 → 초록쪽
+        let h = apply_filters(red, &[("hue-rotate".to_string(), 120.0)]);
+        assert!(h.g > h.r && h.g > h.b, "hue-rotate(120) 빨강→초록쪽 {:?}", h);
     }
 
     #[test]
