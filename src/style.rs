@@ -1013,6 +1013,30 @@ mod tests {
     }
 
     #[test]
+    fn details_collapses_content() {
+        fn find_tag<'a>(n: &'a StyledNode<'a>, tag: &str) -> Option<&'a StyledNode<'a>> {
+            if matches!(&n.node.node_type, NodeType::Element(e) if e.tag_name == tag) {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find_tag(c, tag))
+        }
+        // 닫힌 details: summary 는 보이고 p 는 display:none
+        let closed = crate::html::parse_dom(
+            "<details><summary>제목</summary><p>내용</p></details>".to_string(),
+        );
+        let ss = crate::css::user_agent_stylesheet();
+        let sc = style_tree(&closed, &ss);
+        assert_eq!(find_tag(&sc, "p").unwrap().value("display"), Some(Value::Keyword("none".to_string())), "닫힌 details 내용 숨김");
+        assert_ne!(find_tag(&sc, "summary").unwrap().value("display"), Some(Value::Keyword("none".to_string())), "summary 는 보임");
+        // 열린 details: p 도 보임
+        let open = crate::html::parse_dom(
+            "<details open><summary>제목</summary><p>내용</p></details>".to_string(),
+        );
+        let so = style_tree(&open, &ss);
+        assert_ne!(find_tag(&so, "p").unwrap().value("display"), Some(Value::Keyword("none".to_string())), "열린 details 내용 표시");
+    }
+
+    #[test]
     fn is_where_selectors() {
         let root = crate::html::parse_dom(
             "<div><h2 class=\"t\">a</h2><p>b</p><span>c</span></div>".to_string(),
