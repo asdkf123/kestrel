@@ -836,7 +836,7 @@ impl<'a> LayoutBox<'a> {
     // <table>: 모든 행의 셀을 모아 공통 열 폭을 계산해 열을 정렬한다.
     // 열 폭 = 지정 폭(있으면) 아니면 내용 기반(max-content) 선호 폭. 남는/부족한
     // 폭은 auto 열에 선호 비율로 분배해 테이블 폭을 채움. 행 높이 = 최고 셀.
-    // colspan 지원. 미지원: rowspan, border-collapse, border-spacing.
+    // colspan/rowspan 지원. 미지원: border-collapse, border-spacing.
     fn layout_table(&mut self, fonts: &FontStack, images: &ImageMap) {
         let d = self.dimensions;
         let (ox, oy, avail) = (d.content.x, d.content.y, d.content.width);
@@ -934,17 +934,28 @@ impl<'a> LayoutBox<'a> {
                 x += col_w[c];
             }
         }
-        // 3) 행별 배치 (공통 열 폭). 측정 패스 글리프는 clear 후 재배치. 행 높이=최고 셀.
+        // 3) 행별 배치 (공통 열 폭). rowspan 은 occupied 로 아래 행 열을 점유.
         let mut y = oy;
-        for &(i, j) in &rows {
+        let mut occupied = vec![0usize; ncols]; // 위 행 rowspan 이 덮은 잔여 행 수
+        let mut row_tops: Vec<f32> = Vec::with_capacity(rows.len());
+        let mut row_heights: Vec<f32> = Vec::with_capacity(rows.len());
+        // 높이 조정 대상 rowspan 셀: (i, j, cell_pos, start_row_order, rowspan)
+        let mut rowspan_cells: Vec<(usize, Option<usize>, usize, usize, usize)> = Vec::new();
+        for (ridx, &(i, j)) in rows.iter().enumerate() {
+            row_tops.push(y);
             let row = row_at!(self, i, j);
             let mut row_h = 0.0f32;
             let mut c = 0usize;
-            for cell in row.children.iter_mut() {
+            for (cell_pos, cell) in row.children.iter_mut().enumerate() {
+                // 위에서 내려온 rowspan 이 덮은 열은 건너뛴다
+                while c < ncols && occupied[c] > 0 {
+                    c += 1;
+                }
                 if c >= ncols {
                     break;
                 }
                 let span = cell_colspan(cell).min(ncols - c);
+                let rspan = cell_rowspan(cell);
                 // colspan 셀 폭 = 스팬한 열 폭의 합
                 let cell_w: f32 = (0..span).map(|k| col_w[c + k]).sum();
                 cell.clear_render();
@@ -953,11 +964,21 @@ impl<'a> LayoutBox<'a> {
                 cb.content.y = y;
                 cb.content.width = cell_w;
                 cell.layout(cb, fonts, images);
-                row_h = row_h.max(cell.dimensions.margin_box().height);
+                // rowspan 셀은 높이를 나눠 각 행에 기여(0-높이 행 방지), 정확 높이는 후처리.
+                row_h = row_h.max(cell.dimensions.margin_box().height / rspan as f32);
+                if rspan > 1 {
+                    for k in 0..span {
+                        occupied[c + k] = occupied[c + k].max(rspan);
+                    }
+                    rowspan_cells.push((i, j, cell_pos, ridx, rspan));
+                }
                 c += span;
             }
-            // 셀 높이를 행 높이로 stretch (세로 정렬 top 근사)
+            // 셀 높이를 행 높이로 stretch (rowspan>1 셀은 후처리에서 조정)
             for cell in row.children.iter_mut() {
+                if cell_rowspan(cell) > 1 {
+                    continue;
+                }
                 let vextra = cell.dimensions.margin_box().height - cell.dimensions.content.height;
                 cell.dimensions.content.height = (row_h - vextra).max(cell.dimensions.content.height);
             }
@@ -966,7 +987,20 @@ impl<'a> LayoutBox<'a> {
             row.dimensions.content.y = y;
             row.dimensions.content.width = avail;
             row.dimensions.content.height = row_h;
+            row_heights.push(row_h);
+            // 점유 카운트 1 감소 (이 행 소비)
+            for o in occupied.iter_mut() {
+                *o = o.saturating_sub(1);
+            }
             y += row_h;
+        }
+        // rowspan 셀 높이 = 시작~끝 행에 걸친 총 높이
+        for (i, j, cell_pos, ridx, rspan) in rowspan_cells {
+            let end = (ridx + rspan - 1).min(rows.len() - 1);
+            let span_h = (row_tops[end] + row_heights[end]) - row_tops[ridx];
+            let cell = &mut row_at!(self, i, j).children[cell_pos];
+            let vextra = cell.dimensions.margin_box().height - cell.dimensions.content.height;
+            cell.dimensions.content.height = (span_h - vextra).max(cell.dimensions.content.height);
         }
         self.dimensions.content.height = (y - oy).max(0.0);
     }
@@ -1041,8 +1075,17 @@ fn is_row_group(b: &LayoutBox) -> bool {
 
 // 셀의 colspan (HTML 속성). 기본 1, 최소 1.
 fn cell_colspan(child: &LayoutBox) -> usize {
+    cell_span_attr(child, "colspan")
+}
+
+// 셀의 rowspan (HTML 속성). 기본 1, 최소 1.
+fn cell_rowspan(child: &LayoutBox) -> usize {
+    cell_span_attr(child, "rowspan")
+}
+
+fn cell_span_attr(child: &LayoutBox, attr: &str) -> usize {
     if let NodeType::Element(e) = &child.styled_node.node.node_type {
-        if let Some(v) = e.attributes.get("colspan") {
+        if let Some(v) = e.attributes.get(attr) {
             if let Ok(n) = v.trim().parse::<usize>() {
                 return n.max(1);
             }
@@ -2477,6 +2520,37 @@ mod tests {
         let normal = height("");
         let nowrap = height("p { white-space: nowrap; }");
         assert!(nowrap < normal, "nowrap 은 한 줄 → normal(여러 줄)보다 낮음: {} < {}", nowrap, normal);
+    }
+
+    #[test]
+    fn table_rowspan_spans_rows() {
+        // 1열 첫 셀 rowspan=2. 둘째 행은 그 열을 건너뛰고 한 셀만.
+        let root = crate::html::parse_dom(
+            "<table><tbody>\
+             <tr><td rowspan=\"2\">L</td><td>a</td></tr>\
+             <tr><td>b</td></tr>\
+             </tbody></table>"
+                .to_string(),
+        );
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(crate::css::parse("table { width: 200px; } td { padding: 0; }".to_string()).rules);
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let tbody = &lb.children[0];
+        let l = &tbody.children[0].children[0]; // rowspan=2 셀
+        let a = &tbody.children[0].children[1]; // 1행 2열
+        let b = &tbody.children[1].children[0]; // 2행: 2열에 위치해야 함
+        // L 은 두 행 높이만큼 → a 높이보다 큼 (대략 2배)
+        assert!(l.dimensions.content.height > a.dimensions.content.height + 1.0,
+            "rowspan 셀 높이({})가 단일 행({})보다 커야", l.dimensions.content.height, a.dimensions.content.height);
+        // b 는 L 아래가 아니라 둘째 열에 위치 (L 의 x 보다 오른쪽)
+        assert!(b.dimensions.content.x > l.dimensions.content.x,
+            "둘째 행 셀 b({})가 rowspan 열 L({}) 오른쪽", b.dimensions.content.x, l.dimensions.content.x);
+        // b 의 x 는 a 의 x 와 같은 열
+        assert!((b.dimensions.content.x - a.dimensions.content.x).abs() < 1.0, "b 와 a 같은 열");
     }
 
     #[test]
