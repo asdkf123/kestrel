@@ -70,13 +70,15 @@ impl<'a> StyledNode<'a> {
 pub struct SiblingCtx<'a> {
     pub index: usize, // 요소 형제 중 1-기반 위치
     pub total: usize, // 요소 형제 수
+    pub type_index: usize, // 같은 타입 형제 중 1-기반 위치 (of-type 용)
+    pub type_total: usize, // 같은 타입 형제 수
     pub prev: &'a [&'a ElementData], // 선행 요소 형제 (문서 순서)
     pub has_children: bool,          // :empty 판별용
 }
 
 impl Default for SiblingCtx<'_> {
     fn default() -> Self {
-        SiblingCtx { index: 1, total: 1, prev: &[], has_children: false }
+        SiblingCtx { index: 1, total: 1, type_index: 1, type_total: 1, prev: &[], has_children: false }
     }
 }
 
@@ -187,6 +189,17 @@ fn matches_compound(
     true
 }
 
+// an+b 매칭: 1-기반 위치 pos 에 대해 pos = a*k + b (k>=0) 정수해 존재?
+fn nth_matches(a: i32, b: i32, pos: usize) -> bool {
+    let n = pos as i32;
+    if a == 0 {
+        n == b
+    } else {
+        let diff = n - b;
+        diff % a == 0 && diff / a >= 0
+    }
+}
+
 fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&SiblingCtx>) -> bool {
     use crate::css::Pseudo;
     match p {
@@ -198,17 +211,15 @@ fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&Sibli
         Pseudo::OnlyChild => sib.map(|s| s.total == 1).unwrap_or(true),
         Pseudo::Root => sib.map(|s| s.prev.is_empty() && s.total >= 1).unwrap_or(true) && elem.tag_name == "html",
         Pseudo::Empty => sib.map(|s| !s.has_children).unwrap_or(true),
-        Pseudo::NthChild(a, b) => {
-            let Some(s) = sib else { return true };
-            let n = s.index as i32;
-            // n = a*k + b, k>=0 인 정수 해 존재?
-            if *a == 0 {
-                n == *b
-            } else {
-                let diff = n - *b;
-                diff % a == 0 && diff / a >= 0
-            }
+        Pseudo::NthChild(a, b) => sib.map(|s| nth_matches(*a, *b, s.index)).unwrap_or(true),
+        Pseudo::NthLastChild(a, b) => {
+            sib.map(|s| nth_matches(*a, *b, s.total + 1 - s.index)).unwrap_or(true)
         }
+        Pseudo::NthOfType(a, b) => sib.map(|s| nth_matches(*a, *b, s.type_index)).unwrap_or(true),
+        Pseudo::NthLastOfType(a, b) => {
+            sib.map(|s| nth_matches(*a, *b, s.type_total + 1 - s.type_index)).unwrap_or(true)
+        }
+        Pseudo::OnlyOfType => sib.map(|s| s.type_total == 1).unwrap_or(true),
         // 폼 상태: 요소 속성으로 정적 판별
         Pseudo::Checked => {
             let has = |a: &str| elem.attributes.get(a).is_some();
@@ -384,11 +395,11 @@ pub fn element_matches(dom: &Dom, id: NodeId, selectors: &[Selector]) -> bool {
     selectors.iter().any(|s| matches(elem, &ancestors, &sib, s))
 }
 
-// 아레나 요소의 형제 문맥(인덱스/총수/선행형제). element_matches 용.
+// 아레나 요소의 형제 문맥(인덱스/총수/타입 인덱스/선행형제). element_matches 용.
 fn sibling_ctx_for<'a>(dom: &'a Dom, id: NodeId) -> SiblingCtx<'a> {
     let has_children = !dom.get(id).children.is_empty();
     let Some(parent) = dom.get(id).parent else {
-        return SiblingCtx { index: 1, total: 1, prev: &[], has_children };
+        return SiblingCtx::default();
     };
     let elem_sibs: Vec<NodeId> = dom
         .get(parent)
@@ -398,9 +409,29 @@ fn sibling_ctx_for<'a>(dom: &'a Dom, id: NodeId) -> SiblingCtx<'a> {
         .filter(|&c| matches!(dom.get(c).node_type, NodeType::Element(_)))
         .collect();
     let index = elem_sibs.iter().position(|&c| c == id).map(|i| i + 1).unwrap_or(1);
+    // 같은 타입 형제 인덱스/총수
+    let my_tag = match &dom.get(id).node_type {
+        NodeType::Element(e) => e.tag_name.as_str(),
+        _ => "",
+    };
+    let same_tag = |c: NodeId| matches!(&dom.get(c).node_type, NodeType::Element(e) if e.tag_name == my_tag);
+    let type_total = elem_sibs.iter().filter(|&&c| same_tag(c)).count().max(1);
+    let type_index = elem_sibs
+        .iter()
+        .take_while(|&&c| c != id)
+        .filter(|&&c| same_tag(c))
+        .count()
+        + 1;
     // prev 는 문서 순서 선행 형제. 라이프타임상 leak 대신 빈 슬라이스(근사) — 대부분
     // querySelector 형제 결합자는 드묾. 인덱스/총수만 정확.
-    SiblingCtx { index, total: elem_sibs.len().max(1), prev: &[], has_children }
+    SiblingCtx {
+        index,
+        total: elem_sibs.len().max(1),
+        type_index,
+        type_total,
+        prev: &[],
+        has_children,
+    }
 }
 
 // CSS 상속 속성 (자식이 명시 안 하면 부모 계산값을 물려받음). font-size 는
@@ -550,12 +581,28 @@ fn collect_pseudo_plans<'a>(
         .filter(|&c| matches!(dom.get(c).node_type, NodeType::Element(_)))
         .collect();
     let total = elem_children.len();
+    let mut type_totals: HashMap<&str, usize> = HashMap::new();
+    for &c in &elem_children {
+        if let NodeType::Element(e) = &dom.get(c).node_type {
+            *type_totals.entry(e.tag_name.as_str()).or_insert(0) += 1;
+        }
+    }
+    let mut type_seen: HashMap<&str, usize> = HashMap::new();
     let mut prev_elems: Vec<&ElementData> = Vec::new();
     for &child in &node.children {
         if let NodeType::Element(ref ce) = dom.get(child).node_type {
             let idx = prev_elems.len() + 1;
+            let tcount = type_seen.entry(ce.tag_name.as_str()).or_insert(0);
+            *tcount += 1;
             let has_children = !dom.get(child).children.is_empty();
-            let csib = SiblingCtx { index: idx, total, prev: &prev_elems, has_children };
+            let csib = SiblingCtx {
+                index: idx,
+                total,
+                type_index: *tcount,
+                type_total: *type_totals.get(ce.tag_name.as_str()).unwrap_or(&1),
+                prev: &prev_elems,
+                has_children,
+            };
             collect_pseudo_plans(dom, child, index, ancestors, &csib, out);
             prev_elems.push(ce);
         }
@@ -703,6 +750,14 @@ fn style_node<'a>(
                 })
                 .collect();
             let total = elem_children.len();
+            // 타입별 총수 (of-type 선택자용)
+            let mut type_totals: HashMap<&str, usize> = HashMap::new();
+            for &c in &elem_children {
+                if let NodeType::Element(e) = &dom.get(c).node_type {
+                    *type_totals.entry(e.tag_name.as_str()).or_insert(0) += 1;
+                }
+            }
+            let mut type_seen: HashMap<&str, usize> = HashMap::new();
             let mut prev_elems: Vec<&ElementData> = Vec::new();
             let mut children = Vec::with_capacity(node.children.len());
             for &child in &node.children {
@@ -716,8 +771,19 @@ fn style_node<'a>(
                         continue;
                     }
                     let idx = prev_elems.len() + 1;
+                    let tcount = type_seen.entry(ce.tag_name.as_str()).or_insert(0);
+                    *tcount += 1;
+                    let type_index = *tcount;
+                    let type_total = *type_totals.get(ce.tag_name.as_str()).unwrap_or(&1);
                     let has_children = !dom.get(child).children.is_empty();
-                    let csib = SiblingCtx { index: idx, total, prev: &prev_elems, has_children };
+                    let csib = SiblingCtx {
+                        index: idx,
+                        total,
+                        type_index,
+                        type_total,
+                        prev: &prev_elems,
+                        has_children,
+                    };
                     children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo));
                     prev_elems.push(ce);
                 } else {
@@ -793,6 +859,39 @@ mod tests {
         // ::before 는 소유 div 의 첫 자식 (span 앞)
         let div = &styled;
         assert!(matches!(&div.children[0].node.node_type, NodeType::Element(e) if is_synthetic_pseudo(e)));
+    }
+
+    #[test]
+    fn nth_of_type_and_last_selectors() {
+        // 혼합 타입: h2, p, p, span. nth-of-type/last-child/of-type 정확 판별
+        let root = crate::html::parse_dom(
+            "<div><h2>a</h2><p>b</p><p>c</p><span>d</span></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "p:first-of-type { color: #ff0000; } \
+             p:last-of-type { color: #00ff00; } \
+             :last-child { width: 7px; } \
+             p:nth-last-of-type(1) { height: 3px; }"
+                .to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        fn find_tag<'a>(n: &'a StyledNode<'a>, tag: &str) -> Option<&'a StyledNode<'a>> {
+            if matches!(&n.node.node_type, NodeType::Element(e) if e.tag_name == tag) {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find_tag(c, tag))
+        }
+        let div = find_tag(&styled, "div").unwrap();
+        let kids = &div.children;
+        // kids: h2, p(b), p(c), span
+        let red = Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 });
+        let green = Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 });
+        assert_eq!(kids[1].value("color"), Some(red), "첫 p 가 first-of-type");
+        assert_eq!(kids[2].value("color"), Some(green), "둘째 p 가 last-of-type");
+        assert_eq!(kids[2].value("height"), Some(Value::Length(3.0, Unit::Px)), "p 중 마지막 = nth-last-of-type(1)");
+        // last-child 는 span (전체 형제 중 마지막)
+        assert_eq!(kids[3].value("width"), Some(Value::Length(7.0, Unit::Px)), "span 이 last-child");
+        assert_ne!(kids[1].value("width"), Some(Value::Length(7.0, Unit::Px)), "첫 p 는 last-child 아님");
     }
 
     #[test]

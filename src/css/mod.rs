@@ -41,7 +41,11 @@ pub enum Pseudo {
     FirstChild,
     LastChild,
     OnlyChild,
-    NthChild(i32, i32), // an+b
+    NthChild(i32, i32),      // an+b (앞에서)
+    NthLastChild(i32, i32),  // an+b (뒤에서)
+    NthOfType(i32, i32),     // 같은 타입 중 an+b (앞에서)
+    NthLastOfType(i32, i32), // 같은 타입 중 an+b (뒤에서)
+    OnlyOfType,              // 같은 타입 형제가 자기 하나뿐
     Not(Vec<SimpleSelector>),
     Root,
     Empty,
@@ -578,9 +582,21 @@ impl Parser {
                 self.consume_char();
             }
             return match name.as_str() {
-                "nth-child" | "nth-of-type" => {
+                "nth-child" => {
                     let (a, b) = parse_nth(arg.trim())?;
                     Some(Pseudo::NthChild(a, b))
+                }
+                "nth-last-child" => {
+                    let (a, b) = parse_nth(arg.trim())?;
+                    Some(Pseudo::NthLastChild(a, b))
+                }
+                "nth-of-type" => {
+                    let (a, b) = parse_nth(arg.trim())?;
+                    Some(Pseudo::NthOfType(a, b))
+                }
+                "nth-last-of-type" => {
+                    let (a, b) = parse_nth(arg.trim())?;
+                    Some(Pseudo::NthLastOfType(a, b))
                 }
                 "not" => {
                     // :not(단순) — 단일 compound 만 (근사)
@@ -595,8 +611,9 @@ impl Parser {
             "first-child" => Pseudo::FirstChild,
             "last-child" => Pseudo::LastChild,
             "only-child" => Pseudo::OnlyChild,
-            "first-of-type" => Pseudo::FirstChild, // 타입 구분 근사
-            "last-of-type" => Pseudo::LastChild,
+            "first-of-type" => Pseudo::NthOfType(0, 1),
+            "last-of-type" => Pseudo::NthLastOfType(0, 1),
+            "only-of-type" => Pseudo::OnlyOfType,
             "root" => Pseudo::Root,
             "empty" => Pseudo::Empty,
             "checked" => Pseudo::Checked,
