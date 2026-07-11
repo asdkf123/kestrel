@@ -556,22 +556,30 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
             _ => {}
         }
     }
-    if lens.len() < 2 {
-        return Vec::new(); // dx, dy 필수
-    }
     let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
     let px = |v: f32| Value::Length(v, Unit::Px);
-    vec![
-        Declaration { name: "box-shadow-x".to_string(), value: px(lens[0]) },
-        Declaration { name: "box-shadow-y".to_string(), value: px(lens[1]) },
-        Declaration { name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
-        Declaration { name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
-        Declaration { name: "box-shadow-color".to_string(), value: color },
-        Declaration {
-            name: "box-shadow-inset".to_string(),
-            value: Value::Keyword(if inset { "inset" } else { "outset" }.to_string()),
-        },
-    ]
+    // 첫 그림자 longhand (inner-shadow 경로가 읽음) — dx,dy 있을 때만.
+    let mut out = if lens.len() >= 2 {
+        vec![
+            Declaration { name: "box-shadow-x".to_string(), value: px(lens[0]) },
+            Declaration { name: "box-shadow-y".to_string(), value: px(lens[1]) },
+            Declaration { name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
+            Declaration { name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
+            Declaration { name: "box-shadow-color".to_string(), value: color },
+            Declaration {
+                name: "box-shadow-inset".to_string(),
+                value: Value::Keyword(if inset { "inset" } else { "outset" }.to_string()),
+            },
+        ]
+    } else {
+        Vec::new()
+    };
+    // 전체 원문 보존 — paint 가 다중(콤마) 그림자를 모두 파싱해 발행한다.
+    out.push(Declaration {
+        name: "box-shadow".to_string(),
+        value: Value::Keyword(value_text.trim().to_string()),
+    });
+    out
 }
 
 // `border[-side]: <width> <style> <color>` 단축값(임의 순서, 일부 생략 가능)을

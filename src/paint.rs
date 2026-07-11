@@ -564,36 +564,93 @@ fn corner_radii(lb: &LayoutBox) -> [f32; 4] {
     ]
 }
 
-// box-shadow(outset) 를 박스 뒤에 발행. rect = border_box + spread, (x,y) 만큼 이동.
-fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
-    let len = |name: &str| match lb.styled_node.value(name) {
-        Some(Value::Length(v, crate::css::Unit::Px)) => Some(v),
-        _ => None,
-    };
-    let (dx, dy) = match (len("box-shadow-x"), len("box-shadow-y")) {
-        (Some(x), Some(y)) => (x, y),
-        _ => return,
-    };
-    let blur = len("box-shadow-blur").unwrap_or(0.0);
-    let spread = len("box-shadow-spread").unwrap_or(0.0);
-    let color = match lb.styled_node.value("box-shadow-color") {
-        Some(Value::Color(c)) => c,
-        _ => Color { r: 0, g: 0, b: 0, a: 128 },
-    };
-    let inset = matches!(lb.styled_node.value("box-shadow-inset"),
-        Some(Value::Keyword(ref k)) if k == "inset");
-    if inset {
-        return; // 안쪽 그림자는 emit_inner_shadow 가 배경 이후에 발행
+// box-shadow 원문 한 조각: [inset] <dx> <dy> [blur] [spread] [color]
+struct ParsedShadow {
+    dx: f32,
+    dy: f32,
+    blur: f32,
+    spread: f32,
+    color: Color,
+    inset: bool,
+}
+
+// 콤마로 나뉜 다중 그림자를 모두 파싱 (rgba(...) 안 콤마는 괄호 깊이로 보호).
+fn parse_box_shadows(s: &str) -> Vec<ParsedShadow> {
+    let mut segs: Vec<&str> = Vec::new();
+    let (mut depth, mut start) = (0i32, 0usize);
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => {
+                segs.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
     }
-    let b = lb.dimensions.border_box();
-    let rect = Rect {
-        x: b.x + dx - spread,
-        y: b.y + dy - spread,
-        width: b.width + 2.0 * spread,
-        height: b.height + 2.0 * spread,
+    segs.push(&s[start..]);
+    let parse_len = |t: &str| -> Option<f32> {
+        let t = t.trim();
+        if let Some(n) = t.strip_suffix("px") {
+            n.parse().ok()
+        } else {
+            t.parse().ok()
+        }
     };
-    let radius = (uniform_radius(lb) + spread).max(0.0);
-    items.push(DisplayItem::Shadow { color, rect, radius, blur });
+    let mut out = Vec::new();
+    for seg in segs {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        let mut lens: Vec<f32> = Vec::new();
+        let mut color: Option<Color> = None;
+        let mut inset = false;
+        for tok in seg.split_whitespace() {
+            if tok == "inset" {
+                inset = true;
+            } else if let Some(px) = parse_len(tok) {
+                lens.push(px);
+            } else if let Some(c) = crate::css::parse_color(tok) {
+                color = Some(c);
+            }
+        }
+        if lens.len() < 2 {
+            continue;
+        }
+        out.push(ParsedShadow {
+            dx: lens[0],
+            dy: lens[1],
+            blur: lens.get(2).copied().unwrap_or(0.0),
+            spread: lens.get(3).copied().unwrap_or(0.0),
+            color: color.unwrap_or(Color { r: 0, g: 0, b: 0, a: 128 }),
+            inset,
+        });
+    }
+    out
+}
+
+// box-shadow(outset) 를 박스 뒤에 발행 — 다중 그림자 지원 (Material elevation 등).
+fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let Some(Value::Keyword(raw)) = lb.styled_node.value("box-shadow") else { return };
+    let shadows = parse_box_shadows(&raw);
+    let base_r = uniform_radius(lb);
+    let b = lb.dimensions.border_box();
+    // 첫 그림자가 위에 오도록 역순 push (뒤에 push 될수록 위에 그려짐).
+    for sh in shadows.iter().rev() {
+        if sh.inset {
+            continue; // 안쪽 그림자는 emit_inner_shadow 가 배경 이후 발행
+        }
+        let rect = Rect {
+            x: b.x + sh.dx - sh.spread,
+            y: b.y + sh.dy - sh.spread,
+            width: b.width + 2.0 * sh.spread,
+            height: b.height + 2.0 * sh.spread,
+        };
+        let radius = (base_r + sh.spread).max(0.0);
+        items.push(DisplayItem::Shadow { color: sh.color, rect, radius, blur: sh.blur });
+    }
 }
 
 // SVG path d 속성 → 서브패스(윤곽선) 폴리라인 목록. 베지어는 평탄화, 상대/절대 지원.
@@ -1812,6 +1869,22 @@ mod tests {
         let (x, y) = parse_bg_position("top left");
         assert_eq!(x.resolve(100.0, 20.0), 0.0);
         assert_eq!(y.resolve(100.0, 20.0), 0.0);
+    }
+
+    #[test]
+    fn parse_multiple_box_shadows_test() {
+        let sh = parse_box_shadows(
+            "0 1px 2px rgba(0,0,0,0.1), 0 4px 8px 1px #333333, inset 0 0 5px red",
+        );
+        assert_eq!(sh.len(), 3, "그림자 3개");
+        assert_eq!(sh[0].dy, 1.0);
+        assert_eq!(sh[0].blur, 2.0);
+        assert!(!sh[0].inset);
+        assert_eq!(sh[1].dy, 4.0);
+        assert_eq!(sh[1].blur, 8.0);
+        assert_eq!(sh[1].spread, 1.0);
+        assert!(sh[2].inset, "셋째는 inset");
+        assert_eq!(sh[2].blur, 5.0);
     }
 
     #[test]
