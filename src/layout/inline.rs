@@ -46,6 +46,23 @@ fn bidi_levels(chars: &[char], base_rtl: bool) -> Vec<u8> {
         .collect()
 }
 
+// RTL 런에서 시각적으로 뒤집히는 문자(괄호/부등호 등). 없으면 원문.
+fn mirror_char(c: char) -> char {
+    match c {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        '<' => '>',
+        '>' => '<',
+        '\u{00AB}' => '\u{00BB}', // « »
+        '\u{00BB}' => '\u{00AB}',
+        _ => c,
+    }
+}
+
 // L2 재정렬: 레벨 배열 → 시각 순서(각 시각 위치의 논리 인덱스).
 fn bidi_reorder(levels: &[u8]) -> Vec<usize> {
     let n = levels.len();
@@ -325,6 +342,12 @@ impl<'a> LayoutBox<'a> {
             let mut word_px_max = 0.0f32;
             let mut word_color = Color { r: 0, g: 0, b: 0, a: 255 };
             for &(ch, st) in word {
+                // RTL 런(홀수 레벨)에서 괄호/부등호 등은 시각적으로 미러 (UAX#9 L4)
+                let ch = if levels.get(self.glyphs.len()).map_or(false, |&l| l % 2 == 1) {
+                    mirror_char(ch)
+                } else {
+                    ch
+                };
                 let (fi, gid, adv) = resolve(ch, st.px);
                 self.glyphs.push(GlyphInstance {
                     font_index: fi,
@@ -586,6 +609,14 @@ mod bidi_tests {
         assert_eq!(levels, vec![1, 1, 2, 2]);
         // 시각: lvl2 [2,3]→[3,2] → vis=[0,1,3,2]; lvl1 전체 역순 → [2,3,1,0]
         assert_eq!(bidi_reorder(&levels), vec![2, 3, 1, 0]);
+    }
+
+    #[test]
+    fn mirror_brackets_flip() {
+        use super::mirror_char;
+        assert_eq!(mirror_char('('), ')');
+        assert_eq!(mirror_char(']'), '[');
+        assert_eq!(mirror_char('a'), 'a');
     }
 
     #[test]
