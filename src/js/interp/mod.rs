@@ -319,6 +319,8 @@ pub enum ArrOp {
     Reverse,
     Keys,
     Values,
+    Sort,
+    Flat,
 }
 
 impl std::fmt::Debug for Value {
@@ -1700,6 +1702,8 @@ impl Interp {
                     "reverse" => Some(ArrOp::Reverse),
                     "keys" => Some(ArrOp::Keys),
                     "values" => Some(ArrOp::Values),
+                    "sort" => Some(ArrOp::Sort),
+                    "flat" => Some(ArrOp::Flat),
                     _ => None,
                 };
                 if let Some(op) = op {
@@ -2695,6 +2699,19 @@ mod tests {
             2.0,
             "콜백 두 번째 인자 = 인덱스"
         );
+    }
+
+    #[test]
+    fn array_sort_and_flat() {
+        // 기본 정렬(문자열): 10 이 2 앞에 온다
+        assert_eq!(run_str("[10, 2, 1].sort().join(',')"), "1,10,2");
+        // 숫자 비교자
+        assert_eq!(run_str("[10, 2, 1].sort((a, b) => a - b).join(',')"), "1,2,10");
+        assert_eq!(run_str("[3, 1, 2].sort((a, b) => b - a).join(',')"), "3,2,1");
+        // 제자리 정렬 + 같은 배열 반환
+        assert_eq!(run_num("var a = [3,1,2]; a.sort(); a[0]"), 1.0);
+        // flat 깊이 1
+        assert_eq!(run_str("[1, [2, 3], 4].flat().join(',')"), "1,2,3,4");
     }
 
     #[test]

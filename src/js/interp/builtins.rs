@@ -1200,6 +1200,58 @@ impl Interp {
                         ))
                     }
                     ArrOp::Values => Value::Arr(ArrayObj::new(a.borrow().clone())),
+                    ArrOp::Sort => {
+                        // 제자리 정렬 후 같은 배열 반환. 비교자 있으면 부호, 없으면 문자열 비교.
+                        // 비교자가 Result 를 반환하므로 삽입정렬로 에러를 전파한다.
+                        let cmp = args.first().cloned().filter(|v| !matches!(v, Value::Undefined));
+                        let mut items: Vec<Value> = a.borrow().clone();
+                        let n = items.len();
+                        for i in 1..n {
+                            let mut j = i;
+                            while j > 0 {
+                                let ord = match &cmp {
+                                    Some(f) => {
+                                        let r = self.call_value(
+                                            f.clone(),
+                                            None,
+                                            vec![items[j - 1].clone(), items[j].clone()],
+                                        )?;
+                                        to_num(&r)
+                                    }
+                                    None => {
+                                        let x = to_display(&items[j - 1]);
+                                        let y = to_display(&items[j]);
+                                        if x < y {
+                                            -1.0
+                                        } else if x > y {
+                                            1.0
+                                        } else {
+                                            0.0
+                                        }
+                                    }
+                                };
+                                if ord > 0.0 {
+                                    items.swap(j - 1, j);
+                                    j -= 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        *a.borrow_mut() = items;
+                        Value::Arr(a.clone())
+                    }
+                    ArrOp::Flat => {
+                        // 기본 깊이 1: 한 단계 배열만 펼친다.
+                        let mut out = Vec::new();
+                        for v in a.borrow().iter() {
+                            match v {
+                                Value::Arr(inner) => out.extend(inner.borrow().iter().cloned()),
+                                other => out.push(other.clone()),
+                            }
+                        }
+                        Value::Arr(ArrayObj::new(out))
+                    }
                 })
             }
             Native::JsonParse => {
