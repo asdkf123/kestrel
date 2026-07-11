@@ -171,6 +171,8 @@ pub enum Native {
     CreateElement,
     AppendChild,
     GetBoundingClientRect,
+    DispatchEvent,
+    EventCtor,
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -595,6 +597,8 @@ impl Interp {
         env_declare(&global, "WeakMap", Value::Native(Native::MapCtor));
         env_declare(&global, "Set", Value::Native(Native::SetCtor));
         env_declare(&global, "WeakSet", Value::Native(Native::SetCtor));
+        env_declare(&global, "Event", Value::Native(Native::EventCtor));
+        env_declare(&global, "CustomEvent", Value::Native(Native::EventCtor));
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
         let mut ls = HashMap::new();
         ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
@@ -815,12 +819,24 @@ impl Interp {
     // 반환: 핸들러가 하나라도 실행됐는지(호출측 리플로우 판단용).
     pub fn fire_handlers(&mut self, target: crate::dom::NodeId, event: &str) -> bool {
         self.steps = 0;
+        let evt = self.make_event(event, target);
+        self.dispatch_event_value(target, event, evt)
+    }
+
+    // 주어진 이벤트 객체로 target 에서 버블링하며 핸들러 실행. fire_handlers 와
+    // dispatchEvent 가 공유. 하나라도 실행됐으면 true.
+    pub fn dispatch_event_value(
+        &mut self,
+        target: crate::dom::NodeId,
+        event: &str,
+        evt: Value,
+    ) -> bool {
         let mut chain = vec![target];
         if let Some(p) = self.dom {
             chain.extend(unsafe { (*p).ancestors(target) });
         }
-        let evt = self.make_event(event, target);
-        let evt_obj = if let Value::Obj(o) = &evt { o.clone() } else { unreachable!() };
+        let evt_obj = if let Value::Obj(o) = &evt { o.clone() } else { return false };
+        evt_obj.borrow_mut().insert("target".to_string(), Value::Dom(target));
         let mut fired = false;
         for id in chain {
             let to_run: Vec<Value> = self
@@ -1897,6 +1913,7 @@ impl Interp {
                     "getElementsByClassName" => Some(Native::GetElementsByClass),
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
+                    "dispatchEvent" => Some(Native::DispatchEvent),
                     _ => None,
                 };
                 if let Some(n) = native {
@@ -2054,6 +2071,9 @@ impl Interp {
             Value::Native(Native::FunctionCtor) => return self.make_function(args),
             Value::Native(Native::MapCtor) => return self.make_map(args),
             Value::Native(Native::SetCtor) => return self.make_set(args),
+            Value::Native(Native::EventCtor) => {
+                return self.call_native(Native::EventCtor, None, args)
+            }
             Value::Native(Native::RegExpCtor) => {
                 return self.call_native(Native::RegExpCtor, None, args)
             }
@@ -2731,6 +2751,25 @@ mod tests {
             2.0,
             "콜백 두 번째 인자 = 인덱스"
         );
+    }
+
+    #[test]
+    fn dispatch_event_and_custom_event() {
+        let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
+        let box_id = dom.find_by_attr_id("box").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        // addEventListener + dispatchEvent(CustomEvent) → 핸들러가 detail 을 읽는다
+        let r = interp
+            .run(
+                "var got = null; \
+                 var e = document.getElementById('box'); \
+                 e.addEventListener('ping', function(ev) { got = ev.detail.n; }); \
+                 e.dispatchEvent(new CustomEvent('ping', { detail: { n: 42 } })); \
+                 got",
+            )
+            .unwrap();
+        assert_eq!(to_display(&r), "42");
     }
 
     #[test]

@@ -745,6 +745,47 @@ impl Interp {
                 }
                 _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
             },
+            Native::DispatchEvent => {
+                let node = match recv {
+                    Some(Value::Dom(id)) => id,
+                    _ => return Ok(Value::Bool(false)),
+                };
+                let evt = args.first().cloned().unwrap_or(Value::Undefined);
+                let etype = match &evt {
+                    Value::Obj(o) => o.borrow().get("type").map(to_display).unwrap_or_default(),
+                    other => to_display(other),
+                };
+                // Obj 이벤트면 그대로 사용, 아니면 표준 이벤트 객체 생성
+                let evt = if matches!(evt, Value::Obj(_)) {
+                    evt
+                } else {
+                    self.make_event(&etype, node)
+                };
+                self.dispatch_event_value(node, &etype, evt.clone());
+                // !defaultPrevented 근사
+                let prevented = matches!(&evt,
+                    Value::Obj(o) if matches!(o.borrow().get("defaultPrevented"), Some(Value::Bool(true))));
+                Ok(Value::Bool(!prevented))
+            }
+            Native::EventCtor => {
+                // new Event(type, opts) / new CustomEvent(type, {detail}) → 이벤트 객체
+                let etype = args.first().map(to_display).unwrap_or_default();
+                let mut m = std::collections::HashMap::new();
+                m.insert("type".to_string(), Value::Str(etype));
+                let mut bubbles = false;
+                if let Some(Value::Obj(o)) = args.get(1) {
+                    let o = o.borrow();
+                    if let Some(d) = o.get("detail") {
+                        m.insert("detail".to_string(), d.clone());
+                    }
+                    bubbles = matches!(o.get("bubbles"), Some(Value::Bool(true)));
+                }
+                m.insert("bubbles".to_string(), Value::Bool(bubbles));
+                m.insert("defaultPrevented".to_string(), Value::Bool(false));
+                m.insert("preventDefault".to_string(), Value::Native(Native::EventPreventDefault));
+                m.insert("stopPropagation".to_string(), Value::Native(Native::EventStopProp));
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
             Native::GetBoundingClientRect => {
                 let (x, y, w, h) = match recv {
                     Some(Value::Dom(id)) => {
