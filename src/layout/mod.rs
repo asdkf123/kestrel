@@ -1185,8 +1185,23 @@ impl<'a> LayoutBox<'a> {
                 x += col_w[c];
             }
         }
+        // <caption>: 표 위에 표 폭으로 배치하고, 행 시작 y 를 캡션 높이만큼 내린다.
+        let table_w: f32 = col_w.iter().sum();
+        let mut caption_h = 0.0;
+        let caption_idx = self.children.iter().position(|c| {
+            matches!(&c.styled_node.node.node_type, NodeType::Element(e) if e.tag_name == "caption")
+        });
+        if let Some(ci) = caption_idx {
+            let cap = &mut self.children[ci];
+            let mut cb: Dimensions = Default::default();
+            cb.content.x = ox;
+            cb.content.y = oy;
+            cb.content.width = table_w.max(1.0);
+            cap.layout(cb, fonts, images);
+            caption_h = cap.dimensions.margin_box().height;
+        }
         // 3) 행별 배치 (공통 열 폭). rowspan 은 occupied 로 아래 행 열을 점유.
-        let mut y = oy;
+        let mut y = oy + caption_h;
         let mut occupied = vec![0usize; ncols]; // 위 행 rowspan 이 덮은 잔여 행 수
         let mut row_tops: Vec<f32> = Vec::with_capacity(rows.len());
         let mut row_heights: Vec<f32> = Vec::with_capacity(rows.len());
@@ -2399,6 +2414,36 @@ mod tests {
         // "Banana" = 6 글리프만 (Apple/Cherry 는 렌더 안 됨)
         let g = glyphs_of(&lb);
         assert_eq!(g.len(), 6, "선택된 option(Banana)만 렌더 (실제 {}글리프)", g.len());
+    }
+
+    #[test]
+    fn table_caption_renders_above_rows() {
+        let fs = fonts();
+        let root = crate::html::parse_dom(
+            "<table><caption>Cap</caption><tr><td>A</td></tr></table>".to_string(),
+        );
+        let ss = crate::css::user_agent_stylesheet();
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        fn subtree_glyphs(b: &LayoutBox) -> usize {
+            b.glyphs.len() + b.children.iter().map(subtree_glyphs).sum::<usize>()
+        }
+        fn collect_boxes(b: &LayoutBox, out: &mut Vec<(String, f32, usize)>) {
+            if let NodeType::Element(e) = &b.styled_node.node.node_type {
+                out.push((e.tag_name.clone(), b.dimensions.content.y, subtree_glyphs(b)));
+            }
+            for c in &b.children {
+                collect_boxes(c, out);
+            }
+        }
+        let mut boxes = Vec::new();
+        collect_boxes(&lb, &mut boxes);
+        let cap = boxes.iter().find(|(t, _, _)| t == "caption").expect("캡션 박스");
+        let td = boxes.iter().find(|(t, _, _)| t == "td").expect("셀 박스");
+        assert!(cap.2 > 0, "캡션 텍스트가 렌더돼야");
+        assert!(cap.1 < td.1, "캡션이 셀 위에 있어야 ({} < {})", cap.1, td.1);
     }
 
     #[test]
