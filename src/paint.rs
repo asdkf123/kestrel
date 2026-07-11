@@ -403,6 +403,67 @@ pub enum ImageFit {
     TileY,   // repeat-y — 세로만 타일
 }
 
+// background-position 한 축 값. Pct 는 0..1 (박스-이미지 정렬 기준).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BgCoord {
+    Px(f32),
+    Pct(f32),
+}
+
+impl BgCoord {
+    // 축 방향 오프셋 px. box_dim/img_dim 은 해당 축 길이.
+    fn resolve(self, box_dim: f32, img_dim: f32) -> f32 {
+        match self {
+            BgCoord::Px(v) => v,
+            BgCoord::Pct(p) => (box_dim - img_dim) * p,
+        }
+    }
+}
+
+// "center" / "right top" / "50% 50%" / "10px 20px" → (x, y) 축 좌표.
+fn parse_bg_position(s: &str) -> (BgCoord, BgCoord) {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    let coord = |t: &str, horizontal: bool| -> Option<BgCoord> {
+        match t {
+            "left" if horizontal => Some(BgCoord::Pct(0.0)),
+            "right" if horizontal => Some(BgCoord::Pct(1.0)),
+            "top" if !horizontal => Some(BgCoord::Pct(0.0)),
+            "bottom" if !horizontal => Some(BgCoord::Pct(1.0)),
+            "center" => Some(BgCoord::Pct(0.5)),
+            _ => {
+                if let Some(p) = t.strip_suffix('%') {
+                    p.trim().parse::<f32>().ok().map(|v| BgCoord::Pct(v / 100.0))
+                } else {
+                    t.trim_end_matches("px").parse::<f32>().ok().map(BgCoord::Px)
+                }
+            }
+        }
+    };
+    match toks.as_slice() {
+        [a] => {
+            // 한 값: 나머지 축은 center. 세로 키워드면 x=center 로.
+            if *a == "top" || *a == "bottom" {
+                (BgCoord::Pct(0.5), coord(a, false).unwrap_or(BgCoord::Pct(0.0)))
+            } else {
+                (coord(a, true).unwrap_or(BgCoord::Pct(0.5)), BgCoord::Pct(0.5))
+            }
+        }
+        [a, b, ..] => {
+            // "top left" 처럼 순서가 바뀐 키워드도 허용
+            let (ax, ay) = if matches!(*a, "top" | "bottom") || matches!(*b, "left" | "right") {
+                (b, a)
+            } else {
+                (a, b)
+            };
+            (
+                coord(ax, true).unwrap_or(BgCoord::Pct(0.5)),
+                coord(ay, false).unwrap_or(BgCoord::Pct(0.5)),
+            )
+        }
+        [] => (BgCoord::Pct(0.0), BgCoord::Pct(0.0)),
+    }
+}
+
 // 트리 borrow 없이 스크롤 오프셋만 바꿔 반복 래스터화할 수 있다 (실제 브라우저 구조).
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
@@ -411,7 +472,7 @@ pub enum DisplayItem {
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
     InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
-    Image { image: usize, rect: Rect, fit: ImageFit },
+    Image { image: usize, rect: Rect, fit: ImageFit, pos: Option<(BgCoord, BgCoord)> },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, stops: (색, 위치 0-1).
     Gradient { rect: Rect, angle: f32, radial: bool, conic: bool, stops: Vec<(Color, f32)> },
     // SVG path 채우기 (여러 윤곽선, nonzero winding). points 는 논리 좌표.
@@ -990,8 +1051,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         DisplayItem::Rect { color, rect } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Rect { color, rect: r })
         }
-        DisplayItem::Image { image, rect, fit } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit })
+        DisplayItem::Image { image, rect, fit, pos } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit, pos })
         }
         // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
         // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
@@ -1086,10 +1147,15 @@ fn collect_items(
                 _ => ImageFit::Tile, // 기본 repeat
             },
         };
+        let pos = layout_box.styled_node.value("background-position").and_then(|v| match v {
+            Value::Keyword(s) => Some(parse_bg_position(&s)),
+            _ => None,
+        });
         local.push(DisplayItem::Image {
             image: idx,
             rect: layout_box.dimensions.border_box(),
             fit,
+            pos,
         });
     }
     if let Some(g) = &layout_box.gradient {
@@ -1112,7 +1178,7 @@ fn collect_items(
             },
             _ => ImageFit::Fill, // object-fit 기본값
         };
-        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit });
+        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit, pos: None });
     }
     // text-shadow: 글리프 뒤에 오프셋+색으로 복제 (blur 미지원, 단일 그림자)
     let text_shadow = {
@@ -1482,13 +1548,13 @@ fn draw_item(
             }
             canvas.fill_inner_shadow(*color, r, radius * scale, blur * scale, dx * scale, dy * scale);
         }
-        DisplayItem::Image { image, rect, fit } => {
+        DisplayItem::Image { image, rect, fit, pos } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
             if let Some(img) = images.get(*image) {
-                blit_image(canvas, img, r, scale, *fit);
+                blit_image(canvas, img, r, scale, *fit, *pos);
             }
         }
         DisplayItem::Gradient { rect, angle, radial, conic, stops } => {
@@ -1527,12 +1593,23 @@ fn draw_item(
 // rect 크기로 클리핑 (<img> 는 rect == 고유 크기 × scale 이라 무손실).
 // rect(물리 px)에 이미지를 fit 방식으로 그린다. 목적지 하위영역 `dr` 을 구하고,
 // dr 안 각 픽셀의 상대 위치로 소스 픽셀을 샘플(최근접), rect 로 클립한다.
-fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f32, fit: ImageFit) {
+fn blit_image(
+    canvas: &mut Canvas,
+    img: &crate::png::Image,
+    rect: Rect,
+    scale: f32,
+    fit: ImageFit,
+    pos: Option<(BgCoord, BgCoord)>,
+) {
     let (iw, ih) = (img.width as f32, img.height as f32);
     if iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
-    // 타일링(background-repeat): 고유 크기(×scale)로 rect 안을 반복. 좌상단 기준 모듈로 샘플.
+    // background-position 오프셋(px, rect 좌상단 기준). Natural/Tile 에만 적용.
+    let (tw0, th0) = (iw * scale, ih * scale);
+    let off_x = pos.map_or(0.0, |(px, _)| px.resolve(rect.width, tw0));
+    let off_y = pos.map_or(0.0, |(_, py)| py.resolve(rect.height, th0));
+    // 타일링(background-repeat): 고유 크기(×scale)로 rect 안을 반복. 위치 오프셋만큼 위상 이동.
     if matches!(fit, ImageFit::Tile | ImageFit::TileX | ImageFit::TileY) {
         let (tile_x, tile_y) = (
             matches!(fit, ImageFit::Tile | ImageFit::TileX),
@@ -1544,14 +1621,14 @@ fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f
         let x1 = ((rect.x + rect.width).min(canvas.width as f32)).max(0.0) as usize;
         let y1 = ((rect.y + rect.height).min(canvas.height as f32)).max(0.0) as usize;
         for py in y0..y1 {
-            let ty = (py as f32 + 0.5 - rect.y) / th;
+            let ty = (py as f32 + 0.5 - rect.y - off_y) / th;
             if !tile_y && ty >= 1.0 {
                 continue; // 세로 미반복: 한 이미지 높이까지만
             }
             let fy = if tile_y { ty - ty.floor() } else { ty };
             let sy = ((fy * ih) as i32).clamp(0, img.height as i32 - 1) as usize;
             for px in x0..x1 {
-                let tx = (px as f32 + 0.5 - rect.x) / tw;
+                let tx = (px as f32 + 0.5 - rect.x - off_x) / tw;
                 if !tile_x && tx >= 1.0 {
                     continue;
                 }
@@ -1588,7 +1665,8 @@ fn blit_image(canvas: &mut Canvas, img: &crate::png::Image, rect: Rect, scale: f
             Rect { x: cx - w / 2.0, y: cy - h / 2.0, width: w, height: h }
         }
         ImageFit::Natural => {
-            Rect { x: rect.x, y: rect.y, width: iw * scale, height: ih * scale }
+            // no-repeat: background-position 오프셋만큼 이동, rect 로 클립
+            Rect { x: rect.x + off_x, y: rect.y + off_y, width: iw * scale, height: ih * scale }
         }
     };
     // 실제로 칠할 영역 = dr ∩ rect ∩ 캔버스
@@ -1673,6 +1751,48 @@ pub fn paint(
 mod tests {
     use super::*;
     use crate::css::Color;
+
+    #[test]
+    fn bg_position_parse_and_resolve() {
+        // center → 50%/50%; 박스 100, 이미지 20 → (100-20)*0.5 = 40
+        let (x, y) = parse_bg_position("center");
+        assert_eq!(x.resolve(100.0, 20.0), 40.0);
+        assert_eq!(y.resolve(100.0, 20.0), 40.0);
+        // right top → x=100%(=80), y=0
+        let (x, y) = parse_bg_position("right top");
+        assert_eq!(x.resolve(100.0, 20.0), 80.0);
+        assert_eq!(y.resolve(100.0, 20.0), 0.0);
+        // 픽셀 오프셋은 절대
+        let (x, y) = parse_bg_position("10px 20px");
+        assert_eq!(x.resolve(999.0, 999.0), 10.0);
+        assert_eq!(y.resolve(999.0, 999.0), 20.0);
+        // 순서 뒤바뀐 키워드(top left)도 축 인식
+        let (x, y) = parse_bg_position("top left");
+        assert_eq!(x.resolve(100.0, 20.0), 0.0);
+        assert_eq!(y.resolve(100.0, 20.0), 0.0);
+    }
+
+    #[test]
+    fn bg_position_center_offsets_blit() {
+        // 4x4 캔버스에 2x2 빨강 이미지 no-repeat, position center → 오프셋 (4-2)/2=1
+        let img = crate::png::Image { width: 2, height: 2, rgba: [255, 0, 0, 255].repeat(4) };
+        let mut canvas = Canvas::new(4, 4);
+        let rect = Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 };
+        blit_image(
+            &mut canvas,
+            &img,
+            rect,
+            1.0,
+            ImageFit::Natural,
+            Some((BgCoord::Pct(0.5), BgCoord::Pct(0.5))),
+        );
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        assert_eq!(canvas.pixels[0], white, "좌상단(0,0)은 비어있어야 (중앙 배치)");
+        assert_eq!(canvas.pixels[1 * 4 + 1], red, "(1,1) 빨강");
+        assert_eq!(canvas.pixels[2 * 4 + 2], red, "(2,2) 빨강");
+        assert_eq!(canvas.pixels[3 * 4 + 3], white, "우하단(3,3)은 비어있어야");
+    }
 
     fn fonts() -> crate::font::FontStack {
         let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
@@ -1764,13 +1884,13 @@ mod tests {
         // 1x1 빨강 이미지를 4x4 rect 에 Tile → 전체가 빨강
         let img = crate::png::Image { width: 1, height: 1, rgba: vec![255, 0, 0, 255] };
         let mut canvas = Canvas::new(4, 4);
-        blit_image(&mut canvas, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::Tile);
+        blit_image(&mut canvas, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::Tile, None);
         let red = Color { r: 255, g: 0, b: 0, a: 255 };
         assert_eq!(canvas.pixels[0], red);
         assert_eq!(canvas.pixels[3 * 4 + 3], red, "우하단도 타일로 채워짐");
         // TileX: 세로는 한 줄만 (1px 높이) → (0,2)는 안 칠해짐(흰색)
         let mut c2 = Canvas::new(4, 4);
-        blit_image(&mut c2, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::TileX);
+        blit_image(&mut c2, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::TileX, None);
         assert_eq!(c2.pixels[0], red, "가로 타일 첫 줄");
         assert_eq!(c2.pixels[2 * 4 + 0], Color { r: 255, g: 255, b: 255, a: 255 }, "TileX 는 세로 미반복");
     }

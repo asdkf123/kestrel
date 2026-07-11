@@ -290,6 +290,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // background 단축: 색 → background-color, url() → background-image.
         // position/repeat/size/attachment/gradient 등은 근사(드롭).
         "background" => background_shorthand(value_text),
+        // background-position: 다중 토큰("center top" 등) 원문 보존, paint 가 파싱.
+        "background-position" => {
+            vec![Declaration {
+                name: "background-position".to_string(),
+                value: Value::Keyword(value_text.trim().to_string()),
+            }]
+        }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
         "outline" => {
             let (mut width, mut style, mut color) = (None, None, None);
@@ -419,6 +426,7 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut color = None;
     let mut repeat = None;
     let mut size = None;
+    let mut pos_tokens: Vec<String> = Vec::new();
 
     let has_gradient = value_text.contains("gradient(");
     // 그라디언트가 없으면 다중 레이어(콤마) 중 첫 레이어만. gradient 안 콤마 보호 위해
@@ -465,16 +473,18 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
             }
         } else if matches!(t, "repeat" | "no-repeat" | "repeat-x" | "repeat-y" | "space" | "round") {
             repeat = Some(Value::Keyword(t.to_string()));
+        } else if matches!(t, "left" | "right" | "top" | "bottom" | "center") {
+            pos_tokens.push(t.to_string());
+        } else if t.ends_with('%') || t.trim_end_matches("px").parse::<f32>().is_ok() {
+            pos_tokens.push(t.to_string()); // 길이/퍼센트 위치
         } else if matches!(
             t,
             "scroll" | "fixed" | "local" | "border-box" | "padding-box" | "content-box" | "none"
-                | "left" | "right" | "top" | "bottom" | "center"
         ) {
-            // attachment/origin/position 키워드 → 무시 (position 렌더 미구현)
+            // attachment/origin 키워드 → 무시
         } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
             color = Some(v);
         }
-        // 그 외(길이/퍼센트 위치) → 무시
     }
     if let Some(v) = image {
         out.push(Declaration { name: "background-image".to_string(), value: v });
@@ -487,6 +497,12 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     }
     if let Some(v) = size {
         out.push(Declaration { name: "background-size".to_string(), value: v });
+    }
+    if !pos_tokens.is_empty() {
+        out.push(Declaration {
+            name: "background-position".to_string(),
+            value: Value::Keyword(pos_tokens.join(" ")),
+        });
     }
     out
 }
@@ -608,6 +624,15 @@ mod tests {
         assert!(
             matches!(find(&d, "background-size"), Some(Value::Keyword(k)) if k == "cover"),
             "size cover"
+        );
+    }
+
+    #[test]
+    fn background_shorthand_extracts_position() {
+        let d = expand_declaration("background", "url(a.png) no-repeat center");
+        assert!(
+            matches!(find(&d, "background-position"), Some(Value::Keyword(k)) if k == "center"),
+            "position center"
         );
     }
 
