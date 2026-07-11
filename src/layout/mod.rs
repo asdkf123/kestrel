@@ -1124,6 +1124,8 @@ fn len_px(v: Value, pct_base: f32) -> Value {
         Length(f, crate::css::Unit::Percent) => Length(pct_base * f / 100.0, Px),
         // calc(pct% + px) → 기준 폭으로 해석
         Value::Calc(pct, px) => Length(pct_base * pct / 100.0 + px, Px),
+        // min()/max()/clamp() → 기준 폭으로 % 해석 후 계산
+        Value::MinMax(kind, args) => Length(crate::css::eval_minmax(kind, &args, pct_base), Px),
         other => other,
     }
 }
@@ -1617,6 +1619,19 @@ mod tests {
         let d = layout_for("<div></div>", "div { display: block; padding: 10px; }", 300.0);
         assert_eq!(d.content.width, 280.0);
         assert_eq!(d.content.x, 10.0);
+    }
+
+    #[test]
+    fn min_max_clamp_width() {
+        // 컨테이닝 블록 400. min(100px, 50%) = min(100, 200) = 100
+        let d = layout_for("<div></div>", "div { display: block; width: min(100px, 50%); }", 400.0);
+        assert_eq!(d.content.width, 100.0);
+        // max(100px, 50%) = max(100, 200) = 200
+        let d2 = layout_for("<div></div>", "div { display: block; width: max(100px, 50%); }", 400.0);
+        assert_eq!(d2.content.width, 200.0);
+        // clamp(50px, 50%, 150px): 50%=200 → 150 으로 상한
+        let d3 = layout_for("<div></div>", "div { display: block; width: clamp(50px, 50%, 150px); }", 400.0);
+        assert_eq!(d3.content.width, 150.0);
     }
 
     #[test]

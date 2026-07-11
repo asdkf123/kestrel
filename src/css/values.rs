@@ -26,6 +26,24 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("radial-gradient(") && text.ends_with(')') {
         return parse_radial_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
     }
+    // min()/max()/clamp() — 인자를 각각 해석해 MinMax 로 (계산은 style/layout).
+    for (name, kind) in [
+        ("min(", crate::css::MinMaxKind::Min),
+        ("max(", crate::css::MinMaxKind::Max),
+        ("clamp(", crate::css::MinMaxKind::Clamp),
+    ] {
+        if lower.starts_with(name) && text.ends_with(')') {
+            let inner = &text[name.len()..text.len() - 1];
+            let args: Vec<Value> = split_top_commas(inner)
+                .iter()
+                .filter_map(|a| interpret_value(a.trim()))
+                .collect();
+            if args.is_empty() {
+                return None;
+            }
+            return Some(Value::MinMax(kind, args));
+        }
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');

@@ -2934,7 +2934,7 @@ mod tests {
         let mut dom = crate::html::parse_dom(
             "<div id=\"t\"><span>hi</span></div>".to_string(),
         );
-        let t = dom.find_by_attr_id("t").unwrap();
+        let _ = dom.find_by_attr_id("t").unwrap();
         let mut interp = Interp::new();
         interp.dom = Some(&mut dom as *mut _);
         // deep clone → 자식 텍스트 포함
@@ -2952,7 +2952,7 @@ mod tests {
     #[test]
     fn dispatch_event_and_custom_event() {
         let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
-        let box_id = dom.find_by_attr_id("box").unwrap();
+        let _ = dom.find_by_attr_id("box").unwrap();
         let mut interp = Interp::new();
         interp.dom = Some(&mut dom as *mut _);
         // addEventListener + dispatchEvent(CustomEvent) → 핸들러가 detail 을 읽는다

@@ -469,6 +469,26 @@ impl Default for Viewport {
     }
 }
 
+// em/rem/vw 등 문맥 단위를 px 로 확정 (재귀: min/max/clamp 인자도). %는 레이아웃까지 보존.
+fn resolve_units(v: &mut Value, fs: f32, vp: Viewport) {
+    match v {
+        Value::Length(n, unit) => match unit {
+            Unit::Em => *v = Value::Length(*n * fs, Unit::Px),
+            Unit::Rem => *v = Value::Length(*n * DEFAULT_FONT_SIZE, Unit::Px),
+            Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax => {
+                *v = Value::Length(*n / 100.0 * vp_unit_px(*unit, vp), Unit::Px)
+            }
+            _ => {}
+        },
+        Value::MinMax(_, args) => {
+            for a in args.iter_mut() {
+                resolve_units(a, fs, vp);
+            }
+        }
+        _ => {}
+    }
+}
+
 // 뷰포트 단위 1 단위당 px (vw/vh/vmin/vmax). n 은 이미 나눠서 곱해 쓴다.
 fn vp_unit_px(unit: Unit, vp: Viewport) -> f32 {
     match unit {
@@ -647,6 +667,15 @@ fn style_node<'a>(
                 Some(Value::Length(n, u @ (Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax))) => {
                     n / 100.0 * vp_unit_px(*u, vp)
                 }
+                // font-size: clamp/min/max — 인자 단위를 부모 기준으로 확정 후 계산
+                Some(Value::MinMax(kind, args)) => {
+                    let kind = *kind;
+                    let mut args = args.clone();
+                    for a in args.iter_mut() {
+                        resolve_units(a, parent_fs, vp); // em 은 부모 font-size 기준
+                    }
+                    crate::css::eval_minmax(kind, &args, parent_fs)
+                }
                 _ => parent_fs, // 미지정/키워드 → 상속
             };
             values.insert("font-size".to_string(), Value::Length(fs, Unit::Px));
@@ -711,16 +740,7 @@ fn style_node<'a>(
                 if k == "font-size" {
                     continue;
                 }
-                if let Value::Length(n, unit) = v {
-                    match unit {
-                        Unit::Em => *v = Value::Length(*n * fs, Unit::Px),
-                        Unit::Rem => *v = Value::Length(*n * DEFAULT_FONT_SIZE, Unit::Px),
-                        Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax => {
-                            *v = Value::Length(*n / 100.0 * vp_unit_px(*unit, vp), Unit::Px)
-                        }
-                        _ => {}
-                    }
-                }
+                resolve_units(v, fs, vp);
             }
             // currentColor 를 요소 계산 color 로 치환 (border-color/background-color 등).
             let cur_color = match values.get("color") {
@@ -1090,6 +1110,15 @@ mod tests {
         let root3 = crate::html::parse_dom("<span></span>".to_string());
         let ss3 = crate::css::parse("span { display: inline; }".to_string());
         assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
+    }
+
+    #[test]
+    fn font_size_clamp_resolves() {
+        let root = crate::html::parse_dom("<div></div>".to_string());
+        // clamp(1rem, 2vw, 2rem): 1rem=16, 2vw(vp 1000)=20, 2rem=32 → 20
+        let ss = crate::css::parse("div { font-size: clamp(1rem, 2vw, 2rem); }".to_string());
+        let styled = style_tree_vp(&root, &ss, Viewport { w: 1000.0, h: 600.0 });
+        assert_eq!(styled.value("font-size"), Some(Value::Length(20.0, Unit::Px)));
     }
 
     #[test]

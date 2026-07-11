@@ -109,7 +109,7 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - 속성 연산자 `^= $= *= ~= |=`, 대소문자 플래그.
 
 ### CSS — 값·캐스케이드
-- `calc()`, 커스텀 속성 `var()`. 남음: `min()/max()/clamp()`.
+- ~~`calc()`, 커스텀 속성 `var()`, `min()/max()/clamp()`~~ ✓.
 - ~~단위: `vw/vh/vmin/vmax ch ex pt pc in cm mm Q`~~ ✓.
 - `!important`, `@import`, ~~`@supports`~~ ✓, `@font-face`, `@keyframes`, cascade layers.
 - 상속 확대: 현재 color/font-size/text-align 만. font-family/weight/style/

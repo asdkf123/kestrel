@@ -107,6 +107,16 @@ pub enum Value {
     Calc(f32, f32),
     // linear-gradient. 페인트가 축을 따라 색 보간.
     Gradient(Gradient),
+    // min()/max()/clamp() — 인자는 Length/Calc. 스타일에서 em/rem/vw 를 px 로 확정하고
+    // 레이아웃(len_px)이 % 해석 후 최종 계산한다.
+    MinMax(MinMaxKind, Vec<Value>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MinMaxKind {
+    Min,
+    Max,
+    Clamp,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,9 +183,39 @@ impl Selector {
 
 impl Value {
     pub fn to_px(&self) -> f32 {
-        match *self {
-            Value::Length(f, Unit::Px) => f,
+        match self {
+            Value::Length(f, Unit::Px) => *f,
+            // 문맥 없는 to_px: %는 0 기준 (대개 인자가 이미 px 로 확정된 min/max/clamp)
+            Value::MinMax(kind, args) => eval_minmax(*kind, args, 0.0),
             _ => 0.0,
+        }
+    }
+}
+
+// min/max/clamp 를 px 로 계산. pct_base 는 % 인자 해석 기준(레이아웃이 제공, 없으면 0).
+pub fn eval_minmax(kind: MinMaxKind, args: &[Value], pct_base: f32) -> f32 {
+    let arg_px = |v: &Value| -> f32 {
+        match v {
+            Value::Length(f, Unit::Px) => *f,
+            Value::Length(f, Unit::Percent) => f / 100.0 * pct_base,
+            Value::Calc(pct, px) => pct / 100.0 * pct_base + px,
+            Value::MinMax(k, a) => eval_minmax(*k, a, pct_base),
+            _ => 0.0, // 미해석 단위(em/rem/vw 는 style 에서 px 로 확정됐어야)
+        }
+    };
+    let vals: Vec<f32> = args.iter().map(arg_px).collect();
+    if vals.is_empty() {
+        return 0.0;
+    }
+    match kind {
+        MinMaxKind::Min => vals.iter().cloned().fold(f32::INFINITY, f32::min),
+        MinMaxKind::Max => vals.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+        // clamp(min, val, max) = max(min, min(val, max))
+        MinMaxKind::Clamp => {
+            let lo = vals[0];
+            let val = vals.get(1).copied().unwrap_or(lo);
+            let hi = vals.get(2).copied().unwrap_or(val);
+            val.min(hi).max(lo)
         }
     }
 }
