@@ -832,12 +832,24 @@ impl Interp {
     pub fn install_location(&mut self, url: &str) {
         self.base_url = Some(url.to_string());
         let Ok(u) = crate::url::Url::parse(url) else { return };
+        // path 는 쿼리(?...)를 포함하므로 pathname/search 로 분리. hash 는 원문에서.
+        let (pathname, search) = match u.path.split_once('?') {
+            Some((p, q)) => (p.to_string(), format!("?{}", q)),
+            None => (u.path.clone(), String::new()),
+        };
+        let hash = match url.split_once('#') {
+            Some((_, f)) => format!("#{}", f),
+            None => String::new(),
+        };
         let mut loc = HashMap::new();
-        loc.insert("href".to_string(), Value::Str(u.as_string()));
+        loc.insert("href".to_string(), Value::Str(url.to_string()));
         loc.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
         loc.insert("host".to_string(), Value::Str(u.host.clone()));
         loc.insert("hostname".to_string(), Value::Str(u.host.clone()));
-        loc.insert("pathname".to_string(), Value::Str(u.path.clone()));
+        loc.insert("origin".to_string(), Value::Str(format!("{}://{}", u.scheme, u.host)));
+        loc.insert("pathname".to_string(), Value::Str(pathname));
+        loc.insert("search".to_string(), Value::Str(search));
+        loc.insert("hash".to_string(), Value::Str(hash));
         let loc = Value::Obj(Rc::new(RefCell::new(loc)));
         env_declare(&self.global, "location", loc.clone());
         if let Some(Value::Obj(w)) = env_get(&self.global, "window") {
@@ -3666,14 +3678,19 @@ mod tests {
     #[test]
     fn location_reflects_page_url() {
         let mut it = Interp::new();
-        it.install_location("https://example.com/a/b?q=1");
-        let v = it.run("location.hostname + location.pathname").unwrap();
+        it.install_location("https://example.com/a/b?q=1#top");
+        // pathname 은 쿼리 제외, search/hash 분리 (DOM 표준)
+        let v = it.run("location.pathname + '|' + location.search + '|' + location.hash").unwrap();
         match v {
-            Value::Str(s) => assert_eq!(s, "example.com/a/b?q=1"),
+            Value::Str(s) => assert_eq!(s, "/a/b|?q=1|#top"),
             other => panic!("{:?}", other),
         }
+        assert!(matches!(it.run("location.hostname").unwrap(), Value::Str(s) if s == "example.com"));
+        assert!(matches!(it.run("location.origin").unwrap(), Value::Str(s) if s == "https://example.com"));
         let w = it.run("window.location.href").unwrap();
         assert!(matches!(w, Value::Str(s) if s.starts_with("https://example.com")));
+        // location.search.indexOf 가 동작해야 (구글 등에서 흔한 패턴)
+        assert!(matches!(it.run("location.search.indexOf('q')").unwrap(), Value::Num(n) if n == 1.0));
     }
 
     #[test]
