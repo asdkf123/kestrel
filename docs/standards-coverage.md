@@ -116,12 +116,11 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
   line-height/letter-spacing/white-space/visibility/list-style/direction 등 다수 미상속.
 
 ### CSS — 레이아웃
-- **진짜 테이블 레이아웃**: auto/fixed 알고리즘, 열 폭 계산, colspan/rowspan,
-  border-collapse. (지금은 태그 기반 근사 + 균등/지정폭)
+- **테이블**: 열 폭 계산 ✓, ~~colspan~~ ✓. 남음: rowspan, border-collapse, fixed 알고리즘.
 - **position: sticky**, 절대 위치 컨테이닝 블록 체인 정확화, **z-index/스태킹 컨텍스트**.
 - **인라인 포매팅 정식화**: 라인 박스, vertical-align, 베이스라인 정렬,
   text + inline-block 같은 줄(현재는 분리됨), float 주위 텍스트 흐름, `clear`.
-- flexbox 잔여: flex-shrink, flex-basis 정식, align-self/content, order, min/max.
+- flexbox: ~~flex-shrink~~ ✓, ~~align-self~~ ✓. 남음: flex-basis 정식, align-content, order, min/max.
 - grid 잔여: template-rows/areas, 명시 배치(grid-row/column/span), auto-flow, subgrid.
 - multi-column, `box-sizing: border-box`(현재 무시), min/max-width·height,
   `overflow`(스크롤/클리핑), aspect-ratio, object-fit.
