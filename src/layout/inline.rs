@@ -144,9 +144,15 @@ impl<'a> LayoutBox<'a> {
             }
             (content_x, content_x + content_w)
         };
+        // text-indent: 첫 줄만 들여쓰기 (px 또는 컨테이닝 폭 기준 %). 상속 속성.
+        let text_indent = match self.styled_node.value("text-indent") {
+            Some(Value::Length(v, crate::css::Unit::Percent)) => v / 100.0 * content_w,
+            Some(v) => v.to_px(),
+            None => 0.0,
+        };
         let mut baseline = self.dimensions.content.y + half_leading + ascent_px;
         let (mut line_left, mut line_right) = line_range(baseline);
-        let mut pen_x = line_left;
+        let mut pen_x = line_left + text_indent;
         let mut lines = 1;
         // 줄별 시작 인덱스 + 폭 (center/right 정렬 후처리용): (glyph, link, deco, width)
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];

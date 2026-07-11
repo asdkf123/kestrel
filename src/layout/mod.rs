@@ -1415,6 +1415,18 @@ mod tests {
     }
 
     #[test]
+    fn text_indent_offsets_first_line() {
+        let fs = fonts();
+        let root = crate::html::parse_dom("<p>hello</p>".to_string());
+        let ss = crate::css::parse("p { display: block; text-indent: 30px; }".to_string());
+        let s = crate::style::style_tree(&root, &ss);
+        let lb = layout_tree_for(&s, &fs);
+        let g = glyphs_of(&lb);
+        // 첫 글리프가 들여쓰기(30px)만큼 오른쪽에서 시작
+        assert!(g[0].x >= 30.0, "첫 글자 x >= 30, 실제 {}", g[0].x);
+    }
+
+    #[test]
     fn letter_spacing_widens_text() {
         let fs = fonts();
         let base = crate::html::parse_dom("<p>hello</p>".to_string());
