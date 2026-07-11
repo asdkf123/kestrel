@@ -154,6 +154,11 @@ pub enum Native {
     DateNow,
     DateCtor,
     DateMethod(DateField),
+    XhrCtor,
+    XhrOpen,
+    XhrSend,
+    XhrSetHeader,
+    XhrGetHeader,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -422,6 +427,8 @@ pub struct Interp {
     fn_proto: Value,
     // String.prototype (문자열 메서드) — String.prototype.slice.call(x) 용.
     string_proto: Value,
+    // 페이지 기준 URL (상대 URL 해석용 — XHR/fetch)
+    base_url: Option<String>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
     // undefined 로 (표준 아님, naver 등 롱테일 거리 측정용). 접근 키를 집계.
     lenient: bool,
@@ -546,6 +553,7 @@ impl Interp {
         env_declare(&global, "Number", Value::Native(Native::NumberCtor));
         env_declare(&global, "Boolean", Value::Native(Native::BooleanCtor));
         env_declare(&global, "Date", Value::Native(Native::DateCtor));
+        env_declare(&global, "XMLHttpRequest", Value::Native(Native::XhrCtor));
         // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
         for name in [
             "Error",
@@ -651,6 +659,7 @@ impl Interp {
             microtasks: std::collections::VecDeque::new(),
             fn_proto,
             string_proto,
+            base_url: None,
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
         }
@@ -744,6 +753,7 @@ impl Interp {
 
     // location 전역 설치 (페이지 URL 기반). window.location 에도 공유.
     pub fn install_location(&mut self, url: &str) {
+        self.base_url = Some(url.to_string());
         let Ok(u) = crate::url::Url::parse(url) else { return };
         let mut loc = HashMap::new();
         loc.insert("href".to_string(), Value::Str(u.as_string()));
@@ -1963,6 +1973,7 @@ impl Interp {
                 return self.call_native(n, None, args)
             }
             Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
+            Value::Native(Native::XhrCtor) => return Ok(self.make_xhr()),
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {
                 let (target, _this, partial) = (*b).clone();

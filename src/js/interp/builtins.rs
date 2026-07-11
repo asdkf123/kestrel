@@ -130,6 +130,50 @@ impl Interp {
         }
     }
 
+    // 상대 URL 을 페이지 기준으로 해석
+    fn resolve_url(&self, url: &str) -> String {
+        if let Some(base) = &self.base_url {
+            if let Ok(b) = crate::url::Url::parse(base) {
+                if let Some(u) = b.join(url) {
+                    return u.as_string();
+                }
+            }
+        }
+        url.to_string()
+    }
+
+    // new XMLHttpRequest() → 메서드/속성을 가진 객체
+    pub(super) fn make_xhr(&self) -> Value {
+        let mut m = HashMap::new();
+        m.insert("__isXhr".to_string(), Value::Bool(true));
+        m.insert("readyState".to_string(), Value::Num(0.0));
+        m.insert("status".to_string(), Value::Num(0.0));
+        m.insert("statusText".to_string(), Value::Str(String::new()));
+        m.insert("responseText".to_string(), Value::Str(String::new()));
+        m.insert("response".to_string(), Value::Str(String::new()));
+        m.insert("responseType".to_string(), Value::Str(String::new()));
+        m.insert("open".to_string(), Value::Native(Native::XhrOpen));
+        m.insert("send".to_string(), Value::Native(Native::XhrSend));
+        m.insert("setRequestHeader".to_string(), Value::Native(Native::XhrSetHeader));
+        m.insert("getResponseHeader".to_string(), Value::Native(Native::XhrGetHeader));
+        m.insert("getAllResponseHeaders".to_string(), Value::Native(Native::XhrGetHeader));
+        m.insert("abort".to_string(), Value::Native(Native::Noop));
+        m.insert("addEventListener".to_string(), Value::Native(Native::AddEventListener));
+        m.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        Value::Obj(Rc::new(RefCell::new(m)))
+    }
+
+    // XHR 발화: on<event> 프로퍼티 + addEventListener 핸들러(요소 핸들러 재사용은 안 함)
+    fn xhr_fire(&mut self, obj: &Rc<RefCell<HashMap<String, Value>>>, event: &str) {
+        let on = format!("on{}", event);
+        let handler = obj.borrow().get(&on).cloned();
+        if let Some(h) = handler {
+            if is_callable(&h) {
+                let _ = self.call_value(h, Some(Value::Obj(obj.clone())), Vec::new());
+            }
+        }
+    }
+
     // new Date(...) / Date(...) 인자 처리
     fn make_date_from_args(&self, args: &[Value]) -> Value {
         let millis = match args.len() {
@@ -447,6 +491,58 @@ impl Interp {
                     return Ok(Value::Bool(self.class_tokens(id).iter().any(|t| t == &name)));
                 }
                 Ok(Value::Bool(false))
+            }
+            Native::XhrCtor => Ok(self.make_xhr()),
+            // XHR: open(method, url) → __method/__url 저장, readyState=1
+            Native::XhrOpen => {
+                if let Some(Value::Obj(o)) = &recv {
+                    let method = args.first().map(to_display).unwrap_or_else(|| "GET".to_string());
+                    let url = args.get(1).map(to_display).unwrap_or_default();
+                    let mut b = o.borrow_mut();
+                    b.insert("__method".to_string(), Value::Str(method));
+                    b.insert("__url".to_string(), Value::Str(url));
+                    b.insert("readyState".to_string(), Value::Num(1.0));
+                }
+                Ok(Value::Undefined)
+            }
+            Native::XhrSetHeader => Ok(Value::Undefined), // 헤더 저장 생략(요청은 GET 위주)
+            Native::XhrGetHeader => Ok(Value::Null),
+            // XHR: send() → 동기 HTTP, 필드 설정 후 readystatechange/load 발화
+            Native::XhrSend => {
+                let obj = match &recv {
+                    Some(Value::Obj(o)) => o.clone(),
+                    _ => return Ok(Value::Undefined),
+                };
+                let url = match obj.borrow().get("__url") {
+                    Some(Value::Str(u)) => u.clone(),
+                    _ => String::new(),
+                };
+                let full = self.resolve_url(&url);
+                match crate::http::fetch(&full) {
+                    Ok(r) => {
+                        let body = String::from_utf8_lossy(&r.body).to_string();
+                        let mut b = obj.borrow_mut();
+                        b.insert("status".to_string(), Value::Num(r.status as f64));
+                        b.insert(
+                            "statusText".to_string(),
+                            Value::Str(if r.status == 200 { "OK".into() } else { String::new() }),
+                        );
+                        b.insert("responseText".to_string(), Value::Str(body.clone()));
+                        b.insert("response".to_string(), Value::Str(body));
+                        b.insert("readyState".to_string(), Value::Num(4.0));
+                    }
+                    Err(e) => {
+                        self.console.push(format!("XHR 실패: {:?}", e));
+                        let mut b = obj.borrow_mut();
+                        b.insert("status".to_string(), Value::Num(0.0));
+                        b.insert("readyState".to_string(), Value::Num(4.0));
+                    }
+                }
+                // 발화 순서: readystatechange → load
+                self.xhr_fire(&obj, "readystatechange");
+                self.xhr_fire(&obj, "load");
+                self.xhr_fire(&obj, "loadend");
+                Ok(Value::Undefined)
             }
             Native::DateNow => Ok(Value::Num(now_millis())),
             Native::DateCtor => Ok(self.make_date_from_args(&args)),
