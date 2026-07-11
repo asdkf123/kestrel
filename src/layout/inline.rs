@@ -4,6 +4,71 @@ use crate::dom::NodeType;
 use crate::font::FontStack;
 use crate::style::{Display, StyledNode};
 
+// ── 양방향(bidi) 텍스트 ── (UAX#9 간소화: 강한 방향 + 중립 해소 + L2 재정렬)
+
+// 문자의 강한 방향. Some(true)=RTL(히브리/아랍), Some(false)=LTR(문자/숫자), None=중립.
+fn char_strong_rtl(c: char) -> Option<bool> {
+    let u = c as u32;
+    let rtl = (0x0590..=0x05FF).contains(&u)  // 히브리
+        || (0xFB1D..=0xFB4F).contains(&u)      // 히브리 표현형
+        || (0x0600..=0x06FF).contains(&u)      // 아랍
+        || (0x0750..=0x077F).contains(&u)      // 아랍 보충
+        || (0x08A0..=0x08FF).contains(&u)      // 아랍 확장-A
+        || (0xFB50..=0xFDFF).contains(&u)      // 아랍 표현형-A
+        || (0xFE70..=0xFEFF).contains(&u); // 아랍 표현형-B
+    if rtl {
+        Some(true)
+    } else if c.is_alphabetic() || c.is_ascii_digit() {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+// 각 문자의 임베딩 레벨. base_rtl 이면 기준 1, 아니면 0.
+fn bidi_levels(chars: &[char], base_rtl: bool) -> Vec<u8> {
+    let n = chars.len();
+    // 중립은 직전 강한 방향(없으면 기준)으로 해소 (근사).
+    let mut prev = base_rtl;
+    let mut resolved = vec![base_rtl; n];
+    for i in 0..n {
+        match char_strong_rtl(chars[i]) {
+            Some(d) => {
+                resolved[i] = d;
+                prev = d;
+            }
+            None => resolved[i] = prev,
+        }
+    }
+    resolved
+        .iter()
+        .map(|&d| if base_rtl { if d { 1 } else { 2 } } else if d { 1 } else { 0 })
+        .collect()
+}
+
+// L2 재정렬: 레벨 배열 → 시각 순서(각 시각 위치의 논리 인덱스).
+fn bidi_reorder(levels: &[u8]) -> Vec<usize> {
+    let n = levels.len();
+    let mut vis: Vec<usize> = (0..n).collect();
+    let maxl = *levels.iter().max().unwrap_or(&0);
+    for lvl in (1..=maxl).rev() {
+        let mut i = 0;
+        while i < n {
+            if levels[vis[i]] >= lvl {
+                let mut j = i;
+                while j < n && levels[vis[j]] >= lvl {
+                    j += 1;
+                }
+                vis[i..j].reverse();
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    vis
+}
+
 // 인라인 텍스트 조각의 계산된 스타일 (런/단어/글리프에 실림).
 #[derive(Clone, Copy)]
 struct TextStyle {
@@ -234,6 +299,14 @@ impl<'a> LayoutBox<'a> {
         // 줄별 각 단어의 시작 글리프 인덱스 (justify 정렬용)
         let mut line_words: Vec<Vec<usize>> = vec![Vec::new()];
 
+        // bidi: 문자 시퀀스의 임베딩 레벨(글리프와 1:1) + 글리프별 advance(재정렬용)
+        let base_rtl = matches!(self.styled_node.value("direction"),
+            Some(Value::Keyword(ref k)) if k == "rtl");
+        let all_chars: Vec<char> =
+            words.iter().flat_map(|(w, _, _)| w.iter().map(|&(c, _)| c)).collect();
+        let levels = bidi_levels(&all_chars, base_rtl);
+        let mut glyph_adv: Vec<f32> = Vec::with_capacity(all_chars.len());
+
         for (word, force_break, glue) in &words {
             let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
             let need_wrap = can_wrap && pen_x > line_left && pen_x + word_w > line_right;
@@ -265,6 +338,7 @@ impl<'a> LayoutBox<'a> {
                     rot: 0.0,
                 });
                 pen_x += adv + letter_spacing;
+                glyph_adv.push(adv + letter_spacing);
                 word_px_max = word_px_max.max(st.px);
                 word_color = st.color;
             }
@@ -305,6 +379,31 @@ impl<'a> LayoutBox<'a> {
             // glue(break-word 조각)면 다음 조각을 공백 없이 붙인다
             if !*glue {
                 pen_x += space_adv;
+                if let Some(a) = glyph_adv.last_mut() {
+                    *a += space_adv; // 단어 뒤 공백을 마지막 글리프 advance 에 포함(재정렬 대비)
+                }
+            }
+        }
+
+        // bidi 재정렬: RTL 문자가 있으면 줄마다 시각 순서로 x 재배치(advance 보존).
+        if levels.iter().any(|&l| l > 0) && glyph_adv.len() == self.glyphs.len() {
+            for i in 0..line_bounds.len() {
+                let start = line_bounds[i].0;
+                let end = line_bounds.get(i + 1).map(|b| b.0).unwrap_or(self.glyphs.len());
+                if end < start + 2 || end > levels.len() {
+                    continue;
+                }
+                let vis = bidi_reorder(&levels[start..end]);
+                let start_x = self.glyphs[start].x;
+                let mut x = start_x;
+                let mut newx = vec![0.0f32; end - start];
+                for &local in &vis {
+                    newx[local] = x;
+                    x += glyph_adv[start + local];
+                }
+                for k in 0..(end - start) {
+                    self.glyphs[start + k].x = newx[k];
+                }
             }
         }
 
@@ -462,5 +561,38 @@ fn collect_node<'a>(
                 }
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod bidi_tests {
+    use super::{bidi_levels, bidi_reorder};
+
+    #[test]
+    fn ltr_base_reverses_rtl_run() {
+        // "AB" + 히브리 "אב" → 레벨 [0,0,1,1], 시각순서 [0,1,3,2] (RTL 런 역순)
+        let chars: Vec<char> = "AB\u{05D0}\u{05D1}".chars().collect();
+        let levels = bidi_levels(&chars, false);
+        assert_eq!(levels, vec![0, 0, 1, 1]);
+        assert_eq!(bidi_reorder(&levels), vec![0, 1, 3, 2]);
+    }
+
+    #[test]
+    fn rtl_base_reverses_whole_and_keeps_ltr() {
+        // 기준 RTL: 히브리 "אב" + 라틴 "AB" → 레벨 [1,1,2,2]
+        // L2: lvl2 로 [2,3] 역순 → 그다음 lvl1 로 전체 역순
+        let chars: Vec<char> = "\u{05D0}\u{05D1}AB".chars().collect();
+        let levels = bidi_levels(&chars, true);
+        assert_eq!(levels, vec![1, 1, 2, 2]);
+        // 시각: lvl2 [2,3]→[3,2] → vis=[0,1,3,2]; lvl1 전체 역순 → [2,3,1,0]
+        assert_eq!(bidi_reorder(&levels), vec![2, 3, 1, 0]);
+    }
+
+    #[test]
+    fn pure_ltr_is_identity() {
+        let chars: Vec<char> = "hello".chars().collect();
+        let levels = bidi_levels(&chars, false);
+        assert!(levels.iter().all(|&l| l == 0));
+        assert_eq!(bidi_reorder(&levels), vec![0, 1, 2, 3, 4]);
     }
 }
