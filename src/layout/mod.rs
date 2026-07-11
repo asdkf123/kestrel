@@ -1661,12 +1661,28 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     if let NodeType::Element(e) = &style_node.node.node_type {
         if e.tag_name == "ol" || e.tag_name == "ul" {
             let ordered = e.tag_name == "ol";
-            let mut n = 0;
+            let reversed = ordered && e.attributes.get("reversed").is_some();
+            let li_count = root
+                .children
+                .iter()
+                .filter(|c| matches!(&c.styled_node.node.node_type,
+                    NodeType::Element(ce) if ce.tag_name == "li"))
+                .count() as i64;
+            // ol start: 시작 번호(기본 1). reversed 면 항목 수부터 감소.
+            let start = e.attributes.get("start").and_then(|s| s.trim().parse::<i64>().ok());
+            let mut n: i64 =
+                if reversed { start.unwrap_or(li_count) + 1 } else { start.unwrap_or(1) - 1 };
             for child in &mut root.children {
-                if matches!(&child.styled_node.node.node_type,
-                    NodeType::Element(ce) if ce.tag_name == "li")
-                {
-                    n += 1;
+                if let NodeType::Element(ce) = &child.styled_node.node.node_type {
+                    if ce.tag_name != "li" {
+                        continue;
+                    }
+                    // <li value="N"> 로 카운터 재설정
+                    if let Some(v) = ce.attributes.get("value").and_then(|s| s.trim().parse::<i64>().ok())
+                    {
+                        n = if reversed { v + 1 } else { v - 1 };
+                    }
+                    n += if reversed { -1 } else { 1 };
                     child.list_marker = list_marker_text(child.styled_node, style_node, ordered, n);
                 }
             }
@@ -1676,7 +1692,8 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
 }
 
 // list-style-type(li → ul/ol → 기본) 에 따라 마커 문자열. none 이면 마커 없음.
-fn list_marker_text(li: &StyledNode, list: &StyledNode, ordered: bool, index: usize) -> Option<String> {
+fn list_marker_text(li: &StyledNode, list: &StyledNode, ordered: bool, index: i64) -> Option<String> {
+    let idx = index.max(1) as usize; // alpha/roman 은 1 이상 기준
     let ty = li
         .value("list-style-type")
         .or_else(|| li.value("list-style"))
@@ -1690,10 +1707,10 @@ fn list_marker_text(li: &StyledNode, list: &StyledNode, ordered: bool, index: us
         "circle" => Some("\u{25E6}".to_string()),  // ◦
         "square" => Some("\u{25AA}".to_string()),  // ▪
         "decimal" => Some(format!("{}.", index)),
-        "lower-alpha" | "lower-latin" => Some(format!("{}.", alpha_marker(index, false))),
-        "upper-alpha" | "upper-latin" => Some(format!("{}.", alpha_marker(index, true))),
-        "lower-roman" => Some(format!("{}.", roman_marker(index, false))),
-        "upper-roman" => Some(format!("{}.", roman_marker(index, true))),
+        "lower-alpha" | "lower-latin" => Some(format!("{}.", alpha_marker(idx, false))),
+        "upper-alpha" | "upper-latin" => Some(format!("{}.", alpha_marker(idx, true))),
+        "lower-roman" => Some(format!("{}.", roman_marker(idx, false))),
+        "upper-roman" => Some(format!("{}.", roman_marker(idx, true))),
         _ => Some(format!("{}.", index)), // 미지원 종류 → decimal 근사
     }
 }
@@ -2444,6 +2461,71 @@ mod tests {
         let td = boxes.iter().find(|(t, _, _)| t == "td").expect("셀 박스");
         assert!(cap.2 > 0, "캡션 텍스트가 렌더돼야");
         assert!(cap.1 < td.1, "캡션이 셀 위에 있어야 ({} < {})", cap.1, td.1);
+    }
+
+    #[test]
+    fn ol_start_and_reversed_number_correctly() {
+        let fs = fonts();
+        let ss = crate::css::user_agent_stylesheet();
+        let markers = |html: &str| -> Vec<String> {
+            let root = crate::html::parse_dom(html.to_string());
+            let styled = crate::style::style_tree(&root, &ss);
+            let mut vp: Dimensions = Default::default();
+            vp.content.width = 300.0;
+            let lb = layout_tree(&styled, vp, &fs, &no_images());
+            fn walk(b: &LayoutBox, out: &mut Vec<String>) {
+                if let NodeType::Element(e) = &b.styled_node.node.node_type {
+                    if e.tag_name == "li" {
+                        if let Some(m) = &b.list_marker {
+                            out.push(m.clone());
+                        }
+                    }
+                }
+                for c in &b.children {
+                    walk(c, out);
+                }
+            }
+            let mut out = Vec::new();
+            walk(&lb, &mut out);
+            out
+        };
+        assert_eq!(markers("<ol start=\"5\"><li>a</li><li>b</li></ol>"), vec!["5.", "6."]);
+        assert_eq!(
+            markers("<ol reversed><li>a</li><li>b</li><li>c</li></ol>"),
+            vec!["3.", "2.", "1."]
+        );
+    }
+
+    #[test]
+    fn hr_rule_and_blockquote_dd_indent() {
+        let fs = fonts();
+        let ss = crate::css::user_agent_stylesheet();
+        let root = crate::html::parse_dom(
+            "<hr><blockquote>q</blockquote><dl><dd>d</dd></dl>".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        fn find(b: &LayoutBox, tag: &str, out: &mut Vec<(f32, f32)>) {
+            if let NodeType::Element(e) = &b.styled_node.node.node_type {
+                if e.tag_name == tag {
+                    out.push((b.dimensions.content.x, b.dimensions.border.top));
+                }
+            }
+            for c in &b.children {
+                find(c, tag, out);
+            }
+        }
+        let mut hr = Vec::new();
+        find(&lb, "hr", &mut hr);
+        assert!(hr[0].1 >= 1.0, "hr 은 border-top 로 선을 그림 ({})", hr[0].1);
+        let mut bq = Vec::new();
+        find(&lb, "blockquote", &mut bq);
+        assert!((bq[0].0 - 40.0).abs() < 0.5, "blockquote 좌여백 40 (실제 {})", bq[0].0);
+        let mut dd = Vec::new();
+        find(&lb, "dd", &mut dd);
+        assert!((dd[0].0 - 40.0).abs() < 0.5, "dd 좌여백 40 (실제 {})", dd[0].0);
     }
 
     #[test]
