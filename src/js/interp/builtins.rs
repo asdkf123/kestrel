@@ -493,6 +493,20 @@ impl Interp {
                 Ok(Value::Bool(false))
             }
             // event.preventDefault() / stopPropagation() — recv 가 이벤트 객체
+            // getElementsByClassName / getElementsByTagName — 서브트리 수집
+            Native::GetElementsByClass | Native::GetElementsByTag => {
+                let scope = match &recv {
+                    Some(Value::Dom(id)) => Some(*id),
+                    _ => None, // document 등 → 루트
+                };
+                let query = args.first().map(to_display).unwrap_or_default();
+                let by_class = matches!(n, Native::GetElementsByClass);
+                let dom = self.dom_arena()?;
+                let root = scope.unwrap_or(dom.root);
+                let mut out = Vec::new();
+                collect_elements(dom, root, scope.is_some(), &query, by_class, &mut out);
+                Ok(Value::Arr(ArrayObj::new(out)))
+            }
             Native::EventPreventDefault => {
                 if let Some(Value::Obj(o)) = &recv {
                     o.borrow_mut().insert("defaultPrevented".to_string(), Value::Bool(true));

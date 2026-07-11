@@ -218,6 +218,36 @@ pub(super) fn regex_escape(s: &str) -> String {
     out
 }
 
+// getElementsByClassName/TagName: id 서브트리에서 매칭 요소 수집.
+// skip_self=true 면 스코프 요소 자신은 제외(자손만).
+pub(super) fn collect_elements(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    skip_self: bool,
+    query: &str,
+    by_class: bool,
+    out: &mut Vec<Value>,
+) {
+    if !skip_self {
+        if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+            let hit = if by_class {
+                e.attributes
+                    .get("class")
+                    .map(|c| c.split_whitespace().any(|t| t == query))
+                    .unwrap_or(false)
+            } else {
+                query == "*" || e.tag_name.eq_ignore_ascii_case(query)
+            };
+            if hit {
+                out.push(Value::Dom(id));
+            }
+        }
+    }
+    for &c in &dom.get(id).children {
+        collect_elements(dom, c, false, query, by_class, out);
+    }
+}
+
 // epoch millis → (year, month[1-12], day, hours, min, sec, ms, weekday[0=일])
 // UTC 기준 (타임존 미구현). Howard Hinnant 의 civil_from_days 알고리즘.
 pub(super) fn date_parts(millis: f64) -> (i64, u32, u32, u32, u32, u32, u32, u32) {

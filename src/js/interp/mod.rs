@@ -161,6 +161,8 @@ pub enum Native {
     XhrGetHeader,
     EventPreventDefault,
     EventStopProp,
+    GetElementsByClass,
+    GetElementsByTag,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -457,7 +459,18 @@ impl Interp {
         // 스크립트 실행 중엔 "loading" — 프레임워크가 DOMContentLoaded 리스너를
         // 등록하도록. run_scripts 가 이후 interactive → complete 로 갱신.
         document.insert("readyState".to_string(), Value::Str("loading".to_string()));
+        // 흔한 document 프로퍼티(미정의 크래시 방지). cookie 는 간이(문자열).
+        document.insert("cookie".to_string(), Value::Str(String::new()));
+        document.insert("title".to_string(), Value::Str(String::new()));
+        document.insert("referrer".to_string(), Value::Str(String::new()));
+        document.insert("characterSet".to_string(), Value::Str("UTF-8".to_string()));
+        document.insert("compatMode".to_string(), Value::Str("CSS1Compat".to_string()));
+        document.insert("hidden".to_string(), Value::Bool(false));
+        document.insert("visibilityState".to_string(), Value::Str("visible".to_string()));
         document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
+        document
+            .insert("getElementsByClassName".to_string(), Value::Native(Native::GetElementsByClass));
+        document.insert("getElementsByTagName".to_string(), Value::Native(Native::GetElementsByTag));
         // 라이브 접근자: document.body/head/documentElement → DOM 요소 핸들
         let live = |tag| Value::Getter(Rc::new(Value::Native(Native::DocQuery(tag))));
         document.insert("body".to_string(), live("body"));
@@ -1846,6 +1859,8 @@ impl Interp {
                     "removeChild" => Some(Native::RemoveChild),
                     "querySelector" => Some(Native::QuerySelector),
                     "querySelectorAll" => Some(Native::QuerySelectorAll),
+                    "getElementsByClassName" => Some(Native::GetElementsByClass),
+                    "getElementsByTagName" => Some(Native::GetElementsByTag),
                     _ => None,
                 };
                 if let Some(n) = native {
