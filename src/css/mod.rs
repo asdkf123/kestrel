@@ -400,7 +400,7 @@ fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>,
 // 테두리/배경을 여기 CSS 로 넣는다 — 캐스케이드상 저작자 CSS 가 덮을 수 있어
 // 하드코딩(무조건 그림)과 달리 구글 등의 커스텀 스타일이 이긴다.
 // 테이블 계열은 진짜 테이블 레이아웃 전까지 block 으로 근사(레이아웃은 tr 태그로 분기).
-const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, thead, tbody, tfoot, tr, td, th, caption, center, form, fieldset, hr, figure, figcaption, address, dl, dt, dd, select, textarea { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; } a { color: #0645ad; text-decoration: underline; } details, summary, figure, figcaption { display: block; } summary { font-weight: bold; } details:not([open]) > :not(summary) { display: none; } ul, ol { padding-left: 24px; } li { padding-left: 18px; } td, th { padding: 4px 6px; } th { color: #202020; } center { text-align: center; } table { text-align: left; } input, button { display: inline-block; } input, textarea, select { border: 1px solid #767676; background-color: #ffffff; padding: 2px 5px; } button, input[type=submit], input[type=reset], input[type=button] { border: 1px solid #767676; background-color: #e9e9ed; padding: 2px 8px; text-align: center; } b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } i, em, cite, var, address { font-style: italic; }";
+const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, table, thead, tbody, tfoot, tr, td, th, caption, center, form, fieldset, hr, figure, figcaption, address, dl, dt, dd, select, textarea { display: block; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: block; } a { color: #0645ad; text-decoration: underline; } details, summary, figure, figcaption { display: block; } summary { font-weight: bold; } details:not([open]) > :not(summary) { display: none; } [hidden] { display: none; } dialog { display: block; } dialog:not([open]) { display: none; } mark { background-color: #ffff00; } del, s, strike { text-decoration: line-through; } ins, u { text-decoration: underline; } small { font-size: 13px; } sub, sup { font-size: 12px; } code, kbd, samp, tt { font-family: monospace; } abbr { text-decoration: underline; } ul, ol { padding-left: 24px; } li { padding-left: 18px; } td, th { padding: 4px 6px; } th { color: #202020; } center { text-align: center; } table { text-align: left; } input, button { display: inline-block; } input, textarea, select { border: 1px solid #767676; background-color: #ffffff; padding: 2px 5px; } button, input[type=submit], input[type=reset], input[type=button] { border: 1px solid #767676; background-color: #e9e9ed; padding: 2px 8px; text-align: center; } b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } i, em, cite, var, address { font-style: italic; }";
 
 pub fn user_agent_stylesheet() -> Stylesheet {
     parse(UA_CSS.to_string())
@@ -1056,6 +1056,28 @@ mod tests {
         let ss = parse("@keyframes spin { from {} to {} } div { width: 5px; }".to_string());
         assert_eq!(ss.rules.len(), 1);
         assert_eq!(ss.rules[0].declarations[0].name, "width");
+    }
+
+    #[test]
+    fn ua_styles_hidden_and_marks() {
+        let ss = user_agent_stylesheet();
+        // [hidden] → display: none
+        let root = crate::html::parse_dom("<div hidden></div>".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        fn find_tag<'a>(n: &'a crate::style::StyledNode<'a>, tag: &str) -> Option<&'a crate::style::StyledNode<'a>> {
+            if matches!(&n.node.node_type, crate::dom::NodeType::Element(e) if e.tag_name == tag) {
+                return Some(n);
+            }
+            n.children.iter().find_map(|c| find_tag(c, tag))
+        }
+        assert_eq!(find_tag(&styled, "div").unwrap().value("display"), Some(Value::Keyword("none".to_string())));
+        // <del> → line-through
+        let r2 = crate::html::parse_dom("<del>x</del>".to_string());
+        let s2 = crate::style::style_tree(&r2, &ss);
+        assert_eq!(
+            find_tag(&s2, "del").unwrap().value("text-decoration-line"),
+            Some(Value::Keyword("line-through".to_string()))
+        );
     }
 
     #[test]
