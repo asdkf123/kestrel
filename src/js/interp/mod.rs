@@ -170,6 +170,7 @@ pub enum Native {
     ErrorCtor(&'static str),
     CreateElement,
     AppendChild,
+    GetBoundingClientRect,
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -415,6 +416,9 @@ pub struct Interp {
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
+    // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
+    // getBoundingClientRect/offsetWidth 등이 읽는다. 빈 맵이면 0 을 돌려준다.
+    pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
     // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
     pub global_handlers: Vec<(String, Value)>,
     // Math.random 용 xorshift 상태
@@ -666,6 +670,7 @@ impl Interp {
             steps: 0,
             dom: None,
             handlers: Vec::new(),
+            layout_rects: std::collections::HashMap::new(),
             global_handlers: Vec::new(),
             rng: seed,
             thrown: None,
@@ -1891,6 +1896,7 @@ impl Interp {
                     "querySelectorAll" => Some(Native::QuerySelectorAll),
                     "getElementsByClassName" => Some(Native::GetElementsByClass),
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
+                    "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     _ => None,
                 };
                 if let Some(n) = native {
@@ -2725,6 +2731,25 @@ mod tests {
             2.0,
             "콜백 두 번째 인자 = 인덱스"
         );
+    }
+
+    #[test]
+    fn get_bounding_client_rect_and_offsets() {
+        let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
+        let box_id = dom.find_by_attr_id("box").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        interp.layout_rects.insert(box_id, (10.0, 20.0, 100.0, 50.0));
+        // getBoundingClientRect: width/top/right/bottom
+        let r = interp
+            .run("var r = document.getElementById('box').getBoundingClientRect(); r.width + ',' + r.top + ',' + r.right + ',' + r.bottom")
+            .unwrap();
+        assert_eq!(to_display(&r), "100,20,110,70");
+        // offsetWidth/offsetHeight/offsetLeft/offsetTop
+        let o = interp
+            .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
+            .unwrap();
+        assert_eq!(to_display(&o), "100,50,10,20");
     }
 
     #[test]

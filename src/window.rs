@@ -65,6 +65,11 @@ impl Page {
         crate::layout::collect_link_regions(&layout_root, &mut self.links);
         self.element_rects.clear();
         crate::layout::collect_element_rects(&layout_root, 0, &mut self.element_rects);
+        // getBoundingClientRect/offset* 용 요소 사각형을 JS 인터프리터로 전달
+        self.js.layout_rects.clear();
+        for (r, id, _) in &self.element_rects {
+            self.js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
+        }
         self.doc_height = layout_root.dimensions.margin_box().height;
     }
 

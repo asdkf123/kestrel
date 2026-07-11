@@ -745,6 +745,24 @@ impl Interp {
                 }
                 _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
             },
+            Native::GetBoundingClientRect => {
+                let (x, y, w, h) = match recv {
+                    Some(Value::Dom(id)) => {
+                        self.layout_rects.get(&id).copied().unwrap_or((0.0, 0.0, 0.0, 0.0))
+                    }
+                    _ => (0.0, 0.0, 0.0, 0.0),
+                };
+                let mut m = std::collections::HashMap::new();
+                m.insert("x".to_string(), Value::Num(x as f64));
+                m.insert("y".to_string(), Value::Num(y as f64));
+                m.insert("left".to_string(), Value::Num(x as f64));
+                m.insert("top".to_string(), Value::Num(y as f64));
+                m.insert("right".to_string(), Value::Num((x + w) as f64));
+                m.insert("bottom".to_string(), Value::Num((y + h) as f64));
+                m.insert("width".to_string(), Value::Num(w as f64));
+                m.insert("height".to_string(), Value::Num(h as f64));
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
             Native::AppendChild => match (recv, args.first()) {
                 (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
                     let child = *child;

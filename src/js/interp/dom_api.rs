@@ -136,6 +136,27 @@ impl Interp {
     }
 
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
+        // 레이아웃 측정 프로퍼티 (dom 아레나 borrow 전에 처리 — 이중 borrow 방지).
+        // offset* 는 border box, client* 는 근사로 같은 박스 크기를 돌려준다.
+        match key {
+            "offsetWidth" | "clientWidth" | "scrollWidth" => {
+                let w = self.layout_rects.get(&id).map(|r| r.2).unwrap_or(0.0);
+                return Ok(Value::Num(w as f64));
+            }
+            "offsetHeight" | "clientHeight" | "scrollHeight" => {
+                let h = self.layout_rects.get(&id).map(|r| r.3).unwrap_or(0.0);
+                return Ok(Value::Num(h as f64));
+            }
+            "offsetLeft" | "clientLeft" => {
+                let x = self.layout_rects.get(&id).map(|r| r.0).unwrap_or(0.0);
+                return Ok(Value::Num(x as f64));
+            }
+            "offsetTop" | "clientTop" => {
+                let y = self.layout_rects.get(&id).map(|r| r.1).unwrap_or(0.0);
+                return Ok(Value::Num(y as f64));
+            }
+            _ => {}
+        }
         let dom = self.dom_arena()?;
         let is_el = |d: &crate::dom::Dom, c: crate::dom::NodeId| {
             matches!(d.get(c).node_type, crate::dom::NodeType::Element(_))
