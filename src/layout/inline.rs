@@ -196,7 +196,12 @@ impl<'a> LayoutBox<'a> {
         };
         for (text, st) in &runs {
             for ch in text.chars() {
-                if keep_newlines && ch == '\n' {
+                if ch == '\u{2028}' {
+                    // <br>: 무조건 강제 개행 (white-space 무관). 빈 단어에 개행 플래그를
+                    // 실어 연속 <br><br>(빈 줄)와 앞뒤 <br> 도 그대로 보존.
+                    flush(&mut cur, &mut words, &mut break_before);
+                    words.push((Vec::new(), true, false));
+                } else if keep_newlines && ch == '\n' {
                     flush(&mut cur, &mut words, &mut break_before);
                     break_before = true; // 다음 단어(또는 빈 줄)는 개행 후
                 } else if ch.is_whitespace() {
@@ -547,6 +552,8 @@ fn collect_node<'a>(
 ) {
     match &node.node.node_type {
         NodeType::Text(t) => runs.push((t.clone(), style)),
+        // <br>: 무조건 줄바꿈 (white-space 무관). U+2028 LINE SEPARATOR 를 강제 개행 신호로.
+        NodeType::Element(e) if e.tag_name == "br" => runs.push(("\u{2028}".to_string(), style)),
         NodeType::Element(e) => match node.display() {
             Display::Block | Display::Flex | Display::Grid | Display::InlineBlock | Display::None => {}
             Display::Inline => {

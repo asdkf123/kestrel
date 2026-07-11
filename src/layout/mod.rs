@@ -1791,6 +1791,36 @@ mod tests {
     }
 
     #[test]
+    fn br_forces_line_breaks() {
+        let fs = fonts();
+        // "aaa<br>bbb<br>ccc" — <br> 두 개로 3줄. 서로 다른 baseline_y 3개여야.
+        let root = crate::html::parse_dom("<p>aaa<br>bbb<br>ccc</p>".to_string());
+        let ss = crate::css::parse("p { display: block; font-size: 16px; }".to_string());
+        let s = crate::style::style_tree(&root, &ss);
+        let lb = layout_tree_for(&s, &fs);
+        let g = glyphs_of(&lb);
+        let mut ys: Vec<f32> = g.iter().map(|g| g.baseline_y).collect();
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ys.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+        assert_eq!(ys.len(), 3, "<br> 두 개면 3줄이어야 (실제 {}: {:?})", ys.len(), ys);
+
+        // 연속 <br><br> 는 빈 줄을 만든다: "a<br><br>b" 의 두 글리프 줄 간격이
+        // 한 번 개행("a<br>b")보다 정확히 한 줄 더 크다.
+        let gap = |html: &str| {
+            let r = crate::html::parse_dom(html.to_string());
+            let st = crate::style::style_tree(&r, &ss);
+            let l = layout_tree_for(&st, &fs);
+            let gs = glyphs_of(&l);
+            let ymin = gs.iter().map(|g| g.baseline_y).fold(f32::INFINITY, f32::min);
+            let ymax = gs.iter().map(|g| g.baseline_y).fold(f32::NEG_INFINITY, f32::max);
+            ymax - ymin
+        };
+        let one = gap("<p>a<br>b</p>");
+        let two = gap("<p>a<br><br>b</p>");
+        assert!(two > one * 1.5, "<br><br> 가 빈 줄로 더 벌어져야 ({} vs {})", two, one);
+    }
+
+    #[test]
     fn text_align_justify_fills_line() {
         let fs = fonts();
         let text = "one two three four five six seven eight nine ten eleven twelve";
