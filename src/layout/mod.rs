@@ -436,6 +436,17 @@ impl<'a> LayoutBox<'a> {
                 mr = mr2;
             }
         }
+        // min-width: max-width 보다 우선 (마지막에 적용). 계산 폭이 하한보다 작으면 하한으로.
+        if let Some(Length(mw, Px)) = style.value("min-width") {
+            let mw = if border_box { (mw - extra).max(0.0) } else { mw };
+            if cw < mw {
+                let (cw2, ml2, mr2) =
+                    resolve_width(&Length(mw, Px), &margin_left, &margin_right, extra, avail);
+                cw = cw2;
+                ml = ml2;
+                mr = mr2;
+            }
+        }
 
         let d = &mut self.dimensions;
         d.content.width = cw;
@@ -1137,25 +1148,49 @@ impl<'a> LayoutBox<'a> {
     }
 
     fn calculate_height(&mut self) {
+        // box-sizing: border-box → 지정 height 는 border box. content = height - 세로 extra.
+        let border_box = matches!(self.styled_node.value("box-sizing"),
+            Some(Value::Keyword(ref k)) if k == "border-box");
+        let vextra = if border_box {
+            let d = &self.dimensions;
+            d.padding.top + d.padding.bottom + d.border.top + d.border.bottom
+        } else {
+            0.0
+        };
         if let Some(Length(h, Px)) = self.styled_node.value("height") {
-            // box-sizing: border-box → 지정 height 는 border box. content = height - 세로 extra.
-            let border_box = matches!(self.styled_node.value("box-sizing"),
-                Some(Value::Keyword(ref k)) if k == "border-box");
-            let vextra = if border_box {
-                let d = &self.dimensions;
-                d.padding.top + d.padding.bottom + d.border.top + d.border.bottom
-            } else {
-                0.0
-            };
             self.dimensions.content.height = (h - vextra).max(0.0);
-            return;
-        }
-        // aspect-ratio: 명시 height 없을 때 content 높이 = 폭 / 비율
-        if let Some(Length(ratio, Px)) = self.styled_node.value("aspect-ratio") {
+        } else if let Some(Length(ratio, Px)) = self.styled_node.value("aspect-ratio") {
+            // aspect-ratio: 명시 height 없을 때 content 높이 = 폭 / 비율
             if ratio > 0.0 && self.dimensions.content.width > 0.0 {
                 self.dimensions.content.height = self.dimensions.content.width / ratio;
             }
         }
+        // max-height: overflow 가 잘리는 경우에만 적용 (미클립 시 내용 겹침 방지)
+        if let Some(Length(mxh, Px)) = self.styled_node.value("max-height") {
+            let mxh = if border_box { (mxh - vextra).max(0.0) } else { mxh };
+            if self.dimensions.content.height > mxh && self.overflow_clips_self() {
+                self.dimensions.content.height = mxh;
+            }
+        }
+        // min-height: content 높이가 하한보다 작으면 하한으로 확장 (min-height:100vh 등)
+        if let Some(Length(mnh, Px)) = self.styled_node.value("min-height") {
+            let mnh = if border_box { (mnh - vextra).max(0.0) } else { mnh };
+            if self.dimensions.content.height < mnh {
+                self.dimensions.content.height = mnh;
+            }
+        }
+    }
+
+    // overflow(-x/-y) 가 hidden/clip/scroll/auto 여서 자손이 이 박스로 클리핑되는가.
+    fn overflow_clips_self(&self) -> bool {
+        for prop in ["overflow", "overflow-x", "overflow-y"] {
+            if let Some(Value::Keyword(k)) = self.styled_node.value(prop) {
+                if matches!(k.as_str(), "hidden" | "clip" | "scroll" | "auto") {
+                    return true;
+                }
+            }
+        }
+        false
     }
 }
 
@@ -1826,6 +1861,40 @@ mod tests {
             800.0,
         );
         assert_eq!(d2.content.height, 30.0, "명시 height 우선");
+    }
+
+    #[test]
+    fn min_width_expands_narrow_box() {
+        // width:50px 이지만 min-width:200px 이면 200 으로 확장
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; width: 50px; min-width: 200px; }",
+            800.0,
+        );
+        assert!((d.content.width - 200.0).abs() < 0.5, "min-width 200, 실제 {}", d.content.width);
+    }
+
+    #[test]
+    fn min_height_expands_short_box() {
+        // 내용이 없어 높이 0 이지만 min-height:120px → 120
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; min-height: 120px; }",
+            800.0,
+        );
+        assert!((d.content.height - 120.0).abs() < 0.5, "min-height 120, 실제 {}", d.content.height);
+    }
+
+    #[test]
+    fn max_height_clamps_only_when_clipping() {
+        // max-height 는 overflow 가 잘릴 때만 적용 (overflow:hidden)
+        let clipped = layout_for(
+            "<div><div class=\"tall\"></div></div>",
+            "div { display: block; } div > div { height: 300px; } \
+             div:first-child, div { max-height: 100px; overflow: hidden; }",
+            800.0,
+        );
+        assert!(clipped.content.height <= 100.5, "overflow:hidden + max-height → 클램프, 실제 {}", clipped.content.height);
     }
 
     #[test]
