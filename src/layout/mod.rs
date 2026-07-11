@@ -1463,6 +1463,26 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     if matches!(&style_node.node.node_type, NodeType::Element(e) if e.tag_name == "svg") {
         return root;
     }
+    // flex/grid 컨테이너: 각 자식은 플렉스/그리드 아이템(인라인 요소도 블록화).
+    // 인라인 자식을 익명 인라인 묶음으로 모으지 않는다 — 그렇지 않으면 <a>/<span>
+    // 로 만든 가로 내비게이션이 하나의 상자로 뭉쳐 세로로 무너진다.
+    if matches!(style_node.display(), Display::Flex | Display::Grid) {
+        for child in &style_node.children {
+            match &child.node.node_type {
+                NodeType::Text(t) => {
+                    if !t.trim().is_empty() {
+                        root.children.push(LayoutBox::new_anonymous(style_node, vec![child]));
+                    }
+                }
+                NodeType::Element(_) => {
+                    if !matches!(child.display(), Display::None) {
+                        root.children.push(build_layout_tree(child));
+                    }
+                }
+            }
+        }
+        return root;
+    }
     let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
     distribute_children(&mut root, &mut pending, style_node, &style_node.children);
     if !pending.is_empty() && !all_whitespace(&pending) {
@@ -2968,6 +2988,21 @@ mod tests {
         assert_eq!(d[1].content.x, 100.0);
         assert_eq!(d[1].content.width, 200.0, "auto 셀 = 남은 200");
         assert_eq!(d[2].content.x, 300.0, "우측 25% 셀");
+    }
+
+    #[test]
+    fn flex_row_with_inline_children_lays_horizontal() {
+        // display:flex 안의 인라인 <a> 3개가 각각 플렉스 아이템으로 가로 배치돼야
+        // (익명 인라인 상자 하나로 뭉치면 안 됨 — 가로 내비 무너짐 방지)
+        let d = flex_layout(
+            "<div class=\"f\"><a>AAA</a><a>BBB</a><a>CCC</a></div>",
+            ".f { display: flex; } a { display: inline; }",
+            400.0,
+        );
+        assert_eq!(d.len(), 3, "인라인 자식 3개가 각각 아이템, 실제 {}", d.len());
+        assert!(d[1].content.x > d[0].content.x, "둘째가 오른쪽");
+        assert!(d[2].content.x > d[1].content.x, "셋째가 더 오른쪽");
+        assert_eq!(d[0].content.y, d[1].content.y, "같은 줄");
     }
 
     #[test]
