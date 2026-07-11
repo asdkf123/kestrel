@@ -157,7 +157,7 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut out = Vec::new();
     for tok in split_top_level(value_text) {
         let t = tok.trim();
-        if t.starts_with("url(") || t.starts_with("linear-gradient(") {
+        if t.starts_with("url(") || t.starts_with("linear-gradient(") || t.starts_with("radial-gradient(") {
             if let Some(v) = interpret_value(t) {
                 out.push(Declaration { name: "background-image".to_string(), value: v });
             }

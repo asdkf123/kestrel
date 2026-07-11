@@ -90,7 +90,8 @@ pub enum Value {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gradient {
-    pub angle_deg: f32,          // CSS 각도 (0=위, 90=오른쪽, 180=아래)
+    pub angle_deg: f32,          // CSS 각도 (0=위, 90=오른쪽, 180=아래). radial 이면 무시.
+    pub radial: bool,            // true=radial(중심에서 방사), false=linear
     pub stops: Vec<(Color, f32)>, // (색, 위치 0-1)
 }
 

@@ -33,17 +33,19 @@ impl Canvas {
         }
     }
 
-    // linear-gradient 채우기. angle 은 CSS 각도(0deg=위쪽, 90deg=오른쪽).
-    // 각 픽셀을 그라디언트 축에 투영해 0..1 위치를 구하고 스톱 사이를 보간한다.
-    // 그라디언트 선 길이 = |w*sin| + |h*cos| (CSS: 모서리가 0/1 에 대응).
-    pub fn fill_gradient(&mut self, rect: Rect, angle_deg: f32, stops: &[(Color, f32)]) {
+    // 그라디언트 채우기. linear 는 픽셀을 축(angle: 0deg=위, 90deg=오른쪽)에 투영,
+    // radial 은 중심에서의 거리를 farthest-corner 반경으로 정규화해 0..1 위치를 구하고
+    // 스톱 사이를 보간한다. linear 선 길이 = |w*sin| + |h*cos| (모서리가 0/1 에 대응).
+    pub fn fill_gradient(&mut self, rect: Rect, angle_deg: f32, radial: bool, stops: &[(Color, f32)]) {
         if rect.width <= 0.0 || rect.height <= 0.0 || stops.is_empty() {
             return;
         }
+        let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
         let a = angle_deg.to_radians();
         let (dx, dy) = (a.sin(), -a.cos());
-        let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
         let len = ((rect.width * dx).abs() + (rect.height * dy).abs()).max(1.0);
+        // radial: 중심에서 가장 먼 모서리까지 거리 (farthest-corner)
+        let radius = ((rect.width / 2.0).powi(2) + (rect.height / 2.0).powi(2)).sqrt().max(1.0);
         let x0 = rect.x.clamp(0.0, self.width as f32) as usize;
         let y0 = rect.y.clamp(0.0, self.height as f32) as usize;
         let x1 = (rect.x + rect.width).clamp(0.0, self.width as f32) as usize;
@@ -52,8 +54,12 @@ impl Canvas {
             let fy = y as f32 + 0.5;
             for x in x0..x1 {
                 let fx = x as f32 + 0.5;
-                let t = (fx - cx) * dx + (fy - cy) * dy;
-                let p = ((t + len / 2.0) / len).clamp(0.0, 1.0);
+                let p = if radial {
+                    (((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() / radius).clamp(0.0, 1.0)
+                } else {
+                    let t = (fx - cx) * dx + (fy - cy) * dy;
+                    ((t + len / 2.0) / len).clamp(0.0, 1.0)
+                };
                 let color = gradient_color_at(stops, p);
                 if color.a == 0 {
                     continue;
@@ -236,8 +242,8 @@ pub enum DisplayItem {
     RoundRect { color: Color, rect: Rect, radius: f32 },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     Image { image: usize, rect: Rect },
-    // linear-gradient 배경. angle: CSS 각도, stops: (색, 위치 0-1).
-    Gradient { rect: Rect, angle: f32, stops: Vec<(Color, f32)> },
+    // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, stops: (색, 위치 0-1).
+    Gradient { rect: Rect, angle: f32, radial: bool, stops: Vec<(Color, f32)> },
     Glyph(GlyphInstance),
     // position: sticky — 스크롤 시 뷰포트 상단 top 만큼 아래에 고정. top=스티키 임계,
     // y0=요소의 자연 문서 y. 렌더 시 inner 를 보정된 스크롤로 그린다.
@@ -436,8 +442,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         }
         // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
         // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
-        DisplayItem::Gradient { rect, angle, stops } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, stops })
+        DisplayItem::Gradient { rect, angle, radial, stops } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, radial, stops })
         }
         DisplayItem::RoundRect { color, rect, radius } => {
             rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radius })
@@ -499,6 +505,7 @@ fn collect_items(
         local.push(DisplayItem::Gradient {
             rect: layout_box.dimensions.border_box(),
             angle: g.angle_deg,
+            radial: g.radial,
             stops: g.stops.clone(),
         });
     }
@@ -653,12 +660,12 @@ fn draw_item(
                 blit_image(canvas, img, r, scale);
             }
         }
-        DisplayItem::Gradient { rect, angle, stops } => {
+        DisplayItem::Gradient { rect, angle, radial, stops } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
-            canvas.fill_gradient(r, *angle, stops);
+            canvas.fill_gradient(r, *angle, *radial, stops);
         }
         DisplayItem::Glyph(gi) => {
             let baseline = (gi.baseline_y - scroll_y) * scale;
@@ -933,10 +940,24 @@ mod tests {
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
         let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 }, 90.0, &stops);
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 }, 90.0, false, &stops);
         assert!(canvas.pixels[0].r < canvas.pixels[3].r, "왼쪽이 오른쪽보다 어두워야 함");
         assert!(canvas.pixels[0].r < 64, "왼쪽 끝은 검정에 가까움");
         assert!(canvas.pixels[3].r > 192, "오른쪽 끝은 흰색에 가까움");
+    }
+
+    #[test]
+    fn radial_gradient_darkens_from_center() {
+        // radial: 중심은 첫 스톱(검정), 모서리로 갈수록 마지막 스톱(흰색)
+        let mut canvas = Canvas::new(5, 5);
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        let stops = vec![(black, 0.0), (white, 1.0)];
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 5.0, height: 5.0 }, 0.0, true, &stops);
+        let center = canvas.pixels[2 * 5 + 2]; // (2,2)
+        let corner = canvas.pixels[0]; // (0,0)
+        assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
+        assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
     }
 
     #[test]

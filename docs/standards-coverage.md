@@ -199,10 +199,12 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 8. ~~overflow(hidden 클리핑)~~ ✓ (5109a73), ~~box-sizing~~ ✓ (fabec85). 스크롤바/스크롤 동작은 후속.
 
 **C. 시각 완성도** — 모던 사이트 외형
-9. linear-gradient(그다음 radial).
+9. ~~linear-gradient~~ ✓ (771c646, 픽셀 투영 보간). 그다음 radial.
 10. transform/transition/animation.
-11. 배경 position/repeat/size, opacity.
+11. 배경 position/repeat/size, ~~opacity~~ ✓ (서브트리 알파 곱).
 - ~~`background:` 단축(색/url)~~ ✓ — 여태 색이 안 나오던 큰 공백 메움.
+- ~~em/rem 을 모든 속성에서 px 로 확정~~ ✓ — padding:1em, width:20rem 등이 무시되던 문제.
+- ~~CSS line-height 적용+상속~~ ✓ — 단위없는 수/퍼센트/길이, half-leading 세로 중앙.
 
 **C-layout. 레이아웃 정확도** (실사이트 검증 기반)
 - ~~float 다단: float 을 클리어하는 블록을 옆에 배치~~ ✓ (float 사이드바+본문).

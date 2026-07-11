@@ -23,6 +23,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("linear-gradient(") && text.ends_with(')') {
         return parse_linear_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
     }
+    if lower.starts_with("radial-gradient(") && text.ends_with(')') {
+        return parse_radial_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
@@ -234,9 +237,35 @@ fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
             idx = 1;
         }
     }
-    // 색 스톱
+    let stops = parse_color_stops(&parts[idx..])?;
+    Some(crate::css::Gradient { angle_deg: angle, radial: false, stops })
+}
+
+// radial-gradient([shape size at pos,]? stop, ...) — 모양/크기/위치는 근사(중심 방사,
+// 박스 반경까지 채움)로 무시하고, 첫 파트가 색이 아니면 서술자로 보고 건너뛴다.
+fn parse_radial_gradient(inner: &str) -> Option<crate::css::Gradient> {
+    let parts = split_top_commas(inner);
+    if parts.is_empty() {
+        return None;
+    }
+    // 첫 파트의 첫 토큰이 색이면 서술자 없음, 아니면 서술자로 스킵
+    let first_is_color = split_top_level(parts[0].trim())
+        .first()
+        .and_then(|t| interpret_value(t))
+        .map(|v| matches!(v, Value::Color(_)))
+        .unwrap_or(false);
+    let idx = if first_is_color { 0 } else { 1 };
+    if idx >= parts.len() {
+        return None;
+    }
+    let stops = parse_color_stops(&parts[idx..])?;
+    Some(crate::css::Gradient { angle_deg: 0.0, radial: true, stops })
+}
+
+// 색 스톱 목록 파싱. 위치 미지정 스톱은 균등 분배. 스톱 2개 미만이면 None.
+fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, f32)>> {
     let mut stops: Vec<(Color, Option<f32>)> = Vec::new();
-    for p in &parts[idx..] {
+    for p in parts {
         let toks = split_top_level(p.trim());
         if toks.is_empty() {
             continue;
@@ -255,14 +284,14 @@ fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
     if stops.len() < 2 {
         return None;
     }
-    // 위치 미지정 스톱은 균등 분배
     let n = stops.len();
-    let resolved: Vec<(Color, f32)> = stops
-        .iter()
-        .enumerate()
-        .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
-        .collect();
-    Some(crate::css::Gradient { angle_deg: angle, stops: resolved })
+    Some(
+        stops
+            .iter()
+            .enumerate()
+            .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
+            .collect(),
+    )
 }
 
 // 최상위(괄호 밖) 콤마로 분리
