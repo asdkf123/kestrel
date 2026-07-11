@@ -60,6 +60,13 @@ pub enum AttrOp {
     Dash(String),     // [attr|=v] (v 또는 v-...)
 }
 
+// 의사 요소 (생성 콘텐츠). ::before / ::after 만 지원.
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum PseudoElement {
+    Before,
+    After,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct SimpleSelector {
     pub tag_name: Option<String>,
@@ -68,6 +75,8 @@ pub struct SimpleSelector {
     // 속성 선택자: (이름, 연산자).
     pub attrs: Vec<(String, AttrOp)>,
     pub pseudos: Vec<Pseudo>,
+    // ::before / ::after — 대상 요소 자체가 아니라 생성 박스를 지정.
+    pub pseudo_element: Option<PseudoElement>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -143,7 +152,11 @@ impl Selector {
             .iter()
             .map(|s| s.class.len() + s.attrs.len() + s.pseudos.len())
             .sum();
-        let c = parts.iter().map(|s| s.tag_name.iter().count()).sum();
+        // 의사 요소는 요소(tag)와 동일 특이도 레벨(c)에 더한다
+        let c = parts
+            .iter()
+            .map(|s| s.tag_name.iter().count() + s.pseudo_element.iter().count())
+            .sum();
         (a, b, c)
     }
 }
@@ -475,6 +488,7 @@ impl Parser {
             class: Vec::new(),
             attrs: Vec::new(),
             pseudos: Vec::new(),
+            pseudo_element: None,
         };
         let mut any = false;
         while !self.eof() {
@@ -503,12 +517,24 @@ impl Parser {
                 }
                 ':' => {
                     self.consume_char();
-                    if self.peek() == Some(':') {
-                        self.consume_char(); // ::pseudo-element → 의사요소, 매칭 대상 아님(Dynamic 근사)
+                    let double = self.peek() == Some(':');
+                    if double {
+                        self.consume_char();
                     }
-                    match self.parse_pseudo() {
-                        Some(p) => selector.pseudos.push(p),
-                        None => return None,
+                    // before/after 는 의사요소로 표시 (단일 콜론 :before 레거시도 허용).
+                    // 그 외는 의사클래스로 파싱 (pos 되돌려 재파싱).
+                    let save = self.pos;
+                    let name = self.parse_identifier().to_ascii_lowercase();
+                    match name.as_str() {
+                        "before" => selector.pseudo_element = Some(PseudoElement::Before),
+                        "after" => selector.pseudo_element = Some(PseudoElement::After),
+                        _ => {
+                            self.pos = save;
+                            match self.parse_pseudo() {
+                                Some(p) => selector.pseudos.push(p),
+                                None => return None,
+                            }
+                        }
                     }
                     any = true;
                 }
@@ -831,6 +857,24 @@ mod tests {
             }
             other => panic!("expected Complex, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn parses_pseudo_elements_before_after() {
+        let ss = parse(
+            ".a::before { content: \"\\2022\"; } .b:after { content: \"x\"; }".to_string(),
+        );
+        // ::before → pseudo_element Before, 클래스 유지, content 디코드
+        let s0 = ss.rules[0].selectors[0].subject();
+        assert_eq!(s0.pseudo_element, Some(PseudoElement::Before));
+        assert_eq!(s0.class, vec!["a".to_string()]);
+        let content = ss.rules[0].declarations.iter().find(|d| d.name == "content").unwrap();
+        assert_eq!(content.value, Value::Keyword("\u{2022}".to_string()), "\\2022 → •");
+        // 레거시 단일 콜론 :after 도 의사요소로
+        assert_eq!(ss.rules[1].selectors[0].subject().pseudo_element, Some(PseudoElement::After));
+        // 일반 의사클래스는 pseudo_element 아님
+        let ss2 = parse("a:hover { color: #ff0000; }".to_string());
+        assert_eq!(ss2.rules[0].selectors[0].subject().pseudo_element, None);
     }
 
     #[test]

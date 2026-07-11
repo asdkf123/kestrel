@@ -101,6 +101,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 value: Value::Keyword(if joined.is_empty() { "none".to_string() } else { joined }),
             }]
         }
+        // content (::before/::after 생성 콘텐츠): 따옴표 문자열은 벗기고 CSS 이스케이프
+        // (\2022 등)를 해석. none/normal/attr()/counter() 는 원문 Keyword 로(생성 판단은 style).
+        "content" => {
+            let v = value_text.trim();
+            let unquoted = if v.len() >= 2
+                && ((v.starts_with('"') && v.ends_with('"'))
+                    || (v.starts_with('\'') && v.ends_with('\'')))
+            {
+                decode_css_escapes(&v[1..v.len() - 1])
+            } else {
+                v.to_string()
+            };
+            vec![Declaration { name: "content".to_string(), value: Value::Keyword(unquoted) }]
+        }
         // opacity: 0..1 수 또는 퍼센트(50%). 스칼라를 Length(op, Px)로 실어 paint 가 읽음.
         // (미지원 단위 아님 — 파서가 0 아닌 단위없는 수를 드롭하므로 여기서 처리.)
         "opacity" => {
@@ -134,6 +148,36 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             None => Vec::new(),
         },
     }
+}
+
+// CSS 문자열 이스케이프 해석: \XXXX(최대 6자리 16진 코드포인트, 뒤 공백 1개 흡수)와
+// \c(리터럴). 아이콘 폰트 content: "\f001" 등에 필요.
+fn decode_css_escapes(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        // 16진 이스케이프
+        let mut hex = String::new();
+        while hex.len() < 6 && chars.peek().map(|c| c.is_ascii_hexdigit()).unwrap_or(false) {
+            hex.push(chars.next().unwrap());
+        }
+        if !hex.is_empty() {
+            // 이스케이프 뒤 공백 1개는 구분자로 흡수
+            if chars.peek() == Some(&' ') {
+                chars.next();
+            }
+            if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                out.push(ch);
+            }
+        } else if let Some(lit) = chars.next() {
+            out.push(lit); // \" \\ 등 리터럴 이스케이프
+        }
+    }
+    out
 }
 
 // 괄호 깊이를 고려해 공백으로 최상위 토큰 분리 (rgb(1, 2, 3) 는 한 토큰).

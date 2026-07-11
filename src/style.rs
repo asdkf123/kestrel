@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::css::{
-    Combinator, Rule, Selector, SimpleSelector, Specificity, Stylesheet, Unit, Value,
+    Combinator, PseudoElement, Rule, Selector, SimpleSelector, Specificity, Stylesheet, Unit, Value,
 };
 use crate::dom::{Dom, ElementData, NodeData, NodeId, NodeType};
 
@@ -214,14 +214,17 @@ fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&Sibli
 
 type MatchedRule<'a> = (Specificity, &'a Rule);
 
+// want_pseudo: None=요소 자신을 스타일하는 규칙만, Some(x)=해당 의사요소 규칙만.
 fn match_rule<'a>(
     elem: &ElementData,
     ancestors: &[&ElementData],
     sib: &SiblingCtx,
     rule: &'a Rule,
+    want_pseudo: Option<PseudoElement>,
 ) -> Option<MatchedRule<'a>> {
     rule.selectors
         .iter()
+        .filter(|selector| selector.subject().pseudo_element == want_pseudo)
         .find(|selector| matches(elem, ancestors, sib, selector))
         .map(|selector| (selector.specificity(), rule))
 }
@@ -297,7 +300,7 @@ fn specified_values(
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
-        .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i]))
+        .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i], None))
         .collect();
     // 오름차순 특이도, 안정 정렬 → 동일 특이도는 문서 순서 유지 (뒤 규칙이 이김)
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
