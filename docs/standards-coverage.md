@@ -148,10 +148,12 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - 실제 폼 위젯: 체크박스/라디오/드롭다운 select/날짜 선택기, 제출/검증.
 
 ### JavaScript / DOM / Web API
-- **ECMAScript 전체**: 클래스 완전, 모듈(import/export), Promise/async-await,
-  제너레이터, 정규식 엔진, Proxy/Reflect, Symbol, BigInt, 이터레이터, Intl 등.
-- **DOM 전체**: createElement/appendChild/removeChild, 속성 조작, **이벤트 모델**
-  (addEventListener, 버블/캡처, 위임), MutationObserver.
+- **ECMAScript**: 클래스, Promise/async-await, 정규식 엔진, ~~Proxy(get/set)~~ ✓,
+  Reflect, Symbol, ~~이터레이터/for-of~~ ✓ 완료. 남음: 모듈(import/export),
+  제너레이터/yield, BigInt, Intl.
+- **DOM**: createElement/appendChild/removeChild ✓, 속성 조작 ✓, 이벤트 모델
+  (addEventListener/버블/위임/dispatchEvent) ✓, ~~cloneNode/matches/closest/contains/
+  DocumentFragment/getBoundingClientRect~~ ✓. 남음: MutationObserver, 캡처 단계.
 - **CSSOM**: style 조작, getComputedStyle. JS DOM 변경 → **리플로우/리페인트** 반영.
 - **fetch/XHR**(현 http 를 JS 에서 호출 불가), WebSocket.
 - 타이머 전체, requestAnimationFrame, storage(localStorage/쿠키/IndexedDB),
@@ -238,7 +240,8 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 17. ~~**`Date`**~~ ✓ (a7ae04f) now/생성자/get*/toISOString/파싱(UTC).
 18. **빌트인/DOM**: String/Number/Boolean ✓, ~~레이아웃 측정
     (getBoundingClientRect/offset*/client*)~~ ✓, ~~for-of~~ ✓, ~~Array.sort/flat~~ ✓,
-    ~~dispatchEvent/CustomEvent~~ ✓. 남음: 제너레이터, Proxy, DocumentFragment, cloneNode.
+    ~~dispatchEvent/CustomEvent~~ ✓, ~~cloneNode~~ ✓, ~~matches/closest/contains~~ ✓,
+    ~~DocumentFragment~~ ✓, ~~Proxy(get/set 트랩)~~ ✓. 남음: 제너레이터/yield, ES 모듈.
 
 **naver 잔여 블로커**: polyfill.js(core-js)가 내부 `e.call`(e=undefined)에서
 크래시 → 모듈 미등록. 이건 넓은 플랫폼 이슈가 아니라 **미니파이 core-js의 특정
