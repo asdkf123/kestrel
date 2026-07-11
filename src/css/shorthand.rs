@@ -409,19 +409,84 @@ fn split_top_level(text: &str) -> Vec<String> {
     out
 }
 
-// background 단축 → background-color / background-image longhand.
+// background 단축 → background-color/image/repeat/size longhand.
+// `background: #fff url(x) no-repeat center / cover` 처럼 repeat/size 도 추출해
+// 기존 background-repeat/background-size 렌더 경로를 활성화한다. (position 은 렌더
+// 미구현이라 아직 무시.)
 fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut out = Vec::new();
-    for tok in split_top_level(value_text) {
+    let mut image = None;
+    let mut color = None;
+    let mut repeat = None;
+    let mut size = None;
+
+    let has_gradient = value_text.contains("gradient(");
+    // 그라디언트가 없으면 다중 레이어(콤마) 중 첫 레이어만. gradient 안 콤마 보호 위해
+    // gradient 있을 땐 전체를 그대로 쓴다 (split_top_level 이 괄호를 존중).
+    let layer: String = if has_gradient {
+        value_text.to_string()
+    } else {
+        value_text.split(',').next().unwrap_or("").to_string()
+    };
+    // "center/cover" 처럼 붙은 슬래시를 토큰화하기 위해 공백 삽입 (gradient 없을 때만).
+    let normalized = if has_gradient { layer.clone() } else { layer.replace('/', " / ") };
+
+    let mut after_slash = false;
+    for tok in split_top_level(&normalized) {
         let t = tok.trim();
-        if t.starts_with("url(") || t.starts_with("linear-gradient(") || t.starts_with("radial-gradient(") || t.starts_with("conic-gradient(") {
-            if let Some(v) = interpret_value(t) {
-                out.push(Declaration { name: "background-image".to_string(), value: v });
-            }
-        } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
-            out.push(Declaration { name: "background-color".to_string(), value: v });
+        if t.is_empty() {
+            continue;
         }
-        // position/repeat/size/attachment/none/transparent → 무시
+        if t == "/" {
+            after_slash = true;
+            continue;
+        }
+        if after_slash {
+            // background-size 자리
+            match t {
+                "cover" | "contain" | "auto" => size = Some(Value::Keyword(t.to_string())),
+                _ => {
+                    if size.is_none() {
+                        if let Some(v) = interpret_value(t) {
+                            size = Some(v);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if t.starts_with("url(")
+            || t.starts_with("linear-gradient(")
+            || t.starts_with("radial-gradient(")
+            || t.starts_with("conic-gradient(")
+        {
+            if let Some(v) = interpret_value(t) {
+                image = Some(v);
+            }
+        } else if matches!(t, "repeat" | "no-repeat" | "repeat-x" | "repeat-y" | "space" | "round") {
+            repeat = Some(Value::Keyword(t.to_string()));
+        } else if matches!(
+            t,
+            "scroll" | "fixed" | "local" | "border-box" | "padding-box" | "content-box" | "none"
+                | "left" | "right" | "top" | "bottom" | "center"
+        ) {
+            // attachment/origin/position 키워드 → 무시 (position 렌더 미구현)
+        } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
+            color = Some(v);
+        }
+        // 그 외(길이/퍼센트 위치) → 무시
+    }
+    if let Some(v) = image {
+        out.push(Declaration { name: "background-image".to_string(), value: v });
+    }
+    if let Some(v) = color {
+        out.push(Declaration { name: "background-color".to_string(), value: v });
+    }
+    if let Some(v) = repeat {
+        out.push(Declaration { name: "background-repeat".to_string(), value: v });
+    }
+    if let Some(v) = size {
+        out.push(Declaration { name: "background-size".to_string(), value: v });
     }
     out
 }
@@ -520,4 +585,39 @@ fn box_shorthand(prefix: &str, suffix: &str, value_text: &str) -> Vec<Declaratio
         value,
     };
     vec![mk("top", top), mk("right", right), mk("bottom", bottom), mk("left", left)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn find<'a>(decls: &'a [Declaration], name: &str) -> Option<&'a Value> {
+        decls.iter().find(|d| d.name == name).map(|d| &d.value)
+    }
+
+    #[test]
+    fn background_shorthand_extracts_repeat_and_size() {
+        // url + no-repeat + position/size(cover) 모두 longhand 로
+        let d = expand_declaration("background", "#ffffff url(x.png) no-repeat center / cover");
+        assert!(matches!(find(&d, "background-image"), Some(Value::Url(_))), "이미지");
+        assert!(matches!(find(&d, "background-color"), Some(Value::Color(_))), "색");
+        assert!(
+            matches!(find(&d, "background-repeat"), Some(Value::Keyword(k)) if k == "no-repeat"),
+            "repeat"
+        );
+        assert!(
+            matches!(find(&d, "background-size"), Some(Value::Keyword(k)) if k == "cover"),
+            "size cover"
+        );
+    }
+
+    #[test]
+    fn background_shorthand_repeat_x_only() {
+        let d = expand_declaration("background", "url(a.png) repeat-x");
+        assert!(
+            matches!(find(&d, "background-repeat"), Some(Value::Keyword(k)) if k == "repeat-x"),
+            "repeat-x"
+        );
+        assert!(find(&d, "background-size").is_none(), "size 없음");
+    }
 }
