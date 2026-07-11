@@ -2486,6 +2486,24 @@ mod tests {
     }
 
     #[test]
+    fn ua_heading_font_sizes() {
+        let ss = crate::css::user_agent_stylesheet();
+        let root = crate::html::parse_dom("<h1>T</h1><h2>S</h2><p>b</p>".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        fn find(n: &StyledNode, tag: &str) -> Option<f32> {
+            if let NodeType::Element(e) = &n.node.node_type {
+                if e.tag_name == tag {
+                    return n.value("font-size").map(|v| v.to_px());
+                }
+            }
+            n.children.iter().find_map(|c| find(c, tag))
+        }
+        // h1 = 2em = 32px, h2 = 1.5em = 24px (기본 16 기준)
+        assert!((find(&styled, "h1").unwrap() - 32.0).abs() < 0.5, "h1=2em");
+        assert!((find(&styled, "h2").unwrap() - 24.0).abs() < 0.5, "h2=1.5em");
+    }
+
+    #[test]
     fn adjacent_block_margins_collapse() {
         let fs = fonts();
         let ss = crate::css::parse(
