@@ -170,6 +170,15 @@ impl Value {
     }
 }
 
+// 단일 길이 토큰을 px 로 (px/절대단위만; em/rem/%/뷰포트 단위는 문맥 필요 → None).
+// transform: translate() 등 문맥 없는 파싱에 쓴다.
+pub fn parse_len_px(tok: &str) -> Option<f32> {
+    match values::interpret_value(tok.trim()) {
+        Some(Value::Length(v, Unit::Px)) => Some(v),
+        _ => None,
+    }
+}
+
 // @media 없는 시트/테스트/UA 용 기본 파스. 데스크톱 폭(1024)으로 미디어 평가.
 pub fn parse(source: String) -> Stylesheet {
     parse_viewport(source, 1024.0)

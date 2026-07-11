@@ -1212,7 +1212,62 @@ pub fn layout_tree<'a>(
     containing_block.content.height = 0.0;
     let mut root_box = build_layout_tree(node);
     root_box.layout(containing_block, fonts, images);
+    // 레이아웃 완료 후 CSS transform(translate) 을 시각 오프셋으로 적용 (흐름 불변)
+    apply_transforms(&mut root_box);
     root_box
+}
+
+// 후위 순회로 transform: translate* 을 서브트리 오프셋으로 적용한다.
+// 흐름/형제 위치에는 영향 없음(레이아웃 후 순수 시각 이동). scale/rotate/matrix 는 미적용.
+fn apply_transforms(b: &mut LayoutBox) {
+    for c in &mut b.children {
+        apply_transforms(c);
+    }
+    if let Some(Value::Keyword(t)) = b.styled_node.value("transform") {
+        let bb = b.dimensions.border_box();
+        if let Some((dx, dy)) = parse_translate(&t, bb.width, bb.height) {
+            if dx != 0.0 || dy != 0.0 {
+                b.translate(dx, dy);
+            }
+        }
+    }
+}
+
+// transform 함수 목록에서 translate/translateX/translateY 의 누적 (dx, dy) 를 구한다.
+// 퍼센트는 요소 자신의 border-box 크기 기준. 다른 함수(scale/rotate 등)는 무시.
+fn parse_translate(text: &str, w: f32, h: f32) -> Option<(f32, f32)> {
+    let (mut dx, mut dy) = (0.0f32, 0.0f32);
+    let mut rest = text;
+    while let Some(open) = rest.find('(') {
+        let name = rest[..open]
+            .trim()
+            .rsplit(|c: char| c.is_whitespace() || c == ')')
+            .next()?
+            .to_ascii_lowercase();
+        let close = rest[open..].find(')')? + open;
+        let args = &rest[open + 1..close];
+        let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+        let resolve = |tok: &str, base: f32| -> f32 {
+            if let Some(p) = tok.strip_suffix('%') {
+                p.trim().parse::<f32>().map(|v| v / 100.0 * base).unwrap_or(0.0)
+            } else {
+                crate::css::parse_len_px(tok).unwrap_or(0.0)
+            }
+        };
+        match name.as_str() {
+            "translate" => {
+                dx += resolve(parts[0], w);
+                if let Some(p) = parts.get(1) {
+                    dy += resolve(p, h);
+                }
+            }
+            "translatex" => dx += resolve(parts[0], w),
+            "translatey" => dy += resolve(parts[0], h),
+            _ => {} // scale/rotate/matrix 등 미적용
+        }
+        rest = &rest[close + 1..];
+    }
+    Some((dx, dy))
 }
 
 #[cfg(test)]
@@ -1267,6 +1322,25 @@ mod tests {
         let styled2 = crate::style::style_tree(&root2, &ss2);
         let lb2 = layout_tree_for(&styled2, &fs);
         assert_eq!(count_decorations(&lb2), 0, "장식 없어야");
+    }
+
+    #[test]
+    fn transform_translate_offsets_box() {
+        // translate(10px, 20px) → 박스가 그만큼 이동 (흐름 불변, 시각 오프셋)
+        let d = layout_for(
+            "<div></div>",
+            "div { display: block; width: 100px; height: 50px; transform: translate(10px, 20px); }",
+            800.0,
+        );
+        assert_eq!(d.content.x, 10.0, "x 오프셋");
+        assert_eq!(d.content.y, 20.0, "y 오프셋");
+        // 퍼센트: translateX(50%) = 자기 border-box 폭의 50%
+        let d2 = layout_for(
+            "<div></div>",
+            "div { display: block; width: 100px; height: 50px; transform: translateX(50%); }",
+            800.0,
+        );
+        assert_eq!(d2.content.x, 50.0, "50% × 100px = 50px");
     }
 
     #[test]

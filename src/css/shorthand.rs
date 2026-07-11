@@ -132,6 +132,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // transform: 함수 목록(translate/scale/rotate...) 원문 보존, 레이아웃이 파싱.
+        // (translate 만 시각 오프셋으로 적용, 나머지는 근사/무시)
+        "transform" => {
+            vec![Declaration { name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
