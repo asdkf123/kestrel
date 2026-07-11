@@ -206,10 +206,13 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 
 **C-layout. 레이아웃 정확도** (실사이트 검증 기반)
 - ~~float 다단: float 을 클리어하는 블록을 옆에 배치~~ ✓ (float 사이드바+본문).
-- 남음: **float text-wrap**(이미지 주위 텍스트 흐름 — 줄 상자 단축), **grid-template-areas**
-  (Wikipedia 3단 겹침 원인), text+inline-block 같은 줄, BFC(overflow) 옆 축소.
-- 실측: HN(2178px/513링크)·Wikipedia(16660px/2864링크) JS 에러 0, 콘텐츠 완전.
-  Wikipedia 3단 겹침만 grid-areas 미지원으로 잔존.
+- ~~text + inline-block 같은 줄~~ ✓ (네비게이션 바/버튼 그룹, 로드맵 A-4).
+- ~~grid-template-areas 명시 배치~~ ✓ (holy-grail 합성 검증).
+- 남음: **float text-wrap**(이미지 주위 텍스트 흐름 — 줄 상자 단축), vertical-align
+  베이스라인, BFC(overflow) 옆 축소, 긴 텍스트+inline-block 혼합.
+- 실측: HN·Wikipedia·example JS 에러 0, 콘텐츠 완전.
+  **Wikipedia 3단 겹침은 grid-areas 가 아니라 다른 메커니즘(flex/position 추정) —
+  별도 진단 필요.** grid-areas 는 합성 holy-grail 로 검증됨(모던 grid 사이트용).
 
 **D. 동적 웹(가장 무거운 단계)** — 앱/프레임워크 사이트
 
