@@ -38,15 +38,31 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         || bytes[0] == b'.'
         || (bytes[0] == b'-' && bytes.len() > 1 && (bytes[1].is_ascii_digit() || bytes[1] == b'.'));
     if numeric_start {
-        // 주의: "rem" 을 "em" 보다 먼저 검사
-        for (suffix, unit) in
-            [("px", Unit::Px), ("rem", Unit::Rem), ("em", Unit::Em), ("%", Unit::Percent)]
-        {
-            if let Some(num) = text.strip_suffix(suffix) {
-                if let Ok(f) = num.trim().parse::<f32>() {
-                    return Some(Value::Length(f, unit));
-                }
-                return None;
+        let lower_num = text.to_ascii_lowercase();
+        // 절대 단위 → px 즉시 변환 (문맥 불필요). 1px=1/96in, 1pt=1/72in, 1pc=12pt.
+        for (suffix, factor) in [
+            ("px", 1.0f32),
+            ("pt", 96.0 / 72.0),
+            ("pc", 16.0),
+            ("in", 96.0),
+            ("cm", 96.0 / 2.54),
+            ("mm", 96.0 / 25.4),
+            ("q", 96.0 / (25.4 * 4.0)),
+        ] {
+            if let Some(num) = lower_num.strip_suffix(suffix) {
+                return num.trim().parse::<f32>().ok().map(|f| Value::Length(f * factor, Unit::Px));
+            }
+        }
+        // 상대/문맥 단위. "rem" 을 "em" 보다 먼저. ch/ex 는 em 근사(0.5em).
+        for (suffix, unit, scale) in [
+            ("rem", Unit::Rem, 1.0f32),
+            ("em", Unit::Em, 1.0),
+            ("ch", Unit::Em, 0.5),
+            ("ex", Unit::Em, 0.5),
+            ("%", Unit::Percent, 1.0),
+        ] {
+            if let Some(num) = lower_num.strip_suffix(suffix) {
+                return num.trim().parse::<f32>().ok().map(|f| Value::Length(f * scale, unit));
             }
         }
         // 단위 없는 0 은 유효한 길이 (예: margin: 0 auto)
@@ -55,7 +71,7 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
                 return Some(Value::Length(0.0, Unit::Px));
             }
         }
-        return None; // pt/vh/단위없는 0 아닌 수 등은 미지원
+        return None; // vw/vh/단위없는 0 아닌 수 등은 미지원
     }
     if text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         if let Some(c) = named_color(&lower) {
@@ -486,6 +502,21 @@ mod tests {
             Some(Value::Color(c)) => c,
             other => panic!("expected color, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn absolute_units_convert_to_px() {
+        // 1pt = 96/72 px, 1pc = 16px, 1in = 96px, 1cm ≈ 37.8px
+        assert_eq!(interpret_value("72pt"), Some(Value::Length(96.0, Unit::Px)));
+        assert_eq!(interpret_value("1pc"), Some(Value::Length(16.0, Unit::Px)));
+        assert_eq!(interpret_value("1in"), Some(Value::Length(96.0, Unit::Px)));
+        let cm = match interpret_value("2.54cm") {
+            Some(Value::Length(v, Unit::Px)) => v,
+            other => panic!("expected px, got {:?}", other),
+        };
+        assert!((cm - 96.0).abs() < 0.01, "2.54cm ≈ 96px, 실제 {}", cm);
+        // ch/ex 는 0.5em 근사로 저장
+        assert_eq!(interpret_value("2ch"), Some(Value::Length(1.0, Unit::Em)));
     }
 
     #[test]
