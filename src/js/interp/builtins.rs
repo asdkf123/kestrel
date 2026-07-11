@@ -227,6 +227,29 @@ impl Interp {
                 let dom = self.dom_arena()?;
                 Ok(Value::Dom(dom.create_text(text)))
             }
+            // style.setProperty(name, value) / getPropertyValue(name) / removeProperty(name)
+            Native::StyleSetProperty => {
+                if let Some(Value::Style(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    let value = args.get(1).map(to_display).unwrap_or_default();
+                    self.style_set(id, &name, &value);
+                }
+                Ok(Value::Undefined)
+            }
+            Native::StyleGetProperty => {
+                if let Some(Value::Style(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    return Ok(Value::Str(self.style_get(id, &name)));
+                }
+                Ok(Value::Str(String::new()))
+            }
+            Native::StyleRemoveProperty => {
+                if let Some(Value::Style(id)) = recv {
+                    let name = args.first().map(to_display).unwrap_or_default();
+                    self.style_set(id, &name, "");
+                }
+                Ok(Value::Undefined)
+            }
             // document.body/head/documentElement (라이브 접근자)
             Native::DocQuery(tag) => {
                 let dom = self.dom_arena()?;

@@ -65,12 +65,59 @@ impl Interp {
         }
     }
 
+    // 요소의 inline style 속성 문자열을 읽는다
+    pub(super) fn style_attr(&mut self, id: crate::dom::NodeId) -> String {
+        if let Ok(dom) = self.dom_arena() {
+            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                return e.attributes.get("style").cloned().unwrap_or_default();
+            }
+        }
+        String::new()
+    }
+
+    pub(super) fn set_style_attr(&mut self, id: crate::dom::NodeId, value: String) {
+        if let Ok(dom) = self.dom_arena() {
+            if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
+                if value.is_empty() {
+                    e.attributes.remove("style");
+                } else {
+                    e.attributes.insert("style".to_string(), value);
+                }
+            }
+        }
+    }
+
+    // style.prop 읽기 (prop 은 CSS 케밥 이름)
+    pub(super) fn style_get(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
+        let attr = self.style_attr(id);
+        style_pairs(&attr)
+            .into_iter()
+            .rev() // 뒤 선언 우선 (마지막 것이 유효)
+            .find(|(k, _)| k == prop)
+            .map(|(_, v)| v)
+            .unwrap_or_default()
+    }
+
+    // style.prop = value 쓰기 (빈 값이면 제거)
+    pub(super) fn style_set(&mut self, id: crate::dom::NodeId, prop: &str, value: &str) {
+        let attr = self.style_attr(id);
+        let mut pairs = style_pairs(&attr);
+        pairs.retain(|(k, _)| k != prop);
+        if !value.trim().is_empty() {
+            pairs.push((prop.to_string(), value.trim().to_string()));
+        }
+        let s = style_serialize(&pairs);
+        self.set_style_attr(id, s);
+    }
+
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
         let dom = self.dom_arena()?;
         let is_el = |d: &crate::dom::Dom, c: crate::dom::NodeId| {
             matches!(d.get(c).node_type, crate::dom::NodeType::Element(_))
         };
         match key {
+            // element.style → inline style 속성에 대한 라이브 프록시
+            "style" => Ok(Value::Style(id)),
             "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
             "value" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(

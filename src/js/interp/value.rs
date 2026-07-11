@@ -106,6 +106,46 @@ pub(super) fn is_promise(v: &Value) -> bool {
     matches!(v, Value::Obj(o) if matches!(o.borrow().get("__isPromise"), Some(Value::Bool(true))))
 }
 
+// element.style.backgroundColor → "background-color" (선두 대문자는 벤더 프리픽스: -webkit-)
+pub(super) fn camel_to_kebab(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for (i, c) in s.char_indices() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('-');
+            } else {
+                out.push('-'); // WebkitX → -webkit-x
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+// inline style 속성 문자열 "a: b; c: d" → 순서 보존 (키, 값) 쌍
+pub(super) fn style_pairs(attr: &str) -> Vec<(String, String)> {
+    attr.split(';')
+        .filter_map(|decl| {
+            let decl = decl.trim();
+            if decl.is_empty() {
+                return None;
+            }
+            let (k, v) = decl.split_once(':')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
+pub(super) fn style_serialize(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 pub(super) fn to_display(v: &Value) -> String {
     match v {
         Value::Undefined => "undefined".to_string(),
@@ -123,6 +163,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::Getter(_) => "[getter]".to_string(),
         Value::MapVal(_) => "[object Map]".to_string(),
         Value::SetVal(_) => "[object Set]".to_string(),
+        Value::Style(_) => "[object CSSStyleDeclaration]".to_string(),
         Value::Dom(_) => "[object Element]".to_string(),
         Value::Instance(i) => format!("[object {}]", i.class.name),
     }
@@ -155,6 +196,7 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::MapVal(x), Value::MapVal(y)) => Rc::ptr_eq(x, y),
         (Value::SetVal(x), Value::SetVal(y)) => Rc::ptr_eq(x, y),
         (Value::Bound(x), Value::Bound(y)) => Rc::ptr_eq(x, y),
+        (Value::Style(x), Value::Style(y)) => x == y,
         _ => false,
     }
 }
@@ -323,7 +365,8 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         | Value::Bound(_)
         | Value::Getter(_)
         | Value::MapVal(_)
-        | Value::SetVal(_) => None,
+        | Value::SetVal(_)
+        | Value::Style(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();

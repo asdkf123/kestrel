@@ -41,6 +41,8 @@ pub enum Value {
     // Map/Set — 삽입 순서 보존. 키 비교는 strict_eq (객체는 참조 동일).
     MapVal(Rc<RefCell<Vec<(Value, Value)>>>),
     SetVal(Rc<RefCell<Vec<Value>>>),
+    // element.style — 요소의 inline style 속성에 대한 라이브 프록시(CSSStyleDeclaration).
+    Style(crate::dom::NodeId),
 }
 
 // 배열 객체: 인덱스 항목(items)과 own-property(props)를 분리 보관.
@@ -127,6 +129,9 @@ pub enum Native {
     DocQuery(&'static str),
     CreateTextNode,
     InsertBefore,
+    StyleSetProperty,
+    StyleGetProperty,
+    StyleRemoveProperty,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -275,6 +280,7 @@ impl std::fmt::Debug for Value {
             Value::Getter(_) => write!(f, "[getter]"),
             Value::MapVal(_) => write!(f, "[object Map]"),
             Value::SetVal(_) => write!(f, "[object Set]"),
+            Value::Style(id) => write!(f, "[style {:?}]", id),
         }
     }
 }
@@ -1556,6 +1562,20 @@ impl Interp {
                 };
                 Ok(op.map(|o| Value::Native(Native::Set(o))).unwrap_or(Value::Undefined))
             }
+            // element.style.prop 읽기 (라이브 프록시)
+            Value::Style(id) => {
+                let id = *id;
+                match key {
+                    "cssText" => Ok(Value::Str(self.style_attr(id))),
+                    "setProperty" => Ok(Value::Native(Native::StyleSetProperty)),
+                    "getPropertyValue" => Ok(Value::Native(Native::StyleGetProperty)),
+                    "removeProperty" => Ok(Value::Native(Native::StyleRemoveProperty)),
+                    _ => {
+                        let prop = camel_to_kebab(key);
+                        Ok(Value::Str(self.style_get(id, &prop)))
+                    }
+                }
+            }
             Value::Str(s) => {
                 if key == "length" {
                     return Ok(Value::Num(s.chars().count() as f64));
@@ -1939,6 +1959,17 @@ impl Interp {
                         Ok(())
                     }
                     Value::Dom(id) => self.dom_set(id, &key, value),
+                    // element.style.prop = value (라이브 프록시 → inline style 갱신)
+                    Value::Style(id) => {
+                        let text = to_display(&value);
+                        if key == "cssText" {
+                            self.set_style_attr(id, text);
+                        } else {
+                            let prop = camel_to_kebab(&key);
+                            self.style_set(id, &prop, &text);
+                        }
+                        Ok(())
+                    }
                     Value::Instance(inst) => {
                         inst.fields.borrow_mut().insert(key, value);
                         Ok(())
