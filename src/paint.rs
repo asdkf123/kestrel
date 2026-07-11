@@ -237,8 +237,9 @@ impl Canvas {
             for w in xs.windows(2) {
                 wind += w[0].1;
                 if wind != 0 {
-                    let xa = w[0].0.max(0.0) as usize;
-                    let xb = (w[1].0.max(0.0) as usize).min(self.width);
+                    // 픽셀 중심 기준 반올림 (경계 픽셀 과포함 방지)
+                    let xa = w[0].0.round().max(0.0) as usize;
+                    let xb = (w[1].0.round().max(0.0) as usize).min(self.width);
                     for px in xa..xb {
                         let idx = py * self.width + px;
                         self.pixels[idx] = blend(self.pixels[idx], color, color.a);
@@ -298,6 +299,10 @@ fn gradient_color_at(stops: &[(Color, f32)], p: f32) -> Color {
 }
 
 fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
+    if gi.rot != 0.0 {
+        blit_glyph_rotated(canvas, bm, gi);
+        return;
+    }
     let ox = (gi.x + bm.left as f32).round() as i32;
     let oy = (gi.baseline_y - bm.top as f32).round() as i32;
     for y in 0..bm.height {
@@ -320,6 +325,60 @@ fn blit_glyph(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
                 continue;
             }
             let idx = cy as usize * canvas.width + cx as usize;
+            canvas.pixels[idx] = blend(canvas.pixels[idx], gi.color, a);
+        }
+    }
+}
+
+// 회전된 글리프: 원점(pen 위치) 기준 rot 만큼 회전. 목적지 회전 bbox 를 훑으며
+// 역회전으로 커버리지 비트맵을 샘플(최근접). 비트맵 원점은 (gi.x+left, gi.baseline_y-top).
+fn blit_glyph_rotated(canvas: &mut Canvas, bm: &CoverageBitmap, gi: &GlyphInstance) {
+    if bm.width == 0 || bm.height == 0 {
+        return;
+    }
+    let (ox, oy) = (gi.x, gi.baseline_y); // 회전 중심 = pen 위치
+    let (bx, by) = (gi.x + bm.left as f32, gi.baseline_y - bm.top as f32); // 비트맵 좌상단(비회전)
+    let (c, s) = (gi.rot.cos(), gi.rot.sin());
+    // 비트맵 4모서리를 회전해 목적지 bbox 계산
+    let corners = [
+        (bx, by),
+        (bx + bm.width as f32, by),
+        (bx, by + bm.height as f32),
+        (bx + bm.width as f32, by + bm.height as f32),
+    ];
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for &(px, py) in &corners {
+        let rx = ox + (px - ox) * c - (py - oy) * s;
+        let ry = oy + (px - ox) * s + (py - oy) * c;
+        x0 = x0.min(rx);
+        y0 = y0.min(ry);
+        x1 = x1.max(rx);
+        y1 = y1.max(ry);
+    }
+    let dx0 = x0.floor().max(0.0) as usize;
+    let dy0 = y0.floor().max(0.0) as usize;
+    let dx1 = (x1.ceil().max(0.0) as usize).min(canvas.width);
+    let dy1 = (y1.ceil().max(0.0) as usize).min(canvas.height);
+    for py in dy0..dy1 {
+        for px in dx0..dx1 {
+            // 목적지 → 원점 기준 역회전 → 비트맵 좌표
+            let (fx, fy) = (px as f32 + 0.5 - ox, py as f32 + 0.5 - oy);
+            let ux = ox + fx * c + fy * s;
+            let uy = oy - fx * s + fy * c;
+            let sx = (ux - bx).floor() as i32;
+            let sy = (uy - by).floor() as i32;
+            if sx < 0 || sy < 0 || sx as usize >= bm.width || sy as usize >= bm.height {
+                continue;
+            }
+            let cov = bm.data[sy as usize * bm.width + sx as usize];
+            if cov == 0 {
+                continue;
+            }
+            let a = (cov as u32 * gi.color.a as u32 / 255) as u8;
+            if a == 0 {
+                continue;
+            }
+            let idx = py * canvas.width + px;
             canvas.pixels[idx] = blend(canvas.pixels[idx], gi.color, a);
         }
     }
@@ -1063,12 +1122,96 @@ fn collect_items(
     for child in &layout_box.children {
         collect_items(child, z, child_clip, sticky_here, buf);
     }
+    // transform: rotate — 서브트리 아이템을 border-box 중심 기준으로 회전.
+    // (translate/scale 는 레이아웃 단계에서 이미 박스에 반영됨.)
+    if let Some(Value::Keyword(t)) = layout_box.styled_node.value("transform") {
+        if let Some(angle) = transform_rotate_rad(&t) {
+            let b = layout_box.dimensions.border_box();
+            let (cx, cy) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
+            for (_, item) in buf[subtree_start..].iter_mut() {
+                rotate_item(item, cx, cy, angle);
+            }
+        }
+    }
     // opacity < 1: 방금 채운 서브트리 구간의 알파에 opacity 를 곱한다.
     // 중첩 opacity 는 자연히 누적(자식 패스 ×op_child 후 부모 패스 ×op_parent).
     if let Some(op) = element_opacity(layout_box) {
         for (_, item) in buf[subtree_start..].iter_mut() {
             scale_item_alpha(item, op);
         }
+    }
+}
+
+// transform 문자열에서 rotate 각도(라디안)를 추출. deg/rad/turn/무단위(deg) 지원.
+fn transform_rotate_rad(text: &str) -> Option<f32> {
+    let lower = text.to_ascii_lowercase();
+    let idx = lower.find("rotate(")?;
+    let rest = &text[idx + 7..];
+    let close = rest.find(')')?;
+    let arg = rest[..close].trim();
+    let a = if let Some(n) = arg.strip_suffix("deg") {
+        n.trim().parse::<f32>().ok()?.to_radians()
+    } else if let Some(n) = arg.strip_suffix("turn") {
+        n.trim().parse::<f32>().ok()? * std::f32::consts::TAU
+    } else if let Some(n) = arg.strip_suffix("rad") {
+        n.trim().parse::<f32>().ok()?
+    } else {
+        arg.parse::<f32>().ok()?.to_radians()
+    };
+    if a == 0.0 {
+        None
+    } else {
+        Some(a)
+    }
+}
+
+// 한 점을 (cx,cy) 기준 angle(rad) 회전.
+fn rotate_pt(x: f32, y: f32, cx: f32, cy: f32, c: f32, s: f32) -> (f32, f32) {
+    let (dx, dy) = (x - cx, y - cy);
+    (cx + dx * c - dy * s, cy + dx * s + dy * c)
+}
+
+// 디스플레이 아이템을 (cx,cy) 기준 회전. 사각형은 폴리곤(4모서리)으로, 글리프는
+// 위치 회전 + rot 각도 부여, 폴리곤은 점 회전. 그라디언트/이미지/그림자는 근사(중심만).
+fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
+    let (c, s) = (angle.cos(), angle.sin());
+    let quad = |rect: &Rect| -> Vec<(f32, f32)> {
+        vec![
+            rotate_pt(rect.x, rect.y, cx, cy, c, s),
+            rotate_pt(rect.x + rect.width, rect.y, cx, cy, c, s),
+            rotate_pt(rect.x + rect.width, rect.y + rect.height, cx, cy, c, s),
+            rotate_pt(rect.x, rect.y + rect.height, cx, cy, c, s),
+        ]
+    };
+    match item {
+        DisplayItem::Rect { color, rect } | DisplayItem::RoundRect { color, rect, .. } => {
+            *item = DisplayItem::Polygon { color: *color, contours: vec![quad(rect)] };
+        }
+        DisplayItem::Polygon { contours, .. } => {
+            for ct in contours.iter_mut() {
+                for p in ct.iter_mut() {
+                    *p = rotate_pt(p.0, p.1, cx, cy, c, s);
+                }
+            }
+        }
+        DisplayItem::Glyph(gi) => {
+            let (nx, ny) = rotate_pt(gi.x, gi.baseline_y, cx, cy, c, s);
+            gi.x = nx;
+            gi.baseline_y = ny;
+            gi.rot += angle;
+        }
+        // 그라디언트/이미지/그림자: 중심을 회전해 이동만(축 정렬 유지, 근사)
+        DisplayItem::Gradient { rect, .. }
+        | DisplayItem::Image { rect, .. }
+        | DisplayItem::Shadow { rect, .. }
+        | DisplayItem::InnerShadow { rect, .. } => {
+            let cxr = rect.x + rect.width / 2.0;
+            let cyr = rect.y + rect.height / 2.0;
+            let (nx, ny) = rotate_pt(cxr, cyr, cx, cy, c, s);
+            rect.x = nx - rect.width / 2.0;
+            rect.y = ny - rect.height / 2.0;
+        }
+        DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
     }
 }
 
@@ -1198,8 +1341,7 @@ fn draw_item(
             }
             canvas.fill_gradient(r, *angle, *radial, stops);
         }
-        DisplayItem::Polygon { color, contours } => {
-            let scaled: Vec<Vec<(f32, f32)>> = contours
+        DisplayItem::Polygon { color, contours } => {            let scaled: Vec<Vec<(f32, f32)>> = contours
                 .iter()
                 .map(|ct| ct.iter().map(|&(x, y)| (x * scale, (y - scroll_y) * scale)).collect())
                 .collect();
@@ -1312,6 +1454,7 @@ pub fn draw_text(
                 color,
                 bold: false,
                 italic: false,
+                rot: 0.0,
             };
             let bm = cache.get(fonts, fi, gid, px, false, false);
             blit_glyph(canvas, bm, &gi);
@@ -1420,6 +1563,23 @@ mod tests {
         // circle 중심 cx=7,cy=5 → 박스 (14,10). 파랑
         let c = canvas.pixels[10 * 20 + 14];
         assert!(c.b > 200 && c.r < 60, "circle 파랑, 실제 {:?}", c);
+    }
+
+    #[test]
+    fn transform_rotate_makes_diamond() {
+        // 10x10 박스를 (5,5)에 두고 45° 회전 → 다이아몬드. 중심은 채워지고
+        // 원래 좌상 모서리(6,6)는 회전 다이아 밖(x+y<13)이라 비어야 한다.
+        let canvas = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 10px; height: 10px; margin: 5px; \
+             background-color: #ff0000; transform: rotate(45deg); }",
+            20.0,
+            20.0,
+        );
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        assert_eq!(canvas.pixels[10 * 20 + 10], red, "중심은 채워짐");
+        // (4,4) 는 회전 다이아 밖(x+y=9 < 좌상 엣지 ~13) → 흰색
+        assert_eq!(canvas.pixels[4 * 20 + 4], Color { r: 255, g: 255, b: 255, a: 255 }, "회전으로 좌상 모서리는 비어야");
     }
 
     #[test]

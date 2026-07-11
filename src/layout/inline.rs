@@ -220,6 +220,7 @@ impl<'a> LayoutBox<'a> {
                     color: st.color,
                     bold: st.bold,
                     italic: st.italic,
+                    rot: 0.0,
                 });
                 pen_x += adv + letter_spacing;
                 word_px_max = word_px_max.max(st.px);
@@ -310,6 +311,7 @@ impl<'a> LayoutBox<'a> {
                     color: base.color,
                     bold: base.bold,
                     italic: base.italic,
+                    rot: 0.0,
                 });
             }
         }

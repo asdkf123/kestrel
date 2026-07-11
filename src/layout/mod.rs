@@ -76,6 +76,8 @@ pub struct GlyphInstance {
     // 합성 볼드/이탤릭 (전용 볼드/이탤릭 폰트 부재 시 faux). raster 가 반영.
     pub bold: bool,
     pub italic: bool,
+    // transform: rotate 로 회전된 각도(라디안). 0 이면 정상. raster 가 비트맵을 회전.
+    pub rot: f32,
 }
 
 pub struct LayoutBox<'a> {
@@ -294,6 +296,7 @@ impl<'a> LayoutBox<'a> {
                 color,
                 bold: false,
                 italic: false,
+                rot: 0.0,
             });
             pen += adv;
         }
@@ -364,6 +367,7 @@ impl<'a> LayoutBox<'a> {
                     color,
                     bold,
                     italic,
+                    rot: 0.0,
                 });
             }
             pen += adv;
