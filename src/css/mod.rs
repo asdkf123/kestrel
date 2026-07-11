@@ -229,6 +229,14 @@ pub fn parse_len_px(tok: &str) -> Option<f32> {
     }
 }
 
+// 색 문자열(hex/named/rgb 등) → Color. SVG fill/stroke 파싱 등에 쓴다.
+pub fn parse_color(s: &str) -> Option<Color> {
+    match values::interpret_value(s.trim()) {
+        Some(Value::Color(c)) => Some(c),
+        _ => None,
+    }
+}
+
 // @media 없는 시트/테스트/UA 용 기본 파스. 데스크톱 폭(1024)으로 미디어 평가.
 pub fn parse(source: String) -> Stylesheet {
     parse_viewport(source, 1024.0)

@@ -384,6 +384,85 @@ fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     items.push(DisplayItem::Shadow { color, rect, radius, blur });
 }
 
+// 인라인 SVG 의 기본 도형(rect/circle/ellipse/line)을 viewBox 매핑으로 발행한다.
+// path 등 복잡 도형은 미지원(후속). 대각선 line 은 근사(수평/수직만 정확).
+fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let crate::dom::NodeType::Element(svg) = &lb.styled_node.node.node_type else { return };
+    if svg.tag_name != "svg" {
+        return;
+    }
+    let box_rect = lb.dimensions.content;
+    // viewBox → 박스 좌표 매핑
+    let (vx, vy, sx, sy) = match svg.attributes.get("viewbox").and_then(|s| crate::layout::parse_viewbox(s)) {
+        Some((vx, vy, vw, vh)) if vw > 0.0 && vh > 0.0 => {
+            (vx, vy, box_rect.width / vw, box_rect.height / vh)
+        }
+        _ => (0.0, 0.0, 1.0, 1.0),
+    };
+    let mx = |x: f32| box_rect.x + (x - vx) * sx;
+    let my = |y: f32| box_rect.y + (y - vy) * sy;
+    for shape in &lb.styled_node.children {
+        let crate::dom::NodeType::Element(e) = &shape.node.node_type else { continue };
+        let num = |k: &str| e.attributes.get(k).and_then(|v| v.trim().parse::<f32>().ok());
+        // fill: 속성 > 기본 검정. "none" 이면 채우지 않음.
+        let fill = match e.attributes.get("fill").map(|s| s.as_str()) {
+            Some("none") => None,
+            Some(f) => crate::css::parse_color(f),
+            None => Some(Color { r: 0, g: 0, b: 0, a: 255 }),
+        };
+        match e.tag_name.as_str() {
+            "rect" => {
+                if let Some(color) = fill {
+                    let (x, y) = (mx(num("x").unwrap_or(0.0)), my(num("y").unwrap_or(0.0)));
+                    let (w, h) = (num("width").unwrap_or(0.0) * sx, num("height").unwrap_or(0.0) * sy);
+                    let r = num("rx").map(|r| r * sx).unwrap_or(0.0);
+                    if w > 0.0 && h > 0.0 {
+                        let rect = Rect { x, y, width: w, height: h };
+                        if r > 0.0 {
+                            items.push(DisplayItem::RoundRect { color, rect, radius: r });
+                        } else {
+                            items.push(DisplayItem::Rect { color, rect });
+                        }
+                    }
+                }
+            }
+            "circle" => {
+                if let Some(color) = fill {
+                    let r = num("r").unwrap_or(0.0);
+                    let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
+                    let rect = Rect { x: mx(cx - r), y: my(cy - r), width: 2.0 * r * sx, height: 2.0 * r * sy };
+                    items.push(DisplayItem::RoundRect { color, rect, radius: r * sx });
+                }
+            }
+            "ellipse" => {
+                if let Some(color) = fill {
+                    let (rx, ry) = (num("rx").unwrap_or(0.0), num("ry").unwrap_or(0.0));
+                    let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
+                    let rect = Rect { x: mx(cx - rx), y: my(cy - ry), width: 2.0 * rx * sx, height: 2.0 * ry * sy };
+                    items.push(DisplayItem::RoundRect { color, rect, radius: rx.min(ry) * sx });
+                }
+            }
+            "line" => {
+                // 수평/수직 선만 정확 (얇은 사각형). stroke 색/굵기 사용.
+                let stroke = e.attributes.get("stroke").and_then(|s| crate::css::parse_color(s));
+                if let Some(color) = stroke {
+                    let sw = (num("stroke-width").unwrap_or(1.0) * sx).max(1.0);
+                    let (x1, y1) = (mx(num("x1").unwrap_or(0.0)), my(num("y1").unwrap_or(0.0)));
+                    let (x2, y2) = (mx(num("x2").unwrap_or(0.0)), my(num("y2").unwrap_or(0.0)));
+                    let rect = Rect {
+                        x: x1.min(x2),
+                        y: y1.min(y2),
+                        width: (x2 - x1).abs().max(sw),
+                        height: (y2 - y1).abs().max(sw),
+                    };
+                    items.push(DisplayItem::Rect { color, rect });
+                }
+            }
+            _ => {} // path/polygon/text 등 미지원
+        }
+    }
+}
+
 // outline: border box 밖으로 offset+width 만큼 나온 균일 링 (4개 사각형). 레이아웃 불변.
 fn emit_outline(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     let w = match lb.styled_node.value("outline-width") {
@@ -622,6 +701,7 @@ fn collect_items(
     emit_box_decorations(layout_box, &mut local);
     emit_inner_shadow(layout_box, &mut local);
     emit_outline(layout_box, &mut local);
+    emit_svg(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
         local.push(DisplayItem::Image {
             image: idx,
@@ -1009,6 +1089,25 @@ mod tests {
         );
         let p = canvas.pixels[0];
         assert!((p.r as i32 - 128).abs() <= 2, "자손도 부모 opacity 적용, 실제 {}", p.r);
+    }
+
+    #[test]
+    fn svg_rect_and_circle_render() {
+        // 20x20 svg, viewBox 0 0 10 10. 왼쪽 절반 빨강 rect + 오른쪽 파랑 circle.
+        let canvas = canvas_for(
+            "<svg width=\"20\" height=\"20\" viewBox=\"0 0 10 10\">\
+             <rect x=\"0\" y=\"0\" width=\"5\" height=\"10\" fill=\"#ff0000\"></rect>\
+             <circle cx=\"7\" cy=\"5\" r=\"3\" fill=\"#0000ff\"></circle>\
+             </svg>",
+            "svg { display: block; }",
+            20.0,
+            20.0,
+        );
+        // rect: viewBox x 0..5 → 박스 0..10. (2,10) 은 빨강
+        assert_eq!(canvas.pixels[10 * 20 + 2], Color { r: 255, g: 0, b: 0, a: 255 }, "rect 빨강");
+        // circle 중심 cx=7,cy=5 → 박스 (14,10). 파랑
+        let c = canvas.pixels[10 * 20 + 14];
+        assert!(c.b > 200 && c.r < 60, "circle 파랑, 실제 {:?}", c);
     }
 
     #[test]

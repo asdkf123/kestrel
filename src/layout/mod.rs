@@ -175,6 +175,33 @@ impl<'a> LayoutBox<'a> {
                 self.layout_input(containing_block, fonts);
                 return;
             }
+            if e.tag_name == "svg" {
+                self.calculate_position(containing_block);
+                let cbw = containing_block.content.width;
+                // 크기: CSS/HTML width·height > viewBox 비율 > 기본 (300x150 근사, 아이콘은 보통 지정)
+                let dim = |css: &str, attr: &str| -> Option<f32> {
+                    if let Some(v) = self.styled_node.value(css) {
+                        if !matches!(v, Value::Keyword(_)) {
+                            return Some(len_px(v, cbw).to_px());
+                        }
+                    }
+                    e.attributes.get(attr).and_then(|s| s.trim().trim_end_matches("px").parse::<f32>().ok())
+                };
+                let vb = e.attributes.get("viewbox").and_then(|s| parse_viewbox(s));
+                let (vbw, vbh) = vb.map(|v| (v.2, v.3)).unwrap_or((0.0, 0.0));
+                let w = dim("width", "width");
+                let h = dim("height", "height");
+                let (w, h) = match (w, h) {
+                    (Some(w), Some(h)) => (w, h),
+                    (Some(w), None) => (w, if vbw > 0.0 { w * vbh / vbw } else { w }),
+                    (None, Some(h)) => (if vbh > 0.0 { h * vbw / vbh } else { h }, h),
+                    (None, None) if vbw > 0.0 => (vbw, vbh),
+                    (None, None) => (300.0, 150.0),
+                };
+                self.dimensions.content.width = w;
+                self.dimensions.content.height = h;
+                return;
+            }
         }
 
         if !self.inline_nodes.is_empty() {
@@ -1073,6 +1100,20 @@ fn is_row_group(b: &LayoutBox) -> bool {
         NodeType::Element(e) if e.tag_name == "tbody" || e.tag_name == "thead" || e.tag_name == "tfoot")
 }
 
+// SVG viewBox "minx miny width height" → (minx, miny, width, height)
+pub(crate) fn parse_viewbox(s: &str) -> Option<(f32, f32, f32, f32)> {
+    let nums: Vec<f32> = s
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|t| !t.is_empty())
+        .filter_map(|t| t.parse::<f32>().ok())
+        .collect();
+    if nums.len() == 4 {
+        Some((nums[0], nums[1], nums[2], nums[3]))
+    } else {
+        None
+    }
+}
+
 // 셀의 colspan (HTML 속성). 기본 1, 최소 1.
 fn cell_colspan(child: &LayoutBox) -> usize {
     cell_span_attr(child, "colspan")
@@ -1247,6 +1288,10 @@ fn all_whitespace(nodes: &[&StyledNode]) -> bool {
 
 fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     let mut root = LayoutBox::new(style_node);
+    // <svg> 는 대체 요소: CSS 자식 박스를 만들지 않는다 (paint 가 도형을 직접 그림).
+    if matches!(&style_node.node.node_type, NodeType::Element(e) if e.tag_name == "svg") {
+        return root;
+    }
     let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
     for child in &style_node.children {
         match child.display() {
