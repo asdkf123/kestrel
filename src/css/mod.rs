@@ -130,8 +130,9 @@ pub enum MinMaxKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gradient {
-    pub angle_deg: f32,          // CSS 각도 (0=위, 90=오른쪽, 180=아래). radial 이면 무시.
-    pub radial: bool,            // true=radial(중심에서 방사), false=linear
+    pub angle_deg: f32,          // CSS 각도 (0=위, 90=오른쪽, 180=아래). radial/conic 이면 무시.
+    pub radial: bool,            // true=radial(중심에서 방사)
+    pub conic: bool,             // true=conic(중심 기준 각도 스윕)
     pub stops: Vec<(Color, f32)>, // (색, 위치 0-1)
 }
 

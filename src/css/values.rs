@@ -26,6 +26,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("radial-gradient(") && text.ends_with(')') {
         return parse_radial_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
     }
+    if lower.starts_with("conic-gradient(") && text.ends_with(')') {
+        return parse_conic_gradient(&text[15..text.len() - 1]).map(Value::Gradient);
+    }
     // min()/max()/clamp() — 인자를 각각 해석해 MinMax 로 (계산은 style/layout).
     for (name, kind) in [
         ("min(", crate::css::MinMaxKind::Min),
@@ -281,7 +284,7 @@ fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
         }
     }
     let stops = parse_color_stops(&parts[idx..])?;
-    Some(crate::css::Gradient { angle_deg: angle, radial: false, stops })
+    Some(crate::css::Gradient { angle_deg: angle, radial: false, conic: false, stops })
 }
 
 // radial-gradient([shape size at pos,]? stop, ...) — 모양/크기/위치는 근사(중심 방사,
@@ -302,7 +305,51 @@ fn parse_radial_gradient(inner: &str) -> Option<crate::css::Gradient> {
         return None;
     }
     let stops = parse_color_stops(&parts[idx..])?;
-    Some(crate::css::Gradient { angle_deg: 0.0, radial: true, stops })
+    Some(crate::css::Gradient { angle_deg: 0.0, radial: true, conic: false, stops })
+}
+
+// conic-gradient([from Ndeg] [at pos,]? stop, ...) — from/at 서술자는 근사로 무시.
+// 색 스톱 위치는 각도(0-360deg 또는 %)를 0-1 로 정규화.
+fn parse_conic_gradient(inner: &str) -> Option<crate::css::Gradient> {
+    let parts = split_top_commas(inner);
+    if parts.is_empty() {
+        return None;
+    }
+    let first = parts[0].trim().to_ascii_lowercase();
+    let idx = if first.starts_with("from") || first.starts_with("at") { 1 } else { 0 };
+    if idx >= parts.len() {
+        return None;
+    }
+    // 각도 위치(Ndeg)를 % 로 바꿔 parse_color_stops 가 처리하도록 전처리
+    let mut stops: Vec<(Color, Option<f32>)> = Vec::new();
+    for p in &parts[idx..] {
+        let toks = split_top_level(p.trim());
+        if toks.is_empty() {
+            continue;
+        }
+        let color = match interpret_value(&toks[0]) {
+            Some(Value::Color(c)) => c,
+            _ => continue,
+        };
+        let pos = toks.get(1).and_then(|t| {
+            if let Some(d) = t.strip_suffix("deg") {
+                d.trim().parse::<f32>().ok().map(|v| v / 360.0)
+            } else {
+                t.strip_suffix('%').and_then(|n| n.trim().parse::<f32>().ok()).map(|v| v / 100.0)
+            }
+        });
+        stops.push((color, pos));
+    }
+    if stops.len() < 2 {
+        return None;
+    }
+    let n = stops.len();
+    let resolved: Vec<(Color, f32)> = stops
+        .iter()
+        .enumerate()
+        .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
+        .collect();
+    Some(crate::css::Gradient { angle_deg: 0.0, radial: false, conic: true, stops: resolved })
 }
 
 // 색 스톱 목록 파싱. 위치 미지정 스톱은 균등 분배. 스톱 2개 미만이면 None.
