@@ -817,6 +817,9 @@ impl<'a> LayoutBox<'a> {
         let mut ib_bottom = cy;
         let mut ib_lines: Vec<(Vec<usize>, f32)> = Vec::new();
         let mut ib_cur: Vec<usize> = Vec::new();
+        // 인접 형제 세로 margin 상쇄: 직전 정상 블록의 하단 margin (다음 블록 상단과 겹침).
+        // float/inline-block 등 흐름을 끊는 배치에선 0 으로 리셋.
+        let mut prev_bottom = 0.0f32;
         let mut inline_extent = 0.0f32;
         let n = self.children.len();
         for i in 0..n {
@@ -848,6 +851,7 @@ impl<'a> LayoutBox<'a> {
                 ib_active = false;
                 ib_pen_x = cx;
                 ib_line_h = 0.0;
+                prev_bottom = 0.0; // 인라인블록 런이 흐름을 끊음 → margin 상쇄 리셋
             }
 
             // position: absolute/fixed — 흐름에서 제거. 여기선 직속 컨테이너 기준
@@ -906,6 +910,7 @@ impl<'a> LayoutBox<'a> {
                 }
                 float_extent = float_extent.max((fl_next - cx) + ((cx + avail) - fr_next));
                 band_bottom = band_bottom.max(band_top + child.dimensions.margin_box().height);
+                prev_bottom = 0.0; // float 은 흐름을 끊음 → margin 상쇄 리셋
                 continue; // 정상 흐름 높이엔 직접 미반영 (밴드로 관리)
             }
 
@@ -956,6 +961,7 @@ impl<'a> LayoutBox<'a> {
                 ib_pen_x += mw;
                 ib_line_h = ib_line_h.max(mh);
                 ib_bottom = ib_bottom.max(ib_line_top + ib_line_h);
+                prev_bottom = 0.0; // inline-block 은 흐름을 끊음 → margin 상쇄 리셋
                 continue;
             }
 
@@ -1005,6 +1011,13 @@ impl<'a> LayoutBox<'a> {
                 band_active = false;
                 self.children[i].clear_render();
             }
+            // 인접 형제 margin 상쇄: 이 블록 상단 margin 을 직전 블록 하단 margin 과
+            // 겹쳐(더하지 않고) 흐름 높이에서 겹침량만큼 줄인 뒤 배치한다.
+            let cur_top = {
+                let z = Length(0.0, Px);
+                len_px(self.children[i].styled_node.lookup("margin-top", "margin", &z), avail).to_px()
+            };
+            self.dimensions.content.height -= collapse_overlap(prev_bottom, cur_top);
             // 정상 흐름: 누적 높이가 반영된 live dimensions 로 스택
             let d = self.dimensions;
             let child = &mut self.children[i];
@@ -1017,6 +1030,7 @@ impl<'a> LayoutBox<'a> {
                 }
             }
             self.dimensions.content.height += child.dimensions.margin_box().height;
+            prev_bottom = child.dimensions.margin.bottom;
         }
         // 마지막이 inline-block 런이면 마감
         if ib_active {
@@ -1744,6 +1758,14 @@ fn roman_marker(index: usize, upper: bool) -> String {
     if upper { s.to_ascii_uppercase() } else { s }
 }
 
+// 인접 margin 상쇄로 흐름에서 줄여야 할 겹침량. m1=이전 하단, m2=이번 상단.
+// 상쇄 결과 = 양수최대 + 음수최소. 현재는 두 margin 이 더해지므로 (m1+m2)-상쇄 만큼 뺀다.
+fn collapse_overlap(m1: f32, m2: f32) -> f32 {
+    let pos = m1.max(0.0).max(m2.max(0.0));
+    let neg = m1.min(0.0).min(m2.min(0.0));
+    (m1 + m2) - (pos + neg)
+}
+
 // StyledNode 서브트리의 텍스트를 모은다 (select 의 선택 option 텍스트 추출용).
 fn styled_subtree_text(sn: &StyledNode) -> String {
     let mut out = String::new();
@@ -2461,6 +2483,28 @@ mod tests {
         let td = boxes.iter().find(|(t, _, _)| t == "td").expect("셀 박스");
         assert!(cap.2 > 0, "캡션 텍스트가 렌더돼야");
         assert!(cap.1 < td.1, "캡션이 셀 위에 있어야 ({} < {})", cap.1, td.1);
+    }
+
+    #[test]
+    fn adjacent_block_margins_collapse() {
+        let fs = fonts();
+        let ss = crate::css::parse(
+            ".a{display:block;height:20px;margin-bottom:30px;} \
+             .b{display:block;height:20px;margin-top:30px;}"
+                .to_string(),
+        );
+        let root =
+            crate::html::parse_dom("<div class=\"a\"></div><div class=\"b\"></div>".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        assert_eq!(lb.children[0].dimensions.content.y, 0.0);
+        // A 하단(20) + 상쇄 margin max(30,30)=30 → B 는 y=50 (더해서 80 이 아님)
+        assert_eq!(
+            lb.children[1].dimensions.content.y, 50.0,
+            "인접 형제 margin 상쇄: B 는 y=50"
+        );
     }
 
     #[test]
