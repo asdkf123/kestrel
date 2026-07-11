@@ -116,7 +116,7 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
   line-height/letter-spacing/white-space/visibility/list-style/direction 등 다수 미상속.
 
 ### CSS — 레이아웃
-- **테이블**: 열 폭 계산 ✓, ~~colspan~~ ✓. 남음: rowspan, border-collapse, fixed 알고리즘.
+- **테이블**: 열 폭 계산 ✓, ~~colspan/rowspan~~ ✓. 남음: border-collapse, fixed 알고리즘.
 - **position: sticky**, 절대 위치 컨테이닝 블록 체인 정확화, **z-index/스태킹 컨텍스트**.
 - **인라인 포매팅 정식화**: 라인 박스, vertical-align, 베이스라인 정렬,
   text + inline-block 같은 줄(현재는 분리됨), float 주위 텍스트 흐름, `clear`.
@@ -131,7 +131,7 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - **font-weight(볼드)**, **font-style(이탤릭)** 렌더 — 지금 굵기/기울기 없음.
 - ~~CSS `line-height`, `letter-spacing`, `word-spacing`, `text-decoration`(밑줄/취소선/윗줄)~~ ✓.
   `text-transform` ✓, `white-space`(pre/nowrap/pre-wrap) ✓.
-  남음: `word-break`/`overflow-wrap`, `text-overflow: ellipsis`, `text-indent` 적용.
+  ~~`word-break`/`overflow-wrap`, `text-indent`~~ ✓. 남음: `text-overflow: ellipsis`.
 - **CJK/아랍/인도계 폰트 커버리지**(지금 두부 □) + **복합 텍스트 셰이핑**
   (리가처, 결합 문자, 아랍 접합, 인도계 재배열 — HarfBuzz 급).
 
@@ -139,10 +139,11 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - ~~그라디언트 linear/radial~~ ✓, ~~`opacity`~~ ✓, hsl() ✓. conic/currentColor 정식 남음.
 - 배경: position/repeat/size/다중 배경. (background 단축 ✓)
 - transform: ~~translate/scale~~ ✓. rotate/matrix/3D, transition/animation 남음.
-- filter, mix-blend-mode, clip-path, mask, border-image, outline.
+- ~~box-shadow inset~~ ✓, ~~outline~~ ✓. 남음: filter, mix-blend-mode, clip-path, mask, border-image.
 
 ### 대체·임베드 콘텐츠
-- **SVG 렌더링**, `<canvas>`, `<video>/<audio>`, `<iframe>`, object/embed.
+- ~~**SVG 렌더링**(rect/circle/ellipse/line/path/polygon, viewBox, fill/stroke)~~ ✓.
+  남음: SVG 그라디언트/텍스트/변환, `<canvas>`, `<video>/<audio>`, `<iframe>`, object/embed.
 - 이미지 포맷: webp/avif/gif(애니), 순차 JPEG 외.
 - 실제 폼 위젯: 체크박스/라디오/드롭다운 select/날짜 선택기, 제출/검증.
 
