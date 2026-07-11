@@ -1562,6 +1562,23 @@ mod tests {
     }
 
     #[test]
+    fn text_overflow_ellipsis_truncates() {
+        let fs = fonts();
+        let text = "a".repeat(40);
+        // nowrap + ellipsis: 40px 폭이면 글리프가 잘리고 … 하나 붙음 → 40개 미만
+        let root = crate::html::parse_dom(format!("<p>{}</p>", text));
+        let ss = crate::css::parse(
+            "p { display: block; width: 40px; white-space: nowrap; text-overflow: ellipsis; font-size: 16px; }"
+                .to_string(),
+        );
+        let s = crate::style::style_tree(&root, &ss);
+        let lb = layout_tree_for(&s, &fs);
+        let g = glyphs_of(&lb);
+        assert!(g.len() < 40, "잘려서 40개 미만이어야 (실제 {})", g.len());
+        assert!(g.len() > 1, "일부 글자 + … 는 남아야");
+    }
+
+    #[test]
     fn word_break_wraps_long_word() {
         let long = "a".repeat(60);
         // break-all: 긴 단어가 좁은 폭에서 여러 줄로 → 높이 큼

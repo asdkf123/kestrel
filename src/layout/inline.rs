@@ -287,6 +287,33 @@ impl<'a> LayoutBox<'a> {
             }
         }
 
+        // text-overflow: ellipsis — nowrap 한 줄이 내용폭을 넘으면 끝을 잘라 "…" 부착.
+        if !can_wrap
+            && lines == 1
+            && matches!(self.styled_node.value("text-overflow"),
+                Some(Value::Keyword(ref k)) if k == "ellipsis")
+        {
+            let limit = content_x + content_w;
+            let (efi, egid, eadv) = resolve('…', base_px);
+            // 넘치는 글리프가 있으면: … 자리를 남기고 끝 글리프 제거 후 … 를 오른쪽 끝에 붙임
+            let overflowing = self.glyphs.iter().any(|g| g.x > limit);
+            if overflowing {
+                while self.glyphs.last().map(|g| g.x + eadv > limit).unwrap_or(false) {
+                    self.glyphs.pop();
+                }
+                self.glyphs.push(GlyphInstance {
+                    font_index: efi,
+                    glyph_id: egid,
+                    x: (limit - eadv).max(content_x),
+                    baseline_y: baseline,
+                    px: base_px,
+                    color: base.color,
+                    bold: base.bold,
+                    italic: base.italic,
+                });
+            }
+        }
+
         self.dimensions.content.height = lines as f32 * line_height;
         // shrink-to-fit float 용: 가장 긴 줄 폭을 내용 폭으로 노출
         self.used_width = line_bounds.iter().map(|b| b.3).fold(0.0f32, f32::max);
