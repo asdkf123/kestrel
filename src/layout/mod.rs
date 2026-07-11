@@ -1310,6 +1310,48 @@ fn all_whitespace(nodes: &[&StyledNode]) -> bool {
     })
 }
 
+// 인라인 요소가 블록 레벨 자손을 품고 있는지 (block-in-inline 분리 판정용).
+fn contains_block_level(node: &StyledNode) -> bool {
+    node.children.iter().any(|c| match c.display() {
+        Display::Block | Display::Flex | Display::Grid | Display::InlineBlock => true,
+        Display::Inline => contains_block_level(c),
+        Display::None => false,
+    })
+}
+
+// 블록 컨테이너의 자식을 분류해 root.children(블록) 과 pending(익명 인라인 묶음) 으로.
+// 블록을 품은 인라인 래퍼(<span><div>..</div></span> 등)는 투명 취급하여 그 자식을
+// 현재 블록 흐름으로 끌어올린다 — CSS 의 block-in-inline 분리 근사.
+fn distribute_children<'a>(
+    root: &mut LayoutBox<'a>,
+    pending: &mut Vec<&'a StyledNode<'a>>,
+    anon_owner: &'a StyledNode<'a>,
+    children: &'a [StyledNode<'a>],
+) {
+    for child in children {
+        match child.display() {
+            Display::Block | Display::Flex | Display::Grid | Display::InlineBlock => {
+                if !pending.is_empty() {
+                    let nodes = std::mem::take(pending);
+                    if !all_whitespace(&nodes) {
+                        root.children.push(LayoutBox::new_anonymous(anon_owner, nodes));
+                    }
+                }
+                root.children.push(build_layout_tree(child));
+            }
+            Display::Inline => {
+                if contains_block_level(child) {
+                    // 투명 래퍼: 인라인 부분은 앞뒤로 나뉘고 블록은 흐름에 편입
+                    distribute_children(root, pending, anon_owner, &child.children);
+                } else {
+                    pending.push(child);
+                }
+            }
+            Display::None => {}
+        }
+    }
+}
+
 fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     let mut root = LayoutBox::new(style_node);
     // <svg> 는 대체 요소: CSS 자식 박스를 만들지 않는다 (paint 가 도형을 직접 그림).
@@ -1317,21 +1359,7 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
         return root;
     }
     let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
-    for child in &style_node.children {
-        match child.display() {
-            Display::Block | Display::Flex | Display::Grid | Display::InlineBlock => {
-                if !pending.is_empty() {
-                    let nodes = std::mem::take(&mut pending);
-                    if !all_whitespace(&nodes) {
-                        root.children.push(LayoutBox::new_anonymous(style_node, nodes));
-                    }
-                }
-                root.children.push(build_layout_tree(child));
-            }
-            Display::Inline => pending.push(child),
-            Display::None => {}
-        }
-    }
+    distribute_children(&mut root, &mut pending, style_node, &style_node.children);
     if !pending.is_empty() && !all_whitespace(&pending) {
         root.children.push(LayoutBox::new_anonymous(style_node, pending));
     }
@@ -2801,6 +2829,31 @@ mod tests {
         assert_eq!(d[1].content.x, 100.0);
         assert_eq!(d[1].content.width, 200.0, "auto 셀 = 남은 200");
         assert_eq!(d[2].content.x, 300.0, "우측 25% 셀");
+    }
+
+    #[test]
+    fn block_inside_inline_is_hoisted() {
+        // <span> 안의 블록 <div> 는 인라인 흐름에서 사라지지 않고 블록으로 편입 (구글 푸터 사례)
+        let root = crate::html::parse_dom(
+            "<div class=\"wrap\"><span id=\"f\"><div class=\"blk\">x</div></span></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "div { display: block; } span { display: inline; } .blk { display: block; height: 20px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // wrap 의 직계 자식에 blk 블록 박스가 있어야 (span 은 투명 처리)
+        let has_blk = lb.children.iter().any(|c| {
+            matches!(&c.styled_node.node.node_type,
+                NodeType::Element(e) if e.classes().contains("blk"))
+        });
+        assert!(has_blk, "span 안 블록 div 가 블록 흐름으로 편입돼야");
+        // 문서 높이가 블록 높이(20px)를 반영해야 (드롭되지 않음)
+        assert!(lb.dimensions.content.height >= 20.0, "블록 높이 반영: {}", lb.dimensions.content.height);
     }
 
     #[test]
