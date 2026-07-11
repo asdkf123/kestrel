@@ -3337,6 +3337,14 @@ mod tests {
     }
 
     #[test]
+    fn destructuring_parameters_bind() {
+        // 객체/배열 구조분해 파라미터가 실제로 바인딩돼야 (기존엔 자리표시로 버려짐)
+        assert_eq!(run_num("(function({a,b}){return a+b;})({a:3,b:4})"), 7.0);
+        assert_eq!(run_num("(({x,y})=>x*y)({x:5,y:6})"), 30.0);
+        assert_eq!(run_num("(function([p,,q]){return p+q;})([1,2,3])"), 4.0);
+    }
+
+    #[test]
     fn class_getters_are_invoked() {
         // get 접근자는 프로퍼티 접근 시 호출돼 값을 낸다 (함수가 아니라)
         assert_eq!(

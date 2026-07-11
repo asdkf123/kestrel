@@ -393,12 +393,12 @@ impl Parser {
             {
                 self.pos += 3;
             }
-            // 구조분해 파라미터 { .. } / [ .. ] — 균형 맞춰 건너뛰고 자리표시 이름
-            let name = if matches!(self.peek(), Some(Tok::LBrace | Tok::LBracket)) {
-                self.skip_balanced()?;
-                format!("__pat{}__", params.len())
+            // 구조분해 파라미터 { .. } / [ .. ] — 자리표시 이름으로 받고 프롤로그에서 분해
+            let (name, pattern) = if matches!(self.peek(), Some(Tok::LBrace | Tok::LBracket)) {
+                let pat = self.binding_pattern()?;
+                (format!("__pat{}__", params.len()), Some(pat))
             } else {
-                self.ident()?
+                (self.ident()?, None)
             };
             if self.eat(&Tok::Assign) {
                 let default = self.assignment()?;
@@ -414,6 +414,13 @@ impl Parser {
                         value: Box::new(default),
                     })],
                     other: None,
+                });
+            }
+            // 구조분해: let <pattern> = <자리표시 인자>;  (기본값 If 뒤에 실행)
+            if let Some(pat) = pattern {
+                prologue.push(Stmt::VarDecl {
+                    kind: DeclKind::Let,
+                    decls: vec![(pat, Some(Expr::Ident(name.clone())))],
                 });
             }
             params.push(name);
