@@ -5,6 +5,40 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+// 컨텍스트의 __path 배열 조작 ([x0,y0,x1,y1,...] 평탄 저장).
+fn set_path(ctx: &Rc<RefCell<HashMap<String, Value>>>, pts: Vec<Value>) {
+    ctx.borrow_mut().insert("__path".to_string(), Value::Arr(ArrayObj::new(pts)));
+}
+fn push_path(ctx: &Rc<RefCell<HashMap<String, Value>>>, x: f32, y: f32) {
+    if let Some(Value::Arr(a)) = ctx.borrow().get("__path") {
+        a.borrow_mut().push(Value::Num(x as f64));
+        a.borrow_mut().push(Value::Num(y as f64));
+    }
+}
+fn get_path(ctx: &Rc<RefCell<HashMap<String, Value>>>) -> Vec<(f32, f32)> {
+    if let Some(Value::Arr(a)) = ctx.borrow().get("__path") {
+        let flat = a.borrow();
+        return flat
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| (to_num(&c[0]) as f32, to_num(&c[1]) as f32))
+            .collect();
+    }
+    Vec::new()
+}
+
+// font 문자열에서 px 크기 추출 ("bold 16px sans-serif" → 16). 없으면 10.
+fn font_px(font: &str) -> f32 {
+    for tok in font.split_whitespace() {
+        if let Some(n) = tok.strip_suffix("px") {
+            if let Ok(v) = n.parse::<f32>() {
+                return v;
+            }
+        }
+    }
+    10.0
+}
+
 // DocumentFragment 판별 (센티널 태그)
 fn is_fragment(dom: &crate::dom::Dom, id: crate::dom::NodeId) -> bool {
     matches!(&dom.get(id).node_type,
@@ -12,6 +46,81 @@ fn is_fragment(dom: &crate::dom::Dom, id: crate::dom::NodeId) -> bool {
 }
 
 impl Interp {
+    // canvas 2D 컨텍스트 메서드 처리. recv=컨텍스트 객체. ops 를 canvas_cmds 에 쌓는다.
+    fn canvas_method(
+        &mut self,
+        method: CanvasMethod,
+        recv: Option<Value>,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        use CanvasMethod::*;
+        let Some(Value::Obj(ctx)) = recv else { return Ok(Value::Undefined) };
+        let canvas_id = match ctx.borrow().get("__canvas") {
+            Some(Value::Num(n)) => *n as crate::dom::NodeId,
+            _ => return Ok(Value::Undefined),
+        };
+        let num = |i: usize| args.get(i).map(to_num).unwrap_or(0.0) as f32;
+        let style = |key: &str| -> crate::css::Color {
+            match ctx.borrow().get(key) {
+                Some(Value::Str(s)) => {
+                    crate::css::parse_color(s).unwrap_or(crate::css::Color { r: 0, g: 0, b: 0, a: 255 })
+                }
+                _ => crate::css::Color { r: 0, g: 0, b: 0, a: 255 },
+            }
+        };
+        let ops = self.canvas_cmds.entry(canvas_id).or_default();
+        match method {
+            FillRect => ops.push(CanvasOp::FillRect {
+                x: num(0), y: num(1), w: num(2), h: num(3), color: style("fillStyle"),
+            }),
+            ClearRect => ops.push(CanvasOp::ClearRect { x: num(0), y: num(1), w: num(2), h: num(3) }),
+            StrokeRect => {
+                let lw = match ctx.borrow().get("lineWidth") { Some(Value::Num(n)) => *n as f32, _ => 1.0 };
+                ops.push(CanvasOp::StrokeRect {
+                    x: num(0), y: num(1), w: num(2), h: num(3), color: style("strokeStyle"), lw,
+                });
+            }
+            FillText => {
+                let text = args.first().map(to_display).unwrap_or_default();
+                let px = match ctx.borrow().get("font") { Some(Value::Str(f)) => font_px(f), _ => 10.0 };
+                ops.push(CanvasOp::FillText { text, x: num(0), y: num(1), color: style("fillStyle"), px });
+            }
+            // 경로: __path 에 점을 쌓았다가 fill 시 폴리곤으로.
+            BeginPath => set_path(&ctx, Vec::new()),
+            MoveTo | LineTo => push_path(&ctx, num(0), num(1)),
+            Rect => {
+                // 사각형 경로(4모서리) 추가
+                let (x, y, w, h) = (num(0), num(1), num(2), num(3));
+                for (px, py) in [(x, y), (x + w, y), (x + w, y + h), (x, y + h)] {
+                    push_path(&ctx, px, py);
+                }
+            }
+            Arc => {
+                // (cx, cy, r, start, end) 를 선분으로 근사해 경로에 추가
+                let (cx, cy, r) = (num(0), num(1), num(2));
+                let (s, e) = (num(3), num(4));
+                let seg = 24;
+                for k in 0..=seg {
+                    let t = s + (e - s) * k as f32 / seg as f32;
+                    push_path(&ctx, cx + r * t.cos(), cy + r * t.sin());
+                }
+            }
+            ClosePath => {}
+            Fill => {
+                let pts = get_path(&ctx);
+                if pts.len() >= 3 {
+                    self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::FillPath {
+                        pts,
+                        color: style("fillStyle"),
+                    });
+                }
+            }
+            Stroke => {} // 경로 스트로크는 미지원(근사로 생략)
+            Noop => {}
+        }
+        Ok(Value::Undefined)
+    }
+
     // 정규식 매치 → [full, g1, ...] 배열 (+ index/input own-property)
     pub(super) fn regex_match_array(
         &self,
@@ -808,6 +917,56 @@ impl Interp {
                     _ => Ok(Value::Bool(false)),
                 }
             }
+            Native::CanvasGetContext => {
+                // canvas.getContext('2d') → 상태 + 메서드를 담은 컨텍스트 객체
+                let canvas_id = match recv {
+                    Some(Value::Dom(id)) => id,
+                    _ => return Ok(Value::Null),
+                };
+                self.canvas_cmds.entry(canvas_id).or_default();
+                let mut m = HashMap::new();
+                m.insert("__canvas".to_string(), Value::Num(canvas_id as f64));
+                m.insert("fillStyle".to_string(), Value::Str("#000000".to_string()));
+                m.insert("strokeStyle".to_string(), Value::Str("#000000".to_string()));
+                m.insert("lineWidth".to_string(), Value::Num(1.0));
+                m.insert("font".to_string(), Value::Str("10px sans-serif".to_string()));
+                m.insert("__path".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
+                use CanvasMethod::*;
+                for (name, meth) in [
+                    ("fillRect", FillRect),
+                    ("clearRect", ClearRect),
+                    ("strokeRect", StrokeRect),
+                    ("beginPath", BeginPath),
+                    ("moveTo", MoveTo),
+                    ("lineTo", LineTo),
+                    ("arc", Arc),
+                    ("rect", Rect),
+                    ("closePath", ClosePath),
+                    ("fill", Fill),
+                    ("stroke", Stroke),
+                    ("fillText", FillText),
+                    ("strokeText", FillText),
+                    ("save", Noop),
+                    ("restore", Noop),
+                    ("scale", Noop),
+                    ("translate", Noop),
+                    ("rotate", Noop),
+                    ("transform", Noop),
+                    ("setTransform", Noop),
+                    ("setLineDash", Noop),
+                    ("clip", Noop),
+                    ("measureText", Noop),
+                    ("createLinearGradient", Noop),
+                    ("bezierCurveTo", Noop),
+                    ("quadraticCurveTo", Noop),
+                    ("drawImage", Noop),
+                    ("putImageData", Noop),
+                ] {
+                    m.insert(name.to_string(), Value::Native(Native::Canvas(meth)));
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
+            Native::Canvas(method) => self.canvas_method(method, recv, args),
             Native::CloneNode => {
                 let deep = args.first().map(to_bool).unwrap_or(false);
                 match recv {

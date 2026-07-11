@@ -36,6 +36,70 @@ pub struct Page {
     pub focused_input: Option<crate::dom::NodeId>,
 }
 
+// <canvas> 2D 명령(캔버스 좌표)을 각 canvas 박스 위치로 옮겨 DisplayItem 목록으로.
+fn canvas_display_items(
+    element_rects: &[(Rect, crate::dom::NodeId, usize)],
+    canvas_cmds: &std::collections::HashMap<crate::dom::NodeId, Vec<crate::js::interp::CanvasOp>>,
+    fonts: &crate::font::FontStack,
+) -> Vec<DisplayItem> {
+    use crate::js::interp::CanvasOp;
+    let mut out = Vec::new();
+    let white = crate::css::Color { r: 255, g: 255, b: 255, a: 255 };
+    for (r, id, _) in element_rects {
+        let Some(ops) = canvas_cmds.get(id) else { continue };
+        let (bx, by) = (r.x, r.y);
+        for op in ops {
+            match op {
+                CanvasOp::FillRect { x, y, w, h, color } => out.push(DisplayItem::Rect {
+                    color: *color,
+                    rect: Rect { x: bx + x, y: by + y, width: *w, height: *h },
+                }),
+                CanvasOp::ClearRect { x, y, w, h } => out.push(DisplayItem::Rect {
+                    color: white,
+                    rect: Rect { x: bx + x, y: by + y, width: *w, height: *h },
+                }),
+                CanvasOp::StrokeRect { x, y, w, h, color, lw } => {
+                    let t = lw.max(1.0);
+                    let (px, py) = (bx + x, by + y);
+                    for rect in [
+                        Rect { x: px, y: py, width: *w, height: t },
+                        Rect { x: px, y: py + h - t, width: *w, height: t },
+                        Rect { x: px, y: py, width: t, height: *h },
+                        Rect { x: px + w - t, y: py, width: t, height: *h },
+                    ] {
+                        out.push(DisplayItem::Rect { color: *color, rect });
+                    }
+                }
+                CanvasOp::FillPath { pts, color } => {
+                    let mapped: Vec<(f32, f32)> = pts.iter().map(|&(x, y)| (bx + x, by + y)).collect();
+                    out.push(DisplayItem::Polygon { color: *color, contours: vec![mapped] });
+                }
+                CanvasOp::FillText { text, x, y, color, px } => {
+                    let mut pen = bx + x;
+                    for ch in text.chars() {
+                        let (fi, gid) = fonts.glyph_for(ch);
+                        let f = fonts.font(fi);
+                        let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+                        out.push(DisplayItem::Glyph(crate::layout::GlyphInstance {
+                            font_index: fi,
+                            glyph_id: gid,
+                            x: pen,
+                            baseline_y: by + y,
+                            px: *px,
+                            color: *color,
+                            bold: false,
+                            italic: false,
+                            rot: 0.0,
+                        }));
+                        pen += adv;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 // application/x-www-form-urlencoded (공백은 +)
 fn urlencode(s: &str) -> String {
     let mut out = String::new();
@@ -69,6 +133,11 @@ impl Page {
         self.js.layout_rects.clear();
         for (r, id, _) in &self.element_rects {
             self.js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
+        }
+        // <canvas> 2D 그리기 명령을 박스로 매핑해 디스플레이 리스트에 추가
+        if !self.js.canvas_cmds.is_empty() {
+            let extra = canvas_display_items(&self.element_rects, &self.js.canvas_cmds, &self.fonts);
+            self.items.extend(extra);
         }
         self.doc_height = layout_root.dimensions.margin_box().height;
     }

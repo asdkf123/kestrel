@@ -111,6 +111,24 @@ pub struct Instance {
     pub fields: RefCell<HashMap<String, Value>>,
 }
 
+// canvas 2D 컨텍스트 메서드
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CanvasMethod {
+    FillRect,
+    ClearRect,
+    StrokeRect,
+    BeginPath,
+    MoveTo,
+    LineTo,
+    Arc,
+    Rect,
+    ClosePath,
+    Fill,
+    Stroke,
+    FillText,
+    Noop, // save/restore/scale/translate/setTransform 등 (근사로 무시)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Native {
     ConsoleLog,
@@ -182,6 +200,8 @@ pub enum Native {
     DomContains,
     CreateDocumentFragment,
     ProxyCtor,
+    CanvasGetContext,
+    Canvas(CanvasMethod),
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -420,6 +440,16 @@ enum Flow {
 
 // ── 인터프리터 ────────────────────────────────────────────────────
 
+// <canvas> 2D 그리기 명령 (캔버스 좌표계). 호스트가 박스로 매핑해 렌더.
+#[derive(Clone, Debug)]
+pub enum CanvasOp {
+    FillRect { x: f32, y: f32, w: f32, h: f32, color: crate::css::Color },
+    ClearRect { x: f32, y: f32, w: f32, h: f32 },
+    StrokeRect { x: f32, y: f32, w: f32, h: f32, color: crate::css::Color, lw: f32 },
+    FillPath { pts: Vec<(f32, f32)>, color: crate::css::Color },
+    FillText { text: String, x: f32, y: f32, color: crate::css::Color, px: f32 },
+}
+
 pub struct Interp {
     pub global: EnvRef,
     pub console: Vec<String>, // console.log 캡처 (호출측이 터미널에 출력)
@@ -433,6 +463,8 @@ pub struct Interp {
     pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
     // 제너레이터 호출 스택별 yield 값 수집기 (eager). Expr::Yield 가 top 에 쌓는다.
     yield_sink: Vec<Vec<Value>>,
+    // <canvas> 2D 그리기 명령 (NodeId → ops). 호스트가 렌더 시 DisplayItem 으로 변환.
+    pub canvas_cmds: std::collections::HashMap<crate::dom::NodeId, Vec<CanvasOp>>,
     // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
     pub global_handlers: Vec<(String, Value)>,
     // Math.random 용 xorshift 상태
@@ -693,6 +725,7 @@ impl Interp {
             handlers: Vec::new(),
             layout_rects: std::collections::HashMap::new(),
             yield_sink: Vec::new(),
+            canvas_cmds: std::collections::HashMap::new(),
             global_handlers: Vec::new(),
             rng: seed,
             thrown: None,
@@ -2071,6 +2104,7 @@ impl Interp {
                     "matches" => Some(Native::Matches),
                     "closest" => Some(Native::Closest),
                     "contains" => Some(Native::DomContains),
+                    "getContext" => Some(Native::CanvasGetContext),
                     _ => None,
                 };
                 if let Some(n) = native {
@@ -3101,6 +3135,31 @@ mod tests {
             .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
             .unwrap();
         assert_eq!(to_display(&o), "100,50,10,20");
+    }
+
+    #[test]
+    fn canvas_2d_records_ops() {
+        let mut dom = crate::html::parse_dom("<canvas id=\"c\" width=\"100\" height=\"50\"></canvas>".to_string());
+        let cid = dom.find_by_attr_id("c").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        interp
+            .run(
+                "var ctx = document.getElementById('c').getContext('2d'); \
+                 ctx.fillStyle = '#ff0000'; ctx.fillRect(10, 20, 30, 40); \
+                 ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(50,0); ctx.lineTo(0,50); ctx.fill();",
+            )
+            .unwrap();
+        let ops = interp.canvas_cmds.get(&cid).expect("canvas ops");
+        assert_eq!(ops.len(), 2, "fillRect + fillPath");
+        match &ops[0] {
+            CanvasOp::FillRect { x, y, w, h, color } => {
+                assert_eq!((*x, *y, *w, *h), (10.0, 20.0, 30.0, 40.0));
+                assert_eq!(*color, crate::css::Color { r: 255, g: 0, b: 0, a: 255 });
+            }
+            other => panic!("expected FillRect, got {:?}", other),
+        }
+        assert!(matches!(&ops[1], CanvasOp::FillPath { pts, .. } if pts.len() == 3));
     }
 
     #[test]

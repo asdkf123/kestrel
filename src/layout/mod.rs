@@ -177,6 +177,25 @@ impl<'a> LayoutBox<'a> {
                 self.layout_input(containing_block, fonts);
                 return;
             }
+            if e.tag_name == "canvas" {
+                // 대체 요소: 크기 = CSS/HTML width·height > 기본 300x150. 내용은 JS 가 그림.
+                self.calculate_position(containing_block);
+                let cbw = containing_block.content.width;
+                let dim = |css: &str, attr: &str, deflt: f32| -> f32 {
+                    if let Some(v) = self.styled_node.value(css) {
+                        if !matches!(v, Value::Keyword(_)) {
+                            return len_px(v, cbw).to_px();
+                        }
+                    }
+                    e.attributes
+                        .get(attr)
+                        .and_then(|s| s.trim().trim_end_matches("px").parse::<f32>().ok())
+                        .unwrap_or(deflt)
+                };
+                self.dimensions.content.width = dim("width", "width", 300.0);
+                self.dimensions.content.height = dim("height", "height", 150.0);
+                return;
+            }
             if e.tag_name == "svg" {
                 self.calculate_position(containing_block);
                 let cbw = containing_block.content.width;
