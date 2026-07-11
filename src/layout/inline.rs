@@ -51,6 +51,12 @@ impl<'a> LayoutBox<'a> {
         for node in &self.inline_nodes {
             collect_node(node, base, &mut runs, &mut hrefs);
         }
+        // text-transform (상속 속성): 이 인라인 문맥의 모든 텍스트에 적용
+        if let Some(Value::Keyword(tt)) = self.styled_node.value("text-transform") {
+            for (text, _) in runs.iter_mut() {
+                *text = apply_text_transform(text, &tt);
+            }
+        }
 
         // 단어 목록 + 각 단어 앞의 강제 개행 여부(pre 의 \n).
         let mut words: Vec<(Vec<(char, TextStyle)>, bool)> = Vec::new();
@@ -201,6 +207,30 @@ impl<'a> LayoutBox<'a> {
         self.dimensions.content.height = lines as f32 * line_height;
         // shrink-to-fit float 용: 가장 긴 줄 폭을 내용 폭으로 노출
         self.used_width = line_bounds.iter().map(|b| b.3).fold(0.0f32, f32::max);
+    }
+}
+
+fn apply_text_transform(s: &str, tt: &str) -> String {
+    match tt {
+        "uppercase" => s.to_uppercase(),
+        "lowercase" => s.to_lowercase(),
+        "capitalize" => {
+            let mut out = String::with_capacity(s.len());
+            let mut at_start = true;
+            for ch in s.chars() {
+                if ch.is_whitespace() {
+                    at_start = true;
+                    out.push(ch);
+                } else if at_start {
+                    out.extend(ch.to_uppercase());
+                    at_start = false;
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        }
+        _ => s.to_string(),
     }
 }
 
