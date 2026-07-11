@@ -75,13 +75,24 @@ impl Canvas {
         }
     }
 
-    // 둥근 사각형 채우기 (모서리 안티에일리어싱). radius 는 물리 px.
+    // 둥근 사각형 채우기 (모서리 안티에일리어싱). radius 는 물리 px, 균일.
     pub fn fill_round_rect(&mut self, color: Color, rect: Rect, radius: f32) {
+        self.fill_round_rect4(color, rect, [radius; 4]);
+    }
+
+    // 네 모서리 반경(물리 px): [top-left, top-right, bottom-right, bottom-left].
+    pub fn fill_round_rect4(&mut self, color: Color, rect: Rect, radii: [f32; 4]) {
         if rect.width <= 0.0 || rect.height <= 0.0 {
             return;
         }
-        let r = radius.min(rect.width / 2.0).min(rect.height / 2.0).max(0.0);
-        if r <= 0.0 {
+        let maxr = (rect.width / 2.0).min(rect.height / 2.0).max(0.0);
+        let r = [
+            radii[0].clamp(0.0, maxr),
+            radii[1].clamp(0.0, maxr),
+            radii[2].clamp(0.0, maxr),
+            radii[3].clamp(0.0, maxr),
+        ];
+        if r.iter().all(|&v| v <= 0.0) {
             self.fill_rect(color, rect);
             return;
         }
@@ -92,18 +103,23 @@ impl Canvas {
         let px1 = (x1.ceil().max(0.0) as usize).min(self.width);
         let py1 = (y1.ceil().max(0.0) as usize).min(self.height);
         let clamp01 = |v: f32| v.clamp(0.0, 1.0);
+        // 코너 중심까지 거리로 커버리지 (0.5 는 픽셀 중심 보정)
+        let corner = |fx: f32, fy: f32, ncx: f32, ncy: f32, rr: f32| {
+            clamp01(rr - ((fx - ncx).powi(2) + (fy - ncy).powi(2)).sqrt() + 0.5)
+        };
         for py in py0..py1 {
             let fy = py as f32 + 0.5;
             for px in px0..px1 {
                 let fx = px as f32 + 0.5;
-                // 모서리 밴드(양축 모두 반경 안)면 코너 중심까지 거리로 커버리지,
-                // 아니면 직선 변 안티에일리어싱.
-                let in_x = fx < x0 + r || fx > x1 - r;
-                let in_y = fy < y0 + r || fy > y1 - r;
-                let cov = if in_x && in_y {
-                    let ncx = if fx < x0 + r { x0 + r } else { x1 - r };
-                    let ncy = if fy < y0 + r { y0 + r } else { y1 - r };
-                    clamp01(r - ((fx - ncx).powi(2) + (fy - ncy).powi(2)).sqrt() + 0.5)
+                // 각 모서리는 자기 반경으로 밴드/커버리지 판정 (r=0 코너는 직각)
+                let cov = if fx < x0 + r[0] && fy < y0 + r[0] {
+                    corner(fx, fy, x0 + r[0], y0 + r[0], r[0])
+                } else if fx > x1 - r[1] && fy < y0 + r[1] {
+                    corner(fx, fy, x1 - r[1], y0 + r[1], r[1])
+                } else if fx > x1 - r[2] && fy > y1 - r[2] {
+                    corner(fx, fy, x1 - r[2], y1 - r[2], r[2])
+                } else if fx < x0 + r[3] && fy > y1 - r[3] {
+                    corner(fx, fy, x0 + r[3], y1 - r[3], r[3])
                 } else {
                     let cx = clamp01(fx - x0 + 0.5).min(clamp01(x1 - fx + 0.5));
                     let cy = clamp01(fy - y0 + 0.5).min(clamp01(y1 - fy + 0.5));
@@ -112,8 +128,7 @@ impl Canvas {
                 if cov <= 0.0 {
                     continue;
                 }
-                // 색의 알파를 엣지 커버리지와 곱한다. 이걸 빼먹으면
-                // rgba(0,0,0,0)/반투명 오버레이가 불투명 검정으로 칠해진다.
+                // 색의 알파를 엣지 커버리지와 곱한다 (반투명 오버레이 정확도).
                 let a = (cov * (color.a as f32 / 255.0) * 255.0).round() as u8;
                 if a == 0 {
                     continue;
@@ -468,7 +483,7 @@ fn parse_bg_position(s: &str) -> (BgCoord, BgCoord) {
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
-    RoundRect { color: Color, rect: Rect, radius: f32 },
+    RoundRect { color: Color, rect: Rect, radii: [f32; 4] },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
     InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
@@ -520,16 +535,33 @@ fn emit_borders(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     }
 }
 
-// 균일 border-radius (물리 아님, 논리 px). 퍼센트는 박스 짧은 변 기준.
+// 균일 border-radius (논리 px). 퍼센트는 박스 짧은 변 기준. box-shadow 등 균일
+// 근사가 필요한 곳에서 사용 (네 모서리 중 최대).
 fn uniform_radius(lb: &LayoutBox) -> f32 {
-    let b = lb.dimensions.border_box();
-    match lb.styled_node.value("border-radius") {
-        Some(Value::Length(v, crate::css::Unit::Px)) => v.max(0.0),
-        Some(Value::Length(v, crate::css::Unit::Percent)) => {
-            v / 100.0 * b.width.min(b.height)
-        }
-        _ => 0.0,
+    corner_radii(lb).into_iter().fold(0.0, f32::max)
+}
+
+// 한 반경 속성(px/%) 을 논리 px 로. 짧은 변 기준 퍼센트.
+fn radius_prop(lb: &LayoutBox, name: &str, short: f32) -> Option<f32> {
+    match lb.styled_node.value(name) {
+        Some(Value::Length(v, crate::css::Unit::Px)) => Some(v.max(0.0)),
+        Some(Value::Length(v, crate::css::Unit::Percent)) => Some(v / 100.0 * short),
+        _ => None,
     }
+}
+
+// 네 모서리 반경(논리 px): [top-left, top-right, bottom-right, bottom-left].
+// 개별 longhand(border-top-left-radius 등) 우선, 없으면 border-radius 로 폴백.
+fn corner_radii(lb: &LayoutBox) -> [f32; 4] {
+    let b = lb.dimensions.border_box();
+    let short = b.width.min(b.height);
+    let base = radius_prop(lb, "border-radius", short).unwrap_or(0.0);
+    [
+        radius_prop(lb, "border-top-left-radius", short).unwrap_or(base),
+        radius_prop(lb, "border-top-right-radius", short).unwrap_or(base),
+        radius_prop(lb, "border-bottom-right-radius", short).unwrap_or(base),
+        radius_prop(lb, "border-bottom-left-radius", short).unwrap_or(base),
+    ]
 }
 
 // box-shadow(outset) 를 박스 뒤에 발행. rect = border_box + spread, (x,y) 만큼 이동.
@@ -807,7 +839,7 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
                     if w > 0.0 && h > 0.0 {
                         let rect = Rect { x, y, width: w, height: h };
                         if r > 0.0 {
-                            items.push(DisplayItem::RoundRect { color, rect, radius: r });
+                            items.push(DisplayItem::RoundRect { color, rect, radii: [r; 4] });
                         } else {
                             items.push(DisplayItem::Rect { color, rect });
                         }
@@ -819,7 +851,7 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
                     let r = num("r").unwrap_or(0.0);
                     let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
                     let rect = Rect { x: mx(cx - r), y: my(cy - r), width: 2.0 * r * sx, height: 2.0 * r * sy };
-                    items.push(DisplayItem::RoundRect { color, rect, radius: r * sx });
+                    items.push(DisplayItem::RoundRect { color, rect, radii: [r * sx; 4] });
                 }
             }
             "ellipse" => {
@@ -827,7 +859,7 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
                     let (rx, ry) = (num("rx").unwrap_or(0.0), num("ry").unwrap_or(0.0));
                     let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
                     let rect = Rect { x: mx(cx - rx), y: my(cy - ry), width: 2.0 * rx * sx, height: 2.0 * ry * sy };
-                    items.push(DisplayItem::RoundRect { color, rect, radius: rx.min(ry) * sx });
+                    items.push(DisplayItem::RoundRect { color, rect, radii: [rx.min(ry) * sx; 4] });
                 }
             }
             "line" => {
@@ -953,20 +985,21 @@ fn emit_box_decorations(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         && bw.top == bw.left
         && border_side_drawn(lb, "top");
 
+    let radii = corner_radii(lb);
     // 라운드 + 균일 테두리 + 배경: 레이어드로 둥근 테두리
     if r > 0.0 && border_uniform && bg.is_some() {
-        items.push(DisplayItem::RoundRect { color: border_side_color(lb, "top"), rect: b, radius: r });
-        let inner_r = (r - bw.top).max(0.0);
+        items.push(DisplayItem::RoundRect { color: border_side_color(lb, "top"), rect: b, radii });
+        let inner = radii.map(|c| (c - bw.top).max(0.0));
         items.push(DisplayItem::RoundRect {
             color: bg.unwrap(),
             rect: lb.dimensions.padding_box(),
-            radius: inner_r,
+            radii: inner,
         });
         return;
     }
     // 라운드 + 배경(테두리 없음/비균일): 배경만 둥글게, 테두리는 사각으로
     if r > 0.0 && bg.is_some() {
-        items.push(DisplayItem::RoundRect { color: bg.unwrap(), rect: b, radius: r });
+        items.push(DisplayItem::RoundRect { color: bg.unwrap(), rect: b, radii });
         emit_borders(lb, items);
         return;
     }
@@ -1059,8 +1092,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         DisplayItem::Gradient { rect, angle, radial, conic, stops } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, radial, conic, stops })
         }
-        DisplayItem::RoundRect { color, rect, radius } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radius })
+        DisplayItem::RoundRect { color, rect, radii } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radii })
         }
         DisplayItem::Polygon { color, contours } => {
             // bbox 로 컬링만 (윤곽 좌표는 유지)
@@ -1530,12 +1563,12 @@ fn draw_item(
             }
             canvas.fill_rect(*color, r);
         }
-        DisplayItem::RoundRect { color, rect, radius } => {
+        DisplayItem::RoundRect { color, rect, radii } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
-            canvas.fill_round_rect(*color, r, radius * scale);
+            canvas.fill_round_rect4(*color, r, radii.map(|c| c * scale));
         }
         DisplayItem::Shadow { color, rect, radius, blur } => {
             let r = scale_rect(rect);
@@ -1779,6 +1812,19 @@ mod tests {
         let (x, y) = parse_bg_position("top left");
         assert_eq!(x.resolve(100.0, 20.0), 0.0);
         assert_eq!(y.resolve(100.0, 20.0), 0.0);
+    }
+
+    #[test]
+    fn round_rect4_per_corner() {
+        // TL 만 반경 8, 나머지 직각 → TL 코너만 비고 나머지 코너는 채워짐
+        let mut c = Canvas::new(20, 20);
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        c.fill_round_rect4(red, Rect { x: 0.0, y: 0.0, width: 20.0, height: 20.0 }, [8.0, 0.0, 0.0, 0.0]);
+        assert_eq!(c.pixels[0], white, "TL(0,0) 둥글어 비어야");
+        assert_eq!(c.pixels[19], red, "TR(19,0) 직각이라 채워짐");
+        assert_eq!(c.pixels[19 * 20], red, "BL(0,19) 직각");
+        assert_eq!(c.pixels[19 * 20 + 19], red, "BR(19,19) 직각");
     }
 
     #[test]

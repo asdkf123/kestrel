@@ -58,13 +58,32 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-width" => box_shorthand("border", "-width", value_text),
         "border-color" => box_shorthand("border", "-color", value_text),
         "border-style" => box_shorthand("border", "-style", value_text),
-        // border-radius: 첫 토큰만 균일 반경으로 (다중/타원 반경은 근사)
-        "border-radius" => match value_text.split_whitespace().next().and_then(interpret_value) {
-            Some(v @ Value::Length(..)) => {
-                vec![Declaration { name: "border-radius".to_string(), value: v }]
+        // border-radius: 1~4 값 → 네 모서리 longhand. 슬래시 뒤 세로 반경은 근사로 무시.
+        "border-radius" => {
+            let hpart = value_text.split('/').next().unwrap_or(value_text);
+            let toks: Vec<Value> = hpart
+                .split_whitespace()
+                .filter_map(interpret_value)
+                .filter(|v| matches!(v, Value::Length(..)))
+                .collect();
+            if toks.is_empty() {
+                return Vec::new();
             }
-            _ => Vec::new(),
-        },
+            let (tl, tr, br, bl) = match toks.len() {
+                1 => (toks[0].clone(), toks[0].clone(), toks[0].clone(), toks[0].clone()),
+                2 => (toks[0].clone(), toks[1].clone(), toks[0].clone(), toks[1].clone()),
+                3 => (toks[0].clone(), toks[1].clone(), toks[2].clone(), toks[1].clone()),
+                _ => (toks[0].clone(), toks[1].clone(), toks[2].clone(), toks[3].clone()),
+            };
+            vec![
+                Declaration { name: "border-top-left-radius".to_string(), value: tl.clone() },
+                Declaration { name: "border-top-right-radius".to_string(), value: tr },
+                Declaration { name: "border-bottom-right-radius".to_string(), value: br },
+                Declaration { name: "border-bottom-left-radius".to_string(), value: bl },
+                // box-shadow 등 균일 근사용으로 border-radius 도 남긴다 (첫 값).
+                Declaration { name: "border-radius".to_string(), value: tl },
+            ]
+        }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         "z-index" => match value_text.trim().parse::<f32>() {
             Ok(n) => vec![Declaration { name: "z-index".to_string(), value: Value::Length(n, Unit::Px) }],
@@ -632,6 +651,30 @@ mod tests {
             matches!(find(&d, "background-position"), Some(Value::Keyword(k)) if k == "center"),
             "position center"
         );
+    }
+
+    #[test]
+    fn border_radius_expands_to_four_corners() {
+        // "8px 4px 2px 1px" → TL/TR/BR/BL
+        let d = expand_declaration("border-radius", "8px 4px 2px 1px");
+        let px = |name: &str| match find(&d, name) {
+            Some(Value::Length(v, _)) => *v,
+            _ => -1.0,
+        };
+        assert_eq!(px("border-top-left-radius"), 8.0);
+        assert_eq!(px("border-top-right-radius"), 4.0);
+        assert_eq!(px("border-bottom-right-radius"), 2.0);
+        assert_eq!(px("border-bottom-left-radius"), 1.0);
+        // 2값: TL/BR = 첫째, TR/BL = 둘째
+        let d2 = expand_declaration("border-radius", "10px 20px");
+        let px2 = |name: &str| match find(&d2, name) {
+            Some(Value::Length(v, _)) => *v,
+            _ => -1.0,
+        };
+        assert_eq!(px2("border-top-left-radius"), 10.0);
+        assert_eq!(px2("border-top-right-radius"), 20.0);
+        assert_eq!(px2("border-bottom-right-radius"), 10.0);
+        assert_eq!(px2("border-bottom-left-radius"), 20.0);
     }
 
     #[test]
