@@ -1589,15 +1589,40 @@ impl Interp {
             Native::ParseInt => {
                 let s = args.first().map(to_display).unwrap_or_default();
                 let t = s.trim();
-                let (neg, t) = match t.strip_prefix('-') {
+                let (neg, mut body) = match t.strip_prefix('-') {
                     Some(rest) => (true, rest),
                     None => (false, t.strip_prefix('+').unwrap_or(t)),
                 };
-                let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
-                Ok(match digits.parse::<f64>() {
-                    Ok(n) => Value::Num(if neg { -n } else { n }),
-                    Err(_) => Value::Num(f64::NAN),
-                })
+                // radix: 인자 있으면 사용, 0/미지정이면 자동(0x→16, 아니면 10)
+                let mut radix = args.get(1).map(|v| to_num(v) as i64).unwrap_or(0);
+                if (radix == 16 || radix == 0)
+                    && (body.starts_with("0x") || body.starts_with("0X"))
+                {
+                    body = &body[2..];
+                    radix = 16;
+                }
+                if radix == 0 {
+                    radix = 10;
+                }
+                if !(2..=36).contains(&radix) {
+                    return Ok(Value::Num(f64::NAN));
+                }
+                // 자리별 f64 누적 (오버플로 없이 임의 길이, JS 동일 근사)
+                let mut val = 0.0f64;
+                let mut any = false;
+                for c in body.chars() {
+                    match c.to_digit(radix as u32) {
+                        Some(d) => {
+                            val = val * radix as f64 + d as f64;
+                            any = true;
+                        }
+                        None => break,
+                    }
+                }
+                if !any {
+                    return Ok(Value::Num(f64::NAN));
+                }
+                Ok(Value::Num(if neg { -val } else { val }))
             }
             Native::ParseFloat => {
                 let s = args.first().map(to_display).unwrap_or_default();

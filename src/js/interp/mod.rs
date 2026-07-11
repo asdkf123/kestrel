@@ -3651,6 +3651,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_int_with_radix() {
+        assert_eq!(run_num("parseInt('0xFF', 16)"), 255.0);
+        assert_eq!(run_num("parseInt('FF', 16)"), 255.0);
+        assert_eq!(run_num("parseInt('101', 2)"), 5.0);
+        assert_eq!(run_num("parseInt('0xff')"), 255.0); // 자동 감지
+        assert_eq!(run_num("parseInt('42px')"), 42.0); // 접미 무시
+        assert_eq!(run_num("parseInt('z', 36)"), 35.0);
+    }
+
+    #[test]
     fn math_extended_methods() {
         assert_eq!(run_num("Math.trunc(4.7)"), 4.0);
         assert_eq!(run_num("Math.sign(-3)"), -1.0);
