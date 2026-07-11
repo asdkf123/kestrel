@@ -142,6 +142,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // counter-reset/counter-increment: 원문 보존 ("name [n] ..."). 카운터 처리기가 파싱.
+        "counter-reset" | "counter-increment" | "counter-set" => {
+            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // aspect-ratio: "w / h" 또는 단일 수 → 비율(w/h)을 Length(r, Px)로 저장.
         "aspect-ratio" => {
             let v = value_text.trim();

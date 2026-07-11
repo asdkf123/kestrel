@@ -547,7 +547,8 @@ pub fn generate_pseudo_elements(dom: &mut Dom, sheet: &Stylesheet) -> PseudoStyl
     let mut plans: Vec<(NodeId, PseudoElement, PropertyMap)> = Vec::new();
     {
         let mut ancestors: Vec<&ElementData> = Vec::new();
-        collect_pseudo_plans(dom, dom.root, &index, &mut ancestors, &SiblingCtx::default(), &mut plans);
+        let mut counters: HashMap<String, i32> = HashMap::new();
+        collect_pseudo_plans(dom, dom.root, &index, &mut ancestors, &SiblingCtx::default(), &mut plans, &mut counters);
     }
     let mut map = HashMap::new();
     for (owner, which, mut vals) in plans {
@@ -576,6 +577,7 @@ pub fn generate_pseudo_elements(dom: &mut Dom, sheet: &Stylesheet) -> PseudoStyl
 }
 
 // style_node 구조 순회를 미러링하며 각 요소의 ::before/::after 명시값을 수집.
+#[allow(clippy::too_many_arguments)]
 fn collect_pseudo_plans<'a>(
     dom: &'a Dom,
     id: NodeId,
@@ -583,13 +585,29 @@ fn collect_pseudo_plans<'a>(
     ancestors: &mut Vec<&'a ElementData>,
     sib: &SiblingCtx,
     out: &mut Vec<(NodeId, PseudoElement, PropertyMap)>,
+    counters: &mut HashMap<String, i32>,
 ) {
     let node = dom.get(id);
     let NodeType::Element(ref elem) = node.node_type else {
         return;
     };
+    // 요소 자신의 counter-reset/increment 를 문서 순서로 적용 (::before content 전)
+    let evals = specified_values(elem, ancestors, sib, index);
+    if let Some(Value::Keyword(r)) = evals.get("counter-reset") {
+        apply_counter_op(r, counters, true);
+    }
+    if let Some(Value::Keyword(inc)) = evals.get("counter-increment") {
+        apply_counter_op(inc, counters, false);
+    }
     for which in [PseudoElement::Before, PseudoElement::After] {
-        let vals = pseudo_specified_values(elem, ancestors, sib, index, which);
+        let mut vals = pseudo_specified_values(elem, ancestors, sib, index, which);
+        // content 의 counter()/counters() 를 현재 값으로 치환
+        if let Some(Value::Keyword(c)) = vals.get("content") {
+            if c.contains("counter(") || c.contains("counters(") {
+                let resolved = resolve_counters(c, counters);
+                vals.insert("content".to_string(), Value::Keyword(resolved));
+            }
+        }
         if vals.contains_key("content") {
             out.push((id, which, vals));
         }
@@ -624,11 +642,59 @@ fn collect_pseudo_plans<'a>(
                 prev: &prev_elems,
                 has_children,
             };
-            collect_pseudo_plans(dom, child, index, ancestors, &csib, out);
+            collect_pseudo_plans(dom, child, index, ancestors, &csib, out, counters);
             prev_elems.push(ce);
         }
     }
     ancestors.pop();
+}
+
+// counter-reset/increment 값 적용. reset=true 면 지정값(기본 0)으로 설정, 아니면 증가(기본 1).
+// 구문: "name [n] name2 [n2] ..." (플랫 근사 — 중첩 스코프 무시).
+fn apply_counter_op(text: &str, counters: &mut HashMap<String, i32>, reset: bool) {
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    let mut i = 0;
+    while i < toks.len() {
+        let name = toks[i].to_string();
+        let num = toks.get(i + 1).and_then(|t| t.parse::<i32>().ok());
+        let step = num.unwrap_or(if reset { 0 } else { 1 });
+        if reset {
+            counters.insert(name, step);
+        } else {
+            *counters.entry(name).or_insert(0) += step;
+        }
+        i += if num.is_some() { 2 } else { 1 };
+    }
+}
+
+// content 의 counter(name[,style]) / counters(name, sep[,style]) 를 현재 카운터 값으로 치환.
+fn resolve_counters(content: &str, counters: &HashMap<String, i32>) -> String {
+    let mut out = String::new();
+    let mut rest = content;
+    loop {
+        // 다음 counter( 또는 counters( 위치
+        let pos = ["counters(", "counter("]
+            .iter()
+            .filter_map(|kw| rest.find(kw).map(|p| (p, *kw)))
+            .min_by_key(|(p, _)| *p);
+        let Some((p, kw)) = pos else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..p]);
+        let after = &rest[p + kw.len()..];
+        let Some(close) = after.find(')') else {
+            out.push_str(&rest[p..]);
+            break;
+        };
+        let args = &after[..close];
+        // 첫 인자 = 카운터 이름
+        let name = args.split(',').next().unwrap_or("").trim();
+        let val = counters.get(name).copied().unwrap_or(0);
+        out.push_str(&val.to_string());
+        rest = &after[close + 1..];
+    }
+    out
 }
 
 // parent: 부모 요소의 계산값(상속 원천). 루트는 None. sib: 형제 문맥. vp: 뷰포트 크기.
@@ -871,6 +937,33 @@ mod tests {
             }
         }
         n.children.iter().find_map(find_synthetic)
+    }
+
+    #[test]
+    fn css_counters_number_content() {
+        // section 마다 counter-increment, ::before content: counter(sec) → "1","2","3"
+        let mut dom = crate::html::parse_dom(
+            "<div><section>a</section><section>b</section><section>c</section></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "div { counter-reset: sec; } \
+             section { counter-increment: sec; } \
+             section::before { content: counter(sec); }"
+                .to_string(),
+        );
+        let map = generate_pseudo_elements(&mut dom, &ss);
+        // 3개의 ::before 생성, 텍스트가 1/2/3
+        let mut texts: Vec<String> = map
+            .keys()
+            .filter_map(|&nid| {
+                dom.get(nid).children.first().and_then(|&c| match &dom.get(c).node_type {
+                    NodeType::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+        texts.sort();
+        assert_eq!(texts, vec!["1", "2", "3"], "카운터 번호: {:?}", texts);
     }
 
     #[test]
