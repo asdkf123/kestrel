@@ -377,13 +377,44 @@ const INHERITED: &[&str] = &[
     "cursor",
 ];
 
-pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
-    let index = RuleIndex::build(stylesheet);
-    let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default())
+// 뷰포트 단위(vw/vh/vmin/vmax) 해석용 뷰포트 크기(px).
+#[derive(Clone, Copy)]
+pub struct Viewport {
+    pub w: f32,
+    pub h: f32,
+}
+impl Default for Viewport {
+    fn default() -> Self {
+        Viewport { w: 800.0, h: 600.0 }
+    }
 }
 
-// parent: 부모 요소의 계산값(상속 원천). 루트는 None. sib: 형제 문맥.
+// 뷰포트 단위 1 단위당 px (vw/vh/vmin/vmax). n 은 이미 나눠서 곱해 쓴다.
+fn vp_unit_px(unit: Unit, vp: Viewport) -> f32 {
+    match unit {
+        Unit::Vw => vp.w,
+        Unit::Vh => vp.h,
+        Unit::Vmin => vp.w.min(vp.h),
+        Unit::Vmax => vp.w.max(vp.h),
+        _ => 0.0,
+    }
+}
+
+pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
+    style_tree_vp(dom, stylesheet, Viewport::default())
+}
+
+pub fn style_tree_vp<'a>(
+    dom: &'a Dom,
+    stylesheet: &'a Stylesheet,
+    vp: Viewport,
+) -> StyledNode<'a> {
+    let index = RuleIndex::build(stylesheet);
+    let mut ancestors: Vec<&ElementData> = Vec::new();
+    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp)
+}
+
+// parent: 부모 요소의 계산값(상속 원천). 루트는 None. sib: 형제 문맥. vp: 뷰포트 크기.
 fn style_node<'a>(
     dom: &'a Dom,
     id: NodeId,
@@ -391,6 +422,7 @@ fn style_node<'a>(
     ancestors: &mut Vec<&'a ElementData>,
     parent: Option<&PropertyMap>,
     sib: &SiblingCtx,
+    vp: Viewport,
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
@@ -409,6 +441,9 @@ fn style_node<'a>(
                 Some(Value::Length(n, Unit::Em)) => n * parent_fs,
                 Some(Value::Length(n, Unit::Rem)) => n * DEFAULT_FONT_SIZE,
                 Some(Value::Length(n, Unit::Percent)) => n / 100.0 * parent_fs,
+                Some(Value::Length(n, u @ (Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax))) => {
+                    n / 100.0 * vp_unit_px(*u, vp)
+                }
                 _ => parent_fs, // 미지정/키워드 → 상속
             };
             values.insert("font-size".to_string(), Value::Length(fs, Unit::Px));
@@ -477,6 +512,9 @@ fn style_node<'a>(
                     match unit {
                         Unit::Em => *v = Value::Length(*n * fs, Unit::Px),
                         Unit::Rem => *v = Value::Length(*n * DEFAULT_FONT_SIZE, Unit::Px),
+                        Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax => {
+                            *v = Value::Length(*n / 100.0 * vp_unit_px(*unit, vp), Unit::Px)
+                        }
                         _ => {}
                     }
                 }
@@ -497,7 +535,7 @@ fn style_node<'a>(
                     let idx = prev_elems.len() + 1;
                     let has_children = !dom.get(child).children.is_empty();
                     let csib = SiblingCtx { index: idx, total, prev: &prev_elems, has_children };
-                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib));
+                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp));
                     prev_elems.push(ce);
                 } else {
                     children.push(style_node(
@@ -507,6 +545,7 @@ fn style_node<'a>(
                         ancestors,
                         Some(&values),
                         &SiblingCtx::default(),
+                        vp,
                     ));
                 }
             }
@@ -521,7 +560,7 @@ fn style_node<'a>(
                 .children
                 .iter()
                 .map(|&child| {
-                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default())
+                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp)
                 })
                 .collect(),
         },
@@ -684,6 +723,20 @@ mod tests {
         let root3 = crate::html::parse_dom("<span></span>".to_string());
         let ss3 = crate::css::parse("span { display: inline; }".to_string());
         assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
+    }
+
+    #[test]
+    fn viewport_units_resolve_against_viewport() {
+        let root = crate::html::parse_dom("<div></div>".to_string());
+        let ss = crate::css::parse(
+            "div { width: 50vw; height: 100vh; padding-left: 10vmin; }".to_string(),
+        );
+        // 뷰포트 1000 x 600
+        let styled = style_tree_vp(&root, &ss, Viewport { w: 1000.0, h: 600.0 });
+        assert_eq!(styled.value("width"), Some(Value::Length(500.0, Unit::Px)));
+        assert_eq!(styled.value("height"), Some(Value::Length(600.0, Unit::Px)));
+        // vmin = min(1000,600)=600 → 10vmin = 60px
+        assert_eq!(styled.value("padding-left"), Some(Value::Length(60.0, Unit::Px)));
     }
 
     #[test]

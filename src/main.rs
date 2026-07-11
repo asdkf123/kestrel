@@ -118,6 +118,7 @@ fn main() {
         js: js_rt,
         url: base,
         viewport_width: viewport_width as f32,
+        viewport_height: viewport_height as f32,
         items: Vec::new(),
         links: Vec::new(),
         element_rects: Vec::new(),
@@ -340,6 +341,7 @@ fn build_page(url: &str) -> Option<window::Page> {
     // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침.
     // 저작자 CSS 는 실제 뷰포트 폭으로 파싱해 @media 를 평가한다.
     let page_vw = 1000.0f32;
+    let page_vh = 800.0f32; // vh 단위 해석용 기본 뷰포트 높이
     let mut sheet = css::user_agent_stylesheet();
     let mut hrefs = Vec::new();
     collect_links(&dom, &mut hrefs);
@@ -384,6 +386,7 @@ fn build_page(url: &str) -> Option<window::Page> {
         js: js_rt,
         url: base,
         viewport_width: page_vw,
+        viewport_height: page_vh,
         items: Vec::new(),
         links: Vec::new(),
         element_rects: Vec::new(),

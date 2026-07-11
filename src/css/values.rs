@@ -39,6 +39,15 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         || (bytes[0] == b'-' && bytes.len() > 1 && (bytes[1].is_ascii_digit() || bytes[1] == b'.'));
     if numeric_start {
         let lower_num = text.to_ascii_lowercase();
+        // 뷰포트 단위 — 절대 단위보다 먼저 (vmin 이 "in" 접미사에 먼저 걸리지 않도록).
+        // 스타일 계산 시 뷰포트 크기로 px 확정.
+        for (suffix, unit) in
+            [("vmin", Unit::Vmin), ("vmax", Unit::Vmax), ("vw", Unit::Vw), ("vh", Unit::Vh)]
+        {
+            if let Some(num) = lower_num.strip_suffix(suffix) {
+                return num.trim().parse::<f32>().ok().map(|f| Value::Length(f, unit));
+            }
+        }
         // 절대 단위 → px 즉시 변환 (문맥 불필요). 1px=1/96in, 1pt=1/72in, 1pc=12pt.
         for (suffix, factor) in [
             ("px", 1.0f32),

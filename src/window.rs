@@ -24,6 +24,7 @@ pub struct Page {
     pub js: crate::js::interp::Interp,
     pub url: crate::url::Url,
     pub viewport_width: f32,
+    pub viewport_height: f32,
     // ── rebuild() 산출물 ──
     pub items: Vec<DisplayItem>,
     pub links: Vec<(Rect, String)>,
@@ -50,7 +51,8 @@ fn urlencode(s: &str) -> String {
 
 impl Page {
     pub fn rebuild(&mut self) {
-        let style_root = crate::style::style_tree(&self.dom, &self.sheet);
+        let vp = crate::style::Viewport { w: self.viewport_width, h: self.viewport_height };
+        let style_root = crate::style::style_tree_vp(&self.dom, &self.sheet, vp);
         let mut viewport: crate::layout::Dimensions = Default::default();
         viewport.content.width = self.viewport_width;
         let layout_root =
@@ -645,6 +647,7 @@ mod tests {
             js,
             url: crate::url::Url::parse("https://localhost/").unwrap(),
             viewport_width: 400.0,
+            viewport_height: 600.0,
             items: Vec::new(),
             links: Vec::new(),
             element_rects: Vec::new(),

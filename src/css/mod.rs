@@ -101,6 +101,10 @@ pub enum Unit {
     Em,      // 부모 font-size 배수
     Rem,     // 루트 font-size 배수
     Percent, // 문맥 의존 (현재 font-size 에서만 해석)
+    Vw,      // 뷰포트 폭 1%
+    Vh,      // 뷰포트 높이 1%
+    Vmin,    // min(vw, vh)
+    Vmax,    // max(vw, vh)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
