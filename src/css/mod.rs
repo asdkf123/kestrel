@@ -45,7 +45,13 @@ pub enum Pseudo {
     Not(Vec<SimpleSelector>),
     Root,
     Empty,
-    Dynamic, // hover/focus/active/visited 등 — 정적 렌더에선 비매칭
+    // 폼 상태 (요소 속성으로 정적 판별)
+    Checked,  // checkbox/radio[checked], option[selected]
+    Disabled, // 폼 요소[disabled]
+    Enabled,  // 폼 요소 && !disabled
+    Required, // 폼 필드[required]
+    Optional, // 폼 필드 && !required
+    Dynamic,  // hover/focus/active/visited 등 — 정적 렌더에선 비매칭
 }
 
 // 속성 선택자 연산자.
@@ -593,6 +599,11 @@ impl Parser {
             "last-of-type" => Pseudo::LastChild,
             "root" => Pseudo::Root,
             "empty" => Pseudo::Empty,
+            "checked" => Pseudo::Checked,
+            "disabled" => Pseudo::Disabled,
+            "enabled" => Pseudo::Enabled,
+            "required" => Pseudo::Required,
+            "optional" => Pseudo::Optional,
             // 상호작용/링크 상태 → 정적 렌더에선 비매칭
             _ => Pseudo::Dynamic,
         })

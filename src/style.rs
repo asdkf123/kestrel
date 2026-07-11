@@ -209,7 +209,29 @@ fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&Sibli
                 diff % a == 0 && diff / a >= 0
             }
         }
+        // 폼 상태: 요소 속성으로 정적 판별
+        Pseudo::Checked => {
+            let has = |a: &str| elem.attributes.get(a).is_some();
+            has("checked") || has("selected")
+        }
+        Pseudo::Disabled => elem.attributes.get("disabled").is_some(),
+        Pseudo::Enabled => is_form_element(elem) && elem.attributes.get("disabled").is_none(),
+        Pseudo::Required => elem.attributes.get("required").is_some(),
+        Pseudo::Optional => is_form_field(elem) && elem.attributes.get("required").is_none(),
     }
+}
+
+// disabled/enabled 대상이 되는 폼 요소
+fn is_form_element(elem: &ElementData) -> bool {
+    matches!(
+        elem.tag_name.as_str(),
+        "input" | "button" | "select" | "textarea" | "option" | "optgroup" | "fieldset"
+    )
+}
+
+// required/optional 대상이 되는 폼 필드
+fn is_form_field(elem: &ElementData) -> bool {
+    matches!(elem.tag_name.as_str(), "input" | "select" | "textarea")
 }
 
 type MatchedRule<'a> = (Specificity, &'a Rule);
@@ -756,6 +778,37 @@ mod tests {
         // ::before 는 소유 div 의 첫 자식 (span 앞)
         let div = &styled;
         assert!(matches!(&div.children[0].node.node_type, NodeType::Element(e) if is_synthetic_pseudo(e)));
+    }
+
+    #[test]
+    fn form_state_pseudo_classes() {
+        let root = crate::html::parse_dom(
+            "<form><input required checked><input disabled></form>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "input:checked { color: #ff0000; } input:disabled { color: #00ff00; } \
+             input:required { width: 5px; }"
+                .to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        fn collect_inputs<'a>(n: &'a StyledNode<'a>, out: &mut Vec<&'a StyledNode<'a>>) {
+            if matches!(&n.node.node_type, NodeType::Element(e) if e.tag_name == "input") {
+                out.push(n);
+            }
+            for c in &n.children {
+                collect_inputs(c, out);
+            }
+        }
+        let mut inputs = Vec::new();
+        collect_inputs(&styled, &mut inputs);
+        assert_eq!(inputs.len(), 2, "input 2개");
+        let first = inputs[0]; // required checked
+        let second = inputs[1]; // disabled
+        assert_eq!(first.value("color"), Some(Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 })), ":checked");
+        assert_eq!(first.value("width"), Some(Value::Length(5.0, Unit::Px)), ":required");
+        assert_eq!(second.value("color"), Some(Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 })), ":disabled");
+        // 첫 입력은 disabled 아님 → :disabled 안 걸림
+        assert_ne!(first.value("color"), Some(Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 })));
     }
 
     #[test]
