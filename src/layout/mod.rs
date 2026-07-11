@@ -1517,6 +1517,25 @@ mod tests {
     }
 
     #[test]
+    fn word_break_wraps_long_word() {
+        let long = "a".repeat(60);
+        // break-all: 긴 단어가 좁은 폭에서 여러 줄로 → 높이 큼
+        let broken = layout_for(
+            &format!("<p>{}</p>", long),
+            "p { display: block; width: 60px; word-break: break-all; font-size: 16px; }",
+            200.0,
+        );
+        // 미지정: 한 줄로 넘침 → 높이 작음(1줄)
+        let overflow = layout_for(
+            &format!("<p>{}</p>", long),
+            "p { display: block; width: 60px; font-size: 16px; }",
+            200.0,
+        );
+        assert!(broken.content.height > overflow.content.height + 1.0,
+            "break-all 이 여러 줄로 나눠 더 높아야 ({} > {})", broken.content.height, overflow.content.height);
+    }
+
+    #[test]
     fn text_indent_offsets_first_line() {
         let fs = fonts();
         let root = crate::html::parse_dom("<p>hello</p>".to_string());

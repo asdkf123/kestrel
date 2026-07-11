@@ -73,13 +73,14 @@ impl<'a> LayoutBox<'a> {
             }
         }
 
-        // 단어 목록 + 각 단어 앞의 강제 개행 여부(pre 의 \n).
-        let mut words: Vec<(Vec<(char, TextStyle)>, bool)> = Vec::new();
+        // 단어 목록: (글자들, 앞의 강제 개행, 뒤에 공백 없음=glue). glue 는 break-word 로
+        // 쪼갠 조각을 붙이기 위한 것 (일반 단어는 false).
+        let mut words: Vec<(Vec<(char, TextStyle)>, bool, bool)> = Vec::new();
         let mut cur: Vec<(char, TextStyle)> = Vec::new();
         let mut break_before = false; // 다음에 확정될 단어 앞에 강제 개행
         let flush = |cur: &mut Vec<(char, TextStyle)>, words: &mut Vec<_>, brk: &mut bool| {
             if !cur.is_empty() {
-                words.push((std::mem::take(cur), *brk));
+                words.push((std::mem::take(cur), *brk, false));
                 *brk = false;
             }
         };
@@ -132,6 +133,42 @@ impl<'a> LayoutBox<'a> {
 
         let content_x = self.dimensions.content.x;
         let content_w = self.dimensions.content.width;
+        // word-break: break-all / overflow-wrap: break-word|anywhere → 내용폭보다 긴
+        // 단어를 글자 단위로 쪼갠다 (긴 URL/토큰 넘침 방지). 상속 속성이 아니라 이 문맥값.
+        let break_word = matches!(self.styled_node.value("word-break"),
+            Some(Value::Keyword(ref k)) if k == "break-all" || k == "break-word" || k == "anywhere")
+            || matches!(self.styled_node.value("overflow-wrap"),
+                Some(Value::Keyword(ref k)) if k == "break-word" || k == "anywhere")
+            || matches!(self.styled_node.value("word-wrap"),
+                Some(Value::Keyword(ref k)) if k == "break-word");
+        if break_word && can_wrap && content_w > 1.0 {
+            let mut split: Vec<(Vec<(char, TextStyle)>, bool, bool)> = Vec::new();
+            for (word, brk, glue) in words.drain(..) {
+                let ww: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
+                if ww <= content_w {
+                    split.push((word, brk, glue));
+                    continue;
+                }
+                // 내용폭 단위로 글자를 나눠 여러 조각으로. 조각 사이는 glue=true(공백 없음),
+                // 마지막 조각만 원래 glue 계승, 첫 조각만 원래 강제개행 계승.
+                let mut pieces: Vec<Vec<(char, TextStyle)>> = vec![Vec::new()];
+                let mut pw = 0.0f32;
+                for (ch, st) in word {
+                    let cw = resolve(ch, st.px).2 + letter_spacing;
+                    if !pieces.last().unwrap().is_empty() && pw + cw > content_w {
+                        pieces.push(Vec::new());
+                        pw = 0.0;
+                    }
+                    pieces.last_mut().unwrap().push((ch, st));
+                    pw += cw;
+                }
+                let last = pieces.len() - 1;
+                for (i, piece) in pieces.into_iter().enumerate() {
+                    split.push((piece, i == 0 && brk, if i == last { glue } else { true }));
+                }
+            }
+            words = split;
+        }
         // float 컨텍스트: 줄이 밴드 안(baseline-ascent < 하단)이면 float 을 피해 좌우 축소.
         let fctx = self.float_ctx;
         let line_range = |baseline: f32| -> (f32, f32) {
@@ -157,7 +194,7 @@ impl<'a> LayoutBox<'a> {
         // 줄별 시작 인덱스 + 폭 (center/right 정렬 후처리용): (glyph, link, deco, width)
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
 
-        for (word, force_break) in &words {
+        for (word, force_break, glue) in &words {
             let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
             let need_wrap = can_wrap && pen_x > line_left && pen_x + word_w > line_right;
             if *force_break || need_wrap {
@@ -220,7 +257,10 @@ impl<'a> LayoutBox<'a> {
                 }
             }
             line_bounds.last_mut().unwrap().3 = pen_x - content_x; // 줄 폭 (trailing space 제외)
-            pen_x += space_adv;
+            // glue(break-word 조각)면 다음 조각을 공백 없이 붙인다
+            if !*glue {
+                pen_x += space_adv;
+            }
         }
 
         // center/right 정렬: 줄마다 남는 폭만큼 그 줄의 글리프/링크/밑줄을 이동
