@@ -302,7 +302,8 @@ fn style_node<'a>(
                     values.insert("text-align".to_string(), Value::Keyword(a));
                 }
             }
-            // 상속: 상속 속성이 명시 안 됐으면 부모 계산값 복사
+            // 상속: 상속 속성이 명시 안 됐으면 부모 계산값 복사.
+            // 커스텀 프로퍼티(--*)도 전부 상속 (테마 토큰이 하위로 흐름).
             if let Some(p) = parent {
                 for &name in INHERITED {
                     if !values.contains_key(name) {
@@ -310,6 +311,33 @@ fn style_node<'a>(
                             values.insert(name.to_string(), v.clone());
                         }
                     }
+                }
+                for (k, v) in p {
+                    if k.starts_with("--") && !values.contains_key(k) {
+                        values.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            // var() 해석: 계산된 커스텀 프로퍼티로 치환 후 재파싱.
+            let custom: HashMap<String, String> = values
+                .iter()
+                .filter(|(k, _)| k.starts_with("--"))
+                .filter_map(|(k, v)| match v {
+                    Value::Keyword(s) => Some((k.clone(), s.clone())),
+                    _ => None,
+                })
+                .collect();
+            let var_props: Vec<(String, String)> = values
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Var(raw) => Some((k.clone(), raw.clone())),
+                    _ => None,
+                })
+                .collect();
+            for (name, raw) in var_props {
+                values.remove(&name);
+                for decl in crate::css::resolve_var(&name, &raw, &custom) {
+                    values.insert(decl.name, decl.value);
                 }
             }
             // font-size 외 속성의 em/rem 은 아직 미해석 → 드롭 (미지원과 동일: auto 취급).
@@ -539,6 +567,28 @@ mod tests {
             Some(Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 }))
         );
         assert_eq!(styled.value("width"), Some(Value::Length(5.0, Unit::Px)));
+    }
+
+    #[test]
+    fn custom_property_and_var_resolve() {
+        // 커스텀 프로퍼티는 상속되고 var() 로 해석된다 (테마 토큰)
+        let root = crate::html::parse_dom("<div class=\"t\"><p class=\"b\"></p></div>".to_string());
+        let ss = crate::css::parse(".t { --c: #ff0000; } .b { color: var(--c); }".to_string());
+        let styled = style_tree(&root, &ss);
+        let p = &styled.children[0];
+        assert_eq!(
+            p.value("color"),
+            Some(Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 })),
+            "var(--c) 가 상속된 커스텀 프로퍼티로 해석"
+        );
+    }
+
+    #[test]
+    fn var_fallback_when_undefined() {
+        let root = crate::html::parse_dom("<div class=\"b\"></div>".to_string());
+        let ss = crate::css::parse(".b { width: var(--missing, 42px); }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.value("width"), Some(Value::Length(42.0, Unit::Px)), "미정의 → fallback");
     }
 
     #[test]

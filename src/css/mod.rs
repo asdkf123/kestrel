@@ -45,6 +45,8 @@ pub enum Value {
     Length(f32, Unit),
     Color(Color),
     Url(String),
+    // var() 를 포함한 미해석 원문. 스타일 계산 시 커스텀 프로퍼티로 치환 후 재파싱.
+    Var(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -114,6 +116,73 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
     let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0 };
     parser.parse_declarations()
+}
+
+// var() 참조를 커스텀 프로퍼티로 치환 → 재파싱해 확정 선언들을 낸다.
+// custom: 요소의 계산된 커스텀 프로퍼티 맵(--name → 원문 값). 미해석이면 빈 Vec.
+pub(crate) fn resolve_var(
+    name: &str,
+    raw: &str,
+    custom: &std::collections::HashMap<String, String>,
+) -> Vec<Declaration> {
+    let substituted = substitute_var(raw, custom, 0);
+    if substituted.contains("var(") {
+        return Vec::new(); // 여전히 미해석(정의 안 됨 + fallback 없음) → 드롭
+    }
+    expand_declaration(name, substituted.trim())
+}
+
+// 문자열 안의 var(--name[, fallback]) 을 커스텀 프로퍼티 값으로 치환 (중첩 8단계까지).
+fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>, depth: u32) -> String {
+    if depth > 8 || !raw.contains("var(") {
+        return raw.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = raw;
+    while let Some(pos) = rest.find("var(") {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + 4..];
+        // 괄호 짝 찾기
+        let mut depth_p = 1i32;
+        let mut end = after.len();
+        for (i, c) in after.char_indices() {
+            match c {
+                '(' => depth_p += 1,
+                ')' => {
+                    depth_p -= 1;
+                    if depth_p == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let inner = &after[..end];
+        // "--name" 또는 "--name, fallback"
+        let (var_name, fallback) = match inner.find(',') {
+            Some(ci) => (inner[..ci].trim(), Some(inner[ci + 1..].trim())),
+            None => (inner.trim(), None),
+        };
+        let resolved = match custom.get(var_name) {
+            Some(v) => substitute_var(v, custom, depth + 1),
+            None => match fallback {
+                Some(f) => substitute_var(f, custom, depth + 1),
+                None => {
+                    // 미해석 표시(재파싱에서 드롭되게 var( 유지)
+                    out.push_str("var(");
+                    out.push_str(inner);
+                    out.push(')');
+                    rest = &after[end + 1..];
+                    continue;
+                }
+            },
+        };
+        out.push_str(&resolved);
+        rest = &after[(end + 1).min(after.len())..];
+    }
+    out.push_str(rest);
+    out
 }
 
 // UA 기본 스타일시트. HTML 표준 §15 Rendering 을 근거로 함

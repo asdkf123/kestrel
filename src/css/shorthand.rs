@@ -3,6 +3,17 @@ use super::{Color, Declaration, Unit, Value};
 
 // 선언 하나를 (경우에 따라 여러) longhand 선언으로 확장한다.
 pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
+    // 커스텀 프로퍼티(--*): 원문 보존, 사용 시점(var())에 해석.
+    if name.starts_with("--") {
+        return vec![Declaration {
+            name: name.to_string(),
+            value: Value::Keyword(value_text.to_string()),
+        }];
+    }
+    // var() 참조: 원문을 Var 로 보존, 스타일 계산 시 치환·재파싱.
+    if value_text.contains("var(") {
+        return vec![Declaration { name: name.to_string(), value: Value::Var(value_text.to_string()) }];
+    }
     match name {
         "margin" | "padding" => box_shorthand(name, "", value_text),
         "border-width" => box_shorthand("border", "-width", value_text),
