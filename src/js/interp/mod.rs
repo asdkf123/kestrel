@@ -675,6 +675,8 @@ impl Interp {
         // self / globalThis 는 전역 객체(window) 별칭 (구글/워커 코드)
         env_declare(&global, "window", window.clone());
         env_declare(&global, "self", window.clone());
+        // 최상위 this = window (sloppy 스크립트: `(function(){this.x=…}).call(this)` 등)
+        env_declare(&global, "this", window.clone());
         env_declare(&global, "globalThis", window);
         // Promise.resolve / Promise.reject (생성자 호출은 미지원, 정적 메서드만)
         let mut promise = HashMap::new();
@@ -2239,7 +2241,10 @@ impl Interp {
                         env_declare(&scope, "this", (**t).clone());
                     }
                 } else {
-                    env_declare(&scope, "this", recv.unwrap_or(Value::Undefined));
+                    // 수신자 없는 일반 호출: sloppy 모드처럼 this = window (undefined 아님)
+                    let this = recv
+                        .unwrap_or_else(|| env_get(&self.global, "window").unwrap_or(Value::Undefined));
+                    env_declare(&scope, "this", this);
                 }
                 // 메서드 안 super.x 해석용
                 if let Some(sc) = &func.super_class {
@@ -3673,6 +3678,18 @@ mod tests {
     fn parse_errors_include_token_context() {
         let err = Interp::new().run("var x = ;").unwrap_err();
         assert!(err.contains("근처"), "에러에 토큰 문맥 포함: {}", err);
+    }
+
+    #[test]
+    fn this_defaults_to_window() {
+        // 최상위 this === window, 일반 함수 호출의 this === window (sloppy)
+        let mut it = Interp::new();
+        assert!(matches!(it.run("this === window").unwrap(), Value::Bool(true)));
+        it.run("function f(){ return this === window; }").unwrap();
+        assert!(matches!(it.run("f()").unwrap(), Value::Bool(true)));
+        // .call(this) 로 window 에 프로퍼티 설정 (구글 gbar 패턴)
+        it.run("(function(){ this.gv = 42; }).call(this);").unwrap();
+        assert!(matches!(it.run("window.gv").unwrap(), Value::Num(n) if n == 42.0));
     }
 
     #[test]
