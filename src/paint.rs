@@ -1267,7 +1267,92 @@ fn emit_inner_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
 
 // 박스 배경 + 테두리를 발행. border-radius 가 있으면 둥근 사각형으로,
 // 균일 테두리는 "테두리색 라운드 → 안쪽 배경 라운드" 레이어링으로 둥근 테두리 근사.
+// (x0,y0)-(x1,y1) 을 두께 t 의 사각 리본(4점 다각형)으로. 체크마크 획 그리기용.
+fn thick_segment(a: (f32, f32), b: (f32, f32), t: f32) -> Vec<(f32, f32)> {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len = (dx * dx + dy * dy).sqrt().max(1e-3);
+    let (nx, ny) = (-dy / len * t / 2.0, dx / len * t / 2.0);
+    vec![(a.0 + nx, a.1 + ny), (b.0 + nx, b.1 + ny), (b.0 - nx, b.1 - ny), (a.0 - nx, a.1 - ny)]
+}
+
+// 네이티브 폼 컨트롤(체크박스/라디오)을 폰트 없이 프리미티브로 그린다.
+fn emit_form_control(lb: &LayoutBox, fc: crate::layout::FormControl, items: &mut Vec<DisplayItem>) {
+    use crate::layout::FormControl;
+    let b = lb.dimensions.border_box();
+    let gray = Color { r: 118, g: 118, b: 118, a: 255 };
+    let white = Color { r: 255, g: 255, b: 255, a: 255 };
+    let accent = Color { r: 26, g: 115, b: 232, a: 255 };
+    match fc {
+        FormControl::Checkbox(checked) => {
+            let radii = [2.0f32; 4];
+            if checked {
+                items.push(DisplayItem::RoundRect { color: accent, rect: b, radii });
+                let p = |nx: f32, ny: f32| (b.x + nx * b.width, b.y + ny * b.height);
+                let t = b.width * 0.15;
+                let contours = vec![
+                    thick_segment(p(0.22, 0.52), p(0.42, 0.70), t),
+                    thick_segment(p(0.42, 0.70), p(0.78, 0.28), t),
+                ];
+                items.push(DisplayItem::Polygon { color: white, contours });
+            } else {
+                items.push(DisplayItem::RoundRect { color: gray, rect: b, radii });
+                let inset =
+                    Rect { x: b.x + 1.0, y: b.y + 1.0, width: b.width - 2.0, height: b.height - 2.0 };
+                items.push(DisplayItem::RoundRect { color: white, rect: inset, radii: [1.5; 4] });
+            }
+        }
+        FormControl::Radio(checked) => {
+            let full = [b.width / 2.0; 4];
+            items.push(DisplayItem::RoundRect { color: gray, rect: b, radii: full });
+            let inset =
+                Rect { x: b.x + 1.0, y: b.y + 1.0, width: b.width - 2.0, height: b.height - 2.0 };
+            items.push(DisplayItem::RoundRect {
+                color: white,
+                rect: inset,
+                radii: [inset.width / 2.0; 4],
+            });
+            if checked {
+                let d = b.width * 0.30;
+                let dot = Rect {
+                    x: b.x + d,
+                    y: b.y + d,
+                    width: b.width - 2.0 * d,
+                    height: b.height - 2.0 * d,
+                };
+                items.push(DisplayItem::RoundRect {
+                    color: accent,
+                    rect: dot,
+                    radii: [dot.width / 2.0; 4],
+                });
+            }
+        }
+        FormControl::SelectArrow => {
+            let cx = b.x + b.width - 14.0;
+            let cy = b.y + b.height / 2.0;
+            let (w, h) = (8.0f32, 5.0f32);
+            let tri = vec![
+                (cx - w / 2.0, cy - h / 2.0),
+                (cx + w / 2.0, cy - h / 2.0),
+                (cx, cy + h / 2.0),
+            ];
+            items.push(DisplayItem::Polygon {
+                color: Color { r: 90, g: 90, b: 90, a: 255 },
+                contours: vec![tri],
+            });
+        }
+    }
+}
+
 fn emit_box_decorations(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    // 체크박스/라디오는 기본 배경·테두리 대신 네이티브 컨트롤을 직접 그린다.
+    match lb.form_control {
+        Some(fc @ crate::layout::FormControl::Checkbox(_))
+        | Some(fc @ crate::layout::FormControl::Radio(_)) => {
+            emit_form_control(lb, fc, items);
+            return;
+        }
+        _ => {}
+    }
     let bg = get_color(lb, "background-color");
     let r = uniform_radius(lb);
     let bw = lb.dimensions.border;
@@ -1610,6 +1695,10 @@ fn collect_items(
     // 그림자 → 배경/테두리(border-radius 포함) → 안쪽그림자 → 배경이미지 → 이미지 → 글리프 → 장식
     emit_box_shadow(layout_box, &mut local);
     emit_box_decorations(layout_box, &mut local);
+    // <select> 드롭다운 화살표는 배경/테두리 위에 그린다
+    if matches!(layout_box.form_control, Some(crate::layout::FormControl::SelectArrow)) {
+        emit_form_control(layout_box, crate::layout::FormControl::SelectArrow, &mut local);
+    }
     emit_inner_shadow(layout_box, &mut local);
     emit_outline(layout_box, &mut local);
     emit_svg(layout_box, &mut local);

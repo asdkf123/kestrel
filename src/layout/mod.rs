@@ -80,10 +80,20 @@ pub struct GlyphInstance {
     pub rot: f32,
 }
 
+// 네이티브 폼 컨트롤 표식 — paint 가 폰트 없이 프리미티브로 그린다(체크/라디오/드롭다운 화살표).
+#[derive(Clone, Copy, PartialEq)]
+pub enum FormControl {
+    Checkbox(bool), // checked
+    Radio(bool),
+    SelectArrow,
+}
+
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
     pub styled_node: &'a StyledNode<'a>,
     pub children: Vec<LayoutBox<'a>>,
+    // 네이티브 폼 컨트롤(체크박스/라디오/셀렉트 화살표) 표식
+    pub form_control: Option<FormControl>,
     pub glyphs: Vec<GlyphInstance>,
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
     pub image: Option<usize>,
@@ -118,6 +128,7 @@ impl<'a> LayoutBox<'a> {
             list_marker: None,
             used_width: 0.0,
             float_ctx: None,
+            form_control: None,
         }
     }
 
@@ -136,6 +147,7 @@ impl<'a> LayoutBox<'a> {
             list_marker: None,
             used_width: 0.0,
             float_ctx: None,
+            form_control: None,
         }
     }
 
@@ -175,6 +187,10 @@ impl<'a> LayoutBox<'a> {
             }
             if e.tag_name == "input" {
                 self.layout_input(containing_block, fonts);
+                return;
+            }
+            if e.tag_name == "select" {
+                self.layout_select(containing_block, fonts);
                 return;
             }
             if e.tag_name == "canvas" {
@@ -332,18 +348,42 @@ impl<'a> LayoutBox<'a> {
     // 높이 = font-size × 1.5. value 속성을 글리프로 렌더. type=hidden 은 0 크기.
     fn layout_input(&mut self, containing_block: Dimensions, fonts: &FontStack) {
         let NodeType::Element(e) = &self.styled_node.node.node_type else { return };
-        if e.attributes.get("type").map(|t| t.as_str()) == Some("hidden") {
+        let input_type =
+            e.attributes.get("type").map(|t| t.to_ascii_lowercase()).unwrap_or_else(|| "text".into());
+        if input_type == "hidden" {
             return; // 0 크기, 글리프 없음
         }
         self.calculate_width(containing_block);
         self.calculate_position(containing_block);
+        // checkbox/radio: 작은 고정 크기 네이티브 컨트롤. paint 가 폰트 없이 직접 그린다.
+        if input_type == "checkbox" || input_type == "radio" {
+            let sz = 13.0;
+            self.dimensions.content.width = sz;
+            self.dimensions.content.height = sz;
+            self.dimensions.border = EdgeSizes::default();
+            self.dimensions.padding = EdgeSizes::default();
+            self.used_width = sz;
+            let checked = e.attributes.get("checked").is_some();
+            self.form_control = Some(if input_type == "checkbox" {
+                FormControl::Checkbox(checked)
+            } else {
+                FormControl::Radio(checked)
+            });
+            return;
+        }
         let px = self
             .styled_node
             .value("font-size")
             .map(|v| v.to_px())
             .filter(|&p| p > 0.0)
             .unwrap_or(16.0);
-        let value = e.attributes.get("value").cloned().unwrap_or_default();
+        let raw_value = e.attributes.get("value").cloned().unwrap_or_default();
+        // password: 글자를 • 로 마스킹
+        let value = if input_type == "password" {
+            "\u{2022}".repeat(raw_value.chars().count())
+        } else {
+            raw_value
+        };
         let is_button = matches!(
             e.attributes.get("type").map(|t| t.as_str()),
             Some("submit") | Some("button") | Some("reset")
@@ -398,6 +438,78 @@ impl<'a> LayoutBox<'a> {
             }
             pen += adv;
         }
+    }
+
+    // <select>: 선택된 option 텍스트만 보여주고, 드롭다운 화살표를 붙인다.
+    // option 자식은 흐름에 배치하지 않는다(SelectArrow 표식 → paint 가 삼각형을 그림).
+    fn layout_select(&mut self, containing_block: Dimensions, fonts: &FontStack) {
+        self.calculate_width(containing_block);
+        self.calculate_position(containing_block);
+        let px = self
+            .styled_node
+            .value("font-size")
+            .map(|v| v.to_px())
+            .filter(|&p| p > 0.0)
+            .unwrap_or(16.0);
+        // 선택된 option: selected 속성 있는 것, 없으면 첫 번째
+        let mut selected: Option<&StyledNode> = None;
+        let mut first: Option<&StyledNode> = None;
+        for c in &self.styled_node.children {
+            if let NodeType::Element(e) = &c.node.node_type {
+                if e.tag_name == "option" {
+                    if first.is_none() {
+                        first = Some(c);
+                    }
+                    if e.attributes.get("selected").is_some() {
+                        selected = Some(c);
+                        break;
+                    }
+                }
+            }
+        }
+        let text = selected.or(first).map(styled_subtree_text).unwrap_or_default();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        // 폭: CSS 지정 없으면 텍스트 + 화살표 여백으로 shrink-to-fit (UA block 폭 대신)
+        let text_w: f32 = text
+            .chars()
+            .map(|c| {
+                let (fi, gid) = fonts.glyph_for(c);
+                let f = fonts.font(fi);
+                f.advance_width(gid) as f32 * (px / f.units_per_em() as f32)
+            })
+            .sum();
+        if self.styled_node.value("width").is_none() {
+            self.dimensions.content.width = text_w + px * 2.0;
+        }
+        self.dimensions.content.height = px * 1.5;
+        self.used_width = self.dimensions.content.width;
+        let color = match self.styled_node.value("color") {
+            Some(Value::Color(c)) => c,
+            _ => Color { r: 20, g: 20, b: 24, a: 255 },
+        };
+        let mut pen = self.dimensions.content.x;
+        let baseline = self.dimensions.content.y + px * 1.1;
+        let (bold, italic) = (self.styled_node.is_bold(), self.styled_node.is_italic());
+        for ch in text.chars() {
+            let (fi, gid) = fonts.glyph_for(ch);
+            let f = fonts.font(fi);
+            let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+            if !ch.is_whitespace() {
+                self.glyphs.push(GlyphInstance {
+                    font_index: fi,
+                    glyph_id: gid,
+                    x: pen,
+                    baseline_y: baseline,
+                    px,
+                    color,
+                    bold,
+                    italic,
+                    rot: 0.0,
+                });
+            }
+            pen += adv;
+        }
+        self.form_control = Some(FormControl::SelectArrow);
     }
 
     fn calculate_width(&mut self, containing_block: Dimensions) {
@@ -1600,6 +1712,21 @@ fn roman_marker(index: usize, upper: bool) -> String {
     if upper { s.to_ascii_uppercase() } else { s }
 }
 
+// StyledNode 서브트리의 텍스트를 모은다 (select 의 선택 option 텍스트 추출용).
+fn styled_subtree_text(sn: &StyledNode) -> String {
+    let mut out = String::new();
+    fn walk(sn: &StyledNode, out: &mut String) {
+        if let NodeType::Text(t) = &sn.node.node_type {
+            out.push_str(t);
+        }
+        for c in &sn.children {
+            walk(c, out);
+        }
+    }
+    walk(sn, &mut out);
+    out
+}
+
 pub fn layout_tree<'a>(
     node: &'a StyledNode<'a>,
     mut containing_block: Dimensions,
@@ -2222,6 +2349,73 @@ mod tests {
         // right:0 을 .rel(폭300) 기준으로 → x = 0 + 300 - 40 = 260 (.mid 기준이면 180)
         assert_eq!(abs.dimensions.content.x, 260.0, "가장 가까운 positioned 조상(.rel) 기준이어야");
         assert_eq!(abs.dimensions.content.y, 0.0);
+    }
+
+    #[test]
+    fn checkbox_and_radio_render_as_native_controls() {
+        let fs = fonts();
+        let root = crate::html::parse_dom(
+            "<div><input type=\"checkbox\" checked><input type=\"radio\"></div>".to_string(),
+        );
+        let ss = crate::css::user_agent_stylesheet();
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        fn collect(b: &LayoutBox, out: &mut Vec<(crate::layout::FormControl, f32)>) {
+            if let Some(fc) = b.form_control {
+                out.push((fc, b.dimensions.content.width));
+            }
+            for c in &b.children {
+                collect(c, out);
+            }
+        }
+        let mut fcs = Vec::new();
+        collect(&lb, &mut fcs);
+        assert!(
+            fcs.iter().any(|(fc, _)| *fc == crate::layout::FormControl::Checkbox(true)),
+            "체크된 체크박스 표식"
+        );
+        assert!(
+            fcs.iter().any(|(fc, _)| *fc == crate::layout::FormControl::Radio(false)),
+            "라디오 표식"
+        );
+        // 작은 고정 크기(≈13px)로 줄어야 (기존 180px 텍스트박스 버그 회귀 방지)
+        assert!(fcs.iter().all(|(_, w)| (*w - 13.0).abs() < 0.5), "13px 컨트롤: {:?}", fcs.iter().map(|(_, w)| *w).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn select_shows_only_selected_option() {
+        let fs = fonts();
+        let root = crate::html::parse_dom(
+            "<select><option>Apple</option><option selected>Banana</option><option>Cherry</option></select>"
+                .to_string(),
+        );
+        let ss = crate::css::user_agent_stylesheet();
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // "Banana" = 6 글리프만 (Apple/Cherry 는 렌더 안 됨)
+        let g = glyphs_of(&lb);
+        assert_eq!(g.len(), 6, "선택된 option(Banana)만 렌더 (실제 {}글리프)", g.len());
+    }
+
+    #[test]
+    fn password_input_is_masked() {
+        let fs = fonts();
+        let root =
+            crate::html::parse_dom("<input type=\"password\" value=\"secret\">".to_string());
+        let ss = crate::css::user_agent_stylesheet();
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // 6글자 → 6개 • 글리프, 원문 문자 글리프는 없음
+        let g = glyphs_of(&lb);
+        assert_eq!(g.len(), 6, "6글자 마스킹");
+        let bullet = fs.glyph_for('\u{2022}').1;
+        assert!(g.iter().all(|gi| gi.glyph_id == bullet), "모두 • 글리프여야");
     }
 
     #[test]
