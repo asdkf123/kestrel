@@ -78,6 +78,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "grid-column" | "grid-row" => {
             vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
         }
+        // place-* 단축: <align> [<justify>] → align-*/justify-* longhand
+        "place-items" | "place-content" | "place-self" => {
+            let axis = name.strip_prefix("place-").unwrap();
+            let toks: Vec<&str> = value_text.split_whitespace().collect();
+            let a = toks.first().copied().unwrap_or("");
+            let j = toks.get(1).copied().unwrap_or(a);
+            if a.is_empty() {
+                return Vec::new();
+            }
+            vec![
+                Declaration { name: format!("align-{}", axis), value: Value::Keyword(a.to_string()) },
+                Declaration { name: format!("justify-{}", axis), value: Value::Keyword(j.to_string()) },
+            ]
+        }
         // grid-gap 은 gap 의 레거시 별칭
         "grid-gap" | "grid-column-gap" | "grid-row-gap" => {
             let mapped = name.strip_prefix("grid-").unwrap();

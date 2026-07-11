@@ -1059,6 +1059,19 @@ mod tests {
     }
 
     #[test]
+    fn place_shorthands_expand() {
+        let decls = parse_inline_style("place-items: center start");
+        let get = |n: &str| decls.iter().find(|d| d.name == n).map(|d| &d.value);
+        assert_eq!(get("align-items"), Some(&Value::Keyword("center".to_string())));
+        assert_eq!(get("justify-items"), Some(&Value::Keyword("start".to_string())));
+        // 단일 값 → 양 축 동일
+        let d2 = parse_inline_style("place-content: center");
+        let get2 = |n: &str| d2.iter().find(|d| d.name == n).map(|d| &d.value);
+        assert_eq!(get2("align-content"), Some(&Value::Keyword("center".to_string())));
+        assert_eq!(get2("justify-content"), Some(&Value::Keyword("center".to_string())));
+    }
+
+    #[test]
     fn font_face_captured() {
         // @font-face 는 rules 가 아니라 font_faces 로. family + src url 추출.
         let ss = parse(
