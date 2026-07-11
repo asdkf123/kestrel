@@ -47,8 +47,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) }]
         }
-        // grid 트랙 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
-        "grid-template-columns" | "grid-template-rows" => {
+        // grid 트랙/영역 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
+        "grid-template-columns" | "grid-template-rows" | "grid-template-areas" | "grid-area"
+        | "grid-column" | "grid-row" => {
             vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
         }
         // grid-gap 은 gap 의 레거시 별칭

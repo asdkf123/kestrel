@@ -13,6 +13,13 @@ impl<'a> LayoutBox<'a> {
         if n == 0 {
             return;
         }
+        // grid-template-areas 가 있으면 명시 배치(holy-grail 등)
+        if let Some(Value::Keyword(a)) = self.styled_node.value("grid-template-areas") {
+            if a.contains('"') {
+                self.layout_grid_areas(&a, fonts, images);
+                return;
+            }
+        }
         let d = self.dimensions;
         let (ox, oy) = (d.content.x, d.content.y);
         let gap = self
@@ -83,6 +90,179 @@ impl<'a> LayoutBox<'a> {
 enum GTrack {
     Px(f32),
     Fr(f32),
+}
+
+impl<'a> LayoutBox<'a> {
+    // grid-template-areas 기반 명시 배치. 아이템의 grid-area 이름으로 셀 영역에 배치.
+    // 열 폭 = grid-template-columns, 행 높이 = grid-template-rows(px) 또는 내용 기반.
+    fn layout_grid_areas(&mut self, areas: &str, fonts: &FontStack, images: &ImageMap) {
+        let d = self.dimensions;
+        let (ox, oy) = (d.content.x, d.content.y);
+        let gap = self
+            .styled_node
+            .value("column-gap")
+            .or_else(|| self.styled_node.value("gap"))
+            .map(|v| v.to_px())
+            .unwrap_or(0.0);
+        let row_gap = self
+            .styled_node
+            .value("row-gap")
+            .or_else(|| self.styled_node.value("gap"))
+            .map(|v| v.to_px())
+            .unwrap_or(0.0);
+
+        // 영역 문자열 파싱: 각 "..." 이 한 행, 공백으로 셀 이름 분리. '.' 은 빈 셀.
+        let grid: Vec<Vec<String>> = areas
+            .split('"')
+            .filter(|s| !s.trim().is_empty())
+            .map(|row| row.split_whitespace().map(|s| s.to_string()).collect::<Vec<_>>())
+            .filter(|r: &Vec<String>| !r.is_empty())
+            .collect();
+        let nrows = grid.len();
+        if nrows == 0 {
+            return;
+        }
+        let ncols = grid.iter().map(|r| r.len()).max().unwrap_or(1).max(1);
+
+        // 이름 → (r0, c0, r1, c1) 경계 상자
+        use std::collections::HashMap;
+        let mut boxes: HashMap<String, (usize, usize, usize, usize)> = HashMap::new();
+        for (r, row) in grid.iter().enumerate() {
+            for (c, name) in row.iter().enumerate() {
+                if name == "." {
+                    continue;
+                }
+                let e = boxes.entry(name.clone()).or_insert((r, c, r + 1, c + 1));
+                e.0 = e.0.min(r);
+                e.1 = e.1.min(c);
+                e.2 = e.2.max(r + 1);
+                e.3 = e.3.max(c + 1);
+            }
+        }
+
+        // 열 폭
+        let cspec = match self.styled_node.value("grid-template-columns") {
+            Some(Value::Keyword(s)) => s,
+            _ => String::new(),
+        };
+        let cols = if cspec.is_empty() {
+            let w = (d.content.width - gap * (ncols as f32 - 1.0)) / ncols as f32;
+            vec![w; ncols]
+        } else {
+            let mut c = resolve_grid_tracks(&cspec, d.content.width, gap);
+            c.resize(ncols, c.last().copied().unwrap_or(0.0));
+            c
+        };
+        let mut col_x = vec![ox; ncols + 1];
+        {
+            let mut x = ox;
+            for c in 0..ncols {
+                col_x[c] = x;
+                x += cols[c] + gap;
+            }
+            col_x[ncols] = x;
+        }
+        let span_w = |c0: usize, c1: usize| -> f32 {
+            let w: f32 = cols[c0..c1].iter().sum();
+            w + gap * ((c1 - c0) as f32 - 1.0).max(0.0)
+        };
+
+        // 각 아이템의 영역 배치 결정 + 폭에 맞춰 측정
+        let mut placed: Vec<Option<(usize, usize, usize, usize)>> = vec![None; self.children.len()];
+        for i in 0..self.children.len() {
+            let name = match self.children[i].styled_node.value("grid-area") {
+                Some(Value::Keyword(s)) => s.trim().to_string(),
+                _ => String::new(),
+            };
+            if let Some(&b) = boxes.get(&name) {
+                placed[i] = Some(b);
+            }
+        }
+
+        // 행 높이: grid-template-rows(px) 우선, 없으면 내용 기반.
+        let rspec = match self.styled_node.value("grid-template-rows") {
+            Some(Value::Keyword(s)) => s,
+            _ => String::new(),
+        };
+        let row_fixed: Vec<Option<f32>> = if rspec.is_empty() {
+            vec![None; nrows]
+        } else {
+            let tr = resolve_grid_tracks(&rspec, 0.0, row_gap);
+            (0..nrows).map(|r| tr.get(r).copied()).collect()
+        };
+        let mut row_h = vec![0.0f32; nrows];
+        // 1행 스팬 아이템으로 행 높이 측정
+        for i in 0..self.children.len() {
+            if let Some((r0, c0, r1, c1)) = placed[i] {
+                let w = span_w(c0, c1);
+                let mut cb: Dimensions = Default::default();
+                cb.content.x = ox;
+                cb.content.y = oy;
+                cb.content.width = w;
+                self.children[i].layout(cb, fonts, images);
+                let h = self.children[i].dimensions.margin_box().height;
+                if r1 - r0 == 1 {
+                    row_h[r0] = row_h[r0].max(h);
+                }
+            }
+        }
+        // 다중 행 스팬 아이템: 부족분을 마지막 행에 보충
+        for i in 0..self.children.len() {
+            if let Some((r0, _, r1, _)) = placed[i] {
+                if r1 - r0 > 1 {
+                    let h = self.children[i].dimensions.margin_box().height;
+                    let cur: f32 = row_h[r0..r1].iter().sum::<f32>() + row_gap * ((r1 - r0) as f32 - 1.0);
+                    if h > cur {
+                        row_h[r1 - 1] += h - cur;
+                    }
+                }
+            }
+        }
+        // 고정 행 높이 반영
+        for r in 0..nrows {
+            if let Some(px) = row_fixed[r] {
+                if px > 0.0 {
+                    row_h[r] = px;
+                }
+            }
+        }
+        let mut row_y = vec![oy; nrows + 1];
+        {
+            let mut y = oy;
+            for r in 0..nrows {
+                row_y[r] = y;
+                y += row_h[r] + row_gap;
+            }
+            row_y[nrows] = y;
+        }
+
+        // 최종 배치: 영역 셀 사각형으로 재배치 (측정 글리프 clear)
+        for i in 0..self.children.len() {
+            if let Some((r0, c0, r1, c1)) = placed[i] {
+                let x = col_x[c0];
+                let w = span_w(c0, c1);
+                let y = row_y[r0];
+                let h: f32 = row_h[r0..r1].iter().sum::<f32>() + row_gap * ((r1 - r0) as f32 - 1.0);
+                self.children[i].clear_render();
+                let mut cb: Dimensions = Default::default();
+                cb.content.x = x;
+                cb.content.y = y;
+                cb.content.width = w;
+                self.children[i].layout(cb, fonts, images);
+                // 셀 높이로 stretch (height 고정 없을 때)
+                let cross_fixed =
+                    matches!(self.children[i].styled_node.value("height"), Some(Length(_, Px)));
+                if !cross_fixed {
+                    let vextra = self.children[i].dimensions.margin_box().height
+                        - self.children[i].dimensions.content.height;
+                    self.children[i].dimensions.content.height =
+                        (h - vextra).max(self.children[i].dimensions.content.height);
+                }
+            }
+        }
+        self.dimensions.content.height = (row_y[nrows] - oy - row_gap).max(0.0);
+        self.used_width = cols.iter().sum::<f32>() + gap * (ncols as f32 - 1.0).max(0.0);
+    }
 }
 
 // grid-template-columns 문자열 → 각 트랙의 픽셀 폭. fr 은 남는 공간을 비율 배분.

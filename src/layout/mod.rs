@@ -1861,6 +1861,35 @@ mod tests {
     }
 
     #[test]
+    fn grid_template_areas_holy_grail() {
+        // 명시 배치: header/footer 는 두 열 span, nav/main 은 나란히 (holy-grail)
+        let d = flex_layout(
+            "<div class=\"page\"><div class=\"hd\"></div><div class=\"nv\"></div><div class=\"mn\"></div><div class=\"ft\"></div></div>",
+            ".page { display: grid; grid-template-columns: 150px 1fr; \
+             grid-template-areas: \"header header\" \"nav main\" \"footer footer\"; } \
+             .hd { display: block; grid-area: header; height: 30px; } \
+             .nv { display: block; grid-area: nav; height: 80px; } \
+             .mn { display: block; grid-area: main; height: 80px; } \
+             .ft { display: block; grid-area: footer; height: 25px; }",
+            400.0,
+        );
+        // header: 두 열 span, 맨 위
+        assert_eq!(d[0].content.x, 0.0);
+        assert_eq!(d[0].content.width, 400.0, "header 는 두 열 span");
+        assert_eq!(d[0].content.y, 0.0);
+        // nav(좌 150) / main(우 250) 나란히, header 아래
+        assert_eq!(d[1].content.x, 0.0);
+        assert_eq!(d[1].content.width, 150.0);
+        assert_eq!(d[2].content.x, 150.0, "main 은 오른쪽 열");
+        assert_eq!(d[2].content.width, 250.0, "1fr = 250");
+        assert_eq!(d[1].content.y, d[2].content.y, "nav/main 같은 행");
+        assert_eq!(d[1].content.y, 30.0, "header 아래");
+        // footer: 두 열 span, nav/main 아래
+        assert_eq!(d[3].content.width, 400.0, "footer 는 두 열 span");
+        assert_eq!(d[3].content.y, 110.0, "nav/main(30+80) 아래");
+    }
+
+    #[test]
     fn grid_gap_between_columns() {
         let d = flex_layout(
             "<div class=\"g\"><div class=\"i\"></div><div class=\"i\"></div></div>",
