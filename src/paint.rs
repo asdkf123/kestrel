@@ -13,15 +13,16 @@ pub struct Canvas {
     blend_mode: BlendMode,
 }
 
-// 픽셀 마스크 도형 (물리 px). 둥근 사각형(사각/원 포함)과 타원.
-#[derive(Debug, Clone, Copy)]
+// 픽셀 마스크 도형 (물리 px). 둥근 사각형(사각/원 포함), 타원, 다각형.
+#[derive(Debug, Clone)]
 pub enum ClipShape {
     RoundRect { rect: Rect, radii: [f32; 4] },
     Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
+    Polygon(Vec<(f32, f32)>),
 }
 
 impl ClipShape {
-    // 픽셀 중심 (x,y) 의 클립 커버리지 0..1 (경계 안티에일리어싱).
+    // 픽셀 중심 (x,y) 의 클립 커버리지 0..1 (경계 안티에일리어싱; 다각형은 1/0).
     fn coverage(&self, x: f32, y: f32) -> f32 {
         match self {
             ClipShape::RoundRect { rect, radii } => round_rect_coverage(*rect, *radii, x, y),
@@ -34,8 +35,34 @@ impl ClipShape {
                 let d = (nx * nx + ny * ny).sqrt();
                 ((1.0 - d) * rx.min(*ry) + 0.5).clamp(0.0, 1.0)
             }
+            ClipShape::Polygon(pts) => {
+                if point_in_polygon(pts, x, y) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
+}
+
+// 짝수-홀수 규칙 점-다각형 판정 (ray casting).
+fn point_in_polygon(pts: &[(f32, f32)], x: f32, y: f32) -> bool {
+    let n = pts.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = pts[i];
+        let (xj, yj) = pts[j];
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
 
 // 둥근 사각형의 (fx,fy) 픽셀 커버리지 0..1. 코너별 반경, 경계 AA. 채우기·클립 공용.
@@ -1387,6 +1414,32 @@ fn round_clip_shape(lb: &LayoutBox) -> Option<ClipShape> {
             let ry = radii.get(1).and_then(|t| len(t, b.height)).unwrap_or(b.height / 2.0);
             return Some(ClipShape::Ellipse { cx, cy, rx, ry });
         }
+        // polygon([fill-rule,]? x1 y1, x2 y2, ...): % 는 박스 크기 기준, 박스 원점 오프셋
+        if let Some(inner) = s.strip_prefix("polygon(").and_then(|x| x.strip_suffix(')')) {
+            let coord = |t: &str, base: f32| -> Option<f32> {
+                if t.ends_with('%') {
+                    t.trim_end_matches('%').parse::<f32>().ok().map(|v| v / 100.0 * base)
+                } else {
+                    t.trim_end_matches("px").parse::<f32>().ok()
+                }
+            };
+            let mut segs: Vec<&str> = inner.split(',').map(|x| x.trim()).collect();
+            if segs.first().map_or(false, |t| *t == "nonzero" || *t == "evenodd") {
+                segs.remove(0);
+            }
+            let mut pts = Vec::new();
+            for seg in segs {
+                let mut it = seg.split_whitespace();
+                if let (Some(xs), Some(ys)) = (it.next(), it.next()) {
+                    if let (Some(px), Some(py)) = (coord(xs, b.width), coord(ys, b.height)) {
+                        pts.push((b.x + px, b.y + py));
+                    }
+                }
+            }
+            if pts.len() >= 3 {
+                return Some(ClipShape::Polygon(pts));
+            }
+        }
         // inset(... round R): 둥근 사각형
         if s.starts_with("inset(") && s.contains("round") {
             if let Some(rect) = clip_path_rect(lb) {
@@ -1537,8 +1590,8 @@ fn collect_items(
     // 이 박스 자신의 아이템은 부모 클립으로 자르고, 둥근 클립·sticky 면 래핑
     for it in local {
         if let Some(clipped) = clip_apply(it, clip) {
-            let masked = match round_clip {
-                Some(shape) => DisplayItem::Clipped { shape, inner: Box::new(clipped) },
+            let masked = match &round_clip {
+                Some(shape) => DisplayItem::Clipped { shape: shape.clone(), inner: Box::new(clipped) },
                 None => clipped,
             };
             let final_it = match sticky_here {
@@ -1559,7 +1612,7 @@ fn collect_items(
         clip
     };
     for child in &layout_box.children {
-        collect_items(child, z, child_clip, round_clip, sticky_here, buf);
+        collect_items(child, z, child_clip, round_clip.clone(), sticky_here, buf);
     }
     // transform: rotate — 서브트리 아이템을 border-box 중심 기준으로 회전.
     // (translate/scale 는 레이아웃 단계에서 이미 박스에 반영됨.)
@@ -1935,8 +1988,11 @@ fn draw_item(
                     rx: rx * scale,
                     ry: ry * scale,
                 },
+                ClipShape::Polygon(pts) => ClipShape::Polygon(
+                    pts.iter().map(|&(x, y)| (x * scale, (y - scroll_y) * scale)).collect(),
+                ),
             };
-            let prev = canvas.clip;
+            let prev = canvas.clip.take();
             canvas.clip = Some(phys);
             draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
             canvas.clip = prev;
@@ -2197,6 +2253,24 @@ mod tests {
         let at = |x: usize, y: usize| c.pixels[y * c.width + x];
         assert_ne!(at(2, 2), blue, "원 밖 코너 잘림");
         assert_eq!(at(20, 20), blue, "원 중앙 채워짐");
+    }
+
+    #[test]
+    fn clip_path_polygon_triangle() {
+        // polygon(50% 0, 100% 100%, 0 100%) → 위가 뾰족한 삼각형
+        let c = canvas_for(
+            "<div class=\"b\"></div>",
+            "html,body{display:block} \
+             .b{display:block;width:40px;height:40px;background-color:#008800;\
+             clip-path:polygon(50% 0, 100% 100%, 0 100%)}",
+            40.0,
+            40.0,
+        );
+        let green = Color { r: 0, g: 136, b: 0, a: 255 };
+        let at = |x: usize, y: usize| c.pixels[y * c.width + x];
+        assert_ne!(at(2, 2), green, "좌상단 코너는 삼각형 밖");
+        assert_eq!(at(20, 20), green, "중앙은 삼각형 안");
+        assert_eq!(at(20, 37), green, "하단 중앙은 삼각형 안");
     }
 
     #[test]
