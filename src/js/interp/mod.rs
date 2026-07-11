@@ -3375,6 +3375,19 @@ mod tests {
     }
 
     #[test]
+    fn for_of_destructuring() {
+        // for-of 루프 변수 구조분해 (Map/entries 순회의 핵심 패턴)
+        assert_eq!(
+            run_num("var m=new Map([['a',1],['b',2]]); var s=0; for(var [k,v] of m){s+=v;} s"),
+            3.0
+        );
+        assert_eq!(
+            run_str("var r=''; for(const [k,v] of Object.entries({x:1})){r+=k+v;} r"),
+            "x1"
+        );
+    }
+
+    #[test]
     fn destructuring_defaults_and_nesting() {
         // 기본값: 없는 프로퍼티/슬롯은 default 사용
         assert_eq!(run_num("var {a=3,b=4}={a:1}; a+b"), 5.0);

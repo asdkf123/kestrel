@@ -504,6 +504,51 @@ impl Parser {
     fn for_stmt(&mut self) -> Result<Stmt, String> {
         self.expect(&Tok::For)?;
         self.expect(&Tok::LParen)?;
+        // 구조분해 for-of/in: for ([var|let|const] {..}|[..] of|in ...) — 임시 변수로 디슈가
+        let destr = {
+            let save = self.pos;
+            if matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const)) {
+                self.pos += 1;
+            }
+            let mut kind = None;
+            if matches!(self.peek(), Some(Tok::LBrace | Tok::LBracket)) && self.skip_balanced().is_ok()
+            {
+                if matches!(self.peek(), Some(Tok::Ident(s)) if s == "of") {
+                    kind = Some(false); // of
+                } else if self.peek() == Some(&Tok::In) {
+                    kind = Some(true); // in
+                }
+            }
+            self.pos = save;
+            kind
+        };
+        if let Some(is_in) = destr {
+            let tmp = format!("__forpat{}__", self.pos);
+            if matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const)) {
+                self.pos += 1;
+            }
+            let pat = self.binding_pattern()?;
+            if is_in {
+                self.expect(&Tok::In)?;
+            } else {
+                self.pos += 1; // "of"
+            }
+            let seq = self.expr()?;
+            self.expect(&Tok::RParen)?;
+            let mut body = self.body_of_clause()?;
+            body.insert(
+                0,
+                Stmt::VarDecl {
+                    kind: DeclKind::Let,
+                    decls: vec![(pat, Some(Expr::Ident(tmp.clone())))],
+                },
+            );
+            return Ok(if is_in {
+                Stmt::ForIn { name: tmp, obj: seq, body }
+            } else {
+                Stmt::ForOf { name: tmp, iter: seq, body }
+            });
+        }
         // for (k in obj) / for (var k in obj)
         let is_decl_in = matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const))
             && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(_)))
