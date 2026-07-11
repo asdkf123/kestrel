@@ -46,13 +46,25 @@ pub enum Pseudo {
     Dynamic, // hover/focus/active/visited 등 — 정적 렌더에선 비매칭
 }
 
+// 속성 선택자 연산자.
+#[derive(Debug, PartialEq, Clone)]
+pub enum AttrOp {
+    Exists,           // [attr]
+    Equals(String),   // [attr=v]
+    Prefix(String),   // [attr^=v]
+    Suffix(String),   // [attr$=v]
+    Contains(String), // [attr*=v]
+    Word(String),     // [attr~=v] (공백 구분 목록에 v)
+    Dash(String),     // [attr|=v] (v 또는 v-...)
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct SimpleSelector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
     pub class: Vec<String>,
-    // 속성 선택자: (이름, 값). 값 None = [attr] 존재만, Some = [attr=val] 정확 일치.
-    pub attrs: Vec<(String, Option<String>)>,
+    // 속성 선택자: (이름, 연산자).
+    pub attrs: Vec<(String, AttrOp)>,
     pub pseudos: Vec<Pseudo>,
 }
 
@@ -500,19 +512,42 @@ impl Parser {
 
     // [name] 또는 [name=value] / [name="value"]. =/따옴표 파싱, 그 외 연산자(~= 등)는
     // value 없는 존재 검사로 관용 처리. name 은 소문자화.
-    fn parse_attr_selector(&mut self) -> Option<(String, Option<String>)> {
+    fn parse_attr_selector(&mut self) -> Option<(String, AttrOp)> {
         self.consume_char(); // '['
         self.consume_whitespace();
         let name = self.parse_identifier().to_ascii_lowercase();
         self.consume_whitespace();
-        let value = if self.peek() == Some('=') {
+        // 연산자: = ^= $= *= ~= |=
+        let op_char = self.peek();
+        let op = if op_char == Some('=') {
             self.consume_char();
-            self.consume_whitespace();
-            Some(self.parse_attr_value())
+            Some(' ')
+        } else if matches!(op_char, Some('^' | '$' | '*' | '~' | '|'))
+            && self.input[self.pos..].chars().nth(1) == Some('=')
+        {
+            let c = op_char.unwrap();
+            self.consume_char();
+            self.consume_char(); // '='
+            Some(c)
         } else {
             None
         };
-        // ']' 까지 소비 (미지원 연산자 잔여 포함)
+        let attr_op = match op {
+            None => AttrOp::Exists,
+            Some(c) => {
+                self.consume_whitespace();
+                let v = self.parse_attr_value();
+                match c {
+                    '^' => AttrOp::Prefix(v),
+                    '$' => AttrOp::Suffix(v),
+                    '*' => AttrOp::Contains(v),
+                    '~' => AttrOp::Word(v),
+                    '|' => AttrOp::Dash(v),
+                    _ => AttrOp::Equals(v),
+                }
+            }
+        };
+        // ']' 까지 소비 (i 플래그 등 잔여 포함)
         self.consume_while(|c| c != ']');
         if self.peek() == Some(']') {
             self.consume_char();
@@ -520,7 +555,7 @@ impl Parser {
         if name.is_empty() {
             None
         } else {
-            Some((name, value))
+            Some((name, attr_op))
         }
     }
 

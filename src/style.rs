@@ -163,16 +163,20 @@ fn matches_compound(
     if selector.class.iter().any(|class| !elem_classes.contains(&**class)) {
         return false;
     }
-    for (name, val) in &selector.attrs {
-        match elem.attributes.get(name) {
-            Some(av) => {
-                if let Some(v) = val {
-                    if av != v {
-                        return false;
-                    }
-                }
-            }
-            None => return false,
+    for (name, op) in &selector.attrs {
+        use crate::css::AttrOp;
+        let Some(av) = elem.attributes.get(name) else { return false };
+        let ok = match op {
+            AttrOp::Exists => true,
+            AttrOp::Equals(v) => av == v,
+            AttrOp::Prefix(v) => !v.is_empty() && av.starts_with(v.as_str()),
+            AttrOp::Suffix(v) => !v.is_empty() && av.ends_with(v.as_str()),
+            AttrOp::Contains(v) => !v.is_empty() && av.contains(v.as_str()),
+            AttrOp::Word(v) => !v.is_empty() && av.split_whitespace().any(|w| w == v),
+            AttrOp::Dash(v) => av == v || av.starts_with(&format!("{}-", v)),
+        };
+        if !ok {
+            return false;
         }
     }
     for p in &selector.pseudos {
@@ -815,6 +819,26 @@ mod tests {
             "input[type=submit] 매칭"
         );
         assert_eq!(styled.children[1].value("width"), None, "input[type=text] 비매칭");
+    }
+
+    #[test]
+    fn attribute_operator_selectors() {
+        let root = crate::html::parse_dom(
+            "<div><a href=\"https://x.com\"></a><a href=\"http://y.io\"></a><a href=\"https://z.org\"></a></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            "a[href^=\"https\"] { color: #ff0000; } \
+             a[href$=\".org\"] { width: 5px; } \
+             a[href*=\"y.io\"] { height: 3px; }"
+                .to_string(),
+        );
+        let div = style_tree(&root, &ss);
+        assert_eq!(div.children[0].value("color"), Some(col(255, 0, 0)), "^=https");
+        assert_eq!(div.children[1].value("color"), None, "http 는 ^=https 아님");
+        assert_eq!(div.children[1].value("height"), Some(Value::Length(3.0, Unit::Px)), "*=y.io");
+        assert_eq!(div.children[2].value("width"), Some(Value::Length(5.0, Unit::Px)), "$=.org");
+        assert_eq!(div.children[2].value("color"), Some(col(255, 0, 0)), "z 도 ^=https");
     }
 
     #[test]
