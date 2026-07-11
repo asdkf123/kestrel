@@ -356,13 +356,17 @@ fn build_page(url: &str) -> Option<window::Page> {
         if let Some(u) = base.join(href) {
             if let Ok(r) = http::fetch(&u.as_string()) {
                 let css_text = String::from_utf8_lossy(&r.body).to_string();
-                sheet.rules.extend(css::parse_viewport(css_text, page_vw).rules);
+                let parsed = css::parse_viewport(css_text, page_vw);
+                sheet.rules.extend(parsed.rules);
+                sheet.font_faces.extend(parsed.font_faces);
             }
         }
     }
     let mut inline_css = String::new();
     extract_css(&dom, &mut inline_css);
-    sheet.rules.extend(css::parse_viewport(inline_css, page_vw).rules);
+    let parsed_inline = css::parse_viewport(inline_css, page_vw);
+    sheet.rules.extend(parsed_inline.rules);
+    sheet.font_faces.extend(parsed_inline.font_faces);
 
     // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리는 일시 사용)
     let mut srcs = Vec::new();
