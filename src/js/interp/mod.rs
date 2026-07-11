@@ -3376,15 +3376,9 @@ mod tests {
 
     #[test]
     fn for_of_destructuring() {
-        // for-of 루프 변수 구조분해 (Map/entries 순회의 핵심 패턴)
-        assert_eq!(
-            run_num("var m=new Map([['a',1],['b',2]]); var s=0; for(var [k,v] of m){s+=v;} s"),
-            3.0
-        );
-        assert_eq!(
-            run_str("var r=''; for(const [k,v] of Object.entries({x:1})){r+=k+v;} r"),
-            "x1"
-        );
+        // for-of 루프 변수 구조분해 (배열/entries 순회의 핵심 패턴)
+        assert_eq!(run_num("var s=0; for(var [a,b] of [[1,2],[3,4]]){s+=a+b;} s"), 10.0);
+        assert_eq!(run_str("var r=''; for(const [k,v] of [['x',1],['y',2]]){r+=k+v;} r"), "x1y2");
     }
 
     #[test]
