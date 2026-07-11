@@ -109,9 +109,9 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - 속성 연산자 `^= $= *= ~= |=`, 대소문자 플래그.
 
 ### CSS — 값·캐스케이드
-- `calc()`, 커스텀 속성 `var()`, `min()/max()/clamp()`.
-- 단위: `vw/vh/vmin/vmax ch ex pt`.
-- `!important`, `@import`, `@supports`, `@font-face`, `@keyframes`, cascade layers.
+- `calc()`, 커스텀 속성 `var()`. 남음: `min()/max()/clamp()`.
+- ~~단위: `vw/vh/vmin/vmax ch ex pt pc in cm mm Q`~~ ✓.
+- `!important`, `@import`, ~~`@supports`~~ ✓, `@font-face`, `@keyframes`, cascade layers.
 - 상속 확대: 현재 color/font-size/text-align 만. font-family/weight/style/
   line-height/letter-spacing/white-space/visibility/list-style/direction 등 다수 미상속.
 
@@ -130,16 +130,16 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 ### CSS — 타이포그래피
 - **font-family 매칭/폴백**, **@font-face 웹폰트**.
 - **font-weight(볼드)**, **font-style(이탤릭)** 렌더 — 지금 굵기/기울기 없음.
-- CSS `line-height`, `letter-spacing`, `word-spacing`, `text-transform`,
-  `text-decoration`(현재 링크 밑줄만), `white-space`(pre/nowrap/pre-wrap),
-  `word-break`/`overflow-wrap`, `text-overflow: ellipsis`, `text-indent`.
+- ~~CSS `line-height`, `letter-spacing`, `word-spacing`, `text-decoration`(밑줄/취소선/윗줄)~~ ✓.
+  `text-transform` ✓, `white-space`(pre/nowrap/pre-wrap) ✓.
+  남음: `word-break`/`overflow-wrap`, `text-overflow: ellipsis`, `text-indent` 적용.
 - **CJK/아랍/인도계 폰트 커버리지**(지금 두부 □) + **복합 텍스트 셰이핑**
   (리가처, 결합 문자, 아랍 접합, 인도계 재배열 — HarfBuzz 급).
 
 ### CSS — 페인트·효과
-- **그라디언트**(linear/radial/conic), `opacity`, `hsl()`, currentColor 정식.
-- 배경: position/repeat/size/다중 배경, background 단축.
-- **transform**(translate/rotate/scale/matrix, 3D), **transition/animation**.
+- ~~그라디언트 linear/radial~~ ✓, ~~`opacity`~~ ✓, hsl() ✓. conic/currentColor 정식 남음.
+- 배경: position/repeat/size/다중 배경. (background 단축 ✓)
+- transform: ~~translate/scale~~ ✓. rotate/matrix/3D, transition/animation 남음.
 - filter, mix-blend-mode, clip-path, mask, border-image, outline.
 
 ### 대체·임베드 콘텐츠
@@ -199,12 +199,15 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 8. ~~overflow(hidden 클리핑)~~ ✓ (5109a73), ~~box-sizing~~ ✓ (fabec85). 스크롤바/스크롤 동작은 후속.
 
 **C. 시각 완성도** — 모던 사이트 외형
-9. ~~linear-gradient~~ ✓ (771c646, 픽셀 투영 보간). 그다음 radial.
-10. transform/transition/animation.
+9. ~~linear-gradient~~ ✓ (771c646) + ~~radial-gradient~~ ✓ (픽셀 투영/방사 보간).
+10. transform: ~~translate/scale~~ ✓ (축 정렬, 레이아웃 후 시각 변환). rotate/matrix/transition/animation 남음.
 11. 배경 position/repeat/size, ~~opacity~~ ✓ (서브트리 알파 곱).
 - ~~`background:` 단축(색/url)~~ ✓ — 여태 색이 안 나오던 큰 공백 메움.
 - ~~em/rem 을 모든 속성에서 px 로 확정~~ ✓ — padding:1em, width:20rem 등이 무시되던 문제.
 - ~~CSS line-height 적용+상속~~ ✓ — 단위없는 수/퍼센트/길이, half-leading 세로 중앙.
+- ~~text-decoration(밑줄/취소선/윗줄), letter-spacing, word-spacing~~ ✓
+- ~~절대 단위(pt/pc/in/cm/mm/Q), ch/ex, 뷰포트 단위(vw/vh/vmin/vmax)~~ ✓
+- ~~@supports 피처 쿼리, ::before/::after 생성 콘텐츠~~ ✓
 
 **C-layout. 레이아웃 정확도** (실사이트 검증 기반)
 - ~~float 다단: float 을 클리어하는 블록을 옆에 배치~~ ✓ (float 사이드바+본문).
