@@ -110,7 +110,7 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 
 ### CSS — 값·캐스케이드
 - ~~`calc()`, `var()`, `min()/max()/clamp()`, 단위 전부(vw/vh/ch/pt/cm...)~~ ✓.
-- ~~`@supports`, `@font-face`(ttf/otf)~~ ✓. 남음: `!important`, `@import`, `@keyframes`, cascade layers, woff2.
+- ~~`@supports`, `@font-face`(ttf/otf), `@keyframes`(최종상태 적용)~~ ✓. 남음: `!important`, `@import`, cascade layers, woff2, 시간 기반 애니메이션.
 - 상속 확대: 현재 color/font-size/text-align 만. font-family/weight/style/
   line-height/letter-spacing/white-space/visibility/list-style/direction 등 다수 미상속.
 
@@ -141,8 +141,9 @@ classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목
 - ~~box-shadow inset, outline, filter(색변환)~~ ✓. 남음: filter blur, mix-blend-mode, clip-path, mask, border-image.
 
 ### 대체·임베드 콘텐츠
-- ~~**SVG 렌더링**(rect/circle/ellipse/line/path/polygon, viewBox, fill/stroke)~~ ✓.
-  남음: SVG 그라디언트/텍스트/변환, `<canvas>`, `<video>/<audio>`, `<iframe>`, object/embed.
+- ~~**SVG**(rect/circle/ellipse/line/path/polygon, viewBox, fill/stroke)~~ ✓.
+- ~~**`<canvas>` 2D**(fillRect/clearRect/strokeRect/fillText/경로 fill)~~ ✓.
+  남음: canvas 그라디언트/이미지/변환, SVG 그라디언트/텍스트, `<video>/<audio>`, `<iframe>`.
 - 이미지 포맷: webp/avif/gif(애니), 순차 JPEG 외.
 - 실제 폼 위젯: 체크박스/라디오/드롭다운 select/날짜 선택기, 제출/검증.
 
