@@ -177,6 +177,7 @@ pub enum Native {
     Matches,
     Closest,
     DomContains,
+    CreateDocumentFragment,
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -462,6 +463,10 @@ impl Interp {
         let mut document = HashMap::new();
         document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
         document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
+        document.insert(
+            "createDocumentFragment".to_string(),
+            Value::Native(Native::CreateDocumentFragment),
+        );
         document.insert("querySelector".to_string(), Value::Native(Native::QuerySelector));
         document.insert("querySelectorAll".to_string(), Value::Native(Native::QuerySelectorAll));
         // 문서 레벨 이벤트(DOMContentLoaded/load): 핸들러를 등록하고 스크립트
@@ -2759,6 +2764,27 @@ mod tests {
             2.0,
             "콜백 두 번째 인자 = 인덱스"
         );
+    }
+
+    #[test]
+    fn document_fragment_moves_children() {
+        let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
+        let _ = dom.find_by_attr_id("list").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        // 프래그먼트에 li 2개 추가 후 ul 에 appendChild → 자식만 옮겨진다
+        let n = interp
+            .run(
+                "var f = document.createDocumentFragment(); \
+                 var a = document.createElement('li'); \
+                 var b = document.createElement('li'); \
+                 f.appendChild(a); f.appendChild(b); \
+                 var ul = document.getElementById('list'); \
+                 ul.appendChild(f); \
+                 ul.children.length",
+            )
+            .unwrap();
+        assert_eq!(to_display(&n), "2", "프래그먼트 자식 2개가 ul 로 이동");
     }
 
     #[test]

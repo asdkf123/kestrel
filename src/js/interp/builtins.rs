@@ -5,6 +5,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+// DocumentFragment 판별 (센티널 태그)
+fn is_fragment(dom: &crate::dom::Dom, id: crate::dom::NodeId) -> bool {
+    matches!(&dom.get(id).node_type,
+        crate::dom::NodeType::Element(e) if e.tag_name == "#document-fragment")
+}
+
 impl Interp {
     // 정규식 매치 → [full, g1, ...] 배열 (+ index/input own-property)
     pub(super) fn regex_match_array(
@@ -424,6 +430,11 @@ impl Interp {
                 let text = args.first().map(to_display).unwrap_or_default();
                 let dom = self.dom_arena()?;
                 Ok(Value::Dom(dom.create_text(text)))
+            }
+            Native::CreateDocumentFragment => {
+                // 프래그먼트: 센티널 태그 컨테이너. appendChild 시 자식만 옮겨진다.
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_element("#document-fragment")))
             }
             // style.setProperty(name, value) / getPropertyValue(name) / removeProperty(name)
             Native::StyleSetProperty => {
@@ -868,7 +879,14 @@ impl Interp {
                 (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
                     let child = *child;
                     let dom = self.dom_arena()?;
-                    dom.append_child(parent, child);
+                    // DocumentFragment 는 자신이 아니라 자식들을 옮긴다
+                    if is_fragment(dom, child) {
+                        for c in dom.get(child).children.clone() {
+                            dom.append_child(parent, c);
+                        }
+                    } else {
+                        dom.append_child(parent, child);
+                    }
                     Ok(Value::Dom(child))
                 }
                 _ => Err("appendChild 는 요소 인자가 필요".to_string()),
