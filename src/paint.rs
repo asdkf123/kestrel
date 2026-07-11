@@ -11,6 +11,8 @@ pub struct Canvas {
     clip: Option<ClipShape>,
     // 활성 mix-blend-mode. Normal 이면 일반 알파합성.
     blend_mode: BlendMode,
+    // 레이어(오프스크린) 모드: 픽셀 알파를 추적해 source-over 로 누적 (그룹 합성용).
+    is_layer: bool,
 }
 
 // 픽셀 마스크 도형 (물리 px). 둥근 사각형(사각/원 포함), 타원, 다각형.
@@ -98,7 +100,19 @@ fn round_rect_coverage(rect: Rect, radii: [f32; 4], fx: f32, fy: f32) -> f32 {
 impl Canvas {
     fn new(width: usize, height: usize) -> Canvas {
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        Canvas { pixels: vec![white; width * height], width, height, clip: None, blend_mode: BlendMode::Normal }
+        Canvas { pixels: vec![white; width * height], width, height, clip: None, blend_mode: BlendMode::Normal, is_layer: false }
+    }
+
+    // 투명 오프스크린 레이어 (알파 추적). 그룹 opacity/blend 합성용.
+    fn new_layer(width: usize, height: usize) -> Canvas {
+        Canvas {
+            pixels: vec![Color { r: 0, g: 0, b: 0, a: 0 }; width * height],
+            width,
+            height,
+            clip: None,
+            blend_mode: BlendMode::Normal,
+            is_layer: true,
+        }
     }
 
     // 지역 박스 블러 (분리형 2패스). backdrop-filter: blur() 용. 물리 px 반경.
@@ -181,10 +195,28 @@ impl Canvas {
             return;
         }
         let idx = py * self.width + px;
-        self.pixels[idx] = if self.blend_mode == BlendMode::Normal {
-            blend(self.pixels[idx], color, a)
+        let dst = self.pixels[idx];
+        self.pixels[idx] = if self.is_layer {
+            // 알파 추적 source-over (레이어 안에선 blend_mode 미적용 — 합성 시 적용)
+            let sa = a as f32 / 255.0;
+            let da = dst.a as f32 / 255.0;
+            let oa = sa + da * (1.0 - sa);
+            if oa <= 0.0 {
+                return;
+            }
+            let comp = |s: u8, d: u8| {
+                ((s as f32 * sa + d as f32 * da * (1.0 - sa)) / oa).round().clamp(0.0, 255.0) as u8
+            };
+            Color {
+                r: comp(color.r, dst.r),
+                g: comp(color.g, dst.g),
+                b: comp(color.b, dst.b),
+                a: (oa * 255.0).round() as u8,
+            }
+        } else if self.blend_mode == BlendMode::Normal {
+            blend(dst, color, a)
         } else {
-            blend_mode_compose(self.pixels[idx], color, a, self.blend_mode)
+            blend_mode_compose(dst, color, a, self.blend_mode)
         };
     }
 
@@ -697,6 +729,9 @@ pub enum DisplayItem {
     Blended { mode: BlendMode, inner: Box<DisplayItem> },
     // backdrop-filter: blur() — 뒤 배경(이미 그려진 캔버스)을 rect 영역에서 흐린다.
     BackdropBlur { rect: Rect, radius: f32 },
+    // 오프스크린 레이어: 서브트리를 격리 합성한 뒤 opacity + blend 로 한 번에 얹는다
+    // (그룹 opacity/mix-blend 정확 — 겹치는 자손이 이중 블렌드되지 않음).
+    Layer { opacity: f32, blend: BlendMode, items: Vec<DisplayItem> },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -1399,6 +1434,7 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         sticky @ DisplayItem::Sticky { .. } => Some(sticky),
         clipped @ DisplayItem::Clipped { .. } => Some(clipped),
         blended @ DisplayItem::Blended { .. } => Some(blended),
+        layer @ DisplayItem::Layer { .. } => Some(layer),
     }
 }
 
@@ -1727,24 +1763,18 @@ fn collect_items(
             }
         }
     }
-    // opacity < 1: 방금 채운 서브트리 구간의 알파에 opacity 를 곱한다.
-    // 중첩 opacity 는 자연히 누적(자식 패스 ×op_child 후 부모 패스 ×op_parent).
-    if let Some(op) = element_opacity(layout_box) {
-        for (_, item) in buf[subtree_start..].iter_mut() {
-            scale_item_alpha(item, op);
-        }
-    }
-    // mix-blend-mode: 이 서브트리 아이템들을 backdrop 과 지정 모드로 합성 래핑.
-    if let Some(Value::Keyword(m)) = layout_box.styled_node.value("mix-blend-mode") {
-        if let Some(mode) = parse_blend_mode(&m) {
-            for (_, item) in buf[subtree_start..].iter_mut() {
-                let taken = std::mem::replace(item, DisplayItem::Rect {
-                    color: Color { r: 0, g: 0, b: 0, a: 0 },
-                    rect: Rect::default(),
-                });
-                *item = DisplayItem::Blended { mode, inner: Box::new(taken) };
-            }
-        }
+    // 그룹 opacity / mix-blend-mode → 오프스크린 레이어로 서브트리를 격리 합성.
+    // (겹치는 반투명 자손이 이중 블렌드되지 않고, 그룹 blend 가 정확해진다.)
+    let op = element_opacity(layout_box).unwrap_or(1.0);
+    let blend = match layout_box.styled_node.value("mix-blend-mode") {
+        Some(Value::Keyword(m)) => parse_blend_mode(&m).unwrap_or(BlendMode::Normal),
+        _ => BlendMode::Normal,
+    };
+    if op < 1.0 || blend != BlendMode::Normal {
+        let mut sub: Vec<(i32, DisplayItem)> = buf.drain(subtree_start..).collect();
+        sub.sort_by(|a, b| a.0.cmp(&b.0)); // 레이어 내부 z 순서 (안정 정렬)
+        let items: Vec<DisplayItem> = sub.into_iter().map(|(_, it)| it).collect();
+        buf.push((z, DisplayItem::Layer { opacity: op, blend, items }));
     }
 }
 
@@ -1871,6 +1901,7 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Blended { inner, .. } => filter_item(inner, funcs),
+        DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| filter_item(it, funcs)),
         DisplayItem::BackdropBlur { .. } => {}
     }
 }
@@ -1947,6 +1978,7 @@ fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
         DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Clipped { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Blended { inner, .. } => rotate_item(inner, cx, cy, angle),
+        DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| rotate_item(it, cx, cy, angle)),
         DisplayItem::BackdropBlur { .. } => {}
     }
 }
@@ -1978,6 +2010,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Clipped { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Blended { inner, .. } => scale_item_alpha(inner, f),
+        DisplayItem::Layer { opacity, .. } => *opacity *= f,
         DisplayItem::BackdropBlur { .. } => {}
     }
 }
@@ -2135,6 +2168,26 @@ fn draw_item(
                 return;
             }
             canvas.blur_region(r, radius * scale);
+        }
+        DisplayItem::Layer { opacity, blend, items } => {
+            // 서브트리를 투명 레이어에 격리 렌더 → opacity/blend 로 한 번에 합성
+            let mut layer = Canvas::new_layer(canvas.width, canvas.height);
+            for it in items {
+                draw_item(&mut layer, it, scroll_y, scale, vh, fonts, cache, images);
+            }
+            let prev = canvas.blend_mode;
+            canvas.blend_mode = *blend;
+            for py in 0..canvas.height {
+                for px in 0..canvas.width {
+                    let lp = layer.pixels[py * canvas.width + px];
+                    if lp.a == 0 {
+                        continue;
+                    }
+                    let a = ((lp.a as f32 / 255.0) * opacity * 255.0).round() as u8;
+                    canvas.put(px, py, lp, a);
+                }
+            }
+            canvas.blend_mode = prev;
         }
     }
 }
@@ -2339,6 +2392,24 @@ mod tests {
         assert_eq!(sh[1].spread, 1.0);
         assert!(sh[2].inset, "셋째는 inset");
         assert_eq!(sh[2].blur, 5.0);
+    }
+
+    #[test]
+    fn group_opacity_no_double_blend_on_overlap() {
+        // 부모 opacity:0.5, 겹치는 빨강 자식 둘 → 겹침 영역도 non-overlap 과 같은 분홍
+        // (per-item 이면 겹침이 이중 블렌드로 더 진해짐. 그룹 레이어면 동일.)
+        let c = canvas_for(
+            "<div class=\"p\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            "html,body{display:block} .p{display:block;position:relative;opacity:0.5} \
+             .a{display:block;position:absolute;top:0;left:0;width:4px;height:4px;background-color:#ff0000} \
+             .b{display:block;position:absolute;top:0;left:2px;width:4px;height:4px;background-color:#ff0000}",
+            8.0,
+            8.0,
+        );
+        let non = c.pixels[0]; // (0,0): a 만
+        let ov = c.pixels[3]; // (3,0): a+b 겹침
+        assert_eq!(non, ov, "그룹 opacity: 겹침도 동일 non={:?} ov={:?}", non, ov);
+        assert!(non.r > 250 && (non.g as i32 - 128).abs() < 6, "분홍이어야 {:?}", non);
     }
 
     #[test]
