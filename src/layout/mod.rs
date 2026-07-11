@@ -248,13 +248,14 @@ impl<'a> LayoutBox<'a> {
             NodeType::Element(e) => e.tag_name.as_str(),
             _ => "",
         };
+        let _ = tag;
         if matches!(self.styled_node.display(), Display::Flex) {
             self.layout_flex_children(fonts, images);
         } else if matches!(self.styled_node.display(), Display::Grid) {
             self.layout_grid_children(fonts, images);
-        } else if tag == "table" {
+        } else if box_is_table(self) {
             self.layout_table(fonts, images);
-        } else if tag == "tr" {
+        } else if is_tr(self) {
             self.layout_table_row(fonts, images);
         } else {
             self.layout_children(fonts, images);
@@ -905,7 +906,12 @@ impl<'a> LayoutBox<'a> {
             }
         }
         if rows.is_empty() {
-            self.layout_children(fonts, images);
+            // CSS 테이블에서 행 없이 셀이 직속이면(익명 행 생략) 한 행으로 가로 배치.
+            if self.children.iter().any(is_cell) {
+                self.layout_table_row(fonts, images);
+            } else {
+                self.layout_children(fonts, images);
+            }
             return;
         }
         // 행 박스 접근 (매크로 대용 인라인 매치)
@@ -1115,13 +1121,37 @@ impl<'a> LayoutBox<'a> {
 
 
 
-fn is_tr(b: &LayoutBox) -> bool {
-    matches!(&b.styled_node.node.node_type, NodeType::Element(e) if e.tag_name == "tr")
+fn box_tag<'a>(b: &'a LayoutBox) -> &'a str {
+    match &b.styled_node.node.node_type {
+        NodeType::Element(e) => e.tag_name.as_str(),
+        _ => "",
+    }
 }
 
+// display 키워드가 kws 중 하나인가 (CSS 테이블 역할 판별).
+fn box_display_is(b: &LayoutBox, kws: &[&str]) -> bool {
+    matches!(b.styled_node.value("display"), Some(Value::Keyword(s)) if kws.contains(&s.as_str()))
+}
+
+// 테이블 상자: <table> 태그 또는 display:table/inline-table
+fn box_is_table(b: &LayoutBox) -> bool {
+    box_tag(b) == "table" || box_display_is(b, &["table", "inline-table"])
+}
+
+// 행 상자: <tr> 태그 또는 display:table-row
+fn is_tr(b: &LayoutBox) -> bool {
+    box_tag(b) == "tr" || box_display_is(b, &["table-row"])
+}
+
+// 행 그룹: tbody/thead/tfoot 또는 display:table-*-group
 fn is_row_group(b: &LayoutBox) -> bool {
-    matches!(&b.styled_node.node.node_type,
-        NodeType::Element(e) if e.tag_name == "tbody" || e.tag_name == "thead" || e.tag_name == "tfoot")
+    matches!(box_tag(b), "tbody" | "thead" | "tfoot")
+        || box_display_is(b, &["table-row-group", "table-header-group", "table-footer-group"])
+}
+
+// 셀 상자: <td>/<th> 또는 display:table-cell
+fn is_cell(b: &LayoutBox) -> bool {
+    matches!(box_tag(b), "td" | "th") || box_display_is(b, &["table-cell"])
 }
 
 // SVG viewBox "minx miny width height" → (minx, miny, width, height)
@@ -2829,6 +2859,44 @@ mod tests {
         assert_eq!(d[1].content.x, 100.0);
         assert_eq!(d[1].content.width, 200.0, "auto 셀 = 남은 200");
         assert_eq!(d[2].content.x, 300.0, "우측 25% 셀");
+    }
+
+    #[test]
+    fn css_display_table_direct_cells_horizontal() {
+        // display:table + display:table-cell (익명 행) → 가로 배치
+        let d = flex_layout(
+            "<div class=\"t\"><div class=\"c\">a</div><div class=\"c\">b</div><div class=\"c\">d</div></div>",
+            ".t { display: table; width: 300px; } .c { display: table-cell; }",
+            400.0,
+        );
+        assert_eq!(d.len(), 3, "셀 3개");
+        assert!(d[1].content.x > d[0].content.x, "둘째 셀이 오른쪽");
+        assert!(d[2].content.x > d[1].content.x, "셋째 셀이 더 오른쪽");
+        assert_eq!(d[0].content.y, d[1].content.y, "같은 행이라 y 동일");
+    }
+
+    #[test]
+    fn css_display_table_full_structure() {
+        // display:table > table-row > table-cell 완전 구조
+        let root = crate::html::parse_dom(
+            "<div class=\"t\"><div class=\"r\"><div class=\"c\">a</div><div class=\"c\">b</div></div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".t { display: table; width: 200px; } .r { display: table-row; } .c { display: table-cell; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let row = &lb.children[0];
+        assert!(row.children.len() >= 2, "행에 셀 2개");
+        assert!(
+            row.children[1].dimensions.content.x > row.children[0].dimensions.content.x,
+            "둘째 셀이 오른쪽"
+        );
     }
 
     #[test]
