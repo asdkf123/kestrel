@@ -1071,10 +1071,16 @@ fn collect_items(
     emit_outline(layout_box, &mut local);
     emit_svg(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
+        // background-size: cover/contain 지원. 그 외/미지정은 Natural(좌상단 고유크기).
+        let fit = match layout_box.styled_node.value("background-size") {
+            Some(Value::Keyword(ref k)) if k == "cover" => ImageFit::Cover,
+            Some(Value::Keyword(ref k)) if k == "contain" => ImageFit::Contain,
+            _ => ImageFit::Natural,
+        };
         local.push(DisplayItem::Image {
             image: idx,
             rect: layout_box.dimensions.border_box(),
-            fit: ImageFit::Natural,
+            fit,
         });
     }
     if let Some(g) = &layout_box.gradient {
