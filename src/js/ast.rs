@@ -175,5 +175,7 @@ pub enum Stmt {
     Switch { disc: Expr, cases: Vec<(Option<Expr>, Vec<Stmt>)> },
     // for (k in obj) — 객체 키 / 배열 인덱스 순회
     ForIn { name: String, obj: Expr, body: Vec<Stmt> },
+    // for (v of iterable) — 값 순회 (배열/문자열/Set/Map)
+    ForOf { name: String, iter: Expr, body: Vec<Stmt> },
     ClassDecl(ClassDef),
 }

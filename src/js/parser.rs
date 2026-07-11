@@ -423,6 +423,23 @@ impl Parser {
             self.expect(&Tok::RParen)?;
             return Ok(Stmt::ForIn { name, obj, body: self.body_of_clause()? });
         }
+        // for (v of iter) — "of" 는 문맥 키워드(Ident)로 렉싱됨
+        let is_of = |t: Option<&Tok>| matches!(t, Some(Tok::Ident(s)) if s == "of");
+        let is_decl_of = matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const))
+            && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(_)))
+            && is_of(self.toks.get(self.pos + 2));
+        let is_bare_of =
+            matches!(self.peek(), Some(Tok::Ident(_))) && is_of(self.toks.get(self.pos + 1));
+        if is_decl_of || is_bare_of {
+            if is_decl_of {
+                self.pos += 1; // var/let/const
+            }
+            let name = self.ident()?;
+            self.pos += 1; // "of"
+            let iter = self.expr()?;
+            self.expect(&Tok::RParen)?;
+            return Ok(Stmt::ForOf { name, iter, body: self.body_of_clause()? });
+        }
         let init = if self.eat(&Tok::Semi) {
             None
         } else {

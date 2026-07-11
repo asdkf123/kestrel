@@ -1256,6 +1256,32 @@ impl Interp {
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
+            Stmt::ForOf { name, iter, body } => {
+                let target = self.eval(iter, env)?;
+                let values: Vec<Value> = match &target {
+                    Value::Arr(a) => a.borrow().clone(),
+                    Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
+                    Value::SetVal(s) => s.borrow().clone(),
+                    // Map: [key, value] 쌍 배열을 순회
+                    Value::MapVal(m) => m
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
+                        .collect(),
+                    _ => return Err(format!("{} 은(는) 반복 가능하지 않음", type_of(&target))),
+                };
+                for v in values {
+                    self.tick()?;
+                    let scope = Env::new(Some(env.clone()));
+                    env_declare(&scope, name, v);
+                    match self.exec_block(body, &scope)? {
+                        Flow::Break => break,
+                        Flow::Continue | Flow::Normal(_) => {}
+                        ret => return Ok(ret),
+                    }
+                }
+                Ok(Flow::Normal(Value::Undefined))
+            }
             Stmt::Switch { disc, cases } => {
                 let d = self.eval(disc, env)?;
                 let scope = Env::new(Some(env.clone()));
@@ -2699,6 +2725,18 @@ mod tests {
             2.0,
             "콜백 두 번째 인자 = 인덱스"
         );
+    }
+
+    #[test]
+    fn for_of_iterates_values() {
+        // 배열 값 순회
+        assert_eq!(run_num("var s = 0; for (const x of [1,2,3,4]) s += x; s"), 10.0);
+        // 문자열 문자 순회
+        assert_eq!(run_str("var out = ''; for (var c of 'abc') out = c + out; out"), "cba");
+        // Set 값 순회
+        assert_eq!(run_num("var s = 0; for (const x of new Set([2,2,3])) s += x; s"), 5.0);
+        // break 동작
+        assert_eq!(run_num("var n = 0; for (const x of [1,2,3,4]) { if (x === 3) break; n++; } n"), 2.0);
     }
 
     #[test]
