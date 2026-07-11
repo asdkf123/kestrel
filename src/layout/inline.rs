@@ -221,6 +221,8 @@ impl<'a> LayoutBox<'a> {
         let mut lines = 1;
         // 줄별 시작 인덱스 + 폭 (center/right 정렬 후처리용): (glyph, link, deco, width)
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
+        // 줄별 각 단어의 시작 글리프 인덱스 (justify 정렬용)
+        let mut line_words: Vec<Vec<usize>> = vec![Vec::new()];
 
         for (word, force_break, glue) in &words {
             let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
@@ -233,7 +235,9 @@ impl<'a> LayoutBox<'a> {
                 pen_x = line_left;
                 lines += 1;
                 line_bounds.push((self.glyphs.len(), self.links.len(), self.decorations.len(), 0.0));
+                line_words.push(Vec::new());
             }
+            line_words.last_mut().unwrap().push(self.glyphs.len());
             let word_x0 = pen_x;
             let mut word_px_max = 0.0f32;
             let mut word_color = Color { r: 0, g: 0, b: 0, a: 255 };
@@ -292,9 +296,36 @@ impl<'a> LayoutBox<'a> {
             }
         }
 
-        // center/right 정렬: 줄마다 남는 폭만큼 그 줄의 글리프/링크/밑줄을 이동
+        // justify 정렬: 마지막 줄 제외, 각 줄의 남는 폭을 단어 사이에 균등 분배.
         let align = self.align();
-        if align != "left" {
+        if align == "justify" {
+            let last_line = line_bounds.len().saturating_sub(1);
+            for i in 0..line_bounds.len() {
+                if i == last_line {
+                    continue; // 마지막 줄은 justify 안 함
+                }
+                let starts = &line_words[i];
+                if starts.len() < 2 {
+                    continue;
+                }
+                let w = line_bounds[i].3;
+                let extra = (content_w - w) / (starts.len() as f32 - 1.0);
+                if extra <= 0.1 {
+                    continue;
+                }
+                let g_end = line_bounds.get(i + 1).map(|b| b.0).unwrap_or(self.glyphs.len());
+                // 단어 k(0-기반)의 글리프를 k*extra 만큼 오른쪽으로
+                for k in 1..starts.len() {
+                    let from = starts[k];
+                    let to = starts.get(k + 1).copied().unwrap_or(g_end);
+                    for g in &mut self.glyphs[from..to] {
+                        g.x += k as f32 * extra;
+                    }
+                }
+            }
+        }
+        // center/right 정렬: 줄마다 남는 폭만큼 그 줄의 글리프/링크/밑줄을 이동
+        if align != "left" && align != "justify" {
             for i in 0..line_bounds.len() {
                 let (g0, l0, d0, w) = line_bounds[i];
                 let off = if align == "center" { (content_w - w) / 2.0 } else { content_w - w };

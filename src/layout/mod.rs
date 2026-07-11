@@ -470,7 +470,8 @@ impl<'a> LayoutBox<'a> {
     fn align(&self) -> &'static str {
         match self.styled_node.value("text-align") {
             Some(Value::Keyword(s)) if s == "center" => "center",
-            Some(Value::Keyword(s)) if s == "right" => "right",
+            Some(Value::Keyword(s)) if s == "right" || s == "end" => "right",
+            Some(Value::Keyword(s)) if s == "justify" => "justify",
             _ => "left",
         }
     }
@@ -1618,6 +1619,29 @@ mod tests {
         );
         assert!(broken.content.height > overflow.content.height + 1.0,
             "break-all 이 여러 줄로 나눠 더 높아야 ({} > {})", broken.content.height, overflow.content.height);
+    }
+
+    #[test]
+    fn text_align_justify_fills_line() {
+        let fs = fonts();
+        let text = "one two three four five six seven eight nine ten eleven twelve";
+        // justify: 첫 줄이 오른쪽 끝까지 채워짐 (마지막 글리프 x 가 크다)
+        let jroot = crate::html::parse_dom(format!("<p>{}</p>", text));
+        let jss = crate::css::parse("p { display: block; width: 120px; text-align: justify; font-size: 14px; }".to_string());
+        let js = crate::style::style_tree(&jroot, &jss);
+        let jlb = layout_tree_for(&js, &fs);
+        let jg = glyphs_of(&jlb);
+        // 왼쪽 정렬과 비교: justify 의 첫 줄 오른쪽 끝 글리프가 더 오른쪽
+        let lroot = crate::html::parse_dom(format!("<p>{}</p>", text));
+        let lss = crate::css::parse("p { display: block; width: 120px; text-align: left; font-size: 14px; }".to_string());
+        let ls = crate::style::style_tree(&lroot, &lss);
+        let llb = layout_tree_for(&ls, &fs);
+        let lg = glyphs_of(&llb);
+        // 첫 줄(y 최소) 글리프들의 최대 x
+        let first_y = jg.iter().map(|g| g.baseline_y).fold(f32::INFINITY, f32::min);
+        let jmax = jg.iter().filter(|g| (g.baseline_y - first_y).abs() < 1.0).map(|g| g.x).fold(0.0f32, f32::max);
+        let lmax = lg.iter().filter(|g| (g.baseline_y - first_y).abs() < 1.0).map(|g| g.x).fold(0.0f32, f32::max);
+        assert!(jmax > lmax + 5.0, "justify 첫 줄이 더 넓게 퍼짐 ({} > {})", jmax, lmax);
     }
 
     #[test]
