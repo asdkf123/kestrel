@@ -43,20 +43,30 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 value: Value::Keyword(if bold { "bold" } else { "normal" }.to_string()),
             }]
         }
-        // flex-grow: 단위 없는 수 → Length(n, Px) 로 저장(레이아웃이 to_px 로 읽음)
-        "flex-grow" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(n, Unit::Px) }],
+        // flex-grow/flex-shrink: 단위 없는 수 → Length(n, Px) (레이아웃이 to_px 로 읽음)
+        "flex-grow" | "flex-shrink" => match value_text.trim().parse::<f32>() {
+            Ok(n) => vec![Declaration { name: name.to_string(), value: Value::Length(n, Unit::Px) }],
             _ => Vec::new(),
         },
-        // flex 단축값: 첫 토큰의 grow 만 취함 (flex:1 → grow 1, none → 0, auto → 1)
+        // flex 단축값: <grow> [shrink] [basis]. none=0 0 auto, auto=1 1 auto, initial=0 1 auto.
         "flex" => {
-            let first = value_text.split_whitespace().next().unwrap_or("");
-            let grow = match first {
-                "none" | "initial" => 0.0,
-                "auto" => 1.0,
-                _ => first.parse::<f32>().unwrap_or(0.0),
+            let toks: Vec<&str> = value_text.split_whitespace().collect();
+            let first = toks.first().copied().unwrap_or("");
+            let (grow, shrink) = match first {
+                "none" => (0.0, 0.0),
+                "initial" => (0.0, 1.0),
+                "auto" => (1.0, 1.0),
+                _ => {
+                    let g = first.parse::<f32>().unwrap_or(0.0);
+                    // 둘째 토큰이 수면 shrink, 아니면 기본 1
+                    let s = toks.get(1).and_then(|t| t.parse::<f32>().ok()).unwrap_or(1.0);
+                    (g, s)
+                }
             };
-            vec![Declaration { name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) }]
+            vec![
+                Declaration { name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) },
+                Declaration { name: "flex-shrink".to_string(), value: Value::Length(shrink, Unit::Px) },
+            ]
         }
         // grid 트랙/영역 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
         "grid-template-columns" | "grid-template-rows" | "grid-template-areas" | "grid-area"

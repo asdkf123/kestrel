@@ -2188,6 +2188,36 @@ mod tests {
     }
 
     #[test]
+    fn flex_shrink_prevents_overflow() {
+        // 고정 폭 합(200+200=400) > 컨테이너(300) → 기본 shrink 1 로 반씩 줄여 300 에 맞춤
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            ".row { display: flex; width: 300px; } \
+             .a { display: block; width: 200px; height: 10px; } \
+             .b { display: block; width: 200px; height: 10px; }",
+            300.0,
+        );
+        // 각 200 에서 (400-300)/2=50 씩 줄어 150
+        assert!((d[0].content.width - 150.0).abs() < 1.0, "a 폭 ~150, 실제 {}", d[0].content.width);
+        assert!((d[1].content.width - 150.0).abs() < 1.0, "b 폭 ~150, 실제 {}", d[1].content.width);
+        // b 는 a 바로 오른쪽(150) — 넘치지 않음
+        assert!((d[1].content.x - 150.0).abs() < 1.0, "b x ~150");
+    }
+
+    #[test]
+    fn flex_shrink_zero_keeps_size() {
+        // flex-shrink: 0 → 줄지 않고 넘침 허용
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>",
+            ".row { display: flex; width: 300px; } \
+             .a { display: block; width: 200px; height: 10px; flex-shrink: 0; } \
+             .b { display: block; width: 200px; height: 10px; flex-shrink: 0; }",
+            300.0,
+        );
+        assert!((d[0].content.width - 200.0).abs() < 1.0, "shrink:0 은 200 유지");
+    }
+
+    #[test]
     fn flex_align_items_center_row() {
         let d = flex_layout(
             "<div class=\"row\"><div class=\"tall\"></div><div class=\"short\"></div></div>",

@@ -12,9 +12,9 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    // flexbox: row/column, flex-wrap, justify-content, align-items, gap, flex-grow.
-    // 미지원: flex-shrink(음수 공간은 넘침 허용), flex-basis(폭/높이 or 내용폭으로 근사),
-    // align-self, align-content, order, wrap-reverse 세부.
+    // flexbox: row/column, flex-wrap, justify-content, align-items, gap, flex-grow, flex-shrink.
+    // 미지원: flex-basis(폭/높이 or 내용폭으로 근사), align-self, align-content, order,
+    // wrap-reverse 세부.
     pub(super) fn layout_flex_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
@@ -44,6 +44,7 @@ impl<'a> LayoutBox<'a> {
         let mut basis = vec![0.0f32; n];
         let mut cross = vec![0.0f32; n];
         let mut grow = vec![0.0f32; n];
+        let mut shrink = vec![1.0f32; n]; // flex-shrink 기본 1
         let mut main_fixed = vec![false; n];
         let mut cross_fixed = vec![false; n];
         let measure_w = if row {
@@ -81,6 +82,7 @@ impl<'a> LayoutBox<'a> {
                 child.used_width + (mbox.width - child.dimensions.content.width)
             };
             grow[i] = child.styled_node.value("flex-grow").map(|v| v.to_px()).unwrap_or(0.0);
+            shrink[i] = child.styled_node.value("flex-shrink").map(|v| v.to_px()).unwrap_or(1.0);
         }
 
         // 2) 줄 나누기 (wrap 이고 main 확정일 때만)
@@ -120,6 +122,15 @@ impl<'a> LayoutBox<'a> {
                 for (k, &i) in line.iter().enumerate() {
                     sizes[k] += free * grow[i] / total_grow;
                 }
+            } else if free < 0.0 {
+                // flex-shrink: 음수 공간을 shrink[i]×basis[i] 가중치로 분배 (넘침 방지)
+                let weighted: f32 = line.iter().map(|&i| shrink[i] * basis[i]).sum();
+                if weighted > 0.0 {
+                    for (k, &i) in line.iter().enumerate() {
+                        sizes[k] += free * (shrink[i] * basis[i]) / weighted;
+                        sizes[k] = sizes[k].max(0.0);
+                    }
+                }
             }
             // justify: grow 가 free 를 소진 못했을 때만 남은 공간 분배
             let leftover = if total_grow > 0.0 { 0.0 } else { free.max(0.0) };
@@ -156,6 +167,19 @@ impl<'a> LayoutBox<'a> {
                 }
                 child.clear_render(); // 측정 패스에서 쌓인 글리프 제거 (이중 렌더 방지)
                 child.layout(cb, fonts, images);
+                // flex main 크기를 강제 (fixed width/height 인 아이템이 grow/shrink 됐을 때).
+                // calculate_width 가 CSS 크기로 덮으므로 여기서 flex 계산값으로 재지정.
+                if main_fixed[i] {
+                    if row {
+                        let hextra =
+                            child.dimensions.border_box().width - child.dimensions.content.width;
+                        child.dimensions.content.width = (msize - hextra).max(0.0);
+                    } else {
+                        let vextra =
+                            child.dimensions.border_box().height - child.dimensions.content.height;
+                        child.dimensions.content.height = (msize - vextra).max(0.0);
+                    }
+                }
                 // stretch: cross 크기를 줄 cross 로 강제 (내용보다 클 때만 늘림)
                 if stretch {
                     if row {
