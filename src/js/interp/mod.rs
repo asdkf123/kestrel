@@ -95,6 +95,8 @@ pub struct JsClass {
     pub ctor: Option<Rc<JsFn>>,
     pub methods: HashMap<String, Rc<JsFn>>,
     pub getters: HashMap<String, Rc<JsFn>>,
+    // 인스턴스 필드 초기화 함수 (없으면 None → undefined). 생성 시 this 로 호출.
+    pub fields: Vec<(String, Option<Rc<JsFn>>)>,
     pub statics: RefCell<HashMap<String, Value>>,
 }
 
@@ -2410,8 +2412,27 @@ impl Interp {
             class: cls.clone(),
             fields: RefCell::new(HashMap::new()),
         }));
+        // 클래스 필드 초기화(조상 → 자신 순) 후 생성자 실행
+        self.init_fields(&cls, &inst)?;
         self.run_constructor(&cls, &inst, args)?;
         Ok(inst)
+    }
+
+    // 클래스 필드를 인스턴스에 초기화. 조상 먼저, this=인스턴스로 초기화식 평가.
+    fn init_fields(&mut self, cls: &Rc<JsClass>, inst: &Value) -> Result<(), String> {
+        if let Some(parent) = &cls.parent {
+            self.init_fields(parent, inst)?;
+        }
+        for (name, init_fn) in &cls.fields {
+            let v = match init_fn {
+                Some(f) => self.call_value(Value::Fn(f.clone()), Some(inst.clone()), vec![])?,
+                None => Value::Undefined,
+            };
+            if let Value::Instance(i) = inst {
+                i.fields.borrow_mut().insert(name.clone(), v);
+            }
+        }
+        Ok(())
     }
 
     // 생성자 실행 (super() 는 명시 호출로 부모 생성자 실행 — 자동 체인 아님, ES 동일)
@@ -2474,6 +2495,14 @@ impl Interp {
         for (name, p, b) in &def.getters {
             getters.insert(name.clone(), mk(p, b));
         }
+        // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출
+        let mut fields = Vec::new();
+        for (name, init) in &def.fields {
+            let f = init
+                .as_ref()
+                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))]));
+            fields.push((name.clone(), f));
+        }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
         for (name, p, b) in &def.statics {
@@ -2485,8 +2514,21 @@ impl Interp {
             ctor,
             methods,
             getters,
+            fields,
             statics: RefCell::new(statics),
         });
+        // static 필드: 클래스 완성 후 this=클래스로 평가해 statics 에 설정
+        for (name, init) in &def.static_fields {
+            let v = match init {
+                Some(e) => {
+                    let scope = Env::new(Some(env.clone()));
+                    env_declare(&scope, "this", Value::Class(cls.clone()));
+                    self.eval(e, &scope)?
+                }
+                None => Value::Undefined,
+            };
+            cls.statics.borrow_mut().insert(name.clone(), v);
+        }
         Ok(Value::Class(cls))
     }
 
@@ -3436,6 +3478,17 @@ mod tests {
         assert_eq!(run_str("({get g(){return 'ok';}}).g"), "ok");
         // getter + setter 공존 (setter 는 무시)
         assert_eq!(run_num("({base:5, set v(x){}, get v(){return this.base+1;}}).v"), 6.0);
+    }
+
+    #[test]
+    fn class_fields_and_numeric_separators() {
+        // 인스턴스 필드 (this 참조 가능) + 상속 + static
+        assert_eq!(run_num("class C{x=5; y=this.x+1;} var c=new C(); c.x+c.y"), 16.0);
+        assert_eq!(run_num("class B{a=1;} class D extends B{b=2;} var d=new D(); d.a+d.b"), 3.0);
+        assert_eq!(run_num("class E{static v=7;} E.v"), 7.0);
+        // 숫자 구분자
+        assert_eq!(run_num("1_000_000 + 2_500"), 1002500.0);
+        assert_eq!(run_num("0xff_ff"), 65535.0);
     }
 
     #[test]

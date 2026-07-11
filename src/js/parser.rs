@@ -1137,6 +1137,8 @@ impl Parser {
         let mut methods = Vec::new();
         let mut statics = Vec::new();
         let mut getters = Vec::new();
+        let mut fields = Vec::new();
+        let mut static_fields = Vec::new();
         while self.peek() != Some(&Tok::RBrace) {
             if self.eof() {
                 return Err("닫히지 않은 class".to_string());
@@ -1156,6 +1158,17 @@ impl Parser {
                 }
             }
             let mname = self.member_name()?;
+            // 클래스 필드: 이름 뒤가 '(' 가 아니면 메서드가 아니라 필드 (x = 5; / x;)
+            if self.peek() != Some(&Tok::LParen) {
+                let init = if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
+                self.eat(&Tok::Semi);
+                if is_static {
+                    static_fields.push((mname, init));
+                } else {
+                    fields.push((mname, init));
+                }
+                continue;
+            }
             let (params, mut body) = self.param_list()?;
             body.extend(self.block()?);
             if !is_static && mname == "constructor" {
@@ -1171,7 +1184,7 @@ impl Parser {
             }
         }
         self.pos += 1; // '}'
-        Ok(ClassDef { name, parent, ctor, methods, statics, getters })
+        Ok(ClassDef { name, parent, ctor, methods, statics, getters, fields, static_fields })
     }
 
     // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드

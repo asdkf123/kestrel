@@ -283,13 +283,14 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
                 if let Some((radix, err)) = radix {
                     let start = i + 2;
                     let mut j = start;
-                    while j < b.len() && b[j].is_digit(radix) {
+                    while j < b.len() && (b[j].is_digit(radix) || b[j] == '_') {
                         j += 1;
                     }
                     if j == start {
                         return Err(err.to_string());
                     }
-                    let s: String = b[start..j].iter().collect();
+                    // 숫자 구분자 _ 제거 (0xff_ff 등)
+                    let s: String = b[start..j].iter().filter(|&&ch| ch != '_').collect();
                     let v = u64::from_str_radix(&s, radix).map_err(|e| e.to_string())?;
                     i = j;
                     if i < b.len() && b[i] == 'n' {
@@ -300,17 +301,18 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
                 }
             }
             let start = i;
-            while i < b.len() && b[i].is_ascii_digit() {
+            while i < b.len() && (b[i].is_ascii_digit() || b[i] == '_') {
                 i += 1;
             }
             if i < b.len() && b[i] == '.' {
                 i += 1;
-                while i < b.len() && b[i].is_ascii_digit() {
+                while i < b.len() && (b[i].is_ascii_digit() || b[i] == '_') {
                     i += 1;
                 }
             }
             lex_exponent(&b, &mut i);
-            let s: String = b[start..i].iter().collect();
+            // 숫자 구분자 _ 제거 (1_000_000 등)
+            let s: String = b[start..i].iter().filter(|&&ch| ch != '_').collect();
             let v = s.parse::<f64>().map_err(|e| e.to_string())?;
             if i < b.len() && b[i] == 'n' {
                 i += 1; // BigInt 접미

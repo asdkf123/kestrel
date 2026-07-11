@@ -66,6 +66,10 @@ pub struct ClassDef {
     pub statics: Vec<(String, Vec<String>, Vec<Stmt>)>,
     // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스)
     pub getters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    // 인스턴스 필드: (이름, 초기화식) — 생성 시 this 에 설정
+    pub fields: Vec<(String, Option<Expr>)>,
+    // static 필드: (이름, 초기화식) — 클래스에 설정
+    pub static_fields: Vec<(String, Option<Expr>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
