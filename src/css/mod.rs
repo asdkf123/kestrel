@@ -20,17 +20,40 @@ pub struct Rule {
 #[derive(Debug, PartialEq)]
 pub enum Selector {
     Simple(SimpleSelector),
-    // 공백 결합자 체인: [조상, ..., 대상] (예: ".a .b" → [.a, .b])
-    Descendant(Vec<SimpleSelector>),
+    // 결합자 체인: [(결합자, 단순), ...]. 첫 항목의 결합자는 무시(대상 기준).
+    // 예: ".a > .b" → [(Descendant, .a), (Child, .b)]. 마지막이 대상.
+    Complex(Vec<(Combinator, SimpleSelector)>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Combinator {
+    Descendant,   // 공백
+    Child,        // >
+    NextSibling,  // +
+    LaterSibling, // ~
+}
+
+// 의사 클래스. 구조적(위치)과 동적(상호작용) 구분.
+#[derive(Debug, PartialEq, Clone)]
+pub enum Pseudo {
+    FirstChild,
+    LastChild,
+    OnlyChild,
+    NthChild(i32, i32), // an+b
+    Not(Vec<SimpleSelector>),
+    Root,
+    Empty,
+    Dynamic, // hover/focus/active/visited 등 — 정적 렌더에선 비매칭
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct SimpleSelector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
     pub class: Vec<String>,
     // 속성 선택자: (이름, 값). 값 None = [attr] 존재만, Some = [attr=val] 정확 일치.
     pub attrs: Vec<(String, Option<String>)>,
+    pub pseudos: Vec<Pseudo>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -70,23 +93,29 @@ pub struct Color {
 pub type Specificity = (usize, usize, usize);
 
 impl Selector {
-    fn parts(&self) -> &[SimpleSelector] {
+    // 대상(가장 오른쪽) 단순 선택자
+    pub fn subject(&self) -> &SimpleSelector {
         match self {
-            Selector::Simple(s) => std::slice::from_ref(s),
-            Selector::Descendant(v) => v,
+            Selector::Simple(s) => s,
+            Selector::Complex(v) => &v.last().unwrap().1,
         }
     }
 
-    // 대상(가장 오른쪽) 단순 선택자
-    pub fn subject(&self) -> &SimpleSelector {
-        self.parts().last().unwrap()
+    fn each_simple(&self) -> Vec<&SimpleSelector> {
+        match self {
+            Selector::Simple(s) => vec![s],
+            Selector::Complex(v) => v.iter().map(|(_, s)| s).collect(),
+        }
     }
 
     pub fn specificity(&self) -> Specificity {
-        let parts = self.parts();
+        let parts = self.each_simple();
+        // 의사 클래스는 클래스와 동일 특이도(:not 은 인자 기준이나 근사)
         let a = parts.iter().map(|s| s.id.iter().count()).sum();
-        // 속성 선택자는 클래스와 동일 특이도 (CSS 표준)
-        let b = parts.iter().map(|s| s.class.len() + s.attrs.len()).sum();
+        let b = parts
+            .iter()
+            .map(|s| s.class.len() + s.attrs.len() + s.pseudos.len())
+            .sum();
         let c = parts.iter().map(|s| s.tag_name.iter().count()).sum();
         (a, b, c)
     }
@@ -115,6 +144,28 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
 
 // 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
 // 캐스케이드에서 어떤 선택자보다 높은 우선순위 (스타일 적용 시 마지막에 얹음).
+// nth 인자 파싱: "2n+1"/"odd"/"even"/"3"/"n"/"-n+3" → (a, b) 의 an+b.
+fn parse_nth(s: &str) -> Option<(i32, i32)> {
+    let s: String = s.trim().to_ascii_lowercase().split_whitespace().collect();
+    match s.as_str() {
+        "odd" => return Some((2, 1)),
+        "even" => return Some((2, 0)),
+        _ => {}
+    }
+    if let Some(np) = s.find('n') {
+        let a = match &s[..np] {
+            "" | "+" => 1,
+            "-" => -1,
+            a => a.parse().ok()?,
+        };
+        let b_str = s[np + 1..].trim_start_matches('+');
+        let b = if b_str.is_empty() { 0 } else { b_str.parse().ok()? };
+        Some((a, b))
+    } else {
+        Some((0, s.parse().ok()?))
+    }
+}
+
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
     let mut parser = Parser { pos: 0, input: text.to_string(), viewport_width: 0.0 };
     parser.parse_declarations()
@@ -299,7 +350,7 @@ impl Parser {
                     self.consume_char();
                     break;
                 }
-                // '>'/'+'/'~'/의사클래스/속성/eof 등은 미지원 → 규칙 스킵
+                // 파싱 실패(미지원 구문 잔여) → 규칙 스킵
                 _ => return None,
             }
         }
@@ -307,53 +358,144 @@ impl Parser {
         Some(selectors)
     }
 
-    // 공백으로 이어진 단순 선택자 체인 (자손 결합자). 종료 후 peek 은 ','/'{'/미지원 문자.
+    // 결합자 체인: 단순 선택자를 공백/`>`/`+`/`~` 로 이음. 종료 후 peek 은 ','/'{'.
     fn parse_complex_selector(&mut self) -> Option<Selector> {
-        let mut parts = vec![self.parse_simple_selector()];
+        let mut parts = vec![(Combinator::Descendant, self.parse_simple_selector()?)];
         loop {
+            let had_ws = self.peek().map(|c| c.is_whitespace()).unwrap_or(false);
             self.consume_whitespace();
-            match self.peek() {
-                Some(c) if c == '.' || c == '#' || c == '*' || c == '[' || valid_identifier_char(c) => {
-                    parts.push(self.parse_simple_selector());
+            let combinator = match self.peek() {
+                Some('>') => {
+                    self.consume_char();
+                    self.consume_whitespace();
+                    Combinator::Child
+                }
+                Some('+') => {
+                    self.consume_char();
+                    self.consume_whitespace();
+                    Combinator::NextSibling
+                }
+                Some('~') => {
+                    self.consume_char();
+                    self.consume_whitespace();
+                    Combinator::LaterSibling
+                }
+                Some(c)
+                    if had_ws
+                        && (c == '.'
+                            || c == '#'
+                            || c == '*'
+                            || c == '['
+                            || c == ':'
+                            || valid_identifier_char(c)) =>
+                {
+                    Combinator::Descendant
                 }
                 _ => break,
-            }
+            };
+            parts.push((combinator, self.parse_simple_selector()?));
         }
         if parts.len() == 1 {
-            Some(Selector::Simple(parts.pop().unwrap()))
+            Some(Selector::Simple(parts.pop().unwrap().1))
         } else {
-            Some(Selector::Descendant(parts))
+            Some(Selector::Complex(parts))
         }
     }
 
-    fn parse_simple_selector(&mut self) -> SimpleSelector {
-        let mut selector =
-            SimpleSelector { tag_name: None, id: None, class: Vec::new(), attrs: Vec::new() };
+    // 하나의 compound 선택자(태그/id/class/속성/의사클래스 조합). 없으면 None.
+    fn parse_simple_selector(&mut self) -> Option<SimpleSelector> {
+        let mut selector = SimpleSelector {
+            tag_name: None,
+            id: None,
+            class: Vec::new(),
+            attrs: Vec::new(),
+            pseudos: Vec::new(),
+        };
+        let mut any = false;
         while !self.eof() {
             match self.input[self.pos..].chars().next().unwrap() {
                 '#' => {
                     self.consume_char();
                     selector.id = Some(self.parse_identifier());
+                    any = true;
                 }
                 '.' => {
                     self.consume_char();
                     selector.class.push(self.parse_identifier());
+                    any = true;
                 }
                 '*' => {
                     self.consume_char();
+                    any = true;
                 }
                 '[' => {
                     if let Some(attr) = self.parse_attr_selector() {
                         selector.attrs.push(attr);
+                        any = true;
+                    } else {
+                        return None;
                     }
+                }
+                ':' => {
+                    self.consume_char();
+                    if self.peek() == Some(':') {
+                        self.consume_char(); // ::pseudo-element → 의사요소, 매칭 대상 아님(Dynamic 근사)
+                    }
+                    match self.parse_pseudo() {
+                        Some(p) => selector.pseudos.push(p),
+                        None => return None,
+                    }
+                    any = true;
                 }
                 c if valid_identifier_char(c) => {
                     selector.tag_name = Some(self.parse_identifier());
+                    any = true;
                 }
                 _ => break,
             }
         }
-        selector
+        if any {
+            Some(selector)
+        } else {
+            None
+        }
+    }
+
+    // 의사 클래스 파싱. 함수형(nth-child(..)/not(..))과 키워드형.
+    fn parse_pseudo(&mut self) -> Option<Pseudo> {
+        let name = self.parse_identifier().to_ascii_lowercase();
+        // 함수형: 괄호 안 인자
+        if self.peek() == Some('(') {
+            self.consume_char();
+            let arg = self.consume_while(|c| c != ')');
+            if self.peek() == Some(')') {
+                self.consume_char();
+            }
+            return match name.as_str() {
+                "nth-child" | "nth-of-type" => {
+                    let (a, b) = parse_nth(arg.trim())?;
+                    Some(Pseudo::NthChild(a, b))
+                }
+                "not" => {
+                    // :not(단순) — 단일 compound 만 (근사)
+                    let mut inner = Parser { pos: 0, input: arg, viewport_width: 0.0 };
+                    let s = inner.parse_simple_selector()?;
+                    Some(Pseudo::Not(vec![s]))
+                }
+                _ => Some(Pseudo::Dynamic), // is/where/lang 등 미지원 → 근사
+            };
+        }
+        Some(match name.as_str() {
+            "first-child" => Pseudo::FirstChild,
+            "last-child" => Pseudo::LastChild,
+            "only-child" => Pseudo::OnlyChild,
+            "first-of-type" => Pseudo::FirstChild, // 타입 구분 근사
+            "last-of-type" => Pseudo::LastChild,
+            "root" => Pseudo::Root,
+            "empty" => Pseudo::Empty,
+            // 상호작용/링크 상태 → 정적 렌더에선 비매칭
+            _ => Pseudo::Dynamic,
+        })
     }
 
     // [name] 또는 [name=value] / [name="value"]. =/따옴표 파싱, 그 외 연산자(~= 등)는
@@ -590,13 +732,16 @@ mod tests {
     }
 
     #[test]
-    fn skips_unsupported_selectors() {
-        // '>' (자식 결합자) 는 아직 미지원 → 규칙 스킵
-        let ss = parse(".a > .b { color: #ff0000; } div { width: 5px; }".to_string());
+    fn parses_child_combinator() {
+        // '>' 자식 결합자 지원 → [(Descendant, .a), (Child, .b)]
+        let ss = parse(".a > .b { color: #ff0000; }".to_string());
         assert_eq!(ss.rules.len(), 1);
         match &ss.rules[0].selectors[0] {
-            Selector::Simple(s) => assert_eq!(s.tag_name.as_deref(), Some("div")),
-            other => panic!("unexpected selector: {:?}", other),
+            Selector::Complex(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert_eq!(parts[1].0, Combinator::Child);
+            }
+            other => panic!("expected Complex, got {:?}", other),
         }
     }
 
@@ -604,13 +749,14 @@ mod tests {
     fn parses_descendant_selector_chain() {
         let ss = parse("div .note p { width: 5px; }".to_string());
         match &ss.rules[0].selectors[0] {
-            Selector::Descendant(parts) => {
+            Selector::Complex(parts) => {
                 assert_eq!(parts.len(), 3);
-                assert_eq!(parts[0].tag_name.as_deref(), Some("div"));
-                assert_eq!(parts[1].class, vec!["note".to_string()]);
-                assert_eq!(parts[2].tag_name.as_deref(), Some("p"));
+                assert_eq!(parts[0].1.tag_name.as_deref(), Some("div"));
+                assert_eq!(parts[1].0, Combinator::Descendant);
+                assert_eq!(parts[1].1.class, vec!["note".to_string()]);
+                assert_eq!(parts[2].1.tag_name.as_deref(), Some("p"));
             }
-            other => panic!("expected Descendant, got {:?}", other),
+            other => panic!("expected Complex, got {:?}", other),
         }
     }
 

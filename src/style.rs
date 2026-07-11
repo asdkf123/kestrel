@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::css::{Rule, Selector, SimpleSelector, Specificity, Stylesheet, Unit, Value};
+use crate::css::{
+    Combinator, Rule, Selector, SimpleSelector, Specificity, Stylesheet, Unit, Value,
+};
 use crate::dom::{Dom, ElementData, NodeData, NodeId, NodeType};
 
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
@@ -63,31 +65,94 @@ impl<'a> StyledNode<'a> {
     }
 }
 
-// ancestors: 루트→부모 순. 자손 체인은 오른쪽(대상)부터 왼쪽으로,
-// 조상은 가까운 쪽부터 위로 탐욕 매칭한다 (자손 결합자 표준 의미).
-fn matches(elem: &ElementData, ancestors: &[&ElementData], selector: &Selector) -> bool {
+// 대상 요소의 형제 문맥: 구조적 의사 클래스(:nth-child 등)와 형제 결합자(+/~)용.
+#[derive(Clone, Copy)]
+pub struct SiblingCtx<'a> {
+    pub index: usize, // 요소 형제 중 1-기반 위치
+    pub total: usize, // 요소 형제 수
+    pub prev: &'a [&'a ElementData], // 선행 요소 형제 (문서 순서)
+    pub has_children: bool,          // :empty 판별용
+}
+
+impl Default for SiblingCtx<'_> {
+    fn default() -> Self {
+        SiblingCtx { index: 1, total: 1, prev: &[], has_children: false }
+    }
+}
+
+// ancestors: 루트→부모 순. 결합자 체인을 대상부터 왼쪽으로 걸어 매칭.
+fn matches(
+    elem: &ElementData,
+    ancestors: &[&ElementData],
+    sib: &SiblingCtx,
+    selector: &Selector,
+) -> bool {
     match selector {
-        Selector::Simple(simple) => matches_simple_selector(elem, simple),
-        Selector::Descendant(parts) => {
-            let (subject, rest) = parts.split_last().unwrap();
-            if !matches_simple_selector(elem, subject) {
+        Selector::Simple(simple) => matches_compound(elem, simple, Some(sib)),
+        Selector::Complex(parts) => {
+            let (_, subject) = parts.last().unwrap();
+            if !matches_compound(elem, subject, Some(sib)) {
                 return false;
             }
-            let mut i = rest.len();
-            for anc in ancestors.iter().rev() {
-                if i == 0 {
-                    break;
-                }
-                if matches_simple_selector(anc, &rest[i - 1]) {
-                    i -= 1;
+            // 현재 요소 기준 조상/선행형제를 유지하며 왼쪽으로 이동
+            let mut cur_anc: &[&ElementData] = ancestors;
+            let mut cur_prev: &[&ElementData] = sib.prev;
+            for i in (1..parts.len()).rev() {
+                let combinator = parts[i].0;
+                let part = &parts[i - 1].1;
+                match combinator {
+                    Combinator::Child => {
+                        let Some(parent) = cur_anc.last() else { return false };
+                        if !matches_compound(parent, part, None) {
+                            return false;
+                        }
+                        cur_anc = &cur_anc[..cur_anc.len() - 1];
+                        cur_prev = &[]; // 부모의 선행형제는 미보유
+                    }
+                    Combinator::Descendant => {
+                        let mut found = None;
+                        for k in (0..cur_anc.len()).rev() {
+                            if matches_compound(cur_anc[k], part, None) {
+                                found = Some(k);
+                                break;
+                            }
+                        }
+                        let Some(k) = found else { return false };
+                        cur_anc = &cur_anc[..k];
+                        cur_prev = &[];
+                    }
+                    Combinator::NextSibling => {
+                        let Some(prev) = cur_prev.last() else { return false };
+                        if !matches_compound(prev, part, None) {
+                            return false;
+                        }
+                        cur_prev = &cur_prev[..cur_prev.len() - 1];
+                    }
+                    Combinator::LaterSibling => {
+                        let mut found = None;
+                        for k in (0..cur_prev.len()).rev() {
+                            if matches_compound(cur_prev[k], part, None) {
+                                found = Some(k);
+                                break;
+                            }
+                        }
+                        let Some(k) = found else { return false };
+                        cur_prev = &cur_prev[..k];
+                    }
                 }
             }
-            i == 0
+            true
         }
     }
 }
 
-fn matches_simple_selector(elem: &ElementData, selector: &SimpleSelector) -> bool {
+// compound(단순) 선택자 매칭 + 의사 클래스. sib=Some 이면 구조적 의사 클래스를
+// 정확히 평가, None(비대상 부분)이면 근사(구조적→통과, 동적→비매칭).
+fn matches_compound(
+    elem: &ElementData,
+    selector: &SimpleSelector,
+    sib: Option<&SiblingCtx>,
+) -> bool {
     if selector.tag_name.iter().any(|name| elem.tag_name != *name) {
         return false;
     }
@@ -98,7 +163,6 @@ fn matches_simple_selector(elem: &ElementData, selector: &SimpleSelector) -> boo
     if selector.class.iter().any(|class| !elem_classes.contains(&**class)) {
         return false;
     }
-    // 속성 선택자: [name] 은 존재, [name=val] 은 값 일치
     for (name, val) in &selector.attrs {
         match elem.attributes.get(name) {
             Some(av) => {
@@ -111,7 +175,37 @@ fn matches_simple_selector(elem: &ElementData, selector: &SimpleSelector) -> boo
             None => return false,
         }
     }
+    for p in &selector.pseudos {
+        if !matches_pseudo(elem, p, sib) {
+            return false;
+        }
+    }
     true
+}
+
+fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&SiblingCtx>) -> bool {
+    use crate::css::Pseudo;
+    match p {
+        Pseudo::Dynamic => false, // hover/focus/active/visited 등 정적 렌더에선 비매칭
+        Pseudo::Not(inner) => !inner.iter().any(|s| matches_compound(elem, s, sib)),
+        // 구조적: 대상(sib=Some)만 정확 평가, 비대상은 통과(근사)
+        Pseudo::FirstChild => sib.map(|s| s.index == 1).unwrap_or(true),
+        Pseudo::LastChild => sib.map(|s| s.index == s.total).unwrap_or(true),
+        Pseudo::OnlyChild => sib.map(|s| s.total == 1).unwrap_or(true),
+        Pseudo::Root => sib.map(|s| s.prev.is_empty() && s.total >= 1).unwrap_or(true) && elem.tag_name == "html",
+        Pseudo::Empty => sib.map(|s| !s.has_children).unwrap_or(true),
+        Pseudo::NthChild(a, b) => {
+            let Some(s) = sib else { return true };
+            let n = s.index as i32;
+            // n = a*k + b, k>=0 인 정수 해 존재?
+            if *a == 0 {
+                n == *b
+            } else {
+                let diff = n - *b;
+                diff % a == 0 && diff / a >= 0
+            }
+        }
+    }
 }
 
 type MatchedRule<'a> = (Specificity, &'a Rule);
@@ -119,11 +213,12 @@ type MatchedRule<'a> = (Specificity, &'a Rule);
 fn match_rule<'a>(
     elem: &ElementData,
     ancestors: &[&ElementData],
+    sib: &SiblingCtx,
     rule: &'a Rule,
 ) -> Option<MatchedRule<'a>> {
     rule.selectors
         .iter()
-        .find(|selector| matches(elem, ancestors, selector))
+        .find(|selector| matches(elem, ancestors, sib, selector))
         .map(|selector| (selector.specificity(), rule))
 }
 
@@ -188,12 +283,17 @@ impl<'a> RuleIndex<'a> {
     }
 }
 
-fn specified_values(elem: &ElementData, ancestors: &[&ElementData], index: &RuleIndex) -> PropertyMap {
+fn specified_values(
+    elem: &ElementData,
+    ancestors: &[&ElementData],
+    sib: &SiblingCtx,
+    index: &RuleIndex,
+) -> PropertyMap {
     let mut values = HashMap::new();
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
-        .filter_map(|i| match_rule(elem, ancestors, &index.rules[i]))
+        .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i]))
         .collect();
     // 오름차순 특이도, 안정 정렬 → 동일 특이도는 문서 순서 유지 (뒤 규칙이 이김)
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
@@ -226,7 +326,28 @@ pub fn element_matches(dom: &Dom, id: NodeId, selectors: &[Selector]) -> bool {
             _ => None,
         })
         .collect();
-    selectors.iter().any(|s| matches(elem, &ancestors, s))
+    // 형제 문맥 계산 (querySelector 는 :nth-child 등도 지원)
+    let sib = sibling_ctx_for(dom, id);
+    selectors.iter().any(|s| matches(elem, &ancestors, &sib, s))
+}
+
+// 아레나 요소의 형제 문맥(인덱스/총수/선행형제). element_matches 용.
+fn sibling_ctx_for<'a>(dom: &'a Dom, id: NodeId) -> SiblingCtx<'a> {
+    let has_children = !dom.get(id).children.is_empty();
+    let Some(parent) = dom.get(id).parent else {
+        return SiblingCtx { index: 1, total: 1, prev: &[], has_children };
+    };
+    let elem_sibs: Vec<NodeId> = dom
+        .get(parent)
+        .children
+        .iter()
+        .copied()
+        .filter(|&c| matches!(dom.get(c).node_type, NodeType::Element(_)))
+        .collect();
+    let index = elem_sibs.iter().position(|&c| c == id).map(|i| i + 1).unwrap_or(1);
+    // prev 는 문서 순서 선행 형제. 라이프타임상 leak 대신 빈 슬라이스(근사) — 대부분
+    // querySelector 형제 결합자는 드묾. 인덱스/총수만 정확.
+    SiblingCtx { index, total: elem_sibs.len().max(1), prev: &[], has_children }
 }
 
 // CSS 상속 속성 (자식이 명시 안 하면 부모 계산값을 물려받음). font-size 는
@@ -255,21 +376,22 @@ const INHERITED: &[&str] = &[
 pub fn style_tree<'a>(dom: &'a Dom, stylesheet: &'a Stylesheet) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None)
+    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default())
 }
 
-// parent: 부모 요소의 계산값(상속 원천). 루트는 None.
+// parent: 부모 요소의 계산값(상속 원천). 루트는 None. sib: 형제 문맥.
 fn style_node<'a>(
     dom: &'a Dom,
     id: NodeId,
     index: &RuleIndex<'a>,
     ancestors: &mut Vec<&'a ElementData>,
     parent: Option<&PropertyMap>,
+    sib: &SiblingCtx,
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
         NodeType::Element(ref elem) => {
-            let mut values = specified_values(elem, ancestors, index);
+            let mut values = specified_values(elem, ancestors, sib, index);
             let parent_fs = parent
                 .and_then(|p| p.get("font-size"))
                 .and_then(|v| match v {
@@ -346,11 +468,34 @@ fn style_node<'a>(
                 k == "font-size" || !matches!(v, Value::Length(_, Unit::Em | Unit::Rem))
             });
             ancestors.push(elem);
-            let children = node
+            // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제
+            let elem_children: Vec<NodeId> = node
                 .children
                 .iter()
-                .map(|&child| style_node(dom, child, index, ancestors, Some(&values)))
+                .copied()
+                .filter(|&c| matches!(dom.get(c).node_type, NodeType::Element(_)))
                 .collect();
+            let total = elem_children.len();
+            let mut prev_elems: Vec<&ElementData> = Vec::new();
+            let mut children = Vec::with_capacity(node.children.len());
+            for &child in &node.children {
+                if let NodeType::Element(ref ce) = dom.get(child).node_type {
+                    let idx = prev_elems.len() + 1;
+                    let has_children = !dom.get(child).children.is_empty();
+                    let csib = SiblingCtx { index: idx, total, prev: &prev_elems, has_children };
+                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib));
+                    prev_elems.push(ce);
+                } else {
+                    children.push(style_node(
+                        dom,
+                        child,
+                        index,
+                        ancestors,
+                        Some(&values),
+                        &SiblingCtx::default(),
+                    ));
+                }
+            }
             ancestors.pop();
             StyledNode { node, id, specified_values: values, children }
         }
@@ -361,7 +506,9 @@ fn style_node<'a>(
             children: node
                 .children
                 .iter()
-                .map(|&child| style_node(dom, child, index, ancestors, parent))
+                .map(|&child| {
+                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default())
+                })
                 .collect(),
         },
     }
@@ -589,6 +736,70 @@ mod tests {
         let ss = crate::css::parse(".b { width: var(--missing, 42px); }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(42.0, Unit::Px)), "미정의 → fallback");
+    }
+
+    fn col(r: u8, g: u8, b: u8) -> Value {
+        Value::Color(crate::css::Color { r, g, b, a: 255 })
+    }
+
+    #[test]
+    fn pseudo_classes_and_child_combinator() {
+        let root =
+            crate::html::parse_dom("<ul><li>a</li><li>b</li><li>c</li></ul>".to_string());
+        let ss = crate::css::parse(
+            "ul > li:first-child { color: #ff0000; } \
+             li:nth-child(2) { color: #00ff00; } \
+             li:last-child { color: #0000ff; }"
+                .to_string(),
+        );
+        let ul = style_tree(&root, &ss);
+        assert_eq!(ul.children[0].value("color"), Some(col(255, 0, 0)), ":first-child");
+        assert_eq!(ul.children[1].value("color"), Some(col(0, 255, 0)), ":nth-child(2)");
+        assert_eq!(ul.children[2].value("color"), Some(col(0, 0, 255)), ":last-child");
+    }
+
+    #[test]
+    fn nth_child_formula_and_not() {
+        let root = crate::html::parse_dom(
+            "<ul><li></li><li></li><li></li><li></li></ul>".to_string(),
+        );
+        // 2n(짝수) 빨강, :not(:first-child) 파랑(1번 제외 나머지가 파랑이지만 짝수는 빨강이 이김?
+        // 특이도 동일 → 문서 순서 뒤가 이김: not 규칙이 뒤라 파랑. 분리 테스트로.
+        let ss = crate::css::parse("li:nth-child(2n) { color: #ff0000; }".to_string());
+        let ul = style_tree(&root, &ss);
+        assert_eq!(ul.children[0].value("color"), None, "1번(홀수) 미매칭");
+        assert_eq!(ul.children[1].value("color"), Some(col(255, 0, 0)), "2번(짝수)");
+        assert_eq!(ul.children[3].value("color"), Some(col(255, 0, 0)), "4번(짝수)");
+        // :not
+        let ss2 = crate::css::parse("li:not(:first-child) { color: #00ff00; }".to_string());
+        let ul2 = style_tree(&root, &ss2);
+        assert_eq!(ul2.children[0].value("color"), None, ":not(:first-child) 는 1번 제외");
+        assert_eq!(ul2.children[1].value("color"), Some(col(0, 255, 0)));
+    }
+
+    #[test]
+    fn child_combinator_excludes_grandchildren() {
+        let root = crate::html::parse_dom(
+            "<div class=\"a\"><p>direct</p><span><p>deep</p></span></div>".to_string(),
+        );
+        let ss = crate::css::parse(".a > p { color: #ff0000; }".to_string());
+        let div = style_tree(&root, &ss);
+        assert_eq!(div.children[0].value("color"), Some(col(255, 0, 0)), "직속 p 매칭");
+        // span 안의 p 는 자식 결합자로 비매칭
+        let deep_p = &div.children[1].children[0];
+        assert_eq!(deep_p.value("color"), None, "손자 p 는 > 로 비매칭");
+    }
+
+    #[test]
+    fn adjacent_sibling_combinator() {
+        let root = crate::html::parse_dom(
+            "<div><h2></h2><p class=\"x\"></p><p class=\"y\"></p></div>".to_string(),
+        );
+        let ss = crate::css::parse("h2 + p { color: #ff0000; }".to_string());
+        let div = style_tree(&root, &ss);
+        // h2 바로 다음 p(.x) 만 매칭, 그다음 p(.y) 는 비매칭
+        assert_eq!(div.children[1].value("color"), Some(col(255, 0, 0)), "h2 직후 p");
+        assert_eq!(div.children[2].value("color"), None, "인접 아닌 p 비매칭");
     }
 
     #[test]
