@@ -1133,12 +1133,115 @@ fn collect_items(
             }
         }
     }
+    // filter: 서브트리 아이템 색을 함수 체인으로 변환 (grayscale/brightness/invert/sepia/contrast).
+    if let Some(Value::Keyword(f)) = layout_box.styled_node.value("filter") {
+        let funcs = parse_filters(&f);
+        if !funcs.is_empty() {
+            for (_, item) in buf[subtree_start..].iter_mut() {
+                filter_item(item, &funcs);
+            }
+        }
+    }
     // opacity < 1: 방금 채운 서브트리 구간의 알파에 opacity 를 곱한다.
     // 중첩 opacity 는 자연히 누적(자식 패스 ×op_child 후 부모 패스 ×op_parent).
     if let Some(op) = element_opacity(layout_box) {
         for (_, item) in buf[subtree_start..].iter_mut() {
             scale_item_alpha(item, op);
         }
+    }
+}
+
+// filter 함수 목록 파싱 → (이름, 강도 0..) 벡터. 퍼센트는 0..1, 무단위 수 그대로.
+fn parse_filters(text: &str) -> Vec<(String, f32)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('(') {
+        let name = rest[..open].trim().rsplit(|c: char| c.is_whitespace()).next().unwrap_or("").to_ascii_lowercase();
+        let Some(close) = rest[open..].find(')') else { break };
+        let close = close + open;
+        let arg = rest[open + 1..close].trim();
+        let amt = if let Some(p) = arg.strip_suffix('%') {
+            p.trim().parse::<f32>().ok().map(|v| v / 100.0)
+        } else if let Some(p) = arg.strip_suffix("deg") {
+            p.trim().parse::<f32>().ok()
+        } else {
+            arg.parse::<f32>().ok()
+        };
+        if let Some(a) = amt {
+            out.push((name, a));
+        } else if !name.is_empty() {
+            out.push((name, 1.0)); // 인자 없는 경우 기본 강도
+        }
+        rest = &rest[close + 1..];
+    }
+    out
+}
+
+// 색에 filter 함수 체인을 적용.
+fn apply_filters(c: Color, funcs: &[(String, f32)]) -> Color {
+    let (mut r, mut g, mut b) = (c.r as f32, c.g as f32, c.b as f32);
+    for (name, amt) in funcs {
+        match name.as_str() {
+            "grayscale" => {
+                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                r += (luma - r) * amt;
+                g += (luma - g) * amt;
+                b += (luma - b) * amt;
+            }
+            "brightness" => {
+                r *= amt;
+                g *= amt;
+                b *= amt;
+            }
+            "invert" => {
+                r += (255.0 - 2.0 * r) * amt;
+                g += (255.0 - 2.0 * g) * amt;
+                b += (255.0 - 2.0 * b) * amt;
+            }
+            "contrast" => {
+                r = (r - 128.0) * amt + 128.0;
+                g = (g - 128.0) * amt + 128.0;
+                b = (b - 128.0) * amt + 128.0;
+            }
+            "sepia" => {
+                let (nr, ng, nb) = (
+                    0.393 * r + 0.769 * g + 0.189 * b,
+                    0.349 * r + 0.686 * g + 0.168 * b,
+                    0.272 * r + 0.534 * g + 0.131 * b,
+                );
+                r += (nr - r) * amt;
+                g += (ng - g) * amt;
+                b += (nb - b) * amt;
+            }
+            _ => {} // blur/drop-shadow/hue-rotate/saturate 등 미지원
+        }
+    }
+    let clamp = |v: f32| v.clamp(0.0, 255.0) as u8;
+    Color { r: clamp(r), g: clamp(g), b: clamp(b), a: c.a }
+}
+
+// 디스플레이 아이템의 색들에 filter 적용. opacity 함수는 알파에.
+fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
+    // opacity(n) filter 는 알파 스케일로 처리
+    for (name, amt) in funcs {
+        if name == "opacity" {
+            scale_item_alpha(item, *amt);
+        }
+    }
+    match item {
+        DisplayItem::Rect { color, .. }
+        | DisplayItem::RoundRect { color, .. }
+        | DisplayItem::Shadow { color, .. }
+        | DisplayItem::InnerShadow { color, .. }
+        | DisplayItem::Polygon { color, .. } => *color = apply_filters(*color, funcs),
+        DisplayItem::Glyph(gi) => gi.color = apply_filters(gi.color, funcs),
+        DisplayItem::Gradient { stops, .. } => {
+            for (c, _) in stops.iter_mut() {
+                *c = apply_filters(*c, funcs);
+            }
+        }
+        DisplayItem::Image { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
+        DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
     }
 }
 
@@ -1563,6 +1666,29 @@ mod tests {
         // circle 중심 cx=7,cy=5 → 박스 (14,10). 파랑
         let c = canvas.pixels[10 * 20 + 14];
         assert!(c.b > 200 && c.r < 60, "circle 파랑, 실제 {:?}", c);
+    }
+
+    #[test]
+    fn filter_grayscale_and_invert() {
+        // grayscale(100%) 빨강 → 회색 (r=g=b=luma≈76)
+        let gray = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 2px; height: 2px; background-color: #ff0000; filter: grayscale(100%); }",
+            4.0,
+            4.0,
+        );
+        let p = gray.pixels[0];
+        assert_eq!(p.r, p.g);
+        assert_eq!(p.g, p.b);
+        assert!((p.r as i32 - 76).abs() <= 2, "빨강 luma ~76, 실제 {}", p.r);
+        // invert(100%) 검정 → 흰색
+        let inv = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 2px; height: 2px; background-color: #000000; filter: invert(100%); }",
+            4.0,
+            4.0,
+        );
+        assert_eq!(inv.pixels[0], Color { r: 255, g: 255, b: 255, a: 255 });
     }
 
     #[test]

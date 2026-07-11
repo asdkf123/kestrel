@@ -170,6 +170,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "transform" => {
             vec![Declaration { name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
+        "filter" | "-webkit-filter" => {
+            vec![Declaration { name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
