@@ -317,6 +317,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
+        // list-style 단축 → type/position/image. `list-style: none` 이 마커를 없앤다.
+        "list-style" => {
+            let mut out = Vec::new();
+            for tok in value_text.split_whitespace() {
+                match tok {
+                    "inside" | "outside" => out.push(Declaration {
+                        name: "list-style-position".to_string(),
+                        value: Value::Keyword(tok.to_string()),
+                    }),
+                    t if t.starts_with("url(") => {
+                        if let Some(v) = interpret_value(t) {
+                            out.push(Declaration { name: "list-style-image".to_string(), value: v });
+                        }
+                    }
+                    // none 은 type/image 둘 다 될 수 있으나 마커 제거 목적상 type:none 로.
+                    t => out.push(Declaration {
+                        name: "list-style-type".to_string(),
+                        value: Value::Keyword(t.to_string()),
+                    }),
+                }
+            }
+            out
+        }
         // background 단축: 색 → background-color, url() → background-image.
         // position/repeat/size/attachment/gradient 등은 근사(드롭).
         "background" => background_shorthand(value_text),

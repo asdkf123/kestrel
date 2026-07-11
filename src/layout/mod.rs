@@ -280,6 +280,12 @@ impl<'a> LayoutBox<'a> {
         if e.tag_name != "li" {
             return;
         }
+        // list-style-type:none (상속 포함) 이면 마커 없음 — None 을 기본 불릿으로 되돌리지 않는다.
+        if matches!(self.styled_node.value("list-style-type"),
+            Some(Value::Keyword(ref k)) if k == "none")
+        {
+            return;
+        }
         let marker = self.list_marker.clone().unwrap_or_else(|| "\u{2022}".to_string());
         let px = self
             .styled_node
@@ -2769,6 +2775,25 @@ mod tests {
         let fs = fonts();
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         lb.children.iter().map(|c| c.list_marker.clone()).collect()
+    }
+
+    #[test]
+    fn list_style_none_draws_no_marker_glyph() {
+        // list-style:none 이면 마커 글리프가 실제로 안 그려져야 (add_list_marker 가 None→불릿 하지 않음)
+        let count = |css: &str| {
+            let root = crate::html::parse_dom("<ul class=\"l\"><li>x</li></ul>".to_string());
+            let mut ss = crate::css::user_agent_stylesheet();
+            ss.rules.extend(crate::css::parse(css.to_string()).rules);
+            let styled = crate::style::style_tree(&root, &ss);
+            let mut vp: Dimensions = Default::default();
+            vp.content.width = 400.0;
+            let fs = fonts();
+            let lb = layout_tree(&styled, vp, &fs, &no_images());
+            glyphs_of(&lb).len()
+        };
+        let bulleted = count(".l { list-style: disc; }"); // 불릿 + x
+        let none = count(".l { list-style: none; }"); // x 만
+        assert!(none < bulleted, "none 은 마커 글리프 없음 none={} bulleted={}", none, bulleted);
     }
 
     #[test]
