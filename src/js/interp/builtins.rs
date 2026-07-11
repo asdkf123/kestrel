@@ -492,6 +492,19 @@ impl Interp {
                 }
                 Ok(Value::Bool(false))
             }
+            // event.preventDefault() / stopPropagation() — recv 가 이벤트 객체
+            Native::EventPreventDefault => {
+                if let Some(Value::Obj(o)) = &recv {
+                    o.borrow_mut().insert("defaultPrevented".to_string(), Value::Bool(true));
+                }
+                Ok(Value::Undefined)
+            }
+            Native::EventStopProp => {
+                if let Some(Value::Obj(o)) = &recv {
+                    o.borrow_mut().insert("__stopProp".to_string(), Value::Bool(true));
+                }
+                Ok(Value::Undefined)
+            }
             Native::XhrCtor => Ok(self.make_xhr()),
             // XHR: open(method, url) → __method/__url 저장, readyState=1
             Native::XhrOpen => {

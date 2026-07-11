@@ -159,6 +159,8 @@ pub enum Native {
     XhrSend,
     XhrSetHeader,
     XhrGetHeader,
+    EventPreventDefault,
+    EventStopProp,
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -768,24 +770,57 @@ impl Interp {
         }
     }
 
-    // 이벤트 디스패치: 타깃과 그 조상 체인에 등록된 핸들러 실행 (버블링).
-    // 하나라도 실행되면 true. 핸들러 에러는 [js error] 로 격리.
+    // 이벤트 객체 생성: type/target + preventDefault/stopPropagation 등.
+    // 내부 플래그(__defaultPrevented/__stopProp)를 네이티브가 갱신.
+    pub(super) fn make_event(&self, event: &str, target: crate::dom::NodeId) -> Value {
+        let mut m = HashMap::new();
+        m.insert("type".to_string(), Value::Str(event.to_string()));
+        m.insert("target".to_string(), Value::Dom(target));
+        m.insert("currentTarget".to_string(), Value::Dom(target));
+        m.insert("srcElement".to_string(), Value::Dom(target));
+        m.insert("bubbles".to_string(), Value::Bool(true));
+        m.insert("cancelable".to_string(), Value::Bool(true));
+        m.insert("defaultPrevented".to_string(), Value::Bool(false));
+        m.insert("isTrusted".to_string(), Value::Bool(true));
+        m.insert("__stopProp".to_string(), Value::Bool(false));
+        m.insert("timeStamp".to_string(), Value::Num(0.0));
+        m.insert("preventDefault".to_string(), Value::Native(Native::EventPreventDefault));
+        m.insert("stopPropagation".to_string(), Value::Native(Native::EventStopProp));
+        m.insert("stopImmediatePropagation".to_string(), Value::Native(Native::EventStopProp));
+        Value::Obj(Rc::new(RefCell::new(m)))
+    }
+
+    // 이벤트 디스패치: 타깃 → 조상 순(버블링). 이벤트 객체를 인자로 전달,
+    // this 는 currentTarget. stopPropagation 시 상위 전파 중단.
+    // 반환: 핸들러가 하나라도 실행됐는지(호출측 리플로우 판단용).
     pub fn fire_handlers(&mut self, target: crate::dom::NodeId, event: &str) -> bool {
-        self.steps = 0; // 이벤트마다 실행 한도 리셋
+        self.steps = 0;
         let mut chain = vec![target];
         if let Some(p) = self.dom {
             chain.extend(unsafe { (*p).ancestors(target) });
         }
-        let to_run: Vec<Value> = self
-            .handlers
-            .iter()
-            .filter(|(id, t, _)| t == event && chain.contains(id))
-            .map(|(_, _, f)| f.clone())
-            .collect();
-        let fired = !to_run.is_empty();
-        for f in to_run {
-            if let Err(e) = self.call_value(f, None, Vec::new()) {
-                println!("[js error] {}", e);
+        let evt = self.make_event(event, target);
+        let evt_obj = if let Value::Obj(o) = &evt { o.clone() } else { unreachable!() };
+        let mut fired = false;
+        for id in chain {
+            let to_run: Vec<Value> = self
+                .handlers
+                .iter()
+                .filter(|(hid, t, _)| *hid == id && t == event)
+                .map(|(_, _, f)| f.clone())
+                .collect();
+            if !to_run.is_empty() {
+                fired = true;
+                evt_obj.borrow_mut().insert("currentTarget".to_string(), Value::Dom(id));
+            }
+            for f in to_run {
+                if let Err(e) = self.call_value(f, Some(Value::Dom(id)), vec![evt.clone()]) {
+                    println!("[js error] {}", e);
+                }
+            }
+            // stopPropagation 되면 상위로 전파 안 함
+            if matches!(evt_obj.borrow().get("__stopProp"), Some(Value::Bool(true))) {
+                break;
             }
         }
         fired
@@ -957,8 +992,11 @@ impl Interp {
             .map(|(_, f)| f.clone())
             .collect();
         let fired = !to_run.is_empty();
+        // 문서 레벨 이벤트 객체 (target = 문서 루트)
+        let evt = self.dom.map(|p| self.make_event(event, unsafe { (*p).root }));
         for f in to_run {
-            if let Err(e) = self.call_value(f, None, Vec::new()) {
+            let args = evt.clone().map(|e| vec![e]).unwrap_or_default();
+            if let Err(e) = self.call_value(f, None, args) {
                 println!("[js error] {}", e);
             }
             self.drain_microtasks();
