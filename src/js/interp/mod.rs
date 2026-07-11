@@ -173,6 +173,7 @@ pub enum Native {
     GetBoundingClientRect,
     DispatchEvent,
     EventCtor,
+    CloneNode,
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -1914,6 +1915,7 @@ impl Interp {
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "dispatchEvent" => Some(Native::DispatchEvent),
+                    "cloneNode" => Some(Native::CloneNode),
                     _ => None,
                 };
                 if let Some(n) = native {
@@ -2751,6 +2753,26 @@ mod tests {
             2.0,
             "콜백 두 번째 인자 = 인덱스"
         );
+    }
+
+    #[test]
+    fn clone_node_deep_and_shallow() {
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"t\"><span>hi</span></div>".to_string(),
+        );
+        let t = dom.find_by_attr_id("t").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        // deep clone → 자식 텍스트 포함
+        let r = interp
+            .run("var c = document.getElementById('t').cloneNode(true); c.textContent")
+            .unwrap();
+        assert_eq!(to_display(&r), "hi");
+        // shallow clone → 자식 없음
+        let r2 = interp
+            .run("var c = document.getElementById('t').cloneNode(false); c.children.length")
+            .unwrap();
+        assert_eq!(to_display(&r2), "0");
     }
 
     #[test]

@@ -745,6 +745,16 @@ impl Interp {
                 }
                 _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
             },
+            Native::CloneNode => {
+                let deep = args.first().map(to_bool).unwrap_or(false);
+                match recv {
+                    Some(Value::Dom(id)) => {
+                        let dom = self.dom_arena()?;
+                        Ok(Value::Dom(dom.clone_node(id, deep)))
+                    }
+                    _ => Err("cloneNode 는 요소 메서드".to_string()),
+                }
+            }
             Native::DispatchEvent => {
                 let node = match recv {
                     Some(Value::Dom(id)) => id,

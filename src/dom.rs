@@ -8,13 +8,13 @@ pub struct Node {
     pub node_type: NodeType,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum NodeType {
     Text(String),
     Element(ElementData),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ElementData {
     pub tag_name: String,
     pub attributes: AttrMap,
@@ -102,6 +102,23 @@ impl Dom {
             }),
         });
         id
+    }
+
+    // node.cloneNode(deep): 노드(및 deep 이면 서브트리)를 복사해 분리된 새 노드로.
+    // 새 루트의 NodeId 를 반환한다 (부모 없음).
+    pub fn clone_node(&mut self, id: NodeId, deep: bool) -> NodeId {
+        let node_type = self.nodes[id].node_type.clone();
+        let new_id = self.nodes.len();
+        self.nodes.push(NodeData { parent: None, children: Vec::new(), node_type });
+        if deep {
+            let children = self.nodes[id].children.clone();
+            for c in children {
+                let cc = self.clone_node(c, true);
+                self.nodes[cc].parent = Some(new_id);
+                self.nodes[new_id].children.push(cc);
+            }
+        }
+        new_id
     }
 
     pub fn create_text(&mut self, text: String) -> NodeId {
