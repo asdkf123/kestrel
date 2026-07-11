@@ -1059,6 +1059,23 @@ mod tests {
     }
 
     #[test]
+    fn logical_properties_map_to_physical() {
+        let d = parse_inline_style("margin-inline: 10px 20px; padding-block: 5px; inline-size: 100px; inset-inline-start: 3px");
+        let get = |n: &str| d.iter().find(|x| x.name == n).map(|x| &x.value);
+        assert_eq!(get("margin-left"), Some(&Value::Length(10.0, Unit::Px)));
+        assert_eq!(get("margin-right"), Some(&Value::Length(20.0, Unit::Px)));
+        assert_eq!(get("padding-top"), Some(&Value::Length(5.0, Unit::Px)));
+        assert_eq!(get("padding-bottom"), Some(&Value::Length(5.0, Unit::Px)));
+        assert_eq!(get("width"), Some(&Value::Length(100.0, Unit::Px)));
+        assert_eq!(get("left"), Some(&Value::Length(3.0, Unit::Px)));
+        // inset 단축 → 네 변
+        let d2 = parse_inline_style("inset: 1px 2px 3px 4px");
+        let g2 = |n: &str| d2.iter().find(|x| x.name == n).map(|x| &x.value);
+        assert_eq!(g2("top"), Some(&Value::Length(1.0, Unit::Px)));
+        assert_eq!(g2("left"), Some(&Value::Length(4.0, Unit::Px)));
+    }
+
+    #[test]
     fn place_shorthands_expand() {
         let decls = parse_inline_style("place-items: center start");
         let get = |n: &str| decls.iter().find(|d| d.name == n).map(|d| &d.value);

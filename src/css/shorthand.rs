@@ -14,6 +14,45 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
     if value_text.contains("var(") {
         return vec![Declaration { name: name.to_string(), value: Value::Var(value_text.to_string()) }];
     }
+    // CSS 논리 속성 → 물리 속성 (LTR/가로쓰기 가정). 모던 CSS 에서 흔함.
+    match name {
+        // 크기
+        "inline-size" => return expand_declaration("width", value_text),
+        "block-size" => return expand_declaration("height", value_text),
+        "min-inline-size" => return expand_declaration("min-width", value_text),
+        "max-inline-size" => return expand_declaration("max-width", value_text),
+        "min-block-size" => return expand_declaration("min-height", value_text),
+        "max-block-size" => return expand_declaration("max-height", value_text),
+        // 단일 논리 변 (start=left/top, end=right/bottom)
+        "margin-inline-start" => return expand_declaration("margin-left", value_text),
+        "margin-inline-end" => return expand_declaration("margin-right", value_text),
+        "margin-block-start" => return expand_declaration("margin-top", value_text),
+        "margin-block-end" => return expand_declaration("margin-bottom", value_text),
+        "padding-inline-start" => return expand_declaration("padding-left", value_text),
+        "padding-inline-end" => return expand_declaration("padding-right", value_text),
+        "padding-block-start" => return expand_declaration("padding-top", value_text),
+        "padding-block-end" => return expand_declaration("padding-bottom", value_text),
+        "inset-inline-start" => return expand_declaration("left", value_text),
+        "inset-inline-end" => return expand_declaration("right", value_text),
+        "inset-block-start" => return expand_declaration("top", value_text),
+        "inset-block-end" => return expand_declaration("bottom", value_text),
+        // 양방향 논리 (1~2 값)
+        "margin-inline" => return logical_pair("margin-left", "margin-right", value_text),
+        "margin-block" => return logical_pair("margin-top", "margin-bottom", value_text),
+        "padding-inline" => return logical_pair("padding-left", "padding-right", value_text),
+        "padding-block" => return logical_pair("padding-top", "padding-bottom", value_text),
+        "inset-inline" => return logical_pair("left", "right", value_text),
+        "inset-block" => return logical_pair("top", "bottom", value_text),
+        // inset 단축: top/right/bottom/left (margin 과 동일 규칙)
+        "inset" => {
+            let sides = box_shorthand("", "", value_text); // "-top" 등 이름이 "-top" 형태
+            return sides
+                .into_iter()
+                .map(|d| Declaration { name: d.name.trim_start_matches('-').to_string(), value: d.value })
+                .collect();
+        }
+        _ => {}
+    }
     match name {
         "margin" | "padding" => box_shorthand(name, "", value_text),
         "border-width" => box_shorthand("border", "-width", value_text),
@@ -283,6 +322,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             None => Vec::new(),
         },
     }
+}
+
+// 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
+fn logical_pair(start: &str, end: &str, value_text: &str) -> Vec<Declaration> {
+    let toks: Vec<&str> = value_text.split_whitespace().collect();
+    let s = toks.first().copied().unwrap_or("");
+    let e = toks.get(1).copied().unwrap_or(s);
+    let mut out = expand_declaration(start, s);
+    out.extend(expand_declaration(end, e));
+    out
 }
 
 // animation 단축 토큰이 애니메이션 이름인지 (시간·타이밍·방향·반복 등 키워드 제외).
