@@ -44,6 +44,14 @@ pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp 
         }
         eprintln!("[js debug] 전역 핸들러 {}개: {:?}", it.global_handlers.len(), counts);
         eprintln!("[js debug] 요소 핸들러 {}개, 타이머 {}개", it.handlers.len(), it.timers.len());
+        if !it.lenient_hits.is_empty() {
+            let mut hits: Vec<_> = it.lenient_hits.iter().collect();
+            hits.sort_by(|a, b| b.1.cmp(a.1));
+            eprintln!("[js debug] 관대 모드 히트 상위:");
+            for (k, n) in hits.iter().take(25) {
+                eprintln!("    {:>6}  {}", n, k);
+            }
+        }
     }
     it.set_ready_state("interactive");
     it.fire_global("DOMContentLoaded");

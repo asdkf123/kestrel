@@ -141,6 +141,16 @@ pub enum Native {
     RegExpCtor,
     RegexTest,
     RegexExec,
+    StringCtor,
+    NumberCtor,
+    BooleanCtor,
+    StrFromCharCode,
+    NumIsInteger,
+    NumIsFinite,
+    NumIsNaN,
+    NumToFixed,
+    ValueToStr, // recv.toString([radix]) → 문자열
+    ValueOfSelf, // recv.valueOf() → recv
     MapCtor,
     SetCtor,
     Map(MapOp),
@@ -390,6 +400,12 @@ pub struct Interp {
     microtasks: std::collections::VecDeque<(Value, Value, Value)>,
     // Function.prototype (call/apply/bind). 정체성 보존 위해 보관.
     fn_proto: Value,
+    // String.prototype (문자열 메서드) — String.prototype.slice.call(x) 용.
+    string_proto: Value,
+    // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
+    // undefined 로 (표준 아님, naver 등 롱테일 거리 측정용). 접근 키를 집계.
+    lenient: bool,
+    pub lenient_hits: std::collections::HashMap<String, usize>,
 }
 
 impl Interp {
@@ -506,6 +522,9 @@ impl Interp {
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
         env_declare(&global, "RegExp", Value::Native(Native::RegExpCtor));
+        env_declare(&global, "String", Value::Native(Native::StringCtor));
+        env_declare(&global, "Number", Value::Native(Native::NumberCtor));
+        env_declare(&global, "Boolean", Value::Native(Native::BooleanCtor));
         // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
         for name in [
             "Error",
@@ -567,6 +586,30 @@ impl Interp {
         fn_proto.insert("apply".to_string(), Value::Native(Native::FnApply));
         fn_proto.insert("bind".to_string(), Value::Native(Native::FnBind));
         let fn_proto = Value::Obj(Rc::new(RefCell::new(fn_proto)));
+        // String.prototype: 문자열 메서드 (String.prototype.slice.call(x) 지원)
+        let mut string_proto = HashMap::new();
+        for (name, op) in [
+            ("charAt", StrOp::CharAt),
+            ("charCodeAt", StrOp::CharCodeAt),
+            ("indexOf", StrOp::IndexOf),
+            ("slice", StrOp::Slice),
+            ("substring", StrOp::Slice),
+            ("split", StrOp::Split),
+            ("toUpperCase", StrOp::Upper),
+            ("toLowerCase", StrOp::Lower),
+            ("trim", StrOp::Trim),
+            ("replace", StrOp::Replace),
+            ("includes", StrOp::Includes),
+            ("startsWith", StrOp::StartsWith),
+            ("endsWith", StrOp::EndsWith),
+            ("match", StrOp::Match),
+            ("padStart", StrOp::PadStart),
+            ("padEnd", StrOp::PadEnd),
+            ("repeat", StrOp::Repeat),
+        ] {
+            string_proto.insert(name.to_string(), Value::Native(Native::Str(op)));
+        }
+        let string_proto = Value::Obj(Rc::new(RefCell::new(string_proto)));
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -586,6 +629,9 @@ impl Interp {
             next_timer_id: 1,
             microtasks: std::collections::VecDeque::new(),
             fn_proto,
+            string_proto,
+            lenient: std::env::var("KESTREL_LENIENT").is_ok(),
+            lenient_hits: std::collections::HashMap::new(),
         }
     }
 
@@ -1165,9 +1211,14 @@ impl Interp {
             Expr::Bool(b) => Ok(Value::Bool(*b)),
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
-            Expr::Ident(name) => {
-                env_get(env, name).ok_or_else(|| format!("{} 은(는) 정의되지 않음", name))
-            }
+            Expr::Ident(name) => match env_get(env, name) {
+                Some(v) => Ok(v),
+                None if self.lenient => {
+                    *self.lenient_hits.entry(name.clone()).or_default() += 1;
+                    Ok(Value::Undefined)
+                }
+                None => Err(format!("{} 은(는) 정의되지 않음", name)),
+            },
             Expr::Array(items) => {
                 let mut v = Vec::new();
                 for item in items {
@@ -1346,6 +1397,10 @@ impl Interp {
                 let recv = self.eval(obj, env)?;
                 let key = self.member_key(prop, *computed, env)?;
                 if matches!(recv, Value::Undefined | Value::Null) {
+                    if self.lenient {
+                        *self.lenient_hits.entry(format!(".{}", key)).or_default() += 1;
+                        return Ok(Value::Undefined);
+                    }
                     return Err(format!(
                         "{}.{} — {} 이(가) {} (읽을 수 없음)",
                         obj_hint(obj),
@@ -1418,6 +1473,13 @@ impl Interp {
                     let recv = self.eval(obj, env)?;
                     let key = self.member_key(prop, *computed, env)?;
                     if matches!(recv, Value::Undefined | Value::Null) {
+                        if self.lenient {
+                            *self.lenient_hits.entry(format!(".{}()", key)).or_default() += 1;
+                            for a in args {
+                                self.eval(a, env)?; // 부수효과 보존
+                            }
+                            return Ok(Value::Undefined);
+                        }
                         return Err(format!(
                             "{}.{}(…) — {} 이(가) {}",
                             obj_hint(obj),
@@ -1431,6 +1493,10 @@ impl Interp {
                         arg_vals.push(self.eval(a, env)?);
                     }
                     if !is_callable(&f) {
+                        if self.lenient {
+                            *self.lenient_hits.entry(format!("{}() 비함수", key)).or_default() += 1;
+                            return Ok(Value::Undefined);
+                        }
                         return Err(format!(
                             "{}(…) — {}.{} 이(가) {} (함수 아님, 수신자={})",
                             key,
@@ -1447,6 +1513,12 @@ impl Interp {
                         arg_vals.push(self.eval(a, env)?);
                     }
                     if !is_callable(&f) {
+                        if self.lenient {
+                            let name =
+                                if let Expr::Ident(n) = &**callee { n.as_str() } else { "?" };
+                            *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
+                            return Ok(Value::Undefined);
+                        }
                         let name = if let Expr::Ident(n) = &**callee { n.as_str() } else { "?" };
                         return Err(format!("{}(…) — {} 이(가) {} (함수 아님)", name, name, to_display(&f)));
                     }
@@ -1648,7 +1720,9 @@ impl Interp {
                     "charCodeAt" => Some(StrOp::CharCodeAt),
                     "codePointAt" => Some(StrOp::CodePointAt),
                     "concat" => Some(StrOp::Concat),
-                    "toString" | "valueOf" => return Ok(Value::Str(s.clone())),
+                    "toString" | "valueOf" | "toLocaleString" => {
+                        return Ok(Value::Native(Native::ValueToStr))
+                    }
                     "substr" => Some(StrOp::Slice),
                     _ => None,
                 };
@@ -1731,6 +1805,30 @@ impl Interp {
             }
             // Function.prototype (정체성 보존된 객체)
             Value::Native(Native::FunctionCtor) if key == "prototype" => Ok(self.fn_proto.clone()),
+            // String.fromCharCode/prototype
+            Value::Native(Native::StringCtor) => Ok(match key {
+                "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
+                "prototype" => self.string_proto.clone(),
+                _ => Value::Undefined,
+            }),
+            // Number.isInteger/isNaN/isFinite/parseInt/parseFloat + 상수
+            Value::Native(Native::NumberCtor) => Ok(match key {
+                "isInteger" | "isSafeInteger" => Value::Native(Native::NumIsInteger),
+                "isFinite" => Value::Native(Native::NumIsFinite),
+                "isNaN" => Value::Native(Native::NumIsNaN),
+                "parseInt" => Value::Native(Native::ParseInt),
+                "parseFloat" => Value::Native(Native::ParseFloat),
+                "MAX_SAFE_INTEGER" => Value::Num(9007199254740991.0),
+                "MIN_SAFE_INTEGER" => Value::Num(-9007199254740991.0),
+                "MAX_VALUE" => Value::Num(f64::MAX),
+                "MIN_VALUE" => Value::Num(f64::MIN_POSITIVE),
+                "EPSILON" => Value::Num(f64::EPSILON),
+                "POSITIVE_INFINITY" => Value::Num(f64::INFINITY),
+                "NEGATIVE_INFINITY" => Value::Num(f64::NEG_INFINITY),
+                "NaN" => Value::Num(f64::NAN),
+                "prototype" => Value::Obj(Rc::new(RefCell::new(HashMap::new()))),
+                _ => Value::Undefined,
+            }),
             // 네이티브/바운드 함수도 호출 어댑터 제공
             Value::Native(_) | Value::Bound(_) => match key {
                 "call" => Ok(Value::Native(Native::FnCall)),
@@ -1740,6 +1838,18 @@ impl Interp {
                 "length" => Ok(Value::Num(0.0)),
                 _ => Ok(Value::Undefined),
             },
+            // 숫자 메서드: (5).toFixed(2), n.toString(radix)
+            Value::Num(_) => Ok(match key {
+                "toFixed" | "toPrecision" => Value::Native(Native::NumToFixed),
+                "toString" | "toLocaleString" => Value::Native(Native::ValueToStr),
+                "valueOf" => Value::Native(Native::ValueOfSelf),
+                _ => Value::Undefined,
+            }),
+            Value::Bool(_) => Ok(match key {
+                "toString" => Value::Native(Native::ValueToStr),
+                "valueOf" => Value::Native(Native::ValueOfSelf),
+                _ => Value::Undefined,
+            }),
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
             }
@@ -1799,6 +1909,10 @@ impl Interp {
             Value::Native(Native::SetCtor) => return self.make_set(args),
             Value::Native(Native::RegExpCtor) => {
                 return self.call_native(Native::RegExpCtor, None, args)
+            }
+            // new String/Number/Boolean → 원시값 근사 (박싱 미구현)
+            Value::Native(n @ (Native::StringCtor | Native::NumberCtor | Native::BooleanCtor)) => {
+                return self.call_native(n, None, args)
             }
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {
@@ -2169,6 +2283,22 @@ mod tests {
         assert_eq!(run_num("var a=[1,2,3,4]; a.length=2; a.length"), 2.0);
         // 재정의 안 하면 내장 메서드 그대로
         assert_eq!(run_num("var a=[3,1,2]; a.push(9); a.length"), 4.0);
+    }
+
+    #[test]
+    fn string_number_boolean_globals() {
+        assert_eq!(run_str("String(42)"), "42");
+        assert_eq!(run_num("Number('3.5')"), 3.5);
+        assert!(!run_bool("Boolean(0)"));
+        assert!(run_bool("Boolean(1)"));
+        assert_eq!(run_str("String.fromCharCode(72,73)"), "HI");
+        assert!(run_bool("Number.isInteger(5)"));
+        assert!(!run_bool("Number.isInteger(5.5)"));
+        assert_eq!(run_str("(3.14159).toFixed(2)"), "3.14");
+        assert_eq!(run_str("(255).toString(16)"), "ff");
+        assert_eq!(run_num("Number.MAX_SAFE_INTEGER"), 9007199254740991.0);
+        // String.prototype.slice.call
+        assert_eq!(run_str("String.prototype.slice.call('hello', 1, 3)"), "el");
     }
 
     #[test]

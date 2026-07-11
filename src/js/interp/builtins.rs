@@ -418,6 +418,71 @@ impl Interp {
                 }
                 Ok(Value::Bool(false))
             }
+            // String(x)/Number(x)/Boolean(x) 변환 생성자
+            Native::StringCtor => Ok(Value::Str(match args.first() {
+                Some(v) => to_display(v),
+                None => String::new(),
+            })),
+            Native::NumberCtor => Ok(Value::Num(match args.first() {
+                Some(v) => to_num(v),
+                None => 0.0,
+            })),
+            Native::BooleanCtor => Ok(Value::Bool(args.first().map(to_bool).unwrap_or(false))),
+            Native::StrFromCharCode => {
+                let s: String = args
+                    .iter()
+                    .filter_map(|a| char::from_u32(to_num(a) as u32))
+                    .collect();
+                Ok(Value::Str(s))
+            }
+            Native::NumIsInteger => {
+                let ok = matches!(args.first(), Some(Value::Num(n)) if n.fract() == 0.0 && n.is_finite());
+                Ok(Value::Bool(ok))
+            }
+            Native::NumIsFinite => {
+                let ok = matches!(args.first(), Some(Value::Num(n)) if n.is_finite());
+                Ok(Value::Bool(ok))
+            }
+            Native::NumIsNaN => {
+                let ok = matches!(args.first(), Some(Value::Num(n)) if n.is_nan());
+                Ok(Value::Bool(ok))
+            }
+            // recv.toString([radix]) / valueOf()
+            Native::ValueToStr => {
+                let v = recv.unwrap_or(Value::Undefined);
+                // 숫자 + radix(2..36)면 진법 변환
+                if let (Value::Num(n), Some(r)) = (&v, args.first().map(to_num)) {
+                    let radix = r as u32;
+                    if (2..=36).contains(&radix) && n.fract() == 0.0 && n.is_finite() {
+                        let mut x = n.abs() as u64;
+                        if x == 0 {
+                            return Ok(Value::Str("0".to_string()));
+                        }
+                        let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+                        let mut buf = Vec::new();
+                        while x > 0 {
+                            buf.push(digits[(x % radix as u64) as usize]);
+                            x /= radix as u64;
+                        }
+                        if *n < 0.0 {
+                            buf.push(b'-');
+                        }
+                        buf.reverse();
+                        return Ok(Value::Str(String::from_utf8_lossy(&buf).to_string()));
+                    }
+                }
+                Ok(Value::Str(to_display(&v)))
+            }
+            Native::ValueOfSelf => Ok(recv.unwrap_or(Value::Undefined)),
+            // n.toFixed(digits) — recv 가 숫자
+            Native::NumToFixed => {
+                let n = match recv {
+                    Some(v) => to_num(&v),
+                    None => 0.0,
+                };
+                let digits = args.first().map(to_num).unwrap_or(0.0).clamp(0.0, 100.0) as usize;
+                Ok(Value::Str(format!("{:.*}", digits, n)))
+            }
             // RegExp(pattern, flags) — 문자열/정규식 → 정규식 객체
             Native::RegExpCtor => {
                 let (src, flags) = match args.first() {
