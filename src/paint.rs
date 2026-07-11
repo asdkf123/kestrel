@@ -1114,6 +1114,32 @@ fn collect_items(
         };
         local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit });
     }
+    // text-shadow: 글리프 뒤에 오프셋+색으로 복제 (blur 미지원, 단일 그림자)
+    let text_shadow = {
+        let len = |n: &str| match layout_box.styled_node.value(n) {
+            Some(Value::Length(v, crate::css::Unit::Px)) => Some(v),
+            _ => None,
+        };
+        match (len("text-shadow-x"), len("text-shadow-y")) {
+            (Some(dx), Some(dy)) => {
+                let color = match layout_box.styled_node.value("text-shadow-color") {
+                    Some(Value::Color(c)) => c,
+                    _ => Color { r: 0, g: 0, b: 0, a: 128 },
+                };
+                Some((dx, dy, color))
+            }
+            _ => None,
+        }
+    };
+    if let Some((dx, dy, color)) = text_shadow {
+        for gi in &layout_box.glyphs {
+            let mut sh = *gi;
+            sh.x += dx;
+            sh.baseline_y += dy;
+            sh.color = color;
+            local.push(DisplayItem::Glyph(sh));
+        }
+    }
     for gi in &layout_box.glyphs {
         local.push(DisplayItem::Glyph(*gi));
     }
@@ -1979,6 +2005,24 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn text_shadow_doubles_glyphs() {
+        // text-shadow → 그림자 글리프 + 본 글리프 = 2배
+        let root = crate::html::parse_dom("<p>hi</p>".to_string());
+        let ss = crate::css::parse(
+            "p { display: block; font-size: 20px; text-shadow: 2px 2px 1px #ff0000; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: crate::layout::Dimensions = Default::default();
+        viewport.content.width = 200.0;
+        let fs = fonts();
+        let imgs = crate::layout::ImageMap::new();
+        let layout_root = crate::layout::layout_tree(&styled, viewport, &fs, &imgs);
+        let items = build_display_list(&layout_root);
+        let glyphs = items.iter().filter(|i| matches!(i, DisplayItem::Glyph(_))).count();
+        assert_eq!(glyphs, 4, "'hi' 2글자 × (그림자+본) = 4");
     }
 
     #[test]

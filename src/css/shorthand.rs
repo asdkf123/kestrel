@@ -205,6 +205,45 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // text-shadow: <dx> <dy> [blur] <color> (단일 그림자). 상속 속성. paint 가 글리프 뒤에 그림.
+        "text-shadow" => {
+            if value_text.trim() == "none" {
+                return Vec::new();
+            }
+            // 첫 최상위 콤마까지가 첫 그림자
+            let mut depth = 0i32;
+            let mut end = value_text.len();
+            for (i, c) in value_text.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    ',' if depth == 0 => {
+                        end = i;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let mut lens: Vec<f32> = Vec::new();
+            let mut color: Option<Value> = None;
+            for tok in value_text[..end].split_whitespace() {
+                match interpret_value(tok) {
+                    Some(Value::Length(v, Unit::Px)) => lens.push(v),
+                    Some(c @ Value::Color(..)) => color = Some(c),
+                    _ => {}
+                }
+            }
+            if lens.len() < 2 {
+                return Vec::new();
+            }
+            let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
+            let px = |v: f32| Value::Length(v, Unit::Px);
+            vec![
+                Declaration { name: "text-shadow-x".to_string(), value: px(lens[0]) },
+                Declaration { name: "text-shadow-y".to_string(), value: px(lens[1]) },
+                Declaration { name: "text-shadow-color".to_string(), value: color },
+            ]
+        }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
