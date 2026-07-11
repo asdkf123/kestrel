@@ -174,6 +174,9 @@ pub enum Native {
     DispatchEvent,
     EventCtor,
     CloneNode,
+    Matches,
+    Closest,
+    DomContains,
     RemoveElement,
     SetAttribute,
     GetAttribute,
@@ -1916,6 +1919,9 @@ impl Interp {
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "dispatchEvent" => Some(Native::DispatchEvent),
                     "cloneNode" => Some(Native::CloneNode),
+                    "matches" => Some(Native::Matches),
+                    "closest" => Some(Native::Closest),
+                    "contains" => Some(Native::DomContains),
                     _ => None,
                 };
                 if let Some(n) = native {
@@ -2752,6 +2758,44 @@ mod tests {
             run_num("[1,2,3].map((x, i) => x + i).indexOf(5)"),
             2.0,
             "콜백 두 번째 인자 = 인덱스"
+        );
+    }
+
+    #[test]
+    fn matches_closest_contains() {
+        let mut dom = crate::html::parse_dom(
+            "<div class=\"outer\"><ul><li id=\"a\" class=\"item\">x</li></ul></div>".to_string(),
+        );
+        let a = dom.find_by_attr_id("a").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        // matches
+        assert_eq!(
+            to_display(&interp.run("document.getElementById('a').matches('.item')").unwrap()),
+            "true"
+        );
+        assert_eq!(
+            to_display(&interp.run("document.getElementById('a').matches('.nope')").unwrap()),
+            "false"
+        );
+        // closest 는 조상 중 첫 매칭 (.outer)
+        assert_eq!(
+            to_display(
+                &interp
+                    .run("document.getElementById('a').closest('.outer').className")
+                    .unwrap()
+            ),
+            "outer"
+        );
+        // contains: outer 가 a 를 포함
+        let _ = a;
+        assert_eq!(
+            to_display(
+                &interp
+                    .run("document.getElementById('a').closest('.outer').contains(document.getElementById('a'))")
+                    .unwrap()
+            ),
+            "true"
         );
     }
 

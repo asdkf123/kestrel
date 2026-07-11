@@ -745,6 +745,56 @@ impl Interp {
                 }
                 _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
             },
+            Native::Matches => {
+                let sel = args.first().map(to_display).unwrap_or_default();
+                match recv {
+                    Some(Value::Dom(id)) => {
+                        let dom = self.dom_arena()?;
+                        let ok = crate::css::parse_selector_list(&sel)
+                            .map(|sels| crate::style::element_matches(dom, id, &sels))
+                            .unwrap_or(false);
+                        Ok(Value::Bool(ok))
+                    }
+                    _ => Ok(Value::Bool(false)),
+                }
+            }
+            Native::Closest => {
+                let sel = args.first().map(to_display).unwrap_or_default();
+                let start = match recv {
+                    Some(Value::Dom(id)) => id,
+                    _ => return Ok(Value::Null),
+                };
+                let dom = self.dom_arena()?;
+                let Some(sels) = crate::css::parse_selector_list(&sel) else {
+                    return Ok(Value::Null);
+                };
+                // 자신부터 조상까지 올라가며 첫 매칭 반환
+                let mut chain = vec![start];
+                chain.extend(dom.ancestors(start));
+                for id in chain {
+                    if matches!(dom.get(id).node_type, crate::dom::NodeType::Element(_))
+                        && crate::style::element_matches(dom, id, &sels)
+                    {
+                        return Ok(Value::Dom(id));
+                    }
+                }
+                Ok(Value::Null)
+            }
+            Native::DomContains => {
+                let other = match args.first() {
+                    Some(Value::Dom(o)) => *o,
+                    _ => return Ok(Value::Bool(false)),
+                };
+                match recv {
+                    Some(Value::Dom(id)) => {
+                        let dom = self.dom_arena()?;
+                        // other == id 이거나 id 의 자손이면 true
+                        let contained = other == id || dom.ancestors(other).contains(&id);
+                        Ok(Value::Bool(contained))
+                    }
+                    _ => Ok(Value::Bool(false)),
+                }
+            }
             Native::CloneNode => {
                 let deep = args.first().map(to_bool).unwrap_or(false);
                 match recv {
