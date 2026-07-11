@@ -384,6 +384,35 @@ fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     items.push(DisplayItem::Shadow { color, rect, radius, blur });
 }
 
+// outline: border box 밖으로 offset+width 만큼 나온 균일 링 (4개 사각형). 레이아웃 불변.
+fn emit_outline(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
+    let w = match lb.styled_node.value("outline-width") {
+        Some(Value::Length(v, crate::css::Unit::Px)) if v > 0.0 => v,
+        _ => return,
+    };
+    // outline-style 이 none 이면 안 그림 (지정 없으면 색이 있을 때만 관용적으로 그림)
+    if matches!(lb.styled_node.value("outline-style"), Some(Value::Keyword(ref k)) if k == "none") {
+        return;
+    }
+    let color = match lb.styled_node.value("outline-color") {
+        Some(Value::Color(c)) => c,
+        _ => get_color(lb, "color").unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 }),
+    };
+    let offset = match lb.styled_node.value("outline-offset") {
+        Some(Value::Length(v, crate::css::Unit::Px)) => v,
+        _ => 0.0,
+    };
+    let b = lb.dimensions.border_box();
+    // 안쪽 경계(offset), 바깥 경계(offset+width)
+    let o = offset;
+    let ow = offset + w;
+    // 위/아래/좌/우 띠
+    items.push(DisplayItem::Rect { color, rect: Rect { x: b.x - ow, y: b.y - ow, width: b.width + 2.0 * ow, height: w } });
+    items.push(DisplayItem::Rect { color, rect: Rect { x: b.x - ow, y: b.y + b.height + o, width: b.width + 2.0 * ow, height: w } });
+    items.push(DisplayItem::Rect { color, rect: Rect { x: b.x - ow, y: b.y - o, width: w, height: b.height + 2.0 * o } });
+    items.push(DisplayItem::Rect { color, rect: Rect { x: b.x + b.width + o, y: b.y - o, width: w, height: b.height + 2.0 * o } });
+}
+
 // 안쪽 그림자(inset): 박스 내부 경계에서 안으로 번진다. 배경/테두리 위에 그린다.
 fn emit_inner_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     let len = |name: &str| match lb.styled_node.value(name) {
@@ -592,6 +621,7 @@ fn collect_items(
     emit_box_shadow(layout_box, &mut local);
     emit_box_decorations(layout_box, &mut local);
     emit_inner_shadow(layout_box, &mut local);
+    emit_outline(layout_box, &mut local);
     if let Some(idx) = layout_box.background_image {
         local.push(DisplayItem::Image {
             image: idx,
@@ -979,6 +1009,22 @@ mod tests {
         );
         let p = canvas.pixels[0];
         assert!((p.r as i32 - 128).abs() <= 2, "자손도 부모 opacity 적용, 실제 {}", p.r);
+    }
+
+    #[test]
+    fn outline_draws_ring_outside_box() {
+        // 10x10 박스를 (5,5)에 두고 2px 빨강 outline → 박스 왼쪽 바깥(3,10)이 빨강
+        let canvas = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 10px; height: 10px; margin: 5px; \
+             background-color: #ffffff; outline: 2px solid #ff0000; }",
+            20.0,
+            20.0,
+        );
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        // 박스는 x=5..15, y=5..15. outline 은 x=3..5 (왼쪽 띠). (3,10) 은 빨강
+        assert_eq!(canvas.pixels[10 * 20 + 3], red, "왼쪽 outline 띠");
+        assert_eq!(canvas.pixels[3 * 20 + 10], red, "위쪽 outline 띠");
     }
 
     #[test]

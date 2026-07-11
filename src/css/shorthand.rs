@@ -173,6 +173,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // background 단축: 색 → background-color, url() → background-image.
         // position/repeat/size/attachment/gradient 등은 근사(드롭).
         "background" => background_shorthand(value_text),
+        // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
+        "outline" => {
+            let (mut width, mut style, mut color) = (None, None, None);
+            for tok in value_text.split_whitespace() {
+                match interpret_value(tok) {
+                    Some(v @ Value::Length(..)) => width = Some(v),
+                    Some(v @ Value::Color(..)) => color = Some(v),
+                    Some(Value::Keyword(k)) => style = Some(Value::Keyword(k)),
+                    _ => {}
+                }
+            }
+            let mut out = Vec::new();
+            if let Some(w) = width {
+                out.push(Declaration { name: "outline-width".to_string(), value: w });
+            }
+            if let Some(s) = style {
+                out.push(Declaration { name: "outline-style".to_string(), value: s });
+            }
+            if let Some(c) = color {
+                out.push(Declaration { name: "outline-color".to_string(), value: c });
+            }
+            out
+        }
         "border-top" => border_shorthand(&["top"], value_text),
         "border-right" => border_shorthand(&["right"], value_text),
         "border-bottom" => border_shorthand(&["bottom"], value_text),
