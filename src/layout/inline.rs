@@ -115,7 +115,13 @@ impl<'a> LayoutBox<'a> {
             _ => natural_lh,
         };
         let half_leading = (line_height - (ascent_px - descent_px)) / 2.0;
-        let space_adv = primary.advance_width(primary.glyph_index(' ')) as f32 * base_scale;
+        // letter-spacing: 글리프마다, word-spacing: 단어 사이 공백에 추가 (상속 속성, px 확정)
+        let letter_spacing =
+            self.styled_node.value("letter-spacing").map(|v| v.to_px()).unwrap_or(0.0);
+        let word_spacing =
+            self.styled_node.value("word-spacing").map(|v| v.to_px()).unwrap_or(0.0);
+        let space_adv =
+            primary.advance_width(primary.glyph_index(' ')) as f32 * base_scale + word_spacing;
 
         let resolve = |ch: char, px: f32| -> (usize, u16, f32) {
             let (fi, gid) = fonts.glyph_for(ch);
@@ -146,7 +152,7 @@ impl<'a> LayoutBox<'a> {
         let mut line_bounds: Vec<(usize, usize, usize, f32)> = vec![(0, 0, 0, 0.0)];
 
         for (word, force_break) in &words {
-            let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2).sum();
+            let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
             let need_wrap = can_wrap && pen_x > line_left && pen_x + word_w > line_right;
             if *force_break || need_wrap {
                 baseline += line_height;
@@ -172,7 +178,7 @@ impl<'a> LayoutBox<'a> {
                     bold: st.bold,
                     italic: st.italic,
                 });
-                pen_x += adv;
+                pen_x += adv + letter_spacing;
                 word_px_max = word_px_max.max(st.px);
                 word_color = st.color;
             }

@@ -1270,6 +1270,24 @@ mod tests {
     }
 
     #[test]
+    fn letter_spacing_widens_text() {
+        let fs = fonts();
+        let base = crate::html::parse_dom("<p>hello</p>".to_string());
+        let ss0 = crate::css::parse("p { display: block; }".to_string());
+        let s0 = crate::style::style_tree(&base, &ss0);
+        let lb0 = layout_tree_for(&s0, &fs);
+        let g0 = glyphs_of(&lb0);
+        // letter-spacing 5px → 마지막 글리프가 더 오른쪽
+        let sp = crate::html::parse_dom("<p>hello</p>".to_string());
+        let ss1 = crate::css::parse("p { display: block; letter-spacing: 5px; }".to_string());
+        let s1 = crate::style::style_tree(&sp, &ss1);
+        let lb1 = layout_tree_for(&s1, &fs);
+        let g1 = glyphs_of(&lb1);
+        assert_eq!(g0.len(), g1.len(), "글리프 수 동일");
+        assert!(g1.last().unwrap().x > g0.last().unwrap().x + 10.0, "letter-spacing 이 글자 간격을 넓혀야");
+    }
+
+    #[test]
     fn ua_underlines_links() {
         let fs = fonts();
         let root = crate::html::parse_dom("<p><a href=\"/x\">link</a></p>".to_string());
