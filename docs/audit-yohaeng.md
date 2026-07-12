@@ -21,20 +21,22 @@
 - [x] CSS **`font` 단축** + #rgba/#rrggbbaa hex. (fa0532a)
 - [x] JS **문자열 이스케이프 `\u \x \b \f \v` + 줄이음**. (41cf1fb)
 - [~] JS **옵셔널체이닝 `obj?.method()` 단락** — 결과는 lenient 로 이미 맞음(undefined). 메커니즘만 비표준 → 후순위.
-- [ ] 폰트 **합성 글리프 빈칸** — é/ñ/CJK 사라짐. cmap fmt12 미지원. (font.rs:216,357) ← 다음 우선
+- [x] 폰트 **합성 글리프** — é/ñ/CJK 렌더. cmap fmt12 는 아직(대형 CJK). (dd17ee0)
 - [x] CSS **미디어쿼리 em/rem + 특성평가 + 미인식→불일치**. (ba15d97)
 - [x] CSS **rem 루트 font-size 기준**. (1e6c0eb)
 - [x] CSS **조상 구조 의사클래스 정확 평가** — zebra 수정. (f1e87ca)
-- [ ] Flex/CSS **flex-basis 드롭, flex:1 등폭 안됨**. (css/shorthand.rs:129, flex.rs:65)
-- [ ] Grid **`auto` 트랙=1fr 근사** — auto 1fr(라벨+필드) 깨짐. (grid.rs:327)
+- [ ] Flex/CSS **flex-basis 드롭, flex:1 등폭 안됨**. (css/shorthand.rs:129, flex.rs:65) ← 다음 우선
+- [ ] Grid **`auto` 트랙=1fr 근사** — auto 1fr(라벨+필드) 깨짐. (grid.rs:327) ← 다음 우선
 - [x] JS **`let` 반복별 바인딩** — 클로저 [0,1,2]. (faa2dc6)
 - [ ] JS **구조분해 할당 `[a,b]=arr` 거부**. (parser.rs:765)
-- [ ] JS **new Promise(executor) 미구현** — 모던 async 깨짐. (interp/mod.rs:2882) ← 다음 우선
-- [ ] JS **Math.round 음수/min·max NaN** 스펙 위반. (builtins.rs:1256)
+- [x] JS **new Promise(executor) + finally** — 모던 async. (a5711f3)
+- [x] JS **Math.round 음수/min·max NaN + NaN/Infinity 전역**. (75a8049)
 - [ ] JS **String indexOf/split 인자, lastIndexOf 없음**. (builtins.rs:1315)
 
-### 이번 세션 완료(8): !important, font+hex, media, rem, zebra, 문자열이스케이프,
-### let-바인딩 + (이전) 개행기반 ASI 표준화. 모두 테스트+실사이트 검증, 459 테스트 그린.
+### 이번 세션 완료(11): ASI표준화, !important, font+hex, media, rem, zebra,
+### 문자열이스케이프, let-바인딩, 합성글리프, new Promise, Math+NaN전역.
+### 모두 회귀테스트 + 실사이트 검증, 461 테스트 그린. 남은 티어1: flex-basis,
+### grid auto트랙, 구조분해할당, String 메서드 인자. 구조적 뿌리는 별도 대공사.
 
 ## 티어2 — 눈에 띄지만 빈도 낮음
 
