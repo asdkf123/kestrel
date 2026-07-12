@@ -14,6 +14,8 @@
 - [x] **JS ToPrimitive** — 템플릿/`+`/산술은 이미 valueOf/toString 호출. String() 도 ToString(hint string)로 수정. (4284467)
 - [x] **JS Promise 거부 의미론** — .catch/then(,onR)/거부 전파/throw→거부/async throw→거부
   /await 거부→throw/Promise.all 거부/allSettled/race 거부 채택. (19874bc)
+- [x] **JS 누락 표준 메서드 보강** — Object.values/entries/fromEntries, Array/String.at,
+  flatMap, structuredClone, Array.from/of. (fc28720, 580ac2c, 62d4a25)
 - [ ] **float in nearest-BFC** — float 이 직속 부모에 갇힘. 다중 float·타 블록 우회 불가. (layout/mod.rs:1049)
 
 ## 티어1 — 고빈도 + 요행 통과 (우선 수정)
