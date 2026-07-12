@@ -211,6 +211,11 @@ pub enum Native {
     ErrorCtor(&'static str),
     CreateElement,
     AppendChild,
+    NodeAppend,
+    NodePrepend,
+    NodeBefore,
+    NodeAfter,
+    NodeReplaceWith,
     GetBoundingClientRect,
     DispatchEvent,
     EventCtor,
@@ -1198,6 +1203,20 @@ impl Interp {
         m.insert("searchParams".to_string(), search_params);
         m.insert("toString".to_string(), Value::Native(Native::UrlToString));
         Ok(Value::Obj(Rc::new(RefCell::new(m))))
+    }
+
+    // append/prepend/before/after 인자를 노드 id 로. Dom 은 그대로, 그 외(문자열 등)는
+    // 텍스트 노드로 생성.
+    fn nodes_from_args(&mut self, args: &[Value]) -> Result<Vec<crate::dom::NodeId>, String> {
+        let dom = self.dom_arena()?;
+        let mut ids = Vec::with_capacity(args.len());
+        for a in args {
+            match a {
+                Value::Dom(id) => ids.push(*id),
+                other => ids.push(dom.create_text(to_display(other))),
+            }
+        }
+        Ok(ids)
     }
 
     // 이벤트 객체 생성: type/target + preventDefault/stopPropagation 등.
@@ -2576,6 +2595,11 @@ impl Interp {
                 let native = match key {
                     "addEventListener" => Some(Native::AddEventListener),
                     "appendChild" => Some(Native::AppendChild),
+                    "append" => Some(Native::NodeAppend),
+                    "prepend" => Some(Native::NodePrepend),
+                    "before" => Some(Native::NodeBefore),
+                    "after" => Some(Native::NodeAfter),
+                    "replaceWith" => Some(Native::NodeReplaceWith),
                     "insertBefore" => Some(Native::InsertBefore),
                     "createTextNode" => Some(Native::CreateTextNode),
                     "remove" => Some(Native::RemoveElement),

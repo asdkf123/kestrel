@@ -247,6 +247,19 @@ mod tests {
     }
 
     #[test]
+    fn parentnode_append_prepend() {
+        // append/prepend (가변 인자, 문자열→텍스트 노드). 순서 확인.
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"t\"><span>mid</span></div>\
+             <script>var d = document.getElementById('t'); \
+             d.append('Z'); d.prepend('A');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "AmidZ");
+    }
+
+    #[test]
     fn url_constructor_and_search_params() {
         // new URL(...) 핵심 프로퍼티 + searchParams.get (%20 디코드).
         let mut dom = crate::html::parse_dom(

@@ -1113,6 +1113,72 @@ impl Interp {
                 }
                 _ => Err("appendChild 는 요소 인자가 필요".to_string()),
             },
+            // ParentNode/ChildNode 삽입 (append/prepend/before/after/replaceWith).
+            // 가변 인자, 문자열은 텍스트 노드로. append/prepend 는 recv 가 부모,
+            // before/after/replaceWith 는 recv 의 부모에 삽입.
+            Native::NodeAppend => {
+                if let Some(Value::Dom(target)) = recv {
+                    let ids = self.nodes_from_args(&args)?;
+                    let dom = self.dom_arena()?;
+                    for id in ids {
+                        dom.insert_before(target, id, None);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::NodePrepend => {
+                if let Some(Value::Dom(target)) = recv {
+                    let ids = self.nodes_from_args(&args)?;
+                    let dom = self.dom_arena()?;
+                    let first = dom.get(target).children.first().copied();
+                    for id in ids {
+                        dom.insert_before(target, id, first);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::NodeBefore => {
+                if let Some(Value::Dom(target)) = recv {
+                    let ids = self.nodes_from_args(&args)?;
+                    let dom = self.dom_arena()?;
+                    if let Some(parent) = dom.get(target).parent {
+                        for id in ids {
+                            dom.insert_before(parent, id, Some(target));
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::NodeAfter => {
+                if let Some(Value::Dom(target)) = recv {
+                    let ids = self.nodes_from_args(&args)?;
+                    let dom = self.dom_arena()?;
+                    if let Some(parent) = dom.get(target).parent {
+                        let kids = dom.get(parent).children.clone();
+                        let next = kids
+                            .iter()
+                            .position(|&c| c == target)
+                            .and_then(|i| kids.get(i + 1).copied());
+                        for id in ids {
+                            dom.insert_before(parent, id, next);
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::NodeReplaceWith => {
+                if let Some(Value::Dom(target)) = recv {
+                    let ids = self.nodes_from_args(&args)?;
+                    let dom = self.dom_arena()?;
+                    if let Some(parent) = dom.get(target).parent {
+                        for id in ids {
+                            dom.insert_before(parent, id, Some(target));
+                        }
+                        dom.detach(target);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             Native::RemoveElement => match recv {
                 Some(Value::Dom(id)) => {
                     let dom = self.dom_arena()?;
