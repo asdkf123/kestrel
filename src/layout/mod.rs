@@ -3498,6 +3498,24 @@ mod tests {
     }
 
     #[test]
+    fn flex_one_makes_equal_columns() {
+        // flex:1 = 1 1 0% → 내용 폭이 달라도 등폭 (basis 0, grow 가 균등 분배).
+        // 이전엔 flex-basis 를 버려 내용폭 기준으로 불균등했음.
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"a\">hi</div><div class=\"b\">much longer content text</div></div>",
+            ".row { display: flex; font-size: 16px; } .a { flex: 1; } .b { flex: 1; }",
+            300.0,
+        );
+        assert!(
+            (d[0].content.width - d[1].content.width).abs() < 1.0,
+            "flex:1 등폭이어야: {} vs {}",
+            d[0].content.width,
+            d[1].content.width
+        );
+        assert!((d[0].content.width - 150.0).abs() < 1.0, "각 ~150px: {}", d[0].content.width);
+    }
+
+    #[test]
     fn flex_gap_and_mixed_widths() {
         let d = flex_layout(
             "<div class=\"row\"><div class=\"f\"></div><div class=\"i\"></div><div class=\"i\"></div></div>",

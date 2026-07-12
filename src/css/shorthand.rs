@@ -111,24 +111,40 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             Ok(n) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Px) }],
             _ => Vec::new(),
         },
-        // flex 단축값: <grow> [shrink] [basis]. none=0 0 auto, auto=1 1 auto, initial=0 1 auto.
+        // flex 단축: <grow> [<shrink>] [<basis>]. 키워드: none=0 0 auto, auto=1 1 auto,
+        // initial=0 1 auto. 숫자 하나(flex:1)=1 1 0% (등폭 핵심), 길이 하나=1 1 <len>.
         "flex" => {
-            let toks: Vec<&str> = value_text.split_whitespace().collect();
-            let first = toks.first().copied().unwrap_or("");
-            let (grow, shrink) = match first {
-                "none" => (0.0, 0.0),
-                "initial" => (0.0, 1.0),
-                "auto" => (1.0, 1.0),
+            let v = value_text.trim();
+            let (grow, shrink, basis): (f32, f32, Value) = match v {
+                "none" => (0.0, 0.0, Value::Keyword("auto".to_string())),
+                "auto" => (1.0, 1.0, Value::Keyword("auto".to_string())),
+                "initial" | "" => (0.0, 1.0, Value::Keyword("auto".to_string())),
                 _ => {
-                    let g = first.parse::<f32>().unwrap_or(0.0);
-                    // 둘째 토큰이 수면 shrink, 아니면 기본 1
-                    let s = toks.get(1).and_then(|t| t.parse::<f32>().ok()).unwrap_or(1.0);
-                    (g, s)
+                    let mut grow: Option<f32> = None;
+                    let mut shrink: Option<f32> = None;
+                    let mut basis: Option<Value> = None;
+                    for t in v.split_whitespace() {
+                        if is_flex_basis_token(t) {
+                            if basis.is_none() {
+                                basis = Some(parse_flex_basis(t));
+                            }
+                        } else if let Ok(num) = t.parse::<f32>() {
+                            if grow.is_none() {
+                                grow = Some(num);
+                            } else if shrink.is_none() {
+                                shrink = Some(num);
+                            }
+                        }
+                    }
+                    // basis 토큰 없이 숫자만 → basis 0% (flex:1 = 1 1 0%)
+                    let basis = basis.unwrap_or(Value::Length(0.0, Unit::Percent));
+                    (grow.unwrap_or(1.0), shrink.unwrap_or(1.0), basis)
                 }
             };
             vec![
                 Declaration { important: false, name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) },
                 Declaration { important: false, name: "flex-shrink".to_string(), value: Value::Length(shrink, Unit::Px) },
+                Declaration { important: false, name: "flex-basis".to_string(), value: basis },
             ]
         }
         // grid 트랙/영역 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
@@ -384,6 +400,24 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
             None => Vec::new(),
         },
+    }
+}
+
+// flex 단축에서 basis 토큰인가 (길이/%/키워드 — 순수 숫자 grow/shrink 와 구분).
+fn is_flex_basis_token(t: &str) -> bool {
+    if t.parse::<f32>().is_ok() {
+        return false; // 단위 없는 순수 숫자(0, 2, 1.5)는 grow/shrink
+    }
+    matches!(t, "auto" | "content" | "max-content" | "min-content" | "fit-content")
+        || t.ends_with('%')
+        || matches!(interpret_value(t), Some(Value::Length(..)))
+}
+
+fn parse_flex_basis(t: &str) -> Value {
+    if matches!(t, "auto" | "content" | "max-content" | "min-content" | "fit-content") {
+        Value::Keyword(t.to_string())
+    } else {
+        interpret_value(t).unwrap_or(Value::Keyword("auto".to_string()))
     }
 }
 
@@ -757,6 +791,24 @@ mod tests {
 
     fn find<'a>(decls: &'a [Declaration], name: &str) -> Option<&'a Value> {
         decls.iter().find(|d| d.name == name).map(|d| &d.value)
+    }
+
+    #[test]
+    fn flex_shorthand_emits_basis() {
+        // flex:1 = 1 1 0% (등폭 핵심)
+        let d = expand_declaration("flex", "1");
+        assert_eq!(find(&d, "flex-grow"), Some(&Value::Length(1.0, Unit::Px)));
+        assert_eq!(find(&d, "flex-shrink"), Some(&Value::Length(1.0, Unit::Px)));
+        assert_eq!(find(&d, "flex-basis"), Some(&Value::Length(0.0, Unit::Percent)));
+        // flex: 2 0 200px
+        let d2 = expand_declaration("flex", "2 0 200px");
+        assert_eq!(find(&d2, "flex-grow"), Some(&Value::Length(2.0, Unit::Px)));
+        assert_eq!(find(&d2, "flex-shrink"), Some(&Value::Length(0.0, Unit::Px)));
+        assert_eq!(find(&d2, "flex-basis"), Some(&Value::Length(200.0, Unit::Px)));
+        // flex: 200px = 1 1 200px
+        let d3 = expand_declaration("flex", "200px");
+        assert_eq!(find(&d3, "flex-grow"), Some(&Value::Length(1.0, Unit::Px)));
+        assert_eq!(find(&d3, "flex-basis"), Some(&Value::Length(200.0, Unit::Px)));
     }
 
     #[test]

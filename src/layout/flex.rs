@@ -61,12 +61,26 @@ impl<'a> LayoutBox<'a> {
             let mbox = child.dimensions.margin_box();
             main_fixed[i] = matches!(child.styled_node.value(main_prop), Some(Length(_, Px)));
             cross_fixed[i] = matches!(child.styled_node.value(cross_prop), Some(Length(_, Px)));
+            // flex-basis: 확정 길이/%(auto/content 는 내용 기반) 면 base main size 로 사용.
+            // flex:1 = basis 0% → 모든 아이템 base 0, grow 가 자유공간 균등 분배 → 등폭.
+            let (mbw, cw) = (mbox.width, child.dimensions.content.width);
+            let basis_override: Option<f32> = match child.styled_node.value("flex-basis") {
+                Some(Length(b, Px)) => Some(b),
+                Some(Length(b, crate::css::Unit::Percent)) if cont_main.is_finite() => {
+                    Some(b / 100.0 * cont_main)
+                }
+                _ => None,
+            };
             // 고정 main 은 border_box (phantom margin 배제), auto 는 내용 preferred+box.
-            basis[i] = if row {
+            basis[i] = if let Some(b) = basis_override {
+                // flex-basis 는 content-box 크기 → box extras(테두리/패딩/마진) 더해 margin-box 기준
+                let extra = if row { mbw - cw } else { mbox.height - child.dimensions.content.height };
+                (b + extra).max(0.0)
+            } else if row {
                 if main_fixed[i] {
                     child.dimensions.border_box().width
                 } else {
-                    child.used_width + (mbox.width - child.dimensions.content.width)
+                    child.used_width + (mbw - cw)
                 }
             } else if main_fixed[i] {
                 child.dimensions.border_box().height
