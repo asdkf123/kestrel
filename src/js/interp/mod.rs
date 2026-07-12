@@ -164,6 +164,15 @@ impl ArrayObj {
     pub fn set_prop(&self, k: String, v: Value) {
         self.props.borrow_mut().insert(k, v);
     }
+    // 인덱스 외의 own 프로퍼티 (엔진 내부 마커 제외) — Object.assign 등의 열거용
+    pub fn own_props(&self) -> Vec<(String, Value)> {
+        self.props
+            .borrow()
+            .iter()
+            .filter(|(k, _)| !is_internal_key(k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
 }
 
 pub struct JsFn {
@@ -4626,6 +4635,40 @@ mod tests {
             .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
             .unwrap();
         assert_eq!(to_display(&o), "100,50,10,20");
+    }
+
+    #[test]
+    fn object_assign_to_object_types() {
+        // 기본: 객체 → 객체
+        assert_eq!(run_num("var t={a:1}; Object.assign(t,{b:2},{c:3}); t.a+t.b+t.c"), 6.0);
+        // 대상이 함수 (번들의 정적 복사 패턴 Object.assign(Fn, {...}))
+        assert_eq!(
+            run_num("function F(){}; Object.assign(F, {version: 7, x: 1}); F.version + F.x"),
+            8.0,
+        );
+        // 대상이 인스턴스 (Object.assign(this, props))
+        assert_eq!(
+            run_num("class C { constructor(p){ Object.assign(this, p); } } (new C({v:9})).v"),
+            9.0,
+        );
+        // 소스가 배열/인스턴스/함수여도 own 프로퍼티 복사
+        assert_eq!(run_str("var t={}; Object.assign(t, ['x','y']); t[0]+t[1]"), "xy");
+        assert_eq!(
+            run_num("function S(){}; S.k = 4; var t={}; Object.assign(t, S); t.k"),
+            4.0,
+        );
+        // 반환값은 대상 (체이닝)
+        assert_eq!(run_num("Object.assign({}, {n:5}).n"), 5.0);
+        // null/undefined 대상만 에러
+        assert_eq!(
+            run_str("try { Object.assign(null, {}); 'no-throw' } catch(e) { 'threw' }"),
+            "threw",
+        );
+        // frozen 대상은 변경 안 됨
+        assert_eq!(
+            run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"),
+            1.0,
+        );
     }
 
     #[test]

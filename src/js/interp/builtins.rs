@@ -6,6 +6,87 @@ use std::rc::Rc;
 
 // URI 인코딩: 비예약문자(A-Za-z0-9 -_.!~*'()) 와 extra_safe 는 보존, 나머지는
 // UTF-8 바이트별 %XX. encodeURI 는 예약문자를 extra_safe 로 넘겨 보존한다.
+// 값의 own enumerable 프로퍼티 (키, 값) — Object.assign/스프레드의 소스 열거.
+// 엔진 내부 마커(__proto__/@@심볼 등)는 제외한다.
+fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
+    match v {
+        Value::Obj(m) => m
+            .borrow()
+            .iter()
+            .filter(|(k, _)| !is_internal_key(k.as_str()))
+            .map(|(k, val)| (k.clone(), val.clone()))
+            .collect(),
+        // 배열: 인덱스 + own-property (push 재정의 등)
+        Value::Arr(a) => {
+            let mut out: Vec<(String, Value)> = a
+                .borrow()
+                .iter()
+                .enumerate()
+                .map(|(i, val)| (i.to_string(), val.clone()))
+                .collect();
+            out.extend(a.own_props());
+            out
+        }
+        Value::Instance(i) => {
+            i.fields.borrow().iter().map(|(k, val)| (k.clone(), val.clone())).collect()
+        }
+        // 함수도 객체 — F.staticProp 복사 (번들의 Object.assign(Fn, {...}) 패턴)
+        Value::Fn(f) => f
+            .props
+            .borrow()
+            .iter()
+            .filter(|(k, _)| k.as_str() != "prototype")
+            .map(|(k, val)| (k.clone(), val.clone()))
+            .collect(),
+        Value::Class(c) => {
+            c.statics.borrow().iter().map(|(k, val)| (k.clone(), val.clone())).collect()
+        }
+        Value::Str(s) => s
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| (i.to_string(), Value::Str(ch.to_string())))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+// 대상에 own 프로퍼티 설정 (Object.assign 의 대상 쓰기). frozen/sealed 는 존중.
+fn set_own_property(target: &Value, k: String, v: Value) {
+    match target {
+        Value::Obj(m) => {
+            let mut b = m.borrow_mut();
+            if b.contains_key("@@frozen") {
+                return;
+            }
+            if !b.contains_key(&k) && (b.contains_key("@@sealed") || b.contains_key("@@nonext")) {
+                return;
+            }
+            b.insert(k, v);
+        }
+        Value::Arr(a) => {
+            if let Ok(i) = k.parse::<usize>() {
+                let mut items = a.borrow_mut();
+                if i >= items.len() {
+                    items.resize(i + 1, Value::Undefined);
+                }
+                items[i] = v;
+            } else {
+                a.set_prop(k, v);
+            }
+        }
+        Value::Instance(inst) => {
+            inst.fields.borrow_mut().insert(k, v);
+        }
+        Value::Fn(f) => {
+            f.props.borrow_mut().insert(k, v);
+        }
+        Value::Class(c) => {
+            c.statics.borrow_mut().insert(k, v);
+        }
+        _ => {}
+    }
+}
+
 fn uri_encode(s: &str, extra_safe: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -2370,20 +2451,20 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
+            // Object.assign(target, ...sources) — 표준 ToObject 의미론.
+            // 대상은 객체/배열/함수/인스턴스/클래스 모두 가능(번들의 Object.assign(Fn, {...})
+            // 정적 복사 패턴). null/undefined 만 TypeError. 소스도 같은 범위에서 열거.
             Native::ObjectAssign => {
-                let Some(Value::Obj(target)) = args.first() else {
-                    return Err("Object.assign 대상은 객체".to_string());
-                };
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                if matches!(target, Value::Undefined | Value::Null) {
+                    return Err("Object.assign 대상이 null/undefined".to_string());
+                }
                 for src in &args[1..] {
-                    if let Value::Obj(m) = src {
-                        for (k, v) in m.borrow().iter() {
-                            if !is_internal_key(k.as_str()) {
-                                target.borrow_mut().insert(k.clone(), v.clone());
-                            }
-                        }
+                    for (k, v) in own_enumerable_entries(src) {
+                        set_own_property(&target, k, v);
                     }
                 }
-                Ok(args.into_iter().next().unwrap())
+                Ok(target)
             }
             Native::ArrayIsArray => {
                 Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
