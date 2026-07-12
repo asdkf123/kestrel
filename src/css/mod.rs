@@ -3,7 +3,7 @@ mod shorthand;
 mod supports;
 mod values;
 
-use media::media_matches;
+pub(crate) use media::media_matches;
 use shorthand::expand_declaration;
 use supports::supports_condition;
 use values::valid_identifier_char;
@@ -1201,6 +1201,22 @@ mod tests {
         );
         assert_eq!(ss.rules.len(), 1);
         assert_eq!(ss.rules[0].declarations[0].name, "width");
+    }
+
+    #[test]
+    fn prefers_color_scheme_defaults_light() {
+        // 헤드리스 = light: dark 스킴 블록은 드롭, light/not-dark 는 포함.
+        assert!(!media_matches("(prefers-color-scheme: dark)", 1000.0), "dark 불일치");
+        assert!(media_matches("(prefers-color-scheme: light)", 1000.0), "light 일치");
+        assert!(media_matches("(not (prefers-color-scheme: dark))", 1000.0), "not-dark 일치");
+        assert!(!media_matches("(prefers-contrast: more)", 1000.0), "more 대비 불일치");
+        // dark 스킴 @media 블록의 내부 규칙은 캐스케이드에서 빠진다
+        let ss = parse_viewport(
+            "@media (prefers-color-scheme: dark) { body { color: #ffffff; } } p { color: #000000; }"
+                .to_string(),
+            1000.0,
+        );
+        assert_eq!(ss.rules.len(), 1, "dark 블록 드롭 → p 규칙만");
     }
 
     #[test]

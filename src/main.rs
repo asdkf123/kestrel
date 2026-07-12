@@ -277,6 +277,84 @@ fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::
     (images, map)
 }
 
+// 외부 스타일시트를 재귀적으로 로드 (@import 추적). 미디어 조건 충족 시만 import.
+// @import 규칙은 파일 자신의 규칙보다 앞선 캐스케이드 → 먼저 추가.
+fn load_stylesheet(
+    css_url: &str,
+    page_vw: f32,
+    sheet: &mut css::Stylesheet,
+    depth: u32,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if depth > 6 || seen.contains(css_url) {
+        return;
+    }
+    seen.insert(css_url.to_string());
+    let r = match http::fetch(css_url) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let text = String::from_utf8_lossy(&r.body).to_string();
+    let this_base = url::Url::parse(css_url).ok();
+    for (imp, media) in extract_imports(&text) {
+        if !media.is_empty() && !css::media_matches(&media, page_vw) {
+            continue;
+        }
+        if let Some(b) = &this_base {
+            if let Some(u) = b.join(&imp) {
+                load_stylesheet(&u.as_string(), page_vw, sheet, depth + 1, seen);
+            }
+        }
+    }
+    let parsed = css::parse_viewport(text, page_vw);
+    sheet.rules.extend(parsed.rules);
+    sheet.font_faces.extend(parsed.font_faces);
+    sheet.keyframes.extend(parsed.keyframes);
+}
+
+// CSS 텍스트에서 @import 규칙 추출 → (url, 미디어조건) 목록.
+// `@import url("x") media;` / `@import "x" media;` 모두 지원.
+fn extract_imports(css: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut rest = css;
+    while let Some(p) = rest.find("@import") {
+        let after = &rest[p + 7..];
+        let end = match after.find(';') {
+            Some(e) => e,
+            None => break,
+        };
+        let stmt = after[..end].trim();
+        if let Some((url, media)) = parse_import_stmt(stmt) {
+            out.push((url, media));
+        }
+        rest = &after[end + 1..];
+    }
+    out
+}
+
+// "url(\"x\") cond" 또는 "\"x\" cond" → (url, cond). url() / 따옴표 제거.
+fn parse_import_stmt(stmt: &str) -> Option<(String, String)> {
+    let s = stmt.trim();
+    let (url, media) = if let Some(inner) = s.strip_prefix("url(") {
+        let close = inner.find(')')?;
+        (inner[..close].trim(), inner[close + 1..].trim())
+    } else {
+        // "x" 또는 'x' 로 시작
+        let q = s.chars().next()?;
+        if q != '"' && q != '\'' {
+            return None;
+        }
+        let after = &s[1..];
+        let close = after.find(q)?;
+        (&s[..close + 2], after[close + 1..].trim())
+    };
+    let url = url.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    if url.is_empty() {
+        return None;
+    }
+    Some((url.to_string(), media.to_string()))
+}
+
 fn collect_links(dom: &dom::Dom, out: &mut Vec<String>) {
     walk_dom(dom, dom.root, &mut |n| {
         if let dom::NodeType::Element(e) = &n.node_type {
@@ -352,15 +430,10 @@ fn build_page(url: &str) -> Option<window::Page> {
     if !hrefs.is_empty() {
         println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
     }
+    let mut seen_css = std::collections::HashSet::new();
     for href in hrefs.iter().take(10) {
         if let Some(u) = base.join(href) {
-            if let Ok(r) = http::fetch(&u.as_string()) {
-                let css_text = String::from_utf8_lossy(&r.body).to_string();
-                let parsed = css::parse_viewport(css_text, page_vw);
-                sheet.rules.extend(parsed.rules);
-                sheet.font_faces.extend(parsed.font_faces);
-                sheet.keyframes.extend(parsed.keyframes);
-            }
+            load_stylesheet(&u.as_string(), page_vw, &mut sheet, 0, &mut seen_css);
         }
     }
     let mut inline_css = String::new();
@@ -616,4 +689,32 @@ fn dump_glyphs(text: &str, path: &str) {
     data.extend_from_slice(&img);
     fs::write(path, data).expect("write ppm");
     println!("glyphs rendered to {}", path);
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::{extract_imports, parse_import_stmt};
+
+    #[test]
+    fn extracts_url_and_bare_imports_with_media() {
+        let css = r#"@import url("theme.css");
+@import "high.css" (prefers-contrast: more);
+@import url(dark.css) (prefers-color-scheme: dark) and (min-width: 100px);
+p { color: red; }"#;
+        let imps = extract_imports(css);
+        assert_eq!(imps.len(), 3);
+        assert_eq!(imps[0], ("theme.css".to_string(), "".to_string()));
+        assert_eq!(imps[1].0, "high.css");
+        assert_eq!(imps[1].1, "(prefers-contrast: more)");
+        assert_eq!(imps[2].0, "dark.css");
+        assert!(imps[2].1.contains("prefers-color-scheme"));
+    }
+
+    #[test]
+    fn parse_import_stmt_strips_quotes_and_url() {
+        assert_eq!(parse_import_stmt("url(\"a.css\")"), Some(("a.css".into(), "".into())));
+        assert_eq!(parse_import_stmt("url(b.css) screen"), Some(("b.css".into(), "screen".into())));
+        assert_eq!(parse_import_stmt("'c.css'"), Some(("c.css".into(), "".into())));
+        assert_eq!(parse_import_stmt("nonsense"), None);
+    }
 }

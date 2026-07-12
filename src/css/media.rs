@@ -23,11 +23,40 @@ fn media_query_matches(q: &str, vw: f32) -> bool {
     if let Some(px) = media_feature_px(body, "max-width") {
         ok = ok && vw <= px;
     }
+    ok = ok && prefers_ok(body);
     if negate {
         !ok
     } else {
         ok
     }
+}
+
+// prefers-color-scheme / prefers-contrast 평가. 헤드리스 렌더는 light + 표준 대비 기준.
+// dark 스킴이나 more 대비를 요구하면 불일치. "not (…dark)" 형태는 일치(light).
+fn prefers_ok(body: &str) -> bool {
+    let mut ok = true;
+    // 특성 앞에 "not (" 가 있으면 그 특성만 부정된 것으로 본다.
+    let negated_at = |i: usize| {
+        let pre = body[..i].trim_end();
+        pre.ends_with("not (") || pre.ends_with("not(")
+    };
+    if let Some(i) = body.find("prefers-color-scheme") {
+        let after = &body[i..];
+        let neg = negated_at(i);
+        if after.contains("dark") {
+            ok = ok && neg; // dark 요구: 부정이면 light 라서 일치, 아니면 불일치
+        } else if after.contains("light") {
+            ok = ok && !neg; // light 요구: 일치
+        }
+    }
+    if let Some(i) = body.find("prefers-contrast") {
+        let after = &body[i..];
+        let neg = negated_at(i);
+        if after.contains("more") || after.contains("high") {
+            ok = ok && neg;
+        }
+    }
+    ok
 }
 
 // "(min-width: 768px)" 같은 특성에서 px 값을 추출. em 등 비-px 는 None.
