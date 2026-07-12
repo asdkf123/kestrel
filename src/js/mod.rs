@@ -175,8 +175,7 @@ var requestIdleCallback = window.requestIdleCallback;
 if (!window.cancelIdleCallback) window.cancelIdleCallback = function(id){ clearTimeout(id); };
 if (!window.cancelAnimationFrame) window.cancelAnimationFrame = function(id){ clearTimeout(id); };
 var cancelAnimationFrame = window.cancelAnimationFrame;
-if (!window.getComputedStyle) window.getComputedStyle = function(){ return { getPropertyValue: function(){ return ''; } }; };
-var getComputedStyle = window.getComputedStyle;
+// getComputedStyle 은 엔진이 실제 계산 스타일로 제공(Native). 스텁 불필요.
 var Reflect = window.Reflect;
 if (!Reflect) {
   Reflect = {};

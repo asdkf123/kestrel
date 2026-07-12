@@ -129,6 +129,9 @@ pub enum Value {
     // Symbol 원시값. key 는 프로퍼티 키로 쓰일 때의 문자열(잘 알려진 심볼은 "@@iterator"
     // 등 고정, 일반 심볼은 "@@sym:<n>" 고유). 동일성(===)은 key 비교. desc 는 설명.
     Symbol(Rc<SymbolData>),
+    // getComputedStyle(el) 이 돌려주는 읽기전용 계산 스타일 뷰. 요소 NodeId 로
+    // computed_styles 맵을 조회한다(카멜케이스/대시 프로퍼티 + getPropertyValue).
+    ComputedStyle(crate::dom::NodeId),
 }
 
 // Symbol 원시값의 데이터. key 로 프로퍼티 저장 키와 동일성을 동시에 표현한다.
@@ -259,6 +262,9 @@ pub enum Native {
     SymbolCtor,
     SymbolFor,
     SymbolKeyFor,
+    // getComputedStyle(el) 과 그 반환 뷰의 getPropertyValue(name)
+    GetComputedStyle,
+    ComputedGetProperty,
     DocQuery(&'static str),
     CreateTextNode,
     InsertBefore,
@@ -553,6 +559,7 @@ impl std::fmt::Debug for Value {
             Value::Proxy(_) => write!(f, "[object Proxy]"),
             Value::Gen(_) => write!(f, "[object Generator]"),
             Value::Symbol(s) => write!(f, "Symbol({})", s.desc.as_deref().unwrap_or("")),
+            Value::ComputedStyle(id) => write!(f, "[computedStyle {:?}]", id),
         }
     }
 }
@@ -588,6 +595,32 @@ fn env_is_const(env: &EnvRef, name: &str) -> bool {
         return is_const;
     }
     parent.map_or(false, |p| env_is_const(&p, name))
+}
+
+// getComputedStyle 프로퍼티명: 카멜케이스 → CSS 대시. backgroundColor → background-color,
+// cssFloat → float, webkitTransform → -webkit-transform. 이미 대시면 그대로.
+fn camel_to_dashed(s: &str) -> String {
+    if s == "cssFloat" || s == "styleFloat" {
+        return "float".to_string();
+    }
+    if s.contains('-') || !s.chars().any(|c| c.is_ascii_uppercase()) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 2);
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            // 선두 대문자(webkit/moz/ms/o 벤더)는 앞에도 대시
+            if i == 0 {
+                out.push('-');
+            } else {
+                out.push('-');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn env_get(env: &EnvRef, name: &str) -> Option<Value> {
@@ -762,6 +795,9 @@ pub struct Interp {
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
     // getBoundingClientRect/offsetWidth 등이 읽는다. 빈 맵이면 0 을 돌려준다.
     pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
+    // 계산된 스타일 (NodeId → 대시 프로퍼티명 → CSS 텍스트). 리빌드 후 호스트가 채움.
+    // getComputedStyle 이 읽는다. 빈 맵이면 빈 문자열.
+    pub computed_styles: std::collections::HashMap<crate::dom::NodeId, HashMap<String, String>>,
     // <canvas> 2D 그리기 명령 (NodeId → ops). 호스트가 렌더 시 DisplayItem 으로 변환.
     pub canvas_cmds: std::collections::HashMap<crate::dom::NodeId, Vec<CanvasOp>>,
     // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
@@ -913,6 +949,9 @@ impl Interp {
         env_declare(&global, "clearTimeout", Value::Native(Native::ClearTimer));
         env_declare(&global, "clearInterval", Value::Native(Native::ClearTimer));
         env_declare(&global, "requestAnimationFrame", Value::Native(Native::SetTimeout));
+        env_declare(&global, "cancelAnimationFrame", Value::Native(Native::ClearTimer));
+        // getComputedStyle — 리빌드 후 채워진 computed_styles 를 읽는 실제 계산 스타일.
+        env_declare(&global, "getComputedStyle", Value::Native(Native::GetComputedStyle));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
@@ -1034,6 +1073,11 @@ impl Interp {
         window.insert("navigator".to_string(), nav);
         window.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
         window.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        window.insert("getComputedStyle".to_string(), Value::Native(Native::GetComputedStyle));
+        window.insert("requestAnimationFrame".to_string(), Value::Native(Native::SetTimeout));
+        window.insert("cancelAnimationFrame".to_string(), Value::Native(Native::ClearTimer));
+        window.insert("setTimeout".to_string(), Value::Native(Native::SetTimeout));
+        window.insert("setInterval".to_string(), Value::Native(Native::SetInterval));
         // 뷰포트/화면 메트릭 (반응형 스크립트가 흔히 읽음). 렌더 뷰포트에 맞춤.
         for (k, v) in [
             ("innerWidth", 1000.0),
@@ -1134,6 +1178,7 @@ impl Interp {
             dom: None,
             handlers: Vec::new(),
             layout_rects: std::collections::HashMap::new(),
+            computed_styles: std::collections::HashMap::new(),
             canvas_cmds: std::collections::HashMap::new(),
             global_handlers: Vec::new(),
             rng: seed,
@@ -2662,6 +2707,15 @@ impl Interp {
         Value::Symbol(Rc::new(SymbolData { key: key.to_string(), desc: Some(desc.to_string()) }))
     }
 
+    // getComputedStyle(el) → 계산 스타일 뷰(el 이 요소면). 요소 아니면 빈 뷰.
+    pub(super) fn get_computed_style(&self, arg: Option<&Value>) -> Value {
+        match arg {
+            Some(Value::Dom(id)) => Value::ComputedStyle(*id),
+            // 요소가 아니면 어떤 노드와도 겹치지 않는 센티널 → 빈 뷰.
+            _ => Value::ComputedStyle(usize::MAX),
+        }
+    }
+
     // 전역 생성자(ctor)의 prototype 에서 메서드를 찾는다 (폴리필 조회용).
     // 예: proto_method("Array", "flatMap") → Array.prototype.flatMap.
     fn proto_method(&self, ctor: &str, key: &str) -> Option<Value> {
@@ -2730,6 +2784,20 @@ impl Interp {
             return Ok(self.constructor_of(recv));
         }
         match recv {
+            // getComputedStyle 뷰: getPropertyValue + 카멜케이스/대시 프로퍼티 읽기.
+            Value::ComputedStyle(id) => {
+                if key == "getPropertyValue" {
+                    return Ok(Value::Native(Native::ComputedGetProperty));
+                }
+                let dashed = camel_to_dashed(key);
+                let v = self
+                    .computed_styles
+                    .get(id)
+                    .and_then(|m| m.get(&dashed))
+                    .cloned()
+                    .unwrap_or_default();
+                Ok(Value::Str(v))
+            }
             // 지연 제너레이터: 반복자 프로토콜 메서드. @@iterator 는 자기 자신 반환.
             Value::Gen(_) => Ok(match key {
                 "next" => Value::Native(Native::GenNext),
@@ -4496,6 +4564,33 @@ mod tests {
             .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
             .unwrap();
         assert_eq!(to_display(&o), "100,50,10,20");
+    }
+
+    #[test]
+    fn get_computed_style_reads_real_values() {
+        let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
+        let box_id = dom.find_by_attr_id("box").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        // 호스트(리빌드)가 채우는 계산 스타일을 흉내낸다.
+        let mut m = HashMap::new();
+        m.insert("display".to_string(), "flex".to_string());
+        m.insert("background-color".to_string(), "rgb(204, 0, 0)".to_string());
+        m.insert("font-size".to_string(), "20px".to_string());
+        m.insert("width".to_string(), "240px".to_string());
+        interp.computed_styles.insert(box_id, m);
+        // 카멜케이스 프로퍼티 + getPropertyValue(대시) 둘 다 동작
+        let r = interp
+            .run(
+                "var cs = getComputedStyle(document.getElementById('box')); \
+                 cs.display + '|' + cs.backgroundColor + '|' + cs.getPropertyValue('font-size') + '|' + cs.width",
+            )
+            .unwrap();
+        assert_eq!(to_display(&r), "flex|rgb(204, 0, 0)|20px|240px");
+        // 없는 프로퍼티는 빈 문자열
+        assert_eq!(to_display(&interp.run("getComputedStyle(document.getElementById('box')).color").unwrap()), "");
+        // getComputedStyle 은 CSSStyleDeclaration 유형(존재 자체로 크래시 방지)
+        assert_eq!(to_display(&interp.run("'' + getComputedStyle(document.getElementById('box'))").unwrap()), "[object CSSStyleDeclaration]");
     }
 
     #[test]

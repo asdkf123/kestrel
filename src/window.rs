@@ -101,6 +101,24 @@ fn canvas_display_items(
 }
 
 // application/x-www-form-urlencoded (공백은 +)
+// 스타일 트리를 순회하며 요소별 계산 스타일을 CSS 텍스트 맵으로 수집(getComputedStyle 용).
+fn collect_computed_styles(
+    node: &crate::style::StyledNode,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, std::collections::HashMap<String, String>>,
+) {
+    // 요소 노드(자식이 있거나 프로퍼티가 있는)만. 텍스트 노드는 건너뜀.
+    if matches!(node.node.node_type, crate::dom::NodeType::Element(_)) {
+        let mut m = std::collections::HashMap::with_capacity(node.specified_values.len());
+        for (k, v) in &node.specified_values {
+            m.insert(k.clone(), crate::style::computed_value_string(v));
+        }
+        out.insert(node.id, m);
+    }
+    for child in &node.children {
+        collect_computed_styles(child, out);
+    }
+}
+
 fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -133,6 +151,16 @@ impl Page {
         self.js.layout_rects.clear();
         for (r, id, _) in &self.element_rects {
             self.js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
+        }
+        // getComputedStyle 용 계산 스타일을 JS 인터프리터로 전달 (요소별 프로퍼티 → CSS 텍스트).
+        self.js.computed_styles.clear();
+        collect_computed_styles(&style_root, &mut self.js.computed_styles);
+        // width/height 는 레이아웃된 used value(px)로 덮어써 정확도를 높인다.
+        for (r, id, _) in &self.element_rects {
+            if let Some(m) = self.js.computed_styles.get_mut(id) {
+                m.insert("width".to_string(), format!("{}px", crate::style::num_css(r.width)));
+                m.insert("height".to_string(), format!("{}px", crate::style::num_css(r.height)));
+            }
         }
         // <canvas> 2D 그리기 명령을 박스로 매핑해 디스플레이 리스트에 추가
         if !self.js.canvas_cmds.is_empty() {

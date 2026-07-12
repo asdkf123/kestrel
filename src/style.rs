@@ -9,6 +9,46 @@ pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 pub type PropertyMap = HashMap<String, Value>;
 
+// 숫자를 CSS 텍스트로 (정수는 소수점 없이, 그 외 최대 소수 3자리, 끝의 0 제거).
+pub fn num_css(n: f32) -> String {
+    if n.fract() == 0.0 && n.is_finite() {
+        return format!("{}", n as i64);
+    }
+    let s = format!("{:.3}", n);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    s.to_string()
+}
+
+// 계산된(computed) 프로퍼티 값을 CSS 텍스트로 직렬화 — getComputedStyle 용.
+pub fn computed_value_string(v: &Value) -> String {
+    match v {
+        Value::Keyword(s) => s.clone(),
+        Value::Length(n, unit) => match unit {
+            Unit::Px => format!("{}px", num_css(*n)),
+            Unit::Percent => format!("{}%", num_css(*n)),
+            Unit::Lh => num_css(*n), // 무단위 line-height 배수
+            Unit::Em => format!("{}em", num_css(*n)),
+            Unit::Rem => format!("{}rem", num_css(*n)),
+            Unit::Vw => format!("{}vw", num_css(*n)),
+            Unit::Vh => format!("{}vh", num_css(*n)),
+            Unit::Vmin => format!("{}vmin", num_css(*n)),
+            Unit::Vmax => format!("{}vmax", num_css(*n)),
+        },
+        Value::Color(c) => {
+            if c.a == 255 {
+                format!("rgb({}, {}, {})", c.r, c.g, c.b)
+            } else {
+                // rgba 알파는 0..1 (CSS 직렬화 규약)
+                let a = num_css((c.a as f32 / 255.0 * 1000.0).round() / 1000.0);
+                format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, a)
+            }
+        }
+        Value::Url(u) => format!("url(\"{}\")", u),
+        // calc/var/gradient/min-max 는 getComputedStyle 로 잘 읽히지 않음 — 근사 빈값.
+        _ => String::new(),
+    }
+}
+
 pub struct StyledNode<'a> {
     pub node: &'a NodeData,
     // 아레나 NodeId — JS DOM 핸들과 같은 좌표계 (구조 변형에도 안정)

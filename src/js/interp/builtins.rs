@@ -662,6 +662,22 @@ impl Interp {
                     .unwrap_or(Value::Undefined),
                 _ => Value::Undefined,
             }),
+            // getComputedStyle(el) → 계산 스타일 뷰.
+            Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
+            // computedStyle.getPropertyValue('background-color') → CSS 텍스트.
+            Native::ComputedGetProperty => {
+                let name = args.first().map(to_display).unwrap_or_default();
+                Ok(match &recv {
+                    Some(Value::ComputedStyle(id)) => Value::Str(
+                        self.computed_styles
+                            .get(id)
+                            .and_then(|m| m.get(&name))
+                            .cloned()
+                            .unwrap_or_default(),
+                    ),
+                    _ => Value::Str(String::new()),
+                })
+            }
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {

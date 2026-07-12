@@ -503,6 +503,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::Symbol(s) => {
             format!("Symbol({})", s.desc.as_deref().unwrap_or(""))
         }
+        Value::ComputedStyle(_) => "[object CSSStyleDeclaration]".to_string(),
     }
 }
 
@@ -791,7 +792,8 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         | Value::ClassList(_)
         | Value::Proxy(_)
         | Value::Gen(_)
-        | Value::Symbol(_) => None,
+        | Value::Symbol(_)
+        | Value::ComputedStyle(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();
