@@ -488,17 +488,33 @@ impl Interp {
             }
             // Object.create(proto) — proto 의 얕은 복사 기반 새 객체 (관용)
             Native::ObjectCreate => {
+                // proto 를 __proto__ 로 링크(스냅샷 복사 아님). Object.create(null) 은 링크 없음.
                 let mut map = HashMap::new();
-                if let Some(Value::Obj(proto)) = args.first() {
-                    for (k, v) in proto.borrow().iter() {
-                        map.insert(k.clone(), v.clone());
+                if let Some(p @ Value::Obj(_)) = args.first() {
+                    map.insert("__proto__".to_string(), p.clone());
+                }
+                let obj = Value::Obj(Rc::new(RefCell::new(map)));
+                // 2번째 인자(프로퍼티 서술자): {k: {value: v}} 를 얕게 반영(get/set 은 근사).
+                if let Some(Value::Obj(descs)) = args.get(1) {
+                    if let Value::Obj(m) = &obj {
+                        for (k, d) in descs.borrow().iter() {
+                            if let Value::Obj(dm) = d {
+                                if let Some(v) = dm.borrow().get("value") {
+                                    m.borrow_mut().insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
                     }
                 }
-                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+                Ok(obj)
             }
-            // freeze 는 그대로 반환(불변성 미구현), getPrototypeOf 는 null
+            // freeze 는 그대로 반환(불변성 미구현)
             Native::ObjectFreeze => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
-            Native::ObjectGetPrototypeOf => Ok(Value::Null),
+            // getPrototypeOf: 객체의 __proto__ 링크(없으면 null)
+            Native::ObjectGetPrototypeOf => Ok(match args.first() {
+                Some(Value::Obj(m)) => m.borrow().get("__proto__").cloned().unwrap_or(Value::Null),
+                _ => Value::Null,
+            }),
             // Object.prototype.hasOwnProperty.call(obj, key) / obj.hasOwnProperty(key)
             Native::HasOwnProperty => {
                 let key = args.first().map(to_display).unwrap_or_default();

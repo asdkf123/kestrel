@@ -4356,6 +4356,26 @@ mod tests {
     }
 
     #[test]
+    fn object_create_links_prototype() {
+        // Object.create(proto) 는 proto 를 링크 → 상속 메서드 조회, getPrototypeOf 반환.
+        assert_eq!(
+            run_str("var proto = { greet: function(){ return 'hi'; } }; \
+                var o = Object.create(proto); o.greet()"),
+            "hi"
+        );
+        assert!(run_bool("var p = {a:1}; var o = Object.create(p); Object.getPrototypeOf(o) === p"));
+        // 생성 후 proto 에 추가한 것도 링크로 보인다
+        assert_eq!(
+            run_num("var p = {}; var o = Object.create(p); p.late = 9; o.late"),
+            9.0
+        );
+        // 2번째 인자 서술자의 value 반영
+        assert_eq!(run_num("var o = Object.create({}, { x: { value: 5 } }); o.x"), 5.0);
+        // 링크는 열거 안 됨
+        assert_eq!(run_num("var o = Object.create({a:1}); o.b = 2; Object.keys(o).length"), 1.0);
+    }
+
+    #[test]
     fn instanceof_function_constructor() {
         assert!(run_bool("function F(){} var x = new F(); x instanceof F"));
         assert!(run_bool("function F(){} function G(){} var x = new F(); !(x instanceof G)"));
