@@ -159,6 +159,8 @@ pub enum Native {
     HasOwnProperty,
     ObjToString,
     ReturnFalse,
+    ReturnThis, // valueOf 등 — 수신자(this) 반환
+    FnToString, // Function.prototype.toString
     MakeIter,
     IterNext,
     DocQuery(&'static str),
@@ -712,6 +714,10 @@ impl Interp {
         let mut object_proto = HashMap::new();
         object_proto.insert("hasOwnProperty".to_string(), Value::Native(Native::HasOwnProperty));
         object_proto.insert("toString".to_string(), Value::Native(Native::ObjToString));
+        object_proto.insert("toLocaleString".to_string(), Value::Native(Native::ObjToString));
+        object_proto.insert("valueOf".to_string(), Value::Native(Native::ReturnThis));
+        object_proto
+            .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
         object_proto.insert("isPrototypeOf".to_string(), Value::Native(Native::ReturnFalse));
         object_proto
             .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
@@ -843,6 +849,8 @@ impl Interp {
         fn_proto.insert("call".to_string(), Value::Native(Native::FnCall));
         fn_proto.insert("apply".to_string(), Value::Native(Native::FnApply));
         fn_proto.insert("bind".to_string(), Value::Native(Native::FnBind));
+        // Function.prototype.toString — core-js 등이 uncurryThis 로 참조
+        fn_proto.insert("toString".to_string(), Value::Native(Native::FnToString));
         let fn_proto = Value::Obj(Rc::new(RefCell::new(fn_proto)));
         // String.prototype: 문자열 메서드 (String.prototype.slice.call(x) 지원)
         let mut string_proto = HashMap::new();

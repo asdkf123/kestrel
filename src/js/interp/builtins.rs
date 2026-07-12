@@ -463,6 +463,8 @@ impl Interp {
                 Ok(Value::Str(format!("[object {}]", tag)))
             }
             Native::ReturnFalse => Ok(Value::Bool(false)),
+            Native::ReturnThis => Ok(recv.unwrap_or(Value::Undefined)),
+            Native::FnToString => Ok(Value::Str("function () { [native code] }".to_string())),
             // obj[Symbol.iterator]() → 반복자 객체 { next(), value/done }
             Native::MakeIter => {
                 let items: Vec<Value> = match &recv {
