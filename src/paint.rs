@@ -427,52 +427,91 @@ impl Canvas {
         }
     }
 
-    // 폴리곤 채우기 (nonzero winding 스캔라인). contours 는 물리 좌표. 홀(안쪽 윤곽) 지원.
+    // 폴리곤 채우기 (nonzero winding). contours 는 물리 좌표. 홀(안쪽 윤곽) 지원.
+    // 안티에일리어싱: 한 픽셀 행을 S개 서브스캔라인으로 나눠 세로 AA, 각 스팬의
+    // 좌우 끝은 부분 픽셀 커버리지로 가로 AA. 픽셀당 커버리지를 누적해 알파로 칠한다.
     pub fn fill_polygon(&mut self, color: Color, contours: &[Vec<(f32, f32)>]) {
         if color.a == 0 {
             return;
         }
-        let mut ymin = f32::INFINITY;
-        let mut ymax = f32::NEG_INFINITY;
+        let (mut ymin, mut ymax) = (f32::INFINITY, f32::NEG_INFINITY);
+        let (mut xmin, mut xmax) = (f32::INFINITY, f32::NEG_INFINITY);
         for c in contours {
-            for &(_, y) in c {
+            for &(x, y) in c {
                 ymin = ymin.min(y);
                 ymax = ymax.max(y);
+                xmin = xmin.min(x);
+                xmax = xmax.max(x);
             }
+        }
+        if !ymin.is_finite() || !xmin.is_finite() {
+            return;
         }
         let y0 = ymin.floor().max(0.0) as usize;
         let y1 = (ymax.ceil().max(0.0) as usize).min(self.height);
+        let x0 = xmin.floor().max(0.0) as usize;
+        let x1 = (xmax.ceil().max(0.0) as usize).min(self.width);
+        if x1 <= x0 {
+            return;
+        }
+        const S: usize = 4; // 픽셀당 세로 서브샘플 수
+        let span_w = x1 - x0;
+        let mut cov = vec![0f32; span_w];
+        let mut xs: Vec<(f32, i32)> = Vec::new();
         for py in y0..y1 {
-            let yc = py as f32 + 0.5;
-            // 교차점 (x, winding 방향) 수집
-            let mut xs: Vec<(f32, i32)> = Vec::new();
-            for c in contours {
-                let m = c.len();
-                for k in 0..m {
-                    let (ax, ay) = c[k];
-                    let (bx, by) = c[(k + 1) % m];
-                    if (ay <= yc && by > yc) || (by <= yc && ay > yc) {
-                        let t = (yc - ay) / (by - ay);
-                        let x = ax + t * (bx - ax);
-                        xs.push((x, if by > ay { 1 } else { -1 }));
+            for c in cov.iter_mut() {
+                *c = 0.0;
+            }
+            for s in 0..S {
+                let yc = py as f32 + (s as f32 + 0.5) / S as f32;
+                xs.clear();
+                for c in contours {
+                    let m = c.len();
+                    for k in 0..m {
+                        let (ax, ay) = c[k];
+                        let (bx, by) = c[(k + 1) % m];
+                        if (ay <= yc && by > yc) || (by <= yc && ay > yc) {
+                            let t = (yc - ay) / (by - ay);
+                            let x = ax + t * (bx - ax);
+                            xs.push((x, if by > ay { 1 } else { -1 }));
+                        }
+                    }
+                }
+                if xs.len() < 2 {
+                    continue;
+                }
+                xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                let mut wind = 0;
+                for w in xs.windows(2) {
+                    wind += w[0].1;
+                    if wind == 0 {
+                        continue;
+                    }
+                    let xa = w[0].0.max(x0 as f32);
+                    let xb = w[1].0.min(x1 as f32);
+                    if xb <= xa {
+                        continue;
+                    }
+                    let ia = xa.floor() as usize; // >= x0
+                    let ib = (xb.ceil() as usize).min(x1);
+                    for px in ia..ib {
+                        // 픽셀 [px, px+1] 과 스팬 [xa, xb] 겹침 길이 = 가로 커버리지.
+                        let l = (px as f32).max(xa);
+                        let r = ((px + 1) as f32).min(xb);
+                        let c = (r - l).clamp(0.0, 1.0);
+                        cov[px - x0] += c / S as f32;
                     }
                 }
             }
-            if xs.len() < 2 {
-                continue;
-            }
-            xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            let mut wind = 0;
-            for w in xs.windows(2) {
-                wind += w[0].1;
-                if wind != 0 {
-                    // 픽셀 중심 기준 반올림 (경계 픽셀 과포함 방지)
-                    let xa = w[0].0.round().max(0.0) as usize;
-                    let xb = (w[1].0.round().max(0.0) as usize).min(self.width);
-                    for px in xa..xb {
-                        self.put(px, py, color, color.a);
-                    }
+            for (i, &cv) in cov.iter().enumerate() {
+                if cv <= 0.0 {
+                    continue;
                 }
+                let a = (cv.min(1.0) * color.a as f32).round() as u8;
+                if a == 0 {
+                    continue;
+                }
+                self.put(x0 + i, py, color, a);
             }
         }
     }
@@ -3237,6 +3276,24 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn polygon_edge_is_antialiased() {
+        // 흰 캔버스(기본)에 검정 직각삼각형 (0,0)-(10,0)-(0,10). 빗변 x+y=10.
+        let mut canvas = Canvas::new(12, 12);
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        let tri = vec![vec![(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]];
+        canvas.fill_polygon(black, &tri);
+        // 내부 깊숙이 → 꽉 찬 검정.
+        let inside = canvas.pixels[1 * 12 + 1];
+        assert!(inside.r < 5, "내부는 검정, 실제 {}", inside.r);
+        // 빗변 위 픽셀 (5,4) 중심 (5.5,4.5) → 부분 커버리지(중간 알파, 계단 아님).
+        let edge = canvas.pixels[4 * 12 + 5];
+        assert!(edge.r > 20 && edge.r < 235, "빗변은 반투명(계단 아님), 실제 {}", edge.r);
+        // 삼각형 밖 → 흰색.
+        let outside = canvas.pixels[10 * 12 + 10];
+        assert!(outside.r > 250, "밖은 흰색, 실제 {}", outside.r);
     }
 
     #[test]
