@@ -834,10 +834,17 @@ impl Interp {
                 })
             }
             // String(x)/Number(x)/Boolean(x) 변환 생성자
-            Native::StringCtor => Ok(Value::Str(match args.first() {
-                Some(v) => to_display(v),
-                None => String::new(),
-            })),
+            Native::StringCtor => {
+                // ToString: 객체는 ToPrimitive(hint string) → toString/valueOf 호출.
+                let s = match args.into_iter().next() {
+                    Some(v) => {
+                        let p = self.to_primitive(v, true);
+                        to_display(&p)
+                    }
+                    None => String::new(),
+                };
+                Ok(Value::Str(s))
+            }
             Native::NumberCtor => Ok(Value::Num(match args.first() {
                 Some(v) => to_num(v),
                 None => 0.0,

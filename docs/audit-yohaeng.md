@@ -11,7 +11,7 @@
   for-in/Object.keys/JSON 이 삽입 순서(JSON 정렬 제거). delete 실제 제거도 구현. (20029e5)
 - [x] **JS 프로토타입 링크** — new F() 가 prototype 을 __proto__ 로 링크(스냅샷 아님).
   체인 조회 + function-ctor instanceof + __proto__ 비열거(keys/for-in/JSON/hasOwnProp). (1899093)
-- [ ] **JS ToPrimitive** — 강제변환 시 toString/valueOf 안 부름. `${obj}`→[object Object]. (value.rs:421, mod.rs:3018)
+- [x] **JS ToPrimitive** — 템플릿/`+`/산술은 이미 valueOf/toString 호출. String() 도 ToString(hint string)로 수정. (다음 커밋)
 - [x] **JS Promise 거부 의미론** — .catch/then(,onR)/거부 전파/throw→거부/async throw→거부
   /await 거부→throw/Promise.all 거부/allSettled/race 거부 채택. (19874bc)
 - [ ] **float in nearest-BFC** — float 이 직속 부모에 갇힘. 다중 float·타 블록 우회 불가. (layout/mod.rs:1049)

@@ -4491,6 +4491,18 @@ mod tests {
     }
 
     #[test]
+    fn string_conversion_calls_toprimitive() {
+        // String(obj) 는 ToString → ToPrimitive(hint string) → toString 호출.
+        assert_eq!(run_str("String({toString:function(){return 'Z';}})"), "Z");
+        // hint string: toString(상속) 우선 → valueOf 만 있어도 "[object Object]"(스펙 정확)
+        assert_eq!(run_str("String({valueOf:function(){return 42;}})"), "[object Object]");
+        // 원시값은 그대로
+        assert_eq!(run_str("String(5)"), "5");
+        assert_eq!(run_str("String(true)"), "true");
+        assert_eq!(run_str("String([1,2,3])"), "1,2,3");
+    }
+
+    #[test]
     fn regex_vs_division_after_paren() {
         // 제어문 헤더 ')' 뒤는 정규식 허용.
         assert!(run_bool("if(1) /ab/.test('xabx')"));
