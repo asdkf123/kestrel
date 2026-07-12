@@ -3707,6 +3707,27 @@ mod tests {
     }
 
     #[test]
+    fn line_box_grows_for_larger_inline() {
+        // 더 큰 font-size 인라인이 오면 줄 상자가 그만큼 커진다(겹침 방지). 균일 문단은 불변.
+        let fs = fonts();
+        let mk = |html: &str, css: &str| -> f32 {
+            let root = crate::html::parse_dom(html.to_string());
+            let ss = crate::css::parse(css.to_string());
+            let styled = crate::style::style_tree(&root, &ss);
+            let mut vp: Dimensions = Default::default();
+            vp.content.width = 600.0;
+            layout_tree(&styled, vp, &fs, &no_images()).dimensions.content.height
+        };
+        let uniform = mk("<p>hello world text</p>", "p { display: block; font-size: 16px; }");
+        let mixed = mk(
+            "<p>hi <span class=\"b\">BIG</span> yo</p>",
+            "p { display: block; font-size: 16px; } .b { font-size: 48px; }",
+        );
+        assert!(uniform < 25.0, "균일 16px 한 줄: {}", uniform);
+        assert!(mixed > 40.0, "48px span 있으면 줄 높이 커짐: {}", mixed);
+    }
+
+    #[test]
     fn grid_auto_track_sizes_to_content() {
         // grid-template-columns: auto 1fr (라벨+필드) → auto 는 내용폭, 1fr 이 나머지.
         // 이전엔 auto=1fr 근사라 반반으로 잘렸다.

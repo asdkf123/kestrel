@@ -246,9 +246,17 @@ impl<'a> LayoutBox<'a> {
         }
 
         let base_scale = base_px / upm;
-        let ascent_px = primary.ascent() as f32 * base_scale;
-        let descent_px = primary.descent() as f32 * base_scale; // 보통 음수
-        let natural_lh = ascent_px - descent_px + primary.line_gap() as f32 * base_scale;
+        // 줄 상자 세로 메트릭은 이 문맥의 가장 큰 글자 크기 기준 (CSS2 §10.8: 줄 높이는
+        // 줄 안 인라인 박스들의 최대). 균일 크기면 base 와 동일 → 변화 없음. 더 큰 span/
+        // 인라인이 오면 줄이 그만큼 커져 겹치지 않는다. (문단 최대치 근사 — 줄별은 후속)
+        let max_px = words
+            .iter()
+            .flat_map(|(w, _, _)| w.iter().map(|&(_, st)| st.px))
+            .fold(base_px, f32::max);
+        let line_scale = max_px / upm;
+        let ascent_px = primary.ascent() as f32 * line_scale;
+        let descent_px = primary.descent() as f32 * line_scale; // 보통 음수
+        let natural_lh = ascent_px - descent_px + primary.line_gap() as f32 * line_scale;
         // CSS line-height: 지정되면(px 로 확정된 값) 사용, 아니면 폰트 메트릭.
         // 반-리딩(half-leading)만큼 baseline 을 내려 줄 상자 안에서 세로 중앙 정렬.
         let line_height = match self.styled_node.value("line-height") {
