@@ -1,0 +1,82 @@
+# 요행(luck-based) 코드 감사 — 표준 기반으로 교체 대상
+
+6개 서브시스템 병렬 감사 종합. "테스트엔 통과하지만 표준 메커니즘이 아니라
+우연/땜빵으로 맞아떨어져 실제 유효 입력에서 깨지는" 코드 목록. 심각도·빈도순.
+
+상태: [ ] 미착수  [~] 진행중  [x] 완료
+
+## 구조적 뿌리 (크고, 여러 곳에 영향)
+
+- [ ] **JS 객체 프로퍼티 순서** — HashMap 백엔드라 for-in/Object.keys 순서 랜덤,
+  JSON.stringify 는 정렬로 가림. 삽입 순서(정수키 먼저) 보장 필요. (interp/mod.rs:441, value.rs:645)
+- [ ] **JS 프로토타입 링크** — new F() 가 prototype 을 스냅샷 복사(링크 아님).
+  instanceof, 인스턴스 상속, constructor 다 깨짐. (interp/mod.rs:2867)
+- [ ] **JS ToPrimitive** — 강제변환 시 toString/valueOf 안 부름. `${obj}`→[object Object]. (value.rs:421, mod.rs:3018)
+- [ ] **JS 진짜 Promise/async** — new Promise 미구현, reject/.catch/await-pending 삼킴. (mod.rs:2882, 2042)
+- [ ] **float in nearest-BFC** — float 이 직속 부모에 갇힘. 다중 float·타 블록 우회 불가. (layout/mod.rs:1049)
+
+## 티어1 — 고빈도 + 요행 통과 (우선 수정)
+
+- [ ] CSS **`!important` 완전 미구현** — 선언이 통째로 드롭됨. (css/mod.rs:968, values.rs:5)
+- [ ] CSS **`font` 단축 미처리** — font:16px/1.5 sans 통째 드롭. (css/shorthand.rs:382)
+- [ ] JS **문자열 이스케이프 `\u \x \b \f \v`** 오처리 — 미니파이 문자열 손상. (lexer.rs:362,397)
+- [ ] JS **옵셔널체이닝 `obj?.method()` 단락** — 체인 뒷부분 미보호. (parser.rs:1035, ast.rs:31)
+- [ ] 폰트 **합성 글리프 빈칸** — é/ñ/CJK 사라짐. cmap fmt12 미지원. (font.rs:216,357)
+- [ ] CSS **미디어쿼리 em/rem + 미지원특성 무조건참** — @media(max-width:48em) 데스크톱 적용. (css/media.rs:11,63)
+- [ ] CSS **`#rgba`/`#rrggbbaa` 드롭** — 4/8자리 hex. (css/values.rs:444)
+- [ ] CSS **rem 16px 하드코딩** — 루트 font-size 무시. (style.rs:700)
+- [ ] CSS **조상 구조 의사클래스 무조건참** — zebra(tr:nth-child(even) td) 깨짐. (style.rs:210)
+- [ ] Flex/CSS **flex-basis 드롭, flex:1 등폭 안됨**. (css/shorthand.rs:129, flex.rs:65)
+- [ ] Grid **`auto` 트랙=1fr 근사** — auto 1fr(라벨+필드) 깨짐. (grid.rs:327)
+- [ ] JS **`let` 반복별 바인딩 없음** — 클로저 [3,3,3]. (interp/mod.rs:1751)
+- [ ] JS **구조분해 할당 `[a,b]=arr` 거부**. (parser.rs:765)
+- [ ] JS **Math.round 음수/min·max NaN** 스펙 위반. (builtins.rs:1256)
+- [ ] JS **String indexOf/split 인자, lastIndexOf 없음**. (builtins.rs:1315)
+
+## 티어2 — 눈에 띄지만 빈도 낮음
+
+- [ ] 레이아웃 **줄 높이 혼합폰트 미반영** — 큰 span/인라인이미지에서 줄 겹침. (inline.rs:248)
+- [ ] 레이아웃 **vertical-align 폰트크기 마법배수**. (inline.rs:132)
+- [ ] 레이아웃 **부모-자식/빈블록 margin 상쇄 없음**. (mod.rs:2033)
+- [ ] 레이아웃 **인라인 텍스트 내 img/inline-block 무시** (인라인박스 안 만듦). (inline.rs:631)
+- [ ] 레이아웃 **리스트마커·밑줄·폼컨트롤 크기 마법상수**. (mod.rs:371, inline.rs:434)
+- [ ] 레이아웃 **max-height 가 overflow clip 시에만 적용**. (mod.rs:1598)
+- [ ] 레이아웃 **인라인 테두리 3px 하드코딩 패딩** (내 코드). (inline.rs:477)
+- [ ] Grid **정렬 전부 무시**(place-items 등), 명시배치/span 무시, template-rows 무시, minmax min 버림. (grid.rs)
+- [ ] Flex **shrink 0까지, min-content 무시, min/max 덮어씀, align-content 없음**. (flex.rs:132,184)
+- [ ] 테이블 **auto 폭 알고리즘 근사(항상 컨테이너 채움), border-collapse/spacing 미구현, rowspan h/n**. (mod.rs:1407)
+- [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
+- [ ] 페인트 **점선/파선/이중 테두리 전부 실선**. (paint.rs:1415)
+- [ ] 페인트 **그라디언트 프리멀티플라이 아님**(투명 페이드 탁함). (paint.rs:523)
+- [ ] 페인트 **박스섀도 선형(가우시안 아님), 필터블러 박스1패스**. (paint.rs:310,119)
+- [ ] 페인트 **방사그라디언트 항상 원+farthest-corner**. (paint.rs:247)
+- [ ] 페인트 **overflow 사각클립이 글리프 픽셀클립 안함**. (paint.rs:1530)
+- [ ] 페인트 **폴리곤 AA 없음**(SVG/clip-path/체크/화살표/회전). (paint.rs:419)
+- [ ] 페인트 **이미지 최근접이웃 스케일링**. (paint.rs:2356)
+- [ ] 페인트 **select 화살표 14px/progress·meter 하드코딩**. (paint.rs:1344,1329)
+- [ ] 페인트 **SVG 대각선 line=bbox 사각, arc=직선 현**. (paint.rs:1158,1081)
+- [ ] 페인트 **grayscale/saturate BT.601(스펙 709)**. (paint.rs:1937)
+- [ ] CSS **:where/:is/:not 명시도 오류**. (css/mod.rs:180)
+- [ ] CSS **무단위 line-height 숫자아닌 px로 상속**. (shorthand.rs:170, style.rs:667)
+- [ ] CSS **calc() em/rem/vw 만나면 드롭**. (css/values.rs:246)
+- [ ] CSS **@supports 값검증 없이 과다보고**. (css/supports.rs:47)
+- [ ] CSS **:not/:is 첫 심플셀렉터만**. (css/mod.rs:796)
+- [ ] CSS **속성선택자 i/s 플래그 무시, 대소문자**. (css/mod.rs:913)
+- [ ] CSS **상속 프로퍼티 하드코딩 화이트리스트 누락**(word-break 등). (style.rs:659)
+- [ ] JS **instanceof 하드코딩표**(new F, Date, Map 다 false). (mod.rs:3042)
+- [ ] JS **인스턴스 Object.prototype 폴백 없음**. (mod.rs:2635)
+- [ ] JS **정규식 named group/lookbehind 미지원, step-limit 무음 no-match**. (regex.rs:226,530)
+- [ ] JS **제너레이터 즉시 전체평가**. (mod.rs:2784)
+- [ ] JS **객체리터럴 계산 Symbol 키 불일치**(for-of 사용자 이터러블 안됨). (mod.rs:1962)
+- [ ] JS **Date UTC전용/parse·UTC 없음/JSON 내부누출**. (builtins.rs:769)
+- [ ] JS **문자열 UTF-16 아님**(astral length). (mod.rs:2545)
+- [ ] JS **JSON replacer/space/toJSON 무시, __marker 누출**. (value.rs:628)
+- [ ] JS **Number→문자열 Rust규칙**(1e21, toFixed 반올림). (value.rs:7)
+- [ ] JS **정규식 vs 나눗셈 `)`/`}` 뒤 오판**. (lexer.rs:174)
+- [ ] JS **계산된/제너레이터/async 멤버명 미지원**. (parser.rs:1176)
+- [ ] JS **레이블 break/continue 무시, 문 종료 강제 안함**. (parser.rs:142,232)
+- [ ] JS **유니코드 식별자 미지원**. (lexer.rs:454)
+- [ ] JS **strict_eq 동일 네이티브함수 false, Map/Set NaN, const 재대입 허용, typeof Symbol=object**. (value.rs:470)
+
+## 저심각 (스킵 가능)
+epsilon fudge, 곡선 고정분할, accent-color, 등.

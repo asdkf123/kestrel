@@ -105,6 +105,22 @@ pub struct SimpleSelector {
 pub struct Declaration {
     pub name: String,
     pub value: Value,
+    pub important: bool, // !important — 캐스케이드에서 일반 선언을 이긴다
+}
+
+// 값에서 후행 `!important`(대소문자 무시, `! important` 공백 허용)를 분리.
+// → (실제 값, important 여부).
+fn split_important(value: &str) -> (&str, bool) {
+    let t = value.trim_end();
+    let lower = t.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_suffix("important") {
+        let idx = rest.len(); // "important" 시작 바이트 오프셋 (ASCII 소문자화라 길이 동일)
+        let before = t[..idx].trim_end();
+        if let Some(v) = before.strip_suffix('!') {
+            return (v.trim_end(), true);
+        }
+    }
+    (value, false)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -972,7 +988,15 @@ impl Parser {
         if name.is_empty() {
             return Vec::new();
         }
-        expand_declaration(&name, value_text.trim())
+        // 후행 !important (대소문자 무시, 공백 허용) 분리. 나머지가 실제 값.
+        let (val, important) = split_important(value_text.trim());
+        let mut decls = expand_declaration(&name, val);
+        if important {
+            for d in &mut decls {
+                d.important = true;
+            }
+        }
+        decls
     }
 
     fn skip_to_decl_end(&mut self) {

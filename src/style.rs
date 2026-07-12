@@ -345,9 +345,19 @@ fn pseudo_specified_values(
         .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i], Some(which)))
         .collect();
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
-    for (_, rule) in rules {
-        for declaration in &rule.declarations {
-            values.insert(declaration.name.clone(), declaration.value.clone());
+    // 일반 선언 먼저, 그다음 important (important 가 특이도 무관하게 이긴다)
+    for (_, rule) in &rules {
+        for d in &rule.declarations {
+            if !d.important {
+                values.insert(d.name.clone(), d.value.clone());
+            }
+        }
+    }
+    for (_, rule) in &rules {
+        for d in &rule.declarations {
+            if d.important {
+                values.insert(d.name.clone(), d.value.clone());
+            }
         }
     }
     values
@@ -581,15 +591,34 @@ fn specified_values(
         .collect();
     // 오름차순 특이도, 안정 정렬 → 동일 특이도는 문서 순서 유지 (뒤 규칙이 이김)
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
-    for (_, rule) in rules {
-        for declaration in &rule.declarations {
-            values.insert(declaration.name.clone(), declaration.value.clone());
+    // 캐스케이드 우선순위: 일반 저작자 → 일반 인라인 → important 저작자 → important 인라인.
+    for (_, rule) in &rules {
+        for d in &rule.declarations {
+            if !d.important {
+                values.insert(d.name.clone(), d.value.clone());
+            }
         }
     }
-    // 인라인 style="..." 속성: 어떤 선택자보다 우선 (마지막에 얹어 이김)
-    if let Some(style) = elem.attributes.get("style") {
-        for declaration in crate::css::parse_inline_style(style) {
-            values.insert(declaration.name, declaration.value);
+    let inline = elem
+        .attributes
+        .get("style")
+        .map(|style| crate::css::parse_inline_style(style))
+        .unwrap_or_default();
+    for d in &inline {
+        if !d.important {
+            values.insert(d.name.clone(), d.value.clone());
+        }
+    }
+    for (_, rule) in &rules {
+        for d in &rule.declarations {
+            if d.important {
+                values.insert(d.name.clone(), d.value.clone());
+            }
+        }
+    }
+    for d in inline {
+        if d.important {
+            values.insert(d.name, d.value);
         }
     }
     values
@@ -1437,6 +1466,28 @@ mod tests {
         let ss = crate::css::parse(".b { width: 10px; } #a { width: 99px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(99.0, Unit::Px)));
+    }
+
+    #[test]
+    fn important_beats_higher_specificity() {
+        // 낮은 특이도 !important 가 높은 특이도 일반 선언을 이긴다 (캐스케이드 origin 우선)
+        let root = crate::html::parse_dom("<div id=\"a\" class=\"b\"></div>".to_string());
+        let ss = crate::css::parse(
+            "#a { width: 99px; } .b { width: 10px !important; }".to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.value("width"), Some(Value::Length(10.0, Unit::Px)));
+    }
+
+    #[test]
+    fn important_beats_inline_style() {
+        // important 저작자 선언이 일반 인라인 스타일을 이긴다
+        let root = crate::html::parse_dom(
+            "<div class=\"b\" style=\"width: 5px\"></div>".to_string(),
+        );
+        let ss = crate::css::parse(".b { width: 10px !important; }".to_string());
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.value("width"), Some(Value::Length(10.0, Unit::Px)));
     }
 
     #[test]

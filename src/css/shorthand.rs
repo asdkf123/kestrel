@@ -5,14 +5,14 @@ use super::{Color, Declaration, Unit, Value};
 pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
     // 커스텀 프로퍼티(--*): 원문 보존, 사용 시점(var())에 해석.
     if name.starts_with("--") {
-        return vec![Declaration {
+        return vec![Declaration { important: false,
             name: name.to_string(),
             value: Value::Keyword(value_text.to_string()),
         }];
     }
     // var() 참조: 원문을 Var 로 보존, 스타일 계산 시 치환·재파싱.
     if value_text.contains("var(") {
-        return vec![Declaration { name: name.to_string(), value: Value::Var(value_text.to_string()) }];
+        return vec![Declaration { important: false, name: name.to_string(), value: Value::Var(value_text.to_string()) }];
     }
     // CSS 논리 속성 → 물리 속성 (LTR/가로쓰기 가정). 모던 CSS 에서 흔함.
     match name {
@@ -48,7 +48,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let sides = box_shorthand("", "", value_text); // "-top" 등 이름이 "-top" 형태
             return sides
                 .into_iter()
-                .map(|d| Declaration { name: d.name.trim_start_matches('-').to_string(), value: d.value })
+                .map(|d| Declaration { important: false, name: d.name.trim_start_matches('-').to_string(), value: d.value })
                 .collect();
         }
         _ => {}
@@ -76,17 +76,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => (toks[0].clone(), toks[1].clone(), toks[2].clone(), toks[3].clone()),
             };
             vec![
-                Declaration { name: "border-top-left-radius".to_string(), value: tl.clone() },
-                Declaration { name: "border-top-right-radius".to_string(), value: tr },
-                Declaration { name: "border-bottom-right-radius".to_string(), value: br },
-                Declaration { name: "border-bottom-left-radius".to_string(), value: bl },
+                Declaration { important: false, name: "border-top-left-radius".to_string(), value: tl.clone() },
+                Declaration { important: false, name: "border-top-right-radius".to_string(), value: tr },
+                Declaration { important: false, name: "border-bottom-right-radius".to_string(), value: br },
+                Declaration { important: false, name: "border-bottom-left-radius".to_string(), value: bl },
                 // box-shadow 등 균일 근사용으로 border-radius 도 남긴다 (첫 값).
-                Declaration { name: "border-radius".to_string(), value: tl },
+                Declaration { important: false, name: "border-radius".to_string(), value: tl },
             ]
         }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         "z-index" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { name: "z-index".to_string(), value: Value::Length(n, Unit::Px) }],
+            Ok(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Px) }],
             _ => Vec::new(),
         },
         // font-weight: bold/bolder/숫자>=600 → "bold", 그 외 → "normal" 로 정규화
@@ -96,19 +96,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let bold = v == "bold"
                 || v == "bolder"
                 || v.parse::<f32>().map(|n| n >= 600.0).unwrap_or(false);
-            vec![Declaration {
+            vec![Declaration { important: false,
                 name: "font-weight".to_string(),
                 value: Value::Keyword(if bold { "bold" } else { "normal" }.to_string()),
             }]
         }
         // order: 정수(음수 가능) → Length(n, Px) (flex 아이템 재정렬용)
         "order" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { name: "order".to_string(), value: Value::Length(n, Unit::Px) }],
+            Ok(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Px) }],
             _ => Vec::new(),
         },
         // flex-grow/flex-shrink: 단위 없는 수 → Length(n, Px) (레이아웃이 to_px 로 읽음)
         "flex-grow" | "flex-shrink" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { name: name.to_string(), value: Value::Length(n, Unit::Px) }],
+            Ok(n) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Px) }],
             _ => Vec::new(),
         },
         // flex 단축값: <grow> [shrink] [basis]. none=0 0 auto, auto=1 1 auto, initial=0 1 auto.
@@ -127,14 +127,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 }
             };
             vec![
-                Declaration { name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) },
-                Declaration { name: "flex-shrink".to_string(), value: Value::Length(shrink, Unit::Px) },
+                Declaration { important: false, name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Px) },
+                Declaration { important: false, name: "flex-shrink".to_string(), value: Value::Length(shrink, Unit::Px) },
             ]
         }
         // grid 트랙/영역 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
         "grid-template-columns" | "grid-template-rows" | "grid-template-areas" | "grid-area"
         | "grid-column" | "grid-row" => {
-            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
         }
         // place-* 단축: <align> [<justify>] → align-*/justify-* longhand
         "place-items" | "place-content" | "place-self" => {
@@ -146,8 +146,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 return Vec::new();
             }
             vec![
-                Declaration { name: format!("align-{}", axis), value: Value::Keyword(a.to_string()) },
-                Declaration { name: format!("justify-{}", axis), value: Value::Keyword(j.to_string()) },
+                Declaration { important: false, name: format!("align-{}", axis), value: Value::Keyword(a.to_string()) },
+                Declaration { important: false, name: format!("justify-{}", axis), value: Value::Keyword(j.to_string()) },
             ]
         }
         // grid-gap 은 gap 의 레거시 별칭
@@ -160,18 +160,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "line-height" => {
             let v = value_text.trim();
             if v == "normal" {
-                return vec![Declaration { name: name.to_string(), value: Value::Keyword("normal".to_string()) }];
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword("normal".to_string()) }];
             }
             if let Some(pct) = v.strip_suffix('%') {
                 if let Ok(n) = pct.trim().parse::<f32>() {
-                    return vec![Declaration { name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }];
+                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }];
                 }
             }
             if let Ok(n) = v.parse::<f32>() {
-                return vec![Declaration { name: name.to_string(), value: Value::Length(n, Unit::Em) }];
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Em) }];
             }
             match interpret_value(v) {
-                Some(value) => vec![Declaration { name: name.to_string(), value }],
+                Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
                 None => Vec::new(),
             }
         }
@@ -190,12 +190,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 }
             }
             let joined = lines.join(" ");
-            let mut out = vec![Declaration {
+            let mut out = vec![Declaration { important: false,
                 name: "text-decoration-line".to_string(),
                 value: Value::Keyword(if joined.is_empty() { "none".to_string() } else { joined }),
             }];
             if let Some(c) = color {
-                out.push(Declaration { name: "text-decoration-color".to_string(), value: c });
+                out.push(Declaration { important: false, name: "text-decoration-color".to_string(), value: c });
             }
             out
         }
@@ -211,7 +211,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 v.to_string()
             };
-            vec![Declaration { name: "content".to_string(), value: Value::Keyword(unquoted) }]
+            vec![Declaration { important: false, name: "content".to_string(), value: Value::Keyword(unquoted) }]
         }
         // opacity: 0..1 수 또는 퍼센트(50%). 스칼라를 Length(op, Px)로 실어 paint 가 읽음.
         // (미지원 단위 아님 — 파서가 0 아닌 단위없는 수를 드롭하므로 여기서 처리.)
@@ -223,7 +223,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 v.parse::<f32>().ok()
             };
             match n {
-                Some(op) => vec![Declaration {
+                Some(op) => vec![Declaration { important: false,
                     name: "opacity".to_string(),
                     value: Value::Length(op.clamp(0.0, 1.0), Unit::Px),
                 }],
@@ -232,7 +232,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // counter-reset/counter-increment: 원문 보존 ("name [n] ..."). 카운터 처리기가 파싱.
         "counter-reset" | "counter-increment" | "counter-set" => {
-            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // aspect-ratio: "w / h" 또는 단일 수 → 비율(w/h)을 Length(r, Px)로 저장.
         "aspect-ratio" => {
@@ -246,7 +246,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 v.parse::<f32>().ok()
             };
             match ratio {
-                Some(r) if r > 0.0 => vec![Declaration {
+                Some(r) if r > 0.0 => vec![Declaration { important: false,
                     name: "aspect-ratio".to_string(),
                     value: Value::Length(r, Unit::Px),
                 }],
@@ -255,22 +255,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // @font-face src / font-family: 원문 보존(다중 url()·format() 포함). font-face 파서가 해석.
         "src" | "font-family" => {
-            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // transform: 함수 목록(translate/scale/rotate...) 원문 보존, 레이아웃이 파싱.
         // (translate 만 시각 오프셋으로 적용, 나머지는 근사/무시)
         "transform" => {
-            vec![Declaration { name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
         "filter" | "-webkit-filter" => {
-            vec![Declaration { name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { important: false, name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // animation 단축: 이름 토큰만 추출 (정적 렌더가 @keyframes 최종 상태를 적용하기 위함).
         "animation" | "-webkit-animation" => {
             let name = value_text.split_whitespace().find(|t| is_animation_name(t));
             match name {
-                Some(n) => vec![Declaration { name: "animation-name".to_string(), value: Value::Keyword(n.to_string()) }],
+                Some(n) => vec![Declaration { important: false, name: "animation-name".to_string(), value: Value::Keyword(n.to_string()) }],
                 None => Vec::new(),
             }
         }
@@ -308,9 +308,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
             let px = |v: f32| Value::Length(v, Unit::Px);
             vec![
-                Declaration { name: "text-shadow-x".to_string(), value: px(lens[0]) },
-                Declaration { name: "text-shadow-y".to_string(), value: px(lens[1]) },
-                Declaration { name: "text-shadow-color".to_string(), value: color },
+                Declaration { important: false, name: "text-shadow-x".to_string(), value: px(lens[0]) },
+                Declaration { important: false, name: "text-shadow-y".to_string(), value: px(lens[1]) },
+                Declaration { important: false, name: "text-shadow-color".to_string(), value: color },
             ]
         }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
@@ -322,17 +322,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let mut out = Vec::new();
             for tok in value_text.split_whitespace() {
                 match tok {
-                    "inside" | "outside" => out.push(Declaration {
+                    "inside" | "outside" => out.push(Declaration { important: false,
                         name: "list-style-position".to_string(),
                         value: Value::Keyword(tok.to_string()),
                     }),
                     t if t.starts_with("url(") => {
                         if let Some(v) = interpret_value(t) {
-                            out.push(Declaration { name: "list-style-image".to_string(), value: v });
+                            out.push(Declaration { important: false, name: "list-style-image".to_string(), value: v });
                         }
                     }
                     // none 은 type/image 둘 다 될 수 있으나 마커 제거 목적상 type:none 로.
-                    t => out.push(Declaration {
+                    t => out.push(Declaration { important: false,
                         name: "list-style-type".to_string(),
                         value: Value::Keyword(t.to_string()),
                     }),
@@ -346,11 +346,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // background-position/object-position: 다중 토큰("center top" 등) 원문 보존,
         // paint 가 파싱. (position 계열은 축별 다값이라 interpret_value 로 못 담음)
         "background-position" | "object-position" => {
-            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // clip-path/backdrop-filter: 함수 표기 원문 보존, paint 가 파싱.
         "clip-path" | "backdrop-filter" => {
-            vec![Declaration { name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
         "outline" => {
@@ -365,13 +365,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let mut out = Vec::new();
             if let Some(w) = width {
-                out.push(Declaration { name: "outline-width".to_string(), value: w });
+                out.push(Declaration { important: false, name: "outline-width".to_string(), value: w });
             }
             if let Some(s) = style {
-                out.push(Declaration { name: "outline-style".to_string(), value: s });
+                out.push(Declaration { important: false, name: "outline-style".to_string(), value: s });
             }
             if let Some(c) = color {
-                out.push(Declaration { name: "outline-color".to_string(), value: c });
+                out.push(Declaration { important: false, name: "outline-color".to_string(), value: c });
             }
             out
         }
@@ -380,7 +380,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-bottom" => border_shorthand(&["bottom"], value_text),
         "border-left" => border_shorthand(&["left"], value_text),
         _ => match interpret_value(value_text) {
-            Some(value) => vec![Declaration { name: name.to_string(), value }],
+            Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
             None => Vec::new(),
         },
     }
@@ -542,19 +542,19 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
         }
     }
     if let Some(v) = image {
-        out.push(Declaration { name: "background-image".to_string(), value: v });
+        out.push(Declaration { important: false, name: "background-image".to_string(), value: v });
     }
     if let Some(v) = color {
-        out.push(Declaration { name: "background-color".to_string(), value: v });
+        out.push(Declaration { important: false, name: "background-color".to_string(), value: v });
     }
     if let Some(v) = repeat {
-        out.push(Declaration { name: "background-repeat".to_string(), value: v });
+        out.push(Declaration { important: false, name: "background-repeat".to_string(), value: v });
     }
     if let Some(v) = size {
-        out.push(Declaration { name: "background-size".to_string(), value: v });
+        out.push(Declaration { important: false, name: "background-size".to_string(), value: v });
     }
     if !pos_tokens.is_empty() {
-        out.push(Declaration {
+        out.push(Declaration { important: false,
             name: "background-position".to_string(),
             value: Value::Keyword(pos_tokens.join(" ")),
         });
@@ -599,12 +599,12 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
     // 첫 그림자 longhand (inner-shadow 경로가 읽음) — dx,dy 있을 때만.
     let mut out = if lens.len() >= 2 {
         vec![
-            Declaration { name: "box-shadow-x".to_string(), value: px(lens[0]) },
-            Declaration { name: "box-shadow-y".to_string(), value: px(lens[1]) },
-            Declaration { name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
-            Declaration { name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
-            Declaration { name: "box-shadow-color".to_string(), value: color },
-            Declaration {
+            Declaration { important: false, name: "box-shadow-x".to_string(), value: px(lens[0]) },
+            Declaration { important: false, name: "box-shadow-y".to_string(), value: px(lens[1]) },
+            Declaration { important: false, name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
+            Declaration { important: false, name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
+            Declaration { important: false, name: "box-shadow-color".to_string(), value: color },
+            Declaration { important: false,
                 name: "box-shadow-inset".to_string(),
                 value: Value::Keyword(if inset { "inset" } else { "outset" }.to_string()),
             },
@@ -613,7 +613,7 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
         Vec::new()
     };
     // 전체 원문 보존 — paint 가 다중(콤마) 그림자를 모두 파싱해 발행한다.
-    out.push(Declaration {
+    out.push(Declaration { important: false,
         name: "box-shadow".to_string(),
         value: Value::Keyword(value_text.trim().to_string()),
     });
@@ -635,13 +635,13 @@ fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
     let mut out = Vec::new();
     for &side in sides {
         if let Some(w) = &width {
-            out.push(Declaration { name: format!("border-{}-width", side), value: w.clone() });
+            out.push(Declaration { important: false, name: format!("border-{}-width", side), value: w.clone() });
         }
         if let Some(s) = &style {
-            out.push(Declaration { name: format!("border-{}-style", side), value: s.clone() });
+            out.push(Declaration { important: false, name: format!("border-{}-style", side), value: s.clone() });
         }
         if let Some(c) = &color {
-            out.push(Declaration { name: format!("border-{}-color", side), value: c.clone() });
+            out.push(Declaration { important: false, name: format!("border-{}-color", side), value: c.clone() });
         }
     }
     out
@@ -659,7 +659,7 @@ fn box_shorthand(prefix: &str, suffix: &str, value_text: &str) -> Vec<Declaratio
         4 => (tokens[0].clone(), tokens[1].clone(), tokens[2].clone(), tokens[3].clone()),
         _ => return Vec::new(),
     };
-    let mk = |side: &str, value: Value| Declaration {
+    let mk = |side: &str, value: Value| Declaration { important: false,
         name: format!("{}-{}{}", prefix, side, suffix),
         value,
     };
