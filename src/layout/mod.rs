@@ -1594,10 +1594,11 @@ impl<'a> LayoutBox<'a> {
                 self.dimensions.content.height = self.dimensions.content.width / ratio;
             }
         }
-        // max-height: overflow 가 잘리는 경우에만 적용 (미클립 시 내용 겹침 방지)
+        // max-height: 사용 높이를 항상 상한으로 클램프(CSS §10.7). overflow 가 visible 이면
+        // 내용은 박스 밖으로 넘쳐 그려지고(자식 위치 유지), hidden/auto 면 잘린다.
         if let Some(Length(mxh, Px)) = self.styled_node.value("max-height") {
             let mxh = if border_box { (mxh - vextra).max(0.0) } else { mxh };
-            if self.dimensions.content.height > mxh && self.overflow_clips_self() {
+            if self.dimensions.content.height > mxh {
                 self.dimensions.content.height = mxh;
             }
         }
@@ -2456,8 +2457,9 @@ mod tests {
     }
 
     #[test]
-    fn max_height_clamps_only_when_clipping() {
-        // max-height 는 overflow 가 잘릴 때만 적용 (overflow:hidden)
+    fn max_height_clamps_box_always() {
+        // max-height 는 overflow 와 무관하게 사용 높이를 항상 클램프(CSS §10.7).
+        // overflow:hidden 케이스
         let clipped = layout_for(
             "<div><div class=\"tall\"></div></div>",
             "div { display: block; } div > div { height: 300px; } \
@@ -2465,6 +2467,14 @@ mod tests {
             800.0,
         );
         assert!(clipped.content.height <= 100.5, "overflow:hidden + max-height → 클램프, 실제 {}", clipped.content.height);
+        // overflow:visible 여도 박스는 클램프(내용은 넘쳐도 박스 높이는 상한)
+        let visible = layout_for(
+            "<div class=\"o\"><div class=\"c\"></div></div>",
+            ".o { display: block; max-height: 100px; } .c { display: block; height: 300px; }",
+            800.0,
+        );
+        assert!((visible.content.height - 100.0).abs() < 0.5,
+            "overflow:visible 여도 max-height 클램프, 실제 {}", visible.content.height);
     }
 
     #[test]
