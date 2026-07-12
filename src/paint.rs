@@ -2516,17 +2516,50 @@ fn blit_image(
     let x1 = (dr.x + dr.width).min(rect.x + rect.width).min(canvas.width as f32).max(0.0) as usize;
     let y1 = (dr.y + dr.height).min(rect.y + rect.height).min(canvas.height as f32).max(0.0) as usize;
     for py in y0..y1 {
-        let fy = (py as f32 + 0.5 - dr.y) / dr.height;
-        let sy = ((fy * ih) as i32).clamp(0, img.height as i32 - 1) as usize;
+        // 목적지 픽셀 중심 → 소스 텍셀 좌표. -0.5 로 텍셀 중심 정렬(바이리니어 기준).
+        let syf = (py as f32 + 0.5 - dr.y) / dr.height * ih - 0.5;
         for px in x0..x1 {
-            let fx = (px as f32 + 0.5 - dr.x) / dr.width;
-            let sx = ((fx * iw) as i32).clamp(0, img.width as i32 - 1) as usize;
-            let s = (sy * img.width + sx) * 4;
-            let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
-            let alpha = img.rgba[s + 3];
-            canvas.put(px, py, fg, alpha);
+            let sxf = (px as f32 + 0.5 - dr.x) / dr.width * iw - 0.5;
+            let (r, g, b, alpha) = sample_bilinear(img, sxf, syf);
+            if alpha == 0 {
+                continue;
+            }
+            canvas.put(px, py, Color { r, g, b, a: 255 }, alpha);
         }
     }
+}
+
+// 바이리니어 샘플링(프리멀티플라이 보간). u,v 는 소스 텍셀 좌표(중심 정렬). 투명 픽셀의
+// 색이 새지 않도록 rgb 를 alpha 가중해 섞고 다시 나눈다. (image-rendering: auto = smooth)
+fn sample_bilinear(img: &crate::png::Image, u: f32, v: f32) -> (u8, u8, u8, u8) {
+    let (iw, ih) = (img.width as i32, img.height as i32);
+    let x0 = u.floor() as i32;
+    let y0 = v.floor() as i32;
+    let tx = u - x0 as f32;
+    let ty = v - y0 as f32;
+    let at = |x: i32, y: i32| -> (f32, f32, f32, f32) {
+        let xc = x.clamp(0, iw - 1) as usize;
+        let yc = y.clamp(0, ih - 1) as usize;
+        let s = (yc * img.width + xc) * 4;
+        let a = img.rgba[s + 3] as f32 / 255.0;
+        // 프리멀티플라이: rgb × a
+        (img.rgba[s] as f32 * a, img.rgba[s + 1] as f32 * a, img.rgba[s + 2] as f32 * a, a)
+    };
+    let (c00, c10, c01, c11) = (at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1));
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let mix = |p: (f32, f32, f32, f32), q: (f32, f32, f32, f32), t: f32| {
+        (lerp(p.0, q.0, t), lerp(p.1, q.1, t), lerp(p.2, q.2, t), lerp(p.3, q.3, t))
+    };
+    let top = mix(c00, c10, tx);
+    let bot = mix(c01, c11, tx);
+    let (pr, pg, pb, pa) = mix(top, bot, ty);
+    if pa <= 0.0 {
+        return (0, 0, 0, 0);
+    }
+    // 언프리멀티플라이: 보간된 rgb 를 alpha 로 되돌린다.
+    let a = pa.clamp(0.0, 1.0);
+    let unpm = |c: f32| (c / pa).clamp(0.0, 255.0).round() as u8;
+    (unpm(pr), unpm(pg), unpm(pb), (a * 255.0).round() as u8)
 }
 
 // 텍스트 폭 측정 (캐럿 위치 계산용)
@@ -2591,6 +2624,40 @@ pub fn paint(
 mod tests {
     use super::*;
     use crate::css::Color;
+
+    #[test]
+    fn bilinear_interpolates_between_texels() {
+        // 2x1 이미지: 왼쪽 검정(0), 오른쪽 흰색(255). 텍셀 중심은 x=0,1.
+        let img = crate::png::Image {
+            width: 2,
+            height: 1,
+            rgba: vec![0, 0, 0, 255, 255, 255, 255, 255],
+        };
+        // 텍셀 중심 정확히 → 원색.
+        assert_eq!(sample_bilinear(&img, 0.0, 0.0), (0, 0, 0, 255));
+        assert_eq!(sample_bilinear(&img, 1.0, 0.0), (255, 255, 255, 255));
+        // 두 텍셀 정중앙(x=0.5) → 회색(128 근처).
+        let (r, _, _, a) = sample_bilinear(&img, 0.5, 0.0);
+        assert_eq!(a, 255);
+        assert!((r as i32 - 128).abs() <= 1, "중간값 회색 근처, 실제 {}", r);
+        // 가장자리 밖은 클램프 → 원색 유지.
+        assert_eq!(sample_bilinear(&img, -1.0, 0.0), (0, 0, 0, 255));
+    }
+
+    #[test]
+    fn bilinear_premultiplies_transparent_edge() {
+        // 왼쪽 완전투명(빨강이지만 a=0), 오른쪽 불투명 파랑. 투명쪽 빨강이 새면 안 됨.
+        let img = crate::png::Image {
+            width: 2,
+            height: 1,
+            rgba: vec![255, 0, 0, 0, 0, 0, 255, 255],
+        };
+        // 중앙: 색은 파랑에 가깝고 빨강 성분 0(프리멀티플라이 보간).
+        let (r, _g, b, a) = sample_bilinear(&img, 0.5, 0.0);
+        assert_eq!(r, 0, "투명 픽셀의 빨강이 새면 안 됨");
+        assert!(b > 200, "파랑 유지");
+        assert!((a as i32 - 128).abs() <= 1, "알파는 0~255 중간, 실제 {}", a);
+    }
 
     #[test]
     fn bg_position_parse_and_resolve() {
