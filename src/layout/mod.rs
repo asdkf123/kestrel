@@ -2510,10 +2510,14 @@ mod tests {
     #[test]
     fn absolute_inset_stretches_to_fill() {
         let fs = fonts();
-        let ss = crate::css::parse(
-            ".p{position:relative;display:block;width:200px;height:100px;} \
-             .c{position:absolute;left:10px;right:10px;top:5px;bottom:5px;}"
-                .to_string(),
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(
+            crate::css::parse(
+                ".p{position:relative;display:block;width:200px;height:100px;} \
+                 .c{position:absolute;display:block;left:10px;right:10px;top:5px;bottom:5px;}"
+                    .to_string(),
+            )
+            .rules,
         );
         let root =
             crate::html::parse_dom("<div class=\"p\"><div class=\"c\"></div></div>".to_string());
@@ -2521,7 +2525,13 @@ mod tests {
         let mut vp: Dimensions = Default::default();
         vp.content.width = 400.0;
         let lb = layout_tree(&styled, vp, &fs, &no_images());
-        let c = &lb.children[0]; // .p 가 root, .c 가 자식
+        fn find_abs<'b>(b: &'b LayoutBox<'b>) -> Option<&'b LayoutBox<'b>> {
+            if b.position() == "absolute" {
+                return Some(b);
+            }
+            b.children.iter().find_map(find_abs)
+        }
+        let c = find_abs(&lb).expect("절대 위치 자식");
         // 좌우10/상하5 인셋 → 200-20=180 x 100-10=90, (10,5)
         assert!((c.dimensions.content.width - 180.0).abs() < 0.5, "폭 180 (실제 {})", c.dimensions.content.width);
         assert!((c.dimensions.content.height - 90.0).abs() < 0.5, "높이 90 (실제 {})", c.dimensions.content.height);
