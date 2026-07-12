@@ -426,6 +426,7 @@ pub enum StrOp {
     CodePointAt,
     Concat,
     At,
+    LocaleCompare,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -494,6 +495,10 @@ pub enum ArrOp {
     Flat,
     FlatMap,
     At,
+    FindLast,
+    FindLastIndex,
+    Fill,
+    ReduceRight,
 }
 
 impl std::fmt::Debug for Value {
@@ -871,6 +876,7 @@ impl Interp {
         object_ns.insert("values".to_string(), Value::Native(Native::ObjectValues));
         object_ns.insert("entries".to_string(), Value::Native(Native::ObjectEntries));
         object_ns.insert("fromEntries".to_string(), Value::Native(Native::ObjectFromEntries));
+        object_ns.insert("getOwnPropertyNames".to_string(), Value::Native(Native::ObjectKeys));
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
         object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
         object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperty));
@@ -2772,6 +2778,10 @@ impl Interp {
                     "flat" => Some(ArrOp::Flat),
                     "flatMap" => Some(ArrOp::FlatMap),
                     "at" => Some(ArrOp::At),
+                    "findLast" => Some(ArrOp::FindLast),
+                    "findLastIndex" => Some(ArrOp::FindLastIndex),
+                    "fill" => Some(ArrOp::Fill),
+                    "reduceRight" => Some(ArrOp::ReduceRight),
                     _ => None,
                 };
                 if let Some(op) = op {
@@ -2902,6 +2912,7 @@ impl Interp {
                     "codePointAt" => Some(StrOp::CodePointAt),
                     "concat" => Some(StrOp::Concat),
                     "at" => Some(StrOp::At),
+                    "localeCompare" => Some(StrOp::LocaleCompare),
                     "toString" | "valueOf" | "toLocaleString" => {
                         return Ok(Value::Native(Native::ValueToStr))
                     }
@@ -4536,6 +4547,18 @@ mod tests {
         assert_eq!(run_str("Object.fromEntries(new Map([['k','v']])).k"), "v");
         // 삽입 순서 유지
         assert_eq!(run_str("Object.keys(Object.fromEntries([['z',1],['a',2]])).join(',')"), "z,a");
+    }
+
+    #[test]
+    fn more_array_string_methods() {
+        assert_eq!(run_num("[1,2,3,4].findLast(function(x){return x<3;})"), 2.0);
+        assert_eq!(run_num("[1,2,3,4].findLastIndex(function(x){return x<3;})"), 1.0);
+        assert_eq!(run_str("[1,2,3].fill(0).join(',')"), "0,0,0");
+        assert_eq!(run_str("[1,2,3,4].fill(9,1,3).join(',')"), "1,9,9,4");
+        assert_eq!(run_num("[1,2,3,4].reduceRight(function(a,b){return a-b;})"), -2.0); // 4-3-2-1
+        assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
+        assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
+        assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
     }
 
     #[test]

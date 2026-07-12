@@ -1611,6 +1611,15 @@ impl Interp {
                         }
                         Value::Str(out)
                     }
+                    StrOp::LocaleCompare => {
+                        // 로케일 콜레이션 근사(코드포인트 순서). -1/0/1.
+                        let other = arg_str(0);
+                        Value::Num(match s.as_str().cmp(other.as_str()) {
+                            std::cmp::Ordering::Less => -1.0,
+                            std::cmp::Ordering::Equal => 0.0,
+                            std::cmp::Ordering::Greater => 1.0,
+                        })
+                    }
                     StrOp::At => {
                         // str.at(i): UTF-16 유닛, 음수는 끝에서. 범위 밖 undefined.
                         let len = units.len() as isize;
@@ -1751,6 +1760,55 @@ impl Interp {
                         }
                         acc
                     }
+                    ArrOp::ReduceRight => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut idx = snapshot.len();
+                        let mut acc = match args.get(1) {
+                            Some(init) => init.clone(),
+                            None => {
+                                if idx == 0 {
+                                    return Err("빈 배열 reduceRight (초기값 없음)".to_string());
+                                }
+                                idx -= 1;
+                                snapshot[idx].clone()
+                            }
+                        };
+                        while idx > 0 {
+                            idx -= 1;
+                            acc = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![acc, snapshot[idx].clone(), Value::Num(idx as f64)],
+                            )?;
+                        }
+                        acc
+                    }
+                    ArrOp::FindLast | ArrOp::FindLastIndex => {
+                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut result = if matches!(op, ArrOp::FindLastIndex) {
+                            Value::Num(-1.0)
+                        } else {
+                            Value::Undefined
+                        };
+                        for i in (0..snapshot.len()).rev() {
+                            let r = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![snapshot[i].clone(), Value::Num(i as f64)],
+                            )?;
+                            if to_bool(&r) {
+                                result = if matches!(op, ArrOp::FindLastIndex) {
+                                    Value::Num(i as f64)
+                                } else {
+                                    snapshot[i].clone()
+                                };
+                                break;
+                            }
+                        }
+                        result
+                    }
                     ArrOp::Concat => {
                         let mut out: Vec<Value> = a.borrow().clone();
                         for arg in &args {
@@ -1874,6 +1932,26 @@ impl Interp {
                     }
                     // FlatMap 은 콜백이 필요 — 위 콜백 처리부에서 처리됨(여기 도달 안 함).
                     ArrOp::FlatMap => Value::Undefined,
+                    ArrOp::Fill => {
+                        // arr.fill(value, start?, end?): 제자리 채우고 배열 반환.
+                        let val = args.first().cloned().unwrap_or(Value::Undefined);
+                        let len = a.borrow().len() as isize;
+                        let clampi = |v: f64| -> usize {
+                            let i = v as isize;
+                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        };
+                        let start = clampi(args.get(1).map(to_num).unwrap_or(0.0));
+                        let end = clampi(args.get(2).map(to_num).unwrap_or(len as f64));
+                        {
+                            let mut b = a.borrow_mut();
+                            for i in start..end {
+                                if i < b.len() {
+                                    b[i] = val.clone();
+                                }
+                            }
+                        }
+                        Value::Arr(a.clone())
+                    }
                 })
             }
             Native::JsonParse => {
