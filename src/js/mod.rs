@@ -231,6 +231,20 @@ mod tests {
     }
 
     #[test]
+    fn destructuring_assignment() {
+        // [a,b]=[b,a] 스왑 + ({x,y}=o) 객체 — 이전엔 파스에러로 스크립트 전체 사망.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var a = 1, b = 2; [a, b] = [b, a]; \
+             var x, y; ({x, y} = {x: 5, y: 6}); \
+             document.getElementById('t').textContent = [a, b, x, y].join(',');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "2,1,5,6");
+    }
+
+    #[test]
     fn math_round_and_minmax_nan() {
         // Math.round 는 floor(x+0.5)(반올림 +∞ 방향), min/max 는 NaN 전파 — 스펙대로.
         let mut dom = crate::html::parse_dom(

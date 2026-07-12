@@ -26,6 +26,8 @@ pub enum Expr {
     Logical { op: LogOp, left: Box<Expr>, right: Box<Expr> },
     Ternary { cond: Box<Expr>, then: Box<Expr>, other: Box<Expr> },
     Assign { op: AssignOp, target: Box<Expr>, value: Box<Expr> },
+    // 구조분해 할당: [a,b]=arr / ({x,y}=o) — 기존 바인딩에 대입
+    AssignPattern { pattern: Pattern, value: Box<Expr> },
     Member { obj: Box<Expr>, prop: Box<Expr>, computed: bool },
     // 옵셔널 접근: obj?.prop / obj?.[expr] — obj 가 null/undefined 면 전체 undefined
     OptMember { obj: Box<Expr>, prop: Box<Expr>, computed: bool },

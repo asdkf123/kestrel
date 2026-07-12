@@ -46,6 +46,52 @@ fn keyword_word(t: &Tok) -> Option<String> {
     Some(s.to_string())
 }
 
+// 식(배열/객체 리터럴)을 구조분해 할당 패턴으로 변환 (cover grammar 정제).
+fn expr_to_pattern(e: Expr) -> Option<Pattern> {
+    match e {
+        Expr::Ident(n) => Some(Pattern::Name(n)),
+        Expr::Array(items) => {
+            let mut out = Vec::new();
+            let mut rest = None;
+            for it in items {
+                match it {
+                    Expr::Undefined => out.push(None), // 홀 [a, , b]
+                    Expr::Spread(inner) => match *inner {
+                        Expr::Ident(n) => rest = Some(n),
+                        _ => return None,
+                    },
+                    Expr::Assign { op: AssignOp::Set, target, value } => {
+                        out.push(Some((expr_to_pattern(*target)?, Some(*value))));
+                    }
+                    other => out.push(Some((expr_to_pattern(other)?, None))),
+                }
+            }
+            Some(Pattern::Array(out, rest))
+        }
+        Expr::Object(props) => {
+            let mut out = Vec::new();
+            let mut rest = None;
+            for (key, val) in props {
+                match key {
+                    PropKey::Static(name) => match val {
+                        Expr::Assign { op: AssignOp::Set, target, value } => {
+                            out.push((name, expr_to_pattern(*target)?, Some(*value)));
+                        }
+                        other => out.push((name, expr_to_pattern(other)?, None)),
+                    },
+                    PropKey::Spread => match val {
+                        Expr::Ident(n) => rest = Some(n),
+                        _ => return None,
+                    },
+                    _ => return None, // computed/getter 키는 미지원
+                }
+            }
+            Some(Pattern::Object(out, rest))
+        }
+        _ => None,
+    }
+}
+
 // 템플릿 보간 ${...} 소스를 독립적으로 식 파싱
 fn parse_expr_source(src: &str) -> Result<Expr, String> {
     let (toks, nl_before) = tokenize(src)?;
@@ -762,10 +808,17 @@ impl Parser {
         };
         if let Some(op) = op {
             self.pos += 1;
+            let value = self.assignment()?; // 우결합
+            // 구조분해 할당: `=` 이고 LHS 가 배열/객체 리터럴이면 패턴으로 재해석
+            if op == AssignOp::Set && matches!(left, Expr::Array(_) | Expr::Object(_)) {
+                if let Some(pattern) = expr_to_pattern(left) {
+                    return Ok(Expr::AssignPattern { pattern, value: Box::new(value) });
+                }
+                return Err("잘못된 구조분해 할당 대상".to_string());
+            }
             if !matches!(left, Expr::Ident(_) | Expr::Member { .. }) {
                 return Err("할당 대상이 아님".to_string());
             }
-            let value = self.assignment()?; // 우결합
             return Ok(Expr::Assign { op, target: Box::new(left), value: Box::new(value) });
         }
         Ok(left)

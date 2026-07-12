@@ -2149,6 +2149,12 @@ impl Interp {
                     self.eval(other, env)
                 }
             }
+            // 구조분해 할당 [a,b]=arr / ({x,y}=o): 기존 바인딩에 대입(assign=true)
+            Expr::AssignPattern { pattern, value } => {
+                let v = self.eval(value, env)?;
+                self.bind_pattern(pattern, v.clone(), env, true)?;
+                Ok(v) // 할당식 값 = 우변
+            }
             Expr::Assign { op, target, value } => {
                 // &&= / ||= / ??= 는 단락: 조건 만족 안 하면 대입도 안 함
                 if matches!(op, AssignOp::And | AssignOp::Or | AssignOp::Nullish) {
