@@ -67,7 +67,7 @@
 - [ ] 페인트 **grayscale/saturate BT.601(스펙 709)**. (paint.rs:1937)
 - [ ] CSS **:where/:is/:not 명시도 오류**. (css/mod.rs:180)
 - [ ] CSS **무단위 line-height 숫자아닌 px로 상속**. (shorthand.rs:170, style.rs:667)
-- [ ] CSS **calc() em/rem/vw 만나면 드롭**. (css/values.rs:246)
+- [x] CSS **calc() em/rem/vw 단위별 계수 보존 후 style 에서 px 확정**. (66a8bcc)
 - [ ] CSS **@supports 값검증 없이 과다보고**. (css/supports.rs:47)
 - [ ] CSS **:not/:is 첫 심플셀렉터만**. (css/mod.rs:796)
 - [ ] CSS **속성선택자 i/s 플래그 무시, 대소문자**. (css/mod.rs:913)

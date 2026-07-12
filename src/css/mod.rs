@@ -132,8 +132,9 @@ pub enum Value {
     Url(String),
     // var() 를 포함한 미해석 원문. 스타일 계산 시 커스텀 프로퍼티로 치환 후 재파싱.
     Var(String),
-    // calc() 를 (percent 계수, px 계수) 선형식으로 축약. 레이아웃이 len_px 로 해석.
-    Calc(f32, f32),
+    // calc() 를 단위별 계수 선형식으로 축약. em/rem/vw 등 문맥 단위는 style(resolve_units)
+    // 에서 px 로 접고, %는 레이아웃(len_px)까지 보존해 컨테이닝 블록 기준으로 해석.
+    Calc(CalcSum),
     // linear-gradient. 페인트가 축을 따라 색 보간.
     Gradient(Gradient),
     // min()/max()/clamp() — 인자는 Length/Calc. 스타일에서 em/rem/vw 를 px 로 확정하고
@@ -146,6 +147,33 @@ pub enum MinMaxKind {
     Min,
     Max,
     Clamp,
+}
+
+// calc() 의 선형 합. 단위별 계수를 따로 들고, resolve_units 가 문맥 단위(em/rem/vw…)
+// 를 px 로 접은 뒤 px 하나로 합쳐 둔다. %(pct)만 레이아웃까지 남아 컨테이닝 블록
+// 폭 기준으로 해석된다. 각 계수는 해당 단위 값의 합(예: 1rem+2rem → rem=3).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CalcSum {
+    pub pct: f32,
+    pub px: f32,
+    pub em: f32,
+    pub rem: f32,
+    pub vw: f32,
+    pub vh: f32,
+    pub vmin: f32,
+    pub vmax: f32,
+}
+
+impl CalcSum {
+    // 문맥 단위가 하나라도 남아 있으면 아직 px 로 확정 못 함(style 필요).
+    pub fn has_ctx_units(&self) -> bool {
+        self.em != 0.0
+            || self.rem != 0.0
+            || self.vw != 0.0
+            || self.vh != 0.0
+            || self.vmin != 0.0
+            || self.vmax != 0.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -249,7 +277,8 @@ pub fn eval_minmax(kind: MinMaxKind, args: &[Value], pct_base: f32) -> f32 {
         match v {
             Value::Length(f, Unit::Px) => *f,
             Value::Length(f, Unit::Percent) => f / 100.0 * pct_base,
-            Value::Calc(pct, px) => pct / 100.0 * pct_base + px,
+            // 문맥 단위는 style 에서 px 로 접혔어야 함. 남은 건 pct + px.
+            Value::Calc(c) => c.pct / 100.0 * pct_base + c.px,
             Value::MinMax(k, a) => eval_minmax(*k, a, pct_base),
             _ => 0.0, // 미해석 단위(em/rem/vw 는 style 에서 px 로 확정됐어야)
         }

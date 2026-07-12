@@ -1721,8 +1721,8 @@ fn cell_width(child: &LayoutBox, avail: f32) -> Option<f32> {
 fn len_px(v: Value, pct_base: f32) -> Value {
     match v {
         Length(f, crate::css::Unit::Percent) => Length(pct_base * f / 100.0, Px),
-        // calc(pct% + px) → 기준 폭으로 해석
-        Value::Calc(pct, px) => Length(pct_base * pct / 100.0 + px, Px),
+        // calc(pct% + px) → 기준 폭으로 해석 (문맥 단위는 style 에서 이미 px 로 접힘)
+        Value::Calc(c) => Length(pct_base * c.pct / 100.0 + c.px, Px),
         // min()/max()/clamp() → 기준 폭으로 % 해석 후 계산
         Value::MinMax(kind, args) => Length(crate::css::eval_minmax(kind, &args, pct_base), Px),
         other => other,
@@ -3087,6 +3087,25 @@ mod tests {
             400.0,
         );
         assert_eq!(d3.content.width, 200.0, "calc(25% * 2) = 50% = 200");
+    }
+
+    #[test]
+    fn calc_resolves_context_units() {
+        // calc(100% - 2rem): 루트 font-size 기본 16 → 2rem=32 → 400-32 = 368.
+        // 예전엔 rem 을 만나면 선언 전체가 드롭돼 width:auto(=400)가 됐다.
+        let d = layout_for(
+            "<div class=\"b\"></div>",
+            ".b { display: block; width: calc(100% - 2rem); height: 10px; }",
+            400.0,
+        );
+        assert_eq!(d.content.width, 368.0, "calc(100% - 2rem), rem=16");
+        // calc(1em + 10px): 요소 font-size 30 → 1em=30 → 40.
+        let d2 = layout_for(
+            "<div class=\"b\"></div>",
+            ".b { display: block; font-size: 30px; width: calc(1em + 10px); height: 10px; }",
+            400.0,
+        );
+        assert_eq!(d2.content.width, 40.0, "calc(1em + 10px), em=30");
     }
 
     #[test]

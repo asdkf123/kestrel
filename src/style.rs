@@ -784,6 +784,25 @@ fn resolve_units(v: &mut Value, fs: f32, root_fs: f32, vp: Viewport) {
                 resolve_units(a, fs, root_fs, vp);
             }
         }
+        Value::Calc(c) => {
+            // 문맥 단위(em/rem/vw…)를 px 로 접어 px 계수에 합친다.
+            c.px += c.em * fs
+                + c.rem * root_fs
+                + c.vw / 100.0 * vp.w
+                + c.vh / 100.0 * vp.h
+                + c.vmin / 100.0 * vp.w.min(vp.h)
+                + c.vmax / 100.0 * vp.w.max(vp.h);
+            c.em = 0.0;
+            c.rem = 0.0;
+            c.vw = 0.0;
+            c.vh = 0.0;
+            c.vmin = 0.0;
+            c.vmax = 0.0;
+            // %가 없으면 완전히 확정됐으니 Length 로 축약(to_px 등에서 바로 쓰이게).
+            if c.pct == 0.0 {
+                *v = Value::Length(c.px, crate::css::Unit::Px);
+            }
+        }
         _ => {}
     }
 }

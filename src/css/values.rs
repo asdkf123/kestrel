@@ -116,14 +116,53 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
 }
 
 // calc() 평가 → (percent 계수, px 계수) 선형식. px 만이면 Length(px), 혼합이면
-// Calc(pct, px). em/rem 등 미지원 단위나 단위 불일치 곱셈이면 None.
+// 단위별 계수 합으로 축약. 단위 불일치 곱셈(길이×길이)이면 None.
 // 지원: + - * /, 괄호, px/%/단위없는 수.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct CalcVal {
     pct: f32,
     px: f32,
+    em: f32,
+    rem: f32,
+    vw: f32,
+    vh: f32,
+    vmin: f32,
+    vmax: f32,
     num: f32,
     is_num: bool,
+}
+
+impl CalcVal {
+    // 길이 계수 전체에 스칼라를 곱한다(단위 없는 수와의 곱/나눗셈용).
+    fn scale(self, k: f32) -> CalcVal {
+        CalcVal {
+            pct: self.pct * k,
+            px: self.px * k,
+            em: self.em * k,
+            rem: self.rem * k,
+            vw: self.vw * k,
+            vh: self.vh * k,
+            vmin: self.vmin * k,
+            vmax: self.vmax * k,
+            num: self.num * k,
+            is_num: self.is_num,
+        }
+    }
+    // 두 길이 합(부호 s 로 뺄셈도). is_num 은 호출부가 맞춰 둔다.
+    fn combine(self, rhs: CalcVal, s: f32) -> CalcVal {
+        CalcVal {
+            pct: self.pct + s * rhs.pct,
+            px: self.px + s * rhs.px,
+            em: self.em + s * rhs.em,
+            rem: self.rem + s * rhs.rem,
+            vw: self.vw + s * rhs.vw,
+            vh: self.vh + s * rhs.vh,
+            vmin: self.vmin + s * rhs.vmin,
+            vmax: self.vmax + s * rhs.vmax,
+            num: self.num + s * rhs.num,
+            is_num: self.is_num,
+        }
+    }
 }
 
 fn eval_calc(inner: &str) -> Option<Value> {
@@ -137,10 +176,22 @@ fn eval_calc(inner: &str) -> Option<Value> {
     if v.is_num {
         return Some(Value::Length(v.num, Unit::Px));
     }
-    if v.pct == 0.0 {
-        Some(Value::Length(v.px, Unit::Px))
+    let sum = crate::css::CalcSum {
+        pct: v.pct,
+        px: v.px,
+        em: v.em,
+        rem: v.rem,
+        vw: v.vw,
+        vh: v.vh,
+        vmin: v.vmin,
+        vmax: v.vmax,
+    };
+    // 순수 px(문맥 단위도 %도 없음)면 바로 Length. 그 외는 Calc 로 보존 —
+    // 문맥 단위는 resolve_units 가, %는 len_px 가 확정한다.
+    if !sum.has_ctx_units() && sum.pct == 0.0 {
+        Some(Value::Length(sum.px, Unit::Px))
     } else {
-        Some(Value::Calc(v.pct, v.px))
+        Some(Value::Calc(sum))
     }
 }
 
@@ -167,12 +218,7 @@ fn calc_expr(t: &[char], p: &mut usize) -> Option<CalcVal> {
             return None;
         }
         let s = if op == '+' { 1.0 } else { -1.0 };
-        acc = CalcVal {
-            pct: acc.pct + s * rhs.pct,
-            px: acc.px + s * rhs.px,
-            num: acc.num + s * rhs.num,
-            is_num: acc.is_num,
-        };
+        acc = acc.combine(rhs, s);
     }
     Some(acc)
 }
@@ -193,9 +239,9 @@ fn calc_term(t: &[char], p: &mut usize) -> Option<CalcVal> {
             '*' => {
                 // 하나는 반드시 수(단위 없음)
                 if acc.is_num {
-                    CalcVal { pct: rhs.pct * acc.num, px: rhs.px * acc.num, num: rhs.num * acc.num, is_num: rhs.is_num }
+                    rhs.scale(acc.num)
                 } else if rhs.is_num {
-                    CalcVal { pct: acc.pct * rhs.num, px: acc.px * rhs.num, num: acc.num * rhs.num, is_num: false }
+                    acc.scale(rhs.num)
                 } else {
                     return None;
                 }
@@ -205,7 +251,7 @@ fn calc_term(t: &[char], p: &mut usize) -> Option<CalcVal> {
                 if !rhs.is_num || rhs.num == 0.0 {
                     return None;
                 }
-                CalcVal { pct: acc.pct / rhs.num, px: acc.px / rhs.num, num: acc.num / rhs.num, is_num: acc.is_num }
+                acc.scale(1.0 / rhs.num)
             }
         };
     }
@@ -243,12 +289,24 @@ fn calc_factor(t: &[char], p: &mut usize) -> Option<CalcVal> {
         *p += 1;
     }
     let unit: String = t[ustart..*p].iter().collect::<String>().to_ascii_lowercase();
+    // 단위별 계수 하나만 채운 CalcVal. 문맥 단위(em/rem/vw…)는 style 에서 px 로 접힌다.
+    let mut c = CalcVal::default();
     match unit.as_str() {
-        "" => Some(CalcVal { pct: 0.0, px: 0.0, num, is_num: true }),
-        "px" => Some(CalcVal { pct: 0.0, px: num, num: 0.0, is_num: false }),
-        "%" => Some(CalcVal { pct: num, px: 0.0, num: 0.0, is_num: false }),
-        _ => None, // em/rem/vw 등 미지원
+        "" => {
+            c.num = num;
+            c.is_num = true;
+        }
+        "px" => c.px = num,
+        "%" => c.pct = num,
+        "em" => c.em = num,
+        "rem" => c.rem = num,
+        "vw" => c.vw = num,
+        "vh" => c.vh = num,
+        "vmin" => c.vmin = num,
+        "vmax" => c.vmax = num,
+        _ => return None, // pt/cm 등 나머지는 아직 미지원
     }
+    Some(c)
 }
 
 // linear-gradient 인자 파싱: [<angle|to side>,] <color> [pos%], ...
