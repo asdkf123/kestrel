@@ -48,8 +48,8 @@ fn keyword_word(t: &Tok) -> Option<String> {
 
 // 템플릿 보간 ${...} 소스를 독립적으로 식 파싱
 fn parse_expr_source(src: &str) -> Result<Expr, String> {
-    let toks = tokenize(src)?;
-    let mut p = Parser { toks, pos: 0, pending_async: false };
+    let (toks, nl_before) = tokenize(src)?;
+    let mut p = Parser { toks, nl_before, pos: 0, pending_async: false };
     let e = p.expr()?;
     if !p.eof() {
         return Err("템플릿 보간 식 뒤에 잉여 토큰".to_string());
@@ -58,8 +58,8 @@ fn parse_expr_source(src: &str) -> Result<Expr, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let toks = tokenize(src)?;
-    let mut p = Parser { toks, pos: 0, pending_async: false };
+    let (toks, nl_before) = tokenize(src)?;
+    let mut p = Parser { toks, nl_before, pos: 0, pending_async: false };
     let mut stmts = Vec::new();
     while !p.eof() {
         stmts.push(p.stmt()?);
@@ -69,6 +69,7 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 
 struct Parser {
     toks: Vec<Tok>,
+    nl_before: Vec<bool>, // 각 토큰 직전 개행 여부 (ASI 판정)
     pos: usize,
     pending_async: bool,
 }
@@ -76,6 +77,11 @@ struct Parser {
 impl Parser {
     fn eof(&self) -> bool {
         self.pos >= self.toks.len()
+    }
+
+    // 현재 토큰 직전에 개행이 있었나 (ASI 판정용). EOF 도 종료로 본다.
+    fn newline_here(&self) -> bool {
+        self.pos >= self.toks.len() || self.nl_before.get(self.pos).copied().unwrap_or(false)
     }
 
     fn peek(&self) -> Option<&Tok> {
@@ -173,29 +179,9 @@ impl Parser {
             Some(Tok::For) => self.for_stmt(),
             Some(Tok::Return) => {
                 self.pos += 1;
-                // 값 없는 return: ; } EOF, 또는 식을 시작할 수 없는 문 키워드가 뒤따를 때(ASI).
-                // (렉서가 개행을 안 남기므로, `return\nconst x=…` 같은 조기 반환은 키워드로 판별.)
-                let value = if self.eof()
-                    || matches!(
-                        self.peek(),
-                        Some(
-                            Tok::Semi
-                                | Tok::RBrace
-                                | Tok::Const
-                                | Tok::Let
-                                | Tok::Var
-                                | Tok::If
-                                | Tok::For
-                                | Tok::While
-                                | Tok::Do
-                                | Tok::Switch
-                                | Tok::Try
-                                | Tok::Break
-                                | Tok::Continue
-                                | Tok::Throw
-                                | Tok::Return
-                        )
-                    )
+                // 값 없는 return: ; } EOF, 또는 개행이 뒤따를 때(ASI 제약 생성물 — 표준).
+                let value = if self.newline_here()
+                    || matches!(self.peek(), Some(Tok::Semi) | Some(Tok::RBrace))
                 {
                     None
                 } else {
@@ -206,13 +192,17 @@ impl Parser {
             }
             Some(Tok::Break) => {
                 self.pos += 1;
-                self.eat_label();
+                if !self.newline_here() {
+                    self.eat_label(); // 개행이면 레이블 없음(ASI 제약 생성물)
+                }
                 self.eat(&Tok::Semi);
                 Ok(Stmt::Break)
             }
             Some(Tok::Continue) => {
                 self.pos += 1;
-                self.eat_label();
+                if !self.newline_here() {
+                    self.eat_label();
+                }
                 self.eat(&Tok::Semi);
                 Ok(Stmt::Continue)
             }
@@ -1090,11 +1080,12 @@ impl Parser {
                         }
                     }
                 }
-                Some(Tok::PlusPlus) => {
+                // 후위 ++/-- 는 제약 생성물: 피연산자와 같은 줄이어야 한다(개행이면 후위 아님).
+                Some(Tok::PlusPlus) if !self.newline_here() => {
                     self.pos += 1;
                     e = Expr::Update { op: UpdOp::Inc, prefix: false, target: Box::new(e) };
                 }
-                Some(Tok::MinusMinus) => {
+                Some(Tok::MinusMinus) if !self.newline_here() => {
                     self.pos += 1;
                     e = Expr::Update { op: UpdOp::Dec, prefix: false, target: Box::new(e) };
                 }

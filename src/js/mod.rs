@@ -322,6 +322,33 @@ mod tests {
     }
 
     #[test]
+    fn return_newline_expr_asi() {
+        // `return` 뒤 개행이면 값을 안 받는다(ASI 제약 생성물) — `return; 42;` 로 파싱.
+        // 키워드 휴리스틱으론 못 잡던 케이스(42 는 키워드 아님) — 개행 기반 표준 ASI.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>function f(){ return\n 42; } \
+             document.getElementById('t').textContent = String(f());</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "undefined");
+    }
+
+    #[test]
+    fn same_line_return_expr_still_works() {
+        // 같은 줄 `return expr` 은 정상 (ASI 미적용).
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>function f(){ return 42; } \
+             document.getElementById('t').textContent = String(f());</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "42");
+    }
+
+    #[test]
     fn bare_return_then_declaration_asi() {
         // `if (!x) return` 뒤 개행 + const 선언 — ASI(값 없는 return). 렉서가 개행을
         // 안 남겨도 식을 시작 못 하는 키워드(const)로 판별. 조기 반환 흔한 패턴.

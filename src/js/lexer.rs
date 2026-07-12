@@ -194,14 +194,30 @@ fn regex_can_start(prev: Option<&Tok>) -> bool {
     )
 }
 
-pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
+// (토큰, 각 토큰 직전에 개행(LineTerminator)이 있었는지) — 자동 세미콜론 삽입(ASI)용.
+pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
     let b: Vec<char> = src.chars().collect();
     let mut i = 0usize;
     let mut out = Vec::new();
+    // nl_before[k] = 토큰 k 직전 공백/주석에 개행이 있었나. pending_nl 은 마지막 토큰
+    // 이후 개행 누적. 토큰이 생기는 반복 시작 시 소비.
+    let mut nl_before: Vec<bool> = Vec::new();
+    let mut pending_nl = false;
     while i < b.len() {
+        // 직전 반복에서 추가된 토큰(들)의 개행 플래그 확정 (첫 토큰만 개행, 나머지 false).
+        if out.len() > nl_before.len() {
+            nl_before.push(pending_nl);
+            while nl_before.len() < out.len() {
+                nl_before.push(false);
+            }
+            pending_nl = false;
+        }
         let c = b[i];
-        // 공백
+        // 공백 (개행이면 pending_nl)
         if c.is_whitespace() {
+            if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+                pending_nl = true;
+            }
             i += 1;
             continue;
         }
@@ -216,6 +232,9 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
             if b[i + 1] == '*' {
                 i += 2;
                 while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                    if matches!(b[i], '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+                        pending_nl = true; // 여러 줄 블록 주석도 개행으로 (ASI)
+                    }
                     i += 1;
                 }
                 if i + 1 >= b.len() {
@@ -546,7 +565,14 @@ pub fn tokenize(src: &str) -> Result<Vec<Tok>, String> {
         out.push(one);
         i += 1;
     }
-    Ok(out)
+    // 마지막 토큰의 개행 플래그 확정
+    if out.len() > nl_before.len() {
+        nl_before.push(pending_nl);
+        while nl_before.len() < out.len() {
+            nl_before.push(false);
+        }
+    }
+    Ok((out, nl_before))
 }
 
 #[cfg(test)]
@@ -555,7 +581,7 @@ mod tests {
 
     #[test]
     fn numbers_and_operators() {
-        let t = tokenize("1 + 2.5 * 0x10").unwrap();
+        let t = tokenize("1 + 2.5 * 0x10").unwrap().0;
         assert_eq!(
             t,
             vec![Tok::Num(1.0), Tok::Plus, Tok::Num(2.5), Tok::Star, Tok::Num(16.0)]
@@ -564,7 +590,7 @@ mod tests {
 
     #[test]
     fn strings_with_escapes() {
-        let t = tokenize(r#"'a\'b' + "c\nd""#).unwrap();
+        let t = tokenize(r#"'a\'b' + "c\nd""#).unwrap().0;
         assert_eq!(
             t,
             vec![Tok::Str("a'b".to_string()), Tok::Plus, Tok::Str("c\nd".to_string())]
@@ -573,7 +599,7 @@ mod tests {
 
     #[test]
     fn keywords_vs_identifiers() {
-        let t = tokenize("var letx = functionx").unwrap();
+        let t = tokenize("var letx = functionx").unwrap().0;
         assert_eq!(
             t,
             vec![
@@ -587,7 +613,7 @@ mod tests {
 
     #[test]
     fn maximal_munch() {
-        let t = tokenize("a === b == c => d ++ += !").unwrap();
+        let t = tokenize("a === b == c => d ++ += !").unwrap().0;
         assert_eq!(
             t,
             vec![
@@ -607,7 +633,7 @@ mod tests {
 
     #[test]
     fn comments_are_skipped() {
-        let t = tokenize("1 // line\n /* block\n */ 2").unwrap();
+        let t = tokenize("1 // line\n /* block\n */ 2").unwrap().0;
         assert_eq!(t, vec![Tok::Num(1.0), Tok::Num(2.0)]);
     }
 
