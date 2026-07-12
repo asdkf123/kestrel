@@ -880,6 +880,16 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
+    // clear 키워드 (지정 쪽 float 아래로 내림)
+    fn clear(&self) -> &'static str {
+        match self.styled_node.value("clear") {
+            Some(Value::Keyword(s)) if s == "left" => "left",
+            Some(Value::Keyword(s)) if s == "right" => "right",
+            Some(Value::Keyword(s)) if s == "both" => "both",
+            _ => "none",
+        }
+    }
+
     // top/left 등 오프셋 px (prop 우선, 없으면 반대편 opp 의 음수, 둘 다 없으면 0)
     fn offset(&self, prop: &str, opp: &str) -> f32 {
         match self.styled_node.value(prop) {
@@ -923,6 +933,9 @@ impl<'a> LayoutBox<'a> {
         let mut fr_next = cx + avail;
         let mut band_top = cy;
         let mut band_bottom = cy;
+        // clear 처리를 위해 좌/우 float 하단을 따로 추적 (clear:left/right/both).
+        let mut band_bottom_l = cy;
+        let mut band_bottom_r = cy;
         let mut band_active = false;
         // 이 컨테이너가 float 로 shrink-to-fit 될 때의 내용 폭: float 밴드가
         // 실제로 차지한 가로 범위 (좌 float 누적 + 우 float 누적).
@@ -971,6 +984,35 @@ impl<'a> LayoutBox<'a> {
                 ib_pen_x = cx;
                 ib_line_h = 0.0;
                 prev_bottom = 0.0; // 인라인블록 런이 흐름을 끊음 → margin 상쇄 리셋
+            }
+
+            // clear: 지정 쪽 float 아래로 이 요소를 내린다 (clearfix/구획 분리).
+            // 청산된 쪽 float 은 이후 이 요소에 영향 없음 (밴드에서 해제). absolute 는 제외.
+            if band_active && cpos != "absolute" && cpos != "fixed" {
+                let cc = self.children[i].clear();
+                if cc != "none" {
+                    let (cl, cr) = (cc == "left" || cc == "both", cc == "right" || cc == "both");
+                    let mut target = self.dimensions.content.height + cy;
+                    if cl {
+                        target = target.max(band_bottom_l);
+                    }
+                    if cr {
+                        target = target.max(band_bottom_r);
+                    }
+                    if target - cy > self.dimensions.content.height {
+                        self.dimensions.content.height = target - cy;
+                    }
+                    if cl && target >= band_bottom_l - 0.5 {
+                        fl_next = cx;
+                    }
+                    if cr && target >= band_bottom_r - 0.5 {
+                        fr_next = cx + avail;
+                    }
+                    if fl_next <= cx + 0.5 && fr_next >= cx + avail - 0.5 {
+                        band_active = false;
+                    }
+                    prev_bottom = 0.0; // clearance 후 margin 상쇄 리셋
+                }
             }
 
             // position: absolute/fixed — 흐름에서 제거. 여기선 직속 컨테이너 기준
@@ -1022,13 +1064,16 @@ impl<'a> LayoutBox<'a> {
                 cb.content.y = band_top;
                 cb.content.width = ow;
                 child.layout(cb, fonts, images);
+                let fbottom = band_top + child.dimensions.margin_box().height;
                 if cfloat == "left" {
                     fl_next += ow;
+                    band_bottom_l = band_bottom_l.max(fbottom);
                 } else {
                     fr_next -= ow;
+                    band_bottom_r = band_bottom_r.max(fbottom);
                 }
                 float_extent = float_extent.max((fl_next - cx) + ((cx + avail) - fr_next));
-                band_bottom = band_bottom.max(band_top + child.dimensions.margin_box().height);
+                band_bottom = band_bottom.max(fbottom);
                 prev_bottom = 0.0; // float 은 흐름을 끊음 → margin 상쇄 리셋
                 continue; // 정상 흐름 높이엔 직접 미반영 (밴드로 관리)
             }
@@ -3343,6 +3388,32 @@ mod tests {
             .find(|g| g.baseline_y > 65.0)
             .expect("float 아래로 흐르는 줄이 있어야");
         assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
+    }
+
+    #[test]
+    fn clear_both_drops_below_float() {
+        // float:left(100x40) 뒤 clear:both 블록: 옆으로 우회하지 않고 float 아래로 내려간다.
+        // (clearfix 의 핵심 — clear 없으면 텍스트가 float 옆으로 흐름)
+        let root = crate::html::parse_dom(
+            "<div class=\"cont\"><div class=\"f\"></div><div class=\"t\">hello world text</div></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ".cont { display: block; font-size: 16px; } \
+             .f { display: block; float: left; width: 100px; height: 40px; } \
+             .t { display: block; clear: both; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let t = &lb.children[1];
+        assert!(t.dimensions.content.y >= 40.0 - 0.5, "clear:both 는 float(40px) 아래: {}", t.dimensions.content.y);
+        // 첫 글리프가 전체폭(x<95)에서 시작 — float 옆으로 우회하지 않음
+        let first = glyphs_of(t).into_iter().next().unwrap();
+        assert!(first.x < 95.0, "clear 블록 텍스트는 float 옆 우회 안 함(x<95): {}", first.x);
     }
 
     #[test]
