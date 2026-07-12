@@ -703,6 +703,7 @@ impl Interp {
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        env_declare(&global, "isFinite", Value::Native(Native::NumIsFinite));
         // 타이머
         env_declare(&global, "setTimeout", Value::Native(Native::SetTimeout));
         env_declare(&global, "setInterval", Value::Native(Native::SetInterval));
@@ -2754,6 +2755,24 @@ impl Interp {
                 return Ok(Value::Obj(Rc::new(RefCell::new(map))));
             }
             // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
+            // new f() — 일반 함수를 생성자로 (ES6 이전 패턴, 미니파이 코드 다수).
+            // 새 객체를 this 로 함수 실행. f.prototype 메서드를 인스턴스에 복사(간이 체인).
+            // 함수가 객체를 반환하면 그것 우선(JS 규칙).
+            Value::Fn(func) => {
+                let obj = Rc::new(RefCell::new(HashMap::new()));
+                let proto = func.props.borrow().get("prototype").cloned();
+                if let Some(Value::Obj(p)) = proto {
+                    for (k, v) in p.borrow().iter() {
+                        obj.borrow_mut().insert(k.clone(), v.clone());
+                    }
+                }
+                let this = Value::Obj(obj);
+                let ret = self.call_value(Value::Fn(func), Some(this.clone()), args)?;
+                return Ok(match ret {
+                    v @ (Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) => v,
+                    _ => this,
+                });
+            }
             Value::Obj(_) | Value::Native(_) => {
                 let mut map = HashMap::new();
                 if let Some(a0) = args.first() {
@@ -3895,6 +3914,19 @@ mod tests {
         assert_eq!(run_num("var s=0; for(var i=0;i<3;i++)s+=i; i"), 3.0);
         // 선언 전 사용 시 하이스트된 undefined
         assert_eq!(run_num("var r=(typeof q==='undefined'?1:2); var q=5; r"), 1.0);
+    }
+
+    #[test]
+    fn new_regular_function_as_constructor() {
+        // ES6 이전 생성자 패턴: new F() + F.prototype.method (미니파이/구코드 다수)
+        assert_eq!(run_num("function P(x,y){this.x=x;this.y=y;} var p=new P(3,4); p.x+p.y"), 7.0);
+        assert_eq!(
+            run_num("function C(){this.n=1;} C.prototype.inc=function(){return ++this.n;}; var c=new C(); c.inc()"),
+            2.0
+        );
+        // 함수가 객체를 반환하면 그것 우선 (JS 규칙)
+        assert_eq!(run_num("function F(){return {v:99};} new F().v"), 99.0);
+        assert_eq!(run_str("typeof isFinite"), "function");
     }
 
     #[test]
