@@ -1090,6 +1090,20 @@ impl Interp {
         window.insert("cancelAnimationFrame".to_string(), Value::Native(Native::ClearTimer));
         window.insert("setTimeout".to_string(), Value::Native(Native::SetTimeout));
         window.insert("setInterval".to_string(), Value::Native(Native::SetInterval));
+        // Event 생성자류(window.Event.prototype 참조 등) — 모두 EventCtor 로 근사.
+        for ev in ["Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "FocusEvent", "InputEvent"] {
+            window.insert(ev.to_string(), Value::Native(Native::EventCtor));
+        }
+        // history 스텁 (pushState/replaceState 등은 URL 만 갱신하지 않는 no-op).
+        let mut history = ObjMap::new();
+        for m in ["pushState", "replaceState", "back", "forward", "go"] {
+            history.insert(m.to_string(), Value::Native(Native::Noop));
+        }
+        history.insert("length".to_string(), Value::Num(1.0));
+        history.insert("state".to_string(), Value::Null);
+        history.insert("scrollRestoration".to_string(), Value::Str("auto".to_string()));
+        let history = Value::Obj(Rc::new(RefCell::new(history)));
+        window.insert("history".to_string(), history.clone());
         // 뷰포트/화면 메트릭 (반응형 스크립트가 흔히 읽음). 렌더 뷰포트에 맞춤.
         for (k, v) in [
             ("innerWidth", 1000.0),
@@ -1113,6 +1127,16 @@ impl Interp {
         // self / globalThis 는 전역 객체(window) 별칭 (구글/워커 코드)
         env_declare(&global, "window", window.clone());
         env_declare(&global, "self", window.clone());
+        // top/parent/frames 는 (프레임 없으니) window 자신. history 전역.
+        env_declare(&global, "top", window.clone());
+        env_declare(&global, "parent", window.clone());
+        env_declare(&global, "frames", window.clone());
+        env_declare(&global, "history", history);
+        if let Value::Obj(w) = &window {
+            w.borrow_mut().insert("top".to_string(), window.clone());
+            w.borrow_mut().insert("parent".to_string(), window.clone());
+            w.borrow_mut().insert("self".to_string(), window.clone());
+        }
         env_declare(&global, "screen", Value::Obj(Rc::new(RefCell::new(screen))));
         // 최상위 this = window (sloppy 스크립트: `(function(){this.x=…}).call(this)` 등)
         env_declare(&global, "this", window.clone());
@@ -5640,6 +5664,50 @@ mod tests {
             run_str("var api = { name: 'k', hello() { return 'hi'; }, }; api.hello() + api.name"),
             "hik"
         );
+    }
+
+    #[test]
+    fn window_globals_history_top_event() {
+        // history 전역 + 메서드(no-op) 존재
+        assert!(run_bool("typeof history === 'object' && typeof history.pushState === 'function'"));
+        assert_eq!(run_str("history.scrollRestoration"), "auto");
+        assert!(run_bool("(history.pushState({}, '', '/x'), true)")); // 크래시 없이 실행
+        // top/parent/frames = window (프레임 없음 → 자기 자신)
+        assert!(run_bool("top === window && parent === window && window.top === window"));
+        // window.Event 접근 가능(프레임워크가 window.Event.prototype 참조)
+        assert!(run_bool("typeof window.Event === 'function'"));
+    }
+
+    #[test]
+    fn json_stringify_throws_on_circular() {
+        // 표준: 순환 구조는 TypeError. (깊이 가드로는 분기 순환의 조합 폭발을 못 막는다)
+        assert_eq!(
+            run_str(
+                "var o={a:1}; o.self=o; \
+                 try { JSON.stringify(o); 'no-throw' } catch(e) { e.name }"
+            ),
+            "TypeError",
+        );
+        // 배열 순환도
+        assert_eq!(
+            run_str("var a=[1]; a.push(a); try { JSON.stringify(a); 'no-throw' } catch(e) { e.name }"),
+            "TypeError",
+        );
+        // 상호 순환 (a→b→a)
+        assert_eq!(
+            run_str(
+                "var a={},b={}; a.b=b; b.a=a; \
+                 try { JSON.stringify(a); 'no-throw' } catch(e) { e.name }"
+            ),
+            "TypeError",
+        );
+        // 같은 객체를 두 번 참조(순환 아님)는 정상 직렬화 — 경로 기반이라 오탐 없음
+        assert_eq!(
+            run_str("var s={n:1}; JSON.stringify({x:s, y:s})"),
+            "{\"x\":{\"n\":1},\"y\":{\"n\":1}}",
+        );
+        // 정상 중첩은 그대로
+        assert_eq!(run_str("JSON.stringify({a:[1,{b:2}]})"), "{\"a\":[1,{\"b\":2}]}");
     }
 
     #[test]

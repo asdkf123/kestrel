@@ -776,9 +776,41 @@ pub(super) fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
     }
 }
 
-// 직렬화 불가(함수/undefined 등)는 None. 객체 키는 삽입 순서(ObjMap) 유지.
-pub(super) fn json_stringify(v: &Value) -> Option<String> {
-    match v {
+// 직렬화 불가(함수/undefined 등)는 Ok(None). 객체 키는 삽입 순서(ObjMap) 유지.
+// 순환 구조는 Err → 호출측이 TypeError 로 던진다(표준).
+pub(super) fn json_stringify(v: &Value) -> Result<Option<String>, String> {
+    let mut path = Vec::new();
+    json_stringify_d(v, &mut path)
+}
+
+pub(super) const JSON_CYCLE_MSG: &str = "순환 구조는 JSON 으로 직렬화할 수 없음";
+
+// 순환 참조 탐지: 현재 경로에 있는 객체 신원(Rc 포인터)을 추적한다.
+// 깊이 가드로는 부족하다 — 자기참조가 여러 개면(window.top/parent/self) 경로가
+// 분기해 조합 폭발(3^depth)을 일으켜 메모리를 삼킨다. 반드시 신원 기반이어야 한다.
+fn json_stringify_d(v: &Value, path: &mut Vec<usize>) -> Result<Option<String>, String> {
+    // 컨테이너면 순환 검사 후 경로에 push (반환 전 pop).
+    let ident: Option<usize> = match v {
+        Value::Obj(m) => Some(Rc::as_ptr(m) as usize),
+        Value::Arr(a) => Some(Rc::as_ptr(a) as usize),
+        Value::Instance(i) => Some(Rc::as_ptr(i) as usize),
+        _ => None,
+    };
+    if let Some(id) = ident {
+        if path.contains(&id) {
+            return Err(JSON_CYCLE_MSG.to_string());
+        }
+        path.push(id);
+    }
+    let out = json_stringify_body(v, path);
+    if ident.is_some() {
+        path.pop();
+    }
+    out
+}
+
+fn json_stringify_body(v: &Value, path: &mut Vec<usize>) -> Result<Option<String>, String> {
+    Ok(match v {
         Value::Undefined
         | Value::Fn(_)
         | Value::Native(_)
@@ -799,10 +831,12 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
             let m = inst.fields.borrow();
             let mut keys: Vec<&String> = m.keys().collect();
             keys.sort();
-            let parts: Vec<String> = keys
-                .into_iter()
-                .filter_map(|k| json_stringify(&m[k]).map(|v| format!("{}:{}", json_quote(k), v)))
-                .collect();
+            let mut parts: Vec<String> = Vec::new();
+            for k in keys {
+                if let Some(s) = json_stringify_d(&m[k], path)? {
+                    parts.push(format!("{}:{}", json_quote(k), s));
+                }
+            }
             Some(format!("{{{}}}", parts.join(",")))
         }
         Value::Null => Some("null".to_string()),
@@ -812,12 +846,13 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         }
         Value::Str(s) => Some(json_quote(s)),
         Value::Arr(a) => {
-            let items: Vec<String> = a
-                .borrow()
-                .iter()
-                .map(|v| json_stringify(v).unwrap_or("null".to_string()))
-                .collect();
-            Some(format!("[{}]", items.join(",")))
+            // 배열 항목은 직렬화 불가면 null (표준)
+            let items = a.borrow().clone();
+            let mut parts: Vec<String> = Vec::with_capacity(items.len());
+            for item in &items {
+                parts.push(json_stringify_d(item, path)?.unwrap_or_else(|| "null".to_string()));
+            }
+            Some(format!("[{}]", parts.join(",")))
         }
         // Date 는 toJSON 규약대로 ISO 문자열로 직렬화(내부 마커 노출 아님).
         Value::Obj(map) if is_date_obj(map) => {
@@ -832,16 +867,23 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
             }
         }
         Value::Obj(map) => {
-            let m = map.borrow();
             // 삽입 순서 유지(ObjMap). 엔진 내부 마커(__proto__/__isDate 등)는 제외.
-            let parts: Vec<String> = m
+            // borrow 를 재귀 전에 끊는다(중첩 borrow 충돌 방지).
+            let entries: Vec<(String, Value)> = map
+                .borrow()
                 .iter()
                 .filter(|(k, _)| !is_internal_key(k))
-                .filter_map(|(k, v)| json_stringify(v).map(|s| format!("{}:{}", json_quote(k), s)))
+                .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
+            let mut parts: Vec<String> = Vec::new();
+            for (k, val) in &entries {
+                if let Some(s) = json_stringify_d(val, path)? {
+                    parts.push(format!("{}:{}", json_quote(k), s));
+                }
+            }
             Some(format!("{{{}}}", parts.join(",")))
         }
-    }
+    })
 }
 
 pub(super) fn json_quote(s: &str) -> String {

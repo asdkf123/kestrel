@@ -2060,11 +2060,17 @@ impl Interp {
                 let src = args.first().map(to_display).unwrap_or_default();
                 json_parse(&src)
             }
-            Native::JsonStringify => {
-                Ok(json_stringify(args.first().unwrap_or(&Value::Undefined))
-                    .map(Value::Str)
-                    .unwrap_or(Value::Undefined))
-            }
+            // 순환 구조면 TypeError 를 던진다(표준). 조용히 폭발/무한재귀하지 않는다.
+            Native::JsonStringify => match json_stringify(args.first().unwrap_or(&Value::Undefined)) {
+                Ok(s) => Ok(s.map(Value::Str).unwrap_or(Value::Undefined)),
+                Err(msg) => {
+                    let mut e = ObjMap::new();
+                    e.insert("name".to_string(), Value::Str("TypeError".to_string()));
+                    e.insert("message".to_string(), Value::Str(msg.clone()));
+                    self.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
+                    Err(msg)
+                }
+            },
             Native::ParseInt => {
                 let s = args.first().map(to_display).unwrap_or_default();
                 let t = s.trim();
