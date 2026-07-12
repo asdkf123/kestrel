@@ -85,7 +85,7 @@
 - [ ] JS **문자열 UTF-16 아님**(astral length). (mod.rs:2545)
 - [~] JS **엔진 내부 마커 비열거 + Date toJSON(ISO)** 완료. promise 메서드도 비열거(프로토타입 격).
   JSON replacer/space 는 후속. (25aa6fd)
-- [~] JS **Number→문자열 ECMAScript 7.1.12.1**(지수 임계 n>21/n≤-6, "de+X"). toFixed 는 후속. (다음 커밋)
+- [~] JS **Number→문자열 ECMAScript 7.1.12.1**(지수 임계 n>21/n≤-6, "de+X"). toFixed 는 후속. (5e9c022)
 - [ ] JS **정규식 vs 나눗셈 `)`/`}` 뒤 오판**. (lexer.rs:174)
 - [~] JS **클래스 제너레이터(*)/async 메서드** 지원. 계산된 이름[expr]/객체리터럴 메서드는 후속(동적키 필요). (ccc73f8)
 - [x] JS **레이블 break/continue + 레이블 문**(중첩 루프 탈출, 레이블 블록 break). (e806035)
