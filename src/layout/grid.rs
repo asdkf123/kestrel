@@ -3,6 +3,7 @@ use crate::css::Unit::Px;
 use crate::css::Value;
 use crate::css::Value::Length;
 use crate::font::FontStack;
+use crate::style::StyledNode;
 
 impl<'a> LayoutBox<'a> {
     // CSS Grid (실용적): grid-template-columns 로 열을 잡고 아이템을 행별 auto-placement.
@@ -38,29 +39,109 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Keyword(s)) => s,
             _ => String::new(),
         };
-        let cols = if spec.is_empty() {
-            vec![d.content.width]
+        let gtracks = if spec.is_empty() {
+            vec![GTrack::Fr(1.0)]
         } else {
-            let gtracks = expand_grid_tracks(&spec, d.content.width, gap);
-            let ncols = gtracks.len().max(1);
-            // auto 트랙: 그 컬럼 아이템들의 내용폭(used_width) 최대치를 측정 (max-content 근사).
-            let has_auto = gtracks.iter().any(|t| matches!(t, GTrack::Auto));
-            let mut auto_content = vec![0.0f32; gtracks.len()];
-            if has_auto {
-                for i in 0..self.children.len() {
-                    let k = i % ncols;
-                    if matches!(gtracks.get(k), Some(GTrack::Auto)) {
-                        let mut cb: Dimensions = Default::default();
-                        cb.content.width = d.content.width; // 넓게 두고 shrink-to-fit 측정
-                        self.children[i].layout(cb, fonts, images);
-                        let ch = &self.children[i];
-                        let extra = ch.dimensions.margin_box().width - ch.dimensions.content.width;
-                        auto_content[k] = auto_content[k].max((ch.used_width + extra).min(d.content.width));
+            expand_grid_tracks(&spec, d.content.width, gap)
+        };
+        let ncols = gtracks.len().max(1);
+        // 명시 행 트랙 수 — 음수 라인(-1 등) 해석 및 고정 행높이용.
+        let rspec = match self.styled_node.value("grid-template-rows") {
+            Some(Value::Keyword(s)) => s,
+            _ => String::new(),
+        };
+        let nrows_explicit = if rspec.is_empty() {
+            0
+        } else {
+            expand_grid_tracks(&rspec, 0.0, row_gap).len()
+        };
+
+        // 1) 아이템별 배치 요청 해석: grid-column/row(라인·span·-1), 없으면 auto. (CSS Grid §8)
+        let req: Vec<(Option<usize>, usize, Option<usize>, usize)> = self
+            .children
+            .iter()
+            .map(|c| resolve_placement(c.styled_node, ncols, nrows_explicit))
+            .collect();
+
+        // 2) auto-placement(grid-auto-flow: row, sparse) — 점유 격자로 최종 (r0,c0,rspan,cspan) 확정.
+        let mut occ: Vec<Vec<bool>> = Vec::new();
+        let mut placed: Vec<(usize, usize, usize, usize)> = vec![(0, 0, 1, 1); n];
+        // A: 행·열 모두 명시
+        for i in 0..n {
+            if let (Some(c0), Some(r0)) = (req[i].0, req[i].2) {
+                let c0 = c0.min(ncols - 1);
+                let cspan = req[i].1.min(ncols - c0).max(1);
+                let rspan = req[i].3.max(1);
+                grid_mark(&mut occ, r0, c0, rspan, cspan, ncols);
+                placed[i] = (r0, c0, rspan, cspan);
+            }
+        }
+        // B: 열만 명시(행 auto) — 그 열에서 비는 최상단 행에 배치
+        for i in 0..n {
+            if let (Some(c0), None) = (req[i].0, req[i].2) {
+                let c0 = c0.min(ncols - 1);
+                let cspan = req[i].1.min(ncols - c0).max(1);
+                let rspan = req[i].3.max(1);
+                let mut r0 = 0;
+                while !grid_free(&occ, r0, c0, rspan, cspan, ncols) {
+                    r0 += 1;
+                }
+                grid_mark(&mut occ, r0, c0, rspan, cspan, ncols);
+                placed[i] = (r0, c0, rspan, cspan);
+            }
+        }
+        // C: 열 auto — 행 커서를 전진시키며 빈 셀에 배치(명시 행이면 그 행 안에서)
+        let (mut cur_r, mut cur_c) = (0usize, 0usize);
+        for i in 0..n {
+            if req[i].0.is_some() {
+                continue; // A/B 에서 처리됨
+            }
+            let cspan = req[i].1.min(ncols).max(1);
+            let rspan = req[i].3.max(1);
+            if let Some(r0) = req[i].2 {
+                // 행 명시, 열 auto: 그 행에서 빈 최좌측
+                let mut c0 = 0;
+                while c0 + cspan <= ncols && !grid_free(&occ, r0, c0, rspan, cspan, ncols) {
+                    c0 += 1;
+                }
+                let c0 = c0.min(ncols - cspan);
+                grid_mark(&mut occ, r0, c0, rspan, cspan, ncols);
+                placed[i] = (r0, c0, rspan, cspan);
+            } else {
+                // 완전 auto: 커서 전진(단조), 줄바꿈
+                loop {
+                    if cur_c + cspan > ncols {
+                        cur_r += 1;
+                        cur_c = 0;
                     }
+                    if grid_free(&occ, cur_r, cur_c, rspan, cspan, ncols) {
+                        grid_mark(&mut occ, cur_r, cur_c, rspan, cspan, ncols);
+                        placed[i] = (cur_r, cur_c, rspan, cspan);
+                        cur_c += cspan;
+                        break;
+                    }
+                    cur_c += 1;
                 }
             }
-            resolve_tracks_sized(&gtracks, d.content.width, gap, &auto_content)
-        };
+        }
+
+        // 3) auto 트랙 폭: 실제 배치된 단일 열 아이템의 내용폭 최대치(max-content 근사).
+        let has_auto = gtracks.iter().any(|t| matches!(t, GTrack::Auto));
+        let mut auto_content = vec![0.0f32; ncols];
+        if has_auto {
+            for i in 0..n {
+                let (_, c0, _, cspan) = placed[i];
+                if cspan == 1 && matches!(gtracks.get(c0), Some(GTrack::Auto)) {
+                    let mut cb: Dimensions = Default::default();
+                    cb.content.width = d.content.width;
+                    self.children[i].layout(cb, fonts, images);
+                    let ch = &self.children[i];
+                    let extra = ch.dimensions.margin_box().width - ch.dimensions.content.width;
+                    auto_content[c0] = auto_content[c0].max((ch.used_width + extra).min(d.content.width));
+                }
+            }
+        }
+        let cols = resolve_tracks_sized(&gtracks, d.content.width, gap, &auto_content);
         let ncols = cols.len().max(1);
         // 열 x 위치 (누적 폭 + gap)
         let mut col_x = Vec::with_capacity(ncols);
@@ -71,37 +152,218 @@ impl<'a> LayoutBox<'a> {
                 x += w + gap;
             }
         }
-        // 아이템을 행별로 배치 (auto-placement, 한 셀씩)
-        let mut y = oy;
-        let mut idx = 0;
-        while idx < n {
-            let end = (idx + ncols).min(n);
-            let mut row_h = 0.0f32;
-            for (k, i) in (idx..end).enumerate() {
-                let mut cb: Dimensions = Default::default();
-                cb.content.x = col_x[k];
-                cb.content.y = y;
-                cb.content.width = cols[k];
-                let child = &mut self.children[i];
-                child.layout(cb, fonts, images);
-                row_h = row_h.max(child.dimensions.margin_box().height);
+        let span_w = |c0: usize, cspan: usize| -> f32 {
+            let end = (c0 + cspan).min(cols.len());
+            let w: f32 = cols[c0..end].iter().sum();
+            w + gap * ((end - c0) as f32 - 1.0).max(0.0)
+        };
+
+        // 4) 행 높이: 각 아이템을 열스팬 폭으로 측정. 단일행은 그 행 최대, 다중행은 마지막 행 보충.
+        let nrows = placed.iter().map(|p| p.0 + p.2).max().unwrap_or(1).max(1);
+        let row_fixed: Vec<Option<f32>> = if nrows_explicit == 0 {
+            vec![None; nrows]
+        } else {
+            let tr = resolve_grid_tracks(&rspec, 0.0, row_gap);
+            (0..nrows).map(|r| tr.get(r).copied().filter(|v| *v > 0.0)).collect()
+        };
+        let mut row_h = vec![0.0f32; nrows];
+        let mut item_h = vec![0.0f32; n];
+        for i in 0..n {
+            let (r0, c0, rspan, cspan) = placed[i];
+            let mut cb: Dimensions = Default::default();
+            cb.content.x = ox;
+            cb.content.y = oy;
+            cb.content.width = span_w(c0, cspan);
+            self.children[i].layout(cb, fonts, images);
+            item_h[i] = self.children[i].dimensions.margin_box().height;
+            if rspan == 1 {
+                row_h[r0] = row_h[r0].max(item_h[i]);
             }
-            // align-items stretch (기본): 각 아이템 높이를 행 높이로 늘림
-            for i in idx..end {
-                let child = &mut self.children[i];
-                let cross_fixed = matches!(child.styled_node.value("height"), Some(Length(_, Px)));
-                if !cross_fixed {
-                    let vextra =
-                        child.dimensions.margin_box().height - child.dimensions.content.height;
-                    child.dimensions.content.height =
-                        (row_h - vextra).max(child.dimensions.content.height);
+        }
+        for i in 0..n {
+            let (r0, _, rspan, _) = placed[i];
+            if rspan > 1 {
+                let cur: f32 =
+                    row_h[r0..r0 + rspan].iter().sum::<f32>() + row_gap * (rspan as f32 - 1.0);
+                if item_h[i] > cur {
+                    row_h[r0 + rspan - 1] += item_h[i] - cur;
                 }
             }
-            y += row_h + row_gap;
-            idx += ncols;
         }
-        self.dimensions.content.height = (y - oy - row_gap).max(0.0);
+        for r in 0..nrows {
+            if let Some(px) = row_fixed.get(r).copied().flatten() {
+                row_h[r] = px;
+            }
+        }
+        let mut row_y = vec![oy; nrows + 1];
+        {
+            let mut y = oy;
+            for r in 0..nrows {
+                row_y[r] = y;
+                y += row_h[r] + row_gap;
+            }
+            row_y[nrows] = y;
+        }
+
+        // 5) 최종 배치 + 셀 높이 stretch (측정 글리프 clear).
+        for i in 0..n {
+            let (r0, c0, rspan, cspan) = placed[i];
+            let x = col_x[c0.min(cols.len() - 1)];
+            let w = span_w(c0, cspan);
+            let y = row_y[r0];
+            let h: f32 =
+                row_h[r0..r0 + rspan].iter().sum::<f32>() + row_gap * (rspan as f32 - 1.0);
+            self.children[i].clear_render();
+            let mut cb: Dimensions = Default::default();
+            cb.content.x = x;
+            cb.content.y = y;
+            cb.content.width = w;
+            self.children[i].layout(cb, fonts, images);
+            let cross_fixed =
+                matches!(self.children[i].styled_node.value("height"), Some(Length(_, Px)));
+            if !cross_fixed {
+                let vextra = self.children[i].dimensions.margin_box().height
+                    - self.children[i].dimensions.content.height;
+                self.children[i].dimensions.content.height =
+                    (h - vextra).max(self.children[i].dimensions.content.height);
+            }
+        }
+        self.dimensions.content.height = (row_y[nrows] - oy - row_gap).max(0.0);
         self.used_width = cols.iter().sum::<f32>() + gap * (ncols as f32 - 1.0).max(0.0);
+    }
+}
+
+// ── CSS Grid 라인 기반 배치 (§8) ────────────────────────────────────────────
+#[derive(Clone, Copy)]
+enum GLine {
+    Auto,
+    Num(i32),
+    Span(usize),
+}
+
+fn parse_gline(s: &str) -> GLine {
+    let s = s.trim();
+    if s.is_empty() || s == "auto" {
+        return GLine::Auto;
+    }
+    if let Some(rest) = s.strip_prefix("span") {
+        return match rest.trim().parse::<usize>() {
+            Ok(k) => GLine::Span(k.max(1)),
+            Err(_) => GLine::Span(1), // span <name> → 1 근사
+        };
+    }
+    if let Ok(v) = s.parse::<i32>() {
+        if v != 0 {
+            return GLine::Num(v);
+        }
+    }
+    GLine::Auto // 명명 라인 미지원 → auto
+}
+
+// (start, end) 라인 → (0-based 시작 트랙 인덱스 or None=auto, span). ntracks 는 음수 라인 해석용.
+fn resolve_axis(start: GLine, end: GLine, ntracks: usize) -> (Option<usize>, usize) {
+    let nt = ntracks as i32;
+    let to_line = |n: i32| -> i32 { if n < 0 { nt + 2 + n } else { n } };
+    let idx = |line: i32| -> usize { (line - 1).max(0) as usize };
+    match (start, end) {
+        (GLine::Num(a), GLine::Num(b)) => {
+            let (mut a, mut b) = (to_line(a), to_line(b));
+            if a > b {
+                std::mem::swap(&mut a, &mut b);
+            }
+            (Some(idx(a)), (b - a).max(1) as usize)
+        }
+        (GLine::Num(a), GLine::Span(s)) => (Some(idx(to_line(a))), s),
+        (GLine::Num(a), GLine::Auto) => (Some(idx(to_line(a))), 1),
+        (GLine::Auto, GLine::Num(b)) => (Some(idx(to_line(b) - 1)), 1),
+        (GLine::Span(s), GLine::Num(b)) => {
+            let start_line = (to_line(b) - s as i32).max(1);
+            (Some(idx(start_line)), s)
+        }
+        (GLine::Span(s), _) => (None, s),
+        (GLine::Auto, GLine::Span(s)) => (None, s),
+        (GLine::Auto, GLine::Auto) => (None, 1),
+    }
+}
+
+fn resolve_placement(
+    node: &StyledNode,
+    ncols: usize,
+    nrows: usize,
+) -> (Option<usize>, usize, Option<usize>, usize) {
+    let (mut rs, mut re, mut cs, mut ce) = (GLine::Auto, GLine::Auto, GLine::Auto, GLine::Auto);
+    // grid-area: row-start / col-start / row-end / col-end (라인 기반)
+    if let Some(Value::Keyword(a)) = node.value("grid-area") {
+        if a.contains('/') {
+            let p: Vec<&str> = a.split('/').collect();
+            rs = parse_gline(p[0]);
+            if p.len() > 1 {
+                cs = parse_gline(p[1]);
+            }
+            if p.len() > 2 {
+                re = parse_gline(p[2]);
+            }
+            if p.len() > 3 {
+                ce = parse_gline(p[3]);
+            }
+        }
+    }
+    if let Some(Value::Keyword(gc)) = node.value("grid-column") {
+        let p: Vec<&str> = gc.split('/').collect();
+        cs = parse_gline(p[0]);
+        ce = if p.len() > 1 { parse_gline(p[1]) } else { GLine::Auto };
+    }
+    if let Some(Value::Keyword(gr)) = node.value("grid-row") {
+        let p: Vec<&str> = gr.split('/').collect();
+        rs = parse_gline(p[0]);
+        re = if p.len() > 1 { parse_gline(p[1]) } else { GLine::Auto };
+    }
+    // 롱핸드 우선 적용
+    if let Some(Value::Keyword(v)) = node.value("grid-column-start") {
+        cs = parse_gline(&v);
+    }
+    if let Some(Value::Keyword(v)) = node.value("grid-column-end") {
+        ce = parse_gline(&v);
+    }
+    if let Some(Value::Keyword(v)) = node.value("grid-row-start") {
+        rs = parse_gline(&v);
+    }
+    if let Some(Value::Keyword(v)) = node.value("grid-row-end") {
+        re = parse_gline(&v);
+    }
+    let (c0, cspan) = resolve_axis(cs, ce, ncols);
+    let (r0, rspan) = resolve_axis(rs, re, nrows);
+    (c0, cspan, r0, rspan)
+}
+
+// 점유 격자 헬퍼 (행은 필요 시 확장)
+fn grid_free(occ: &[Vec<bool>], r0: usize, c0: usize, rspan: usize, cspan: usize, ncols: usize) -> bool {
+    if c0 + cspan > ncols {
+        return false;
+    }
+    for r in r0..r0 + rspan {
+        if r >= occ.len() {
+            continue;
+        }
+        for c in c0..c0 + cspan {
+            if occ[r][c] {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn grid_mark(occ: &mut Vec<Vec<bool>>, r0: usize, c0: usize, rspan: usize, cspan: usize, ncols: usize) {
+    while occ.len() < r0 + rspan {
+        occ.push(vec![false; ncols]);
+    }
+    for r in r0..r0 + rspan {
+        for c in c0..c0 + cspan {
+            if c < ncols {
+                occ[r][c] = true;
+            }
+        }
     }
 }
 
