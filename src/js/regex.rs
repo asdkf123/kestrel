@@ -62,6 +62,8 @@ pub struct Match {
 pub struct Regex {
     prog: Vec<Inst>,
     ngroups: usize,
+    // 이름 있는 그룹 (?<name>...) → 그룹 인덱스. .groups / $<name> 치환에 사용.
+    pub group_names: Vec<(String, usize)>,
     ignore_case: bool,
     multiline: bool,
     dotall: bool,
@@ -90,6 +92,7 @@ struct Parser {
     c: Vec<char>,
     i: usize,
     ngroups: usize,
+    group_names: Vec<(String, usize)>,
 }
 
 impl Parser {
@@ -223,6 +226,29 @@ impl Parser {
                             self.expect_close()?;
                             Ok(Ast::Look(true, Box::new(inner)))
                         }
+                        // (?<name>...) 이름 있는 캡처 그룹 / (?<=..)(?<!..) 룩비하인드
+                        Some('<') => match self.peek() {
+                            Some('=') | Some('!') => {
+                                Err("룩비하인드 미지원".to_string())
+                            }
+                            _ => {
+                                let mut name = String::new();
+                                while let Some(c) = self.peek() {
+                                    if c == '>' {
+                                        break;
+                                    }
+                                    name.push(c);
+                                    self.i += 1;
+                                }
+                                self.eat('>');
+                                self.ngroups += 1;
+                                let idx = self.ngroups;
+                                self.group_names.push((name, idx));
+                                let inner = self.parse_alt()?;
+                                self.expect_close()?;
+                                Ok(Ast::Group(idx, Box::new(inner)))
+                            }
+                        },
                         _ => Err("지원 안 하는 그룹".to_string()),
                     }
                 } else {
@@ -500,12 +526,13 @@ const REGEX_STEP_LIMIT: usize = 2_000_000;
 
 impl Regex {
     pub fn compile_pattern(source: &str, flags: &str) -> Result<Regex, String> {
-        let mut p = Parser { c: source.chars().collect(), i: 0, ngroups: 0 };
+        let mut p = Parser { c: source.chars().collect(), i: 0, ngroups: 0, group_names: Vec::new() };
         let ast = p.parse_alt()?;
         if p.i != p.c.len() {
             return Err(format!("정규식 파싱 실패 (위치 {})", p.i));
         }
         let ngroups = p.ngroups;
+        let group_names = std::mem::take(&mut p.group_names);
         let mut prog = Vec::new();
         prog.push(Inst::Save(0));
         compile(&ast, &mut prog);
@@ -514,6 +541,7 @@ impl Regex {
         Ok(Regex {
             prog,
             ngroups,
+            group_names,
             ignore_case: flags.contains('i'),
             multiline: flags.contains('m'),
             dotall: flags.contains('s'),
@@ -641,6 +669,7 @@ impl Regex {
                 let sub = Regex {
                     prog: prog.clone(),
                     ngroups: 0,
+                    group_names: Vec::new(),
                     ignore_case: self.ignore_case,
                     multiline: self.multiline,
                     dotall: self.dotall,

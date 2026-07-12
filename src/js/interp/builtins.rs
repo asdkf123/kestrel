@@ -188,11 +188,12 @@ impl Interp {
         Ok(Value::Undefined)
     }
 
-    // 정규식 매치 → [full, g1, ...] 배열 (+ index/input own-property)
+    // 정규식 매치 → [full, g1, ...] 배열 (+ index/input/groups own-property)
     pub(super) fn regex_match_array(
         &self,
         chars: &[char],
         mt: &crate::js::regex::Match,
+        group_names: &[(String, usize)],
     ) -> Value {
         let mut items = Vec::new();
         for g in &mt.groups {
@@ -202,8 +203,27 @@ impl Interp {
             }
         }
         let arr = ArrayObj::new(items);
-        arr.set_prop("index".to_string(), Value::Num(mt.start as f64));
+        // index 는 UTF-16 코드 유닛 오프셋(정규식 엔진은 코드포인트 인덱스).
+        let u16_index: usize = chars[..mt.start].iter().map(|c| c.len_utf16()).sum();
+        arr.set_prop("index".to_string(), Value::Num(u16_index as f64));
         arr.set_prop("input".to_string(), Value::Str(chars.iter().collect()));
+        // groups: 이름 있는 그룹의 {name: value} (없으면 undefined)
+        let groups = if group_names.is_empty() {
+            Value::Undefined
+        } else {
+            let mut g = ObjMap::new();
+            for (name, idx) in group_names {
+                let v = mt
+                    .groups
+                    .get(*idx)
+                    .and_then(|o| o.as_ref())
+                    .map(|(a, b)| Value::Str(chars[*a..*b].iter().collect()))
+                    .unwrap_or(Value::Undefined);
+                g.insert(name.clone(), v);
+            }
+            Value::Obj(Rc::new(RefCell::new(g)))
+        };
+        arr.set_prop("groups".to_string(), groups);
         Value::Arr(arr)
     }
 
@@ -956,7 +976,7 @@ impl Interp {
                                     .insert("lastIndex".to_string(), Value::Num(mt.end as f64));
                             }
                         }
-                        Ok(self.regex_match_array(&chars, &mt))
+                        Ok(self.regex_match_array(&chars, &mt, &re.group_names))
                     }
                     None => {
                         if re.global {
@@ -1454,7 +1474,7 @@ impl Interp {
                             }
                         } else {
                             match re.find(&chars, 0) {
-                                Some(mt) => self.regex_match_array(&chars, &mt),
+                                Some(mt) => self.regex_match_array(&chars, &mt, &re.group_names),
                                 None => Value::Null,
                             }
                         }
@@ -1469,7 +1489,7 @@ impl Interp {
                         let mut out = Vec::new();
                         let mut pos = 0;
                         while let Some(mt) = re.find(&chars, pos) {
-                            out.push(self.regex_match_array(&chars, &mt));
+                            out.push(self.regex_match_array(&chars, &mt, &re.group_names));
                             pos = if mt.end > mt.start { mt.end } else { mt.end + 1 };
                             if pos > chars.len() {
                                 break;

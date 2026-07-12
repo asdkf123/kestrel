@@ -78,7 +78,7 @@
 - [x] CSS **상속 화이트리스트에 word-break/overflow-wrap/word-wrap 추가**(소비되나 미상속이던 것). (6885dd8)
 - [x] JS **instanceof** — function 생성자/Object.create 체인/내장/원시값 모두 정확(프로토타입 링크로 해소, 1899093). 확인 완료.
 - [x] JS **인스턴스 Object.prototype 폴백**(hasOwnProperty/toString/valueOf 등). (6a8dc70)
-- [ ] JS **정규식 named group/lookbehind 미지원, step-limit 무음 no-match**. (regex.rs:226,530)
+- [~] JS **정규식 named group (?<n>) 지원**(번호/.groups/치환). 룩비하인드는 명시적 에러. step-limit 은 후속. (다음 커밋)
 - [ ] JS **제너레이터 즉시 전체평가**. (mod.rs:2784)
 - [ ] JS **객체리터럴 계산 Symbol 키 불일치**(for-of 사용자 이터러블 안됨). (mod.rs:1962)
 - [~] JS **Date.parse/Date.UTC 구현(4568092) + JSON toJSON(ISO, 25aa6fd)** 완료. UTC전용(로컬시간대 미구현)은 후속.

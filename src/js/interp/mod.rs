@@ -4513,6 +4513,21 @@ mod tests {
     }
 
     #[test]
+    fn regex_named_groups() {
+        // (?<name>...) 이름 있는 그룹: 번호 접근 + .groups 이름 접근 + 번호 치환.
+        assert_eq!(run_str("'2020-01-15'.match(/(?<y>\\d{4})-(?<m>\\d{2})/)[1]"), "2020");
+        assert_eq!(run_str("'2020-01-15'.match(/(?<y>\\d{4})-(?<m>\\d{2})/).groups.y"), "2020");
+        assert_eq!(run_str("'2020-01-15'.match(/(?<y>\\d{4})-(?<m>\\d{2})/).groups.m"), "01");
+        assert_eq!(
+            run_str("'2020-01-15'.replace(/(?<y>\\d{4})-(?<m>\\d{2})-(?<d>\\d{2})/, '$3.$2.$1')"),
+            "15.01.2020"
+        );
+        assert!(run_bool("/(?<year>\\d+)/.test('abc123')"));
+        // 이름 그룹 없으면 groups 는 undefined
+        assert!(run_bool("'ab'.match(/a/).groups === undefined"));
+    }
+
+    #[test]
     fn array_from_and_of() {
         // Array.from: 이터러블/문자열(코드포인트)/Set/array-like/mapFn.
         assert_eq!(run_str("Array.from([1,2,3]).join(',')"), "1,2,3");
