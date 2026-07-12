@@ -528,7 +528,44 @@ impl Interp {
                 Ok(obj)
             }
             // freeze 는 그대로 반환(불변성 미구현)
-            Native::ObjectFreeze => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
+            // freeze/seal/preventExtensions: 객체/배열에 마커를 달아 실제로 상태를 남긴다.
+            // (@@ 접두 → 비열거) 프로퍼티 대입 경로가 이 마커를 보고 변경을 막는다.
+            Native::ObjectFreeze | Native::ObjectSeal | Native::ObjectPreventExt => {
+                let arg = args.into_iter().next().unwrap_or(Value::Undefined);
+                let marker = match n {
+                    Native::ObjectFreeze => "@@frozen",
+                    Native::ObjectSeal => "@@sealed",
+                    _ => "@@nonext",
+                };
+                match &arg {
+                    Value::Obj(m) => {
+                        m.borrow_mut().insert(marker.to_string(), Value::Bool(true));
+                    }
+                    Value::Arr(a) => a.set_prop(marker.to_string(), Value::Bool(true)),
+                    _ => {}
+                }
+                Ok(arg)
+            }
+            // isFrozen/isSealed/isExtensible. 원시값은 frozen·sealed=true, extensible=false.
+            Native::ObjectIsFrozen | Native::ObjectIsSealed | Native::ObjectIsExtensible => {
+                let flags = |has: &dyn Fn(&str) -> bool| {
+                    let frozen = has("@@frozen");
+                    let sealed = frozen || has("@@sealed");
+                    let nonext = sealed || has("@@nonext");
+                    match n {
+                        Native::ObjectIsFrozen => frozen,
+                        Native::ObjectIsSealed => sealed,
+                        _ => !nonext, // isExtensible
+                    }
+                };
+                let r = match args.first() {
+                    Some(Value::Obj(m)) => flags(&|k| m.borrow().contains_key(k)),
+                    Some(Value::Arr(a)) => flags(&|k| a.get_prop(k).is_some()),
+                    // 비객체(원시값 등): frozen/sealed=true, extensible=false
+                    _ => !matches!(n, Native::ObjectIsExtensible),
+                };
+                Ok(Value::Bool(r))
+            }
             // getPrototypeOf: 객체의 __proto__ 링크(없으면 null)
             Native::ObjectGetPrototypeOf => Ok(match args.first() {
                 Some(Value::Obj(m)) => m.borrow().get("__proto__").cloned().unwrap_or(Value::Null),

@@ -246,6 +246,11 @@ pub enum Native {
     ObjectDefineProperty,
     ObjectCreate,
     ObjectFreeze,
+    ObjectSeal,
+    ObjectPreventExt,
+    ObjectIsFrozen,
+    ObjectIsSealed,
+    ObjectIsExtensible,
     ObjectGetPrototypeOf,
     HasOwnProperty,
     ObjToString,
@@ -964,6 +969,11 @@ impl Interp {
         object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperty));
         object_ns.insert("create".to_string(), Value::Native(Native::ObjectCreate));
         object_ns.insert("freeze".to_string(), Value::Native(Native::ObjectFreeze));
+        object_ns.insert("seal".to_string(), Value::Native(Native::ObjectSeal));
+        object_ns.insert("preventExtensions".to_string(), Value::Native(Native::ObjectPreventExt));
+        object_ns.insert("isFrozen".to_string(), Value::Native(Native::ObjectIsFrozen));
+        object_ns.insert("isSealed".to_string(), Value::Native(Native::ObjectIsSealed));
+        object_ns.insert("isExtensible".to_string(), Value::Native(Native::ObjectIsExtensible));
         object_ns.insert(
             "getPrototypeOf".to_string(),
             Value::Native(Native::ObjectGetPrototypeOf),
@@ -3795,7 +3805,17 @@ impl Interp {
                         Ok(())
                     }
                     Value::Obj(map) => {
-                        map.borrow_mut().insert(key, value);
+                        let mut m = map.borrow_mut();
+                        // freeze: 변경 금지. seal/preventExtensions: 새 프로퍼티 추가 금지.
+                        if m.contains_key("@@frozen") {
+                            return Ok(());
+                        }
+                        if !m.contains_key(&key)
+                            && (m.contains_key("@@sealed") || m.contains_key("@@nonext"))
+                        {
+                            return Ok(());
+                        }
+                        m.insert(key, value);
                         Ok(())
                     }
                     Value::Arr(a) => {
@@ -4564,6 +4584,31 @@ mod tests {
             .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
             .unwrap();
         assert_eq!(to_display(&o), "100,50,10,20");
+    }
+
+    #[test]
+    fn object_integrity_methods() {
+        // freeze 후 isFrozen, 변경 무시
+        assert!(run_bool("var o={a:1}; Object.freeze(o); Object.isFrozen(o)"));
+        assert_eq!(run_num("var o={a:1}; Object.freeze(o); o.a=99; o.b=5; o.a"), 1.0);
+        assert!(run_bool("var o={a:1}; Object.freeze(o); o.b=5; o.b === undefined"));
+        // 안 얼린 객체는 isFrozen false, 변경 가능
+        assert!(run_bool("!Object.isFrozen({})"));
+        assert_eq!(run_num("var o={}; o.x=7; o.x"), 7.0);
+        // seal: 기존 값 변경 가능, 새 프로퍼티 추가 금지
+        assert_eq!(run_num("var o={a:1}; Object.seal(o); o.a=2; o.b=9; o.a"), 2.0);
+        assert!(run_bool("var o={a:1}; Object.seal(o); o.b=9; o.b === undefined"));
+        assert!(run_bool("var o={a:1}; Object.seal(o); Object.isSealed(o) && !Object.isFrozen(o)"));
+        // isExtensible
+        assert!(run_bool("Object.isExtensible({})"));
+        assert!(run_bool("var o={}; Object.preventExtensions(o); !Object.isExtensible(o)"));
+        // 원시값: frozen/sealed=true, extensible=false
+        assert!(run_bool("Object.isFrozen(5) && Object.isSealed('x') && !Object.isExtensible(3)"));
+        // freeze 는 인자를 반환 (체이닝)
+        assert_eq!(run_num("Object.freeze({a:42}).a"), 42.0);
+        // 배열도 정확: 안 얼린 배열은 not frozen
+        assert!(run_bool("!Object.isFrozen([1,2,3])"));
+        assert!(run_bool("var a=[1]; Object.freeze(a); Object.isFrozen(a)"));
     }
 
     #[test]
