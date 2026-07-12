@@ -305,6 +305,41 @@ impl Canvas {
         }
     }
 
+    // 둥근 테두리 링(annulus): outer 안이면서 inner 밖인 영역을 칠한다. 투명 배경
+    // 요소의 border-radius 테두리(고스트/아웃라인 버튼)를 각지지 않게 정확히 그린다.
+    pub fn fill_round_rect_ring(
+        &mut self,
+        color: Color,
+        outer: Rect,
+        outer_radii: [f32; 4],
+        inner: Rect,
+        inner_radii: [f32; 4],
+    ) {
+        if outer.width <= 0.0 || outer.height <= 0.0 {
+            return;
+        }
+        let px0 = outer.x.floor().max(0.0) as usize;
+        let py0 = outer.y.floor().max(0.0) as usize;
+        let px1 = ((outer.x + outer.width).ceil().max(0.0) as usize).min(self.width);
+        let py1 = ((outer.y + outer.height).ceil().max(0.0) as usize).min(self.height);
+        for py in py0..py1 {
+            for px in px0..px1 {
+                let (fx, fy) = (px as f32 + 0.5, py as f32 + 0.5);
+                let oc = round_rect_coverage(outer, outer_radii, fx, fy);
+                if oc <= 0.0 {
+                    continue;
+                }
+                let ic = round_rect_coverage(inner, inner_radii, fx, fy);
+                let cov = (oc * (1.0 - ic)).max(0.0);
+                if cov <= 0.0 {
+                    continue;
+                }
+                let a = (cov * (color.a as f32 / 255.0) * 255.0).round() as u8;
+                self.put(px, py, color, a);
+            }
+        }
+    }
+
     // 부드러운 둥근 사각형(드롭 섀도). 둥근 박스 SDF 로 경계에서 blur 폭에 걸쳐
     // 커버리지를 선형 감쇠시킨다. color 의 알파와 곱해 반투명 그림자를 만든다.
     pub fn fill_soft_round_rect(&mut self, color: Color, rect: Rect, radius: f32, blur: f32) {
@@ -721,6 +756,8 @@ fn parse_bg_position(s: &str) -> (BgCoord, BgCoord) {
 pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
     RoundRect { color: Color, rect: Rect, radii: [f32; 4] },
+    // 둥근 테두리 링: outer 안 && inner 밖 (투명 배경 border-radius 테두리)
+    RoundRectRing { color: Color, outer: Rect, outer_radii: [f32; 4], inner: Rect, inner_radii: [f32; 4] },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
     InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
@@ -1390,14 +1427,20 @@ fn emit_box_decorations(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         && border_side_drawn(lb, "top");
 
     let radii = corner_radii(lb);
-    // 라운드 + 균일 테두리 + 배경: 레이어드로 둥근 테두리
-    if r > 0.0 && border_uniform && bg.is_some() {
-        items.push(DisplayItem::RoundRect { color: border_side_color(lb, "top"), rect: b, radii });
+    // 라운드 + 균일 테두리: 배경(있으면 padding box 를 둥글게) + 테두리 링.
+    // 배경 유무 무관 — 투명 배경 고스트/아웃라인 버튼도 각지지 않는다.
+    if r > 0.0 && border_uniform {
+        let inner_rect = lb.dimensions.padding_box();
         let inner = radii.map(|c| (c - bw.top).max(0.0));
-        items.push(DisplayItem::RoundRect {
-            color: bg.unwrap(),
-            rect: lb.dimensions.padding_box(),
-            radii: inner,
+        if let Some(bgc) = bg {
+            items.push(DisplayItem::RoundRect { color: bgc, rect: inner_rect, radii: inner });
+        }
+        items.push(DisplayItem::RoundRectRing {
+            color: border_side_color(lb, "top"),
+            outer: b,
+            outer_radii: radii,
+            inner: inner_rect,
+            inner_radii: inner,
         });
         return;
     }
@@ -1493,6 +1536,14 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
     match item {
         DisplayItem::Rect { color, rect } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Rect { color, rect: r })
+        }
+        // 링은 outer 가 클립과 겹치면 유지(정밀 교차는 생략 — 테두리라 영향 미미)
+        DisplayItem::RoundRectRing { color, outer, outer_radii, inner, inner_radii } => {
+            if rect_intersect(outer, c).is_some() {
+                Some(DisplayItem::RoundRectRing { color, outer, outer_radii, inner, inner_radii })
+            } else {
+                None
+            }
         }
         DisplayItem::Image { image, rect, fit, pos } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit, pos })
@@ -2022,6 +2073,7 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
     match item {
         DisplayItem::Rect { color, .. }
         | DisplayItem::RoundRect { color, .. }
+        | DisplayItem::RoundRectRing { color, .. }
         | DisplayItem::Shadow { color, .. }
         | DisplayItem::InnerShadow { color, .. }
         | DisplayItem::Polygon { color, .. } => *color = apply_filters(*color, funcs),
@@ -2085,6 +2137,7 @@ fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
         DisplayItem::Rect { color, rect } | DisplayItem::RoundRect { color, rect, .. } => {
             *item = DisplayItem::Polygon { color: *color, contours: vec![quad(rect)] };
         }
+        DisplayItem::RoundRectRing { .. } => {} // 회전 미지원 (테두리 링, 드묾)
         DisplayItem::Polygon { contours, .. } => {
             for ct in contours.iter_mut() {
                 for p in ct.iter_mut() {
@@ -2131,6 +2184,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
     match item {
         DisplayItem::Rect { color, .. } => color.a = s(color.a),
         DisplayItem::RoundRect { color, .. } => color.a = s(color.a),
+        DisplayItem::RoundRectRing { color, .. } => color.a = s(color.a),
         DisplayItem::Shadow { color, .. } => color.a = s(color.a),
         DisplayItem::InnerShadow { color, .. } => color.a = s(color.a),
         DisplayItem::Glyph(gi) => gi.color.a = s(gi.color.a),
@@ -2215,6 +2269,20 @@ fn draw_item(
                 return;
             }
             canvas.fill_round_rect4(*color, r, radii.map(|c| c * scale));
+        }
+        DisplayItem::RoundRectRing { color, outer, outer_radii, inner, inner_radii } => {
+            let o = scale_rect(outer);
+            if o.y + o.height < 0.0 || o.y > vh {
+                return;
+            }
+            let i = scale_rect(inner);
+            canvas.fill_round_rect_ring(
+                *color,
+                o,
+                outer_radii.map(|c| c * scale),
+                i,
+                inner_radii.map(|c| c * scale),
+            );
         }
         DisplayItem::Shadow { color, rect, radius, blur } => {
             let r = scale_rect(rect);
@@ -2697,6 +2765,26 @@ mod tests {
             &mut cache,
             &[],
         )
+    }
+
+    #[test]
+    fn rounded_transparent_border_has_round_corners() {
+        // border-radius + border + 투명 배경 → 링으로 그려 모서리가 둥글다(각지지 않음).
+        // 이전엔 배경 없으면 사각 테두리(고스트/아웃라인 버튼 각짐).
+        let c = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 20px; height: 20px; \
+             border: 3px solid #ff0000; border-radius: 8px; }",
+            20.0,
+            20.0,
+        );
+        let px = |x: usize, y: usize| c.pixels[y * 20 + x];
+        // 모서리(0,0)는 둥근 경계 밖 → 배경(밝음, 빨강 아님)
+        let corner = px(0, 0);
+        assert!(corner.r > 200 && corner.g > 150, "모서리는 테두리 밖(밝음): {:?}", corner);
+        // 위 변 중앙(10,1)은 빨강 테두리
+        let top_mid = px(10, 1);
+        assert!(top_mid.r > 150 && top_mid.g < 120, "위 변 중앙은 빨강 테두리: {:?}", top_mid);
     }
 
     #[test]
