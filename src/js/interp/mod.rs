@@ -459,6 +459,14 @@ fn env_declare(env: &EnvRef, name: &str, value: Value) {
     env.borrow_mut().vars.insert(name.to_string(), value);
 }
 
+// 프로토타입 객체(Value::Obj)에서 키를 꺼낸다 (원시값이 자기 프로토타입 참조용).
+fn proto_prop(proto: &Value, key: &str) -> Value {
+    if let Value::Obj(m) = proto {
+        return m.borrow().get(key).cloned().unwrap_or(Value::Undefined);
+    }
+    Value::Undefined
+}
+
 // var 하이스팅: 함수/전역 진입 시 몸통의 모든 var 이름을 undefined 로 미리 선언.
 // 제어흐름 몸통(if/for/while/try/switch/block)은 파고들되, 중첩 함수 몸통은 제외
 // (var 은 함수 스코프). 이미 있는 이름(파라미터 등)은 덮지 않는다.
@@ -2296,7 +2304,8 @@ impl Interp {
                                 .map(|f| Value::Native(Native::DateMethod(f)))
                                 .unwrap_or(Value::Undefined))
                         }
-                        _ => Ok(Value::Undefined),
+                        // Object.prototype 폴백 — 인스턴스 객체도 valueOf/toString/hasOwnProperty 등
+                        _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),
                     },
                 }
             }
@@ -2609,17 +2618,17 @@ impl Interp {
                 "length" => Ok(Value::Num(0.0)),
                 _ => Ok(Value::Undefined),
             },
-            // 숫자 메서드: (5).toFixed(2), n.toString(radix)
+            // 숫자 메서드: (5).toFixed(2), n.toString(radix). 나머지는 Number.prototype 폴백.
             Value::Num(_) => Ok(match key {
                 "toFixed" | "toPrecision" => Value::Native(Native::NumToFixed),
                 "toString" | "toLocaleString" => Value::Native(Native::ValueToStr),
                 "valueOf" => Value::Native(Native::ValueOfSelf),
-                _ => Value::Undefined,
+                _ => proto_prop(&self.number_proto, key),
             }),
             Value::Bool(_) => Ok(match key {
                 "toString" => Value::Native(Native::ValueToStr),
                 "valueOf" => Value::Native(Native::ValueOfSelf),
-                _ => Value::Undefined,
+                _ => proto_prop(&self.boolean_proto, key),
             }),
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
@@ -3886,6 +3895,16 @@ mod tests {
         assert_eq!(run_num("var s=0; for(var i=0;i<3;i++)s+=i; i"), 3.0);
         // 선언 전 사용 시 하이스트된 undefined
         assert_eq!(run_num("var r=(typeof q==='undefined'?1:2); var q=5; r"), 1.0);
+    }
+
+    #[test]
+    fn instance_consults_prototype() {
+        // 인스턴스 객체가 Object.prototype 메서드를 봄 (uncurryThis 및 인스턴스 호출)
+        assert!(run_bool("({a:1}).hasOwnProperty('a')"));
+        assert!(run_bool("!({a:1}).hasOwnProperty('b')"));
+        assert_eq!(run_num("({n:5}).valueOf().n"), 5.0);
+        assert_eq!(run_str("({}).toString()"), "[object Object]");
+        assert!(run_bool("({a:1}).propertyIsEnumerable('a')"));
     }
 
     #[test]

@@ -163,6 +163,18 @@ if (!Array.of) Array.of = function(...a){ return a; };
 if (!Array.prototype.entries) Array.prototype.entries = function(){ var r = []; for (var i = 0; i < this.length; i++) r.push([i, this[i]]); return r; };
 if (!Array.prototype.fill) Array.prototype.fill = function(v, s, e){ s = s === undefined ? 0 : (s < 0 ? this.length + s : s); e = e === undefined ? this.length : (e < 0 ? this.length + e : e); for (var i = s; i < e; i++) this[i] = v; return this; };
 if (!Array.prototype.flatMap) Array.prototype.flatMap = function(fn){ return this.map(fn).flat(); };
+if (!Array.prototype.reduceRight) Array.prototype.reduceRight = function(fn){ var i = this.length - 1, acc; if (arguments.length > 1) { acc = arguments[1]; } else { acc = this[i--]; } for (; i >= 0; i--) acc = fn(acc, this[i], i, this); return acc; };
+if (!Array.prototype.lastIndexOf) Array.prototype.lastIndexOf = function(x){ for (var i = this.length - 1; i >= 0; i--) if (this[i] === x) return i; return -1; };
+if (!Array.prototype.toReversed) Array.prototype.toReversed = function(){ return this.slice().reverse(); };
+if (!Array.prototype.toSorted) Array.prototype.toSorted = function(fn){ return this.slice().sort(fn); };
+if (!Array.prototype.toLocaleString) Array.prototype.toLocaleString = function(){ return this.join(','); };
+if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(t, s, e){ var len = this.length; t = t < 0 ? len + t : t; s = s === undefined ? 0 : (s < 0 ? len + s : s); e = e === undefined ? len : (e < 0 ? len + e : e); var tmp = this.slice(s, e); for (var i = 0; i < tmp.length && t + i < len; i++) this[t + i] = tmp[i]; return this; };
+if (!String.prototype.localeCompare) String.prototype.localeCompare = function(o){ o = String(o); return this < o ? -1 : (this > o ? 1 : 0); };
+if (!String.prototype.normalize) String.prototype.normalize = function(){ return String(this); };
+if (!Object.hasOwn) Object.hasOwn = function(o, k){ return Object.prototype.hasOwnProperty.call(o, k); };
+if (!Object.is) Object.is = function(a, b){ if (a === b) return a !== 0 || 1 / a === 1 / b; return a !== a && b !== b; };
+if (!Object.getOwnPropertyDescriptors) Object.getOwnPropertyDescriptors = function(o){ var r = {}, k = Object.keys(o || {}); for (var i = 0; i < k.length; i++) r[k[i]] = Object.getOwnPropertyDescriptor(o, k[i]); return r; };
+if (!Number.prototype.toExponential) Number.prototype.toExponential = function(){ return String(this); };
 if (!Array.prototype.findLast) Array.prototype.findLast = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return this[i]; return undefined; };
 if (!Array.prototype.findLastIndex) Array.prototype.findLastIndex = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return i; return -1; };
 if (typeof console !== 'undefined') { var __klg = console.log; if (!console.warn) console.warn = __klg; if (!console.error) console.error = __klg; if (!console.info) console.info = __klg; if (!console.debug) console.debug = __klg; if (!console.trace) console.trace = __klg; if (!console.group) console.group = __kNoop; if (!console.groupEnd) console.groupEnd = __kNoop; if (!console.groupCollapsed) console.groupCollapsed = __kNoop; if (!console.table) console.table = __klg; if (!console.dir) console.dir = __klg; if (!console.assert) console.assert = __kNoop; if (!console.count) console.count = __kNoop; if (!console.time) console.time = __kNoop; if (!console.timeEnd) console.timeEnd = __kNoop; }
