@@ -596,6 +596,10 @@ pub struct Interp {
     fn_proto: Value,
     // String.prototype (문자열 메서드) — String.prototype.slice.call(x) 용.
     string_proto: Value,
+    // Number/Boolean/RegExp.prototype — core-js uncurryThis(Constructor.prototype.method) 용.
+    number_proto: Value,
+    boolean_proto: Value,
+    regexp_proto: Value,
     // 페이지 기준 URL (상대 URL 해석용 — XHR/fetch)
     base_url: Option<String>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
@@ -876,6 +880,30 @@ impl Interp {
             string_proto.insert(name.to_string(), Value::Native(Native::Str(op)));
         }
         let string_proto = Value::Obj(Rc::new(RefCell::new(string_proto)));
+        // Number/Boolean/RegExp.prototype — 원시값 메서드 네이티브를 재사용.
+        let mk_proto = |pairs: Vec<(&str, Native)>| {
+            let mut m = HashMap::new();
+            for (k, n) in pairs {
+                m.insert(k.to_string(), Value::Native(n));
+            }
+            Value::Obj(Rc::new(RefCell::new(m)))
+        };
+        let number_proto = mk_proto(vec![
+            ("toString", Native::ValueToStr),
+            ("toLocaleString", Native::ValueToStr),
+            ("toFixed", Native::NumToFixed),
+            ("toPrecision", Native::NumToFixed),
+            ("valueOf", Native::ValueOfSelf),
+        ]);
+        let boolean_proto = mk_proto(vec![
+            ("toString", Native::ValueToStr),
+            ("valueOf", Native::ValueOfSelf),
+        ]);
+        let regexp_proto = mk_proto(vec![
+            ("exec", Native::RegexExec),
+            ("test", Native::RegexTest),
+            ("toString", Native::ValueToStr),
+        ]);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -899,6 +927,9 @@ impl Interp {
             microtasks: std::collections::VecDeque::new(),
             fn_proto,
             string_proto,
+            number_proto,
+            boolean_proto,
+            regexp_proto,
             base_url: None,
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
@@ -2555,7 +2586,15 @@ impl Interp {
                 "POSITIVE_INFINITY" => Value::Num(f64::INFINITY),
                 "NEGATIVE_INFINITY" => Value::Num(f64::NEG_INFINITY),
                 "NaN" => Value::Num(f64::NAN),
-                "prototype" => Value::Obj(Rc::new(RefCell::new(HashMap::new()))),
+                "prototype" => self.number_proto.clone(),
+                _ => Value::Undefined,
+            }),
+            Value::Native(Native::BooleanCtor) => Ok(match key {
+                "prototype" => self.boolean_proto.clone(),
+                _ => Value::Undefined,
+            }),
+            Value::Native(Native::RegExpCtor) => Ok(match key {
+                "prototype" => self.regexp_proto.clone(),
                 _ => Value::Undefined,
             }),
             // 네이티브/바운드 함수도 호출 어댑터 제공
