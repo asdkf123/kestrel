@@ -335,6 +335,25 @@ pub(super) fn is_date_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(map.borrow().get("__isDate"), Some(Value::Bool(true)))
 }
 
+// 엔진 내부 마커 키(구현 세부). Date/Promise/정규식/반복자 등의 상태를 프로퍼티 맵에
+// 담는데, 이 키들은 열거(Object.keys/for-in/JSON/스프레드)에 노출되면 안 된다.
+// 사용자 데이터 키(__typename, __esModule 등)와 겹치지 않는 엔진 전용 이름만.
+pub(super) fn is_internal_key(k: &str) -> bool {
+    matches!(
+        k,
+        "__proto__"
+            | "__isDate"
+            | "__time"
+            | "__isPromise"
+            | "__state"
+            | "__value"
+            | "__cbs"
+            | "__i"
+            | "__items"
+            | "__isRegex"
+    )
+}
+
 fn two(n: u32) -> String {
     format!("{:02}", n)
 }
@@ -663,12 +682,24 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
                 .collect();
             Some(format!("[{}]", items.join(",")))
         }
+        // Date 는 toJSON 규약대로 ISO 문자열로 직렬화(내부 마커 노출 아님).
+        Value::Obj(map) if is_date_obj(map) => {
+            let millis = match map.borrow().get("__time") {
+                Some(Value::Num(n)) => *n,
+                _ => 0.0,
+            };
+            if millis.is_finite() {
+                Some(json_quote(&date_iso(millis)))
+            } else {
+                Some("null".to_string()) // Invalid Date → null (표준)
+            }
+        }
         Value::Obj(map) => {
             let m = map.borrow();
-            // 삽입 순서 유지(ObjMap). __proto__ 링크는 직렬화 대상 아님.
+            // 삽입 순서 유지(ObjMap). 엔진 내부 마커(__proto__/__isDate 등)는 제외.
             let parts: Vec<String> = m
                 .iter()
-                .filter(|(k, _)| *k != "__proto__")
+                .filter(|(k, _)| !is_internal_key(k))
                 .filter_map(|(k, v)| json_stringify(v).map(|s| format!("{}:{}", json_quote(k), s)))
                 .collect();
             Some(format!("{{{}}}", parts.join(",")))

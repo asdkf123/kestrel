@@ -1077,9 +1077,7 @@ impl Interp {
         m.insert("__state".to_string(), Value::Str("pending".to_string()));
         m.insert("__value".to_string(), Value::Undefined);
         m.insert("__cbs".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
-        m.insert("then".to_string(), Value::Native(Native::PromiseThen));
-        m.insert("catch".to_string(), Value::Native(Native::PromiseCatch));
-        m.insert("finally".to_string(), Value::Native(Native::PromiseFinally));
+        // then/catch/finally 는 own 프로퍼티가 아니라 member_get 에서 해석(비열거).
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
@@ -1758,7 +1756,7 @@ impl Interp {
                     match &value {
                         Value::Obj(o) => {
                             for (k, v) in o.borrow().iter() {
-                                if !consumed.contains(k.as_str()) && k != "__proto__" {
+                                if !consumed.contains(k.as_str()) && !is_internal_key(k.as_str()) {
                                     map.insert(k.clone(), v.clone());
                                 }
                             }
@@ -2021,7 +2019,7 @@ impl Interp {
                 let target = self.eval(obj, env)?;
                 let keys: Vec<String> = match &target {
                     // __proto__ 링크는 열거 대상 아님(JS 에서 non-enumerable accessor)
-                    Value::Obj(m) => m.borrow().keys().filter(|k| *k != "__proto__").cloned().collect(),
+                    Value::Obj(m) => m.borrow().keys().filter(|k| !is_internal_key(k.as_str())).cloned().collect(),
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.chars().count()).map(|i| i.to_string()).collect(),
                     _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
@@ -2143,7 +2141,7 @@ impl Interp {
                         match self.eval(e, env)? {
                             Value::Obj(o) => {
                                 for (k, v) in o.borrow().iter() {
-                                    if k != "__proto__" {
+                                    if !is_internal_key(k.as_str()) {
                                         map.insert(k.clone(), v.clone());
                                     }
                                 }
@@ -2661,6 +2659,10 @@ impl Interp {
                         "propertyIsEnumerable" => Ok(Value::Native(Native::HasOwnProperty)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
+                        // promise 메서드는 프로토타입 격(비열거) — own 프로퍼티 아님.
+                        "then" if is_promise(recv) => Ok(Value::Native(Native::PromiseThen)),
+                        "catch" if is_promise(recv) => Ok(Value::Native(Native::PromiseCatch)),
+                        "finally" if is_promise(recv) => Ok(Value::Native(Native::PromiseFinally)),
                         _ if is_date_obj(map) => {
                             let field = match key {
                                 "getTime" | "valueOf" => Some(DateField::Time),
@@ -4432,6 +4434,21 @@ mod tests {
         assert_eq!(run_str("var o={a:1}; delete o.a; typeof o.a"), "undefined");
         assert!(run_bool("var o={a:1}; delete o['a']; !('a' in o)"));
         assert!(run_bool("var o={a:1}; delete o.a === true"));
+    }
+
+    #[test]
+    fn internal_markers_not_leaked() {
+        // Date/Promise 의 엔진 내부 마커가 Object.keys/JSON 에 노출되지 않는다.
+        assert_eq!(run_num("Object.keys(new Date(0)).length"), 0.0);
+        assert_eq!(run_num("Object.keys(Promise.resolve(1)).length"), 0.0);
+        // Date 는 JSON 에서 ISO 문자열(toJSON 규약).
+        assert_eq!(run_str("JSON.stringify(new Date(0))"), "\"1970-01-01T00:00:00.000Z\"");
+        assert_eq!(run_str("JSON.stringify({d: new Date(0)})"),
+            "{\"d\":\"1970-01-01T00:00:00.000Z\"}");
+        // 사용자 __ 키(__typename 등)는 보존 — 내부 마커만 필터.
+        assert_eq!(run_str("JSON.stringify({__typename:'X', a:1})"),
+            "{\"__typename\":\"X\",\"a\":1}");
+        assert_eq!(run_str("Object.keys({__typename:'X'}).join(',')"), "__typename");
     }
 
     #[test]
