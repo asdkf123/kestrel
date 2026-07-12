@@ -177,8 +177,11 @@ pub enum Stmt {
     DoWhile { body: Vec<Stmt>, cond: Expr },
     For { init: Option<Box<Stmt>>, cond: Option<Expr>, step: Option<Expr>, body: Vec<Stmt> },
     Return(Option<Expr>),
-    Break,
-    Continue,
+    // break/continue 의 선택적 레이블 (break outer;). None 은 가장 안쪽 루프/스위치.
+    Break(Option<String>),
+    Continue(Option<String>),
+    // 레이블 붙은 문 (outer: for(...)). break/continue 가 이 레이블을 지목할 수 있다.
+    Labeled(String, Box<Stmt>),
     Block(Vec<Stmt>),
     Expr(Expr),
     Throw(Expr),

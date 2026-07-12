@@ -578,8 +578,27 @@ fn hoist_stmt(s: &Stmt, scope: &EnvRef) {
 enum Flow {
     Normal(Value),
     Return(Value),
-    Break,
-    Continue,
+    // 선택적 레이블. Some(l) 은 레이블 l 을 지목한 break/continue.
+    Break(Option<String>),
+    Continue(Option<String>),
+}
+
+// 루프 몸통 실행 결과를 이 루프(my_label) 기준으로 해석.
+enum LoopAct {
+    Exit,            // 이 루프 종료 (break)
+    Next,            // 다음 반복 (정상 종료 또는 continue)
+    Propagate(Flow), // 이 루프 소관 아님 (return, 상위 레이블 대상 break/continue)
+}
+
+fn loop_action(f: Flow, my_label: &Option<String>) -> LoopAct {
+    match f {
+        Flow::Break(None) => LoopAct::Exit,
+        Flow::Break(Some(l)) if Some(&l) == my_label.as_ref() => LoopAct::Exit,
+        Flow::Continue(None) => LoopAct::Next,
+        Flow::Continue(Some(l)) if Some(&l) == my_label.as_ref() => LoopAct::Next,
+        Flow::Normal(_) => LoopAct::Next,
+        other => LoopAct::Propagate(other),
+    }
 }
 
 // ── 인터프리터 ────────────────────────────────────────────────────
@@ -637,6 +656,8 @@ pub struct Interp {
     // undefined 로 (표준 아님, naver 등 롱테일 거리 측정용). 접근 키를 집계.
     lenient: bool,
     pub lenient_hits: std::collections::HashMap<String, usize>,
+    // 레이블 문(outer:)이 직후 루프/문에 넘겨줄 레이블. 그 문의 exec_stmt 가 즉시 take.
+    pending_label: Option<String>,
 }
 
 impl Interp {
@@ -970,6 +991,7 @@ impl Interp {
             base_url: None,
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
+            pending_label: None,
         }
     }
 
@@ -1684,6 +1706,8 @@ impl Interp {
 
     fn exec_stmt(&mut self, stmt: &Stmt, env: &EnvRef) -> Result<Flow, String> {
         self.tick()?;
+        // 직전 레이블 문이 남긴 레이블을 이 문(주로 루프)이 가져간다. 루프 아닌 문은 무시.
+        let my_label = self.pending_label.take();
         match stmt {
             Stmt::VarDecl { kind, decls } => {
                 let is_var = matches!(kind, crate::js::ast::DeclKind::Var);
@@ -1727,10 +1751,10 @@ impl Interp {
                         break;
                     }
                     let scope = Env::new(Some(env.clone()));
-                    match self.exec_block(body, &scope)? {
-                        Flow::Break => break,
-                        Flow::Continue | Flow::Normal(_) => {}
-                        ret => return Ok(ret),
+                    match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                        LoopAct::Exit => break,
+                        LoopAct::Next => {}
+                        LoopAct::Propagate(f) => return Ok(f),
                     }
                 }
                 Ok(Flow::Normal(Value::Undefined))
@@ -1739,10 +1763,10 @@ impl Interp {
                 loop {
                     self.tick()?;
                     let scope = Env::new(Some(env.clone()));
-                    match self.exec_block(body, &scope)? {
-                        Flow::Break => break,
-                        Flow::Continue | Flow::Normal(_) => {}
-                        ret => return Ok(ret),
+                    match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                        LoopAct::Exit => break,
+                        LoopAct::Next => {}
+                        LoopAct::Propagate(f) => return Ok(f),
                     }
                     if !to_bool(&self.eval(cond, env)?) {
                         break;
@@ -1786,10 +1810,10 @@ impl Interp {
                         }
                     }
                     let scope = Env::new(Some(cur.clone()));
-                    match self.exec_block(body, &scope)? {
-                        Flow::Break => break,
-                        Flow::Continue | Flow::Normal(_) => {}
-                        ret => return Ok(ret),
+                    match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                        LoopAct::Exit => break,
+                        LoopAct::Next => {}
+                        LoopAct::Propagate(f) => return Ok(f),
                     }
                     // 다음 반복: 현재 값 복사 후 step 실행 (step 은 새 바인딩에 반영)
                     let next = make_iter(&cur);
@@ -1807,8 +1831,20 @@ impl Interp {
                 };
                 Ok(Flow::Return(v))
             }
-            Stmt::Break => Ok(Flow::Break),
-            Stmt::Continue => Ok(Flow::Continue),
+            Stmt::Break(label) => Ok(Flow::Break(label.clone())),
+            Stmt::Continue(label) => Ok(Flow::Continue(label.clone())),
+            Stmt::Labeled(label, inner) => {
+                // 레이블을 직후 문(주로 루프)이 가져가도록 남긴다.
+                self.pending_label = Some(label.clone());
+                let r = self.exec_stmt(inner, env)?;
+                self.pending_label = None; // 루프면 이미 take, 아니면 여기서 정리
+                // 루프 아닌 레이블 문(블록/if 등)을 지목한 break/continue 는 여기서 소비.
+                match r {
+                    Flow::Break(Some(l)) if l == *label => Ok(Flow::Normal(Value::Undefined)),
+                    Flow::Continue(Some(l)) if l == *label => Ok(Flow::Normal(Value::Undefined)),
+                    other => Ok(other),
+                }
+            }
             Stmt::Block(stmts) => {
                 let scope = Env::new(Some(env.clone()));
                 self.exec_block(stmts, &scope)
@@ -1860,10 +1896,10 @@ impl Interp {
                     self.tick()?;
                     let scope = Env::new(Some(env.clone()));
                     env_declare(&scope, name, Value::Str(k));
-                    match self.exec_block(body, &scope)? {
-                        Flow::Break => break,
-                        Flow::Continue | Flow::Normal(_) => {}
-                        ret => return Ok(ret),
+                    match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                        LoopAct::Exit => break,
+                        LoopAct::Next => {}
+                        LoopAct::Propagate(f) => return Ok(f),
                     }
                 }
                 Ok(Flow::Normal(Value::Undefined))
@@ -1883,10 +1919,10 @@ impl Interp {
                     self.tick()?;
                     let scope = Env::new(Some(env.clone()));
                     env_declare(&scope, name, v);
-                    match self.exec_block(body, &scope)? {
-                        Flow::Break => break,
-                        Flow::Continue | Flow::Normal(_) => {}
-                        ret => return Ok(ret),
+                    match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                        LoopAct::Exit => break,
+                        LoopAct::Next => {}
+                        LoopAct::Propagate(f) => return Ok(f),
                     }
                 }
                 Ok(Flow::Normal(Value::Undefined))
@@ -1909,9 +1945,14 @@ impl Interp {
                 }
                 if let Some(s) = start {
                     for (_, stmts) in &cases[s..] {
-                        // 폴스루: break 가 나올 때까지 다음 케이스도 실행
+                        // 폴스루: break 가 나올 때까지 다음 케이스도 실행. 레이블 없는 break
+                        // 또는 이 switch 레이블을 지목한 break 면 종료, 그 외(continue/외부
+                        // 레이블/return)는 상위로 전파.
                         match self.exec_block(stmts, &scope)? {
-                            Flow::Break => return Ok(Flow::Normal(Value::Undefined)),
+                            Flow::Break(None) => return Ok(Flow::Normal(Value::Undefined)),
+                            Flow::Break(Some(l)) if Some(&l) == my_label.as_ref() => {
+                                return Ok(Flow::Normal(Value::Undefined))
+                            }
                             Flow::Normal(_) => {}
                             other => return Ok(other),
                         }
@@ -3380,6 +3421,44 @@ mod tests {
         assert_eq!(run_num("(1 + 2) * 3"), 9.0);
         assert_eq!(run_num("7 % 3"), 1.0);
         assert_eq!(run_num("-3 + 1"), -2.0);
+    }
+
+    #[test]
+    fn labeled_break_exits_outer_loop() {
+        // i=0: j 0,1,2 → r=3. i=1: j=0 → r=4, j=1 → break outer. 결과 4.
+        let src = "let r = 0; \
+            outer: for (let i = 0; i < 3; i++) { \
+              for (let j = 0; j < 3; j++) { \
+                if (i === 1 && j === 1) break outer; \
+                r++; \
+              } \
+            } r";
+        assert_eq!(run_num(src), 4.0);
+    }
+
+    #[test]
+    fn labeled_continue_skips_to_outer() {
+        // 각 i 에서 j=0 만 세고 j=1 이면 outer 로 continue → i 당 1씩, 총 3.
+        let src = "let r = 0; \
+            outer: for (let i = 0; i < 3; i++) { \
+              for (let j = 0; j < 3; j++) { \
+                if (j === 1) continue outer; \
+                r++; \
+              } \
+            } r";
+        assert_eq!(run_num(src), 3.0);
+    }
+
+    #[test]
+    fn unlabeled_break_continue_still_work() {
+        assert_eq!(run_num("let r=0; for(let i=0;i<5;i++){ if(i===3) break; r++; } r"), 3.0);
+        assert_eq!(run_num("let r=0; for(let i=0;i<5;i++){ if(i%2===0) continue; r++; } r"), 2.0);
+    }
+
+    #[test]
+    fn labeled_block_break() {
+        // 레이블 붙은 블록에서 break 로 탈출 → 이후 문 건너뜀.
+        assert_eq!(run_num("let r=0; block: { r=1; break block; r=99; } r"), 1.0);
     }
 
     #[test]

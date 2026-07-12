@@ -184,16 +184,14 @@ impl Parser {
         }
     }
 
-    // break/continue 뒤의 레이블: 다음이 문 종결이면 레이블로 보고 소비 (무시)
-    fn eat_label(&mut self) {
-        if matches!(self.peek(), Some(Tok::Ident(_)))
-            && matches!(
-                self.toks.get(self.pos + 1),
-                Some(Tok::Semi) | Some(Tok::RBrace) | Some(Tok::Case) | Some(Tok::Default) | None
-            )
-        {
+    // break/continue 뒤의 레이블: 식별자면 레이블 이름을 소비해 반환 (없으면 None).
+    fn eat_label(&mut self) -> Option<String> {
+        if let Some(Tok::Ident(name)) = self.peek() {
+            let name = name.clone();
             self.pos += 1;
+            return Some(name);
         }
+        None
     }
 
     // ── 문 ──────────────────────────────────────────────────────────
@@ -238,25 +236,23 @@ impl Parser {
             }
             Some(Tok::Break) => {
                 self.pos += 1;
-                if !self.newline_here() {
-                    self.eat_label(); // 개행이면 레이블 없음(ASI 제약 생성물)
-                }
+                // 개행이면 레이블 없음(ASI 제약 생성물)
+                let label = if self.newline_here() { None } else { self.eat_label() };
                 self.eat(&Tok::Semi);
-                Ok(Stmt::Break)
+                Ok(Stmt::Break(label))
             }
             Some(Tok::Continue) => {
                 self.pos += 1;
-                if !self.newline_here() {
-                    self.eat_label();
-                }
+                let label = if self.newline_here() { None } else { self.eat_label() };
                 self.eat(&Tok::Semi);
-                Ok(Stmt::Continue)
+                Ok(Stmt::Continue(label))
             }
-            // 레이블 문 (foo: stmt) — 레이블은 파싱만 하고 버림.
-            // break/continue 의 레이블도 무시되므로 다중 중첩 탈출 의미는 다를 수 있음 (관용)
-            Some(Tok::Ident(_)) if self.toks.get(self.pos + 1) == Some(&Tok::Colon) => {
-                self.pos += 2;
-                self.stmt()
+            // 레이블 문 (foo: stmt) — break/continue 가 이 레이블을 지목할 수 있게 보존.
+            Some(Tok::Ident(name)) if self.toks.get(self.pos + 1) == Some(&Tok::Colon) => {
+                let name = name.clone();
+                self.pos += 2; // Ident ':'
+                let inner = self.stmt()?;
+                Ok(Stmt::Labeled(name, Box::new(inner)))
             }
             Some(Tok::Throw) => {
                 self.pos += 1;
