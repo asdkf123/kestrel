@@ -57,7 +57,7 @@
 - [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
 - [x] 페인트 **점선/파선 테두리**(dashed/dotted). double/groove 는 근사. (7bbcf70)
 - [ ] 페인트 **그라디언트 프리멀티플라이 아님**(투명 페이드 탁함). (paint.rs:523)
-- [ ] 페인트 **박스섀도 선형(가우시안 아님), 필터블러 박스1패스**. (paint.rs:310,119)
+- [~] 페인트 **박스섀도 가우시안(erf 전이)** 완료. 필터 backdrop-blur 박스1패스는 후속. (다음 커밋)
 - [x] 페인트 **방사그라디언트 ellipse(기본)/circle 구분** — 축별 반경. 크기/위치는 아직 근사. (1d402ff)
 - [x] 페인트 **overflow 사각클립이 글리프/폴리곤 픽셀클립** — 경계 걸치면 사각 ClipShape 로 래핑. (e622fc2)
 - [x] 페인트 **폴리곤 AA**(세로 서브스캔라인 4 + 가로 부분커버리지). (bc07013)
@@ -67,7 +67,7 @@
 - [ ] 레이아웃 **인라인 레벨 SVG 미배치** — width/height 속성은 블록일 때만 반영(mod.rs:255).
   기본 display 의 `<svg>`(인라인)는 크기/렌더 안 됨. display:block/inline-block 필요.
   인라인 대체요소(img/inline-block/svg) 전반 문제와 동류(mod.rs 인라인). (검증 중 발견)
-- [ ] 페인트 **grayscale/saturate BT.601(스펙 709)**. (paint.rs:1937)
+- [x] 페인트 **grayscale/saturate BT.709**(이미 709 계수 사용, b957a7d 에서 반영됨). 확인 완료.
 - [ ] CSS **:where/:is/:not 명시도 오류**. (css/mod.rs:180)
 - [x] CSS **무단위 line-height 배수(Lh)로 상속** — 요소별 font-size 곱. %/길이는 길이 상속. (69f728a)
 - [x] CSS **calc() em/rem/vw 단위별 계수 보존 후 style 에서 px 확정**. (5951826)

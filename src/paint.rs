@@ -48,6 +48,19 @@ impl ClipShape {
     }
 }
 
+// 오차함수 erf 근사 (Abramowitz & Stegun 7.1.26, |오차|<1.5e-7). 가우시안 섀도 전이용.
+fn erf(x: f32) -> f32 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t
+            * (-x * x).exp();
+    sign * y
+}
+
 // 짝수-홀수 규칙 점-다각형 판정 (ray casting).
 fn point_in_polygon(pts: &[(f32, f32)], x: f32, y: f32) -> bool {
     let n = pts.len();
@@ -350,21 +363,25 @@ impl Canvas {
         }
     }
 
-    // 부드러운 둥근 사각형(드롭 섀도). 둥근 박스 SDF 로 경계에서 blur 폭에 걸쳐
-    // 커버리지를 선형 감쇠시킨다. color 의 알파와 곱해 반투명 그림자를 만든다.
+    // 부드러운 둥근 사각형(드롭 섀도). 둥근 박스 SDF 를 가우시안으로 흐린 근사 —
+    // 직선 경계에서 커버리지는 erf 전이(가우시안 적분). CSS blur 반경 ≈ 2σ 이므로
+    // σ=blur/2. color 의 알파와 곱해 반투명 그림자.
     pub fn fill_soft_round_rect(&mut self, color: Color, rect: Rect, radius: f32, blur: f32) {
         if rect.width <= 0.0 || rect.height <= 0.0 {
             return;
         }
-        let soft = blur.max(0.75);
+        let sigma = (blur * 0.5).max(0.5);
+        // 가우시안 꼬리(~3σ)까지 칠하도록 여유를 둔다.
+        let ext = (blur * 1.5).max(0.75);
         let (hw, hh) = (rect.width / 2.0, rect.height / 2.0);
         let (ccx, ccy) = (rect.x + hw, rect.y + hh);
         let r = radius.min(hw).min(hh).max(0.0);
-        let x0 = (rect.x - soft).floor().max(0.0) as usize;
-        let y0 = (rect.y - soft).floor().max(0.0) as usize;
-        let x1 = ((rect.x + rect.width + soft).ceil().max(0.0) as usize).min(self.width);
-        let y1 = ((rect.y + rect.height + soft).ceil().max(0.0) as usize).min(self.height);
+        let x0 = (rect.x - ext).floor().max(0.0) as usize;
+        let y0 = (rect.y - ext).floor().max(0.0) as usize;
+        let x1 = ((rect.x + rect.width + ext).ceil().max(0.0) as usize).min(self.width);
+        let y1 = ((rect.y + rect.height + ext).ceil().max(0.0) as usize).min(self.height);
         let base_a = color.a as f32 / 255.0;
+        let denom = sigma * std::f32::consts::SQRT_2;
         for py in y0..y1 {
             let fy = py as f32 + 0.5;
             for px in x0..x1 {
@@ -374,7 +391,8 @@ impl Canvas {
                 let qy = (fy - ccy).abs() - (hh - r);
                 let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
                 let sdf = outside + qx.max(qy).min(0.0) - r;
-                let cov = (0.5 - sdf / soft).clamp(0.0, 1.0);
+                // 가우시안 경계 전이: 안쪽(sdf<0)=1, 바깥=0, 폭은 σ 로 결정.
+                let cov = 0.5 * (1.0 - erf(sdf / denom));
                 if cov <= 0.0 {
                     continue;
                 }
@@ -3409,6 +3427,32 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn erf_matches_known_values() {
+        assert!(erf(0.0).abs() < 1e-4, "erf(0)=0");
+        assert!((erf(1.0) - 0.8427).abs() < 1e-3, "erf(1)≈0.8427, 실제 {}", erf(1.0));
+        assert!((erf(-1.0) + 0.8427).abs() < 1e-3, "erf(-1)≈-0.8427");
+        assert!((erf(2.0) - 0.9953).abs() < 1e-3, "erf(2)≈0.9953, 실제 {}", erf(2.0));
+    }
+
+    #[test]
+    fn gaussian_shadow_edge_is_half_and_falls_off() {
+        // 흰 캔버스에 검정 드롭섀도(반경 0, blur 6). 경계에서 ~50%, 밖으로 갈수록 옅어짐.
+        let mut canvas = Canvas::new(40, 40);
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        // 박스 [10..30] x [10..30], blur 6
+        canvas.fill_soft_round_rect(black, Rect { x: 10.0, y: 10.0, width: 20.0, height: 20.0 }, 0.0, 6.0);
+        // 중심(20,20) 내부 → 거의 검정
+        let center = canvas.pixels[20 * 40 + 20];
+        assert!(center.r < 20, "중심 진함, 실제 {}", center.r);
+        // 왼쪽 경계 픽셀 (10,20): sdf≈0 → cov≈0.5 → r≈128
+        let edge = canvas.pixels[20 * 40 + 10];
+        assert!((edge.r as i32 - 128).abs() < 40, "경계 ~50%(회색), 실제 {}", edge.r);
+        // 경계에서 더 바깥 (4,20) 은 더 옅다(밝다)
+        let outer = canvas.pixels[20 * 40 + 4];
+        assert!(outer.r > edge.r, "바깥이 경계보다 옅어야: {} > {}", outer.r, edge.r);
     }
 
     #[test]
