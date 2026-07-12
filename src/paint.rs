@@ -981,8 +981,83 @@ fn emit_box_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     }
 }
 
-// SVG path d 속성 → 서브패스(윤곽선) 폴리라인 목록. 베지어는 평탄화, 상대/절대 지원.
-// 지원: M/L/H/V/C/S/Q/T/Z (대소문자). A(호)는 끝점으로 직선 근사.
+// SVG 타원 호(A 명령)를 선분으로 평탄화 (SVG 구현 노트 F.6). (x0,y0)=시작,
+// (x1,y1)=끝, phi=x축 회전(rad). cubic/quad 와 같은 규약: 끝점은 push, 시작점은
+// 이미 out 에 있다고 가정.
+fn flatten_arc(
+    out: &mut Vec<(f32, f32)>,
+    x0: f32,
+    y0: f32,
+    mut rx: f32,
+    mut ry: f32,
+    phi: f32,
+    large_arc: bool,
+    sweep: bool,
+    x1: f32,
+    y1: f32,
+) {
+    if rx == 0.0 || ry == 0.0 {
+        out.push((x1, y1)); // 반경 0 → 직선
+        return;
+    }
+    rx = rx.abs();
+    ry = ry.abs();
+    let (sp, cp) = phi.sin_cos();
+    // F.6.5.1: 중점 기준 좌표계로 (회전 제거)
+    let dx = (x0 - x1) / 2.0;
+    let dy = (y0 - y1) / 2.0;
+    let x1p = cp * dx + sp * dy;
+    let y1p = -sp * dx + cp * dy;
+    // F.6.6.2: 반경이 너무 작으면 키운다
+    let lambda = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry);
+    if lambda > 1.0 {
+        let s = lambda.sqrt();
+        rx *= s;
+        ry *= s;
+    }
+    let (rx2, ry2) = (rx * rx, ry * ry);
+    // F.6.5.2: 중심
+    let num = (rx2 * ry2 - rx2 * y1p * y1p - ry2 * x1p * x1p).max(0.0);
+    let den = rx2 * y1p * y1p + ry2 * x1p * x1p;
+    let co = if den == 0.0 { 0.0 } else { (num / den).sqrt() };
+    let sign = if large_arc != sweep { 1.0 } else { -1.0 };
+    let cxp = sign * co * (rx * y1p / ry);
+    let cyp = sign * co * (-ry * x1p / rx);
+    let cx = cp * cxp - sp * cyp + (x0 + x1) / 2.0;
+    let cy = sp * cxp + cp * cyp + (y0 + y1) / 2.0;
+    // F.6.5.4: 시작각과 스윕각
+    let (ux, uy) = ((x1p - cxp) / rx, (y1p - cyp) / ry);
+    let (vx, vy) = ((-x1p - cxp) / rx, (-y1p - cyp) / ry);
+    let ang = |ux: f32, uy: f32, vx: f32, vy: f32| -> f32 {
+        let dot = ux * vx + uy * vy;
+        let len = ((ux * ux + uy * uy) * (vx * vx + vy * vy)).sqrt();
+        let mut a = if len == 0.0 { 0.0 } else { (dot / len).clamp(-1.0, 1.0).acos() };
+        if ux * vy - uy * vx < 0.0 {
+            a = -a;
+        }
+        a
+    };
+    let theta1 = ang(1.0, 0.0, ux, uy);
+    let mut dtheta = ang(ux, uy, vx, vy);
+    if !sweep && dtheta > 0.0 {
+        dtheta -= std::f32::consts::TAU;
+    }
+    if sweep && dtheta < 0.0 {
+        dtheta += std::f32::consts::TAU;
+    }
+    // 스윕각 크기에 비례해 분할 (약 32/원)
+    let n = ((dtheta.abs() / (std::f32::consts::PI / 16.0)).ceil() as usize).clamp(2, 64);
+    for i in 1..=n {
+        let t = theta1 + dtheta * (i as f32 / n as f32);
+        let (st, ct) = t.sin_cos();
+        let px = cp * rx * ct - sp * ry * st + cx;
+        let py = sp * rx * ct + cp * ry * st + cy;
+        out.push((px, py));
+    }
+}
+
+// SVG path d 속성 → 서브패스(윤곽선) 폴리라인 목록. 베지어/호는 평탄화, 상대/절대 지원.
+// 지원: M/L/H/V/C/S/Q/T/A/Z (대소문자).
 fn flatten_path(d: &str) -> Vec<Vec<(f32, f32)>> {
     // 1) 명령 그룹으로 토큰화
     struct Group {
@@ -1171,10 +1246,16 @@ fn flatten_path(d: &str) -> Vec<Vec<(f32, f32)>> {
                     y = y2;
                 }
                 'A' => {
-                    // 호는 끝점으로 직선 근사 (정확한 호 평탄화는 후속)
-                    x = if rel { x + a[5] } else { a[5] };
-                    y = if rel { y + a[6] } else { a[6] };
-                    cur.push((x, y));
+                    // rx ry x축회전 large-arc sweep x y
+                    let (rx, ry) = (a[0], a[1]);
+                    let phi = a[2].to_radians();
+                    let large = a[3] != 0.0;
+                    let sweep = a[4] != 0.0;
+                    let ex = if rel { x + a[5] } else { a[5] };
+                    let ey = if rel { y + a[6] } else { a[6] };
+                    flatten_arc(&mut cur, x, y, rx, ry, phi, large, sweep, ex, ey);
+                    x = ex;
+                    y = ey;
                 }
                 _ => {}
             }
@@ -3328,6 +3409,21 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn svg_arc_flattens_to_curve_not_chord() {
+        // (0,0)→(10,0) 반지름 5 반원. 예전엔 끝점 직선(현)만 → y 항상 0.
+        let mut out = vec![(0.0f32, 0.0f32)];
+        flatten_arc(&mut out, 0.0, 0.0, 5.0, 5.0, 0.0, false, false, 10.0, 0.0);
+        // 끝점 도달
+        let last = *out.last().unwrap();
+        assert!((last.0 - 10.0).abs() < 0.1 && last.1.abs() < 0.1, "끝점 (10,0): {:?}", last);
+        // 중간에 크게 부풀어야(현 아님) — |y| 최대가 반지름 근처
+        let max_bulge = out.iter().map(|&(_, y)| y.abs()).fold(0.0f32, f32::max);
+        assert!(max_bulge > 3.0, "호가 부풀어야(현 아님), 최대 |y|={}", max_bulge);
+        // 충분히 세분화
+        assert!(out.len() > 6, "선분 수 충분: {}", out.len());
     }
 
     #[test]
