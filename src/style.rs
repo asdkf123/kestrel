@@ -722,11 +722,12 @@ impl Default for Viewport {
 }
 
 // em/rem/vw 등 문맥 단위를 px 로 확정 (재귀: min/max/clamp 인자도). %는 레이아웃까지 보존.
-fn resolve_units(v: &mut Value, fs: f32, vp: Viewport) {
+// em 은 요소 font-size(fs), rem 은 루트 요소 font-size(root_fs) 기준.
+fn resolve_units(v: &mut Value, fs: f32, root_fs: f32, vp: Viewport) {
     match v {
         Value::Length(n, unit) => match unit {
             Unit::Em => *v = Value::Length(*n * fs, Unit::Px),
-            Unit::Rem => *v = Value::Length(*n * DEFAULT_FONT_SIZE, Unit::Px),
+            Unit::Rem => *v = Value::Length(*n * root_fs, Unit::Px),
             Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax => {
                 *v = Value::Length(*n / 100.0 * vp_unit_px(*unit, vp), Unit::Px)
             }
@@ -734,7 +735,7 @@ fn resolve_units(v: &mut Value, fs: f32, vp: Viewport) {
         },
         Value::MinMax(_, args) => {
             for a in args.iter_mut() {
-                resolve_units(a, fs, vp);
+                resolve_units(a, fs, root_fs, vp);
             }
         }
         _ => {}
@@ -774,7 +775,7 @@ pub fn style_tree_full<'a>(
 ) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes)
+    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, DEFAULT_FONT_SIZE)
 }
 
 pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
@@ -961,6 +962,7 @@ fn resolve_counters(content: &str, counters: &HashMap<String, i32>) -> String {
 // parent: 부모 요소의 계산값(상속 원천). 루트는 None. sib: 형제 문맥. vp: 뷰포트 크기.
 // pseudo: 합성 의사요소 노드의 명시값 맵.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn style_node<'a>(
     dom: &'a Dom,
     id: NodeId,
@@ -971,6 +973,7 @@ fn style_node<'a>(
     vp: Viewport,
     pseudo: &PseudoStyles,
     keyframes: &std::collections::HashMap<String, Vec<(String, Value)>>,
+    root_fs: f32, // 루트 요소 계산 font-size (rem 해석 기준)
 ) -> StyledNode<'a> {
     let node = dom.get(id);
     match node.node_type {
@@ -1022,7 +1025,7 @@ fn style_node<'a>(
             let fs = match values.get("font-size") {
                 Some(Value::Length(n, Unit::Px)) => *n,
                 Some(Value::Length(n, Unit::Em)) => n * parent_fs,
-                Some(Value::Length(n, Unit::Rem)) => n * DEFAULT_FONT_SIZE,
+                Some(Value::Length(n, Unit::Rem)) => n * root_fs,
                 Some(Value::Length(n, Unit::Percent)) => n / 100.0 * parent_fs,
                 Some(Value::Length(n, u @ (Unit::Vw | Unit::Vh | Unit::Vmin | Unit::Vmax))) => {
                     n / 100.0 * vp_unit_px(*u, vp)
@@ -1032,13 +1035,15 @@ fn style_node<'a>(
                     let kind = *kind;
                     let mut args = args.clone();
                     for a in args.iter_mut() {
-                        resolve_units(a, parent_fs, vp); // em 은 부모 font-size 기준
+                        resolve_units(a, parent_fs, root_fs, vp); // em 은 부모 font-size 기준
                     }
                     crate::css::eval_minmax(kind, &args, parent_fs)
                 }
                 _ => parent_fs, // 미지정/키워드 → 상속
             };
             values.insert("font-size".to_string(), Value::Length(fs, Unit::Px));
+            // 루트 요소면 이 요소의 계산 font-size 가 자손의 rem 기준이 된다.
+            let child_root_fs = if parent.is_none() { fs } else { root_fs };
             // align 속성 / <center> 요소 → text-align (CSS 미지정 시). 표준의
             // presentational hint. 여기서 안 잡히면 아래 상속 루프가 부모값 물려줌.
             if !values.contains_key("text-align") {
@@ -1100,7 +1105,7 @@ fn style_node<'a>(
                 if k == "font-size" {
                     continue;
                 }
-                resolve_units(v, fs, vp);
+                resolve_units(v, fs, root_fs, vp);
             }
             // currentColor 를 요소 계산 color 로 치환 (border-color/background-color 등).
             let cur_color = match values.get("color") {
@@ -1123,7 +1128,7 @@ fn style_node<'a>(
                 if let Some(frame) = keyframes.get(&name) {
                     for (k, v) in frame {
                         let mut vv = v.clone();
-                        resolve_units(&mut vv, fs, vp);
+                        resolve_units(&mut vv, fs, root_fs, vp);
                         values.insert(k.clone(), vv);
                     }
                 }
@@ -1157,7 +1162,7 @@ fn style_node<'a>(
                         // 구조적 문맥에 포함하지 않고 스타일만 (기본 형제 문맥)
                         children.push(style_node(
                             dom, child, index, ancestors, Some(&values),
-                            &SiblingCtx::default(), vp, pseudo, keyframes,
+                            &SiblingCtx::default(), vp, pseudo, keyframes, child_root_fs,
                         ));
                         continue;
                     }
@@ -1175,7 +1180,7 @@ fn style_node<'a>(
                         prev: &prev_elems,
                         has_children,
                     };
-                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo, keyframes));
+                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo, keyframes, child_root_fs));
                     prev_elems.push(ce);
                 } else {
                     children.push(style_node(
@@ -1188,6 +1193,7 @@ fn style_node<'a>(
                         vp,
                         pseudo,
                         keyframes,
+                        child_root_fs,
                     ));
                 }
             }
@@ -1202,7 +1208,7 @@ fn style_node<'a>(
                 .children
                 .iter()
                 .map(|&child| {
-                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp, pseudo, keyframes)
+                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp, pseudo, keyframes, root_fs)
                 })
                 .collect(),
         },
@@ -1606,8 +1612,22 @@ mod tests {
         let fs = |i: usize| styled.children[i].value("font-size");
         assert_eq!(fs(0), Some(Value::Length(30.0, Unit::Px)), "1.5em × 20px");
         assert_eq!(fs(1), Some(Value::Length(10.0, Unit::Px)), "50% × 20px");
-        assert_eq!(fs(2), Some(Value::Length(32.0, Unit::Px)), "2rem × 16px 루트");
+        // rem 은 루트 요소(여기선 트리 루트 div, font-size 20px) 기준 — 스펙대로
+        assert_eq!(fs(2), Some(Value::Length(40.0, Unit::Px)), "2rem × 20px 루트");
         assert_eq!(fs(3), Some(Value::Length(20.0, Unit::Px)), "미지정 → 상속");
+    }
+
+    #[test]
+    fn rem_follows_root_font_size() {
+        // 루트 font-size:62.5% → 1rem=10px (흔한 트릭). 자손의 rem 은 상수 16 이 아니라
+        // 루트 계산 font-size 기준. (이전엔 rem 이 항상 16 하드코딩이라 요행 통과)
+        let root = crate::html::parse_dom("<div><p class=\"x\">a</p></div>".to_string());
+        let ss = crate::css::parse(
+            "div { font-size: 62.5%; } .x { width: 1.6rem; }".to_string(),
+        );
+        let styled = style_tree(&root, &ss);
+        assert_eq!(styled.value("font-size"), Some(Value::Length(10.0, Unit::Px)), "루트 62.5%×16=10");
+        assert_eq!(styled.children[0].value("width"), Some(Value::Length(16.0, Unit::Px)), "1.6rem×10");
     }
 
     #[test]
