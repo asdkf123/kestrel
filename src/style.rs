@@ -246,7 +246,9 @@ fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&Sibli
     match p {
         Pseudo::Dynamic => false, // hover/focus/active/visited 등 정적 렌더에선 비매칭
         Pseudo::Not(inner) => !inner.iter().any(|s| matches_compound(elem, s, sib)),
-        Pseudo::Is(inner) => inner.iter().any(|s| matches_compound(elem, s, sib)),
+        Pseudo::Is(inner) | Pseudo::Where(inner) => {
+            inner.iter().any(|s| matches_compound(elem, s, sib))
+        }
         // 구조적: 대상(sib=Some)만 정확 평가, 비대상은 통과(근사)
         Pseudo::FirstChild => sib.map(|s| s.index == 1).unwrap_or(true),
         Pseudo::LastChild => sib.map(|s| s.index == s.total).unwrap_or(true),
@@ -1524,6 +1526,21 @@ mod tests {
         let ss = crate::css::parse(".b { width: 10px; } #a { width: 99px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(99.0, Unit::Px)));
+    }
+
+    #[test]
+    fn where_and_is_specificity() {
+        let root = crate::html::parse_dom("<div id=\"x\" class=\"c\"></div>".to_string());
+        let green = Some(Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 }));
+        let blue = Some(Value::Color(crate::css::Color { r: 0, g: 0, b: 255, a: 255 }));
+        // :where(#x) 특이도 0 → 뒤 .c 가 이김
+        let ss1 =
+            crate::css::parse(":where(#x) { color: #ff0000; } .c { color: #00ff00; }".to_string());
+        assert_eq!(style_tree(&root, &ss1).value("color"), green, ":where(#x)=0 → .c 이김");
+        // :is(#x) 는 id 특이도 (1,0,0) → .c (0,1,0) 이김
+        let ss2 =
+            crate::css::parse(".c { color: #ff0000; } :is(#x) { color: #0000ff; }".to_string());
+        assert_eq!(style_tree(&root, &ss2).value("color"), blue, ":is(#x)=id → .c 이김");
     }
 
     #[test]

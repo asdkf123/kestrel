@@ -57,7 +57,8 @@ pub enum Pseudo {
     NthLastOfType(i32, i32), // 같은 타입 중 an+b (뒤에서)
     OnlyOfType,              // 같은 타입 형제가 자기 하나뿐
     Not(Vec<SimpleSelector>),
-    Is(Vec<SimpleSelector>), // :is()/:where()/:matches() — 인자 중 하나라도 매칭
+    Is(Vec<SimpleSelector>),    // :is()/:matches() — 인자 중 하나라도 매칭 (특이도=인자 최대)
+    Where(Vec<SimpleSelector>), // :where() — 매칭은 :is 와 같되 특이도 0
     Root,
     Empty,
     // 폼 상태 (요소 속성으로 정적 판별)
@@ -194,19 +195,40 @@ impl Selector {
     }
 
     pub fn specificity(&self) -> Specificity {
-        let parts = self.each_simple();
-        // 의사 클래스는 클래스와 동일 특이도(:not 은 인자 기준이나 근사)
-        let a = parts.iter().map(|s| s.id.iter().count()).sum();
-        let b = parts
-            .iter()
-            .map(|s| s.class.len() + s.attrs.len() + s.pseudos.len())
-            .sum();
-        // 의사 요소는 요소(tag)와 동일 특이도 레벨(c)에 더한다
-        let c = parts
-            .iter()
-            .map(|s| s.tag_name.iter().count() + s.pseudo_element.iter().count())
-            .sum();
+        let (mut a, mut b, mut c) = (0usize, 0usize, 0usize);
+        for s in self.each_simple() {
+            let (sa, sb, sc) = simple_specificity(s);
+            a += sa;
+            b += sb;
+            c += sc + s.pseudo_element.iter().count(); // 의사 요소 = tag 레벨
+        }
         (a, b, c)
+    }
+}
+
+// 단순 선택자 하나의 특이도. 의사 클래스는 종류별로: :where=0, :is/:not=인자 최대,
+// 그 외(구조적/폼/동적)=클래스 1. id=a, class/attr/pseudo=b, tag=c.
+fn simple_specificity(s: &SimpleSelector) -> Specificity {
+    let mut a = s.id.iter().count();
+    let mut b = s.class.len() + s.attrs.len();
+    let mut c = s.tag_name.iter().count();
+    for p in &s.pseudos {
+        let (pa, pb, pc) = pseudo_specificity(p);
+        a += pa;
+        b += pb;
+        c += pc;
+    }
+    (a, b, c)
+}
+
+fn pseudo_specificity(p: &Pseudo) -> Specificity {
+    match p {
+        Pseudo::Where(_) => (0, 0, 0), // :where() 는 특이도에 기여 안 함
+        // :is()/:not() 는 인자 중 가장 특이한 것의 특이도
+        Pseudo::Is(args) | Pseudo::Not(args) => {
+            args.iter().map(simple_specificity).max().unwrap_or((0, 0, 0))
+        }
+        _ => (0, 1, 0), // 그 외 의사 클래스 = 클래스 하나
     }
 }
 
@@ -857,11 +879,13 @@ impl Parser {
                         Some(Pseudo::Not(sels))
                     }
                 }
-                "is" | "where" | "matches" => {
-                    // :is(a, b, ...) — 인자 중 하나라도 매칭
+                "is" | "matches" | "where" => {
+                    // :is/:where(a, b, ...) — 인자 중 하나라도 매칭. :where 는 특이도 0.
                     let sels = Self::parse_selector_arg_list(&arg);
                     if sels.is_empty() {
                         Some(Pseudo::Dynamic)
+                    } else if name == "where" {
+                        Some(Pseudo::Where(sels))
                     } else {
                         Some(Pseudo::Is(sels))
                     }
