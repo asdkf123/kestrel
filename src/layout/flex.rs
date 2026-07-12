@@ -20,6 +20,10 @@ impl<'a> LayoutBox<'a> {
         if n == 0 {
             return;
         }
+        // flex 아이템은 독립 서식 맥락(BFC) — 자식/컨테이너와 margin 상쇄 안 함(§8.3.1).
+        for c in self.children.iter_mut() {
+            c.bfc_item = true;
+        }
         let row = self.flex_keyword("flex-direction") != "column";
         let wrap = matches!(self.styled_node.value("flex-wrap"),
             Some(Value::Keyword(ref k)) if k == "wrap" || k == "wrap-reverse");

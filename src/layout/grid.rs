@@ -14,6 +14,10 @@ impl<'a> LayoutBox<'a> {
         if n == 0 {
             return;
         }
+        // grid 아이템은 독립 서식 맥락(BFC) — margin 상쇄 안 함(§8.3.1).
+        for c in self.children.iter_mut() {
+            c.bfc_item = true;
+        }
         // grid-template-areas 가 있으면 명시 배치(holy-grail 등)
         if let Some(Value::Keyword(a)) = self.styled_node.value("grid-template-areas") {
             if a.contains('"') {

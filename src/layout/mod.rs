@@ -115,6 +115,12 @@ pub struct LayoutBox<'a> {
     // float 컨텍스트(절대 좌표): (좌 float 우측 x, 우 float 좌측 x, 밴드 하단 y).
     // 텍스트 줄 상자가 이 밴드 안(y < 하단)에서 float 을 피해 짧아진다(text-wrap).
     pub float_ctx: Option<(f32, f32, f32)>,
+    // 세로 margin 상쇄(§8.3.1): 이 박스의 상/하단 margin 이 조상 margin 으로 hoisting 되어
+    // 자기 위치엔 0 으로 적용됨을 뜻하는 플래그. 부모의 블록 스택이 설정.
+    pub collapse_top: bool,
+    pub collapse_bottom: bool,
+    // flex/grid 아이템 등 독립 서식 맥락(BFC): 자식과 margin 상쇄하지 않는다.
+    pub bfc_item: bool,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -136,6 +142,9 @@ impl<'a> LayoutBox<'a> {
             used_width: 0.0,
             float_ctx: None,
             form_control: None,
+            collapse_top: false,
+            collapse_bottom: false,
+            bfc_item: false,
         }
     }
 
@@ -157,6 +166,9 @@ impl<'a> LayoutBox<'a> {
             used_width: 0.0,
             float_ctx: None,
             form_control: None,
+            collapse_top: false,
+            collapse_bottom: false,
+            bfc_item: false,
         }
     }
 
@@ -674,13 +686,100 @@ impl<'a> LayoutBox<'a> {
         d.margin.right = mr;
     }
 
+    // ── 세로 margin 상쇄 (CSS 2.1 §8.3.1) ────────────────────────────────
+    // 이 박스가 첫 정상흐름 블록 자식과 상단 margin 을 상쇄하는가:
+    // 상단 테두리/패딩 없음, BFC 아님(flex/grid 아이템·overflow 등 제외), 블록,
+    // 직접 인라인 내용 없음.
+    fn collapse_child_top(&self, avail: f32) -> bool {
+        if establishes_bfc(self) || !matches!(self.styled_node.display(), Display::Block) {
+            return false;
+        }
+        if !self.inline_nodes.is_empty() {
+            return false;
+        }
+        let z = Length(0.0, Px);
+        let bt = len_px(self.styled_node.lookup("border-top-width", "border-width", &z), avail).to_px();
+        let pt = len_px(self.styled_node.lookup("padding-top", "padding", &z), avail).to_px();
+        bt <= 0.0 && pt <= 0.0
+    }
+
+    fn collapse_child_bottom(&self, avail: f32) -> bool {
+        if establishes_bfc(self) || !matches!(self.styled_node.display(), Display::Block) {
+            return false;
+        }
+        if !self.inline_nodes.is_empty() {
+            return false;
+        }
+        // 고정 height / min-height 는 상쇄 차단(내용이 못 채울 수 있음 — §8.3.1).
+        if matches!(self.styled_node.value("height"), Some(Length(_, Px)))
+            || self.styled_node.value("min-height").is_some()
+        {
+            return false;
+        }
+        let z = Length(0.0, Px);
+        let bb = len_px(self.styled_node.lookup("border-bottom-width", "border-width", &z), avail).to_px();
+        let pb = len_px(self.styled_node.lookup("padding-bottom", "padding", &z), avail).to_px();
+        bb <= 0.0 && pb <= 0.0
+    }
+
+    // 정상흐름(float/abs 아님) 첫/마지막 블록 자식. 첫(마지막) 정상흐름 자식이
+    // 인라인 레벨이면 None (인라인 내용이 상쇄를 막음).
+    fn first_flow_block_child(&self) -> Option<usize> {
+        for (i, c) in self.children.iter().enumerate() {
+            if c.float() != "none" || c.position() == "absolute" || c.position() == "fixed" {
+                continue;
+            }
+            return if matches!(c.styled_node.display(), Display::Block) { Some(i) } else { None };
+        }
+        None
+    }
+
+    fn last_flow_block_child(&self) -> Option<usize> {
+        for (i, c) in self.children.iter().enumerate().rev() {
+            if c.float() != "none" || c.position() == "absolute" || c.position() == "fixed" {
+                continue;
+            }
+            return if matches!(c.styled_node.display(), Display::Block) { Some(i) } else { None };
+        }
+        None
+    }
+
+    // 상쇄된 상/하단 margin: 자기 margin 을, 자격 되면 첫/마지막 블록 자식의
+    // 상쇄 margin 과 재귀적으로 상쇄한 값.
+    fn collapsed_top_margin(&self, avail: f32) -> f32 {
+        let z = Length(0.0, Px);
+        let own = len_px(self.styled_node.lookup("margin-top", "margin", &z), avail).to_px();
+        if self.collapse_child_top(avail) {
+            if let Some(i) = self.first_flow_block_child() {
+                return collapse_margins(own, self.children[i].collapsed_top_margin(avail));
+            }
+        }
+        own
+    }
+
+    fn collapsed_bottom_margin(&self, avail: f32) -> f32 {
+        let z = Length(0.0, Px);
+        let own = len_px(self.styled_node.lookup("margin-bottom", "margin", &z), avail).to_px();
+        if self.collapse_child_bottom(avail) {
+            if let Some(i) = self.last_flow_block_child() {
+                return collapse_margins(own, self.children[i].collapsed_bottom_margin(avail));
+            }
+        }
+        own
+    }
+
     fn calculate_position(&mut self, containing_block: Dimensions) {
+        // 세로 margin 은 상쇄값을 쓴다(§8.3.1). collapse_top/bottom 플래그가 서면
+        // 그 margin 은 조상으로 hoisting 되었으므로 자기 위치엔 0.
+        let cbw = containing_block.content.width;
+        let mtop = if self.collapse_top { 0.0 } else { self.collapsed_top_margin(cbw) };
+        let mbot = if self.collapse_bottom { 0.0 } else { self.collapsed_bottom_margin(cbw) };
         let style = self.styled_node;
         let zero = Length(0.0, Px);
         let d = &mut self.dimensions;
 
-        d.margin.top = style.lookup("margin-top", "margin", &zero).to_px();
-        d.margin.bottom = style.lookup("margin-bottom", "margin", &zero).to_px();
+        d.margin.top = mtop;
+        d.margin.bottom = mbot;
         d.border.top = style.lookup("border-top-width", "border-width", &zero).to_px();
         d.border.bottom = style.lookup("border-bottom-width", "border-width", &zero).to_px();
         d.padding.top = style.lookup("padding-top", "padding", &zero).to_px();
@@ -889,6 +988,10 @@ impl<'a> LayoutBox<'a> {
         self.gradient = None;
         self.dimensions = Default::default();
         self.used_width = 0.0;
+        // collapse 플래그는 매 배치마다 부모가 다시 설정 → 재레이아웃 전 리셋.
+        // (bfc_item 은 구조적 속성이라 유지.)
+        self.collapse_top = false;
+        self.collapse_bottom = false;
         for c in &mut self.children {
             c.clear_render();
         }
@@ -986,6 +1089,10 @@ impl<'a> LayoutBox<'a> {
         // float/inline-block 등 흐름을 끊는 배치에선 0 으로 리셋.
         let mut prev_bottom = 0.0f32;
         let mut inline_extent = 0.0f32;
+        // 부모-자식 margin 상쇄(§8.3.1): 자격 되면 첫/마지막 정상흐름 블록 자식의
+        // 상단/하단 margin 이 이 박스 margin 으로 hoisting 된다(그 자식은 자기 위치엔 0).
+        let first_bc = if self.collapse_child_top(avail) { self.first_flow_block_child() } else { None };
+        let last_bc = if self.collapse_child_bottom(avail) { self.last_flow_block_child() } else { None };
         let n = self.children.len();
         for i in 0..n {
             let cpos = self.children[i].position();
@@ -1179,10 +1286,7 @@ impl<'a> LayoutBox<'a> {
                     || (!establishes_bfc(&self.children[i])
                         && subtree_has_inline_text(&self.children[i]))
                 {
-                    let cur_top = {
-                        let z = Length(0.0, Px);
-                        len_px(self.children[i].styled_node.lookup("margin-top", "margin", &z), avail).to_px()
-                    };
+                    let cur_top = self.children[i].collapsed_top_margin(avail);
                     self.dimensions.content.height -= collapse_overlap(prev_bottom, cur_top);
                     self.children[i].float_ctx = Some((fl_next, fr_next, band_bottom));
                     let d = self.dimensions;
@@ -1221,11 +1325,15 @@ impl<'a> LayoutBox<'a> {
                 band_active = false;
                 self.children[i].clear_render();
             }
-            // 인접 형제 margin 상쇄: 이 블록 상단 margin 을 직전 블록 하단 margin 과
+            // 부모-자식 상쇄 대상이면 이 자식의 상/하단 margin 을 부모로 hoisting (자기 위치엔 0).
+            self.children[i].collapse_top = Some(i) == first_bc;
+            self.children[i].collapse_bottom = Some(i) == last_bc;
+            // 인접 형제 margin 상쇄: 이 블록의 (상쇄된) 상단 margin 을 직전 블록 하단 margin 과
             // 겹쳐(더하지 않고) 흐름 높이에서 겹침량만큼 줄인 뒤 배치한다.
-            let cur_top = {
-                let z = Length(0.0, Px);
-                len_px(self.children[i].styled_node.lookup("margin-top", "margin", &z), avail).to_px()
+            let cur_top = if self.children[i].collapse_top {
+                0.0
+            } else {
+                self.children[i].collapsed_top_margin(avail)
             };
             self.dimensions.content.height -= collapse_overlap(prev_bottom, cur_top);
             // 정상 흐름: 누적 높이가 반영된 live dimensions 로 스택
@@ -2063,7 +2171,8 @@ fn establishes_bfc(b: &LayoutBox) -> bool {
         matches!(b.styled_node.value(p),
             Some(Value::Keyword(ref k)) if k == "hidden" || k == "auto" || k == "scroll" || k == "clip")
     };
-    clips("overflow") || clips("overflow-x") || clips("overflow-y")
+    b.bfc_item
+        || clips("overflow") || clips("overflow-x") || clips("overflow-y")
         || matches!(b.styled_node.display(), Display::Flex | Display::Grid | Display::InlineBlock)
         || box_is_table(b)
         || b.float() != "none"
@@ -2086,6 +2195,11 @@ fn collapse_overlap(m1: f32, m2: f32) -> f32 {
     let pos = m1.max(0.0).max(m2.max(0.0));
     let neg = m1.min(0.0).min(m2.min(0.0));
     (m1 + m2) - (pos + neg)
+}
+
+// 두 margin 의 상쇄 결과값 = 양수 최대 + 음수 최소 (§8.3.1).
+fn collapse_margins(a: f32, b: f32) -> f32 {
+    a.max(b).max(0.0) + a.min(b).min(0.0)
 }
 
 // StyledNode 서브트리의 텍스트를 모은다 (select 의 선택 option 텍스트 추출용).
@@ -2949,6 +3063,47 @@ mod tests {
         assert_eq!(
             lb.children[1].dimensions.content.y, 50.0,
             "인접 형제 margin 상쇄: B 는 y=50"
+        );
+    }
+
+    #[test]
+    fn parent_child_top_margin_collapses() {
+        let fs = fonts();
+        // A(20) 다음 B(패딩/테두리 없음) > inner(margin-top:40). inner 의 상단 margin 은
+        // B 로 hoisting 되어 A 와 상쇄 → inner 는 B 상단에 붙고, B 는 y=60(=20+40).
+        // 대조: P 는 padding-top 있어 상쇄 차단 → innerP 의 40 이 P 내부에 남는다.
+        let ss = crate::css::parse(
+            ".a{display:block;height:20px;} \
+             .b{display:block;} \
+             .inner{display:block;height:20px;margin-top:40px;} \
+             .p{display:block;padding-top:10px;} \
+             .innerp{display:block;height:20px;margin-top:40px;}"
+                .to_string(),
+        );
+        let root = crate::html::parse_dom(
+            "<div class=\"a\"></div>\
+             <div class=\"b\"><div class=\"inner\"></div></div>\
+             <div class=\"p\"><div class=\"innerp\"></div></div>"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let b = &lb.children[1];
+        let inner = &b.children[0];
+        assert_eq!(b.dimensions.content.y, 60.0, "상쇄 통과: B 는 A하단(20)+상쇄margin(40)=60");
+        assert_eq!(
+            inner.dimensions.content.y - b.dimensions.content.y,
+            0.0,
+            "inner 상단이 B 상단에 붙음(내부 40 여백 없음)"
+        );
+        let p = &lb.children[2];
+        let innerp = &p.children[0];
+        assert_eq!(
+            innerp.dimensions.content.y - p.dimensions.content.y,
+            40.0,
+            "padding-top 이 상쇄 차단 → innerP 의 margin 40 이 P 내부에 남음"
         );
     }
 
