@@ -55,7 +55,7 @@
 - [ ] Flex **shrink 0까지, min-content 무시, min/max 덮어씀, align-content 없음**. (flex.rs:132,184)
 - [ ] 테이블 **auto 폭 알고리즘 근사(항상 컨테이너 채움), border-collapse/spacing 미구현, rowspan h/n**. (mod.rs:1407)
 - [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
-- [ ] 페인트 **점선/파선/이중 테두리 전부 실선**. (paint.rs:1415)
+- [x] 페인트 **점선/파선 테두리**(dashed/dotted). double/groove 는 근사. (7bbcf70)
 - [ ] 페인트 **그라디언트 프리멀티플라이 아님**(투명 페이드 탁함). (paint.rs:523)
 - [ ] 페인트 **박스섀도 선형(가우시안 아님), 필터블러 박스1패스**. (paint.rs:310,119)
 - [ ] 페인트 **방사그라디언트 항상 원+farthest-corner**. (paint.rs:247)
