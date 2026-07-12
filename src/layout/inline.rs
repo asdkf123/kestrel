@@ -98,6 +98,26 @@ struct TextStyle {
     deco_color: Option<Color>, // text-decoration-color (없으면 글자색 사용)
     voffset: f32, // vertical-align 세로 오프셋(px, 양수=아래). super/sub/length.
     bg: Option<Color>, // 인라인 요소 배경(<mark>/background 있는 span 등). 글리프 뒤에 칠함.
+    border: Option<(Color, f32, f32)>, // 인라인 테두리 (색, 두께, radius) — 태그/뱃지/kbd.
+    border_run: u32, // 테두리 요소 식별자 (인접한 별개 요소가 하나로 병합되지 않게).
+}
+
+// 인라인 요소의 테두리 (균일 두께/색만 근사, border-radius 포함).
+fn inline_border_of(node: &StyledNode) -> Option<(Color, f32, f32)> {
+    let w = node
+        .value("border-top-width")
+        .or_else(|| node.value("border-width"))
+        .map(|v| v.to_px())
+        .unwrap_or(0.0);
+    if w <= 0.0 {
+        return None;
+    }
+    let color = match node.value("border-top-color").or_else(|| node.value("border-color")) {
+        Some(Value::Color(c)) if c.a > 0 => c,
+        _ => return None,
+    };
+    let radius = node.value("border-radius").map(|v| v.to_px()).unwrap_or(0.0);
+    Some((color, w, radius))
 }
 
 // text-decoration-color 명시값 (currentColor/미지정 → None)
@@ -161,6 +181,8 @@ impl<'a> LayoutBox<'a> {
             deco_color: deco_color_of(self.styled_node),
             voffset: vertical_offset(self.styled_node, base_px),
             bg: None, // 블록 자체 배경은 paint 가 따로 칠함 — 인라인 자손만 여기서
+            border: None,
+            border_run: 0,
         };
 
         // white-space: nowrap/pre 는 폭 기반 줄바꿈 안 함. pre 계열은 \n 을 강제 개행,
@@ -175,8 +197,9 @@ impl<'a> LayoutBox<'a> {
 
         let mut runs: Vec<(String, TextStyle)> = Vec::new();
         let mut hrefs: Vec<String> = Vec::new();
+        let mut next_run: u32 = 0;
         for node in &self.inline_nodes {
-            collect_node(node, base, &mut runs, &mut hrefs);
+            collect_node(node, base, &mut runs, &mut hrefs, &mut next_run);
         }
         // text-transform (상속 속성): 이 인라인 문맥의 모든 텍스트에 적용
         if let Some(Value::Keyword(tt)) = self.styled_node.value("text-transform") {
@@ -330,6 +353,8 @@ impl<'a> LayoutBox<'a> {
             words.iter().flat_map(|(w, _, _)| w.iter().map(|&(c, _)| c)).collect();
         let levels = bidi_levels(&all_chars, base_rtl);
         let mut glyph_adv: Vec<f32> = Vec::with_capacity(all_chars.len());
+        // 인라인 테두리 조각: (run, 줄 top y, x0, x1, 색, 두께, radius). 나중에 병합.
+        let mut border_segs: Vec<(u32, f32, f32, f32, Color, f32, f32)> = Vec::new();
 
         for (word, force_break, glue) in &words {
             let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
@@ -385,6 +410,12 @@ impl<'a> LayoutBox<'a> {
                     bg,
                 ));
             }
+            // 인라인 테두리 조각 (병합 전). 배경과 달리 공백폭 미포함(pill 을 촘촘히).
+            if let Some((run, (bc, bw, brd))) =
+                word.iter().find_map(|&(_, st)| st.border.map(|b| (st.border_run, b)))
+            {
+                border_segs.push((run, baseline - ascent_px, word_x0, pen_x, bc, bw, brd));
+            }
             // 링크: 히트 영역 (단어 폭, baseline 위아래로)
             if let Some(li) = word.iter().find_map(|&(_, st)| st.link) {
                 self.links.push((
@@ -425,6 +456,33 @@ impl<'a> LayoutBox<'a> {
                 if let Some(a) = glyph_adv.last_mut() {
                     *a += space_adv; // 단어 뒤 공백을 마지막 글리프 advance 에 포함(재정렬 대비)
                 }
+            }
+        }
+
+        // 인라인 테두리 조각 병합: 같은 요소(run) + 같은 줄(y top) 끼리 하나의 pill 로.
+        // (요소가 줄바꿈되면 줄마다 별개 테두리 — CSS 인라인 테두리 규칙)
+        if !border_segs.is_empty() {
+            let line_box_h = ascent_px - descent_px;
+            // (run, 줄키) → (x0, x1, 색, 두께, radius)
+            let mut merged: Vec<(u32, i32, f32, f32, Color, f32, f32)> = Vec::new();
+            for (run, y, x0, x1, c, w, r) in border_segs {
+                let yk = (y * 4.0).round() as i32;
+                if let Some(m) = merged.iter_mut().find(|m| m.0 == run && m.1 == yk) {
+                    m.2 = m.2.min(x0);
+                    m.3 = m.3.max(x1);
+                } else {
+                    merged.push((run, yk, x0, x1, c, w, r));
+                }
+            }
+            for (_, yk, x0, x1, c, w, r) in merged {
+                let y = yk as f32 / 4.0;
+                // 패딩 근사: 좌우 3px, 상하 1px 여유로 글리프를 촘촘히 감싼다.
+                self.inline_borders.push((
+                    Rect { x: x0 - 3.0, y: y - 1.0, width: (x1 - x0) + 6.0, height: line_box_h + 2.0 },
+                    c,
+                    w,
+                    r,
+                ));
             }
         }
 
@@ -564,6 +622,7 @@ fn collect_node<'a>(
     style: TextStyle,
     runs: &mut Vec<(String, TextStyle)>,
     hrefs: &mut Vec<String>,
+    next_run: &mut u32,
 ) {
     match &node.node.node_type {
         NodeType::Text(t) => runs.push((t.clone(), style)),
@@ -596,6 +655,15 @@ fn collect_node<'a>(
                     Some(Value::Color(c)) if c.a > 0 => Some(c),
                     _ => style.bg,
                 };
+                // 테두리: 이 요소가 지정하면 새 run id 부여(인접 요소와 병합 방지),
+                // 아니면 조상 것을 물려받아 요소 전체 조각을 하나로 감싼다.
+                let (cborder, crun) = match inline_border_of(node) {
+                    Some(b) => {
+                        *next_run += 1;
+                        (Some(b), *next_run)
+                    }
+                    None => (style.border, style.border_run),
+                };
                 let cstyle = TextStyle {
                     color: ccolor,
                     px: cpx,
@@ -607,9 +675,11 @@ fn collect_node<'a>(
                     deco_color: deco_color_of(node).or(style.deco_color),
                     voffset: vertical_offset(node, cpx),
                     bg: cbg,
+                    border: cborder,
+                    border_run: crun,
                 };
                 for child in &node.children {
-                    collect_node(child, cstyle, runs, hrefs);
+                    collect_node(child, cstyle, runs, hrefs, next_run);
                 }
             }
         },

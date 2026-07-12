@@ -1795,6 +1795,15 @@ fn collect_items(
     for (rect, color) in &layout_box.inline_bgs {
         local.push(DisplayItem::Rect { color: *color, rect: *rect });
     }
+    // 인라인 요소 테두리(태그/뱃지/kbd) — 4변을 얇은 사각으로. 글리프 위를 덮지 않게
+    // 윤곽만 그린다 (배경 뒤, 글리프 앞). radius 는 근사(모서리 직각).
+    for (rect, color, w, _radius) in &layout_box.inline_borders {
+        let (x, y, bw, bh, t) = (rect.x, rect.y, rect.width, rect.height, w.max(1.0));
+        local.push(DisplayItem::Rect { color: *color, rect: Rect { x, y, width: bw, height: t } });
+        local.push(DisplayItem::Rect { color: *color, rect: Rect { x, y: y + bh - t, width: bw, height: t } });
+        local.push(DisplayItem::Rect { color: *color, rect: Rect { x, y, width: t, height: bh } });
+        local.push(DisplayItem::Rect { color: *color, rect: Rect { x: x + bw - t, y, width: t, height: bh } });
+    }
     if let Some((dx, dy, color)) = text_shadow {
         for gi in &layout_box.glyphs {
             let mut sh = *gi;

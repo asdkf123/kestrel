@@ -106,6 +106,8 @@ pub struct LayoutBox<'a> {
     pub decorations: Vec<(Rect, Color)>,
     // 인라인 요소 배경(<mark>, background 있는 <span>/<code> 등) — 글리프 뒤에 칠함
     pub inline_bgs: Vec<(Rect, Color)>,
+    // 인라인 요소 테두리(태그/뱃지/kbd 등) — (박스, 색, 두께, radius). 병합된 조각.
+    pub inline_borders: Vec<(Rect, Color, f32, f32)>,
     // 리스트 마커 텍스트 (ol: "1." / ul: "•"). build 시 부모 리스트가 부여.
     pub list_marker: Option<String>,
     // 콘텐츠의 실제 사용 폭 (shrink-to-fit float 배치용)
@@ -129,6 +131,7 @@ impl<'a> LayoutBox<'a> {
             links: Vec::new(),
             decorations: Vec::new(),
             inline_bgs: Vec::new(),
+            inline_borders: Vec::new(),
             list_marker: None,
             used_width: 0.0,
             float_ctx: None,
@@ -149,6 +152,7 @@ impl<'a> LayoutBox<'a> {
             links: Vec::new(),
             decorations: Vec::new(),
             inline_bgs: Vec::new(),
+            inline_borders: Vec::new(),
             list_marker: None,
             used_width: 0.0,
             float_ctx: None,
@@ -715,6 +719,10 @@ impl<'a> LayoutBox<'a> {
             r.x += dx;
             r.y += dy;
         }
+        for b in &mut self.inline_borders {
+            b.0.x += dx;
+            b.0.y += dy;
+        }
         for c in &mut self.children {
             c.translate(dx, dy);
         }
@@ -802,6 +810,9 @@ impl<'a> LayoutBox<'a> {
         for (r, _) in &mut self.inline_bgs {
             r.y += dy;
         }
+        for b in &mut self.inline_borders {
+            b.0.y += dy;
+        }
         for c in &mut self.children {
             c.translate(0.0, dy);
         }
@@ -839,6 +850,12 @@ impl<'a> LayoutBox<'a> {
             r.width *= sx;
             r.height *= sy;
         }
+        for b in &mut self.inline_borders {
+            b.0.x = sc(b.0.x, ox, sx);
+            b.0.y = sc(b.0.y, oy, sy);
+            b.0.width *= sx;
+            b.0.height *= sy;
+        }
         for c in &mut self.children {
             c.scale_subtree(ox, oy, sx, sy);
         }
@@ -851,6 +868,7 @@ impl<'a> LayoutBox<'a> {
         self.links.clear();
         self.decorations.clear();
         self.inline_bgs.clear();
+        self.inline_borders.clear();
         self.image = None;
         self.background_image = None;
         self.gradient = None;
@@ -2144,6 +2162,10 @@ mod tests {
         b.decorations.len() + b.children.iter().map(count_decorations).sum::<usize>()
     }
 
+    fn count_inline_borders(b: &LayoutBox) -> usize {
+        b.inline_borders.len() + b.children.iter().map(count_inline_borders).sum::<usize>()
+    }
+
     fn layout_tree_for<'a>(root: &'a StyledNode<'a>, fs: &FontStack) -> LayoutBox<'a> {
         let mut viewport: Dimensions = Default::default();
         viewport.content.width = 800.0;
@@ -3388,6 +3410,24 @@ mod tests {
             .find(|g| g.baseline_y > 65.0)
             .expect("float 아래로 흐르는 줄이 있어야");
         assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
+    }
+
+    #[test]
+    fn inline_elements_get_borders() {
+        // 인접한 두 인라인 태그가 각각 별개 테두리를 얻는다 (하나로 병합 안 됨).
+        // 태그/뱃지/kbd 등 인라인 요소 border 렌더.
+        let root = crate::html::parse_dom(
+            "<p>x <span class=\"t\">foo</span> <span class=\"t\">bar</span> y</p>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "p { display: block; font-size: 16px; } .t { border: 1px solid #333333; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        assert_eq!(count_inline_borders(&lb), 2, "두 태그 → 별개 테두리 2개 (병합 안 됨)");
     }
 
     #[test]
