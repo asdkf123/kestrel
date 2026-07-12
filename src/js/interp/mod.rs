@@ -3176,21 +3176,46 @@ impl Interp {
                     }
                     return Ok(Value::Bool(found));
                 }
-                // 전역 생성자 스텁과의 대응 판단 (관용)
+                // 내장 생성자별 값 타입 판정 (feature-detection/에러 처리에 흔함)
+                let obj_has = |key: &str| -> bool {
+                    matches!(&l, Value::Obj(m) if m.borrow().contains_key(key))
+                };
+                let is_regex = matches!(&l, Value::Obj(m) if is_regex_obj(m));
+                let is_date = matches!(&l, Value::Obj(m) if is_date_obj(m));
+                // 전역 Array/Object 는 Obj 네임스페이스로 등록됨 — 아이덴티티 비교
                 let global_is = |name: &str| -> bool {
                     matches!(
                         (env_get(&self.global, name), &r),
                         (Some(Value::Obj(a)), Value::Obj(b)) if Rc::ptr_eq(&a, b)
                     )
                 };
-                let hit = if global_is("Array") {
-                    matches!(l, Value::Arr(_))
-                } else if global_is("Object") {
-                    matches!(l, Value::Obj(_) | Value::Arr(_))
-                } else if matches!(&r, Value::Native(Native::FunctionCtor)) {
-                    matches!(l, Value::Fn(_) | Value::Native(_) | Value::Bound(_))
-                } else {
-                    false
+                let hit = match &r {
+                    Value::Native(Native::MapCtor) => matches!(l, Value::MapVal(_)),
+                    Value::Native(Native::SetCtor) => matches!(l, Value::SetVal(_)),
+                    Value::Native(Native::RegExpCtor) => is_regex,
+                    Value::Native(Native::DateCtor) => is_date,
+                    Value::Native(Native::PromiseCtor) => is_promise(&l),
+                    Value::Native(Native::UrlCtor) => obj_has("searchParams"),
+                    Value::Native(Native::FunctionCtor) => {
+                        matches!(l, Value::Fn(_) | Value::Native(_) | Value::Bound(_) | Value::Class(_))
+                    }
+                    // Error 및 서브타입: 에러 객체(name/message 보유). 정확한 이름은 subtype.
+                    Value::Native(Native::ErrorCtor(name)) => {
+                        obj_has("message")
+                            && (*name == "Error"
+                                || matches!(&l, Value::Obj(m)
+                                    if matches!(m.borrow().get("name"), Some(Value::Str(s)) if s == name)))
+                    }
+                    _ if global_is("Array") => matches!(l, Value::Arr(_)),
+                    _ if global_is("Object") => matches!(
+                        l,
+                        Value::Obj(_)
+                            | Value::Arr(_)
+                            | Value::MapVal(_)
+                            | Value::SetVal(_)
+                            | Value::Instance(_)
+                    ),
+                    _ => false,
                 };
                 Value::Bool(hit)
             }

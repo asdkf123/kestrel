@@ -259,6 +259,24 @@ mod tests {
     }
 
     #[test]
+    fn instanceof_builtins() {
+        // 내장 생성자 instanceof (이전엔 하드코딩표라 Date/Map/Error/RegExp 다 false).
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var c = [\
+             [] instanceof Array, new Date() instanceof Date, new Map() instanceof Map, \
+             /x/ instanceof RegExp, new TypeError('x') instanceof Error, \
+             new TypeError('x') instanceof TypeError, new Error('x') instanceof TypeError, \
+             (function(){}) instanceof Function, ({}) instanceof Array]; \
+             document.getElementById('t').textContent = c.map(function(b){return b?'1':'0';}).join('');\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "111111010");
+    }
+
+    #[test]
     fn to_primitive_valueof_tostring() {
         // 객체 강제변환이 valueOf/toString 을 부른다 (이전엔 [object Object]/NaN).
         let mut dom = crate::html::parse_dom(
