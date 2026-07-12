@@ -1632,10 +1632,31 @@ fn rect_intersect(a: Rect, b: Rect) -> Option<Rect> {
     }
 }
 
-// 클립 사각형에 아이템을 맞춰 자른다. 사각형/이미지는 교집합, 글리프는 완전히
-// 밖이면 컬링(부분 픽셀 클립은 근사로 생략). clip=None 이면 그대로.
-fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
+// outer 가 inner 를 완전히 포함하는가.
+fn rect_contains(outer: Rect, inner: Rect) -> bool {
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner.x + inner.width <= outer.x + outer.width
+        && inner.y + inner.height <= outer.y + outer.height
+}
+
+// 클립 사각형에 아이템을 맞춰 자른다. 사각형/이미지는 rect 교집합, 글리프/폴리곤은
+// 경계에 걸치면 사각 클립(ClipShape)으로 감싸 픽셀 단위로 자른다. round_active=true
+// 면 이미 바깥 둥근 Clipped 래퍼가 픽셀 클립을 하므로 이중 래핑을 피한다.
+// clip=None 이면 그대로.
+fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Option<DisplayItem> {
     let Some(c) = clip else { return Some(item) };
+    // 경계에 걸친 아이템을 사각 클립으로 감싼다(둥근 클립 활성 시엔 바깥 래퍼가 처리).
+    let rect_clip = |it: DisplayItem| -> DisplayItem {
+        if round_active {
+            it
+        } else {
+            DisplayItem::Clipped {
+                shape: ClipShape::RoundRect { rect: c, radii: [0.0; 4] },
+                inner: Box::new(it),
+            }
+        }
+    };
     match item {
         DisplayItem::Rect { color, rect } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Rect { color, rect: r })
@@ -1675,7 +1696,11 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
                 }
             }
             let bbox = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
-            rect_intersect(bbox, c).map(|_| DisplayItem::Polygon { color, contours })
+            match rect_intersect(bbox, c) {
+                None => None,
+                Some(_) if rect_contains(c, bbox) => Some(DisplayItem::Polygon { color, contours }),
+                Some(_) => Some(rect_clip(DisplayItem::Polygon { color, contours })),
+            }
         }
         DisplayItem::Shadow { color, rect, radius, blur } => {
             // 그림자는 blur 만큼 넉넉히 — 경계 밖이면 컬링만
@@ -1699,7 +1724,12 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
                 width: gi.px,
                 height: 1.5 * gi.px,
             };
-            rect_intersect(gbox, c).map(|_| DisplayItem::Glyph(gi))
+            match rect_intersect(gbox, c) {
+                None => None,
+                // 완전히 안이면 그대로, 경계에 걸치면 픽셀 단위 사각 클립으로 감싼다.
+                Some(_) if rect_contains(c, gbox) => Some(DisplayItem::Glyph(gi)),
+                Some(_) => Some(rect_clip(DisplayItem::Glyph(gi))),
+            }
         }
         // sticky 래퍼는 클립 전에 감싸지 않으므로 여기 도달 안 함 (exhaustive 용)
         sticky @ DisplayItem::Sticky { .. } => Some(sticky),
@@ -1993,7 +2023,7 @@ fn collect_items(
     }
     // 이 박스 자신의 아이템은 부모 클립으로 자르고, 둥근 클립·sticky 면 래핑
     for it in local {
-        if let Some(clipped) = clip_apply(it, clip) {
+        if let Some(clipped) = clip_apply(it, clip, round_clip.is_some()) {
             let masked = match &round_clip {
                 Some(shape) => DisplayItem::Clipped { shape: shape.clone(), inner: Box::new(clipped) },
                 None => clipped,
@@ -3298,6 +3328,33 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn overflow_clip_pixel_clips_straddling_glyph() {
+        let glyph = || DisplayItem::Glyph(crate::layout::GlyphInstance {
+            font_index: 0,
+            glyph_id: 1,
+            x: 100.0,
+            baseline_y: 100.0,
+            px: 20.0,
+            color: Color { r: 0, g: 0, b: 0, a: 255 },
+            bold: false,
+            italic: false,
+            rot: 0.0,
+        });
+        // gbox ≈ [100..120] x [78..108].
+        // 완전히 포함 → 글리프 그대로.
+        let full = Rect { x: 0.0, y: 0.0, width: 200.0, height: 200.0 };
+        assert!(matches!(clip_apply(glyph(), Some(full), false), Some(DisplayItem::Glyph(_))));
+        // 오른쪽 경계에 걸침 → 사각 Clipped 로 감쌈(픽셀 클립).
+        let straddle = Rect { x: 0.0, y: 0.0, width: 110.0, height: 200.0 };
+        assert!(matches!(clip_apply(glyph(), Some(straddle), false), Some(DisplayItem::Clipped { .. })));
+        // 걸치지만 둥근 클립 활성 → 바깥 래퍼가 처리하므로 이중 래핑 안 함.
+        assert!(matches!(clip_apply(glyph(), Some(straddle), true), Some(DisplayItem::Glyph(_))));
+        // 완전히 밖 → 컬링.
+        let outside = Rect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 };
+        assert!(clip_apply(glyph(), Some(outside), false).is_none());
     }
 
     #[test]
