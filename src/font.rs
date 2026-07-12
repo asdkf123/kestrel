@@ -202,6 +202,10 @@ impl Font {
     }
 
     fn glyf_outline(&self, glyph_id: u16) -> Glyph {
+        self.glyf_outline_depth(glyph_id, 0)
+    }
+
+    fn glyf_outline_depth(&self, glyph_id: u16, depth: u32) -> Glyph {
         let (glyf, _) = self.tables[b"glyf"];
         let (start, end) = self.glyph_range(glyph_id);
         if end <= start {
@@ -213,8 +217,11 @@ impl Font {
         let y_min = be_i16(&self.data, g + 4);
         let x_max = be_i16(&self.data, g + 6);
         let y_max = be_i16(&self.data, g + 8);
-        if num_contours <= 0 {
-            // composite (<0) is out of scope; 0 contours = empty
+        if num_contours < 0 {
+            // 합성 글리프: 컴포넌트들을 변환해 합침 (é/ñ/ü 등 악센트, 일부 CJK)
+            return self.composite_glyf(g + 10, x_min, y_min, x_max, y_max, depth);
+        }
+        if num_contours == 0 {
             return Glyph { contours: vec![], x_min, y_min, x_max, y_max };
         }
         let num_contours = num_contours as usize;
@@ -289,6 +296,84 @@ impl Font {
             }
             contours.push(Contour { points });
             s = e + 1;
+        }
+        Glyph { contours, x_min, y_min, x_max, y_max }
+    }
+
+    // 합성 글리프 파싱 (TrueType). 각 컴포넌트: flags, glyphIndex, args(오프셋/포인트),
+    // 선택 변환(scale / x·y scale / 2x2). 컴포넌트 아웃라인을 변환해 합친다(재귀).
+    fn composite_glyf(
+        &self,
+        mut p: usize,
+        x_min: i16,
+        y_min: i16,
+        x_max: i16,
+        y_max: i16,
+        depth: u32,
+    ) -> Glyph {
+        let empty = Glyph { contours: vec![], x_min, y_min, x_max, y_max };
+        if depth > 6 || p + 4 > self.data.len() {
+            return empty; // 재귀 폭주/손상 방지
+        }
+        let f2dot14 = |v: i16| v as f32 / 16384.0;
+        let mut contours: Vec<Contour> = Vec::new();
+        loop {
+            if p + 4 > self.data.len() {
+                break;
+            }
+            let flags = be_u16(&self.data, p);
+            let comp_glyph = be_u16(&self.data, p + 2);
+            p += 4;
+            // 인자: ARGS_ARE_XY_VALUES(0x0002) 면 dx,dy 오프셋, 아니면 포인트 매칭(근사 0).
+            let words = flags & 0x0001 != 0;
+            let xy = flags & 0x0002 != 0;
+            let (dx, dy) = if words {
+                let (a1, a2) = (be_i16(&self.data, p), be_i16(&self.data, p + 2));
+                p += 4;
+                if xy { (a1 as f32, a2 as f32) } else { (0.0, 0.0) }
+            } else {
+                let (a1, a2) = (self.data[p] as i8, self.data[p + 1] as i8);
+                p += 2;
+                if xy { (a1 as f32, a2 as f32) } else { (0.0, 0.0) }
+            };
+            // 변환 행렬 [[a,c],[b,d]] (기본 항등)
+            let (mut a, mut b, mut c, mut d) = (1.0f32, 0.0f32, 0.0f32, 1.0f32);
+            if flags & 0x0008 != 0 {
+                // WE_HAVE_A_SCALE
+                let s = f2dot14(be_i16(&self.data, p));
+                p += 2;
+                a = s;
+                d = s;
+            } else if flags & 0x0040 != 0 {
+                // WE_HAVE_AN_X_AND_Y_SCALE
+                a = f2dot14(be_i16(&self.data, p));
+                d = f2dot14(be_i16(&self.data, p + 2));
+                p += 4;
+            } else if flags & 0x0080 != 0 {
+                // WE_HAVE_A_TWO_BY_TWO (a, b, c, d 순)
+                a = f2dot14(be_i16(&self.data, p));
+                b = f2dot14(be_i16(&self.data, p + 2));
+                c = f2dot14(be_i16(&self.data, p + 4));
+                d = f2dot14(be_i16(&self.data, p + 6));
+                p += 8;
+            }
+            // 컴포넌트 아웃라인을 변환해 추가: x'=a·x+c·y+dx, y'=b·x+d·y+dy
+            let comp = self.glyf_outline_depth(comp_glyph, depth + 1);
+            for cont in comp.contours {
+                let points = cont
+                    .points
+                    .iter()
+                    .map(|pt| Point {
+                        x: a * pt.x + c * pt.y + dx,
+                        y: b * pt.x + d * pt.y + dy,
+                        on_curve: pt.on_curve,
+                    })
+                    .collect();
+                contours.push(Contour { points });
+            }
+            if flags & 0x0020 == 0 {
+                break; // MORE_COMPONENTS 없음
+            }
         }
         Glyph { contours, x_min, y_min, x_max, y_max }
     }
