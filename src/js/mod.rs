@@ -295,6 +295,20 @@ mod tests {
     }
 
     #[test]
+    fn url_search_params_mutation() {
+        // searchParams.set/append/delete — 쿼리 조작.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var u = new URL('https://ex.com/p?a=1&b=2'); \
+             u.searchParams.set('a','9'); u.searchParams.append('c','3'); u.searchParams.delete('b'); \
+             document.getElementById('t').textContent = u.searchParams.toString();</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "a=9&c=3");
+    }
+
+    #[test]
     fn url_resolves_against_base() {
         // new URL(relative, base) — 상대 경로를 base 로 해석.
         let mut dom = crate::html::parse_dom(

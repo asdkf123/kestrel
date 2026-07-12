@@ -53,6 +53,15 @@ fn recv_prop_str(recv: &Option<Value>, key: &str) -> String {
     String::new()
 }
 
+// (키,값) 쌍을 x-www-form-urlencoded 쿼리 문자열로 (각 성분 encodeURIComponent).
+fn build_query(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", uri_encode(k, ""), uri_encode(v, "")))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 // application/x-www-form-urlencoded 쿼리를 (키,값) 쌍으로. '+' → 공백, %XX 디코드.
 fn parse_query(q: &str) -> Vec<(String, String)> {
     q.split('&')
@@ -1807,6 +1816,36 @@ impl Interp {
                 Ok(Value::Bool(
                     parse_query(&recv_prop_str(&recv, "__query")).iter().any(|(k, _)| *k == key),
                 ))
+            }
+            Native::UrlSearchSet => {
+                if let Some(Value::Obj(o)) = &recv {
+                    let mut pairs = parse_query(&recv_prop_str(&recv, "__query"));
+                    let key = args.first().map(to_display).unwrap_or_default();
+                    let val = args.get(1).map(to_display).unwrap_or_default();
+                    pairs.retain(|(k, _)| *k != key);
+                    pairs.push((key, val));
+                    o.borrow_mut().insert("__query".to_string(), Value::Str(build_query(&pairs)));
+                }
+                Ok(Value::Undefined)
+            }
+            Native::UrlSearchAppend => {
+                if let Some(Value::Obj(o)) = &recv {
+                    let mut pairs = parse_query(&recv_prop_str(&recv, "__query"));
+                    let key = args.first().map(to_display).unwrap_or_default();
+                    let val = args.get(1).map(to_display).unwrap_or_default();
+                    pairs.push((key, val));
+                    o.borrow_mut().insert("__query".to_string(), Value::Str(build_query(&pairs)));
+                }
+                Ok(Value::Undefined)
+            }
+            Native::UrlSearchDelete => {
+                if let Some(Value::Obj(o)) = &recv {
+                    let mut pairs = parse_query(&recv_prop_str(&recv, "__query"));
+                    let key = args.first().map(to_display).unwrap_or_default();
+                    pairs.retain(|(k, _)| *k != key);
+                    o.borrow_mut().insert("__query".to_string(), Value::Str(build_query(&pairs)));
+                }
+                Ok(Value::Undefined)
             }
             Native::IsNaN => {
                 Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))

@@ -195,6 +195,9 @@ pub enum Native {
     UrlSearchGet,
     UrlSearchGetAll,
     UrlSearchHas,
+    UrlSearchSet,
+    UrlSearchAppend,
+    UrlSearchDelete,
     UrlSearchToString,
     XhrOpen,
     XhrSend,
@@ -1187,6 +1190,9 @@ impl Interp {
         sp.insert("get".to_string(), Value::Native(Native::UrlSearchGet));
         sp.insert("getAll".to_string(), Value::Native(Native::UrlSearchGetAll));
         sp.insert("has".to_string(), Value::Native(Native::UrlSearchHas));
+        sp.insert("set".to_string(), Value::Native(Native::UrlSearchSet));
+        sp.insert("append".to_string(), Value::Native(Native::UrlSearchAppend));
+        sp.insert("delete".to_string(), Value::Native(Native::UrlSearchDelete));
         sp.insert("toString".to_string(), Value::Native(Native::UrlSearchToString));
         let search_params = Value::Obj(Rc::new(RefCell::new(sp)));
 
