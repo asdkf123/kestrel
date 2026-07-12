@@ -206,17 +206,20 @@ fn matches_compound(
     if selector.class.iter().any(|class| !elem_classes.contains(&**class)) {
         return false;
     }
-    for (name, op) in &selector.attrs {
+    for (name, op, ci) in &selector.attrs {
         use crate::css::AttrOp;
-        let Some(av) = elem.attributes.get(name) else { return false };
+        let Some(av_raw) = elem.attributes.get(name) else { return false };
+        // [attr=v i] 대소문자 무시: 양쪽을 ASCII 소문자로 비교.
+        let av = if *ci { av_raw.to_ascii_lowercase() } else { av_raw.clone() };
+        let val = |v: &String| if *ci { v.to_ascii_lowercase() } else { v.clone() };
         let ok = match op {
             AttrOp::Exists => true,
-            AttrOp::Equals(v) => av == v,
-            AttrOp::Prefix(v) => !v.is_empty() && av.starts_with(v.as_str()),
-            AttrOp::Suffix(v) => !v.is_empty() && av.ends_with(v.as_str()),
-            AttrOp::Contains(v) => !v.is_empty() && av.contains(v.as_str()),
-            AttrOp::Word(v) => !v.is_empty() && av.split_whitespace().any(|w| w == v),
-            AttrOp::Dash(v) => av == v || av.starts_with(&format!("{}-", v)),
+            AttrOp::Equals(v) => av == val(v),
+            AttrOp::Prefix(v) => !v.is_empty() && av.starts_with(&val(v)),
+            AttrOp::Suffix(v) => !v.is_empty() && av.ends_with(&val(v)),
+            AttrOp::Contains(v) => !v.is_empty() && av.contains(&val(v)),
+            AttrOp::Word(v) => !v.is_empty() && av.split_whitespace().any(|w| w == val(v)),
+            AttrOp::Dash(v) => av == val(v) || av.starts_with(&format!("{}-", val(v))),
         };
         if !ok {
             return false;
@@ -2004,6 +2007,27 @@ mod tests {
             "input[type=submit] 매칭"
         );
         assert_eq!(styled.children[1].value("width"), None, "input[type=text] 비매칭");
+    }
+
+    #[test]
+    fn attribute_selector_case_insensitive_flag() {
+        // 기본은 대소문자 구분: [type=SUBMIT] 는 type="submit" 과 비매칭.
+        // [type=SUBMIT i] 는 i 플래그로 매칭.
+        let root = crate::html::parse_dom(
+            "<div><input type=\"submit\"></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "input[type=SUBMIT] { width: 5px; } \
+             input[type=SUBMIT i] { height: 7px; }"
+                .to_string(),
+        );
+        let div = style_tree(&root, &ss);
+        assert_eq!(div.children[0].value("width"), None, "대소문자 구분: SUBMIT≠submit");
+        assert_eq!(
+            div.children[0].value("height"),
+            Some(Value::Length(7.0, Unit::Px)),
+            "i 플래그: 대소문자 무시 매칭"
+        );
     }
 
     #[test]

@@ -95,8 +95,8 @@ pub struct SimpleSelector {
     pub tag_name: Option<String>,
     pub id: Option<String>,
     pub class: Vec<String>,
-    // 속성 선택자: (이름, 연산자).
-    pub attrs: Vec<(String, AttrOp)>,
+    // 속성 선택자: (이름, 연산자, 대소문자무시). ci=true 는 [attr=v i] 플래그.
+    pub attrs: Vec<(String, AttrOp, bool)>,
     pub pseudos: Vec<Pseudo>,
     // ::before / ::after — 대상 요소 자체가 아니라 생성 박스를 지정.
     pub pseudo_element: Option<PseudoElement>,
@@ -947,7 +947,7 @@ impl Parser {
 
     // [name] 또는 [name=value] / [name="value"]. =/따옴표 파싱, 그 외 연산자(~= 등)는
     // value 없는 존재 검사로 관용 처리. name 은 소문자화.
-    fn parse_attr_selector(&mut self) -> Option<(String, AttrOp)> {
+    fn parse_attr_selector(&mut self) -> Option<(String, AttrOp, bool)> {
         self.consume_char(); // '['
         self.consume_whitespace();
         let name = self.parse_identifier().to_ascii_lowercase();
@@ -982,7 +982,11 @@ impl Parser {
                 }
             }
         };
-        // ']' 까지 소비 (i 플래그 등 잔여 포함)
+        // 값 뒤 대소문자 플래그: i(무시)/s(구분). 기본은 대소문자 구분.
+        self.consume_whitespace();
+        let flag = self.parse_identifier().to_ascii_lowercase();
+        let ci = flag == "i";
+        // 남은 것(예상외 토큰) ']' 까지 소비
         self.consume_while(|c| c != ']');
         if self.peek() == Some(']') {
             self.consume_char();
@@ -990,7 +994,7 @@ impl Parser {
         if name.is_empty() {
             None
         } else {
-            Some((name, attr_op))
+            Some((name, attr_op, ci))
         }
     }
 
