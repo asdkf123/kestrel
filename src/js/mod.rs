@@ -231,6 +231,35 @@ mod tests {
     }
 
     #[test]
+    fn uri_encode_decode_globals() {
+        // encodeURIComponent 는 예약문자/공백/비ASCII 를 %XX(UTF-8)로, 왕복 복원.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var e = encodeURIComponent('a b/c?d=\u{d55c}'); \
+             document.getElementById('t').textContent = e + '|' + decodeURIComponent(e);</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(
+            text_of_id(&dom, "t").unwrap(),
+            "a%20b%2Fc%3Fd%3D%ED%95%9C|a b/c?d=\u{d55c}"
+        );
+    }
+
+    #[test]
+    fn encode_uri_preserves_reserved() {
+        // encodeURI 는 예약문자(/ ? : = &)를 보존, 공백만 %20.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>document.getElementById('t').textContent = \
+             encodeURI('http://x.com/a b?c=1&d=2');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "http://x.com/a%20b?c=1&d=2");
+    }
+
+    #[test]
     fn scripts_share_globals_in_document_order() {
         let mut dom = crate::html::parse_dom(
             "<p id=\"t\">old</p>\

@@ -5,6 +5,44 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+// URI 인코딩: 비예약문자(A-Za-z0-9 -_.!~*'()) 와 extra_safe 는 보존, 나머지는
+// UTF-8 바이트별 %XX. encodeURI 는 예약문자를 extra_safe 로 넘겨 보존한다.
+fn uri_encode(s: &str, extra_safe: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() || "-_.!~*'()".contains(ch) || extra_safe.contains(ch) {
+            out.push(ch);
+        } else {
+            let mut buf = [0u8; 4];
+            for &b in ch.encode_utf8(&mut buf).as_bytes() {
+                out.push('%');
+                out.push(char::from_digit((b >> 4) as u32, 16).unwrap().to_ascii_uppercase());
+                out.push(char::from_digit((b & 0xf) as u32, 16).unwrap().to_ascii_uppercase());
+            }
+        }
+    }
+    out
+}
+
+// URI 디코딩: %XX 를 바이트로 모아 UTF-8 해석. 유효하지 않은 %는 그대로 통과.
+fn uri_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 // 컨텍스트의 __path 배열 조작 ([x0,y0,x1,y1,...] 평탄 저장).
 fn set_path(ctx: &Rc<RefCell<HashMap<String, Value>>>, pts: Vec<Value>) {
     ctx.borrow_mut().insert("__path".to_string(), Value::Arr(ArrayObj::new(pts)));
@@ -1645,6 +1683,17 @@ impl Interp {
                     end += 1;
                 }
                 Ok(t[..end].parse::<f64>().map(Value::Num).unwrap_or(Value::Num(f64::NAN)))
+            }
+            Native::EncodeUri => {
+                // encodeURI: 예약문자(;,/?:@&=+$#) 와 비예약문자는 보존
+                Ok(Value::Str(uri_encode(&args.first().map(to_display).unwrap_or_default(), ";,/?:@&=+$#")))
+            }
+            Native::EncodeUriComponent => {
+                // encodeURIComponent: 비예약문자만 보존 (예약문자도 인코딩)
+                Ok(Value::Str(uri_encode(&args.first().map(to_display).unwrap_or_default(), "")))
+            }
+            Native::DecodeUri | Native::DecodeUriComponent => {
+                Ok(Value::Str(uri_decode(&args.first().map(to_display).unwrap_or_default())))
             }
             Native::IsNaN => {
                 Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))

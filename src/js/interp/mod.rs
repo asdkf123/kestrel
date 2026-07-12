@@ -228,6 +228,10 @@ pub enum Native {
     JsonStringify,
     ParseInt,
     ParseFloat,
+    EncodeUri,
+    EncodeUriComponent,
+    DecodeUri,
+    DecodeUriComponent,
     IsNaN,
     LsGetItem,
     LsSetItem,
@@ -702,6 +706,10 @@ impl Interp {
         // 전역 함수
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
+        env_declare(&global, "encodeURI", Value::Native(Native::EncodeUri));
+        env_declare(&global, "encodeURIComponent", Value::Native(Native::EncodeUriComponent));
+        env_declare(&global, "decodeURI", Value::Native(Native::DecodeUri));
+        env_declare(&global, "decodeURIComponent", Value::Native(Native::DecodeUriComponent));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
         env_declare(&global, "isFinite", Value::Native(Native::NumIsFinite));
         // 타이머
