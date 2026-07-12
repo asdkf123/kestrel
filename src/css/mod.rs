@@ -1228,6 +1228,29 @@ mod tests {
     }
 
     #[test]
+    fn media_em_units_orientation_and_unknown() {
+        // 48em = 768px(@16). vw=1000 → max-width:48em 불일치(데스크톱). 이전엔 em 무시→항상 참.
+        assert!(!media_matches("(max-width: 48em)", 1000.0), "48em max 데스크톱 불일치");
+        assert!(media_matches("(min-width: 40em)", 1000.0), "40em min 매칭");
+        // orientation (vw>=vh=800 → landscape)
+        assert!(media_matches("(orientation: landscape)", 1000.0));
+        assert!(!media_matches("(orientation: portrait)", 1000.0));
+        // 데스크톱 인터랙션 미디어
+        assert!(media_matches("(hover: hover)", 1000.0));
+        assert!(media_matches("(pointer: fine)", 1000.0));
+        assert!(!media_matches("(pointer: coarse)", 1000.0));
+        // 미인식 특성 → 불일치 (관용적 참 아님)
+        assert!(!media_matches("(grid: 1)", 1000.0));
+        assert!(!media_matches("(min-resolution: 2dppx)", 1000.0));
+        // Level 4 범위 문법
+        assert!(media_matches("(width >= 768px)", 1000.0));
+        assert!(!media_matches("(width >= 1200px)", 1000.0));
+        // 결합
+        assert!(media_matches("screen and (min-width: 30em)", 1000.0));
+        assert!(!media_matches("screen and (max-width: 20em)", 1000.0));
+    }
+
+    #[test]
     fn prefers_color_scheme_defaults_light() {
         // 헤드리스 = light: dark 스킴 블록은 드롭, light/not-dark 는 포함.
         assert!(!media_matches("(prefers-color-scheme: dark)", 1000.0), "dark 불일치");
