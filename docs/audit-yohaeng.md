@@ -16,7 +16,8 @@
   /await 거부→throw/Promise.all 거부/allSettled/race 거부 채택. (19874bc)
 - [x] **JS 누락 표준 메서드 보강** — Object.values/entries/fromEntries, Array/String.at,
   flatMap, structuredClone, Array.from/of. (fc28720, 580ac2c, 62d4a25)
-- [ ] **float in nearest-BFC** — float 이 직속 부모에 갇힘. 다중 float·타 블록 우회 불가. (layout/mod.rs:1049)
+- [x] **float in nearest-BFC(§9.5)** — 비BFC 블록은 float 을 담지 않고 trailing_floats 로
+  부모 BFC 까지 버블. 중첩 래퍼 밖 형제·조상이 우회. 루트는 BFC 로 담음. (layout/mod.rs)
 
 ## 티어1 — 고빈도 + 요행 통과 (우선 수정)
 
