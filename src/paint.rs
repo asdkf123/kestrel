@@ -48,6 +48,36 @@ impl ClipShape {
     }
 }
 
+// 분리형 박스 블러 한 축 1회 (접두합으로 O(n)). horizontal=true 면 가로, false 면 세로.
+// 경계는 클램프(윈도우가 영역 안으로 잘림). 3회 반복하면 가우시안 근사.
+fn box_pass(
+    src: &[(f32, f32, f32)],
+    dst: &mut [(f32, f32, f32)],
+    rw: usize,
+    rh: usize,
+    r: usize,
+    horizontal: bool,
+) {
+    let line_len = if horizontal { rw } else { rh };
+    let lines = if horizontal { rh } else { rw };
+    let mut pr = vec![(0f32, 0f32, 0f32); line_len + 1];
+    let idx = |i: usize, j: usize| if horizontal { i * rw + j } else { j * rw + i };
+    for i in 0..lines {
+        // 접두합
+        for j in 0..line_len {
+            let c = src[idx(i, j)];
+            pr[j + 1] = (pr[j].0 + c.0, pr[j].1 + c.1, pr[j].2 + c.2);
+        }
+        for j in 0..line_len {
+            let lo = j.saturating_sub(r);
+            let hi = (j + r).min(line_len - 1);
+            let cnt = (hi - lo + 1) as f32;
+            let s = (pr[hi + 1].0 - pr[lo].0, pr[hi + 1].1 - pr[lo].1, pr[hi + 1].2 - pr[lo].2);
+            dst[idx(i, j)] = (s.0 / cnt, s.1 / cnt, s.2 / cnt);
+        }
+    }
+}
+
 // 오차함수 erf 근사 (Abramowitz & Stegun 7.1.26, |오차|<1.5e-7). 가우시안 섀도 전이용.
 fn erf(x: f32) -> f32 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
@@ -128,7 +158,9 @@ impl Canvas {
         }
     }
 
-    // 지역 박스 블러 (분리형 2패스). backdrop-filter: blur() 용. 물리 px 반경.
+    // 지역 가우시안 블러 근사. backdrop-filter: blur() 용. 물리 px 반경(≈σ).
+    // 박스 블러를 축마다 3회 반복하면 중심극한정리로 가우시안에 수렴(SVG feGaussianBlur
+    // 표준 방식). 각 패스는 접두합(prefix sum)으로 O(픽셀).
     fn blur_region(&mut self, rect: Rect, radius: f32) {
         let r = (radius.round() as i32).max(1) as usize;
         let x0 = rect.x.floor().max(0.0) as i32;
@@ -141,47 +173,30 @@ impl Canvas {
         let (x0, y0) = (x0 as usize, y0 as usize);
         let (rw, rh) = ((x1 as usize - x0), (y1 as usize - y0));
         let w = self.width;
-        let mut a = vec![(0f32, 0f32, 0f32); rw * rh];
+        let mut buf = vec![(0f32, 0f32, 0f32); rw * rh];
         for yy in 0..rh {
             for xx in 0..rw {
                 let p = self.pixels[(y0 + yy) * w + (x0 + xx)];
-                a[yy * rw + xx] = (p.r as f32, p.g as f32, p.b as f32);
+                buf[yy * rw + xx] = (p.r as f32, p.g as f32, p.b as f32);
             }
         }
-        let mut b = a.clone();
-        // 가로 패스 a → b
-        for yy in 0..rh {
-            for xx in 0..rw {
-                let (mut sr, mut sg, mut sb, mut cnt) = (0.0, 0.0, 0.0, 0.0);
-                let lo = xx.saturating_sub(r);
-                let hi = (xx + r).min(rw - 1);
-                for k in lo..=hi {
-                    let c = a[yy * rw + k];
-                    sr += c.0;
-                    sg += c.1;
-                    sb += c.2;
-                    cnt += 1.0;
-                }
-                b[yy * rw + xx] = (sr / cnt, sg / cnt, sb / cnt);
-            }
+        let mut tmp = vec![(0f32, 0f32, 0f32); rw * rh];
+        // 가로 3회, 세로 3회 (핑퐁)
+        for _ in 0..3 {
+            box_pass(&buf, &mut tmp, rw, rh, r, true);
+            std::mem::swap(&mut buf, &mut tmp);
         }
-        // 세로 패스 b → canvas
+        for _ in 0..3 {
+            box_pass(&buf, &mut tmp, rw, rh, r, false);
+            std::mem::swap(&mut buf, &mut tmp);
+        }
         for yy in 0..rh {
             for xx in 0..rw {
-                let (mut sr, mut sg, mut sb, mut cnt) = (0.0, 0.0, 0.0, 0.0);
-                let lo = yy.saturating_sub(r);
-                let hi = (yy + r).min(rh - 1);
-                for k in lo..=hi {
-                    let c = b[k * rw + xx];
-                    sr += c.0;
-                    sg += c.1;
-                    sb += c.2;
-                    cnt += 1.0;
-                }
+                let c = buf[yy * rw + xx];
                 self.pixels[(y0 + yy) * w + (x0 + xx)] = Color {
-                    r: (sr / cnt).round() as u8,
-                    g: (sg / cnt).round() as u8,
-                    b: (sb / cnt).round() as u8,
+                    r: c.0.round().clamp(0.0, 255.0) as u8,
+                    g: c.1.round().clamp(0.0, 255.0) as u8,
+                    b: c.2.round().clamp(0.0, 255.0) as u8,
                     a: 255,
                 };
             }
@@ -3427,6 +3442,22 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn box_pass_spreads_spike_symmetrically() {
+        // 11칸 중 가운데(5)만 255. r=2 가로 패스 → [3..7] 로 균일 확산(255/5=51).
+        let mut src = vec![(0f32, 0f32, 0f32); 11];
+        src[5] = (255.0, 255.0, 255.0);
+        let mut dst = vec![(0f32, 0f32, 0f32); 11];
+        box_pass(&src, &mut dst, 11, 1, 2, true);
+        assert!((dst[5].0 - 51.0).abs() < 0.5, "중심 255/5=51, 실제 {}", dst[5].0);
+        assert!((dst[3].0 - dst[7].0).abs() < 0.01, "좌우 대칭");
+        assert!((dst[3].0 - 51.0).abs() < 0.5, "창 안 균일");
+        assert!(dst[2].0 < 0.01 && dst[8].0 < 0.01, "창 밖은 0");
+        // 질량 보존(가장자리 클램프 없는 중앙부): 합 ≈ 255
+        let sum: f32 = dst.iter().map(|c| c.0).sum();
+        assert!((sum - 255.0).abs() < 1.0, "질량 보존 ~255, 실제 {}", sum);
     }
 
     #[test]
