@@ -173,9 +173,29 @@ impl Parser {
             Some(Tok::For) => self.for_stmt(),
             Some(Tok::Return) => {
                 self.pos += 1;
-                let value = if self.peek() == Some(&Tok::Semi)
-                    || self.peek() == Some(&Tok::RBrace)
-                    || self.eof()
+                // 값 없는 return: ; } EOF, 또는 식을 시작할 수 없는 문 키워드가 뒤따를 때(ASI).
+                // (렉서가 개행을 안 남기므로, `return\nconst x=…` 같은 조기 반환은 키워드로 판별.)
+                let value = if self.eof()
+                    || matches!(
+                        self.peek(),
+                        Some(
+                            Tok::Semi
+                                | Tok::RBrace
+                                | Tok::Const
+                                | Tok::Let
+                                | Tok::Var
+                                | Tok::If
+                                | Tok::For
+                                | Tok::While
+                                | Tok::Do
+                                | Tok::Switch
+                                | Tok::Try
+                                | Tok::Break
+                                | Tok::Continue
+                                | Tok::Throw
+                                | Tok::Return
+                        )
+                    )
                 {
                     None
                 } else {

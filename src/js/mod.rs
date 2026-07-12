@@ -247,6 +247,20 @@ mod tests {
     }
 
     #[test]
+    fn bare_return_then_declaration_asi() {
+        // `if (!x) return` 뒤 개행 + const 선언 — ASI(값 없는 return). 렉서가 개행을
+        // 안 남겨도 식을 시작 못 하는 키워드(const)로 판별. 조기 반환 흔한 패턴.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>function g(x){ if(!x) return\nconst z = 7; return z; } \
+             document.getElementById('t').textContent = String(g(true));</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "7");
+    }
+
+    #[test]
     fn trailing_comma_in_call_args() {
         // f(2, 3,) — 함수 호출 인자의 트레일링 콤마 (ES2017+, 번들러 코드에 흔함)
         let mut dom = crate::html::parse_dom(
