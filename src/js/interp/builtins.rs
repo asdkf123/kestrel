@@ -286,7 +286,7 @@ impl Interp {
                                 None,
                                 vec![
                                     Value::Str(needle.clone()),
-                                    Value::Num(s[..at].chars().count() as f64),
+                                    Value::Num(s[..at].encode_utf16().count() as f64), // UTF-16 인덱스
                                     Value::Str(s.to_string()),
                                 ],
                             )?;
@@ -1367,41 +1367,37 @@ impl Interp {
                     return Err("문자열 메서드".to_string());
                 };
                 let chars: Vec<char> = s.chars().collect();
+                // JS 문자열은 UTF-16 코드 유닛 열 — 길이/인덱스는 코드 유닛 기준.
+                let units: Vec<u16> = s.encode_utf16().collect();
                 let arg_str = |i: usize| args.get(i).map(to_display).unwrap_or_default();
                 Ok(match op {
                     StrOp::Upper => Value::Str(s.to_uppercase()),
                     StrOp::Lower => Value::Str(s.to_lowercase()),
                     StrOp::Trim => Value::Str(s.trim().to_string()),
                     StrOp::CharAt => {
-                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
-                        Value::Str(
-                            chars
-                                .get(i.max(0) as usize)
-                                .map(|c| c.to_string())
-                                .unwrap_or_default(),
-                        )
+                        // UTF-16 코드 유닛 하나(범위 밖은 ""). 짝 없는 서로게이트는 U+FFFD.
+                        let i = args.first().map(to_num).unwrap_or(0.0);
+                        let out = if i >= 0.0 && (i as usize) < units.len() {
+                            String::from_utf16_lossy(&units[i as usize..i as usize + 1])
+                        } else {
+                            String::new()
+                        };
+                        Value::Str(out)
                     }
                     StrOp::IndexOf => {
-                        // 문자(char) 인덱스 기준 (UTF-16 이 아님 — 단순화). fromIndex 2번째 인자.
-                        let needle = arg_str(0);
+                        // UTF-16 코드 유닛 인덱스. fromIndex 2번째 인자.
+                        let ndl: Vec<u16> = arg_str(0).encode_utf16().collect();
                         let from = args
                             .get(1)
                             .map(to_num)
                             .filter(|n| !n.is_nan())
                             .map(|n| n.max(0.0) as usize)
                             .unwrap_or(0);
-                        let byte_from = s.char_indices().nth(from).map(|(b, _)| b).unwrap_or(s.len());
-                        match s[byte_from..].find(&needle) {
-                            Some(rel) => Value::Num(s[..byte_from + rel].chars().count() as f64),
-                            None => Value::Num(-1.0),
-                        }
+                        Value::Num(utf16_index_of(&units, &ndl, from).map(|i| i as f64).unwrap_or(-1.0))
                     }
                     StrOp::LastIndexOf => {
-                        let needle = arg_str(0);
-                        match s.rfind(&needle) {
-                            Some(byte_i) => Value::Num(s[..byte_i].chars().count() as f64),
-                            None => Value::Num(-1.0),
-                        }
+                        let ndl: Vec<u16> = arg_str(0).encode_utf16().collect();
+                        Value::Num(utf16_last_index_of(&units, &ndl).map(|i| i as f64).unwrap_or(-1.0))
                     }
                     StrOp::Includes => Value::Bool(s.contains(&arg_str(0))),
                     StrOp::StartsWith => Value::Bool(s.starts_with(&arg_str(0))),
@@ -1424,7 +1420,12 @@ impl Interp {
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                             .map_err(|e| format!("정규식: {}", e))?;
                         match re.find(&chars, 0) {
-                            Some(mt) => Value::Num(mt.start as f64),
+                            // 정규식 엔진은 코드포인트 인덱스 → UTF-16 유닛 오프셋으로 변환
+                            Some(mt) => {
+                                let u16_start: usize =
+                                    chars[..mt.start].iter().map(|c| c.len_utf16()).sum();
+                                Value::Num(u16_start as f64)
+                            }
                             None => Value::Num(-1.0),
                         }
                     }
@@ -1477,14 +1478,15 @@ impl Interp {
                         Value::Arr(ArrayObj::new(out))
                     }
                     StrOp::Slice => {
-                        let len = chars.len() as isize;
+                        // UTF-16 코드 유닛 기준 슬라이스(음수 인덱스는 끝에서).
+                        let len = units.len() as isize;
                         let clampi = |v: f64| -> usize {
                             let i = v as isize;
                             (if i < 0 { len + i } else { i }).clamp(0, len) as usize
                         };
                         let start = clampi(args.first().map(to_num).unwrap_or(0.0));
                         let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
-                        Value::Str(chars[start..end.max(start)].iter().collect())
+                        Value::Str(String::from_utf16_lossy(&units[start..end.max(start)]))
                     }
                     StrOp::Split => {
                         // 정규식 구분자 지원
@@ -1546,14 +1548,39 @@ impl Interp {
                             })
                         }
                     }
-                    StrOp::CharCodeAt | StrOp::CodePointAt => {
+                    StrOp::CharCodeAt => {
+                        // i번째 UTF-16 코드 유닛(u16). 범위 밖 NaN.
                         let i = args.first().map(to_num).unwrap_or(0.0);
                         if i < 0.0 {
                             Value::Num(f64::NAN)
                         } else {
-                            match chars.get(i as usize) {
-                                Some(c) => Value::Num(*c as u32 as f64),
+                            match units.get(i as usize) {
+                                Some(u) => Value::Num(*u as f64),
                                 None => Value::Num(f64::NAN),
+                            }
+                        }
+                    }
+                    StrOp::CodePointAt => {
+                        // i번째 UTF-16 위치에서 시작하는 코드 포인트(서로게이트쌍 결합). 범위 밖 undefined.
+                        let i = args.first().map(to_num).unwrap_or(0.0);
+                        if i < 0.0 {
+                            Value::Undefined
+                        } else {
+                            let idx = i as usize;
+                            match units.get(idx).copied() {
+                                None => Value::Undefined,
+                                Some(hi) if (0xD800..=0xDBFF).contains(&hi) => {
+                                    let cp = units
+                                        .get(idx + 1)
+                                        .copied()
+                                        .filter(|lo| (0xDC00..=0xDFFF).contains(lo))
+                                        .map(|lo| {
+                                            0x10000 + ((hi as u32 - 0xD800) << 10) + (lo as u32 - 0xDC00)
+                                        })
+                                        .unwrap_or(hi as u32);
+                                    Value::Num(cp as f64)
+                                }
+                                Some(u) => Value::Num(u as f64),
                             }
                         }
                     }

@@ -503,6 +503,28 @@ pub(super) fn type_of(v: &Value) -> &'static str {
     }
 }
 
+// UTF-16 코드 유닛열 hay 에서 ndl 을 from 부터 찾아 첫 유닛 인덱스 반환(String.indexOf).
+pub(super) fn utf16_index_of(hay: &[u16], ndl: &[u16], from: usize) -> Option<usize> {
+    if ndl.is_empty() {
+        return Some(from.min(hay.len()));
+    }
+    if ndl.len() > hay.len() {
+        return None;
+    }
+    (from.min(hay.len())..=hay.len() - ndl.len()).find(|&i| &hay[i..i + ndl.len()] == ndl)
+}
+
+// String.lastIndexOf: 뒤에서부터 마지막 일치의 첫 유닛 인덱스.
+pub(super) fn utf16_last_index_of(hay: &[u16], ndl: &[u16]) -> Option<usize> {
+    if ndl.is_empty() {
+        return Some(hay.len());
+    }
+    if ndl.len() > hay.len() {
+        return None;
+    }
+    (0..=hay.len() - ndl.len()).rev().find(|&i| &hay[i..i + ndl.len()] == ndl)
+}
+
 // SameValueZero: strict_eq 와 같되 NaN 은 서로 같다(Map/Set 키 비교용). +0/-0 은 strict 와 동일.
 pub(super) fn same_value_zero(a: &Value, b: &Value) -> bool {
     if let (Value::Num(x), Value::Num(y)) = (a, b) {

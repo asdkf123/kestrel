@@ -2051,7 +2051,7 @@ impl Interp {
                     // __proto__ 링크는 열거 대상 아님(JS 에서 non-enumerable accessor)
                     Value::Obj(m) => m.borrow().keys().filter(|k| !is_internal_key(k.as_str())).cloned().collect(),
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
-                    Value::Str(s) => (0..s.chars().count()).map(|i| i.to_string()).collect(),
+                    Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                     _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
                 };
                 for k in keys {
@@ -2854,7 +2854,7 @@ impl Interp {
             }
             Value::Str(s) => {
                 if key == "length" {
-                    return Ok(Value::Num(s.chars().count() as f64));
+                    return Ok(Value::Num(s.encode_utf16().count() as f64)); // UTF-16 코드 유닛 수
                 }
                 if key == "@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
@@ -2897,10 +2897,11 @@ impl Interp {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
-                    return Ok(s
-                        .chars()
-                        .nth(i)
-                        .map(|c| Value::Str(c.to_string()))
+                    // UTF-16 코드 유닛 인덱싱(짝 없는 서로게이트는 U+FFFD).
+                    let units: Vec<u16> = s.encode_utf16().collect();
+                    return Ok(units
+                        .get(i)
+                        .map(|&u| Value::Str(String::from_utf16_lossy(&[u])))
                         .unwrap_or(Value::Undefined));
                 }
                 // String.prototype 폴리필(at 등) — 원시 문자열에도 적용 (배열과 동일)
@@ -4505,6 +4506,28 @@ mod tests {
         assert!(run_bool("class A{} var a=new A(); a.valueOf() === a"));
         // 클래스가 toString 정의하면 그것 우선
         assert_eq!(run_str("class A{ toString(){ return 'custom'; } } new A().toString()"), "custom");
+    }
+
+    #[test]
+    fn string_utf16_semantics() {
+        // 문자열은 UTF-16 코드 유닛열: astral 문자는 길이 2.
+        assert_eq!(run_num("'😀'.length"), 2.0);
+        assert_eq!(run_num("'a😀b'.length"), 4.0);
+        assert_eq!(run_num("'café'.length"), 4.0); // é는 BMP → 1
+        // charCodeAt=코드 유닛(서로게이트), codePointAt=코드 포인트
+        assert_eq!(run_num("'😀'.charCodeAt(0)"), 55357.0); // 0xD83D 하이 서로게이트
+        assert_eq!(run_num("'😀'.codePointAt(0)"), 128512.0); // 0x1F600
+        // 인덱싱/slice/indexOf 는 UTF-16 유닛 기준
+        assert_eq!(run_num("'a😀b'.indexOf('b')"), 3.0);
+        assert_eq!(run_str("'a😀b'.slice(0,1)"), "a");
+        assert_eq!(run_str("'a😀b'[0]"), "a");
+        assert_eq!(run_num("'a😀b'.charCodeAt(1)"), 55357.0);
+        // BMP 문자열은 그대로(코드포인트==코드유닛)
+        assert_eq!(run_num("'hello'.length"), 5.0);
+        assert_eq!(run_num("'hello'.indexOf('llo')"), 2.0);
+        assert_eq!(run_str("'hello'.slice(1,3)"), "el");
+        // 반복/스프레드는 코드 포인트(astral=1)
+        assert_eq!(run_num("[...'😀'].length"), 1.0);
     }
 
     #[test]

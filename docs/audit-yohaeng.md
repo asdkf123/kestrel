@@ -82,7 +82,8 @@
 - [ ] JS **제너레이터 즉시 전체평가**. (mod.rs:2784)
 - [ ] JS **객체리터럴 계산 Symbol 키 불일치**(for-of 사용자 이터러블 안됨). (mod.rs:1962)
 - [~] JS **Date.parse/Date.UTC 구현(4568092) + JSON toJSON(ISO, 25aa6fd)** 완료. UTC전용(로컬시간대 미구현)은 후속.
-- [ ] JS **문자열 UTF-16 아님**(astral length). (mod.rs:2545)
+- [x] JS **문자열 UTF-16 코드 유닛**(length/charAt/charCodeAt/codePointAt/indexOf/slice/[i]/search/for-in).
+  반복·스프레드는 코드 포인트. 짝없는 서로게이트만 U+FFFD(Rust String 한계). (다음 커밋)
 - [~] JS **엔진 내부 마커 비열거 + Date toJSON(ISO)** 완료. promise 메서드도 비열거(프로토타입 격).
   JSON replacer/space 는 후속. (25aa6fd)
 - [~] JS **Number→문자열 ECMAScript 7.1.12.1**(지수 임계 n>21/n≤-6, "de+X"). toFixed 는 후속. (5e9c022)
