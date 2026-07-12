@@ -1611,6 +1611,17 @@ impl Interp {
                         }
                         Value::Str(out)
                     }
+                    StrOp::At => {
+                        // str.at(i): UTF-16 유닛, 음수는 끝에서. 범위 밖 undefined.
+                        let len = units.len() as isize;
+                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
+                        let idx = if i < 0 { len + i } else { i };
+                        if idx >= 0 && idx < len {
+                            Value::Str(String::from_utf16_lossy(&units[idx as usize..idx as usize + 1]))
+                        } else {
+                            Value::Undefined
+                        }
+                    }
                 })
             }
             Native::Arr(op) => {
@@ -1643,7 +1654,7 @@ impl Interp {
                         let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
                         Value::Arr(ArrayObj::new(items[start..end.max(start)].to_vec()))
                     }
-                    ArrOp::ForEach | ArrOp::Map | ArrOp::Filter => {
+                    ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut out = Vec::new();
@@ -1655,6 +1666,11 @@ impl Interp {
                             )?;
                             match op {
                                 ArrOp::Map => out.push(r),
+                                // flatMap: 콜백 결과가 배열이면 한 단계 펼침
+                                ArrOp::FlatMap => match r {
+                                    Value::Arr(inner) => out.extend(inner.borrow().iter().cloned()),
+                                    other => out.push(other),
+                                },
                                 ArrOp::Filter => {
                                     if to_bool(&r) {
                                         out.push(item);
@@ -1845,6 +1861,19 @@ impl Interp {
                         }
                         Value::Arr(ArrayObj::new(out))
                     }
+                    ArrOp::At => {
+                        // arr.at(i): 음수는 끝에서. 범위 밖 undefined.
+                        let len = a.borrow().len() as isize;
+                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
+                        let idx = if i < 0 { len + i } else { i };
+                        if idx >= 0 && idx < len {
+                            a.borrow().get(idx as usize).cloned().unwrap_or(Value::Undefined)
+                        } else {
+                            Value::Undefined
+                        }
+                    }
+                    // FlatMap 은 콜백이 필요 — 위 콜백 처리부에서 처리됨(여기 도달 안 함).
+                    ArrOp::FlatMap => Value::Undefined,
                 })
             }
             Native::JsonParse => {
@@ -2024,8 +2053,70 @@ impl Interp {
                         (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
+                Some(Value::Instance(i)) => {
+                    let keys: Vec<Value> =
+                        i.fields.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                    Ok(Value::Arr(ArrayObj::new(keys)))
+                }
                 _ => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
             },
+            Native::ObjectValues => {
+                let vals: Vec<Value> = match args.first() {
+                    Some(Value::Obj(m)) => m
+                        .borrow()
+                        .iter()
+                        .filter(|(k, _)| !is_internal_key(k.as_str()))
+                        .map(|(_, v)| v.clone())
+                        .collect(),
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    Some(Value::Instance(i)) => i.fields.borrow().values().cloned().collect(),
+                    _ => Vec::new(),
+                };
+                Ok(Value::Arr(ArrayObj::new(vals)))
+            }
+            Native::ObjectEntries => {
+                let pair = |k: &str, v: &Value| {
+                    Value::Arr(ArrayObj::new(vec![Value::Str(k.to_string()), v.clone()]))
+                };
+                let entries: Vec<Value> = match args.first() {
+                    Some(Value::Obj(m)) => m
+                        .borrow()
+                        .iter()
+                        .filter(|(k, _)| !is_internal_key(k.as_str()))
+                        .map(|(k, v)| pair(k, v))
+                        .collect(),
+                    Some(Value::Arr(a)) => a
+                        .borrow()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| pair(&i.to_string(), v))
+                        .collect(),
+                    Some(Value::Instance(inst)) => {
+                        inst.fields.borrow().iter().map(|(k, v)| pair(k, v)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                Ok(Value::Arr(ArrayObj::new(entries)))
+            }
+            Native::ObjectFromEntries => {
+                // [[k,v], ...] 또는 Map → 객체. 이터러블 순회.
+                let mut map = ObjMap::new();
+                if let Some(src) = args.first() {
+                    for entry in self.iterate_to_vec(src) {
+                        let (k, v) = match &entry {
+                            Value::Arr(a) => {
+                                let b = a.borrow();
+                                (b.first().cloned(), b.get(1).cloned())
+                            }
+                            _ => (None, None),
+                        };
+                        if let Some(k) = k {
+                            map.insert(to_display(&k), v.unwrap_or(Value::Undefined));
+                        }
+                    }
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
             Native::ObjectAssign => {
                 let Some(Value::Obj(target)) = args.first() else {
                     return Err("Object.assign 대상은 객체".to_string());

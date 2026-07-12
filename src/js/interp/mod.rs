@@ -331,6 +331,9 @@ pub enum Native {
     // 받고 아무것도 안 함 (window.addEventListener 등 — 창 이벤트는 아직 없음)
     Noop,
     ObjectKeys,
+    ObjectValues,
+    ObjectEntries,
+    ObjectFromEntries,
     ObjectAssign,
     ArrayIsArray,
     ArrayFrom, // Array.from(iterable|array-like, mapFn?)
@@ -421,6 +424,7 @@ pub enum StrOp {
     CharCodeAt,
     CodePointAt,
     Concat,
+    At,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -487,6 +491,8 @@ pub enum ArrOp {
     Values,
     Sort,
     Flat,
+    FlatMap,
+    At,
 }
 
 impl std::fmt::Debug for Value {
@@ -860,6 +866,9 @@ impl Interp {
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
+        object_ns.insert("values".to_string(), Value::Native(Native::ObjectValues));
+        object_ns.insert("entries".to_string(), Value::Native(Native::ObjectEntries));
+        object_ns.insert("fromEntries".to_string(), Value::Native(Native::ObjectFromEntries));
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
         object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
         object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperty));
@@ -2759,6 +2768,8 @@ impl Interp {
                     "values" => Some(ArrOp::Values),
                     "sort" => Some(ArrOp::Sort),
                     "flat" => Some(ArrOp::Flat),
+                    "flatMap" => Some(ArrOp::FlatMap),
+                    "at" => Some(ArrOp::At),
                     _ => None,
                 };
                 if let Some(op) = op {
@@ -2888,6 +2899,7 @@ impl Interp {
                     "charCodeAt" => Some(StrOp::CharCodeAt),
                     "codePointAt" => Some(StrOp::CodePointAt),
                     "concat" => Some(StrOp::Concat),
+                    "at" => Some(StrOp::At),
                     "toString" | "valueOf" | "toLocaleString" => {
                         return Ok(Value::Native(Native::ValueToStr))
                     }
@@ -4510,6 +4522,31 @@ mod tests {
         assert!(run_bool("class A{} var a=new A(); a.valueOf() === a"));
         // 클래스가 toString 정의하면 그것 우선
         assert_eq!(run_str("class A{ toString(){ return 'custom'; } } new A().toString()"), "custom");
+    }
+
+    #[test]
+    fn object_values_entries_fromentries() {
+        assert_eq!(run_num("Object.values({a:1,b:2,c:3}).length"), 3.0);
+        assert_eq!(run_str("Object.values({a:1,b:2}).join(',')"), "1,2");
+        assert_eq!(run_str("Object.entries({x:5})[0].join('=')"), "x=5");
+        assert_eq!(run_num("Object.entries({a:1,b:2}).length"), 2.0);
+        assert_eq!(run_num("Object.fromEntries([['a',1],['b',2]]).b"), 2.0);
+        assert_eq!(run_str("Object.fromEntries(new Map([['k','v']])).k"), "v");
+        // 삽입 순서 유지
+        assert_eq!(run_str("Object.keys(Object.fromEntries([['z',1],['a',2]])).join(',')"), "z,a");
+    }
+
+    #[test]
+    fn array_string_at_and_flatmap() {
+        // .at (음수 인덱스)
+        assert_eq!(run_num("[10,20,30].at(-1)"), 30.0);
+        assert_eq!(run_num("[10,20,30].at(0)"), 10.0);
+        assert!(run_bool("[1,2].at(5) === undefined"));
+        assert_eq!(run_str("'abc'.at(-1)"), "c");
+        assert_eq!(run_str("'abc'.at(0)"), "a");
+        // flatMap
+        assert_eq!(run_str("[1,2,3].flatMap(function(x){return [x, x*2];}).join(',')"), "1,2,2,4,3,6");
+        assert_eq!(run_num("[1,2].flatMap(function(x){return x;}).length"), 2.0);
     }
 
     #[test]
