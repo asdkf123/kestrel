@@ -91,7 +91,9 @@
   무한 제너레이터/양방향 next(v)/yield* 위임/return·throw/try 재개. yield 없는 문장은 기존
   평가기 재사용(의미론 동일). 디슈가 패스로 식 내부 yield(`a+(yield b)`, `f(yield x)`,
   삼항/단락평가)까지 완전 지원 — 평가순서·단락평가·메서드 this 보존. (generator.rs)
-- [ ] JS **객체리터럴 계산 Symbol 키 불일치**(for-of 사용자 이터러블 안됨). (mod.rs:1962)
+- [x] JS **Symbol 진짜 원시값** — 가짜 객체(__key) 폴리필 제거. typeof 'symbol', 고유성/
+  Symbol.for/keyFor, 계산 프로퍼티 키(멤버·객체·클래스 메서드), 비열거. 반복자 프로토콜
+  일반화로 사용자 정의 [Symbol.iterator] 이터러블(for-of/스프레드/Array.from) 지원. (generator.rs/mod.rs)
 - [~] JS **Date.parse/Date.UTC 구현(4568092) + JSON toJSON(ISO, 25aa6fd)** 완료. UTC전용(로컬시간대 미구현)은 후속.
 - [x] JS **문자열 UTF-16 코드 유닛**(length/charAt/charCodeAt/codePointAt/indexOf/slice/[i]/search/for-in).
   반복·스프레드는 코드 포인트. 짝없는 서로게이트만 U+FFFD(Rust String 한계). (2014792)
@@ -102,7 +104,7 @@
 - [~] JS **클래스 제너레이터(*)/async 메서드** 지원. 계산된 이름[expr]/객체리터럴 메서드는 후속(동적키 필요). (ccc73f8)
 - [x] JS **레이블 break/continue + 레이블 문**(중첩 루프 탈출, 레이블 블록 break). (e806035)
 - [x] JS **유니코드 식별자**(ID_Start≈is_alphabetic, ID_Continue≈is_alphanumeric). (9f21ee7)
-- [~] JS **Map/Set SameValueZero(c090180) + const 재대입 금지(bfbd894) + 네이티브함수 ===(1003a26)** 완료. typeof Symbol 은 후속.
+- [x] JS **Map/Set SameValueZero(c090180) + const 재대입 금지(bfbd894) + 네이티브함수 ===(1003a26)** 완료. typeof Symbol('symbol') 도 진짜 원시값으로 완료.
 
 ## 저심각 (스킵 가능)
 epsilon fudge, 곡선 고정분할, accent-color, 등.
