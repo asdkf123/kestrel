@@ -756,6 +756,9 @@ impl Interp {
             array_proto.insert(name.to_string(), Value::Native(Native::Arr(op)));
         }
         array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
+        // Array.prototype[Symbol.iterator]/toString — core-js uncurryThis 참조
+        array_proto.insert("@@iterator".to_string(), Value::Native(Native::MakeIter));
+        array_proto.insert("toString".to_string(), Value::Native(Native::Arr(ArrOp::Join)));
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
         env_declare(&global, "RegExp", Value::Native(Native::RegExpCtor));
