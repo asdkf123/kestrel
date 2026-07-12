@@ -1564,7 +1564,7 @@ impl Interp {
         let set = Rc::new(RefCell::new(Vec::<Value>::new()));
         if let Some(Value::Arr(a)) = args.first() {
             for v in a.borrow().iter() {
-                if !set.borrow().iter().any(|e| strict_eq(e, v)) {
+                if !set.borrow().iter().any(|e| same_value_zero(e, v)) {
                     set.borrow_mut().push(v.clone());
                 }
             }
@@ -1583,13 +1583,13 @@ impl Interp {
             MapOp::Get => m
                 .borrow()
                 .iter()
-                .find(|(k, _)| strict_eq(k, &key))
+                .find(|(k, _)| same_value_zero(k, &key))
                 .map(|(_, v)| v.clone())
                 .unwrap_or(Value::Undefined),
-            MapOp::Has => Value::Bool(m.borrow().iter().any(|(k, _)| strict_eq(k, &key))),
+            MapOp::Has => Value::Bool(m.borrow().iter().any(|(k, _)| same_value_zero(k, &key))),
             MapOp::Set => {
                 let val = args.get(1).cloned().unwrap_or(Value::Undefined);
-                let pos = m.borrow().iter().position(|(k, _)| strict_eq(k, &key));
+                let pos = m.borrow().iter().position(|(k, _)| same_value_zero(k, &key));
                 match pos {
                     Some(i) => m.borrow_mut()[i].1 = val,
                     None => m.borrow_mut().push((key, val)),
@@ -1598,7 +1598,7 @@ impl Interp {
             }
             MapOp::Delete => {
                 let before = m.borrow().len();
-                m.borrow_mut().retain(|(k, _)| !strict_eq(k, &key));
+                m.borrow_mut().retain(|(k, _)| !same_value_zero(k, &key));
                 Value::Bool(m.borrow().len() < before)
             }
             MapOp::Clear => {
@@ -1632,15 +1632,15 @@ impl Interp {
         let val = args.first().cloned().unwrap_or(Value::Undefined);
         match op {
             SetOp::Add => {
-                if !s.borrow().iter().any(|e| strict_eq(e, &val)) {
+                if !s.borrow().iter().any(|e| same_value_zero(e, &val)) {
                     s.borrow_mut().push(val);
                 }
                 Value::SetVal(s)
             }
-            SetOp::Has => Value::Bool(s.borrow().iter().any(|e| strict_eq(e, &val))),
+            SetOp::Has => Value::Bool(s.borrow().iter().any(|e| same_value_zero(e, &val))),
             SetOp::Delete => {
                 let before = s.borrow().len();
-                s.borrow_mut().retain(|e| !strict_eq(e, &val));
+                s.borrow_mut().retain(|e| !same_value_zero(e, &val));
                 Value::Bool(s.borrow().len() < before)
             }
             SetOp::Clear => {
@@ -4449,6 +4449,17 @@ mod tests {
         assert_eq!(run_str("JSON.stringify({__typename:'X', a:1})"),
             "{\"__typename\":\"X\",\"a\":1}");
         assert_eq!(run_str("Object.keys({__typename:'X'}).join(',')"), "__typename");
+    }
+
+    #[test]
+    fn map_set_same_value_zero_nan() {
+        // Set/Map 은 SameValueZero — NaN 은 서로 같다(중복 제거/조회).
+        assert_eq!(run_num("var s=new Set(); s.add(NaN); s.add(NaN); s.size"), 1.0);
+        assert!(run_bool("var s=new Set(); s.add(NaN); s.has(NaN)"));
+        assert_eq!(run_num("var m=new Map(); m.set(NaN,1); m.set(NaN,2); m.size"), 1.0);
+        assert_eq!(run_num("var m=new Map(); m.set(NaN,7); m.get(NaN)"), 7.0);
+        // 일반 값은 그대로 strict
+        assert_eq!(run_num("var s=new Set(); s.add(1); s.add(2); s.add(1); s.size"), 2.0);
     }
 
     #[test]

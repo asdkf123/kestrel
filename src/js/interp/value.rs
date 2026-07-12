@@ -503,6 +503,16 @@ pub(super) fn type_of(v: &Value) -> &'static str {
     }
 }
 
+// SameValueZero: strict_eq 와 같되 NaN 은 서로 같다(Map/Set 키 비교용). +0/-0 은 strict 와 동일.
+pub(super) fn same_value_zero(a: &Value, b: &Value) -> bool {
+    if let (Value::Num(x), Value::Num(y)) = (a, b) {
+        if x.is_nan() && y.is_nan() {
+            return true;
+        }
+    }
+    strict_eq(a, b)
+}
+
 pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null) => true,
