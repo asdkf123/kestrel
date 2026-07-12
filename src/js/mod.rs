@@ -231,6 +231,20 @@ mod tests {
     }
 
     #[test]
+    fn string_indexof_split_args_lastindexof() {
+        // indexOf(needle, fromIndex), split(sep, limit), lastIndexOf — 이전엔 인자 무시/미구현.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>document.getElementById('t').textContent = \
+             ['abcabc'.indexOf('a',1), 'abcabc'.lastIndexOf('b'), 'a,b,c'.split(',',2).join('|')]\
+             .join(';');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "3;4;a|b");
+    }
+
+    #[test]
     fn destructuring_assignment() {
         // [a,b]=[b,a] 스왑 + ({x,y}=o) 객체 — 이전엔 파스에러로 스크립트 전체 사망.
         let mut dom = crate::html::parse_dom(

@@ -320,6 +320,7 @@ pub enum MathOp {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum StrOp {
     IndexOf,
+    LastIndexOf,
     Slice,
     Split,
     Upper,
@@ -897,6 +898,7 @@ impl Interp {
             ("charAt", StrOp::CharAt),
             ("charCodeAt", StrOp::CharCodeAt),
             ("indexOf", StrOp::IndexOf),
+            ("lastIndexOf", StrOp::LastIndexOf),
             ("slice", StrOp::Slice),
             ("substring", StrOp::Slice),
             ("split", StrOp::Split),
@@ -2583,6 +2585,7 @@ impl Interp {
                 }
                 let op = match key {
                     "indexOf" => Some(StrOp::IndexOf),
+                    "lastIndexOf" => Some(StrOp::LastIndexOf),
                     "slice" | "substring" => Some(StrOp::Slice),
                     "split" => Some(StrOp::Split),
                     "toUpperCase" => Some(StrOp::Upper),

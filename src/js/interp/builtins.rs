@@ -1331,9 +1331,23 @@ impl Interp {
                         )
                     }
                     StrOp::IndexOf => {
-                        // 문자(char) 인덱스 기준 (UTF-16 이 아님 — 단순화)
+                        // 문자(char) 인덱스 기준 (UTF-16 이 아님 — 단순화). fromIndex 2번째 인자.
                         let needle = arg_str(0);
-                        match s.find(&needle) {
+                        let from = args
+                            .get(1)
+                            .map(to_num)
+                            .filter(|n| !n.is_nan())
+                            .map(|n| n.max(0.0) as usize)
+                            .unwrap_or(0);
+                        let byte_from = s.char_indices().nth(from).map(|(b, _)| b).unwrap_or(s.len());
+                        match s[byte_from..].find(&needle) {
+                            Some(rel) => Value::Num(s[..byte_from + rel].chars().count() as f64),
+                            None => Value::Num(-1.0),
+                        }
+                    }
+                    StrOp::LastIndexOf => {
+                        let needle = arg_str(0);
+                        match s.rfind(&needle) {
                             Some(byte_i) => Value::Num(s[..byte_i].chars().count() as f64),
                             None => Value::Num(-1.0),
                         }
@@ -1443,13 +1457,17 @@ impl Interp {
                             Value::Arr(ArrayObj::new(parts))
                         } else {
                             let sep = arg_str(0);
-                            let parts: Vec<Value> = if args.is_empty() {
+                            let mut parts: Vec<Value> = if args.is_empty() {
                                 vec![Value::Str(s.clone())]
                             } else if sep.is_empty() {
                                 chars.iter().map(|c| Value::Str(c.to_string())).collect()
                             } else {
                                 s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
                             };
+                            // limit (2번째 인자): 결과를 그 개수로 자름
+                            if let Some(lim) = args.get(1).map(to_num).filter(|n| !n.is_nan() && *n >= 0.0) {
+                                parts.truncate(lim as usize);
+                            }
                             Value::Arr(ArrayObj::new(parts))
                         }
                     }
