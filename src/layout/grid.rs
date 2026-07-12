@@ -452,7 +452,8 @@ fn grid_mark(occ: &mut Vec<Vec<bool>>, r0: usize, c0: usize, rspan: usize, cspan
 enum GTrack {
     Px(f32),
     Fr(f32),
-    Auto, // 내용(max-content) 기반 — 배치 시 측정
+    FrMin(f32, f32), // minmax(min_px, N fr): 최소 min_px 보장, N fr 로 성장
+    Auto,            // 내용(max-content) 기반 — 배치 시 측정
 }
 
 impl<'a> LayoutBox<'a> {
@@ -644,26 +645,66 @@ fn resolve_tracks_sized(tracks: &[GTrack], avail: f32, gap: f32, auto_content: &
     // auto 트랙 폭 확정: 측정값 있으면 그것, 없으면 fr 로 취급.
     let auto_w = |k: usize| auto_content.get(k).copied().filter(|w| *w > 0.0);
     let total_gap = gap * (n as f32 - 1.0);
-    let mut fixed = 0.0f32;
-    let mut total_fr = 0.0f32;
-    for (k, t) in tracks.iter().enumerate() {
+    // 고정 크기(Px, 측정된 Auto). FrMin 의 min 은 클램프될 때만 고정에 편입.
+    let base_fixed = |k: usize, t: &GTrack| -> f32 {
         match t {
-            GTrack::Px(p) => fixed += p,
-            GTrack::Fr(f) => total_fr += f,
-            GTrack::Auto => match auto_w(k) {
-                Some(w) => fixed += w,
-                None => total_fr += 1.0, // 측정값 없음 → fr(1) 근사
-            },
+            GTrack::Px(p) => *p,
+            GTrack::Auto => auto_w(k).unwrap_or(0.0),
+            _ => 0.0,
+        }
+    };
+    // fr 성장 가중치 (Fr, FrMin, 측정값 없는 Auto).
+    let frw = |k: usize, t: &GTrack| -> f32 {
+        match t {
+            GTrack::Fr(f) | GTrack::FrMin(f, _) => *f,
+            GTrack::Auto if auto_w(k).is_none() => 1.0,
+            _ => 0.0,
+        }
+    };
+    // FrMin 트랙이 fr 배분에서 min 미만이면 min 으로 클램프(고정화) 후 재배분 — 반복(§11.5).
+    let mut constrained = vec![false; n];
+    let mut fr_unit = 0.0f32;
+    for _ in 0..=n {
+        let mut fixed = 0.0f32;
+        let mut total_fr = 0.0f32;
+        for (k, t) in tracks.iter().enumerate() {
+            fixed += base_fixed(k, t);
+            if let GTrack::FrMin(_, m) = t {
+                if constrained[k] {
+                    fixed += m;
+                    continue;
+                }
+            }
+            total_fr += frw(k, t);
+        }
+        let free = (avail - total_gap - fixed).max(0.0);
+        fr_unit = if total_fr > 0.0 { free / total_fr } else { 0.0 };
+        let mut changed = false;
+        for (k, t) in tracks.iter().enumerate() {
+            if let GTrack::FrMin(f, m) = t {
+                if !constrained[k] && fr_unit * f < *m - 0.01 {
+                    constrained[k] = true;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
         }
     }
-    let free = (avail - total_gap - fixed).max(0.0);
-    let fr_unit = if total_fr > 0.0 { free / total_fr } else { 0.0 };
     tracks
         .iter()
         .enumerate()
         .map(|(k, t)| match t {
             GTrack::Px(p) => *p,
             GTrack::Fr(f) => fr_unit * f,
+            GTrack::FrMin(f, m) => {
+                if constrained[k] {
+                    *m
+                } else {
+                    fr_unit * f
+                }
+            }
             GTrack::Auto => auto_w(k).unwrap_or(fr_unit),
         })
         .collect()
@@ -699,9 +740,25 @@ fn expand_grid_tracks(spec: &str, avail: f32, gap: f32) -> Vec<GTrack> {
 fn parse_one_grid_track(t: &str, avail: f32) -> GTrack {
     let t = t.trim();
     if let Some(inner) = strip_func(t, "minmax") {
-        // minmax(min, max): max 로 근사 (max 가 fr 이면 fr, auto/content 면 auto)
-        let max = inner.split(',').nth(1).unwrap_or("").trim();
-        return parse_one_grid_track(max, avail);
+        let mut parts = inner.splitn(2, ',');
+        let min_s = parts.next().unwrap_or("").trim();
+        let max_s = parts.next().unwrap_or("").trim();
+        // minmax(<px|%>, <N fr>) → FrMin: min 을 하한으로 보장하며 fr 로 성장(반응형 카드 그리드).
+        let min_px = min_s
+            .strip_suffix("px")
+            .and_then(|x| x.trim().parse::<f32>().ok())
+            .or_else(|| {
+                min_s
+                    .strip_suffix('%')
+                    .and_then(|x| x.trim().parse::<f32>().ok())
+                    .map(|p| p / 100.0 * avail)
+            });
+        let max_fr = max_s.strip_suffix("fr").and_then(|x| x.trim().parse::<f32>().ok());
+        if let (Some(mn), Some(fr)) = (min_px, max_fr) {
+            return GTrack::FrMin(fr, mn);
+        }
+        // 그 외(minmax(px,px)/(auto,fr) 등)는 max 근사.
+        return parse_one_grid_track(max_s, avail);
     }
     if let Some(inner) = strip_func(t, "fit-content") {
         return parse_one_grid_track(inner.trim(), avail);
