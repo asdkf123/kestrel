@@ -704,11 +704,25 @@ impl<'a> LayoutBox<'a> {
             let cpos = child.position();
             if cpos == "absolute" || cpos == "fixed" {
                 let cb = if cpos == "fixed" { fixed_cb } else { child_abs_cb };
-                let cur = child.dimensions.border_box();
                 let has_left = child.styled_node.value("left").is_some();
                 let has_right = child.styled_node.value("right").is_some();
                 let has_top = child.styled_node.value("top").is_some();
                 let has_bottom = child.styled_node.value("bottom").is_some();
+                // 스트레치: 양쪽 오프셋 지정 + 크기 auto 면 컨테이닝 블록을 채운다
+                // (inset:0 오버레이 등). 박스만 리사이즈(콘텐츠 재배치는 안 함 — 근사).
+                let width_auto = !matches!(child.styled_node.value("width"), Some(Length(_, _)));
+                let height_auto = !matches!(child.styled_node.value("height"), Some(Length(_, _)));
+                if has_left && has_right && width_auto {
+                    let bp = child.dimensions.border_box().width - child.dimensions.content.width;
+                    let w = cb.width - child.offset_val("left") - child.offset_val("right") - bp;
+                    child.dimensions.content.width = w.max(0.0);
+                }
+                if has_top && has_bottom && height_auto {
+                    let bp = child.dimensions.border_box().height - child.dimensions.content.height;
+                    let h = cb.height - child.offset_val("top") - child.offset_val("bottom") - bp;
+                    child.dimensions.content.height = h.max(0.0);
+                }
+                let cur = child.dimensions.border_box();
                 let tx = if has_right && !has_left {
                     cb.x + cb.width - cur.width - child.offset_val("right")
                 } else if has_left {
@@ -2491,6 +2505,28 @@ mod tests {
         assert_eq!(abs.dimensions.content.y, 5.0);
         // flow 는 y=0 (abs 가 공간을 안 차지하므로 맨 위)
         assert_eq!(lb.children[1].dimensions.content.y, 0.0);
+    }
+
+    #[test]
+    fn absolute_inset_stretches_to_fill() {
+        let fs = fonts();
+        let ss = crate::css::parse(
+            ".p{position:relative;display:block;width:200px;height:100px;} \
+             .c{position:absolute;left:10px;right:10px;top:5px;bottom:5px;}"
+                .to_string(),
+        );
+        let root =
+            crate::html::parse_dom("<div class=\"p\"><div class=\"c\"></div></div>".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let c = &lb.children[0]; // .p 가 root, .c 가 자식
+        // 좌우10/상하5 인셋 → 200-20=180 x 100-10=90, (10,5)
+        assert!((c.dimensions.content.width - 180.0).abs() < 0.5, "폭 180 (실제 {})", c.dimensions.content.width);
+        assert!((c.dimensions.content.height - 90.0).abs() < 0.5, "높이 90 (실제 {})", c.dimensions.content.height);
+        assert!((c.dimensions.content.x - 10.0).abs() < 0.5, "x=10 (실제 {})", c.dimensions.content.x);
+        assert!((c.dimensions.content.y - 5.0).abs() < 0.5, "y=5 (실제 {})", c.dimensions.content.y);
     }
 
     #[test]
