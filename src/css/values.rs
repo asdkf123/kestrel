@@ -451,11 +451,27 @@ fn parse_hex_color(text: &str) -> Option<Color> {
             // 0xN → 0xNN (N*17)
             Some(Color { r: r * 17, g: g * 17, b: b * 17, a: 255 })
         }
+        4 => {
+            // #rgba — 각 니블 ×17, 알파 포함
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            let a = u8::from_str_radix(&hex[3..4], 16).ok()?;
+            Some(Color { r: r * 17, g: g * 17, b: b * 17, a: a * 17 })
+        }
         6 => {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
             Some(Color { r, g, b, a: 255 })
+        }
+        8 => {
+            // #rrggbbaa
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some(Color { r, g, b, a })
         }
         _ => None,
     }
@@ -712,6 +728,13 @@ mod tests {
         assert!((cm - 96.0).abs() < 0.01, "2.54cm ≈ 96px, 실제 {}", cm);
         // ch/ex 는 0.5em 근사로 저장
         assert_eq!(interpret_value("2ch"), Some(Value::Length(1.0, Unit::Em)));
+    }
+
+    #[test]
+    fn hex4_and_hex8_alpha() {
+        // #rgba / #rrggbbaa (CSS Color 4) — 이전엔 드롭됐음
+        assert_eq!(color("#ff000080"), Color { r: 255, g: 0, b: 0, a: 128 });
+        assert_eq!(color("#f008"), Color { r: 255, g: 0, b: 0, a: 136 });
     }
 
     #[test]

@@ -379,11 +379,96 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-right" => border_shorthand(&["right"], value_text),
         "border-bottom" => border_shorthand(&["bottom"], value_text),
         "border-left" => border_shorthand(&["left"], value_text),
+        "font" => font_shorthand(value_text),
         _ => match interpret_value(value_text) {
             Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
             None => Vec::new(),
         },
     }
+}
+
+// 절대 크기 키워드 → px (medium=16 기준 스케일, CSS Fonts).
+fn font_size_keyword(k: &str) -> Option<f32> {
+    Some(match k {
+        "xx-small" => 9.6,
+        "x-small" => 12.0,
+        "small" => 13.3,
+        "medium" => 16.0,
+        "large" => 18.0,
+        "x-large" => 24.0,
+        "xx-large" => 32.0,
+        _ => return None,
+    })
+}
+
+// font 단축: [style|variant|weight|stretch]* size[/line-height] family
+// 시스템 폰트 키워드(caption 등)와 global 키워드는 no-op. size 토큰을 못 찾으면 드롭.
+fn font_shorthand(value_text: &str) -> Vec<Declaration> {
+    let v = value_text.trim();
+    if matches!(
+        v,
+        "caption" | "icon" | "menu" | "message-box" | "small-caption" | "status-bar"
+            | "inherit" | "initial" | "unset"
+    ) {
+        return Vec::new();
+    }
+    let tokens: Vec<&str> = v.split_whitespace().collect();
+    // size 토큰: '/' 앞부분이 길이거나 크기 키워드인 첫 토큰
+    let is_size = |t: &str| {
+        let head = t.split('/').next().unwrap_or(t);
+        matches!(interpret_value(head), Some(Value::Length(..))) || font_size_keyword(head).is_some()
+    };
+    let Some(si) = tokens.iter().position(|t| is_size(t)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    // size 앞: style/weight (variant/stretch 는 근사 무시)
+    for t in &tokens[..si] {
+        let tl = t.to_ascii_lowercase();
+        match tl.as_str() {
+            "italic" | "oblique" => out.push(Declaration {
+                important: false,
+                name: "font-style".to_string(),
+                value: Value::Keyword("italic".to_string()),
+            }),
+            "bold" | "bolder" => out.push(Declaration {
+                important: false,
+                name: "font-weight".to_string(),
+                value: Value::Keyword("bold".to_string()),
+            }),
+            _ => {
+                if tl.parse::<f32>().map(|n| n >= 600.0).unwrap_or(false) {
+                    out.push(Declaration {
+                        important: false,
+                        name: "font-weight".to_string(),
+                        value: Value::Keyword("bold".to_string()),
+                    });
+                }
+            }
+        }
+    }
+    // size[/line-height]
+    let mut sp = tokens[si].splitn(2, '/');
+    let size = sp.next().unwrap_or(tokens[si]);
+    let size_val = match interpret_value(size) {
+        Some(v @ Value::Length(..)) => Some(v),
+        _ => font_size_keyword(size).map(|px| Value::Length(px, Unit::Px)),
+    };
+    if let Some(sv) = size_val {
+        out.push(Declaration { important: false, name: "font-size".to_string(), value: sv });
+    }
+    if let Some(lh) = sp.next() {
+        out.extend(expand_declaration("line-height", lh)); // 무단위→factor, 길이→그대로
+    }
+    // family: size 뒤 나머지 전부
+    if si + 1 < tokens.len() {
+        out.push(Declaration {
+            important: false,
+            name: "font-family".to_string(),
+            value: Value::Keyword(tokens[si + 1..].join(" ")),
+        });
+    }
+    out
 }
 
 // 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
@@ -672,6 +757,28 @@ mod tests {
 
     fn find<'a>(decls: &'a [Declaration], name: &str) -> Option<&'a Value> {
         decls.iter().find(|d| d.name == name).map(|d| &d.value)
+    }
+
+    #[test]
+    fn font_shorthand_expands_all_parts() {
+        let d = expand_declaration("font", "italic bold 14px/1.5 Arial, sans-serif");
+        assert!(matches!(find(&d, "font-style"), Some(Value::Keyword(k)) if k == "italic"));
+        assert!(matches!(find(&d, "font-weight"), Some(Value::Keyword(k)) if k == "bold"));
+        assert_eq!(find(&d, "font-size"), Some(&Value::Length(14.0, Unit::Px)));
+        assert_eq!(find(&d, "line-height"), Some(&Value::Length(1.5, Unit::Em)));
+        assert!(matches!(find(&d, "font-family"), Some(Value::Keyword(k)) if k.contains("Arial")));
+    }
+
+    #[test]
+    fn font_shorthand_minimal_and_keyword_size() {
+        let d = expand_declaration("font", "16px sans-serif");
+        assert_eq!(find(&d, "font-size"), Some(&Value::Length(16.0, Unit::Px)));
+        assert!(matches!(find(&d, "font-family"), Some(Value::Keyword(k)) if k == "sans-serif"));
+        // 크기 키워드
+        let d2 = expand_declaration("font", "large serif");
+        assert_eq!(find(&d2, "font-size"), Some(&Value::Length(18.0, Unit::Px)));
+        // 시스템 폰트 키워드는 no-op
+        assert!(expand_declaration("font", "caption").is_empty());
     }
 
     #[test]
