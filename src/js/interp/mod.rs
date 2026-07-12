@@ -2544,6 +2544,10 @@ impl Interp {
                         env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
                     }
                 }
+                // arguments 객체 (화살표 제외). 배열로 근사 — .length/인덱스/slice.call 동작.
+                if !func.is_arrow {
+                    env_declare(&scope, "arguments", Value::Arr(ArrayObj::new(args.clone())));
+                }
                 hoist_vars(&func.body, &scope); // var 하이스팅 (함수 스코프)
                 // 제너레이터(eager): 본문을 즉시 실행해 yield 값을 모으고 반복자 반환.
                 if func.is_generator {
@@ -3745,6 +3749,13 @@ mod tests {
             run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
             "b"
         );
+    }
+
+    #[test]
+    fn arguments_object() {
+        // 비화살표 함수의 arguments (가변 인자 — 미니파이/구코드 흔함)
+        assert_eq!(run_num("(function(){var t=0;for(var i=0;i<arguments.length;i++)t+=arguments[i];return t;})(1,2,3,4)"), 10.0);
+        assert_eq!(run_str("(function(){return Array.prototype.slice.call(arguments).join('-');})('a','b')"), "a-b");
     }
 
     #[test]
