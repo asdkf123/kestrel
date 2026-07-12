@@ -901,6 +901,16 @@ impl<'a> LayoutBox<'a> {
 
     fn layout_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let align = self.align();
+        // 이 블록이 float 밴드 옆에 놓여(부모가 float_ctx 설정) 내용이 float 을 우회해야 하면,
+        // 인라인 자식(익명 인라인 박스)에 밴드를 물려줘 줄 상자가 짧아지게 한다. 밴드 좌표는
+        // 절대값이라 자식 content box 범위로 클램프되어 그대로 합성된다.
+        if let Some(fc) = self.float_ctx {
+            for c in self.children.iter_mut() {
+                if !c.inline_nodes.is_empty() {
+                    c.float_ctx = Some(fc);
+                }
+            }
+        }
         // 컨테이너의 안정된 원점/폭 (height 만 흐름 중 누적)
         let (cx, cy, avail) =
             (self.dimensions.content.x, self.dimensions.content.y, self.dimensions.content.width);
@@ -1072,21 +1082,31 @@ impl<'a> LayoutBox<'a> {
                 continue;
             }
 
-            // 정상 블록. float 밴드가 있을 때: 이 블록이 (margin 등으로) float 을
-            // 가로로 클리어하면 밴드 옆(같은 y)에 배치, 아니면 밴드 아래로 clear(겹침 방지).
-            // 이것이 float 사이드바 + margin 본문 다단을 살린다.
+            // float 밴드가 활성일 때: 현재 흐름 y 가 밴드 하단을 지났으면 밴드 해제
+            // (이후 블록은 float 영향 없이 전체폭). 밴드는 여러 형제에 걸쳐 지속된다.
+            if band_active && (self.dimensions.content.height + cy) >= band_bottom - 0.5 {
+                band_active = false;
+                fl_next = cx;
+                fr_next = cx + avail;
+            }
+            // 정상 블록. float 밴드가 있을 때: 인라인 콘텐츠를 담은 블록(문단 등)은 박스는
+            // 전체폭을 유지하되 줄 상자만 float 을 우회한다(text-wrap) — 흐름에 정상 배치.
+            // 인라인 콘텐츠 없는 블록은 (margin 으로) 옆에 맞으면 나란히, 아니면 밴드 아래로 clear.
             if band_active {
-                // 익명 텍스트 박스는 float 주위로 흐른다(text-wrap): float_ctx 설정 후
-                // 밴드 top 에서 배치. 줄 상자가 float 을 피해 짧아진다.
-                if is_anon {
+                // 익명 텍스트 박스 또는 인라인 콘텐츠 블록: float 주위로 줄이 흐른다.
+                // float_ctx 를 실어 배치하면 내부 줄 상자가 밴드를 피해 짧아진다.
+                if is_anon || box_has_inline_content(&self.children[i]) {
+                    let cur_top = {
+                        let z = Length(0.0, Px);
+                        len_px(self.children[i].styled_node.lookup("margin-top", "margin", &z), avail).to_px()
+                    };
+                    self.dimensions.content.height -= collapse_overlap(prev_bottom, cur_top);
                     self.children[i].float_ctx = Some((fl_next, fr_next, band_bottom));
-                    let d0 = self.dimensions;
-                    self.children[i].layout(d0, fonts, images);
+                    let d = self.dimensions;
+                    self.children[i].layout(d, fonts, images);
                     self.children[i].float_ctx = None;
-                    let mh = self.children[i].dimensions.margin_box().height;
-                    let block_bottom = self.dimensions.content.height + mh;
-                    self.dimensions.content.height = block_bottom.max(band_bottom - cy);
-                    band_active = false;
+                    self.dimensions.content.height += self.children[i].dimensions.margin_box().height;
+                    prev_bottom = self.children[i].dimensions.margin.bottom;
                     continue;
                 }
                 let d0 = self.dimensions; // content.height = 밴드 top 레벨 (float 은 흐름 미반영)
@@ -1913,6 +1933,12 @@ fn roman_marker(index: usize, upper: bool) -> String {
         }
     }
     if upper { s.to_ascii_uppercase() } else { s }
+}
+
+// 블록이 직접 인라인 콘텐츠(자기 inline_nodes 또는 익명 인라인 자식)를 담는가.
+// 담으면 float 밴드 옆에서 박스는 전체폭을 유지하되 줄 상자만 float 을 우회한다(text-wrap).
+fn box_has_inline_content(b: &LayoutBox) -> bool {
+    !b.inline_nodes.is_empty() || b.children.iter().any(|c| !c.inline_nodes.is_empty())
 }
 
 // 인접 margin 상쇄로 흐름에서 줄여야 할 겹침량. m1=이전 하단, m2=이번 상단.
@@ -3227,6 +3253,40 @@ mod tests {
             .iter()
             .find(|g| g.baseline_y > 40.0)
             .expect("float(30px) 아래로 흐르는 줄이 있어야");
+        assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
+    }
+
+    #[test]
+    fn block_paragraph_wraps_around_float() {
+        // float:left(100px, 40px 높이) 뒤 문단 블록(<div> 텍스트): 박스는 전체폭이되
+        // 줄만 float 을 우회한다. 밴드 아래로 clear 되지 않고 float 옆(같은 y)에 배치.
+        // (위키백과 인포박스 옆 본문 흐름의 핵심 패턴 — 예전엔 문단이 float 아래로 밀렸음)
+        let words = "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz a1 b2 c3 d4 e5 f6 g7 h8 i9 j0 k1 l2 m3 n4";
+        let root = crate::html::parse_dom(format!(
+            "<div class=\"wrap\"><div class=\"f\"></div><div class=\"t\">{words}</div></div>"
+        ));
+        let ss = crate::css::parse(
+            ".wrap { display: block; font-size: 16px; } \
+             .f { display: block; float: left; width: 100px; height: 40px; } \
+             .t { display: block; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // .t 블록은 float 옆(같은 y), 아래로 clear 되지 않음
+        let t = &lb.children[1];
+        assert!(t.dimensions.content.y < 1.0, "문단 블록은 float 옆(y≈0), 아래로 안 밀림: {}", t.dimensions.content.y);
+        // 밴드 안 줄은 float 우측(x>=95)에서 시작, float 아래 줄은 전체폭(x<95)
+        let gs = glyphs_of(t);
+        let first = gs.first().unwrap();
+        assert!(first.x >= 95.0, "첫 줄 텍스트는 float 우측에서 시작: {}", first.x);
+        let below = gs
+            .iter()
+            .find(|g| g.baseline_y > 65.0)
+            .expect("float(40px) 아래로 흐르는 줄이 있어야");
         assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
     }
 
