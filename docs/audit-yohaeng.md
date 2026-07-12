@@ -49,7 +49,7 @@
 - [ ] 레이아웃 **부모-자식/빈블록 margin 상쇄 없음**. (mod.rs:2033)
 - [ ] 레이아웃 **인라인 텍스트 내 img/inline-block 무시** (인라인박스 안 만듦). (inline.rs:631)
 - [ ] 레이아웃 **리스트마커·밑줄·폼컨트롤 크기 마법상수**. (mod.rs:371, inline.rs:434)
-- [x] 레이아웃 **max-height 항상 사용높이 클램프**(overflow 무관, CSS §10.7). visible 이면 내용은 넘침. (다음 커밋)
+- [x] 레이아웃 **max-height 항상 사용높이 클램프**(overflow 무관, CSS §10.7). visible 이면 내용은 넘침. (ce2a50c)
 - [ ] 레이아웃 **인라인 테두리 3px 하드코딩 패딩** (내 코드). (inline.rs:477)
 - [ ] Grid **정렬 전부 무시**(place-items 등), 명시배치/span 무시, template-rows 무시, minmax min 버림. (grid.rs)
 - [ ] Flex **shrink 0까지, min-content 무시, min/max 덮어씀, align-content 없음**. (flex.rs:132,184)
