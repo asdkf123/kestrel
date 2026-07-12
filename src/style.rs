@@ -82,10 +82,45 @@ impl Default for SiblingCtx<'_> {
     }
 }
 
+// 조상 요소의 형제 위치 (lifetime 없는 SiblingCtx 부분집합). 결합자 체인에서 조상의
+// 구조적 의사 클래스(:nth-child 등)를 정확히 평가하기 위해 ancestors 와 병렬로 유지.
+#[derive(Clone, Copy)]
+struct NodePos {
+    index: usize,
+    total: usize,
+    type_index: usize,
+    type_total: usize,
+    has_children: bool,
+}
+impl NodePos {
+    fn from_sib(s: &SiblingCtx) -> NodePos {
+        NodePos {
+            index: s.index,
+            total: s.total,
+            type_index: s.type_index,
+            type_total: s.type_total,
+            has_children: s.has_children,
+        }
+    }
+    // 조상 매칭용 SiblingCtx (선행 형제 prev 는 미보유 → 빈 슬라이스).
+    fn as_sib(&self) -> SiblingCtx<'static> {
+        SiblingCtx {
+            index: self.index,
+            total: self.total,
+            type_index: self.type_index,
+            type_total: self.type_total,
+            prev: &[],
+            has_children: self.has_children,
+        }
+    }
+}
+
 // ancestors: 루트→부모 순. 결합자 체인을 대상부터 왼쪽으로 걸어 매칭.
+// anc_pos: ancestors 와 병렬(같은 길이). 조상의 구조적 의사 클래스 평가용.
 fn matches(
     elem: &ElementData,
     ancestors: &[&ElementData],
+    anc_pos: &[NodePos],
     sib: &SiblingCtx,
     selector: &Selector,
 ) -> bool {
@@ -98,29 +133,35 @@ fn matches(
             }
             // 현재 요소 기준 조상/선행형제를 유지하며 왼쪽으로 이동
             let mut cur_anc: &[&ElementData] = ancestors;
+            let mut cur_pos: &[NodePos] = anc_pos;
             let mut cur_prev: &[&ElementData] = sib.prev;
+            // 조상 k 의 형제 문맥 (있으면 정확 평가, 없으면 None 근사)
+            let anc_sib = |pos: &[NodePos], k: usize| pos.get(k).map(|p| p.as_sib());
             for i in (1..parts.len()).rev() {
                 let combinator = parts[i].0;
                 let part = &parts[i - 1].1;
                 match combinator {
                     Combinator::Child => {
                         let Some(parent) = cur_anc.last() else { return false };
-                        if !matches_compound(parent, part, None) {
+                        let psib = anc_sib(cur_pos, cur_pos.len().saturating_sub(1));
+                        if !matches_compound(parent, part, psib.as_ref()) {
                             return false;
                         }
                         cur_anc = &cur_anc[..cur_anc.len() - 1];
+                        cur_pos = &cur_pos[..cur_pos.len().saturating_sub(1)];
                         cur_prev = &[]; // 부모의 선행형제는 미보유
                     }
                     Combinator::Descendant => {
                         let mut found = None;
                         for k in (0..cur_anc.len()).rev() {
-                            if matches_compound(cur_anc[k], part, None) {
+                            if matches_compound(cur_anc[k], part, anc_sib(cur_pos, k).as_ref()) {
                                 found = Some(k);
                                 break;
                             }
                         }
                         let Some(k) = found else { return false };
                         cur_anc = &cur_anc[..k];
+                        cur_pos = &cur_pos[..k.min(cur_pos.len())];
                         cur_prev = &[];
                     }
                     Combinator::NextSibling => {
@@ -257,6 +298,7 @@ type MatchedRule<'a> = (Specificity, &'a Rule);
 fn match_rule<'a>(
     elem: &ElementData,
     ancestors: &[&ElementData],
+    anc_pos: &[NodePos],
     sib: &SiblingCtx,
     rule: &'a Rule,
     want_pseudo: Option<PseudoElement>,
@@ -264,7 +306,7 @@ fn match_rule<'a>(
     rule.selectors
         .iter()
         .filter(|selector| selector.subject().pseudo_element == want_pseudo)
-        .find(|selector| matches(elem, ancestors, sib, selector))
+        .find(|selector| matches(elem, ancestors, anc_pos, sib, selector))
         .map(|selector| (selector.specificity(), rule))
 }
 
@@ -334,6 +376,7 @@ impl<'a> RuleIndex<'a> {
 fn pseudo_specified_values(
     elem: &ElementData,
     ancestors: &[&ElementData],
+    anc_pos: &[NodePos],
     sib: &SiblingCtx,
     index: &RuleIndex,
     which: PseudoElement,
@@ -342,7 +385,7 @@ fn pseudo_specified_values(
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
-        .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i], Some(which)))
+        .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, &index.rules[i], Some(which)))
         .collect();
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
     // 일반 선언 먼저, 그다음 important (important 가 특이도 무관하게 이긴다)
@@ -573,6 +616,7 @@ fn presentational_css(elem: &ElementData) -> String {
 fn specified_values(
     elem: &ElementData,
     ancestors: &[&ElementData],
+    anc_pos: &[NodePos],
     sib: &SiblingCtx,
     index: &RuleIndex,
 ) -> PropertyMap {
@@ -587,7 +631,7 @@ fn specified_values(
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
-        .filter_map(|i| match_rule(elem, ancestors, sib, &index.rules[i], None))
+        .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, &index.rules[i], None))
         .collect();
     // 오름차순 특이도, 안정 정렬 → 동일 특이도는 문서 순서 유지 (뒤 규칙이 이김)
     rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
@@ -641,7 +685,7 @@ pub fn element_matches(dom: &Dom, id: NodeId, selectors: &[Selector]) -> bool {
         .collect();
     // 형제 문맥 계산 (querySelector 는 :nth-child 등도 지원)
     let sib = sibling_ctx_for(dom, id);
-    selectors.iter().any(|s| matches(elem, &ancestors, &sib, s))
+    selectors.iter().any(|s| matches(elem, &ancestors, &[], &sib, s))
 }
 
 // 아레나 요소의 형제 문맥(인덱스/총수/타입 인덱스/선행형제). element_matches 용.
@@ -775,7 +819,7 @@ pub fn style_tree_full<'a>(
 ) -> StyledNode<'a> {
     let index = RuleIndex::build(stylesheet);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, DEFAULT_FONT_SIZE)
+    style_node(dom, dom.root, &index, &mut ancestors, &mut Vec::new(), None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, DEFAULT_FONT_SIZE)
 }
 
 pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
@@ -800,7 +844,7 @@ pub fn generate_pseudo_elements(dom: &mut Dom, sheet: &Stylesheet) -> PseudoStyl
     {
         let mut ancestors: Vec<&ElementData> = Vec::new();
         let mut counters: HashMap<String, i32> = HashMap::new();
-        collect_pseudo_plans(dom, dom.root, &index, &mut ancestors, &SiblingCtx::default(), &mut plans, &mut counters);
+        collect_pseudo_plans(dom, dom.root, &index, &mut ancestors, &mut Vec::new(), &SiblingCtx::default(), &mut plans, &mut counters);
     }
     let mut map = HashMap::new();
     for (owner, which, mut vals) in plans {
@@ -830,11 +874,13 @@ pub fn generate_pseudo_elements(dom: &mut Dom, sheet: &Stylesheet) -> PseudoStyl
 
 // style_node 구조 순회를 미러링하며 각 요소의 ::before/::after 명시값을 수집.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn collect_pseudo_plans<'a>(
     dom: &'a Dom,
     id: NodeId,
     index: &RuleIndex<'a>,
     ancestors: &mut Vec<&'a ElementData>,
+    anc_pos: &mut Vec<NodePos>,
     sib: &SiblingCtx,
     out: &mut Vec<(NodeId, PseudoElement, PropertyMap)>,
     counters: &mut HashMap<String, i32>,
@@ -844,7 +890,7 @@ fn collect_pseudo_plans<'a>(
         return;
     };
     // 요소 자신의 counter-reset/increment 를 문서 순서로 적용 (::before content 전)
-    let evals = specified_values(elem, ancestors, sib, index);
+    let evals = specified_values(elem, ancestors, anc_pos, sib, index);
     if let Some(Value::Keyword(r)) = evals.get("counter-reset") {
         apply_counter_op(r, counters, true);
     }
@@ -852,7 +898,7 @@ fn collect_pseudo_plans<'a>(
         apply_counter_op(inc, counters, false);
     }
     for which in [PseudoElement::Before, PseudoElement::After] {
-        let mut vals = pseudo_specified_values(elem, ancestors, sib, index, which);
+        let mut vals = pseudo_specified_values(elem, ancestors, anc_pos, sib, index, which);
         // content 의 counter()/counters() 를 현재 값으로 치환, open-quote/close-quote 를 인용부호로
         if let Some(Value::Keyword(c)) = vals.get("content") {
             let resolved = if c.contains("counter(") || c.contains("counters(") {
@@ -875,6 +921,7 @@ fn collect_pseudo_plans<'a>(
         }
     }
     ancestors.push(elem);
+    anc_pos.push(NodePos::from_sib(sib));
     let elem_children: Vec<NodeId> = node
         .children
         .iter()
@@ -904,11 +951,12 @@ fn collect_pseudo_plans<'a>(
                 prev: &prev_elems,
                 has_children,
             };
-            collect_pseudo_plans(dom, child, index, ancestors, &csib, out, counters);
+            collect_pseudo_plans(dom, child, index, ancestors, anc_pos, &csib, out, counters);
             prev_elems.push(ce);
         }
     }
     ancestors.pop();
+    anc_pos.pop();
 }
 
 // counter-reset/increment 값 적용. reset=true 면 지정값(기본 0)으로 설정, 아니면 증가(기본 1).
@@ -968,6 +1016,7 @@ fn style_node<'a>(
     id: NodeId,
     index: &RuleIndex<'a>,
     ancestors: &mut Vec<&'a ElementData>,
+    anc_pos: &mut Vec<NodePos>,
     parent: Option<&PropertyMap>,
     sib: &SiblingCtx,
     vp: Viewport,
@@ -981,7 +1030,7 @@ fn style_node<'a>(
             // 합성 의사요소 노드: 캐스케이드 대신 사전 계산된 명시값 사용.
             let mut values = match pseudo.get(&id) {
                 Some(v) => v.clone(),
-                None => specified_values(elem, ancestors, sib, index),
+                None => specified_values(elem, ancestors, anc_pos, sib, index),
             };
             // CSS 전역 키워드: inherit → 부모 계산값, unset → 제거(상속 속성이면 아래
             // 상속 루프가 부모값 복사, 아니면 기본값), initial → 제거(기본값 근사).
@@ -1134,6 +1183,7 @@ fn style_node<'a>(
                 }
             }
             ancestors.push(elem);
+            anc_pos.push(NodePos::from_sib(sib));
             // 자식별 형제 문맥 계산: 요소 자식의 인덱스/총수/선행형제.
             // 합성 의사요소(::before/::after)는 구조적 선택자에서 제외(요소 트리에 없음).
             let elem_children: Vec<NodeId> = node
@@ -1161,7 +1211,7 @@ fn style_node<'a>(
                     if is_synthetic_pseudo(ce) {
                         // 구조적 문맥에 포함하지 않고 스타일만 (기본 형제 문맥)
                         children.push(style_node(
-                            dom, child, index, ancestors, Some(&values),
+                            dom, child, index, ancestors, anc_pos, Some(&values),
                             &SiblingCtx::default(), vp, pseudo, keyframes, child_root_fs,
                         ));
                         continue;
@@ -1180,7 +1230,7 @@ fn style_node<'a>(
                         prev: &prev_elems,
                         has_children,
                     };
-                    children.push(style_node(dom, child, index, ancestors, Some(&values), &csib, vp, pseudo, keyframes, child_root_fs));
+                    children.push(style_node(dom, child, index, ancestors, anc_pos, Some(&values), &csib, vp, pseudo, keyframes, child_root_fs));
                     prev_elems.push(ce);
                 } else {
                     children.push(style_node(
@@ -1188,6 +1238,7 @@ fn style_node<'a>(
                         child,
                         index,
                         ancestors,
+                        anc_pos,
                         Some(&values),
                         &SiblingCtx::default(),
                         vp,
@@ -1198,6 +1249,7 @@ fn style_node<'a>(
                 }
             }
             ancestors.pop();
+            anc_pos.pop();
             StyledNode { node, id, specified_values: values, children }
         }
         NodeType::Text(_) => StyledNode {
@@ -1208,7 +1260,7 @@ fn style_node<'a>(
                 .children
                 .iter()
                 .map(|&child| {
-                    style_node(dom, child, index, ancestors, parent, &SiblingCtx::default(), vp, pseudo, keyframes, root_fs)
+                    style_node(dom, child, index, ancestors, anc_pos, parent, &SiblingCtx::default(), vp, pseudo, keyframes, root_fs)
                 })
                 .collect(),
         },
@@ -1494,6 +1546,35 @@ mod tests {
         let ss = crate::css::parse(".b { width: 10px !important; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(10.0, Unit::Px)));
+    }
+
+    #[test]
+    fn ancestor_nth_child_zebra_striping() {
+        // tr:nth-child(even) td → 짝수 행 td 만. 이전엔 조상 구조 의사클래스가
+        // 무조건 참이라 모든 td 가 매칭됐다(zebra 깨짐).
+        let root = crate::html::parse_dom(
+            "<table><tr><td>1</td></tr><tr><td>2</td></tr><tr><td>3</td></tr></table>"
+                .to_string(),
+        );
+        let ss = crate::css::parse("tr:nth-child(even) td { color: #ff0000; }".to_string());
+        let styled = style_tree(&root, &ss);
+        fn collect<'a>(n: &'a StyledNode<'a>, tag: &str, out: &mut Vec<&'a StyledNode<'a>>) {
+            if let crate::dom::NodeType::Element(e) = &n.node.node_type {
+                if e.tag_name == tag {
+                    out.push(n);
+                }
+            }
+            for c in &n.children {
+                collect(c, tag, out);
+            }
+        }
+        let mut tds = Vec::new();
+        collect(&styled, "td", &mut tds);
+        assert_eq!(tds.len(), 3, "td 3개");
+        let red = Some(Value::Color(crate::css::Color { r: 255, g: 0, b: 0, a: 255 }));
+        assert_ne!(tds[0].value("color"), red, "1행(홀수) 아님");
+        assert_eq!(tds[1].value("color"), red, "2행(짝수) 빨강");
+        assert_ne!(tds[2].value("color"), red, "3행(홀수) 아님");
     }
 
     #[test]
