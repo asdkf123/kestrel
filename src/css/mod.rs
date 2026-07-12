@@ -194,6 +194,9 @@ pub enum Unit {
     Vh,      // 뷰포트 높이 1%
     Vmin,    // min(vw, vh)
     Vmax,    // max(vw, vh)
+    // line-height 전용: 단위 없는 배수(factor). px 로 확정하지 않고 상속되어,
+    // 각 요소가 자기 font-size 를 곱해 쓴다(CSS2 §10.8). 길이/%와 상속 방식이 다름.
+    Lh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

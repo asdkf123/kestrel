@@ -2476,6 +2476,20 @@ mod tests {
     }
 
     #[test]
+    fn unitless_line_height_inherits_as_factor() {
+        // 부모 line-height:2 (배수). 자식 font-size 40 은 상속받은 factor 2 를 자기
+        // font-size 에 곱해야 함 → 자식 줄 높이 80. (예전엔 부모 20×2=40px 가 그대로
+        // 상속돼 자식도 40 이 됐다.) 외곽 블록 높이 = 자식 블록 높이.
+        let d = layout_for(
+            "<div class=\"o\"><p>hi</p></div>",
+            ".o { display: block; font-size: 20px; line-height: 2; } \
+             p { display: block; font-size: 40px; margin: 0; }",
+            800.0,
+        );
+        assert!((d.content.height - 80.0).abs() < 0.5, "2 × 40px = 80, 실제 {}", d.content.height);
+    }
+
+    #[test]
     fn auto_width_fills_containing_block_minus_padding() {
         let d = layout_for("<div></div>", "div { display: block; padding: 10px; }", 300.0);
         assert_eq!(d.content.width, 280.0);

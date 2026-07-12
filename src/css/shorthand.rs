@@ -171,8 +171,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let mapped = name.strip_prefix("grid-").unwrap();
             expand_declaration(mapped, value_text)
         }
-        // line-height: 단위 없는 수(1.5)와 퍼센트(150%)는 font-size 배수 → em 으로 저장
-        // (스타일 계산 시 요소 font-size 기준 px 로 확정). normal/길이단위는 그대로.
+        // line-height: 단위 없는 수(1.5)는 배수(Lh)로 저장해 상속 시 factor 그대로 —
+        // 각 요소가 자기 font-size 를 곱한다(CSS2 §10.8). 퍼센트(150%)는 요소 font-size
+        // 기준 길이로 확정돼 그 길이가 상속되므로 em 으로 저장. normal/길이단위는 그대로.
         "line-height" => {
             let v = value_text.trim();
             if v == "normal" {
@@ -184,7 +185,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 }
             }
             if let Ok(n) = v.parse::<f32>() {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Em) }];
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Lh) }];
             }
             match interpret_value(v) {
                 Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
@@ -817,7 +818,8 @@ mod tests {
         assert!(matches!(find(&d, "font-style"), Some(Value::Keyword(k)) if k == "italic"));
         assert!(matches!(find(&d, "font-weight"), Some(Value::Keyword(k)) if k == "bold"));
         assert_eq!(find(&d, "font-size"), Some(&Value::Length(14.0, Unit::Px)));
-        assert_eq!(find(&d, "line-height"), Some(&Value::Length(1.5, Unit::Em)));
+        // 단위 없는 배수는 Lh(상속 시 factor 유지, 요소별 font-size 곱)로 저장
+        assert_eq!(find(&d, "line-height"), Some(&Value::Length(1.5, Unit::Lh)));
         assert!(matches!(find(&d, "font-family"), Some(Value::Keyword(k)) if k.contains("Arial")));
     }
 

@@ -257,10 +257,13 @@ impl<'a> LayoutBox<'a> {
         let ascent_px = primary.ascent() as f32 * line_scale;
         let descent_px = primary.descent() as f32 * line_scale; // 보통 음수
         let natural_lh = ascent_px - descent_px + primary.line_gap() as f32 * line_scale;
-        // CSS line-height: 지정되면(px 로 확정된 값) 사용, 아니면 폰트 메트릭.
+        // CSS line-height: 지정되면 사용, 아니면 폰트 메트릭(normal).
         // 반-리딩(half-leading)만큼 baseline 을 내려 줄 상자 안에서 세로 중앙 정렬.
+        // Lh 는 단위 없는 배수 → 이 요소의 font-size(base_px)에 곱한다. Px 는 %/길이가
+        // style 에서 이미 확정된 값.
         let line_height = match self.styled_node.value("line-height") {
             Some(Value::Length(px, crate::css::Unit::Px)) if px > 0.0 => px,
+            Some(Value::Length(factor, crate::css::Unit::Lh)) if factor > 0.0 => factor * base_px,
             _ => natural_lh,
         };
         let half_leading = (line_height - (ascent_px - descent_px)) / 2.0;
