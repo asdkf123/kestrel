@@ -1,278 +1,161 @@
-# Kestrel 웹 표준 커버리지 · 로드맵
+# Kestrel 웹 표준 커버리지
 
-Kestrel 은 Rust 로 처음부터 만드는 **완전한 웹 브라우저**를 목표로 한다. 이 문서는
-웹 표준(HTML/CSS/ECMAScript/DOM/…) 중 무엇을 구현했고 무엇이 남았는지 정직하게
-기록해, 남은 작업을 **순서 있는 마일스톤**으로 지어 나가기 위한 것이다.
+Rust 로 처음부터 만드는 웹 브라우저. 이 문서는 웹 표준(HTML/CSS/ECMAScript/DOM)
+중 무엇이 되고 무엇이 남았는지 **정직하게** 체크박스로 기록한다. 과장 없음 —
+`[x]` 지원 범위 내 정상, `[~]` 부분(되는 것/안 되는 것 명시), `[ ]` 미구현.
 
-이건 실현 가능한 엔지니어링 프로젝트다. Ladybird(from-scratch, 실사이트 렌더),
-Servo 가 같은 길을 실제로 걷고 있다. 방대하지만 유한하고, 순서가 있다.
+기준 스펙: HTML(whatwg §13 파싱, §15 Rendering), CSS(drafts.csswg.org),
+ECMAScript(tc39), DOM(dom.spec.whatwg.org). 검증: WPT + 실사이트 렌더.
 
-기준 스펙:
-- HTML: https://html.spec.whatwg.org/ (특히 §13 파싱, §15 Rendering=UA 스타일시트)
-- CSS: https://drafts.csswg.org/ (모듈별), 검증은 https://github.com/web-platform-tests/wpt
-- ECMAScript: https://tc39.es/ecma262/
-- DOM: https://dom.spec.whatwg.org/
-
----
-
-## 0. 현재 상태 요약 (339 단위 테스트 통과, 실사이트 검증)
-
-**정적 문서 웹은 실사용 수준**(HN/위키/뉴스/블로그 렌더 검증). 넓게 구현됨:
-
-- **CSS 시각**: 그라디언트 linear/radial/conic, opacity, transform translate/scale/rotate,
-  filter(색변환), box-shadow(outset/inset), outline, text-shadow, visibility.
-- **CSS 값**: em/rem/절대·뷰포트 단위 전부, currentColor, aspect-ratio, min/max/clamp,
-  calc/var, 논리 속성(margin-inline 등).
-- **타이포**: line-height, text-decoration, letter/word-spacing, text-indent, word-break,
-  text-overflow ellipsis.
-- **선택자**: ::before/::after(+CSS 카운터), :is/:where, :nth-* 전부, 폼 상태, @supports.
-- **리소스**: @font-face(ttf/otf), @keyframes(최종상태), background-size/repeat, place-*.
-- **레이아웃**: 이미지 크기/object-fit, 테이블 colspan/rowspan, flexbox shrink/align-self/order.
-- **JS**: for-of, Proxy, 제너레이터, 스프레드, ES 모듈 구문, sort/flat/at, 프로토타입 디스패치.
-- **JS/DOM**: getBoundingClientRect/offset*, dispatchEvent/CustomEvent, cloneNode,
-  matches/closest/contains, DocumentFragment.
-- **대체 콘텐츠**: SVG(도형+path), canvas 2D.
-
-**남은 것**(성격이 다른 큰 항목): ES 모듈 그래프 로딩, 시간 기반 애니메이션(정적 렌더 밖),
-상호작용(hover/focus/scroll), RTL/복합 셰이핑, 합성 효과(mix-blend/clip-path/mask),
-표준 §13 HTML 파싱 알고리즘, WebSocket/IndexedDB.
+**현재(2026-07): 524 단위 테스트 통과.** 정적 문서 웹은 상용 브라우저 근접 —
+위키백과, HN, lobste.rs, MDN, go.dev, react.dev, Rust 블로그, Guardian, gov.uk,
+old.reddit, Tailwind 정상 렌더. JS 무거운 SPA(GitHub 등)와 무거운 디자인시스템
+(Stack Overflow)은 아직 부분.
 
 ---
 
-## 1. 구현 상태 (된다 / 부분)
+## HTML / DOM
 
-"대략" 같은 표현은 안 쓴다. 되는 건 되는 것, 부분이면 **되는 것과 안 되는 것을 명시**한다.
-(각 기능이 지원하는 범위는 여기, 그 밖의 미구현은 §2.)
+- [x] 관용적 HTML 파서 (void 요소, 속성, raw text, 주석)
+- [x] 아레나 DOM (안정 NodeId, detach)
+- [x] 문자 엔티티 디코딩 (`&amp; &lt; &#x...`)
+- [x] 폼 컨트롤 UA 외형 + 값 텍스트
+- [ ] 표준 §13 파싱 알고리즘 (삽입 모드, foster parenting, active formatting 재구성, quirks)
+- [ ] `<template>`, `<svg>`/`<math>` 통합, `<noscript>` 세부
 
-### 1a. 완전히 되는 것 (지원 범위 내에서 정상 동작)
+## CSS — 셀렉터
 
-- CSS 캐스케이드·특이도, **인라인 `style="..."`**, `@media`(min/max-width/print).
-- 선택자: 태그·id·class·자손( )·속성(`[a]`,`[a=v]`).
-- 값: px/em/rem/%, #hex/rgb/rgba/이름색, url(), 키워드, 다수 단축값.
-- 레이아웃: 블록 흐름, inline-block(가로 흐름+줄바꿈), flexbox(방향/wrap/
-  justify/align/grow), CSS Grid(px/fr/repeat/auto-fill/gap).
-- 시각: 배경색, border(단축/변별/다색), border-radius(AA), box-shadow(SDF),
-  리스트 마커(list-style-type), **z-index 스택 순서**, **box-sizing: border-box**,
-  **overflow 클리핑**, **position: sticky**(스크롤 고정).
-- 텍스트: **white-space**(nowrap/pre 계열).
-- 테이블: **공통 열 폭 + 내용 기반 사이징** (열이 행마다 정렬).
-- 이미지: png/jpeg(baseline). 폼 컨트롤 UA 기본 외형(캐스케이드로 저작자 CSS 우선).
-- 폰트: 자체 TrueType/CFF 렌더 + 글리프 캐시 (라틴+한글), **볼드/이탤릭(faux 합성)**.
-- **상속**: 표준 상속 속성 다수 (color/font-*/line-height/white-space/list-style 등).
+- [x] 타입 / id / class / 자손( ) / 자식(`>`) / 형제(`+` `~`)
+- [x] 속성 `[a] [a=v]` + 연산자 `^= $= *= ~= |=` + `i/s` 플래그
+- [x] 구조 의사클래스 `:nth-child/of-type` `:first/last-child` `:only-*` `:root` `:empty`
+- [x] `:not() :is() :where()` — 명시도 정확 계산(:where=0)
+- [x] `:checked :disabled :required` (폼 상태)
+- [x] `::before ::after` + CSS 카운터
+- [ ] `:hover :focus :active` (상호작용 필요), `:has()`
+- [ ] `::marker ::placeholder ::first-line ::selection`
 
-### 1b. 부분만 되는 것 (→ 되는 것 / ✗ 안 되는 것)
+## CSS — 값 · 캐스케이드
 
-- **HTML 파싱**: → 흔한 HTML 트리화, void/속성/raw. ✗ 표준 §13 파싱 알고리즘,
-  문자 엔티티(`&amp;`), 오류 복구/quirks.
-- **position**: → relative(offset 이동). ✗ absolute/fixed 는 top/left 배치만 되고
-  containing-block 체인·z-index/스태킹 컨텍스트 안 됨.
-- **float**: → left/right 배치. ✗ `clear`, 텍스트가 float 주위로 흐르기.
-- **테이블**: → 행 배치 + 셀 지정폭(width). ✗ auto 열 폭 계산, colspan/rowspan,
-  border-collapse.
-- **인라인 포매팅**: → 텍스트 줄바꿈·정렬. ✗ text 와 inline-block 이 같은 줄(분리됨),
-  vertical-align, 베이스라인 정렬.
-- **상속**: → 표준 상속 속성 다수. ✗ em/rem 값은 아직 드롭(미해석), 일부 속성 미적용.
-- **폼 컨트롤**: → UA 외형 + 값 텍스트. ✗ 실제 위젯(체크박스/라디오/드롭다운),
-  입력/포커스/제출.
-- **폰트 커버리지**: → 라틴+한글 + 볼드/이탤릭(faux). ✗ CJK(일/중)·아랍(두부 □),
-  전용 볼드/이탤릭 폰트(현재는 합성).
-- **JS**: 상세 현황은 아래 **§1c** 참조 (언어 코어 대부분 + 내장 상당수 + DOM 일부).
-- **네트워크**: → HTTP GET + gzip(inflate), 외부 CSS/이미지/스크립트 로드. ✗ HTTPS 세부,
-  쿠키/리다이렉트/캐시, CORS.
+- [x] 캐스케이드 · 특이도 · `!important` · 인라인 `style="..."`
+- [x] 단위 전부: px/em/rem/% + vw/vh/vmin/vmax + pt/pc/in/cm/mm/Q + ch/ex
+- [x] `calc()` (단위별 계수 보존 후 px 확정), `min() max() clamp()`
+- [x] `var()` 커스텀 프로퍼티 + 폴백 (font-size 포함, em/rem 해석 전 치환)
+- [x] 색: #hex(4/8자리 알파) / rgb / rgba / hsl / 이름색 / currentColor
+- [x] `@media` (min/max-width, em/rem, print, 피처 평가, 미인식→불일치)
+- [x] `@font-face` (ttf/otf), `@keyframes` (최종 상태 적용)
+- [x] 단축: font / margin / padding / border / flex / grid / place-* / background(-position)
+- [x] 논리 속성 (margin-inline, inline-size 등 → 물리 속성)
+- [x] 상속 (color/font-*/line-height/letter-spacing/white-space/word-break/list-style/direction/visibility)
+- [~] `@supports` — 되는 것: 피처 존재/논리 결합. 안 되는 것: 값 검증(과다 보고)
+- [ ] `@import`, `@layer` (cascade layers), 컨테이너 쿼리, CSS 네스팅, woff2, 시간 기반 애니메이션/transition
 
-### 1c. JavaScript / DOM 상세 현황 (2026-07 기준, 코드 확인)
+## CSS — 레이아웃
 
-**JS 언어 (문법) — 체감 85~90%**
-- 된다: var/let/const, 함수(선언/식/화살표/기본값 파라미터), 클래스(extends/super/
-  static), if/while/**do-while**/for/for-in/switch/try-catch-finally/throw, 모든 연산자
-  (`**`/`>>>=`/`??`/`?.`/비트/논리), 템플릿 리터럴, 스프레드/구조분해(부분),
-  **async/await**(간이), **반복자 프로토콜(Symbol.iterator)**.
-- 남음: **제너레이터 `function*`/`yield`**, **`for...of` 구문**(반복자 프로토콜은 있음),
-  **정규식 매칭 엔진**(리터럴만 파싱), 객체 게터/세터 `{get x(){}}`, 태그드 템플릿,
-  라벨 문 실제 의미, 구조분해 기본값.
+- [x] 블록 흐름 + 세로 margin 상쇄 (형제 §8.3.1 + **부모-자식** hoisting)
+- [x] 인라인 포매팅: text + inline-block 같은 줄, **인라인 박스 가로 margin/border/padding**(§10.3.1), 공백 접기, 줄바꿈/정렬(justify), text-indent
+- [x] Flexbox: 방향/wrap/justify-content/align-items/align-self/grow/shrink/**min-content**(§4.5)/order/gap
+- [x] Grid: **라인 배치·span·음수라인·auto-placement**(§8), **셀 자기정렬**(§11), **minmax(px,fr)**(§11.5), grid-auto-rows, template-areas, repeat/auto-fill
+- [x] Float: 좌/우 패킹 + **text-wrap**(줄 상자 단축) + `clear` + **최근접 BFC 탈출**(§9.5) + **% 폭**(컨테이너 기준)
+- [x] Table: 행/tbody/thead + colspan/rowspan + **auto 폭 shrink-to-fit**(§17.5.2) + **border-spacing** + caption
+- [x] position: relative / absolute / fixed / **sticky**, z-index / 스태킹 컨텍스트
+- [x] overflow 클리핑, box-sizing: border-box, min/max-width·height, aspect-ratio, object-fit
+- [x] 대체 요소: img / **인라인 SVG** / 폼컨트롤 (원자적 인라인 흐름, 미로드 공간 예약)
+- [x] transform: translate / scale (레이아웃 후 시각 변환)
+- [~] vertical-align — 되는 것: baseline/top/bottom/middle/sub/super 배치. 안 되는 것: 실측 폰트 메트릭(현재 폰트크기 배수 근사)
+- [~] Flexbox 잔여 — 안 되는 것: align-content, min/max 덮어씀 세부
+- [~] Grid 잔여 — 안 되는 것: 명명 라인, justify/align-content(트랙 분배), subgrid
+- [~] Table 잔여 — 안 되는 것: border-collapse 테두리 중첩, fixed 알고리즘
+- [ ] transform rotate/matrix/3D, multi-column, writing-mode(세로쓰기)
 
-**내장 객체/메서드 — 체감 60~70%**
-- 된다: **함수-객체**(prototype/정적/call/apply/bind), **Object**(defineProperty·접근자/
-  keys/entries/assign/create/freeze/prototype), **Array**(대부분 + Array.prototype),
-  **Map/Set/WeakMap/WeakSet**, **Function 생성자**, Math, JSON, **Promise(간이)**,
-  **Reflect**, **Symbol(경량)**, **Error 계열**, 문자열 11종, **webpack 청크 런타임(사이트 자체)**.
-- 남음: **`Date` 전무**, **정규식 엔진**, **`Array.sort`**/flat/at/fill, 문자열 padStart/
-  repeat/matchAll, 숫자 toFixed/Number.isInteger, **Proxy**, Promise.all/race,
-  structuredClone/queueMicrotask.
+## CSS — 타이포그래피
 
-**DOM API — 체감 30~40% (가장 큰 남은 덩어리)**
-- 된다: getElementById/createElement/**createTextNode**, querySelector(All),
-  appendChild/**insertBefore**/removeChild/remove, setAttribute/getAttribute/
-  removeAttribute/hasAttribute, children/parentNode/siblings, innerHTML/textContent,
-  className/id/value, addEventListener(요소+문서/window), **body/head/documentElement**,
-  **DOMContentLoaded/load 발화 + readyState**.
-- 남음(프레임워크 즉효 순): **`element.style`**(CSSStyleDeclaration), **`classList`**,
-  **레이아웃 측정**(getBoundingClientRect/offset*/client*), **이벤트 객체 모델**
-  (event.target/preventDefault/stopPropagation/dispatchEvent), **`XMLHttpRequest`**,
-  getElementsByClassName/TagName, cloneNode/closest/matches/contains, DocumentFragment,
-  dataset, nodeType.
+- [x] font-family 매칭/폴백, @font-face 웹폰트, faux 볼드/이탤릭 합성
+- [x] line-height (normal/무단위 배수/%/px, half-leading 중앙)
+- [x] letter-spacing, word-spacing, text-indent
+- [x] text-decoration (밑줄/취소선/윗줄 + 색), text-transform
+- [x] white-space (normal/nowrap/pre/pre-wrap/pre-line), word-break/overflow-wrap
+- [x] text-overflow: ellipsis
+- [x] 합성 글리프 (é/ñ 등 결합), 한글 + 라틴
+- [x] bidi (UAX#9 기본 레벨/재정렬), direction: rtl
+- [~] CJK — 되는 것: 한글. 안 되는 것: 일/중 대형 cmap fmt12 일부
+- [ ] 복합 셰이핑 (리가처, 아랍 접합, 인도계 재배열 — HarfBuzz 급)
 
-**요약**: 가벼운 페이지는 대부분 렌더됨. 프레임워크 SPA(naver)는 **DOM API(style/
-classList/이벤트/XHR)**가 최대 남은 덩어리 + JS 쪽 독립 큰 항목 **정규식 엔진**과 **Date**.
+## CSS — 페인트 · 효과
 
----
+- [x] 배경색 / 배경 이미지(size cover/contain, position)
+- [x] border: solid/dashed/dotted + radius(AA), outline
+- [x] 그라디언트: linear / radial(ellipse/circle, premultiplied 보간)
+- [x] box-shadow (가우시안 erf 전이, inset), text-shadow
+- [x] filter / backdrop blur (3패스 가우시안), grayscale/saturate(BT.709), opacity
+- [x] 이미지: png / jpeg(baseline), 바이리니어 스케일, object-fit
+- [x] 클리핑: overflow 사각/둥근, 글리프/폴리곤 픽셀 클립
+- [x] SVG: rect/circle/ellipse/line/path/polygon, arc(A) 정확 평탄화, viewBox, fill/stroke
+- [~] 그라디언트 conic, radial 크기/위치 정밀 — 근사
+- [ ] mix-blend-mode, clip-path, mask, border-image, SVG 그라디언트/텍스트
+- [ ] canvas 그라디언트/이미지/변환, `<video>/<audio>/<iframe>`
+- [ ] 이미지 포맷: webp / avif / gif(애니) / 프로그레시브 JPEG
 
-## 2. 미구현 (완벽 렌더링에 필요한 것)
+## JavaScript — 언어
 
-### HTML
-- 표준 §13 파싱 알고리즘 전체: 삽입 모드, 오류 복구(foster parenting, 암묵 태그,
-  active formatting 재구성), quirks 모드.
-- 문자 참조(엔티티) 디코딩: `&amp; &lt; &#x...`.
-- `<template>`, `<svg>`/`<math>` 통합, form 연결 규칙, `<noscript>` 처리 세부.
+- [x] var/let/const (반복별 바인딩, const 재대입 금지)
+- [x] 함수 (선언/식/화살표/기본값 파라미터), 클래스 (extends/super/static/getter/setter/제너레이터·async 메서드)
+- [x] 제어문 (if/while/do-while/for/for-in/switch/try-catch-finally/throw), **라벨 break/continue**
+- [x] 연산자 전부 (`**` `>>>` `??` `?.` 비트/논리/비교), 템플릿 리터럴
+- [x] 스프레드 / 구조분해 (`[a,b]=arr`, `({x,y}=o)`)
+- [x] async/await, Promise/마이크로태스크, 반복자 프로토콜 + for-of
+- [x] 유니코드 식별자, ToPrimitive (valueOf/toString hint)
+- [x] 프로토타입 링크 (`new F()` → `__proto__`, instanceof, 체인 조회)
+- [~] 정규식 — 되는 것: 백트래킹 VM, test/exec/match/replace/split, **명명 그룹** `(?<n>)`. 안 되는 것: lookbehind, step-limit
+- [ ] **지연 제너레이터** (현재 eager 전체평가), **Symbol 타입** (typeof/계산 키), ES 모듈 그래프, BigInt, Intl, 태그드 템플릿
 
-### CSS — 선택자
-- 자식 `>` ✓, 형제 `+`/`~` ✓, 속성 연산자 `^= $= *= ~= |=` ✓.
-- 의사 클래스: `:first/last-child :nth-child() :nth-of-type() :nth-last-*
-  :not() :is() :where() :checked :disabled :required :root :empty` ✓.
-  남음: `:hover :focus :active`(상호작용), `:has()`.
-- ~~의사 요소 `::before ::after`~~ ✓ (생성 콘텐츠 박스 주입). `::marker ::placeholder ::first-line` 남음.
+## JavaScript — 내장 객체
 
-### CSS — 값·캐스케이드
-- ~~`calc()`, `var()`, `min()/max()/clamp()`, 단위 전부(vw/vh/ch/pt/cm...)~~ ✓.
-- ~~`@supports`, `@font-face`(ttf/otf), `@keyframes`(최종상태 적용)~~ ✓. 남음: `!important`, `@import`, cascade layers, woff2, 시간 기반 애니메이션.
-- 상속 확대: 현재 color/font-size/text-align 만. font-family/weight/style/
-  line-height/letter-spacing/white-space/visibility/list-style/direction 등 다수 미상속.
+- [x] Object (defineProperty/접근자/keys/values/entries/fromEntries/assign/create/freeze), **삽입 순서 유지**(정수키 먼저)
+- [x] Array (대부분 + from/of/at/flatMap/findLast/findLastIndex/fill/reduceRight)
+- [x] String (**UTF-16 코드유닛** length/charAt/[i]/slice, at/localeCompare/pad*/repeat/matchAll)
+- [x] Map/Set/WeakMap/WeakSet (SameValueZero, NaN 키)
+- [x] Math, JSON (Date→ISO, 삽입순서, 내부마커 필터), **Number→문자열** (ECMAScript 7.1.12.1)
+- [x] Date (now/생성자/get*/toISOString/parse/UTC)
+- [x] Reflect, structuredClone, Function 생성자, Error 계열
+- [ ] Proxy(트랩 세부), BigInt, Intl, WeakRef, Date 로컬 시간대
 
-### CSS — 레이아웃
-- **테이블**: 열 폭 계산 ✓, ~~colspan/rowspan~~ ✓. 남음: border-collapse, fixed 알고리즘.
-- **position: sticky**, 절대 위치 컨테이닝 블록 체인 정확화, **z-index/스태킹 컨텍스트**.
-- **인라인 포매팅 정식화**: 라인 박스, vertical-align, 베이스라인 정렬,
-  text + inline-block 같은 줄(현재는 분리됨), float 주위 텍스트 흐름, `clear`.
-- flexbox: ~~flex-shrink~~ ✓, ~~align-self~~ ✓. 남음: flex-basis 정식, align-content, order, min/max.
-- grid 잔여: template-rows/areas, 명시 배치(grid-row/column/span), auto-flow, subgrid.
-- multi-column, `box-sizing: border-box`(현재 무시), min/max-width·height,
-  `overflow`(스크롤/클리핑), aspect-ratio, object-fit.
-- writing-mode(세로), **direction: rtl**(양방향 텍스트).
+## DOM / Web API
 
-### CSS — 타이포그래피
-- **font-family 매칭/폴백**, **@font-face 웹폰트**.
-- **font-weight(볼드)**, **font-style(이탤릭)** 렌더 — 지금 굵기/기울기 없음.
-- ~~CSS `line-height`, `letter-spacing`, `word-spacing`, `text-decoration`(밑줄/취소선/윗줄)~~ ✓.
-  `text-transform` ✓, `white-space`(pre/nowrap/pre-wrap) ✓.
-  ~~`word-break`/`overflow-wrap`, `text-indent`~~ ✓. 남음: `text-overflow: ellipsis`.
-- **CJK/아랍/인도계 폰트 커버리지**(지금 두부 □) + **복합 텍스트 셰이핑**
-  (리가처, 결합 문자, 아랍 접합, 인도계 재배열 — HarfBuzz 급).
+- [x] 요소 생성/조작 (createElement/appendChild/insertBefore/removeChild/remove)
+- [x] querySelector(All), getElementById/ByClassName/ByTagName
+- [x] 속성 (get/set/remove/hasAttribute, className/id/value/dataset)
+- [x] 트리 탐색 (children/parentNode/siblings), innerHTML/textContent, cloneNode
+- [x] matches/closest/contains, DocumentFragment
+- [x] **`element.style`** (CSSStyleDeclaration 라이브), **`classList`** (add/remove/toggle/contains + CSS 재매칭)
+- [x] 이벤트 (addEventListener/버블/위임/dispatchEvent/Event/CustomEvent, target/preventDefault/stopPropagation)
+- [x] 레이아웃 측정 (getBoundingClientRect/offset*/client*)
+- [x] XMLHttpRequest (open/send/onreadystatechange), fetch, 타이머
+- [x] DOMContentLoaded/load 발화 + readyState, body/head/documentElement
+- [ ] MutationObserver, 이벤트 캡처 단계, getComputedStyle
+- [ ] requestAnimationFrame, storage (localStorage/쿠키/IndexedDB), history/location, WebSocket
 
-### CSS — 페인트·효과
-- ~~그라디언트 linear/radial/conic, opacity, hsl(), currentColor~~ ✓.
-- 배경: ~~background-size cover/contain~~ ✓. position/repeat/다중 배경 남음.
-- transform: ~~translate/scale/rotate~~ ✓. matrix/3D, transition/animation 남음.
-- ~~box-shadow inset, outline, filter(색변환)~~ ✓. 남음: filter blur, mix-blend-mode, clip-path, mask, border-image.
+## 네트워킹 · 로딩
 
-### 대체·임베드 콘텐츠
-- ~~**SVG**(rect/circle/ellipse/line/path/polygon, viewBox, fill/stroke)~~ ✓.
-- ~~**`<canvas>` 2D**(fillRect/clearRect/strokeRect/fillText/경로 fill)~~ ✓.
-  남음: canvas 그라디언트/이미지/변환, SVG 그라디언트/텍스트, `<video>/<audio>`, `<iframe>`.
-- 이미지 포맷: webp/avif/gif(애니), 순차 JPEG 외.
-- 실제 폼 위젯: 체크박스/라디오/드롭다운 select/날짜 선택기, 제출/검증.
+- [x] HTTP / HTTPS GET, gzip(inflate)
+- [x] 외부 `<link>` CSS / 이미지 / `<script src>` 로드·실행
+- [ ] 쿠키 / 리다이렉트 / 캐시, CORS/동일출처, HTTP/2, charset 감지, 지연 로딩
 
-### JavaScript / DOM / Web API
-- **ECMAScript**: 클래스, Promise/async-await, 정규식 엔진, ~~Proxy(get/set)~~ ✓,
-  Reflect, Symbol, ~~이터레이터/for-of, 제너레이터(function*/yield, eager), 스프레드 ...~~ ✓.
-  남음: 모듈(import/export), BigInt, Intl, 양방향 제너레이터.
-- **DOM**: createElement/appendChild/removeChild ✓, 속성 조작 ✓, 이벤트 모델
-  (addEventListener/버블/위임/dispatchEvent) ✓, ~~cloneNode/matches/closest/contains/
-  DocumentFragment/getBoundingClientRect~~ ✓. 남음: MutationObserver, 캡처 단계.
-- **CSSOM**: style 조작, getComputedStyle. JS DOM 변경 → **리플로우/리페인트** 반영.
-- **fetch/XHR**(현 http 를 JS 에서 호출 불가), WebSocket.
-- 타이머 전체, requestAnimationFrame, storage(localStorage/쿠키/IndexedDB),
-  history/location/URL, JSON/Date/Math 완전.
-- 이게 갖춰져야 React/Vue 같은 **프레임워크 기반 사이트(예: naver)** 렌더 가능.
+## 렌더링 · 합성
 
-### 네트워크·로딩
-- HTTPS/TLS 세부, 리다이렉트/캐시/쿠키, HTTP/2, **CORS/동일 출처 정책**,
-  charset 감지·디코딩, 지연 로딩.
-
-### 렌더링·합성
-- GPU 합성/레이어, **스크롤/뷰포트**, 히트테스트 정식, 서브픽셀 AA,
-  감마 보정 블렌딩, 고DPI 정식.
-
-### 접근성·보안
-- ARIA/접근성 트리, CSP, 샌드박스, 믹스드 콘텐츠.
+- [x] 소프트웨어 래스터라이저, 폴리곤/글리프 AA (서브스캔라인 + 부분 커버리지)
+- [x] position:sticky 스크롤 고정, overflow 스크롤(헤드리스 오프셋)
+- [x] 그라디언트 premultiplied 보간, 이미지 투명 가장자리 안전
+- [ ] GPU 합성/레이어, 히트테스트 정식, 감마 보정 블렌딩, 고DPI 정식
 
 ---
 
-## 3. 만드는 순서 (마일스톤)
+## 남은 큰 덩어리 (파급 순)
 
-완전한 브라우저는 한 번에 완성되지 않고, 아래 순서로 지어 올라간다. 각 마일스톤은
-그 자체로 유한하고 구체적이며, 매 단계 **실제 사이트로 검증**한다. 실사이트가 크게
-두 부류라 로드맵도 그 순서를 따른다:
+1. **JS 지연 제너레이터 + Symbol 타입** — 모던 JS 앱의 근간. (Rust 코루틴 부재로 난이도 높음)
+2. **DOM 동적 갱신 → 리플로우/리페인트, getComputedStyle, requestAnimationFrame** — SPA 구동
+3. **상호작용 의사클래스** `:hover/:focus/:active` + 이벤트 루프 — 동적 UI
+4. **디자인시스템 캐스케이드 정밀화** — Stack Overflow(Stacks) 등 특정 사이트 line-height 붕괴
+5. **정밀화**: vertical-align 실측, border-collapse 중첩, grid/flex align-content, @supports 값검증, 복합 셰이핑
+6. **대체 콘텐츠**: video/audio/iframe, webp/gif, canvas 고급
 
-- **정적 문서 웹(SSR)** — 위키·블로그·뉴스·문서. 아래 A~C 로 상당수가 제대로 나온다.
-- **동적 앱 웹** — 프레임워크 사이트(naver 등). D(JS/DOM/이벤트/fetch)가 갖춰지면 열린다.
-
-둘 다 유한한 작업의 합이다. 순서대로 하나씩 완성한다.
-
----
-
-## 4. 우선순위 로드맵 (파급 큰 순)
-
-**A. 인라인·타이포그래피 정식화** — 거의 모든 페이지에 영향
-1. ~~`style="..."` 인라인 속성 파싱~~ ✓ 완료 (ac5ea9b).
-2. ~~상속 속성 확대~~ ✓ 완료 (4dcef16).
-3. ~~font-weight(볼드)·font-style(이탤릭) 렌더~~ ✓ 완료 (4dcef16, faux 합성).
-4. 라인 박스 정식화: text+inline-block 같은 줄, vertical-align, white-space.
-5. CJK 등 폰트 폴백.
-
-**B. 레이아웃 정확화** ✓ 완료
-6. ~~진짜 테이블 레이아웃(공통 열 폭 + 내용 기반)~~ ✓ (7429c25). colspan/rowspan/border-collapse 는 후속.
-7. ~~position: sticky~~ ✓ (073d346), ~~z-index/스태킹~~ ✓ (63ac308).
-8. ~~overflow(hidden 클리핑)~~ ✓ (5109a73), ~~box-sizing~~ ✓ (fabec85). 스크롤바/스크롤 동작은 후속.
-
-**C. 시각 완성도** — 모던 사이트 외형
-9. ~~linear-gradient~~ ✓ (771c646) + ~~radial-gradient~~ ✓ (픽셀 투영/방사 보간).
-10. transform: ~~translate/scale~~ ✓ (축 정렬, 레이아웃 후 시각 변환). rotate/matrix/transition/animation 남음.
-11. 배경 position/repeat/size, ~~opacity~~ ✓ (서브트리 알파 곱).
-- ~~`background:` 단축(색/url)~~ ✓ — 여태 색이 안 나오던 큰 공백 메움.
-- ~~em/rem 을 모든 속성에서 px 로 확정~~ ✓ — padding:1em, width:20rem 등이 무시되던 문제.
-- ~~CSS line-height 적용+상속~~ ✓ — 단위없는 수/퍼센트/길이, half-leading 세로 중앙.
-- ~~text-decoration(밑줄/취소선/윗줄), letter-spacing, word-spacing~~ ✓
-- ~~절대 단위(pt/pc/in/cm/mm/Q), ch/ex, 뷰포트 단위(vw/vh/vmin/vmax)~~ ✓
-- ~~@supports 피처 쿼리, ::before/::after 생성 콘텐츠~~ ✓
-
-**C-layout. 레이아웃 정확도** (실사이트 검증 기반)
-- ~~float 다단: float 을 클리어하는 블록을 옆에 배치~~ ✓ (float 사이드바+본문).
-- ~~text + inline-block 같은 줄~~ ✓ (네비게이션 바/버튼 그룹, 로드맵 A-4).
-- ~~grid-template-areas 명시 배치~~ ✓ (holy-grail 합성 검증).
-- 남음: **float text-wrap**(이미지 주위 텍스트 흐름 — 줄 상자 단축), vertical-align
-  베이스라인, BFC(overflow) 옆 축소, 긴 텍스트+inline-block 혼합.
-- 실측: HN·Wikipedia·example JS 에러 0, 콘텐츠 완전.
-  **Wikipedia 3단 겹침은 grid-areas 가 아니라 다른 메커니즘(flex/position 추정) —
-  별도 진단 필요.** grid-areas 는 합성 holy-grail 로 검증됨(모던 grid 사이트용).
-
-**D. 동적 웹(가장 무거운 단계)** — 앱/프레임워크 사이트
-
-이번 라운드에 채운 것(전부 표준 플랫폼, 프레임워크 비종속):
-- ~~함수-객체(prototype/call/apply/bind), Map/Set, defineProperty(접근자)~~ ✓
-- ~~내장 프로토타입(Function/Array/Object.prototype), Reflect, 반복자~~ ✓
-- ~~webpack 청크 런타임 → 배열을 표준 객체로 만들어 **사이트 자체 런타임**이 동작~~ ✓
-- ~~외부 `<script src>` 실행, DOMContentLoaded/load 발화, document.body/head~~ ✓
-- ~~async/await, Promise/마이크로태스크, fetch~~ ✓
-
-**D 남은 것 — 파급 큰 순:**
-12. ~~**`element.style` (CSSStyleDeclaration)**~~ ✓ (eaab20b) 라이브 프록시, 렌더 반영.
-13. ~~**`classList`** (add/remove/toggle/contains)~~ ✓ (e8a37f3) 라이브, CSS 재매칭.
-14. ~~**정규식 매칭 엔진**~~ ✓ (c49432d) 백트래킹 VM + test/exec/match/replace/split/search.
-15. ~~**이벤트 객체 모델**~~ ✓ (d976fe8) target/currentTarget/preventDefault/
-    stopPropagation + 버블링. ~~dispatchEvent/Event/CustomEvent~~ ✓.
-16. ~~**`XMLHttpRequest`**~~ ✓ (f3952bd) 동기 open/send/onreadystatechange/onload.
-17. ~~**`Date`**~~ ✓ (a7ae04f) now/생성자/get*/toISOString/파싱(UTC).
-18. **빌트인/DOM**: String/Number/Boolean ✓, ~~레이아웃 측정
-    (getBoundingClientRect/offset*/client*)~~ ✓, ~~for-of~~ ✓, ~~Array.sort/flat~~ ✓,
-    ~~dispatchEvent/CustomEvent~~ ✓, ~~cloneNode~~ ✓, ~~matches/closest/contains~~ ✓,
-    ~~DocumentFragment~~ ✓, ~~Proxy(get/set 트랩)~~ ✓. 남음: 제너레이터/yield, ES 모듈.
-
-**naver 잔여 블로커**: polyfill.js(core-js)가 내부 `e.call`(e=undefined)에서
-크래시 → 모듈 미등록. 이건 넓은 플랫폼 이슈가 아니라 **미니파이 core-js의 특정
-내부 지점**이라, 위 항목들과 별개로 정밀 추적이 필요.
-
-**E. 대체 콘텐츠**
-16. SVG, canvas, 웹폰트(@font-face), webp/gif.
-
-각 항목은 유한하고 구체적이다. 한 번에 하나씩, 실제 사이트로 검증하며 지어 올라간다.
-이게 완전한 브라우저로 가는 길이다.
+각 항목은 유한하고 구체적이다. 실제 사이트로 검증하며 하나씩 지어 올린다.
