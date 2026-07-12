@@ -25,18 +25,19 @@
 - [x] CSS **미디어쿼리 em/rem + 특성평가 + 미인식→불일치**. (ba15d97)
 - [x] CSS **rem 루트 font-size 기준**. (1e6c0eb)
 - [x] CSS **조상 구조 의사클래스 정확 평가** — zebra 수정. (f1e87ca)
-- [ ] Flex/CSS **flex-basis 드롭, flex:1 등폭 안됨**. (css/shorthand.rs:129, flex.rs:65) ← 다음 우선
-- [ ] Grid **`auto` 트랙=1fr 근사** — auto 1fr(라벨+필드) 깨짐. (grid.rs:327) ← 다음 우선
+- [x] Flex/CSS **flex-basis** — flex:1 등폭. (c8b8006)
+- [x] Grid **auto/% 트랙 사이징** — auto 1fr. (0bb6735)
 - [x] JS **`let` 반복별 바인딩** — 클로저 [0,1,2]. (faa2dc6)
-- [ ] JS **구조분해 할당 `[a,b]=arr` 거부**. (parser.rs:765)
-- [x] JS **new Promise(executor) + finally** — 모던 async. (a5711f3)
+- [x] JS **구조분해 할당 `[a,b]=arr`/`({x,y}=o)`**. (c0bbd9d)
+- [x] JS **new Promise(executor) + finally**. (a5711f3)
 - [x] JS **Math.round 음수/min·max NaN + NaN/Infinity 전역**. (75a8049)
-- [ ] JS **String indexOf/split 인자, lastIndexOf 없음**. (builtins.rs:1315)
+- [x] JS **String indexOf(fromIndex)/split(limit)/lastIndexOf**. (ea9608a)
 
-### 이번 세션 완료(11): ASI표준화, !important, font+hex, media, rem, zebra,
-### 문자열이스케이프, let-바인딩, 합성글리프, new Promise, Math+NaN전역.
-### 모두 회귀테스트 + 실사이트 검증, 461 테스트 그린. 남은 티어1: flex-basis,
-### grid auto트랙, 구조분해할당, String 메서드 인자. 구조적 뿌리는 별도 대공사.
+### ★ 티어1 전부 완료(15+ASI, 466 테스트 그린, 모두 회귀테스트+실사이트 검증).
+### 남은 것: 티어2(작은 항목 다수) + 구조적 뿌리(대공사: JS 객체순서/프로토타입
+### 링크/ToPrimitive/진짜async/float-in-BFC). 티어2 다음 우선: 페인트(둥근투명
+### 테두리 사각, 점선/파선 실선, 그라디언트 프리멀티플라이), 레이아웃(줄높이 혼합폰트,
+### vertical-align, 부모자식 margin상쇄), CSS(:where/:is 명시도, calc em/rem).
 
 ## 티어2 — 눈에 띄지만 빈도 낮음
 
