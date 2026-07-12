@@ -2276,6 +2276,25 @@ mod tests {
     }
 
     #[test]
+    fn word_break_inherits_to_child() {
+        // word-break 는 상속 속성 — 부모에 걸면 자식 텍스트도 나뉘어야 함.
+        let long = "a".repeat(60);
+        let broken = layout_for(
+            &format!("<div class=\"w\"><p>{}</p></div>", long),
+            ".w { word-break: break-all; } \
+             p { display: block; width: 60px; font-size: 16px; margin: 0; }",
+            200.0,
+        );
+        let overflow = layout_for(
+            &format!("<div><p>{}</p></div>", long),
+            "p { display: block; width: 60px; font-size: 16px; margin: 0; }",
+            200.0,
+        );
+        assert!(broken.content.height > overflow.content.height + 1.0,
+            "상속된 break-all 로 자식이 여러 줄 ({} > {})", broken.content.height, overflow.content.height);
+    }
+
+    #[test]
     fn br_forces_line_breaks() {
         let fs = fonts();
         // "aaa<br>bbb<br>ccc" — <br> 두 개로 3줄. 서로 다른 baseline_y 3개여야.

@@ -745,6 +745,10 @@ const INHERITED: &[&str] = &[
     "letter-spacing",
     "word-spacing",
     "white-space",
+    // 줄바꿈 제어 — CSS Text 상 모두 상속 속성. 인라인 레이아웃이 소비(break-all 등).
+    "word-break",
+    "overflow-wrap",
+    "word-wrap",
     "text-transform",
     "text-indent",
     "text-shadow-x",
