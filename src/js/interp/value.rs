@@ -522,6 +522,8 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Obj(x), Value::Obj(y)) => Rc::ptr_eq(x, y),
         (Value::Arr(x), Value::Arr(y)) => Rc::ptr_eq(x, y),
         (Value::Fn(x), Value::Fn(y)) => Rc::ptr_eq(x, y),
+        // 같은 네이티브(내장) 함수는 동일 (Math.round === Math.round 등)
+        (Value::Native(x), Value::Native(y)) => x == y,
         (Value::Dom(x), Value::Dom(y)) => x == y,
         (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
         (Value::Instance(x), Value::Instance(y)) => Rc::ptr_eq(x, y),

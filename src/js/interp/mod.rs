@@ -4487,6 +4487,16 @@ mod tests {
     }
 
     #[test]
+    fn native_function_strict_equality() {
+        // 같은 내장 함수는 === 로 동일 (기능 탐지/함수 비교에 쓰임).
+        assert!(run_bool("Math.round === Math.round"));
+        assert!(run_bool("[].push === [].push"));
+        assert!(run_bool("JSON.stringify === JSON.stringify"));
+        // 다른 내장 함수는 다름
+        assert!(run_bool("Math.round !== Math.floor"));
+    }
+
+    #[test]
     fn const_reassignment_throws() {
         // const 재대입은 TypeError(잡을 수 있음). 재선언 없는 정상 사용은 유지.
         assert!(Interp::new().run("const x=1; x=2;").is_err());
