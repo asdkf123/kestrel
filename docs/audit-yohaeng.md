@@ -69,7 +69,7 @@
   기본 display 의 `<svg>`(인라인)는 크기/렌더 안 됨. display:block/inline-block 필요.
   인라인 대체요소(img/inline-block/svg) 전반 문제와 동류(mod.rs 인라인). (검증 중 발견)
 - [x] 페인트 **grayscale/saturate BT.709**(이미 709 계수 사용, b957a7d 에서 반영됨). 확인 완료.
-- [ ] CSS **:where/:is/:not 명시도 오류**. (css/mod.rs:180)
+- [x] CSS **:where/:is/:not 명시도 정확 계산**(:where=0, :is/:not=인자 최대). (5e77316, 중복 항목)
 - [x] CSS **무단위 line-height 배수(Lh)로 상속** — 요소별 font-size 곱. %/길이는 길이 상속. (69f728a)
 - [x] CSS **calc() em/rem/vw 단위별 계수 보존 후 style 에서 px 확정**. (5951826)
 - [ ] CSS **@supports 값검증 없이 과다보고**. (css/supports.rs:47)
