@@ -121,6 +121,9 @@ pub struct LayoutBox<'a> {
     pub collapse_bottom: bool,
     // flex/grid 아이템 등 독립 서식 맥락(BFC): 자식과 margin 상쇄하지 않는다.
     pub bfc_item: bool,
+    // 비BFC 블록이 끝날 때 아직 소진 안 된 float 밴드(절대좌표): 부모 BFC 로 "탈출"시킨다.
+    // (fl_next, fr_next, band_bottom_l, band_bottom_r, band_bottom). §9.5 float 은 최근접 BFC 소속.
+    pub trailing_floats: Option<(f32, f32, f32, f32, f32)>,
 }
 
 impl<'a> LayoutBox<'a> {
@@ -145,6 +148,7 @@ impl<'a> LayoutBox<'a> {
             collapse_top: false,
             collapse_bottom: false,
             bfc_item: false,
+            trailing_floats: None,
         }
     }
 
@@ -169,6 +173,7 @@ impl<'a> LayoutBox<'a> {
             collapse_top: false,
             collapse_bottom: false,
             bfc_item: false,
+            trailing_floats: None,
         }
     }
 
@@ -992,6 +997,7 @@ impl<'a> LayoutBox<'a> {
         // (bfc_item 은 구조적 속성이라 유지.)
         self.collapse_top = false;
         self.collapse_bottom = false;
+        self.trailing_floats = None;
         for c in &mut self.children {
             c.clear_render();
         }
@@ -1349,6 +1355,26 @@ impl<'a> LayoutBox<'a> {
             }
             self.dimensions.content.height += child.dimensions.margin_box().height;
             prev_bottom = child.dimensions.margin.bottom;
+            // 비BFC 자식 안의 float 이 자식 밖으로 protrude 하면(자식보다 float 이 큼),
+            // 그 밴드를 현재 흐름으로 이어받아 뒤 형제가 float 을 우회하게 한다(§9.5).
+            if let Some((cfl, cfr, cbl, cbr, cbb)) = self.children[i].trailing_floats {
+                let flow_y = self.dimensions.content.height + cy;
+                if cbb > flow_y + 0.5 {
+                    if band_active {
+                        fl_next = fl_next.max(cfl.clamp(cx, cx + avail));
+                        fr_next = fr_next.min(cfr.clamp(cx, cx + avail));
+                    } else {
+                        band_active = true;
+                        band_top = flow_y;
+                        fl_next = cfl.clamp(cx, cx + avail);
+                        fr_next = cfr.clamp(cx, cx + avail);
+                    }
+                    band_bottom_l = band_bottom_l.max(cbl);
+                    band_bottom_r = band_bottom_r.max(cbr);
+                    band_bottom = band_bottom.max(cbb);
+                    float_extent = float_extent.max((fl_next - cx) + ((cx + avail) - fr_next));
+                }
+            }
         }
         // 마지막이 inline-block 런이면 마감
         if ib_active {
@@ -1357,13 +1383,21 @@ impl<'a> LayoutBox<'a> {
                 self.finish_inline_block_run(std::mem::take(&mut ib_lines), align, avail, ib_bottom, cy);
             inline_extent = inline_extent.max(w);
         }
-        // float 로 끝난 경우 밴드 높이를 컨테이너에 반영
-        if band_active {
+        // float 로 끝난 경우: BFC 블록만 float 을 담아 높이가 자란다(§9.5). 비BFC 블록은
+        // float 을 담지 않아(브라우저처럼 박스 밖으로 넘칠 수 있음) 아래 trailing 으로 넘긴다.
+        if band_active && establishes_bfc(self) {
             let below = band_bottom - cy;
             if below > self.dimensions.content.height {
                 self.dimensions.content.height = below;
             }
         }
+        // 비BFC 블록이 소진 안 된 float 밴드를 갖고 끝나면 부모 BFC 로 넘긴다(§9.5).
+        // BFC(overflow/flex/grid/float/abs 등)는 float 을 가두므로 넘기지 않는다.
+        self.trailing_floats = if band_active && !establishes_bfc(self) {
+            Some((fl_next, fr_next, band_bottom_l, band_bottom_r, band_bottom))
+        } else {
+            None
+        };
         // shrink-to-fit 부모용 내재 폭(preferred width): 정상 자식 최대 폭, float 밴드,
         // inline-block 줄 중 최대. auto 폭 자식은 avail 을 채우므로 border_box 대신
         // 내용 preferred(used_width)+좌우 padding/border 로 재구성해야 실제 내용 폭이 된다.
@@ -2261,6 +2295,8 @@ pub fn layout_tree<'a>(
     let viewport_rect = containing_block.content;
     containing_block.content.height = 0.0;
     let mut root_box = build_layout_tree(node);
+    // 초기 컨테이닝 블록은 BFC 를 만든다 — 루트의 float 은 문서를 벗어나지 않고 담긴다(§9.4.1).
+    root_box.bfc_item = true;
     root_box.layout(containing_block, fonts, images);
     // 절대/고정 위치를 올바른 컨테이닝 블록 기준으로 재배치 (transform 적용 전)
     root_box.reposition_abs(viewport_rect, viewport_rect);
@@ -3139,6 +3175,31 @@ mod tests {
             40.0,
             "padding-top 이 상쇄 차단 → innerP 의 margin 40 이 P 내부에 남음"
         );
+    }
+
+    #[test]
+    fn float_escapes_non_bfc_wrapper() {
+        let fs = fonts();
+        // §9.5: float 은 최근접 BFC 소속. 비BFC 래퍼는 float 을 담지 않아 높이가 0 이고,
+        // float 은 래퍼 밖(부모 BFC)으로 넘쳐 뒤 형제가 우회하게 된다.
+        let root = crate::html::parse_dom(
+            "<div class=\"outer\"><div class=\"wrap\"><div class=\"fl\"></div></div></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            ".outer { display: block; } \
+             .wrap { display: block; } \
+             .fl { display: block; float: left; width: 80px; height: 80px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        // lb = outer(BFC 아님이지만 루트라 담음? 아니 — outer 는 비BFC). wrap 은 lb.children[0].
+        let wrap = &lb.children[0];
+        let fl = &wrap.children[0];
+        assert_eq!(fl.dimensions.content.height, 80.0, "float 자체는 80");
+        assert_eq!(wrap.dimensions.content.height, 0.0, "비BFC 래퍼는 float 을 담지 않음(높이 0)");
     }
 
     #[test]
