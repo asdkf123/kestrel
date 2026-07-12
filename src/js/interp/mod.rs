@@ -126,6 +126,15 @@ pub enum Value {
     // function* 로 만든 지연 제너레이터. 호출 시 즉시 평가하지 않고, next()마다 다음
     // yield 까지 본문을 재개 실행한다(무한 제너레이터/양방향 next(v) 지원). generator.rs.
     Gen(Rc<RefCell<GenState>>),
+    // Symbol 원시값. key 는 프로퍼티 키로 쓰일 때의 문자열(잘 알려진 심볼은 "@@iterator"
+    // 등 고정, 일반 심볼은 "@@sym:<n>" 고유). 동일성(===)은 key 비교. desc 는 설명.
+    Symbol(Rc<SymbolData>),
+}
+
+// Symbol 원시값의 데이터. key 로 프로퍼티 저장 키와 동일성을 동시에 표현한다.
+pub struct SymbolData {
+    pub key: String,
+    pub desc: Option<String>,
 }
 
 // 배열 객체: 인덱스 항목(items)과 own-property(props)를 분리 보관.
@@ -246,6 +255,10 @@ pub enum Native {
     GenNext,
     GenReturn,
     GenThrow,
+    // Symbol 원시값 (Symbol()/Symbol.for/Symbol.keyFor)
+    SymbolCtor,
+    SymbolFor,
+    SymbolKeyFor,
     DocQuery(&'static str),
     CreateTextNode,
     InsertBefore,
@@ -539,6 +552,7 @@ impl std::fmt::Debug for Value {
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
             Value::Proxy(_) => write!(f, "[object Proxy]"),
             Value::Gen(_) => write!(f, "[object Generator]"),
+            Value::Symbol(s) => write!(f, "Symbol({})", s.desc.as_deref().unwrap_or("")),
         }
     }
 }
@@ -781,6 +795,9 @@ pub struct Interp {
     pub lenient_hits: std::collections::HashMap<String, usize>,
     // 레이블 문(outer:)이 직후 루프/문에 넘겨줄 레이블. 그 문의 exec_stmt 가 즉시 take.
     pending_label: Option<String>,
+    // Symbol() 고유 키 카운터, Symbol.for(k) 전역 레지스트리(key → Symbol 값).
+    sym_counter: u64,
+    sym_registry: HashMap<String, Value>,
 }
 
 impl Interp {
@@ -966,6 +983,8 @@ impl Interp {
         env_declare(&global, "String", Value::Native(Native::StringCtor));
         env_declare(&global, "Number", Value::Native(Native::NumberCtor));
         env_declare(&global, "Boolean", Value::Native(Native::BooleanCtor));
+        // Symbol 원시값 — Symbol()/Symbol.for/Symbol.iterator 등은 Native 로 제공.
+        env_declare(&global, "Symbol", Value::Native(Native::SymbolCtor));
         env_declare(&global, "Date", Value::Native(Native::DateCtor));
         env_declare(&global, "URL", Value::Native(Native::UrlCtor));
         env_declare(&global, "XMLHttpRequest", Value::Native(Native::XhrCtor));
@@ -1133,6 +1152,8 @@ impl Interp {
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
             pending_label: None,
+            sym_counter: 0,
+            sym_registry: HashMap::new(),
         }
     }
 
@@ -2279,7 +2300,7 @@ impl Interp {
                     let key = match k {
                         PropKey::Static(s) => s.clone(),
                         PropKey::Getter(s) => s.clone(),
-                        PropKey::Computed(ke) => to_display(&self.eval(ke, env)?),
+                        PropKey::Computed(ke) => key_of(&self.eval(ke, env)?),
                         PropKey::Spread => unreachable!(),
                     };
                     let val = self.eval(e, env)?;
@@ -2650,18 +2671,17 @@ impl Interp {
     fn member_key(&mut self, prop: &Expr, computed: bool, env: &EnvRef) -> Result<String, String> {
         if computed {
             let v = self.eval(prop, env)?;
-            // 심볼 키(Symbol.iterator 등)는 고유 __key 문자열로 매핑
-            if let Value::Obj(o) = &v {
-                if let Some(Value::Str(k)) = o.borrow().get("__key") {
-                    return Ok(k.clone());
-                }
-            }
-            Ok(to_display(&v))
+            Ok(key_of(&v))
         } else if let Expr::Str(s) = prop {
             Ok(s.clone())
         } else {
             Err("잘못된 멤버 접근".to_string())
         }
+    }
+
+    // 잘 알려진 심볼(Symbol.iterator 등) — 고정 key 로 배열/제너레이터 반복자와 연결.
+    fn well_known_symbol(key: &str, desc: &str) -> Value {
+        Value::Symbol(Rc::new(SymbolData { key: key.to_string(), desc: Some(desc.to_string()) }))
     }
 
     // 전역 생성자(ctor)의 prototype 에서 메서드를 찾는다 (폴리필 조회용).
@@ -3101,6 +3121,28 @@ impl Interp {
             Value::Native(Native::StringCtor) => Ok(match key {
                 "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
                 "prototype" => self.string_proto.clone(),
+                _ => Value::Undefined,
+            }),
+            // Symbol.iterator 등 잘 알려진 심볼 + Symbol.for/keyFor
+            Value::Native(Native::SymbolCtor) => Ok(match key {
+                "iterator" => Self::well_known_symbol("@@iterator", "Symbol.iterator"),
+                "asyncIterator" => {
+                    Self::well_known_symbol("@@asyncIterator", "Symbol.asyncIterator")
+                }
+                "toStringTag" => Self::well_known_symbol("@@toStringTag", "Symbol.toStringTag"),
+                "hasInstance" => Self::well_known_symbol("@@hasInstance", "Symbol.hasInstance"),
+                "toPrimitive" => Self::well_known_symbol("@@toPrimitive", "Symbol.toPrimitive"),
+                "for" => Value::Native(Native::SymbolFor),
+                "keyFor" => Value::Native(Native::SymbolKeyFor),
+                _ => Value::Undefined,
+            }),
+            // 심볼 원시값: .description / .toString()
+            Value::Symbol(s) => Ok(match key {
+                "description" => {
+                    s.desc.clone().map(Value::Str).unwrap_or(Value::Undefined)
+                }
+                "toString" => Value::Native(Native::ValueToStr),
+                "constructor" => Value::Native(Native::SymbolCtor),
                 _ => Value::Undefined,
             }),
             // Number.isInteger/isNaN/isFinite/parseInt/parseFloat + 상수
@@ -3887,24 +3929,65 @@ mod tests {
 
     #[test]
     fn iterator_protocol() {
-        // Symbol 은 실제 페이지에선 프렐류드가 주입 — 테스트는 인라인 정의.
-        // 계산된 심볼 키가 __key("@@iterator")로 매핑돼 반복자에 연결된다.
-        let sym = "var Symbol={iterator:{__isSymbol:true,__key:'@@iterator'}};";
+        // 진짜 Symbol.iterator (엔진 제공 원시값). 배열 반복자.
         assert_eq!(
-            run_num(&format!(
-                "{sym} var a=[10,20,30]; var it=a[Symbol.iterator](); var s=0,r; \
-                 while(!(r=it.next()).done){{ s+=r.value; }} s"
-            )),
+            run_num(
+                "var a=[10,20,30]; var it=a[Symbol.iterator](); var s=0,r; \
+                 while(!(r=it.next()).done){ s+=r.value; } s"
+            ),
             60.0
         );
         // Set 반복자
         assert_eq!(
-            run_num(&format!(
-                "{sym} var it=new Set([1,2,3])[Symbol.iterator](); var s=0,r; \
-                 while(!(r=it.next()).done){{ s+=r.value; }} s"
-            )),
+            run_num(
+                "var it=new Set([1,2,3])[Symbol.iterator](); var s=0,r; \
+                 while(!(r=it.next()).done){ s+=r.value; } s"
+            ),
             6.0
         );
+    }
+
+    #[test]
+    fn symbol_primitive_type() {
+        // typeof 는 'symbol'
+        assert!(run_bool("typeof Symbol() === 'symbol'"));
+        assert!(run_bool("typeof Symbol.iterator === 'symbol'"));
+        // 고유성: 같은 설명이어도 서로 다름
+        assert!(run_bool("Symbol('x') !== Symbol('x')"));
+        assert!(run_bool("var s=Symbol('a'); s === s"));
+        // description
+        assert_eq!(run_str("Symbol('hello').description"), "hello");
+        // 잘 알려진 심볼은 안정적 동일성
+        assert!(run_bool("Symbol.iterator === Symbol.iterator"));
+        // Symbol.for 레지스트리: 같은 키면 동일
+        assert!(run_bool("Symbol.for('k') === Symbol.for('k')"));
+        assert!(run_bool("Symbol.for('k') !== Symbol('k')"));
+        assert_eq!(run_str("Symbol.keyFor(Symbol.for('abc'))"), "abc");
+        assert!(run_bool("Symbol.keyFor(Symbol('x')) === undefined"));
+    }
+
+    #[test]
+    fn symbol_as_property_key() {
+        // 심볼 키로 저장/조회
+        assert_eq!(
+            run_num("var s=Symbol('k'); var o={}; o[s]=42; o[s]"),
+            42.0
+        );
+        // 계산된 심볼 키 객체 리터럴
+        assert_eq!(
+            run_num("var s=Symbol(); var o={[s]: 7, a: 1}; o[s] + o.a"),
+            8.0
+        );
+        // 심볼 키는 열거되지 않는다(for-in/Object.keys/JSON 제외)
+        assert_eq!(
+            run_str(
+                "var s=Symbol('hidden'); var o={a:1, b:2}; o[s]='x'; \
+                 var k=[]; for(var p in o) k.push(p); k.join(',')"
+            ),
+            "a,b"
+        );
+        assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
+        assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
     }
 
     #[test]

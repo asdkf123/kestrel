@@ -374,19 +374,21 @@ pub(super) fn is_date_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
 // 담는데, 이 키들은 열거(Object.keys/for-in/JSON/스프레드)에 노출되면 안 된다.
 // 사용자 데이터 키(__typename, __esModule 등)와 겹치지 않는 엔진 전용 이름만.
 pub(super) fn is_internal_key(k: &str) -> bool {
-    matches!(
-        k,
-        "__proto__"
-            | "__isDate"
-            | "__time"
-            | "__isPromise"
-            | "__state"
-            | "__value"
-            | "__cbs"
-            | "__i"
-            | "__items"
-            | "__isRegex"
-    )
+    // 심볼 키("@@...")는 열거 대상이 아니다(for-in/Object.keys/JSON/스프레드 제외).
+    k.starts_with("@@")
+        || matches!(
+            k,
+            "__proto__"
+                | "__isDate"
+                | "__time"
+                | "__isPromise"
+                | "__state"
+                | "__value"
+                | "__cbs"
+                | "__i"
+                | "__items"
+                | "__isRegex"
+        )
 }
 
 fn two(n: u32) -> String {
@@ -464,6 +466,14 @@ pub(super) fn regex_src_flags(v: &Value) -> Option<(String, String)> {
     None
 }
 
+// 값을 프로퍼티 키 문자열로. 심볼은 고유 key, 그 외는 ToString.
+pub(super) fn key_of(v: &Value) -> String {
+    match v {
+        Value::Symbol(s) => s.key.clone(),
+        _ => to_display(v),
+    }
+}
+
 pub(super) fn to_display(v: &Value) -> String {
     match v {
         Value::Undefined => "undefined".to_string(),
@@ -489,6 +499,10 @@ pub(super) fn to_display(v: &Value) -> String {
         // Proxy 문자열화는 target 에 위임 (트랩 없는 근사)
         Value::Proxy(p) => to_display(&p.0),
         Value::Gen(_) => "[object Generator]".to_string(),
+        // String(sym) 은 "Symbol(desc)". (`+ sym` 은 스펙상 throw 지만 관대 처리)
+        Value::Symbol(s) => {
+            format!("Symbol({})", s.desc.as_deref().unwrap_or(""))
+        }
     }
 }
 
@@ -499,6 +513,8 @@ pub(super) fn type_of(v: &Value) -> &'static str {
         Value::Bool(_) => "boolean",
         Value::Num(_) => "number",
         Value::Str(_) => "string",
+        Value::Symbol(_) => "symbol",
+        // Symbol 생성자만 함수, 다른 Native 도 함수.
         Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => "function",
         _ => "object",
     }
@@ -600,6 +616,8 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Bound(x), Value::Bound(y)) => Rc::ptr_eq(x, y),
         (Value::Style(x), Value::Style(y)) => x == y,
         (Value::ClassList(x), Value::ClassList(y)) => x == y,
+        // 심볼 동일성은 고유 key 비교 (Symbol('x')!==Symbol('x'), Symbol.for 은 ===).
+        (Value::Symbol(x), Value::Symbol(y)) => x.key == y.key,
         _ => false,
     }
 }
@@ -772,7 +790,8 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         | Value::Style(_)
         | Value::ClassList(_)
         | Value::Proxy(_)
-        | Value::Gen(_) => None,
+        | Value::Gen(_)
+        | Value::Symbol(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();

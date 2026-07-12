@@ -628,6 +628,40 @@ impl Interp {
                     Ok(Value::Undefined)
                 }
             }
+            // Symbol(desc) — 고유 심볼 원시값 생성.
+            Native::SymbolCtor => {
+                self.sym_counter += 1;
+                let desc = match args.first() {
+                    Some(Value::Undefined) | None => None,
+                    Some(v) => Some(to_display(v)),
+                };
+                Ok(Value::Symbol(Rc::new(super::SymbolData {
+                    key: format!("@@sym:{}", self.sym_counter),
+                    desc,
+                })))
+            }
+            // Symbol.for(k) — 전역 레지스트리에서 공유 심볼.
+            Native::SymbolFor => {
+                let k = args.first().map(to_display).unwrap_or_else(|| "undefined".to_string());
+                if let Some(sym) = self.sym_registry.get(&k) {
+                    return Ok(sym.clone());
+                }
+                let sym = Value::Symbol(Rc::new(super::SymbolData {
+                    key: format!("@@for:{}", k),
+                    desc: Some(k.clone()),
+                }));
+                self.sym_registry.insert(k, sym.clone());
+                Ok(sym)
+            }
+            // Symbol.keyFor(sym) — 레지스트리 심볼이면 키, 아니면 undefined.
+            Native::SymbolKeyFor => Ok(match args.first() {
+                Some(Value::Symbol(s)) => s
+                    .key
+                    .strip_prefix("@@for:")
+                    .map(|k| Value::Str(k.to_string()))
+                    .unwrap_or(Value::Undefined),
+                _ => Value::Undefined,
+            }),
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {

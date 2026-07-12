@@ -134,21 +134,7 @@ const EXT_TAG: &str = "\u{0}ext\u{0}";
 const JS_PRELUDE: &str = r#"
 var __kNoop = function(){};
 var __kObs = function(){ return { observe: __kNoop, unobserve: __kNoop, disconnect: __kNoop, takeRecords: function(){ return []; } }; };
-var Symbol = window.Symbol;
-if (!Symbol) {
-  var __symCount = 0;
-  // 심볼은 고유 __key 문자열을 갖고, 계산된 멤버 접근에서 그 키로 매핑된다.
-  // 잘 알려진 심볼(iterator 등)은 고정 키 → 배열/문자열 반복자와 연결.
-  Symbol = function(d){ __symCount++; return { __isSymbol: true, description: d, __key: '@@s:' + (d === undefined ? '' : d) + ':' + __symCount }; };
-  Symbol.iterator = { __isSymbol: true, description: 'Symbol.iterator', __key: '@@iterator' };
-  Symbol.asyncIterator = { __isSymbol: true, description: 'Symbol.asyncIterator', __key: '@@asyncIterator' };
-  Symbol.toStringTag = { __isSymbol: true, description: 'Symbol.toStringTag', __key: '@@toStringTag' };
-  Symbol.hasInstance = { __isSymbol: true, description: 'Symbol.hasInstance', __key: '@@hasInstance' };
-  Symbol.__reg = {};
-  Symbol.for = function(k){ if (!Symbol.__reg[k]) Symbol.__reg[k] = { __isSymbol: true, description: k, __key: '@@for:' + k }; return Symbol.__reg[k]; };
-  Symbol.keyFor = function(){ return undefined; };
-  window.Symbol = Symbol;
-}
+// Symbol 은 엔진이 진짜 원시값으로 제공(Value::Symbol). 폴리필 불필요.
 if (!Object.entries) Object.entries = function(o){ var k = Object.keys(o || {}), r = []; for (var i = 0; i < k.length; i++) r.push([k[i], o[k[i]]]); return r; };
 if (!Object.values) Object.values = function(o){ var k = Object.keys(o || {}), r = []; for (var i = 0; i < k.length; i++) r.push(o[k[i]]); return r; };
 if (!Object.getOwnPropertyNames) Object.getOwnPropertyNames = function(o){ return Object.keys(o || {}); };
