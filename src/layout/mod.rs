@@ -1539,11 +1539,20 @@ impl<'a> LayoutBox<'a> {
                 c += span;
             }
         }
-        // 2) 열 폭 확정: 고정 열은 그대로, auto 열은 남은 폭을 선호 비율로 분배(테이블 폭 채움)
+        // 2) 열 폭 확정: 고정 열은 그대로, auto 열은 남은 폭을 선호 비율로 분배.
         let total_fixed: f32 = col_fixed.iter().flatten().sum();
         let auto_cols: Vec<usize> = (0..ncols).filter(|&c| col_fixed[c].is_none()).collect();
         let auto_pref_sum: f32 = auto_cols.iter().map(|&c| col_pref[c]).sum();
-        let remaining = (avail - total_fixed).max(0.0);
+        // 테이블 used 폭(§17.5.2 auto layout): 명시 width(px/%)면 계산된 폭(avail)을,
+        // width:auto 면 shrink-to-fit = min(선호폭 합, avail). 좁은 내용의 표는
+        // 컨테이너를 다 채우지 않고 내용 폭으로 줄어든다(인포박스·작은 표).
+        // 고정폭(px/%) 열이 있으면 그 폭 기준을 채우려는 의도로 보고 avail 유지.
+        // 순수 auto 열만인 표(작은 데이터표·인포박스)만 내용 폭으로 줄인다.
+        let explicit_width = matches!(self.styled_node.value("width"), Some(Length(_, _)));
+        let shrink = !explicit_width && total_fixed <= 0.0;
+        let table_pref = total_fixed + auto_pref_sum;
+        let table_width = if shrink { table_pref.min(avail).max(0.0) } else { avail };
+        let remaining = (table_width - total_fixed).max(0.0);
         let mut col_w = vec![0.0f32; ncols];
         for c in 0..ncols {
             col_w[c] = match col_fixed[c] {
@@ -1569,6 +1578,10 @@ impl<'a> LayoutBox<'a> {
         }
         // <caption>: 표 위에 표 폭으로 배치하고, 행 시작 y 를 캡션 높이만큼 내린다.
         let table_w: f32 = col_w.iter().sum();
+        // shrink-to-fit: 표 박스 폭을 실제 열 폭 합으로 줄인다(배경/테두리/부모 폭 반영).
+        if shrink && table_w < avail {
+            self.dimensions.content.width = table_w;
+        }
         let mut caption_h = 0.0;
         let caption_idx = self.children.iter().position(|c| {
             matches!(&c.styled_node.node.node_type, NodeType::Element(e) if e.tag_name == "caption")
