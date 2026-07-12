@@ -613,6 +613,21 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(res))))
             }
+            // 지연 제너레이터: next(v)/return(v)/throw(e) — 다음 yield 까지 재개 실행.
+            Native::GenNext | Native::GenReturn | Native::GenThrow => {
+                if let Some(Value::Gen(gs)) = &recv {
+                    let arg = args.into_iter().next().unwrap_or(Value::Undefined);
+                    let mode = match n {
+                        Native::GenReturn => super::generator::ResumeMode::Return(arg.clone()),
+                        Native::GenThrow => super::generator::ResumeMode::Throw(arg.clone()),
+                        _ => super::generator::ResumeMode::Next,
+                    };
+                    let gs = gs.clone();
+                    self.gen_resume(&gs, arg, mode)
+                } else {
+                    Ok(Value::Undefined)
+                }
+            }
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {

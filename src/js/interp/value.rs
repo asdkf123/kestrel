@@ -488,6 +488,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::Instance(i) => format!("[object {}]", i.class.name),
         // Proxy 문자열화는 target 에 위임 (트랩 없는 근사)
         Value::Proxy(p) => to_display(&p.0),
+        Value::Gen(_) => "[object Generator]".to_string(),
     }
 }
 
@@ -770,7 +771,8 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         | Value::SetVal(_)
         | Value::Style(_)
         | Value::ClassList(_)
-        | Value::Proxy(_) => None,
+        | Value::Proxy(_)
+        | Value::Gen(_) => None,
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();

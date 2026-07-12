@@ -11,6 +11,8 @@ use super::parser::parse;
 mod builtins;
 mod value;
 mod dom_api;
+mod generator;
+use generator::GenState;
 use value::*;
 
 const STEP_LIMIT: u64 = 5_000_000;
@@ -121,6 +123,9 @@ pub enum Value {
     ClassList(crate::dom::NodeId),
     // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
     Proxy(Rc<(Value, Value)>),
+    // function* 로 만든 지연 제너레이터. 호출 시 즉시 평가하지 않고, next()마다 다음
+    // yield 까지 본문을 재개 실행한다(무한 제너레이터/양방향 next(v) 지원). generator.rs.
+    Gen(Rc<RefCell<GenState>>),
 }
 
 // 배열 객체: 인덱스 항목(items)과 own-property(props)를 분리 보관.
@@ -237,6 +242,10 @@ pub enum Native {
     FnToString, // Function.prototype.toString
     MakeIter,
     IterNext,
+    // 지연 제너레이터 반복자 프로토콜 (generator.rs)
+    GenNext,
+    GenReturn,
+    GenThrow,
     DocQuery(&'static str),
     CreateTextNode,
     InsertBefore,
@@ -529,6 +538,7 @@ impl std::fmt::Debug for Value {
             Value::Style(id) => write!(f, "[style {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
             Value::Proxy(_) => write!(f, "[object Proxy]"),
+            Value::Gen(_) => write!(f, "[object Generator]"),
         }
     }
 }
@@ -738,8 +748,6 @@ pub struct Interp {
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
     // getBoundingClientRect/offsetWidth 등이 읽는다. 빈 맵이면 0 을 돌려준다.
     pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
-    // 제너레이터 호출 스택별 yield 값 수집기 (eager). Expr::Yield 가 top 에 쌓는다.
-    yield_sink: Vec<Vec<Value>>,
     // <canvas> 2D 그리기 명령 (NodeId → ops). 호스트가 렌더 시 DisplayItem 으로 변환.
     pub canvas_cmds: std::collections::HashMap<crate::dom::NodeId, Vec<CanvasOp>>,
     // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
@@ -1107,7 +1115,6 @@ impl Interp {
             dom: None,
             handlers: Vec::new(),
             layout_rects: std::collections::HashMap::new(),
-            yield_sink: Vec::new(),
             canvas_cmds: std::collections::HashMap::new(),
             global_handlers: Vec::new(),
             rng: seed,
@@ -1463,6 +1470,25 @@ impl Interp {
     // 이터러블(배열/문자열/Set/Map/반복자 객체)을 값 Vec 으로. yield* 와 for-of 공용.
     fn iterate_to_vec(&mut self, v: &Value) -> Vec<Value> {
         match v {
+            // 지연 제너레이터: done 까지 next() 반복(무한이면 step 상한이 방어). 재료화.
+            Value::Gen(_) => {
+                let mut out = Vec::new();
+                loop {
+                    match self.gen_iter_next(v, Value::Undefined) {
+                        Ok((val, done)) => {
+                            if done {
+                                break;
+                            }
+                            out.push(val);
+                        }
+                        Err(_) => break,
+                    }
+                    if self.tick().is_err() {
+                        break;
+                    }
+                }
+                out
+            }
             Value::Arr(a) => a.borrow().clone(),
             Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
             Value::SetVal(s) => s.borrow().clone(),
@@ -2107,11 +2133,32 @@ impl Interp {
             }
             Stmt::ForOf { name, iter, body } => {
                 let target = self.eval(iter, env)?;
-                // 배열/문자열/Set/Map + 반복자 객체(제너레이터 포함) 지원
+                // 지연 제너레이터/반복자 객체는 한 번에 하나씩 뽑아(무한+break 대응),
+                // 유한한 배열/문자열/Set/Map 은 재료화해 순회한다.
+                let lazy = matches!(&target, Value::Gen(_))
+                    || matches!(&target, Value::Obj(o)
+                        if o.borrow().contains_key("next") && !o.borrow().contains_key("__items"));
+                if lazy {
+                    let iter_obj = self.gen_get_iterator(target)?;
+                    loop {
+                        self.tick()?;
+                        let (v, done) = self.gen_iter_next(&iter_obj, Value::Undefined)?;
+                        if done {
+                            break;
+                        }
+                        let scope = Env::new(Some(env.clone()));
+                        env_declare(&scope, name, v);
+                        match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                            LoopAct::Exit => break,
+                            LoopAct::Next => {}
+                            LoopAct::Propagate(f) => return Ok(f),
+                        }
+                    }
+                    return Ok(Flow::Normal(Value::Undefined));
+                }
                 let iterable = matches!(&target,
                     Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
-                    || matches!(&target, Value::Obj(o)
-                        if o.borrow().contains_key("__items") || o.borrow().contains_key("next"));
+                    || matches!(&target, Value::Obj(o) if o.borrow().contains_key("__items"));
                 if !iterable {
                     return Err(format!("{} 은(는) 반복 가능하지 않음", type_of(&target)));
                 }
@@ -2270,20 +2317,11 @@ impl Interp {
                 }
                 Ok(Value::Fn(f))
             }
-            Expr::Yield { star, arg } => {
-                // eager 제너레이터: 값을 현재 yield sink 에 쌓는다. yield 식 자체는 undefined.
-                let val = match arg {
-                    Some(e) => self.eval(e, env)?,
-                    None => Value::Undefined,
-                };
-                if *star {
-                    // yield* iterable — 값들을 전개
-                    let items = self.iterate_to_vec(&val);
-                    if let Some(sink) = self.yield_sink.last_mut() {
-                        sink.extend(items);
-                    }
-                } else if let Some(sink) = self.yield_sink.last_mut() {
-                    sink.push(val);
+            Expr::Yield { arg, .. } => {
+                // 지연 제너레이터는 generator.rs 가 모든 yield 를 처리한다. 여기 도달하는
+                // 것은 제너레이터 밖 yield(오용)뿐 — 인자만 평가하고 undefined.
+                if let Some(e) = arg {
+                    self.eval(e, env)?;
                 }
                 Ok(Value::Undefined)
             }
@@ -2694,6 +2732,14 @@ impl Interp {
             return Ok(self.constructor_of(recv));
         }
         match recv {
+            // 지연 제너레이터: 반복자 프로토콜 메서드. @@iterator 는 자기 자신 반환.
+            Value::Gen(_) => Ok(match key {
+                "next" => Value::Native(Native::GenNext),
+                "return" => Value::Native(Native::GenReturn),
+                "throw" => Value::Native(Native::GenThrow),
+                "@@iterator" => Value::Native(Native::ReturnThis),
+                _ => Value::Undefined,
+            }),
             // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
             Value::Proxy(p) => {
                 let (target, handler) = (&p.0, &p.1);
@@ -3165,13 +3211,10 @@ impl Interp {
                     env_declare(&scope, "arguments", Value::Arr(ArrayObj::new(args.clone())));
                 }
                 hoist_vars(&func.body, &scope); // var 하이스팅 (함수 스코프)
-                // 제너레이터(eager): 본문을 즉시 실행해 yield 값을 모으고 반복자 반환.
+                // 지연 제너레이터: 본문을 즉시 실행하지 않고 재개가능 제너레이터 객체를 반환.
+                // next() 마다 다음 yield 까지 실행(무한 제너레이터/양방향 next(v) 지원).
                 if func.is_generator {
-                    self.yield_sink.push(Vec::new());
-                    let result = self.exec_block(&func.body, &scope);
-                    let items = self.yield_sink.pop().unwrap_or_default();
-                    result?; // 본문 에러 전파(수집 후)
-                    return Ok(self.make_iter_from_vec(items));
+                    return Ok(self.make_generator(func.clone(), scope));
                 }
                 // async: 반환값/에러를 Promise 로 감싼다(본문 throw → 거부된 promise).
                 if func.is_async {
@@ -4426,6 +4469,127 @@ mod tests {
         assert_eq!(
             run_num("var g = function*(){ yield 5; yield 7; }; var s=0; for(const x of g()) s+=x; s"),
             12.0
+        );
+    }
+
+    #[test]
+    fn generator_is_lazy_infinite() {
+        // 무한 제너레이터를 유한하게 소비 — eager 였다면 여기서 멈춘다.
+        assert_eq!(
+            run_num(
+                "function* nat(){ var i=0; while(true) yield i++; } \
+                 var it=nat(); it.next().value + it.next().value + it.next().value"
+            ),
+            3.0, // 0+1+2
+        );
+        // for-of + break 로 무한 제너레이터 순회
+        assert_eq!(
+            run_num(
+                "function* nat(){ var i=0; while(true) yield i++; } \
+                 var s=0; for(const x of nat()){ if(x>=5) break; s+=x; } s"
+            ),
+            10.0, // 0+1+2+3+4
+        );
+    }
+
+    #[test]
+    fn generator_lazy_side_effects_interleave() {
+        // 본문 부작용이 생성 시점이 아니라 next() 마다 하나씩 일어난다.
+        // 생성 직후엔 로그가 비어 있어야 한다(eager 였다면 'ab').
+        assert_eq!(
+            run_str(
+                "var log=[]; function* g(){ log.push('a'); yield 1; log.push('b'); yield 2; } \
+                 var it=g(); var before=log.join(''); it.next(); var mid=log.join(''); \
+                 it.next(); before + '|' + mid + '|' + log.join('')"
+            ),
+            "|a|ab",
+        );
+    }
+
+    #[test]
+    fn generator_two_way_next() {
+        // next(v) 로 넘긴 값이 yield 식의 값이 된다.
+        assert_eq!(
+            run_num("function* g(){ var x = yield 1; yield x + 10; } var it=g(); it.next(); it.next(5).value"),
+            15.0,
+        );
+        // 선언 초기화 형태 let x = yield
+        assert_eq!(
+            run_num("function* g(){ let a = yield 1; let b = yield 2; yield a + b; } \
+                     var it=g(); it.next(); it.next(10); it.next(20).value"),
+            30.0,
+        );
+    }
+
+    #[test]
+    fn generator_return_value_and_done() {
+        // return 값이 { value, done:true } 로 나온다.
+        assert!(run_bool(
+            "function* g(){ yield 1; return 99; yield 2; } var it=g(); it.next(); \
+             var r=it.next(); r.value===99 && r.done===true"
+        ));
+        // 끝난 뒤 next() 는 { undefined, true }
+        assert!(run_bool(
+            "function* g(){ yield 1; } var it=g(); it.next(); it.next(); it.next().done"
+        ));
+    }
+
+    #[test]
+    fn generator_yield_star_delegation() {
+        // yield* 로 내부 제너레이터/배열을 위임 전개
+        assert_eq!(
+            run_str("function* inner(){ yield 'a'; yield 'b'; } \
+                     function* g(){ yield* inner(); yield* ['c','d']; yield 'e'; } \
+                     var out=''; for(const x of g()) out+=x; out"),
+            "abcde",
+        );
+        // yield* 의 값 = 내부 제너레이터의 return 값
+        assert_eq!(
+            run_num("function* inner(){ yield 1; return 42; } \
+                     function* g(){ var r = yield* inner(); yield r; } \
+                     var out=[]; for(const x of g()) out.push(x); out[0]*1 + out[1]"),
+            43.0, // 1 + 42
+        );
+    }
+
+    #[test]
+    fn generator_try_finally_runs() {
+        // 제너레이터 안 try/finally: finally 의 yield 도 산출된다.
+        assert_eq!(
+            run_str("function* g(){ try { yield 1; yield 2; } finally { yield 9; } } \
+                     var out=''; for(const x of g()) out+=x; out"),
+            "129",
+        );
+        // try 안에서 throw → catch 로 이어 실행
+        assert_eq!(
+            run_str("function* g(){ try { yield 1; throw 'e'; yield 2; } catch(e) { yield e; } } \
+                     var out=''; for(const x of g()) out+=x; out"),
+            "1e",
+        );
+    }
+
+    #[test]
+    fn generator_early_return_method() {
+        // it.return(v) 로 조기 종료 — { v, done:true }, 이후엔 done.
+        assert!(run_bool(
+            "function* g(){ yield 1; yield 2; yield 3; } var it=g(); it.next(); \
+             var r=it.return(77); r.value===77 && r.done===true && it.next().done===true"
+        ));
+    }
+
+    #[test]
+    fn generator_for_of_in_body() {
+        // 제너레이터 본문 안 for-of (지연 위임과 동류) — 값을 변환해 산출
+        assert_eq!(
+            run_num("function* g(){ for(const x of [1,2,3]) yield x*x; } \
+                     var s=0; for(const v of g()) s+=v; s"),
+            14.0, // 1+4+9
+        );
+        // 본문 안 switch + yield
+        assert_eq!(
+            run_str("function* g(n){ switch(n){ case 1: yield 'a'; case 2: yield 'b'; break; default: yield 'z'; } } \
+                     var out=''; for(const x of g(1)) out+=x; out"),
+            "ab",
         );
     }
 
