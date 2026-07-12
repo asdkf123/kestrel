@@ -56,7 +56,8 @@
   대체요소를 자식 박스로, 미로드 이미지 공간 예약. (98f962d)
 - [ ] 레이아웃 **리스트마커·밑줄·폼컨트롤 크기 마법상수**. (mod.rs:371, inline.rs:434)
 - [x] 레이아웃 **max-height 항상 사용높이 클램프**(overflow 무관, CSS §10.7). visible 이면 내용은 넘침. (ce2a50c)
-- [ ] 레이아웃 **인라인 테두리 3px 하드코딩 패딩** (내 코드). (inline.rs:477)
+- [x] 레이아웃 **인라인 요소 가로 margin/border/padding 반영(§10.3.1)** — 요소 경계에 spacer 삽입.
+  내비게이션 붙음(Reddit/HN/Guardian) 해소. 테두리 링 3px 근사는 잔존. (inline.rs)
 - [~] Grid **라인배치·span·auto-placement(§8) + 셀 자기정렬(§11) + grid-auto-rows + minmax(px,fr)
   하한(§11.5)** 완료 — go.dev 히어로 복원. 명명 라인, justify/align-content(트랙 분배)는 후속. (grid.rs)
 - [~] Flex **shrink 시 min-content 하한 적용(§4.5)** 완료. min/max 덮어씀, align-content 는 후속. (flex.rs)
