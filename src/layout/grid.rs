@@ -147,13 +147,20 @@ impl<'a> LayoutBox<'a> {
         }
         let cols = resolve_tracks_sized(&gtracks, d.content.width, gap, &auto_content);
         let ncols = cols.len().max(1);
-        // 열 x 위치 (누적 폭 + gap)
+        // justify-content: 트랙 총폭이 컨테이너보다 작으면 여유 공간을 정렬 분배(§10.1).
+        let tracks_w = cols.iter().sum::<f32>() + gap * (ncols as f32 - 1.0).max(0.0);
+        let (jx_start, jx_between) = grid_content_distribution(
+            self.styled_node.value("justify-content"),
+            (d.content.width - tracks_w).max(0.0),
+            ncols,
+        );
+        // 열 x 위치 (누적 폭 + gap + 분배 오프셋)
         let mut col_x = Vec::with_capacity(ncols);
         {
-            let mut x = ox;
+            let mut x = ox + jx_start;
             for w in &cols {
                 col_x.push(x);
-                x += w + gap;
+                x += w + gap + jx_between;
             }
         }
         let span_w = |c0: usize, cspan: usize| -> f32 {
@@ -211,12 +218,23 @@ impl<'a> LayoutBox<'a> {
                 }
             }
         }
+        // align-content: 명시 height(px) 가 행 총높이보다 크면 여유를 세로 분배(§10.1).
+        let rows_h = row_h.iter().sum::<f32>() + row_gap * (nrows as f32 - 1.0).max(0.0);
+        let grid_h = match self.styled_node.value("height") {
+            Some(Length(h, Px)) if h > rows_h => h,
+            _ => rows_h,
+        };
+        let (ay_start, ay_between) = grid_content_distribution(
+            self.styled_node.value("align-content"),
+            (grid_h - rows_h).max(0.0),
+            nrows,
+        );
         let mut row_y = vec![oy; nrows + 1];
         {
-            let mut y = oy;
+            let mut y = oy + ay_start;
             for r in 0..nrows {
                 row_y[r] = y;
-                y += row_h[r] + row_gap;
+                y += row_h[r] + row_gap + ay_between;
             }
             row_y[nrows] = y;
         }
@@ -312,6 +330,27 @@ enum GLine {
     Auto,
     Num(i32),
     Span(usize),
+}
+
+// justify-content/align-content: 트랙 총크기가 컨테이너보다 작을 때 여유 공간 분배.
+// (시작 오프셋, 트랙 사이 추가 간격) 반환. stretch/start/normal 은 (0,0).
+fn grid_content_distribution(kw: Option<Value>, free: f32, n: usize) -> (f32, f32) {
+    if free <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let k = match &kw {
+        Some(Value::Keyword(s)) => s.as_str(),
+        _ => "",
+    };
+    let nf = n as f32;
+    match k {
+        "center" => (free / 2.0, 0.0),
+        "end" | "right" | "flex-end" => (free, 0.0),
+        "space-between" if n > 1 => (0.0, free / (nf - 1.0)),
+        "space-around" if n > 0 => (free / nf / 2.0, free / nf),
+        "space-evenly" if n > 0 => (free / (nf + 1.0), free / (nf + 1.0)),
+        _ => (0.0, 0.0), // start / left / stretch / normal
+    }
 }
 
 // 아이템 정렬 값: justify-self/align-self(auto 아니면 우선) → 없으면 컨테이너 기본.

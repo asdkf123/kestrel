@@ -3182,6 +3182,31 @@ mod tests {
     }
 
     #[test]
+    fn grid_justify_content_center_offsets_tracks() {
+        let fs = fonts();
+        // 3×100px 트랙(gap 0), 컨테이너 400 → 여유 100. justify-content:center → 시작 오프셋 50.
+        let ss = crate::css::parse(
+            ".g { display: grid; grid-template-columns: 100px 100px 100px; justify-content: center; } \
+             .c { display: block; }"
+                .to_string(),
+        );
+        let root = crate::html::parse_dom(
+            "<div class=\"g\"><div class=\"c\"></div><div class=\"c\"></div><div class=\"c\"></div></div>"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let first = &lb.children[0];
+        assert!(
+            (first.dimensions.content.x - 50.0).abs() < 1.0,
+            "justify-content:center → 첫 셀 x=50, 실제 {}",
+            first.dimensions.content.x
+        );
+    }
+
+    #[test]
     fn float_percentage_width_resolves_against_container() {
         let fs = fonts();
         // float 의 % width 는 컨테이너 폭 기준으로 한 번만 해석돼야(이중 축소·밴드기준 버그 방지).
