@@ -166,6 +166,14 @@ impl<'a> LayoutBox<'a> {
             let tr = resolve_grid_tracks(&rspec, 0.0, row_gap);
             (0..nrows).map(|r| tr.get(r).copied().filter(|v| *v > 0.0)).collect()
         };
+        // grid-auto-rows: 명시 행 트랙 밖(암시 행)의 고정 높이. px/track 값이면 그 행 높이로 사용.
+        let auto_row_px: Option<f32> = match self.styled_node.value("grid-auto-rows") {
+            Some(Length(p, Px)) if p > 0.0 => Some(p),
+            Some(Value::Keyword(ref s)) => {
+                resolve_grid_tracks(s, 0.0, 0.0).first().copied().filter(|v| *v > 0.0)
+            }
+            _ => None,
+        };
         let mut row_h = vec![0.0f32; nrows];
         let mut item_h = vec![0.0f32; n];
         for i in 0..n {
@@ -192,7 +200,11 @@ impl<'a> LayoutBox<'a> {
         }
         for r in 0..nrows {
             if let Some(px) = row_fixed.get(r).copied().flatten() {
-                row_h[r] = px;
+                row_h[r] = px; // grid-template-rows 고정 높이
+            } else if r >= nrows_explicit {
+                if let Some(ap) = auto_row_px {
+                    row_h[r] = ap; // grid-auto-rows 고정 높이(암시 행)
+                }
             }
         }
         let mut row_y = vec![oy; nrows + 1];
@@ -205,27 +217,84 @@ impl<'a> LayoutBox<'a> {
             row_y[nrows] = y;
         }
 
-        // 5) 최종 배치 + 셀 높이 stretch (측정 글리프 clear).
+        // 컨테이너 기본 정렬(§11): justify-items(가로)/align-items(세로). place-items 단축은
+        // shorthand 에서 이미 justify-items/align-items 로 분해됨. 기본=stretch.
+        let kw = |p: &str| match self.styled_node.value(p) {
+            Some(Value::Keyword(k)) => k,
+            _ => String::new(),
+        };
+        let justify_items = kw("justify-items");
+        let align_items = kw("align-items");
+
+        // 5) 최종 배치: 셀 안에서 justify/align 에 따라 stretch/start/end/center.
         for i in 0..n {
             let (r0, c0, rspan, cspan) = placed[i];
-            let x = col_x[c0.min(cols.len() - 1)];
+            let cell_x = col_x[c0.min(cols.len() - 1)];
             let w = span_w(c0, cspan);
-            let y = row_y[r0];
+            let cell_y = row_y[r0];
             let h: f32 =
                 row_h[r0..r0 + rspan].iter().sum::<f32>() + row_gap * (rspan as f32 - 1.0);
+            let node = self.children[i].styled_node;
+            let justify = grid_item_align(node, "justify-self", &justify_items);
+            let align = grid_item_align(node, "align-self", &align_items);
+            let width_fixed = matches!(node.value("width"), Some(Length(_, Px)));
+            let height_fixed = matches!(node.value("height"), Some(Length(_, Px)));
+
+            // 가로: stretch(기본) → 셀 폭 채움. start/end/center → 내용 폭(shrink-to-fit) + 오프셋.
             self.children[i].clear_render();
             let mut cb: Dimensions = Default::default();
-            cb.content.x = x;
-            cb.content.y = y;
+            cb.content.x = cell_x;
+            cb.content.y = cell_y;
             cb.content.width = w;
+            self.children[i].layout(cb, fonts, images); // 측정(셀 폭)
+            let stretch_x =
+                !width_fixed && (justify.is_empty() || justify == "stretch" || justify == "normal");
+            let (content_w, just_off) = if stretch_x {
+                (w, 0.0)
+            } else {
+                let ch = &self.children[i];
+                let extra_w = ch.dimensions.margin_box().width - ch.dimensions.content.width;
+                let cw = if width_fixed {
+                    ch.dimensions.content.width
+                } else {
+                    ch.used_width.min((w - extra_w).max(0.0))
+                };
+                let item_w = cw + extra_w;
+                let off = match justify.as_str() {
+                    "end" | "right" | "flex-end" => (w - item_w).max(0.0),
+                    "center" => ((w - item_w) / 2.0).max(0.0),
+                    _ => 0.0, // start/left/flex-start
+                };
+                (cw, off)
+            };
+
+            // 최종 가로 레이아웃 (폭·x 확정)
+            self.children[i].clear_render();
+            cb.content.x = cell_x + just_off;
+            cb.content.y = cell_y;
+            cb.content.width = content_w;
             self.children[i].layout(cb, fonts, images);
-            let cross_fixed =
-                matches!(self.children[i].styled_node.value("height"), Some(Length(_, Px)));
-            if !cross_fixed {
-                let vextra = self.children[i].dimensions.margin_box().height
-                    - self.children[i].dimensions.content.height;
+
+            // 세로: stretch(기본, height auto) → 셀 높이. 아니면 내용 높이 + align 오프셋.
+            let vextra = self.children[i].dimensions.margin_box().height
+                - self.children[i].dimensions.content.height;
+            let stretch_y =
+                !height_fixed && (align.is_empty() || align == "stretch" || align == "normal");
+            if stretch_y {
                 self.children[i].dimensions.content.height =
                     (h - vextra).max(self.children[i].dimensions.content.height);
+            } else {
+                let item_h = self.children[i].dimensions.margin_box().height;
+                let align_off = match align.as_str() {
+                    "end" | "flex-end" => (h - item_h).max(0.0),
+                    "center" => ((h - item_h) / 2.0).max(0.0),
+                    _ => 0.0, // start/flex-start
+                };
+                if align_off > 0.5 {
+                    self.children[i].clear_render();
+                    cb.content.y = cell_y + align_off;
+                    self.children[i].layout(cb, fonts, images);
+                }
             }
         }
         self.dimensions.content.height = (row_y[nrows] - oy - row_gap).max(0.0);
@@ -239,6 +308,14 @@ enum GLine {
     Auto,
     Num(i32),
     Span(usize),
+}
+
+// 아이템 정렬 값: justify-self/align-self(auto 아니면 우선) → 없으면 컨테이너 기본.
+fn grid_item_align(node: &StyledNode, self_prop: &str, container_default: &str) -> String {
+    match node.value(self_prop) {
+        Some(Value::Keyword(k)) if k != "auto" => k,
+        _ => container_default.to_string(),
+    }
 }
 
 fn parse_gline(s: &str) -> GLine {
