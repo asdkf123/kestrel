@@ -8,7 +8,7 @@
 ## 구조적 뿌리 (크고, 여러 곳에 영향)
 
 - [x] **JS 객체 프로퍼티 순서** — HashMap → 삽입 순서 유지 ObjMap(정수키 오름차순 먼저).
-  for-in/Object.keys/JSON 이 삽입 순서(JSON 정렬 제거). delete 실제 제거도 구현. (다음 커밋)
+  for-in/Object.keys/JSON 이 삽입 순서(JSON 정렬 제거). delete 실제 제거도 구현. (20029e5)
 - [x] **JS 프로토타입 링크** — new F() 가 prototype 을 __proto__ 로 링크(스냅샷 아님).
   체인 조회 + function-ctor instanceof + __proto__ 비열거(keys/for-in/JSON/hasOwnProp). (1899093)
 - [ ] **JS ToPrimitive** — 강제변환 시 toString/valueOf 안 부름. `${obj}`→[object Object]. (value.rs:421, mod.rs:3018)
