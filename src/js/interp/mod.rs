@@ -971,6 +971,24 @@ impl Interp {
     }
 
     // 마이크로태스크 드레인: 콜백 실행 → 그 결과로 의존 promise 이행 (체이닝).
+    // Object(x) 호출(또는 new Object(x)) 강제변환. f 가 전역 Object 네임스페이스면 Some.
+    // null/undefined → 새 빈 객체, 이미 객체/원시값이면 그대로(근사). 아니면 None.
+    fn coerce_object_call(&self, f: &Value, args: &[Value]) -> Option<Value> {
+        let Value::Obj(m) = f else { return None };
+        match env_get(&self.global, "Object") {
+            Some(Value::Obj(obj_ns)) if Rc::ptr_eq(m, &obj_ns) => {
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                Some(match arg {
+                    Value::Null | Value::Undefined => {
+                        Value::Obj(Rc::new(RefCell::new(HashMap::new())))
+                    }
+                    other => other,
+                })
+            }
+            _ => None,
+        }
+    }
+
     // window(전역 객체) 프로퍼티 조회 — 브라우저처럼 window.X 를 맨 X 로 읽게 하는 폴백.
     fn window_prop(&self, name: &str) -> Option<Value> {
         if let Some(Value::Obj(m)) = env_get(&self.global, "window") {
@@ -2087,6 +2105,11 @@ impl Interp {
                 } else {
                     let f = self.eval(callee, env)?;
                     arg_vals.extend(self.eval_args(args, env)?);
+                    // Object(x) — 전역 Object 네임스페이스를 함수로 호출 = 객체 강제변환.
+                    // core-js/프레임워크가 Object(this) 로 this 를 객체화하는 흔한 패턴.
+                    if let Some(v) = self.coerce_object_call(&f, &arg_vals) {
+                        return Ok(v);
+                    }
                     if !is_callable(&f) {
                         if self.lenient {
                             let name =
@@ -3772,6 +3795,14 @@ mod tests {
         assert_eq!(run_num("var s=0; for(var i=0;i<3;i++)s+=i; i"), 3.0);
         // 선언 전 사용 시 하이스트된 undefined
         assert_eq!(run_num("var r=(typeof q==='undefined'?1:2); var q=5; r"), 1.0);
+    }
+
+    #[test]
+    fn object_callable_coercion() {
+        // Object(x) — 함수로 호출 시 객체 강제변환 (core-js 의 Object(this) 등)
+        assert_eq!(run_num("var o={n:9}; Object(o).n"), 9.0); // 객체는 그대로
+        assert_eq!(run_str("typeof Object(null)"), "object"); // null → 새 {}
+        assert_eq!(run_num("var A=Object; A(7)"), 7.0); // 별칭 + 원시값 근사
     }
 
     #[test]
