@@ -231,6 +231,19 @@ mod tests {
     }
 
     #[test]
+    fn string_escapes_unicode_hex_and_continuation() {
+        // \uHHHH, \xHH, \u{...}, 줄 이음 — 이전엔 \u→"u0041" 로 문자열 손상.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var s = \"\\u0041\\x42\\u{43}\"; var lc = \"a\\\nb\"; \
+             document.getElementById('t').textContent = s + '|' + lc;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "ABC|ab");
+    }
+
+    #[test]
     fn uri_encode_decode_globals() {
         // encodeURIComponent 는 예약문자/공백/비ASCII 를 %XX(UTF-8)로, 왕복 복원.
         let mut dom = crate::html::parse_dom(

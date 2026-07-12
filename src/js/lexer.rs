@@ -1,5 +1,5 @@
 // JS 렉서: 소스 → 토큰열. 최대 munch (=== 이 == 보다 우선).
-// 미지원: 템플릿 리터럴, 정규식 리터럴, \u 이스케이프 (에러로 보고).
+// 지원: 템플릿 리터럴, 정규식 리터럴, \u/\x/\u{} 이스케이프, ASI용 개행 추적.
 
 // 지수부(e/E [+/-] 숫자)를 있으면 소비. 뒤에 숫자가 있을 때만 지수로 취급
 // (그래야 `1 .e` 같은 경우에 e 를 식별자로 안 삼킴). i 를 전진시킨다.
@@ -168,6 +168,83 @@ fn keyword(word: &str) -> Option<Tok> {
         "static" => Tok::Static,
         _ => return None,
     })
+}
+
+// 정확히 n 자리 16진을 읽어 code point 반환 (성공 시 i 를 n 전진).
+fn read_hex(b: &[char], i: &mut usize, n: usize) -> Option<u32> {
+    if *i + n > b.len() {
+        return None;
+    }
+    let hex: String = b[*i..*i + n].iter().collect();
+    let cp = u32::from_str_radix(&hex, 16).ok()?;
+    *i += n;
+    Some(cp)
+}
+
+// 문자열/템플릿 이스케이프 해석 (b[*i] = 역슬래시 다음 문자). out 에 push, i 진행.
+// \n\t\r\b\f\v\0, \xHH, \uHHHH(+서로게이트쌍), \u{...}, 줄 이음(\+개행), 그 외 문자 그대로.
+fn read_escape(b: &[char], i: &mut usize, out: &mut String) {
+    let c = b[*i];
+    *i += 1;
+    match c {
+        'n' => out.push('\n'),
+        't' => out.push('\t'),
+        'r' => out.push('\r'),
+        'b' => out.push('\u{08}'),
+        'f' => out.push('\u{0C}'),
+        'v' => out.push('\u{0B}'),
+        '0' => out.push('\0'),
+        'x' => match read_hex(b, i, 2).and_then(char::from_u32) {
+            Some(ch) => out.push(ch),
+            None => out.push('x'),
+        },
+        'u' => {
+            if b.get(*i) == Some(&'{') {
+                let start = *i + 1;
+                let mut j = start;
+                while j < b.len() && b[j] != '}' {
+                    j += 1;
+                }
+                let hex: String = b[start..j].iter().collect();
+                match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                    Some(ch) => {
+                        out.push(ch);
+                        *i = j + 1;
+                    }
+                    None => out.push('u'),
+                }
+            } else if let Some(hi) = read_hex(b, i, 4) {
+                // 서로게이트 상위: 뒤따르는 \uXXXX 하위와 결합해 보조 평면 문자로
+                if (0xD800..=0xDBFF).contains(&hi)
+                    && b.get(*i) == Some(&'\\')
+                    && b.get(*i + 1) == Some(&'u')
+                {
+                    let save = *i;
+                    *i += 2;
+                    if let Some(lo) = read_hex(b, i, 4) {
+                        if (0xDC00..=0xDFFF).contains(&lo) {
+                            let cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+                            if let Some(ch) = char::from_u32(cp) {
+                                out.push(ch);
+                                return;
+                            }
+                        }
+                    }
+                    *i = save; // 결합 실패 → 롤백
+                }
+                out.push(char::from_u32(hi).unwrap_or('\u{FFFD}'));
+            } else {
+                out.push('u');
+            }
+        }
+        '\n' => {} // 줄 이음 (LineContinuation)
+        '\r' => {
+            if b.get(*i) == Some(&'\n') {
+                *i += 1;
+            }
+        }
+        other => out.push(other), // \" \' \\ / ` $ 등
+    }
 }
 
 // '/' 위치에서 정규식이 시작될 수 있는가: 직전 토큰이 값으로 끝나면 나눗셈.
@@ -359,14 +436,7 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                     if i >= b.len() {
                         return Err("문자열 끝의 역슬래시".to_string());
                     }
-                    s.push(match b[i] {
-                        'n' => '\n',
-                        't' => '\t',
-                        'r' => '\r',
-                        '0' => '\0',
-                        other => other, // \" \' \\ / 등: 그대로
-                    });
-                    i += 1;
+                    read_escape(&b, &mut i, &mut s);
                     continue;
                 }
                 s.push(ch);
@@ -394,13 +464,7 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                     if i >= b.len() {
                         return Err("템플릿 끝의 역슬래시".to_string());
                     }
-                    lit.push(match b[i] {
-                        'n' => '\n',
-                        't' => '\t',
-                        'r' => '\r',
-                        other => other, // \` \$ \\ 등: 그대로
-                    });
-                    i += 1;
+                    read_escape(&b, &mut i, &mut lit);
                     continue;
                 }
                 if ch == '$' && b.get(i + 1) == Some(&'{') {
