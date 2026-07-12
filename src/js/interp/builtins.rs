@@ -2013,6 +2013,9 @@ impl Interp {
             Native::IsNaN => {
                 Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))
             }
+            Native::StructuredClone => {
+                Ok(deep_clone(args.first().unwrap_or(&Value::Undefined), 0))
+            }
             Native::LsGetItem => {
                 let k = args.first().map(to_display).unwrap_or_default();
                 Ok(self.storage.get(&k).map(|v| Value::Str(v.clone())).unwrap_or(Value::Null))

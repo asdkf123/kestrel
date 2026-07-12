@@ -330,6 +330,7 @@ pub enum Native {
     Alert,
     // 받고 아무것도 안 함 (window.addEventListener 등 — 창 이벤트는 아직 없음)
     Noop,
+    StructuredClone,
     ObjectKeys,
     ObjectValues,
     ObjectEntries,
@@ -854,6 +855,7 @@ impl Interp {
         env_declare(&global, "decodeURI", Value::Native(Native::DecodeUri));
         env_declare(&global, "decodeURIComponent", Value::Native(Native::DecodeUriComponent));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        env_declare(&global, "structuredClone", Value::Native(Native::StructuredClone));
         env_declare(&global, "NaN", Value::Num(f64::NAN));
         env_declare(&global, "Infinity", Value::Num(f64::INFINITY));
         env_declare(&global, "isFinite", Value::Native(Native::NumIsFinite));
@@ -4534,6 +4536,16 @@ mod tests {
         assert_eq!(run_str("Object.fromEntries(new Map([['k','v']])).k"), "v");
         // 삽입 순서 유지
         assert_eq!(run_str("Object.keys(Object.fromEntries([['z',1],['a',2]])).join(',')"), "z,a");
+    }
+
+    #[test]
+    fn structured_clone_deep() {
+        // 깊은 복제 — 복제본 변경이 원본에 영향 없음.
+        assert_eq!(run_num("var o={a:1,b:{c:2}}; var d=structuredClone(o); d.b.c=9; o.b.c"), 2.0);
+        assert_eq!(run_num("var a=[1,[2,3]]; var d=structuredClone(a); d[1][0]=9; a[1][0]"), 2.0);
+        assert_eq!(run_num("structuredClone({x:5}).x"), 5.0);
+        assert_eq!(run_num("structuredClone([1,2,3]).length"), 3.0);
+        assert_eq!(run_num("structuredClone(new Map([['a',7]])).get('a')"), 7.0);
     }
 
     #[test]

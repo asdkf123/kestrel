@@ -503,6 +503,51 @@ pub(super) fn type_of(v: &Value) -> &'static str {
     }
 }
 
+// structuredClone: 깊은 복제(배열/객체/Map/Set/인스턴스 재귀, 원시값 그대로).
+// 함수/클래스/DOM 은 복제 불가 → null(스펙은 throw, 관대 처리). __proto__ 링크는 미복제.
+pub(super) fn deep_clone(v: &Value, depth: usize) -> Value {
+    if depth > 500 {
+        return Value::Null; // 순환/과도한 깊이 방어
+    }
+    match v {
+        Value::Arr(a) => {
+            Value::Arr(ArrayObj::new(a.borrow().iter().map(|x| deep_clone(x, depth + 1)).collect()))
+        }
+        Value::Obj(o) => {
+            let mut m = ObjMap::new();
+            for (k, val) in o.borrow().iter() {
+                if k != "__proto__" {
+                    m.insert(k.clone(), deep_clone(val, depth + 1));
+                }
+            }
+            Value::Obj(Rc::new(RefCell::new(m)))
+        }
+        Value::MapVal(mp) => Value::MapVal(Rc::new(RefCell::new(
+            mp.borrow()
+                .iter()
+                .map(|(k, val)| (deep_clone(k, depth + 1), deep_clone(val, depth + 1)))
+                .collect(),
+        ))),
+        Value::SetVal(s) => Value::SetVal(Rc::new(RefCell::new(
+            s.borrow().iter().map(|x| deep_clone(x, depth + 1)).collect(),
+        ))),
+        Value::Instance(i) => {
+            // 인스턴스는 필드만 복제한 일반 객체로(프로토타입 미복제 — 근사).
+            let mut m = ObjMap::new();
+            for (k, val) in i.fields.borrow().iter() {
+                m.insert(k.clone(), deep_clone(val, depth + 1));
+            }
+            Value::Obj(Rc::new(RefCell::new(m)))
+        }
+        Value::Fn(_)
+        | Value::Native(_)
+        | Value::Class(_)
+        | Value::Bound(_)
+        | Value::Dom(_) => Value::Null,
+        other => other.clone(),
+    }
+}
+
 // UTF-16 코드 유닛열 hay 에서 ndl 을 from 부터 찾아 첫 유닛 인덱스 반환(String.indexOf).
 pub(super) fn utf16_index_of(hay: &[u16], ndl: &[u16], from: usize) -> Option<usize> {
     if ndl.is_empty() {
