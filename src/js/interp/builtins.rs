@@ -1928,6 +1928,33 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
+            // Promise(executor) (new 없이 호출) — 관대하게 생성자처럼
+            Native::PromiseCtor => self.construct(Value::Native(Native::PromiseCtor), args),
+            // executor 의 resolve(v): this(=promise)를 v 로 이행
+            Native::PromiseSettleResolve => {
+                let v = args.into_iter().next().unwrap_or(Value::Undefined);
+                if let Some(p) = recv {
+                    // 이미 정착된 promise 는 무시 (한 번만)
+                    let pending = matches!(&p, Value::Obj(o)
+                        if matches!(o.borrow().get("__state"), Some(Value::Str(s)) if s == "pending"));
+                    if pending {
+                        self.resolve_promise(&p, v);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            // executor 의 reject(e): this(=promise)를 거부 상태로
+            Native::PromiseSettleReject => {
+                let v = args.into_iter().next().unwrap_or(Value::Undefined);
+                if let Some(Value::Obj(o)) = recv {
+                    let mut m = o.borrow_mut();
+                    if matches!(m.get("__state"), Some(Value::Str(s)) if s == "pending") {
+                        m.insert("__state".to_string(), Value::Str("rejected".to_string()));
+                        m.insert("__value".to_string(), v);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             Native::PromiseResolve => {
                 let v = args.into_iter().next().unwrap_or(Value::Undefined);
                 let p = self.new_promise();
@@ -1985,6 +2012,15 @@ impl Interp {
             }
             // 이행만 지원 → catch 는 자신 반환(no-op)
             Native::PromiseCatch => Ok(recv.unwrap_or(Value::Undefined)),
+            // p.finally(cb): cb 를 인자 없이 실행하고 원래 promise 반환 (동기 근사)
+            Native::PromiseFinally => {
+                if let Some(cb) = args.into_iter().next() {
+                    if is_callable(&cb) {
+                        let _ = self.call_value(cb, None, vec![]);
+                    }
+                }
+                Ok(recv.unwrap_or(Value::Undefined))
+            }
             Native::Identity => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
             Native::Fetch => {
                 let url = args.first().map(to_display).unwrap_or_default();

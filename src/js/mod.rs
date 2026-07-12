@@ -231,6 +231,20 @@ mod tests {
     }
 
     #[test]
+    fn new_promise_executor_runs_and_then_fires() {
+        // new Promise(executor) — executor 동기 실행 + resolve → then 마이크로태스크.
+        // 이전엔 executor 가 아예 안 불리고 non-thenable 쓰레기 객체 반환.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>new Promise(function(resolve){ resolve('ok'); })\
+             .then(function(v){ document.getElementById('t').textContent = v + '!'; });</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "ok!");
+    }
+
+    #[test]
     fn let_for_loop_per_iteration_binding() {
         // for(let i…) 클로저가 각 반복 값을 포착 → [0,1,2] (이전엔 공유 바인딩 [3,3,3]).
         // var 는 함수 스코프 단일 바인딩이라 [3,3,3] 유지.

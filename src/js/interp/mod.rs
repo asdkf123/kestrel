@@ -261,6 +261,9 @@ pub enum Native {
     SetInterval,
     ClearTimer,
     // Promise/fetch
+    PromiseCtor,          // new Promise(executor)
+    PromiseSettleResolve, // executor 의 resolve (this=promise)
+    PromiseSettleReject,  // executor 의 reject (this=promise)
     PromiseResolve,
     PromiseReject,
     PromiseAll,
@@ -268,6 +271,7 @@ pub enum Native {
     PromiseAllSettled,
     PromiseThen,
     PromiseCatch,
+    PromiseFinally,
     Identity, // 값 통과 (promise 체이닝용)
     Fetch,
     ResponseText,
@@ -872,14 +876,8 @@ impl Interp {
         // 최상위 this = window (sloppy 스크립트: `(function(){this.x=…}).call(this)` 등)
         env_declare(&global, "this", window.clone());
         env_declare(&global, "globalThis", window);
-        // Promise.resolve / Promise.reject (생성자 호출은 미지원, 정적 메서드만)
-        let mut promise = HashMap::new();
-        promise.insert("resolve".to_string(), Value::Native(Native::PromiseResolve));
-        promise.insert("reject".to_string(), Value::Native(Native::PromiseReject));
-        promise.insert("all".to_string(), Value::Native(Native::PromiseAll));
-        promise.insert("race".to_string(), Value::Native(Native::PromiseRace));
-        promise.insert("allSettled".to_string(), Value::Native(Native::PromiseAllSettled));
-        env_declare(&global, "Promise", Value::Obj(Rc::new(RefCell::new(promise))));
+        // Promise 생성자 (new Promise(executor)) + 정적 메서드(member_get 에서 제공)
+        env_declare(&global, "Promise", Value::Native(Native::PromiseCtor));
         // fetch(url) — 동기 HTTP 후 resolved Promise(Response) 반환
         env_declare(&global, "fetch", Value::Native(Native::Fetch));
         // Function.prototype (call/apply/bind) — 폴리필이 Function.prototype.call.apply
@@ -980,6 +978,7 @@ impl Interp {
         m.insert("__cbs".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
         m.insert("then".to_string(), Value::Native(Native::PromiseThen));
         m.insert("catch".to_string(), Value::Native(Native::PromiseCatch));
+        m.insert("finally".to_string(), Value::Native(Native::PromiseFinally));
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
@@ -2741,6 +2740,22 @@ impl Interp {
                 "prototype" => self.regexp_proto.clone(),
                 _ => Value::Undefined,
             }),
+            // Promise 정적 메서드 + prototype (기능 탐지 'finally' in Promise.prototype)
+            Value::Native(Native::PromiseCtor) => Ok(match key {
+                "resolve" => Value::Native(Native::PromiseResolve),
+                "reject" => Value::Native(Native::PromiseReject),
+                "all" => Value::Native(Native::PromiseAll),
+                "race" => Value::Native(Native::PromiseRace),
+                "allSettled" => Value::Native(Native::PromiseAllSettled),
+                "prototype" => {
+                    let mut m = HashMap::new();
+                    m.insert("then".to_string(), Value::Native(Native::PromiseThen));
+                    m.insert("catch".to_string(), Value::Native(Native::PromiseCatch));
+                    m.insert("finally".to_string(), Value::Native(Native::PromiseFinally));
+                    Value::Obj(Rc::new(RefCell::new(m)))
+                }
+                _ => Value::Undefined,
+            }),
             // 네이티브/바운드 함수도 호출 어댑터 제공
             Value::Native(_) | Value::Bound(_) => match key {
                 "call" => Ok(Value::Native(Native::FnCall)),
@@ -2868,6 +2883,32 @@ impl Interp {
                 return self.call_native(n, None, args)
             }
             Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
+            // new Promise(executor): pending promise 생성 후 executor(resolve, reject) 동기 실행.
+            // executor 가 throw 하면 reject. (동기 모델 — resolve/reject 즉시 정착)
+            Value::Native(Native::PromiseCtor) => {
+                let p = self.new_promise();
+                let resolve = Value::Bound(Rc::new((
+                    Value::Native(Native::PromiseSettleResolve),
+                    p.clone(),
+                    vec![],
+                )));
+                let reject = Value::Bound(Rc::new((
+                    Value::Native(Native::PromiseSettleReject),
+                    p.clone(),
+                    vec![],
+                )));
+                let executor = args.into_iter().next().unwrap_or(Value::Undefined);
+                if let Err(e) = self.call_value(executor, None, vec![resolve, reject.clone()]) {
+                    // executor throw → reject (스텝 한도는 제외)
+                    if !e.starts_with(STEP_LIMIT_MSG) {
+                        let err = self.thrown.take().unwrap_or(Value::Str(e));
+                        let _ = self.call_value(reject, None, vec![err]);
+                    } else {
+                        return Err(e);
+                    }
+                }
+                return Ok(p);
+            }
             Value::Native(Native::UrlCtor) => return self.make_url(args),
             Value::Native(Native::XhrCtor) => return Ok(self.make_xhr()),
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
