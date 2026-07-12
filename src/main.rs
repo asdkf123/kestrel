@@ -355,14 +355,16 @@ fn parse_import_stmt(stmt: &str) -> Option<(String, String)> {
     Some((url.to_string(), media.to_string()))
 }
 
-fn collect_links(dom: &dom::Dom, out: &mut Vec<String>) {
+// <link rel=stylesheet> 의 (href, media) 수집. media 조건은 로더가 평가한다.
+fn collect_links(dom: &dom::Dom, out: &mut Vec<(String, String)>) {
     walk_dom(dom, dom.root, &mut |n| {
         if let dom::NodeType::Element(e) = &n.node_type {
             if e.tag_name == "link" {
                 let rel = e.attributes.get("rel").map(|s| s.as_str()).unwrap_or("");
                 if rel.split_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
                     if let Some(href) = e.attributes.get("href") {
-                        out.push(href.clone());
+                        let media = e.attributes.get("media").cloned().unwrap_or_default();
+                        out.push((href.clone(), media));
                     }
                 }
             }
@@ -431,7 +433,11 @@ fn build_page(url: &str) -> Option<window::Page> {
         println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
     }
     let mut seen_css = std::collections::HashSet::new();
-    for href in hrefs.iter().take(10) {
+    for (href, media) in hrefs.iter().take(10) {
+        // <link media="..."> 조건 (다크 테마·print 등) 불일치 시 건너뜀
+        if !media.is_empty() && !css::media_matches(media, page_vw) {
+            continue;
+        }
         if let Some(u) = base.join(href) {
             load_stylesheet(&u.as_string(), page_vw, &mut sheet, 0, &mut seen_css);
         }
