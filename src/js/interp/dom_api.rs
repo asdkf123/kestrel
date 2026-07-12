@@ -160,7 +160,7 @@ impl Interp {
             // element.dataset — data-* 속성을 camelCase 키 객체로 (읽기 스냅샷)
             "dataset" => {
                 let dom = self.dom_arena()?;
-                let mut map = std::collections::HashMap::new();
+                let mut map = ObjMap::new();
                 if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
                     for (k, v) in e.attributes.iter() {
                         if let Some(rest) = k.strip_prefix("data-") {

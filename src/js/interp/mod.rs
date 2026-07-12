@@ -17,6 +17,80 @@ const STEP_LIMIT: u64 = 5_000_000;
 // 이 접두사의 에러는 try/catch 로 잡을 수 없다 (무한 루프 가드가 무력화되지 않게)
 const STEP_LIMIT_MSG: &str = "실행 한도 초과";
 
+// 정규 배열 인덱스인가 (0 ~ 2^32-2, 선행 0 없음). 열거 순서 결정에 쓰인다.
+fn array_index(k: &str) -> Option<u32> {
+    if k.is_empty() || (k.len() > 1 && k.starts_with('0')) {
+        return None;
+    }
+    match k.parse::<u32>() {
+        Ok(n) if n != u32::MAX => Some(n),
+        _ => None,
+    }
+}
+
+// 삽입 순서를 유지하는 객체 프로퍼티 맵 (ECMAScript OrdinaryOwnPropertyKeys):
+// 정수 인덱스 키는 오름차순으로 먼저, 그다음 문자열 키는 삽입 순서.
+// HashMap 과 같은 메서드 이름을 노출해 호출부를 그대로 둔다.
+#[derive(Clone, Debug, Default)]
+pub struct ObjMap {
+    entries: Vec<(String, Value)>,
+    index: HashMap<String, usize>,
+}
+
+impl ObjMap {
+    pub fn new() -> ObjMap {
+        ObjMap::default()
+    }
+    pub fn get(&self, k: &str) -> Option<&Value> {
+        self.index.get(k).map(|&i| &self.entries[i].1)
+    }
+    pub fn contains_key(&self, k: &str) -> bool {
+        self.index.contains_key(k)
+    }
+    // 정수 인덱스 키는 정렬 위치에, 문자열 키는 끝에 삽입할 위치를 구한다.
+    fn insert_position(&self, k: &str) -> usize {
+        match array_index(k) {
+            Some(kn) => {
+                let mut pos = 0;
+                for (ek, _) in &self.entries {
+                    match array_index(ek) {
+                        Some(en) if en < kn => pos += 1,
+                        _ => break, // 더 큰 정수키 또는 문자열키 → 여기 삽입
+                    }
+                }
+                pos
+            }
+            None => self.entries.len(),
+        }
+    }
+    pub fn insert(&mut self, k: String, v: Value) -> Option<Value> {
+        if let Some(&i) = self.index.get(&k) {
+            return Some(std::mem::replace(&mut self.entries[i].1, v));
+        }
+        let pos = self.insert_position(&k);
+        self.entries.insert(pos, (k, v));
+        for i in pos..self.entries.len() {
+            self.index.insert(self.entries[i].0.clone(), i);
+        }
+        None
+    }
+    pub fn remove(&mut self, k: &str) -> Option<Value> {
+        let &i = self.index.get(k)?;
+        let (_, v) = self.entries.remove(i);
+        self.index.remove(k);
+        for j in i..self.entries.len() {
+            self.index.insert(self.entries[j].0.clone(), j);
+        }
+        Some(v)
+    }
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.entries.iter().map(|(k, v)| (k, v))
+    }
+}
+
 #[derive(Clone)]
 pub enum Value {
     Undefined,
@@ -24,7 +98,7 @@ pub enum Value {
     Bool(bool),
     Num(f64),
     Str(String),
-    Obj(Rc<RefCell<HashMap<String, Value>>>),
+    Obj(Rc<RefCell<ObjMap>>),
     // 배열은 항목 + own-property 맵을 가진 객체(표준). arr.push 재정의 등 지원.
     Arr(Rc<ArrayObj>),
     Fn(Rc<JsFn>),
@@ -664,11 +738,11 @@ impl Interp {
     pub fn new() -> Interp {
         let global = Env::new(None);
         // console.log
-        let mut console = HashMap::new();
+        let mut console = ObjMap::new();
         console.insert("log".to_string(), Value::Native(Native::ConsoleLog));
         env_declare(&global, "console", Value::Obj(Rc::new(RefCell::new(console))));
         // document (dom 포인터 미설정 시 호출하면 런타임 에러)
-        let mut document = HashMap::new();
+        let mut document = ObjMap::new();
         document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
         document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
         document.insert(
@@ -703,7 +777,7 @@ impl Interp {
         document.insert("documentElement".to_string(), live("html"));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         // Math
-        let mut math = HashMap::new();
+        let mut math = ObjMap::new();
         for (name, op) in [
             ("floor", MathOp::Floor),
             ("ceil", MathOp::Ceil),
@@ -739,7 +813,7 @@ impl Interp {
         math.insert("LN10".to_string(), Value::Num(std::f64::consts::LN_10));
         env_declare(&global, "Math", Value::Obj(Rc::new(RefCell::new(math))));
         // JSON
-        let mut json = HashMap::new();
+        let mut json = ObjMap::new();
         json.insert("parse".to_string(), Value::Native(Native::JsonParse));
         json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
         env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
@@ -761,7 +835,7 @@ impl Interp {
         env_declare(&global, "clearInterval", Value::Native(Native::ClearTimer));
         env_declare(&global, "requestAnimationFrame", Value::Native(Native::SetTimeout));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
-        let mut object_ns = HashMap::new();
+        let mut object_ns = ObjMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
         object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
@@ -774,7 +848,7 @@ impl Interp {
         );
         // Object.prototype: hasOwnProperty(webpack .o), toString(타입 판별 관용),
         // isPrototypeOf/propertyIsEnumerable/valueOf
-        let mut object_proto = HashMap::new();
+        let mut object_proto = ObjMap::new();
         object_proto.insert("hasOwnProperty".to_string(), Value::Native(Native::HasOwnProperty));
         object_proto.insert("toString".to_string(), Value::Native(Native::ObjToString));
         object_proto.insert("toLocaleString".to_string(), Value::Native(Native::ObjToString));
@@ -787,9 +861,9 @@ impl Interp {
         object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
         env_declare(&global, "Object", Value::Obj(Rc::new(RefCell::new(object_ns))));
         // Array.prototype: 모든 배열 메서드를 담아 Array.prototype.slice.call(x) 지원
-        let mut array_ns = HashMap::new();
+        let mut array_ns = ObjMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
-        let mut array_proto = HashMap::new();
+        let mut array_proto = ObjMap::new();
         for (name, op) in [
             ("forEach", ArrOp::ForEach),
             ("map", ArrOp::Map),
@@ -851,7 +925,7 @@ impl Interp {
         env_declare(&global, "CustomEvent", Value::Native(Native::EventCtor));
         env_declare(&global, "Proxy", Value::Native(Native::ProxyCtor));
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
-        let mut ls = HashMap::new();
+        let mut ls = ObjMap::new();
         ls.insert("getItem".to_string(), Value::Native(Native::LsGetItem));
         ls.insert("setItem".to_string(), Value::Native(Native::LsSetItem));
         ls.insert("removeItem".to_string(), Value::Native(Native::LsRemoveItem));
@@ -860,7 +934,7 @@ impl Interp {
         env_declare(&global, "localStorage", ls.clone());
         env_declare(&global, "sessionStorage", ls.clone());
         // navigator / alert
-        let mut nav = HashMap::new();
+        let mut nav = ObjMap::new();
         nav.insert("userAgent".to_string(), Value::Str("Kestrel/0.1".to_string()));
         let nav = Value::Obj(Rc::new(RefCell::new(nav)));
         env_declare(&global, "navigator", nav.clone());
@@ -868,7 +942,7 @@ impl Interp {
         // window: 전역 객체 스텁 — 프로퍼티 읽기/쓰기는 되지만 전역 변수와
         // 연동되진 않음 (window.x = 1 후 x 로 읽기 미지원). 존재 자체가
         // "window 미정의" 즉사를 막는다. 필드 테스트 최다 런타임 에러.
-        let mut window = HashMap::new();
+        let mut window = ObjMap::new();
         window.insert("localStorage".to_string(), ls);
         window.insert("navigator".to_string(), nav);
         window.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
@@ -887,7 +961,7 @@ impl Interp {
         ] {
             window.insert(k.to_string(), Value::Num(v));
         }
-        let mut screen = HashMap::new();
+        let mut screen = ObjMap::new();
         for (k, v) in [("width", 1000.0), ("height", 800.0), ("availWidth", 1000.0), ("availHeight", 800.0), ("colorDepth", 24.0), ("pixelDepth", 24.0)] {
             screen.insert(k.to_string(), Value::Num(v));
         }
@@ -906,7 +980,7 @@ impl Interp {
         env_declare(&global, "fetch", Value::Native(Native::Fetch));
         // Function.prototype (call/apply/bind) — 폴리필이 Function.prototype.call.apply
         // 등으로 광범위하게 참조. 정체성 보존 위해 필드로 보관.
-        let mut fn_proto = HashMap::new();
+        let mut fn_proto = ObjMap::new();
         fn_proto.insert("call".to_string(), Value::Native(Native::FnCall));
         fn_proto.insert("apply".to_string(), Value::Native(Native::FnApply));
         fn_proto.insert("bind".to_string(), Value::Native(Native::FnBind));
@@ -914,7 +988,7 @@ impl Interp {
         fn_proto.insert("toString".to_string(), Value::Native(Native::FnToString));
         let fn_proto = Value::Obj(Rc::new(RefCell::new(fn_proto)));
         // String.prototype: 문자열 메서드 (String.prototype.slice.call(x) 지원)
-        let mut string_proto = HashMap::new();
+        let mut string_proto = ObjMap::new();
         for (name, op) in [
             ("charAt", StrOp::CharAt),
             ("charCodeAt", StrOp::CharCodeAt),
@@ -940,7 +1014,7 @@ impl Interp {
         let string_proto = Value::Obj(Rc::new(RefCell::new(string_proto)));
         // Number/Boolean/RegExp.prototype — 원시값 메서드 네이티브를 재사용.
         let mk_proto = |pairs: Vec<(&str, Native)>| {
-            let mut m = HashMap::new();
+            let mut m = ObjMap::new();
             for (k, n) in pairs {
                 m.insert(k.to_string(), Value::Native(n));
             }
@@ -997,7 +1071,7 @@ impl Interp {
 
     // 새 pending Promise (Obj 표현: 상태·값·대기콜백을 맵에 저장, then/catch 는 Native)
     fn new_promise(&self) -> Value {
-        let mut m = HashMap::new();
+        let mut m = ObjMap::new();
         m.insert("__isPromise".to_string(), Value::Bool(true));
         m.insert("__state".to_string(), Value::Str("pending".to_string()));
         m.insert("__value".to_string(), Value::Undefined);
@@ -1058,7 +1132,7 @@ impl Interp {
             self.microtasks.push_back((cb, value, dep.clone()));
         } else {
             // 대기: {cb, dep} 를 __cbs 에 추가
-            let mut entry = HashMap::new();
+            let mut entry = ObjMap::new();
             entry.insert("cb".to_string(), cb);
             entry.insert("dep".to_string(), dep.clone());
             let entry = Value::Obj(Rc::new(RefCell::new(entry)));
@@ -1096,7 +1170,7 @@ impl Interp {
                 let arg = args.first().cloned().unwrap_or(Value::Undefined);
                 Some(match arg {
                     Value::Null | Value::Undefined => {
-                        Value::Obj(Rc::new(RefCell::new(HashMap::new())))
+                        Value::Obj(Rc::new(RefCell::new(ObjMap::new())))
                     }
                     other => other,
                 })
@@ -1157,7 +1231,7 @@ impl Interp {
             Some((_, f)) => format!("#{}", f),
             None => String::new(),
         };
-        let mut loc = HashMap::new();
+        let mut loc = ObjMap::new();
         loc.insert("href".to_string(), Value::Str(url.to_string()));
         loc.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
         loc.insert("host".to_string(), Value::Str(u.host.clone()));
@@ -1210,7 +1284,7 @@ impl Interp {
         };
         let host = if port.is_empty() { u.host.clone() } else { format!("{}:{}", u.host, port) };
         // searchParams: 쿼리 문자열을 담고 네이티브 메서드로 조회
-        let mut sp = HashMap::new();
+        let mut sp = ObjMap::new();
         sp.insert("__query".to_string(), Value::Str(search.trim_start_matches('?').to_string()));
         sp.insert("get".to_string(), Value::Native(Native::UrlSearchGet));
         sp.insert("getAll".to_string(), Value::Native(Native::UrlSearchGetAll));
@@ -1221,7 +1295,7 @@ impl Interp {
         sp.insert("toString".to_string(), Value::Native(Native::UrlSearchToString));
         let search_params = Value::Obj(Rc::new(RefCell::new(sp)));
 
-        let mut m = HashMap::new();
+        let mut m = ObjMap::new();
         m.insert("href".to_string(), Value::Str(resolved.clone()));
         m.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
         m.insert("host".to_string(), Value::Str(host.clone()));
@@ -1268,7 +1342,7 @@ impl Interp {
 
     // 값들의 Vec 을 반복자 객체로 (MakeIter 와 동일 구조: __items/__i/next).
     fn make_iter_from_vec(&self, items: Vec<Value>) -> Value {
-        let mut it = HashMap::new();
+        let mut it = ObjMap::new();
         it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
         it.insert("__i".to_string(), Value::Num(0.0));
         it.insert("next".to_string(), Value::Native(Native::IterNext));
@@ -1321,7 +1395,7 @@ impl Interp {
     }
 
     pub(super) fn make_event(&self, event: &str, target: crate::dom::NodeId) -> Value {
-        let mut m = HashMap::new();
+        let mut m = ObjMap::new();
         m.insert("type".to_string(), Value::Str(event.to_string()));
         m.insert("target".to_string(), Value::Dom(target));
         m.insert("currentTarget".to_string(), Value::Dom(target));
@@ -1626,17 +1700,22 @@ impl Interp {
                 if let Some(rest_name) = rest {
                     let consumed: std::collections::HashSet<&str> =
                         props.iter().map(|(k, _, _)| k.as_str()).collect();
-                    let mut map = HashMap::new();
-                    let collect = |src: &HashMap<String, Value>, map: &mut HashMap<String, Value>| {
-                        for (k, v) in src.iter() {
-                            if !consumed.contains(k.as_str()) && k != "__proto__" {
-                                map.insert(k.clone(), v.clone());
+                    let mut map = ObjMap::new();
+                    match &value {
+                        Value::Obj(o) => {
+                            for (k, v) in o.borrow().iter() {
+                                if !consumed.contains(k.as_str()) && k != "__proto__" {
+                                    map.insert(k.clone(), v.clone());
+                                }
                             }
                         }
-                    };
-                    match &value {
-                        Value::Obj(o) => collect(&o.borrow(), &mut map),
-                        Value::Instance(i) => collect(&i.fields.borrow(), &mut map),
+                        Value::Instance(i) => {
+                            for (k, v) in i.fields.borrow().iter() {
+                                if !consumed.contains(k.as_str()) {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
                         _ => {}
                     }
                     bind(env, rest_name, Value::Obj(Rc::new(RefCell::new(map))));
@@ -2003,7 +2082,7 @@ impl Interp {
             // 스프레드가 배열/호출 밖에 홀로 나오면 값 그대로 (관용)
             Expr::Spread(inner) => self.eval(inner, env),
             Expr::Object(props) => {
-                let mut map = HashMap::new();
+                let mut map = ObjMap::new();
                 for (k, e) in props {
                     if matches!(k, PropKey::Spread) {
                         // {...obj} — obj/배열/인스턴스의 own 프로퍼티 병합
@@ -2147,6 +2226,21 @@ impl Interp {
                             return Ok(Value::Str("undefined".to_string()));
                         }
                     }
+                }
+                // delete obj.key / obj[key] — 실제로 own 프로퍼티 제거 후 true.
+                if matches!(op, UnOp::Delete) {
+                    if let Expr::Member { obj, prop, computed } = expr.as_ref() {
+                        let target = self.eval(obj, env)?;
+                        let key = match (computed, prop.as_ref()) {
+                            (false, Expr::Str(s)) => s.clone(),
+                            _ => to_display(&self.eval(prop, env)?),
+                        };
+                        if let Value::Obj(m) = &target {
+                            m.borrow_mut().remove(&key);
+                        }
+                        return Ok(Value::Bool(true));
+                    }
+                    return Ok(Value::Bool(true));
                 }
                 let v = self.eval(expr, env)?;
                 Ok(match op {
@@ -2414,7 +2508,7 @@ impl Interp {
     // __proto__ 링크를 따라 프로퍼티를 찾는다. getter 면 this=원 객체로 호출. 순환 방지.
     fn proto_chain_lookup(
         &mut self,
-        map: &Rc<RefCell<HashMap<String, Value>>>,
+        map: &Rc<RefCell<ObjMap>>,
         key: &str,
         this: &Value,
     ) -> Result<Option<Value>, String> {
@@ -2785,7 +2879,7 @@ impl Interp {
                     // F.prototype 지연 생성: 접근 시 빈 객체를 만들어 저장
                     // (F.prototype.method = ... 패턴 지원)
                     "prototype" => {
-                        let proto = Value::Obj(Rc::new(RefCell::new(HashMap::new())));
+                        let proto = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
                         func.props.borrow_mut().insert("prototype".to_string(), proto.clone());
                         Ok(proto)
                     }
@@ -2839,7 +2933,7 @@ impl Interp {
                 "race" => Value::Native(Native::PromiseRace),
                 "allSettled" => Value::Native(Native::PromiseAllSettled),
                 "prototype" => {
-                    let mut m = HashMap::new();
+                    let mut m = ObjMap::new();
                     m.insert("then".to_string(), Value::Native(Native::PromiseThen));
                     m.insert("catch".to_string(), Value::Native(Native::PromiseCatch));
                     m.insert("finally".to_string(), Value::Native(Native::PromiseFinally));
@@ -3010,7 +3104,7 @@ impl Interp {
                 return self.construct(target, all);
             }
             Value::Native(Native::ErrorCtor(name)) => {
-                let mut map = HashMap::new();
+                let mut map = ObjMap::new();
                 map.insert("name".to_string(), Value::Str(name.to_string()));
                 map.insert(
                     "message".to_string(),
@@ -3024,13 +3118,13 @@ impl Interp {
             // F.prototype.m 추가도 인스턴스에 반영되고 프로토타입 체인 조회가 동작한다.
             // 함수가 객체를 반환하면 그것 우선(JS 규칙).
             Value::Fn(func) => {
-                let obj = Rc::new(RefCell::new(HashMap::new()));
+                let obj = Rc::new(RefCell::new(ObjMap::new()));
                 // f.prototype 지연 생성(없으면) 후 링크. borrow 를 먼저 끊고 match.
                 let existing = func.props.borrow().get("prototype").cloned();
                 let proto = match existing {
                     Some(p @ Value::Obj(_)) => p,
                     _ => {
-                        let p = Value::Obj(Rc::new(RefCell::new(HashMap::new())));
+                        let p = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
                         func.props.borrow_mut().insert("prototype".to_string(), p.clone());
                         p
                     }
@@ -3044,7 +3138,7 @@ impl Interp {
                 });
             }
             Value::Obj(_) | Value::Native(_) => {
-                let mut map = HashMap::new();
+                let mut map = ObjMap::new();
                 if let Some(a0) = args.first() {
                     map.insert("message".to_string(), a0.clone());
                 }
@@ -4194,13 +4288,38 @@ mod tests {
     }
 
     #[test]
+    fn object_property_insertion_order() {
+        // Object.keys / for-in / JSON 은 삽입 순서를 따른다(정렬/무작위 아님).
+        assert_eq!(run_str("Object.keys({z:1, a:2, m:3}).join(',')"), "z,a,m");
+        assert_eq!(run_str("var o={}; o.b=1; o.a=2; o.c=3; Object.keys(o).join(',')"), "b,a,c");
+        assert_eq!(run_str("var s=''; for(var k in {y:1,x:2,w:3}) s+=k; s"), "yxw");
+        assert_eq!(run_str("JSON.stringify({one:1, two:2, three:3})"),
+            "{\"one\":1,\"two\":2,\"three\":3}");
+        // 정수 인덱스 키는 오름차순으로 먼저, 그다음 문자열 키 삽입 순서
+        assert_eq!(run_str("var o={}; o.b=1; o[2]=1; o.a=1; o[1]=1; Object.keys(o).join(',')"),
+            "1,2,b,a");
+        // 재대입은 순서 유지
+        assert_eq!(run_str("var o={x:1,y:2}; o.x=9; Object.keys(o).join(',')"), "x,y");
+    }
+
+    #[test]
+    fn delete_removes_property() {
+        // delete 가 실제로 own 프로퍼티를 제거한다(예전엔 항상 true 만 반환).
+        assert_eq!(run_str("var o={a:1,b:2,c:3}; delete o.b; Object.keys(o).join(',')"), "a,c");
+        assert_eq!(run_str("var o={a:1}; delete o.a; typeof o.a"), "undefined");
+        assert!(run_bool("var o={a:1}; delete o['a']; !('a' in o)"));
+        assert!(run_bool("var o={a:1}; delete o.a === true"));
+    }
+
+    #[test]
     fn json_roundtrip() {
         assert_eq!(run_num("JSON.parse('42')"), 42.0);
         assert_eq!(run_str("JSON.parse('\"hi\\\\n\"')"), "hi\n");
         assert_eq!(run_num("JSON.parse('[1, 2, 3]')[1]"), 2.0);
         assert_eq!(run_num("JSON.parse('{\"a\": {\"b\": 7}}').a.b"), 7.0);
         assert!(run_bool("JSON.parse('true') === true && JSON.parse('null') === null"));
-        assert_eq!(run_str("JSON.stringify({ b: 2, a: 'x' })"), "{\"a\":\"x\",\"b\":2}");
+        // 삽입(소스) 순서 보존 — 정렬 아님(ECMAScript OrdinaryOwnPropertyKeys)
+        assert_eq!(run_str("JSON.stringify({ b: 2, a: 'x' })"), "{\"b\":2,\"a\":\"x\"}");
         assert_eq!(run_str("JSON.stringify([1, 'two', null, true])"), "[1,\"two\",null,true]");
         // 라운드트립
         assert_eq!(

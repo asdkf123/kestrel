@@ -2,7 +2,6 @@
 use super::*;
 use super::value::*;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 // URI 인코딩: 비예약문자(A-Za-z0-9 -_.!~*'()) 와 extra_safe 는 보존, 나머지는
@@ -74,16 +73,16 @@ fn parse_query(q: &str) -> Vec<(String, String)> {
 }
 
 // 컨텍스트의 __path 배열 조작 ([x0,y0,x1,y1,...] 평탄 저장).
-fn set_path(ctx: &Rc<RefCell<HashMap<String, Value>>>, pts: Vec<Value>) {
+fn set_path(ctx: &Rc<RefCell<ObjMap>>, pts: Vec<Value>) {
     ctx.borrow_mut().insert("__path".to_string(), Value::Arr(ArrayObj::new(pts)));
 }
-fn push_path(ctx: &Rc<RefCell<HashMap<String, Value>>>, x: f32, y: f32) {
+fn push_path(ctx: &Rc<RefCell<ObjMap>>, x: f32, y: f32) {
     if let Some(Value::Arr(a)) = ctx.borrow().get("__path") {
         a.borrow_mut().push(Value::Num(x as f64));
         a.borrow_mut().push(Value::Num(y as f64));
     }
 }
-fn get_path(ctx: &Rc<RefCell<HashMap<String, Value>>>) -> Vec<(f32, f32)> {
+fn get_path(ctx: &Rc<RefCell<ObjMap>>) -> Vec<(f32, f32)> {
     if let Some(Value::Arr(a)) = ctx.borrow().get("__path") {
         let flat = a.borrow();
         return flat
@@ -327,7 +326,7 @@ impl Interp {
 
     // new XMLHttpRequest() → 메서드/속성을 가진 객체
     pub(super) fn make_xhr(&self) -> Value {
-        let mut m = HashMap::new();
+        let mut m = ObjMap::new();
         m.insert("__isXhr".to_string(), Value::Bool(true));
         m.insert("readyState".to_string(), Value::Num(0.0));
         m.insert("status".to_string(), Value::Num(0.0));
@@ -347,7 +346,7 @@ impl Interp {
     }
 
     // XHR 발화: on<event> 프로퍼티 + addEventListener 핸들러(요소 핸들러 재사용은 안 함)
-    fn xhr_fire(&mut self, obj: &Rc<RefCell<HashMap<String, Value>>>, event: &str) {
+    fn xhr_fire(&mut self, obj: &Rc<RefCell<ObjMap>>, event: &str) {
         let on = format!("on{}", event);
         let handler = obj.borrow().get(&on).cloned();
         if let Some(h) = handler {
@@ -489,7 +488,7 @@ impl Interp {
             // Object.create(proto) — proto 의 얕은 복사 기반 새 객체 (관용)
             Native::ObjectCreate => {
                 // proto 를 __proto__ 로 링크(스냅샷 복사 아님). Object.create(null) 은 링크 없음.
-                let mut map = HashMap::new();
+                let mut map = ObjMap::new();
                 if let Some(p @ Value::Obj(_)) = args.first() {
                     map.insert("__proto__".to_string(), p.clone());
                 }
@@ -563,7 +562,7 @@ impl Interp {
                         .collect(),
                     _ => Vec::new(),
                 };
-                let mut it = HashMap::new();
+                let mut it = ObjMap::new();
                 it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
                 it.insert("__i".to_string(), Value::Num(0.0));
                 it.insert("next".to_string(), Value::Native(Native::IterNext));
@@ -571,7 +570,7 @@ impl Interp {
             }
             // 반복자.next() → { value, done }
             Native::IterNext => {
-                let mut res = HashMap::new();
+                let mut res = ObjMap::new();
                 if let Some(Value::Obj(o)) = &recv {
                     let (items, i) = {
                         let b = o.borrow();
@@ -595,7 +594,7 @@ impl Interp {
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {
-                let mut map = HashMap::new();
+                let mut map = ObjMap::new();
                 map.insert("name".to_string(), Value::Str(name.to_string()));
                 map.insert(
                     "message".to_string(),
@@ -1011,7 +1010,7 @@ impl Interp {
                     _ => return Ok(Value::Null),
                 };
                 self.canvas_cmds.entry(canvas_id).or_default();
-                let mut m = HashMap::new();
+                let mut m = ObjMap::new();
                 m.insert("__canvas".to_string(), Value::Num(canvas_id as f64));
                 m.insert("fillStyle".to_string(), Value::Str("#000000".to_string()));
                 m.insert("strokeStyle".to_string(), Value::Str("#000000".to_string()));
@@ -1089,7 +1088,7 @@ impl Interp {
             Native::EventCtor => {
                 // new Event(type, opts) / new CustomEvent(type, {detail}) → 이벤트 객체
                 let etype = args.first().map(to_display).unwrap_or_default();
-                let mut m = std::collections::HashMap::new();
+                let mut m = ObjMap::new();
                 m.insert("type".to_string(), Value::Str(etype));
                 let mut bubbles = false;
                 if let Some(Value::Obj(o)) = args.get(1) {
@@ -1112,7 +1111,7 @@ impl Interp {
                     }
                     _ => (0.0, 0.0, 0.0, 0.0),
                 };
-                let mut m = std::collections::HashMap::new();
+                let mut m = ObjMap::new();
                 m.insert("x".to_string(), Value::Num(x as f64));
                 m.insert("y".to_string(), Value::Num(y as f64));
                 m.insert("left".to_string(), Value::Num(x as f64));
@@ -2040,7 +2039,7 @@ impl Interp {
                 for item in items {
                     let v = self.promise_value(&item);
                     if settled {
-                        let mut m = std::collections::HashMap::new();
+                        let mut m = ObjMap::new();
                         m.insert("status".to_string(), Value::Str("fulfilled".to_string()));
                         m.insert("value".to_string(), v);
                         out.push(Value::Obj(Rc::new(RefCell::new(m))));
@@ -2087,7 +2086,7 @@ impl Interp {
                 match crate::http::fetch(&url) {
                     Ok(r) => {
                         let body = String::from_utf8_lossy(&r.body).to_string();
-                        let mut m = HashMap::new();
+                        let mut m = ObjMap::new();
                         m.insert("status".to_string(), Value::Num(r.status as f64));
                         m.insert(
                             "ok".to_string(),

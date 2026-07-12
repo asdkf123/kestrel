@@ -1,7 +1,6 @@
 // Value 헬퍼: 표시/형변환/동등성/JSON. interp/mod.rs 에서 분리.
 use super::*;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 pub(super) fn num_to_str(n: f64) -> String {
@@ -326,13 +325,13 @@ pub(super) fn parse_date_string(s: &str) -> Option<f64> {
 }
 
 pub(super) fn make_date(millis: f64) -> Value {
-    let mut m = HashMap::new();
+    let mut m = ObjMap::new();
     m.insert("__isDate".to_string(), Value::Bool(true));
     m.insert("__time".to_string(), Value::Num(millis));
     Value::Obj(Rc::new(RefCell::new(m)))
 }
 
-pub(super) fn is_date_obj(map: &Rc<RefCell<HashMap<String, Value>>>) -> bool {
+pub(super) fn is_date_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(map.borrow().get("__isDate"), Some(Value::Bool(true)))
 }
 
@@ -376,7 +375,7 @@ pub(super) fn date_string(millis: f64) -> String {
 
 // 정규식 리터럴/RegExp → {source, flags, __isRegex, global, lastIndex} 객체
 pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
-    let mut map = HashMap::new();
+    let mut map = ObjMap::new();
     map.insert("source".to_string(), Value::Str(source.to_string()));
     map.insert("flags".to_string(), Value::Str(flags.to_string()));
     map.insert("__isRegex".to_string(), Value::Bool(true));
@@ -388,7 +387,7 @@ pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
 }
 
 // 객체가 정규식인지 (__isRegex == true)
-pub(super) fn is_regex_obj(map: &Rc<RefCell<HashMap<String, Value>>>) -> bool {
+pub(super) fn is_regex_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(map.borrow().get("__isRegex"), Some(Value::Bool(true)))
 }
 
@@ -518,7 +517,7 @@ pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
         None => Err("JSON 이 갑자기 끝남".to_string()),
         Some('{') => {
             *p += 1;
-            let mut map = HashMap::new();
+            let mut map = ObjMap::new();
             json_ws(c, p);
             if c.get(*p) == Some(&'}') {
                 *p += 1;
@@ -624,7 +623,7 @@ pub(super) fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
     }
 }
 
-// 직렬화 불가(함수/undefined 등)는 None. 객체 키는 정렬 (HashMap 순서 비결정 대비).
+// 직렬화 불가(함수/undefined 등)는 None. 객체 키는 삽입 순서(ObjMap) 유지.
 pub(super) fn json_stringify(v: &Value) -> Option<String> {
     match v {
         Value::Undefined
@@ -666,12 +665,11 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         }
         Value::Obj(map) => {
             let m = map.borrow();
-            // __proto__ 링크는 직렬화 대상 아님
-            let mut keys: Vec<&String> = m.keys().filter(|k| *k != "__proto__").collect();
-            keys.sort();
-            let parts: Vec<String> = keys
-                .into_iter()
-                .filter_map(|k| json_stringify(&m[k]).map(|v| format!("{}:{}", json_quote(k), v)))
+            // 삽입 순서 유지(ObjMap). __proto__ 링크는 직렬화 대상 아님.
+            let parts: Vec<String> = m
+                .iter()
+                .filter(|(k, _)| *k != "__proto__")
+                .filter_map(|(k, v)| json_stringify(v).map(|s| format!("{}:{}", json_quote(k), s)))
                 .collect();
             Some(format!("{{{}}}", parts.join(",")))
         }
