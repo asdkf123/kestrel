@@ -61,8 +61,8 @@
 - [~] Grid **라인배치·span·auto-placement(§8) + 셀 자기정렬(§11) + grid-auto-rows + minmax(px,fr)
   하한(§11.5)** 완료 — go.dev 히어로 복원. 명명 라인, justify/align-content(트랙 분배)는 후속. (grid.rs)
 - [~] Flex **shrink 시 min-content 하한 적용(§4.5)** 완료. min/max 덮어씀, align-content 는 후속. (flex.rs)
-- [~] 테이블 **auto 폭 shrink-to-fit(§17.5.2) + border-spacing** 완료 — 작은 표는 내용 폭,
-  separate 표는 셀 간격. border-collapse 테두리 중첩, rowspan 높이 분배는 후속. (mod.rs)
+- [~] 테이블 **border-spacing** 완료(separate 표 셀 간격). auto 폭 shrink-to-fit 은 보류
+  (used_width 근사가 중첩 표에서 오측정 → min/max-content 정식 측정 필요). (mod.rs)
 - [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
 - [x] 페인트 **점선/파선 테두리**(dashed/dotted). double/groove 는 근사. (7bbcf70)
 - [x] 페인트 **그라디언트 프리멀티플라이 보간**(gradient_color_at 이미 반영, b957a7d). 확인 완료.
