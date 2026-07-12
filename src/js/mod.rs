@@ -259,6 +259,21 @@ mod tests {
     }
 
     #[test]
+    fn to_primitive_valueof_tostring() {
+        // 객체 강제변환이 valueOf/toString 을 부른다 (이전엔 [object Object]/NaN).
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var money = { valueOf: function(){ return 5; } }; \
+             var d = { toString: function(){ return 'DAY'; } }; \
+             document.getElementById('t').textContent = (money + 1) + '|' + (`${d}`) + '|' + [1,2,3];\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "6|DAY|1,2,3");
+    }
+
+    #[test]
     fn math_round_and_minmax_nan() {
         // Math.round 는 floor(x+0.5)(반올림 +∞ 방향), min/max 는 NaN 전파 — 스펙대로.
         let mut dom = crate::html::parse_dom(

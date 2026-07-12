@@ -2084,7 +2084,12 @@ impl Interp {
                 for part in parts {
                     match part {
                         TemplatePart::Lit(t) => s.push_str(t),
-                        TemplatePart::Expr(e) => s.push_str(&to_display(&self.eval(e, env)?)),
+                        TemplatePart::Expr(e) => {
+                            // ${obj} 는 문자열 힌트로 ToPrimitive (toString 우선)
+                            let v = self.eval(e, env)?;
+                            let p = self.to_primitive(v, true);
+                            s.push_str(&to_display(&p));
+                        }
                     }
                 }
                 Ok(Value::Str(s))
@@ -3091,7 +3096,47 @@ impl Interp {
     }
 
 
+    // ToPrimitive: 객체를 원시값으로 (valueOf/toString 호출). prefer_string 이면 toString 먼저.
+    // 원시값은 그대로. 사용자 정의 toString/valueOf(BigNumber/moment/커스텀 값형)를 존중.
+    fn to_primitive(&mut self, v: Value, prefer_string: bool) -> Value {
+        if !matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+            return v;
+        }
+        let order: [&str; 2] =
+            if prefer_string { ["toString", "valueOf"] } else { ["valueOf", "toString"] };
+        for m in order {
+            if let Ok(f) = self.member_get(&v, m) {
+                if is_callable(&f) {
+                    if let Ok(res) = self.call_value(f, Some(v.clone()), vec![]) {
+                        if !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                            return res; // 원시값이면 채택
+                        }
+                    }
+                }
+            }
+        }
+        v
+    }
+
     fn binary(&mut self, op: BinOp, l: Value, r: Value) -> Result<Value, String> {
+        // 산술/비교 연산: 객체 피연산자를 원시값으로 강제변환 (ToPrimitive). in/instanceof 제외.
+        let (l, r) = if matches!(
+            op,
+            BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Div
+                | BinOp::Mod
+                | BinOp::Pow
+                | BinOp::Lt
+                | BinOp::Gt
+                | BinOp::Le
+                | BinOp::Ge
+        ) {
+            (self.to_primitive(l, false), self.to_primitive(r, false))
+        } else {
+            (l, r)
+        };
         Ok(match op {
             BinOp::Add => match (&l, &r) {
                 (Value::Str(_), _) | (_, Value::Str(_)) => {
