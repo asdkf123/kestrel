@@ -17,21 +17,24 @@
 
 ## 티어1 — 고빈도 + 요행 통과 (우선 수정)
 
-- [ ] CSS **`!important` 완전 미구현** — 선언이 통째로 드롭됨. (css/mod.rs:968, values.rs:5)
-- [ ] CSS **`font` 단축 미처리** — font:16px/1.5 sans 통째 드롭. (css/shorthand.rs:382)
-- [ ] JS **문자열 이스케이프 `\u \x \b \f \v`** 오처리 — 미니파이 문자열 손상. (lexer.rs:362,397)
-- [ ] JS **옵셔널체이닝 `obj?.method()` 단락** — 체인 뒷부분 미보호. (parser.rs:1035, ast.rs:31)
-- [ ] 폰트 **합성 글리프 빈칸** — é/ñ/CJK 사라짐. cmap fmt12 미지원. (font.rs:216,357)
-- [ ] CSS **미디어쿼리 em/rem + 미지원특성 무조건참** — @media(max-width:48em) 데스크톱 적용. (css/media.rs:11,63)
-- [ ] CSS **`#rgba`/`#rrggbbaa` 드롭** — 4/8자리 hex. (css/values.rs:444)
-- [ ] CSS **rem 16px 하드코딩** — 루트 font-size 무시. (style.rs:700)
-- [ ] CSS **조상 구조 의사클래스 무조건참** — zebra(tr:nth-child(even) td) 깨짐. (style.rs:210)
+- [x] CSS **`!important`** — 캐스케이드 우선순위 구현. (8854de4)
+- [x] CSS **`font` 단축** + #rgba/#rrggbbaa hex. (fa0532a)
+- [x] JS **문자열 이스케이프 `\u \x \b \f \v` + 줄이음**. (41cf1fb)
+- [~] JS **옵셔널체이닝 `obj?.method()` 단락** — 결과는 lenient 로 이미 맞음(undefined). 메커니즘만 비표준 → 후순위.
+- [ ] 폰트 **합성 글리프 빈칸** — é/ñ/CJK 사라짐. cmap fmt12 미지원. (font.rs:216,357) ← 다음 우선
+- [x] CSS **미디어쿼리 em/rem + 특성평가 + 미인식→불일치**. (ba15d97)
+- [x] CSS **rem 루트 font-size 기준**. (1e6c0eb)
+- [x] CSS **조상 구조 의사클래스 정확 평가** — zebra 수정. (f1e87ca)
 - [ ] Flex/CSS **flex-basis 드롭, flex:1 등폭 안됨**. (css/shorthand.rs:129, flex.rs:65)
 - [ ] Grid **`auto` 트랙=1fr 근사** — auto 1fr(라벨+필드) 깨짐. (grid.rs:327)
-- [ ] JS **`let` 반복별 바인딩 없음** — 클로저 [3,3,3]. (interp/mod.rs:1751)
+- [x] JS **`let` 반복별 바인딩** — 클로저 [0,1,2]. (faa2dc6)
 - [ ] JS **구조분해 할당 `[a,b]=arr` 거부**. (parser.rs:765)
+- [ ] JS **new Promise(executor) 미구현** — 모던 async 깨짐. (interp/mod.rs:2882) ← 다음 우선
 - [ ] JS **Math.round 음수/min·max NaN** 스펙 위반. (builtins.rs:1256)
 - [ ] JS **String indexOf/split 인자, lastIndexOf 없음**. (builtins.rs:1315)
+
+### 이번 세션 완료(8): !important, font+hex, media, rem, zebra, 문자열이스케이프,
+### let-바인딩 + (이전) 개행기반 ASI 표준화. 모두 테스트+실사이트 검증, 459 테스트 그린.
 
 ## 티어2 — 눈에 띄지만 빈도 낮음
 
