@@ -666,7 +666,8 @@ pub(super) fn json_stringify(v: &Value) -> Option<String> {
         }
         Value::Obj(map) => {
             let m = map.borrow();
-            let mut keys: Vec<&String> = m.keys().collect();
+            // __proto__ 링크는 직렬화 대상 아님
+            let mut keys: Vec<&String> = m.keys().filter(|k| *k != "__proto__").collect();
             keys.sort();
             let parts: Vec<String> = keys
                 .into_iter()

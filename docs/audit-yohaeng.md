@@ -9,8 +9,8 @@
 
 - [ ] **JS 객체 프로퍼티 순서** — HashMap 백엔드라 for-in/Object.keys 순서 랜덤,
   JSON.stringify 는 정렬로 가림. 삽입 순서(정수키 먼저) 보장 필요. (interp/mod.rs:441, value.rs:645)
-- [ ] **JS 프로토타입 링크** — new F() 가 prototype 을 스냅샷 복사(링크 아님).
-  instanceof, 인스턴스 상속, constructor 다 깨짐. (interp/mod.rs:2867)
+- [x] **JS 프로토타입 링크** — new F() 가 prototype 을 __proto__ 로 링크(스냅샷 아님).
+  체인 조회 + function-ctor instanceof + __proto__ 비열거(keys/for-in/JSON/hasOwnProp). (다음 커밋)
 - [ ] **JS ToPrimitive** — 강제변환 시 toString/valueOf 안 부름. `${obj}`→[object Object]. (value.rs:421, mod.rs:3018)
 - [ ] **JS 진짜 Promise/async** — new Promise 미구현, reject/.catch/await-pending 삼킴. (mod.rs:2882, 2042)
 - [ ] **float in nearest-BFC** — float 이 직속 부모에 갇힘. 다중 float·타 블록 우회 불가. (layout/mod.rs:1049)

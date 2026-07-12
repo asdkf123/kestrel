@@ -1629,7 +1629,7 @@ impl Interp {
                     let mut map = HashMap::new();
                     let collect = |src: &HashMap<String, Value>, map: &mut HashMap<String, Value>| {
                         for (k, v) in src.iter() {
-                            if !consumed.contains(k.as_str()) {
+                            if !consumed.contains(k.as_str()) && k != "__proto__" {
                                 map.insert(k.clone(), v.clone());
                             }
                         }
@@ -1887,7 +1887,8 @@ impl Interp {
             Stmt::ForIn { name, obj, body } => {
                 let target = self.eval(obj, env)?;
                 let keys: Vec<String> = match &target {
-                    Value::Obj(m) => m.borrow().keys().cloned().collect(),
+                    // __proto__ 링크는 열거 대상 아님(JS 에서 non-enumerable accessor)
+                    Value::Obj(m) => m.borrow().keys().filter(|k| *k != "__proto__").cloned().collect(),
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.chars().count()).map(|i| i.to_string()).collect(),
                     _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
@@ -2009,7 +2010,9 @@ impl Interp {
                         match self.eval(e, env)? {
                             Value::Obj(o) => {
                                 for (k, v) in o.borrow().iter() {
-                                    map.insert(k.clone(), v.clone());
+                                    if k != "__proto__" {
+                                        map.insert(k.clone(), v.clone());
+                                    }
                                 }
                             }
                             Value::Instance(inst) => {
@@ -2408,6 +2411,32 @@ impl Interp {
         }
     }
 
+    // __proto__ 링크를 따라 프로퍼티를 찾는다. getter 면 this=원 객체로 호출. 순환 방지.
+    fn proto_chain_lookup(
+        &mut self,
+        map: &Rc<RefCell<HashMap<String, Value>>>,
+        key: &str,
+        this: &Value,
+    ) -> Result<Option<Value>, String> {
+        let mut proto = map.borrow().get("__proto__").cloned();
+        let mut depth = 0;
+        while let Some(Value::Obj(p)) = proto {
+            depth += 1;
+            if depth > 100 {
+                break; // 순환/과도한 체인 방어
+            }
+            let found = p.borrow().get(key).cloned();
+            match found {
+                Some(Value::Getter(g)) => {
+                    return Ok(Some(self.call_value((*g).clone(), Some(this.clone()), vec![])?))
+                }
+                Some(v) => return Ok(Some(v)),
+                None => proto = p.borrow().get("__proto__").cloned(),
+            }
+        }
+        Ok(None)
+    }
+
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         // .constructor — 값 타입의 전역 생성자 (core-js/프레임워크의 타입판별·종/species 에 필수).
         // 객체/인스턴스가 자체 constructor 프로퍼티를 가지면 그것 우선.
@@ -2456,8 +2485,12 @@ impl Interp {
                         self.call_value((*g).clone(), Some(recv.clone()), vec![])
                     }
                     Some(v) => Ok(v),
-                    // 내장 메서드 폴백
-                    None => match key {
+                    // own 에 없으면 프로토타입 체인(__proto__)을 따라 조회.
+                    None => {
+                        if let Some(pv) = self.proto_chain_lookup(map, key, recv)? {
+                            return Ok(pv);
+                        }
+                        match key {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
                         // propertyIsEnumerable: own 프로퍼티면 열거가능(단순 모델) → hasOwnProperty 로 근사.
                         // core-js 등이 {}.propertyIsEnumerable.call(...) 로 기능탐지 → 없으면 크래시.
@@ -2488,7 +2521,8 @@ impl Interp {
                         }
                         // Object.prototype 폴백 — 인스턴스 객체도 valueOf/toString/hasOwnProperty 등
                         _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),
-                    },
+                        }
+                    }
                 }
             }
             Value::Arr(a) => {
@@ -2986,16 +3020,22 @@ impl Interp {
             }
             // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
             // new f() — 일반 함수를 생성자로 (ES6 이전 패턴, 미니파이 코드 다수).
-            // 새 객체를 this 로 함수 실행. f.prototype 메서드를 인스턴스에 복사(간이 체인).
+            // 새 객체의 __proto__ 를 f.prototype 에 '링크'(스냅샷 복사 아님) → 이후
+            // F.prototype.m 추가도 인스턴스에 반영되고 프로토타입 체인 조회가 동작한다.
             // 함수가 객체를 반환하면 그것 우선(JS 규칙).
             Value::Fn(func) => {
                 let obj = Rc::new(RefCell::new(HashMap::new()));
-                let proto = func.props.borrow().get("prototype").cloned();
-                if let Some(Value::Obj(p)) = proto {
-                    for (k, v) in p.borrow().iter() {
-                        obj.borrow_mut().insert(k.clone(), v.clone());
+                // f.prototype 지연 생성(없으면) 후 링크. borrow 를 먼저 끊고 match.
+                let existing = func.props.borrow().get("prototype").cloned();
+                let proto = match existing {
+                    Some(p @ Value::Obj(_)) => p,
+                    _ => {
+                        let p = Value::Obj(Rc::new(RefCell::new(HashMap::new())));
+                        func.props.borrow_mut().insert("prototype".to_string(), p.clone());
+                        p
                     }
-                }
+                };
+                obj.borrow_mut().insert("__proto__".to_string(), proto);
                 let this = Value::Obj(obj);
                 let ret = self.call_value(Value::Fn(func), Some(this.clone()), args)?;
                 return Ok(match ret {
@@ -3216,6 +3256,25 @@ impl Interp {
                         cur = c.parent.clone();
                     }
                     return Ok(Value::Bool(found));
+                }
+                // function 생성자: l 의 __proto__ 체인에 F.prototype 이 있으면 인스턴스.
+                if let (Value::Obj(lm), Value::Fn(func)) = (&l, &r) {
+                    let fp = func.props.borrow().get("prototype").cloned();
+                    if let Some(Value::Obj(fp)) = fp {
+                        let mut proto = lm.borrow().get("__proto__").cloned();
+                        let mut depth = 0;
+                        while let Some(Value::Obj(p)) = proto {
+                            depth += 1;
+                            if depth > 100 {
+                                break;
+                            }
+                            if Rc::ptr_eq(&p, &fp) {
+                                return Ok(Value::Bool(true));
+                            }
+                            proto = p.borrow().get("__proto__").cloned();
+                        }
+                    }
+                    return Ok(Value::Bool(false));
                 }
                 // 내장 생성자별 값 타입 판정 (feature-detection/에러 처리에 흔함)
                 let obj_has = |key: &str| -> bool {
@@ -4282,6 +4341,36 @@ mod tests {
         // 함수가 객체를 반환하면 그것 우선 (JS 규칙)
         assert_eq!(run_num("function F(){return {v:99};} new F().v"), 99.0);
         assert_eq!(run_str("typeof isFinite"), "function");
+    }
+
+    #[test]
+    fn prototype_linked_not_snapshotted() {
+        // 인스턴스 생성 '후'에 prototype 에 추가한 메서드도 보여야 함(링크, 스냅샷 아님).
+        let src = "function C(){this.n=10;} var c = new C(); \
+            C.prototype.later = function(){ return this.n + 5; }; c.later()";
+        assert_eq!(run_num(src), 15.0);
+        // 공유 프로토타입: 두 인스턴스가 같은 메서드를 본다
+        let src2 = "function P(){} P.prototype.hi = function(){ return 7; }; \
+            var a = new P(), b = new P(); a.hi() + b.hi()";
+        assert_eq!(run_num(src2), 14.0);
+    }
+
+    #[test]
+    fn instanceof_function_constructor() {
+        assert!(run_bool("function F(){} var x = new F(); x instanceof F"));
+        assert!(run_bool("function F(){} function G(){} var x = new F(); !(x instanceof G)"));
+    }
+
+    #[test]
+    fn proto_link_not_enumerated() {
+        // __proto__ 링크는 Object.keys/for-in/JSON 에 노출되지 않는다.
+        assert_eq!(run_num("function C(){this.a=1;} var c=new C(); Object.keys(c).length"), 1.0);
+        assert_eq!(run_str("function C(){this.a=1;} var c=new C(); Object.keys(c)[0]"), "a");
+        assert_eq!(run_str("function C(){this.a=1;} var c=new C(); JSON.stringify(c)"), "{\"a\":1}");
+        assert!(run_bool("function C(){this.a=1;} var c=new C(); !c.hasOwnProperty('__proto__')"));
+        // for-in 은 own 키만(__proto__ 제외)
+        assert_eq!(run_num(
+            "function C(){this.a=1;this.b=2;} var c=new C(); var n=0; for(var k in c) n++; n"), 2.0);
     }
 
     #[test]

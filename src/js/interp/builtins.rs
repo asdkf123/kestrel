@@ -503,7 +503,8 @@ impl Interp {
             Native::HasOwnProperty => {
                 let key = args.first().map(to_display).unwrap_or_default();
                 let has = match &recv {
-                    Some(Value::Obj(m)) => m.borrow().contains_key(&key),
+                    // __proto__ 는 own 프로퍼티 아님(상속 accessor)
+                    Some(Value::Obj(m)) => key != "__proto__" && m.borrow().contains_key(&key),
                     Some(Value::Arr(a)) => {
                         key.parse::<usize>().map(|i| i < a.borrow().len()).unwrap_or(false)
                     }
@@ -1913,8 +1914,12 @@ impl Interp {
             Native::Noop => Ok(Value::Undefined),
             Native::ObjectKeys => match args.first() {
                 Some(Value::Obj(m)) => {
-                    let keys: Vec<Value> =
-                        m.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                    let keys: Vec<Value> = m
+                        .borrow()
+                        .keys()
+                        .filter(|k| *k != "__proto__")
+                        .map(|k| Value::Str(k.clone()))
+                        .collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
                 Some(Value::Arr(a)) => {
@@ -1931,7 +1936,9 @@ impl Interp {
                 for src in &args[1..] {
                     if let Value::Obj(m) = src {
                         for (k, v) in m.borrow().iter() {
-                            target.borrow_mut().insert(k.clone(), v.clone());
+                            if k != "__proto__" {
+                                target.borrow_mut().insert(k.clone(), v.clone());
+                            }
                         }
                     }
                 }
