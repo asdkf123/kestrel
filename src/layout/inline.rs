@@ -100,6 +100,7 @@ struct TextStyle {
     bg: Option<Color>, // 인라인 요소 배경(<mark>/background 있는 span 등). 글리프 뒤에 칠함.
     border: Option<(Color, f32, f32)>, // 인라인 테두리 (색, 두께, radius) — 태그/뱃지/kbd.
     border_run: u32, // 테두리 요소 식별자 (인접한 별개 요소가 하나로 병합되지 않게).
+    spacer: f32, // >0 이면 이 항목은 글리프 없는 가로 간격(인라인 요소 margin/border/padding 좌우).
 }
 
 // 인라인 요소의 테두리 (균일 두께/색만 근사, border-radius 포함).
@@ -183,6 +184,7 @@ impl<'a> LayoutBox<'a> {
             bg: None, // 블록 자체 배경은 paint 가 따로 칠함 — 인라인 자손만 여기서
             border: None,
             border_run: 0,
+            spacer: 0.0,
         };
 
         // white-space: nowrap/pre 는 폭 기반 줄바꿈 안 함. pre 계열은 \n 을 강제 개행,
@@ -360,15 +362,21 @@ impl<'a> LayoutBox<'a> {
         // bidi: 문자 시퀀스의 임베딩 레벨(글리프와 1:1) + 글리프별 advance(재정렬용)
         let base_rtl = matches!(self.styled_node.value("direction"),
             Some(Value::Keyword(ref k)) if k == "rtl");
-        let all_chars: Vec<char> =
-            words.iter().flat_map(|(w, _, _)| w.iter().map(|&(c, _)| c)).collect();
+        // spacer 항목은 글리프를 내지 않으므로 bidi 레벨(글리프 1:1)에서 제외한다.
+        let all_chars: Vec<char> = words
+            .iter()
+            .flat_map(|(w, _, _)| w.iter().filter(|&&(_, st)| st.spacer <= 0.0).map(|&(c, _)| c))
+            .collect();
         let levels = bidi_levels(&all_chars, base_rtl);
         let mut glyph_adv: Vec<f32> = Vec::with_capacity(all_chars.len());
         // 인라인 테두리 조각: (run, 줄 top y, x0, x1, 색, 두께, radius). 나중에 병합.
         let mut border_segs: Vec<(u32, f32, f32, f32, Color, f32, f32)> = Vec::new();
 
         for (word, force_break, glue) in &words {
-            let word_w: f32 = word.iter().map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing).sum();
+            let word_w: f32 = word
+                .iter()
+                .map(|&(ch, st)| if st.spacer > 0.0 { st.spacer } else { resolve(ch, st.px).2 + letter_spacing })
+                .sum();
             let need_wrap = can_wrap && pen_x > line_left && pen_x + word_w > line_right;
             if *force_break || need_wrap {
                 baseline += line_height;
@@ -385,6 +393,13 @@ impl<'a> LayoutBox<'a> {
             let mut word_px_max = 0.0f32;
             let mut word_color = Color { r: 0, g: 0, b: 0, a: 255 };
             for &(ch, st) in word {
+                // spacer: 글리프 없이 pen_x 만 전진 (인라인 요소 좌우 margin/border/padding).
+                // 배경/테두리는 word_x0..pen_x 범위로 이 간격을 포함해 칠해진다.
+                if st.spacer > 0.0 {
+                    pen_x += st.spacer;
+                    word_px_max = word_px_max.max(st.px);
+                    continue;
+                }
                 // RTL 런(홀수 레벨)에서 괄호/부등호 등은 시각적으로 미러 (UAX#9 L4)
                 let ch = if levels.get(self.glyphs.len()).map_or(false, |&l| l % 2 == 1) {
                     mirror_char(ch)
@@ -688,9 +703,22 @@ fn collect_node<'a>(
                     bg: cbg,
                     border: cborder,
                     border_run: crun,
+                    spacer: 0.0,
                 };
+                // 인라인 요소의 가로 margin/border/padding 은 좌우로 후속 인라인 내용을 민다.
+                // 요소 앞뒤에 글리프 없는 spacer 를 삽입해 그 간격을 만든다(§10.3.1, 배경/테두리 포함).
+                let z = Value::Length(0.0, crate::css::Unit::Px);
+                let hx = |a: &str, b: &str| node.lookup(a, b, &z).to_px();
+                let lead = hx("margin-left", "margin") + hx("border-left-width", "border-width") + hx("padding-left", "padding");
+                let trail = hx("margin-right", "margin") + hx("border-right-width", "border-width") + hx("padding-right", "padding");
+                if lead > 0.0 {
+                    runs.push(("\u{E000}".to_string(), TextStyle { spacer: lead, ..cstyle }));
+                }
                 for child in &node.children {
                     collect_node(child, cstyle, runs, hrefs, next_run);
+                }
+                if trail > 0.0 {
+                    runs.push(("\u{E000}".to_string(), TextStyle { spacer: trail, ..cstyle }));
                 }
             }
         },

@@ -3178,6 +3178,31 @@ mod tests {
     }
 
     #[test]
+    fn inline_horizontal_padding_advances_content() {
+        let fs = fonts();
+        // 인라인 <span> 의 padding-left 30 이 뒤 글리프를 최소 30px 밀어야 한다(§10.3.1).
+        let ss = crate::css::parse(
+            "div { display: block; font-size: 16px; } .p { padding-left: 30px; }".to_string(),
+        );
+        let root = crate::html::parse_dom("<div>A<span class=\"p\">B</span></div>".to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 300.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        fn glyph_xs(b: &LayoutBox, out: &mut Vec<f32>) {
+            out.extend(b.glyphs.iter().map(|g| g.x));
+            for c in &b.children {
+                glyph_xs(c, out);
+            }
+        }
+        let mut xs = Vec::new();
+        glyph_xs(&lb, &mut xs);
+        assert!(xs.len() >= 2, "A,B 두 글리프");
+        let (a, b) = (xs[0], xs[xs.len() - 1]);
+        assert!(b - a >= 30.0, "padding-left 30 이 B 를 밀어냄: 실제 간격 {}", b - a);
+    }
+
+    #[test]
     fn float_escapes_non_bfc_wrapper() {
         let fs = fonts();
         // §9.5: float 은 최근접 BFC 소속. 비BFC 래퍼는 float 을 담지 않아 높이가 0 이고,
