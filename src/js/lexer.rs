@@ -514,11 +514,12 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
             out.push(Tok::Template(parts));
             continue;
         }
-        // 식별자/키워드 ('#' 은 private 필드 수용용 — 클래스 미지원이라 관용 처리)
-        if c.is_ascii_alphabetic() || c == '_' || c == '$' || c == '#' {
+        // 식별자/키워드. 유니코드 식별자 지원(café/你好 등): ID_Start≈is_alphabetic,
+        // ID_Continue≈is_alphanumeric. '#'은 private 필드, '_'/'$'는 허용.
+        if c.is_alphabetic() || c == '_' || c == '$' || c == '#' {
             let start = i;
             i += 1;
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == '_' || b[i] == '$') {
+            while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_' || b[i] == '$') {
                 i += 1;
             }
             let word: String = b[start..i].iter().collect();

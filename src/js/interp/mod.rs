@@ -4487,6 +4487,15 @@ mod tests {
     }
 
     #[test]
+    fn unicode_identifiers() {
+        // 유니코드 식별자(비ASCII 문자·숫자) 인식.
+        assert_eq!(run_num("var café = 5; café"), 5.0);
+        assert_eq!(run_num("let 你好 = 7; 你好"), 7.0);
+        assert_eq!(run_num("const Ω = 3; Ω * 2"), 6.0);
+        assert_eq!(run_num("var π=3; π"), 3.0);
+    }
+
+    #[test]
     fn native_function_strict_equality() {
         // 같은 내장 함수는 === 로 동일 (기능 탐지/함수 비교에 쓰임).
         assert!(run_bool("Math.round === Math.round"));

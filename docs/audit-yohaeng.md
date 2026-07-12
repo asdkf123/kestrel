@@ -89,7 +89,7 @@
 - [ ] JS **정규식 vs 나눗셈 `)`/`}` 뒤 오판**. (lexer.rs:174)
 - [~] JS **클래스 제너레이터(*)/async 메서드** 지원. 계산된 이름[expr]/객체리터럴 메서드는 후속(동적키 필요). (ccc73f8)
 - [x] JS **레이블 break/continue + 레이블 문**(중첩 루프 탈출, 레이블 블록 break). (e806035)
-- [ ] JS **유니코드 식별자 미지원**. (lexer.rs:454)
+- [x] JS **유니코드 식별자**(ID_Start≈is_alphabetic, ID_Continue≈is_alphanumeric). (다음 커밋)
 - [~] JS **Map/Set SameValueZero(c090180) + const 재대입 금지(bfbd894) + 네이티브함수 ===(1003a26)** 완료. typeof Symbol 은 후속.
 
 ## 저심각 (스킵 가능)
