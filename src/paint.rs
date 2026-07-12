@@ -316,11 +316,6 @@ impl Canvas {
         }
     }
 
-    // 둥근 사각형 채우기 (모서리 안티에일리어싱). radius 는 물리 px, 균일.
-    pub fn fill_round_rect(&mut self, color: Color, rect: Rect, radius: f32) {
-        self.fill_round_rect4(color, rect, [radius; 4]);
-    }
-
     // 네 모서리 반경(물리 px): [top-left, top-right, bottom-right, bottom-left].
     pub fn fill_round_rect4(&mut self, color: Color, rect: Rect, radii: [f32; 4]) {
         if rect.width <= 0.0 || rect.height <= 0.0 {
@@ -854,8 +849,6 @@ pub enum DisplayItem {
     Sticky { top: f32, y0: f32, inner: Box<DisplayItem> },
     // 픽셀 마스크 클립 (둥근 overflow / clip-path circle·ellipse). inner 를 shape 로 마스킹.
     Clipped { shape: ClipShape, inner: Box<DisplayItem> },
-    // mix-blend-mode: inner 를 backdrop 과 mode 로 합성.
-    Blended { mode: BlendMode, inner: Box<DisplayItem> },
     // backdrop-filter: blur() — 뒤 배경(이미 그려진 캔버스)을 rect 영역에서 흐린다.
     BackdropBlur { rect: Rect, radius: f32 },
     // 오프스크린 레이어: 서브트리를 격리 합성한 뒤 opacity + blend 로 한 번에 얹는다
@@ -1848,7 +1841,6 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
         // sticky 래퍼는 클립 전에 감싸지 않으므로 여기 도달 안 함 (exhaustive 용)
         sticky @ DisplayItem::Sticky { .. } => Some(sticky),
         clipped @ DisplayItem::Clipped { .. } => Some(clipped),
-        blended @ DisplayItem::Blended { .. } => Some(blended),
         layer @ DisplayItem::Layer { .. } => Some(layer),
     }
 }
@@ -2334,7 +2326,6 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
-        DisplayItem::Blended { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| filter_item(it, funcs)),
         DisplayItem::BackdropBlur { .. } => {}
     }
@@ -2412,7 +2403,6 @@ fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
         }
         DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Clipped { inner, .. } => rotate_item(inner, cx, cy, angle),
-        DisplayItem::Blended { inner, .. } => rotate_item(inner, cx, cy, angle),
         DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| rotate_item(it, cx, cy, angle)),
         DisplayItem::BackdropBlur { .. } => {}
     }
@@ -2445,7 +2435,6 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
         DisplayItem::Image { .. } => {} // 이미지 per-pixel 알파는 별도 — 근사로 스킵
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Clipped { inner, .. } => scale_item_alpha(inner, f),
-        DisplayItem::Blended { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Layer { opacity, .. } => *opacity *= f,
         DisplayItem::BackdropBlur { .. } => {}
     }
@@ -2605,12 +2594,6 @@ fn draw_item(
             canvas.clip = Some(phys);
             draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
             canvas.clip = prev;
-        }
-        DisplayItem::Blended { mode, inner } => {
-            let prev = canvas.blend_mode;
-            canvas.blend_mode = *mode;
-            draw_item(canvas, inner, scroll_y, scale, vh, fonts, cache, images);
-            canvas.blend_mode = prev;
         }
         DisplayItem::BackdropBlur { rect, radius } => {
             let r = scale_rect(rect);

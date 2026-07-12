@@ -20,6 +20,8 @@ pub struct ElementData {
     pub attributes: AttrMap,
 }
 
+// text/elem: 테스트에서만 쓰이는 노드 생성자 (비-테스트 빌드에선 미사용).
+#[allow(dead_code)]
 pub fn text(data: String) -> Node {
     Node { children: Vec::new(), node_type: NodeType::Text(data) }
 }

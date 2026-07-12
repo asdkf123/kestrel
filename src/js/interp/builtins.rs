@@ -2113,8 +2113,6 @@ impl Interp {
                             Value::Undefined
                         }
                     }
-                    // FlatMap 은 콜백이 필요 — 위 콜백 처리부에서 처리됨(여기 도달 안 함).
-                    ArrOp::FlatMap => Value::Undefined,
                     ArrOp::Fill => {
                         // arr.fill(value, start?, end?): 제자리 채우고 배열 반환.
                         let val = args.first().cloned().unwrap_or(Value::Undefined);

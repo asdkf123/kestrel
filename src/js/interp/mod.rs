@@ -1394,11 +1394,6 @@ impl Interp {
         None
     }
 
-    // promise 면 마이크로태스크를 비운 뒤 이행값을, 아니면 값 그대로 (Promise.all 등).
-    fn promise_value(&mut self, v: &Value) -> Value {
-        self.promise_settle_state(v).1
-    }
-
     // promise 를 드레인해 정착 상태를 (true=이행/false=거부, 값/이유)로 반환.
     // thenable 아닌 값은 (true, 값). 펜딩은 (true, undefined) 근사.
     fn promise_settle_state(&mut self, v: &Value) -> (bool, Value) {

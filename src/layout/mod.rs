@@ -1798,18 +1798,6 @@ impl<'a> LayoutBox<'a> {
             }
         }
     }
-
-    // overflow(-x/-y) 가 hidden/clip/scroll/auto 여서 자손이 이 박스로 클리핑되는가.
-    fn overflow_clips_self(&self) -> bool {
-        for prop in ["overflow", "overflow-x", "overflow-y"] {
-            if let Some(Value::Keyword(k)) = self.styled_node.value(prop) {
-                if matches!(k.as_str(), "hidden" | "clip" | "scroll" | "auto") {
-                    return true;
-                }
-            }
-        }
-        false
-    }
 }
 
 
