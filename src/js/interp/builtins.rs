@@ -2094,6 +2094,70 @@ impl Interp {
             Native::StructuredClone => {
                 Ok(deep_clone(args.first().unwrap_or(&Value::Undefined), 0))
             }
+            Native::ReflectGet => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                self.member_get(&target, &key)
+            }
+            Native::ReflectSet => {
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                let val = args.get(2).cloned().unwrap_or(Value::Undefined);
+                let mut ok = false;
+                match args.first() {
+                    Some(Value::Obj(o)) => {
+                        o.borrow_mut().insert(key, val);
+                        ok = true;
+                    }
+                    Some(Value::Instance(i)) => {
+                        i.fields.borrow_mut().insert(key, val);
+                        ok = true;
+                    }
+                    _ => {}
+                }
+                Ok(Value::Bool(ok))
+            }
+            Native::ReflectHas => {
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                let has = match args.first() {
+                    Some(Value::Obj(m)) => {
+                        !is_internal_key(&key)
+                            && (m.borrow().contains_key(&key)
+                                || self
+                                    .proto_chain_lookup(m, &key, args.first().unwrap())
+                                    .map(|v| v.is_some())
+                                    .unwrap_or(false))
+                    }
+                    Some(Value::Instance(i)) => i.fields.borrow().contains_key(&key),
+                    _ => false,
+                };
+                Ok(Value::Bool(has))
+            }
+            Native::ReflectDeleteProperty => {
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                if let Some(Value::Obj(o)) = args.first() {
+                    o.borrow_mut().remove(&key);
+                }
+                Ok(Value::Bool(true))
+            }
+            Native::ReflectApply => {
+                // Reflect.apply(fn, thisArg, argsList)
+                let f = args.first().cloned().unwrap_or(Value::Undefined);
+                let this = args.get(1).cloned();
+                let arg_list = match args.get(2) {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                self.call_value(f, this, arg_list)
+            }
+            Native::ReflectConstruct => {
+                // Reflect.construct(fn, argsList)
+                let f = args.first().cloned().unwrap_or(Value::Undefined);
+                let arg_list = match args.get(1) {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                self.construct(f, arg_list)
+            }
             Native::LsGetItem => {
                 let k = args.first().map(to_display).unwrap_or_default();
                 Ok(self.storage.get(&k).map(|v| Value::Str(v.clone())).unwrap_or(Value::Null))

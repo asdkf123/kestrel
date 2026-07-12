@@ -331,6 +331,12 @@ pub enum Native {
     // 받고 아무것도 안 함 (window.addEventListener 등 — 창 이벤트는 아직 없음)
     Noop,
     StructuredClone,
+    ReflectGet,
+    ReflectSet,
+    ReflectHas,
+    ReflectDeleteProperty,
+    ReflectApply,
+    ReflectConstruct,
     ObjectKeys,
     ObjectValues,
     ObjectEntries,
@@ -861,6 +867,18 @@ impl Interp {
         env_declare(&global, "decodeURIComponent", Value::Native(Native::DecodeUriComponent));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
         env_declare(&global, "structuredClone", Value::Native(Native::StructuredClone));
+        // Reflect 네임스페이스 (Proxy/프레임워크 코드에서 흔함)
+        let mut reflect_ns = ObjMap::new();
+        reflect_ns.insert("get".to_string(), Value::Native(Native::ReflectGet));
+        reflect_ns.insert("set".to_string(), Value::Native(Native::ReflectSet));
+        reflect_ns.insert("has".to_string(), Value::Native(Native::ReflectHas));
+        reflect_ns.insert("deleteProperty".to_string(), Value::Native(Native::ReflectDeleteProperty));
+        reflect_ns.insert("ownKeys".to_string(), Value::Native(Native::ObjectKeys));
+        reflect_ns.insert("getPrototypeOf".to_string(), Value::Native(Native::ObjectGetPrototypeOf));
+        reflect_ns.insert("apply".to_string(), Value::Native(Native::ReflectApply));
+        reflect_ns.insert("construct".to_string(), Value::Native(Native::ReflectConstruct));
+        reflect_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
+        env_declare(&global, "Reflect", Value::Obj(Rc::new(RefCell::new(reflect_ns))));
         env_declare(&global, "NaN", Value::Num(f64::NAN));
         env_declare(&global, "Infinity", Value::Num(f64::INFINITY));
         env_declare(&global, "isFinite", Value::Native(Native::NumIsFinite));
@@ -4547,6 +4565,18 @@ mod tests {
         assert_eq!(run_str("Object.fromEntries(new Map([['k','v']])).k"), "v");
         // 삽입 순서 유지
         assert_eq!(run_str("Object.keys(Object.fromEntries([['z',1],['a',2]])).join(',')"), "z,a");
+    }
+
+    #[test]
+    fn reflect_namespace() {
+        assert_eq!(run_num("Reflect.get({a:5},'a')"), 5.0);
+        assert_eq!(run_num("var o={}; Reflect.set(o,'x',9); o.x"), 9.0);
+        assert!(run_bool("Reflect.has({a:1},'a')"));
+        assert!(run_bool("!Reflect.has({a:1},'b')"));
+        assert_eq!(run_num("Reflect.ownKeys({a:1,b:2}).length"), 2.0);
+        assert!(run_bool("var o={a:1}; Reflect.deleteProperty(o,'a'); o.a === undefined"));
+        assert_eq!(run_num("Reflect.apply(function(a,b){return a+b;},null,[2,3])"), 5.0);
+        assert_eq!(run_num("function P(x){this.x=x;} Reflect.construct(P,[7]).x"), 7.0);
     }
 
     #[test]
