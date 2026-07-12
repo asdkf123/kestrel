@@ -1223,14 +1223,28 @@ impl Parser {
                 continue; // 멤버 사이 세미콜론 허용
             }
             let is_static = self.eat(&Tok::Static);
-            // get/set 접근자: get 은 접근자로 분리, set 은 소비만(할당 시 미호출 근사)
+            // async 메서드: async 뒤가 메서드 이름/`*` 이면 비동기 표시.
+            let is_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
+                && matches!(
+                    self.toks.get(self.pos + 1),
+                    Some(Tok::Ident(_)) | Some(Tok::Str(_)) | Some(Tok::Star)
+                );
+            if is_async {
+                self.pos += 1;
+            }
+            // 제너레이터 메서드: *name(){}
+            let is_generator = self.eat(&Tok::Star);
+            // get/set 접근자: get 은 접근자로 분리, set 은 소비만(할당 시 미호출 근사).
+            // 단 get/set 바로 뒤가 '(' 면 이름이 get/set 인 메서드다.
             let mut accessor = None; // Some("get") | Some("set")
-            if let Some(Tok::Ident(w)) = self.peek() {
-                if (w == "get" || w == "set")
-                    && matches!(self.toks.get(self.pos + 1), Some(Tok::Ident(_)))
-                {
-                    accessor = Some(w.clone());
-                    self.pos += 1;
+            if !is_async && !is_generator {
+                if let Some(Tok::Ident(w)) = self.peek() {
+                    if (w == "get" || w == "set")
+                        && !matches!(self.toks.get(self.pos + 1), Some(Tok::LParen) | Some(Tok::Assign) | Some(Tok::Semi))
+                    {
+                        accessor = Some(w.clone());
+                        self.pos += 1;
+                    }
                 }
             }
             let mname = self.member_name()?;
@@ -1254,9 +1268,9 @@ impl Parser {
             } else if accessor.as_deref() == Some("set") {
                 // setter: 할당 훅 미지원 → 조용히 버림(메서드로 오인 방지)
             } else if is_static {
-                statics.push((mname, params, body));
+                statics.push((mname, params, body, is_generator, is_async));
             } else {
-                methods.push((mname, params, body));
+                methods.push((mname, params, body, is_generator, is_async));
             }
         }
         self.pos += 1; // '}'

@@ -64,9 +64,9 @@ pub struct ClassDef {
     pub name: Option<String>,
     pub parent: Option<Box<Expr>>,
     pub ctor: Option<(Vec<String>, Vec<Stmt>)>,
-    // (이름, 파라미터, 몸통)
-    pub methods: Vec<(String, Vec<String>, Vec<Stmt>)>,
-    pub statics: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    // (이름, 파라미터, 몸통, is_generator, is_async)
+    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool)>,
+    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool)>,
     // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스)
     pub getters: Vec<(String, Vec<String>, Vec<Stmt>)>,
     // 인스턴스 필드: (이름, 초기화식) — 생성 시 this 에 설정

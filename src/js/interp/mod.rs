@@ -3077,40 +3077,40 @@ impl Interp {
             },
             None => None,
         };
-        let mk = |params: &Vec<String>, body: &Vec<Stmt>| {
+        let mk = |params: &Vec<String>, body: &Vec<Stmt>, is_generator: bool, is_async: bool| {
             Rc::new(JsFn {
                 params: params.clone(),
                 body: body.clone(),
                 env: env.clone(),
                 is_arrow: false,
-                is_generator: false,
-                is_async: false,
+                is_generator,
+                is_async,
                 this: None,
                 super_class: parent.clone(), // super.x → 이 클래스의 부모
                 props: RefCell::new(HashMap::new()),
             })
         };
-        let ctor = def.ctor.as_ref().map(|(p, b)| mk(p, b));
+        let ctor = def.ctor.as_ref().map(|(p, b)| mk(p, b, false, false));
         let mut methods = HashMap::new();
-        for (name, p, b) in &def.methods {
-            methods.insert(name.clone(), mk(p, b));
+        for (name, p, b, gen, asy) in &def.methods {
+            methods.insert(name.clone(), mk(p, b, *gen, *asy));
         }
         let mut getters = HashMap::new();
         for (name, p, b) in &def.getters {
-            getters.insert(name.clone(), mk(p, b));
+            getters.insert(name.clone(), mk(p, b, false, false));
         }
         // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출
         let mut fields = Vec::new();
         for (name, init) in &def.fields {
             let f = init
                 .as_ref()
-                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))]));
+                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))], false, false));
             fields.push((name.clone(), f));
         }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
-        for (name, p, b) in &def.statics {
-            statics.insert(name.clone(), Value::Fn(mk(p, b)));
+        for (name, p, b, gen, asy) in &def.statics {
+            statics.insert(name.clone(), Value::Fn(mk(p, b, *gen, *asy)));
         }
         let cls = Rc::new(JsClass {
             name: def.name.clone().unwrap_or_else(|| "(anonymous)".to_string()),
@@ -3459,6 +3459,28 @@ mod tests {
     fn labeled_block_break() {
         // 레이블 붙은 블록에서 break 로 탈출 → 이후 문 건너뜀.
         assert_eq!(run_num("let r=0; block: { r=1; break block; r=99; } r"), 1.0);
+    }
+
+    #[test]
+    fn class_generator_method() {
+        // *gen() 메서드가 반복자를 돌려주고 for-of 로 소비 가능.
+        let src = "class C { *gen() { yield 1; yield 2; yield 3; } } \
+            let s = 0; for (const x of new C().gen()) s += x; s";
+        assert_eq!(run_num(src), 6.0);
+    }
+
+    #[test]
+    fn class_async_method_returns_thenable() {
+        // async 메서드는 파싱/실행되고 then 을 가진 값(Promise)을 돌려준다.
+        let src = "class C { async foo() { return 42; } } \
+            typeof new C().foo().then";
+        assert_eq!(run_str(src), "function");
+    }
+
+    #[test]
+    fn class_regular_and_static_methods_still_work() {
+        assert_eq!(run_num("class C { m() { return 7; } static s() { return 9; } } \
+            new C().m() + C.s()"), 16.0);
     }
 
     #[test]

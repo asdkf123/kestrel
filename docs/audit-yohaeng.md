@@ -85,7 +85,7 @@
 - [ ] JS **JSON replacer/space/toJSON 무시, __marker 누출**. (value.rs:628)
 - [ ] JS **Number→문자열 Rust규칙**(1e21, toFixed 반올림). (value.rs:7)
 - [ ] JS **정규식 vs 나눗셈 `)`/`}` 뒤 오판**. (lexer.rs:174)
-- [ ] JS **계산된/제너레이터/async 멤버명 미지원**. (parser.rs:1176)
+- [~] JS **클래스 제너레이터(*)/async 메서드** 지원. 계산된 이름[expr]/객체리터럴 메서드는 후속(동적키 필요). (다음 커밋)
 - [x] JS **레이블 break/continue + 레이블 문**(중첩 루프 탈출, 레이블 블록 break). (e806035)
 - [ ] JS **유니코드 식별자 미지원**. (lexer.rs:454)
 - [ ] JS **strict_eq 동일 네이티브함수 false, Map/Set NaN, const 재대입 허용, typeof Symbol=object**. (value.rs:470)
