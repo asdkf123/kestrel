@@ -2024,6 +2024,44 @@ impl Interp {
             Native::ArrayIsArray => {
                 Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
             }
+            Native::ArrayOf => Ok(Value::Arr(ArrayObj::new(args))),
+            Native::ArrayFrom => {
+                let src = args.first().cloned().unwrap_or(Value::Undefined);
+                let map_fn = args.get(1).cloned().filter(is_callable);
+                // 이터러블(배열/문자열/Set/Map/반복자)이면 그대로, 아니면 array-like(length).
+                let items: Vec<Value> = match &src {
+                    Value::Arr(_)
+                    | Value::Str(_)
+                    | Value::SetVal(_)
+                    | Value::MapVal(_) => self.iterate_to_vec(&src),
+                    Value::Obj(o)
+                        if o.borrow().contains_key("__items") || o.borrow().contains_key("next") =>
+                    {
+                        self.iterate_to_vec(&src)
+                    }
+                    // array-like: length + 인덱스 프로퍼티
+                    Value::Obj(o) => {
+                        let len = o.borrow().get("length").map(to_num).unwrap_or(0.0);
+                        let len = if len.is_finite() && len > 0.0 { len as usize } else { 0 };
+                        (0..len)
+                            .map(|i| o.borrow().get(&i.to_string()).cloned().unwrap_or(Value::Undefined))
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
+                // mapFn(value, index) 적용
+                let out = match map_fn {
+                    Some(f) => {
+                        let mut r = Vec::with_capacity(items.len());
+                        for (i, v) in items.into_iter().enumerate() {
+                            r.push(self.call_value(f.clone(), None, vec![v, Value::Num(i as f64)])?);
+                        }
+                        r
+                    }
+                    None => items,
+                };
+                Ok(Value::Arr(ArrayObj::new(out)))
+            }
             Native::SetTimeout | Native::SetInterval => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);
                 if !matches!(callback, Value::Fn(_) | Value::Native(_)) {

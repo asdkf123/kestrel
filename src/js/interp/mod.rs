@@ -333,6 +333,8 @@ pub enum Native {
     ObjectKeys,
     ObjectAssign,
     ArrayIsArray,
+    ArrayFrom, // Array.from(iterable|array-like, mapFn?)
+    ArrayOf,   // Array.of(...args)
     SetTimeout,
     SetInterval,
     ClearTimer,
@@ -884,6 +886,8 @@ impl Interp {
         // Array.prototype: 모든 배열 메서드를 담아 Array.prototype.slice.call(x) 지원
         let mut array_ns = ObjMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
+        array_ns.insert("from".to_string(), Value::Native(Native::ArrayFrom));
+        array_ns.insert("of".to_string(), Value::Native(Native::ArrayOf));
         let mut array_proto = ObjMap::new();
         for (name, op) in [
             ("forEach", ArrOp::ForEach),
@@ -4506,6 +4510,19 @@ mod tests {
         assert!(run_bool("class A{} var a=new A(); a.valueOf() === a"));
         // 클래스가 toString 정의하면 그것 우선
         assert_eq!(run_str("class A{ toString(){ return 'custom'; } } new A().toString()"), "custom");
+    }
+
+    #[test]
+    fn array_from_and_of() {
+        // Array.from: 이터러블/문자열(코드포인트)/Set/array-like/mapFn.
+        assert_eq!(run_str("Array.from([1,2,3]).join(',')"), "1,2,3");
+        assert_eq!(run_num("Array.from('a😀b').length"), 3.0); // 코드 포인트
+        assert_eq!(run_num("Array.from(new Set([1,1,2,2,3])).length"), 3.0);
+        assert_eq!(run_str("Array.from({length:3}, function(v,i){return i*2;}).join(',')"), "0,2,4");
+        assert_eq!(run_str("Array.from({0:'a',1:'b',length:2}).join(',')"), "a,b");
+        // Array.of: 인자 그대로(Array(7)과 달리 [7])
+        assert_eq!(run_num("Array.of(7).length"), 1.0);
+        assert_eq!(run_str("Array.of(1,2,3).join(',')"), "1,2,3");
     }
 
     #[test]
