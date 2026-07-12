@@ -2163,6 +2163,9 @@ impl Interp {
                     // 내장 메서드 폴백
                     None => match key {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
+                        // propertyIsEnumerable: own 프로퍼티면 열거가능(단순 모델) → hasOwnProperty 로 근사.
+                        // core-js 등이 {}.propertyIsEnumerable.call(...) 로 기능탐지 → 없으면 크래시.
+                        "propertyIsEnumerable" => Ok(Value::Native(Native::HasOwnProperty)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
                         _ if is_date_obj(map) => {
