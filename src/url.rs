@@ -13,6 +13,47 @@ pub enum UrlError {
     NoHost,
 }
 
+/// RFC 3986 §5.2.4 remove_dot_segments — 경로의 "." / ".." 세그먼트를 해소한다.
+/// 예: "/a/b/../c.css" → "/a/c.css", "/dir/." → "/dir/", "/a/.." → "/".
+/// 쿼리(?…)/프래그먼트는 경로가 아니므로 호출측이 떼고 넘긴다.
+pub fn remove_dot_segments(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    // ".." 는 상위로, "." 와 빈 세그먼트는 버린다. 루트 위로는 못 올라간다.
+    let mut out: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            s => out.push(s),
+        }
+    }
+    // 원본이 디렉터리로 끝나면(슬래시/./..) 결과도 슬래시로 끝나야 한다.
+    let dir_like = path.ends_with('/')
+        || path.ends_with("/.")
+        || path.ends_with("/..")
+        || path == "."
+        || path == "..";
+    let mut s = String::new();
+    if absolute {
+        s.push('/');
+    }
+    s.push_str(&out.join("/"));
+    if dir_like && !s.ends_with('/') {
+        s.push('/');
+    }
+    s
+}
+
+// 경로에 붙은 쿼리는 보존하고 경로 부분만 dot 세그먼트를 해소한다.
+fn normalize_with_query(path_and_query: &str) -> String {
+    match path_and_query.split_once('?') {
+        Some((p, q)) => format!("{}?{}", remove_dot_segments(p), q),
+        None => remove_dot_segments(path_and_query),
+    }
+}
+
 impl Url {
     pub fn parse(input: &str) -> Result<Url, UrlError> {
         let (scheme, rest) = input.split_once("://").ok_or(UrlError::NoScheme)?;
@@ -48,26 +89,37 @@ impl Url {
             // 프로토콜 상대 (//host/path)
             Url::parse(&format!("{}://{}", self.scheme, rest)).ok()
         } else if href.starts_with('/') {
-            Some(Url {
-                scheme: self.scheme.clone(),
-                host: self.host.clone(),
-                port: self.port,
-                path: href.split('#').next().unwrap_or("/").to_string(),
-            })
+            let p = href.split('#').next().unwrap_or("/");
+            Some(self.with_path(&normalize_with_query(p)))
         } else {
-            // 현재 경로의 디렉터리 기준 상대
-            let mut path = self.path.clone();
-            match path.rfind('/') {
-                Some(i) => path.truncate(i + 1),
-                None => path = "/".to_string(),
+            // 프래그먼트만(#x) → 기준 URL 그대로 (RFC 3986 §5.3)
+            let no_frag = href.split('#').next().unwrap_or("");
+            if no_frag.is_empty() {
+                return Some(self.clone());
             }
-            path.push_str(href.split('#').next().unwrap_or(""));
-            Some(Url {
-                scheme: self.scheme.clone(),
-                host: self.host.clone(),
-                port: self.port,
-                path,
-            })
+            // 쿼리만(?x) → 기준 경로 + 새 쿼리
+            if let Some(q) = no_frag.strip_prefix('?') {
+                let base_path = self.path.split('?').next().unwrap_or("/");
+                return Some(self.with_path(&format!("{}?{}", base_path, q)));
+            }
+            // 현재 경로의 디렉터리 기준 상대 → dot 세그먼트 해소
+            let base_path = self.path.split('?').next().unwrap_or("/");
+            let mut dir = base_path.to_string();
+            match dir.rfind('/') {
+                Some(i) => dir.truncate(i + 1),
+                None => dir = "/".to_string(),
+            }
+            dir.push_str(no_frag);
+            Some(self.with_path(&normalize_with_query(&dir)))
+        }
+    }
+
+    fn with_path(&self, path: &str) -> Url {
+        Url {
+            scheme: self.scheme.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            path: path.to_string(),
         }
     }
 
@@ -130,6 +182,41 @@ mod tests {
         assert_eq!(d.path, "/dir/a.css");
         // 프로토콜 상대
         assert_eq!(base.join("//cdn.com/s.css").unwrap().host, "cdn.com");
+    }
+
+    #[test]
+    fn removes_dot_segments_rfc3986() {
+        // §5.2.4 — 상위 이동/현재 디렉터리 해소
+        assert_eq!(remove_dot_segments("/a/b/../c.css"), "/a/c.css");
+        assert_eq!(remove_dot_segments("/a/b/./c"), "/a/b/c");
+        assert_eq!(remove_dot_segments("/a/b/.."), "/a/");
+        assert_eq!(remove_dot_segments("/a/.."), "/");
+        assert_eq!(remove_dot_segments("/a/b/"), "/a/b/");
+        assert_eq!(remove_dot_segments("/a/b/."), "/a/b/");
+        // 루트 위로는 못 올라간다
+        assert_eq!(remove_dot_segments("/../x"), "/x");
+        assert_eq!(remove_dot_segments("/a/../../x"), "/x");
+        // 다중 상위
+        assert_eq!(remove_dot_segments("/a/b/c/../../d"), "/a/d");
+    }
+
+    #[test]
+    fn joins_dot_relative_paths() {
+        let base = Url::parse("https://site.com/a/b/page.html").unwrap();
+        // 상위 디렉터리 상대 (실사이트 CSS/JS/이미지에 흔함)
+        assert_eq!(base.join("../c.css").unwrap().path, "/a/c.css");
+        assert_eq!(base.join("../../top.css").unwrap().path, "/top.css");
+        assert_eq!(base.join("./same.css").unwrap().path, "/a/b/same.css");
+        // "." → 현재 디렉터리
+        assert_eq!(base.join(".").unwrap().path, "/a/b/");
+        assert_eq!(base.join("..").unwrap().path, "/a/");
+        // 루트 상대도 정규화
+        assert_eq!(base.join("/x/../y.css").unwrap().path, "/y.css");
+        // 쿼리는 보존
+        assert_eq!(base.join("../c.css?v=2").unwrap().path, "/a/c.css?v=2");
+        // 쿼리만 / 프래그먼트만 (RFC 3986 §5.3)
+        assert_eq!(base.join("?q=1").unwrap().path, "/a/b/page.html?q=1");
+        assert_eq!(base.join("#frag").unwrap().path, "/a/b/page.html");
     }
 
     #[test]
