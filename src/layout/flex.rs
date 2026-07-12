@@ -45,6 +45,9 @@ impl<'a> LayoutBox<'a> {
         let mut cross = vec![0.0f32; n];
         let mut grow = vec![0.0f32; n];
         let mut shrink = vec![1.0f32; n]; // flex-shrink 기본 1
+        // 자동 최소 크기(min-content): 아이템은 이 아래로 줄지 않는다(CSS Flexbox §4.5).
+        // min-width/height:auto(기본)일 때 적용. 명시 min 이 있으면 그 값 사용.
+        let mut min_main = vec![0.0f32; n];
         let mut main_fixed = vec![false; n];
         let mut cross_fixed = vec![false; n];
         let measure_w = if row {
@@ -57,6 +60,20 @@ impl<'a> LayoutBox<'a> {
             cb.content.x = ox;
             cb.content.y = oy;
             cb.content.width = measure_w;
+            // min-content 측정(row): 폭 0 으로 레이아웃 → used_width = 최장 단어(줄 수 없는 최소).
+            if row {
+                let mut cb0 = cb;
+                cb0.content.width = 0.0;
+                child.layout(cb0, fonts, images);
+                let extra = child.dimensions.margin_box().width - child.dimensions.content.width;
+                let mc = child.used_width + extra;
+                // 명시 min-width 가 있으면 그것을(0 포함), 없으면 자동 최소=min-content.
+                min_main[i] = match child.styled_node.value("min-width") {
+                    Some(Length(m, Px)) => m + extra,
+                    Some(Value::Keyword(ref k)) if k == "0" => 0.0,
+                    _ => mc,
+                };
+            }
             child.layout(cb, fonts, images);
             let mbox = child.dimensions.margin_box();
             main_fixed[i] = matches!(child.styled_node.value(main_prop), Some(Length(_, Px)));
@@ -144,12 +161,13 @@ impl<'a> LayoutBox<'a> {
                     sizes[k] += free * grow[i] / total_grow;
                 }
             } else if free < 0.0 {
-                // flex-shrink: 음수 공간을 shrink[i]×basis[i] 가중치로 분배 (넘침 방지)
+                // flex-shrink: 음수 공간을 shrink[i]×basis[i] 가중치로 분배 (넘침 방지).
+                // 단 아이템은 자동 최소 크기(min-content) 아래로 줄지 않는다(§4.5).
                 let weighted: f32 = line.iter().map(|&i| shrink[i] * basis[i]).sum();
                 if weighted > 0.0 {
                     for (k, &i) in line.iter().enumerate() {
                         sizes[k] += free * (shrink[i] * basis[i]) / weighted;
-                        sizes[k] = sizes[k].max(0.0);
+                        sizes[k] = sizes[k].max(min_main[i]);
                     }
                 }
             }
