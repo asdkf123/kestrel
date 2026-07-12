@@ -1084,14 +1084,15 @@ impl Parser {
         Ok(e)
     }
 
-    // ( arg, arg, ... ) — 여는 괄호에서 시작해 닫는 괄호까지 소비
+    // ( arg, arg, ... ) — 여는 괄호에서 시작해 닫는 괄호까지 소비. 트레일링 콤마 허용.
     fn arg_list(&mut self) -> Result<Vec<Expr>, String> {
         self.expect(&Tok::LParen)?;
         let mut args = Vec::new();
-        if self.eat(&Tok::RParen) {
-            return Ok(args);
-        }
         loop {
+            // 빈 목록 `()` 또는 트레일링 콤마 뒤 닫힘 `f(a,)`
+            if self.eat(&Tok::RParen) {
+                break;
+            }
             if self.eat_spread() {
                 args.push(Expr::Spread(Box::new(self.assignment()?)));
             } else {

@@ -247,6 +247,19 @@ mod tests {
     }
 
     #[test]
+    fn trailing_comma_in_call_args() {
+        // f(2, 3,) — 함수 호출 인자의 트레일링 콤마 (ES2017+, 번들러 코드에 흔함)
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>function f(a, b) { return a + b; } \
+             document.getElementById('t').textContent = String(f(2, 3,));</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "5");
+    }
+
+    #[test]
     fn encode_uri_preserves_reserved() {
         // encodeURI 는 예약문자(/ ? : = &)를 보존, 공백만 %20.
         let mut dom = crate::html::parse_dom(
