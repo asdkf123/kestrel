@@ -1600,17 +1600,15 @@ impl<'a> LayoutBox<'a> {
         let auto_pref_sum: f32 = auto_cols.iter().map(|&c| col_pref[c]).sum();
         // 테이블 used 폭(§17.5.2 auto layout): 명시 width(px/%)면 계산된 폭(avail)을,
         // width:auto 면 shrink-to-fit = min(선호폭 합, avail). 좁은 내용의 표는
-        // 컨테이너를 다 채우지 않고 내용 폭으로 줄어든다(인포박스·작은 표).
-        // 고정폭(px/%) 열이 있으면 그 폭 기준을 채우려는 의도로 보고 avail 유지.
-        // 순수 auto 열만인 표(작은 데이터표·인포박스)만 내용 폭으로 줄인다.
-        let explicit_width = matches!(self.styled_node.value("width"), Some(Length(_, _)));
         // border-spacing 은 열 사이·표 가장자리 공간을 먹으므로 열 배분 폭에서 뺀다.
         let (bsx, bsy) = self.table_border_spacing();
         let total_sx = bsx * (ncols as f32 + 1.0);
         let avail_cols = (avail - total_sx).max(0.0);
-        let shrink = !explicit_width && total_fixed <= 0.0;
-        let table_pref = total_fixed + auto_pref_sum;
-        let table_width = if shrink { table_pref.min(avail_cols).max(0.0) } else { avail_cols };
+        // 표 폭 = 컨테이너 채움. auto 표 shrink-to-fit(§17.5.2)은 min/max-content 정식
+        // 측정 후로 보류 — used_width 근사는 중첩 표에서 preferred 폭을 오측정해(HN 댓글표
+        // 12px 붕괴) 회귀를 냈다. 정식 측정 전엔 항상 채우는 편이 안전.
+        let _ = auto_pref_sum;
+        let table_width = avail_cols;
         let remaining = (table_width - total_fixed).max(0.0);
         let mut col_w = vec![0.0f32; ncols];
         for c in 0..ncols {
@@ -1637,10 +1635,6 @@ impl<'a> LayoutBox<'a> {
         }
         // <caption>: 표 위에 표 폭으로 배치하고, 행 시작 y 를 캡션 높이만큼 내린다.
         let table_w: f32 = col_w.iter().sum::<f32>() + total_sx;
-        // shrink-to-fit: 표 박스 폭을 실제 열 폭 합으로 줄인다(배경/테두리/부모 폭 반영).
-        if shrink && table_w < avail {
-            self.dimensions.content.width = table_w;
-        }
         let mut caption_h = 0.0;
         let caption_idx = self.children.iter().position(|c| {
             matches!(&c.styled_node.node.node_type, NodeType::Element(e) if e.tag_name == "caption")
