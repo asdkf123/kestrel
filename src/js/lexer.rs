@@ -280,6 +280,10 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
     // 이후 개행 누적. 토큰이 생기는 반복 시작 시 소비.
     let mut nl_before: Vec<bool> = Vec::new();
     let mut pending_nl = false;
+    // 괄호 문맥: 각 '(' 가 제어문 헤더(if/while/for/switch/catch/with)인지 스택.
+    // 헤더를 닫는 ')' 뒤에는 정규식이 올 수 있다 (if(x) /re/.test(y)). 그 외 ')'는 나눗셈.
+    let mut paren_headers: Vec<bool> = Vec::new();
+    let mut last_rparen_header = false;
     while i < b.len() {
         // 직전 반복에서 추가된 토큰(들)의 개행 플래그 확정 (첫 토큰만 개행, 나머지 false).
         if out.len() > nl_before.len() {
@@ -321,8 +325,13 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                 continue;
             }
         }
-        // 정규식 리터럴 vs 나눗셈: 직전 토큰이 식을 끝낼 수 있으면 나눗셈
-        if c == '/' && regex_can_start(out.last()) {
+        // 정규식 리터럴 vs 나눗셈: 직전 토큰이 식을 끝낼 수 있으면 나눗셈.
+        // 단 ')' 는 제어문 헤더를 닫는 경우엔 정규식 허용(if(x) /re/).
+        let regex_allowed = match out.last() {
+            Some(Tok::RParen) => last_rparen_header,
+            other => regex_can_start(other),
+        };
+        if c == '/' && regex_allowed {
             let start = i;
             i += 1;
             let mut in_class = false; // [...] 안의 / 는 종료가 아님
@@ -627,6 +636,18 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
             '~' => Tok::Tilde,
             other => return Err(format!("알 수 없는 문자: {:?} (위치 {})", other, i)),
         };
+        // 괄호 문맥 갱신: '(' 가 제어문 키워드 직후면 헤더로 표시, ')' 는 팝.
+        match one {
+            Tok::LParen => {
+                let header = matches!(
+                    out.last(),
+                    Some(Tok::If | Tok::While | Tok::For | Tok::Switch | Tok::Catch)
+                );
+                paren_headers.push(header);
+            }
+            Tok::RParen => last_rparen_header = paren_headers.pop().unwrap_or(false),
+            _ => {}
+        }
         out.push(one);
         i += 1;
     }

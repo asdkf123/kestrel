@@ -4491,6 +4491,18 @@ mod tests {
     }
 
     #[test]
+    fn regex_vs_division_after_paren() {
+        // 제어문 헤더 ')' 뒤는 정규식 허용.
+        assert!(run_bool("if(1) /ab/.test('xabx')"));
+        assert_eq!(run_num("var r; if(true) r = /x/.test('x') ? 1 : 0; r"), 1.0);
+        // 그룹/호출 ')' 뒤는 나눗셈 유지.
+        assert_eq!(run_num("var a=6,b=2,c=3; (a)/b/c"), 1.0);
+        assert_eq!(run_num("var r=(function(){return 10;})()/2; r"), 5.0);
+        // 일반 위치의 정규식도 유지.
+        assert_eq!(run_num("'a1b2'.match(/\\d/g).length"), 2.0);
+    }
+
+    #[test]
     fn date_parse_and_utc() {
         // Date.parse 는 new Date(문자열).getTime 과 일치, 미파싱은 NaN.
         assert!(run_bool("Date.parse('2020-01-15') === new Date('2020-01-15').getTime()"));
