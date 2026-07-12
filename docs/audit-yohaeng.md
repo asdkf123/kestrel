@@ -63,7 +63,7 @@
 - [x] 페인트 **폴리곤 AA**(세로 서브스캔라인 4 + 가로 부분커버리지). (bc07013)
 - [x] 페인트 **이미지 바이리니어 스케일링**(프리멀티플라이, 투명가장자리 안전). 타일은 최근접 유지. (d15516c)
 - [ ] 페인트 **select 화살표 14px/progress·meter 하드코딩**. (paint.rs:1344,1329)
-- [x] 페인트 **SVG line=방향맞춘 quad + arc(A) 정확 평탄화**(F.6 중심 파라미터화). (d887cec, 다음 커밋)
+- [x] 페인트 **SVG line=방향맞춘 quad + arc(A) 정확 평탄화**(F.6 중심 파라미터화). (d887cec, f7a093c)
 - [ ] 레이아웃 **인라인 레벨 SVG 미배치** — width/height 속성은 블록일 때만 반영(mod.rs:255).
   기본 display 의 `<svg>`(인라인)는 크기/렌더 안 됨. display:block/inline-block 필요.
   인라인 대체요소(img/inline-block/svg) 전반 문제와 동류(mod.rs 인라인). (검증 중 발견)
