@@ -1098,6 +1098,27 @@ fn style_node<'a>(
                     _ => None,
                 })
                 .unwrap_or(DEFAULT_FONT_SIZE);
+            // font-size 가 var() 면 em/rem 해석보다 먼저 치환한다(var_props 루프는 이 뒤라 늦음).
+            // 커스텀 프로퍼티는 상속되므로 부모 계산값 + 자신 것으로 맵을 만든다.
+            if let Some(Value::Var(raw)) = values.get("font-size").cloned() {
+                let mut custom: HashMap<String, String> = HashMap::new();
+                if let Some(p) = parent {
+                    for (k, v) in p.iter() {
+                        if let (true, Value::Keyword(s)) = (k.starts_with("--"), v) {
+                            custom.insert(k.clone(), s.clone());
+                        }
+                    }
+                }
+                for (k, v) in values.iter() {
+                    if let (true, Value::Keyword(s)) = (k.starts_with("--"), v) {
+                        custom.insert(k.clone(), s.clone());
+                    }
+                }
+                values.remove("font-size");
+                for decl in crate::css::resolve_var("font-size", &raw, &custom) {
+                    values.insert(decl.name, decl.value);
+                }
+            }
             // font-size: 상대 단위를 부모 기준으로 해석해 px 로 확정 (computed value)
             let fs = match values.get("font-size") {
                 Some(Value::Length(n, Unit::Px)) => *n,
