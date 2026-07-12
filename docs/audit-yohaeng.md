@@ -106,5 +106,11 @@
 - [x] JS **유니코드 식별자**(ID_Start≈is_alphabetic, ID_Continue≈is_alphanumeric). (9f21ee7)
 - [x] JS **Map/Set SameValueZero(c090180) + const 재대입 금지(bfbd894) + 네이티브함수 ===(1003a26)** 완료. typeof Symbol('symbol') 도 진짜 원시값으로 완료.
 
+## DOM/렌더 상호작용
+
+- [x] **getComputedStyle 빈 스텁 → 실제 계산 스타일**. 스타일 엔진의 해석값을 브리지,
+  카멜·대시·getPropertyValue, width/height 는 레이아웃 used value(px). 프렐류드 스텁 제거.
+  (초기 인라인 스크립트 시점 강제 리플로우는 후속) (mod.rs/window.rs/style.rs)
+
 ## 저심각 (스킵 가능)
 epsilon fudge, 곡선 고정분할, accent-color, 등.
