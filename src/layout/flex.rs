@@ -73,6 +73,9 @@ impl<'a> LayoutBox<'a> {
                     Some(Value::Keyword(ref k)) if k == "0" => 0.0,
                     _ => mc,
                 };
+                // 폭 0 측정으로 쌓인 글리프/치수(줄바꿈으로 부풀린 높이)를 제거해
+                // 뒤이은 실제 측정이 오염되지 않게 한다(layout 은 비멱등 — 글리프 누적).
+                child.clear_render();
             }
             child.layout(cb, fonts, images);
             let mbox = child.dimensions.margin_box();
