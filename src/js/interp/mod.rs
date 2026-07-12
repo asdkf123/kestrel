@@ -517,13 +517,31 @@ pub type EnvRef = Rc<RefCell<Env>>;
 
 pub struct Env {
     vars: HashMap<String, Value>,
+    // const 로 선언된 이름 (재대입 시 TypeError). 바인딩과 같은 스코프에 표시.
+    consts: std::collections::HashSet<String>,
     parent: Option<EnvRef>,
 }
 
 impl Env {
     fn new(parent: Option<EnvRef>) -> EnvRef {
-        Rc::new(RefCell::new(Env { vars: HashMap::new(), parent }))
+        Rc::new(RefCell::new(Env {
+            vars: HashMap::new(),
+            consts: std::collections::HashSet::new(),
+            parent,
+        }))
     }
+}
+
+// name 바인딩이 있는 스코프에서 그것이 const 인가 (체인 탐색, env_get 과 동일 해석).
+fn env_is_const(env: &EnvRef, name: &str) -> bool {
+    let (has, is_const, parent) = {
+        let e = env.borrow();
+        (e.vars.contains_key(name), e.consts.contains(name), e.parent.clone())
+    };
+    if has {
+        return is_const;
+    }
+    parent.map_or(false, |p| env_is_const(&p, name))
 }
 
 fn env_get(env: &EnvRef, name: &str) -> Option<Value> {
@@ -1842,6 +1860,7 @@ impl Interp {
         match stmt {
             Stmt::VarDecl { kind, decls } => {
                 let is_var = matches!(kind, crate::js::ast::DeclKind::Var);
+                let is_const = matches!(kind, crate::js::ast::DeclKind::Const);
                 for (pat, init) in decls {
                     match init {
                         // var 는 하이스트된 바인딩에 대입(env_set), let/const 는 새로 선언
@@ -1852,6 +1871,15 @@ impl Interp {
                         // var x; (초기화 없음)은 하이스트된 값 보존(덮지 않음). let x; 는 undefined.
                         None if !is_var => self.bind_pattern(pat, Value::Undefined, env, false)?,
                         None => {}
+                    }
+                    // const 로 선언한 이름들을 이 스코프에 const 로 표시(재대입 금지).
+                    if is_const {
+                        let mut names = Vec::new();
+                        pattern_names(pat, &mut names);
+                        let mut e = env.borrow_mut();
+                        for n in names {
+                            e.consts.insert(n);
+                        }
                     }
                 }
                 Ok(Flow::Normal(Value::Undefined))
@@ -3530,6 +3558,13 @@ impl Interp {
     fn assign_to(&mut self, target: &Expr, value: Value, env: &EnvRef) -> Result<(), String> {
         match target {
             Expr::Ident(name) => {
+                // const 재대입은 TypeError (표준).
+                if env_is_const(env, name) {
+                    self.thrown = Some(Value::Str(format!(
+                        "TypeError: Assignment to constant variable."
+                    )));
+                    return Err(format!("상수 '{}' 에 재대입", name));
+                }
                 env_set(env, name, value);
                 Ok(())
             }
@@ -4449,6 +4484,19 @@ mod tests {
         assert_eq!(run_str("JSON.stringify({__typename:'X', a:1})"),
             "{\"__typename\":\"X\",\"a\":1}");
         assert_eq!(run_str("Object.keys({__typename:'X'}).join(',')"), "__typename");
+    }
+
+    #[test]
+    fn const_reassignment_throws() {
+        // const 재대입은 TypeError(잡을 수 있음). 재선언 없는 정상 사용은 유지.
+        assert!(Interp::new().run("const x=1; x=2;").is_err());
+        assert_eq!(run_num("const x=1; try{ x=2; }catch(e){} x"), 1.0);
+        // const 객체의 프로퍼티 변경은 허용(바인딩만 상수)
+        assert_eq!(run_num("const o={a:1}; o.a=5; o.a"), 5.0);
+        // for-of/for-in const 루프 변수는 반복마다 새 바인딩 → 정상
+        assert_eq!(run_num("var s=0; for(const v of [1,2,3]) s+=v; s"), 6.0);
+        // let 은 재대입 가능
+        assert_eq!(run_num("let y=1; y=2; y"), 2.0);
     }
 
     #[test]
