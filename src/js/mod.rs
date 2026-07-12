@@ -247,6 +247,23 @@ mod tests {
     }
 
     #[test]
+    fn anchor_href_reflects_absolute() {
+        // element.href 는 절대 URL 반사, getAttribute('href') 는 원문.
+        let mut dom = crate::html::parse_dom(
+            "<a id=\"lnk\" href=\"/foo/bar?q=1\">L</a><p id=\"t\">x</p>\
+             <script>var a = document.getElementById('lnk'); \
+             document.getElementById('t').textContent = a.href + ' ' + a.getAttribute('href');\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(
+            text_of_id(&dom, "t").unwrap(),
+            "https://localhost/foo/bar?q=1 /foo/bar?q=1"
+        );
+    }
+
+    #[test]
     fn parentnode_append_prepend() {
         // append/prepend (가변 인자, 문자열→텍스트 노드). 순서 확인.
         let mut dom = crate::html::parse_dom(

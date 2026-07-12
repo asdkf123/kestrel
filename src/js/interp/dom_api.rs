@@ -136,6 +136,8 @@ impl Interp {
     }
 
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
+        // href/src 절대 URL 해석용 base (dom borrow 전에 복제).
+        let base = self.base_url.clone();
         // 레이아웃 측정 프로퍼티 (dom 아레나 borrow 전에 처리 — 이중 borrow 방지).
         // offset* 는 border box, client* 는 근사로 같은 박스 크기를 돌려준다.
         match key {
@@ -259,6 +261,30 @@ impl Interp {
             "className" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => {
                     Ok(Value::Str(e.attributes.get("class").cloned().unwrap_or_default()))
+                }
+                _ => Ok(Value::Undefined),
+            },
+            // URL 반사 프로퍼티: 절대 URL 로 해석 (getAttribute 는 원문 반환).
+            "href" | "src" | "action" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => {
+                    let raw = e.attributes.get(key).cloned().unwrap_or_default();
+                    let abs = match &base {
+                        Some(b) if !raw.is_empty() => crate::url::Url::parse(b)
+                            .ok()
+                            .and_then(|u| u.join(&raw))
+                            .map(|u| u.as_string())
+                            .unwrap_or(raw),
+                        _ => raw,
+                    };
+                    Ok(Value::Str(abs))
+                }
+                _ => Ok(Value::Undefined),
+            },
+            // 문자열 속성 반사 (원문 그대로).
+            "alt" | "title" | "name" | "type" | "rel" | "target" | "placeholder" | "method"
+            | "lang" | "dir" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => {
+                    Ok(Value::Str(e.attributes.get(key).cloned().unwrap_or_default()))
                 }
                 _ => Ok(Value::Undefined),
             },
