@@ -4611,6 +4611,25 @@ mod tests {
     }
 
     #[test]
+    fn generator_yield_in_loop_condition() {
+        // while 조건 안 yield: 매 반복 조건 재평가(양방향 next 로 종료 제어)
+        // g: 소비자가 0 을 보낼 때까지 받은 값을 합산.
+        assert_eq!(
+            run_num("function* g(){ var sum=0, v; while((v = yield sum)) { sum += v; } return sum; } \
+                     var it=g(); it.next(); it.next(3); it.next(4); it.next(0).value"),
+            7.0,
+        );
+        // do-while 조건 안 yield: 본문 최소 1회 후 조건 검사
+        // next(): 본문 n=1, cond=yield 1. next(true): cond 참 → n=2, cond=yield 2.
+        // next(false): cond 거짓 → 종료, return n=2.
+        assert_eq!(
+            run_num("function* g(){ var n=0; do { n++; } while(yield n); return n; } \
+                     var it=g(); it.next(); it.next(true); it.next(false).value"),
+            2.0,
+        );
+    }
+
+    #[test]
     fn generator_yield_short_circuit() {
         // && 오른쪽 yield 는 왼쪽이 truthy 일 때만 실행(부작용 로그로 확인)
         assert_eq!(
