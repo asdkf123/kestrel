@@ -1186,28 +1186,32 @@ impl<'a> LayoutBox<'a> {
                 let avail_band = (fr_next - fl_next).max(0.0);
                 let child = &mut self.children[i];
                 // 1차(probe) 배치: 밴드 잔여 폭으로 레이아웃해 내용 폭(used_width) 측정
+                // 명시 width(%/px)면 컨테이닝 블록(컨테이너 전체 avail) 기준으로 해석 —
+                // 밴드 잔여가 아니라 컨테이너 폭에 대한 %(float 폭은 §10.3.5). auto 는 밴드에
+                // shrink-to-fit. 최종 배치도 explicit 이면 CB 폭을 넘겨 % 를 한 번만 해석한다
+                // (ow 를 넘기면 calculate_width 가 % 를 재해석해 이중 축소되던 버그).
+                let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
+                let cbw = if explicit { avail } else { avail_band };
                 let mut probe: Dimensions = Default::default();
                 probe.content.x = fl_next;
                 probe.content.y = band_top;
-                probe.content.width = avail_band;
+                probe.content.width = cbw;
                 child.layout(probe, fonts, images);
-                // 점유 폭 결정: 명시 width(퍼센트 포함, 이미 px)면 border box, 아니면 shrink-to-fit
-                let explicit = matches!(child.styled_node.value("width"), Some(Length(_, _)));
                 // auto 폭 shrink-to-fit 시 재배치 폭(ow)에 margin 도 포함해야 재계산에서
                 // margin 이 content 를 깎지 않는다 (auto 폭엔 phantom margin 이 없음).
                 let bp = child.dimensions.margin_box().width - child.dimensions.content.width;
                 let ow = if explicit {
-                    child.dimensions.border_box().width.min(avail_band)
+                    child.dimensions.border_box().width
                 } else {
                     (child.used_width + bp).min(avail_band)
                 };
-                // 2차 배치: 확정 폭·위치로 재배치 (1차 페인트 상태는 비우고 다시)
+                // 2차 배치: 확정 위치로 재배치 (1차 페인트 상태는 비우고 다시).
                 let x = if cfloat == "left" { fl_next } else { fr_next - ow };
                 child.clear_render();
                 let mut cb: Dimensions = Default::default();
                 cb.content.x = x;
                 cb.content.y = band_top;
-                cb.content.width = ow;
+                cb.content.width = if explicit { cbw } else { ow };
                 child.layout(cb, fonts, images);
                 let fbottom = band_top + child.dimensions.margin_box().height;
                 if cfloat == "left" {
@@ -3175,6 +3179,30 @@ mod tests {
             40.0,
             "padding-top 이 상쇄 차단 → innerP 의 margin 40 이 P 내부에 남음"
         );
+    }
+
+    #[test]
+    fn float_percentage_width_resolves_against_container() {
+        let fs = fonts();
+        // float 의 % width 는 컨테이너 폭 기준으로 한 번만 해석돼야(이중 축소·밴드기준 버그 방지).
+        let ss = crate::css::parse(
+            ".row { display: block; } \
+             .a { display: block; float: left; width: 60%; } \
+             .b { display: block; float: left; width: 40%; }"
+                .to_string(),
+        );
+        let root = crate::html::parse_dom(
+            "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 1000.0;
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let a = &lb.children[0];
+        let b = &lb.children[1];
+        assert!((a.dimensions.content.width - 600.0).abs() < 1.0, "a=60% → 600, 실제 {}", a.dimensions.content.width);
+        assert!((b.dimensions.content.width - 400.0).abs() < 1.0, "b=40% → 400, 실제 {}", b.dimensions.content.width);
+        assert!((b.dimensions.content.x - 600.0).abs() < 1.0, "b 는 a 오른쪽(x=600), 실제 {}", b.dimensions.content.x);
     }
 
     #[test]
