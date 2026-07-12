@@ -183,6 +183,33 @@ impl<'a> LayoutBox<'a> {
                             (None, Some(h)) => (if ih > 0.0 { h * iw / ih } else { iw }, h),
                             (None, None) => (iw, ih),
                         };
+                        // min/max 제약 (반응형 이미지: img { max-width: 100% }). 폭이 눌리고
+                        // 다른 축이 auto 면 고유 종횡비를 유지해 재계산 (height: auto 흔한 경우).
+                        let sn = self.styled_node;
+                        // base<=0(indefinite %) 또는 해석값<=0 은 무제약으로 무시.
+                        let clamp_axis = |val: f32, min_p: &str, max_p: &str, base: f32| -> f32 {
+                            let mut v = val;
+                            if let Some(mv) = sn.value(max_p) {
+                                if let Length(mx, Px) = len_px(mv, base) {
+                                    if mx > 0.0 && v > mx { v = mx; }
+                                }
+                            }
+                            if let Some(mv) = sn.value(min_p) {
+                                if let Length(mn, Px) = len_px(mv, base) {
+                                    if mn > 0.0 && v < mn { v = mn; }
+                                }
+                            }
+                            v
+                        };
+                        let w2 = clamp_axis(w, "min-width", "max-width", cbw);
+                        let h2 = clamp_axis(h, "min-height", "max-height", containing_block.content.height);
+                        let (w, h) = if ch.is_none() && (w2 - w).abs() > 0.01 && iw > 0.0 {
+                            (w2, w2 * ih / iw) // height auto: 눌린 폭에 비율 적용
+                        } else if cw.is_none() && (h2 - h).abs() > 0.01 && ih > 0.0 {
+                            (h2 * iw / ih, h2) // width auto: 눌린 높이에 비율 적용
+                        } else {
+                            (w2, h2)
+                        };
                         self.dimensions.content.width = w;
                         self.dimensions.content.height = h;
                         self.image = Some(idx);
@@ -590,19 +617,23 @@ impl<'a> LayoutBox<'a> {
 
         let (mut cw, mut ml, mut mr) = resolve_width(&width, &margin_left, &margin_right, extra, avail);
 
-        // max-width: 계산된 폭이 상한을 넘으면 고정 폭으로 재계산 (auto 마진 → 가운데 정렬)
-        if let Some(Length(mw, Px)) = style.value("max-width") {
-            let mw = if border_box { (mw - extra).max(0.0) } else { mw };
-            if cw > mw {
-                let (cw2, ml2, mr2) =
-                    resolve_width(&Length(mw, Px), &margin_left, &margin_right, extra, avail);
-                cw = cw2;
-                ml = ml2;
-                mr = mr2;
+        // max-width: 계산된 폭이 상한을 넘으면 고정 폭으로 재계산 (auto 마진 → 가운데 정렬).
+        // 퍼센트/calc/min-max 는 컨테이닝 폭 기준으로 해석 (max-width: 100% 등 반응형 핵심).
+        if let Some(v) = style.value("max-width") {
+            if let Length(mw, Px) = len_px(v, avail) {
+                let mw = if border_box { (mw - extra).max(0.0) } else { mw };
+                if cw > mw {
+                    let (cw2, ml2, mr2) =
+                        resolve_width(&Length(mw, Px), &margin_left, &margin_right, extra, avail);
+                    cw = cw2;
+                    ml = ml2;
+                    mr = mr2;
+                }
             }
         }
         // min-width: max-width 보다 우선 (마지막에 적용). 계산 폭이 하한보다 작으면 하한으로.
-        if let Some(Length(mw, Px)) = style.value("min-width") {
+        if let Some(v) = style.value("min-width") {
+          if let Length(mw, Px) = len_px(v, avail) {
             let mw = if border_box { (mw - extra).max(0.0) } else { mw };
             if cw < mw {
                 let (cw2, ml2, mr2) =
@@ -611,6 +642,7 @@ impl<'a> LayoutBox<'a> {
                 ml = ml2;
                 mr = mr2;
             }
+          }
         }
 
         let d = &mut self.dimensions;
@@ -3935,6 +3967,41 @@ mod tests {
         let img = &lb.children[0];
         assert_eq!(img.dimensions.content.width, 64.0);
         assert_eq!(img.dimensions.content.height, 48.0, "종횡비 유지 (64 × 24/32)");
+    }
+
+    #[test]
+    fn image_max_width_percent_scales_down() {
+        // 고유 800x400 이미지, 컨테이닝 폭 400, img { max-width: 100% } → 폭 400 으로 축소,
+        // height: auto 이므로 종횡비 유지해 200 으로 재계산 (반응형 이미지 핵심 패턴).
+        let root = crate::html::parse_dom("<div><img src=\"a.png\"></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; } img { display: block; max-width: 100%; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let mut images = ImageMap::new();
+        images.insert("a.png".to_string(), (0, 800, 400));
+        let lb = layout_tree(&styled, viewport, &fs, &images);
+        let img = &lb.children[0];
+        assert_eq!(img.dimensions.content.width, 400.0, "max-width:100% 로 폭 축소");
+        assert_eq!(img.dimensions.content.height, 200.0, "종횡비 유지 (400 × 400/800)");
+    }
+
+    #[test]
+    fn block_max_width_percent_clamps() {
+        // 컨테이닝 폭 400, div { max-width: 50% } → 폭 200 으로 상한 적용 (기존엔 % 무시됨).
+        let root = crate::html::parse_dom("<div class=\"c\"></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; } .c { max-width: 50%; height: 10px; }".to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, viewport, &fs, &no_images());
+        assert_eq!(lb.dimensions.content.width, 200.0, "max-width:50% → 200");
     }
 
     #[test]
