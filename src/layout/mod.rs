@@ -3707,6 +3707,26 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_track_sizes_to_content() {
+        // grid-template-columns: auto 1fr (라벨+필드) → auto 는 내용폭, 1fr 이 나머지.
+        // 이전엔 auto=1fr 근사라 반반으로 잘렸다.
+        let d = flex_layout(
+            "<div class=\"g\"><div class=\"a\">Hi</div><div class=\"b\"></div></div>",
+            ".g { display: grid; grid-template-columns: auto 1fr; font-size: 16px; } \
+             .a { display: block; } .b { display: block; height: 10px; }",
+            400.0,
+        );
+        assert!(d[0].content.width < 100.0, "auto 는 내용폭(작음): {}", d[0].content.width);
+        assert!(d[1].content.width > 250.0, "1fr 은 나머지 대부분: {}", d[1].content.width);
+        assert!(
+            (d[0].content.width + d[1].content.width - 400.0).abs() < 1.0,
+            "합 = 400: {} + {}",
+            d[0].content.width,
+            d[1].content.width
+        );
+    }
+
+    #[test]
     fn grid_template_areas_holy_grail() {
         // 명시 배치: header/footer 는 두 열 span, nav/main 은 나란히 (holy-grail)
         let d = flex_layout(

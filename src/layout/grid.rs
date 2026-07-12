@@ -41,7 +41,25 @@ impl<'a> LayoutBox<'a> {
         let cols = if spec.is_empty() {
             vec![d.content.width]
         } else {
-            resolve_grid_tracks(&spec, d.content.width, gap)
+            let gtracks = expand_grid_tracks(&spec, d.content.width, gap);
+            let ncols = gtracks.len().max(1);
+            // auto 트랙: 그 컬럼 아이템들의 내용폭(used_width) 최대치를 측정 (max-content 근사).
+            let has_auto = gtracks.iter().any(|t| matches!(t, GTrack::Auto));
+            let mut auto_content = vec![0.0f32; gtracks.len()];
+            if has_auto {
+                for i in 0..self.children.len() {
+                    let k = i % ncols;
+                    if matches!(gtracks.get(k), Some(GTrack::Auto)) {
+                        let mut cb: Dimensions = Default::default();
+                        cb.content.width = d.content.width; // 넓게 두고 shrink-to-fit 측정
+                        self.children[i].layout(cb, fonts, images);
+                        let ch = &self.children[i];
+                        let extra = ch.dimensions.margin_box().width - ch.dimensions.content.width;
+                        auto_content[k] = auto_content[k].max((ch.used_width + extra).min(d.content.width));
+                    }
+                }
+            }
+            resolve_tracks_sized(&gtracks, d.content.width, gap, &auto_content)
         };
         let ncols = cols.len().max(1);
         // 열 x 위치 (누적 폭 + gap)
@@ -87,9 +105,11 @@ impl<'a> LayoutBox<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 enum GTrack {
     Px(f32),
     Fr(f32),
+    Auto, // 내용(max-content) 기반 — 배치 시 측정
 }
 
 impl<'a> LayoutBox<'a> {
@@ -265,24 +285,43 @@ impl<'a> LayoutBox<'a> {
     }
 }
 
-// grid-template-columns 문자열 → 각 트랙의 픽셀 폭. fr 은 남는 공간을 비율 배분.
-// repeat(N, ..)/repeat(auto-fill, minmax(..))/minmax(..)/px/fr/auto 지원(근사).
+// grid-template-columns 문자열 → 각 트랙의 픽셀 폭. auto 는 내용 없이 fr(1) 근사
+// (grid-template-areas 경로용 — 내용 측정 없음). 컬럼 경로는 resolve_tracks_sized 사용.
 fn resolve_grid_tracks(spec: &str, avail: f32, gap: f32) -> Vec<f32> {
     let tracks = expand_grid_tracks(spec, avail, gap);
+    resolve_tracks_sized(&tracks, avail, gap, &[])
+}
+
+// 트랙 목록 → 픽셀 폭. auto_content[k] 가 있으면 그 auto 트랙은 내용폭, 없으면 fr(1) 근사.
+fn resolve_tracks_sized(tracks: &[GTrack], avail: f32, gap: f32, auto_content: &[f32]) -> Vec<f32> {
     let n = tracks.len();
     if n == 0 {
         return Vec::new();
     }
+    // auto 트랙 폭 확정: 측정값 있으면 그것, 없으면 fr 로 취급.
+    let auto_w = |k: usize| auto_content.get(k).copied().filter(|w| *w > 0.0);
     let total_gap = gap * (n as f32 - 1.0);
-    let fixed: f32 = tracks.iter().filter_map(|t| if let GTrack::Px(p) = t { Some(*p) } else { None }).sum();
-    let total_fr: f32 = tracks.iter().filter_map(|t| if let GTrack::Fr(f) = t { Some(*f) } else { None }).sum();
+    let mut fixed = 0.0f32;
+    let mut total_fr = 0.0f32;
+    for (k, t) in tracks.iter().enumerate() {
+        match t {
+            GTrack::Px(p) => fixed += p,
+            GTrack::Fr(f) => total_fr += f,
+            GTrack::Auto => match auto_w(k) {
+                Some(w) => fixed += w,
+                None => total_fr += 1.0, // 측정값 없음 → fr(1) 근사
+            },
+        }
+    }
     let free = (avail - total_gap - fixed).max(0.0);
     let fr_unit = if total_fr > 0.0 { free / total_fr } else { 0.0 };
     tracks
         .iter()
-        .map(|t| match t {
+        .enumerate()
+        .map(|(k, t)| match t {
             GTrack::Px(p) => *p,
             GTrack::Fr(f) => fr_unit * f,
+            GTrack::Auto => auto_w(k).unwrap_or(fr_unit),
         })
         .collect()
 }
@@ -308,23 +347,30 @@ fn expand_grid_tracks(spec: &str, avail: f32, gap: f32) -> Vec<GTrack> {
                 }
             }
         } else {
-            out.push(parse_one_grid_track(t));
+            out.push(parse_one_grid_track(t, avail));
         }
     }
     out
 }
 
-fn parse_one_grid_track(t: &str) -> GTrack {
+fn parse_one_grid_track(t: &str, avail: f32) -> GTrack {
+    let t = t.trim();
     if let Some(inner) = strip_func(t, "minmax") {
+        // minmax(min, max): max 로 근사 (max 가 fr 이면 fr, auto/content 면 auto)
         let max = inner.split(',').nth(1).unwrap_or("").trim();
-        return parse_one_grid_track(max);
+        return parse_one_grid_track(max, avail);
+    }
+    if let Some(inner) = strip_func(t, "fit-content") {
+        return parse_one_grid_track(inner.trim(), avail);
     }
     if let Some(num) = t.strip_suffix("fr") {
         GTrack::Fr(num.trim().parse().unwrap_or(1.0))
+    } else if let Some(num) = t.strip_suffix('%') {
+        GTrack::Px(num.trim().parse::<f32>().map(|p| p / 100.0 * avail).unwrap_or(0.0))
     } else if let Some(num) = t.strip_suffix("px") {
         GTrack::Px(num.trim().parse().unwrap_or(0.0))
     } else {
-        GTrack::Fr(1.0) // auto/% 등 → 1fr 근사
+        GTrack::Auto // auto/min-content/max-content/기타 → 내용 기반 (이전엔 1fr 근사)
     }
 }
 
