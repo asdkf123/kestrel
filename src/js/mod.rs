@@ -247,6 +247,37 @@ mod tests {
     }
 
     #[test]
+    fn url_constructor_and_search_params() {
+        // new URL(...) 핵심 프로퍼티 + searchParams.get (%20 디코드).
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var u = new URL('https://ex.com:8080/a/b?x=1&y=two%20words#frag'); \
+             document.getElementById('t').textContent = [u.protocol, u.hostname, u.port, \
+             u.pathname, u.search, u.hash, u.searchParams.get('x'), u.searchParams.get('y')].join('|');\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(
+            text_of_id(&dom, "t").unwrap(),
+            "https:|ex.com|8080|/a/b|?x=1&y=two%20words|#frag|1|two words"
+        );
+    }
+
+    #[test]
+    fn url_resolves_against_base() {
+        // new URL(relative, base) — 상대 경로를 base 로 해석.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var u = new URL('/foo?a=1', 'https://ex.com/bar'); \
+             document.getElementById('t').textContent = u.href;</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "https://ex.com/foo?a=1");
+    }
+
+    #[test]
     fn bare_return_then_declaration_asi() {
         // `if (!x) return` 뒤 개행 + const 선언 — ASI(값 없는 return). 렉서가 개행을
         // 안 남겨도 식을 시작 못 하는 키워드(const)로 판별. 조기 반환 흔한 패턴.

@@ -190,6 +190,12 @@ pub enum Native {
     DateCtor,
     DateMethod(DateField),
     XhrCtor,
+    UrlCtor,
+    UrlToString,
+    UrlSearchGet,
+    UrlSearchGetAll,
+    UrlSearchHas,
+    UrlSearchToString,
     XhrOpen,
     XhrSend,
     XhrSetHeader,
@@ -783,6 +789,7 @@ impl Interp {
         env_declare(&global, "Number", Value::Native(Native::NumberCtor));
         env_declare(&global, "Boolean", Value::Native(Native::BooleanCtor));
         env_declare(&global, "Date", Value::Native(Native::DateCtor));
+        env_declare(&global, "URL", Value::Native(Native::UrlCtor));
         env_declare(&global, "XMLHttpRequest", Value::Native(Native::XhrCtor));
         // Error 계열: 호출/ new 둘 다로 {name, message} 객체 생성
         for name in [
@@ -1131,6 +1138,66 @@ impl Interp {
         if let Some(Value::Obj(w)) = env_get(&self.global, "window") {
             w.borrow_mut().insert("location".to_string(), loc);
         }
+    }
+
+    // new URL(url, base?) — WHATWG URL. 핵심 프로퍼티 + searchParams(get/has/getAll/toString).
+    fn make_url(&self, args: Vec<Value>) -> Result<Value, String> {
+        let input = args.first().map(to_display).unwrap_or_default();
+        let resolved = match args.get(1) {
+            Some(b) if !matches!(b, Value::Undefined | Value::Null) => {
+                let base = to_display(b);
+                crate::url::Url::parse(&base)
+                    .ok()
+                    .and_then(|bu| bu.join(&input))
+                    .map(|u| u.as_string())
+                    .unwrap_or_else(|| input.clone())
+            }
+            _ => input.clone(),
+        };
+        let u = crate::url::Url::parse(&resolved).map_err(|_| format!("Invalid URL: {}", input))?;
+        // path 에 쿼리·프래그먼트가 붙어올 수 있으니 분리 (search 는 # 앞까지).
+        let path_no_hash = u.path.split('#').next().unwrap_or(&u.path);
+        let (pathname, search) = match path_no_hash.split_once('?') {
+            Some((p, q)) => (p.to_string(), format!("?{}", q)),
+            None => (path_no_hash.to_string(), String::new()),
+        };
+        let hash = match resolved.split_once('#') {
+            Some((_, f)) => format!("#{}", f),
+            None => String::new(),
+        };
+        let default_port = match u.scheme.as_str() {
+            "http" | "ws" => 80,
+            "https" | "wss" => 443,
+            _ => 0,
+        };
+        let port = if u.port != 0 && u.port != default_port {
+            u.port.to_string()
+        } else {
+            String::new()
+        };
+        let host = if port.is_empty() { u.host.clone() } else { format!("{}:{}", u.host, port) };
+        // searchParams: 쿼리 문자열을 담고 네이티브 메서드로 조회
+        let mut sp = HashMap::new();
+        sp.insert("__query".to_string(), Value::Str(search.trim_start_matches('?').to_string()));
+        sp.insert("get".to_string(), Value::Native(Native::UrlSearchGet));
+        sp.insert("getAll".to_string(), Value::Native(Native::UrlSearchGetAll));
+        sp.insert("has".to_string(), Value::Native(Native::UrlSearchHas));
+        sp.insert("toString".to_string(), Value::Native(Native::UrlSearchToString));
+        let search_params = Value::Obj(Rc::new(RefCell::new(sp)));
+
+        let mut m = HashMap::new();
+        m.insert("href".to_string(), Value::Str(resolved.clone()));
+        m.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
+        m.insert("host".to_string(), Value::Str(host.clone()));
+        m.insert("hostname".to_string(), Value::Str(u.host.clone()));
+        m.insert("port".to_string(), Value::Str(port));
+        m.insert("origin".to_string(), Value::Str(format!("{}://{}", u.scheme, host)));
+        m.insert("pathname".to_string(), Value::Str(pathname));
+        m.insert("search".to_string(), Value::Str(search));
+        m.insert("hash".to_string(), Value::Str(hash));
+        m.insert("searchParams".to_string(), search_params);
+        m.insert("toString".to_string(), Value::Native(Native::UrlToString));
+        Ok(Value::Obj(Rc::new(RefCell::new(m))))
     }
 
     // 이벤트 객체 생성: type/target + preventDefault/stopPropagation 등.
@@ -2745,6 +2812,7 @@ impl Interp {
                 return self.call_native(n, None, args)
             }
             Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
+            Value::Native(Native::UrlCtor) => return self.make_url(args),
             Value::Native(Native::XhrCtor) => return Ok(self.make_xhr()),
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {

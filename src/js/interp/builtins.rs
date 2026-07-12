@@ -43,6 +43,27 @@ fn uri_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+// 수신자 객체의 문자열 프로퍼티 (URL/URLSearchParams 네이티브 메서드용).
+fn recv_prop_str(recv: &Option<Value>, key: &str) -> String {
+    if let Some(Value::Obj(o)) = recv {
+        if let Some(v) = o.borrow().get(key) {
+            return to_display(v);
+        }
+    }
+    String::new()
+}
+
+// application/x-www-form-urlencoded 쿼리를 (키,값) 쌍으로. '+' → 공백, %XX 디코드.
+fn parse_query(q: &str) -> Vec<(String, String)> {
+    q.split('&')
+        .filter(|s| !s.is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            (uri_decode(&k.replace('+', " ")), uri_decode(&v.replace('+', " ")))
+        })
+        .collect()
+}
+
 // 컨텍스트의 __path 배열 조작 ([x0,y0,x1,y1,...] 평탄 저장).
 fn set_path(ctx: &Rc<RefCell<HashMap<String, Value>>>, pts: Vec<Value>) {
     ctx.borrow_mut().insert("__path".to_string(), Value::Arr(ArrayObj::new(pts)));
@@ -1694,6 +1715,32 @@ impl Interp {
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
                 Ok(Value::Str(uri_decode(&args.first().map(to_display).unwrap_or_default())))
+            }
+            Native::UrlCtor => self.make_url(args), // URL(x) (new 없이) — 관대하게 생성
+            Native::UrlToString => Ok(Value::Str(recv_prop_str(&recv, "href"))),
+            Native::UrlSearchToString => Ok(Value::Str(recv_prop_str(&recv, "__query"))),
+            Native::UrlSearchGet => {
+                let key = args.first().map(to_display).unwrap_or_default();
+                Ok(parse_query(&recv_prop_str(&recv, "__query"))
+                    .into_iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| Value::Str(v))
+                    .unwrap_or(Value::Null))
+            }
+            Native::UrlSearchGetAll => {
+                let key = args.first().map(to_display).unwrap_or_default();
+                let vals: Vec<Value> = parse_query(&recv_prop_str(&recv, "__query"))
+                    .into_iter()
+                    .filter(|(k, _)| *k == key)
+                    .map(|(_, v)| Value::Str(v))
+                    .collect();
+                Ok(Value::Arr(ArrayObj::new(vals)))
+            }
+            Native::UrlSearchHas => {
+                let key = args.first().map(to_display).unwrap_or_default();
+                Ok(Value::Bool(
+                    parse_query(&recv_prop_str(&recv, "__query")).iter().any(|(k, _)| *k == key),
+                ))
             }
             Native::IsNaN => {
                 Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))
