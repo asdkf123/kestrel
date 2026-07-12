@@ -535,12 +535,22 @@ fn gradient_color_at(stops: &[(Color, f32)], p: f32) -> Color {
         let (c1, p1) = w[1];
         if p >= p0 && p <= p1 {
             let f = if p1 > p0 { (p - p0) / (p1 - p0) } else { 0.0 };
-            let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * f).round() as u8;
+            // CSS: 그라디언트는 premultiplied alpha 로 보간 (투명 페이드가 탁해지지 않게).
+            let (a0, a1) = (c0.a as f32 / 255.0, c1.a as f32 / 255.0);
+            let a = a0 + (a1 - a0) * f;
+            let chan = |ch0: u8, ch1: u8| -> u8 {
+                let pm = ch0 as f32 * a0 + (ch1 as f32 * a1 - ch0 as f32 * a0) * f; // premultiplied lerp
+                if a > 0.0 {
+                    (pm / a).round().clamp(0.0, 255.0) as u8
+                } else {
+                    0
+                }
+            };
             return Color {
-                r: lerp(c0.r, c1.r),
-                g: lerp(c0.g, c1.g),
-                b: lerp(c0.b, c1.b),
-                a: lerp(c0.a, c1.a),
+                r: chan(c0.r, c1.r),
+                g: chan(c0.g, c1.g),
+                b: chan(c0.b, c1.b),
+                a: (a * 255.0).round() as u8,
             };
         }
     }
@@ -1934,7 +1944,7 @@ fn apply_filters(c: Color, funcs: &[(String, f32)]) -> Color {
     for (name, amt) in funcs {
         match name.as_str() {
             "grayscale" => {
-                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 r += (luma - r) * amt;
                 g += (luma - g) * amt;
                 b += (luma - b) * amt;
@@ -1965,7 +1975,7 @@ fn apply_filters(c: Color, funcs: &[(String, f32)]) -> Color {
                 b += (nb - b) * amt;
             }
             "saturate" => {
-                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 r = luma + (r - luma) * amt;
                 g = luma + (g - luma) * amt;
                 b = luma + (b - luma) * amt;
@@ -2539,9 +2549,9 @@ mod tests {
     #[test]
     fn filter_saturate_and_hue_rotate() {
         let red = Color { r: 255, g: 0, b: 0, a: 255 };
-        // saturate(0) → 회색 (빨강 휘도 ≈ 76)
+        // saturate(0) → 회색 (빨강 휘도 ≈ 54, BT.709)
         let g = apply_filters(red, &[("saturate".to_string(), 0.0)]);
-        assert!(g.r == g.g && g.g == g.b && (g.r as i32 - 76).abs() <= 3, "saturate(0)→회색 {:?}", g);
+        assert!(g.r == g.g && g.g == g.b && (g.r as i32 - 54).abs() <= 3, "saturate(0)→회색 {:?}", g);
         // hue-rotate(120deg) 로 빨강 → 초록쪽
         let h = apply_filters(red, &[("hue-rotate".to_string(), 120.0)]);
         assert!(h.g > h.r && h.g > h.b, "hue-rotate(120) 빨강→초록쪽 {:?}", h);
@@ -2779,7 +2789,7 @@ mod tests {
 
     #[test]
     fn filter_grayscale_and_invert() {
-        // grayscale(100%) 빨강 → 회색 (r=g=b=luma≈76)
+        // grayscale(100%) 빨강 → 회색 (BT.709: r=g=b=luma≈54)
         let gray = canvas_for(
             "<div></div>",
             "div { display: block; width: 2px; height: 2px; background-color: #ff0000; filter: grayscale(100%); }",
@@ -2789,7 +2799,7 @@ mod tests {
         let p = gray.pixels[0];
         assert_eq!(p.r, p.g);
         assert_eq!(p.g, p.b);
-        assert!((p.r as i32 - 76).abs() <= 2, "빨강 luma ~76, 실제 {}", p.r);
+        assert!((p.r as i32 - 54).abs() <= 2, "빨강 luma ~54(709), 실제 {}", p.r);
         // invert(100%) 검정 → 흰색
         let inv = canvas_for(
             "<div></div>",
@@ -2940,6 +2950,19 @@ mod tests {
         // 범위 밖은 양끝으로 클램프
         assert_eq!(gradient_color_at(&stops, -1.0), black);
         assert_eq!(gradient_color_at(&stops, 2.0), white);
+    }
+
+    #[test]
+    fn gradient_fade_to_transparent_premultiplied() {
+        // red → transparent 중간점: premultiplied 보간이면 rgb 는 빨강 유지, a≈127.
+        // (straight 보간이면 r≈127 로 탁해짐)
+        let stops = vec![
+            (Color { r: 255, g: 0, b: 0, a: 255 }, 0.0),
+            (Color { r: 0, g: 0, b: 0, a: 0 }, 1.0),
+        ];
+        let mid = gradient_color_at(&stops, 0.5);
+        assert!(mid.r > 240, "프리멀티 보간: 중간점도 빨강 유지 (r={})", mid.r);
+        assert!((mid.a as i32 - 127).abs() <= 2, "알파 ~127 (a={})", mid.a);
     }
 
     #[test]
