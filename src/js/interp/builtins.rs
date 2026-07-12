@@ -2030,24 +2030,34 @@ impl Interp {
                 Ok(p)
             }
             Native::PromiseAll | Native::PromiseAllSettled => {
-                let settled = matches!(n, Native::PromiseAllSettled);
+                let all_settled = matches!(n, Native::PromiseAllSettled);
                 let items = match args.into_iter().next() {
                     Some(Value::Arr(a)) => a.borrow().clone(),
                     _ => Vec::new(),
                 };
+                let p = self.new_promise();
                 let mut out = Vec::new();
                 for item in items {
-                    let v = self.promise_value(&item);
-                    if settled {
+                    let (fulfilled, v) = self.promise_settle_state(&item);
+                    if all_settled {
+                        // allSettled: 항목마다 {status, value|reason}
                         let mut m = ObjMap::new();
-                        m.insert("status".to_string(), Value::Str("fulfilled".to_string()));
-                        m.insert("value".to_string(), v);
+                        if fulfilled {
+                            m.insert("status".to_string(), Value::Str("fulfilled".to_string()));
+                            m.insert("value".to_string(), v);
+                        } else {
+                            m.insert("status".to_string(), Value::Str("rejected".to_string()));
+                            m.insert("reason".to_string(), v);
+                        }
                         out.push(Value::Obj(Rc::new(RefCell::new(m))));
+                    } else if !fulfilled {
+                        // all: 하나라도 거부되면 그 이유로 즉시 거부
+                        self.reject_promise(&p, v);
+                        return Ok(p);
                     } else {
                         out.push(v);
                     }
                 }
-                let p = self.new_promise();
                 self.resolve_promise(&p, Value::Arr(ArrayObj::new(out)));
                 Ok(p)
             }
@@ -2056,28 +2066,45 @@ impl Interp {
                     Some(Value::Arr(a)) => a.borrow().clone(),
                     _ => Vec::new(),
                 };
-                let first =
-                    items.first().map(|i| self.promise_value(i)).unwrap_or(Value::Undefined);
                 let p = self.new_promise();
-                self.resolve_promise(&p, first);
+                // 첫 항목의 정착 상태를 채택(이행/거부)
+                if let Some(first) = items.first() {
+                    let (fulfilled, v) = self.promise_settle_state(first);
+                    if fulfilled {
+                        self.resolve_promise(&p, v);
+                    } else {
+                        self.reject_promise(&p, v);
+                    }
+                }
                 Ok(p)
             }
             Native::PromiseThen => {
                 let p = recv.unwrap_or(Value::Undefined);
-                let cb = args.into_iter().next().unwrap_or(Value::Undefined);
+                let mut it = args.into_iter();
+                let on_f = it.next().unwrap_or(Value::Undefined);
+                let on_r = it.next().unwrap_or(Value::Undefined);
                 let dep = self.new_promise();
-                Ok(self.promise_then(&p, cb, dep))
+                Ok(self.promise_then(&p, on_f, on_r, dep))
             }
-            // 이행만 지원 → catch 는 자신 반환(no-op)
-            Native::PromiseCatch => Ok(recv.unwrap_or(Value::Undefined)),
-            // p.finally(cb): cb 를 인자 없이 실행하고 원래 promise 반환 (동기 근사)
+            // p.catch(onR) = then(undefined, onR)
+            Native::PromiseCatch => {
+                let p = recv.unwrap_or(Value::Undefined);
+                let on_r = args.into_iter().next().unwrap_or(Value::Undefined);
+                let dep = self.new_promise();
+                Ok(self.promise_then(&p, Value::Undefined, on_r, dep))
+            }
+            // p.finally(cb): 이행/거부 모두 cb 실행 후 원 결과(값/거부)를 전파.
+            // 동기 모델: 대기 마이크로태스크를 먼저 흘려 p 를 정착시킨 뒤 cb 실행하고
+            // p 를 그대로 반환(정착 상태 — 이행값 또는 거부이유 — 유지).
             Native::PromiseFinally => {
+                let p = recv.unwrap_or(Value::Undefined);
                 if let Some(cb) = args.into_iter().next() {
                     if is_callable(&cb) {
+                        self.drain_microtasks();
                         let _ = self.call_value(cb, None, vec![]);
                     }
                 }
-                Ok(recv.unwrap_or(Value::Undefined))
+                Ok(p)
             }
             Native::Identity => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
             Native::Fetch => {

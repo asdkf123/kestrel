@@ -714,8 +714,9 @@ pub struct Interp {
     pub timers: Vec<Timer>,
     pub cleared: std::collections::HashSet<u64>,
     next_timer_id: u64,
-    // Promise 마이크로태스크 큐: (콜백, 인자, 의존 promise). 스크립트/타이머 후 드레인.
-    microtasks: std::collections::VecDeque<(Value, Value, Value)>,
+    // Promise 마이크로태스크 큐: (핸들러, 값, 의존 promise, is_reject 반응). 핸들러가
+    // 비함수면 값을 그대로 전파(is_reject 면 dep 거부, 아니면 이행). 스크립트/타이머 후 드레인.
+    microtasks: std::collections::VecDeque<(Value, Value, Value, bool)>,
     // Function.prototype (call/apply/bind). 정체성 보존 위해 보관.
     fn_proto: Value,
     // String.prototype (문자열 메서드) — String.prototype.slice.call(x) 용.
@@ -1083,61 +1084,87 @@ impl Interp {
     }
 
     // promise 를 값으로 이행. 값이 또 promise 면 그것이 이행될 때 이어서 이행(체이닝).
+    // promise 를 이행(fulfilled)으로 정착. 값이 thenable 이면 그 상태를 채택.
     fn resolve_promise(&mut self, p: &Value, v: Value) {
         if is_promise(&v) {
-            // v 가 이행되면 p 도 같은 값으로 (Identity 콜백으로 위임)
-            self.promise_then(&v, Value::Native(Native::Identity), p.clone());
+            // p 는 v 의 상태를 채택: v 이행 → Identity 로 p 이행, v 거부 → 전파로 p 거부
+            self.promise_then(&v, Value::Native(Native::Identity), Value::Undefined, p.clone());
             return;
         }
+        self.settle(p, true, v);
+    }
+
+    // promise 를 거부(rejected)로 정착.
+    fn reject_promise(&mut self, p: &Value, reason: Value) {
+        self.settle(p, false, reason);
+    }
+
+    // 공통 정착: pending 일 때만 상태/값을 확정하고 대기 반응을 마이크로태스크로 스케줄.
+    fn settle(&mut self, p: &Value, fulfilled: bool, value: Value) {
         let Value::Obj(o) = p else { return };
         {
-            let mut m = o.borrow_mut();
-            m.insert("__state".to_string(), Value::Str("fulfilled".to_string()));
-            m.insert("__value".to_string(), v.clone());
-        }
-        // 대기 콜백을 마이크로태스크로
-        let cbs = {
             let m = o.borrow();
+            if !matches!(m.get("__state"), Some(Value::Str(s)) if s == "pending") {
+                return; // 이미 정착 — 한 번만
+            }
+        }
+        let cbs = {
+            let mut m = o.borrow_mut();
+            let state = if fulfilled { "fulfilled" } else { "rejected" };
+            m.insert("__state".to_string(), Value::Str(state.to_string()));
+            m.insert("__value".to_string(), value.clone());
             match m.get("__cbs") {
-                Some(Value::Arr(a)) => a.borrow().clone(),
+                Some(Value::Arr(a)) => {
+                    let v = a.borrow().clone();
+                    a.borrow_mut().clear();
+                    v
+                }
                 _ => Vec::new(),
             }
         };
-        for cb in cbs {
-            if let Value::Obj(c) = cb {
-                let (f, dep) = {
-                    let cm = c.borrow();
-                    (cm.get("cb").cloned().unwrap_or(Value::Undefined),
-                     cm.get("dep").cloned().unwrap_or(Value::Undefined))
-                };
-                self.microtasks.push_back((f, v.clone(), dep));
-            }
-        }
-        if let Some(Value::Arr(a)) = o.borrow().get("__cbs") {
-            a.borrow_mut().clear();
+        for reaction in cbs {
+            self.schedule_reaction(&reaction, fulfilled, value.clone());
         }
     }
 
-    // p.then(cb) → dep promise 반환. p 가 이미 이행이면 마이크로태스크로, 아니면 대기열에.
-    fn promise_then(&mut self, p: &Value, cb: Value, dep: Value) -> Value {
-        let Value::Obj(o) = p else { return Value::Undefined };
+    // 반응 레코드 {onF, onR, dep} 에서 상태에 맞는 핸들러를 골라 마이크로태스크로.
+    fn schedule_reaction(&mut self, reaction: &Value, fulfilled: bool, value: Value) {
+        if let Value::Obj(c) = reaction {
+            let cm = c.borrow();
+            let handler = if fulfilled { cm.get("onF") } else { cm.get("onR") }
+                .cloned()
+                .unwrap_or(Value::Undefined);
+            let dep = cm.get("dep").cloned().unwrap_or(Value::Undefined);
+            self.microtasks.push_back((handler, value, dep, !fulfilled));
+        }
+    }
+
+    // p.then(onF, onR) → dep promise 반환. 정착돼 있으면 즉시 마이크로태스크, 아니면 대기열에.
+    fn promise_then(&mut self, p: &Value, on_f: Value, on_r: Value, dep: Value) -> Value {
+        let Value::Obj(o) = p else { return dep };
         let (state, value) = {
             let m = o.borrow();
             (
-                match m.get("__state") { Some(Value::Str(s)) => s.clone(), _ => "pending".into() },
+                match m.get("__state") {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => "pending".into(),
+                },
                 m.get("__value").cloned().unwrap_or(Value::Undefined),
             )
         };
-        if state == "fulfilled" {
-            self.microtasks.push_back((cb, value, dep.clone()));
-        } else {
-            // 대기: {cb, dep} 를 __cbs 에 추가
-            let mut entry = ObjMap::new();
-            entry.insert("cb".to_string(), cb);
-            entry.insert("dep".to_string(), dep.clone());
-            let entry = Value::Obj(Rc::new(RefCell::new(entry)));
-            if let Some(Value::Arr(a)) = o.borrow().get("__cbs") {
-                a.borrow_mut().push(entry);
+        match state.as_str() {
+            "fulfilled" => self.microtasks.push_back((on_f, value, dep.clone(), false)),
+            "rejected" => self.microtasks.push_back((on_r, value, dep.clone(), true)),
+            _ => {
+                // 대기: {onF, onR, dep} 를 __cbs 에 추가
+                let mut entry = ObjMap::new();
+                entry.insert("onF".to_string(), on_f);
+                entry.insert("onR".to_string(), on_r);
+                entry.insert("dep".to_string(), dep.clone());
+                let entry = Value::Obj(Rc::new(RefCell::new(entry)));
+                if let Some(Value::Arr(a)) = o.borrow().get("__cbs") {
+                    a.borrow_mut().push(entry);
+                }
             }
         }
         dep
@@ -1193,28 +1220,55 @@ impl Interp {
 
     // promise 면 마이크로태스크를 비운 뒤 이행값을, 아니면 값 그대로 (Promise.all 등).
     fn promise_value(&mut self, v: &Value) -> Value {
+        self.promise_settle_state(v).1
+    }
+
+    // promise 를 드레인해 정착 상태를 (true=이행/false=거부, 값/이유)로 반환.
+    // thenable 아닌 값은 (true, 값). 펜딩은 (true, undefined) 근사.
+    fn promise_settle_state(&mut self, v: &Value) -> (bool, Value) {
         if !is_promise(v) {
-            return v.clone();
+            return (true, v.clone());
         }
         self.drain_microtasks();
         if let Value::Obj(o) = v {
             let m = o.borrow();
-            if matches!(m.get("__state"), Some(Value::Str(s)) if s == "fulfilled") {
-                return m.get("__value").cloned().unwrap_or(Value::Undefined);
+            let state = match m.get("__state") {
+                Some(Value::Str(s)) => s.clone(),
+                _ => "pending".into(),
+            };
+            let value = m.get("__value").cloned().unwrap_or(Value::Undefined);
+            if state == "rejected" {
+                return (false, value);
             }
+            return (true, value);
         }
-        Value::Undefined
+        (true, Value::Undefined)
     }
 
     pub fn drain_microtasks(&mut self) {
         let mut guard = 0;
-        while let Some((cb, arg, dep)) = self.microtasks.pop_front() {
+        while let Some((handler, value, dep, is_reject)) = self.microtasks.pop_front() {
             guard += 1;
             if guard > 100_000 {
                 break; // 폭주 방지
             }
-            let r = self.call_value(cb, None, vec![arg]).unwrap_or(Value::Undefined);
-            self.resolve_promise(&dep, r);
+            if is_callable(&handler) {
+                // 핸들러 실행: 정상 반환 → dep 이행, throw → dep 거부(체인 전파).
+                match self.call_value(handler, None, vec![value]) {
+                    Ok(r) => self.resolve_promise(&dep, r),
+                    Err(e) if e.starts_with(STEP_LIMIT_MSG) => return, // 스텝 한도는 삼키지 않음
+                    Err(_) => {
+                        let reason = self.thrown.take().unwrap_or(Value::Undefined);
+                        self.reject_promise(&dep, reason);
+                    }
+                }
+            } else if is_reject {
+                // onRejected 없음 → 거부를 그대로 전파(.then(f) 뒤 .catch 로 흐름)
+                self.reject_promise(&dep, value);
+            } else {
+                // onFulfilled 없음 → 값을 그대로 전파(.catch(r) 뒤 .then 으로 흐름)
+                self.resolve_promise(&dep, value);
+            }
         }
     }
 
@@ -2182,16 +2236,32 @@ impl Interp {
             Expr::Await(inner) => {
                 let v = self.eval(inner, env)?;
                 if !is_promise(&v) {
-                    return Ok(v);
+                    return Ok(v); // thenable 아닌 값은 그대로
                 }
                 self.drain_microtasks();
                 if let Value::Obj(o) = &v {
-                    let m = o.borrow();
-                    if matches!(m.get("__state"), Some(Value::Str(s)) if s == "fulfilled") {
-                        return Ok(m.get("__value").cloned().unwrap_or(Value::Undefined));
+                    let (state, value) = {
+                        let m = o.borrow();
+                        (
+                            match m.get("__state") {
+                                Some(Value::Str(s)) => s.clone(),
+                                _ => "pending".into(),
+                            },
+                            m.get("__value").cloned().unwrap_or(Value::Undefined),
+                        )
+                    };
+                    match state.as_str() {
+                        "fulfilled" => return Ok(value),
+                        // 거부된 promise 를 await → 그 이유를 throw (표준)
+                        "rejected" => {
+                            let msg = to_display(&value);
+                            self.thrown = Some(value);
+                            return Err(msg);
+                        }
+                        _ => {}
                     }
                 }
-                Ok(Value::Undefined) // 펜딩(미이행) — 관용
+                Ok(Value::Undefined) // 펜딩(동기 모델에서 해소 불가) — 근사
             }
             Expr::Class(def) => self.make_class(def, env),
             Expr::Sequence(items) => {
@@ -3015,21 +3085,36 @@ impl Interp {
                     result?; // 본문 에러 전파(수집 후)
                     return Ok(self.make_iter_from_vec(items));
                 }
-                let result = match self.exec_block(&func.body, &scope)? {
-                    Flow::Return(v) => v,
-                    _ => Value::Undefined,
-                };
-                // async: 반환값을 이행된 Promise 로 감싼다 (await/then 대상이 되도록).
-                // 이미 Promise 면 그대로 (thenable 위임).
+                // async: 반환값/에러를 Promise 로 감싼다(본문 throw → 거부된 promise).
                 if func.is_async {
-                    if is_promise(&result) {
-                        return Ok(result);
+                    match self.exec_block(&func.body, &scope) {
+                        Ok(flow) => {
+                            let result = match flow {
+                                Flow::Return(v) => v,
+                                _ => Value::Undefined,
+                            };
+                            if is_promise(&result) {
+                                return Ok(result); // 이미 promise 면 위임
+                            }
+                            let p = self.new_promise();
+                            self.resolve_promise(&p, result);
+                            Ok(p)
+                        }
+                        Err(e) if e.starts_with(STEP_LIMIT_MSG) => Err(e),
+                        Err(_) => {
+                            let reason = self.thrown.take().unwrap_or(Value::Undefined);
+                            let p = self.new_promise();
+                            self.reject_promise(&p, reason);
+                            Ok(p)
+                        }
                     }
-                    let p = self.new_promise();
-                    self.resolve_promise(&p, result);
-                    return Ok(p);
+                } else {
+                    let result = match self.exec_block(&func.body, &scope)? {
+                        Flow::Return(v) => v,
+                        _ => Value::Undefined,
+                    };
+                    Ok(result)
                 }
-                Ok(result)
             }
             Value::Native(n) => self.call_native(n, recv, args),
             Value::Class(_) => self.construct(f, args), // 클래스를 함수처럼 호출 = new (관용)
@@ -4300,6 +4385,44 @@ mod tests {
             "1,2,b,a");
         // 재대입은 순서 유지
         assert_eq!(run_str("var o={x:1,y:2}; o.x=9; Object.keys(o).join(',')"), "x,y");
+    }
+
+    #[test]
+    fn promise_rejection_and_catch() {
+        // .catch 가 거부를 잡는다(예전엔 no-op).
+        assert_eq!(run_num("await Promise.reject(5).catch(function(e){ return e + 1; })"), 6.0);
+        // .then(null, onR) 두 번째 인자로 거부 처리
+        assert_eq!(run_num("await Promise.reject(3).then(null, function(e){ return e * 2; })"), 6.0);
+        // await 로 거부된 promise → throw (try/catch 로 잡힘)
+        assert_eq!(run_num("var r; try { await Promise.reject(9); r=-1; } catch(e){ r=e; } r"), 9.0);
+        // .then 핸들러가 throw → 체인 거부 → .catch 로 잡힘
+        assert_eq!(
+            run_num("await Promise.resolve(1).then(function(){ throw 8; }).catch(function(e){ return e; })"),
+            8.0
+        );
+        // onRejected 없는 .then 뒤로 거부가 통과해 .catch 로
+        assert_eq!(
+            run_num("await Promise.reject(4).then(function(v){ return v; }).catch(function(e){ return e + 100; })"),
+            104.0
+        );
+        // async 함수 본문 throw → 거부된 promise
+        assert_eq!(run_num("await (async function(){ throw 11; })().catch(function(e){ return e; })"), 11.0);
+    }
+
+    #[test]
+    fn promise_all_rejects_on_any() {
+        // Promise.all 은 하나라도 거부되면 그 이유로 거부.
+        assert_eq!(
+            run_num("var r; try { await Promise.all([Promise.resolve(1), Promise.reject(2)]); r=-1; } catch(e){ r=e; } r"),
+            2.0
+        );
+        // 모두 이행이면 값 배열로 이행
+        assert_eq!(run_num("var a = await Promise.all([Promise.resolve(3), Promise.resolve(4)]); a[0]+a[1]"), 7.0);
+        // allSettled 는 거부돼도 status/reason 으로 수집(거부 안 함)
+        assert_eq!(
+            run_str("var a = await Promise.allSettled([Promise.resolve(1), Promise.reject(2)]); a[1].status"),
+            "rejected"
+        );
     }
 
     #[test]
