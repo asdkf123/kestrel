@@ -13,7 +13,7 @@
   체인 조회 + function-ctor instanceof + __proto__ 비열거(keys/for-in/JSON/hasOwnProp). (1899093)
 - [ ] **JS ToPrimitive** — 강제변환 시 toString/valueOf 안 부름. `${obj}`→[object Object]. (value.rs:421, mod.rs:3018)
 - [x] **JS Promise 거부 의미론** — .catch/then(,onR)/거부 전파/throw→거부/async throw→거부
-  /await 거부→throw/Promise.all 거부/allSettled/race 거부 채택. (다음 커밋)
+  /await 거부→throw/Promise.all 거부/allSettled/race 거부 채택. (19874bc)
 - [ ] **float in nearest-BFC** — float 이 직속 부모에 갇힘. 다중 float·타 블록 우회 불가. (layout/mod.rs:1049)
 
 ## 티어1 — 고빈도 + 요행 통과 (우선 수정)
