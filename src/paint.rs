@@ -1189,8 +1189,26 @@ fn flatten_path(d: &str) -> Vec<Vec<(f32, f32)>> {
     subs
 }
 
-// 인라인 SVG 의 기본 도형(rect/circle/ellipse/line)을 viewBox 매핑으로 발행한다.
-// path 등 복잡 도형은 미지원(후속). 대각선 line 은 근사(수평/수직만 정확).
+// (x1,y1)-(x2,y2) 를 잇는 굵기 sw 의 선을 방향에 맞춘 사각형(quad) 4점으로.
+// 길이가 0 이면 None(호출부가 점으로 처리). butt cap(끝 연장 없음).
+fn stroke_line_quad(x1: f32, y1: f32, x2: f32, y2: f32, sw: f32) -> Option<Vec<(f32, f32)>> {
+    let (dx, dy) = (x2 - x1, y2 - y1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1e-3 {
+        return None;
+    }
+    // 선에 수직인 반-굵기 벡터
+    let (nx, ny) = (-dy / len * sw / 2.0, dx / len * sw / 2.0);
+    Some(vec![
+        (x1 + nx, y1 + ny),
+        (x2 + nx, y2 + ny),
+        (x2 - nx, y2 - ny),
+        (x1 - nx, y1 - ny),
+    ])
+}
+
+// 인라인 SVG 의 기본 도형(rect/circle/ellipse/line/path/polygon)을 viewBox 매핑으로 발행.
+// line 은 방향 맞춘 quad 로 대각선도 정확. arc(A)는 아직 현(chord) 근사.
 fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     let crate::dom::NodeType::Element(svg) = &lb.styled_node.node.node_type else { return };
     if svg.tag_name != "svg" {
@@ -1248,19 +1266,23 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
                 }
             }
             "line" => {
-                // 수평/수직 선만 정확 (얇은 사각형). stroke 색/굵기 사용.
+                // 두 점을 잇는 굵기 sw 의 선 → 방향에 맞춘 사각형(quad) 폴리곤. 대각선도 정확.
                 let stroke = e.attributes.get("stroke").and_then(|s| crate::css::parse_color(s));
                 if let Some(color) = stroke {
                     let sw = (num("stroke-width").unwrap_or(1.0) * sx).max(1.0);
                     let (x1, y1) = (mx(num("x1").unwrap_or(0.0)), my(num("y1").unwrap_or(0.0)));
                     let (x2, y2) = (mx(num("x2").unwrap_or(0.0)), my(num("y2").unwrap_or(0.0)));
-                    let rect = Rect {
-                        x: x1.min(x2),
-                        y: y1.min(y2),
-                        width: (x2 - x1).abs().max(sw),
-                        height: (y2 - y1).abs().max(sw),
-                    };
-                    items.push(DisplayItem::Rect { color, rect });
+                    match stroke_line_quad(x1, y1, x2, y2, sw) {
+                        Some(quad) => items.push(DisplayItem::Polygon { color, contours: vec![quad] }),
+                        None => {
+                            // 길이 0: 작은 사각형으로 점 표시
+                            let h = sw / 2.0;
+                            items.push(DisplayItem::Rect {
+                                color,
+                                rect: Rect { x: x1 - h, y: y1 - h, width: sw, height: sw },
+                            });
+                        }
+                    }
                 }
             }
             "path" => {
@@ -3276,6 +3298,21 @@ mod tests {
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn svg_line_stroke_quad_is_perpendicular() {
+        // 수평선 (0,0)-(10,0), 굵기 4 → 세로로 ±2 벌어진 사각형.
+        let q = stroke_line_quad(0.0, 0.0, 10.0, 0.0, 4.0).unwrap();
+        assert_eq!(q.len(), 4);
+        // y 좌표는 -2 또는 +2, x 는 0/10.
+        assert!(q.iter().all(|&(_, y)| (y.abs() - 2.0).abs() < 1e-4), "수직 반굵기 2: {:?}", q);
+        // 대각선 (0,0)-(10,10), 굵기 √2·2 → 수직 오프셋이 (−1,+1) 방향.
+        let d = stroke_line_quad(0.0, 0.0, 10.0, 10.0, 2.0 * std::f32::consts::SQRT_2).unwrap();
+        // 첫 점은 (x1+nx, y1+ny). n = perp(1/√2,1/√2)*half. half=√2. nx=-1, ny=1.
+        assert!((d[0].0 - (-1.0)).abs() < 1e-4 && (d[0].1 - 1.0).abs() < 1e-4, "대각선 수직 오프셋: {:?}", d[0]);
+        // 길이 0 → None
+        assert!(stroke_line_quad(5.0, 5.0, 5.0, 5.0, 3.0).is_none());
     }
 
     #[test]

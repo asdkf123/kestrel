@@ -63,7 +63,7 @@
 - [x] 페인트 **폴리곤 AA**(세로 서브스캔라인 4 + 가로 부분커버리지). (bc07013)
 - [x] 페인트 **이미지 바이리니어 스케일링**(프리멀티플라이, 투명가장자리 안전). 타일은 최근접 유지. (d15516c)
 - [ ] 페인트 **select 화살표 14px/progress·meter 하드코딩**. (paint.rs:1344,1329)
-- [ ] 페인트 **SVG 대각선 line=bbox 사각, arc=직선 현**. (paint.rs:1158,1081)
+- [~] 페인트 **SVG line=방향맞춘 quad(대각선 정확)** 완료. arc=현 근사는 후속. (다음 커밋)
 - [ ] 페인트 **grayscale/saturate BT.601(스펙 709)**. (paint.rs:1937)
 - [ ] CSS **:where/:is/:not 명시도 오류**. (css/mod.rs:180)
 - [x] CSS **무단위 line-height 배수(Lh)로 상속** — 요소별 font-size 곱. %/길이는 길이 상속. (69f728a)
