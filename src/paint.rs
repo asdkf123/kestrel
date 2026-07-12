@@ -793,28 +793,24 @@ fn emit_borders(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     let side_color = |side: &str| border_side_color(lb, side);
     let drawn = |side: &str| border_side_drawn(lb, side);
     if bw.top > 0.0 && drawn("top") {
-        items.push(DisplayItem::Rect {
-            color: side_color("top"),
-            rect: Rect { x: b.x, y: b.y, width: b.width, height: bw.top },
-        });
+        emit_border_side(items, side_color("top"),
+            Rect { x: b.x, y: b.y, width: b.width, height: bw.top },
+            &border_side_style(lb, "top"), true);
     }
     if bw.bottom > 0.0 && drawn("bottom") {
-        items.push(DisplayItem::Rect {
-            color: side_color("bottom"),
-            rect: Rect { x: b.x, y: b.y + b.height - bw.bottom, width: b.width, height: bw.bottom },
-        });
+        emit_border_side(items, side_color("bottom"),
+            Rect { x: b.x, y: b.y + b.height - bw.bottom, width: b.width, height: bw.bottom },
+            &border_side_style(lb, "bottom"), true);
     }
     if bw.left > 0.0 && drawn("left") {
-        items.push(DisplayItem::Rect {
-            color: side_color("left"),
-            rect: Rect { x: b.x, y: b.y, width: bw.left, height: b.height },
-        });
+        emit_border_side(items, side_color("left"),
+            Rect { x: b.x, y: b.y, width: bw.left, height: b.height },
+            &border_side_style(lb, "left"), false);
     }
     if bw.right > 0.0 && drawn("right") {
-        items.push(DisplayItem::Rect {
-            color: side_color("right"),
-            rect: Rect { x: b.x + b.width - bw.right, y: b.y, width: bw.right, height: b.height },
-        });
+        emit_border_side(items, side_color("right"),
+            Rect { x: b.x + b.width - bw.right, y: b.y, width: bw.right, height: b.height },
+            &border_side_style(lb, "right"), false);
     }
 }
 
@@ -1466,11 +1462,47 @@ fn border_side_color(lb: &LayoutBox, side: &str) -> Color {
 }
 
 fn border_side_drawn(lb: &LayoutBox, side: &str) -> bool {
-    let style = lb
+    !matches!(border_side_style(lb, side).as_str(), "none" | "hidden")
+}
+
+// border-<side>-style (없으면 border-style, 없으면 none). solid/dashed/dotted/double 등.
+fn border_side_style(lb: &LayoutBox, side: &str) -> String {
+    match lb
         .styled_node
         .value(&format!("border-{}-style", side))
-        .or_else(|| lb.styled_node.value("border-style"));
-    matches!(style, Some(Value::Keyword(ref k)) if k != "none" && k != "hidden")
+        .or_else(|| lb.styled_node.value("border-style"))
+    {
+        Some(Value::Keyword(k)) => k,
+        _ => "none".to_string(),
+    }
+}
+
+// 파선/점선 한 변을 세그먼트로 (수평이면 x축, 수직이면 y축을 따라). rect 는 변 전체 영역.
+fn emit_dashed_side(items: &mut Vec<DisplayItem>, color: Color, rect: Rect, horizontal: bool, dotted: bool) {
+    let thick = if horizontal { rect.height } else { rect.width };
+    let (dash, gap) = if dotted { (thick, thick) } else { (thick * 3.0, thick * 2.0) };
+    let period = (dash + gap).max(1.0);
+    let len = if horizontal { rect.width } else { rect.height };
+    let mut pos = 0.0;
+    while pos < len {
+        let seg = dash.min(len - pos);
+        let r = if horizontal {
+            Rect { x: rect.x + pos, y: rect.y, width: seg, height: rect.height }
+        } else {
+            Rect { x: rect.x, y: rect.y + pos, width: rect.width, height: seg }
+        };
+        items.push(DisplayItem::Rect { color, rect: r });
+        pos += period;
+    }
+}
+
+// 한 변을 스타일에 맞게 그린다 (solid=사각, dashed/dotted=세그먼트).
+fn emit_border_side(items: &mut Vec<DisplayItem>, color: Color, rect: Rect, style: &str, horizontal: bool) {
+    match style {
+        "dashed" => emit_dashed_side(items, color, rect, horizontal, false),
+        "dotted" => emit_dashed_side(items, color, rect, horizontal, true),
+        _ => items.push(DisplayItem::Rect { color, rect }), // solid/double/기타 → 실선 근사
+    }
 }
 
 pub fn build_display_list(root: &LayoutBox) -> Vec<DisplayItem> {
@@ -2765,6 +2797,27 @@ mod tests {
             &mut cache,
             &[],
         )
+    }
+
+    #[test]
+    fn dashed_border_has_gaps() {
+        // border-top: dashed → 위 변에 빨강 대시와 빈 갭이 번갈아 (이전엔 전부 실선).
+        let c = canvas_for(
+            "<div></div>",
+            "div { display: block; width: 40px; height: 4px; border-top: 4px dashed #ff0000; }",
+            44.0,
+            44.0,
+        );
+        let (mut red, mut gap) = (0, 0);
+        for x in 0..40 {
+            let p = c.pixels[44 + x]; // y=1
+            if p.r > 150 && p.g < 100 {
+                red += 1;
+            } else {
+                gap += 1;
+            }
+        }
+        assert!(red > 3 && gap > 3, "파선은 빨강 대시+갭 둘 다: red={} gap={}", red, gap);
     }
 
     #[test]
