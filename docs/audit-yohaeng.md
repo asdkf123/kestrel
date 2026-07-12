@@ -56,7 +56,7 @@
 - [ ] 테이블 **auto 폭 알고리즘 근사(항상 컨테이너 채움), border-collapse/spacing 미구현, rowspan h/n**. (mod.rs:1407)
 - [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
 - [x] 페인트 **점선/파선 테두리**(dashed/dotted). double/groove 는 근사. (7bbcf70)
-- [ ] 페인트 **그라디언트 프리멀티플라이 아님**(투명 페이드 탁함). (paint.rs:523)
+- [x] 페인트 **그라디언트 프리멀티플라이 보간**(gradient_color_at 이미 반영, b957a7d). 확인 완료.
 - [x] 페인트 **박스섀도 가우시안(erf 전이) + 필터/backdrop 블러 3패스 가우시안**. (bdc27e9, 2d31c45)
 - [x] 페인트 **방사그라디언트 ellipse(기본)/circle 구분** — 축별 반경. 크기/위치는 아직 근사. (1d402ff)
 - [x] 페인트 **overflow 사각클립이 글리프/폴리곤 픽셀클립** — 경계 걸치면 사각 ClipShape 로 래핑. (e622fc2)
