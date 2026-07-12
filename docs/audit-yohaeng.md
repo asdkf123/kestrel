@@ -76,7 +76,7 @@
 - [ ] CSS **:not/:is 첫 심플셀렉터만**. (css/mod.rs:796)
 - [x] CSS **속성선택자 i/s 플래그 + 기본 대소문자 구분**. (4a38252)
 - [x] CSS **상속 화이트리스트에 word-break/overflow-wrap/word-wrap 추가**(소비되나 미상속이던 것). (6885dd8)
-- [ ] JS **instanceof 하드코딩표**(new F, Date, Map 다 false). (mod.rs:3042)
+- [x] JS **instanceof** — function 생성자/Object.create 체인/내장/원시값 모두 정확(프로토타입 링크로 해소, 1899093). 확인 완료.
 - [x] JS **인스턴스 Object.prototype 폴백**(hasOwnProperty/toString/valueOf 등). (6a8dc70)
 - [ ] JS **정규식 named group/lookbehind 미지원, step-limit 무음 no-match**. (regex.rs:226,530)
 - [ ] JS **제너레이터 즉시 전체평가**. (mod.rs:2784)
