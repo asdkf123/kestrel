@@ -77,7 +77,7 @@
 - [x] CSS **속성선택자 i/s 플래그 + 기본 대소문자 구분**. (4a38252)
 - [x] CSS **상속 화이트리스트에 word-break/overflow-wrap/word-wrap 추가**(소비되나 미상속이던 것). (6885dd8)
 - [ ] JS **instanceof 하드코딩표**(new F, Date, Map 다 false). (mod.rs:3042)
-- [ ] JS **인스턴스 Object.prototype 폴백 없음**. (mod.rs:2635)
+- [x] JS **인스턴스 Object.prototype 폴백**(hasOwnProperty/toString/valueOf 등). (다음 커밋)
 - [ ] JS **정규식 named group/lookbehind 미지원, step-limit 무음 no-match**. (regex.rs:226,530)
 - [ ] JS **제너레이터 즉시 전체평가**. (mod.rs:2784)
 - [ ] JS **객체리터럴 계산 Symbol 키 불일치**(for-of 사용자 이터러블 안됨). (mod.rs:1962)

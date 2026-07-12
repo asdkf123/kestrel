@@ -520,6 +520,8 @@ impl Interp {
                 let has = match &recv {
                     // __proto__ 는 own 프로퍼티 아님(상속 accessor)
                     Some(Value::Obj(m)) => !is_internal_key(&key) && m.borrow().contains_key(&key),
+                    // 인스턴스는 own 필드만 own 프로퍼티(메서드는 프로토타입 격)
+                    Some(Value::Instance(i)) => i.fields.borrow().contains_key(&key),
                     Some(Value::Arr(a)) => {
                         key.parse::<usize>().map(|i| i < a.borrow().len()).unwrap_or(false)
                     }

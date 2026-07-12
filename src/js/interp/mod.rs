@@ -2955,7 +2955,13 @@ impl Interp {
                 if let Some(m) = inst.class.find_method(key) {
                     return Ok(Value::Fn(m));
                 }
-                Ok(Value::Undefined)
+                // Object.prototype 폴백 — 인스턴스도 hasOwnProperty/toString/valueOf 등.
+                match key {
+                    "hasOwnProperty" | "propertyIsEnumerable" => {
+                        Ok(Value::Native(Native::HasOwnProperty))
+                    }
+                    _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),
+                }
             }
             Value::Class(c) => {
                 // 정적 멤버
@@ -4488,6 +4494,17 @@ mod tests {
         assert_eq!(run_str("JSON.stringify({__typename:'X', a:1})"),
             "{\"__typename\":\"X\",\"a\":1}");
         assert_eq!(run_str("Object.keys({__typename:'X'}).join(',')"), "__typename");
+    }
+
+    #[test]
+    fn instance_object_prototype_fallback() {
+        // 클래스 인스턴스도 Object.prototype 메서드를 상속(hasOwnProperty/toString/valueOf).
+        assert!(run_bool("class P{constructor(x){this.x=x;}} new P(5).hasOwnProperty('x')"));
+        assert!(run_bool("class P{constructor(x){this.x=x;}} !new P(5).hasOwnProperty('y')"));
+        assert_eq!(run_str("class A{} new A().toString()"), "[object Object]");
+        assert!(run_bool("class A{} var a=new A(); a.valueOf() === a"));
+        // 클래스가 toString 정의하면 그것 우선
+        assert_eq!(run_str("class A{ toString(){ return 'custom'; } } new A().toString()"), "custom");
     }
 
     #[test]
