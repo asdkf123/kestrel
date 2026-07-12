@@ -231,6 +231,20 @@ mod tests {
     }
 
     #[test]
+    fn math_round_and_minmax_nan() {
+        // Math.round 는 floor(x+0.5)(반올림 +∞ 방향), min/max 는 NaN 전파 — 스펙대로.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>document.getElementById('t').textContent = \
+             [Math.round(-2.5), Math.round(2.5), Math.min(1, NaN), Math.max(1, NaN)].join(',');\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "-2,3,NaN,NaN");
+    }
+
+    #[test]
     fn new_promise_executor_runs_and_then_fires() {
         // new Promise(executor) — executor 동기 실행 + resolve → then 마이크로태스크.
         // 이전엔 executor 가 아예 안 불리고 non-thenable 쓰레기 객체 반환.

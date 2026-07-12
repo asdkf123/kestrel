@@ -729,6 +729,8 @@ impl Interp {
         env_declare(&global, "decodeURI", Value::Native(Native::DecodeUri));
         env_declare(&global, "decodeURIComponent", Value::Native(Native::DecodeUriComponent));
         env_declare(&global, "isNaN", Value::Native(Native::IsNaN));
+        env_declare(&global, "NaN", Value::Num(f64::NAN));
+        env_declare(&global, "Infinity", Value::Num(f64::INFINITY));
         env_declare(&global, "isFinite", Value::Native(Native::NumIsFinite));
         // 타이머
         env_declare(&global, "setTimeout", Value::Native(Native::SetTimeout));

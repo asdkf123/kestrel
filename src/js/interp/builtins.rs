@@ -1253,12 +1253,30 @@ impl Interp {
                 Ok(Value::Num(match op {
                     MathOp::Floor => a.floor(),
                     MathOp::Ceil => a.ceil(),
-                    MathOp::Round => a.round(),
+                    // JS Math.round: floor(x+0.5) — 반올림이 +∞ 방향 (round(-2.5)=-2, not -3)
+                    MathOp::Round => {
+                        if a.is_nan() || a.is_infinite() {
+                            a
+                        } else {
+                            (a + 0.5).floor()
+                        }
+                    }
                     MathOp::Abs => a.abs(),
                     MathOp::Sqrt => a.sqrt(),
                     MathOp::Pow => a.powf(args.get(1).map(to_num).unwrap_or(f64::NAN)),
-                    MathOp::Min => args.iter().map(to_num).fold(f64::INFINITY, f64::min),
-                    MathOp::Max => args.iter().map(to_num).fold(f64::NEG_INFINITY, f64::max),
+                    // JS min/max: 인자에 NaN 있으면 NaN (Rust min/max 는 NaN 무시하므로 직접)
+                    MathOp::Min => {
+                        let vs = args.iter().map(to_num);
+                        vs.fold(f64::INFINITY, |acc, x| {
+                            if acc.is_nan() || x.is_nan() { f64::NAN } else { acc.min(x) }
+                        })
+                    }
+                    MathOp::Max => {
+                        let vs = args.iter().map(to_num);
+                        vs.fold(f64::NEG_INFINITY, |acc, x| {
+                            if acc.is_nan() || x.is_nan() { f64::NAN } else { acc.max(x) }
+                        })
+                    }
                     MathOp::Trunc => a.trunc(),
                     MathOp::Sign => {
                         if a.is_nan() {
