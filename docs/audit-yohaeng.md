@@ -57,9 +57,8 @@
 - [ ] 레이아웃 **리스트마커·밑줄·폼컨트롤 크기 마법상수**. (mod.rs:371, inline.rs:434)
 - [x] 레이아웃 **max-height 항상 사용높이 클램프**(overflow 무관, CSS §10.7). visible 이면 내용은 넘침. (ce2a50c)
 - [ ] 레이아웃 **인라인 테두리 3px 하드코딩 패딩** (내 코드). (inline.rs:477)
-- [~] Grid **명시 라인배치·span·auto-placement(§8) + 셀 자기정렬(§11) + grid-auto-rows** 완료
-  — go.dev 히어로 복원, Wikipedia 회귀 수정. minmax min 버림, 명명 라인, justify/align-content
-  (트랙 분배)는 후속. (grid.rs)
+- [~] Grid **라인배치·span·auto-placement(§8) + 셀 자기정렬(§11) + grid-auto-rows + minmax(px,fr)
+  하한(§11.5)** 완료 — go.dev 히어로 복원. 명명 라인, justify/align-content(트랙 분배)는 후속. (grid.rs)
 - [~] Flex **shrink 시 min-content 하한 적용(§4.5)** 완료. min/max 덮어씀, align-content 는 후속. (flex.rs)
 - [~] 테이블 **auto 폭 shrink-to-fit(§17.5.2) + border-spacing** 완료 — 작은 표는 내용 폭,
   separate 표는 셀 간격. border-collapse 테두리 중첩, rowspan 높이 분배는 후속. (mod.rs)
