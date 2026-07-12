@@ -45,6 +45,8 @@ pub enum Expr {
     This,
     Super,
     New { callee: Box<Expr>, args: Vec<Expr> },
+    // new.target 메타 프로퍼티 — new 로 호출됐으면 생성자, 아니면 undefined.
+    NewTarget,
     Class(Box<ClassDef>),
     // await expr — 대상이 promise 면 이행될 때까지 마이크로태스크 드레인 후 값
     Await(Box<Expr>),

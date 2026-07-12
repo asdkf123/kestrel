@@ -147,7 +147,8 @@ fn expr_has_yield(e: &Expr) -> bool {
         // 중첩 함수/화살표/클래스 본문의 yield 는 이 제너레이터 것이 아니다.
         Expr::Func { .. } | Expr::Class(_) => false,
         Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Null | Expr::Undefined
-        | Expr::Ident(_) | Expr::This | Expr::Super | Expr::Regex { .. } => false,
+        | Expr::Ident(_) | Expr::This | Expr::Super | Expr::Regex { .. }
+        | Expr::NewTarget => false,
         Expr::Array(items) => items.iter().any(expr_has_yield),
         Expr::Object(props) => props.iter().any(|(k, v)| {
             expr_has_yield(v)

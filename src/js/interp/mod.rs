@@ -839,6 +839,8 @@ pub struct Interp {
     // Symbol() 고유 키 카운터, Symbol.for(k) 전역 레지스트리(key → Symbol 값).
     sym_counter: u64,
     sym_registry: HashMap<String, Value>,
+    // new 로 함수를 호출하기 직전 설정 → call_value 가 스코프에 new.target 을 심는다.
+    new_target: Option<Value>,
 }
 
 impl Interp {
@@ -1209,6 +1211,7 @@ impl Interp {
             pending_label: None,
             sym_counter: 0,
             sym_registry: HashMap::new(),
+            new_target: None,
         }
     }
 
@@ -2390,6 +2393,9 @@ impl Interp {
                 arg_vals.extend(self.eval_args(args, env)?);
                 self.construct(class, arg_vals)
             }
+            // new.target: new 로 호출됐으면 그 생성자, 아니면 undefined. construct 가 스코프에
+            // 숨김 바인딩을 심는다. 일반 함수 호출 스코프엔 없어 undefined.
+            Expr::NewTarget => Ok(env_get(env, "\u{0}newtarget").unwrap_or(Value::Undefined)),
             // await expr: 대상이 promise 면 마이크로태스크를 드레인해 이행시킨 뒤 값.
             // (우리 promise 는 동기 resolve 모델이라 드레인만으로 이행됨)
             Expr::Await(inner) => {
@@ -3308,6 +3314,14 @@ impl Interp {
                 if !func.is_arrow {
                     env_declare(&scope, "arguments", Value::Arr(ArrayObj::new(args.clone())));
                 }
+                // new.target: new 로 호출된 경우만 (construct 가 직전 설정). 일반 호출은 undefined.
+                // 화살표는 렉시컬(자기 스코프에 안 심음 → 바깥 것 상속).
+                if !func.is_arrow {
+                    let nt = self.new_target.take().unwrap_or(Value::Undefined);
+                    env_declare(&scope, "\u{0}newtarget", nt);
+                } else {
+                    self.new_target = None;
+                }
                 hoist_vars(&func.body, &scope); // var 하이스팅 (함수 스코프)
                 // 지연 제너레이터: 본문을 즉시 실행하지 않고 재개가능 제너레이터 객체를 반환.
                 // next() 마다 다음 yield 까지 실행(무한 제너레이터/양방향 next(v) 지원).
@@ -3445,6 +3459,8 @@ impl Interp {
                 };
                 obj.borrow_mut().insert("__proto__".to_string(), proto);
                 let this = Value::Obj(obj);
+                // new.target = 이 함수 (call_value 가 스코프에 심는다).
+                self.new_target = Some(Value::Fn(func.clone()));
                 let ret = self.call_value(Value::Fn(func), Some(this.clone()), args)?;
                 return Ok(match ret {
                     v @ (Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) => v,
@@ -3498,6 +3514,8 @@ impl Interp {
             Some(ctor) => {
                 let scope = Env::new(Some(ctor.env.clone()));
                 env_declare(&scope, "this", inst.clone());
+                // 클래스 생성자는 항상 new 로 실행 → new.target 은 이 클래스.
+                env_declare(&scope, "\u{0}newtarget", Value::Class(cls.clone()));
                 // super 참조용: 현재 클래스의 부모를 스코프에 숨겨둠
                 if let Some(parent) = &cls.parent {
                     env_declare(&scope, "__superclass__", Value::Class(parent.clone()));
@@ -5622,6 +5640,42 @@ mod tests {
             run_str("var api = { name: 'k', hello() { return 'hi'; }, }; api.hello() + api.name"),
             "hik"
         );
+    }
+
+    #[test]
+    fn new_target_meta_property() {
+        // 일반 호출: new.target 은 undefined
+        assert!(run_bool("function f(){ return new.target === undefined; } f()"));
+        // new 호출: new.target 은 그 함수 (truthy)
+        assert!(run_bool("function f(){ return new.target !== undefined; } (new f()) instanceof f"));
+        // 흔한 가드 패턴: new 강제
+        assert_eq!(
+            run_str(
+                "function C(){ if(!new.target) return 'called'; this.ok='new'; } \
+                 C() + '|' + (new C()).ok"
+            ),
+            "called|new",
+        );
+        // 클래스 생성자 안 new.target 은 클래스
+        assert!(run_bool("class A { constructor(){ this.t = new.target === A; } } (new A()).t"));
+    }
+
+    #[test]
+    fn object_async_generator_method_shorthand() {
+        // 제너레이터 메서드 단축 { *gen() {} }
+        assert_eq!(
+            run_num("var o = { *gen() { yield 1; yield 2; yield 3; } }; var s=0; for(var x of o.gen()) s+=x; s"),
+            6.0,
+        );
+        // async 메서드 단축 { async fetch() {} } — thenable 반환
+        assert!(run_bool(
+            "var o = { async load() { return 42; } }; typeof o.load().then === 'function'"
+        ));
+        // async 가 프로퍼티명/메서드명인 경우는 그대로 (오검출 방지)
+        assert_eq!(run_num("var o = { async: 5 }; o.async"), 5.0);
+        assert_eq!(run_str("var o = { async() { return 'x'; } }; o.async()"), "x");
+        // async 제너레이터 메서드 { async *stream() {} } — 파싱만 (호출 안 함)
+        assert_eq!(run_num("var o = { async *stream() { yield 1; }, n: 7 }; o.n"), 7.0);
     }
 
     #[test]

@@ -1480,6 +1480,42 @@ impl Parser {
                             self.expect(&Tok::RBrace)?;
                             break;
                         }
+                        // 제너레이터/async 메서드 단축 { *gen(){}, async foo(){}, async *bar(){} }.
+                        // async 가 프로퍼티명/메서드명({async:1}/{async(){}})인 경우는 제외.
+                        let obj_gen = self.peek() == Some(&Tok::Star);
+                        let obj_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
+                            && !matches!(
+                                self.toks.get(self.pos + 1),
+                                Some(Tok::Colon) | Some(Tok::Comma) | Some(Tok::RBrace)
+                                    | Some(Tok::LParen) | Some(Tok::Assign)
+                            );
+                        if obj_gen || obj_async {
+                            let is_async = obj_async && {
+                                self.pos += 1;
+                                true
+                            };
+                            let is_gen = self.eat(&Tok::Star); // async *name / *name
+                            let key = self.member_name()?;
+                            let (params, mut body) = self.param_list()?;
+                            body.extend(self.block()?);
+                            let f = Expr::Func {
+                                name: None,
+                                params,
+                                body,
+                                is_arrow: false,
+                                is_generator: is_gen,
+                                is_async,
+                            };
+                            props.push((PropKey::Static(key), f));
+                            if self.eat(&Tok::Comma) {
+                                if self.eat(&Tok::RBrace) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            self.expect(&Tok::RBrace)?;
+                            break;
+                        }
                         let key = match self.next()? {
                             Tok::Ident(s) => s,
                             Tok::Str(s) => s,
@@ -1533,6 +1569,16 @@ impl Parser {
             Tok::This => Ok(Expr::This),
             Tok::Super => Ok(Expr::Super),
             Tok::New => {
+                // new.target 메타 프로퍼티
+                if self.peek() == Some(&Tok::Dot) {
+                    self.pos += 1; // '.'
+                    match self.next()? {
+                        Tok::Ident(w) if w == "target" => return Ok(Expr::NewTarget),
+                        other => {
+                            return Err(format!("new. 뒤엔 target 만: {:?}{}", other, self.ctx()))
+                        }
+                    }
+                }
                 // new Callee(args) — callee 는 멤버 접근까지 (호출은 별도)
                 let callee = self.new_callee()?;
                 let args = if self.peek() == Some(&Tok::LParen) {
