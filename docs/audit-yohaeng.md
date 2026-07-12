@@ -55,8 +55,9 @@
 - [ ] 레이아웃 **리스트마커·밑줄·폼컨트롤 크기 마법상수**. (mod.rs:371, inline.rs:434)
 - [x] 레이아웃 **max-height 항상 사용높이 클램프**(overflow 무관, CSS §10.7). visible 이면 내용은 넘침. (ce2a50c)
 - [ ] 레이아웃 **인라인 테두리 3px 하드코딩 패딩** (내 코드). (inline.rs:477)
-- [ ] Grid **정렬 전부 무시**(place-items 등), 명시배치/span 무시, template-rows 무시, minmax min 버림. (grid.rs)
-- [ ] Flex **shrink 0까지, min-content 무시, min/max 덮어씀, align-content 없음**. (flex.rs:132,184)
+- [~] Grid **명시 라인배치·span·auto-placement 구현(§8)** 완료 — go.dev 히어로 복원.
+  정렬(place-items/justify-*), minmax min 버림, 명명 라인/영역-span 은 후속. (grid.rs)
+- [~] Flex **shrink 시 min-content 하한 적용(§4.5)** 완료. min/max 덮어씀, align-content 는 후속. (flex.rs)
 - [ ] 테이블 **auto 폭 알고리즘 근사(항상 컨테이너 채움), border-collapse/spacing 미구현, rowspan h/n**. (mod.rs:1407)
 - [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
 - [x] 페인트 **점선/파선 테두리**(dashed/dotted). double/groove 는 근사. (7bbcf70)
