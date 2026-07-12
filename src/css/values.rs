@@ -345,7 +345,7 @@ fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
         }
     }
     let stops = parse_color_stops(&parts[idx..])?;
-    Some(crate::css::Gradient { angle_deg: angle, radial: false, conic: false, stops })
+    Some(crate::css::Gradient { angle_deg: angle, radial: false, circle: false, conic: false, stops })
 }
 
 // radial-gradient([shape size at pos,]? stop, ...) — 모양/크기/위치는 근사(중심 방사,
@@ -365,8 +365,10 @@ fn parse_radial_gradient(inner: &str) -> Option<crate::css::Gradient> {
     if idx >= parts.len() {
         return None;
     }
+    // 서술자(첫 파트)에 'circle' 이 있으면 원, 아니면 타원(기본). 크기/위치는 근사.
+    let circle = idx == 1 && parts[0].to_ascii_lowercase().split_whitespace().any(|t| t == "circle");
     let stops = parse_color_stops(&parts[idx..])?;
-    Some(crate::css::Gradient { angle_deg: 0.0, radial: true, conic: false, stops })
+    Some(crate::css::Gradient { angle_deg: 0.0, radial: true, circle, conic: false, stops })
 }
 
 // conic-gradient([from Ndeg] [at pos,]? stop, ...) — from/at 서술자는 근사로 무시.
@@ -410,7 +412,7 @@ fn parse_conic_gradient(inner: &str) -> Option<crate::css::Gradient> {
         .enumerate()
         .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
         .collect();
-    Some(crate::css::Gradient { angle_deg: 0.0, radial: false, conic: true, stops: resolved })
+    Some(crate::css::Gradient { angle_deg: 0.0, radial: false, circle: false, conic: true, stops: resolved })
 }
 
 // 색 스톱 목록 파싱. 위치 미지정 스톱은 균등 분배. 스톱 2개 미만이면 None.

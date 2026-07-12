@@ -240,7 +240,7 @@ impl Canvas {
     // 그라디언트 채우기. linear 는 픽셀을 축(angle: 0deg=위, 90deg=오른쪽)에 투영,
     // radial 은 중심에서의 거리를 farthest-corner 반경으로 정규화해 0..1 위치를 구하고
     // 스톱 사이를 보간한다. linear 선 길이 = |w*sin| + |h*cos| (모서리가 0/1 에 대응).
-    pub fn fill_gradient(&mut self, rect: Rect, angle_deg: f32, radial: bool, conic: bool, stops: &[(Color, f32)]) {
+    pub fn fill_gradient(&mut self, rect: Rect, angle_deg: f32, radial: bool, circle: bool, conic: bool, stops: &[(Color, f32)]) {
         if rect.width <= 0.0 || rect.height <= 0.0 || stops.is_empty() {
             return;
         }
@@ -248,8 +248,13 @@ impl Canvas {
         let a = angle_deg.to_radians();
         let (dx, dy) = (a.sin(), -a.cos());
         let len = ((rect.width * dx).abs() + (rect.height * dy).abs()).max(1.0);
-        // radial: 중심에서 가장 먼 모서리까지 거리 (farthest-corner)
+        // radial farthest-corner: circle 는 중심~가장 먼 모서리 거리(단일 반경),
+        // ellipse(기본)는 축별 반경 rx=(w/2)√2, ry=(h/2)√2 (모서리가 p=1 에 대응).
         let radius = ((rect.width / 2.0).powi(2) + (rect.height / 2.0).powi(2)).sqrt().max(1.0);
+        let (rx, ry) = (
+            (rect.width / 2.0 * std::f32::consts::SQRT_2).max(1.0),
+            (rect.height / 2.0 * std::f32::consts::SQRT_2).max(1.0),
+        );
         let x0 = rect.x.clamp(0.0, self.width as f32) as usize;
         let y0 = rect.y.clamp(0.0, self.height as f32) as usize;
         let x1 = (rect.x + rect.width).clamp(0.0, self.width as f32) as usize;
@@ -264,7 +269,12 @@ impl Canvas {
                     let norm = if ang < 0.0 { ang + std::f32::consts::TAU } else { ang };
                     norm / std::f32::consts::TAU
                 } else if radial {
-                    (((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() / radius).clamp(0.0, 1.0)
+                    if circle {
+                        (((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() / radius).clamp(0.0, 1.0)
+                    } else {
+                        // 타원: 축별 정규화 후 반경 거리
+                        (((fx - cx) / rx).powi(2) + ((fy - cy) / ry).powi(2)).sqrt().clamp(0.0, 1.0)
+                    }
                 } else {
                     let t = (fx - cx) * dx + (fy - cy) * dy;
                     ((t + len / 2.0) / len).clamp(0.0, 1.0)
@@ -762,8 +772,8 @@ pub enum DisplayItem {
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
     InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
     Image { image: usize, rect: Rect, fit: ImageFit, pos: Option<(BgCoord, BgCoord)> },
-    // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, stops: (색, 위치 0-1).
-    Gradient { rect: Rect, angle: f32, radial: bool, conic: bool, stops: Vec<(Color, f32)> },
+    // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, circle: 원/타원, stops: (색, 위치 0-1).
+    Gradient { rect: Rect, angle: f32, radial: bool, circle: bool, conic: bool, stops: Vec<(Color, f32)> },
     // SVG path 채우기 (여러 윤곽선, nonzero winding). points 는 논리 좌표.
     Polygon { color: Color, contours: Vec<Vec<(f32, f32)>> },
     Glyph(GlyphInstance),
@@ -1585,8 +1595,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>) -> Option<DisplayItem> {
         }
         // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
         // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
-        DisplayItem::Gradient { rect, angle, radial, conic, stops } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, radial, conic, stops })
+        DisplayItem::Gradient { rect, angle, radial, circle, conic, stops } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, radial, circle, conic, stops })
         }
         DisplayItem::RoundRect { color, rect, radii } => {
             rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radii })
@@ -1846,6 +1856,7 @@ fn collect_items(
             rect: layout_box.dimensions.border_box(),
             angle: g.angle_deg,
             radial: g.radial,
+            circle: g.circle,
             conic: g.conic,
             stops: g.stops.clone(),
         });
@@ -2340,12 +2351,12 @@ fn draw_item(
                 blit_image(canvas, img, r, scale, *fit, *pos);
             }
         }
-        DisplayItem::Gradient { rect, angle, radial, conic, stops } => {
+        DisplayItem::Gradient { rect, angle, radial, circle, conic, stops } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
-            canvas.fill_gradient(r, *angle, *radial, *conic, stops);
+            canvas.fill_gradient(r, *angle, *radial, *circle, *conic, stops);
         }
         DisplayItem::Polygon { color, contours } => {            let scaled: Vec<Vec<(f32, f32)>> = contours
                 .iter()
@@ -3180,7 +3191,7 @@ mod tests {
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
         let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 }, 90.0, false, false, &stops);
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 }, 90.0, false, false, false, &stops);
         assert!(canvas.pixels[0].r < canvas.pixels[3].r, "왼쪽이 오른쪽보다 어두워야 함");
         assert!(canvas.pixels[0].r < 64, "왼쪽 끝은 검정에 가까움");
         assert!(canvas.pixels[3].r > 192, "오른쪽 끝은 흰색에 가까움");
@@ -3208,7 +3219,7 @@ mod tests {
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
         let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 11.0, height: 11.0 }, 0.0, false, true, &stops);
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 11.0, height: 11.0 }, 0.0, false, false, true, &stops);
         let top = canvas.pixels[0 * 11 + 5]; // 중심 위쪽 (5,0) 각도~0 → 검정
         let left = canvas.pixels[5 * 11 + 0]; // 중심 왼쪽 (0,5) 각도~270 → 밝음
         assert!(top.r < left.r, "위쪽({})이 왼쪽({})보다 어두워야", top.r, left.r);
@@ -3221,11 +3232,30 @@ mod tests {
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
         let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 5.0, height: 5.0 }, 0.0, true, false, &stops);
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 5.0, height: 5.0 }, 0.0, true, false, false, &stops);
         let center = canvas.pixels[2 * 5 + 2]; // (2,2)
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
         assert!(corner.r > center.r, "모서리가 중심보다 밝아야");
+    }
+
+    #[test]
+    fn radial_ellipse_differs_from_circle_on_wide_box() {
+        // 넓은 박스(20x4)에서 타원(기본)은 가로로 늘어나 오른쪽 가장자리 중앙이
+        // 원보다 어둡다(정규화 거리 p 가 더 작음). 원과 결과가 달라야 함.
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        let white = Color { r: 255, g: 255, b: 255, a: 255 };
+        let stops = vec![(black, 0.0), (white, 1.0)];
+        let rect = Rect { x: 0.0, y: 0.0, width: 20.0, height: 4.0 };
+        let mut ell = Canvas::new(20, 4);
+        ell.fill_gradient(rect, 0.0, true, false, false, &stops); // ellipse
+        let mut cir = Canvas::new(20, 4);
+        cir.fill_gradient(rect, 0.0, true, true, false, &stops); // circle
+        // 오른쪽 가장자리 중앙 (19,2)
+        let ell_edge = ell.pixels[2 * 20 + 19];
+        let cir_edge = cir.pixels[2 * 20 + 19];
+        assert!(ell_edge.r < cir_edge.r,
+            "타원이 원보다 어두워야(가로로 늘어남): ell {} < cir {}", ell_edge.r, cir_edge.r);
     }
 
     #[test]
