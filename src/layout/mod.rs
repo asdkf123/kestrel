@@ -220,6 +220,21 @@ impl<'a> LayoutBox<'a> {
                         return;
                     }
                 }
+                // 이미지 미로드: width/height(CSS/속성)로 공간 예약(대체 요소 박스).
+                // 없으면 0. 레이아웃 점프 방지 + 인라인 흐름 유지.
+                self.calculate_position(containing_block);
+                let cbw = containing_block.content.width;
+                let dim = |css: &str, attr: &str| -> f32 {
+                    if let Some(v) = self.styled_node.value(css) {
+                        if !matches!(v, Value::Keyword(_)) {
+                            return len_px(v, cbw).to_px();
+                        }
+                    }
+                    e.attributes.get(attr).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0)
+                };
+                self.dimensions.content.width = dim("width", "width");
+                self.dimensions.content.height = dim("height", "height");
+                return;
             }
             if e.tag_name == "input" {
                 self.layout_input(containing_block, fonts);
@@ -975,15 +990,14 @@ impl<'a> LayoutBox<'a> {
         for i in 0..n {
             let cpos = self.children[i].position();
             let cfloat = self.children[i].float();
-            let is_ib =
-                matches!(self.children[i].styled_node.display(), Display::InlineBlock) && cfloat == "none";
+            let is_ib = is_atomic_inline(&self.children[i]) && cfloat == "none";
             // 익명 인라인 박스(텍스트 런): inline-block 과 같은 줄에 흘러야 한다.
             // 단, 인접한 inline-block 이 있을 때만 atom 으로(홀로 있는 텍스트 블록은 정상 유지).
             let is_anon = !self.children[i].inline_nodes.is_empty() && cfloat == "none";
             let next_is_ib = self
                 .children
                 .get(i + 1)
-                .map(|c| matches!(c.styled_node.display(), Display::InlineBlock) && c.float() == "none")
+                .map(|c| is_atomic_inline(c) && c.float() == "none")
                 .unwrap_or(false);
             let is_atom = is_ib || (is_anon && (ib_active || next_is_ib));
 
@@ -1875,7 +1889,17 @@ fn distribute_children<'a>(
                 root.children.push(build_layout_tree(child));
             }
             Display::Inline => {
-                if contains_block_level(child) {
+                // 인라인 레벨 대체 요소(img/svg/input 등)는 원자적 인라인 — 텍스트 런에
+                // 넣을 수 없으므로(대체 콘텐츠) 별도 자식 박스로 만들어 줄 안에 흐르게 한다.
+                if is_replaced_element(child) {
+                    if !pending.is_empty() {
+                        let nodes = std::mem::take(pending);
+                        if !all_whitespace(&nodes) {
+                            root.children.push(LayoutBox::new_anonymous(anon_owner, nodes));
+                        }
+                    }
+                    root.children.push(build_layout_tree(child));
+                } else if contains_block_level(child) {
                     // 투명 래퍼: 인라인 부분은 앞뒤로 나뉘고 블록은 흐름에 편입
                     distribute_children(root, pending, anon_owner, &child.children);
                 } else {
@@ -2003,6 +2027,33 @@ fn roman_marker(index: usize, upper: bool) -> String {
         }
     }
     if upper { s.to_ascii_uppercase() } else { s }
+}
+
+// 대체 요소(replaced element)인가 — 고유 콘텐츠(이미지/폼컨트롤 등)로 텍스트 런에
+// 넣을 수 없고 원자적 인라인 박스로 흐른다.
+fn is_replaced_element(node: &StyledNode) -> bool {
+    matches!(&node.node.node_type, NodeType::Element(e)
+        if matches!(e.tag_name.as_str(),
+            "img" | "svg" | "input" | "button" | "canvas" | "video" | "textarea" | "select"
+            | "progress" | "meter"))
+}
+
+// 원자적 인라인 박스(atomic inline)인가 — inline-block 이거나, 인라인 레벨 대체 요소
+// (img/svg/input 등)이면 줄 안에서 하나의 원자로 흐른다(줄바꿈 안 함, 텍스트와 한 줄).
+fn is_atomic_inline(c: &LayoutBox) -> bool {
+    let disp = c.styled_node.display();
+    if matches!(disp, Display::InlineBlock) {
+        return true;
+    }
+    if matches!(disp, Display::Inline) {
+        if let NodeType::Element(e) = &c.styled_node.node.node_type {
+            return matches!(
+                e.tag_name.as_str(),
+                "img" | "svg" | "input" | "button" | "canvas" | "video" | "textarea" | "select"
+            );
+        }
+    }
+    false
 }
 
 // 이 박스가 새 블록 서식 맥락(BFC)을 만드는가. BFC 블록은 float 과 겹치지 않고
