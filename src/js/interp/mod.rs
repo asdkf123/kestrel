@@ -971,6 +971,23 @@ impl Interp {
     }
 
     // 마이크로태스크 드레인: 콜백 실행 → 그 결과로 의존 promise 이행 (체이닝).
+    // 값 타입에 대응하는 전역 생성자 (x.constructor 용).
+    fn constructor_of(&self, v: &Value) -> Value {
+        let name = match v {
+            Value::Arr(_) => "Array",
+            Value::Str(_) => "String",
+            Value::Num(_) => "Number",
+            Value::Bool(_) => "Boolean",
+            Value::Fn(_) | Value::Native(_) | Value::Bound(_) => "Function",
+            Value::MapVal(_) => "Map",
+            Value::SetVal(_) => "Set",
+            Value::Class(_) => "Function",
+            Value::Obj(_) => "Object",
+            _ => return Value::Undefined,
+        };
+        env_get(&self.global, name).unwrap_or(Value::Undefined)
+    }
+
     // Object(x) 호출(또는 new Object(x)) 강제변환. f 가 전역 Object 네임스페이스면 Some.
     // null/undefined → 새 빈 객체, 이미 객체/원시값이면 그대로(근사). 아니면 None.
     fn coerce_object_call(&self, f: &Value, args: &[Value]) -> Option<Value> {
@@ -2160,6 +2177,30 @@ impl Interp {
     }
 
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
+        // .constructor — 값 타입의 전역 생성자 (core-js/프레임워크의 타입판별·종/species 에 필수).
+        // 객체/인스턴스가 자체 constructor 프로퍼티를 가지면 그것 우선.
+        if key == "constructor" {
+            match recv {
+                Value::Obj(m) => {
+                    if let Some(v) = m.borrow().get("constructor") {
+                        return Ok(v.clone());
+                    }
+                }
+                Value::Instance(i) => {
+                    if let Some(v) = i.fields.borrow().get("constructor") {
+                        return Ok(v.clone());
+                    }
+                    return Ok(Value::Class(i.class.clone()));
+                }
+                Value::Fn(f) => {
+                    if let Some(v) = f.props.borrow().get("constructor") {
+                        return Ok(v.clone());
+                    }
+                }
+                _ => {}
+            }
+            return Ok(self.constructor_of(recv));
+        }
         match recv {
             // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
             Value::Proxy(p) => {
@@ -3795,6 +3836,16 @@ mod tests {
         assert_eq!(run_num("var s=0; for(var i=0;i<3;i++)s+=i; i"), 3.0);
         // 선언 전 사용 시 하이스트된 undefined
         assert_eq!(run_num("var r=(typeof q==='undefined'?1:2); var q=5; r"), 1.0);
+    }
+
+    #[test]
+    fn constructor_property() {
+        // x.constructor → 전역 생성자 (core-js/프레임워크 타입판별에 필수)
+        assert!(run_bool("[].constructor === Array"));
+        assert!(run_bool("({}).constructor === Object"));
+        assert_eq!(run_str("typeof (5).constructor"), "function");
+        // 자체 constructor 프로퍼티가 있으면 우선
+        assert_eq!(run_num("({constructor: 42}).constructor"), 42.0);
     }
 
     #[test]

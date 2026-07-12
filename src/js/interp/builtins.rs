@@ -370,7 +370,7 @@ impl Interp {
                 let this_arg = it.next().unwrap_or(Value::Undefined);
                 self.call_value(target, Some(this_arg), it.collect())
             }
-            // fn.apply(thisArg, [args]) — 두 번째 인자는 배열
+            // fn.apply(thisArg, [args]) — 두 번째 인자는 배열 또는 유사배열(arguments)
             Native::FnApply => {
                 let target = recv.ok_or("apply 대상 함수 없음")?;
                 let mut it = args.into_iter();
