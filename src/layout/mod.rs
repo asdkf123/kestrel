@@ -906,7 +906,9 @@ impl<'a> LayoutBox<'a> {
         // 절대값이라 자식 content box 범위로 클램프되어 그대로 합성된다.
         if let Some(fc) = self.float_ctx {
             for c in self.children.iter_mut() {
-                if !c.inline_nodes.is_empty() {
+                // 익명 인라인 박스는 직접 우회. 일반 블록(BFC 아님)은 밴드를 물려받아
+                // 그 안의 인라인 자식까지 재귀적으로 우회하게 한다. BFC/float/abs 는 제외.
+                if !c.inline_nodes.is_empty() || !establishes_bfc(c) {
                     c.float_ctx = Some(fc);
                 }
             }
@@ -1093,9 +1095,13 @@ impl<'a> LayoutBox<'a> {
             // 전체폭을 유지하되 줄 상자만 float 을 우회한다(text-wrap) — 흐름에 정상 배치.
             // 인라인 콘텐츠 없는 블록은 (margin 으로) 옆에 맞으면 나란히, 아니면 밴드 아래로 clear.
             if band_active {
-                // 익명 텍스트 박스 또는 인라인 콘텐츠 블록: float 주위로 줄이 흐른다.
-                // float_ctx 를 실어 배치하면 내부 줄 상자가 밴드를 피해 짧아진다.
-                if is_anon || box_has_inline_content(&self.children[i]) {
+                // 익명 텍스트 박스 또는 인라인 콘텐츠 블록(중첩 래퍼 포함, BFC 제외):
+                // float 주위로 줄이 흐른다. float_ctx 를 실어 배치하면 내부(및 중첩된
+                // 자식) 줄 상자가 밴드를 피해 짧아진다.
+                if is_anon
+                    || (!establishes_bfc(&self.children[i])
+                        && subtree_has_inline_text(&self.children[i]))
+                {
                     let cur_top = {
                         let z = Length(0.0, Px);
                         len_px(self.children[i].styled_node.lookup("margin-top", "margin", &z), avail).to_px()
@@ -1935,10 +1941,28 @@ fn roman_marker(index: usize, upper: bool) -> String {
     if upper { s.to_ascii_uppercase() } else { s }
 }
 
-// 블록이 직접 인라인 콘텐츠(자기 inline_nodes 또는 익명 인라인 자식)를 담는가.
-// 담으면 float 밴드 옆에서 박스는 전체폭을 유지하되 줄 상자만 float 을 우회한다(text-wrap).
-fn box_has_inline_content(b: &LayoutBox) -> bool {
-    !b.inline_nodes.is_empty() || b.children.iter().any(|c| !c.inline_nodes.is_empty())
+// 이 박스가 새 블록 서식 맥락(BFC)을 만드는가. BFC 블록은 float 과 겹치지 않고
+// 밴드 옆으로 줄어들거나 아래로 clear 되므로, float text-wrap 전파에서 제외한다.
+fn establishes_bfc(b: &LayoutBox) -> bool {
+    let clips = |p: &str| {
+        matches!(b.styled_node.value(p),
+            Some(Value::Keyword(ref k)) if k == "hidden" || k == "auto" || k == "scroll" || k == "clip")
+    };
+    clips("overflow") || clips("overflow-x") || clips("overflow-y")
+        || matches!(b.styled_node.display(), Display::Flex | Display::Grid | Display::InlineBlock)
+        || box_is_table(b)
+        || b.float() != "none"
+        || b.position() == "absolute"
+        || b.position() == "fixed"
+}
+
+// 서브트리에 float 을 우회해 흐를 인라인 텍스트가 있는가 (BFC 경계에서 멈춤 — BFC 안
+// 텍스트는 그 BFC 가 따로 처리). float 밴드 옆에서 블록이 줄만 우회할지 판단에 쓰인다.
+fn subtree_has_inline_text(b: &LayoutBox) -> bool {
+    if !b.inline_nodes.is_empty() {
+        return true;
+    }
+    b.children.iter().any(|c| !establishes_bfc(c) && subtree_has_inline_text(c))
 }
 
 // 인접 margin 상쇄로 흐름에서 줄여야 할 겹침량. m1=이전 하단, m2=이번 상단.
@@ -3287,6 +3311,37 @@ mod tests {
             .iter()
             .find(|g| g.baseline_y > 65.0)
             .expect("float(40px) 아래로 흐르는 줄이 있어야");
+        assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
+    }
+
+    #[test]
+    fn nested_block_wraps_around_float() {
+        // float 뒤 중첩 래퍼(<div><div>텍스트</div></div>): 밴드가 BFC 아닌 블록을
+        // 통해 재귀적으로 전파돼 안쪽 텍스트가 float 을 우회한다. (예: float + 감싼 본문)
+        let words = "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz a1 b2 c3 d4 e5 f6 g7 h8 i9 j0 k1 l2 m3 n4";
+        let root = crate::html::parse_dom(format!(
+            "<div class=\"cont\"><div class=\"f\"></div><div class=\"outer\"><div class=\"inner\">{words}</div></div></div>"
+        ));
+        let ss = crate::css::parse(
+            ".cont { display: block; font-size: 16px; } \
+             .f { display: block; float: left; width: 100px; height: 40px; } \
+             .outer { display: block; } .inner { display: block; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut vp: Dimensions = Default::default();
+        vp.content.width = 400.0;
+        let fs = fonts();
+        let lb = layout_tree(&styled, vp, &fs, &no_images());
+        let outer = &lb.children[1];
+        assert!(outer.dimensions.content.y < 1.0, "래퍼는 float 옆(y≈0): {}", outer.dimensions.content.y);
+        let gs = glyphs_of(outer); // .inner 의 글리프까지 재귀 수집
+        let first = gs.first().unwrap();
+        assert!(first.x >= 95.0, "중첩 텍스트 첫 줄은 float 우측: {}", first.x);
+        let below = gs
+            .iter()
+            .find(|g| g.baseline_y > 65.0)
+            .expect("float 아래로 흐르는 줄이 있어야");
         assert!(below.x < 95.0, "float 아래 줄은 전체폭(x<95): {}", below.x);
     }
 
