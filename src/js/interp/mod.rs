@@ -4452,6 +4452,27 @@ mod tests {
     }
 
     #[test]
+    fn number_to_string_ecmascript() {
+        let s = |src: &str| run_str(&format!("String({})", src));
+        // 지수 임계: n>21 또는 n≤-6 에서 지수 표기, 형식 "de+X"/"de-X"
+        assert_eq!(s("1e21"), "1e+21");
+        assert_eq!(s("1e-7"), "1e-7");
+        assert_eq!(s("0.0000001"), "1e-7");
+        // 경계: 1e-6 은 지수 아님(소수)
+        assert_eq!(s("0.000001"), "0.000001");
+        // 일반 정수/소수
+        assert_eq!(s("100"), "100");
+        assert_eq!(s("123.45"), "123.45");
+        assert_eq!(s("0.5"), "0.5");
+        assert_eq!(s("1000000"), "1000000");
+        assert_eq!(s("-0"), "0");
+        assert_eq!(s("-12.5"), "-12.5");
+        // 큰 정수(<1e21)는 전체 자리, ≥1e21 은 지수
+        assert_eq!(s("1e20"), "100000000000000000000");
+        assert_eq!(s("1.5e21"), "1.5e+21");
+    }
+
+    #[test]
     fn json_roundtrip() {
         assert_eq!(run_num("JSON.parse('42')"), 42.0);
         assert_eq!(run_str("JSON.parse('\"hi\\\\n\"')"), "hi\n");

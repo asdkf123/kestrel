@@ -3,15 +3,50 @@ use super::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+// ECMAScript Number::toString (7.1.12.1). Rust 의 최단 유효숫자 표현({:e})을 분해해
+// JS 의 소수/지수 표기 규칙(지수는 n>21 또는 n≤-6 에서, 형식 "de+X")을 적용한다.
 pub(super) fn num_to_str(n: f64) -> String {
     if n.is_nan() {
-        "NaN".to_string()
-    } else if n.is_infinite() {
-        if n > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }
-    } else if n.fract() == 0.0 && n.abs() < 9e15 {
-        format!("{}", n as i64)
+        return "NaN".to_string();
+    }
+    if n == 0.0 {
+        return "0".to_string(); // +0/-0 → "0"
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    let neg = n < 0.0;
+    // 최단 유효숫자 + 십진 지수로 분해: "m e exp" (예: "1.2345e2", "1e21", "1e-7")
+    let sci = format!("{:e}", n.abs());
+    let (mant, exp_str) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
+    let exp: i32 = exp_str.parse().unwrap_or(0);
+    let digits: String = mant.chars().filter(|c| *c != '.').collect();
+    let k = digits.len() as i32; // 유효숫자 개수
+    let np = exp + 1; // 소수점 위치(첫 유효숫자의 자리 = 10^(np-1))
+    let body = if np >= k && np <= 21 {
+        // 정수: 숫자 + (np-k)개의 0
+        format!("{}{}", digits, "0".repeat((np - k) as usize))
+    } else if np > 0 && np <= 21 {
+        // 소수점이 숫자들 사이
+        format!("{}.{}", &digits[..np as usize], &digits[np as usize..])
+    } else if np > -6 && np <= 0 {
+        // 0.00…digits
+        format!("0.{}{}", "0".repeat((-np) as usize), digits)
     } else {
-        format!("{}", n)
+        // 지수 표기: d[.rest]e{+|-}(np-1)
+        let e = np - 1;
+        let mantissa = if k == 1 {
+            digits.clone()
+        } else {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        };
+        let sign = if e >= 0 { "+" } else { "-" };
+        format!("{}e{}{}", mantissa, sign, e.abs())
+    };
+    if neg {
+        format!("-{}", body)
+    } else {
+        body
     }
 }
 
