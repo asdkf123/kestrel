@@ -84,7 +84,7 @@
 - [ ] JS **Date UTC전용/parse·UTC 없음/JSON 내부누출**. (builtins.rs:769)
 - [ ] JS **문자열 UTF-16 아님**(astral length). (mod.rs:2545)
 - [~] JS **엔진 내부 마커 비열거 + Date toJSON(ISO)** 완료. promise 메서드도 비열거(프로토타입 격).
-  JSON replacer/space 는 후속. (다음 커밋)
+  JSON replacer/space 는 후속. (25aa6fd)
 - [ ] JS **Number→문자열 Rust규칙**(1e21, toFixed 반올림). (value.rs:7)
 - [ ] JS **정규식 vs 나눗셈 `)`/`}` 뒤 오판**. (lexer.rs:174)
 - [~] JS **클래스 제너레이터(*)/async 메서드** 지원. 계산된 이름[expr]/객체리터럴 메서드는 후속(동적키 필요). (ccc73f8)
