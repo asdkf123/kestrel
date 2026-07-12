@@ -35,7 +35,7 @@ pub(super) enum GStep {
 
 // 제너레이터 인스턴스 상태. Value::Gen 이 이걸 Rc<RefCell> 로 들고 있다.
 pub struct GenState {
-    func: Rc<JsFn>,      // 본문/파라미터
+    body: Rc<Vec<Stmt>>, // 디슈가된 본문(모든 yield 가 문장 위치로 정규화됨)
     scope: EnvRef,       // 함수 스코프(파라미터·arguments·호이스트, 중단 사이 보존)
     started: bool,
     done: bool,
@@ -182,9 +182,12 @@ const UNSUPPORTED_YIELD: &str =
 
 impl Interp {
     // function* 호출 → 지연 제너레이터 객체 생성(본문은 아직 실행 안 함).
+    // 본문을 디슈가해 식 내부 yield(`a+(yield b)`, `f(yield x)`)를 문장 위치로 정규화한다.
     pub(super) fn make_generator(&mut self, func: Rc<JsFn>, scope: EnvRef) -> Value {
+        let mut ctr = 0usize;
+        let body = Rc::new(desugar_stmts(&func.body, &mut ctr));
         Value::Gen(Rc::new(RefCell::new(GenState {
-            func,
+            body,
             scope,
             started: false,
             done: false,
@@ -236,13 +239,13 @@ impl Interp {
                 ResumeMode::Next => {}
             }
         }
-        let (func, scope, resume) = {
+        let (body, scope, resume) = {
             let mut b = gs.borrow_mut();
             b.started = true;
-            (b.func.clone(), b.scope.clone(), std::mem::take(&mut b.resume))
+            (b.body.clone(), b.scope.clone(), std::mem::take(&mut b.resume))
         };
         let mut drive = Drive { resume, rpos: 0, sent: arg, saved: Vec::new(), mode };
-        let flow = self.gen_list(&func.body, &scope, &mut drive);
+        let flow = self.gen_list(&body, &scope, &mut drive);
         match flow {
             Ok(GenFlow::Yield(v)) => {
                 drive.saved.reverse(); // 잎→뿌리로 쌓였으니 뒤집어 뿌리→잎
@@ -1056,5 +1059,681 @@ impl Interp {
             }
             _ => Ok((Value::Undefined, true)),
         }
+    }
+}
+
+// ── 디슈가(desugar) 패스 ───────────────────────────────────────────────
+//
+// 제너레이터 본문을 실행 전에 변환해, 식 내부 어디에 있든 yield 를 문장 위치로
+// 끌어올린다(임시변수 도입). 예: `return a + (yield b)` →
+//   `let _l = a; let _t = yield b; return _l + _t;`
+// 평가 순서와 단락평가(&&/||/?:/??)를 정확히 보존한다. 변환 후엔 모든 yield 가
+// `yield e;` / `x = yield e` / `let x = yield e` 형태라 재개가능 인터프리터가
+// 기존 평가기 그대로로 처리한다(연산 의미론은 손대지 않음 = 요행 없음).
+
+// 부작용 없는 리터럴만 임시변수 없이 재사용 가능. 식별자도 중단 사이 재대입될 수
+// 있어 반드시 캡처한다.
+fn is_literal(e: &Expr) -> bool {
+    matches!(
+        e,
+        Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Null | Expr::Undefined
+    )
+}
+
+fn fresh(ctr: &mut usize) -> String {
+    *ctr += 1;
+    format!("\u{0}g{}", ctr) // NUL 접두사 — 소스 식별자와 절대 충돌하지 않음
+}
+
+fn let_stmt(name: String, init: Expr) -> Stmt {
+    Stmt::VarDecl { kind: DeclKind::Let, decls: vec![(Pattern::Name(name), Some(init))] }
+}
+
+fn let_uninit(name: String) -> Stmt {
+    Stmt::VarDecl { kind: DeclKind::Let, decls: vec![(Pattern::Name(name), None)] }
+}
+
+fn assign_stmt(name: String, val: Expr) -> Stmt {
+    Stmt::Expr(Expr::Assign {
+        op: AssignOp::Set,
+        target: Box::new(Expr::Ident(name)),
+        value: Box::new(val),
+    })
+}
+
+fn not_expr(e: Expr) -> Expr {
+    Expr::Unary { op: UnOp::Not, expr: Box::new(e) }
+}
+
+fn eq_null(e: Expr) -> Expr {
+    // `e == null` — null 과 undefined 모두 참(느슨한 동등).
+    Expr::Binary { op: BinOp::EqEq, left: Box::new(e), right: Box::new(Expr::Null) }
+}
+
+// 식을 평가해 임시변수에 담고 그 식별자를 돌려준다(리터럴은 그대로).
+fn capture(e: Expr, out: &mut Vec<Stmt>, ctr: &mut usize) -> Expr {
+    if is_literal(&e) {
+        return e;
+    }
+    let t = fresh(ctr);
+    out.push(let_stmt(t.clone(), e));
+    Expr::Ident(t)
+}
+
+fn compound_binop(op: AssignOp) -> BinOp {
+    match op {
+        AssignOp::Add => BinOp::Add,
+        AssignOp::Sub => BinOp::Sub,
+        AssignOp::Mul => BinOp::Mul,
+        AssignOp::Div => BinOp::Div,
+        AssignOp::Mod => BinOp::Mod,
+        AssignOp::Pow => BinOp::Pow,
+        AssignOp::BitAnd => BinOp::BitAnd,
+        AssignOp::BitOr => BinOp::BitOr,
+        AssignOp::BitXor => BinOp::BitXor,
+        AssignOp::Shl => BinOp::Shl,
+        AssignOp::Shr => BinOp::Shr,
+        AssignOp::UShr => BinOp::UShr,
+        _ => BinOp::Add, // Set/And/Or/Nullish 은 별도 처리
+    }
+}
+
+// 인자 목록을 순서대로 임시변수화(스프레드 유지). yield 인자 앞의 인자도 중단 전에
+// 캡처돼 순서가 보존된다.
+fn flatten_args(args: &[Expr], out: &mut Vec<Stmt>, ctr: &mut usize) -> Vec<Expr> {
+    args.iter()
+        .map(|a| match a {
+            Expr::Spread(inner) => {
+                let f = flatten(inner, out, ctr);
+                Expr::Spread(Box::new(capture(f, out, ctr)))
+            }
+            _ => {
+                let f = flatten(a, out, ctr);
+                capture(f, out, ctr)
+            }
+        })
+        .collect()
+}
+
+// 식을 평탄화한다. prelude 문을 out 에 덧붙이고, yield 없는 등가 식을 돌려준다.
+fn flatten(e: &Expr, out: &mut Vec<Stmt>, ctr: &mut usize) -> Expr {
+    if !expr_has_yield(e) {
+        return e.clone();
+    }
+    match e {
+        Expr::Yield { star, arg } => {
+            let a = arg.as_ref().map(|a| Box::new(flatten(a, out, ctr)));
+            let t = fresh(ctr);
+            out.push(let_stmt(t.clone(), Expr::Yield { star: *star, arg: a }));
+            Expr::Ident(t)
+        }
+        Expr::Binary { op, left, right } => {
+            let l = flatten(left, out, ctr);
+            if expr_has_yield(right) {
+                let lt = capture(l, out, ctr); // 오른쪽 yield 전에 왼쪽 값 확정
+                let r = flatten(right, out, ctr);
+                Expr::Binary { op: *op, left: Box::new(lt), right: Box::new(r) }
+            } else {
+                Expr::Binary { op: *op, left: Box::new(l), right: right.clone() }
+            }
+        }
+        Expr::Logical { op, left, right } => {
+            let l = flatten(left, out, ctr);
+            if expr_has_yield(right) {
+                // 단락평가 보존: 오른쪽(yield 포함)은 조건 만족 시에만 실행.
+                let res = fresh(ctr);
+                out.push(let_stmt(res.clone(), l));
+                let mut inner = Vec::new();
+                let r = flatten(right, &mut inner, ctr);
+                inner.push(assign_stmt(res.clone(), r));
+                let cond = match op {
+                    LogOp::And => Expr::Ident(res.clone()),
+                    LogOp::Or => not_expr(Expr::Ident(res.clone())),
+                };
+                out.push(Stmt::If { cond, then: inner, other: None });
+                Expr::Ident(res)
+            } else {
+                Expr::Logical { op: *op, left: Box::new(l), right: right.clone() }
+            }
+        }
+        Expr::Nullish { left, right } => {
+            let l = flatten(left, out, ctr);
+            if expr_has_yield(right) {
+                let res = fresh(ctr);
+                out.push(let_stmt(res.clone(), l));
+                let mut inner = Vec::new();
+                let r = flatten(right, &mut inner, ctr);
+                inner.push(assign_stmt(res.clone(), r));
+                out.push(Stmt::If { cond: eq_null(Expr::Ident(res.clone())), then: inner, other: None });
+                Expr::Ident(res)
+            } else {
+                Expr::Nullish { left: Box::new(l), right: right.clone() }
+            }
+        }
+        Expr::Ternary { cond, then, other } => {
+            let c = flatten(cond, out, ctr);
+            if expr_has_yield(then) || expr_has_yield(other) {
+                let res = fresh(ctr);
+                out.push(let_uninit(res.clone()));
+                let mut tb = Vec::new();
+                let t = flatten(then, &mut tb, ctr);
+                tb.push(assign_stmt(res.clone(), t));
+                let mut ob = Vec::new();
+                let o = flatten(other, &mut ob, ctr);
+                ob.push(assign_stmt(res.clone(), o));
+                out.push(Stmt::If { cond: c, then: tb, other: Some(ob) });
+                Expr::Ident(res)
+            } else {
+                Expr::Ternary {
+                    cond: Box::new(c),
+                    then: then.clone(),
+                    other: other.clone(),
+                }
+            }
+        }
+        Expr::Call { callee, args } => flatten_call(callee, args, false, out, ctr),
+        Expr::New { callee, args } => flatten_call(callee, args, true, out, ctr),
+        Expr::OptCall { callee, args } => {
+            let c = flatten(callee, out, ctr);
+            if args.iter().any(expr_has_yield) {
+                // fn?.(yield x): fn 이 null/undefined 면 인자 평가 없이 undefined.
+                let ct = capture(c, out, ctr);
+                let res = fresh(ctr);
+                out.push(let_uninit(res.clone()));
+                let mut elseb = Vec::new();
+                let a = flatten_args(args, &mut elseb, ctr);
+                elseb.push(assign_stmt(
+                    res.clone(),
+                    Expr::Call { callee: Box::new(ct.clone()), args: a },
+                ));
+                out.push(Stmt::If {
+                    cond: eq_null(ct),
+                    then: vec![assign_stmt(res.clone(), Expr::Undefined)],
+                    other: Some(elseb),
+                });
+                Expr::Ident(res)
+            } else {
+                Expr::OptCall { callee: Box::new(c), args: args.clone() }
+            }
+        }
+        Expr::Member { obj, prop, computed } => {
+            let o = flatten(obj, out, ctr);
+            if *computed && expr_has_yield(prop) {
+                let ot = capture(o, out, ctr);
+                let p = flatten(prop, out, ctr);
+                Expr::Member { obj: Box::new(ot), prop: Box::new(p), computed: true }
+            } else {
+                Expr::Member { obj: Box::new(o), prop: prop.clone(), computed: *computed }
+            }
+        }
+        Expr::OptMember { obj, prop, computed } => {
+            let o = flatten(obj, out, ctr);
+            if *computed && expr_has_yield(prop) {
+                let ot = capture(o, out, ctr);
+                let res = fresh(ctr);
+                out.push(let_uninit(res.clone()));
+                let mut elseb = Vec::new();
+                let p = flatten(prop, &mut elseb, ctr);
+                elseb.push(assign_stmt(
+                    res.clone(),
+                    Expr::Member { obj: Box::new(ot.clone()), prop: Box::new(p), computed: true },
+                ));
+                out.push(Stmt::If {
+                    cond: eq_null(ot),
+                    then: vec![assign_stmt(res.clone(), Expr::Undefined)],
+                    other: Some(elseb),
+                });
+                Expr::Ident(res)
+            } else {
+                Expr::OptMember { obj: Box::new(o), prop: prop.clone(), computed: *computed }
+            }
+        }
+        Expr::Array(items) => Expr::Array(
+            items
+                .iter()
+                .map(|it| match it {
+                    Expr::Spread(inner) => {
+                        Expr::Spread(Box::new(capture(flatten(inner, out, ctr), out, ctr)))
+                    }
+                    _ => capture(flatten(it, out, ctr), out, ctr),
+                })
+                .collect(),
+        ),
+        Expr::Object(props) => Expr::Object(
+            props
+                .iter()
+                .map(|(k, v)| {
+                    let k2 = match k {
+                        PropKey::Computed(ke) => {
+                            PropKey::Computed(Box::new(capture(flatten(ke, out, ctr), out, ctr)))
+                        }
+                        other => other.clone(),
+                    };
+                    let v2 = capture(flatten(v, out, ctr), out, ctr);
+                    (k2, v2)
+                })
+                .collect(),
+        ),
+        Expr::Assign { op, target, value } => flatten_assign(*op, target, value, out, ctr),
+        Expr::Sequence(xs) => {
+            let n = xs.len();
+            let mut result = Expr::Undefined;
+            for (i, x) in xs.iter().enumerate() {
+                let fx = flatten(x, out, ctr);
+                if i + 1 < n {
+                    out.push(Stmt::Expr(fx)); // 부작용만, 값 버림
+                } else {
+                    result = fx;
+                }
+            }
+            result
+        }
+        Expr::Unary { op, expr } => {
+            Expr::Unary { op: *op, expr: Box::new(flatten(expr, out, ctr)) }
+        }
+        Expr::Update { op, prefix, target } => match &**target {
+            Expr::Member { obj, prop, computed }
+                if expr_has_yield(obj) || (*computed && expr_has_yield(prop)) =>
+            {
+                let o = capture(flatten(obj, out, ctr), out, ctr);
+                let p = if *computed {
+                    capture(flatten(prop, out, ctr), out, ctr)
+                } else {
+                    (**prop).clone()
+                };
+                Expr::Update {
+                    op: *op,
+                    prefix: *prefix,
+                    target: Box::new(Expr::Member {
+                        obj: Box::new(o),
+                        prop: Box::new(p),
+                        computed: *computed,
+                    }),
+                }
+            }
+            _ => Expr::Update { op: *op, prefix: *prefix, target: target.clone() },
+        },
+        Expr::Spread(inner) => Expr::Spread(Box::new(flatten(inner, out, ctr))),
+        Expr::Template(parts) => Expr::Template(
+            parts
+                .iter()
+                .map(|p| match p {
+                    TemplatePart::Expr(x) => {
+                        TemplatePart::Expr(Box::new(capture(flatten(x, out, ctr), out, ctr)))
+                    }
+                    TemplatePart::Lit(s) => TemplatePart::Lit(s.clone()),
+                })
+                .collect(),
+        ),
+        Expr::Await(x) => Expr::Await(Box::new(flatten(x, out, ctr))),
+        Expr::AssignPattern { pattern, value } => Expr::AssignPattern {
+            pattern: pattern.clone(),
+            value: Box::new(flatten(value, out, ctr)),
+        },
+        // 나머지(함수/클래스 등)는 자기 소관 yield 를 포함하지 않으므로 그대로.
+        _ => e.clone(),
+    }
+}
+
+// 호출/생성자 평탄화. 메서드 호출은 this 를 보존하려 `_f.call(_o, ...)` 로 바꾼다.
+fn flatten_call(
+    callee: &Expr,
+    args: &[Expr],
+    is_new: bool,
+    out: &mut Vec<Stmt>,
+    ctr: &mut usize,
+) -> Expr {
+    if !is_new {
+        if let Expr::Member { obj, prop, computed } = callee {
+            // 메서드 호출: 객체·메서드를 인자 평가 전에 캡처하고 this 를 넘긴다.
+            let o = flatten(obj, out, ctr);
+            let ot = capture(o, out, ctr);
+            let prop2 = if *computed {
+                capture(flatten(prop, out, ctr), out, ctr)
+            } else {
+                (**prop).clone()
+            };
+            let method = Expr::Member {
+                obj: Box::new(ot.clone()),
+                prop: Box::new(prop2),
+                computed: *computed,
+            };
+            let ft = capture(method, out, ctr);
+            let arg_temps = flatten_args(args, out, ctr);
+            let mut call_args = vec![ot];
+            call_args.extend(arg_temps);
+            return Expr::Call {
+                callee: Box::new(Expr::Member {
+                    obj: Box::new(ft),
+                    prop: Box::new(Expr::Str("call".to_string())),
+                    computed: false,
+                }),
+                args: call_args,
+            };
+        }
+    }
+    let c = flatten(callee, out, ctr);
+    let ct = capture(c, out, ctr);
+    let arg_temps = flatten_args(args, out, ctr);
+    if is_new {
+        Expr::New { callee: Box::new(ct), args: arg_temps }
+    } else {
+        Expr::Call { callee: Box::new(ct), args: arg_temps }
+    }
+}
+
+fn flatten_assign(
+    op: AssignOp,
+    target: &Expr,
+    value: &Expr,
+    out: &mut Vec<Stmt>,
+    ctr: &mut usize,
+) -> Expr {
+    // 논리 복합대입(&&= ||= ??=)은 단락평가.
+    let logical = matches!(op, AssignOp::And | AssignOp::Or | AssignOp::Nullish);
+    match target {
+        Expr::Ident(name) => {
+            if logical {
+                let cond = match op {
+                    AssignOp::And => Expr::Ident(name.clone()),
+                    AssignOp::Or => not_expr(Expr::Ident(name.clone())),
+                    _ => eq_null(Expr::Ident(name.clone())),
+                };
+                let mut inner = Vec::new();
+                let v = flatten(value, &mut inner, ctr);
+                inner.push(assign_stmt(name.clone(), v));
+                out.push(Stmt::If { cond, then: inner, other: None });
+                Expr::Ident(name.clone())
+            } else if matches!(op, AssignOp::Set) {
+                let v = flatten(value, out, ctr);
+                Expr::Assign {
+                    op,
+                    target: Box::new(Expr::Ident(name.clone())),
+                    value: Box::new(v),
+                }
+            } else {
+                // 복합대입: 옛 값을 yield 전에 확정.
+                let old = fresh(ctr);
+                out.push(let_stmt(old.clone(), Expr::Ident(name.clone())));
+                let v = flatten(value, out, ctr);
+                let combined = Expr::Binary {
+                    op: compound_binop(op),
+                    left: Box::new(Expr::Ident(old)),
+                    right: Box::new(v),
+                };
+                Expr::Assign {
+                    op: AssignOp::Set,
+                    target: Box::new(Expr::Ident(name.clone())),
+                    value: Box::new(combined),
+                }
+            }
+        }
+        Expr::Member { obj, prop, computed } => {
+            let ot = capture(flatten(obj, out, ctr), out, ctr);
+            let prop2 = if *computed {
+                capture(flatten(prop, out, ctr), out, ctr)
+            } else {
+                (**prop).clone()
+            };
+            let tgt = Expr::Member {
+                obj: Box::new(ot),
+                prop: Box::new(prop2),
+                computed: *computed,
+            };
+            if matches!(op, AssignOp::Set) {
+                let v = flatten(value, out, ctr);
+                Expr::Assign { op, target: Box::new(tgt), value: Box::new(v) }
+            } else if logical {
+                let cond = match op {
+                    AssignOp::And => tgt.clone(),
+                    AssignOp::Or => not_expr(tgt.clone()),
+                    _ => eq_null(tgt.clone()),
+                };
+                let mut inner = Vec::new();
+                let v = flatten(value, &mut inner, ctr);
+                inner.push(Stmt::Expr(Expr::Assign {
+                    op: AssignOp::Set,
+                    target: Box::new(tgt.clone()),
+                    value: Box::new(v),
+                }));
+                out.push(Stmt::If { cond, then: inner, other: None });
+                tgt
+            } else {
+                let old = fresh(ctr);
+                out.push(let_stmt(old.clone(), tgt.clone()));
+                let v = flatten(value, out, ctr);
+                let combined = Expr::Binary {
+                    op: compound_binop(op),
+                    left: Box::new(Expr::Ident(old)),
+                    right: Box::new(v),
+                };
+                Expr::Assign {
+                    op: AssignOp::Set,
+                    target: Box::new(tgt),
+                    value: Box::new(combined),
+                }
+            }
+        }
+        // 그 외 대상(구조분해 등): 값만 평탄화(최선).
+        _ => {
+            let v = flatten(value, out, ctr);
+            Expr::Assign { op, target: Box::new(target.clone()), value: Box::new(v) }
+        }
+    }
+}
+
+fn desugar_stmts(stmts: &[Stmt], ctr: &mut usize) -> Vec<Stmt> {
+    let mut out = Vec::new();
+    for s in stmts {
+        out.extend(desugar_stmt(s, ctr));
+    }
+    out
+}
+
+fn desugar_stmt(s: &Stmt, ctr: &mut usize) -> Vec<Stmt> {
+    if !stmt_has_yield(s) {
+        return vec![s.clone()]; // yield 없으면 그대로
+    }
+    match s {
+        Stmt::Expr(Expr::Yield { star, arg }) => {
+            let mut out = Vec::new();
+            let a = arg.as_ref().map(|a| Box::new(flatten(a, &mut out, ctr)));
+            out.push(Stmt::Expr(Expr::Yield { star: *star, arg: a }));
+            out
+        }
+        Stmt::Expr(Expr::Assign { op: AssignOp::Set, target, value })
+            if matches!(&**target, Expr::Ident(_)) && matches!(&**value, Expr::Yield { .. }) =>
+        {
+            // x = yield e (정규 형태 유지)
+            let (star, arg) = match &**value {
+                Expr::Yield { star, arg } => (*star, arg),
+                _ => unreachable!(),
+            };
+            let mut out = Vec::new();
+            let a = arg.as_ref().map(|a| Box::new(flatten(a, &mut out, ctr)));
+            out.push(Stmt::Expr(Expr::Assign {
+                op: AssignOp::Set,
+                target: target.clone(),
+                value: Box::new(Expr::Yield { star, arg: a }),
+            }));
+            out
+        }
+        Stmt::Expr(e) => {
+            let mut out = Vec::new();
+            let e2 = flatten(e, &mut out, ctr);
+            out.push(Stmt::Expr(e2));
+            out
+        }
+        Stmt::Return(Some(Expr::Yield { star, arg })) => {
+            let mut out = Vec::new();
+            let a = arg.as_ref().map(|a| Box::new(flatten(a, &mut out, ctr)));
+            out.push(Stmt::Return(Some(Expr::Yield { star: *star, arg: a })));
+            out
+        }
+        Stmt::Return(Some(e)) => {
+            let mut out = Vec::new();
+            let e2 = flatten(e, &mut out, ctr);
+            out.push(Stmt::Return(Some(e2)));
+            out
+        }
+        Stmt::Throw(e) => {
+            let mut out = Vec::new();
+            let e2 = flatten(e, &mut out, ctr);
+            out.push(Stmt::Throw(e2));
+            out
+        }
+        Stmt::VarDecl { kind, decls } => {
+            let mut out = Vec::new();
+            for (pat, init) in decls {
+                match (pat, init) {
+                    (Pattern::Name(n), Some(Expr::Yield { star, arg })) => {
+                        let a = arg.as_ref().map(|a| Box::new(flatten(a, &mut out, ctr)));
+                        out.push(Stmt::VarDecl {
+                            kind: *kind,
+                            decls: vec![(
+                                Pattern::Name(n.clone()),
+                                Some(Expr::Yield { star: *star, arg: a }),
+                            )],
+                        });
+                    }
+                    (_, Some(e)) => {
+                        let e2 = flatten(e, &mut out, ctr);
+                        out.push(Stmt::VarDecl {
+                            kind: *kind,
+                            decls: vec![(pat.clone(), Some(e2))],
+                        });
+                    }
+                    (_, None) => out.push(Stmt::VarDecl {
+                        kind: *kind,
+                        decls: vec![(pat.clone(), None)],
+                    }),
+                }
+            }
+            out
+        }
+        Stmt::If { cond, then, other } => {
+            let mut out = Vec::new();
+            let c = flatten(cond, &mut out, ctr);
+            out.push(Stmt::If {
+                cond: c,
+                then: desugar_stmts(then, ctr),
+                other: other.as_ref().map(|o| desugar_stmts(o, ctr)),
+            });
+            out
+        }
+        Stmt::While { cond, body } => {
+            let body2 = desugar_stmts(body, ctr);
+            if expr_has_yield(cond) {
+                // while(cond) → while(true){ <pre>; if(!cond') break; body }
+                let mut nb = Vec::new();
+                let c = flatten(cond, &mut nb, ctr);
+                nb.push(Stmt::If { cond: not_expr(c), then: vec![Stmt::Break(None)], other: None });
+                nb.extend(body2);
+                vec![Stmt::While { cond: Expr::Bool(true), body: nb }]
+            } else {
+                vec![Stmt::While { cond: cond.clone(), body: body2 }]
+            }
+        }
+        Stmt::DoWhile { body, cond } => {
+            let mut nb = desugar_stmts(body, ctr);
+            if expr_has_yield(cond) {
+                let c = flatten(cond, &mut nb, ctr);
+                nb.push(Stmt::If { cond: not_expr(c), then: vec![Stmt::Break(None)], other: None });
+                vec![Stmt::DoWhile { body: nb, cond: Expr::Bool(true) }]
+            } else {
+                vec![Stmt::DoWhile { body: nb, cond: cond.clone() }]
+            }
+        }
+        Stmt::For { init, cond, step, body } => {
+            let body2 = desugar_stmts(body, ctr);
+            let cond_has = cond.as_ref().map_or(false, expr_has_yield);
+            let step_has = step.as_ref().map_or(false, expr_has_yield);
+            let init_has = init.as_ref().map_or(false, |s| stmt_has_yield(s));
+            if !cond_has && !step_has && !init_has {
+                // yield 는 본문에만 — for 유지(재개가능 인터프리터가 per-iteration 처리).
+                vec![Stmt::For {
+                    init: init.clone(),
+                    cond: cond.clone(),
+                    step: step.clone(),
+                    body: body2,
+                }]
+            } else {
+                // 드묾: cond/step/init 에 yield → while(true) 로 변환.
+                // { init; let first=true; while(true){ if(first)first=false else step;
+                //   <cond-pre>; if(!cond') break; body } }  (continue → step 재실행 보존)
+                let mut outer = Vec::new();
+                if let Some(init) = init {
+                    outer.extend(desugar_stmt(init, ctr));
+                }
+                let first = fresh(ctr);
+                outer.push(let_stmt(first.clone(), Expr::Bool(true)));
+                let mut wb = Vec::new();
+                let mut elseb = Vec::new();
+                if let Some(step) = step {
+                    let s2 = flatten(step, &mut elseb, ctr);
+                    elseb.push(Stmt::Expr(s2));
+                }
+                wb.push(Stmt::If {
+                    cond: Expr::Ident(first.clone()),
+                    then: vec![assign_stmt(first.clone(), Expr::Bool(false))],
+                    other: Some(elseb),
+                });
+                if let Some(cond) = cond {
+                    let c = flatten(cond, &mut wb, ctr);
+                    wb.push(Stmt::If { cond: not_expr(c), then: vec![Stmt::Break(None)], other: None });
+                }
+                wb.extend(body2);
+                outer.push(Stmt::While { cond: Expr::Bool(true), body: wb });
+                vec![Stmt::Block(outer)]
+            }
+        }
+        Stmt::ForOf { name, iter, body } => {
+            let mut out = Vec::new();
+            let it = flatten(iter, &mut out, ctr);
+            out.push(Stmt::ForOf {
+                name: name.clone(),
+                iter: it,
+                body: desugar_stmts(body, ctr),
+            });
+            out
+        }
+        Stmt::ForIn { name, obj, body } => {
+            let mut out = Vec::new();
+            let o = flatten(obj, &mut out, ctr);
+            out.push(Stmt::ForIn {
+                name: name.clone(),
+                obj: o,
+                body: desugar_stmts(body, ctr),
+            });
+            out
+        }
+        Stmt::Block(stmts) => vec![Stmt::Block(desugar_stmts(stmts, ctr))],
+        Stmt::Labeled(l, inner) => {
+            // 레이블은 대상 문(주로 루프)에 붙여야 한다. 디슈가가 prelude+문 을 낳으면
+            // 마지막 문(루프)에 레이블을 단다.
+            let mut d = desugar_stmt(inner, ctr);
+            if let Some(last) = d.pop() {
+                d.push(Stmt::Labeled(l.clone(), Box::new(last)));
+            }
+            d
+        }
+        Stmt::Try { body, catch, finally } => vec![Stmt::Try {
+            body: desugar_stmts(body, ctr),
+            catch: catch.as_ref().map(|(p, b)| (p.clone(), desugar_stmts(b, ctr))),
+            finally: finally.as_ref().map(|b| desugar_stmts(b, ctr)),
+        }],
+        Stmt::Switch { disc, cases } => {
+            let mut out = Vec::new();
+            let d = flatten(disc, &mut out, ctr);
+            out.push(Stmt::Switch {
+                disc: d,
+                cases: cases
+                    .iter()
+                    .map(|(t, b)| (t.clone(), desugar_stmts(b, ctr)))
+                    .collect(),
+            });
+            out
+        }
+        _ => vec![s.clone()],
     }
 }

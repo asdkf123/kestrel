@@ -4578,6 +4578,55 @@ mod tests {
     }
 
     #[test]
+    fn generator_yield_in_expression_positions() {
+        // 이항식 내부 yield — 평가 순서 보존(왼쪽 먼저)
+        assert_eq!(
+            run_num("function* g(){ return 10 + (yield 1); } var it=g(); it.next(); it.next(5).value"),
+            15.0,
+        );
+        // 함수 호출 인자 위치 yield (부작용 함수)
+        assert_eq!(
+            run_num("function* g(){ return Math.max(yield 1, yield 2); } \
+                     var it=g(); it.next(); it.next(3); it.next(8).value"),
+            8.0,
+        );
+        // 메서드 호출 인자 위치 yield — this 보존
+        assert_eq!(
+            run_str("function* g(){ var a=[]; a.push(yield 1); a.push(yield 2); return a.join(','); } \
+                     var it=g(); it.next(); it.next('x'); var r=it.next('y'); r.value"),
+            "x,y",
+        );
+        // 배열 리터럴 안 yield, 순서 보존
+        assert_eq!(
+            run_str("function* g(){ return [yield 1, yield 2, 3].join('-'); } \
+                     var it=g(); it.next(); it.next('a'); it.next('b').value"),
+            "a-b-3",
+        );
+        // 삼항식 분기 안 yield — 선택된 분기만 산출
+        assert_eq!(
+            run_num("function* g(cond){ return cond ? (yield 1) : (yield 2); } \
+                     var it=g(true); it.next(); it.next(42).value"),
+            42.0,
+        );
+    }
+
+    #[test]
+    fn generator_yield_short_circuit() {
+        // && 오른쪽 yield 는 왼쪽이 truthy 일 때만 실행(부작용 로그로 확인)
+        assert_eq!(
+            run_str("var log=[]; function* g(){ false && (yield log.push('R')); return log.join(''); } \
+                     var it=g(); var r=it.next(); r.value"),
+            "", // 오른쪽 미실행 → 첫 next 가 바로 done
+        );
+        // || 왼쪽 falsy → 오른쪽 yield 실행
+        assert_eq!(
+            run_num("function* g(){ var x = 0 || (yield 1); return x; } \
+                     var it=g(); it.next(); it.next(7).value"),
+            7.0,
+        );
+    }
+
+    #[test]
     fn generator_for_of_in_body() {
         // 제너레이터 본문 안 for-of (지연 위임과 동류) — 값을 변환해 산출
         assert_eq!(
