@@ -1464,7 +1464,24 @@ impl<'a> LayoutBox<'a> {
     // <table>: 모든 행의 셀을 모아 공통 열 폭을 계산해 열을 정렬한다.
     // 열 폭 = 지정 폭(있으면) 아니면 내용 기반(max-content) 선호 폭. 남는/부족한
     // 폭은 auto 열에 선호 비율로 분배해 테이블 폭을 채움. 행 높이 = 최고 셀.
-    // colspan/rowspan 지원. 미지원: border-collapse, border-spacing.
+    // border-spacing (border-collapse:separate 일 때만, 기본 0). (가로, 세로) px.
+    fn table_border_spacing(&self) -> (f32, f32) {
+        if matches!(self.styled_node.value("border-collapse"), Some(Value::Keyword(ref k)) if k == "collapse") {
+            return (0.0, 0.0);
+        }
+        match self.styled_node.value("border-spacing") {
+            Some(Length(v, _)) => (v, v),
+            Some(Value::Keyword(ref s)) => {
+                let mut it = s.split_whitespace();
+                let h = it.next().and_then(crate::css::parse_len_px).unwrap_or(0.0);
+                let v = it.next().and_then(crate::css::parse_len_px).unwrap_or(h);
+                (h, v)
+            }
+            _ => (0.0, 0.0),
+        }
+    }
+
+    // colspan/rowspan/border-spacing 지원. border-collapse 는 근사(테두리 미중첩).
     fn layout_table(&mut self, fonts: &FontStack, images: &ImageMap) {
         let d = self.dimensions;
         let (ox, oy, avail) = (d.content.x, d.content.y, d.content.width);
@@ -1549,9 +1566,13 @@ impl<'a> LayoutBox<'a> {
         // 고정폭(px/%) 열이 있으면 그 폭 기준을 채우려는 의도로 보고 avail 유지.
         // 순수 auto 열만인 표(작은 데이터표·인포박스)만 내용 폭으로 줄인다.
         let explicit_width = matches!(self.styled_node.value("width"), Some(Length(_, _)));
+        // border-spacing 은 열 사이·표 가장자리 공간을 먹으므로 열 배분 폭에서 뺀다.
+        let (bsx, bsy) = self.table_border_spacing();
+        let total_sx = bsx * (ncols as f32 + 1.0);
+        let avail_cols = (avail - total_sx).max(0.0);
         let shrink = !explicit_width && total_fixed <= 0.0;
         let table_pref = total_fixed + auto_pref_sum;
-        let table_width = if shrink { table_pref.min(avail).max(0.0) } else { avail };
+        let table_width = if shrink { table_pref.min(avail_cols).max(0.0) } else { avail_cols };
         let remaining = (table_width - total_fixed).max(0.0);
         let mut col_w = vec![0.0f32; ncols];
         for c in 0..ncols {
@@ -1570,14 +1591,14 @@ impl<'a> LayoutBox<'a> {
         }
         let mut col_x = vec![ox; ncols];
         {
-            let mut x = ox;
+            let mut x = ox + bsx;
             for c in 0..ncols {
                 col_x[c] = x;
-                x += col_w[c];
+                x += col_w[c] + bsx;
             }
         }
         // <caption>: 표 위에 표 폭으로 배치하고, 행 시작 y 를 캡션 높이만큼 내린다.
-        let table_w: f32 = col_w.iter().sum();
+        let table_w: f32 = col_w.iter().sum::<f32>() + total_sx;
         // shrink-to-fit: 표 박스 폭을 실제 열 폭 합으로 줄인다(배경/테두리/부모 폭 반영).
         if shrink && table_w < avail {
             self.dimensions.content.width = table_w;
@@ -1596,7 +1617,7 @@ impl<'a> LayoutBox<'a> {
             caption_h = cap.dimensions.margin_box().height;
         }
         // 3) 행별 배치 (공통 열 폭). rowspan 은 occupied 로 아래 행 열을 점유.
-        let mut y = oy + caption_h;
+        let mut y = oy + caption_h + bsy;
         let mut occupied = vec![0usize; ncols]; // 위 행 rowspan 이 덮은 잔여 행 수
         let mut row_tops: Vec<f32> = Vec::with_capacity(rows.len());
         let mut row_heights: Vec<f32> = Vec::with_capacity(rows.len());
@@ -1655,7 +1676,7 @@ impl<'a> LayoutBox<'a> {
             for o in occupied.iter_mut() {
                 *o = o.saturating_sub(1);
             }
-            y += row_h;
+            y += row_h + bsy;
         }
         // rowspan 셀 높이 = 시작~끝 행에 걸친 총 높이
         for (i, j, cell_pos, ridx, rspan) in rowspan_cells {
