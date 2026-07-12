@@ -457,6 +457,86 @@ fn env_declare(env: &EnvRef, name: &str, value: Value) {
     env.borrow_mut().vars.insert(name.to_string(), value);
 }
 
+// var 하이스팅: 함수/전역 진입 시 몸통의 모든 var 이름을 undefined 로 미리 선언.
+// 제어흐름 몸통(if/for/while/try/switch/block)은 파고들되, 중첩 함수 몸통은 제외
+// (var 은 함수 스코프). 이미 있는 이름(파라미터 등)은 덮지 않는다.
+fn hoist_vars(stmts: &[Stmt], scope: &EnvRef) {
+    for s in stmts {
+        hoist_stmt(s, scope);
+    }
+}
+
+fn pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
+    use crate::js::ast::Pattern;
+    match pat {
+        Pattern::Name(n) => out.push(n.clone()),
+        Pattern::Object(props, rest) => {
+            for (_, sub, _) in props {
+                pattern_names(sub, out);
+            }
+            if let Some(r) = rest {
+                out.push(r.clone());
+            }
+        }
+        Pattern::Array(elems, rest) => {
+            for slot in elems.iter().flatten() {
+                pattern_names(&slot.0, out);
+            }
+            if let Some(r) = rest {
+                out.push(r.clone());
+            }
+        }
+    }
+}
+
+fn hoist_stmt(s: &Stmt, scope: &EnvRef) {
+    match s {
+        Stmt::VarDecl { kind: crate::js::ast::DeclKind::Var, decls } => {
+            for (pat, _) in decls {
+                let mut names = Vec::new();
+                pattern_names(pat, &mut names);
+                for n in names {
+                    if !scope.borrow().vars.contains_key(&n) {
+                        env_declare(scope, &n, Value::Undefined);
+                    }
+                }
+            }
+        }
+        Stmt::If { then, other, .. } => {
+            hoist_vars(then, scope);
+            if let Some(o) = other {
+                hoist_vars(o, scope);
+            }
+        }
+        Stmt::While { body, .. }
+        | Stmt::DoWhile { body, .. }
+        | Stmt::Block(body)
+        | Stmt::ForIn { body, .. }
+        | Stmt::ForOf { body, .. } => hoist_vars(body, scope),
+        Stmt::For { init, body, .. } => {
+            if let Some(init) = init {
+                hoist_stmt(init, scope);
+            }
+            hoist_vars(body, scope);
+        }
+        Stmt::Try { body, catch, finally } => {
+            hoist_vars(body, scope);
+            if let Some((_, cb)) = catch {
+                hoist_vars(cb, scope);
+            }
+            if let Some(fb) = finally {
+                hoist_vars(fb, scope);
+            }
+        }
+        Stmt::Switch { cases, .. } => {
+            for (_, body) in cases {
+                hoist_vars(body, scope);
+            }
+        }
+        _ => {} // FuncDecl/ClassDecl 몸통은 별도 스코프 → 하이스트 안 함
+    }
+}
+
 // ── 값 변환 ────────────────────────────────────────────────────────
 
 
@@ -1295,6 +1375,7 @@ impl Interp {
         self.steps = 0; // 실행 단위(스크립트/핸들러)마다 한도 리셋
         let program = parse(src)?;
         let env = self.global.clone();
+        hoist_vars(&program, &env); // var 하이스팅 (전역)
         match self.exec_block(&program, &env)? {
             Flow::Normal(v) | Flow::Return(v) => Ok(v),
             _ => Ok(Value::Undefined),
@@ -1307,10 +1388,19 @@ impl Interp {
         pat: &crate::js::ast::Pattern,
         value: Value,
         env: &EnvRef,
+        // assign=true(var): 하이스트된 기존 바인딩에 대입(env_set). false(let/const/param): 새로 선언.
+        assign: bool,
     ) -> Result<(), String> {
         use crate::js::ast::Pattern;
+        let bind = |env: &EnvRef, n: &str, v: Value| {
+            if assign {
+                env_set(env, n, v);
+            } else {
+                env_declare(env, n, v);
+            }
+        };
         match pat {
-            Pattern::Name(n) => env_declare(env, n, value),
+            Pattern::Name(n) => bind(env, n, value),
             Pattern::Object(props, rest) => {
                 for (key, sub, default) in props {
                     let mut v = self.member_get(&value, key).unwrap_or(Value::Undefined);
@@ -1319,7 +1409,7 @@ impl Interp {
                             v = self.eval(d, env)?;
                         }
                     }
-                    self.bind_pattern(sub, v, env)?;
+                    self.bind_pattern(sub, v, env, assign)?;
                 }
                 // { a, ...rest } — 분해되지 않은 나머지 own 프로퍼티를 객체로
                 if let Some(rest_name) = rest {
@@ -1338,7 +1428,7 @@ impl Interp {
                         Value::Instance(i) => collect(&i.fields.borrow(), &mut map),
                         _ => {}
                     }
-                    env_declare(env, rest_name, Value::Obj(Rc::new(RefCell::new(map))));
+                    bind(env, rest_name, Value::Obj(Rc::new(RefCell::new(map))));
                 }
             }
             Pattern::Array(elems, rest) => {
@@ -1351,7 +1441,7 @@ impl Interp {
                                 v = self.eval(d, env)?;
                             }
                         }
-                        self.bind_pattern(sub, v, env)?;
+                        self.bind_pattern(sub, v, env, assign)?;
                     }
                 }
                 // [a, ...rest] — elems.len() 부터 남은 요소를 배열로
@@ -1360,7 +1450,7 @@ impl Interp {
                         Value::Arr(a) => a.borrow().iter().skip(elems.len()).cloned().collect(),
                         _ => Vec::new(),
                     };
-                    env_declare(env, rest_name, Value::Arr(ArrayObj::new(items)));
+                    bind(env, rest_name, Value::Arr(ArrayObj::new(items)));
                 }
             }
         }
@@ -1406,13 +1496,19 @@ impl Interp {
     fn exec_stmt(&mut self, stmt: &Stmt, env: &EnvRef) -> Result<Flow, String> {
         self.tick()?;
         match stmt {
-            Stmt::VarDecl { decls, .. } => {
+            Stmt::VarDecl { kind, decls } => {
+                let is_var = matches!(kind, crate::js::ast::DeclKind::Var);
                 for (pat, init) in decls {
-                    let v = match init {
-                        Some(e) => self.eval(e, env)?,
-                        None => Value::Undefined,
-                    };
-                    self.bind_pattern(pat, v, env)?;
+                    match init {
+                        // var 는 하이스트된 바인딩에 대입(env_set), let/const 는 새로 선언
+                        Some(e) => {
+                            let v = self.eval(e, env)?;
+                            self.bind_pattern(pat, v, env, is_var)?;
+                        }
+                        // var x; (초기화 없음)은 하이스트된 값 보존(덮지 않음). let x; 는 undefined.
+                        None if !is_var => self.bind_pattern(pat, Value::Undefined, env, false)?,
+                        None => {}
+                    }
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
@@ -2448,6 +2544,7 @@ impl Interp {
                         env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
                     }
                 }
+                hoist_vars(&func.body, &scope); // var 하이스팅 (함수 스코프)
                 // 제너레이터(eager): 본문을 즉시 실행해 yield 값을 모으고 반복자 반환.
                 if func.is_generator {
                     self.yield_sink.push(Vec::new());
@@ -3648,6 +3745,19 @@ mod tests {
             run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
             "b"
         );
+    }
+
+    #[test]
+    fn var_hoisting() {
+        // var x = x || default (미니파이/UMD 흔한 패턴 — 하이스팅으로 자기참조 동작)
+        assert_eq!(run_num("var a = a || 3; a"), 3.0);
+        assert_eq!(run_num("(function(){ var n=n||{v:7}; return n.v; })()"), 7.0);
+        // 블록 안 var 는 함수 스코프
+        assert_eq!(run_num("(function(){ if(true){var z=42;} return z; })()"), 42.0);
+        // for 루프 var 는 루프 밖에서도 보임
+        assert_eq!(run_num("var s=0; for(var i=0;i<3;i++)s+=i; i"), 3.0);
+        // 선언 전 사용 시 하이스트된 undefined
+        assert_eq!(run_num("var r=(typeof q==='undefined'?1:2); var q=5; r"), 1.0);
     }
 
     #[test]
