@@ -2333,17 +2333,20 @@ impl Interp {
             Native::ArrayFrom => {
                 let src = args.first().cloned().unwrap_or(Value::Undefined);
                 let map_fn = args.get(1).cloned().filter(is_callable);
-                // 이터러블(배열/문자열/Set/Map/반복자)이면 그대로, 아니면 array-like(length).
+                // 이터러블(배열/문자열/Set/Map/제너레이터/반복자/사용자 [Symbol.iterator])이면
+                // 프로토콜로, 아니면 array-like(length + 인덱스).
                 let items: Vec<Value> = match &src {
                     Value::Arr(_)
                     | Value::Str(_)
                     | Value::SetVal(_)
-                    | Value::MapVal(_) => self.iterate_to_vec(&src),
+                    | Value::MapVal(_)
+                    | Value::Gen(_) => self.iterate_to_vec(&src),
                     Value::Obj(o)
                         if o.borrow().contains_key("__items") || o.borrow().contains_key("next") =>
                     {
                         self.iterate_to_vec(&src)
                     }
+                    _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src),
                     // array-like: length + 인덱스 프로퍼티
                     Value::Obj(o) => {
                         let len = o.borrow().get("length").map(to_num).unwrap_or(0.0);

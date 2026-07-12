@@ -1018,23 +1018,33 @@ impl Interp {
         Ok(GenFlow::Normal)
     }
 
-    // 값에서 반복자를 얻는다. 제너레이터/반복자 객체는 그대로(지연 유지), 그 외
-    // (배열/문자열/Set/Map)는 유한하므로 재료화해 반복자로 감싼다.
-    pub(super) fn gen_get_iterator(&mut self, v: Value) -> Result<Value, String> {
-        match &v {
-            Value::Gen(_) => Ok(v),
-            Value::Obj(o) => {
-                if o.borrow().contains_key("next") {
-                    return Ok(v);
-                }
-                let it = self.member_get(&v, "@@iterator")?;
-                if !matches!(it, Value::Undefined) {
-                    return self.call_value(it, Some(v.clone()), vec![]);
-                }
-                let items = self.iterate_to_vec(&v);
-                Ok(self.make_iter_from_vec(items))
+    // GetIterator 추상연산. 반복자 프로토콜로 반복자를 얻는다: 이미 반복자(next 보유)면
+    // 그대로, `[Symbol.iterator]`(@@iterator) 메서드가 있으면 호출해 얻는다(사용자 정의
+    // 이터러블/인스턴스 포함). 반복 불가면 None.
+    pub(super) fn try_get_iterator(&mut self, v: &Value) -> Result<Option<Value>, String> {
+        // 이미 반복자 객체(next 보유, 재료화 배열은 제외)
+        if let Value::Obj(o) = v {
+            let b = o.borrow();
+            if b.contains_key("next") && !b.contains_key("__items") {
+                return Ok(Some(v.clone()));
             }
-            _ => {
+        }
+        if matches!(v, Value::Gen(_)) {
+            return Ok(Some(v.clone()));
+        }
+        // @@iterator 메서드 호출 (배열/문자열/Set/Map/사용자 이터러블 공통)
+        let itf = self.member_get(v, "@@iterator")?;
+        if is_callable(&itf) {
+            return Ok(Some(self.call_value(itf, Some(v.clone()), vec![])?));
+        }
+        Ok(None)
+    }
+
+    // 값에서 반복자를 얻는다. 프로토콜로 안 되면(비이터러블) 재료화 시도(빈 배열 안전).
+    pub(super) fn gen_get_iterator(&mut self, v: Value) -> Result<Value, String> {
+        match self.try_get_iterator(&v)? {
+            Some(it) => Ok(it),
+            None => {
                 let items = self.iterate_to_vec(&v);
                 Ok(self.make_iter_from_vec(items))
             }

@@ -1491,11 +1491,31 @@ impl Interp {
     // 이터러블(배열/문자열/Set/Map/반복자 객체)을 값 Vec 으로. yield* 와 for-of 공용.
     fn iterate_to_vec(&mut self, v: &Value) -> Vec<Value> {
         match v {
-            // 지연 제너레이터: done 까지 next() 반복(무한이면 step 상한이 방어). 재료화.
-            Value::Gen(_) => {
+            Value::Arr(a) => a.borrow().clone(),
+            Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
+            Value::SetVal(s) => s.borrow().clone(),
+            Value::MapVal(m) => m
+                .borrow()
+                .iter()
+                .map(|(k, val)| Value::Arr(ArrayObj::new(vec![k.clone(), val.clone()])))
+                .collect(),
+            // 재료화된 반복자 객체(__items)는 그대로.
+            Value::Obj(o) if o.borrow().contains_key("__items") => {
+                match o.borrow().get("__items") {
+                    Some(Value::Arr(items)) => items.borrow().clone(),
+                    _ => Vec::new(),
+                }
+            }
+            // 그 외: 반복자 프로토콜(제너레이터/사용자 [Symbol.iterator]/반복자 객체)로
+            // done 까지 재료화. 무한이면 step 상한이 방어.
+            _ => {
+                let it = match self.try_get_iterator(v) {
+                    Ok(Some(it)) => it,
+                    _ => return Vec::new(),
+                };
                 let mut out = Vec::new();
                 loop {
-                    match self.gen_iter_next(v, Value::Undefined) {
+                    match self.gen_iter_next(&it, Value::Undefined) {
                         Ok((val, done)) => {
                             if done {
                                 break;
@@ -1510,45 +1530,6 @@ impl Interp {
                 }
                 out
             }
-            Value::Arr(a) => a.borrow().clone(),
-            Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
-            Value::SetVal(s) => s.borrow().clone(),
-            Value::MapVal(m) => m
-                .borrow()
-                .iter()
-                .map(|(k, val)| Value::Arr(ArrayObj::new(vec![k.clone(), val.clone()])))
-                .collect(),
-            // 반복자 객체: __items 있으면 그대로, 아니면 next() 반복 호출
-            Value::Obj(o) => {
-                if let Some(Value::Arr(items)) = o.borrow().get("__items") {
-                    return items.borrow().clone();
-                }
-                let mut out = Vec::new();
-                let next = o.borrow().get("next").cloned();
-                if let Some(next) = next {
-                    // next() 를 done 까지 반복 (무한 방지: step 카운터가 상한)
-                    loop {
-                        let r = match self.call_value(next.clone(), Some(v.clone()), vec![]) {
-                            Ok(r) => r,
-                            Err(_) => break,
-                        };
-                        if let Value::Obj(res) = &r {
-                            let b = res.borrow();
-                            if matches!(b.get("done"), Some(Value::Bool(true))) {
-                                break;
-                            }
-                            out.push(b.get("value").cloned().unwrap_or(Value::Undefined));
-                        } else {
-                            break;
-                        }
-                        if self.tick().is_err() {
-                            break;
-                        }
-                    }
-                }
-                out
-            }
-            _ => Vec::new(),
         }
     }
 
@@ -2154,33 +2135,30 @@ impl Interp {
             }
             Stmt::ForOf { name, iter, body } => {
                 let target = self.eval(iter, env)?;
-                // 지연 제너레이터/반복자 객체는 한 번에 하나씩 뽑아(무한+break 대응),
-                // 유한한 배열/문자열/Set/Map 은 재료화해 순회한다.
-                let lazy = matches!(&target, Value::Gen(_))
-                    || matches!(&target, Value::Obj(o)
-                        if o.borrow().contains_key("next") && !o.borrow().contains_key("__items"));
-                if lazy {
-                    let iter_obj = self.gen_get_iterator(target)?;
-                    loop {
-                        self.tick()?;
-                        let (v, done) = self.gen_iter_next(&iter_obj, Value::Undefined)?;
-                        if done {
-                            break;
-                        }
-                        let scope = Env::new(Some(env.clone()));
-                        env_declare(&scope, name, v);
-                        match loop_action(self.exec_block(body, &scope)?, &my_label) {
-                            LoopAct::Exit => break,
-                            LoopAct::Next => {}
-                            LoopAct::Propagate(f) => return Ok(f),
-                        }
-                    }
-                    return Ok(Flow::Normal(Value::Undefined));
-                }
-                let iterable = matches!(&target,
+                // 유한한 내장 이터러블(배열/문자열/Set/Map/재료화 반복자)은 재료화해 순회.
+                let finite = matches!(&target,
                     Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
                     || matches!(&target, Value::Obj(o) if o.borrow().contains_key("__items"));
-                if !iterable {
+                if !finite {
+                    // 반복자 프로토콜(지연): 제너레이터/사용자 [Symbol.iterator] 이터러블/
+                    // 반복자 객체. 한 번에 하나씩 뽑아 무한+break 에도 대응.
+                    if let Some(iter_obj) = self.try_get_iterator(&target)? {
+                        loop {
+                            self.tick()?;
+                            let (v, done) = self.gen_iter_next(&iter_obj, Value::Undefined)?;
+                            if done {
+                                break;
+                            }
+                            let scope = Env::new(Some(env.clone()));
+                            env_declare(&scope, name, v);
+                            match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                                LoopAct::Exit => break,
+                                LoopAct::Next => {}
+                                LoopAct::Propagate(f) => return Ok(f),
+                            }
+                        }
+                        return Ok(Flow::Normal(Value::Undefined));
+                    }
                     return Err(format!("{} 은(는) 반복 가능하지 않음", type_of(&target)));
                 }
                 let values = self.iterate_to_vec(&target);
@@ -3964,6 +3942,60 @@ mod tests {
         assert!(run_bool("Symbol.for('k') !== Symbol('k')"));
         assert_eq!(run_str("Symbol.keyFor(Symbol.for('abc'))"), "abc");
         assert!(run_bool("Symbol.keyFor(Symbol('x')) === undefined"));
+    }
+
+    #[test]
+    fn user_defined_iterable() {
+        // obj[Symbol.iterator] = function(){...} — 사용자 정의 이터러블
+        let iter = "var range={n:4}; \
+            range[Symbol.iterator]=function(){ var i=0; var self=this; \
+              return { next:function(){ return i<self.n?{value:i++,done:false}:{value:undefined,done:true}; } }; };";
+        // for-of
+        assert_eq!(
+            run_num(&format!("{iter} var s=0; for(var x of range) s+=x; s")),
+            6.0, // 0+1+2+3
+        );
+        // 스프레드
+        assert_eq!(
+            run_str(&format!("{iter} [...range].join(',')")),
+            "0,1,2,3",
+        );
+        // Array.from
+        assert_eq!(
+            run_num(&format!("{iter} Array.from(range).length")),
+            4.0,
+        );
+        // 제너레이터를 반복자로 반환하는 이터러블
+        let gi = "var g={}; g[Symbol.iterator]=function*(){ yield 'a'; yield 'b'; yield 'c'; };";
+        assert_eq!(
+            run_str(&format!("{gi} var out=''; for(var x of g) out+=x; out")),
+            "abc",
+        );
+    }
+
+    #[test]
+    fn class_symbol_iterator_method() {
+        // class C { [Symbol.iterator]() {...} } — 계산된 메서드 키(사용자 정의 이터러블)
+        let src = "class Range { \
+              constructor(n){ this.n = n; } \
+              [Symbol.iterator]() { var i=0; var n=this.n; \
+                return { next: function(){ return i<n ? {value:i++,done:false} : {value:undefined,done:true}; } }; } \
+            } \
+            var s=0; for(const x of new Range(5)) s+=x; s";
+        assert_eq!(run_num(src), 10.0); // 0+1+2+3+4
+        // 제너레이터 메서드 *[Symbol.iterator]()
+        let src2 = "class Chars { \
+              constructor(s){ this.s = s; } \
+              *[Symbol.iterator]() { for (var c of this.s) yield c.toUpperCase(); } \
+            } \
+            var out=''; for(const c of new Chars('abc')) out+=c; out";
+        assert_eq!(run_str(src2), "ABC");
+        // 스프레드로도 소비 가능
+        assert_eq!(run_num("class R { constructor(n){this.n=n;} [Symbol.iterator](){ var i=0,n=this.n; return {next:function(){return i<n?{value:i++,done:false}:{value:0,done:true};}}; } } [...new R(3)].length"), 3.0);
+        // 객체 리터럴 계산 메서드 { [Symbol.iterator]() {...} }
+        let obj = "var o={ data:[1,2,3], [Symbol.iterator]() { var i=0; var d=this.data; \
+            return { next: function(){ return i<d.length?{value:d[i++],done:false}:{value:0,done:true}; } }; } };";
+        assert_eq!(run_num(&format!("{obj} var s=0; for(var x of o) s+=x; s")), 6.0);
     }
 
     #[test]

@@ -4,6 +4,37 @@
 use super::ast::*;
 use super::lexer::{tokenize, Tok, TplPart};
 
+// 계산된 메서드/프로퍼티 키 [expr] 를 정적으로 프로퍼티 키 문자열에 매핑한다.
+// 잘 알려진 심볼(Symbol.iterator → "@@iterator")과 문자열/숫자 리터럴을 처리한다.
+// 런타임에만 알 수 있는 키(변수 등)는 None(호출측이 유일 플레이스홀더 사용).
+fn computed_key_string(e: &Expr) -> Option<String> {
+    match e {
+        Expr::Str(s) => Some(s.clone()),
+        Expr::Num(n) => Some(if n.fract() == 0.0 && n.is_finite() {
+            format!("{}", *n as i64)
+        } else {
+            format!("{}", n)
+        }),
+        // Symbol.iterator 등 잘 알려진 심볼 → 엔진과 동일한 고정 키.
+        Expr::Member { obj, prop, computed: false } => {
+            if let (Expr::Ident(o), Expr::Str(p)) = (obj.as_ref(), prop.as_ref()) {
+                if o == "Symbol" {
+                    return Some(match p.as_str() {
+                        "iterator" => "@@iterator".to_string(),
+                        "asyncIterator" => "@@asyncIterator".to_string(),
+                        "toStringTag" => "@@toStringTag".to_string(),
+                        "hasInstance" => "@@hasInstance".to_string(),
+                        "toPrimitive" => "@@toPrimitive".to_string(),
+                        other => format!("@@{}", other),
+                    });
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 // 예약어를 프로퍼티/메서드 이름으로 쓸 때 원래 문자열 (obj.for, Symbol.for 등)
 fn keyword_word(t: &Tok) -> Option<String> {
     let s = match t {
@@ -1279,6 +1310,13 @@ impl Parser {
 
     // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드
     fn member_name(&mut self) -> Result<String, String> {
+        // 계산된 메서드 키 [expr] — 잘 알려진 심볼/리터럴을 정적으로 키에 매핑.
+        // 예: [Symbol.iterator]() {} → "@@iterator". 사용자 정의 이터러블 클래스 지원.
+        if self.eat(&Tok::LBracket) {
+            let e = self.assignment()?;
+            self.expect(&Tok::RBracket)?;
+            return Ok(computed_key_string(&e).unwrap_or_else(|| format!("@@computed:{}", self.pos)));
+        }
         match self.next()? {
             Tok::Ident(s) => Ok(s),
             Tok::Str(s) => Ok(s),
@@ -1370,13 +1408,36 @@ impl Parser {
                             self.expect(&Tok::RBrace)?;
                             break;
                         }
-                        // 계산된 키 { [expr]: v } — 키 식은 런타임에 평가.
-                        if self.peek() == Some(&Tok::LBracket) {
-                            self.pos += 1;
+                        // 계산된 키 { [expr]: v } 또는 계산 메서드 { [expr]() {} }
+                        // (제너레이터 *[expr]()/async [expr]() 접두 포함). 키 식은 런타임 평가.
+                        let comp_gen = self.peek() == Some(&Tok::Star)
+                            && self.toks.get(self.pos + 1) == Some(&Tok::LBracket);
+                        let comp_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
+                            && self.toks.get(self.pos + 1) == Some(&Tok::LBracket);
+                        if comp_gen || comp_async || self.peek() == Some(&Tok::LBracket) {
+                            let is_gen = self.eat(&Tok::Star);
+                            let is_async = comp_async && {
+                                self.pos += 1;
+                                true
+                            };
+                            self.pos += 1; // '['
                             let key_expr = self.assignment()?;
                             self.expect(&Tok::RBracket)?;
-                            self.expect(&Tok::Colon)?;
-                            let value = self.assignment()?;
+                            let value = if self.eat(&Tok::Colon) {
+                                self.assignment()?
+                            } else {
+                                // 계산 메서드 단축 { [k]() {} }
+                                let (params, mut body) = self.param_list()?;
+                                body.extend(self.block()?);
+                                Expr::Func {
+                                    name: None,
+                                    params,
+                                    body,
+                                    is_arrow: false,
+                                    is_generator: is_gen,
+                                    is_async,
+                                }
+                            };
                             props.push((PropKey::Computed(Box::new(key_expr)), value));
                             if self.eat(&Tok::Comma) {
                                 if self.eat(&Tok::RBrace) {
