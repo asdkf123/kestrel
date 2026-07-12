@@ -231,6 +231,23 @@ mod tests {
     }
 
     #[test]
+    fn let_for_loop_per_iteration_binding() {
+        // for(let i…) 클로저가 각 반복 값을 포착 → [0,1,2] (이전엔 공유 바인딩 [3,3,3]).
+        // var 는 함수 스코프 단일 바인딩이라 [3,3,3] 유지.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">x</p>\
+             <script>var a = [], b = []; \
+             for (let i = 0; i < 3; i++) a.push(function(){ return i; }); \
+             for (var j = 0; j < 3; j++) b.push(function(){ return j; }); \
+             document.getElementById('t').textContent = \
+             [a[0](),a[1](),a[2]()].join('') + '|' + [b[0](),b[1](),b[2]()].join('');</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/");
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "012|333");
+    }
+
+    #[test]
     fn string_escapes_unicode_hex_and_continuation() {
         // \uHHHH, \xHH, \u{...}, 줄 이음 — 이전엔 \u→"u0041" 로 문자열 손상.
         let mut dom = crate::html::parse_dom(

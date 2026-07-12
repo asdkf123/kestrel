@@ -1748,26 +1748,52 @@ impl Interp {
                 Ok(Flow::Normal(Value::Undefined))
             }
             Stmt::For { init, cond, step, body } => {
-                let outer = Env::new(Some(env.clone())); // for(let i...) 스코프
+                use crate::js::ast::DeclKind;
+                let head = Env::new(Some(env.clone())); // for(let i...) 스코프
                 if let Some(init) = init {
-                    self.exec_stmt(init, &outer)?;
+                    self.exec_stmt(init, &head)?;
                 }
+                // let/const 루프 변수는 반복마다 새 바인딩 (ES6 per-iteration environment).
+                // 클로저가 각 반복의 값을 포착 → for(let i…) cbs.push(()=>i) 가 [0,1,2].
+                let mut loop_vars: Vec<String> = Vec::new();
+                if let Some(s) = init {
+                    if let Stmt::VarDecl { kind: DeclKind::Let | DeclKind::Const, decls } = &**s {
+                        for (pat, _) in decls {
+                            pattern_names(pat, &mut loop_vars);
+                        }
+                    }
+                }
+                // src 의 루프 변수 값을 복사한 새 환경 (var/식 init 은 그대로 재사용).
+                let make_iter = |src: &EnvRef| -> EnvRef {
+                    if loop_vars.is_empty() {
+                        return src.clone();
+                    }
+                    let e = Env::new(Some(env.clone()));
+                    for name in &loop_vars {
+                        env_declare(&e, name, env_get(src, name).unwrap_or(Value::Undefined));
+                    }
+                    e
+                };
+                let mut cur = make_iter(&head);
                 loop {
                     self.tick()?;
                     if let Some(cond) = cond {
-                        if !to_bool(&self.eval(cond, &outer)?) {
+                        if !to_bool(&self.eval(cond, &cur)?) {
                             break;
                         }
                     }
-                    let scope = Env::new(Some(outer.clone()));
+                    let scope = Env::new(Some(cur.clone()));
                     match self.exec_block(body, &scope)? {
                         Flow::Break => break,
                         Flow::Continue | Flow::Normal(_) => {}
                         ret => return Ok(ret),
                     }
+                    // 다음 반복: 현재 값 복사 후 step 실행 (step 은 새 바인딩에 반영)
+                    let next = make_iter(&cur);
                     if let Some(step) = step {
-                        self.eval(step, &outer)?;
+                        self.eval(step, &next)?;
                     }
+                    cur = next;
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
