@@ -780,6 +780,32 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Native::DateNow => Ok(Value::Num(now_millis())),
+            // Date.parse(str) → 밀리초(파싱 불가 시 NaN)
+            Native::DateParse => {
+                let millis = match args.first() {
+                    Some(Value::Str(s)) => parse_date_string(s).unwrap_or(f64::NAN),
+                    Some(v) => parse_date_string(&to_display(v)).unwrap_or(f64::NAN),
+                    None => f64::NAN,
+                };
+                Ok(Value::Num(millis))
+            }
+            // Date.UTC(year, month[0기준], day, h, m, s, ms) → 밀리초(UTC)
+            Native::DateUTC => {
+                let g = |i: usize, dflt: f64| args.get(i).map(to_num).unwrap_or(dflt);
+                if args.is_empty() {
+                    return Ok(Value::Num(f64::NAN));
+                }
+                let millis = date_to_millis(
+                    g(0, 1970.0) as i64,
+                    g(1, 0.0) as i64 + 1,
+                    g(2, 1.0) as i64,
+                    g(3, 0.0) as i64,
+                    g(4, 0.0) as i64,
+                    g(5, 0.0) as i64,
+                    g(6, 0.0) as i64,
+                );
+                Ok(Value::Num(millis))
+            }
             Native::DateCtor => Ok(self.make_date_from_args(&args)),
             // date.getFullYear() 등 — recv 가 Date 객체
             Native::DateMethod(field) => {

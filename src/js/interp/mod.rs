@@ -261,6 +261,8 @@ pub enum Native {
     ValueToStr, // recv.toString([radix]) → 문자열
     ValueOfSelf, // recv.valueOf() → recv
     DateNow,
+    DateParse, // Date.parse(str) → millis
+    DateUTC,   // Date.UTC(y,m,d,...) → millis
     DateCtor,
     DateMethod(DateField),
     XhrCtor,
@@ -2991,6 +2993,8 @@ impl Interp {
             // Date.now / Date.parse / Date.UTC
             Value::Native(Native::DateCtor) => Ok(match key {
                 "now" => Value::Native(Native::DateNow),
+                "parse" => Value::Native(Native::DateParse),
+                "UTC" => Value::Native(Native::DateUTC),
                 _ => Value::Undefined,
             }),
             // String.fromCharCode/prototype
@@ -4484,6 +4488,18 @@ mod tests {
         assert_eq!(run_str("JSON.stringify({__typename:'X', a:1})"),
             "{\"__typename\":\"X\",\"a\":1}");
         assert_eq!(run_str("Object.keys({__typename:'X'}).join(',')"), "__typename");
+    }
+
+    #[test]
+    fn date_parse_and_utc() {
+        // Date.parse 는 new Date(문자열).getTime 과 일치, 미파싱은 NaN.
+        assert!(run_bool("Date.parse('2020-01-15') === new Date('2020-01-15').getTime()"));
+        assert!(run_bool("isNaN(Date.parse('nonsense'))"));
+        assert!(run_bool("typeof Date.parse === 'function'"));
+        // Date.UTC 는 UTC 컴포넌트의 밀리초.
+        assert_eq!(run_num("Date.UTC(1970,0,1)"), 0.0);
+        assert!(run_bool("Date.UTC(2020,0,1) === new Date('2020-01-01T00:00:00.000Z').getTime()"));
+        assert!(run_bool("typeof Date.UTC === 'function'"));
     }
 
     #[test]
