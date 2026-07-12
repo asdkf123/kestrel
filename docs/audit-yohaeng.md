@@ -87,9 +87,10 @@
 - [x] JS **instanceof** — function 생성자/Object.create 체인/내장/원시값 모두 정확(프로토타입 링크로 해소, 1899093). 확인 완료.
 - [x] JS **인스턴스 Object.prototype 폴백**(hasOwnProperty/toString/valueOf 등). (6a8dc70)
 - [~] JS **정규식 named group (?<n>) 지원**(번호/.groups/치환). 룩비하인드는 명시적 에러. step-limit 은 후속. (a95bcea)
-- [~] JS **제너레이터 지연 실행** — 재개가능 인터프리터(제어흐름 위치 저장/복원)로 중단·재개.
+- [x] JS **제너레이터 지연 실행** — 재개가능 인터프리터(제어흐름 위치 저장/복원)로 중단·재개.
   무한 제너레이터/양방향 next(v)/yield* 위임/return·throw/try 재개. yield 없는 문장은 기존
-  평가기 재사용(의미론 동일). 깊은 식 위치 yield(`a+(yield b)`)만 후속(명확한 에러). (generator.rs)
+  평가기 재사용(의미론 동일). 디슈가 패스로 식 내부 yield(`a+(yield b)`, `f(yield x)`,
+  삼항/단락평가)까지 완전 지원 — 평가순서·단락평가·메서드 this 보존. (generator.rs)
 - [ ] JS **객체리터럴 계산 Symbol 키 불일치**(for-of 사용자 이터러블 안됨). (mod.rs:1962)
 - [~] JS **Date.parse/Date.UTC 구현(4568092) + JSON toJSON(ISO, 25aa6fd)** 완료. UTC전용(로컬시간대 미구현)은 후속.
 - [x] JS **문자열 UTF-16 코드 유닛**(length/charAt/charCodeAt/codePointAt/indexOf/slice/[i]/search/for-in).
