@@ -155,11 +155,41 @@ impl Page {
         // getComputedStyle 용 계산 스타일을 JS 인터프리터로 전달 (요소별 프로퍼티 → CSS 텍스트).
         self.js.computed_styles.clear();
         collect_computed_styles(&style_root, &mut self.js.computed_styles);
-        // width/height 는 레이아웃된 used value(px)로 덮어써 정확도를 높인다.
-        for (r, id, _) in &self.element_rects {
-            if let Some(m) = self.js.computed_styles.get_mut(id) {
-                m.insert("width".to_string(), format!("{}px", crate::style::num_css(r.width)));
-                m.insert("height".to_string(), format!("{}px", crate::style::num_css(r.height)));
+        // 표준의 resolved value: 길이는 px 로 확정돼야 한다. %/em/무단위 배수는 스타일 맵에
+        // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
+        let mut metrics = std::collections::HashMap::new();
+        crate::layout::collect_box_metrics(&layout_root, &mut metrics);
+        let px = |v: f32| format!("{}px", crate::style::num_css(v));
+        for (id, d) in &metrics {
+            let Some(m) = self.js.computed_styles.get_mut(id) else { continue };
+            m.insert("width".to_string(), px(d.content.width));
+            m.insert("height".to_string(), px(d.content.height));
+            for (k, v) in [
+                ("margin-top", d.margin.top),
+                ("margin-right", d.margin.right),
+                ("margin-bottom", d.margin.bottom),
+                ("margin-left", d.margin.left),
+                ("padding-top", d.padding.top),
+                ("padding-right", d.padding.right),
+                ("padding-bottom", d.padding.bottom),
+                ("padding-left", d.padding.left),
+                ("border-top-width", d.border.top),
+                ("border-right-width", d.border.right),
+                ("border-bottom-width", d.border.bottom),
+                ("border-left-width", d.border.left),
+            ] {
+                m.insert(k.to_string(), px(v));
+            }
+            // 무단위 line-height 배수는 font-size 를 곱해 px 로 확정 (CSS2 §10.8).
+            let fs = m
+                .get("font-size")
+                .and_then(|s| s.strip_suffix("px"))
+                .and_then(|s| s.parse::<f32>().ok())
+                .unwrap_or(crate::style::DEFAULT_FONT_SIZE);
+            if let Some(lh) = m.get("line-height").cloned() {
+                if let Ok(factor) = lh.parse::<f32>() {
+                    m.insert("line-height".to_string(), px(factor * fs));
+                }
             }
         }
         // <canvas> 2D 그리기 명령을 박스로 매핑해 디스플레이 리스트에 추가

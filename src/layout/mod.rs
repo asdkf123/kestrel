@@ -92,6 +92,10 @@ pub enum FormControl {
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
     pub styled_node: &'a StyledNode<'a>,
+    // 익명 박스인가. 익명 박스는 부모의 styled_node 를 그대로 쓰므로 NodeId 가 겹친다.
+    // 요소별 사각형/메트릭을 수집할 때 반드시 제외해야 한다(안 그러면 익명 박스의
+    // content-only 사각형이 진짜 박스의 border-box 를 덮어쓴다).
+    pub anonymous: bool,
     pub children: Vec<LayoutBox<'a>>,
     // 네이티브 폼 컨트롤(체크박스/라디오/셀렉트 화살표) 표식
     pub form_control: Option<FormControl>,
@@ -131,6 +135,7 @@ impl<'a> LayoutBox<'a> {
         LayoutBox {
             dimensions: Default::default(),
             styled_node,
+            anonymous: false,
             children: Vec::new(),
             glyphs: Vec::new(),
             inline_nodes: Vec::new(),
@@ -156,6 +161,7 @@ impl<'a> LayoutBox<'a> {
         LayoutBox {
             dimensions: Default::default(),
             styled_node: parent,
+            anonymous: true,
             children: Vec::new(),
             glyphs: Vec::new(),
             inline_nodes: nodes,
@@ -1986,11 +1992,25 @@ pub fn collect_element_rects(
     depth: usize,
     out: &mut Vec<(Rect, crate::dom::NodeId, usize)>,
 ) {
-    if matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
+    if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
         out.push((root.dimensions.border_box(), root.styled_node.id, depth));
     }
     for child in &root.children {
         collect_element_rects(child, depth + 1, out);
+    }
+}
+
+// 요소별 박스 메트릭(px 확정된 used value). getComputedStyle 이 표준의 resolved value
+// (길이는 px)를 돌려주려면 % / em / 무단위 배수를 레이아웃이 확정한 값으로 써야 한다.
+pub fn collect_box_metrics(
+    root: &LayoutBox,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, Dimensions>,
+) {
+    if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
+        out.insert(root.styled_node.id, root.dimensions);
+    }
+    for child in &root.children {
+        collect_box_metrics(child, out);
     }
 }
 
