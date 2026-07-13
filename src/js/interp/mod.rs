@@ -381,6 +381,9 @@ pub enum Native {
     RemoveGlobalListener,
     DispatchGlobalEvent,
     TakeMutations,
+    QueueMicrotask,
+    CssSupports,
+    ElementAnimate,
     InsertAdjacentHTML,
     InsertAdjacentElement,
     ScrollTo,
@@ -1099,6 +1102,14 @@ impl Interp {
         env_declare(&global, "DOMParser", Value::Native(Native::DomParserCtor));
         // 프렐류드의 MutationObserver 가 쌓인 변형 기록을 가져가는 통로
         env_declare(&global, "__kTakeMutations", Value::Native(Native::TakeMutations));
+        // queueMicrotask — 진짜 마이크로태스크 큐에 넣는다 (setTimeout 으로 흉내내면
+        // 실행 순서가 달라진다: 마이크로태스크는 매크로태스크보다 먼저 돈다).
+        env_declare(&global, "queueMicrotask", Value::Native(Native::QueueMicrotask));
+        // CSS.supports — CSS 의 @supports 와 같은 평가기를 쓴다 (한 엔진 두 답 금지)
+        let mut css_ns = ObjMap::new();
+        css_ns.insert("supports".to_string(), Value::Native(Native::CssSupports));
+        css_ns.insert("escape".to_string(), Value::Native(Native::Noop));
+        env_declare(&global, "CSS", Value::Obj(Rc::new(RefCell::new(css_ns))));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
@@ -3670,6 +3681,7 @@ impl Interp {
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "scrollIntoView" => Some(Native::ScrollIntoView),
+                    "animate" => Some(Native::ElementAnimate),
                     "dispatchEvent" => Some(Native::DispatchEvent),
                     "cloneNode" => Some(Native::CloneNode),
                     "matches" => Some(Native::Matches),
@@ -4073,10 +4085,8 @@ impl Interp {
                 // new.target = 이 함수 (call_value 가 스코프에 심는다).
                 self.new_target = Some(Value::Fn(func.clone()));
                 let ret = self.call_value(Value::Fn(func), Some(this.clone()), args)?;
-                return Ok(match ret {
-                    v @ (Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) => v,
-                    _ => this,
-                });
+                // 표준: 생성자가 객체를 반환하면 그게 결과, 원시값이면 this.
+                return Ok(if is_object(&ret) { ret } else { this });
             }
             Value::Obj(_) | Value::Native(_) => {
                 let mut map = ObjMap::new();
@@ -4579,6 +4589,28 @@ mod tests {
         Interp::new().run(src).unwrap()
     }
 
+    // 프렐류드(플랫폼 전역들)를 깔고 실행 — 실제 페이지와 같은 환경.
+    fn run_prelude(src: &str) -> Value {
+        let mut it = Interp::new();
+        it.run(crate::js::JS_PRELUDE).expect("프렐류드 실행");
+        it.run(src).unwrap()
+    }
+
+    fn prelude_str(src: &str) -> String {
+        to_display(&run_prelude(src))
+    }
+
+    fn prelude_num(src: &str) -> f64 {
+        match run_prelude(src) {
+            Value::Num(n) => n,
+            v => panic!("수를 기대: {:?}", v),
+        }
+    }
+
+    fn prelude_bool(src: &str) -> bool {
+        matches!(run_prelude(src), Value::Bool(true))
+    }
+
     fn run_bool_in(it: &mut Interp, src: &str) -> bool {
         matches!(it.run(src).unwrap(), Value::Bool(true))
     }
@@ -5076,6 +5108,52 @@ mod tests {
         it.run("window.scrollTo({ top: 5, left: 2 })").unwrap();
         assert_eq!(to_display(&it.run("window.scrollY").unwrap()), "5");
         assert_eq!(to_display(&it.run("window.scrollX").unwrap()), "2");
+    }
+
+    #[test]
+    fn constructor_returning_object_wins_over_this() {
+        // 표준: 생성자가 객체를 반환하면 그게 결과다. 예전엔 Obj/Instance/Arr 만
+        // 객체로 봐서 Proxy 반환이 조용히 버려졌다 — Proxy 로 인덱스를 가로채는
+        // 구현(타입드 배열)이 통째로 무력화되고, 값이 그냥 평범한 프로퍼티로 저장됐다.
+        assert_eq!(run_num("function F(){ this.a=1; return {a:2}; } new F().a"), 2.0);
+        assert_eq!(run_num("function F(){ this.a=1; return 5; } new F().a"), 1.0, "원시값 반환은 무시");
+        assert_eq!(
+            run_num("function F(){ return new Proxy({}, {get:function(){return 9}}); } new F().x"),
+            9.0,
+            "Proxy 반환도 객체다"
+        );
+    }
+
+    #[test]
+    fn typed_arrays_have_real_semantics() {
+        // 숫자 배열로 흉내내면 랩어라운드/버퍼 공유가 전부 조용히 틀린다.
+        assert_eq!(prelude_num("var a=new Uint8Array(2); a[0]=300; a[0]"), 44.0, "8비트 랩어라운드");
+        assert_eq!(prelude_num("var a=new Int8Array(1); a[0]=200; a[0]"), -56.0, "부호 있는 8비트");
+        assert_eq!(
+            prelude_num("var b=new ArrayBuffer(4); var u8=new Uint8Array(b); var u32=new Uint32Array(b); u8[0]=1; u32[0]"),
+            1.0,
+            "두 뷰가 같은 바이트를 본다"
+        );
+        // Float32 는 실제로 32비트로 반올림된다 (0.1 왕복 시 값이 달라진다)
+        assert!(prelude_bool("var a=new Float32Array(1); a[0]=0.1; a[0] !== 0.1"));
+        assert_eq!(prelude_str("Array.from(new TextEncoder().encode('가')).join(',')"), "234,176,128");
+    }
+
+    #[test]
+    fn platform_globals_exist_and_work() {
+        // 이 전역들이 없으면 그걸 쓰는 첫 줄에서 TypeError 가 나고 번들 전체가 멈춘다.
+        assert_eq!(prelude_str("typeof queueMicrotask"), "function");
+        assert_eq!(prelude_str("typeof performance.now()"), "number");
+        assert_eq!(prelude_str("atob(btoa('hi'))"), "hi");
+        assert_eq!(prelude_str("typeof Promise.any"), "function");
+        assert_eq!(prelude_str("new URLSearchParams('a=1&b=2').get('b')"), "2");
+        assert_eq!(prelude_str("typeof crypto.randomUUID()"), "string");
+        assert!(prelude_bool("var c=new AbortController(); var hit=false; \
+                          c.signal.addEventListener('abort', function(){hit=true;}); \
+                          c.abort(); hit && c.signal.aborted"));
+        // CSS.supports 는 CSS 의 @supports 와 같은 평가기를 쓴다
+        assert!(prelude_bool("CSS.supports('display','grid')"));
+        assert!(!prelude_bool("CSS.supports('position','sticky')"), "미구현은 거짓 (한 엔진 한 답)");
     }
 
     #[test]

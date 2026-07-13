@@ -141,6 +141,26 @@ pub(super) fn obj_listener_key(event: &str) -> String {
     format!("\u{0}evt:{}", event)
 }
 
+// 객체인가 (원시값이 아닌가). 표준의 Type(x) == Object.
+// 생성자의 반환값 판정과 ToPrimitive 가 쓴다. Proxy/Map/Set/Date/함수도 객체다 —
+// 예전엔 Obj/Instance/Arr 만 객체로 봐서, 생성자가 Proxy 를 반환하면 조용히 버려졌다
+// (타입드 배열처럼 Proxy 로 인덱스를 가로채는 구현이 통째로 무력화된다).
+pub(super) fn is_object(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Obj(_)
+            | Value::Instance(_)
+            | Value::Arr(_)
+            | Value::Proxy(_)
+            | Value::MapVal(_)
+            | Value::SetVal(_)
+            | Value::Fn(_)
+            | Value::Class(_)
+            | Value::Bound(_)
+            | Value::Gen(_)
+    )
+}
+
 // 두 값이 같은 함수인가 (참조 동일). removeEventListener 가 등록된 리스너를 찾을 때 쓴다.
 // 표준도 참조 동일로 지운다 — bind() 로 새로 만든 함수는 안 지워지는 게 맞다.
 pub(super) fn same_callable(a: &Value, b: &Value) -> bool {

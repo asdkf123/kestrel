@@ -98,6 +98,14 @@ fn collect_scripts(
                 .unwrap_or_default();
             let is_js =
                 ty.is_empty() || ty == "text/javascript" || ty == "application/javascript";
+            // ESM(type=module)은 import/export 미구현이라 실행하지 않는다.
+            // 조용히 건너뛰면 "스크립트가 다 돌았는데 화면이 비었다"로 보인다 — 알린다.
+            if ty == "module" {
+                println!(
+                    "[script] type=module 미지원 (import/export) — 건너뜀: {}",
+                    e.attributes.get("src").map(|s| s.as_str()).unwrap_or("(인라인)")
+                );
+            }
             let src = e.attributes.get("src").map(|s| s.trim()).filter(|s| !s.is_empty());
             if is_js {
                 match src {
@@ -106,16 +114,28 @@ fn collect_scripts(
                     Some(href) => {
                         if let Some(b) = base {
                             let n_ext = out.iter().filter(|s| s.starts_with(EXT_TAG)).count();
-                            if n_ext < MAX_EXTERNAL_SCRIPTS {
-                                if let Some(u) = b.join(href) {
-                                    if let Ok(r) = crate::http::fetch(&u.as_string()) {
-                                        let text =
-                                            String::from_utf8_lossy(&r.body).to_string();
+                            if n_ext >= MAX_EXTERNAL_SCRIPTS {
+                                // 상한에 걸려 버리는 건 조용히 하면 안 된다 —
+                                // "다 실행했다"고 착각하게 만든다.
+                                println!("[script] 상한({}개) 초과로 건너뜀: {}", MAX_EXTERNAL_SCRIPTS, href);
+                            } else if let Some(u) = b.join(href) {
+                                match crate::http::fetch(&u.as_string()) {
+                                    // 2xx 가 아니면 본문은 스크립트가 아니다.
+                                    // 예전엔 상태를 안 보고 404/429 의 HTML 오류 페이지를
+                                    // 그대로 자바스크립트로 실행했다.
+                                    Ok(r) if !(200..300).contains(&r.status) => {
+                                        println!("[script] HTTP {} — {}", r.status, href);
+                                    }
+                                    Ok(r) => {
+                                        let text = String::from_utf8_lossy(&r.body).to_string();
                                         if !text.trim().is_empty() {
                                             // 외부임을 표시(카운트용) — 앞의 마커는 실행 전 제거.
                                             out.push(format!("{}{}", EXT_TAG, text));
                                         }
                                     }
+                                    // 못 받으면 그 스크립트에 의존하는 코드가 줄줄이 죽는다.
+                                    // 조용히 넘기면 렌더가 실행마다 달라진다 — 알린다.
+                                    Err(e) => println!("[script] 로드 실패 {:?} — {}", e, href),
                                 }
                             }
                         }
@@ -140,7 +160,7 @@ const EXT_TAG: &str = "\u{0}ext\u{0}";
 
 // 폴리필 프렐류드: 프레임워크(React 등)가 기대하는 공통 전역/메서드를 채운다.
 // 순수 JS 로 엔진의 기존 기능만 사용. 최상위 var 선언이라 진짜 전역이 된다.
-const JS_PRELUDE: &str = r#"
+pub(crate) const JS_PRELUDE: &str = r#"
 var __kNoop = function(){};
 var __kObs = function(){ return { observe: __kNoop, unobserve: __kNoop, disconnect: __kNoop, takeRecords: function(){ return []; } }; };
 // Symbol 은 엔진이 진짜 원시값으로 제공(Value::Symbol). 폴리필 불필요.
@@ -288,6 +308,410 @@ if (!window.cancelIdleCallback) window.cancelIdleCallback = function(id){ clearT
 if (!window.cancelAnimationFrame) window.cancelAnimationFrame = function(id){ clearTimeout(id); };
 var cancelAnimationFrame = window.cancelAnimationFrame;
 // getComputedStyle 은 엔진이 실제 계산 스타일로 제공(Native). 스텁 불필요.
+
+// ── 플랫폼 API: 없으면 스크립트가 통째로 죽는 것들 ──
+// 이 전역들이 없으면 그걸 쓰는 첫 줄에서 TypeError 가 나고 번들 전체가 멈춘다.
+// 스텁이 아니라 실제 동작으로 넣는다.
+
+// performance.now() — 페이지 시작 이후 경과 ms. 아주 흔하게 쓰인다.
+if (!window.performance) {
+  var __kT0 = Date.now();
+  var __kMarks = {};
+  window.performance = {
+    timeOrigin: __kT0,
+    now: function(){ return Date.now() - __kT0; },
+    mark: function(n){ __kMarks[n] = Date.now() - __kT0; },
+    measure: function(){ },
+    getEntriesByName: function(){ return []; },
+    getEntriesByType: function(){ return []; },
+    clearMarks: function(){ __kMarks = {}; },
+    clearMeasures: __kNoop
+  };
+}
+var performance = window.performance;
+
+// btoa / atob — 진짜 base64 (RFC 4648).
+var __kB64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+if (!window.btoa) window.btoa = function(s){
+  s = String(s);
+  var out = '', i = 0;
+  while (i < s.length) {
+    var c1 = s.charCodeAt(i++), c2 = s.charCodeAt(i++), c3 = s.charCodeAt(i++);
+    if (c1 > 255 || (c2 === c2 && c2 > 255) || (c3 === c3 && c3 > 255)) {
+      throw new Error('btoa: Latin-1 범위를 넘는 문자');
+    }
+    var e1 = c1 >> 2;
+    var e2 = ((c1 & 3) << 4) | (c2 !== c2 ? 0 : c2 >> 4);
+    var e3 = c2 !== c2 ? 64 : (((c2 & 15) << 2) | (c3 !== c3 ? 0 : c3 >> 6));
+    var e4 = c3 !== c3 ? 64 : (c3 & 63);
+    out += __kB64.charAt(e1) + __kB64.charAt(e2) +
+           (e3 === 64 ? '=' : __kB64.charAt(e3)) + (e4 === 64 ? '=' : __kB64.charAt(e4));
+  }
+  return out;
+};
+if (!window.atob) window.atob = function(s){
+  s = String(s).replace(/[\s=]/g, '');
+  var out = '', acc = 0, bits = 0;
+  for (var i = 0; i < s.length; i++) {
+    var v = __kB64.indexOf(s.charAt(i));
+    if (v < 0) throw new Error('atob: base64 가 아닌 문자');
+    acc = (acc << 6) | v; bits += 6;
+    if (bits >= 8) { bits -= 8; out += String.fromCharCode((acc >> bits) & 255); }
+  }
+  return out;
+};
+var btoa = window.btoa, atob = window.atob;
+
+// Promise.any — 하나라도 이행되면 이행, 전부 거부면 AggregateError.
+if (!Promise.any) Promise.any = function(list){
+  var arr = Array.from(list);
+  return new Promise(function(resolve, reject){
+    var errs = [], left = arr.length;
+    if (left === 0) { reject(new Error('AggregateError: 모든 프로미스가 거부됨')); return; }
+    arr.forEach(function(p, i){
+      Promise.resolve(p).then(resolve, function(e){
+        errs[i] = e;
+        if (--left === 0) {
+          var ag = new Error('AggregateError: 모든 프로미스가 거부됨');
+          ag.errors = errs;
+          reject(ag);
+        }
+      });
+    });
+  });
+};
+
+// crypto — getRandomValues/randomUUID.
+// 주의: 엔진의 Math.random(xorshift) 기반이라 암호학적으로 안전하지 않다.
+// 렌더링 목적의 식별자 생성엔 충분하지만, 보안 용도로 신뢰하면 안 된다.
+if (!window.crypto) {
+  window.crypto = {
+    getRandomValues: function(a){
+      for (var i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256);
+      return a;
+    },
+    randomUUID: function(){
+      var h = '0123456789abcdef', s = '';
+      for (var i = 0; i < 36; i++) {
+        if (i === 8 || i === 13 || i === 18 || i === 23) { s += '-'; continue; }
+        if (i === 14) { s += '4'; continue; }
+        var r = Math.floor(Math.random() * 16);
+        if (i === 19) r = (r & 3) | 8;
+        s += h.charAt(r);
+      }
+      return s;
+    }
+  };
+}
+var crypto = window.crypto;
+
+// URLSearchParams — 진짜 파싱/직렬화.
+function __kURLSearchParams(init) {
+  this._p = [];
+  var self = this;
+  if (typeof init === 'string') {
+    var s = init.charAt(0) === '?' ? init.slice(1) : init;
+    if (s) s.split('&').forEach(function(kv){
+      if (!kv) return;
+      var i = kv.indexOf('=');
+      var k = i < 0 ? kv : kv.slice(0, i);
+      var v = i < 0 ? '' : kv.slice(i + 1);
+      self._p.push([decodeURIComponent(k.replace(/\+/g, ' ')),
+                    decodeURIComponent(v.replace(/\+/g, ' '))]);
+    });
+  } else if (init && typeof init === 'object') {
+    Object.keys(init).forEach(function(k){ self._p.push([k, String(init[k])]); });
+  }
+}
+__kURLSearchParams.prototype.get = function(k){
+  for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) return this._p[i][1];
+  return null;
+};
+__kURLSearchParams.prototype.getAll = function(k){
+  return this._p.filter(function(e){ return e[0] === k; }).map(function(e){ return e[1]; });
+};
+__kURLSearchParams.prototype.has = function(k){ return this.get(k) !== null; };
+__kURLSearchParams.prototype.set = function(k, v){
+  var found = false, out = [];
+  for (var i = 0; i < this._p.length; i++) {
+    if (this._p[i][0] === k) { if (found) continue; out.push([k, String(v)]); found = true; }
+    else out.push(this._p[i]);
+  }
+  if (!found) out.push([k, String(v)]);
+  this._p = out;
+};
+__kURLSearchParams.prototype.append = function(k, v){ this._p.push([k, String(v)]); };
+__kURLSearchParams.prototype['delete'] = function(k){
+  this._p = this._p.filter(function(e){ return e[0] !== k; });
+};
+__kURLSearchParams.prototype.forEach = function(fn){
+  this._p.forEach(function(e){ fn(e[1], e[0]); });
+};
+__kURLSearchParams.prototype.keys = function(){ return this._p.map(function(e){ return e[0]; }); };
+__kURLSearchParams.prototype.values = function(){ return this._p.map(function(e){ return e[1]; }); };
+__kURLSearchParams.prototype.entries = function(){ return this._p.map(function(e){ return [e[0], e[1]]; }); };
+__kURLSearchParams.prototype.toString = function(){
+  return this._p.map(function(e){
+    return encodeURIComponent(e[0]) + '=' + encodeURIComponent(e[1]);
+  }).join('&');
+};
+if (!window.URLSearchParams) window.URLSearchParams = __kURLSearchParams;
+var URLSearchParams = window.URLSearchParams;
+
+// AbortController / AbortSignal — 실제 상태 + 리스너 발화.
+function __kAbortSignal() { this.aborted = false; this.reason = undefined; this._ls = []; this.onabort = null; }
+__kAbortSignal.prototype.addEventListener = function(t, f){ if (t === 'abort') this._ls.push(f); };
+__kAbortSignal.prototype.removeEventListener = function(t, f){
+  if (t === 'abort') this._ls = this._ls.filter(function(x){ return x !== f; });
+};
+__kAbortSignal.prototype.throwIfAborted = function(){ if (this.aborted) throw this.reason; };
+function __kAbortController() { this.signal = new __kAbortSignal(); }
+__kAbortController.prototype.abort = function(reason){
+  var s = this.signal;
+  if (s.aborted) return;
+  s.aborted = true;
+  s.reason = reason === undefined ? new Error('AbortError') : reason;
+  var e = { type: 'abort', target: s };
+  if (typeof s.onabort === 'function') s.onabort(e);
+  s._ls.slice().forEach(function(f){ f(e); });
+};
+if (!window.AbortController) { window.AbortController = __kAbortController; window.AbortSignal = __kAbortSignal; }
+var AbortController = window.AbortController;
+
+// ── 타입드 배열 ──
+// 실제 바이트 버퍼(ArrayBuffer) 위의 뷰로 구현한다. 인덱스 읽기/쓰기는 Proxy 로 가로채
+// 타입에 맞게 인코딩/디코딩한다 — 그래서 Uint8Array 에 256 을 넣으면 0 이 되고,
+// Float32Array 는 32비트 정밀도로 실제로 반올림된다(IEEE754 인코딩을 거치므로).
+// 숫자 배열로 흉내내면 이 규칙들이 전부 조용히 틀린다.
+function __kArrayBuffer(len) {
+  this.byteLength = len | 0;
+  this._b = [];
+  for (var i = 0; i < this.byteLength; i++) this._b.push(0);
+}
+__kArrayBuffer.prototype.slice = function(a, b){
+  a = a || 0; b = (b === undefined) ? this.byteLength : b;
+  var out = new __kArrayBuffer(Math.max(0, b - a));
+  for (var i = 0; i < out.byteLength; i++) out._b[i] = this._b[a + i];
+  return out;
+};
+
+// IEEE754 인코딩/디코딩 (Float32/Float64) — 실제 비트로 왕복한다.
+function __kF2B(v, bytes, mBits, eBits) {
+  var eMax = (1 << eBits) - 1, bias = eMax >> 1;
+  var s = 0;
+  if (v < 0 || (v === 0 && 1 / v < 0)) { s = 1; v = -v; }
+  var e, m;
+  if (v !== v) { e = eMax; m = 1; s = 0; }
+  else if (v === Infinity) { e = eMax; m = 0; }
+  else if (v === 0) { e = 0; m = 0; }
+  else {
+    e = Math.floor(Math.log(v) / Math.LN2);
+    if (v * Math.pow(2, -e) < 1) e--;
+    if (v * Math.pow(2, -e) >= 2) e++;
+    if (e + bias >= 1) {
+      m = Math.round((v * Math.pow(2, -e) - 1) * Math.pow(2, mBits));
+      if (m >= Math.pow(2, mBits)) { m = 0; e++; }
+      e = e + bias;
+      if (e >= eMax) { e = eMax; m = 0; }
+    } else {
+      m = Math.round(v * Math.pow(2, bias - 1) * Math.pow(2, mBits));
+      e = 0;
+    }
+  }
+  // 비트를 바이트로 (리틀엔디언)
+  var out = [];
+  var bits = [];
+  for (var i = 0; i < mBits; i++) { bits.push(m % 2); m = Math.floor(m / 2); }
+  for (var i = 0; i < eBits; i++) { bits.push(e % 2); e = Math.floor(e / 2); }
+  bits.push(s);
+  for (var i = 0; i < bytes; i++) {
+    var b = 0;
+    for (var k = 0; k < 8; k++) b |= (bits[i * 8 + k] || 0) << k;
+    out.push(b);
+  }
+  return out;
+}
+function __kB2F(bs, mBits, eBits) {
+  var bits = [];
+  for (var i = 0; i < bs.length; i++)
+    for (var k = 0; k < 8; k++) bits.push((bs[i] >> k) & 1);
+  var m = 0;
+  for (var i = mBits - 1; i >= 0; i--) m = m * 2 + bits[i];
+  var e = 0;
+  for (var i = eBits - 1; i >= 0; i--) e = e * 2 + bits[mBits + i];
+  var s = bits[mBits + eBits] ? -1 : 1;
+  var eMax = (1 << eBits) - 1, bias = eMax >> 1;
+  if (e === eMax) return m ? NaN : s * Infinity;
+  if (e === 0) return s * m * Math.pow(2, 1 - bias - mBits);
+  return s * (1 + m * Math.pow(2, -mBits)) * Math.pow(2, e - bias);
+}
+
+var __kTA = {
+  Int8Array:    {size: 1, get: function(b,o){var v=b[o]; return v>127?v-256:v;},
+                 set: function(b,o,v){ b[o]=((v|0)%256+256)%256; }},
+  Uint8Array:   {size: 1, get: function(b,o){return b[o];},
+                 set: function(b,o,v){ b[o]=((v|0)%256+256)%256; }},
+  Uint8ClampedArray: {size: 1, get: function(b,o){return b[o];},
+                 set: function(b,o,v){ v=Math.round(v); b[o]= v<0?0:(v>255?255:v); }},
+  Int16Array:   {size: 2, get: function(b,o){var v=b[o]|(b[o+1]<<8); return v>32767?v-65536:v;},
+                 set: function(b,o,v){ v=((v|0)%65536+65536)%65536; b[o]=v&255; b[o+1]=(v>>8)&255; }},
+  Uint16Array:  {size: 2, get: function(b,o){return b[o]|(b[o+1]<<8);},
+                 set: function(b,o,v){ v=((v|0)%65536+65536)%65536; b[o]=v&255; b[o+1]=(v>>8)&255; }},
+  Int32Array:   {size: 4, get: function(b,o){return (b[o]|(b[o+1]<<8)|(b[o+2]<<16)|(b[o+3]<<24));},
+                 set: function(b,o,v){ v=v|0; b[o]=v&255; b[o+1]=(v>>8)&255; b[o+2]=(v>>16)&255; b[o+3]=(v>>24)&255; }},
+  Uint32Array:  {size: 4, get: function(b,o){var v=(b[o]|(b[o+1]<<8)|(b[o+2]<<16)|(b[o+3]<<24)); return v<0?v+4294967296:v;},
+                 set: function(b,o,v){ v=v>>>0; b[o]=v&255; b[o+1]=(v>>>8)&255; b[o+2]=(v>>>16)&255; b[o+3]=(v>>>24)&255; }},
+  Float32Array: {size: 4, get: function(b,o){return __kB2F([b[o],b[o+1],b[o+2],b[o+3]], 23, 8);},
+                 set: function(b,o,v){ var e=__kF2B(+v,4,23,8); for(var i=0;i<4;i++) b[o+i]=e[i]; }},
+  Float64Array: {size: 8, get: function(b,o){return __kB2F([b[o],b[o+1],b[o+2],b[o+3],b[o+4],b[o+5],b[o+6],b[o+7]], 52, 11);},
+                 set: function(b,o,v){ var e=__kF2B(+v,8,52,11); for(var i=0;i<8;i++) b[o+i]=e[i]; }}
+};
+
+function __kMakeTypedArray(name) {
+  var spec = __kTA[name];
+  function Ctor(arg, byteOffset, length) {
+    var buf, off = 0, len = 0;
+    if (arg instanceof __kArrayBuffer) {
+      buf = arg;
+      off = byteOffset || 0;
+      len = (length === undefined) ? Math.floor((buf.byteLength - off) / spec.size) : length;
+    } else if (typeof arg === 'number') {
+      len = arg | 0;
+      buf = new __kArrayBuffer(len * spec.size);
+    } else if (arg && typeof arg.length === 'number') {
+      len = arg.length;
+      buf = new __kArrayBuffer(len * spec.size);
+    } else {
+      len = 0;
+      buf = new __kArrayBuffer(0);
+    }
+    var self = this;
+    this.buffer = buf;
+    this.byteOffset = off;
+    this.length = len;
+    this.byteLength = len * spec.size;
+    this.BYTES_PER_ELEMENT = spec.size;
+    this._spec = spec;
+    var view = new Proxy(this, {
+      get: function(t, k){
+        var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
+        if (n >= 0) {
+          if (n >= t.length) return undefined;
+          return spec.get(t.buffer._b, t.byteOffset + n * spec.size);
+        }
+        return t[k];
+      },
+      set: function(t, k, v){
+        var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
+        if (n >= 0) {
+          if (n < t.length) spec.set(t.buffer._b, t.byteOffset + n * spec.size, v);
+          return true;
+        }
+        t[k] = v;
+        return true;
+      }
+    });
+    if (arg && typeof arg !== 'number' && !(arg instanceof __kArrayBuffer) && typeof arg.length === 'number') {
+      for (var i = 0; i < len; i++) spec.set(buf._b, off + i * spec.size, arg[i]);
+    }
+    return view;
+  }
+  Ctor.prototype.set = function(src, off){
+    off = off || 0;
+    for (var i = 0; i < src.length; i++) this[off + i] = src[i];
+  };
+  Ctor.prototype.fill = function(v, a, b){
+    a = a || 0; b = (b === undefined) ? this.length : b;
+    for (var i = a; i < b; i++) this[i] = v;
+    return this;
+  };
+  Ctor.prototype.subarray = function(a, b){
+    a = a || 0; b = (b === undefined) ? this.length : b;
+    return new Ctor(this.buffer, this.byteOffset + a * spec.size, Math.max(0, b - a));
+  };
+  Ctor.prototype.slice = function(a, b){
+    a = a || 0; b = (b === undefined) ? this.length : b;
+    var out = new Ctor(Math.max(0, b - a));
+    for (var i = 0; i < out.length; i++) out[i] = this[a + i];
+    return out;
+  };
+  Ctor.prototype.forEach = function(fn){ for (var i = 0; i < this.length; i++) fn(this[i], i, this); };
+  Ctor.prototype.map = function(fn){
+    var out = new Ctor(this.length);
+    for (var i = 0; i < this.length; i++) out[i] = fn(this[i], i, this);
+    return out;
+  };
+  Ctor.prototype.indexOf = function(v){
+    for (var i = 0; i < this.length; i++) if (this[i] === v) return i;
+    return -1;
+  };
+  Ctor.prototype.includes = function(v){ return this.indexOf(v) >= 0; };
+  Ctor.prototype.join = function(sep){
+    var a = [];
+    for (var i = 0; i < this.length; i++) a.push(this[i]);
+    return a.join(sep === undefined ? ',' : sep);
+  };
+  Ctor.prototype.reduce = function(fn, init){
+    var acc = init;
+    for (var i = 0; i < this.length; i++) acc = fn(acc, this[i], i, this);
+    return acc;
+  };
+  Ctor.prototype[Symbol.iterator] = function*(){
+    for (var i = 0; i < this.length; i++) yield this[i];
+  };
+  Ctor.from = function(x, fn){
+    var arr = Array.from(x, fn);
+    return new Ctor(arr);
+  };
+  Ctor.of = function(){ return new Ctor(Array.prototype.slice.call(arguments)); };
+  Ctor.BYTES_PER_ELEMENT = spec.size;
+  return Ctor;
+}
+if (!window.ArrayBuffer) {
+  window.ArrayBuffer = __kArrayBuffer;
+  Object.keys(__kTA).forEach(function(n){ window[n] = __kMakeTypedArray(n); });
+}
+var ArrayBuffer = window.ArrayBuffer;
+var Uint8Array = window.Uint8Array, Int8Array = window.Int8Array;
+var Uint8ClampedArray = window.Uint8ClampedArray;
+var Uint16Array = window.Uint16Array, Int16Array = window.Int16Array;
+var Uint32Array = window.Uint32Array, Int32Array = window.Int32Array;
+var Float32Array = window.Float32Array, Float64Array = window.Float64Array;
+
+// TextEncoder / TextDecoder — 실제 UTF-8 인코딩/디코딩.
+if (!window.TextEncoder) {
+  window.TextEncoder = function(){};
+  window.TextEncoder.prototype.encode = function(s){
+    s = String(s === undefined ? '' : s);
+    var out = [];
+    for (var i = 0; i < s.length; i++) {
+      var c = s.codePointAt(i);
+      if (c > 0xffff) i++;
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) { out.push(0xc0 | (c >> 6), 0x80 | (c & 63)); }
+      else if (c < 0x10000) { out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }
+      else { out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }
+    }
+    return new Uint8Array(out);
+  };
+  window.TextDecoder = function(){};
+  window.TextDecoder.prototype.decode = function(a){
+    if (!a) return '';
+    var out = '', i = 0;
+    while (i < a.length) {
+      var b = a[i++];
+      var c;
+      if (b < 0x80) c = b;
+      else if (b < 0xe0) c = ((b & 31) << 6) | (a[i++] & 63);
+      else if (b < 0xf0) c = ((b & 15) << 12) | ((a[i++] & 63) << 6) | (a[i++] & 63);
+      else c = ((b & 7) << 18) | ((a[i++] & 63) << 12) | ((a[i++] & 63) << 6) | (a[i++] & 63);
+      out += String.fromCodePoint(c);
+    }
+    return out;
+  };
+}
+var TextEncoder = window.TextEncoder, TextDecoder = window.TextDecoder;
+
 var Reflect = window.Reflect;
 if (!Reflect) {
   Reflect = {};

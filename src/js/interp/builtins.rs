@@ -1087,6 +1087,79 @@ impl Interp {
             }
             // getComputedStyle(el) → 계산 스타일 뷰.
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
+            // queueMicrotask(fn) — 마이크로태스크 큐에 직접 넣는다.
+            Native::QueueMicrotask => {
+                let f = args.into_iter().next().unwrap_or(Value::Undefined);
+                if !is_callable(&f) {
+                    return Err("queueMicrotask 인자는 함수여야 함".to_string());
+                }
+                self.microtasks.push_back((f, Value::Undefined, Value::Undefined, false));
+                Ok(Value::Undefined)
+            }
+            // el.animate(keyframes, opts) — Web Animations.
+            // 정적 렌더에는 시간축이 없다. fill 이 forwards/both 면 마지막 키프레임을
+            // 실제로 적용하고(끝 상태 = 우리가 그리는 프레임), finished 는 즉시 이행한다.
+            // 아무것도 안 하고 finished 를 영영 안 주면, 이걸로 콘텐츠를 드러내는
+            // 코드에서 그 콘텐츠가 영영 안 나온다.
+            Native::ElementAnimate => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
+                let fill = match args.get(1) {
+                    Some(Value::Obj(o)) => {
+                        o.borrow().get("fill").map(to_display).unwrap_or_default()
+                    }
+                    _ => String::new(),
+                };
+                if fill == "forwards" || fill == "both" {
+                    // 마지막 키프레임의 프로퍼티를 인라인 스타일로
+                    let last = match args.first() {
+                        Some(Value::Arr(a)) => a.borrow().last().cloned(),
+                        Some(v @ Value::Obj(_)) => Some(v.clone()),
+                        _ => None,
+                    };
+                    if let Some(Value::Obj(kf)) = last {
+                        let props: Vec<(String, String)> = kf
+                            .borrow()
+                            .iter()
+                            .filter(|(k, _)| {
+                                !matches!(k.as_str(), "offset" | "easing" | "composite")
+                                    && !is_internal_key(k)
+                            })
+                            .map(|(k, v)| (camel_to_dashed(k), to_display(v)))
+                            .collect();
+                        for (k, v) in props {
+                            self.style_set(id, &k, &v);
+                        }
+                    }
+                }
+                let done = self.new_promise();
+                self.resolve_promise(&done, Value::Undefined);
+                let mut m = ObjMap::new();
+                m.insert("finished".to_string(), done.clone());
+                m.insert("ready".to_string(), done);
+                m.insert("playState".to_string(), Value::Str("finished".to_string()));
+                m.insert("currentTime".to_string(), Value::Num(0.0));
+                for k in ["play", "pause", "cancel", "finish", "reverse", "addEventListener",
+                          "removeEventListener"] {
+                    m.insert(k.to_string(), Value::Native(Native::Noop));
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
+            // CSS.supports('display','grid') 또는 CSS.supports('(display: grid)')
+            Native::CssSupports => {
+                let cond = match args.len() {
+                    0 => return Ok(Value::Bool(false)),
+                    1 => {
+                        let c = to_display(&args[0]);
+                        if c.trim().starts_with('(') {
+                            c
+                        } else {
+                            format!("({})", c)
+                        }
+                    }
+                    _ => format!("({}: {})", to_display(&args[0]), to_display(&args[1])),
+                };
+                Ok(Value::Bool(crate::css::supports_condition(&cond)))
+            }
             // new DOMParser() → parseFromString 을 가진 객체
             Native::DomParserCtor => {
                 let mut m = ObjMap::new();

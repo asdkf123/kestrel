@@ -6,7 +6,7 @@ mod values;
 pub(crate) use media::{media_matches, media_matches_vp};
 pub(crate) use supports::SUPPORTED;
 use shorthand::expand_declaration;
-use supports::supports_condition;
+pub(crate) use supports::supports_condition;
 use values::valid_identifier_char;
 
 #[derive(Debug, PartialEq)]
