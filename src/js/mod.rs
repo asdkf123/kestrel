@@ -138,9 +138,7 @@ var __kObs = function(){ return { observe: __kNoop, unobserve: __kNoop, disconne
 if (!Object.entries) Object.entries = function(o){ var k = Object.keys(o || {}), r = []; for (var i = 0; i < k.length; i++) r.push([k[i], o[k[i]]]); return r; };
 if (!Object.values) Object.values = function(o){ var k = Object.keys(o || {}), r = []; for (var i = 0; i < k.length; i++) r.push(o[k[i]]); return r; };
 if (!Object.getOwnPropertyNames) Object.getOwnPropertyNames = function(o){ return Object.keys(o || {}); };
-if (!Object.getOwnPropertySymbols) Object.getOwnPropertySymbols = function(){ return []; };
 if (!Object.getOwnPropertyDescriptor) Object.getOwnPropertyDescriptor = function(o, k){ if (o && Object.prototype.hasOwnProperty.call(o, k)) return { value: o[k], writable: true, enumerable: true, configurable: true }; return undefined; };
-if (!Object.setPrototypeOf) Object.setPrototypeOf = function(o){ return o; };
 if (!Array.from) Array.from = function(x, fn){ var r = []; if (x === null || x === undefined) return r; var i = 0; if (typeof x.length === 'number') { for (i = 0; i < x.length; i++) r.push(fn ? fn(x[i], i) : x[i]); return r; } for (var v of x) { r.push(fn ? fn(v, i) : v); i++; } return r; };
 if (!Object.fromEntries) Object.fromEntries = function(e){ var r = {}; for (var p of e) { r[p[0]] = p[1]; } return r; };
 if (!Array.prototype.at) Array.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this[i]; };
@@ -185,7 +183,7 @@ if (!Reflect) {
   Reflect.deleteProperty = function(t, k){ delete t[k]; return true; };
   Reflect.ownKeys = function(t){ return Object.keys(t || {}); };
   Reflect.getPrototypeOf = function(){ return null; };
-  Reflect.setPrototypeOf = function(){ return true; };
+  Reflect.setPrototypeOf = function(o, p){ Object.setPrototypeOf(o, p); return true; };
   Reflect.defineProperty = function(t, k, d){ Object.defineProperty(t, k, d); return true; };
   Reflect.getOwnPropertyDescriptor = function(t, k){ return Object.getOwnPropertyDescriptor(t, k); };
   Reflect.apply = function(fn, thisArg, args){ return fn.apply(thisArg, args); };

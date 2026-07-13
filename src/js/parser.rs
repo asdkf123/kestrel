@@ -1530,15 +1530,18 @@ impl Parser {
                                 is_generator: false,
                                 is_async: false,
                             };
-                            if is_get {
-                                match computed_key {
-                                    Some(e) => {
-                                        props.push((PropKey::ComputedGetter(Box::new(e)), f))
-                                    }
-                                    None => props.push((PropKey::Getter(name), f)),
+                            // get/set 둘 다 보존한다. 예전엔 setter 를 버려서 대입이
+                            // 조용히 setter 를 우회했다(부작용이 안 일어남).
+                            match (is_get, computed_key) {
+                                (true, Some(e)) => {
+                                    props.push((PropKey::ComputedGetter(Box::new(e)), f))
                                 }
+                                (true, None) => props.push((PropKey::Getter(name), f)),
+                                (false, Some(e)) => {
+                                    props.push((PropKey::ComputedSetter(Box::new(e)), f))
+                                }
+                                (false, None) => props.push((PropKey::Setter(name), f)),
                             }
-                            // setter 는 할당 훅 미지원 → 버림(파싱만)
                             if self.eat(&Tok::Comma) {
                                 if self.eat(&Tok::RBrace) {
                                     break;

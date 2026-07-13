@@ -59,8 +59,10 @@ pub enum PropKey {
     Computed(Box<Expr>),
     Spread, // {...obj} — value 식의 프로퍼티를 병합
     Getter(String), // { get x() {..} } — 접근 시 호출되는 접근자
-    // { get [expr]() {..} } — 계산된 키의 접근자. 키는 런타임 평가.
+    Setter(String), // { set x(v) {..} } — 대입 시 호출되는 접근자
+    // { get [expr]() {..} } / { set [expr](v) {..} } — 계산된 키의 접근자. 키는 런타임 평가.
     ComputedGetter(Box<Expr>),
+    ComputedSetter(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

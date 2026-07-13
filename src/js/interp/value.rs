@@ -479,7 +479,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => {
             "function".to_string()
         }
-        Value::Getter(_) => "[getter]".to_string(),
+        Value::Accessor(_) => "[accessor]".to_string(),
         Value::MapVal(_) => "[object Map]".to_string(),
         Value::SetVal(_) => "[object Set]".to_string(),
         Value::Style(_) => "[object CSSStyleDeclaration]".to_string(),
@@ -808,7 +808,7 @@ fn json_stringify_body(v: &Value, path: &mut Vec<usize>) -> Result<Option<String
         | Value::Dom(_)
         | Value::Class(_)
         | Value::Bound(_)
-        | Value::Getter(_)
+        | Value::Accessor(_)
         | Value::MapVal(_)
         | Value::SetVal(_)
         | Value::Style(_)

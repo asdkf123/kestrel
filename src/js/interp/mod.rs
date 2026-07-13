@@ -111,9 +111,9 @@ pub enum Value {
     Instance(Rc<Instance>),
     // bind 로 만든 바운드 함수: (대상, this, 선행 인자)
     Bound(Rc<(Value, Value, Vec<Value>)>),
-    // Object.defineProperty 의 접근자(get). 객체 맵에만 저장되고, 멤버 읽기 때
-    // 호출돼 실제 값을 낸다. 다른 경로엔 노출되지 않음.
-    Getter(Rc<Value>),
+    // 접근자 프로퍼티(get/set). 객체 맵에만 저장된다. 읽기는 get 을 호출하고,
+    // 대입은 set 을 호출한다(없으면 각각 undefined / 무시). 다른 경로엔 노출되지 않음.
+    Accessor(Rc<AccessorPair>),
     // Map/Set — 삽입 순서 보존. 키 비교는 strict_eq (객체는 참조 동일).
     MapVal(Rc<RefCell<Vec<(Value, Value)>>>),
     SetVal(Rc<RefCell<Vec<Value>>>),
@@ -132,6 +132,19 @@ pub enum Value {
     // getComputedStyle(el) 이 돌려주는 읽기전용 계산 스타일 뷰. 요소 NodeId 로
     // computed_styles 맵을 조회한다(카멜케이스/대시 프로퍼티 + getPropertyValue).
     ComputedStyle(crate::dom::NodeId),
+}
+
+// 접근자 프로퍼티: get/set 함수 쌍. 둘 중 하나만 있을 수 있다.
+// (예전엔 getter 만 있고 setter 는 파싱 후 버려져, 대입이 setter 를 조용히 우회했다)
+pub struct AccessorPair {
+    pub get: Option<Value>,
+    pub set: Option<Value>,
+}
+
+impl AccessorPair {
+    pub fn getter(g: Value) -> Rc<AccessorPair> {
+        Rc::new(AccessorPair { get: Some(g), set: None })
+    }
 }
 
 // Symbol 원시값의 데이터. key 로 프로퍼티 저장 키와 동일성을 동시에 표현한다.
@@ -277,6 +290,10 @@ pub enum Native {
     ObjectIsSealed,
     ObjectIsExtensible,
     ObjectGetPrototypeOf,
+    ObjectSetPrototypeOf,
+    ObjectDefineProperties,
+    ObjectGetOwnPropertySymbols,
+    ObjectIsPrototypeOf,
     HasOwnProperty,
     ObjToString,
     ReturnFalse,
@@ -585,7 +602,7 @@ impl std::fmt::Debug for Value {
             Value::Class(c) => write!(f, "[class {}]", c.name),
             Value::Instance(i) => write!(f, "[instance {}]", i.class.name),
             Value::Bound(_) => write!(f, "[bound function]"),
-            Value::Getter(_) => write!(f, "[getter]"),
+            Value::Accessor(_) => write!(f, "[accessor]"),
             Value::MapVal(_) => write!(f, "[object Map]"),
             Value::SetVal(_) => write!(f, "[object Set]"),
             Value::Style(id) => write!(f, "[style {:?}]", id),
@@ -886,7 +903,30 @@ pub struct Interp {
     // 네이티브(내장 생성자/함수)에 붙은 프로퍼티. 폴리필이 `Promise.allSettled = fn`,
     // `Symbol.observable = …` 처럼 내장에 값을 얹는다 — 저장소가 없어 전부 에러였다.
     native_props: HashMap<Native, HashMap<String, Value>>,
+    // 무결성 상태(freeze/seal/preventExtensions). 모든 객체 종류(Obj/Arr/Fn/Instance/
+    // Class/Map/Set)에 통일 적용한다. Value 를 함께 보관해 주소 재사용으로 인한
+    // 오탐을 막는다(강한 참조 → 주소 안정).
+    // 비트: 1=preventExtensions, 2=sealed, 4=frozen
+    integrity: HashMap<usize, (Value, u8)>,
 }
+
+// 무결성 상태를 걸 수 있는 값의 신원(Rc 포인터). 원시값은 None.
+pub(super) fn integrity_ptr(v: &Value) -> Option<usize> {
+    Some(match v {
+        Value::Obj(m) => Rc::as_ptr(m) as usize,
+        Value::Arr(a) => Rc::as_ptr(a) as usize,
+        Value::Fn(f) => Rc::as_ptr(f) as usize,
+        Value::Instance(i) => Rc::as_ptr(i) as usize,
+        Value::Class(c) => Rc::as_ptr(c) as usize,
+        Value::MapVal(m) => Rc::as_ptr(m) as usize,
+        Value::SetVal(s) => Rc::as_ptr(s) as usize,
+        _ => return None,
+    })
+}
+
+pub(super) const INTEG_NONEXT: u8 = 1;
+pub(super) const INTEG_SEALED: u8 = 2;
+pub(super) const INTEG_FROZEN: u8 = 4;
 
 impl Interp {
     pub fn new() -> Interp {
@@ -925,7 +965,7 @@ impl Interp {
             .insert("getElementsByClassName".to_string(), Value::Native(Native::GetElementsByClass));
         document.insert("getElementsByTagName".to_string(), Value::Native(Native::GetElementsByTag));
         // 라이브 접근자: document.body/head/documentElement → DOM 요소 핸들
-        let live = |tag| Value::Getter(Rc::new(Value::Native(Native::DocQuery(tag))));
+        let live = |tag| Value::Accessor(AccessorPair::getter(Value::Native(Native::DocQuery(tag))));
         document.insert("body".to_string(), live("body"));
         document.insert("head".to_string(), live("head"));
         document.insert("documentElement".to_string(), live("html"));
@@ -1027,7 +1067,7 @@ impl Interp {
         object_ns.insert("getOwnPropertyNames".to_string(), Value::Native(Native::ObjectKeys));
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
         object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
-        object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperty));
+        object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperties));
         object_ns.insert("create".to_string(), Value::Native(Native::ObjectCreate));
         object_ns.insert("freeze".to_string(), Value::Native(Native::ObjectFreeze));
         object_ns.insert("seal".to_string(), Value::Native(Native::ObjectSeal));
@@ -1039,6 +1079,12 @@ impl Interp {
             "getPrototypeOf".to_string(),
             Value::Native(Native::ObjectGetPrototypeOf),
         );
+        object_ns
+            .insert("setPrototypeOf".to_string(), Value::Native(Native::ObjectSetPrototypeOf));
+        object_ns.insert(
+            "getOwnPropertySymbols".to_string(),
+            Value::Native(Native::ObjectGetOwnPropertySymbols),
+        );
         // Object.prototype: hasOwnProperty(webpack .o), toString(타입 판별 관용),
         // isPrototypeOf/propertyIsEnumerable/valueOf
         let mut object_proto = ObjMap::new();
@@ -1048,7 +1094,7 @@ impl Interp {
         object_proto.insert("valueOf".to_string(), Value::Native(Native::ReturnThis));
         object_proto
             .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
-        object_proto.insert("isPrototypeOf".to_string(), Value::Native(Native::ReturnFalse));
+        object_proto.insert("isPrototypeOf".to_string(), Value::Native(Native::ObjectIsPrototypeOf));
         object_proto
             .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
         object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
@@ -1402,6 +1448,7 @@ impl Interp {
             new_target: None,
             window_obj,
             native_props: HashMap::new(),
+            integrity: HashMap::new(),
         }
     }
 
@@ -2528,21 +2575,32 @@ impl Interp {
                     }
                     let key = match k {
                         PropKey::Static(s) => s.clone(),
-                        PropKey::Getter(s) => s.clone(),
-                        // { get [expr]() {..} } — 키를 런타임 평가 (심볼 키도 가능)
-                        PropKey::Computed(ke) | PropKey::ComputedGetter(ke) => {
-                            key_of(&self.eval(ke, env)?)
-                        }
+                        PropKey::Getter(s) | PropKey::Setter(s) => s.clone(),
+                        // { get/set [expr]() {..} } — 키를 런타임 평가 (심볼 키도 가능)
+                        PropKey::Computed(ke)
+                        | PropKey::ComputedGetter(ke)
+                        | PropKey::ComputedSetter(ke) => key_of(&self.eval(ke, env)?),
                         PropKey::Spread => unreachable!(),
                     };
                     let val = self.eval(e, env)?;
-                    // 접근자: 함수를 Getter 로 감싸 멤버 접근 시 호출되게
-                    let val = if matches!(k, PropKey::Getter(_) | PropKey::ComputedGetter(_)) {
-                        Value::Getter(Rc::new(val))
+                    // 접근자: get/set 함수를 Accessor 로 감싼다. 같은 키에 get 과 set 이
+                    // 따로 오면({get x(){}, set x(v){}}) 하나의 접근자로 병합해야 한다.
+                    let is_get = matches!(k, PropKey::Getter(_) | PropKey::ComputedGetter(_));
+                    let is_set = matches!(k, PropKey::Setter(_) | PropKey::ComputedSetter(_));
+                    if is_get || is_set {
+                        let (mut g, mut st) = match map.get(&key) {
+                            Some(Value::Accessor(a)) => (a.get.clone(), a.set.clone()),
+                            _ => (None, None),
+                        };
+                        if is_get {
+                            g = Some(val);
+                        } else {
+                            st = Some(val);
+                        }
+                        map.insert(key, Value::Accessor(Rc::new(AccessorPair { get: g, set: st })));
                     } else {
-                        val
-                    };
-                    map.insert(key, val);
+                        map.insert(key, val);
+                    }
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
@@ -2835,7 +2893,7 @@ impl Interp {
                         other => {
                             let produced = self.construct(other, arg_vals)?;
                             for (k, v) in builtins::own_enumerable_entries(&produced) {
-                                builtins::set_own_property(&this, k, v);
+                                self.set_own_property(&this, k, v);
                             }
                         }
                     }
@@ -2936,6 +2994,108 @@ impl Interp {
         }
     }
 
+    // 대상에 own 프로퍼티 설정 (Object.assign 의 대상 쓰기, super() 의 this 채우기).
+    // 무결성(freeze/seal)을 존중하고, 접근자(setter)가 있으면 setter 를 호출한다.
+    pub(super) fn set_own_property(&mut self, target: &Value, k: String, v: Value) {
+        if self.is_frozen_val(target) {
+            return;
+        }
+        match target {
+            Value::Obj(m) => {
+                // setter 가 있으면 호출 (own → 프로토타입)
+                if let Some(acc) = self.find_accessor(m, &k) {
+                    if let Some(st) = acc.set.clone() {
+                        let _ = self.call_value(st, Some(target.clone()), vec![v]);
+                    }
+                    return;
+                }
+                if !m.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
+                    return;
+                }
+                m.borrow_mut().insert(k, v);
+            }
+            Value::Arr(a) => {
+                if let Ok(i) = k.parse::<usize>() {
+                    if i >= a.borrow().len() && self.is_nonextensible_val(target) {
+                        return;
+                    }
+                    let mut items = a.borrow_mut();
+                    if i >= items.len() {
+                        items.resize(i + 1, Value::Undefined);
+                    }
+                    items[i] = v;
+                } else {
+                    if a.get_prop(&k).is_none() && self.is_nonextensible_val(target) {
+                        return;
+                    }
+                    a.set_prop(k, v);
+                }
+            }
+            Value::Instance(inst) => {
+                if !inst.fields.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
+                    return;
+                }
+                inst.fields.borrow_mut().insert(k, v);
+            }
+            Value::Fn(f) => {
+                if !f.props.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
+                    return;
+                }
+                f.props.borrow_mut().insert(k, v);
+            }
+            Value::Class(c) => {
+                c.statics.borrow_mut().insert(k, v);
+            }
+            _ => {}
+        }
+    }
+
+    // 무결성 비트 조회/설정 (freeze/seal/preventExtensions). 모든 객체 종류 공통.
+    pub(super) fn integrity_bits(&self, v: &Value) -> u8 {
+        integrity_ptr(v)
+            .and_then(|p| self.integrity.get(&p))
+            .map(|(_, b)| *b)
+            .unwrap_or(0)
+    }
+
+    pub(super) fn set_integrity(&mut self, v: &Value, bit: u8) {
+        if let Some(p) = integrity_ptr(v) {
+            let e = self.integrity.entry(p).or_insert((v.clone(), 0));
+            e.1 |= bit;
+        }
+    }
+
+    pub(super) fn is_frozen_val(&self, v: &Value) -> bool {
+        self.integrity_bits(v) & INTEG_FROZEN != 0
+    }
+
+    // 새 프로퍼티 추가가 막혔는가 (frozen/sealed/preventExtensions 중 하나)
+    pub(super) fn is_nonextensible_val(&self, v: &Value) -> bool {
+        self.integrity_bits(v) & (INTEG_FROZEN | INTEG_SEALED | INTEG_NONEXT) != 0
+    }
+
+    // 접근자 프로퍼티 탐색: own → __proto__ 체인. 대입 시 setter 를 찾는 데 쓴다.
+    fn find_accessor(&self, map: &Rc<RefCell<ObjMap>>, key: &str) -> Option<Rc<AccessorPair>> {
+        let mut cur = map.clone();
+        for _ in 0..100 {
+            let (found, proto) = {
+                let b = cur.borrow();
+                (b.get(key).cloned(), b.get("__proto__").cloned())
+            };
+            match found {
+                Some(Value::Accessor(a)) => return Some(a),
+                // 값 프로퍼티가 먼저 발견되면 접근자가 아니다(가리워짐)
+                Some(_) => return None,
+                None => {}
+            }
+            match proto {
+                Some(Value::Obj(p)) => cur = p,
+                _ => return None,
+            }
+        }
+        None
+    }
+
     // 잘 알려진 심볼(Symbol.iterator 등) — 고정 key 로 배열/제너레이터 반복자와 연결.
     fn well_known_symbol(key: &str, desc: &str) -> Value {
         Value::Symbol(Rc::new(SymbolData { key: key.to_string(), desc: Some(desc.to_string()) }))
@@ -2991,8 +3151,11 @@ impl Interp {
             }
             let found = p.borrow().get(key).cloned();
             match found {
-                Some(Value::Getter(g)) => {
-                    return Ok(Some(self.call_value((*g).clone(), Some(this.clone()), vec![])?))
+                Some(Value::Accessor(acc)) => {
+                    return Ok(Some(match &acc.get {
+                        Some(g) => self.call_value(g.clone(), Some(this.clone()), vec![])?,
+                        None => Value::Undefined,
+                    }))
                 }
                 Some(v) => return Ok(Some(v)),
                 None => proto = p.borrow().get("__proto__").cloned(),
@@ -3079,9 +3242,10 @@ impl Interp {
                 let v = map.borrow().get(key).cloned();
                 match v {
                     // 접근자면 this=객체로 호출해 실제 값 산출 (defineProperty get)
-                    Some(Value::Getter(g)) => {
-                        self.call_value((*g).clone(), Some(recv.clone()), vec![])
-                    }
+                    Some(Value::Accessor(acc)) => match &acc.get {
+                        Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                        None => Ok(Value::Undefined), // set 만 있는 프로퍼티는 읽으면 undefined
+                    },
                     Some(v) => Ok(v),
                     // own 에 없으면 프로토타입 체인(__proto__)을 따라 조회.
                     None => {
@@ -3404,9 +3568,10 @@ impl Interp {
                 let stored = func.props.borrow().get(key).cloned();
                 if let Some(v) = stored {
                     return match v {
-                        Value::Getter(g) => {
-                            self.call_value((*g).clone(), Some(recv.clone()), vec![])
-                        }
+                        Value::Accessor(acc) => match &acc.get {
+                            Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                            None => Ok(Value::Undefined),
+                        },
                         other => Ok(other),
                     };
                 }
@@ -4133,21 +4298,30 @@ impl Interp {
                         Ok(())
                     }
                     Value::Obj(map) => {
+                        // 접근자 프로퍼티면 setter 를 호출한다(own → 프로토타입 체인 순).
+                        // 예전엔 setter 를 무시하고 raw 값을 덮어써 조용히 틀렸다.
+                        let this_obj = Value::Obj(map.clone());
+                        if let Some(acc) = self.find_accessor(&map, &key) {
+                            if let Some(setter) = acc.set.clone() {
+                                self.call_value(setter, Some(this_obj), vec![value])?;
+                                return Ok(());
+                            }
+                            // get 만 있는 접근자에 대입 → 무시 (sloppy 모드 표준)
+                            if acc.get.is_some() {
+                                return Ok(());
+                            }
+                        }
                         // window.x = v 는 전역 변수 x 를 만든다(전역 객체 의미론).
                         let is_window = Rc::ptr_eq(&map, &self.window_obj);
-                        {
-                            let mut m = map.borrow_mut();
-                            // freeze: 변경 금지. seal/preventExtensions: 새 프로퍼티 추가 금지.
-                            if m.contains_key("\u{0}@@frozen") {
-                                return Ok(());
-                            }
-                            if !m.contains_key(&key)
-                                && (m.contains_key("\u{0}@@sealed") || m.contains_key("\u{0}@@nonext"))
-                            {
-                                return Ok(());
-                            }
-                            m.insert(key.clone(), value.clone());
+                        // freeze: 변경 금지. seal/preventExtensions: 새 프로퍼티 추가 금지.
+                        if self.is_frozen_val(&this_obj) {
+                            return Ok(());
                         }
+                        let is_new = !map.borrow().contains_key(&key);
+                        if is_new && self.is_nonextensible_val(&this_obj) {
+                            return Ok(());
+                        }
+                        map.borrow_mut().insert(key.clone(), value.clone());
                         if is_window {
                             env_declare(&self.global, &key, value);
                         }
@@ -4155,13 +4329,13 @@ impl Interp {
                     }
                     Value::Arr(a) => {
                         // freeze: 모든 변경 금지. seal/preventExtensions: 새 인덱스·프로퍼티 금지.
-                        // (isFrozen 이 참인데 실제로는 변경되던 구멍 — 표준대로 막는다)
-                        if builtins::arr_is_frozen(&a) {
+                        let av = Value::Arr(a.clone());
+                        if self.is_frozen_val(&av) {
                             return Ok(());
                         }
                         if let Ok(i) = key.parse::<usize>() {
                             let is_new = i >= a.borrow().len();
-                            if is_new && builtins::arr_is_sealed(&a) {
+                            if is_new && self.is_nonextensible_val(&av) {
                                 return Ok(());
                             }
                             let mut arr = a.borrow_mut();
@@ -4174,7 +4348,7 @@ impl Interp {
                             a.borrow_mut().resize(n, Value::Undefined);
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
-                            if a.get_prop(&key).is_none() && builtins::arr_is_sealed(&a) {
+                            if a.get_prop(&key).is_none() && self.is_nonextensible_val(&av) {
                                 return Ok(());
                             }
                             a.set_prop(key, value);
@@ -4194,6 +4368,15 @@ impl Interp {
                         Ok(())
                     }
                     Value::Instance(inst) => {
+                        let iv = Value::Instance(inst.clone());
+                        if self.is_frozen_val(&iv) {
+                            return Ok(());
+                        }
+                        if !inst.fields.borrow().contains_key(&key)
+                            && self.is_nonextensible_val(&iv)
+                        {
+                            return Ok(());
+                        }
                         inst.fields.borrow_mut().insert(key, value);
                         Ok(())
                     }
@@ -4203,6 +4386,15 @@ impl Interp {
                     }
                     // 함수 프로퍼티 (F.prototype, F.staticProp = ...)
                     Value::Fn(func) => {
+                        let fv = Value::Fn(func.clone());
+                        if self.is_frozen_val(&fv) {
+                            return Ok(());
+                        }
+                        if !func.props.borrow().contains_key(&key)
+                            && self.is_nonextensible_val(&fv)
+                        {
+                            return Ok(());
+                        }
                         func.props.borrow_mut().insert(key, value);
                         Ok(())
                     }
@@ -5188,6 +5380,94 @@ mod tests {
             run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"),
             1.0,
         );
+    }
+
+    #[test]
+    fn setters_actually_run() {
+        // setter 가 파싱만 되고 버려져 대입이 조용히 setter 를 우회했다(부작용 미발생).
+        assert_eq!(
+            run_str(
+                "var log=''; var o={ _v:0, get v(){return this._v;}, set v(x){ log='set:'+x; this._v=x*10; } }; \
+                 o.v = 5; log + '|' + o.v"
+            ),
+            "set:5|50",
+        );
+        // set 만 있는 프로퍼티: 읽으면 undefined, 부작용은 발생
+        assert_eq!(
+            run_str("var o={ set only(x){ this.got=x; } }; o.only='z'; (o.only===undefined) + '|' + o.got"),
+            "true|z",
+        );
+        // get 만 있는 프로퍼티: 대입 무시
+        assert_eq!(run_num("var o={ get ro(){return 1;} }; o.ro=9; o.ro"), 1.0);
+        // 계산 키 setter (심볼 키)
+        assert_eq!(
+            run_num("var k=Symbol('k'); var o={ set [k](x){ this.hit=x; } }; o[k]=7; o.hit"),
+            7.0,
+        );
+        // 프로토타입의 setter 도 호출된다
+        assert_eq!(
+            run_num(
+                "function P(){}; Object.defineProperty(P.prototype,'p',\
+                 { get:function(){return this.s;}, set:function(x){ this.s=x*2; } }); \
+                 var i=new P(); i.p=4; i.p"
+            ),
+            8.0,
+        );
+        // 같은 키의 get/set 이 하나의 접근자로 병합된다
+        assert_eq!(
+            run_num("var o={ get x(){return this._x;}, set x(v){ this._x=v+1; } }; o.x=1; o.x"),
+            2.0,
+        );
+    }
+
+    #[test]
+    fn integrity_is_uniform_across_object_kinds() {
+        // isFrozen 이 인스턴스/함수/Map 을 "원시값" 취급해 안 얼렸는데 true 를 반환했다(거짓말).
+        assert!(run_bool("class K{}; !Object.isFrozen(new K())"));
+        assert!(run_bool("function F(){}; !Object.isFrozen(F)"));
+        assert!(run_bool("!Object.isFrozen(new Map()) && !Object.isFrozen(new Set())"));
+        // 얼리면 실제로 막힌다
+        assert_eq!(
+            run_num("class K{ constructor(){ this.a=1; } }; var i=new K(); Object.freeze(i); i.a=99; i.a"),
+            1.0,
+        );
+        assert_eq!(
+            run_num("function F(){}; F.x=1; Object.freeze(F); F.x=99; F.y=2; F.x + (F.y||0)"),
+            1.0,
+        );
+        // 얼린 뒤 isFrozen 은 true
+        assert!(run_bool("var m=new Map(); Object.freeze(m); Object.isFrozen(m)"));
+        // Object.assign 도 무결성을 존중
+        assert_eq!(run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"), 1.0);
+        // 원시값은 표준대로 frozen/sealed=true, extensible=false
+        assert!(run_bool("Object.isFrozen(5) && Object.isSealed('x') && !Object.isExtensible(3)"));
+    }
+
+    #[test]
+    fn prototype_and_descriptor_apis_are_real() {
+        // 전부 "거짓말하는 스텁" 이었다: setPrototypeOf=no-op, isPrototypeOf=항상 false,
+        // defineProperties=defineProperty 별칭(시그니처 불일치), getOwnPropertySymbols=항상 [].
+        assert!(run_bool(
+            "var proto={ hi:function(){return 'h';} }; var o={}; Object.setPrototypeOf(o, proto); \
+             typeof o.hi === 'function' && Object.getPrototypeOf(o) === proto"
+        ));
+        assert!(run_bool(
+            "var proto={}; var o={}; Object.setPrototypeOf(o, proto); \
+             proto.isPrototypeOf(o) && !proto.isPrototypeOf({})"
+        ));
+        assert_eq!(
+            run_num("var d={}; Object.defineProperties(d, { x:{value:1}, y:{value:2} }); d.x + d.y"),
+            3.0,
+        );
+        assert_eq!(
+            run_num("var s=Symbol('s'); var o={}; o[s]=1; Object.getOwnPropertySymbols(o).length"),
+            1.0,
+        );
+        // 복원된 심볼이 원본과 같은 키(=동일성)와 설명을 갖는다
+        assert!(run_bool(
+            "var s=Symbol('desc'); var o={}; o[s]=1; \
+             var got=Object.getOwnPropertySymbols(o)[0]; got === s && got.description === 'desc'"
+        ));
     }
 
     #[test]

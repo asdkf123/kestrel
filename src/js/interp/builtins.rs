@@ -21,16 +21,19 @@ fn is_mutating_arr_op(op: ArrOp) -> bool {
     )
 }
 
-// 배열/객체가 얼었는가(변경 금지) / 봉인·확장금지인가(새 프로퍼티 금지).
-// 마커는 NUL 접두 내부 키라 사용자 문자열 키가 위조할 수 없다.
-pub(super) fn arr_is_frozen(a: &Rc<ArrayObj>) -> bool {
-    a.get_prop("\u{0}@@frozen").is_some()
-}
-
-pub(super) fn arr_is_sealed(a: &Rc<ArrayObj>) -> bool {
-    arr_is_frozen(a)
-        || a.get_prop("\u{0}@@sealed").is_some()
-        || a.get_prop("\u{0}@@nonext").is_some()
+// 저장 키("\u{0}@@…")에서 Symbol 값을 복원한다 — getOwnPropertySymbols 용.
+// 일반 심볼 키는 "\0@@sym:<n>:<desc>", 레지스트리는 "\0@@for:<k>", 그 외는 잘 알려진 심볼.
+fn symbol_from_key(key: &str) -> Value {
+    let body = key.strip_prefix("\u{0}@@").unwrap_or(key);
+    let desc = if let Some(rest) = body.strip_prefix("sym:") {
+        // "<n>:<desc>" — 설명은 비어 있을 수 있다(Symbol())
+        rest.split_once(':').map(|(_, d)| d.to_string()).filter(|d| !d.is_empty())
+    } else if let Some(k) = body.strip_prefix("for:") {
+        Some(k.to_string())
+    } else {
+        Some(format!("Symbol.{}", body)) // 잘 알려진 심볼
+    };
+    Value::Symbol(Rc::new(super::SymbolData { key: key.to_string(), desc }))
 }
 
 // 문서 순서(preorder) 인덱스 — compareDocumentPosition 용.
@@ -148,41 +151,7 @@ pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
 }
 
 // 대상에 own 프로퍼티 설정 (Object.assign 의 대상 쓰기). frozen/sealed 는 존중.
-pub(super) fn set_own_property(target: &Value, k: String, v: Value) {
-    match target {
-        Value::Obj(m) => {
-            let mut b = m.borrow_mut();
-            if b.contains_key("\u{0}@@frozen") {
-                return;
-            }
-            if !b.contains_key(&k) && (b.contains_key("\u{0}@@sealed") || b.contains_key("\u{0}@@nonext")) {
-                return;
-            }
-            b.insert(k, v);
-        }
-        Value::Arr(a) => {
-            if let Ok(i) = k.parse::<usize>() {
-                let mut items = a.borrow_mut();
-                if i >= items.len() {
-                    items.resize(i + 1, Value::Undefined);
-                }
-                items[i] = v;
-            } else {
-                a.set_prop(k, v);
-            }
-        }
-        Value::Instance(inst) => {
-            inst.fields.borrow_mut().insert(k, v);
-        }
-        Value::Fn(f) => {
-            f.props.borrow_mut().insert(k, v);
-        }
-        Value::Class(c) => {
-            c.statics.borrow_mut().insert(k, v);
-        }
-        _ => {}
-    }
-}
+// (Interp 메서드로 이동 — 무결성(freeze/seal) 상태를 봐야 하므로 self 가 필요하다)
 
 fn uri_encode(s: &str, extra_safe: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -601,7 +570,7 @@ impl Interp {
             Native::ArrayPush => match recv {
                 Some(Value::Arr(a)) => {
                     // 얼었거나 봉인/확장금지면 새 항목을 추가하지 않는다(표준).
-                    if arr_is_sealed(&a) {
+                    if self.is_nonextensible_val(&Value::Arr(a.clone())) {
                         return Ok(Value::Num(a.borrow().len() as f64));
                     }
                     for v in args {
@@ -673,8 +642,11 @@ impl Interp {
                 let key = args.get(1).map(to_display).unwrap_or_default();
                 let entry = if let Some(Value::Obj(d)) = args.get(2) {
                     let d = d.borrow();
-                    if let Some(g) = d.get("get") {
-                        Some(Value::Getter(Rc::new(g.clone())))
+                    let g = d.get("get").cloned().filter(is_callable);
+                    let st = d.get("set").cloned().filter(is_callable);
+                    if g.is_some() || st.is_some() {
+                        // 접근자 프로퍼티 (get/set 둘 다, 또는 한쪽만)
+                        Some(Value::Accessor(Rc::new(super::AccessorPair { get: g, set: st })))
                     } else {
                         d.get("value").cloned()
                     }
@@ -718,45 +690,115 @@ impl Interp {
                 Ok(obj)
             }
             // freeze 는 그대로 반환(불변성 미구현)
+            // Object.setPrototypeOf(o, proto) — 예전엔 no-op 로 객체만 돌려줬다(거짓말).
+            Native::ObjectSetPrototypeOf => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let proto = args.get(1).cloned().unwrap_or(Value::Null);
+                if let Value::Obj(m) = &target {
+                    match proto {
+                        Value::Obj(_) => {
+                            m.borrow_mut().insert("__proto__".to_string(), proto);
+                        }
+                        // null → 프로토타입 없음
+                        _ => {
+                            m.borrow_mut().remove("__proto__");
+                        }
+                    }
+                }
+                Ok(target)
+            }
+            // Object.defineProperties(o, {k: desc, …}) — 예전엔 defineProperty 별칭이라
+            // 시그니처가 달라 아무것도 정의되지 않았다.
+            Native::ObjectDefineProperties => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let descs: Vec<(String, Value)> = match args.get(1) {
+                    Some(Value::Obj(d)) => d
+                        .borrow()
+                        .iter()
+                        .filter(|(k, _)| !is_internal_key(k))
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for (k, desc) in descs {
+                    self.call_native(
+                        Native::ObjectDefineProperty,
+                        None,
+                        vec![target.clone(), Value::Str(k), desc],
+                    )?;
+                }
+                Ok(target)
+            }
+            // Object.getOwnPropertySymbols(o) — 예전엔 항상 [] 였다(거짓말).
+            // 심볼 키는 "\0@@…" 로 저장되므로 그 키들에서 심볼을 복원한다.
+            Native::ObjectGetOwnPropertySymbols => {
+                let keys: Vec<String> = match args.first() {
+                    Some(Value::Obj(m)) => m
+                        .borrow()
+                        .keys()
+                        .filter(|k| k.starts_with("\u{0}@@"))
+                        .cloned()
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let syms: Vec<Value> = keys.into_iter().map(|k| symbol_from_key(&k)).collect();
+                Ok(Value::Arr(ArrayObj::new(syms)))
+            }
+            // proto.isPrototypeOf(obj) — 예전엔 항상 false 였다(거짓말).
+            Native::ObjectIsPrototypeOf => {
+                let (Some(proto), Some(Value::Obj(target))) = (&recv, args.first()) else {
+                    return Ok(Value::Bool(false));
+                };
+                let mut cur = target.borrow().get("__proto__").cloned();
+                for _ in 0..100 {
+                    match cur {
+                        Some(p) => {
+                            if strict_eq(&p, proto) {
+                                return Ok(Value::Bool(true));
+                            }
+                            cur = match &p {
+                                Value::Obj(pm) => pm.borrow().get("__proto__").cloned(),
+                                _ => None,
+                            };
+                        }
+                        None => break,
+                    }
+                }
+                Ok(Value::Bool(false))
+            }
             // Object(x) / Array(a,b,…) — 전역이 Native 생성자라 호출이 여기로 온다.
             Native::ObjectCtor | Native::ArrayCtor => {
                 Ok(self.coerce_object_call(&Value::Native(n), &args).unwrap_or(Value::Undefined))
             }
-            // freeze/seal/preventExtensions: 객체/배열에 마커를 달아 실제로 상태를 남긴다.
-            // (@@ 접두 → 비열거) 프로퍼티 대입 경로가 이 마커를 보고 변경을 막는다.
+            // freeze/seal/preventExtensions — 모든 객체 종류(Obj/Arr/Fn/Instance/Class/Map/Set)에
+            // 통일된 무결성 테이블로 상태를 남긴다. 대입 경로가 이 상태를 보고 변경을 막는다.
             Native::ObjectFreeze | Native::ObjectSeal | Native::ObjectPreventExt => {
                 let arg = args.into_iter().next().unwrap_or(Value::Undefined);
-                let marker = match n {
-                    Native::ObjectFreeze => "\u{0}@@frozen",
-                    Native::ObjectSeal => "\u{0}@@sealed",
-                    _ => "\u{0}@@nonext",
+                let bit = match n {
+                    Native::ObjectFreeze => super::INTEG_FROZEN,
+                    Native::ObjectSeal => super::INTEG_SEALED,
+                    _ => super::INTEG_NONEXT,
                 };
-                match &arg {
-                    Value::Obj(m) => {
-                        m.borrow_mut().insert(marker.to_string(), Value::Bool(true));
-                    }
-                    Value::Arr(a) => a.set_prop(marker.to_string(), Value::Bool(true)),
-                    _ => {}
-                }
+                self.set_integrity(&arg, bit);
                 Ok(arg)
             }
-            // isFrozen/isSealed/isExtensible. 원시값은 frozen·sealed=true, extensible=false.
+            // isFrozen/isSealed/isExtensible.
+            // 원시값(비객체)은 frozen·sealed=true, extensible=false (표준).
+            // 예전엔 인스턴스/함수/Map 도 "비객체" 취급해 안 얼렸는데 true 를 반환했다(거짓말).
             Native::ObjectIsFrozen | Native::ObjectIsSealed | Native::ObjectIsExtensible => {
-                let flags = |has: &dyn Fn(&str) -> bool| {
-                    let frozen = has("\u{0}@@frozen");
-                    let sealed = frozen || has("\u{0}@@sealed");
-                    let nonext = sealed || has("\u{0}@@nonext");
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let r = if super::integrity_ptr(&arg).is_none() {
+                    !matches!(n, Native::ObjectIsExtensible) // 원시값
+                } else {
+                    let b = self.integrity_bits(&arg);
+                    let frozen = b & super::INTEG_FROZEN != 0;
+                    let sealed = frozen || b & super::INTEG_SEALED != 0;
+                    let nonext = sealed || b & super::INTEG_NONEXT != 0;
                     match n {
                         Native::ObjectIsFrozen => frozen,
                         Native::ObjectIsSealed => sealed,
-                        _ => !nonext, // isExtensible
+                        _ => !nonext,
                     }
-                };
-                let r = match args.first() {
-                    Some(Value::Obj(m)) => flags(&|k| m.borrow().contains_key(k)),
-                    Some(Value::Arr(a)) => flags(&|k| a.get_prop(k).is_some()),
-                    // 비객체(원시값 등): frozen/sealed=true, extensible=false
-                    _ => !matches!(n, Native::ObjectIsExtensible),
                 };
                 Ok(Value::Bool(r))
             }
@@ -867,7 +909,9 @@ impl Interp {
                     Some(v) => Some(to_display(v)),
                 };
                 Ok(Value::Symbol(Rc::new(super::SymbolData {
-                    key: format!("\u{0}@@sym:{}", self.sym_counter),
+                    // desc 를 키에 담아 둔다 — getOwnPropertySymbols 가 심볼을 복원할 때
+                    // 설명까지 되살릴 수 있어야 한다. 고유성은 카운터가 보장.
+                    key: format!("\u{0}@@sym:{}:{}", self.sym_counter, desc.clone().unwrap_or_default()),
                     desc,
                 })))
             }
@@ -1978,7 +2022,10 @@ impl Interp {
                 // 결과를 되쓴다 → 표준의 generic 배열 메서드(jQuery 가 이걸 의존).
                 let (a, write_back) = match &recv {
                     // 얼린 배열은 제자리 변형을 무시한다(표준: 조용히 실패).
-                    Some(Value::Arr(a)) if is_mutating_arr_op(op) && arr_is_frozen(a) => {
+                    Some(Value::Arr(a))
+                        if is_mutating_arr_op(op)
+                            && self.is_frozen_val(&Value::Arr(a.clone())) =>
+                    {
                         return Ok(Value::Arr(a.clone()))
                     }
                     Some(Value::Arr(a)) => (a.clone(), None),
@@ -2634,7 +2681,7 @@ impl Interp {
                 }
                 for src in &args[1..] {
                     for (k, v) in own_enumerable_entries(src) {
-                        set_own_property(&target, k, v);
+                        self.set_own_property(&target, k, v);
                     }
                 }
                 Ok(target)
