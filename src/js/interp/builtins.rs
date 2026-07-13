@@ -508,11 +508,13 @@ impl Interp {
         m.insert("getAllResponseHeaders".to_string(), Value::Native(Native::XhrGetHeader));
         m.insert("abort".to_string(), Value::Native(Native::Noop));
         m.insert("addEventListener".to_string(), Value::Native(Native::AddEventListener));
-        m.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        m.insert("removeEventListener".to_string(), Value::Native(Native::RemoveEventListener));
+        m.insert("dispatchEvent".to_string(), Value::Native(Native::DispatchEvent));
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
-    // XHR 발화: on<event> 프로퍼티 + addEventListener 핸들러(요소 핸들러 재사용은 안 함)
+    // XHR 발화: on<event> 프로퍼티 + addEventListener 로 등록된 리스너.
+    // 예전엔 on<event> 만 불렀다 — addEventListener 로 붙인 load 핸들러가 영영 안 왔다.
     fn xhr_fire(&mut self, obj: &Rc<RefCell<ObjMap>>, event: &str) {
         let on = format!("on{}", event);
         let handler = obj.borrow().get(&on).cloned();
@@ -520,6 +522,13 @@ impl Interp {
             if is_callable(&h) {
                 let _ = self.call_value(h, Some(Value::Obj(obj.clone())), Vec::new());
             }
+        }
+        let listeners: Vec<Value> = match obj.borrow().get(&obj_listener_key(event)) {
+            Some(Value::Arr(a)) => a.borrow().clone(),
+            _ => Vec::new(),
+        };
+        for l in listeners {
+            let _ = self.call_value(l, Some(Value::Obj(obj.clone())), Vec::new());
         }
     }
 
@@ -589,16 +598,98 @@ impl Interp {
                 _ => Err("push 는 배열 메서드".to_string()),
             },
             Native::GetElementById => self.dom_get_element_by_id(args),
-            Native::AddEventListener => match recv {
-                Some(Value::Dom(id)) => {
-                    let event = args.first().map(to_display).unwrap_or_default();
-                    if let Some(f @ Value::Fn(_)) = args.get(1) {
-                        self.handlers.push((id, event, f.clone()));
-                    }
-                    Ok(Value::Undefined)
+            Native::AddEventListener => {
+                let event = args.first().map(to_display).unwrap_or_default();
+                let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&listener) {
+                    return Ok(Value::Undefined); // null/undefined 리스너는 무시 (표준)
                 }
-                _ => Err("addEventListener 는 요소 메서드".to_string()),
-            },
+                match recv {
+                    Some(Value::Dom(id)) => {
+                        self.handlers.push((id, event, listener));
+                        Ok(Value::Undefined)
+                    }
+                    // EventTarget 은 요소 전용이 아니다. XHR 등 객체 수신자는 리스너를
+                    // 객체 안(내부 키)에 보관한다. 예전엔 여기서 던져서 xhr.addEventListener
+                    // 한 줄에 스크립트 전체가 죽었다.
+                    Some(Value::Obj(o)) => {
+                        let key = obj_listener_key(&event);
+                        let existing = o.borrow().get(&key).cloned();
+                        let list = match existing {
+                            Some(Value::Arr(a)) => a,
+                            _ => {
+                                let a = ArrayObj::new(Vec::new());
+                                o.borrow_mut().insert(key, Value::Arr(a.clone()));
+                                a
+                            }
+                        };
+                        list.borrow_mut().push(listener);
+                        Ok(Value::Undefined)
+                    }
+                    _ => Ok(Value::Undefined),
+                }
+            }
+            // removeEventListener — 참조 동일한 리스너만 제거 (표준).
+            // 예전엔 요소엔 메서드 자체가 없어 TypeError, document/window/XHR 은 무동작
+            // 스텁이었다 — "제거했다"고 믿는 코드에서 핸들러가 계속 발화했다.
+            Native::RemoveEventListener => {
+                let event = args.first().map(to_display).unwrap_or_default();
+                let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
+                match recv {
+                    Some(Value::Dom(id)) => {
+                        self.handlers.retain(|(hid, t, f)| {
+                            !(*hid == id && *t == event && same_callable(f, &listener))
+                        });
+                    }
+                    Some(Value::Obj(o)) => {
+                        let key = obj_listener_key(&event);
+                        let list = match o.borrow().get(&key) {
+                            Some(Value::Arr(a)) => Some(a.clone()),
+                            _ => None,
+                        };
+                        if let Some(a) = list {
+                            a.borrow_mut().retain(|f| !same_callable(f, &listener));
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(Value::Undefined)
+            }
+            // document/window.removeEventListener
+            Native::RemoveGlobalListener => {
+                let event = args.first().map(to_display).unwrap_or_default();
+                let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
+                self.global_handlers
+                    .retain(|(t, f)| !(*t == event && same_callable(f, &listener)));
+                Ok(Value::Undefined)
+            }
+            // document/window.dispatchEvent — 전역 핸들러를 실제로 부른다.
+            // 예전엔 메서드 자체가 없어 커스텀 이벤트를 문서에 쏘면 TypeError 였다.
+            Native::DispatchGlobalEvent => {
+                let evt = args.first().cloned().unwrap_or(Value::Undefined);
+                let ty = match &evt {
+                    Value::Obj(o) => o.borrow().get("type").map(to_display).unwrap_or_default(),
+                    _ => to_display(&evt),
+                };
+                let to_run: Vec<Value> = self
+                    .global_handlers
+                    .iter()
+                    .filter(|(t, _)| *t == ty)
+                    .map(|(_, f)| f.clone())
+                    .collect();
+                for f in to_run {
+                    if let Err(e) = self.call_value(f, None, vec![evt.clone()]) {
+                        println!("[js error] {}", e);
+                    }
+                }
+                let prevented = match &evt {
+                    Value::Obj(o) => {
+                        matches!(o.borrow().get("defaultPrevented"), Some(Value::Bool(true)))
+                    }
+                    _ => false,
+                };
+                Ok(Value::Bool(!prevented))
+            }
             // document/window.addEventListener — 전역 핸들러로 등록 (recv 무시)
             Native::AddGlobalListener => {
                 let event = args.first().map(to_display).unwrap_or_default();
@@ -1523,6 +1614,28 @@ impl Interp {
             Native::DispatchEvent => {
                 let node = match recv {
                     Some(Value::Dom(id)) => id,
+                    // 객체 EventTarget(XHR 등): 그 객체에 붙은 리스너를 부른다
+                    Some(Value::Obj(o)) => {
+                        let evt = args.first().cloned().unwrap_or(Value::Undefined);
+                        let ty = match &evt {
+                            Value::Obj(e) => {
+                                e.borrow().get("type").map(to_display).unwrap_or_default()
+                            }
+                            other => to_display(other),
+                        };
+                        let listeners: Vec<Value> = match o.borrow().get(&obj_listener_key(&ty)) {
+                            Some(Value::Arr(a)) => a.borrow().clone(),
+                            _ => Vec::new(),
+                        };
+                        for l in listeners {
+                            if let Err(e) =
+                                self.call_value(l, Some(Value::Obj(o.clone())), vec![evt.clone()])
+                            {
+                                println!("[js error] {}", e);
+                            }
+                        }
+                        return Ok(Value::Bool(true));
+                    }
                     _ => return Ok(Value::Bool(false)),
                 };
                 let evt = args.first().cloned().unwrap_or(Value::Undefined);

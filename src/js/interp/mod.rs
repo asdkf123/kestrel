@@ -377,6 +377,9 @@ pub enum Native {
     NodeReplaceWith,
     GetBoundingClientRect,
     DispatchEvent,
+    RemoveEventListener,
+    RemoveGlobalListener,
+    DispatchGlobalEvent,
     EventCtor,
     CloneNode,
     Matches,
@@ -954,7 +957,14 @@ impl Interp {
         // 문서 레벨 이벤트(DOMContentLoaded/load): 핸들러를 등록하고 스크립트
         // 실행 후 발화한다(run_scripts). 프레임워크가 여기서 콘텐츠를 구성.
         document.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
-        document.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        document.insert(
+            "removeEventListener".to_string(),
+            Value::Native(Native::RemoveGlobalListener),
+        );
+        document.insert(
+            "dispatchEvent".to_string(),
+            Value::Native(Native::DispatchGlobalEvent),
+        );
         // 스크립트 실행 중엔 "loading" — 프레임워크가 DOMContentLoaded 리스너를
         // 등록하도록. run_scripts 가 이후 interactive → complete 로 갱신.
         document.insert("readyState".to_string(), Value::Str("loading".to_string()));
@@ -1246,7 +1256,14 @@ impl Interp {
         window.insert("localStorage".to_string(), ls);
         window.insert("navigator".to_string(), nav);
         window.insert("addEventListener".to_string(), Value::Native(Native::AddGlobalListener));
-        window.insert("removeEventListener".to_string(), Value::Native(Native::Noop));
+        window.insert(
+            "removeEventListener".to_string(),
+            Value::Native(Native::RemoveGlobalListener),
+        );
+        window.insert(
+            "dispatchEvent".to_string(),
+            Value::Native(Native::DispatchGlobalEvent),
+        );
         window.insert("getComputedStyle".to_string(), Value::Native(Native::GetComputedStyle));
         window.insert("requestAnimationFrame".to_string(), Value::Native(Native::SetTimeout));
         window.insert("cancelAnimationFrame".to_string(), Value::Native(Native::ClearTimer));
@@ -3528,6 +3545,7 @@ impl Interp {
             Value::Dom(id) => {
                 let native = match key {
                     "addEventListener" => Some(Native::AddEventListener),
+                    "removeEventListener" => Some(Native::RemoveEventListener),
                     "appendChild" => Some(Native::AppendChild),
                     "append" => Some(Native::NodeAppend),
                     "prepend" => Some(Native::NodePrepend),
@@ -4811,6 +4829,59 @@ mod tests {
         assert!(run_bool("typeof TypeError.prototype === 'object'"));
         assert_eq!(run_str("Error.name"), "Error");
         assert_eq!(run_str("TypeError.name"), "TypeError");
+    }
+
+    #[test]
+    fn remove_event_listener_actually_removes() {
+        // 예전엔 요소에 removeEventListener 메서드 자체가 없어 TypeError 로 스크립트가 죽고,
+        // document/window/XHR 은 무동작 스텁이라 "제거했다"고 믿는 코드에서 계속 발화했다.
+        let mut dom = crate::html::parse_dom("<button id=\"b\">x</button>".to_string());
+        let mut it = Interp::new();
+        it.dom = Some(&mut dom as *mut _);
+        let n = it
+            .run(
+                "var n = 0; function h(){ n++; } \
+                 var b = document.getElementById('b'); \
+                 b.addEventListener('click', h); \
+                 b.dispatchEvent(new Event('click')); \
+                 b.removeEventListener('click', h); \
+                 b.dispatchEvent(new Event('click')); \
+                 n",
+            )
+            .unwrap();
+        assert!(matches!(n, Value::Num(x) if x == 1.0), "제거 후엔 발화 안 함: {:?}", n);
+
+        // document 리스너도 제거되고, dispatchEvent 로 실제 호출된다
+        let m = it
+            .run(
+                "var m = 0; function g(){ m++; } \
+                 document.addEventListener('ping', g); \
+                 document.dispatchEvent(new CustomEvent('ping')); \
+                 document.removeEventListener('ping', g); \
+                 document.dispatchEvent(new CustomEvent('ping')); \
+                 m",
+            )
+            .unwrap();
+        assert!(matches!(m, Value::Num(x) if x == 1.0), "document 리스너 제거: {:?}", m);
+    }
+
+    #[test]
+    fn xhr_is_an_event_target() {
+        // xhr.addEventListener 는 예전에 "요소 메서드"라며 던졌다 — 한 줄에 스크립트 전체가 죽었다.
+        // 이제 객체 수신자도 EventTarget 이다(등록/제거/디스패치).
+        let mut it = Interp::new();
+        let v = it
+            .run(
+                "var x = new XMLHttpRequest(); var hits = 0; \
+                 function f(){ hits++; } \
+                 x.addEventListener('load', f); \
+                 x.dispatchEvent(new Event('load')); \
+                 x.removeEventListener('load', f); \
+                 x.dispatchEvent(new Event('load')); \
+                 hits",
+            )
+            .unwrap();
+        assert!(matches!(v, Value::Num(n) if n == 1.0), "XHR 리스너 등록/제거: {:?}", v);
     }
 
     #[test]

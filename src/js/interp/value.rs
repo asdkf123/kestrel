@@ -135,6 +135,26 @@ pub(super) fn is_callable(v: &Value) -> bool {
     matches!(v, Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_))
 }
 
+// 객체 수신자(XHR 등)의 리스너 보관 키. NUL 접두라 JS 코드가 만들 수 없고
+// Object.keys/JSON 에도 새지 않는다 (is_internal_key).
+pub(super) fn obj_listener_key(event: &str) -> String {
+    format!("\u{0}evt:{}", event)
+}
+
+// 두 값이 같은 함수인가 (참조 동일). removeEventListener 가 등록된 리스너를 찾을 때 쓴다.
+// 표준도 참조 동일로 지운다 — bind() 로 새로 만든 함수는 안 지워지는 게 맞다.
+pub(super) fn same_callable(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Fn(x), Value::Fn(y)) => Rc::ptr_eq(x, y),
+        (Value::Native(x), Value::Native(y)) => x == y,
+        (Value::Bound(x), Value::Bound(y)) => Rc::ptr_eq(x, y),
+        (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
+        // handleEvent 객체 리스너
+        (Value::Obj(x), Value::Obj(y)) => Rc::ptr_eq(x, y),
+        _ => false,
+    }
+}
+
 // Obj 기반 Promise 판별 (__isPromise 마커)
 pub(super) fn is_promise(v: &Value) -> bool {
     matches!(v, Value::Obj(o) if matches!(o.borrow().get("\u{0}isPromise"), Some(Value::Bool(true))))
