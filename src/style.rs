@@ -677,14 +677,17 @@ fn presentational_css(elem: &ElementData) -> String {
     out.join(";")
 }
 
+// 반환: (최종 명시값, UA 원점만의 명시값). `revert` 는 저자 선언을 되돌려 UA 원점
+// 값으로 계산해야 하므로 원점별 맵이 필요하다 (CSS Cascade §6.2).
 fn specified_values(
     elem: &ElementData,
     ancestors: &[&ElementData],
     anc_pos: &[NodePos],
     sib: &SiblingCtx,
     index: &RuleIndex,
-) -> PropertyMap {
+) -> (PropertyMap, PropertyMap) {
     let mut values = HashMap::new();
+    let mut ua_values: PropertyMap = HashMap::new();
     // 표현 속성(presentational hints)을 기본 레이어로 먼저 얹는다 (규칙이 덮을 수 있음)
     let hints = presentational_css(elem);
     if !hints.is_empty() {
@@ -704,6 +707,9 @@ fn specified_values(
         for d in &rule.declarations {
             if !d.important {
                 values.insert(d.name.clone(), d.value.clone());
+                if rule.ua {
+                    ua_values.insert(d.name.clone(), d.value.clone());
+                }
             }
         }
     }
@@ -721,6 +727,9 @@ fn specified_values(
         for d in &rule.declarations {
             if d.important {
                 values.insert(d.name.clone(), d.value.clone());
+                if rule.ua {
+                    ua_values.insert(d.name.clone(), d.value.clone());
+                }
             }
         }
     }
@@ -729,7 +738,7 @@ fn specified_values(
             values.insert(d.name, d.value);
         }
     }
-    values
+    (values, ua_values)
 }
 
 // querySelector 용: 아레나 요소가 선택자 목록 중 하나와 매칭되는가.
@@ -1045,7 +1054,7 @@ fn collect_pseudo_plans<'a>(
         return;
     };
     // 요소 자신의 counter-reset/increment 를 문서 순서로 적용 (::before content 전)
-    let evals = specified_values(elem, ancestors, anc_pos, sib, index);
+    let (evals, _) = specified_values(elem, ancestors, anc_pos, sib, index);
     if let Some(Value::Keyword(r)) = evals.get("counter-reset") {
         apply_counter_op(r, counters, true);
     }
@@ -1183,18 +1192,25 @@ fn style_node<'a>(
     match node.node_type {
         NodeType::Element(ref elem) => {
             // 합성 의사요소 노드: 캐스케이드 대신 사전 계산된 명시값 사용.
-            let mut values = match pseudo.get(&id) {
-                Some(v) => v.clone(),
+            let (mut values, ua_values) = match pseudo.get(&id) {
+                Some(v) => (v.clone(), HashMap::new()),
                 None => specified_values(elem, ancestors, anc_pos, sib, index),
             };
-            // CSS 전역 키워드: inherit → 부모 계산값, unset → 제거(상속 속성이면 아래
-            // 상속 루프가 부모값 복사, 아니면 기본값), initial → 제거(기본값 근사).
+            // CSS 전역 키워드 (CSS Cascade §7):
+            //   inherit → 부모 계산값
+            //   initial → 그 프로퍼티의 **초기값** (상속 속성이어도 상속하지 않는다)
+            //   unset   → 상속 속성이면 inherit, 아니면 initial (= 선언 제거와 같다)
+            //   revert  → 저자 선언을 되돌려 UA 원점 값으로
+            // 예전엔 initial 을 그냥 "제거" 로 처리해서 상속 속성이 부모값을 물려받았고
+            // (color: initial 이 검정이 아니라 부모색), revert 는 아예 몰라서
+            // 키워드 문자열이 그대로 값이 됐다 (display: revert → display 가 "revert").
             {
                 let wide: Vec<String> = values
                     .iter()
                     .filter(|(_, v)| {
                         matches!(v, Value::Keyword(k)
-                            if k == "inherit" || k == "initial" || k == "unset")
+                            if k == "inherit" || k == "initial" || k == "unset"
+                                || k == "revert" || k == "revert-layer")
                     })
                     .map(|(k, _)| k.clone())
                     .collect();
@@ -1212,8 +1228,26 @@ fn style_node<'a>(
                                 values.remove(&k);
                             }
                         },
-                        _ => {
+                        "initial" => {
                             values.remove(&k);
+                            // 초기값을 실제로 넣는다 — 없으면 상속 루프가 부모값을 덮어쓴다.
+                            if let Some(init) = initial_value(&k) {
+                                for d in crate::css::parse_inline_style(&format!("{}: {}", k, init))
+                                {
+                                    values.insert(d.name, d.value);
+                                }
+                            }
+                        }
+                        "revert" | "revert-layer" => match ua_values.get(&k) {
+                            Some(v) => {
+                                values.insert(k.clone(), v.clone());
+                            }
+                            None => {
+                                values.remove(&k);
+                            }
+                        },
+                        _ => {
+                            values.remove(&k); // unset
                         }
                     }
                 }
@@ -1453,6 +1487,47 @@ fn style_node<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn css_wide_keywords_initial_and_revert() {
+        // initial 은 **초기값**이다 (상속 속성이어도 상속하지 않는다). 예전엔 선언을
+        // 그냥 지워서 상속 루프가 부모색을 물려줬다 — color: initial 이 검정이 아니었다.
+        // revert 는 저자 선언을 되돌려 UA 원점 값으로 계산한다. 예전엔 아예 몰라서
+        // 키워드 문자열이 그대로 값이 됐다 (display: revert → display 가 "revert").
+        let dom = crate::html::parse_dom(
+            "<div id=p><div id=a>a</div><div id=b>b</div></div>".to_string(),
+        );
+        let mut ss = crate::css::user_agent_stylesheet();
+        ss.rules.extend(
+            crate::css::parse(
+                "#p { color: rgb(5, 5, 5) } #a { color: initial } \
+                 #b { display: inline; display: revert }"
+                    .to_string(),
+            )
+            .rules,
+        );
+        let styled = style_tree(&dom, &ss);
+        fn find<'a, 'b>(n: &'b StyledNode<'a>, id: &str) -> Option<&'b StyledNode<'a>> {
+            if let NodeType::Element(e) = &n.node.node_type {
+                if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+                    return Some(n);
+                }
+            }
+            n.children.iter().find_map(|c| find(c, id))
+        }
+        let a = find(&styled, "a").expect("#a");
+        assert_eq!(
+            a.value("color"),
+            Some(Value::Color(crate::css::Color { r: 0, g: 0, b: 0, a: 255 })),
+            "color: initial 은 검정 (부모색 상속 아님)"
+        );
+        let b = find(&styled, "b").expect("#b");
+        assert!(
+            matches!(b.value("display"), Some(Value::Keyword(k)) if k == "block"),
+            "display: revert 는 UA 기본값(block) 으로 되돌아간다: {:?}",
+            b.value("display")
+        );
+    }
     use crate::css::{Unit, Value};
 
     #[test]

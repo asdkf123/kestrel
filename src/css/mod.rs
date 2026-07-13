@@ -28,6 +28,9 @@ pub struct FontFace {
 pub struct Rule {
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
+    // UA(브라우저 기본) 스타일에서 온 규칙인가. `revert` 는 저자 선언을 되돌려
+    // UA 원점 값으로 계산해야 하므로 원점을 구분해야 한다 (CSS Cascade §6.2).
+    pub ua: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -519,7 +522,11 @@ fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>,
 const UA_CSS: &str = "html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, li, section, article, header, footer, nav, main, aside, blockquote, pre, center, form, fieldset, hr, figure, figcaption, address, dl, dt, dd, select, textarea { display: block; } table { display: table; } thead { display: table-header-group; } tbody { display: table-row-group; } tfoot { display: table-footer-group; } tr { display: table-row; } td, th { display: table-cell; } caption { display: table-caption; } head, script, style, title, meta, link, noscript, template { display: none; } img { display: inline-block; } a { color: #0645ad; text-decoration: underline; } details, summary, figure, figcaption { display: block; } summary { font-weight: bold; } details:not([open]) > :not(summary) { display: none; } [hidden] { display: none; } dialog { display: block; } dialog:not([open]) { display: none; } mark { background-color: #ffff00; } del, s, strike { text-decoration: line-through; } ins, u { text-decoration: underline; } small { font-size: 13px; } sub, sup { font-size: 12px; } code, kbd, samp, tt { font-family: monospace; } pre, xmp, listing, plaintext { white-space: pre; font-family: monospace; } textarea { white-space: pre-wrap; } nobr { white-space: nowrap; } abbr { text-decoration: underline; } ul, ol { padding-left: 24px; } li { padding-left: 18px; } td, th { padding: 4px 6px; } th { color: #202020; } center { text-align: center; } table { text-align: left; } input, button, progress, meter { display: inline-block; } input, textarea, select { border: 1px solid #767676; background-color: #ffffff; padding: 2px 5px; } button, input[type=submit], input[type=reset], input[type=button] { border: 1px solid #767676; background-color: #e9e9ed; padding: 2px 8px; text-align: center; } b, strong, h1, h2, h3, h4, h5, h6, th { font-weight: bold; } i, em, cite, var, address { font-style: italic; } hr { border-top: 1px solid #a0a0a0; margin: 8px 0; height: 0; box-sizing: content-box; } blockquote { margin: 8px 40px; } figure { margin: 16px 40px; } dl { margin: 8px 0; } dd { margin-left: 40px; } menu, dir { display: block; padding-left: 24px; } p { margin: 1em 0; } h1 { font-size: 2em; margin: 0.67em 0; } h2 { font-size: 1.5em; margin: 0.83em 0; } h3 { font-size: 1.17em; margin: 1em 0; } h4 { margin: 1.33em 0; } h5 { font-size: 0.83em; margin: 1.67em 0; } h6 { font-size: 0.67em; margin: 2.33em 0; } ul, ol { margin: 1em 0; } ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0; } pre { margin: 1em 0; } q::before { content: open-quote; } q::after { content: close-quote; }";
 
 pub fn user_agent_stylesheet() -> Stylesheet {
-    parse(UA_CSS.to_string())
+    let mut ss = parse(UA_CSS.to_string());
+    for r in &mut ss.rules {
+        r.ua = true; // 원점 표시 (revert 가 여기로 되돌린다)
+    }
+    ss
 }
 
 // querySelector 용: 선택자 목록만 파싱. 빈 규칙 몸통을 붙여 기존 파서를 재사용.
@@ -723,7 +730,7 @@ impl Parser {
         match self.parse_selectors() {
             Some(selectors) => {
                 let declarations = self.parse_declarations();
-                Some(Rule { selectors, declarations })
+                Some(Rule { selectors, declarations, ua: false })
             }
             None => {
                 self.skip_to_block_end();
