@@ -1278,6 +1278,9 @@ impl Parser {
         let mut methods = Vec::new();
         let mut statics = Vec::new();
         let mut getters = Vec::new();
+        let mut setters = Vec::new();
+        let mut static_getters = Vec::new();
+        let mut static_setters = Vec::new();
         let mut fields = Vec::new();
         let mut static_fields = Vec::new();
         while self.peek() != Some(&Tok::RBrace) {
@@ -1328,10 +1331,20 @@ impl Parser {
             body.extend(self.block()?);
             if !is_static && mname == "constructor" {
                 ctor = Some((params, body));
-            } else if accessor.as_deref() == Some("get") && !is_static {
-                getters.push((mname, params, body));
+            } else if accessor.as_deref() == Some("get") {
+                if is_static {
+                    static_getters.push((mname, params, body));
+                } else {
+                    getters.push((mname, params, body));
+                }
             } else if accessor.as_deref() == Some("set") {
-                // setter: 할당 훅 미지원 → 조용히 버림(메서드로 오인 방지)
+                // setter 는 실제로 등록한다. 예전엔 조용히 버려서 obj.x = v 가
+                // 아무 일도 안 했다 (검증 로직/프록시 패턴이 통째로 무력화).
+                if is_static {
+                    static_setters.push((mname, params, body));
+                } else {
+                    setters.push((mname, params, body));
+                }
             } else if is_static {
                 statics.push((mname, params, body, is_generator, is_async));
             } else {
@@ -1339,7 +1352,19 @@ impl Parser {
             }
         }
         self.pos += 1; // '}'
-        Ok(ClassDef { name, parent, ctor, methods, statics, getters, fields, static_fields })
+        Ok(ClassDef {
+            name,
+            parent,
+            ctor,
+            methods,
+            statics,
+            getters,
+            setters,
+            static_getters,
+            static_setters,
+            fields,
+            static_fields,
+        })
     }
 
     // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드

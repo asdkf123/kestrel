@@ -134,6 +134,7 @@ impl Interp {
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
         // href/src 절대 URL 해석용 base (dom borrow 전에 복제).
         let base = self.base_url.clone();
+        let self_shadow = self.shadow_hosts.contains(&id);
         // 레이아웃 측정 프로퍼티 (dom 아레나 borrow 전에 처리 — 이중 borrow 방지).
         // offset* 는 border box, client* 는 근사로 같은 박스 크기를 돌려준다.
         match key {
@@ -209,10 +210,50 @@ impl Interp {
                     .map(Value::Dom)
                     .unwrap_or(Value::Null))
             }
+            // el.attributes — [{name, value}, …] (예전엔 undefined 라 읽는 순간 죽었다)
+            "attributes" => {
+                let list: Vec<Value> = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Element(e) => e
+                        .attributes
+                        .iter()
+                        .map(|(k, v)| {
+                            let mut m = ObjMap::new();
+                            m.insert("name".to_string(), Value::Str(k.clone()));
+                            m.insert("value".to_string(), Value::Str(v.clone()));
+                            Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m)))
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                Ok(Value::Arr(ArrayObj::new(list)))
+            }
+            // 문서 트리에 붙어 있는가 (분리된 노드인지 판별 — 프레임워크가 흔히 본다)
+            "isConnected" => {
+                let root = dom.root;
+                let connected = id == root || dom.ancestors(id).contains(&root);
+                Ok(Value::Bool(connected))
+            }
+            // attachShadow 를 부른 요소면 자기 자신이 섀도 루트다 (문서화된 근사)
+            "shadowRoot" => Ok(if self_shadow {
+                Value::Dom(id)
+            } else {
+                Value::Null
+            }),
+            // <form>.elements — 폼 컨트롤 목록
+            "elements"
+                if matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.tag_name == "form") =>
+            {
+                let mut out = Vec::new();
+                collect_form_controls(dom, id, &mut out);
+                Ok(Value::Arr(ArrayObj::new(out.into_iter().map(Value::Dom).collect())))
+            }
             // element.style/classList → 속성에 대한 라이브 프록시
             "style" => Ok(Value::Style(id)),
             "classList" => Ok(Value::ClassList(id)),
             "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
+            "innerHTML" => Ok(Value::Str(dom.inner_html(id))),
+            "outerHTML" => Ok(Value::Str(dom.outer_html(id))),
             // value: <select> 는 선택된 option 의 값, <option> 은 value 속성 없으면 텍스트,
             // 그 외(input/textarea)는 value 속성. 예전엔 셋 다 value 속성만 봐서
             // select.value 가 늘 빈 문자열이었다(폼 로직이 통째로 어긋난다).
@@ -453,6 +494,22 @@ impl Interp {
             }
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)
         }
+    }
+}
+
+// <form> 안의 폼 컨트롤 (input/select/textarea/button)
+pub(super) fn collect_form_controls(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    out: &mut Vec<crate::dom::NodeId>,
+) {
+    for &c in &dom.get(id).children {
+        if let crate::dom::NodeType::Element(e) = &dom.get(c).node_type {
+            if matches!(e.tag_name.as_str(), "input" | "select" | "textarea" | "button") {
+                out.push(c);
+            }
+        }
+        collect_form_controls(dom, c, out);
     }
 }
 

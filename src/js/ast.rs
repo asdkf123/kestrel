@@ -75,6 +75,12 @@ pub struct ClassDef {
     pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool)>,
     // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스)
     pub getters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    // set 접근자: 대입 시 호출 (this=인스턴스). 예전엔 파싱만 하고 버렸다 —
+    // 그러면 obj.x = v 가 조용히 아무 일도 안 한다.
+    pub setters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    // static get/set 접근자 (this=클래스). static get observedAttributes 가 대표.
+    pub static_getters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    pub static_setters: Vec<(String, Vec<String>, Vec<Stmt>)>,
     // 인스턴스 필드: (이름, 초기화식) — 생성 시 this 에 설정
     pub fields: Vec<(String, Option<Expr>)>,
     // static 필드: (이름, 초기화식) — 클래스에 설정

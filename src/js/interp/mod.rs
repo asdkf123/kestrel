@@ -213,6 +213,11 @@ pub struct JsClass {
     pub ctor: Option<Rc<JsFn>>,
     pub methods: HashMap<String, Rc<JsFn>>,
     pub getters: HashMap<String, Rc<JsFn>>,
+    // set 접근자 (this=인스턴스). 예전엔 파싱 단계에서 버려서 대입이 조용히 무시됐다.
+    pub setters: HashMap<String, Rc<JsFn>>,
+    // static get/set (this=클래스). static get observedAttributes 가 대표.
+    pub static_getters: HashMap<String, Rc<JsFn>>,
+    pub static_setters: HashMap<String, Rc<JsFn>>,
     // 인스턴스 필드 초기화 함수 (없으면 None → undefined). 생성 시 this 로 호출.
     pub fields: Vec<(String, Option<Rc<JsFn>>)>,
     pub statics: RefCell<HashMap<String, Value>>,
@@ -228,6 +233,20 @@ impl JsClass {
     }
 
     // get 접근자 탐색 (자신 → 조상)
+    fn find_setter(&self, name: &str) -> Option<Rc<JsFn>> {
+        if let Some(s) = self.setters.get(name) {
+            return Some(s.clone());
+        }
+        self.parent.as_ref().and_then(|p| p.find_setter(name))
+    }
+
+    fn find_static_getter(&self, name: &str) -> Option<Rc<JsFn>> {
+        if let Some(g) = self.static_getters.get(name) {
+            return Some(g.clone());
+        }
+        self.parent.as_ref().and_then(|p| p.find_static_getter(name))
+    }
+
     fn find_getter(&self, name: &str) -> Option<Rc<JsFn>> {
         if let Some(g) = self.getters.get(name) {
             return Some(g.clone());
@@ -384,6 +403,12 @@ pub enum Native {
     QueueMicrotask,
     CssSupports,
     ElementAnimate,
+    GetAttributeNames,
+    HasAttributes,
+    ToggleAttribute,
+    ReplaceChildren,
+    GetAnimations,
+    AttachShadow,
     InsertAdjacentHTML,
     InsertAdjacentElement,
     ScrollTo,
@@ -862,6 +887,9 @@ pub struct Interp {
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
     // MutationObserver 배달을 이미 예약했는가 (마이크로태스크 중복 예약 방지)
     mutation_scheduled: bool,
+    // attachShadow 를 부른 요소들. 우리는 섀도 트리를 따로 두지 않고 요소 자신을
+    // 섀도 루트로 돌려준다 — 콘텐츠는 실제로 렌더되지만 스타일 격리는 없다(문서화된 근사).
+    shadow_hosts: std::collections::HashSet<crate::dom::NodeId>,
     // 스크립트가 요청한 스크롤 위치(px). 호스트가 렌더에 반영한다.
     pub scroll_x: f32,
     pub scroll_y: f32,
@@ -1484,6 +1512,7 @@ impl Interp {
             dom: None,
             handlers: Vec::new(),
             mutation_scheduled: false,
+            shadow_hosts: std::collections::HashSet::new(),
             scroll_x: 0.0,
             scroll_y: 0.0,
             layout_ctx: None,
@@ -2150,10 +2179,18 @@ impl Interp {
     }
 
     // 타이머 콜백 실행 (호출측이 dom 포인터 설정/해제). 에러는 격리.
+    // 태스크(타이머/이벤트 콜백) 하나를 실행한다.
+    // 이벤트 루프 규칙: 태스크가 끝나면 마이크로태스크 큐를 비운다.
+    // 예전엔 안 비워서, 타이머 안에서 일어난 DOM 변경의 MutationObserver 배달과
+    // 그 안에서 만든 Promise 의 .then 이 영영 안 돌았다 (조용히).
     pub fn run_callback(&mut self, cb: Value) {
         self.steps = 0;
         if let Err(e) = self.call_value(cb, None, Vec::new()) {
             println!("[js error] {}", e);
+        }
+        self.drain_microtasks();
+        for line in std::mem::take(&mut self.console) {
+            println!("[console] {}", line);
         }
     }
 
@@ -2163,6 +2200,7 @@ impl Interp {
         if let Err(e) = self.run(src) {
             println!("[js error] {}", e);
         }
+        self.drain_microtasks();
     }
 
     pub fn run(&mut self, src: &str) -> Result<Value, String> {
@@ -2958,14 +2996,24 @@ impl Interp {
                     };
                     match sc {
                         Value::Class(parent) => {
-                            self.run_constructor(&parent, &this, arg_vals)?;
+                            if let Some(obj) = self.run_constructor(&parent, &this, arg_vals)? {
+                                env_set(env, "this", obj);
+                            }
                         }
-                        // 클래스가 아닌 생성자(Error/함수 등) 확장: 부모 생성자를 실행해
-                        // 나온 객체의 own 프로퍼티를 this 로 옮긴다(= this 를 채운 효과).
+                        // 클래스가 아닌 생성자(함수/Error 등) 확장.
+                        // 표준: 파생 클래스의 this 는 super() 가 반환한 객체다.
+                        // 예전엔 그 객체의 own 프로퍼티만 this 로 복사했다 — 겉보기엔
+                        // 비슷해 보이지만 진짜 대상이 아니다. 커스텀 엘리먼트에서
+                        // HTMLElement 가 DOM 노드를 돌려줘도 this 는 여전히 빈 인스턴스라
+                        // this.innerHTML 이 아무 데도 안 그린다.
                         other => {
                             let produced = self.construct(other, arg_vals)?;
-                            for (k, v) in builtins::own_enumerable_entries(&produced) {
-                                self.set_own_property(&this, k, v);
+                            if is_object(&produced) {
+                                env_set(env, "this", produced);
+                            } else {
+                                for (k, v) in builtins::own_enumerable_entries(&produced) {
+                                    self.set_own_property(&this, k, v);
+                                }
                             }
                         }
                     }
@@ -3104,6 +3152,12 @@ impl Interp {
                 }
             }
             Value::Instance(inst) => {
+                // set 접근자가 있으면 호출한다 (표준). 예전엔 파서가 setter 를 버려서
+                // 대입이 그냥 필드에 꽂혔고, 검증/변환 로직이 통째로 우회됐다.
+                if let Some(setter) = inst.class.find_setter(&k) {
+                    let _ = self.call_value(Value::Fn(setter), Some(target.clone()), vec![v]);
+                    return;
+                }
                 if !inst.fields.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
                     return;
                 }
@@ -3682,6 +3736,12 @@ impl Interp {
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "scrollIntoView" => Some(Native::ScrollIntoView),
                     "animate" => Some(Native::ElementAnimate),
+                    "getAttributeNames" => Some(Native::GetAttributeNames),
+                    "hasAttributes" => Some(Native::HasAttributes),
+                    "toggleAttribute" => Some(Native::ToggleAttribute),
+                    "replaceChildren" => Some(Native::ReplaceChildren),
+                    "getAnimations" => Some(Native::GetAnimations),
+                    "attachShadow" => Some(Native::AttachShadow),
                     "dispatchEvent" => Some(Native::DispatchEvent),
                     "cloneNode" => Some(Native::CloneNode),
                     "matches" => Some(Native::Matches),
@@ -3725,8 +3785,46 @@ impl Interp {
                 }
             }
             Value::Class(c) => {
-                // 정적 멤버
-                Ok(c.statics.borrow().get(key).cloned().unwrap_or(Value::Undefined))
+                // C.prototype — 클래스 메서드를 담은 객체 (상속 체인 포함).
+                // 예전엔 undefined 라, 프로토타입에서 메서드를 꺼내 특정 this 로 호출하는
+                // 코드(커스텀 엘리먼트의 connectedCallback 등)가 전부 실패했다.
+                if key == "prototype" {
+                    let mut m = ObjMap::new();
+                    fn collect(cls: &Rc<JsClass>, m: &mut ObjMap) {
+                        if let Some(p) = &cls.parent {
+                            collect(p, m);
+                        }
+                        for (k, f) in &cls.methods {
+                            m.insert(k.clone(), Value::Fn(f.clone()));
+                        }
+                        for (k, g) in &cls.getters {
+                            m.insert(
+                                k.clone(),
+                                Value::Accessor(AccessorPair::getter(Value::Fn(g.clone()))),
+                            );
+                        }
+                    }
+                    collect(c, &mut m);
+                    m.insert("constructor".to_string(), recv.clone());
+                    return Ok(Value::Obj(Rc::new(RefCell::new(m))));
+                }
+                // static get 접근자 (this=클래스). 예전엔 평범한 정적 메서드로 저장돼
+                // C.observedAttributes 가 배열이 아니라 함수를 돌려줬다.
+                if let Some(g) = c.find_static_getter(key) {
+                    return self.call_value(Value::Fn(g), Some(recv.clone()), vec![]);
+                }
+                if let Some(v) = c.statics.borrow().get(key).cloned() {
+                    return Ok(v);
+                }
+                // 상속된 정적 멤버
+                let mut p = c.parent.clone();
+                while let Some(cls) = p {
+                    if let Some(v) = cls.statics.borrow().get(key).cloned() {
+                        return Ok(v);
+                    }
+                    p = cls.parent.clone();
+                }
+                Ok(Value::Undefined)
             }
             Value::Fn(func) => {
                 // 함수도 객체: 속성 백 우선, 그다음 call/apply/bind, prototype/name/length
@@ -4103,8 +4201,10 @@ impl Interp {
         }));
         // 클래스 필드 초기화(조상 → 자신 순) 후 생성자 실행
         self.init_fields(&cls, &inst)?;
-        self.run_constructor(&cls, &inst, args)?;
-        Ok(inst)
+        match self.run_constructor(&cls, &inst, args)? {
+            Some(obj) => Ok(obj), // 생성자/super() 가 만들어낸 객체가 결과다
+            None => Ok(inst),
+        }
     }
 
     // 클래스 필드를 인스턴스에 초기화. 조상 먼저, this=인스턴스로 초기화식 평가.
@@ -4125,12 +4225,15 @@ impl Interp {
     }
 
     // 생성자 실행 (super() 는 명시 호출로 부모 생성자 실행 — 자동 체인 아님, ES 동일)
+    // 생성자를 실행하고, 생성자가 객체를 반환했으면 그 객체를 돌려준다.
+    // 표준: 파생 클래스의 this 는 super() 가 만들어낸 객체다 — 반환값을 버리면
+    // this 가 진짜 대상(예: 커스텀 엘리먼트의 DOM 노드)이 되지 못한다.
     fn run_constructor(
         &mut self,
         cls: &Rc<JsClass>,
         inst: &Value,
         args: Vec<Value>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Value>, String> {
         match &cls.ctor {
             Some(ctor) => {
                 let scope = Env::new(Some(ctor.env.clone()));
@@ -4147,16 +4250,28 @@ impl Interp {
                 for (i, p) in ctor.params.iter().enumerate() {
                     env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
                 }
-                self.exec_block(&ctor.body, &scope)?;
+                let flow = self.exec_block(&ctor.body, &scope)?;
+                // 생성자 본문이 객체를 반환했거나, super() 가 this 를 갈아끼웠다면 그것이 결과다
+                if let Flow::Return(v) = flow {
+                    if is_object(&v) {
+                        return Ok(Some(v));
+                    }
+                }
+                if let Some(t) = env_get(&scope, "this") {
+                    if is_object(&t) && !matches!((&t, inst), (Value::Instance(a), Value::Instance(b)) if Rc::ptr_eq(a, b))
+                    {
+                        return Ok(Some(t));
+                    }
+                }
             }
             None => {
                 // 암묵 생성자: 부모가 있으면 부모 생성자를 같은 인자로 실행
                 if let Some(parent) = &cls.parent {
-                    self.run_constructor(parent, inst, args)?;
+                    return self.run_constructor(parent, inst, args);
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn make_class(&mut self, def: &crate::js::ast::ClassDef, env: &EnvRef) -> Result<Value, String> {
@@ -4195,6 +4310,18 @@ impl Interp {
             methods.insert(name.clone(), mk(p, b, *gen, *asy));
         }
         let mut getters = HashMap::new();
+        let mut setters = HashMap::new();
+        for (name, p, b) in &def.setters {
+            setters.insert(name.clone(), mk(p, b, false, false));
+        }
+        let mut static_getters = HashMap::new();
+        for (name, p, b) in &def.static_getters {
+            static_getters.insert(name.clone(), mk(p, b, false, false));
+        }
+        let mut static_setters = HashMap::new();
+        for (name, p, b) in &def.static_setters {
+            static_setters.insert(name.clone(), mk(p, b, false, false));
+        }
         for (name, p, b) in &def.getters {
             getters.insert(name.clone(), mk(p, b, false, false));
         }
@@ -4220,6 +4347,9 @@ impl Interp {
             getters,
             fields,
             statics: RefCell::new(statics),
+            setters,
+            static_getters,
+            static_setters,
         });
         // static 필드: 클래스 완성 후 this=클래스로 평가해 statics 에 설정
         for (name, init) in &def.static_fields {
@@ -4535,6 +4665,12 @@ impl Interp {
                     }
                     Value::Instance(inst) => {
                         let iv = Value::Instance(inst.clone());
+                        // set 접근자가 있으면 호출한다 (표준). 예전엔 파서가 클래스 setter 를
+                        // 버려서 대입이 그냥 필드에 꽂혔고 검증/변환 로직이 통째로 우회됐다.
+                        if let Some(setter) = inst.class.find_setter(&key) {
+                            self.call_value(Value::Fn(setter), Some(iv), vec![value])?;
+                            return Ok(());
+                        }
                         if self.is_frozen_val(&iv) {
                             return Ok(());
                         }
@@ -5108,6 +5244,45 @@ mod tests {
         it.run("window.scrollTo({ top: 5, left: 2 })").unwrap();
         assert_eq!(to_display(&it.run("window.scrollY").unwrap()), "5");
         assert_eq!(to_display(&it.run("window.scrollX").unwrap()), "2");
+    }
+
+    #[test]
+    fn derived_this_is_what_super_returned() {
+        // 표준: 파생 클래스의 this 는 super() 가 만들어낸 객체다.
+        // 예전엔 그 객체의 own 프로퍼티만 this 로 복사했다 — 겉보기엔 비슷하지만
+        // 진짜 대상이 아니다. 커스텀 엘리먼트에서 HTMLElement 가 DOM 노드를 돌려줘도
+        // this 는 여전히 빈 인스턴스라 this.innerHTML 이 아무 데도 안 그렸다.
+        assert_eq!(
+            run_str("class A { constructor(){ return {x:1}; } } \
+                     class B extends A { constructor(){ super(); this.y=2; } } \
+                     var b=new B(); b.x+':'+b.y"),
+            "1:2"
+        );
+        assert_eq!(
+            run_str("function A(){ return {x:3}; } \
+                     class B extends A { constructor(){ super(); this.y=4; } } \
+                     var b=new B(); b.x+':'+b.y"),
+            "3:4"
+        );
+    }
+
+    #[test]
+    fn class_setters_and_static_accessors_work() {
+        // 파서가 클래스 setter 를 조용히 버렸다 — obj.x = v 가 아무 일도 안 했다.
+        assert_eq!(
+            run_num("class C { set v(x){ this._v = x * 2; } get v(){ return this._v; } } \
+                     var c = new C(); c.v = 5; c.v"),
+            10.0
+        );
+        // static get 은 평범한 정적 메서드로 저장돼 값이 아니라 함수를 돌려줬다.
+        // (커스텀 엘리먼트의 static get observedAttributes 가 대표적인 피해자)
+        assert_eq!(run_num("class C { static get list(){ return [1,2,3]; } } C.list.length"), 3.0);
+        // C.prototype 으로 메서드를 꺼내 특정 this 로 호출할 수 있어야 한다
+        assert_eq!(
+            run_num("class C { m(){ return this.n; } } \
+                     C.prototype.m.call({n: 7})"),
+            7.0
+        );
     }
 
     #[test]

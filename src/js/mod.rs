@@ -712,6 +712,150 @@ if (!window.TextEncoder) {
 }
 var TextEncoder = window.TextEncoder, TextDecoder = window.TextDecoder;
 
+// ── 커스텀 엘리먼트 (Web Components) ──
+// 없으면 customElements.define 한 줄에서 죽고, 컴포넌트로 만든 페이지는 통째로 빈다.
+//
+// 핵심: HTMLElement 를 "지금 업그레이드 중인 요소를 반환하는 함수"로 둔다.
+// class MyEl extends HTMLElement { constructor(){ super(); … } } 에서 super() 의 반환
+// 객체가 this 가 되므로(표준), this 는 진짜 DOM 노드다 — this.innerHTML 이 실제로 그린다.
+// 흉내내는 게 아니라 실제 DOM 위에서 돈다.
+var __kUpgrading = null;
+function __kHTMLElement() { return __kUpgrading; }
+__kHTMLElement.prototype = {};
+if (!window.HTMLElement) window.HTMLElement = __kHTMLElement;
+var HTMLElement = window.HTMLElement;
+// 흔히 확장하는 다른 기반 클래스들도 같은 규약으로
+if (!window.HTMLDivElement) window.HTMLDivElement = __kHTMLElement;
+if (!window.HTMLSpanElement) window.HTMLSpanElement = __kHTMLElement;
+
+var __kCE = {};      // 태그명 → 생성자
+var __kCEDone = [];  // 이미 업그레이드한 요소들
+
+function __kUpgrade(el, ctor) {
+  if (!el || __kCEDone.indexOf(el) >= 0) return;
+  __kCEDone.push(el);
+  var prev = __kUpgrading;
+  __kUpgrading = el;
+  try { new ctor(); } catch (e) { console.error('커스텀 엘리먼트 생성자 오류: ' + e); }
+  __kUpgrading = prev;
+  var proto = ctor.prototype;
+  if (proto && typeof proto.connectedCallback === 'function') {
+    try { proto.connectedCallback.call(el); } catch (e) {
+      console.error('connectedCallback 오류: ' + e);
+    }
+  }
+  // 초기 속성에 대해 attributeChangedCallback (표준: 업그레이드 시 관측 속성 전달)
+  var obs = ctor.observedAttributes;
+  if (obs && proto && typeof proto.attributeChangedCallback === 'function') {
+    for (var i = 0; i < obs.length; i++) {
+      var v = el.getAttribute(obs[i]);
+      if (v !== null) {
+        try { proto.attributeChangedCallback.call(el, obs[i], null, v); } catch (e) {}
+      }
+    }
+  }
+}
+
+function __kUpgradeAll(name) {
+  var ctor = __kCE[name];
+  if (!ctor) return;
+  var list = document.querySelectorAll(name);
+  for (var i = 0; i < list.length; i++) __kUpgrade(list[i], ctor);
+}
+
+if (!window.customElements) {
+  window.customElements = {
+    define: function(name, ctor){
+      __kCE[name] = ctor;
+      __kUpgradeAll(name);
+    },
+    get: function(name){ return __kCE[name]; },
+    whenDefined: function(){ return Promise.resolve(); },
+    upgrade: function(root){
+      Object.keys(__kCE).forEach(function(n){ __kUpgradeAll(n); });
+    }
+  };
+  // 나중에 DOM 에 추가되는 요소도 업그레이드한다. 진짜 MutationObserver 로 —
+  // 폴링이나 훅 흉내가 아니라 표준 메커니즘 위에서 돈다.
+  var __kCEObs = new MutationObserver(function(recs){
+    for (var i = 0; i < recs.length; i++) {
+      var r = recs[i];
+      if (r.type === 'childList') {
+        for (var j = 0; j < r.addedNodes.length; j++) {
+          var n = r.addedNodes[j];
+          if (!n || !n.tagName) continue;
+          var t = n.tagName.toLowerCase();
+          if (__kCE[t]) __kUpgrade(n, __kCE[t]);
+        }
+        // 새로 붙은 서브트리 안쪽도
+        Object.keys(__kCE).forEach(function(nm){ __kUpgradeAll(nm); });
+      } else if (r.type === 'attributes' && r.target && r.target.tagName) {
+        var tt = r.target.tagName.toLowerCase();
+        var c = __kCE[tt];
+        if (c && c.observedAttributes && c.prototype &&
+            typeof c.prototype.attributeChangedCallback === 'function' &&
+            c.observedAttributes.indexOf(r.attributeName) >= 0) {
+          try {
+            c.prototype.attributeChangedCallback.call(
+              r.target, r.attributeName, null, r.target.getAttribute(r.attributeName));
+          } catch (e) {}
+        }
+      }
+    }
+  });
+  // DOM 이 없는 실행 환경(엔진 단위 테스트 등)에서는 조용히 건너뛴다.
+  try {
+    if (document.body) {
+      __kCEObs.observe(document.body, { childList: true, subtree: true, attributes: true });
+    }
+  } catch (e) {}
+}
+var customElements = window.customElements;
+
+// FormData — 폼의 실제 컨트롤 값을 읽는다.
+function __kFormData(form) {
+  this._p = [];
+  var self = this;
+  if (form && form.elements) {
+    var els = form.elements;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var name = el.getAttribute('name');
+      if (!name) continue;
+      var type = (el.getAttribute('type') || '').toLowerCase();
+      if ((type === 'checkbox' || type === 'radio') && !el.checked) continue;
+      if (el.tagName.toLowerCase() === 'button') continue;
+      self._p.push([name, el.value === undefined ? '' : String(el.value)]);
+    }
+  }
+}
+__kFormData.prototype.get = function(k){
+  for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) return this._p[i][1];
+  return null;
+};
+__kFormData.prototype.getAll = function(k){
+  return this._p.filter(function(e){ return e[0] === k; }).map(function(e){ return e[1]; });
+};
+__kFormData.prototype.has = function(k){ return this.get(k) !== null; };
+__kFormData.prototype.append = function(k, v){ this._p.push([k, String(v)]); };
+__kFormData.prototype.set = function(k, v){
+  this._p = this._p.filter(function(e){ return e[0] !== k; });
+  this._p.push([k, String(v)]);
+};
+__kFormData.prototype['delete'] = function(k){
+  this._p = this._p.filter(function(e){ return e[0] !== k; });
+};
+__kFormData.prototype.forEach = function(fn){ this._p.forEach(function(e){ fn(e[1], e[0]); }); };
+__kFormData.prototype.entries = function(){ return this._p.map(function(e){ return [e[0], e[1]]; }); };
+__kFormData.prototype.keys = function(){ return this._p.map(function(e){ return e[0]; }); };
+__kFormData.prototype.toString = function(){
+  return this._p.map(function(e){
+    return encodeURIComponent(e[0]) + '=' + encodeURIComponent(e[1]);
+  }).join('&');
+};
+if (!window.FormData) window.FormData = __kFormData;
+var FormData = window.FormData;
+
 var Reflect = window.Reflect;
 if (!Reflect) {
   Reflect = {};

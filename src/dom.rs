@@ -88,6 +88,23 @@ pub struct DomMut {
     pub removed: Vec<NodeId>,
 }
 
+// 닫는 태그가 없는 요소 (HTML 표준의 void elements)
+fn is_void_element(tag: &str) -> bool {
+    matches!(
+        tag,
+        "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link" | "meta"
+            | "param" | "source" | "track" | "wbr"
+    )
+}
+
+fn escape_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;")
+}
+
 #[derive(Debug)]
 pub struct Dom {
     nodes: Vec<NodeData>,
@@ -241,6 +258,50 @@ impl Dom {
             dom.get(id).children.iter().find_map(|&c| rec(dom, c, want))
         }
         rec(self, self.root, want)
+    }
+
+    // HTML 직렬화 (innerHTML / outerHTML).
+    // 예전엔 innerHTML 을 쓰기만 되고 읽기가 없어서, el.innerHTML 을 읽는 코드가
+    // undefined 를 받고 그 자리에서 죽었다 (아주 흔한 패턴이다).
+    pub fn inner_html(&self, id: NodeId) -> String {
+        let mut s = String::new();
+        for &c in &self.get(id).children {
+            self.serialize(c, &mut s);
+        }
+        s
+    }
+
+    pub fn outer_html(&self, id: NodeId) -> String {
+        let mut s = String::new();
+        self.serialize(id, &mut s);
+        s
+    }
+
+    fn serialize(&self, id: NodeId, out: &mut String) {
+        match &self.get(id).node_type {
+            NodeType::Text(t) => out.push_str(&escape_text(t)),
+            NodeType::Element(e) => {
+                out.push('<');
+                out.push_str(&e.tag_name);
+                for (k, v) in e.attributes.iter() {
+                    out.push(' ');
+                    out.push_str(k);
+                    out.push_str("=\"");
+                    out.push_str(&escape_attr(v));
+                    out.push('"');
+                }
+                out.push('>');
+                if is_void_element(&e.tag_name) {
+                    return; // void 요소는 닫는 태그가 없다
+                }
+                for &c in &self.get(id).children {
+                    self.serialize(c, out);
+                }
+                out.push_str("</");
+                out.push_str(&e.tag_name);
+                out.push('>');
+            }
+        }
     }
 
     pub fn text_content(&self, id: NodeId) -> String {

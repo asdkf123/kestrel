@@ -158,6 +158,10 @@ pub(super) fn is_object(v: &Value) -> bool {
             | Value::Class(_)
             | Value::Bound(_)
             | Value::Gen(_)
+            // DOM 요소도 JS 에서는 객체다. 빠뜨리면 생성자가 요소를 반환할 때
+            // 조용히 버려진다 — 커스텀 엘리먼트의 this 가 진짜 DOM 노드가 되지 못한다.
+            | Value::Dom(_)
+            | Value::ComputedStyle(_)
     )
 }
 

@@ -1144,6 +1144,65 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
             }
+            Native::GetAttributeNames => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
+                let dom = self.dom_arena()?;
+                let names: Vec<Value> = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Element(e) => {
+                        e.attributes.keys().map(|k| Value::Str(k.clone())).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                Ok(Value::Arr(ArrayObj::new(names)))
+            }
+            Native::HasAttributes => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Bool(false)) };
+                let dom = self.dom_arena()?;
+                Ok(Value::Bool(matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if !e.attributes.is_empty())))
+            }
+            // toggleAttribute(name[, force]) — 있으면 제거, 없으면 추가. 반환은 최종 존재 여부.
+            Native::ToggleAttribute => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Bool(false)) };
+                let name = args.first().map(to_display).unwrap_or_default();
+                let force = args.get(1).map(to_bool);
+                let dom = self.dom_arena()?;
+                let has = matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.attributes.contains_key(&name));
+                let want = force.unwrap_or(!has);
+                if want {
+                    dom.set_attr(id, &name, String::new());
+                } else {
+                    dom.remove_attr(id, &name);
+                }
+                Ok(Value::Bool(want))
+            }
+            // replaceChildren(...nodes) — 자식을 전부 갈아끼운다
+            Native::ReplaceChildren => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
+                let dom = self.dom_arena()?;
+                dom.clear_children(id);
+                for a in &args {
+                    match a {
+                        Value::Dom(c) => dom.append_child(id, *c),
+                        other => {
+                            let t = dom.create_text(to_display(other));
+                            dom.append_child(id, t);
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            // getAnimations() — 정적 렌더에는 진행 중인 애니메이션이 없다(빈 목록).
+            Native::GetAnimations => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
+            // attachShadow({mode}) — 섀도 트리를 따로 두지 않고 요소 자신을 섀도 루트로
+            // 돌려준다. shadowRoot.innerHTML 로 넣은 콘텐츠는 실제로 렌더된다.
+            // 스타일 격리(:host, 캡슐화)는 없다 — 근사임을 문서화한다.
+            Native::AttachShadow => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
+                self.shadow_hosts.insert(id);
+                Ok(Value::Dom(id))
+            }
             // CSS.supports('display','grid') 또는 CSS.supports('(display: grid)')
             Native::CssSupports => {
                 let cond = match args.len() {
