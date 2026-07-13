@@ -171,12 +171,78 @@ if (!Number.prototype.toExponential) Number.prototype.toExponential = function()
 if (!Array.prototype.findLast) Array.prototype.findLast = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return this[i]; return undefined; };
 if (!Array.prototype.findLastIndex) Array.prototype.findLastIndex = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return i; return -1; };
 if (typeof console !== 'undefined') { var __klg = console.log; if (!console.warn) console.warn = __klg; if (!console.error) console.error = __klg; if (!console.info) console.info = __klg; if (!console.debug) console.debug = __klg; if (!console.trace) console.trace = __klg; if (!console.group) console.group = __kNoop; if (!console.groupEnd) console.groupEnd = __kNoop; if (!console.groupCollapsed) console.groupCollapsed = __kNoop; if (!console.table) console.table = __klg; if (!console.dir) console.dir = __klg; if (!console.assert) console.assert = __kNoop; if (!console.count) console.count = __kNoop; if (!console.time) console.time = __kNoop; if (!console.timeEnd) console.timeEnd = __kNoop; }
+// IntersectionObserver — 진짜 교차 판정. 예전엔 콜백이 영영 발화하지 않는 무동작 스텁이라,
+// 교차 시점에 콘텐츠를 드러내는 사이트(reveal-on-scroll)가 화면 안 요소까지 opacity:0 인
+// 채로 남았다. 레이아웃이 실제 사각형을 주므로 뷰포트와의 교차를 그대로 계산한다.
+// 표준대로 observe() 직후 초기 관측을 비동기로 1회 전달한다.
+function __kIntersectionObserver(cb, opts) {
+  this._cb = cb; this._els = []; this._q = [];
+  this.root = (opts && opts.root) || null;
+  this.rootMargin = (opts && opts.rootMargin) || '0px';
+  this.thresholds = (opts && opts.threshold != null) ? [].concat(opts.threshold) : [0];
+}
+__kIntersectionObserver.prototype.observe = function(el){
+  if (!el || this._els.indexOf(el) >= 0) return;
+  this._els.push(el);
+  var self = this;
+  setTimeout(function(){ self._deliver([el]); }, 0);
+};
+__kIntersectionObserver.prototype.unobserve = function(el){
+  var i = this._els.indexOf(el); if (i >= 0) this._els.splice(i, 1);
+};
+__kIntersectionObserver.prototype.disconnect = function(){ this._els = []; };
+__kIntersectionObserver.prototype.takeRecords = function(){ var r = this._q; this._q = []; return r; };
+__kIntersectionObserver.prototype._deliver = function(els){
+  var vw = window.innerWidth, vh = window.innerHeight, entries = [];
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (this._els.indexOf(el) < 0) continue;
+    var r = el.getBoundingClientRect();
+    var iw = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+    var ih = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+    var area = r.width * r.height;
+    entries.push({
+      target: el, boundingClientRect: r, intersectionRect: r,
+      rootBounds: { x: 0, y: 0, top: 0, left: 0, right: vw, bottom: vh, width: vw, height: vh },
+      intersectionRatio: area > 0 ? (iw * ih) / area : 0,
+      isIntersecting: iw > 0 && ih > 0, time: 0
+    });
+  }
+  if (entries.length && this._cb) this._cb(entries, this);
+};
+
+// ResizeObserver — 표준대로 observe() 직후 현재 크기로 초기 관측을 1회 전달한다.
+// (정적 렌더에는 크기 변화가 없으니 그 뒤 발화는 없다 — 예전엔 초기 관측조차 없었다.)
+function __kResizeObserver(cb) { this._cb = cb; this._els = []; }
+__kResizeObserver.prototype.observe = function(el){
+  if (!el || this._els.indexOf(el) >= 0) return;
+  this._els.push(el);
+  var self = this;
+  setTimeout(function(){ self._deliver([el]); }, 0);
+};
+__kResizeObserver.prototype.unobserve = function(el){
+  var i = this._els.indexOf(el); if (i >= 0) this._els.splice(i, 1);
+};
+__kResizeObserver.prototype.disconnect = function(){ this._els = []; };
+__kResizeObserver.prototype._deliver = function(els){
+  var entries = [];
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (this._els.indexOf(el) < 0) continue;
+    var r = el.getBoundingClientRect();
+    var box = { x: 0, y: 0, top: 0, left: 0, right: r.width, bottom: r.height, width: r.width, height: r.height };
+    var size = [{ inlineSize: r.width, blockSize: r.height }];
+    entries.push({ target: el, contentRect: box, borderBoxSize: size, contentBoxSize: size, devicePixelContentBoxSize: size });
+  }
+  if (entries.length && this._cb) this._cb(entries, this);
+};
+
 var MutationObserver = window.MutationObserver; if (!MutationObserver) { MutationObserver = __kObs; window.MutationObserver = MutationObserver; }
-var IntersectionObserver = window.IntersectionObserver; if (!IntersectionObserver) { IntersectionObserver = __kObs; window.IntersectionObserver = IntersectionObserver; }
-var ResizeObserver = window.ResizeObserver; if (!ResizeObserver) { ResizeObserver = __kObs; window.ResizeObserver = ResizeObserver; }
+var IntersectionObserver = window.IntersectionObserver; if (!IntersectionObserver) { IntersectionObserver = __kIntersectionObserver; window.IntersectionObserver = IntersectionObserver; }
+var ResizeObserver = window.ResizeObserver; if (!ResizeObserver) { ResizeObserver = __kResizeObserver; window.ResizeObserver = ResizeObserver; }
 var PerformanceObserver = window.PerformanceObserver; if (!PerformanceObserver) { PerformanceObserver = __kObs; window.PerformanceObserver = PerformanceObserver; }
-if (!window.matchMedia) window.matchMedia = function(q){ return { matches: false, media: q || '', onchange: null, addListener: __kNoop, removeListener: __kNoop, addEventListener: __kNoop, removeEventListener: __kNoop, dispatchEvent: function(){ return false; } }; };
-var matchMedia = window.matchMedia;
+// matchMedia 는 엔진이 CSS @media 와 같은 평가기로 제공(Native). 스텁 불필요.
+window.matchMedia = matchMedia;
 if (!window.requestIdleCallback) window.requestIdleCallback = function(cb){ return setTimeout(function(){ cb({ didTimeout: false, timeRemaining: function(){ return 0; } }); }, 1); };
 var requestIdleCallback = window.requestIdleCallback;
 if (!window.cancelIdleCallback) window.cancelIdleCallback = function(id){ clearTimeout(id); };

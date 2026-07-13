@@ -5,14 +5,20 @@ const VH_DEFAULT: f32 = 800.0;
 const ROOT_FS: f32 = 16.0; // @media 의 em/rem 은 초기 폰트크기 기준
 
 pub(crate) fn media_matches(query: &str, vw: f32) -> bool {
+    media_matches_vp(query, vw, VH_DEFAULT)
+}
+
+// 뷰포트 높이까지 지정하는 변형. window.matchMedia 가 실제 뷰포트로 평가할 때 쓴다
+// (CSS 의 @media 와 JS 의 matchMedia 가 같은 답을 내야 한다 — 예전엔 JS 쪽이 늘 false).
+pub(crate) fn media_matches_vp(query: &str, vw: f32, vh: f32) -> bool {
     let q = query.trim();
     if q.is_empty() {
         return true; // '@media { }' (조건 생략) → 매칭
     }
-    q.split(',').any(|one| one_query_matches(one.trim(), vw))
+    q.split(',').any(|one| one_query_matches(one.trim(), vw, vh))
 }
 
-fn one_query_matches(q: &str, vw: f32) -> bool {
+fn one_query_matches(q: &str, vw: f32, vh: f32) -> bool {
     let ql = q.to_ascii_lowercase();
     let (negate, body) = match ql.trim().strip_prefix("not ") {
         Some(rest) => (true, rest.trim().to_string()),
@@ -27,7 +33,7 @@ fn one_query_matches(q: &str, vw: f32) -> bool {
         let pass = if cond.starts_with('(') {
             // 괄호 한 겹만 벗긴다 ((not (…)) 같은 중첩 유지)
             let inner = cond.strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(cond);
-            feature_matches(inner.trim(), vw)
+            feature_matches(inner.trim(), vw, vh)
         } else {
             matches!(cond, "screen" | "all") // print/기타 타입 불일치
         };
@@ -47,13 +53,12 @@ enum Bound {
 }
 
 // 괄호 안 특성 하나 평가.
-fn feature_matches(feat: &str, vw: f32) -> bool {
+fn feature_matches(feat: &str, vw: f32, vh: f32) -> bool {
     // 중첩 부정 (not (feature)) — Level 4
     if let Some(rest) = feat.strip_prefix("not ") {
         let inner = rest.trim().strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(rest);
-        return !feature_matches(inner.trim(), vw);
+        return !feature_matches(inner.trim(), vw, vh);
     }
-    let vh = VH_DEFAULT;
     // Level 4 범위형: "width >= 768px", "400px <= width <= 700px"
     if feat.contains('<') || feat.contains('>') {
         return range_feature_matches(feat, vw, vh);

@@ -311,6 +311,7 @@ pub enum Native {
     SymbolKeyFor,
     // getComputedStyle(el) 과 그 반환 뷰의 getPropertyValue(name)
     GetComputedStyle,
+    MatchMedia,
     ComputedGetProperty,
     // a.compareDocumentPosition(b) — 문서 순서 비트마스크 (jQuery sortOrder)
     CompareDocPosition,
@@ -1063,6 +1064,10 @@ impl Interp {
         env_declare(&global, "cancelAnimationFrame", Value::Native(Native::ClearTimer));
         // getComputedStyle — 리빌드 후 채워진 computed_styles 를 읽는 실제 계산 스타일.
         env_declare(&global, "getComputedStyle", Value::Native(Native::GetComputedStyle));
+        // matchMedia — CSS 의 @media 와 같은 평가기를 쓴다. 예전엔 프렐류드가 항상
+        // matches:false 를 돌려줘서, CSS 는 데스크톱 규칙을 적용하는데 JS 는 모바일로
+        // 분기하는 자기모순이 있었다.
+        env_declare(&global, "matchMedia", Value::Native(Native::MatchMedia));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
@@ -3117,6 +3122,14 @@ impl Interp {
         crate::window::flush_layout(self);
     }
 
+    // 현재 뷰포트(px). 강제 레이아웃 컨텍스트가 있으면 실제 값, 없으면 기본 창 크기.
+    pub(super) fn viewport(&self) -> (f32, f32) {
+        match self.layout_ctx {
+            Some(ctx) => (ctx.vw, ctx.vh),
+            None => (1000.0, 800.0),
+        }
+    }
+
     pub(super) fn get_computed_style(&mut self, arg: Option<&Value>) -> Value {
         self.ensure_layout();
         match arg {
@@ -4798,6 +4811,17 @@ mod tests {
         assert!(run_bool("typeof TypeError.prototype === 'object'"));
         assert_eq!(run_str("Error.name"), "Error");
         assert_eq!(run_str("TypeError.name"), "TypeError");
+    }
+
+    #[test]
+    fn match_media_agrees_with_css_media_queries() {
+        // 예전엔 프렐류드가 항상 matches:false 를 돌려줬다 — CSS 는 데스크톱 규칙을
+        // 적용하는데 JS 는 모바일로 분기하는 자기모순. 같은 평가기를 쓴다(뷰포트 1000x800).
+        assert!(run_bool("matchMedia('(min-width: 768px)').matches"));
+        assert!(!run_bool("matchMedia('(max-width: 500px)').matches"));
+        assert!(run_bool("window.matchMedia('(min-width: 100px) and (max-width: 2000px)').matches"));
+        assert!(!run_bool("matchMedia('(prefers-color-scheme: dark)').matches"));
+        assert_eq!(run_str("matchMedia('(min-width: 768px)').media"), "(min-width: 768px)");
     }
 
     #[test]

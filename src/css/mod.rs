@@ -3,7 +3,7 @@ mod shorthand;
 mod supports;
 mod values;
 
-pub(crate) use media::media_matches;
+pub(crate) use media::{media_matches, media_matches_vp};
 use shorthand::expand_declaration;
 use supports::supports_condition;
 use values::valid_identifier_char;

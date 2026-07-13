@@ -927,6 +927,50 @@ mod tests {
         );
     }
 
+    fn class_of_id(dom: &Dom, id: &str) -> String {
+        let n = dom.find_by_attr_id(id).unwrap();
+        match &dom.get(n).node_type {
+            NodeType::Element(e) => e.attributes.get("class").cloned().unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    #[test]
+    fn intersection_observer_delivers_real_entries() {
+        // 예전엔 무동작 스텁이라 콜백이 영영 오지 않았다 — 교차 시 콘텐츠를 드러내는
+        // 사이트가 화면 안 요소까지 숨긴 채로 남았다.
+        let mut page = make_page(
+            "<div id=\"near\" style=\"height:50px\">a</div>\
+             <div id=\"far\" style=\"margin-top:3000px;height:50px\">b</div>\
+             <script>\
+             var io = new IntersectionObserver(function(es){\
+               es.forEach(function(e){ if (e.isIntersecting) e.target.className = 'shown'; });\
+             });\
+             io.observe(document.getElementById('near'));\
+             io.observe(document.getElementById('far'));\
+             </script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(class_of_id(&page.dom, "near"), "shown", "뷰포트 안 요소는 교차 → 콜백");
+        assert_eq!(class_of_id(&page.dom, "far"), "", "3000px 아래 요소는 비교차 (스크롤 0)");
+    }
+
+    #[test]
+    fn resize_observer_delivers_initial_size() {
+        // 표준: observe() 하면 현재 크기로 초기 관측이 1회 전달된다.
+        let mut page = make_page(
+            "<div id=\"b\" style=\"width:120px;height:30px\"></div><p id=\"out\"></p>\
+             <script>\
+             var ro = new ResizeObserver(function(es){\
+               document.getElementById('out').textContent = Math.round(es[0].contentRect.width);\
+             });\
+             ro.observe(document.getElementById('b'));\
+             </script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "120", "초기 관측이 실제 폭을 준다");
+    }
+
     fn text_of_id(dom: &Dom, id: &str) -> Option<String> {
         dom.find_by_attr_id(id).map(|n| dom.text_content(n))
     }

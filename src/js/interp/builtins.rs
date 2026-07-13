@@ -983,6 +983,23 @@ impl Interp {
             }
             // getComputedStyle(el) → 계산 스타일 뷰.
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
+            // window.matchMedia(query) — CSS @media 와 동일한 평가기로 실제 판정한다.
+            // 정적 렌더에는 뷰포트 변화가 없으므로 change 리스너는 발화하지 않는다(정직).
+            Native::MatchMedia => {
+                let q = args.first().map(to_display).unwrap_or_default();
+                let (vw, vh) = self.viewport();
+                let matches = crate::css::media_matches_vp(&q, vw, vh);
+                let mut m = ObjMap::new();
+                m.insert("matches".to_string(), Value::Bool(matches));
+                m.insert("media".to_string(), Value::Str(q));
+                m.insert("onchange".to_string(), Value::Null);
+                for k in ["addListener", "removeListener", "addEventListener", "removeEventListener"]
+                {
+                    m.insert(k.to_string(), Value::Native(Native::Noop));
+                }
+                m.insert("dispatchEvent".to_string(), Value::Native(Native::Noop));
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
             // computedStyle.getPropertyValue('background-color') → CSS 텍스트.
             Native::ComputedGetProperty => {
                 self.ensure_layout();
