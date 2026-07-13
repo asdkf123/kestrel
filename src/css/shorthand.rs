@@ -61,8 +61,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // border-radius: 1~4 값 → 네 모서리 longhand. 슬래시 뒤 세로 반경은 근사로 무시.
         "border-radius" => {
             let hpart = value_text.split('/').next().unwrap_or(value_text);
-            let toks: Vec<Value> = hpart
-                .split_whitespace()
+            let toks: Vec<Value> = split_top_level(hpart)
+                .into_iter()
                 .filter_map(interpret_value)
                 .filter(|v| matches!(v, Value::Length(..)))
                 .collect();
@@ -123,7 +123,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     let mut grow: Option<f32> = None;
                     let mut shrink: Option<f32> = None;
                     let mut basis: Option<Value> = None;
-                    for t in v.split_whitespace() {
+                    for t in split_top_level(v) {
                         if is_flex_basis_token(t) {
                             if basis.is_none() {
                                 basis = Some(parse_flex_basis(t));
@@ -155,7 +155,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // place-* 단축: <align> [<justify>] → align-*/justify-* longhand
         "place-items" | "place-content" | "place-self" => {
             let axis = name.strip_prefix("place-").unwrap();
-            let toks: Vec<&str> = value_text.split_whitespace().collect();
+            let toks: Vec<&str> = split_top_level(value_text);
             let a = toks.first().copied().unwrap_or("");
             let j = toks.get(1).copied().unwrap_or(a);
             if a.is_empty() {
@@ -197,7 +197,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "text-decoration" | "text-decoration-line" => {
             let mut lines: Vec<&str> = Vec::new();
             let mut color: Option<Value> = None;
-            for t in value_text.split_whitespace() {
+            for t in split_top_level(value_text) {
                 if matches!(t, "underline" | "overline" | "line-through") {
                     lines.push(t);
                 } else if matches!(t, "solid" | "double" | "dotted" | "dashed" | "wavy" | "none") {
@@ -285,7 +285,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // animation 단축: 이름 토큰만 추출 (정적 렌더가 @keyframes 최종 상태를 적용하기 위함).
         "animation" | "-webkit-animation" => {
-            let name = value_text.split_whitespace().find(|t| is_animation_name(t));
+            let name = split_top_level(value_text).into_iter().find(|t| is_animation_name(t));
             match name {
                 Some(n) => vec![Declaration { important: false, name: "animation-name".to_string(), value: Value::Keyword(n.to_string()) }],
                 None => Vec::new(),
@@ -312,7 +312,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let mut lens: Vec<f32> = Vec::new();
             let mut color: Option<Value> = None;
-            for tok in value_text[..end].split_whitespace() {
+            for tok in split_top_level(&value_text[..end]) {
                 match interpret_value(tok) {
                     Some(Value::Length(v, Unit::Px)) => lens.push(v),
                     Some(c @ Value::Color(..)) => color = Some(c),
@@ -337,7 +337,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // list-style 단축 → type/position/image. `list-style: none` 이 마커를 없앤다.
         "list-style" => {
             let mut out = Vec::new();
-            for tok in value_text.split_whitespace() {
+            for tok in split_top_level(value_text) {
                 match tok {
                     "inside" | "outside" => out.push(Declaration { important: false,
                         name: "list-style-position".to_string(),
@@ -372,7 +372,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
         "outline" => {
             let (mut width, mut style, mut color) = (None, None, None);
-            for tok in value_text.split_whitespace() {
+            for tok in split_top_level(value_text) {
                 match interpret_value(tok) {
                     Some(v @ Value::Length(..)) => width = Some(v),
                     Some(v @ Value::Color(..)) => color = Some(v),
@@ -447,7 +447,7 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     ) {
         return Vec::new();
     }
-    let tokens: Vec<&str> = v.split_whitespace().collect();
+    let tokens: Vec<&str> = split_top_level(v);
     // size 토큰: '/' 앞부분이 길이거나 크기 키워드인 첫 토큰
     let is_size = |t: &str| {
         let head = t.split('/').next().unwrap_or(t);
@@ -508,7 +508,7 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
 
 // 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
 fn logical_pair(start: &str, end: &str, value_text: &str) -> Vec<Declaration> {
-    let toks: Vec<&str> = value_text.split_whitespace().collect();
+    let toks: Vec<&str> = split_top_level(value_text);
     let s = toks.first().copied().unwrap_or("");
     let e = toks.get(1).copied().unwrap_or(s);
     let mut out = expand_declaration(start, s);
@@ -563,7 +563,42 @@ fn decode_css_escapes(s: &str) -> String {
 }
 
 // 괄호 깊이를 고려해 공백으로 최상위 토큰 분리 (rgb(1, 2, 3) 는 한 토큰).
-fn split_top_level(text: &str) -> Vec<String> {
+// 값 토큰화의 유일한 규칙: 괄호 안(함수 인자)의 공백·콤마는 구분자가 아니다.
+// 예전엔 단축 프로퍼티들이 split_whitespace()/split(',') 를 그대로 써서
+// `border: 1px solid rgba(0, 0, 0, .1)` 의 색이 통째로 사라지고
+// `background: rgb(1,2,3)` 은 배경이 아예 안 칠해졌다 (아주 흔한 표기다).
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start: Option<usize> = None;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' => {
+                depth += 1;
+                start.get_or_insert(i);
+            }
+            ')' => {
+                depth -= 1;
+                start.get_or_insert(i);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if let Some(st) = start.take() {
+                    out.push(&text[st..i]);
+                }
+            }
+            _ => {
+                start.get_or_insert(i);
+            }
+        }
+    }
+    if let Some(st) = start {
+        out.push(&text[st..]);
+    }
+    out
+}
+
+// 괄호 밖 콤마로만 분리 (background 의 레이어, font-family 목록 등).
+fn split_top_level_commas(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut depth = 0i32;
@@ -577,17 +612,11 @@ fn split_top_level(text: &str) -> Vec<String> {
                 depth -= 1;
                 cur.push(c);
             }
-            c if c.is_whitespace() && depth == 0 => {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
             _ => cur.push(c),
         }
     }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
+    out.push(cur);
     out
 }
 
@@ -603,16 +632,25 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut size = None;
     let mut pos_tokens: Vec<String> = Vec::new();
 
+    // 레이어는 괄호 밖 콤마로만 나뉜다. 예전엔 그냥 split(',') 이라
+    // `background: rgb(1,2,3)` 이 "rgb(1" 로 잘려 배경색이 통째로 사라졌다.
+    // CSS 문법상 색은 마지막 레이어에만 올 수 있으므로, 이미지/반복/크기는 첫 레이어,
+    // 색은 마지막 레이어에서 찾는다. (우리는 레이어 1장만 그린다)
+    let layers = split_top_level_commas(value_text);
+    let first = layers.first().cloned().unwrap_or_default();
+    let last = layers.last().cloned().unwrap_or_default();
     let has_gradient = value_text.contains("gradient(");
-    // 그라디언트가 없으면 다중 레이어(콤마) 중 첫 레이어만. gradient 안 콤마 보호 위해
-    // gradient 있을 땐 전체를 그대로 쓴다 (split_top_level 이 괄호를 존중).
-    let layer: String = if has_gradient {
-        value_text.to_string()
-    } else {
-        value_text.split(',').next().unwrap_or("").to_string()
-    };
+    let layer: String = if has_gradient { value_text.to_string() } else { first };
     // "center/cover" 처럼 붙은 슬래시를 토큰화하기 위해 공백 삽입 (gradient 없을 때만).
     let normalized = if has_gradient { layer.clone() } else { layer.replace('/', " / ") };
+    // 마지막 레이어의 색 (첫 레이어에 색이 있으면 아래 루프가 덮어쓴다)
+    if !has_gradient && layers.len() > 1 {
+        for tok in split_top_level(&last) {
+            if let Some(v @ Value::Color(_)) = interpret_value(tok.trim()) {
+                color = Some(v);
+            }
+        }
+    }
 
     let mut after_slash = false;
     for tok in split_top_level(&normalized) {
@@ -703,7 +741,7 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut lens: Vec<f32> = Vec::new();
     let mut color: Option<Value> = None;
     let mut inset = false;
-    for tok in first.split_whitespace() {
+    for tok in split_top_level(first) {
         if tok == "inset" {
             inset = true;
             continue;
@@ -744,7 +782,7 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
 // 지정한 변들의 width/style/color longhand 로 확장한다.
 fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
     let (mut width, mut style, mut color) = (None, None, None);
-    for tok in value_text.split_whitespace() {
+    for tok in split_top_level(value_text) {
         match interpret_value(tok) {
             Some(v @ Value::Length(..)) => width = Some(v),
             Some(v @ Value::Color(..)) => color = Some(v),
@@ -771,7 +809,8 @@ fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
 // prefix="margin", suffix=""  → margin-top ...
 // prefix="border", suffix="-width" → border-top-width ...
 fn box_shorthand(prefix: &str, suffix: &str, value_text: &str) -> Vec<Declaration> {
-    let tokens: Vec<Value> = value_text.split_whitespace().filter_map(interpret_value).collect();
+    let tokens: Vec<Value> =
+        split_top_level(value_text).into_iter().filter_map(interpret_value).collect();
     let (top, right, bottom, left) = match tokens.len() {
         1 => (tokens[0].clone(), tokens[0].clone(), tokens[0].clone(), tokens[0].clone()),
         2 => (tokens[0].clone(), tokens[1].clone(), tokens[0].clone(), tokens[1].clone()),
@@ -833,6 +872,46 @@ mod tests {
         assert_eq!(find(&d2, "font-size"), Some(&Value::Length(18.0, Unit::Px)));
         // 시스템 폰트 키워드는 no-op
         assert!(expand_declaration("font", "caption").is_empty());
+    }
+
+    #[test]
+    fn shorthands_respect_parentheses_in_function_values() {
+        // 예전엔 단축 파서들이 괄호를 무시하고 공백·콤마로 잘라서,
+        // `background: rgb(1,2,3)` 은 "rgb(1" 로 잘려 배경이 아예 안 칠해지고
+        // `border: 1px solid rgba(0, 0, 0, .1)` 은 색이 통째로 사라졌다.
+        // rgba(…, .1) 표기는 실제 사이트에서 압도적으로 흔하다.
+        let d = expand_declaration("background", "rgb(1,2,3)");
+        assert!(
+            matches!(find(&d, "background-color"), Some(Value::Color(c)) if c.r == 1 && c.g == 2 && c.b == 3),
+            "콤마 있는 rgb() 배경색: {:?}",
+            d
+        );
+        let d = expand_declaration("background", "rgba(1, 2, 4, 1) url(x.png) no-repeat");
+        assert!(
+            matches!(find(&d, "background-color"), Some(Value::Color(c)) if c.b == 4),
+            "콤마+공백 rgba() + url: {:?}",
+            d
+        );
+        assert!(matches!(find(&d, "background-image"), Some(Value::Url(_))));
+
+        let d = expand_declaration("border", "2px solid rgba(1, 2, 6, 0.5)");
+        assert!(
+            matches!(find(&d, "border-top-color"), Some(Value::Color(c)) if c.b == 6),
+            "테두리 색이 살아있다: {:?}",
+            d
+        );
+        assert!(matches!(find(&d, "border-top-width"), Some(Value::Length(w, _)) if *w == 2.0));
+
+        let d = expand_declaration("outline", "2px solid rgb(1, 2, 7)");
+        assert!(matches!(find(&d, "outline-color"), Some(Value::Color(c)) if c.b == 7));
+
+        // 다중 레이어: 색은 마지막 레이어에만 올 수 있다 (CSS 문법)
+        let d = expand_declaration("background", "url(a.png) no-repeat, rgb(9, 8, 7)");
+        assert!(
+            matches!(find(&d, "background-color"), Some(Value::Color(c)) if c.r == 9),
+            "마지막 레이어의 색: {:?}",
+            d
+        );
     }
 
     #[test]
