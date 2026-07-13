@@ -64,6 +64,9 @@ pub enum Display {
     Grid,
     InlineBlock,
     None,
+    // display: contents — 이 요소의 박스를 만들지 않고 자식을 부모 흐름에 직접 참여시킨다.
+    // 예전엔 미지원 값이라 block 으로 떨어져 없어야 할 박스가 생기고 레이아웃이 틀렸다.
+    Contents,
 }
 
 impl<'a> StyledNode<'a> {
@@ -97,7 +100,10 @@ impl<'a> StyledNode<'a> {
                 // inline-block: 자체 블록 박스를 갖되(내부 블록 자식 보존) 형제와
                 // 가로로 흐른다. layout_children 이 shrink-to-fit 폭으로 좌→우 패킹 + 줄바꿈.
                 "inline-block" => Display::InlineBlock,
-                // grid/table/flow-root/list-item 등 미지원 값도 블록으로
+                // 박스를 만들지 않고 자식만 남긴다 (CSS Display §3.3)
+                "contents" => Display::Contents,
+                // table/list-item/flow-root 등 아직 별도 레이아웃이 없는 값은 블록으로.
+                // (@supports 는 이 값들을 지원한다고 보고하지 않는다 — supports.rs)
                 _ => Display::Block,
             },
             _ => Display::Inline,

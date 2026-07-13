@@ -656,7 +656,9 @@ fn collect_node<'a>(
         NodeType::Element(e) if e.tag_name == "br" => runs.push(("\u{2028}".to_string(), style)),
         NodeType::Element(e) => match node.display() {
             Display::Block | Display::Flex | Display::Grid | Display::InlineBlock | Display::None => {}
-            Display::Inline => {
+            // contents 는 박스를 안 만들 뿐 상속은 그대로다 — inline 과 같은 경로로
+            // 자식 텍스트를 모으되, 자기 박스는 만들지 않는다(여기선 애초에 안 만든다).
+            Display::Inline | Display::Contents => {
                 // 요소의 계산값(상속 반영)으로 자식 텍스트 스타일 갱신
                 let cpx = node
                     .value("font-size")

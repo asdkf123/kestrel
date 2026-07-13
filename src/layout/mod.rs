@@ -2045,7 +2045,8 @@ fn all_whitespace(nodes: &[&StyledNode]) -> bool {
 fn contains_block_level(node: &StyledNode) -> bool {
     node.children.iter().any(|c| match c.display() {
         Display::Block | Display::Flex | Display::Grid | Display::InlineBlock => true,
-        Display::Inline => contains_block_level(c),
+        // contents 는 박스가 없으므로 자식이 블록이면 블록을 품은 셈이다
+        Display::Inline | Display::Contents => contains_block_level(c),
         Display::None => false,
     })
 }
@@ -2088,7 +2089,35 @@ fn distribute_children<'a>(
                     pending.push(child);
                 }
             }
+            // display: contents — 박스를 만들지 않고 자식을 현재 흐름에 그대로 넣는다.
+            // 부모가 flex/grid 면 자식들이 그대로 flex/grid 아이템이 된다(표준).
+            Display::Contents => {
+                distribute_children(root, pending, anon_owner, &child.children);
+            }
             Display::None => {}
+        }
+    }
+}
+
+// flex/grid 컨테이너의 아이템 수집. display:contents 인 자식은 박스를 만들지 않고
+// 그 자식들이 대신 아이템이 된다(CSS Display §3.3 — 박스 트리에서 요소가 사라진다).
+fn push_flex_items<'a>(
+    root: &mut LayoutBox<'a>,
+    container: &'a StyledNode<'a>,
+    children: &'a [StyledNode<'a>],
+) {
+    for child in children {
+        match &child.node.node_type {
+            NodeType::Text(t) => {
+                if !t.trim().is_empty() {
+                    root.children.push(LayoutBox::new_anonymous(container, vec![child]));
+                }
+            }
+            NodeType::Element(_) => match child.display() {
+                Display::None => {}
+                Display::Contents => push_flex_items(root, container, &child.children),
+                _ => root.children.push(build_layout_tree(child)),
+            },
         }
     }
 }
@@ -2103,20 +2132,7 @@ fn build_layout_tree<'a>(style_node: &'a StyledNode<'a>) -> LayoutBox<'a> {
     // 인라인 자식을 익명 인라인 묶음으로 모으지 않는다 — 그렇지 않으면 <a>/<span>
     // 로 만든 가로 내비게이션이 하나의 상자로 뭉쳐 세로로 무너진다.
     if matches!(style_node.display(), Display::Flex | Display::Grid) {
-        for child in &style_node.children {
-            match &child.node.node_type {
-                NodeType::Text(t) => {
-                    if !t.trim().is_empty() {
-                        root.children.push(LayoutBox::new_anonymous(style_node, vec![child]));
-                    }
-                }
-                NodeType::Element(_) => {
-                    if !matches!(child.display(), Display::None) {
-                        root.children.push(build_layout_tree(child));
-                    }
-                }
-            }
-        }
+        push_flex_items(&mut root, style_node, &style_node.children);
         return root;
     }
     let mut pending: Vec<&'a StyledNode<'a>> = Vec::new();
@@ -4118,6 +4134,23 @@ mod tests {
         assert_eq!(d[1].content.x, 150.0);
         assert_eq!(d[2].content.x, 0.0, "셋째는 줄바꿈");
         assert_eq!(d[2].content.y, 20.0, "둘째 줄(y=20)");
+    }
+
+    #[test]
+    fn display_contents_removes_box_and_lifts_children() {
+        // display: contents — 래퍼의 박스는 생기지 않고 자식이 부모 flex 의 아이템이 된다.
+        // 예전엔 미지원 값이라 block 으로 떨어져 래퍼가 통짜 한 아이템이 됐다(자식은 세로 쌓임).
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"w\"><div class=\"i\"></div><div class=\"i\"></div></div><div class=\"i\"></div></div>",
+            ".row { display: flex; } .w { display: contents; } \
+             .i { display: block; width: 100px; height: 20px; }",
+            400.0,
+        );
+        assert_eq!(d.len(), 3, "래퍼 박스는 없고 아이템 3개");
+        assert_eq!(d[0].content.x, 0.0);
+        assert_eq!(d[1].content.x, 100.0, "래퍼 자식도 같은 flex 행");
+        assert_eq!(d[2].content.x, 200.0);
+        assert!(d.iter().all(|b| b.content.y == 0.0), "셋 다 한 행");
     }
 
     #[test]
