@@ -17,6 +17,7 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
     }
     let mut i = 12;
     let mut vp8: Option<&[u8]> = None;
+    let mut vp8l: Option<&[u8]> = None;
     let mut alph: Option<&[u8]> = None;
     while i + 8 <= data.len() {
         let fourcc = &data[i..i + 4];
@@ -28,12 +29,15 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
         }
         match fourcc {
             b"VP8 " => vp8 = Some(&data[body_start..body_end]),
+            b"VP8L" => vp8l = Some(&data[body_start..body_end]),
             b"ALPH" => alph = Some(&data[body_start..body_end]),
-            // VP8L(무손실)은 별도 포맷 — 아직 미구현이면 정직하게 실패한다.
-            b"VP8L" => return None,
             _ => {}
         }
         i = body_end + (size & 1); // 청크는 짝수 정렬
+    }
+    // 무손실 (VP8L) 은 알파가 이미 픽셀에 들어 있다
+    if let Some(l) = vp8l {
+        return crate::vp8l::decode(l);
     }
     let frame = vp8?;
     let mut img = decode_vp8(frame)?;
@@ -43,22 +47,78 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
     Some(img)
 }
 
-// ALPH 청크: 압축 방식 0(무압축)만 처리. 1(무손실 압축)이면 알파를 불투명으로 둔다
-// (그림은 나오고 투명도만 없다 — 조용히 틀린 색을 내는 것보다 낫다).
+// ALPH 청크: 압축 방식 0(무압축) / 1(VP8L 무손실). 필터(없음/가로/세로/그라디언트)도 푼다.
+// 예전엔 방식 1 을 못 읽어 알파를 불투명으로 뒀다 — **투명 이미지를 불투명하게 그렸다**.
+// 그림이 나오니 성공한 것처럼 보이지만 조용히 틀린 그림이다.
 fn apply_alpha(img: &mut crate::png::Image, alph: &[u8]) {
     if alph.is_empty() {
         return;
     }
     let method = alph[0] & 0x03;
-    if method != 0 {
-        return;
-    }
-    let n = img.width * img.height;
-    if alph.len() < 1 + n {
-        return;
-    }
+    let filter = (alph[0] >> 2) & 0x03;
+    let (w, h) = (img.width, img.height);
+    let n = w * h;
+    let payload = &alph[1..];
+    let mut plane: Vec<u8> = match method {
+        0 => {
+            if payload.len() < n {
+                return;
+            }
+            payload[..n].to_vec()
+        }
+        1 => match crate::vp8l::decode_alpha(payload, w, h) {
+            Some(p) => p,
+            None => return,
+        },
+        _ => return,
+    };
+    unfilter_alpha(&mut plane, w, h, filter);
     for p in 0..n {
-        img.rgba[p * 4 + 3] = alph[1 + p];
+        img.rgba[p * 4 + 3] = plane[p];
+    }
+}
+
+// 알파 평면 필터 해제 (WebP 명세: 0 없음, 1 가로, 2 세로, 3 그라디언트)
+fn unfilter_alpha(plane: &mut [u8], w: usize, h: usize, filter: u8) {
+    if filter == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let at = |p: &[u8], x: usize, y: usize| -> i32 { p[y * w + x] as i32 };
+    for y in 0..h {
+        for x in 0..w {
+            if x == 0 && y == 0 {
+                continue; // 첫 화소는 그대로
+            }
+            let pred = match filter {
+                1 => {
+                    if x == 0 {
+                        at(plane, 0, y - 1)
+                    } else {
+                        at(plane, x - 1, y)
+                    }
+                }
+                2 => {
+                    if y == 0 {
+                        at(plane, x - 1, 0)
+                    } else {
+                        at(plane, x, y - 1)
+                    }
+                }
+                _ => {
+                    if y == 0 {
+                        at(plane, x - 1, 0)
+                    } else if x == 0 {
+                        at(plane, 0, y - 1)
+                    } else {
+                        let (l, t, tl) =
+                            (at(plane, x - 1, y), at(plane, x, y - 1), at(plane, x - 1, y - 1));
+                        (l + t - tl).clamp(0, 255)
+                    }
+                }
+            };
+            let v = plane[y * w + x] as i32;
+            plane[y * w + x] = ((v + pred) & 0xff) as u8;
+        }
     }
 }
 
@@ -1459,6 +1519,44 @@ mod tests {
                 x, y, dr, dg, db, r, g, b
             );
         }
+    }
+
+    #[test]
+    fn decodes_lossless_vp8l() {
+        // VP8L 무손실은 **비트 정확**해야 한다 (손실이 아니니 근사가 없다).
+        // 기준: macOS 참조 디코더(sips)가 만든 PNG. 아래 표본은 거기서 뽑았다.
+        let bytes = std::fs::read("assets/test/lossless.webp").unwrap();
+        let img = decode(&bytes).expect("VP8L 디코드");
+        assert_eq!((img.width, img.height), (400, 301));
+        let at = |x: usize, y: usize| {
+            let o = (y * img.width + x) * 4;
+            (img.rgba[o], img.rgba[o + 1], img.rgba[o + 2], img.rgba[o + 3])
+        };
+        // 이 이미지는 왼쪽 가장자리가 투명하다 (참조 디코더와 동일해야 한다)
+        assert_eq!(at(0, 0), (0, 0, 0, 0));
+        assert_eq!(at(0, 200), (171, 127, 69, 0));
+        assert_eq!(at(200, 150).3, 255, "가운데는 불투명");
+    }
+
+    #[test]
+    fn decodes_lossless_alpha_channel() {
+        // ALPH 압축 방식 1(무손실)을 못 읽으면 알파를 불투명으로 뒀다 —
+        // **투명 이미지를 불투명하게 그린다**. 그림이 나오니 성공처럼 보이지만
+        // 조용히 틀린 그림이다. 참조 디코더의 알파와 완전히 일치해야 한다.
+        let bytes = std::fs::read("assets/test/alpha.webp").unwrap();
+        let img = decode(&bytes).expect("알파 webp 디코드");
+        assert_eq!((img.width, img.height), (386, 395));
+        let alpha = |x: usize, y: usize| img.rgba[(y * img.width + x) * 4 + 3];
+        // 모서리는 투명, 가운데는 불투명
+        assert_eq!(alpha(0, 0), 0, "모서리는 투명해야");
+        assert_eq!(alpha(193, 200), 255, "가운데는 불투명해야");
+        // 전부 불투명이면 알파를 버린 것이다 (예전 동작)
+        let transparent = (0..img.height)
+            .step_by(4)
+            .flat_map(|y| (0..img.width).step_by(4).map(move |x| (x, y)))
+            .filter(|&(x, y)| alpha(x, y) < 128)
+            .count();
+        assert!(transparent > 100, "투명 화소가 있어야 (알파를 버리면 0): {}", transparent);
     }
 
     #[test]

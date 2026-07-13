@@ -22,6 +22,8 @@ mod raster;
 mod style;
 mod url;
 mod vp8_tables;
+mod vp8l;
+mod vp8l_tables;
 mod webp;
 mod woff2;
 mod window;
