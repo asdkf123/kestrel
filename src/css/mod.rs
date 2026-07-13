@@ -199,6 +199,11 @@ pub enum Unit {
     // line-height 전용: 단위 없는 배수(factor). px 로 확정하지 않고 상속되어,
     // 각 요소가 자기 font-size 를 곱해 쓴다(CSS2 §10.8). 길이/%와 상속 방식이 다름.
     Lh,
+    // 단위 없는 <number> — opacity/z-index/order/flex-grow/flex-shrink/font-weight.
+    // 예전엔 이것들을 Length(n, Px) 로 실었다. 동작은 했지만(레이아웃이 to_px 로 읽음)
+    // getComputedStyle 이 "0.5px"/"5px"/"1px" 같은 거짓 값을 돌려줬다 — 이 값들은
+    // CSS 상 길이가 아니라 수다.
+    Number,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -268,7 +273,8 @@ fn pseudo_specificity(p: &Pseudo) -> Specificity {
 impl Value {
     pub fn to_px(&self) -> f32 {
         match self {
-            Value::Length(f, Unit::Px) => *f,
+            // Number 는 단위 없는 수 — 레이아웃이 스칼라로 읽는다(flex-grow/order 등)
+            Value::Length(f, Unit::Px) | Value::Length(f, Unit::Number) => *f,
             // 문맥 없는 to_px: %는 0 기준 (대개 인자가 이미 px 로 확정된 min/max/clamp)
             Value::MinMax(kind, args) => eval_minmax(*kind, args, 0.0),
             _ => 0.0,

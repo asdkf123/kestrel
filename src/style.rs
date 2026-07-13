@@ -27,6 +27,7 @@ pub fn computed_value_string(v: &Value) -> String {
             Unit::Px => format!("{}px", num_css(*n)),
             Unit::Percent => format!("{}%", num_css(*n)),
             Unit::Lh => num_css(*n), // 무단위 line-height 배수
+            Unit::Number => num_css(*n), // 단위 없는 수 (opacity/z-index/flex-grow/font-weight)
             Unit::Em => format!("{}em", num_css(*n)),
             Unit::Rem => format!("{}rem", num_css(*n)),
             Unit::Vw => format!("{}vw", num_css(*n)),
@@ -38,8 +39,11 @@ pub fn computed_value_string(v: &Value) -> String {
             if c.a == 255 {
                 format!("rgb({}, {}, {})", c.r, c.g, c.b)
             } else {
-                // rgba 알파는 0..1 (CSS 직렬화 규약)
-                let a = num_css((c.a as f32 / 255.0 * 1000.0).round() / 1000.0);
+                // rgba 알파는 0..1 (CSS 직렬화 규약).
+                // 우리 색 모델은 8비트라 0.5 를 저장하면 128/255 = 0.50196 이 된다.
+                // 세 자리까지 그대로 찍으면 "0.502" 같은 양자화 잡음이 새어 나온다 —
+                // 두 자리로 반올림해 지정값에 가장 가까운 표현을 준다(0.5, 0.1, 0.05).
+                let a = num_css((c.a as f32 / 255.0 * 100.0).round() / 100.0);
                 format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, a)
             }
         }
@@ -79,8 +83,13 @@ impl<'a> StyledNode<'a> {
             .unwrap_or_else(|| self.value(fallback_name).unwrap_or_else(|| default.clone()))
     }
 
+    // font-weight 의 계산값은 수다. 600 이상을 굵게 그린다(폰트가 regular/bold 2종).
     pub fn is_bold(&self) -> bool {
-        matches!(self.value("font-weight"), Some(Value::Keyword(k)) if k == "bold")
+        match self.value("font-weight") {
+            Some(Value::Length(n, _)) => n >= 600.0,
+            Some(Value::Keyword(k)) => k == "bold" || k == "bolder",
+            _ => false,
+        }
     }
 
     pub fn is_italic(&self) -> bool {
@@ -1272,6 +1281,13 @@ fn style_node<'a>(
                     values.insert("text-align".to_string(), Value::Keyword(a));
                 }
             }
+            // color: currentColor 는 자기 자신을 가리키므로 표준상 inherit 과 같다
+            // (CSS Color §3.2). 선언을 걷어내면 아래 상속 단계가 부모 color 를 채우고,
+            // 부모가 없으면 초기값(검정)이 된다. 예전엔 키워드가 그대로 남아 미해석 상태였다.
+            if matches!(values.get("color"), Some(Value::Keyword(s)) if s.eq_ignore_ascii_case("currentcolor"))
+            {
+                values.remove("color");
+            }
             // 상속: 상속 속성이 명시 안 됐으면 부모 계산값 복사.
             // 커스텀 프로퍼티(--*)도 전부 상속 (테마 토큰이 하위로 흐름).
             if let Some(p) = parent {
@@ -1320,18 +1336,18 @@ fn style_node<'a>(
                 resolve_units(v, fs, root_fs, vp);
             }
             // currentColor 를 요소 계산 color 로 치환 (border-color/background-color 등).
-            let cur_color = match values.get("color") {
-                Some(Value::Color(c)) => Some(*c),
-                _ => None,
+            // color 가 없으면 계산값은 초기값(검정)이다 — 예전엔 이때 치환을 건너뛰어
+            // 키워드가 그대로 남았다(미해석 색).
+            let cc = match values.get("color") {
+                Some(Value::Color(c)) => *c,
+                _ => crate::css::Color { r: 0, g: 0, b: 0, a: 255 },
             };
-            if let Some(cc) = cur_color {
-                for (k, v) in values.iter_mut() {
-                    if k == "color" {
-                        continue;
-                    }
-                    if matches!(v, Value::Keyword(s) if s.eq_ignore_ascii_case("currentcolor")) {
-                        *v = Value::Color(cc);
-                    }
+            for (k, v) in values.iter_mut() {
+                if k == "color" {
+                    continue;
+                }
+                if matches!(v, Value::Keyword(s) if s.eq_ignore_ascii_case("currentcolor")) {
+                    *v = Value::Color(cc);
                 }
             }
             // animation: @keyframes 최종(100%/to) 프레임을 적용 (정적 렌더 = 애니메이션 종료 근사).
@@ -1538,8 +1554,8 @@ mod tests {
             n.children.iter().find_map(|c| find_tag(c, tag))
         }
         let div = find_tag(&styled, "div").unwrap();
-        // 최종 opacity 1 이 적용됨 (초기 0 을 덮음)
-        assert_eq!(div.value("opacity"), Some(Value::Length(1.0, Unit::Px)));
+        // 최종 opacity 1 이 적용됨 (초기 0 을 덮음). opacity 는 단위 없는 수다.
+        assert_eq!(div.value("opacity"), Some(Value::Length(1.0, Unit::Number)));
     }
 
     #[test]

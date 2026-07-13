@@ -86,29 +86,41 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         "z-index" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Px) }],
+            Ok(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
-        // font-weight: bold/bolder/숫자>=600 → "bold", 그 외 → "normal" 로 정규화
-        // (숫자 weight 는 interpret_value 로 안 살아남아 여기서 처리)
+        // font-weight 의 계산값은 수다(CSS Fonts §2.2). bold=700, normal=400.
+        // 예전엔 "bold"/"normal" 키워드로 정규화해서 getComputedStyle 이 "bold" 를
+        // 돌려줬다(표준은 "700"). 렌더는 600 이상을 굵게 그린다(폰트가 2종뿐).
         "font-weight" => {
-            let v = value_text.trim();
-            let bold = v == "bold"
-                || v == "bolder"
-                || v.parse::<f32>().map(|n| n >= 600.0).unwrap_or(false);
-            vec![Declaration { important: false,
+            let v = value_text.trim().to_ascii_lowercase();
+            let n = match v.as_str() {
+                "bold" | "bolder" => 700.0,
+                "normal" | "lighter" => 400.0,
+                "initial" => 400.0,
+                // inherit/unset/revert 는 선언을 남기지 않는다 → 상속이 적용된다.
+                // 예전엔 이걸 "normal" 로 눌러버려서 `font-weight: inherit` 이 상속을
+                // 끊었다(react.dev 의 리셋 CSS 가 실제로 이걸 쓴다).
+                "inherit" | "unset" | "revert" => return Vec::new(),
+                other => match other.parse::<f32>() {
+                    Ok(n) if (1.0..=1000.0).contains(&n) => n,
+                    _ => return Vec::new(),
+                },
+            };
+            vec![Declaration {
+                important: false,
                 name: "font-weight".to_string(),
-                value: Value::Keyword(if bold { "bold" } else { "normal" }.to_string()),
+                value: Value::Length(n, Unit::Number),
             }]
         }
-        // order: 정수(음수 가능) → Length(n, Px) (flex 아이템 재정렬용)
+        // order: 정수(음수 가능). 단위 없는 수다.
         "order" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Px) }],
+            Ok(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
-        // flex-grow/flex-shrink: 단위 없는 수 → Length(n, Px) (레이아웃이 to_px 로 읽음)
+        // flex-grow/flex-shrink: 단위 없는 수 (레이아웃이 to_px 로 스칼라를 읽는다)
         "flex-grow" | "flex-shrink" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Px) }],
+            Ok(n) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
         // flex 단축: <grow> [<shrink>] [<basis>]. 키워드: none=0 0 auto, auto=1 1 auto,
@@ -230,8 +242,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             vec![Declaration { important: false, name: "content".to_string(), value: Value::Keyword(unquoted) }]
         }
-        // opacity: 0..1 수 또는 퍼센트(50%). 스칼라를 Length(op, Px)로 실어 paint 가 읽음.
-        // (미지원 단위 아님 — 파서가 0 아닌 단위없는 수를 드롭하므로 여기서 처리.)
+        // opacity: 0..1 수 또는 퍼센트(50%). 단위 없는 수(Number)로 저장.
         "opacity" => {
             let v = value_text.trim();
             let n = if let Some(p) = v.strip_suffix('%') {
@@ -242,7 +253,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             match n {
                 Some(op) => vec![Declaration { important: false,
                     name: "opacity".to_string(),
-                    value: Value::Length(op.clamp(0.0, 1.0), Unit::Px),
+                    value: Value::Length(op.clamp(0.0, 1.0), Unit::Number),
                 }],
                 None => Vec::new(),
             }
@@ -469,15 +480,17 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
             "bold" | "bolder" => out.push(Declaration {
                 important: false,
                 name: "font-weight".to_string(),
-                value: Value::Keyword("bold".to_string()),
+                value: Value::Length(700.0, Unit::Number),
             }),
             _ => {
-                if tl.parse::<f32>().map(|n| n >= 600.0).unwrap_or(false) {
-                    out.push(Declaration {
-                        important: false,
-                        name: "font-weight".to_string(),
-                        value: Value::Keyword("bold".to_string()),
-                    });
+                if let Ok(n) = tl.parse::<f32>() {
+                    if (1.0..=1000.0).contains(&n) {
+                        out.push(Declaration {
+                            important: false,
+                            name: "font-weight".to_string(),
+                            value: Value::Length(n, Unit::Number),
+                        });
+                    }
                 }
             }
         }
@@ -855,7 +868,8 @@ mod tests {
     fn font_shorthand_expands_all_parts() {
         let d = expand_declaration("font", "italic bold 14px/1.5 Arial, sans-serif");
         assert!(matches!(find(&d, "font-style"), Some(Value::Keyword(k)) if k == "italic"));
-        assert!(matches!(find(&d, "font-weight"), Some(Value::Keyword(k)) if k == "bold"));
+        // font-weight 의 계산값은 수다 (bold = 700, CSS Fonts §2.2)
+        assert_eq!(find(&d, "font-weight"), Some(&Value::Length(700.0, Unit::Number)));
         assert_eq!(find(&d, "font-size"), Some(&Value::Length(14.0, Unit::Px)));
         // 단위 없는 배수는 Lh(상속 시 factor 유지, 요소별 font-size 곱)로 저장
         assert_eq!(find(&d, "line-height"), Some(&Value::Length(1.5, Unit::Lh)));
@@ -872,6 +886,38 @@ mod tests {
         assert_eq!(find(&d2, "font-size"), Some(&Value::Length(18.0, Unit::Px)));
         // 시스템 폰트 키워드는 no-op
         assert!(expand_declaration("font", "caption").is_empty());
+    }
+
+    #[test]
+    fn unitless_numbers_are_numbers_not_lengths() {
+        // 예전엔 opacity/z-index/order/flex-grow 를 Length(n, Px) 로 실었다. 동작은 했지만
+        // getComputedStyle 이 "0.5px"/"5px"/"1px" 같은 거짓 값을 돌려줬다 — 길이가 아니라 수다.
+        assert_eq!(
+            find(&expand_declaration("opacity", "0.5"), "opacity"),
+            Some(&Value::Length(0.5, Unit::Number))
+        );
+        assert_eq!(
+            find(&expand_declaration("z-index", "5"), "z-index"),
+            Some(&Value::Length(5.0, Unit::Number))
+        );
+        assert_eq!(
+            find(&expand_declaration("flex-grow", "2"), "flex-grow"),
+            Some(&Value::Length(2.0, Unit::Number))
+        );
+        // font-weight 의 계산값도 수다 (bold = 700)
+        assert_eq!(
+            find(&expand_declaration("font-weight", "bold"), "font-weight"),
+            Some(&Value::Length(700.0, Unit::Number))
+        );
+        assert_eq!(
+            find(&expand_declaration("font-weight", "700"), "font-weight"),
+            Some(&Value::Length(700.0, Unit::Number))
+        );
+        // 레이아웃은 여전히 to_px 로 스칼라를 읽는다
+        assert_eq!(
+            find(&expand_declaration("flex-grow", "3"), "flex-grow").unwrap().to_px(),
+            3.0
+        );
     }
 
     #[test]

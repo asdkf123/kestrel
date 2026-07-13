@@ -261,6 +261,21 @@ fn calc_term(t: &[char], p: &mut usize) -> Option<CalcVal> {
 // factor = '(' expr ')' | number[unit]
 fn calc_factor(t: &[char], p: &mut usize) -> Option<CalcVal> {
     skip_ws(t, p);
+    // 중첩 calc(): `calc(50% + calc(10px * 2))` — 표준에서 허용된다.
+    // 예전엔 'c' 를 만나 파싱이 실패하고 선언 전체가 버려졌다(조용히 다른 값이 됨).
+    if t.len() >= *p + 5 {
+        let head: String = t[*p..*p + 5].iter().collect::<String>().to_ascii_lowercase();
+        if head == "calc(" {
+            *p += 5;
+            let v = calc_expr(t, p)?;
+            skip_ws(t, p);
+            if t.get(*p) != Some(&')') {
+                return None;
+            }
+            *p += 1;
+            return Some(v);
+        }
+    }
     if t.get(*p) == Some(&'(') {
         *p += 1;
         let v = calc_expr(t, p)?;
@@ -778,6 +793,11 @@ mod tests {
     #[test]
     fn absolute_units_convert_to_px() {
         // 1pt = 96/72 px, 1pc = 16px, 1in = 96px, 1cm ≈ 37.8px
+        // 중첩 calc() — 표준에서 허용된다. 예전엔 파싱이 실패해 선언이 통째로 버려졌다.
+        assert!(matches!(
+            interpret_value("calc(50% + calc(10px * 2))"),
+            Some(Value::Calc(_))
+        ));
         assert_eq!(interpret_value("72pt"), Some(Value::Length(96.0, Unit::Px)));
         assert_eq!(interpret_value("1pc"), Some(Value::Length(16.0, Unit::Px)));
         assert_eq!(interpret_value("1in"), Some(Value::Length(96.0, Unit::Px)));
