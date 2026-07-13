@@ -899,6 +899,25 @@ pub enum CanvasOp {
     FillText { text: String, x: f32, y: f32, color: crate::css::Color, px: f32 },
 }
 
+// 복합 대입 연산자 → 대응하는 이항 연산자
+fn compound_binop(op: &AssignOp) -> BinOp {
+    match op {
+        AssignOp::Add => BinOp::Add,
+        AssignOp::Sub => BinOp::Sub,
+        AssignOp::Mul => BinOp::Mul,
+        AssignOp::Div => BinOp::Div,
+        AssignOp::Mod => BinOp::Mod,
+        AssignOp::Pow => BinOp::Pow,
+        AssignOp::BitAnd => BinOp::BitAnd,
+        AssignOp::BitOr => BinOp::BitOr,
+        AssignOp::BitXor => BinOp::BitXor,
+        AssignOp::Shl => BinOp::Shl,
+        AssignOp::Shr => BinOp::Shr,
+        AssignOp::UShr => BinOp::UShr,
+        _ => BinOp::Add, // Set/And/Or/Nullish 는 호출측에서 처리
+    }
+}
+
 // 호출식에서 사람이 읽을 프레임 이름을 뽑는다: f(), o.m(), o[k](), (expr)()
 fn callee_label(e: &Expr) -> String {
     match e {
@@ -3056,6 +3075,27 @@ impl Interp {
                     self.assign_to(target, rhs.clone(), env)?;
                     return Ok(rhs);
                 }
+                // 표준 §13.15.2: **왼쪽 참조를 먼저** 평가하고 그 다음 오른쪽 값을 평가한다.
+                // 반대로 하면 왼쪽 안의 부수효과가 오른쪽보다 늦게 일어난다. jQuery 가
+                // 정확히 그걸 쓴다: `(b = se.selectors = {…}).pseudos.nth = b.pseudos.eq`
+                // — 오른쪽을 먼저 보면 b 는 아직 undefined 라 통째로 죽었다.
+                if let Expr::Member { obj, prop, computed } = &**target {
+                    if !matches!(&**obj, Expr::Super) {
+                        let recv = self.eval(obj, env)?;
+                        let key = self.member_key(prop, *computed, env)?;
+                        let rhs = self.eval(value, env)?;
+                        let new = match op {
+                            AssignOp::Set => rhs,
+                            compound => {
+                                let old = self.member_get(&recv, &key)?;
+                                let bin = compound_binop(compound);
+                                self.binary(bin, old, rhs)?
+                            }
+                        };
+                        self.member_assign(recv, key, new.clone())?;
+                        return Ok(new);
+                    }
+                }
                 let rhs = self.eval(value, env)?;
                 let new = match op {
                     AssignOp::Set => rhs,
@@ -5024,22 +5064,10 @@ impl Interp {
         })
     }
 
-    fn assign_to(&mut self, target: &Expr, value: Value, env: &EnvRef) -> Result<(), String> {
-        match target {
-            Expr::Ident(name) => {
-                // const 재대입은 TypeError (표준).
-                if env_is_const(env, name) {
-                    self.thrown = Some(Value::Str(format!(
-                        "TypeError: Assignment to constant variable."
-                    )));
-                    return Err(format!("상수 '{}' 에 재대입", name));
-                }
-                env_set(env, name, value);
-                Ok(())
-            }
-            Expr::Member { obj, prop, computed } => {
-                let recv = self.eval(obj, env)?;
-                let key = self.member_key(prop, *computed, env)?;
+    // 멤버 대입의 실제 수행 (수신자·키가 이미 평가된 상태).
+    // 표준 §13.15.2 는 왼쪽 참조를 **먼저** 평가하고 그 다음 오른쪽을 평가하라고 한다.
+    // 그래서 참조 평가와 값 대입을 분리한다.
+    fn member_assign(&mut self, recv: Value, key: String, value: Value) -> Result<(), String> {
                 match recv {
                     // Proxy: set 트랩 있으면 handler.set(target, key, value, receiver), 없으면 target 에 위임
                     Value::Proxy(p) => {
@@ -5189,6 +5217,25 @@ impl Interp {
                     }
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
+    }
+
+    fn assign_to(&mut self, target: &Expr, value: Value, env: &EnvRef) -> Result<(), String> {
+        match target {
+            Expr::Ident(name) => {
+                // const 재대입은 TypeError (표준).
+                if env_is_const(env, name) {
+                    self.thrown = Some(Value::Str(format!(
+                        "TypeError: Assignment to constant variable."
+                    )));
+                    return Err(format!("상수 '{}' 에 재대입", name));
+                }
+                env_set(env, name, value);
+                Ok(())
+            }
+            Expr::Member { obj, prop, computed } => {
+                let recv = self.eval(obj, env)?;
+                let key = self.member_key(prop, *computed, env)?;
+                self.member_assign(recv, key, value)
             }
             _ => Err("할당 대상이 아님".to_string()),
         }
@@ -7706,6 +7753,22 @@ mod tests {
     fn class_static_block_runs() {
         // ES2022 static 초기화 블록. 예전엔 파서가 여기서 죽어 **스크립트 전체**가 날아갔다.
         assert_eq!(run_num("class C { static x = 1; static { C.x = 4 } } C.x"), 4.0);
+    }
+
+    #[test]
+    fn assignment_evaluates_left_reference_first() {
+        // 표준 §13.15.2: 왼쪽 참조 → 오른쪽 값 순서. jQuery 가 이 순서에 의존한다:
+        //   (b = se.selectors = {…}).pseudos.nth = b.pseudos.eq
+        // 오른쪽을 먼저 평가하면 b 가 아직 undefined 라 jQuery 가 통째로 죽는다.
+        assert_eq!(
+            run_str("var b, se = {}; (b = se.sel = { p: { eq: 'E' } }).p.nth = b.p.eq; se.sel.p.nth"),
+            "E"
+        );
+        // 복합 대입도 같은 순서 (왼쪽 참조 먼저)
+        assert_eq!(
+            run_num("var o, box = {}; (o = box.v = { n: 1 }).n += o.n; box.v.n"),
+            2.0
+        );
     }
 
     #[test]
