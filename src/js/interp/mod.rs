@@ -237,7 +237,7 @@ pub struct Instance {
 }
 
 // canvas 2D 컨텍스트 메서드
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CanvasMethod {
     FillRect,
     ClearRect,
@@ -254,7 +254,7 @@ pub enum CanvasMethod {
     Noop, // save/restore/scale/translate/setTransform 등 (근사로 무시)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Native {
     ConsoleLog,
     ArrayPush,
@@ -432,7 +432,7 @@ pub struct Timer {
     pub repeat: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MathOp {
     Floor,
     Ceil,
@@ -460,7 +460,7 @@ pub enum MathOp {
     Hypot,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StrOp {
     IndexOf,
     LastIndexOf,
@@ -490,7 +490,7 @@ pub enum StrOp {
     LocaleCompare,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DateField {
     Time,
     FullYear,
@@ -507,7 +507,7 @@ pub enum DateField {
     ToDateStr,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MapOp {
     Get,
     Set,
@@ -520,7 +520,7 @@ pub enum MapOp {
     Entries,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SetOp {
     Add,
     Has,
@@ -530,7 +530,7 @@ pub enum SetOp {
     Values,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ArrOp {
     Join,
     Pop,
@@ -872,6 +872,9 @@ pub struct Interp {
     // window 객체 자체(정체성). window 는 전역 객체이므로 own 프로퍼티에 없는 키는
     // 전역 스코프로 폴백한다 — `window.Promise` 같은 기능 탐지가 실제로 동작해야 한다.
     window_obj: Rc<RefCell<ObjMap>>,
+    // 네이티브(내장 생성자/함수)에 붙은 프로퍼티. 폴리필이 `Promise.allSettled = fn`,
+    // `Symbol.observable = …` 처럼 내장에 값을 얹는다 — 저장소가 없어 전부 에러였다.
+    native_props: HashMap<Native, HashMap<String, Value>>,
 }
 
 impl Interp {
@@ -1349,6 +1352,7 @@ impl Interp {
             sym_registry: HashMap::new(),
             new_target: None,
             window_obj,
+            native_props: HashMap::new(),
         }
     }
 
@@ -2941,6 +2945,12 @@ impl Interp {
     }
 
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
+        // 내장에 얹힌 프로퍼티가 최우선 (폴리필이 Promise.allSettled 등을 덮어쓴 경우).
+        if let Value::Native(n) = recv {
+            if let Some(v) = self.native_props.get(n).and_then(|m| m.get(key)) {
+                return Ok(v.clone());
+            }
+        }
         // .constructor — 값 타입의 전역 생성자 (core-js/프레임워크의 타입판별·종/species 에 필수).
         // 객체/인스턴스가 자체 constructor 프로퍼티를 가지면 그것 우선.
         if key == "constructor" {
@@ -3343,6 +3353,8 @@ impl Interp {
                     "bind" => Ok(Value::Native(Native::FnBind)),
                     "name" => Ok(Value::Str(String::new())),
                     "length" => Ok(Value::Num(func.params.len() as f64)),
+                    // 함수도 toString 을 가진다 (번들이 fn.toString() 으로 소스 검사)
+                    "toString" => Ok(Value::Native(Native::FnToString)),
                     // F.prototype 지연 생성: 접근 시 빈 객체를 만들어 저장
                     // (F.prototype.method = ... 패턴 지원)
                     "prototype" => {
@@ -4111,6 +4123,12 @@ impl Interp {
                         func.props.borrow_mut().insert(key, value);
                         Ok(())
                     }
+                    // 내장(네이티브)에 프로퍼티 얹기 — 폴리필의
+                    // `if (!Promise.allSettled) Promise.allSettled = fn` 패턴.
+                    Value::Native(n) => {
+                        self.native_props.entry(n).or_default().insert(key, value);
+                        Ok(())
+                    }
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
             }
@@ -4360,6 +4378,27 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn polyfill_can_assign_props_to_natives() {
+        // 폴리필의 `if (!X.method) X.method = fn` 패턴 — 내장에 프로퍼티 저장소가
+        // 없어 "function 에 할당할 수 없음" 으로 전부 죽었다.
+        // (allSettled 는 이미 내장이라 폴리필 분기를 안 탄다 — 없는 이름으로 검증)
+        assert_eq!(
+            run_str("if (!Promise.any) { Promise.any = function(){ return 'p'; }; } Promise.any()"),
+            "p",
+        );
+        assert_eq!(run_str("Symbol.observable = 'obs'; Symbol.observable"), "obs");
+        assert_eq!(run_num("Date.helper = function(){ return 3; }; Date.helper()"), 3.0);
+        // 기존 내장 멤버는 그대로 (덮어쓰지 않은 것)
+        assert!(run_bool("Symbol.observable = 'x'; typeof Symbol.iterator === 'symbol'"));
+        assert!(run_bool("Date.helper = 1; typeof Date.now === 'function'"));
+        // 얹은 값이 내장보다 우선 (명시적 덮어쓰기)
+        assert_eq!(run_str("Date.now = function(){ return 'stub'; }; Date.now()"), "stub");
+        // 함수의 toString (번들이 fn.toString() 으로 소스 검사)
+        assert!(run_bool("typeof (function f(){}).toString === 'function'"));
+        assert_eq!(run_str("(function f(a){ return a; }).toString().slice(0,8)"), "function");
     }
 
     #[test]
