@@ -205,3 +205,62 @@
 
 ## 저심각 (스킵 가능)
 epsilon fudge, 곡선 고정분할, accent-color, 등.
+
+## 2026-07 라운드 (실제 사이트를 어서션 페이지로 훑어 찾은 것)
+
+방법: 브라우저에 T(name, actual, expected) 어서션 페이지를 띄워 렌더하고 [console] 을
+읽는다. 픽셀은 PPM 을 직접 뒤진다. **주석·문서를 믿지 않는다** — 코드가 실제로
+무엇을 하는지만 본다.
+
+### CSS
+- [x] **다중 토큰 값이 선언째 사라짐** — 일반 값 파서가 토큰 2개 이상이면 None 을 돌려주고
+  선언이 통째로 버려졌다. `overflow: hidden auto`, `gap: 10px 20px`, `border-spacing: 2px 4px`,
+  `background-size: 50% 25%`, `transform-origin: 0 0` 이 전부 조용히 무시됐다.
+  `flex-flow` 는 아예 아무도 읽지 않았다. (d2e24f0)
+- [x] **transform 은 translate 만 진짜였다** — rotate 는 페인트에서 아이템별 근사,
+  skew/matrix 는 무시. 2D 아핀 행렬로 합성해 서브트리를 통째로 변환하도록 재작성.
+  @supports 도 이제 3D 만 거짓으로 답한다. (b16ed6b)
+- [x] **익명 박스가 부모 스타일을 공유** → absolute/sticky/transform 이 이중 적용.
+  `position:absolute` 요소의 글자가 좌표 2배 위치에 그려졌다. (b16ed6b)
+- [x] **initial/revert 미구현** — initial 은 "선언 삭제"로 처리해 상속 속성이 부모값을
+  물려받았고(color: initial 이 검정이 아님), revert 는 키워드 문자열이 그대로 값이 됐다
+  (display: revert). 원점(UA/저자)을 구분해 되돌린다. (e96059d)
+- [x] **background 단축의 `/` 뒤 크기가 나머지를 삼킴** — url() 과 색이 통째로 사라졌다. (75c52d1)
+- [x] **white-space: pre-wrap 이 절대 줄바꿈 안 됨** — 보존한 공백을 단어에 이어 붙여
+  줄 전체가 한 단어가 됐다 (= pre 와 동일). (3231042)
+
+### JS
+- [x] **대입의 평가 순서** — 표준은 왼쪽 참조 먼저인데 오른쪽을 먼저 평가했다.
+  jQuery 가 `(b = se.selectors = {…}).pseudos.nth = b.pseudos.eq` 로 그 순서에 의존해서
+  jquery.js 가 통째로 죽었다 ($ 자체가 정의되지 않음). (db669ea)
+- [x] **ESM 네임스페이스가 살아있는 뷰가 아님** — 본문 실행 후에 채워서, 자기 자신을
+  import 하는 모듈(rspack/webpack 청크)이 자기 export 를 못 봤다. MDN 메인 모듈이 죽었다. (366bed1)
+- [x] **옵셔널 체인 호출이 단락 안 됨** — `a?.m()` 이 a=null 이어도 호출을 시도해 죽었다. (b0015b0)
+- [x] class static {} 블록에서 파서가 죽어 **스크립트 전체**가 날아갔다. (3a5340c)
+- [x] super.x **읽기**, in 연산자의 프로토타입 체인, Proxy has/deleteProperty/ownKeys,
+  단항 ToPrimitive, Symbol.toPrimitive, JSON replacer/indent. (3a5340c)
+- [x] class extends 뒤 **호출식**(믹스인)에서 파서가 죽었다. (a83bbbe)
+- [x] **BigInt 를 f64 로 근사** — 렉서가 n 접미를 버렸다. 2n**64n 이 조용히 틀렸다.
+  임의 정밀도 정수로 구현(혼합 산술은 TypeError). (31091ee)
+- [x] 정규식 **룩비하인드 미지원**, 룩어라운드 안의 캡처를 버림. (c9ef19d)
+- [x] JS 호출 스택이 없어 오류 위치를 알 수 없었다 → 프레임 추적 추가. (366bed1)
+
+### HTML / 이미지 / DOM
+- [x] **script nomodule 을 실행** — 모듈 지원 브라우저는 실행하면 안 된다(HTML §4.12.1).
+  react.dev 의 레거시 폴리필 번들이 최신 코드와 충돌해 React 훅 리스트를 깨뜨렸다. (a1497c5)
+- [x] **focus()/blur()/activeElement 없음** — el?.focus() 가 "함수 아님" 으로 죽었다. (b0015b0)
+- [x] **new URL(location)** 이 ToString 을 안 거쳐 "[object Object]" 를 파싱했다. (b0015b0)
+- [x] **CSS url(*.svg) 미지원** — <img src=*.svg> 는 DOM 치환으로 그렸지만 배경은 못 그렸다.
+  SVG 를 실제 픽셀로 래스터화. 겸사겸사 emit_svg 가 <g> 그룹을 순회하지 않던 것도 고침
+  (실제 SVG 는 거의 다 <g> 로 감싼다). (5d8d9db)
+- [x] **그레이스케일 JPEG 디코드 실패** — 1채널 스캔은 비인터리브인데(T.81 §A.2.2)
+  인터리브로 취급해 4블록씩 읽었다. (5d8d9db)
+- [x] **WebP 미지원** — 사이트가 .webp 를 하드코딩한다. VP8 lossy 디코더 구현(RFC 6386),
+  참조 디코더와 픽셀 대조로 검증(평균오차 0.85). (1bf4b32)
+
+### 남은 것 (정직하게)
+- [ ] WebP 무손실(VP8L), AVIF
+- [ ] 임포트 맵 / 베어 명세자
+- [ ] 3D transform (perspective/rotate3d) — @supports 는 거짓으로 답한다
+- [ ] window.getSelection
+- [ ] 인라인 style 값의 CSSOM 직렬화 정규화 (rgb(9,9,9) → rgb(9, 9, 9))
