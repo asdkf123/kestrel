@@ -9,6 +9,25 @@ use crate::url::{Url, UrlError};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
+// User-Agent 는 능력 선언이기도 하다. 서버는 이걸 보고 무엇을 내려줄지 정한다.
+//
+// 브라우저형 UA("Mozilla/5.0 … Safari/537.36")를 보내면 구글폰트는 woff2 를 내려준다.
+// 우리는 woff2 를 아직 못 읽는다 — 그러면 웹폰트가 전부 죽고 아이콘 폰트를 쓰는 사이트는
+// 리거처 글자("navigate_next")가 그대로 노출되며 텍스트 메트릭이 어긋나 레이아웃이 밀린다.
+// (측정: 같은 go.dev CSS/HTML 인데 폰트만 ttf → woff2 로 바뀌어 렌더가 무너졌다)
+//
+// 없는 능력을 광고하면 대가를 치른다. Accept 헤더에서 image/webp 를 뺀 것과 같은 원리다.
+// woff2 디코더가 들어오면 그때 브라우저형 UA 로 바꾼다.
+const USER_AGENT: &str = "Kestrel/0.1";
+
+// Accept 는 우리가 실제로 디코드할 수 있는 것만 광고한다. 이건 협상이지 인사말이 아니다.
+// 브라우저 UA 를 쓰면서 image/webp,image/avif 를 받는다고 하면 서버는 기꺼이 WebP 를
+// 내려준다 — 그리고 우리는 그걸 못 읽어서 이미지가 전부 사라진다(실제로 그렇게 됐다.
+// 위키백과 이미지 디코드가 3~5개에서 0개가 됐다). 없는 능력을 광고하면 그 대가를 치른다.
+// PNG/JPEG 만 디코드하므로 그것만 우선순위로 밝히고, 나머지는 낮은 q 로 받는다.
+const ACCEPT: &str = "text/html,application/xhtml+xml,application/xml;q=0.9,\
+image/png,image/jpeg,*/*;q=0.8";
+
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
@@ -97,8 +116,8 @@ fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
         _ => return Err(HttpError::UnsupportedScheme),
     };
     let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Kestrel/0.1\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
-        url.path, url.host
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: {}\r\nAccept-Language: en-US,en;q=0.9\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
+        url.path, url.host, USER_AGENT, ACCEPT
     );
     stream.write_all(req.as_bytes()).map_err(HttpError::Io)?;
     let mut buf = Vec::new();
