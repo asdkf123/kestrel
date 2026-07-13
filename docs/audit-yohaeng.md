@@ -63,7 +63,7 @@
 - [~] Flex **shrink 시 min-content 하한 적용(§4.5)** 완료. min/max 덮어씀, align-content 는 후속. (flex.rs)
 - [~] 테이블 **border-spacing** 완료(separate 표 셀 간격). auto 폭 shrink-to-fit 은 보류
   (used_width 근사가 중첩 표에서 오측정 → min/max-content 정식 측정 필요). (mod.rs)
-- [ ] 페인트 **둥근+투명배경=사각 테두리**. (paint.rs:1384)
+- [x] 페인트 **둥근+투명배경 테두리** — 렌더로 재확인, 이미 링으로 정상(중복 항목, adeaefb).
 - [x] 페인트 **점선/파선 테두리**(dashed/dotted). double/groove 는 근사. (7bbcf70)
 - [x] 페인트 **그라디언트 프리멀티플라이 보간**(gradient_color_at 이미 반영, b957a7d). 확인 완료.
 - [x] 페인트 **박스섀도 가우시안(erf 전이) + 필터/backdrop 블러 3패스 가우시안**. (bdc27e9, 2d31c45)
@@ -71,7 +71,8 @@
 - [x] 페인트 **overflow 사각클립이 글리프/폴리곤 픽셀클립** — 경계 걸치면 사각 ClipShape 로 래핑. (e622fc2)
 - [x] 페인트 **폴리곤 AA**(세로 서브스캔라인 4 + 가로 부분커버리지). (bc07013)
 - [x] 페인트 **이미지 바이리니어 스케일링**(프리멀티플라이, 투명가장자리 안전). 타일은 최근접 유지. (d15516c)
-- [ ] 페인트 **select 화살표 14px/progress·meter 하드코딩**. (paint.rs:1344,1329)
+- [~] 페인트 **select 화살표/progress 하드코딩** — 렌더 확인 결과 표시는 정상.
+  UA 기본 위젯 크기는 원래 구현 정의라 요행 아님. 값 자체는 유지.
 - [x] 페인트 **SVG line=방향맞춘 quad + arc(A) 정확 평탄화**(F.6 중심 파라미터화). (d887cec, f7a093c)
 - [ ] 레이아웃 **인라인 레벨 SVG 미배치** — width/height 속성은 블록일 때만 반영(mod.rs:255).
   기본 display 의 `<svg>`(인라인)는 크기/렌더 안 됨. display:block/inline-block 필요.
@@ -80,7 +81,9 @@
 - [x] CSS **:where/:is/:not 명시도 정확 계산**(:where=0, :is/:not=인자 최대). (5e77316, 중복 항목)
 - [x] CSS **무단위 line-height 배수(Lh)로 상속** — 요소별 font-size 곱. %/길이는 길이 상속. (69f728a)
 - [x] CSS **calc() em/rem/vw 단위별 계수 보존 후 style 에서 px 확정**. (5951826)
-- [ ] CSS **@supports 값검증 없이 과다보고**. (css/supports.rs:47)
+- [x] CSS **@supports 과다보고** — 2단계로 해소: 프로퍼티 이름 검증(535f98d 이전) +
+  값 검증(31bfe54). 열거형 미구현 값(position:sticky, display:table-cell/flow-root)과
+  미구현 값 함수(color-mix/oklch/env/transform:rotate)를 이제 거짓으로 보고한다.
 - [ ] CSS **:not/:is 첫 심플셀렉터만**. (css/mod.rs:796)
 - [x] CSS **속성선택자 i/s 플래그 + 기본 대소문자 구분**. (4a38252)
 - [x] CSS **상속 화이트리스트에 word-break/overflow-wrap/word-wrap 추가**(소비되나 미상속이던 것). (6885dd8)
@@ -110,7 +113,60 @@
 
 - [x] **getComputedStyle 빈 스텁 → 실제 계산 스타일**. 스타일 엔진의 해석값을 브리지,
   카멜·대시·getPropertyValue, width/height 는 레이아웃 used value(px). 프렐류드 스텁 제거.
-  (초기 인라인 스크립트 시점 강제 리플로우는 후속) (mod.rs/window.rs/style.rs)
+  (mod.rs/window.rs/style.rs)
+- [x] **측정 API 가 강제 레이아웃을 흘린다(CSSOM View)** — 스크립트가 첫 레이아웃보다 먼저
+  전부 실행돼서, 파싱 중이나 load 에서 잰 값이 항상 0/빈 문자열이었다. 이제 CSS·폰트·
+  이미지가 준비된 뒤 스크립트가 돌고(HTML 표준의 script-blocking stylesheet 순서),
+  getBoundingClientRect/offset*/client*/scroll*/getComputedStyle 은 읽는 순간 보류된
+  스타일·레이아웃을 흘린다. Dom 에 변형 카운터(version)를 두어 깨끗하면 재계산하지 않는다.
+  (aef2963)
+- [x] **getComputedStyle 이 미설정 프로퍼티에 빈 문자열** → CSS 명세의 초기값/상속값.
+  `getComputedStyle(el).position === 'static'` 류 검사가 전부 실패하던 문제. (881d199)
+
+## 2라운드 감사 — "있는 척만 하던" API (2026-07-13)
+
+감사 방법: 어서션 HTML 페이지를 만들어 헤드리스 렌더 → [console] 출력 확인.
+주석이나 이 문서를 믿지 않고 매번 실제로 측정했다(이 문서 자체가 여러 번 스테일이었다).
+
+- [x] **matchMedia 가 항상 matches:false** — CSS 는 @media (min-width:768px) 를 참으로
+  보고 데스크톱 규칙을 적용하는데 JS 는 거짓을 돌려줬다. 한 엔진 안에서 CSS 와 JS 의
+  답이 달랐다. 이제 같은 평가기(media_matches_vp)로 실제 뷰포트에 대해 판정. (1565eb0)
+- [x] **IntersectionObserver 무동작 스텁** — 콜백이 영영 오지 않아, 교차 시 콘텐츠를
+  드러내는 사이트가 화면 안 요소까지 opacity:0 로 남았다. 이제 레이아웃의 실제 사각형으로
+  뷰포트 교차를 계산하고 observe() 직후 초기 관측을 비동기 1회 전달. (1565eb0)
+- [x] **ResizeObserver 무동작** — 표준은 observe() 시 현재 크기로 초기 관측을 준다. (1565eb0)
+- [x] **MutationObserver 무동작** — "요소가 나타나면 처리" 패턴이 통째로 죽었다.
+  DOM 아레나가 childList/attributes/characterData 기록을 쌓고(속성 쓰기는 set_attr/
+  remove_attr 로 일원화), 첫 기록에서 마이크로태스크 배달을 1회 예약한다. subtree/
+  attributeFilter 필터링. (9ebdcd2)
+- [x] **el.removeEventListener 메서드 자체가 없음** → TypeError 로 스크립트 전체가 죽었다.
+  document/window/XHR 의 removeEventListener 는 Noop 스텁이라 "제거했다"고 믿는 코드에서
+  핸들러가 계속 발화. xhr.addEventListener 는 "요소 메서드"라며 던졌다. EventTarget 을
+  객체 수신자까지 일반화하고 참조 동일성으로 제거. document/window.dispatchEvent 추가.
+  (cc702b1)
+- [x] **input.checked/select.value 등 폼 상태가 undefined/""** — `if (cb.checked)` 가 늘
+  거짓. select.value 는 선택된 option 의 값(없으면 첫 option), option.value 는 value 속성
+  없으면 텍스트(HTML 표준). selectedIndex/options/불리언 속성 반사. (35fcdca)
+- [x] **insertAdjacentHTML/insertAdjacentElement 없음** → TypeError. (35fcdca)
+- [x] **window.scrollTo/scrollBy/scrollIntoView 없음** → TypeError. scrollY 는 0 고정.
+  이제 실제 스크롤 상태를 바꾸고 헤드리스 렌더도 그 위치에서 그린다. (35fcdca)
+- [x] **history.pushState/replaceState 가 no-op** — SPA 라우터가 pushState 후 읽는
+  location.pathname 이 그대로였다. 이제 상대 URL 을 결합해 location 을 갱신. (35fcdca)
+- [x] **fetch/xhr.open 이 상대 URL 을 못 씀** — fetch('/api/x') 가 Url(NoScheme) 로 실패.
+  SPA 는 거의 다 상대경로로 부른다. 문서 URL 기준으로 절대화. (35fcdca)
+- [x] **<template>.content 없음** / **DOMParser 없음**. (35fcdca)
+- [x] **display: contents 미구현** — 미지원 값이라 block 으로 떨어져 없어야 할 박스가
+  생기고, 부모가 flex/grid 여도 자식이 아이템이 되지 못했다. (31bfe54)
+- [x] **대문자 타입 선택자(`DIV SPAN`)가 아무것도 매칭 안 함** — HTML 타입 선택자는 ASCII
+  대소문자 구분이 없다(선택자 표준 §6.1). (881d199)
+
+### 남은 격차 (요행이 아니라 미구현 — 정직하게 보고 중)
+- woff/woff2 웹폰트 디코더 없음 (ttf/otf 만). 모던 사이트는 woff2 만 싣는 곳이 많다.
+- Shift_JIS/GBK/Big5 문자셋 테이블 (감지는 하고 Unsupported 로 보고).
+- GIF/WebP 이미지 디코더 (PNG/JPEG 만).
+- 타입드 배열(Uint8Array/ArrayBuffer), Intl, import.meta.
+- position: sticky (@supports 는 이제 거짓으로 보고 → 사이트가 폴백을 준다).
+- MutationObserver oldValue (attributeOldValue/characterDataOldValue).
 
 ## 저심각 (스킵 가능)
 epsilon fudge, 곡선 고정분할, accent-color, 등.
