@@ -978,7 +978,9 @@ pub struct Interp {
     // DOM 바인딩이 사용 (실행 동안만 유효한 아레나 포인터)
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
-    pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
+    // (요소, 이벤트, 리스너, 캡처 여부). 캡처 플래그가 없으면 DOM 이벤트의 3단계
+    // (캡처 → 타깃 → 버블)를 지킬 수 없다 — 캡처 리스너가 버블 순서로 늦게 불린다.
+    pub handlers: Vec<(crate::dom::NodeId, String, Value, bool)>,
     // MutationObserver 배달을 이미 예약했는가 (마이크로태스크 중복 예약 방지)
     mutation_scheduled: bool,
     // attachShadow 를 부른 요소들. 우리는 섀도 트리를 따로 두지 않고 요소 자신을
@@ -2150,19 +2152,35 @@ impl Interp {
         event: &str,
         evt: Value,
     ) -> bool {
-        let mut chain = vec![target];
-        if let Some(p) = self.dom {
-            chain.extend(unsafe { (*p).ancestors(target) });
-        }
+        // DOM 이벤트는 3단계다 (DOM 표준 §2.9): 캡처(루트→타깃 부모) → 타깃 → 버블(부모→루트).
+        // 예전엔 캡처 플래그를 버리고 타깃부터 위로 한 번만 돌아서, 캡처 리스너가
+        // 타깃보다 **늦게** 불렸다 (이벤트 위임 라이브러리가 조용히 어긋난다).
+        let ancestors: Vec<crate::dom::NodeId> = match self.dom {
+            Some(p) => unsafe { (*p).ancestors(target) },
+            None => Vec::new(),
+        };
         let evt_obj = if let Value::Obj(o) = &evt { o.clone() } else { return false };
         evt_obj.borrow_mut().insert("target".to_string(), Value::Dom(target));
+
+        // (노드, 캡처단계인가) 순서: 조상 역순(루트→부모) 캡처 → 타깃(둘 다) → 부모→루트 버블
+        let mut phases: Vec<(crate::dom::NodeId, Option<bool>)> = Vec::new();
+        for &a in ancestors.iter().rev() {
+            phases.push((a, Some(true))); // 캡처 리스너만
+        }
+        phases.push((target, None)); // 타깃: 등록 순서대로 전부
+        for &a in ancestors.iter() {
+            phases.push((a, Some(false))); // 버블 리스너만
+        }
+
         let mut fired = false;
-        for id in chain {
+        for (id, want_capture) in phases {
             let to_run: Vec<Value> = self
                 .handlers
                 .iter()
-                .filter(|(hid, t, _)| *hid == id && t == event)
-                .map(|(_, _, f)| f.clone())
+                .filter(|(hid, t, _, cap)| {
+                    *hid == id && t == event && want_capture.map_or(true, |w| *cap == w)
+                })
+                .map(|(_, _, f, _)| f.clone())
                 .collect();
             if !to_run.is_empty() {
                 fired = true;
@@ -2173,9 +2191,8 @@ impl Interp {
                     println!("[js error] {}", e);
                 }
             }
-            // stopPropagation 되면 상위로 전파 안 함
             if matches!(evt_obj.borrow().get("\u{0}stopProp"), Some(Value::Bool(true))) {
-                break;
+                break; // stopPropagation
             }
         }
         fired

@@ -1424,6 +1424,44 @@ mod tests {
     }
 
     #[test]
+    fn event_capture_runs_before_target() {
+        // DOM 이벤트는 캡처 → 타깃 → 버블 3단계다 (DOM 표준 §2.9). 예전엔 캡처 플래그를
+        // 통째로 버려서 캡처 리스너가 타깃보다 **늦게** 불렸다 (이벤트 위임이 어긋난다).
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"outer\"><button id=\"b\">x</button></div><p id=\"t\">?</p>\
+             <script>\
+             var s = '';\
+             document.getElementById('outer').addEventListener('click', function () { s += 'C' }, true);\
+             document.getElementById('b').addEventListener('click', function () { s += 'T' });\
+             document.getElementById('outer').addEventListener('click', function () { s += 'B' });\
+             document.getElementById('b').dispatchEvent(new Event('click', { bubbles: true }));\
+             document.getElementById('t').textContent = s;\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/", None);
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "CTB", "캡처 → 타깃 → 버블 순서");
+    }
+
+    #[test]
+    fn event_init_dict_becomes_properties() {
+        // init 딕셔너리의 모든 멤버가 이벤트 프로퍼티가 된다 (§2.2). 예전엔 detail/bubbles
+        // 만 베껴서 KeyboardEvent 의 key, MouseEvent 의 clientX 가 통째로 사라졌다.
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">?</p>\
+             <script>\
+             var got = '';\
+             document.addEventListener('keydown', function (e) { got = e.key + ',' + e.ctrlKey });\
+             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }));\
+             document.getElementById('t').textContent = got;\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/", None);
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "Enter,true");
+    }
+
+    #[test]
     fn nomodule_script_is_not_executed() {
         // HTML 표준 §4.12.1: nomodule 이 붙은 스크립트는 **모듈을 지원하는 브라우저에서
         // 실행하지 않는다**. 우리는 ESM 을 구현하므로 건너뛴다. 예전엔 레거시 폴리필

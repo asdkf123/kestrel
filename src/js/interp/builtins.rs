@@ -827,9 +827,17 @@ impl Interp {
                 if !is_callable(&listener) {
                     return Ok(Value::Undefined); // null/undefined 리스너는 무시 (표준)
                 }
+                // 3번째 인자: true 또는 {capture: true} (표준)
+                let capture = match args.get(2) {
+                    Some(Value::Bool(b)) => *b,
+                    Some(Value::Obj(o)) => {
+                        matches!(o.borrow().get("capture"), Some(v) if to_bool(v))
+                    }
+                    _ => false,
+                };
                 match recv {
                     Some(Value::Dom(id)) => {
-                        self.handlers.push((id, event, listener));
+                        self.handlers.push((id, event, listener, capture));
                         Ok(Value::Undefined)
                     }
                     // EventTarget 은 요소 전용이 아니다. XHR 등 객체 수신자는 리스너를
@@ -860,7 +868,7 @@ impl Interp {
                 let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
                 match recv {
                     Some(Value::Dom(id)) => {
-                        self.handlers.retain(|(hid, t, f)| {
+                        self.handlers.retain(|(hid, t, f, _)| {
                             !(*hid == id && *t == event && same_callable(f, &listener))
                         });
                     }
@@ -2412,18 +2420,35 @@ impl Interp {
                 let etype = args.first().map(to_display).unwrap_or_default();
                 let mut m = ObjMap::new();
                 m.insert("type".to_string(), Value::Str(etype));
+                // init 딕셔너리의 **모든 멤버**가 이벤트의 프로퍼티가 된다 (DOM 표준 §2.2).
+                // 예전엔 detail/bubbles 만 베껴서 KeyboardEvent 의 key, MouseEvent 의
+                // clientX/ctrlKey 같은 것이 통째로 사라졌다 — 키 핸들러가 조용히 안 먹는다.
                 let mut bubbles = false;
+                let mut cancelable = false;
                 if let Some(Value::Obj(o)) = args.get(1) {
-                    let o = o.borrow();
-                    if let Some(d) = o.get("detail") {
-                        m.insert("detail".to_string(), d.clone());
+                    let entries: Vec<(String, Value)> =
+                        o.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    for (k, v) in entries {
+                        if k == "bubbles" {
+                            bubbles = to_bool(&v);
+                            continue;
+                        }
+                        if k == "cancelable" {
+                            cancelable = to_bool(&v);
+                            continue;
+                        }
+                        m.insert(k, v);
                     }
-                    bubbles = matches!(o.get("bubbles"), Some(Value::Bool(true)));
                 }
                 m.insert("bubbles".to_string(), Value::Bool(bubbles));
+                m.insert("cancelable".to_string(), Value::Bool(cancelable));
                 m.insert("defaultPrevented".to_string(), Value::Bool(false));
                 m.insert("preventDefault".to_string(), Value::Native(Native::EventPreventDefault));
                 m.insert("stopPropagation".to_string(), Value::Native(Native::EventStopProp));
+                m.insert(
+                    "stopImmediatePropagation".to_string(),
+                    Value::Native(Native::EventStopProp),
+                );
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
             }
             Native::GetBoundingClientRect => {
