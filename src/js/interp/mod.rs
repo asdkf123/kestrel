@@ -2895,8 +2895,37 @@ impl Interp {
                             (false, Expr::Str(s)) => s.clone(),
                             _ => to_display(&self.eval(prop, env)?),
                         };
-                        if let Value::Obj(m) = &target {
-                            m.borrow_mut().remove(&key);
+                        match &target {
+                            Value::Obj(m) => {
+                                m.borrow_mut().remove(&key);
+                            }
+                            // Proxy: deleteProperty 트랩 (없으면 타깃에 위임).
+                            // 반응성 라이브러리(Vue 등)가 delete 를 이 트랩으로 잡는다.
+                            Value::Proxy(p) => {
+                                let (t, h) = (p.0.clone(), p.1.clone());
+                                let trap = self.member_get(&h, "deleteProperty")?;
+                                if is_callable(&trap) {
+                                    let res = self.call_value(
+                                        trap,
+                                        Some(h),
+                                        vec![t, Value::Str(key.clone())],
+                                    )?;
+                                    return Ok(Value::Bool(to_bool(&res)));
+                                }
+                                if let Value::Obj(m) = &t {
+                                    m.borrow_mut().remove(&key);
+                                }
+                            }
+                            Value::Arr(a) => {
+                                // 배열 요소 삭제는 구멍(undefined)을 남긴다 (길이 불변)
+                                if let Ok(i) = key.parse::<usize>() {
+                                    let mut b = a.borrow_mut();
+                                    if i < b.len() {
+                                        b[i] = Value::Undefined;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                         return Ok(Value::Bool(true));
                     }
@@ -2904,8 +2933,16 @@ impl Interp {
                 }
                 let v = self.eval(expr, env)?;
                 Ok(match op {
-                    UnOp::Neg => Value::Num(-to_num(&v)),
-                    UnOp::Pos => Value::Num(to_num(&v)),
+                    // 단항 +/- 도 객체를 원시값으로 변환해야 한다 (ToNumber → ToPrimitive).
+                    // 이항 연산만 변환하고 있어서 +obj 는 NaN 이었다.
+                    UnOp::Neg => {
+                        let p = self.to_primitive(v.clone(), false);
+                        Value::Num(-to_num(&p))
+                    }
+                    UnOp::Pos => {
+                        let p = self.to_primitive(v.clone(), false);
+                        Value::Num(to_num(&p))
+                    }
                     UnOp::Not => Value::Bool(!to_bool(&v)),
                     UnOp::Typeof => Value::Str(type_of(&v).to_string()),
                     UnOp::BitNot => Value::Num(!to_i32(&v) as f64),
@@ -3001,6 +3038,31 @@ impl Interp {
                 };
                 self.assign_to(target, new.clone(), env)?;
                 Ok(new)
+            }
+            Expr::Member { obj, prop, computed } if matches!(&**obj, Expr::Super) => {
+                // super.x (호출이 아닌 **속성 읽기**). 부모의 게터가 있으면 현재 this 로
+                // 실행하고, 없으면 부모 메서드/프로토타입 프로퍼티를 준다.
+                // 예전엔 Expr::Super 가 undefined 로 평가돼 super.x 읽기가 통째로 터졌다.
+                let key = self.member_key(prop, *computed, env)?;
+                let this = env_get(env, "this").unwrap_or(Value::Undefined);
+                let Some(sc) = env_get(env, "\u{0}superclass__") else {
+                    return Err("super.x 는 파생 클래스에서만".to_string());
+                };
+                match sc {
+                    Value::Class(p) => {
+                        if let Some(g) = p.find_getter(&key) {
+                            return self.call_value(Value::Fn(g), Some(this), vec![]);
+                        }
+                        if let Some(m) = p.find_method(&key) {
+                            return Ok(Value::Fn(m));
+                        }
+                        Ok(Value::Undefined)
+                    }
+                    other => {
+                        let proto = self.member_get(&other, "prototype")?;
+                        self.member_get(&proto, &key)
+                    }
+                }
             }
             Expr::Member { obj, prop, computed } => {
                 let recv = self.eval(obj, env)?;
@@ -4634,6 +4696,11 @@ impl Interp {
                 Some(e) => {
                     let scope = Env::new(Some(env.clone()));
                     env_declare(&scope, "this", Value::Class(cls.clone()));
+                    // 클래스 본문 안에는 클래스 이름의 내부 바인딩이 있다 (표준 §15.7.14).
+                    // static 블록/필드가 자기 클래스를 이름으로 참조할 수 있어야 한다.
+                    if let Some(n) = &def.name {
+                        env_declare(&scope, n, Value::Class(cls.clone()));
+                    }
                     self.eval(e, &scope)?
                 }
                 None => Value::Undefined,
@@ -4649,6 +4716,17 @@ impl Interp {
     fn to_primitive(&mut self, v: Value, prefer_string: bool) -> Value {
         if !matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
             return v;
+        }
+        // Symbol.toPrimitive 가 있으면 그것이 우선한다 (표준 §7.1.1).
+        if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
+            if is_callable(&f) {
+                let hint = Value::Str(if prefer_string { "string" } else { "number" }.to_string());
+                if let Ok(res) = self.call_value(f, Some(v.clone()), vec![hint]) {
+                    if !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                        return res;
+                    }
+                }
+            }
         }
         let order: [&str; 2] =
             if prefer_string { ["toString", "valueOf"] } else { ["valueOf", "toString"] };
@@ -4703,13 +4781,53 @@ impl Interp {
             BinOp::Shl => Value::Num((to_i32(&l) << (to_i32(&r) & 31)) as f64),
             BinOp::Shr => Value::Num((to_i32(&l) >> (to_i32(&r) & 31)) as f64),
             BinOp::UShr => Value::Num(((to_i32(&l) as u32) >> (to_i32(&r) & 31)) as f64),
-            BinOp::In => match &r {
-                Value::Obj(m) => Value::Bool(m.borrow().contains_key(&to_display(&l))),
-                Value::Arr(a) => Value::Bool(
-                    to_display(&l).parse::<usize>().map_or(false, |i| i < a.borrow().len()),
-                ),
-                _ => Value::Bool(false),
-            },
+            // in: 프로토타입 체인까지 본다 (표준 §13.10). Proxy 면 has 트랩.
+            BinOp::In => {
+                let key = to_display(&l);
+                match &r {
+                    Value::Proxy(p) => {
+                        let (target, handler) = (p.0.clone(), p.1.clone());
+                        let trap = self.member_get(&handler, "has")?;
+                        if is_callable(&trap) {
+                            let res = self.call_value(
+                                trap,
+                                Some(handler),
+                                vec![target, Value::Str(key)],
+                            )?;
+                            return Ok(Value::Bool(to_bool(&res)));
+                        }
+                        return self.binary(BinOp::In, l, target);
+                    }
+                    Value::Obj(m) => {
+                        let mut cur = Some(m.clone());
+                        while let Some(o) = cur {
+                            let b = o.borrow();
+                            if b.contains_key(&key) {
+                                return Ok(Value::Bool(true));
+                            }
+                            cur = match b.get("__proto__") {
+                                Some(Value::Obj(p)) => Some(p.clone()),
+                                _ => None,
+                            };
+                        }
+                        Value::Bool(false)
+                    }
+                    // 인스턴스: 필드 + 클래스 체인의 메서드/게터
+                    Value::Instance(inst) => {
+                        if inst.fields.borrow().contains_key(&key) {
+                            return Ok(Value::Bool(true));
+                        }
+                        Value::Bool(
+                            inst.class.find_method(&key).is_some()
+                                || inst.class.find_getter(&key).is_some(),
+                        )
+                    }
+                    Value::Arr(a) => Value::Bool(
+                        key.parse::<usize>().map_or(false, |i| i < a.borrow().len()),
+                    ),
+                    _ => Value::Bool(false),
+                }
+            }
             BinOp::Instanceof => {
                 // 사용자 클래스: 인스턴스의 클래스 체인에 r 이 있는가
                 if let (Value::Instance(inst), Value::Class(rc)) = (&l, &r) {
@@ -7477,6 +7595,73 @@ mod tests {
         assert_eq!(run_num("1 | 2 & 3"), 3.0);
         assert!(run_bool("1 << 2 > 3"));
         assert!(run_bool("(5 & 3) === 1 && true"));
+    }
+
+    #[test]
+    fn class_static_block_runs() {
+        // ES2022 static 초기화 블록. 예전엔 파서가 여기서 죽어 **스크립트 전체**가 날아갔다.
+        assert_eq!(run_num("class C { static x = 1; static { C.x = 4 } } C.x"), 4.0);
+    }
+
+    #[test]
+    fn super_property_read_uses_parent_getter() {
+        // super.x 는 호출이 아니라 **읽기**로도 쓴다. 예전엔 super 가 undefined 로 평가돼 터졌다.
+        assert_eq!(
+            run_num("class A { get v() { return 1 } } class B extends A { get v() { return super.v + 1 } } new B().v"),
+            2.0
+        );
+        // super.method 를 값으로 꺼내 쓰기
+        assert_eq!(
+            run_num("class A { m() { return 5 } } class B extends A { m() { return super.m.call(this) } } new B().m()"),
+            5.0
+        );
+    }
+
+    #[test]
+    fn in_operator_walks_prototype_chain() {
+        // in 은 own 프로퍼티만이 아니라 프로토타입 체인까지 본다 (§13.10)
+        assert_eq!(run_str("var o = Object.create({a:1}); ('a' in o) + ',' + ('b' in o)"), "true,false");
+        // 클래스 인스턴스: 메서드도 in 으로 보인다
+        assert_eq!(run_str("class C { m(){} } var c = new C(); String('m' in c)"), "true");
+    }
+
+    #[test]
+    fn proxy_has_delete_ownkeys_traps() {
+        // Vue 3 같은 반응성 라이브러리가 실제로 쓰는 트랩들. 없으면 조용히 틀린 답을 준다.
+        assert_eq!(run_str("var p = new Proxy({}, {has: () => true}); String('z' in p)"), "true");
+        assert_eq!(
+            run_str("var hit=false; var p=new Proxy({a:1},{deleteProperty(t,k){hit=true; delete t[k]; return true}}); delete p.a; String(hit)"),
+            "true"
+        );
+        assert_eq!(
+            run_str("var p=new Proxy({a:1},{ownKeys:()=>['a','b']}); Object.keys(p).join()"),
+            "a,b"
+        );
+    }
+
+    #[test]
+    fn to_primitive_for_unary_and_symbol() {
+        // 단항 + 도 ToPrimitive 를 거친다 (이항만 거쳐서 +obj 가 NaN 이었다)
+        assert_eq!(run_num("+{ valueOf() { return 5 } }"), 5.0);
+        assert_eq!(run_num("-{ valueOf() { return 5 } }"), -5.0);
+        // Symbol.toPrimitive 가 valueOf/toString 보다 우선
+        assert_eq!(run_num("+{ [Symbol.toPrimitive]() { return 42 }, valueOf() { return 1 } }"), 42.0);
+    }
+
+    #[test]
+    fn json_stringify_replacer_and_indent() {
+        // replacer 배열 = 키 필터
+        assert_eq!(run_str("JSON.stringify({a:1,b:2}, ['a'])"), "{\"a\":1}");
+        // replacer 함수 = 값 변환
+        assert_eq!(
+            run_str("JSON.stringify({a:1}, (k,v) => typeof v === 'number' ? v * 2 : v)"),
+            "{\"a\":2}"
+        );
+        // space = 들여쓰기 (JSON.stringify(o, null, 2) 는 아주 흔하다)
+        assert_eq!(run_str("JSON.stringify({a:1}, null, 2)"), "{\n  \"a\": 1\n}");
+        assert_eq!(run_str("JSON.stringify([1,2], null, 1)"), "[\n 1,\n 2\n]");
+        // 들여쓰기 없으면 예전 그대로 한 줄
+        assert_eq!(run_str("JSON.stringify({a:[1,{b:2}]})"), "{\"a\":[1,{\"b\":2}]}");
     }
 
     #[test]

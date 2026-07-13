@@ -1411,6 +1411,25 @@ impl Parser {
                 continue; // 멤버 사이 세미콜론 허용
             }
             let is_static = self.eat(&Tok::Static);
+            // static 초기화 블록 (ES2022): `static { ... }`. 예전엔 여기서 파서가 죽어서
+            // **스크립트 전체**가 실행되지 않았다. this 가 클래스인 즉시실행 화살표로
+            // desugar 해서 static 필드와 같은 순서로 실행한다.
+            if is_static && self.peek() == Some(&Tok::LBrace) {
+                let body = self.block()?;
+                let f = Expr::Func {
+                    name: None,
+                    params: Vec::new(),
+                    body,
+                    is_arrow: true, // this 를 렉시컬 캡처 → 정적 초기화 스코프의 this = 클래스
+                    is_generator: false,
+                    is_async: false,
+                };
+                static_fields.push((
+                    format!("\u{0}staticblock:{}", static_fields.len()),
+                    Some(Expr::Call { callee: Box::new(f), args: Vec::new() }),
+                ));
+                continue;
+            }
             // async 메서드: async 뒤가 메서드 이름/`*` 이면 비동기 표시.
             let is_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
                 && matches!(

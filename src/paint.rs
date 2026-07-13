@@ -2693,10 +2693,7 @@ fn blit_image(
     if iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0 {
         return;
     }
-    // background-position 오프셋(px, rect 좌상단 기준). Natural/Tile 에만 적용.
-    let (tw0, th0) = (iw * scale, ih * scale);
-    let off_x = pos.map_or(0.0, |(px, _)| px.resolve(rect.width, tw0));
-    let off_y = pos.map_or(0.0, |(_, py)| py.resolve(rect.height, th0));
+    // background-position 오프셋은 타일/단일 경로가 각자 실제 그림 크기 기준으로 푼다.
     // 타일링(background-repeat) + background-size. 타일 한 장의 크기를 먼저 정하고,
     // 축별 반복 여부에 따라 rect 안을 채운다 (반복 안 하는 축은 한 장만 그리고 클립).
     if matches!(fit, ImageFit::Tile | ImageFit::TileX | ImageFit::TileY | ImageFit::Sized { .. }) {

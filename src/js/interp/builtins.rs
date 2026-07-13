@@ -260,6 +260,169 @@ fn is_fragment(dom: &crate::dom::Dom, id: crate::dom::NodeId) -> bool {
 }
 
 impl Interp {
+    // JSON.stringify 의 재귀 직렬화 (표준 §25.5.2). toJSON → replacer 함수 → 직렬화 순서.
+    // replacer 배열이면 객체 키를 그 목록으로 거른다. indent 가 있으면 표준 들여쓰기.
+    #[allow(clippy::too_many_arguments)]
+    fn json_ser(
+        &mut self,
+        v: &Value,
+        key: &str,
+        holder: &Value,
+        fnrep: &Option<Value>,
+        keys: &Option<Vec<String>>,
+        indent: &str,
+        depth: usize,
+        path: &mut Vec<usize>,
+    ) -> Result<Option<String>, String> {
+        // 1) toJSON(key) 가 있으면 그 반환값을 직렬화한다 (Date 등).
+        let mut v = v.clone();
+        if matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+            let tj = self.member_get(&v, "toJSON").unwrap_or(Value::Undefined);
+            if matches!(tj, Value::Fn(_) | Value::Native(_) | Value::Bound(_)) {
+                v = self.call_value(tj, Some(v.clone()), vec![Value::Str(key.to_string())])?;
+            }
+        }
+        // 2) replacer 함수는 모든 (키, 값) 쌍에 적용된다 (루트는 키 "").
+        if let Some(f) = fnrep {
+            v = self.call_value(
+                f.clone(),
+                Some(holder.clone()),
+                vec![Value::Str(key.to_string()), v.clone()],
+            )?;
+        }
+        // 3) 순환 검사 (신원 기반 — 깊이 가드로는 자기참조 다중 분기를 못 막는다)
+        let ident: Option<usize> = match &v {
+            Value::Obj(m) => Some(Rc::as_ptr(m) as usize),
+            Value::Arr(a) => Some(Rc::as_ptr(a) as usize),
+            Value::Instance(i) => Some(Rc::as_ptr(i) as usize),
+            _ => None,
+        };
+        if let Some(id) = ident {
+            if path.contains(&id) {
+                return Err(JSON_CYCLE_MSG.to_string());
+            }
+            path.push(id);
+        }
+        let out = self.json_ser_body(&v, fnrep, keys, indent, depth, path);
+        if ident.is_some() {
+            path.pop();
+        }
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn json_ser_body(
+        &mut self,
+        v: &Value,
+        fnrep: &Option<Value>,
+        keys: &Option<Vec<String>>,
+        indent: &str,
+        depth: usize,
+        path: &mut Vec<usize>,
+    ) -> Result<Option<String>, String> {
+        // 들여쓰기 조각: 여는 괄호 뒤 개행 + (depth+1) 단, 닫는 괄호 앞 개행 + depth 단.
+        let (nl, pad_in, pad_out, colon) = if indent.is_empty() {
+            (String::new(), String::new(), String::new(), ":".to_string())
+        } else {
+            (
+                "\n".to_string(),
+                indent.repeat(depth + 1),
+                indent.repeat(depth),
+                ": ".to_string(),
+            )
+        };
+        let wrap = |parts: Vec<String>, open: char, close: char| -> String {
+            if parts.is_empty() {
+                return format!("{}{}", open, close);
+            }
+            format!(
+                "{}{}{}{}{}{}{}",
+                open,
+                nl,
+                pad_in,
+                parts.join(&format!(",{}{}", nl, pad_in)),
+                nl,
+                pad_out,
+                close
+            )
+        };
+        Ok(match v {
+            Value::Undefined
+            | Value::Fn(_)
+            | Value::Native(_)
+            | Value::Dom(_)
+            | Value::Class(_)
+            | Value::Bound(_)
+            | Value::Accessor(_)
+            | Value::MapVal(_)
+            | Value::SetVal(_)
+            | Value::Style(_)
+            | Value::ClassList(_)
+            | Value::Proxy(_)
+            | Value::Gen(_)
+            | Value::Symbol(_)
+            | Value::ComputedStyle(_) => None,
+            Value::Null => Some("null".to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            Value::Num(n) => Some(json_num(*n)),
+            Value::Str(s) => Some(json_quote_pub(s)),
+            Value::Arr(a) => {
+                let items = a.borrow().clone();
+                let mut parts = Vec::with_capacity(items.len());
+                for (i, item) in items.iter().enumerate() {
+                    let s = self
+                        .json_ser(item, &i.to_string(), v, fnrep, keys, indent, depth + 1, path)?
+                        .unwrap_or_else(|| "null".to_string()); // 배열의 직렬화 불가 항목은 null
+                    parts.push(s);
+                }
+                Some(wrap(parts, '[', ']'))
+            }
+            // Date 는 toJSON 규약대로 ISO 문자열 (내부 마커 노출 아님)
+            Value::Obj(map) if json_is_date(map) => Some(
+                json_date_iso(map).map(|s| json_quote_pub(&s)).unwrap_or_else(|| "null".to_string()),
+            ),
+            Value::Obj(map) => {
+                let entries: Vec<(String, Value)> = map
+                    .borrow()
+                    .iter()
+                    .filter(|(k, _)| !json_is_internal(k))
+                    .map(|(k, val)| (k.clone(), val.clone()))
+                    .collect();
+                let mut parts = Vec::new();
+                for (k, val) in &entries {
+                    if let Some(ks) = keys {
+                        if !ks.contains(k) {
+                            continue; // replacer 배열에 없는 키는 제외
+                        }
+                    }
+                    if let Some(s) = self.json_ser(val, k, v, fnrep, keys, indent, depth + 1, path)? {
+                        parts.push(format!("{}{}{}", json_quote_pub(k), colon, s));
+                    }
+                }
+                Some(wrap(parts, '{', '}'))
+            }
+            Value::Instance(inst) => {
+                let m = inst.fields.borrow().clone();
+                let mut ks: Vec<&String> = m.keys().collect();
+                ks.sort();
+                let mut parts = Vec::new();
+                for k in ks {
+                    if let Some(list) = keys {
+                        if !list.contains(k) {
+                            continue;
+                        }
+                    }
+                    if let Some(s) =
+                        self.json_ser(&m[k], k, v, fnrep, keys, indent, depth + 1, path)?
+                    {
+                        parts.push(format!("{}{}{}", json_quote_pub(k), colon, s));
+                    }
+                }
+                Some(wrap(parts, '{', '}'))
+            }
+        })
+    }
+
     // canvas 2D 컨텍스트 메서드 처리. recv=컨텍스트 객체. ops 를 canvas_cmds 에 쌓는다.
     fn canvas_method(
         &mut self,
@@ -2806,16 +2969,38 @@ impl Interp {
                 json_parse(&src)
             }
             // 순환 구조면 TypeError 를 던진다(표준). 조용히 폭발/무한재귀하지 않는다.
-            Native::JsonStringify => match json_stringify(args.first().unwrap_or(&Value::Undefined)) {
-                Ok(s) => Ok(s.map(Value::Str).unwrap_or(Value::Undefined)),
-                Err(msg) => {
-                    let mut e = ObjMap::new();
-                    e.insert("name".to_string(), Value::Str("TypeError".to_string()));
-                    e.insert("message".to_string(), Value::Str(msg.clone()));
-                    self.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
-                    Err(msg)
+            // replacer(배열/함수)와 space(들여쓰기)도 표준대로 처리한다 — 예전엔 둘 다
+            // 조용히 무시해서 JSON.stringify(o, null, 2) 가 한 줄로 나왔다.
+            Native::JsonStringify => {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let indent = match args.get(2) {
+                    Some(Value::Num(n)) if *n >= 1.0 => " ".repeat((*n as usize).min(10)),
+                    Some(Value::Str(s)) => s.chars().take(10).collect(),
+                    _ => String::new(),
+                };
+                let keys: Option<Vec<String>> = match &replacer {
+                    Value::Arr(a) => Some(a.borrow().iter().map(to_display).collect()),
+                    _ => None,
+                };
+                let fnrep = if matches!(replacer, Value::Fn(_) | Value::Native(_) | Value::Bound(_)) {
+                    Some(replacer.clone())
+                } else {
+                    None
+                };
+                let mut path = Vec::new();
+                let holder = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
+                match self.json_ser(&v, "", &holder, &fnrep, &keys, &indent, 0, &mut path) {
+                    Ok(s) => Ok(s.map(Value::Str).unwrap_or(Value::Undefined)),
+                    Err(msg) => {
+                        let mut e = ObjMap::new();
+                        e.insert("name".to_string(), Value::Str("TypeError".to_string()));
+                        e.insert("message".to_string(), Value::Str(msg.clone()));
+                        self.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
+                        Err(msg)
+                    }
                 }
-            },
+            }
             Native::ParseInt => {
                 let s = args.first().map(to_display).unwrap_or_default();
                 let t = s.trim();
@@ -3037,6 +3222,17 @@ impl Interp {
             }
             Native::Noop => Ok(Value::Undefined),
             Native::ObjectKeys => match args.first() {
+                // Proxy: ownKeys 트랩 (없으면 타깃 위임). Object.keys(proxy) 가 빈 배열을
+                // 돌려주던 문제 — 반응성 프록시의 키 열거가 통째로 안 됐다.
+                Some(Value::Proxy(p)) => {
+                    let (t, h) = (p.0.clone(), p.1.clone());
+                    let trap = self.member_get(&h, "ownKeys")?;
+                    if is_callable(&trap) {
+                        let res = self.call_value(trap, Some(h), vec![t])?;
+                        return Ok(res);
+                    }
+                    self.call_native(Native::ObjectKeys, None, vec![t])
+                }
                 Some(Value::Obj(m)) => {
                     let keys: Vec<Value> = m
                         .borrow()

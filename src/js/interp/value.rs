@@ -818,6 +818,46 @@ pub(super) fn json_stringify(v: &Value) -> Result<Option<String>, String> {
     json_stringify_d(v, &mut path)
 }
 
+// JSON.stringify(v, replacer, space) 의 replacer/space 처리 (표준 §25.5.2).
+// replacer: 키 배열이면 그 키만, 함수면 (key, value) 로 변환. space: 들여쓰기.
+// 값 변환에 JS 함수 호출이 필요하므로 인터프리터가 있는 쪽(builtins)에서 부른다.
+pub(super) struct JsonOpts {
+    pub keys: Option<Vec<String>>, // replacer 배열
+    pub indent: String,
+}
+
+pub(super) fn json_quote_pub(s: &str) -> String {
+    json_quote(s)
+}
+
+pub(super) fn json_num(n: f64) -> String {
+    if n.is_finite() {
+        num_to_str(n)
+    } else {
+        "null".to_string()
+    }
+}
+
+pub(super) fn json_is_internal(k: &str) -> bool {
+    is_internal_key(k)
+}
+
+pub(super) fn json_is_date(map: &Rc<RefCell<ObjMap>>) -> bool {
+    is_date_obj(map)
+}
+
+pub(super) fn json_date_iso(map: &Rc<RefCell<ObjMap>>) -> Option<String> {
+    let millis = match map.borrow().get("\u{0}time") {
+        Some(Value::Num(n)) => *n,
+        _ => 0.0,
+    };
+    if millis.is_finite() {
+        Some(date_iso(millis))
+    } else {
+        None
+    }
+}
+
 pub(super) const JSON_CYCLE_MSG: &str = "순환 구조는 JSON 으로 직렬화할 수 없음";
 
 // 순환 참조 탐지: 현재 경로에 있는 객체 신원(Rc 포인터)을 추적한다.
