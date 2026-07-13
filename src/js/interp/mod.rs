@@ -1020,6 +1020,8 @@ pub struct Interp {
     base_url: Option<String>,
     // ES 모듈: 절대 URL → 소스 (호스트가 미리 받아 넣는다. 인터프리터는 네트워크를 모른다)
     pub module_sources: HashMap<String, String>,
+    // 임포트 맵 (베어 명세자 → URL). 긴 키 우선으로 정렬돼 들어온다.
+    pub import_map: Vec<(String, String)>,
     // 절대 URL → 네임스페이스 객체 (평가 완료/진행 중). 순환 의존은 부분 채워진 채로 공유한다.
     module_namespaces: HashMap<String, Value>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
@@ -1636,6 +1638,7 @@ impl Interp {
             regexp_proto,
             base_url: None,
             module_sources: HashMap::new(),
+            import_map: Vec::new(),
             module_namespaces: HashMap::new(),
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
@@ -3624,9 +3627,36 @@ impl Interp {
 
     // 모듈 명세자 → 절대 URL (importer 기준). 베어 명세자('react')는 지원하지 않는다 —
     // 임포트 맵/노드 해석이 필요하고, 조용히 틀린 URL 을 만들면 더 나쁘다.
+    // 임포트 맵으로 베어 명세자를 해석한다. 맵에 없거나 상대 경로면 None.
+    pub fn map_specifier(&self, spec: &str) -> Option<String> {
+        if spec.starts_with("./") || spec.starts_with("../") || spec.starts_with('/') {
+            return None;
+        }
+        for (key, target) in &self.import_map {
+            if key.ends_with('/') {
+                if let Some(rest) = spec.strip_prefix(key.as_str()) {
+                    return Some(format!("{}{}", target, rest));
+                }
+            } else if spec == key {
+                return Some(target.clone());
+            }
+        }
+        None
+    }
+
     fn resolve_module(&self, importer: &str, spec: &str) -> String {
         if spec.starts_with("http://") || spec.starts_with("https://") {
             return spec.to_string();
+        }
+        // 임포트 맵: 베어 명세자("react", "lib/x.js")를 URL 로 해석 (HTML §4.12.5)
+        if let Some(mapped) = self.map_specifier(spec) {
+            if mapped.starts_with("http") {
+                return mapped;
+            }
+            return match crate::url::Url::parse(importer).ok().and_then(|u| u.join(&mapped)) {
+                Some(u) => u.as_string(),
+                None => mapped,
+            };
         }
         match crate::url::Url::parse(importer).ok().and_then(|u| u.join(spec)) {
             Some(u) => u.as_string(),
@@ -6975,6 +7005,29 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn import_map_resolves_bare_specifiers() {
+        // <script type="importmap"> 은 베어 명세자를 URL 로 해석하는 표준 메커니즘이다
+        // (HTML §4.12.5). 없으면 import "react" 는 해석 불가로 실패한다.
+        let mut it = Interp::new();
+        it.import_map = vec![
+            ("pkg/".to_string(), "https://x.test/js/".to_string()),
+            ("mylib".to_string(), "https://x.test/lib.js".to_string()),
+        ];
+        assert_eq!(
+            it.map_specifier("mylib").as_deref(),
+            Some("https://x.test/lib.js"),
+            "정확 매핑"
+        );
+        assert_eq!(
+            it.map_specifier("pkg/deep/a.js").as_deref(),
+            Some("https://x.test/js/deep/a.js"),
+            "접두 매핑"
+        );
+        assert_eq!(it.map_specifier("./rel.js"), None, "상대 경로는 맵 대상이 아니다");
+        assert_eq!(it.map_specifier("unknown"), None, "맵에 없으면 None (지어내지 않는다)");
     }
 
     #[test]

@@ -102,7 +102,17 @@ impl Interp {
         let mut pairs = style_pairs(&attr);
         pairs.retain(|(k, _)| k != prop);
         if !value.trim().is_empty() {
-            pairs.push((prop.to_string(), value.trim().to_string()));
+            // CSSOM 은 값을 **정규 형태**로 직렬화한다 (CSSOM §6.7.2):
+            // el.style.color = "rgb(9,9,9)" 를 읽으면 "rgb(9, 9, 9)" 가 나와야 한다.
+            // 예전엔 원문을 그대로 저장해서, 값을 되읽어 비교하는 코드가 조용히 틀렸다.
+            // 파싱에 실패하면(우리가 모르는 값) 원문을 보존한다 — 지어내지 않는다.
+            let decls = crate::css::parse_inline_style(&format!("{}: {}", prop, value.trim()));
+            let canonical = decls
+                .iter()
+                .find(|d| d.name == prop)
+                .map(|d| crate::style::computed_value_string(&d.value));
+            let text = canonical.unwrap_or_else(|| value.trim().to_string());
+            pairs.push((prop.to_string(), text));
         }
         let s = style_serialize(&pairs);
         self.set_style_attr(id, s);

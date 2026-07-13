@@ -44,6 +44,11 @@ pub fn run_scripts_with_base(
     // (예전엔 여기서 일찍 반환해 모듈이 통째로 안 돌았다).
     let mut modules: Vec<(String, Option<String>)> = Vec::new();
     collect_modules(dom, dom.root, base.as_ref(), &mut modules);
+    // 임포트 맵 (<script type="importmap">): 베어 명세자("react")를 URL 로 해석하는
+    // **표준 메커니즘**이다 (HTML §4.12.5). 없으면 베어 명세자는 해석 불가로 실패한다.
+    let mut import_map: Vec<(String, String)> = Vec::new();
+    collect_import_map(dom, dom.root, base.as_ref(), &mut import_map);
+    it.import_map = import_map;
     if sources.is_empty() && modules.is_empty() {
         return it;
     }
@@ -113,6 +118,100 @@ pub fn run_scripts_with_base(
 const MAX_EXTERNAL_SCRIPTS: usize = 30;
 
 // <script type="module"> 수집: (모듈 URL, 소스). 인라인 모듈은 합성 URL 을 준다.
+// <script type="importmap">{"imports": {"react": "https://...", "lib/": "/lib/"}}</script>
+// 접두 매핑(끝이 /)과 정확 매핑 둘 다 지원한다. 긴 키가 우선한다 (표준).
+fn collect_import_map(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    base: Option<&crate::url::Url>,
+    out: &mut Vec<(String, String)>,
+) {
+    let node = dom.get(id);
+    if let crate::dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "script"
+            && e.attributes.get("type").map(|s| s.trim().to_ascii_lowercase()).as_deref()
+                == Some("importmap")
+        {
+            let text = dom.text_content(id);
+            for (spec, target) in parse_import_map(&text) {
+                // 상대 URL 은 문서 기준 절대화
+                let abs = match base {
+                    Some(b) => b.join(&target).map(|u| u.as_string()).unwrap_or(target.clone()),
+                    None => target.clone(),
+                };
+                out.push((spec, abs));
+            }
+            // 긴 키가 먼저 매칭돼야 한다 (표준: 가장 긴 접두 우선)
+            out.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+            return;
+        }
+    }
+    for &c in &node.children {
+        collect_import_map(dom, c, base, out);
+    }
+}
+
+// {"imports": {"a": "b", ...}} 의 imports 객체만 읽는다 (scopes 는 미지원 — 흔치 않다).
+fn parse_import_map(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Some(i) = text.find("\"imports\"") else { return out };
+    let rest = &text[i..];
+    let Some(open) = rest.find('{') else { return out };
+    let mut depth = 0usize;
+    let mut end = open;
+    for (k, ch) in rest[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + k;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &rest[open + 1..end];
+    // "키": "값" 쌍을 순서대로 뽑는다
+    let mut chars = body.char_indices().peekable();
+    let mut strs: Vec<String> = Vec::new();
+    while let Some((k, ch)) = chars.next() {
+        if ch != '"' {
+            continue;
+        }
+        let mut s = String::new();
+        let mut j = k + 1;
+        let bytes: Vec<char> = body.chars().collect();
+        let start_idx = body[..k].chars().count() + 1;
+        let mut idx = start_idx;
+        while idx < bytes.len() && bytes[idx] != '"' {
+            s.push(bytes[idx]);
+            idx += 1;
+        }
+        strs.push(s);
+        // 소비한 만큼 건너뛰기
+        j = body
+            .char_indices()
+            .nth(idx + 1)
+            .map(|(b, _)| b)
+            .unwrap_or(body.len());
+        while let Some(&(b, _)) = chars.peek() {
+            if b < j {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+    for pair in strs.chunks(2) {
+        if pair.len() == 2 {
+            out.push((pair[0].clone(), pair[1].clone()));
+        }
+    }
+    out
+}
+
 fn collect_modules(
     dom: &crate::dom::Dom,
     id: crate::dom::NodeId,
@@ -221,9 +320,21 @@ fn load_module_graph(it: &mut interp::Interp, url: &str, inline: Option<String>,
 
     let base = crate::url::Url::parse(url).ok();
     for d in deps {
-        // 베어 명세자('react')는 임포트 맵이 필요하다 — 조용히 틀린 URL 을 만들지 않는다.
-        if !d.starts_with('.') && !d.starts_with('/') && !d.starts_with("http") {
-            println!("[module] 베어 명세자 미지원 (임포트 맵 필요): {}", d);
+        // 베어 명세자('react')는 임포트 맵으로 해석한다 (HTML §4.12.5).
+        // 맵에 없으면 조용히 틀린 URL 을 만들지 않고 정직하게 알린다.
+        let mapped = it.map_specifier(&d);
+        let d = match mapped {
+            Some(m) => m,
+            None => {
+                if !d.starts_with('.') && !d.starts_with('/') && !d.starts_with("http") {
+                    println!("[module] 베어 명세자를 임포트 맵에서 못 찾음: {}", d);
+                    continue;
+                }
+                d
+            }
+        };
+        if d.starts_with("http") {
+            load_module_graph(it, &d, None, depth + 1);
             continue;
         }
         let Some(abs) = base.as_ref().and_then(|b| b.join(&d)) else { continue };
@@ -457,6 +568,23 @@ var ResizeObserver = window.ResizeObserver; if (!ResizeObserver) { ResizeObserve
 var PerformanceObserver = window.PerformanceObserver; if (!PerformanceObserver) { PerformanceObserver = __kObs; window.PerformanceObserver = PerformanceObserver; }
 // matchMedia 는 엔진이 CSS @media 와 같은 평가기로 제공(Native). 스텁 불필요.
 window.matchMedia = matchMedia;
+
+// getSelection: 정적 렌더에는 사용자 선택이 없다 → 항상 빈 Selection.
+// 없으면 typeof 검사 후 .toString() 을 부르는 코드가 죽는다. 빈 선택은 거짓말이 아니다.
+window.getSelection = function () {
+  return {
+    rangeCount: 0,
+    isCollapsed: true,
+    anchorNode: null,
+    focusNode: null,
+    type: "None",
+    toString() { return ""; },
+    removeAllRanges() {},
+    addRange() {},
+    getRangeAt() { throw new Error("IndexSizeError: 선택 범위 없음"); },
+  };
+};
+document.getSelection = window.getSelection;
 if (!window.requestIdleCallback) window.requestIdleCallback = function(cb){ return setTimeout(function(){ cb({ didTimeout: false, timeRemaining: function(){ return 0; } }); }, 1); };
 var requestIdleCallback = window.requestIdleCallback;
 if (!window.cancelIdleCallback) window.cancelIdleCallback = function(id){ clearTimeout(id); };
