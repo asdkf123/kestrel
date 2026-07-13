@@ -899,10 +899,33 @@ pub enum CanvasOp {
     FillText { text: String, x: f32, y: f32, color: crate::css::Color, px: f32 },
 }
 
+// 호출식에서 사람이 읽을 프레임 이름을 뽑는다: f(), o.m(), o[k](), (expr)()
+fn callee_label(e: &Expr) -> String {
+    match e {
+        Expr::Ident(n) => n.clone(),
+        Expr::Member { obj, prop, computed } => {
+            let base = callee_label(obj);
+            match (computed, prop.as_ref()) {
+                (false, Expr::Str(p)) => format!("{}.{}", base, p),
+                _ => format!("{}[…]", base),
+            }
+        }
+        Expr::Call { callee, .. } => format!("{}()", callee_label(callee)),
+        Expr::Func { name: Some(n), .. } => n.clone(),
+        _ => "<anonymous>".to_string(),
+    }
+}
+
 pub struct Interp {
     pub global: EnvRef,
     pub console: Vec<String>, // console.log 캡처 (호출측이 터미널에 출력)
     steps: u64,
+    // JS 호출 스택 (호출식에서 뽑은 이름). 오류 메시지에 "어디서" 를 붙인다.
+    // 스택이 없으면 진단이 사실상 불가능하다.
+    js_stack: Vec<String>,
+    // 오류가 **처음 던져진 시점**의 스택. 호출 경계를 빠져나오며 프레임이 pop 되므로
+    // 맨 위에서 읽으면 이미 비어 있다. 가장 안쪽 프레임에서 한 번만 스냅샷한다.
+    err_stack: Option<Vec<String>>,
     // DOM 바인딩이 사용 (실행 동안만 유효한 아레나 포인터)
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
@@ -1541,6 +1564,8 @@ impl Interp {
             global,
             console: Vec::new(),
             steps: 0,
+            js_stack: Vec::new(),
+            err_stack: None,
             dom: None,
             handlers: Vec::new(),
             mutation_scheduled: false,
@@ -2244,13 +2269,29 @@ impl Interp {
 
     pub fn run(&mut self, src: &str) -> Result<Value, String> {
         self.steps = 0; // 실행 단위(스크립트/핸들러)마다 한도 리셋
+        self.js_stack.clear();
+        self.err_stack = None;
         let program = parse(src)?;
         let env = self.global.clone();
         hoist_vars(&program, &env); // var 하이스팅 (전역)
-        match self.exec_block(&program, &env)? {
-            Flow::Normal(v) | Flow::Return(v) => Ok(v),
-            _ => Ok(Value::Undefined),
+        let r = match self.exec_block(&program, &env) {
+            Ok(Flow::Normal(v)) | Ok(Flow::Return(v)) => Ok(v),
+            Ok(_) => Ok(Value::Undefined),
+            // 오류엔 호출 스택을 붙인다 — "어디서" 없이는 진단이 불가능하다.
+            Err(e) => Err(self.with_stack(e)),
+        };
+        self.js_stack.clear();
+        r
+    }
+
+    // 오류 메시지 뒤에 호출 스택(안쪽부터)을 붙인다. 이미 붙어 있으면 그대로.
+    pub(crate) fn with_stack(&mut self, e: String) -> String {
+        let stack = self.err_stack.take().unwrap_or_else(|| self.js_stack.clone());
+        if stack.is_empty() || e.contains(" @ ") {
+            return e;
         }
+        let frames: Vec<String> = stack.iter().rev().take(6).cloned().collect();
+        format!("{} @ {}", e, frames.join(" ← "))
     }
 
     // 구조분해 바인딩: 패턴을 재귀적으로 풀어 값을 선언. 값이 undefined 면 기본값 사용.
@@ -2553,6 +2594,8 @@ impl Interp {
                     // 스텝 한도 초과는 잡을 수 없음 (가드 무력화 방지)
                     if !e.starts_with(STEP_LIMIT_MSG) {
                         if let Some((param, cbody)) = catch {
+                            // 잡힌 오류의 스택 스냅샷은 버린다 (다음 오류가 자기 스택을 갖도록)
+                            self.err_stack = None;
                             // throw 된 값이 있으면 그 값, 네이티브 에러면 메시지 문자열
                             let caught =
                                 self.thrown.take().unwrap_or(Value::Str(e.clone()));
@@ -3108,120 +3151,18 @@ impl Interp {
                 self.call_value(f, None, arg_vals)
             }
             Expr::Call { callee, args } => {
-                let mut arg_vals = Vec::new();
-                // super(...) — 부모 생성자를 현재 this 로 실행
-                if matches!(&**callee, Expr::Super) {
-                    arg_vals.extend(self.eval_args(args, env)?);
-                    let (Some(sc), Some(this)) =
-                        (env_get(env, "\u{0}superclass__"), env_get(env, "this"))
-                    else {
-                        return Err("super() 는 파생 클래스 생성자에서만".to_string());
-                    };
-                    match sc {
-                        Value::Class(parent) => {
-                            if let Some(obj) = self.run_constructor(&parent, &this, arg_vals)? {
-                                env_set(env, "this", obj);
-                            }
-                        }
-                        // 클래스가 아닌 생성자(함수/Error 등) 확장.
-                        // 표준: 파생 클래스의 this 는 super() 가 반환한 객체다.
-                        // 예전엔 그 객체의 own 프로퍼티만 this 로 복사했다 — 겉보기엔
-                        // 비슷해 보이지만 진짜 대상이 아니다. 커스텀 엘리먼트에서
-                        // HTMLElement 가 DOM 노드를 돌려줘도 this 는 여전히 빈 인스턴스라
-                        // this.innerHTML 이 아무 데도 안 그린다.
-                        other => {
-                            let produced = self.construct(other, arg_vals)?;
-                            if is_object(&produced) {
-                                env_set(env, "this", produced);
-                            } else {
-                                for (k, v) in builtins::own_enumerable_entries(&produced) {
-                                    self.set_own_property(&this, k, v);
-                                }
-                            }
-                        }
-                    }
-                    return Ok(Value::Undefined);
+                // 호출 스택 프레임 (오류 위치 보고용). 호출식에서 이름을 뽑아 쌓는다.
+                self.js_stack.push(callee_label(callee));
+                if self.js_stack.len() > 400 {
+                    self.js_stack.pop();
+                    return Err("호출 스택 초과".to_string());
                 }
-                // super.method(...) — 부모 메서드를 현재 this 로 실행
-                if let Expr::Member { obj, prop, computed } = &**callee {
-                    if matches!(&**obj, Expr::Super) {
-                        let key = self.member_key(prop, *computed, env)?;
-                        let (Some(sc), Some(this)) =
-                            (env_get(env, "\u{0}superclass__"), env_get(env, "this"))
-                        else {
-                            return Err("super.x 는 파생 클래스에서만".to_string());
-                        };
-                        // 부모가 클래스가 아니면 그 prototype 에서 메서드를 찾는다.
-                        let parent = match sc {
-                            Value::Class(p) => p,
-                            other => {
-                                let proto = self.member_get(&other, "prototype")?;
-                                let m = self.member_get(&proto, &key)?;
-                                arg_vals.extend(self.eval_args(args, env)?);
-                                return self.call_value(m, Some(this), arg_vals);
-                            }
-                        };
-                        let m = parent
-                            .find_method(&key)
-                            .ok_or_else(|| format!("부모에 메서드 {} 없음", key))?;
-                        arg_vals.extend(self.eval_args(args, env)?);
-                        return self.call_value(Value::Fn(m), Some(this), arg_vals);
-                    }
-                    let recv = self.eval(obj, env)?;
-                    let key = self.member_key(prop, *computed, env)?;
-                    if matches!(recv, Value::Undefined | Value::Null) {
-                        if self.lenient {
-                            *self.lenient_hits.entry(format!(".{}()", key)).or_default() += 1;
-                            for a in args {
-                                self.eval(a, env)?; // 부수효과 보존
-                            }
-                            return Ok(Value::Undefined);
-                        }
-                        return Err(format!(
-                            "{}.{}(…) — {} 이(가) {}",
-                            obj_hint(obj),
-                            key,
-                            obj_hint(obj),
-                            to_display(&recv)
-                        ));
-                    }
-                    let f = self.member_get(&recv, &key)?;
-                    arg_vals.extend(self.eval_args(args, env)?);
-                    if !is_callable(&f) {
-                        if self.lenient {
-                            *self.lenient_hits.entry(format!("{}() 비함수", key)).or_default() += 1;
-                            return Ok(Value::Undefined);
-                        }
-                        return Err(format!(
-                            "{}(…) — {}.{} 이(가) {} (함수 아님, 수신자={})",
-                            key,
-                            obj_hint(obj),
-                            key,
-                            to_display(&f),
-                            type_of(&recv)
-                        ));
-                    }
-                    self.call_value(f, Some(recv), arg_vals)
-                } else {
-                    let f = self.eval(callee, env)?;
-                    arg_vals.extend(self.eval_args(args, env)?);
-                    // Object(x) — 전역 Object 네임스페이스를 함수로 호출 = 객체 강제변환.
-                    // core-js/프레임워크가 Object(this) 로 this 를 객체화하는 흔한 패턴.
-                    if let Some(v) = self.coerce_object_call(&f, &arg_vals) {
-                        return Ok(v);
-                    }
-                    if !is_callable(&f) {
-                        if self.lenient {
-                            let name =
-                                if let Expr::Ident(n) = &**callee { n.as_str() } else { "?" };
-                            *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
-                            return Ok(Value::Undefined);
-                        }
-                        let name = if let Expr::Ident(n) = &**callee { n.as_str() } else { "?" };
-                        return Err(format!("{}(…) — {} 이(가) {} (함수 아님)", name, name, to_display(&f)));
-                    }
-                    self.call_value(f, None, arg_vals)
+                let r = self.eval_call(callee, args, env);
+                if r.is_err() && self.err_stack.is_none() {
+                    self.err_stack = Some(self.js_stack.clone()); // 던진 시점 스냅샷
                 }
+                self.js_stack.pop();
+                r
             }
         }
     }
@@ -3389,6 +3330,15 @@ impl Interp {
     //    현재 값을 읽는 게터다. 값 스냅샷으로 흉내내면 나중에 바뀌는 값이 안 보인다.
     //  - 순환 의존은 부분 채워진 네임스페이스를 공유해 무한 재귀를 피한다.
     pub fn run_module(&mut self, url: &str) -> Result<Value, String> {
+        let depth = self.js_stack.len();
+        let r = self.run_module_inner(url);
+        // 모듈 평가 중 난 오류에도 호출 스택을 붙인다.
+        let r = r.map_err(|e| self.with_stack(e));
+        self.js_stack.truncate(depth);
+        r
+    }
+
+    fn run_module_inner(&mut self, url: &str) -> Result<Value, String> {
         if let Some(ns) = self.module_namespaces.get(url) {
             return Ok(ns.clone());
         }
@@ -3408,7 +3358,7 @@ impl Interp {
         for st in &body {
             let Stmt::Import { specs, source } = st else { continue };
             let dep = self.resolve_module(url, source);
-            let dep_ns = self.run_module(&dep)?;
+            let dep_ns = self.run_module_inner(&dep)?;
             // 네임스페이스의 프로퍼티를 **호출하지 않고** 그대로 가져온다.
             // 접근자면 접근자째로 스코프에 넣어 살아있는 바인딩이 된다(순환 의존 대비).
             let raw = |ns: &Value, key: &str| -> Option<Value> {
@@ -3466,17 +3416,51 @@ impl Interp {
             }
         }
 
-        // 2) 본문 실행 (import 는 이미 처리, export 는 선언을 실행하고 이름을 기록)
+        // 2) 내보낼 이름을 **본문 실행 전에** 살아있는 바인딩(게터)으로 등록한다.
+        // ESM 네임스페이스는 모듈 환경의 살아있는 뷰다 (표준 §10.4.6). 예전엔 본문이
+        // 다 끝난 뒤에 채워서, **자기 자신을 import 하는 모듈**(rspack/webpack 청크가
+        // 실제로 그렇게 한다: import * as a from "./self.js"; e.C(a))이 본문 도중
+        // 자기 네임스페이스를 읽으면 통째로 비어 있었다.
         let mut exported: Vec<(String, String)> = Vec::new(); // (로컬명, 내보낸 이름)
+        for st in &body {
+            match st {
+                Stmt::ExportDecl(inner) => {
+                    for n in declared_names(inner) {
+                        exported.push((n.clone(), n));
+                    }
+                }
+                Stmt::ExportNamed { specs, source: None } => {
+                    for (local, name) in specs {
+                        exported.push((local.clone(), name.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (local, exported_name) in &exported {
+            let getter = Value::Fn(Rc::new(JsFn {
+                params: vec![],
+                body: vec![Stmt::Return(Some(Expr::Ident(local.clone())))],
+                env: env.clone(),
+                is_arrow: false,
+                is_generator: false,
+                is_async: false,
+                this: None,
+                super_class: None,
+                props: RefCell::new(HashMap::new()),
+            }));
+            ns_map
+                .borrow_mut()
+                .insert(exported_name.clone(), Value::Accessor(AccessorPair::getter(getter)));
+        }
+
+        // 3) 본문 실행 (import 는 이미 처리)
         for (idx, st) in body.iter().enumerate() {
             let _ = idx;
             match st {
                 Stmt::Import { .. } => {}
                 Stmt::ExportDecl(inner) => {
-                    self.exec_stmt(inner, &env)?;
-                    for n in declared_names(inner) {
-                        exported.push((n.clone(), n));
-                    }
+                    self.exec_stmt(inner, &env)?; // 이름은 위에서 이미 게터로 등록됨
                 }
                 Stmt::ExportDefault(inner) => {
                     match &**inner {
@@ -3509,11 +3493,7 @@ impl Interp {
                             ns_map.borrow_mut().insert(exported_name.clone(), v);
                         }
                     }
-                    None => {
-                        for (local, exported_name) in specs {
-                            exported.push((local.clone(), exported_name.clone()));
-                        }
-                    }
+                    None => {} // export { a as b } — 위에서 이미 게터로 등록됨
                 },
                 Stmt::ExportAll { source } => {
                     let dep = self.resolve_module(url, source);
@@ -3548,23 +3528,6 @@ impl Interp {
             }
         }
 
-        // 3) 내보낸 이름은 **살아있는 바인딩**으로 (모듈 스코프를 읽는 게터)
-        for (local, exported_name) in exported {
-            let getter = Value::Fn(Rc::new(JsFn {
-                params: vec![],
-                body: vec![Stmt::Return(Some(Expr::Ident(local.clone())))],
-                env: env.clone(),
-                is_arrow: false,
-                is_generator: false,
-                is_async: false,
-                this: None,
-                super_class: None,
-                props: RefCell::new(HashMap::new()),
-            }));
-            ns_map
-                .borrow_mut()
-                .insert(exported_name, Value::Accessor(AccessorPair::getter(getter)));
-        }
         self.drain_microtasks();
         Ok(ns)
     }
@@ -4328,6 +4291,129 @@ impl Interp {
             }
             _ => Ok(Value::Undefined),
         }
+    }
+
+    // Expr::Call 의 본문 (프레임 push/pop 을 위해 분리). 동작은 그대로.
+    fn eval_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        env: &EnvRef,
+    ) -> Result<Value, String> {
+                    let mut arg_vals = Vec::new();
+                    // super(...) — 부모 생성자를 현재 this 로 실행
+                    if matches!(callee, Expr::Super) {
+                        arg_vals.extend(self.eval_args(args, env)?);
+                        let (Some(sc), Some(this)) =
+                            (env_get(env, "\u{0}superclass__"), env_get(env, "this"))
+                        else {
+                            return Err("super() 는 파생 클래스 생성자에서만".to_string());
+                        };
+                        match sc {
+                            Value::Class(parent) => {
+                                if let Some(obj) = self.run_constructor(&parent, &this, arg_vals)? {
+                                    env_set(env, "this", obj);
+                                }
+                            }
+                            // 클래스가 아닌 생성자(함수/Error 등) 확장.
+                            // 표준: 파생 클래스의 this 는 super() 가 반환한 객체다.
+                            // 예전엔 그 객체의 own 프로퍼티만 this 로 복사했다 — 겉보기엔
+                            // 비슷해 보이지만 진짜 대상이 아니다. 커스텀 엘리먼트에서
+                            // HTMLElement 가 DOM 노드를 돌려줘도 this 는 여전히 빈 인스턴스라
+                            // this.innerHTML 이 아무 데도 안 그린다.
+                            other => {
+                                let produced = self.construct(other, arg_vals)?;
+                                if is_object(&produced) {
+                                    env_set(env, "this", produced);
+                                } else {
+                                    for (k, v) in builtins::own_enumerable_entries(&produced) {
+                                        self.set_own_property(&this, k, v);
+                                    }
+                                }
+                            }
+                        }
+                        return Ok(Value::Undefined);
+                    }
+                    // super.method(...) — 부모 메서드를 현재 this 로 실행
+                    if let Expr::Member { obj, prop, computed } = callee {
+                        if matches!(&**obj, Expr::Super) {
+                            let key = self.member_key(prop, *computed, env)?;
+                            let (Some(sc), Some(this)) =
+                                (env_get(env, "\u{0}superclass__"), env_get(env, "this"))
+                            else {
+                                return Err("super.x 는 파생 클래스에서만".to_string());
+                            };
+                            // 부모가 클래스가 아니면 그 prototype 에서 메서드를 찾는다.
+                            let parent = match sc {
+                                Value::Class(p) => p,
+                                other => {
+                                    let proto = self.member_get(&other, "prototype")?;
+                                    let m = self.member_get(&proto, &key)?;
+                                    arg_vals.extend(self.eval_args(args, env)?);
+                                    return self.call_value(m, Some(this), arg_vals);
+                                }
+                            };
+                            let m = parent
+                                .find_method(&key)
+                                .ok_or_else(|| format!("부모에 메서드 {} 없음", key))?;
+                            arg_vals.extend(self.eval_args(args, env)?);
+                            return self.call_value(Value::Fn(m), Some(this), arg_vals);
+                        }
+                        let recv = self.eval(obj, env)?;
+                        let key = self.member_key(prop, *computed, env)?;
+                        if matches!(recv, Value::Undefined | Value::Null) {
+                            if self.lenient {
+                                *self.lenient_hits.entry(format!(".{}()", key)).or_default() += 1;
+                                for a in args {
+                                    self.eval(a, env)?; // 부수효과 보존
+                                }
+                                return Ok(Value::Undefined);
+                            }
+                            return Err(format!(
+                                "{}.{}(…) — {} 이(가) {}",
+                                obj_hint(obj),
+                                key,
+                                obj_hint(obj),
+                                to_display(&recv)
+                            ));
+                        }
+                        let f = self.member_get(&recv, &key)?;
+                        arg_vals.extend(self.eval_args(args, env)?);
+                        if !is_callable(&f) {
+                            if self.lenient {
+                                *self.lenient_hits.entry(format!("{}() 비함수", key)).or_default() += 1;
+                                return Ok(Value::Undefined);
+                            }
+                            return Err(format!(
+                                "{}(…) — {}.{} 이(가) {} (함수 아님, 수신자={})",
+                                key,
+                                obj_hint(obj),
+                                key,
+                                to_display(&f),
+                                type_of(&recv)
+                            ));
+                        }
+                        self.call_value(f, Some(recv), arg_vals)
+                    } else {
+                        let f = self.eval(callee, env)?;
+                        arg_vals.extend(self.eval_args(args, env)?);
+                        // Object(x) — 전역 Object 네임스페이스를 함수로 호출 = 객체 강제변환.
+                        // core-js/프레임워크가 Object(this) 로 this 를 객체화하는 흔한 패턴.
+                        if let Some(v) = self.coerce_object_call(&f, &arg_vals) {
+                            return Ok(v);
+                        }
+                        if !is_callable(&f) {
+                            if self.lenient {
+                                let name =
+                                    if let Expr::Ident(n) = callee { n.as_str() } else { "?" };
+                                *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
+                                return Ok(Value::Undefined);
+                            }
+                            let name = if let Expr::Ident(n) = callee { n.as_str() } else { "?" };
+                            return Err(format!("{}(…) — {} 이(가) {} (함수 아님)", name, name, to_display(&f)));
+                        }
+                        self.call_value(f, None, arg_vals)
+                    }
     }
 
     fn call_value(
@@ -6677,6 +6763,25 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn module_namespace_is_live_during_own_evaluation() {
+        // ESM 네임스페이스는 모듈 환경의 **살아있는 뷰**다 (§10.4.6).
+        // rspack/webpack 청크는 자기 자신을 import 해서 본문 도중 자기 네임스페이스를
+        // 런타임에 넘긴다 (import * as a from "./self.js"; __webpack_require__.C(a)).
+        // 예전엔 본문이 끝난 뒤에야 네임스페이스를 채워서 그때는 통째로 비어 있었고,
+        // MDN 의 메인 모듈이 여기서 죽었다.
+        let mut it = Interp::new();
+        it.module_sources.insert(
+            "https://x.test/self.js".to_string(),
+            "import * as me from \"./self.js\"; \
+             export const IDS = [\"a\", \"b\"]; \
+             globalThis.seen = me.IDS ? me.IDS.length : -1;"
+                .to_string(),
+        );
+        it.run_module("https://x.test/self.js").expect("모듈 평가");
+        assert_eq!(to_display(&it.run("seen").unwrap()), "2", "본문 도중 자기 export 가 보여야");
     }
 
     #[test]
