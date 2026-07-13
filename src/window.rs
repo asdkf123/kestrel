@@ -202,6 +202,20 @@ fn collect_computed_styles(
         for (k, v) in &node.specified_values {
             m.insert(k.clone(), crate::style::computed_value_string(v));
         }
+        // 규칙이 없는 프로퍼티도 resolved value 를 돌려줘야 한다(초기값/상속값).
+        // 예전엔 빈 문자열이라 getComputedStyle(el).position === 'static' 같은 검사가
+        // 전부 실패했다 — 사이트는 우리가 아무 스타일도 없다고 믿는다.
+        let color = m.get("color").cloned().unwrap_or_else(|| "rgb(0, 0, 0)".to_string());
+        for prop in crate::css::SUPPORTED {
+            if m.contains_key(*prop) {
+                continue;
+            }
+            if crate::style::is_current_color_prop(prop) {
+                m.insert(prop.to_string(), color.clone());
+            } else if let Some(v) = crate::style::initial_value(prop) {
+                m.insert(prop.to_string(), v.to_string());
+            }
+        }
         out.insert(node.id, m);
     }
     for child in &node.children {
@@ -934,6 +948,23 @@ mod tests {
             NodeType::Element(e) => e.attributes.get("class").cloned().unwrap_or_default(),
             _ => String::new(),
         }
+    }
+
+    #[test]
+    fn computed_style_returns_initial_values_for_unset_properties() {
+        // 예전엔 규칙이 없는 프로퍼티가 빈 문자열이었다 — 사이트는 우리가 아무 스타일도
+        // 없다고 믿는다. 표준의 resolved value 는 초기값/상속값이다.
+        let page = make_page("<div id=\"d\"><span id=\"s\">s</span></div>");
+        let d = page.dom.find_by_attr_id("d").unwrap();
+        let sp = page.dom.find_by_attr_id("s").unwrap();
+        let cs = &page.js.computed_styles;
+        assert_eq!(cs[&d].get("color").unwrap(), "rgb(0, 0, 0)", "color 초기값");
+        assert_eq!(cs[&d].get("display").unwrap(), "block", "div 는 UA 규칙으로 block");
+        assert_eq!(cs[&sp].get("display").unwrap(), "inline", "span 은 초기값 inline");
+        assert_eq!(cs[&d].get("position").unwrap(), "static");
+        assert_eq!(cs[&d].get("background-color").unwrap(), "rgba(0, 0, 0, 0)");
+        assert_eq!(cs[&d].get("z-index").unwrap(), "auto");
+        assert_eq!(cs[&d].get("visibility").unwrap(), "visible");
     }
 
     #[test]

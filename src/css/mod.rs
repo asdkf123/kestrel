@@ -4,6 +4,7 @@ mod supports;
 mod values;
 
 pub(crate) use media::{media_matches, media_matches_vp};
+pub(crate) use supports::SUPPORTED;
 use shorthand::expand_declaration;
 use supports::supports_condition;
 use values::valid_identifier_char;
@@ -849,7 +850,10 @@ impl Parser {
                     any = true;
                 }
                 c if valid_identifier_char(c) => {
-                    selector.tag_name = Some(self.parse_identifier());
+                    // HTML 의 타입 선택자는 ASCII 대소문자 구분이 없다(선택자 표준 §6.1).
+                    // DOM 태그명은 소문자로 정규화돼 있으므로 여기서 소문자로 맞춘다.
+                    // 예전엔 `DIV SPAN { … }` 같은 규칙이 조용히 아무것도 매칭하지 않았다.
+                    selector.tag_name = Some(self.parse_identifier().to_ascii_lowercase());
                     any = true;
                 }
                 _ => break,

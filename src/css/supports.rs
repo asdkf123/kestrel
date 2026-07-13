@@ -47,7 +47,7 @@ fn strip_not(c: &str) -> Option<&str> {
 // @supports 는 이 집합으로만 참을 낸다 — 과다보고하면 사이트가 우리가 못 그리는
 // 모던 레이아웃(container query/subgrid 등)을 내보내고 렌더가 깨진다.
 // 과소보고는 안전하다(사이트가 폴백 CSS 를 준다). 새 프로퍼티를 구현하면 여기 추가.
-const SUPPORTED: &[&str] = &[
+pub(crate) const SUPPORTED: &[&str] = &[
     "align-content", "align-items", "align-self", "aspect-ratio", "backdrop-filter",
     "background-color", "background-image", "background-position", "background-repeat",
     "background-size", "border-bottom-width", "border-collapse",
@@ -278,6 +278,20 @@ mod tests {
         assert!(supports_condition("(--x: 1px)"));
         // not 은 뒤집는다
         assert!(supports_condition("not (container-type: inline-size)"));
+    }
+
+    #[test]
+    fn type_selectors_are_case_insensitive() {
+        // HTML 의 타입 선택자는 ASCII 대소문자 구분이 없다(선택자 표준 §6.1).
+        // 예전엔 `DIV { … }` 이 조용히 아무것도 매칭하지 않았다.
+        let ss = crate::css::parse("DIV SPAN { color: #ff0000; }".to_string());
+        match &ss.rules[0].selectors[0] {
+            crate::css::Selector::Complex(parts) => {
+                assert_eq!(parts[0].1.tag_name.as_deref(), Some("div"), "소문자로 정규화");
+                assert_eq!(parts[1].1.tag_name.as_deref(), Some("span"));
+            }
+            other => panic!("복합 선택자를 기대: {:?}", other),
+        }
     }
 
     #[test]

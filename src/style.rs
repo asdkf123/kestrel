@@ -898,6 +898,74 @@ pub fn style_tree_full<'a>(
 
 pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
 
+// 프로퍼티의 초기값(CSS 각 명세의 initial value).
+// getComputedStyle 은 규칙이 없는 프로퍼티에도 resolved value 를 돌려줘야 한다 —
+// 예전엔 빈 문자열이라 `getComputedStyle(el).display === 'block'` 같은 검사가 전부 실패했다.
+// currentcolor 로 계산되는 값(테두리/아웃라인/텍스트 장식 색)은 호출부가 color 로 채운다.
+pub fn initial_value(prop: &str) -> Option<&'static str> {
+    Some(match prop {
+        "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
+        "align-self" | "justify-self" => "auto",
+        "aspect-ratio" => "auto",
+        "backdrop-filter" | "filter" | "transform" | "clip-path" | "box-shadow"
+        | "background-image" | "text-decoration-line" | "text-transform" | "float" | "clear"
+        | "max-height" | "max-width" | "grid-template-areas" | "grid-template-columns"
+        | "grid-template-rows" | "content" => "none",
+        "background-color" => "rgba(0, 0, 0, 0)",
+        "background-position" => "0% 0%",
+        "background-repeat" => "repeat",
+        "background-size" | "column-count" | "grid-auto-rows" | "grid-column" | "grid-row"
+        | "grid-area" | "grid-column-start" | "grid-column-end" | "grid-row-start"
+        | "grid-row-end" | "min-height" | "min-width" | "height" | "width" | "top" | "right"
+        | "bottom" | "left" | "flex-basis" => "auto",
+        "border-collapse" => "separate",
+        "border-radius" | "border-spacing" | "outline-offset" | "text-indent" => "0px",
+        "border-style" | "outline-style" => "none",
+        "border-top-width" | "border-right-width" | "border-bottom-width"
+        | "border-left-width" | "border-width" | "outline-width" => "0px",
+        "box-sizing" => "content-box",
+        "color" => "rgb(0, 0, 0)",
+        "column-gap" | "row-gap" | "gap" | "letter-spacing" | "word-spacing" | "line-height" => {
+            "normal"
+        }
+        "direction" => "ltr",
+        "display" => "inline",
+        "flex-direction" => "row",
+        "flex-grow" | "order" => "0",
+        "flex-shrink" | "opacity" => "1",
+        "flex-wrap" => "nowrap",
+        "font-size" => "16px",
+        "font-style" => "normal",
+        "font-weight" => "400",
+        "list-style-type" => "disc",
+        "margin-top" | "margin-right" | "margin-bottom" | "margin-left" | "padding-top"
+        | "padding-right" | "padding-bottom" | "padding-left" => "0px",
+        "mix-blend-mode" | "white-space" | "word-break" | "overflow-wrap" | "word-wrap" => {
+            "normal"
+        }
+        "object-fit" => "fill",
+        "object-position" => "50% 50%",
+        "overflow" | "overflow-x" | "overflow-y" => "visible",
+        "position" => "static",
+        "text-align" => "start",
+        "text-overflow" => "clip",
+        "vertical-align" => "baseline",
+        "visibility" => "visible",
+        "z-index" => "auto",
+        // font-family 의 초기값은 사용자 기본 글꼴이라 엔진마다 다르다 —
+        // 지어내지 않고 비워 둔다(설정된 경우에만 값이 나온다).
+        _ => return None,
+    })
+}
+
+// currentcolor 로 계산되는 색 프로퍼티 (초기값이 요소의 color)
+pub fn is_current_color_prop(prop: &str) -> bool {
+    matches!(
+        prop,
+        "border-color" | "border-top-color" | "outline-color" | "text-decoration-color"
+    )
+}
+
 // 생성 콘텐츠 여부: none/normal/이스케이프 키워드/미지원 함수(attr()/counter())/빈 문자열 제외.
 fn is_generated_content(s: &str) -> bool {
     !s.is_empty()
