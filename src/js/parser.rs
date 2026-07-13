@@ -81,6 +81,8 @@ fn keyword_word(t: &Tok) -> Option<String> {
 fn expr_to_pattern(e: Expr) -> Option<Pattern> {
     match e {
         Expr::Ident(n) => Some(Pattern::Name(n)),
+        // 멤버 표현식도 대입 대상이 된다 (표준): [o.p, arr[0]] = [1, 2]
+        m @ Expr::Member { .. } => Some(Pattern::Member(Box::new(m))),
         Expr::Array(items) => {
             let mut out = Vec::new();
             let mut rest = None;

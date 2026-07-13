@@ -784,6 +784,7 @@ fn pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
     use crate::js::ast::Pattern;
     match pat {
         Pattern::Name(n) => out.push(n.clone()),
+        Pattern::Member(_) => {} // 새 이름을 만들지 않는다 (기존 대상에 대입)
         Pattern::Object(props, rest) => {
             for (_, sub, _) in props {
                 pattern_names(sub, out);
@@ -2267,6 +2268,10 @@ impl Interp {
         };
         match pat {
             Pattern::Name(n) => bind(env, n, value),
+            // 멤버 대상: 선언이 아니라 대입이다 (o.p = v)
+            Pattern::Member(e) => {
+                self.assign_to(e, value, env)?;
+            }
             Pattern::Object(props, rest) => {
                 for (key, sub, default) in props {
                     let mut v = self.member_get(&value, key).unwrap_or(Value::Undefined);
@@ -2672,6 +2677,13 @@ impl Interp {
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
             Expr::Ident(name) => match env_get(env, name) {
+                // import 바인딩은 살아있는 바인딩이다 — 스코프에 접근자가 들어 있으면
+                // 읽는 시점에 모듈의 현재 값을 가져온다. 값 스냅샷으로 흉내내면
+                // 순환 의존에서 "아직 초기화 안 된 이름"을 영영 undefined 로 굳혀버린다.
+                Some(Value::Accessor(acc)) => match &acc.get {
+                    Some(g) => self.call_value(g.clone(), None, vec![]),
+                    None => Ok(Value::Undefined),
+                },
                 Some(v) => Ok(v),
                 None => {
                     // window(전역 객체) 프로퍼티 폴백 — window.X = v 를 맨 X 로 읽게 함.
@@ -3331,14 +3343,22 @@ impl Interp {
             let Stmt::Import { specs, source } = st else { continue };
             let dep = self.resolve_module(url, source);
             let dep_ns = self.run_module(&dep)?;
+            // 네임스페이스의 프로퍼티를 **호출하지 않고** 그대로 가져온다.
+            // 접근자면 접근자째로 스코프에 넣어 살아있는 바인딩이 된다(순환 의존 대비).
+            let raw = |ns: &Value, key: &str| -> Option<Value> {
+                match ns {
+                    Value::Obj(m) => m.borrow().get(key).cloned(),
+                    _ => None,
+                }
+            };
             for sp in specs {
                 match sp {
                     crate::js::ast::ImportSpec::Default(local) => {
-                        let v = self.member_get(&dep_ns, "default")?;
+                        let v = raw(&dep_ns, "default").unwrap_or(Value::Undefined);
                         env_declare(&env, local, v);
                     }
                     crate::js::ast::ImportSpec::Named(imported, local) => {
-                        let v = self.member_get(&dep_ns, imported)?;
+                        let v = raw(&dep_ns, imported).unwrap_or(Value::Undefined);
                         env_declare(&env, local, v);
                     }
                     crate::js::ast::ImportSpec::Namespace(local) => {
@@ -3377,7 +3397,8 @@ impl Interp {
 
         // 2) 본문 실행 (import 는 이미 처리, export 는 선언을 실행하고 이름을 기록)
         let mut exported: Vec<(String, String)> = Vec::new(); // (로컬명, 내보낸 이름)
-        for st in &body {
+        for (idx, st) in body.iter().enumerate() {
+            let _ = idx;
             match st {
                 Stmt::Import { .. } => {}
                 Stmt::ExportDecl(inner) => {
@@ -3439,7 +3460,18 @@ impl Interp {
                     }
                 }
                 other => {
-                    self.exec_stmt(other, &env)?;
+                    if let Err(e) = self.exec_stmt(other, &env) {
+                        if std::env::var("KESTREL_MODULE_DEBUG").is_ok() {
+                            eprintln!(
+                                "[module] {} 문장 #{} 에서 오류: {} — {:?}",
+                                url,
+                                idx,
+                                e,
+                                std::mem::discriminant(other)
+                            );
+                        }
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -6487,6 +6519,17 @@ mod tests {
             other => panic!("expected FillRect, got {:?}", other),
         }
         assert!(matches!(&ops[1], CanvasOp::FillPath { pts, .. } if pts.len() == 3));
+    }
+
+    #[test]
+    fn destructuring_targets_can_be_members() {
+        // 표준: 구조분해 대상은 멤버 표현식일 수 있다. 예전엔 "잘못된 구조분해 할당 대상"
+        // 으로 파싱이 죽어서, 이 패턴을 쓰는 번들(vue 런타임 등)이 통째로 안 돌았다.
+        assert_eq!(run_num("var o={}; [o.p, o.q] = [5, 6]; o.p + o.q"), 11.0);
+        assert_eq!(run_num("var o={}; ({x: o.a, y: o.b} = {x:1, y:2}); o.a + o.b"), 3.0);
+        assert_eq!(run_num("var a=[0,0]; [a[0], a[1]] = [7, 8]; a[0] + a[1]"), 15.0);
+        // 기존 동작(이름 대상 / 스왑)도 그대로
+        assert_eq!(run_num("var a=1,b=2; [a,b]=[b,a]; a*10+b"), 21.0);
     }
 
     #[test]

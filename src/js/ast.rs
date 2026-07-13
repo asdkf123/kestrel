@@ -173,6 +173,10 @@ pub enum DeclKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Name(String),
+    // 구조분해 대상이 멤버 표현식일 수 있다: [o.p, o.q] = [1, 2] / ({x: o.a} = v)
+    // 표준이 허용하는 형태다. 예전엔 "잘못된 구조분해 할당 대상" 으로 파싱이 죽어서,
+    // 이 패턴을 쓰는 번들(예: vue 런타임)이 통째로 안 돌았다.
+    Member(Box<Expr>),
     // { key: sub = default, ..., ...rest } — 중첩/기본값/rest 지원
     Object(Vec<(String, Pattern, Option<Expr>)>, Option<String>),
     // [ sub = default, , ..., ...rest ] — None = 홀(건너뜀)

@@ -186,6 +186,21 @@ fn load_module_graph(it: &mut interp::Interp, url: &str, inline: Option<String>,
         println!("[module] 파싱 실패 — {}", url);
         return;
     };
+    if std::env::var("KESTREL_MODULE_DEBUG").is_ok() {
+        let names: Vec<&str> = body
+            .iter()
+            .filter_map(|st| match st {
+                crate::js::ast::Stmt::FuncDecl { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        eprintln!(
+            "[module] {} — 최상위 문 {}개, 함수선언 {:?}",
+            url,
+            body.len(),
+            names
+        );
+    }
     let mut deps: Vec<String> = Vec::new();
     for st in &body {
         match st {
