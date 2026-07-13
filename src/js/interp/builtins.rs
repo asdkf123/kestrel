@@ -1087,6 +1087,81 @@ impl Interp {
             }
             // getComputedStyle(el) → 계산 스타일 뷰.
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
+            // new DOMParser() → parseFromString 을 가진 객체
+            Native::DomParserCtor => {
+                let mut m = ObjMap::new();
+                m.insert(
+                    "parseFromString".to_string(),
+                    Value::Native(Native::DomParserParse),
+                );
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
+            // parseFromString(html) → 분리된 <html><body>…</body></html> 서브트리.
+            // 부모가 없으니 렌더 트리에 들어가지 않는다. querySelector/body 등이 동작한다.
+            Native::DomParserParse => {
+                let src = args.first().map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                let root = dom.create_element("html");
+                let body = dom.create_element("body");
+                dom.append_child(root, body);
+                for tree in crate::html::parse_fragment(src) {
+                    let sub = dom.insert_tree(tree, None);
+                    dom.append_child(body, sub);
+                }
+                Ok(Value::Dom(root))
+            }
+            // window.scrollTo(x, y) 또는 scrollTo({top, left}) — 실제 스크롤 상태를 바꾼다.
+            // 호스트가 이 값을 렌더에 반영한다(스크롤된 화면). 예전엔 메서드 자체가 없어
+            // TypeError 로 스크립트가 죽었다.
+            Native::ScrollTo | Native::ScrollBy => {
+                let (mut x, mut y) = match args.first() {
+                    Some(Value::Obj(o)) => {
+                        let m = o.borrow();
+                        (
+                            m.get("left").map(to_num).unwrap_or(0.0) as f32,
+                            m.get("top").map(to_num).unwrap_or(0.0) as f32,
+                        )
+                    }
+                    Some(v) => (
+                        to_num(v) as f32,
+                        args.get(1).map(to_num).unwrap_or(0.0) as f32,
+                    ),
+                    None => (0.0, 0.0),
+                };
+                if matches!(n, Native::ScrollBy) {
+                    x += self.scroll_x;
+                    y += self.scroll_y;
+                }
+                self.set_scroll(x, y);
+                Ok(Value::Undefined)
+            }
+            // el.scrollIntoView() — 그 요소가 뷰포트 위쪽에 오도록 스크롤.
+            Native::ScrollIntoView => {
+                self.ensure_layout();
+                if let Some(Value::Dom(id)) = recv {
+                    if let Some(&(_, y, _, _)) = self.layout_rects.get(&id) {
+                        self.set_scroll(self.scroll_x, y);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            // history.pushState(state, title, url) — location 을 실제로 갱신한다.
+            Native::HistoryPushState | Native::HistoryReplaceState => {
+                let state = args.first().cloned().unwrap_or(Value::Null);
+                let url = args.get(2).map(to_display).unwrap_or_default();
+                if !url.is_empty() {
+                    self.update_location(&url);
+                }
+                if let Some(Value::Obj(h)) = env_get(&self.global, "history") {
+                    let mut m = h.borrow_mut();
+                    m.insert("state".to_string(), state);
+                    if matches!(n, Native::HistoryPushState) {
+                        let len = m.get("length").map(to_num).unwrap_or(1.0);
+                        m.insert("length".to_string(), Value::Num(len + 1.0));
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             // 프렐류드의 MutationObserver 배달 함수가 호출한다. 쌓인 DOM 변형 기록을
             // JS MutationRecord 배열로 만들어 넘기고 큐를 비운다.
             Native::TakeMutations => {
@@ -1290,7 +1365,8 @@ impl Interp {
             Native::XhrOpen => {
                 if let Some(Value::Obj(o)) = &recv {
                     let method = args.first().map(to_display).unwrap_or_else(|| "GET".to_string());
-                    let url = args.get(1).map(to_display).unwrap_or_default();
+                    let raw = args.get(1).map(to_display).unwrap_or_default();
+                    let url = self.absolute_url(&raw);
                     let mut b = o.borrow_mut();
                     b.insert("\u{0}method".to_string(), Value::Str(method));
                     b.insert("\u{0}url".to_string(), Value::Str(url));
@@ -1814,6 +1890,57 @@ impl Interp {
                             dom.insert_before(parent, id, Some(target));
                         }
                         dom.detach(target);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            // el.insertAdjacentHTML(position, html) / insertAdjacentElement(position, el)
+            // 예전엔 메서드가 없어 TypeError 로 스크립트 전체가 죽었다.
+            Native::InsertAdjacentHTML | Native::InsertAdjacentElement => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
+                let pos = args.first().map(to_display).unwrap_or_default().to_ascii_lowercase();
+                // 삽입할 노드들: HTML 이면 조각 파싱, Element 면 그 노드
+                let nodes: Vec<crate::dom::NodeId> =
+                    if matches!(n, Native::InsertAdjacentElement) {
+                        match args.get(1) {
+                            Some(Value::Dom(e)) => vec![*e],
+                            _ => Vec::new(),
+                        }
+                    } else {
+                        let html = args.get(1).map(to_display).unwrap_or_default();
+                        let dom = self.dom_arena()?;
+                        crate::html::parse_fragment(html)
+                            .into_iter()
+                            .map(|t| dom.insert_tree(t, None))
+                            .collect()
+                    };
+                let dom = self.dom_arena()?;
+                let parent = dom.get(id).parent;
+                for node in nodes {
+                    match pos.as_str() {
+                        "beforebegin" => {
+                            if let Some(p) = parent {
+                                dom.insert_before(p, node, Some(id));
+                            }
+                        }
+                        "afterbegin" => {
+                            let first = dom.get(id).children.first().copied();
+                            dom.insert_before(id, node, first);
+                        }
+                        "beforeend" => dom.append_child(id, node),
+                        "afterend" => {
+                            if let Some(p) = parent {
+                                // id 의 다음 형제 앞에 (없으면 끝)
+                                let next = dom
+                                    .get(p)
+                                    .children
+                                    .iter()
+                                    .position(|&c| c == id)
+                                    .and_then(|i| dom.get(p).children.get(i + 1).copied());
+                                dom.insert_before(p, node, next);
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 Ok(Value::Undefined)
@@ -3047,7 +3174,10 @@ impl Interp {
             }
             Native::Identity => Ok(args.into_iter().next().unwrap_or(Value::Undefined)),
             Native::Fetch => {
-                let url = args.first().map(to_display).unwrap_or_default();
+                let raw = args.first().map(to_display).unwrap_or_default();
+                // 상대 URL 은 문서 URL 기준으로 절대화한다. 예전엔 그대로 넘겨
+                // fetch('/api/x') 가 Url(NoScheme) 로 실패했다 — SPA 는 거의 다 상대경로다.
+                let url = self.absolute_url(&raw);
                 let resp = self.new_promise();
                 match crate::http::fetch(&url) {
                     Ok(r) => {

@@ -646,10 +646,12 @@ fn render_url(url: &str) {
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
         page.flush_timers_headless();
         let (vw, vh) = (1000usize, 1400usize);
+        // 스크롤 위치: KESTREL_SCROLL 이 우선, 없으면 스크립트가 요청한 위치
+        // (window.scrollTo/scrollIntoView). 상태만 바꾸고 렌더는 안 움직이면 반쪽 거짓말이다.
         let scroll = std::env::var("KESTREL_SCROLL")
             .ok()
             .and_then(|s| s.parse::<f32>().ok())
-            .unwrap_or(0.0)
+            .unwrap_or(page.js.scroll_y)
             .clamp(0.0, (page.doc_height - vh as f32).max(0.0));
         let mut cache = raster::GlyphCache::new();
         let canvas = paint::rasterize(

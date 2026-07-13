@@ -441,7 +441,8 @@ pub fn run_page(
 
     let mut page = page;
     let mut cache = crate::raster::GlyphCache::new();
-    let mut scroll_y: f32 = 0.0;
+    // 스크립트가 window.scrollTo/scrollIntoView 로 요청한 위치에서 시작
+    let mut scroll_y: f32 = page.js.scroll_y;
     let mut cursor: (f32, f32) = (0.0, 0.0);
     // 뒤로 가기 스택: (URL, 떠날 때 스크롤 위치)
     let mut history: Vec<(String, f32)> = Vec::new();

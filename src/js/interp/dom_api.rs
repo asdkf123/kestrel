@@ -181,16 +181,96 @@ impl Interp {
             matches!(d.get(c).node_type, crate::dom::NodeType::Element(_))
         };
         match key {
+            // <template>.content — 우리 파서는 템플릿 자식을 그대로 그 아래 둔다.
+            // UA 스타일시트가 template 을 display:none 으로 감추므로 렌더되지 않는다.
+            // 템플릿 자신을 돌려주면 content.querySelector/cloneNode/children 이 다 동작한다.
+            "content"
+                if matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.tag_name == "template") =>
+            {
+                Ok(Value::Dom(id))
+            }
+            // DOMParser 가 돌려준 <html> 문서 노드에서의 body/head/documentElement
+            "body" | "head" | "documentElement"
+                if matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.tag_name == "html") =>
+            {
+                if key == "documentElement" {
+                    return Ok(Value::Dom(id));
+                }
+                let want = key;
+                Ok(dom
+                    .get(id)
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&c| matches!(&dom.get(c).node_type,
+                        crate::dom::NodeType::Element(e) if e.tag_name == want))
+                    .map(Value::Dom)
+                    .unwrap_or(Value::Null))
+            }
             // element.style/classList → 속성에 대한 라이브 프록시
             "style" => Ok(Value::Style(id)),
             "classList" => Ok(Value::ClassList(id)),
             "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
+            // value: <select> 는 선택된 option 의 값, <option> 은 value 속성 없으면 텍스트,
+            // 그 외(input/textarea)는 value 속성. 예전엔 셋 다 value 속성만 봐서
+            // select.value 가 늘 빈 문자열이었다(폼 로직이 통째로 어긋난다).
             "value" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) if e.tag_name == "select" => {
+                    Ok(Value::Str(selected_option(dom, id).map(|o| option_value(dom, o)).unwrap_or_default()))
+                }
+                crate::dom::NodeType::Element(e) if e.tag_name == "option" => {
+                    Ok(Value::Str(option_value(dom, id)))
+                }
+                crate::dom::NodeType::Element(e) if e.tag_name == "textarea" => Ok(Value::Str(
+                    e.attributes.get("value").cloned().unwrap_or_else(|| dom.text_content(id)),
+                )),
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(
                     e.attributes.get("value").cloned().unwrap_or_default(),
                 )),
                 _ => Ok(Value::Undefined),
             },
+            // checked/selected/disabled 등 불리언 속성 반사. 예전엔 undefined 였다 —
+            // `if (cb.checked)` 가 항상 거짓이라 체크박스 로직이 죽는다.
+            "checked" | "disabled" | "readOnly" | "required" | "multiple" | "hidden" => {
+                let attr = match key {
+                    "readOnly" => "readonly",
+                    k => k,
+                };
+                Ok(match &dom.get(id).node_type {
+                    crate::dom::NodeType::Element(e) => {
+                        Value::Bool(e.attributes.contains_key(attr))
+                    }
+                    _ => Value::Undefined,
+                })
+            }
+            "selected" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => {
+                    Value::Bool(e.attributes.contains_key("selected"))
+                }
+                _ => Value::Undefined,
+            }),
+            "selectedIndex" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) if e.tag_name == "select" => {
+                    let opts = option_list(dom, id);
+                    let sel = selected_option(dom, id);
+                    Value::Num(
+                        sel.and_then(|s| opts.iter().position(|&o| o == s))
+                            .map(|i| i as f64)
+                            .unwrap_or(-1.0),
+                    )
+                }
+                _ => Value::Undefined,
+            }),
+            "options" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) if e.tag_name == "select" => {
+                    Value::Arr(ArrayObj::new(
+                        option_list(dom, id).into_iter().map(Value::Dom).collect(),
+                    ))
+                }
+                _ => Value::Undefined,
+            }),
             // 트리 순회 프로퍼티 (프레임워크/앱 코드가 광범위하게 사용)
             "children" => {
                 let arr: Vec<Value> = dom
@@ -335,7 +415,34 @@ impl Interp {
                 Ok(())
             }
             "value" => {
+                // select.value = x → 그 값을 가진 option 을 선택 상태로 (표준)
+                let is_select = matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.tag_name == "select");
+                if is_select {
+                    for o in option_list(dom, id) {
+                        if option_value(dom, o) == text {
+                            dom.set_attr(o, "selected", String::new());
+                        } else {
+                            dom.remove_attr(o, "selected");
+                        }
+                    }
+                    return Ok(());
+                }
                 dom.set_attr(id, "value", text);
+                Ok(())
+            }
+            // 불리언 속성: true 면 속성 추가, false 면 제거 (표준 반사)
+            "checked" | "disabled" | "readOnly" | "required" | "multiple" | "hidden"
+            | "selected" => {
+                let attr = match key {
+                    "readOnly" => "readonly",
+                    k => k,
+                };
+                if to_bool(&value) {
+                    dom.set_attr(id, attr, String::new());
+                } else {
+                    dom.remove_attr(id, attr);
+                }
                 Ok(())
             }
             // className/id 는 대응 속성으로 (스타일 매칭이 읽음)
@@ -346,6 +453,47 @@ impl Interp {
             }
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)
         }
+    }
+}
+
+// <select> 의 option 목록 (optgroup 안쪽 포함)
+pub(super) fn option_list(dom: &crate::dom::Dom, sel: crate::dom::NodeId) -> Vec<crate::dom::NodeId> {
+    let mut out = Vec::new();
+    fn walk(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<crate::dom::NodeId>) {
+        for &c in &dom.get(id).children {
+            if let crate::dom::NodeType::Element(e) = &dom.get(c).node_type {
+                if e.tag_name == "option" {
+                    out.push(c);
+                } else {
+                    walk(dom, c, out);
+                }
+            }
+        }
+    }
+    walk(dom, sel, &mut out);
+    out
+}
+
+// 선택된 option: selected 속성이 있는 첫 번째, 없으면 첫 option (HTML 표준의 기본 선택)
+pub(super) fn selected_option(
+    dom: &crate::dom::Dom,
+    sel: crate::dom::NodeId,
+) -> Option<crate::dom::NodeId> {
+    let opts = option_list(dom, sel);
+    opts.iter()
+        .copied()
+        .find(|&o| matches!(&dom.get(o).node_type,
+            crate::dom::NodeType::Element(e) if e.attributes.contains_key("selected")))
+        .or_else(|| opts.first().copied())
+}
+
+// option 의 값: value 속성이 없으면 텍스트 내용 (HTML 표준)
+pub(super) fn option_value(dom: &crate::dom::Dom, o: crate::dom::NodeId) -> String {
+    match &dom.get(o).node_type {
+        crate::dom::NodeType::Element(e) => {
+            e.attributes.get("value").cloned().unwrap_or_else(|| dom.text_content(o).trim().to_string())
+        }
+        _ => String::new(),
     }
 }
 

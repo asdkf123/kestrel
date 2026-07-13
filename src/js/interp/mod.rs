@@ -381,6 +381,15 @@ pub enum Native {
     RemoveGlobalListener,
     DispatchGlobalEvent,
     TakeMutations,
+    InsertAdjacentHTML,
+    InsertAdjacentElement,
+    ScrollTo,
+    ScrollBy,
+    ScrollIntoView,
+    HistoryPushState,
+    HistoryReplaceState,
+    DomParserCtor,
+    DomParserParse,
     EventCtor,
     CloneNode,
     Matches,
@@ -850,6 +859,9 @@ pub struct Interp {
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
     // MutationObserver 배달을 이미 예약했는가 (마이크로태스크 중복 예약 방지)
     mutation_scheduled: bool,
+    // 스크립트가 요청한 스크롤 위치(px). 호스트가 렌더에 반영한다.
+    pub scroll_x: f32,
+    pub scroll_y: f32,
     // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
     // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
     pub layout_ctx: Option<crate::window::LayoutCtx>,
@@ -1081,6 +1093,10 @@ impl Interp {
         // matches:false 를 돌려줘서, CSS 는 데스크톱 규칙을 적용하는데 JS 는 모바일로
         // 분기하는 자기모순이 있었다.
         env_declare(&global, "matchMedia", Value::Native(Native::MatchMedia));
+        env_declare(&global, "scrollTo", Value::Native(Native::ScrollTo));
+        env_declare(&global, "scrollBy", Value::Native(Native::ScrollBy));
+        // DOMParser — 문자열을 실제 DOM 으로 파싱 (분리된 서브트리라 렌더되지 않는다)
+        env_declare(&global, "DOMParser", Value::Native(Native::DomParserCtor));
         // 프렐류드의 MutationObserver 가 쌓인 변형 기록을 가져가는 통로
         env_declare(&global, "__kTakeMutations", Value::Native(Native::TakeMutations));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
@@ -1270,6 +1286,10 @@ impl Interp {
             Value::Native(Native::DispatchGlobalEvent),
         );
         window.insert("getComputedStyle".to_string(), Value::Native(Native::GetComputedStyle));
+        // 스크롤: 예전엔 window.scrollTo 자체가 없어 TypeError 로 스크립트가 죽었다.
+        window.insert("scrollTo".to_string(), Value::Native(Native::ScrollTo));
+        window.insert("scroll".to_string(), Value::Native(Native::ScrollTo));
+        window.insert("scrollBy".to_string(), Value::Native(Native::ScrollBy));
         window.insert("requestAnimationFrame".to_string(), Value::Native(Native::SetTimeout));
         window.insert("cancelAnimationFrame".to_string(), Value::Native(Native::ClearTimer));
         window.insert("setTimeout".to_string(), Value::Native(Native::SetTimeout));
@@ -1278,9 +1298,13 @@ impl Interp {
         for ev in ["Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "FocusEvent", "InputEvent"] {
             window.insert(ev.to_string(), Value::Native(Native::EventCtor));
         }
-        // history 스텁 (pushState/replaceState 등은 URL 만 갱신하지 않는 no-op).
+        // history: pushState/replaceState 는 location 을 실제로 갱신한다(SPA 라우터가
+        // 그 뒤 location.pathname 을 읽는다). 예전엔 no-op 이라 라우팅이 조용히 어긋났다.
+        // back/forward/go 는 실제 세션 이동이라 정적 렌더에선 하지 않는다.
         let mut history = ObjMap::new();
-        for m in ["pushState", "replaceState", "back", "forward", "go"] {
+        history.insert("pushState".to_string(), Value::Native(Native::HistoryPushState));
+        history.insert("replaceState".to_string(), Value::Native(Native::HistoryReplaceState));
+        for m in ["back", "forward", "go"] {
             history.insert(m.to_string(), Value::Native(Native::Noop));
         }
         history.insert("length".to_string(), Value::Num(1.0));
@@ -1449,6 +1473,8 @@ impl Interp {
             dom: None,
             handlers: Vec::new(),
             mutation_scheduled: false,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
             layout_ctx: None,
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
@@ -3166,6 +3192,55 @@ impl Interp {
         }
     }
 
+    // 상대 URL → 문서 URL 기준 절대 URL. 이미 절대면 그대로.
+    pub(super) fn absolute_url(&self, raw: &str) -> String {
+        let Some(base) = &self.base_url else { return raw.to_string() };
+        match crate::url::Url::parse(base).ok().and_then(|u| u.join(raw)) {
+            Some(u) => u.as_string(),
+            None => raw.to_string(),
+        }
+    }
+
+    // pushState/replaceState 가 부른다. 상대 URL 을 현재 문서 URL 에 결합해
+    // location 의 href/pathname/search/hash 를 갱신한다 (네비게이션은 하지 않는다).
+    pub(super) fn update_location(&mut self, url: &str) {
+        let base = self.base_url.clone().unwrap_or_default();
+        let Some(next) = crate::url::Url::parse(&base).ok().and_then(|u| u.join(url)) else {
+            return;
+        };
+        let full = next.as_string();
+        let (path_q, hash) = match full.split_once('#') {
+            Some((p, h)) => (p.to_string(), format!("#{}", h)),
+            None => (full.clone(), String::new()),
+        };
+        let (pathname, search) = match next.path.split_once('?') {
+            Some((p, q)) => (p.to_string(), format!("?{}", q)),
+            None => (next.path.clone(), String::new()),
+        };
+        let _ = path_q;
+        self.base_url = Some(full.clone());
+        let Some(Value::Obj(loc)) = env_get(&self.global, "location") else { return };
+        let mut m = loc.borrow_mut();
+        m.insert("href".to_string(), Value::Str(full));
+        m.insert("pathname".to_string(), Value::Str(pathname));
+        m.insert("search".to_string(), Value::Str(search));
+        m.insert("hash".to_string(), Value::Str(hash));
+    }
+
+    // 스크롤 위치 갱신 + window 프로퍼티(scrollY/pageYOffset 등) 동기화.
+    // 읽는 쪽이 늘 같은 값을 보게 한다 (예전엔 scrollY 가 0 으로 고정돼 있었다).
+    pub(super) fn set_scroll(&mut self, x: f32, y: f32) {
+        self.scroll_x = x.max(0.0);
+        self.scroll_y = y.max(0.0);
+        let mut w = self.window_obj.borrow_mut();
+        for k in ["scrollX", "pageXOffset"] {
+            w.insert(k.to_string(), Value::Num(self.scroll_x as f64));
+        }
+        for k in ["scrollY", "pageYOffset"] {
+            w.insert(k.to_string(), Value::Num(self.scroll_y as f64));
+        }
+    }
+
     // 현재 뷰포트(px). 강제 레이아웃 컨텍스트가 있으면 실제 값, 없으면 기본 창 크기.
     pub(super) fn viewport(&self) -> (f32, f32) {
         match self.layout_ctx {
@@ -3580,6 +3655,8 @@ impl Interp {
                     "after" => Some(Native::NodeAfter),
                     "replaceWith" => Some(Native::NodeReplaceWith),
                     "insertBefore" => Some(Native::InsertBefore),
+                    "insertAdjacentHTML" => Some(Native::InsertAdjacentHTML),
+                    "insertAdjacentElement" => Some(Native::InsertAdjacentElement),
                     "createTextNode" => Some(Native::CreateTextNode),
                     "remove" => Some(Native::RemoveElement),
                     "setAttribute" => Some(Native::SetAttribute),
@@ -3592,6 +3669,7 @@ impl Interp {
                     "getElementsByClassName" => Some(Native::GetElementsByClass),
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
+                    "scrollIntoView" => Some(Native::ScrollIntoView),
                     "dispatchEvent" => Some(Native::DispatchEvent),
                     "cloneNode" => Some(Native::CloneNode),
                     "matches" => Some(Native::Matches),
@@ -3926,6 +4004,9 @@ impl Interp {
                 return self.call_native(n, None, args)
             }
             Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
+            Value::Native(Native::DomParserCtor) => {
+                return self.call_native(Native::DomParserCtor, None, args)
+            }
             // new Promise(executor): pending promise 생성 후 executor(resolve, reject) 동기 실행.
             // executor 가 throw 하면 reject. (동기 모델 — resolve/reject 즉시 정착)
             Value::Native(Native::PromiseCtor) => {
@@ -4498,6 +4579,10 @@ mod tests {
         Interp::new().run(src).unwrap()
     }
 
+    fn run_bool_in(it: &mut Interp, src: &str) -> bool {
+        matches!(it.run(src).unwrap(), Value::Bool(true))
+    }
+
     fn run_num(src: &str) -> f64 {
         match run(src) {
             Value::Num(n) => n,
@@ -4909,6 +4994,88 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(v, Value::Num(n) if n == 1.0), "XHR 리스너 등록/제거: {:?}", v);
+    }
+
+    #[test]
+    fn form_state_properties_reflect_attributes() {
+        // checked/select.value 는 undefined/"" 였다 — 폼 로직이 통째로 어긋난다.
+        let mut dom = crate::html::parse_dom(
+            "<input id=\"cb\" type=\"checkbox\">\
+             <select id=\"s\"><option value=\"a\">A</option>\
+             <option value=\"b\" selected>B</option></select>"
+                .to_string(),
+        );
+        let mut it = Interp::new();
+        it.dom = Some(&mut dom as *mut _);
+        assert!(!run_bool_in(&mut it, "document.getElementById('cb').checked"), "기본 false");
+        assert!(
+            run_bool_in(&mut it, "var c=document.getElementById('cb'); c.checked=true; c.checked"),
+            "쓰기 후 true"
+        );
+        assert_eq!(
+            to_display(&it.run("document.getElementById('s').value").unwrap()),
+            "b",
+            "select.value 는 선택된 option 의 값"
+        );
+        assert_eq!(
+            to_display(&it.run("document.getElementById('s').selectedIndex").unwrap()),
+            "1"
+        );
+        // select.value = 'a' → 그 option 이 선택된다
+        assert_eq!(
+            to_display(
+                &it.run("var s=document.getElementById('s'); s.value='a'; s.value").unwrap()
+            ),
+            "a"
+        );
+    }
+
+    #[test]
+    fn insert_adjacent_html_and_template_content() {
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"h\"></div><template id=\"t\"><i class=\"in\">x</i></template>"
+                .to_string(),
+        );
+        let mut it = Interp::new();
+        it.dom = Some(&mut dom as *mut _);
+        // 예전엔 insertAdjacentHTML 메서드가 없어 TypeError 로 스크립트가 죽었다
+        let v = it
+            .run(
+                "document.getElementById('h')\
+                   .insertAdjacentHTML('beforeend', '<b id=\"ins\">i</b>'); \
+                 !!document.getElementById('ins')",
+            )
+            .unwrap();
+        assert!(matches!(v, Value::Bool(true)), "insertAdjacentHTML 로 삽입");
+        let t = it.run("!!document.getElementById('t').content.querySelector('.in')").unwrap();
+        assert!(matches!(t, Value::Bool(true)), "template.content 조회");
+    }
+
+    #[test]
+    fn history_push_state_updates_location() {
+        // 예전엔 no-op 이라 SPA 라우터가 pushState 후 읽는 location 이 그대로였다.
+        let mut it = Interp::new();
+        it.install_location("https://x.test/a/b?q=1");
+        it.run("history.pushState({}, '', '/c/d?z=2')").unwrap();
+        assert_eq!(to_display(&it.run("location.pathname").unwrap()), "/c/d");
+        assert_eq!(to_display(&it.run("location.search").unwrap()), "?z=2");
+        assert_eq!(to_display(&it.run("history.length").unwrap()), "2");
+        // 상대 경로도 현재 URL 기준으로 결합
+        it.run("history.replaceState(null, '', 'e')").unwrap();
+        assert_eq!(to_display(&it.run("location.pathname").unwrap()), "/c/e");
+    }
+
+    #[test]
+    fn window_scroll_updates_state() {
+        // 예전엔 window.scrollTo 자체가 없어 TypeError 로 스크립트가 죽었다.
+        let mut it = Interp::new();
+        it.run("window.scrollTo(0, 120)").unwrap();
+        assert_eq!(to_display(&it.run("window.scrollY").unwrap()), "120");
+        it.run("window.scrollBy(0, 30)").unwrap();
+        assert_eq!(to_display(&it.run("window.pageYOffset").unwrap()), "150");
+        it.run("window.scrollTo({ top: 5, left: 2 })").unwrap();
+        assert_eq!(to_display(&it.run("window.scrollY").unwrap()), "5");
+        assert_eq!(to_display(&it.run("window.scrollX").unwrap()), "2");
     }
 
     #[test]
