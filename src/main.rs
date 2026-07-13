@@ -1,4 +1,6 @@
 mod bench;
+mod brotli;
+mod brotli_tables;
 mod cff;
 mod css;
 mod dataurl;
@@ -16,6 +18,7 @@ mod png;
 mod raster;
 mod style;
 mod url;
+mod woff2;
 mod window;
 
 use std::fs;
@@ -600,7 +603,22 @@ fn build_page(url: &str) -> Option<window::Page> {
         for src in &ff.srcs {
             if let Some(u) = base.join(src) {
                 if let Ok(r) = http::fetch(&u.as_string()) {
-                    if let Ok(font) = font::Font::from_bytes(r.body) {
+                    // woff2 는 brotli 압축 + glyf/loca 변환이 걸린 sfnt 다 — 되돌려서 넘긴다.
+                    // 모던 사이트의 웹폰트는 사실상 전부 이 형식이다.
+                    let bytes = if r.body.starts_with(b"wOF2") {
+                        match woff2::decode(&r.body) {
+                            Some(sfnt) => sfnt,
+                            None => {
+                                if std::env::var("KESTREL_FONT_DEBUG").is_ok() {
+                                    eprintln!("[font] woff2 복원 실패: {}", src);
+                                }
+                                continue;
+                            }
+                        }
+                    } else {
+                        r.body
+                    };
+                    if let Ok(font) = font::Font::from_bytes(bytes) {
                         fonts.add_named_font(font, ff.family.clone());
                         loaded_faces += 1;
                         break;

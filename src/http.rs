@@ -10,15 +10,15 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
 // User-Agent 는 능력 선언이기도 하다. 서버는 이걸 보고 무엇을 내려줄지 정한다.
+// "Mozilla/5.0 …" 접두와 호환 토큰은 모든 브라우저가 붙이는 역사적 관습이고
+// (Chrome/Safari/Firefox/Ladybird 전부), 서버는 이걸 보고 모던 브라우저용 마크업과
+// 자원을 내려준다 — 우리가 그리려는 바로 그 콘텐츠다. 우리 자신은 끝의 Kestrel/0.1 로 밝힌다.
 //
-// 브라우저형 UA("Mozilla/5.0 … Safari/537.36")를 보내면 구글폰트는 woff2 를 내려준다.
-// 우리는 woff2 를 아직 못 읽는다 — 그러면 웹폰트가 전부 죽고 아이콘 폰트를 쓰는 사이트는
-// 리거처 글자("navigate_next")가 그대로 노출되며 텍스트 메트릭이 어긋나 레이아웃이 밀린다.
-// (측정: 같은 go.dev CSS/HTML 인데 폰트만 ttf → woff2 로 바뀌어 렌더가 무너졌다)
-//
-// 없는 능력을 광고하면 대가를 치른다. Accept 헤더에서 image/webp 를 뺀 것과 같은 원리다.
-// woff2 디코더가 들어오면 그때 브라우저형 UA 로 바꾼다.
-const USER_AGENT: &str = "Kestrel/0.1";
+// 이 UA 를 켜면 구글폰트가 ttf 대신 woff2 를 내려준다. 그래서 woff2 디코더(brotli +
+// glyf/loca 역변환)를 먼저 구현했다 — 없는 능력을 광고하면 대가를 치르기 때문이다
+// (Accept 헤더에서 image/webp 를 뺀 것과 같은 원리).
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+AppleWebKit/537.36 (KHTML, like Gecko) Kestrel/0.1 Safari/537.36";
 
 // Accept 는 우리가 실제로 디코드할 수 있는 것만 광고한다. 이건 협상이지 인사말이 아니다.
 // 브라우저 UA 를 쓰면서 image/webp,image/avif 를 받는다고 하면 서버는 기꺼이 WebP 를
