@@ -6,6 +6,26 @@ use std::rc::Rc;
 
 // URI 인코딩: 비예약문자(A-Za-z0-9 -_.!~*'()) 와 extra_safe 는 보존, 나머지는
 // UTF-8 바이트별 %XX. encodeURI 는 예약문자를 extra_safe 로 넘겨 보존한다.
+// 문서 순서(preorder) 인덱스 — compareDocumentPosition 용.
+fn preorder_index(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    target: crate::dom::NodeId,
+    counter: &mut usize,
+) -> Option<usize> {
+    let my = *counter;
+    *counter += 1;
+    if id == target {
+        return Some(my);
+    }
+    for &c in &dom.get(id).children {
+        if let Some(r) = preorder_index(dom, c, target, counter) {
+            return Some(r);
+        }
+    }
+    None
+}
+
 // ── 배열 메서드의 generic(array-like) 지원 ─────────────────────────
 // 표준의 배열 메서드는 배열이 아닌 "length 를 가진 객체"에도 동작한다.
 // jQuery 가 이걸 핵심으로 쓴다: `var push = arr.push; push.apply(jqObj, elems)`
@@ -838,6 +858,50 @@ impl Interp {
                     .unwrap_or(Value::Undefined),
                 _ => Value::Undefined,
             }),
+            // a.compareDocumentPosition(b) — 문서(preorder) 순서 비트마스크.
+            // 4 = b 가 a 뒤(FOLLOWING), 2 = b 가 a 앞(PRECEDING), 0 = 동일.
+            // jQuery 의 sortOrder 가 결과 집합 정렬에 쓴다.
+            Native::CompareDocPosition => {
+                let (Some(Value::Dom(a)), Some(Value::Dom(b))) = (&recv, args.first()) else {
+                    return Ok(Value::Num(0.0));
+                };
+                let (a, b) = (*a, *b);
+                if a == b {
+                    return Ok(Value::Num(0.0));
+                }
+                let dom = self.dom_arena()?;
+                let root = dom.root;
+                let ia = preorder_index(dom, root, a, &mut 0);
+                let ib = preorder_index(dom, root, b, &mut 0);
+                Ok(Value::Num(match (ia, ib) {
+                    (Some(x), Some(y)) if y > x => 4.0,
+                    (Some(x), Some(y)) if y < x => 2.0,
+                    _ => 0.0,
+                }))
+            }
+            // document.implementation.createHTMLDocument(title) — 분리된 문서.
+            // html>head+body 를 아레나에 만들어(문서 트리엔 안 붙임) 문서형 객체로 돌려준다.
+            // jQuery 가 support.createHTMLDocument 판정과 parseHTML 컨텍스트에 쓴다.
+            Native::CreateHTMLDocument => {
+                let dom = self.dom_arena()?;
+                let html = dom.create_element("html");
+                let head = dom.create_element("head");
+                let body = dom.create_element("body");
+                dom.append_child(html, head);
+                dom.append_child(html, body);
+                let mut d = ObjMap::new();
+                d.insert("nodeType".to_string(), Value::Num(9.0));
+                d.insert("documentElement".to_string(), Value::Dom(html));
+                d.insert("head".to_string(), Value::Dom(head));
+                d.insert("body".to_string(), Value::Dom(body));
+                d.insert("createElement".to_string(), Value::Native(Native::CreateElement));
+                d.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
+                d.insert(
+                    "createDocumentFragment".to_string(),
+                    Value::Native(Native::CreateDocumentFragment),
+                );
+                Ok(Value::Obj(Rc::new(RefCell::new(d))))
+            }
             // getComputedStyle(el) → 계산 스타일 뷰.
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
             // computedStyle.getPropertyValue('background-color') → CSS 텍스트.

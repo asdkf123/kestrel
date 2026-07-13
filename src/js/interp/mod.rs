@@ -292,6 +292,10 @@ pub enum Native {
     // getComputedStyle(el) 과 그 반환 뷰의 getPropertyValue(name)
     GetComputedStyle,
     ComputedGetProperty,
+    // a.compareDocumentPosition(b) — 문서 순서 비트마스크 (jQuery sortOrder)
+    CompareDocPosition,
+    // document.implementation.createHTMLDocument(title) — 분리된 문서
+    CreateHTMLDocument,
     DocQuery(&'static str),
     CreateTextNode,
     InsertBefore,
@@ -918,6 +922,20 @@ impl Interp {
         document.insert("body".to_string(), live("body"));
         document.insert("head".to_string(), live("head"));
         document.insert("documentElement".to_string(), live("html"));
+        // nodeType: DOCUMENT_NODE(9). jQuery 의 setDocument 가 `doc.nodeType !== 9` 로
+        // 문서를 검증하는데, 없으면 조기 반환해 로컬 document 가 undefined 로 남고
+        // 이후 document.createElement 가 죽는다 → jQuery 전체가 못 뜬다.
+        document.insert("nodeType".to_string(), Value::Num(9.0));
+        // document.implementation.createHTMLDocument — jQuery 가 이걸로 분리 문서를
+        // 만들어 feature test 를 한다(support.createHTMLDocument).
+        let mut implementation = ObjMap::new();
+        implementation
+            .insert("createHTMLDocument".to_string(), Value::Native(Native::CreateHTMLDocument));
+        implementation.insert("hasFeature".to_string(), Value::Native(Native::ReturnFalse));
+        document.insert(
+            "implementation".to_string(),
+            Value::Obj(Rc::new(RefCell::new(implementation))),
+        );
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         // Math
         let mut math = ObjMap::new();
@@ -1071,6 +1089,26 @@ impl Interp {
         env_declare(&global, "Boolean", Value::Native(Native::BooleanCtor));
         // Symbol 원시값 — Symbol()/Symbol.for/Symbol.iterator 등은 Native 로 제공.
         env_declare(&global, "Symbol", Value::Native(Native::SymbolCtor));
+        // Node — 노드 타입/문서 위치 상수 (jQuery 등이 Node.ELEMENT_NODE 를 읽는다).
+        let mut node_ns = ObjMap::new();
+        for (k, v) in [
+            ("ELEMENT_NODE", 1.0),
+            ("ATTRIBUTE_NODE", 2.0),
+            ("TEXT_NODE", 3.0),
+            ("CDATA_SECTION_NODE", 4.0),
+            ("COMMENT_NODE", 8.0),
+            ("DOCUMENT_NODE", 9.0),
+            ("DOCUMENT_TYPE_NODE", 10.0),
+            ("DOCUMENT_FRAGMENT_NODE", 11.0),
+            ("DOCUMENT_POSITION_DISCONNECTED", 1.0),
+            ("DOCUMENT_POSITION_PRECEDING", 2.0),
+            ("DOCUMENT_POSITION_FOLLOWING", 4.0),
+            ("DOCUMENT_POSITION_CONTAINS", 8.0),
+            ("DOCUMENT_POSITION_CONTAINED_BY", 16.0),
+        ] {
+            node_ns.insert(k.to_string(), Value::Num(v));
+        }
+        env_declare(&global, "Node", Value::Obj(Rc::new(RefCell::new(node_ns))));
         env_declare(&global, "Date", Value::Native(Native::DateCtor));
         env_declare(&global, "URL", Value::Native(Native::UrlCtor));
         env_declare(&global, "XMLHttpRequest", Value::Native(Native::XhrCtor));
@@ -2959,6 +2997,12 @@ impl Interp {
                     if let Some(v) = m.borrow().get("constructor") {
                         return Ok(v.clone());
                     }
+                    // 프로토타입 체인도 본다 — jQuery 는 `jQuery.fn.constructor = jQuery` 로
+                    // 프로토타입에 둔다. own 만 보면 pushStack 의 this.constructor() 가
+                    // 전역 Object 로 떨어져 "함수 아님" 이 된다.
+                    if let Some(pv) = self.proto_chain_lookup(m, "constructor", recv)? {
+                        return Ok(pv);
+                    }
                 }
                 Value::Instance(i) => {
                     if let Some(v) = i.fields.borrow().get("constructor") {
@@ -4382,6 +4426,60 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn dom_node_type_and_owner_document() {
+        let mut dom = crate::html::parse_dom("<div id=\"box\">hi</div>".to_string());
+        let box_id = dom.find_by_attr_id("box").unwrap();
+        let mut interp = Interp::new();
+        interp.dom = Some(&mut dom as *mut _);
+        // document.nodeType === 9 — jQuery 의 setDocument 가 이걸로 문서를 검증한다.
+        // 없으면 조기 반환해 jQuery 의 로컬 document 가 undefined 로 남아 전체가 죽었다.
+        assert_eq!(to_display(&interp.run("document.nodeType").unwrap()), "9");
+        // 요소 nodeType === 1
+        assert_eq!(
+            to_display(&interp.run("document.getElementById('box').nodeType").unwrap()),
+            "1",
+        );
+        // element.ownerDocument === document (jQuery setDocument 의 `node.ownerDocument || node`)
+        assert_eq!(
+            to_display(
+                &interp
+                    .run("document.getElementById('box').ownerDocument === document")
+                    .unwrap()
+            ),
+            "true",
+        );
+        let _ = box_id;
+        // document.implementation.createHTMLDocument — 분리 문서(body/head 보유)
+        assert_eq!(
+            to_display(
+                &interp
+                    .run("var d = document.implementation.createHTMLDocument(''); \
+                          (d.nodeType) + ',' + (d.body ? 'body' : 'no') + ',' + (d.head ? 'head' : 'no')")
+                    .unwrap()
+            ),
+            "9,body,head",
+        );
+    }
+
+    #[test]
+    fn constructor_found_on_prototype_chain() {
+        // jQuery 는 `jQuery.fn.constructor = jQuery` 로 프로토타입에 둔다.
+        // own 만 보면 this.constructor() 가 전역 Object 로 떨어져 "함수 아님" 이 됐다.
+        assert!(run_bool(
+            "function F(){}; F.prototype = { constructor: F, tag: 'proto' }; \
+             var o = new F(); o.constructor === F"
+        ));
+        // 인스턴스가 자기 constructor 를 가지면 그것이 우선
+        assert_eq!(
+            run_str(
+                "function F(){}; F.prototype = { constructor: F }; \
+                 var o = new F(); o.constructor = 'own'; o.constructor"
+            ),
+            "own",
+        );
     }
 
     #[test]

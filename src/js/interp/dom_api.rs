@@ -234,6 +234,14 @@ impl Interp {
             "parentElement" | "parentNode" => {
                 Ok(dom.get(id).parent.map(Value::Dom).unwrap_or(Value::Null))
             }
+            // 요소가 속한 문서. jQuery 의 setDocument 가 `node.ownerDocument || node` 로
+            // 문서를 정하는데, 없으면 요소 자신을 document 로 삼아 document.createElement
+            // 가 undefined 가 되며 jQuery 전체가 죽었다.
+            "ownerDocument" => {
+                Ok(env_get(&self.global, "document").unwrap_or(Value::Null))
+            }
+            // 문서 순서 비교 (jQuery 의 sortOrder). 4=뒤따름, 2=앞섬, 0=동일.
+            "compareDocumentPosition" => Ok(Value::Native(Native::CompareDocPosition)),
             "nextElementSibling" | "previousElementSibling" => {
                 let next = key.starts_with("next");
                 let result = dom.get(id).parent.and_then(|p| {
@@ -252,6 +260,12 @@ impl Interp {
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(e.tag_name.to_ascii_uppercase())),
                 _ => Ok(Value::Undefined),
             },
+            // nodeType: ELEMENT_NODE(1) / TEXT_NODE(3).
+            // jQuery·프레임워크가 노드 종류 판별에 광범위하게 쓴다.
+            "nodeType" => Ok(Value::Num(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(_) => 1.0,
+                crate::dom::NodeType::Text(_) => 3.0,
+            })),
             "id" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => {
                     Ok(Value::Str(e.attributes.get("id").cloned().unwrap_or_default()))
