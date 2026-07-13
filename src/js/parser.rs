@@ -5,7 +5,7 @@ use super::ast::*;
 use super::lexer::{tokenize, Tok, TplPart};
 
 // 계산된 메서드/프로퍼티 키 [expr] 를 정적으로 프로퍼티 키 문자열에 매핑한다.
-// 잘 알려진 심볼(Symbol.iterator → "@@iterator")과 문자열/숫자 리터럴을 처리한다.
+// 잘 알려진 심볼(Symbol.iterator → "\u{0}@@iterator")과 문자열/숫자 리터럴을 처리한다.
 // 런타임에만 알 수 있는 키(변수 등)는 None(호출측이 유일 플레이스홀더 사용).
 fn computed_key_string(e: &Expr) -> Option<String> {
     match e {
@@ -20,12 +20,12 @@ fn computed_key_string(e: &Expr) -> Option<String> {
             if let (Expr::Ident(o), Expr::Str(p)) = (obj.as_ref(), prop.as_ref()) {
                 if o == "Symbol" {
                     return Some(match p.as_str() {
-                        "iterator" => "@@iterator".to_string(),
-                        "asyncIterator" => "@@asyncIterator".to_string(),
-                        "toStringTag" => "@@toStringTag".to_string(),
-                        "hasInstance" => "@@hasInstance".to_string(),
-                        "toPrimitive" => "@@toPrimitive".to_string(),
-                        other => format!("@@{}", other),
+                        "iterator" => "\u{0}@@iterator".to_string(),
+                        "asyncIterator" => "\u{0}@@asyncIterator".to_string(),
+                        "toStringTag" => "\u{0}@@toStringTag".to_string(),
+                        "hasInstance" => "\u{0}@@hasInstance".to_string(),
+                        "toPrimitive" => "\u{0}@@toPrimitive".to_string(),
+                        other => format!("\u{0}@@{}", other),
                     });
                 }
             }
@@ -1311,11 +1311,11 @@ impl Parser {
     // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드
     fn member_name(&mut self) -> Result<String, String> {
         // 계산된 메서드 키 [expr] — 잘 알려진 심볼/리터럴을 정적으로 키에 매핑.
-        // 예: [Symbol.iterator]() {} → "@@iterator". 사용자 정의 이터러블 클래스 지원.
+        // 예: [Symbol.iterator]() {} → "\u{0}@@iterator". 사용자 정의 이터러블 클래스 지원.
         if self.eat(&Tok::LBracket) {
             let e = self.assignment()?;
             self.expect(&Tok::RBracket)?;
-            return Ok(computed_key_string(&e).unwrap_or_else(|| format!("@@computed:{}", self.pos)));
+            return Ok(computed_key_string(&e).unwrap_or_else(|| format!("\u{0}@@computed:{}", self.pos)));
         }
         match self.next()? {
             Tok::Ident(s) => Ok(s),

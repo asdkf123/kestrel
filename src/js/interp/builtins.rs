@@ -6,6 +6,33 @@ use std::rc::Rc;
 
 // URI 인코딩: 비예약문자(A-Za-z0-9 -_.!~*'()) 와 extra_safe 는 보존, 나머지는
 // UTF-8 바이트별 %XX. encodeURI 는 예약문자를 extra_safe 로 넘겨 보존한다.
+// 배열을 제자리에서 바꾸는 연산인가. 읽기 전용 연산은 array-like 대상을 건드리면 안 된다
+// (indexOf.call(obj,x) 가 obj 에 own length/인덱스를 심는 부작용이 있었다).
+fn is_mutating_arr_op(op: ArrOp) -> bool {
+    matches!(
+        op,
+        ArrOp::Pop
+            | ArrOp::Splice
+            | ArrOp::Shift
+            | ArrOp::Unshift
+            | ArrOp::Reverse
+            | ArrOp::Sort
+            | ArrOp::Fill
+    )
+}
+
+// 배열/객체가 얼었는가(변경 금지) / 봉인·확장금지인가(새 프로퍼티 금지).
+// 마커는 NUL 접두 내부 키라 사용자 문자열 키가 위조할 수 없다.
+pub(super) fn arr_is_frozen(a: &Rc<ArrayObj>) -> bool {
+    a.get_prop("\u{0}@@frozen").is_some()
+}
+
+pub(super) fn arr_is_sealed(a: &Rc<ArrayObj>) -> bool {
+    arr_is_frozen(a)
+        || a.get_prop("\u{0}@@sealed").is_some()
+        || a.get_prop("\u{0}@@nonext").is_some()
+}
+
 // 문서 순서(preorder) 인덱스 — compareDocumentPosition 용.
 fn preorder_index(
     dom: &crate::dom::Dom,
@@ -125,10 +152,10 @@ pub(super) fn set_own_property(target: &Value, k: String, v: Value) {
     match target {
         Value::Obj(m) => {
             let mut b = m.borrow_mut();
-            if b.contains_key("@@frozen") {
+            if b.contains_key("\u{0}@@frozen") {
                 return;
             }
-            if !b.contains_key(&k) && (b.contains_key("@@sealed") || b.contains_key("@@nonext")) {
+            if !b.contains_key(&k) && (b.contains_key("\u{0}@@sealed") || b.contains_key("\u{0}@@nonext")) {
                 return;
             }
             b.insert(k, v);
@@ -573,6 +600,10 @@ impl Interp {
             }
             Native::ArrayPush => match recv {
                 Some(Value::Arr(a)) => {
+                    // 얼었거나 봉인/확장금지면 새 항목을 추가하지 않는다(표준).
+                    if arr_is_sealed(&a) {
+                        return Ok(Value::Num(a.borrow().len() as f64));
+                    }
                     for v in args {
                         a.borrow_mut().push(v);
                     }
@@ -687,14 +718,18 @@ impl Interp {
                 Ok(obj)
             }
             // freeze 는 그대로 반환(불변성 미구현)
+            // Object(x) / Array(a,b,…) — 전역이 Native 생성자라 호출이 여기로 온다.
+            Native::ObjectCtor | Native::ArrayCtor => {
+                Ok(self.coerce_object_call(&Value::Native(n), &args).unwrap_or(Value::Undefined))
+            }
             // freeze/seal/preventExtensions: 객체/배열에 마커를 달아 실제로 상태를 남긴다.
             // (@@ 접두 → 비열거) 프로퍼티 대입 경로가 이 마커를 보고 변경을 막는다.
             Native::ObjectFreeze | Native::ObjectSeal | Native::ObjectPreventExt => {
                 let arg = args.into_iter().next().unwrap_or(Value::Undefined);
                 let marker = match n {
-                    Native::ObjectFreeze => "@@frozen",
-                    Native::ObjectSeal => "@@sealed",
-                    _ => "@@nonext",
+                    Native::ObjectFreeze => "\u{0}@@frozen",
+                    Native::ObjectSeal => "\u{0}@@sealed",
+                    _ => "\u{0}@@nonext",
                 };
                 match &arg {
                     Value::Obj(m) => {
@@ -708,9 +743,9 @@ impl Interp {
             // isFrozen/isSealed/isExtensible. 원시값은 frozen·sealed=true, extensible=false.
             Native::ObjectIsFrozen | Native::ObjectIsSealed | Native::ObjectIsExtensible => {
                 let flags = |has: &dyn Fn(&str) -> bool| {
-                    let frozen = has("@@frozen");
-                    let sealed = frozen || has("@@sealed");
-                    let nonext = sealed || has("@@nonext");
+                    let frozen = has("\u{0}@@frozen");
+                    let sealed = frozen || has("\u{0}@@sealed");
+                    let nonext = sealed || has("\u{0}@@nonext");
                     match n {
                         Native::ObjectIsFrozen => frozen,
                         Native::ObjectIsSealed => sealed,
@@ -832,7 +867,7 @@ impl Interp {
                     Some(v) => Some(to_display(v)),
                 };
                 Ok(Value::Symbol(Rc::new(super::SymbolData {
-                    key: format!("@@sym:{}", self.sym_counter),
+                    key: format!("\u{0}@@sym:{}", self.sym_counter),
                     desc,
                 })))
             }
@@ -843,7 +878,7 @@ impl Interp {
                     return Ok(sym.clone());
                 }
                 let sym = Value::Symbol(Rc::new(super::SymbolData {
-                    key: format!("@@for:{}", k),
+                    key: format!("\u{0}@@for:{}", k),
                     desc: Some(k.clone()),
                 }));
                 self.sym_registry.insert(k, sym.clone());
@@ -853,7 +888,7 @@ impl Interp {
             Native::SymbolKeyFor => Ok(match args.first() {
                 Some(Value::Symbol(s)) => s
                     .key
-                    .strip_prefix("@@for:")
+                    .strip_prefix("\u{0}@@for:")
                     .map(|k| Value::Str(k.to_string()))
                     .unwrap_or(Value::Undefined),
                 _ => Value::Undefined,
@@ -1942,10 +1977,16 @@ impl Interp {
                 // 배열이면 그대로. array-like(length 보유 객체)면 임시 배열로 옮겨 실행하고
                 // 결과를 되쓴다 → 표준의 generic 배열 메서드(jQuery 가 이걸 의존).
                 let (a, write_back) = match &recv {
-                    Some(Value::Arr(a)) => (a.clone(), None),
-                    Some(Value::Obj(o)) if is_array_like(o) => {
-                        (ArrayObj::new(array_like_to_vec(o)), Some(o.clone()))
+                    // 얼린 배열은 제자리 변형을 무시한다(표준: 조용히 실패).
+                    Some(Value::Arr(a)) if is_mutating_arr_op(op) && arr_is_frozen(a) => {
+                        return Ok(Value::Arr(a.clone()))
                     }
+                    Some(Value::Arr(a)) => (a.clone(), None),
+                    // 읽기 전용 연산은 array-like 대상을 변형하지 않는다(되쓰기 없음).
+                    Some(Value::Obj(o)) if is_array_like(o) => (
+                        ArrayObj::new(array_like_to_vec(o)),
+                        if is_mutating_arr_op(op) { Some(o.clone()) } else { None },
+                    ),
                     _ => return Err("배열 메서드".to_string()),
                 };
                 let out = match op {

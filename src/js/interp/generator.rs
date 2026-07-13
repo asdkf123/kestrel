@@ -1034,7 +1034,7 @@ impl Interp {
             return Ok(Some(v.clone()));
         }
         // @@iterator 메서드 호출 (배열/문자열/Set/Map/사용자 이터러블 공통)
-        let itf = self.member_get(v, "@@iterator")?;
+        let itf = self.member_get(v, "\u{0}@@iterator")?;
         if is_callable(&itf) {
             return Ok(Some(self.call_value(itf, Some(v.clone()), vec![])?));
         }

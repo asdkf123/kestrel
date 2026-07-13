@@ -126,8 +126,8 @@ pub enum Value {
     // function* 로 만든 지연 제너레이터. 호출 시 즉시 평가하지 않고, next()마다 다음
     // yield 까지 본문을 재개 실행한다(무한 제너레이터/양방향 next(v) 지원). generator.rs.
     Gen(Rc<RefCell<GenState>>),
-    // Symbol 원시값. key 는 프로퍼티 키로 쓰일 때의 문자열(잘 알려진 심볼은 "@@iterator"
-    // 등 고정, 일반 심볼은 "@@sym:<n>" 고유). 동일성(===)은 key 비교. desc 는 설명.
+    // Symbol 원시값. key 는 프로퍼티 키로 쓰일 때의 문자열(잘 알려진 심볼은 "\u{0}@@iterator"
+    // 등 고정, 일반 심볼은 "\u{0}@@sym:<n>" 고유). 동일성(===)은 key 비교. desc 는 설명.
     Symbol(Rc<SymbolData>),
     // getComputedStyle(el) 이 돌려주는 읽기전용 계산 스타일 뷰. 요소 NodeId 로
     // computed_styles 맵을 조회한다(카멜케이스/대시 프로퍼티 + getPropertyValue).
@@ -265,6 +265,9 @@ pub enum Native {
     FnApply,
     FnBind,
     FunctionCtor,
+    // Object/Array 전역 자체 (typeof 가 "function" 이어야 하고 호출/new 가 가능해야 함)
+    ObjectCtor,
+    ArrayCtor,
     ObjectDefineProperty,
     ObjectCreate,
     ObjectFreeze,
@@ -858,6 +861,10 @@ pub struct Interp {
     map_proto: Value,
     set_proto: Value,
     error_proto: Value,
+    // Object/Array 의 정적 멤버·prototype 을 담은 네임스페이스 맵.
+    // 전역은 Native 생성자이고, 멤버 조회는 이 맵에 위임한다.
+    object_ns: Value,
+    array_ns: Value,
     date_proto: Value,
     symbol_proto: Value,
     // 페이지 기준 URL (상대 URL 해석용 — XHR/fetch)
@@ -1045,7 +1052,8 @@ impl Interp {
         object_proto
             .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
         object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
-        env_declare(&global, "Object", Value::Obj(Rc::new(RefCell::new(object_ns))));
+        let object_ns = Value::Obj(Rc::new(RefCell::new(object_ns)));
+        env_declare(&global, "Object", Value::Native(Native::ObjectCtor));
         // Array.prototype: 모든 배열 메서드를 담아 Array.prototype.slice.call(x) 지원
         let mut array_ns = ObjMap::new();
         array_ns.insert("isArray".to_string(), Value::Native(Native::ArrayIsArray));
@@ -1078,11 +1086,12 @@ impl Interp {
         }
         array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
         // Array.prototype[Symbol.iterator]/toString — core-js uncurryThis 참조
-        array_proto.insert("@@iterator".to_string(), Value::Native(Native::MakeIter));
+        array_proto.insert("\u{0}@@iterator".to_string(), Value::Native(Native::MakeIter));
         array_proto.insert("toString".to_string(), Value::Native(Native::Arr(ArrOp::Join)));
         array_proto.insert("sort".to_string(), Value::Native(Native::Arr(ArrOp::Sort)));
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
-        env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
+        let array_ns = Value::Obj(Rc::new(RefCell::new(array_ns)));
+        env_declare(&global, "Array", Value::Native(Native::ArrayCtor));
         env_declare(&global, "RegExp", Value::Native(Native::RegExpCtor));
         env_declare(&global, "String", Value::Native(Native::StringCtor));
         env_declare(&global, "Number", Value::Native(Native::NumberCtor));
@@ -1313,7 +1322,7 @@ impl Interp {
             ("keys", Native::Map(MapOp::Keys)),
             ("values", Native::Map(MapOp::Values)),
             ("entries", Native::Map(MapOp::Entries)),
-            ("@@iterator", Native::Map(MapOp::Entries)),
+            ("\u{0}@@iterator", Native::Map(MapOp::Entries)),
         ]);
         let set_proto = mk_proto(vec![
             ("add", Native::Set(SetOp::Add)),
@@ -1323,7 +1332,7 @@ impl Interp {
             ("forEach", Native::Set(SetOp::ForEach)),
             ("keys", Native::Set(SetOp::Values)),
             ("values", Native::Set(SetOp::Values)),
-            ("@@iterator", Native::Set(SetOp::Values)),
+            ("\u{0}@@iterator", Native::Set(SetOp::Values)),
         ]);
         let date_proto = mk_proto(vec![
             ("getTime", Native::DateMethod(DateField::Time)),
@@ -1376,6 +1385,8 @@ impl Interp {
             map_proto,
             set_proto,
             error_proto,
+            object_ns,
+            array_ns,
             date_proto,
             symbol_proto,
             string_proto,
@@ -1512,28 +1523,24 @@ impl Interp {
 
     // Object(x) 호출(또는 new Object(x)) 강제변환. f 가 전역 Object 네임스페이스면 Some.
     // null/undefined → 새 빈 객체, 이미 객체/원시값이면 그대로(근사). 아니면 None.
+    // Array(…)/new Array(…) 와 Object(x)/new Object(x) — 전역이 Native 생성자이므로
+    // 호출·new 가 여기로 온다(표준: typeof 도 "function").
     fn coerce_object_call(&self, f: &Value, args: &[Value]) -> Option<Value> {
-        let Value::Obj(m) = f else { return None };
-        // Array(…) / new Array(…) — Array 는 네임스페이스 객체라 호출 불가였다.
-        // new Array(n) → 길이 n 의 빈 배열, Array(a,b,…) → 항목 배열 (표준).
-        if let Some(Value::Obj(arr_ns)) = env_get(&self.global, "Array") {
-            if Rc::ptr_eq(m, &arr_ns) {
-                return Some(match args {
-                    [Value::Num(n)] if n.fract() == 0.0 && *n >= 0.0 && *n < 4294967296.0 => {
-                        Value::Arr(ArrayObj::new(vec![Value::Undefined; *n as usize]))
-                    }
-                    items => Value::Arr(ArrayObj::new(items.to_vec())),
-                });
-            }
-        }
-        match env_get(&self.global, "Object") {
-            Some(Value::Obj(obj_ns)) if Rc::ptr_eq(m, &obj_ns) => {
+        match f {
+            Value::Native(Native::ArrayCtor) => Some(match args {
+                // new Array(n) → 길이 n 의 빈 배열, Array(a,b,…) → 항목 배열
+                [Value::Num(n)] if n.fract() == 0.0 && *n >= 0.0 && *n < 4294967296.0 => {
+                    Value::Arr(ArrayObj::new(vec![Value::Undefined; *n as usize]))
+                }
+                items => Value::Arr(ArrayObj::new(items.to_vec())),
+            }),
+            Value::Native(Native::ObjectCtor) => {
                 let arg = args.first().cloned().unwrap_or(Value::Undefined);
                 Some(match arg {
                     Value::Null | Value::Undefined => {
                         Value::Obj(Rc::new(RefCell::new(ObjMap::new())))
                     }
-                    other => other,
+                    other => other, // ToObject 근사 (원시값 박싱 미구현)
                 })
             }
             _ => None,
@@ -2948,6 +2955,15 @@ impl Interp {
             Value::Obj(m) => m.borrow().get("prototype").cloned(),
             // String 은 Native 생성자 — prototype 은 보관된 string_proto (폴리필이 여기 얹힘)
             Value::Native(Native::StringCtor) => Some(self.string_proto.clone()),
+            // Object/Array 도 Native 생성자 — prototype 은 네임스페이스 맵에 있다.
+            Value::Native(Native::ObjectCtor) => match &self.object_ns {
+                Value::Obj(m) => m.borrow().get("prototype").cloned(),
+                _ => None,
+            },
+            Value::Native(Native::ArrayCtor) => match &self.array_ns {
+                Value::Obj(m) => m.borrow().get("prototype").cloned(),
+                _ => None,
+            },
             _ => None,
         }?;
         match proto {
@@ -3039,7 +3055,7 @@ impl Interp {
                 "next" => Value::Native(Native::GenNext),
                 "return" => Value::Native(Native::GenReturn),
                 "throw" => Value::Native(Native::GenThrow),
-                "@@iterator" => Value::Native(Native::ReturnThis),
+                "\u{0}@@iterator" => Value::Native(Native::ReturnThis),
                 _ => Value::Undefined,
             }),
             // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
@@ -3163,7 +3179,7 @@ impl Interp {
                 if key == "hasOwnProperty" {
                     return Ok(Value::Native(Native::HasOwnProperty));
                 }
-                if key == "@@iterator" {
+                if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
@@ -3176,7 +3192,7 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Value::MapVal(m) => {
-                if key == "@@iterator" {
+                if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if key == "size" {
@@ -3200,7 +3216,7 @@ impl Interp {
                 if key == "size" {
                     return Ok(Value::Num(s.borrow().len() as f64));
                 }
-                if key == "@@iterator" {
+                if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 let op = match key {
@@ -3256,7 +3272,7 @@ impl Interp {
                 if key == "length" {
                     return Ok(Value::Num(s.encode_utf16().count() as f64)); // UTF-16 코드 유닛 수
                 }
-                if key == "@@iterator" {
+                if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 let op = match key {
@@ -3295,7 +3311,7 @@ impl Interp {
                 if let Some(op) = op {
                     return Ok(Value::Native(Native::Str(op)));
                 }
-                if key == "@@iterator" {
+                if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
@@ -3419,6 +3435,16 @@ impl Interp {
                 "prototype" => self.date_proto.clone(),
                 _ => Value::Undefined,
             }),
+            // Object/Array 전역은 Native 생성자(typeof === "function"). 정적 멤버·prototype 은
+            // 보관된 네임스페이스 맵에 위임한다.
+            Value::Native(Native::ObjectCtor) => {
+                let ns = self.object_ns.clone();
+                self.member_get(&ns, key)
+            }
+            Value::Native(Native::ArrayCtor) => {
+                let ns = self.array_ns.clone();
+                self.member_get(&ns, key)
+            }
             // Map/Set(=WeakMap/WeakSet).prototype — 번들의 Map.prototype.get 등.
             Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
             Value::Native(Native::SetCtor) if key == "prototype" => Ok(self.set_proto.clone()),
@@ -3439,13 +3465,13 @@ impl Interp {
             }),
             // Symbol.iterator 등 잘 알려진 심볼 + Symbol.for/keyFor
             Value::Native(Native::SymbolCtor) => Ok(match key {
-                "iterator" => Self::well_known_symbol("@@iterator", "Symbol.iterator"),
+                "iterator" => Self::well_known_symbol("\u{0}@@iterator", "Symbol.iterator"),
                 "asyncIterator" => {
-                    Self::well_known_symbol("@@asyncIterator", "Symbol.asyncIterator")
+                    Self::well_known_symbol("\u{0}@@asyncIterator", "Symbol.asyncIterator")
                 }
-                "toStringTag" => Self::well_known_symbol("@@toStringTag", "Symbol.toStringTag"),
-                "hasInstance" => Self::well_known_symbol("@@hasInstance", "Symbol.hasInstance"),
-                "toPrimitive" => Self::well_known_symbol("@@toPrimitive", "Symbol.toPrimitive"),
+                "toStringTag" => Self::well_known_symbol("\u{0}@@toStringTag", "Symbol.toStringTag"),
+                "hasInstance" => Self::well_known_symbol("\u{0}@@hasInstance", "Symbol.hasInstance"),
+                "toPrimitive" => Self::well_known_symbol("\u{0}@@toPrimitive", "Symbol.toPrimitive"),
                 "for" => Value::Native(Native::SymbolFor),
                 "keyFor" => Value::Native(Native::SymbolKeyFor),
                 "prototype" => self.symbol_proto.clone(),
@@ -3995,13 +4021,6 @@ impl Interp {
                 };
                 let is_regex = matches!(&l, Value::Obj(m) if is_regex_obj(m));
                 let is_date = matches!(&l, Value::Obj(m) if is_date_obj(m));
-                // 전역 Array/Object 는 Obj 네임스페이스로 등록됨 — 아이덴티티 비교
-                let global_is = |name: &str| -> bool {
-                    matches!(
-                        (env_get(&self.global, name), &r),
-                        (Some(Value::Obj(a)), Value::Obj(b)) if Rc::ptr_eq(&a, b)
-                    )
-                };
                 let hit = match &r {
                     Value::Native(Native::MapCtor) => matches!(l, Value::MapVal(_)),
                     Value::Native(Native::SetCtor) => matches!(l, Value::SetVal(_)),
@@ -4019,8 +4038,9 @@ impl Interp {
                                 || matches!(&l, Value::Obj(m)
                                     if matches!(m.borrow().get("name"), Some(Value::Str(s)) if s == name)))
                     }
-                    _ if global_is("Array") => matches!(l, Value::Arr(_)),
-                    _ if global_is("Object") => matches!(
+                    // Array/Object 는 Native 생성자
+                    Value::Native(Native::ArrayCtor) => matches!(l, Value::Arr(_)),
+                    Value::Native(Native::ObjectCtor) => matches!(
                         l,
                         Value::Obj(_)
                             | Value::Arr(_)
@@ -4115,11 +4135,11 @@ impl Interp {
                         {
                             let mut m = map.borrow_mut();
                             // freeze: 변경 금지. seal/preventExtensions: 새 프로퍼티 추가 금지.
-                            if m.contains_key("@@frozen") {
+                            if m.contains_key("\u{0}@@frozen") {
                                 return Ok(());
                             }
                             if !m.contains_key(&key)
-                                && (m.contains_key("@@sealed") || m.contains_key("@@nonext"))
+                                && (m.contains_key("\u{0}@@sealed") || m.contains_key("\u{0}@@nonext"))
                             {
                                 return Ok(());
                             }
@@ -4131,7 +4151,16 @@ impl Interp {
                         Ok(())
                     }
                     Value::Arr(a) => {
+                        // freeze: 모든 변경 금지. seal/preventExtensions: 새 인덱스·프로퍼티 금지.
+                        // (isFrozen 이 참인데 실제로는 변경되던 구멍 — 표준대로 막는다)
+                        if builtins::arr_is_frozen(&a) {
+                            return Ok(());
+                        }
                         if let Ok(i) = key.parse::<usize>() {
+                            let is_new = i >= a.borrow().len();
+                            if is_new && builtins::arr_is_sealed(&a) {
+                                return Ok(());
+                            }
                             let mut arr = a.borrow_mut();
                             if i >= arr.len() {
                                 arr.resize(i + 1, Value::Undefined);
@@ -4142,6 +4171,9 @@ impl Interp {
                             a.borrow_mut().resize(n, Value::Undefined);
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
+                            if a.get_prop(&key).is_none() && builtins::arr_is_sealed(&a) {
+                                return Ok(());
+                            }
                             a.set_prop(key, value);
                         }
                         Ok(())
@@ -5151,6 +5183,96 @@ mod tests {
         // frozen 대상은 변경 안 됨
         assert_eq!(
             run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"),
+            1.0,
+        );
+    }
+
+    #[test]
+    fn symbol_keys_do_not_share_string_keyspace() {
+        // 심볼 키는 문자열이 도달할 수 없는 내부 공간(NUL 접두)에 산다.
+        // 예전엔 "@@iterator" 라는 그냥 문자열로 이터러블을 위장할 수 있었고,
+        // 반대로 "@@" 로 시작하는 정상 문자열 키가 열거에서 조용히 사라졌다.
+        // 문자열 "@@iterator" 로는 이터러블이 되지 않는다
+        assert_eq!(
+            run_num(
+                "var o={}; o['@@iterator']=function(){var i=0;return{next:function(){\
+                 return i<2?{value:i++,done:false}:{done:true};}};}; [...o].length"
+            ),
+            0.0,
+        );
+        // "@@" 로 시작하는 문자열 키는 정상 프로퍼티 (열거·JSON 에 보인다)
+        assert_eq!(
+            run_str("var o={}; o['@@myprop']=1; o.normal=2; Object.keys(o).join(',')"),
+            "@@myprop,normal",
+        );
+        assert_eq!(
+            run_str("var o={}; o['@@x']=1; JSON.stringify(o)"),
+            "{\"@@x\":1}",
+        );
+        // 진짜 심볼 키는 여전히 비열거
+        assert_eq!(
+            run_str("var s=Symbol('k'); var o={a:1}; o[s]=9; Object.keys(o).join(',')"),
+            "a",
+        );
+        // 진짜 Symbol.iterator 로는 이터러블이 된다
+        assert_eq!(
+            run_num(
+                "var o={}; o[Symbol.iterator]=function(){var i=0;return{next:function(){\
+                 return i<2?{value:i++,done:false}:{done:true};}};}; [...o].length"
+            ),
+            2.0,
+        );
+    }
+
+    #[test]
+    fn builtin_constructors_are_functions() {
+        // 표준: 전역 생성자는 함수다. Array/Object 가 네임스페이스 객체라
+        // typeof 가 "object" 였다 — 기능 탐지(typeof Object === 'function')가 실패했다.
+        assert!(run_bool("typeof Array === 'function'"));
+        assert!(run_bool("typeof Object === 'function'"));
+        assert!(run_bool("typeof Promise === 'function' && typeof Date === 'function'"));
+        // 호출/new 는 그대로
+        assert_eq!(run_num("new Array(3).length"), 3.0);
+        assert_eq!(run_str("Array(1,2).join(',')"), "1,2");
+        assert_eq!(run_num("Object({a:5}).a"), 5.0);
+        // 정적 멤버·prototype 도 그대로
+        assert_eq!(run_num("Array.from([1,2]).length"), 2.0);
+        assert!(run_bool("typeof Object.keys === 'function' && typeof Array.prototype.map === 'function'"));
+        // instanceof 유지
+        assert!(run_bool("[1,2] instanceof Array && ({}) instanceof Object"));
+    }
+
+    #[test]
+    fn frozen_arrays_are_actually_frozen() {
+        // isFrozen 이 참을 반환하면서 실제로는 변경되던 구멍 — 표준대로 막는다.
+        assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a[0]=99; a[0]"), 1.0);
+        assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a.push(4); a.length"), 3.0);
+        assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a.pop(); a.length"), 3.0);
+        assert_eq!(run_str("var a=[3,1,2]; Object.freeze(a); a.sort(); a.join(',')"), "3,1,2");
+        assert!(run_bool("var a=[1]; Object.freeze(a); Object.isFrozen(a)"));
+        // seal: 기존 인덱스 변경은 되고 새 인덱스 추가는 안 된다
+        assert_eq!(run_num("var a=[1,2]; Object.seal(a); a[0]=9; a[0]"), 9.0);
+        assert_eq!(run_num("var a=[1,2]; Object.seal(a); a.push(3); a.length"), 2.0);
+        // 안 얼린 배열은 그대로
+        assert_eq!(run_num("var a=[1]; a[0]=7; a.push(8); a.length + a[0]"), 9.0);
+    }
+
+    #[test]
+    fn readonly_array_methods_do_not_mutate_array_like() {
+        // 읽기 전용 연산이 array-like 대상에 own length/인덱스를 심던 부작용 제거.
+        let pre = "var arr=[]; var indexOf=arr.indexOf, slice=arr.slice, join=arr.join;";
+        assert_eq!(
+            run_num(&format!(
+                "{pre} function P(){{}} P.prototype={{length:0}}; var al=new P(); \
+                 indexOf.call(al,'x'); slice.call(al); join.call(al); Object.keys(al).length"
+            )),
+            0.0,
+        );
+        // 변형 연산은 여전히 되쓴다
+        assert_eq!(
+            run_num(&format!(
+                "{pre} var push=arr.push; var al={{length:0}}; push.call(al,'a'); al.length"
+            )),
             1.0,
         );
     }

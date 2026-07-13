@@ -374,8 +374,8 @@ pub(super) fn is_date_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
 // 담는데, 이 키들은 열거(Object.keys/for-in/JSON/스프레드)에 노출되면 안 된다.
 // 사용자 데이터 키(__typename, __esModule 등)와 겹치지 않는 엔진 전용 이름만.
 pub(super) fn is_internal_key(k: &str) -> bool {
-    // 심볼 키("@@...")는 열거 대상이 아니다(for-in/Object.keys/JSON/스프레드 제외).
-    k.starts_with("@@")
+    // 심볼 키("\u{0}@@...")는 열거 대상이 아니다(for-in/Object.keys/JSON/스프레드 제외).
+    k.starts_with("\u{0}@@")
         || matches!(
             k,
             "__proto__"
