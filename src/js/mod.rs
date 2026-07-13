@@ -252,6 +252,13 @@ fn collect_scripts(
                 .unwrap_or_default();
             let is_js =
                 ty.is_empty() || ty == "text/javascript" || ty == "application/javascript";
+            // nomodule: 모듈을 지원하는 브라우저는 **실행하지 않는다** (HTML 표준
+            // §4.12.1 "prepare the script": nomodule 이 있고 모듈을 지원하면 중단).
+            // 우리는 ESM 을 구현하므로 건너뛴다. 예전엔 레거시 폴리필 번들(core-js 등)을
+            // 그대로 실행해서, 최신 엔진에 맞는 코드와 충돌하며 죽었다 (react.dev).
+            if e.attributes.contains_key("nomodule") {
+                return;
+            }
             // type=module 은 아래 모듈 파이프라인(run_module)이 따로 실행한다.
             let src = e.attributes.get("src").map(|s| s.trim()).filter(|s| !s.is_empty());
             if is_js {
@@ -1239,6 +1246,20 @@ mod tests {
 
     fn text_of_id(dom: &Dom, id: &str) -> Option<String> {
         dom.find_by_attr_id(id).map(|n| dom.text_content(n))
+    }
+
+    #[test]
+    fn nomodule_script_is_not_executed() {
+        // HTML 표준 §4.12.1: nomodule 이 붙은 스크립트는 **모듈을 지원하는 브라우저에서
+        // 실행하지 않는다**. 우리는 ESM 을 구현하므로 건너뛴다. 예전엔 레거시 폴리필
+        // 번들(core-js)을 그대로 실행해서 최신 코드와 충돌하며 죽었다 (react.dev).
+        let mut dom = crate::html::parse_dom(
+            "<p id=\"t\">ok</p>\
+             <script nomodule>document.getElementById('t').textContent = '폴리필 실행됨';</script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/", None);
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "ok", "nomodule 스크립트는 실행되면 안 된다");
     }
 
     #[test]
