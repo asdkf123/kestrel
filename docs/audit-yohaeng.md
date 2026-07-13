@@ -257,10 +257,14 @@ epsilon fudge, 곡선 고정분할, accent-color, 등.
   인터리브로 취급해 4블록씩 읽었다. (5d8d9db)
 - [x] **WebP 미지원** — 사이트가 .webp 를 하드코딩한다. VP8 lossy 디코더 구현(RFC 6386),
   참조 디코더와 픽셀 대조로 검증(평균오차 0.85). (1bf4b32)
+- [x] **GIF 미지원** — HN 의 스페이서가 안 나왔다. LZW/팔레트/투명/인터레이스. (0ec61d9)
+- [x] **임포트 맵 미지원** — 베어 명세자를 해석할 표준 메커니즘이 없었다. (0c0286e)
+- [x] **CSSOM 값 직렬화** — el.style.color 를 원문 그대로 돌려줬다 (정규화 안 함). (0c0286e)
+- [x] **window.getSelection 없음** — typeof 검사 후 부르는 코드가 죽었다. (0c0286e)
 
 ### 남은 것 (정직하게)
-- [ ] WebP 무손실(VP8L), AVIF
-- [ ] 임포트 맵 / 베어 명세자
-- [ ] 3D transform (perspective/rotate3d) — @supports 는 거짓으로 답한다
-- [ ] window.getSelection
-- [ ] 인라인 style 값의 CSSOM 직렬화 정규화 (rgb(9,9,9) → rgb(9, 9, 9))
+- [ ] WebP 무손실(VP8L) + 무손실 알파(ALPH method 1) — 투명 webp 는 불투명하게 나온다
+- [ ] AVIF
+- [ ] 3D transform (perspective/rotate3d) — @supports 는 거짓으로 답한다 (거짓말은 안 함)
+- [ ] 임포트 맵의 scopes
+- [ ] GIF 애니메이션 (첫 프레임만 그린다 — 정적 렌더에서는 의도된 동작)
