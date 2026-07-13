@@ -29,7 +29,11 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Keyword(ref k)) if k == "wrap" || k == "wrap-reverse");
         let justify = self.flex_keyword("justify-content");
         let align = self.flex_keyword("align-items");
-        let gap = self.styled_node.value("gap").map(|v| v.to_px()).unwrap_or(0.0);
+        // main 축 간격은 row 면 column-gap, column 이면 row-gap (CSS Box Alignment §8).
+        // 줄 사이(cross) 간격은 그 반대다. 예전엔 한 값(gap)을 양쪽에 다 썼다.
+        let px = |p: &str| self.styled_node.value(p).map(|v| v.to_px()).unwrap_or(0.0);
+        let (row_gap, col_gap) = (px("row-gap"), px("column-gap"));
+        let (gap, cross_gap) = if row { (col_gap, row_gap) } else { (row_gap, col_gap) };
         let d = self.dimensions;
         let (ox, oy) = (d.content.x, d.content.y);
 
@@ -160,7 +164,7 @@ impl<'a> LayoutBox<'a> {
                     .iter()
                     .map(|l| l.iter().map(|&i| cross[i]).fold(0.0f32, f32::max))
                     .sum::<f32>()
-                    + gap * (lines.len() as f32 - 1.0).max(0.0);
+                    + cross_gap * (lines.len() as f32 - 1.0).max(0.0);
                 justify_offsets(&align_content, (cc - total_lc).max(0.0), lines.len())
             } else {
                 (0.0, 0.0)
@@ -262,12 +266,12 @@ impl<'a> LayoutBox<'a> {
                 main_pen += msize + gap + between_extra;
             }
             max_main = max_main.max(sum_basis + sum_gap + if total_grow > 0.0 { free.max(0.0) } else { 0.0 });
-            cross_pen += line_cross + gap + ac_between;
+            cross_pen += line_cross + cross_gap + ac_between;
         }
 
         // 컨테이너 cross(=흐름) 크기 반영. calculate_height 가 명시 height 로 나중에 덮음.
         if row {
-            self.dimensions.content.height = (cross_pen - oy - gap).max(0.0);
+            self.dimensions.content.height = (cross_pen - oy - cross_gap).max(0.0);
         } else {
             self.dimensions.content.height = max_main.max(0.0);
         }

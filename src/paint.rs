@@ -765,6 +765,36 @@ pub enum ImageFit {
     Tile,    // background-repeat: repeat — 양축 타일
     TileX,   // repeat-x — 가로만 타일
     TileY,   // repeat-y — 세로만 타일
+    // background-size 로 타일 크기가 지정된 경우 (repeat 여부는 background-repeat).
+    Sized { w: BgSize, h: BgSize, tile_x: bool, tile_y: bool },
+}
+
+// background-size 한 축. Pct 는 0..1 (배경 배치 영역 기준). Auto 는 다른 축에서 종횡비 유지.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BgSize {
+    Auto,
+    Px(f32),
+    Pct(f32),
+}
+
+// "50% 25%" / "20px" / "100% auto" / "auto" → (가로, 세로). cover/contain 은 여기서 다루지 않는다.
+pub fn parse_bg_size(text: &str) -> Option<(BgSize, BgSize)> {
+    let one = |t: &str| -> Option<BgSize> {
+        let t = t.trim();
+        if t.eq_ignore_ascii_case("auto") {
+            return Some(BgSize::Auto);
+        }
+        if let Some(p) = t.strip_suffix('%') {
+            return p.trim().parse::<f32>().ok().map(|v| BgSize::Pct(v / 100.0));
+        }
+        crate::css::parse_len_px(t).map(BgSize::Px)
+    };
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    match toks.len() {
+        1 => one(toks[0]).map(|w| (w, BgSize::Auto)), // 한 값이면 세로는 auto (종횡비 유지)
+        2 => Some((one(toks[0])?, one(toks[1])?)),
+        _ => None,
+    }
 }
 
 // background-position 한 축 값. Pct 는 0..1 (박스-이미지 정렬 기준).
@@ -2035,14 +2065,28 @@ fn collect_items(
     if let Some(idx) = layout_box.background_image {
         // background-size: cover/contain 우선. 아니면 background-repeat 로 타일 여부 결정
         // (CSS 기본은 repeat → Tile; no-repeat 이면 Natural).
+        let repeat = layout_box.styled_node.value("background-repeat");
+        let (tile_x, tile_y) = match repeat {
+            Some(Value::Keyword(ref k)) if k == "no-repeat" => (false, false),
+            Some(Value::Keyword(ref k)) if k == "repeat-x" => (true, false),
+            Some(Value::Keyword(ref k)) if k == "repeat-y" => (false, true),
+            _ => (true, true), // 기본 repeat
+        };
+        let bg_size = match layout_box.styled_node.value("background-size") {
+            Some(Value::Keyword(ref k)) => parse_bg_size(k),
+            Some(Value::Length(v, crate::css::Unit::Px)) => Some((BgSize::Px(v), BgSize::Auto)),
+            Some(Value::Length(v, crate::css::Unit::Percent)) => Some((BgSize::Pct(v / 100.0), BgSize::Auto)),
+            _ => None,
+        };
         let fit = match layout_box.styled_node.value("background-size") {
             Some(Value::Keyword(ref k)) if k == "cover" => ImageFit::Cover,
             Some(Value::Keyword(ref k)) if k == "contain" => ImageFit::Contain,
-            _ => match layout_box.styled_node.value("background-repeat") {
-                Some(Value::Keyword(ref k)) if k == "no-repeat" => ImageFit::Natural,
-                Some(Value::Keyword(ref k)) if k == "repeat-x" => ImageFit::TileX,
-                Some(Value::Keyword(ref k)) if k == "repeat-y" => ImageFit::TileY,
-                _ => ImageFit::Tile, // 기본 repeat
+            _ => match bg_size {
+                Some((w, h)) => ImageFit::Sized { w, h, tile_x, tile_y },
+                None if !tile_x && !tile_y => ImageFit::Natural,
+                None if tile_x && !tile_y => ImageFit::TileX,
+                None if !tile_x && tile_y => ImageFit::TileY,
+                None => ImageFit::Tile,
             },
         };
         let pos = layout_box.styled_node.value("background-position").and_then(|v| match v {
@@ -2653,13 +2697,43 @@ fn blit_image(
     let (tw0, th0) = (iw * scale, ih * scale);
     let off_x = pos.map_or(0.0, |(px, _)| px.resolve(rect.width, tw0));
     let off_y = pos.map_or(0.0, |(_, py)| py.resolve(rect.height, th0));
-    // 타일링(background-repeat): 고유 크기(×scale)로 rect 안을 반복. 위치 오프셋만큼 위상 이동.
-    if matches!(fit, ImageFit::Tile | ImageFit::TileX | ImageFit::TileY) {
-        let (tile_x, tile_y) = (
-            matches!(fit, ImageFit::Tile | ImageFit::TileX),
-            matches!(fit, ImageFit::Tile | ImageFit::TileY),
-        );
-        let (tw, th) = (iw * scale, ih * scale);
+    // 타일링(background-repeat) + background-size. 타일 한 장의 크기를 먼저 정하고,
+    // 축별 반복 여부에 따라 rect 안을 채운다 (반복 안 하는 축은 한 장만 그리고 클립).
+    if matches!(fit, ImageFit::Tile | ImageFit::TileX | ImageFit::TileY | ImageFit::Sized { .. }) {
+        let (tile_x, tile_y) = match fit {
+            ImageFit::Tile => (true, true),
+            ImageFit::TileX => (true, false),
+            ImageFit::TileY => (false, true),
+            ImageFit::Sized { tile_x, tile_y, .. } => (tile_x, tile_y),
+            _ => (false, false),
+        };
+        // background-size 로 크기가 지정되면 그 크기가 타일 크기다. auto 축은 종횡비 유지.
+        let (tw, th) = match fit {
+            ImageFit::Sized { w, h, .. } => {
+                let res = |s: BgSize, base: f32| match s {
+                    BgSize::Auto => f32::NAN,
+                    BgSize::Px(v) => v * scale, // CSS px → 장치 px
+                    BgSize::Pct(p) => base * p, // 배경 배치 영역 기준 (이미 장치 px)
+                };
+                let (mut w, mut h) = (res(w, rect.width), res(h, rect.height));
+                if w.is_nan() && h.is_nan() {
+                    w = iw * scale;
+                    h = ih * scale;
+                } else if w.is_nan() {
+                    w = h * iw / ih;
+                } else if h.is_nan() {
+                    h = w * ih / iw;
+                }
+                (w, h)
+            }
+            _ => (iw * scale, ih * scale),
+        };
+        if tw <= 0.0 || th <= 0.0 {
+            return;
+        }
+        // background-position 은 실제 타일 크기 기준으로 다시 푼다 (퍼센트 정렬은 타일 크기에 의존).
+        let off_x = pos.map_or(0.0, |(px, _)| px.resolve(rect.width, tw));
+        let off_y = pos.map_or(0.0, |(_, py)| py.resolve(rect.height, th));
         let x0 = rect.x.max(0.0) as usize;
         let y0 = rect.y.max(0.0) as usize;
         let x1 = ((rect.x + rect.width).min(canvas.width as f32)).max(0.0) as usize;
@@ -2692,7 +2766,7 @@ fn blit_image(
     let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
     // 그려질 목적지 사각형 dr (이미지 전체가 매핑되는 영역; rect 밖은 클립)
     let mut dr = match fit {
-        ImageFit::Fill | ImageFit::Tile | ImageFit::TileX | ImageFit::TileY => rect,
+        ImageFit::Fill | ImageFit::Tile | ImageFit::TileX | ImageFit::TileY | ImageFit::Sized { .. } => rect,
         ImageFit::Contain => {
             let s = (rect.width / iw).min(rect.height / ih);
             let (w, h) = (iw * s, ih * s);
@@ -2830,6 +2904,17 @@ pub fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn background_size_parses_lengths_and_auto() {
+        assert_eq!(parse_bg_size("50% 25%"), Some((BgSize::Pct(0.5), BgSize::Pct(0.25))));
+        assert_eq!(parse_bg_size("40px auto"), Some((BgSize::Px(40.0), BgSize::Auto)));
+        assert_eq!(parse_bg_size("auto"), Some((BgSize::Auto, BgSize::Auto)));
+        // 한 값이면 세로는 auto (종횡비 유지)
+        assert_eq!(parse_bg_size("20px"), Some((BgSize::Px(20.0), BgSize::Auto)));
+        // cover/contain 은 여기서 다루지 않는다 (별도 fit)
+        assert_eq!(parse_bg_size("cover"), None);
+    }
+
     use crate::css::Color;
 
     #[test]

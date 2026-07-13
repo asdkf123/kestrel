@@ -183,6 +183,59 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let mapped = name.strip_prefix("grid-").unwrap();
             expand_declaration(mapped, value_text)
         }
+        // gap: <row-gap> [<column-gap>]. 값이 둘이면 일반 값 파서가 None 을 돌려주고
+        // 선언이 통째로 사라져서 간격이 0 이 됐다. longhand 로 쪼갠다.
+        // 한 값이어도 longhand 를 함께 내보내 소비자가 어느 쪽을 읽든 맞게 한다.
+        "gap" => {
+            let toks = split_top_level(value_text);
+            let Some(r) = toks.first().copied() else { return Vec::new() };
+            let c = toks.get(1).copied().unwrap_or(r);
+            let mut out = expand_declaration("row-gap", r);
+            out.extend(expand_declaration("column-gap", c));
+            out
+        }
+        // overflow: <x> [<y>] (CSS Overflow §3). 두 값이면 선언이 사라져 visible 이 됐다.
+        "overflow" => {
+            let toks = split_top_level(value_text);
+            let Some(x) = toks.first().copied() else { return Vec::new() };
+            match toks.get(1).copied() {
+                None => vec![Declaration { important: false, name: "overflow".to_string(), value: Value::Keyword(x.to_string()) }],
+                Some(y) => vec![
+                    Declaration { important: false, name: "overflow-x".to_string(), value: Value::Keyword(x.to_string()) },
+                    Declaration { important: false, name: "overflow-y".to_string(), value: Value::Keyword(y.to_string()) },
+                ],
+            }
+        }
+        // flex-flow: <flex-direction> || <flex-wrap> (순서 무관). 아예 미구현이었다.
+        "flex-flow" => {
+            let mut out = Vec::new();
+            for t in split_top_level(value_text) {
+                let lower = t.to_ascii_lowercase();
+                match lower.as_str() {
+                    "row" | "row-reverse" | "column" | "column-reverse" => out.push(Declaration {
+                        important: false, name: "flex-direction".to_string(), value: Value::Keyword(lower) }),
+                    "nowrap" | "wrap" | "wrap-reverse" => out.push(Declaration {
+                        important: false, name: "flex-wrap".to_string(), value: Value::Keyword(lower) }),
+                    _ => {}
+                }
+            }
+            out
+        }
+        // border-spacing: <h> [<v>]. 두 값 원문 보존 (레이아웃이 이미 두 값을 읽는다).
+        "border-spacing" => {
+            let toks = split_top_level(value_text);
+            if toks.len() >= 2 {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+            }
+            interpret_value(value_text)
+                .map(|v| vec![Declaration { important: false, name: name.to_string(), value: v }])
+                .unwrap_or_default()
+        }
+        // background-size: cover | contain | [<length-percentage> | auto]{1,2}. 다중 토큰
+        // 원문 보존 (페인트가 파싱). 예전엔 "50% 25%" 가 사라져 auto 로 그려졌다.
+        "background-size" => {
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // line-height: 단위 없는 수(1.5)는 배수(Lh)로 저장해 상속 시 factor 그대로 —
         // 각 요소가 자기 font-size 를 곱한다(CSS2 §10.8). 퍼센트(150%)는 요소 font-size
         // 기준 길이로 확정돼 그 길이가 상속되므로 em 으로 저장. normal/길이단위는 그대로.
@@ -850,6 +903,47 @@ mod tests {
 
     fn find<'a>(decls: &'a [Declaration], name: &str) -> Option<&'a Value> {
         decls.iter().find(|d| d.name == name).map(|d| &d.value)
+    }
+
+    #[test]
+    fn multi_token_values_are_not_dropped() {
+        // 일반 값 파서는 다중 토큰을 못 읽어 None 을 돌려주고, 그러면 선언이 통째로
+        // 사라진다. 아래 프로퍼티들은 그래서 조용히 무시되고 있었다 (요행).
+        // overflow: <x> [<y>]
+        let d = expand_declaration("overflow", "hidden auto");
+        assert!(matches!(find(&d, "overflow-x"), Some(Value::Keyword(k)) if k == "hidden"));
+        assert!(matches!(find(&d, "overflow-y"), Some(Value::Keyword(k)) if k == "auto"));
+        // 한 값이면 overflow 그대로 (소비자가 세 이름을 다 본다)
+        let d1 = expand_declaration("overflow", "hidden");
+        assert!(matches!(find(&d1, "overflow"), Some(Value::Keyword(k)) if k == "hidden"));
+
+        // gap: <row> [<column>]
+        let g = expand_declaration("gap", "10px 20px");
+        assert_eq!(find(&g, "row-gap"), Some(&Value::Length(10.0, Unit::Px)));
+        assert_eq!(find(&g, "column-gap"), Some(&Value::Length(20.0, Unit::Px)));
+        let g1 = expand_declaration("gap", "8px");
+        assert_eq!(find(&g1, "row-gap"), Some(&Value::Length(8.0, Unit::Px)));
+        assert_eq!(find(&g1, "column-gap"), Some(&Value::Length(8.0, Unit::Px)));
+
+        // flex-flow: <direction> || <wrap> (순서 무관, 아예 미구현이었다)
+        let f = expand_declaration("flex-flow", "column wrap");
+        assert!(matches!(find(&f, "flex-direction"), Some(Value::Keyword(k)) if k == "column"));
+        assert!(matches!(find(&f, "flex-wrap"), Some(Value::Keyword(k)) if k == "wrap"));
+        let f2 = expand_declaration("flex-flow", "wrap-reverse row-reverse");
+        assert!(matches!(find(&f2, "flex-direction"), Some(Value::Keyword(k)) if k == "row-reverse"));
+        assert!(matches!(find(&f2, "flex-wrap"), Some(Value::Keyword(k)) if k == "wrap-reverse"));
+
+        // border-spacing: <h> [<v>] — 레이아웃은 이미 두 값을 읽고 있었지만 선언이 없었다
+        let b = expand_declaration("border-spacing", "2px 4px");
+        assert!(matches!(find(&b, "border-spacing"), Some(Value::Keyword(k)) if k == "2px 4px"));
+
+        // background-size: 다중 토큰 원문 보존
+        let z = expand_declaration("background-size", "50% 25%");
+        assert!(matches!(find(&z, "background-size"), Some(Value::Keyword(k)) if k == "50% 25%"));
+
+        // transform-origin: 다중 토큰 원문 보존
+        let t = expand_declaration("transform-origin", "left top");
+        assert!(matches!(find(&t, "transform-origin"), Some(Value::Keyword(k)) if k == "left top"));
     }
 
     #[test]
