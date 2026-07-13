@@ -145,6 +145,11 @@ impl Dom {
         id
     }
 
+    // 아레나에 든 노드 수 (테스트/진단용)
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn get(&self, id: NodeId) -> &NodeData {
         &self.nodes[id]
     }

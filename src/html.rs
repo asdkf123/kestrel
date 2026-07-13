@@ -1555,7 +1555,13 @@ impl Builder {
     fn m_in_table(&mut self, t: Token) -> Option<Token> {
         match t {
             Token::Text(s) => {
-                self.original_mode = Mode::InTable;
+                // 표 안의 텍스트는 "in table text" 로 모아서 처리하고, 끝나면 **원래
+                // 삽입 모드**로 돌아간다 (HTML 표준 §13.2.6.4.9).
+                // 예전엔 원래 모드를 InTable 로 못 박았다. 그래서 <tr> 안에서
+                // `</td> <td>` 처럼 공백 하나만 있어도 행 밖으로 튕겨 나가고,
+                // 다음 <td> 가 새 tbody/tr 을 만들었다 — 표가 세로로 쪼개진다.
+                // (위키백과의 힌트 상자가 정확히 이렇게 무너졌다)
+                self.original_mode = self.mode;
                 self.mode = Mode::InTableText;
                 self.table_text.clear();
                 self.table_text_ws_only = true;
@@ -2218,6 +2224,33 @@ fn decode_one(entity: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    // (아래 표준 테스트들과 함께 실행)
+    use super::*;
+
+    #[test]
+    fn whitespace_between_cells_keeps_one_row() {
+        // 표 안 텍스트를 처리한 뒤엔 원래 삽입 모드로 돌아가야 한다(HTML 표준 §13.2.6.4.9).
+        // 예전엔 InTable 로 못 박아서 `</td> <td>` 사이의 공백 하나에 행이 닫히고
+        // 다음 셀이 새 tbody/tr 을 만들었다 — 표가 세로로 쪼개진다.
+        let dom = parse_dom(
+            "<table><tbody><tr><td>a</td> <td>b</td></tr></tbody></table>".to_string(),
+        );
+        let mut tbody = 0;
+        let mut tr = 0;
+        let mut td = 0;
+        for i in 0..dom.node_count() {
+            if let NodeType::Element(e) = &dom.get(i).node_type {
+                match e.tag_name.as_str() {
+                    "tbody" => tbody += 1,
+                    "tr" => tr += 1,
+                    "td" => td += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!((tbody, tr, td), (1, 1, 2), "한 행 두 칸이어야 한다");
+    }
+
     use super::*;
     use crate::dom::NodeType;
 

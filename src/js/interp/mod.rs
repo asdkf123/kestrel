@@ -940,6 +940,8 @@ pub struct Interp {
     date_proto: Value,
     symbol_proto: Value,
     // 페이지 기준 URL (상대 URL 해석용 — XHR/fetch)
+    // 상대 URL 해석 기준 (문서의 base URL). <base href> 가 있으면 그것이다 —
+    // location.href(문서 URL)와는 다를 수 있다.
     base_url: Option<String>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
     // undefined 로 (표준 아님, naver 등 롱테일 거리 측정용). 접근 키를 집계.
@@ -1757,6 +1759,11 @@ impl Interp {
     }
 
     // location 전역 설치 (페이지 URL 기반). window.location 에도 공유.
+    // 문서의 기준 URL 설정 (<base href>). location 은 바뀌지 않는다.
+    pub fn set_base_url(&mut self, base: &str) {
+        self.base_url = Some(base.to_string());
+    }
+
     pub fn install_location(&mut self, url: &str) {
         self.base_url = Some(url.to_string());
         let Ok(u) = crate::url::Url::parse(url) else { return };

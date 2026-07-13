@@ -403,9 +403,24 @@ fn load_stylesheet(
     seen.insert(css_url.to_string());
     let r = match http::fetch(css_url) {
         Ok(r) => r,
-        Err(_) => return,
+        Err(e) => {
+            println!("[css] 로드 실패 {:?} — {}", e, css_url);
+            return;
+        }
     };
-    let text = String::from_utf8_lossy(&r.body).to_string();
+    // 2xx 가 아니면 본문은 CSS 가 아니다. 예전엔 상태를 안 보고 404/429 의 HTML 오류
+    // 페이지를 그대로 CSS 파서에 넣었다 — 규칙이 하나도 안 나오는데 아무 말도 없었다.
+    // (스타일이 통째로 빠진 페이지가 나오고 왜 그런지 알 수가 없다)
+    if !(200..300).contains(&r.status) {
+        println!("[css] HTTP {} — {}", r.status, css_url);
+        return;
+    }
+    let ctype = r
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone());
+    let (text, _) = encoding::decode(&r.body, ctype.as_deref());
     let this_base = url::Url::parse(css_url).ok();
     for (imp, media) in extract_imports(&text) {
         if !media.is_empty() && !css::media_matches(&media, page_vw) {
@@ -467,6 +482,28 @@ fn parse_import_stmt(stmt: &str) -> Option<(String, String)> {
 }
 
 // <link rel=stylesheet> 의 (href, media) 수집. media 조건은 로더가 평가한다.
+// <base href> — 문서의 기준 URL (HTML 표준 §4.2.3).
+// 이게 없으면 이 태그를 쓰는 페이지의 CSS/스크립트/이미지/링크가 전부 엉뚱한 곳으로
+// 간다. 예전엔 무시했다 — 서브리소스가 통째로 404 가 나는데 아무 말도 없었다.
+fn base_href(dom: &dom::Dom) -> Option<String> {
+    let mut found = None;
+    walk_dom(dom, dom.root, &mut |n| {
+        if found.is_some() {
+            return;
+        }
+        if let dom::NodeType::Element(e) = &n.node_type {
+            if e.tag_name == "base" {
+                if let Some(h) = e.attributes.get("href") {
+                    if !h.trim().is_empty() {
+                        found = Some(h.trim().to_string());
+                    }
+                }
+            }
+        }
+    });
+    found
+}
+
 fn collect_links(dom: &dom::Dom, out: &mut Vec<(String, String)>) {
     walk_dom(dom, dom.root, &mut |n| {
         if let dom::NodeType::Element(e) = &n.node_type {
@@ -548,7 +585,19 @@ fn build_page(url: &str) -> Option<window::Page> {
     // 원문엔 없어도 엔티티(&#51060; 등) 디코드 후 한글이 나올 수 있다 (google.co.kr)
     scripts.extend(page_scripts(&dom.text_content(dom.root)));
 
-    let base = url::Url::parse(url).ok()?;
+    let doc_url = url::Url::parse(url).ok()?;
+    // <base href> 가 있으면 그것이 문서의 기준 URL 이다 (HTML 표준 §4.2.3).
+    // CSS/스크립트/이미지/링크의 상대 URL 이 전부 이 기준으로 해석된다.
+    let base = match base_href(&dom) {
+        Some(h) => match doc_url.join(&h) {
+            Some(b) => {
+                println!("[base] <base href> → {}", b.as_string());
+                b
+            }
+            None => doc_url.clone(),
+        },
+        None => doc_url.clone(),
+    };
 
     // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침.
     // 저작자 CSS 는 실제 뷰포트 폭으로 파싱해 @media 를 평가한다.
@@ -645,7 +694,7 @@ fn build_page(url: &str) -> Option<window::Page> {
             vw: page_vw,
             vh: page_vh,
         };
-        js::run_scripts(&mut dom, url, Some(ctx))
+        js::run_scripts_with_base(&mut dom, url, &base.as_string(), Some(ctx))
     };
 
     // 스크립트가 <style> 을 주입했으면 그때 생긴 것만 추가로 반영한다.

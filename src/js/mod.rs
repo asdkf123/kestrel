@@ -20,10 +20,23 @@ pub fn run_scripts(
     page_url: &str,
     layout_ctx: Option<crate::window::LayoutCtx>,
 ) -> interp::Interp {
+    run_scripts_with_base(dom, page_url, page_url, layout_ctx)
+}
+
+// page_url: location.href 가 되는 문서 URL.
+// base_url: 상대 URL 해석 기준 (<base href> 가 있으면 그것). 표준에서 이 둘은 다를 수 있다.
+pub fn run_scripts_with_base(
+    dom: &mut crate::dom::Dom,
+    page_url: &str,
+    base_url: &str,
+    layout_ctx: Option<crate::window::LayoutCtx>,
+) -> interp::Interp {
     let mut it = interp::Interp::new();
     it.install_location(page_url);
+    it.set_base_url(base_url);
     it.layout_ctx = layout_ctx;
-    let base = crate::url::Url::parse(page_url).ok();
+    // 외부 스크립트 src 도 문서의 기준 URL(<base href>)로 해석한다
+    let base = crate::url::Url::parse(base_url).ok();
     let mut sources = Vec::new();
     collect_scripts(dom, dom.root, base.as_ref(), &mut sources);
     if sources.is_empty() {
