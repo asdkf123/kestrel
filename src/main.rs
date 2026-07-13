@@ -8,6 +8,7 @@ mod dom;
 mod encoding;
 mod encoding_cjk;
 mod font;
+mod gif;
 mod html;
 mod http;
 mod inflate;
@@ -238,6 +239,10 @@ fn decode_image(bytes: &[u8]) -> Option<png::Image> {
     // WebP (RIFF....WEBP). 사이트가 .webp 를 URL 에 박아 쓴다 (react.dev 등).
     if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         return webp::decode(bytes);
+    }
+    // GIF (아직도 흔하다 — HN 의 스페이서, 옛 아이콘·배너)
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return gif::decode(bytes);
     }
     // SVG: 텍스트 포맷이라 시그니처가 없다. XML 선언/주석/공백을 건너뛰고 <svg 를 찾는다.
     // CSS background-image: url(*.svg) 와 <img src=*.svg> 가 전부 이걸로 온다 —
