@@ -851,12 +851,7 @@ impl Interp {
         } else {
             let target = self.eval(obj, scope)?;
             let ks: Vec<String> = match &target {
-                Value::Obj(m) => m
-                    .borrow()
-                    .keys()
-                    .filter(|k| !is_internal_key(k.as_str()))
-                    .cloned()
-                    .collect(),
+                Value::Obj(m) => super::value::enumerable_keys(m),
                 Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                 Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                 _ => Vec::new(),

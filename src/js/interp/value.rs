@@ -446,6 +446,29 @@ pub(super) fn is_internal_key(k: &str) -> bool {
     k.starts_with('\u{0}') || k == "__proto__"
 }
 
+// 비열거(enumerable: false) 프로퍼티 표식. 내부 키라서 스스로는 열거되지 않는다.
+// 예전엔 defineProperty 의 enumerable 을 통째로 무시해서, 숨겨야 할 프로퍼티가
+// Object.keys / for-in / JSON 에 그대로 새어 나왔다 (조용히 틀린 출력).
+pub(super) fn nonenum_marker(k: &str) -> String {
+    format!("\u{0}ne:{}", k)
+}
+
+pub(super) fn enumerable_keys(m: &Rc<RefCell<ObjMap>>) -> Vec<String> {
+    let b = m.borrow();
+    b.keys()
+        .filter(|k| !is_internal_key(k) && !b.contains_key(&nonenum_marker(k)))
+        .cloned()
+        .collect()
+}
+
+pub(super) fn enumerable_entries(m: &Rc<RefCell<ObjMap>>) -> Vec<(String, Value)> {
+    let b = m.borrow();
+    b.iter()
+        .filter(|(k, _)| !is_internal_key(k) && !b.contains_key(&nonenum_marker(k)))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 fn two(n: u32) -> String {
     format!("{:02}", n)
 }

@@ -433,6 +433,7 @@ pub enum Native {
     DocWrite,
     CookieGet,
     CookieSet,
+    ObjectGetOwnPropertyDescriptor,
     LocationAssign,
     LocationReload,
     LocationHrefSet,
@@ -1287,6 +1288,10 @@ impl Interp {
         object_ns.insert("getOwnPropertyNames".to_string(), Value::Native(Native::ObjectKeys));
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
         object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
+        object_ns.insert(
+            "getOwnPropertyDescriptor".to_string(),
+            Value::Native(Native::ObjectGetOwnPropertyDescriptor),
+        );
         object_ns.insert("defineProperties".to_string(), Value::Native(Native::ObjectDefineProperties));
         object_ns.insert("create".to_string(), Value::Native(Native::ObjectCreate));
         object_ns.insert("freeze".to_string(), Value::Native(Native::ObjectFreeze));
@@ -2757,7 +2762,7 @@ impl Interp {
                 let target = self.eval(obj, env)?;
                 let keys: Vec<String> = match &target {
                     // __proto__ 링크는 열거 대상 아님(JS 에서 non-enumerable accessor)
-                    Value::Obj(m) => m.borrow().keys().filter(|k| !is_internal_key(k.as_str())).cloned().collect(),
+                    Value::Obj(m) => enumerable_keys(m),
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                     _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
@@ -7109,6 +7114,47 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn property_descriptors_and_enumerable() {
+        // 게터 프로퍼티의 디스크립터에는 get 이 있어야 한다. 예전 프렐류드 폴리필은
+        // {value: o[k]} 를 만들어 **게터를 실행해 값만** 줬다 — 라이브러리가 d.get 으로
+        // 분기하므로 조용히 틀린 길로 간다 (naver 가 여기서 죽었다).
+        assert_eq!(
+            run_str("var o = { get a() { return 1 } }; typeof Object.getOwnPropertyDescriptor(o, 'a').get"),
+            "function"
+        );
+        // 배열 length / 함수 prototype 도 own 프로퍼티다
+        assert_eq!(run_num("Object.getOwnPropertyDescriptor([1,2], 'length').value"), 2.0);
+        assert_eq!(
+            run_str("function F(){}; typeof Object.getOwnPropertyDescriptor(F, 'prototype').value"),
+            "object"
+        );
+        // enumerable: false 는 Object.keys / for-in / JSON 에서 빠져야 한다.
+        // 예전엔 이 플래그를 통째로 무시해서 숨겨야 할 프로퍼티가 그대로 새어 나왔다.
+        assert_eq!(
+            run_num("var o = {}; Object.defineProperty(o, 'h', { value: 1 }); Object.keys(o).length"),
+            0.0
+        );
+        assert_eq!(
+            run_str("var o = {}; Object.defineProperty(o, 'h', { value: 1 }); JSON.stringify(o)"),
+            "{}"
+        );
+        assert_eq!(
+            run_num("var o = {}; Object.defineProperty(o, 'h', { value: 1 }); var n = 0; for (var k in o) n++; n"),
+            0.0
+        );
+        // enumerable: true 는 보인다
+        assert_eq!(
+            run_str("var o = {}; Object.defineProperty(o, 'v', { value: 9, enumerable: true }); Object.keys(o).join()"),
+            "v"
+        );
+        // 숨긴 뒤에도 값은 읽힌다
+        assert_eq!(
+            run_num("var o = {}; Object.defineProperty(o, 'h', { value: 7 }); o.h"),
+            7.0
+        );
     }
 
     #[test]

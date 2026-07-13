@@ -110,12 +110,7 @@ fn write_back_array_like(o: &Rc<RefCell<ObjMap>>, items: &[Value]) {
 // 엔진 내부 마커(__proto__/@@심볼 등)는 제외한다.
 pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
     match v {
-        Value::Obj(m) => m
-            .borrow()
-            .iter()
-            .filter(|(k, _)| !is_internal_key(k.as_str()))
-            .map(|(k, val)| (k.clone(), val.clone()))
-            .collect(),
+        Value::Obj(m) => enumerable_entries(m),
         // 배열: 인덱스 + own-property (push 재정의 등)
         Value::Arr(a) => {
             let mut out: Vec<(String, Value)> = a
@@ -429,12 +424,7 @@ impl Interp {
                 json_date_iso(map).map(|s| json_quote_pub(&s)).unwrap_or_else(|| "null".to_string()),
             ),
             Value::Obj(map) => {
-                let entries: Vec<(String, Value)> = map
-                    .borrow()
-                    .iter()
-                    .filter(|(k, _)| !json_is_internal(k))
-                    .map(|(k, val)| (k.clone(), val.clone()))
-                    .collect();
+                let entries: Vec<(String, Value)> = enumerable_entries(map);
                 let mut parts = Vec::new();
                 for (k, val) in &entries {
                     if let Some(ks) = keys {
@@ -958,6 +948,111 @@ impl Interp {
                 Ok(Value::Bound(Rc::new((target, this_arg, partial))))
             }
             Native::FunctionCtor => self.make_function(args),
+            // Object.getOwnPropertyDescriptor(o, k) — 접근자면 get/set, 값이면 value.
+            // 예전엔 프렐류드 폴리필이 {value: o[k], enumerable: true} 를 만들었다:
+            //   1) 게터 프로퍼티의 디스크립터에 get 이 없다 (게터를 **실행해** 값만 준다).
+            //   2) enumerable 이 항상 true (비열거를 구분 못 한다).
+            //   3) 배열 length / 함수 prototype 이 undefined.
+            // 라이브러리가 d.get / d.enumerable 을 보고 분기하므로 조용히 틀린 길로 간다.
+            Native::ObjectGetOwnPropertyDescriptor => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let key = args.get(1).map(to_display).unwrap_or_default();
+                let mut d = ObjMap::new();
+                let found = match &target {
+                    Value::Obj(m) => {
+                        let b = m.borrow();
+                        match b.get(&key) {
+                            Some(Value::Accessor(acc)) => {
+                                d.insert(
+                                    "get".to_string(),
+                                    acc.get.clone().unwrap_or(Value::Undefined),
+                                );
+                                d.insert(
+                                    "set".to_string(),
+                                    acc.set.clone().unwrap_or(Value::Undefined),
+                                );
+                                true
+                            }
+                            Some(v) => {
+                                d.insert("value".to_string(), v.clone());
+                                d.insert("writable".to_string(), Value::Bool(true));
+                                true
+                            }
+                            None => false,
+                        }
+                    }
+                    Value::Arr(a) => {
+                        if key == "length" {
+                            d.insert("value".to_string(), Value::Num(a.borrow().len() as f64));
+                            d.insert("writable".to_string(), Value::Bool(true));
+                            // length 는 비열거다 (표준)
+                            d.insert("enumerable".to_string(), Value::Bool(false));
+                            d.insert("configurable".to_string(), Value::Bool(false));
+                            return Ok(Value::Obj(Rc::new(RefCell::new(d))));
+                        }
+                        match key.parse::<usize>().ok().and_then(|i| a.borrow().get(i).cloned()) {
+                            Some(v) => {
+                                d.insert("value".to_string(), v);
+                                d.insert("writable".to_string(), Value::Bool(true));
+                                true
+                            }
+                            None => match a.get_prop(&key) {
+                                Some(v) => {
+                                    d.insert("value".to_string(), v);
+                                    d.insert("writable".to_string(), Value::Bool(true));
+                                    true
+                                }
+                                None => false,
+                            },
+                        }
+                    }
+                    Value::Fn(f) => {
+                        let v = if key == "prototype" {
+                            Some(self.member_get(&target, "prototype")?)
+                        } else {
+                            f.props.borrow().get(&key).cloned()
+                        };
+                        match v {
+                            Some(Value::Accessor(acc)) => {
+                                d.insert(
+                                    "get".to_string(),
+                                    acc.get.clone().unwrap_or(Value::Undefined),
+                                );
+                                d.insert(
+                                    "set".to_string(),
+                                    acc.set.clone().unwrap_or(Value::Undefined),
+                                );
+                                true
+                            }
+                            Some(v) => {
+                                d.insert("value".to_string(), v);
+                                d.insert("writable".to_string(), Value::Bool(true));
+                                true
+                            }
+                            None => false,
+                        }
+                    }
+                    Value::Instance(inst) => match inst.fields.borrow().get(&key) {
+                        Some(v) => {
+                            d.insert("value".to_string(), v.clone());
+                            d.insert("writable".to_string(), Value::Bool(true));
+                            true
+                        }
+                        None => false,
+                    },
+                    _ => false,
+                };
+                if !found {
+                    return Ok(Value::Undefined);
+                }
+                let enumerable = match &target {
+                    Value::Obj(m) => !m.borrow().contains_key(&nonenum_marker(&key)),
+                    _ => true,
+                };
+                d.insert("enumerable".to_string(), Value::Bool(enumerable));
+                d.insert("configurable".to_string(), Value::Bool(true));
+                Ok(Value::Obj(Rc::new(RefCell::new(d))))
+            }
             // Object.defineProperty(target, key, {get|value}) — 접근자/값 정의
             Native::ObjectDefineProperty => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
@@ -975,10 +1070,23 @@ impl Interp {
                 } else {
                     None
                 };
+                // enumerable: false 면 표식을 남긴다 (기본값은 false — 표준).
+                // 예전엔 이 플래그를 통째로 무시해서 숨겨야 할 프로퍼티가 Object.keys /
+                // for-in / JSON 에 그대로 새어 나왔다.
+                let enumerable = match args.get(2) {
+                    Some(Value::Obj(dd)) => matches!(dd.borrow().get("enumerable"), Some(v) if to_bool(v)),
+                    _ => false,
+                };
                 if let Some(val) = entry {
                     match &target {
                         Value::Obj(map) => {
+                            let marker = nonenum_marker(&key);
                             map.borrow_mut().insert(key, val);
+                            if enumerable {
+                                map.borrow_mut().remove(&marker);
+                            } else {
+                                map.borrow_mut().insert(marker, Value::Bool(true));
+                            }
                         }
                         // require.n 은 함수에 접근자를 정의 (getter.a = ...)
                         Value::Fn(func) => {
@@ -3597,12 +3705,8 @@ impl Interp {
                     self.call_native(Native::ObjectKeys, None, vec![t])
                 }
                 Some(Value::Obj(m)) => {
-                    let keys: Vec<Value> = m
-                        .borrow()
-                        .keys()
-                        .filter(|k| !is_internal_key(k.as_str()))
-                        .map(|k| Value::Str(k.clone()))
-                        .collect();
+                    let keys: Vec<Value> =
+                        enumerable_keys(m).into_iter().map(Value::Str).collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
                 Some(Value::Arr(a)) => {
@@ -3619,12 +3723,9 @@ impl Interp {
             },
             Native::ObjectValues => {
                 let vals: Vec<Value> = match args.first() {
-                    Some(Value::Obj(m)) => m
-                        .borrow()
-                        .iter()
-                        .filter(|(k, _)| !is_internal_key(k.as_str()))
-                        .map(|(_, v)| v.clone())
-                        .collect(),
+                    Some(Value::Obj(m)) => {
+                        enumerable_entries(m).into_iter().map(|(_, v)| v).collect()
+                    }
                     Some(Value::Arr(a)) => a.borrow().clone(),
                     Some(Value::Instance(i)) => i.fields.borrow().values().cloned().collect(),
                     _ => Vec::new(),
@@ -3636,12 +3737,9 @@ impl Interp {
                     Value::Arr(ArrayObj::new(vec![Value::Str(k.to_string()), v.clone()]))
                 };
                 let entries: Vec<Value> = match args.first() {
-                    Some(Value::Obj(m)) => m
-                        .borrow()
-                        .iter()
-                        .filter(|(k, _)| !is_internal_key(k.as_str()))
-                        .map(|(k, v)| pair(k, v))
-                        .collect(),
+                    Some(Value::Obj(m)) => {
+                        enumerable_entries(m).iter().map(|(k, v)| pair(k, v)).collect()
+                    }
                     Some(Value::Arr(a)) => a
                         .borrow()
                         .iter()
