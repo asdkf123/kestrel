@@ -160,6 +160,41 @@
 - [x] **대문자 타입 선택자(`DIV SPAN`)가 아무것도 매칭 안 함** — HTML 타입 선택자는 ASCII
   대소문자 구분이 없다(선택자 표준 §6.1). (881d199)
 
+## 3라운드 감사 — CSS 값/단축, 레이아웃, 페인트 (2026-07-13)
+
+감사 방법은 같다: 어서션 페이지를 렌더해서 [console] 확인, 페인트는 PPM 픽셀 직접 probe.
+
+- [x] **단축 프로퍼티 파서가 괄호를 무시** — 이번 감사 최대어. 값을 split_whitespace()/
+  split(',') 로 잘라서 함수 인자 안의 공백·콤마까지 구분자로 봤다:
+  `background: rgb(1,2,3)` → "rgb(1" 로 잘려 배경이 아예 안 칠해지고,
+  `border: 1px solid rgba(0, 0, 0, .1)` → 색이 통째로 사라졌다. rgba(…, .1) 콤마+공백
+  표기는 실제 사이트에서 압도적으로 흔하다. split_top_level 을 슬라이스 반환으로 바꿔
+  단축 파서 13곳을 전부 교체. background 레이어는 괄호 밖 콤마로만 분리. (f60bd7c)
+- [x] **단위 없는 수를 길이(px)로 저장** — opacity/z-index/order/flex-grow/flex-shrink 를
+  Length(n, Px) 로 실어서 getComputedStyle 이 "0.5px" "5px" "1px" 을 돌려줬다.
+  Unit::Number 도입. (657ee61)
+- [x] **font-weight: inherit 이 상속을 끊음** — 파싱 실패로 보고 "normal" 로 눌렀다.
+  react.dev 의 리셋 CSS 가 실제로 이걸 써서 굵어야 할 글자가 가늘게 나왔다.
+  계산값도 표준대로 수(bold=700). (657ee61)
+- [x] **중첩 calc()** — `calc(50% + calc(10px * 2))` 가 선언째 버려졌다. (657ee61)
+- [x] **color: currentColor 자기참조** — 표준상 inherit. 키워드가 미해석으로 남았다. (657ee61)
+- [x] **rgba 알파 직렬화 잡음** — 8비트 모델이라 0.5 가 "0.502" 로 샜다. (657ee61)
+- [x] **인라인 요소에 박스가 없음** — span/a/b/em 의 getBoundingClientRect 가 전부 0,
+  <span onclick> 도 발화 안 함(히트 목록에 없어서). 표준의 인라인 박스 = 조각들의
+  경계 합집합. 인라인 조상 체인 전부에 조각을 적립해 합집합. (3ad7984)
+
+### 정상 확인 (요행 없음 — 렌더/픽셀로 검증)
+- HTML 파서 오류 복구 10/10: 미닫힌 b/i, tbody 암묵 삽입, li/option 암묵 닫힘,
+  엔티티(&amp; &#65; &nbsp; &#x42;), void 요소.
+- z-index 스태킹 5/5 (픽셀 probe): 문서 순서, z-index 순서, positioned vs in-flow,
+  opacity 가 만드는 스태킹 컨텍스트, 음수 z-index.
+- 테이블: colspan/rowspan/폭 분배 정상.
+- CSS 캐스케이드/선택자 16/16: 특이도, !important vs 인라인, 자식/인접/일반형제,
+  :nth-child/:first/:last, 속성 선택자(=, ^=), :not, var/calc, 상속, 동일특이도 순서.
+- CSS 값 25/25: hex 3/6, rgb/rgba/hsl/hsla, 명명색, transparent, %/vw/rem/pt/in,
+  calc/min/clamp, var 폴백, 대문자 값·프로퍼티명, !important 공백 변형,
+  rgb(a b c / d) 공백 표기.
+
 ### 남은 격차 (요행이 아니라 미구현 — 정직하게 보고 중)
 - woff/woff2 웹폰트 디코더 없음 (ttf/otf 만). 모던 사이트는 woff2 만 싣는 곳이 많다.
 - Shift_JIS/GBK/Big5 문자셋 테이블 (감지는 하고 Unsupported 로 보고).
