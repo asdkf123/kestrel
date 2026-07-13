@@ -1408,10 +1408,10 @@ impl Interp {
     // 새 pending Promise (Obj 표현: 상태·값·대기콜백을 맵에 저장, then/catch 는 Native)
     fn new_promise(&self) -> Value {
         let mut m = ObjMap::new();
-        m.insert("__isPromise".to_string(), Value::Bool(true));
-        m.insert("__state".to_string(), Value::Str("pending".to_string()));
-        m.insert("__value".to_string(), Value::Undefined);
-        m.insert("__cbs".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
+        m.insert("\u{0}isPromise".to_string(), Value::Bool(true));
+        m.insert("\u{0}state".to_string(), Value::Str("pending".to_string()));
+        m.insert("\u{0}value".to_string(), Value::Undefined);
+        m.insert("\u{0}cbs".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
         // then/catch/finally 는 own 프로퍼티가 아니라 member_get 에서 해석(비열거).
         Value::Obj(Rc::new(RefCell::new(m)))
     }
@@ -1437,16 +1437,16 @@ impl Interp {
         let Value::Obj(o) = p else { return };
         {
             let m = o.borrow();
-            if !matches!(m.get("__state"), Some(Value::Str(s)) if s == "pending") {
+            if !matches!(m.get("\u{0}state"), Some(Value::Str(s)) if s == "pending") {
                 return; // 이미 정착 — 한 번만
             }
         }
         let cbs = {
             let mut m = o.borrow_mut();
             let state = if fulfilled { "fulfilled" } else { "rejected" };
-            m.insert("__state".to_string(), Value::Str(state.to_string()));
-            m.insert("__value".to_string(), value.clone());
-            match m.get("__cbs") {
+            m.insert("\u{0}state".to_string(), Value::Str(state.to_string()));
+            m.insert("\u{0}value".to_string(), value.clone());
+            match m.get("\u{0}cbs") {
                 Some(Value::Arr(a)) => {
                     let v = a.borrow().clone();
                     a.borrow_mut().clear();
@@ -1478,11 +1478,11 @@ impl Interp {
         let (state, value) = {
             let m = o.borrow();
             (
-                match m.get("__state") {
+                match m.get("\u{0}state") {
                     Some(Value::Str(s)) => s.clone(),
                     _ => "pending".into(),
                 },
-                m.get("__value").cloned().unwrap_or(Value::Undefined),
+                m.get("\u{0}value").cloned().unwrap_or(Value::Undefined),
             )
         };
         match state.as_str() {
@@ -1495,7 +1495,7 @@ impl Interp {
                 entry.insert("onR".to_string(), on_r);
                 entry.insert("dep".to_string(), dep.clone());
                 let entry = Value::Obj(Rc::new(RefCell::new(entry)));
-                if let Some(Value::Arr(a)) = o.borrow().get("__cbs") {
+                if let Some(Value::Arr(a)) = o.borrow().get("\u{0}cbs") {
                     a.borrow_mut().push(entry);
                 }
             }
@@ -1568,11 +1568,11 @@ impl Interp {
         self.drain_microtasks();
         if let Value::Obj(o) = v {
             let m = o.borrow();
-            let state = match m.get("__state") {
+            let state = match m.get("\u{0}state") {
                 Some(Value::Str(s)) => s.clone(),
                 _ => "pending".into(),
             };
-            let value = m.get("__value").cloned().unwrap_or(Value::Undefined);
+            let value = m.get("\u{0}value").cloned().unwrap_or(Value::Undefined);
             if state == "rejected" {
                 return (false, value);
             }
@@ -1675,7 +1675,7 @@ impl Interp {
         let host = if port.is_empty() { u.host.clone() } else { format!("{}:{}", u.host, port) };
         // searchParams: 쿼리 문자열을 담고 네이티브 메서드로 조회
         let mut sp = ObjMap::new();
-        sp.insert("__query".to_string(), Value::Str(search.trim_start_matches('?').to_string()));
+        sp.insert("\u{0}query".to_string(), Value::Str(search.trim_start_matches('?').to_string()));
         sp.insert("get".to_string(), Value::Native(Native::UrlSearchGet));
         sp.insert("getAll".to_string(), Value::Native(Native::UrlSearchGetAll));
         sp.insert("has".to_string(), Value::Native(Native::UrlSearchHas));
@@ -1733,8 +1733,8 @@ impl Interp {
     // 값들의 Vec 을 반복자 객체로 (MakeIter 와 동일 구조: __items/__i/next).
     fn make_iter_from_vec(&self, items: Vec<Value>) -> Value {
         let mut it = ObjMap::new();
-        it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
-        it.insert("__i".to_string(), Value::Num(0.0));
+        it.insert("\u{0}items".to_string(), Value::Arr(ArrayObj::new(items)));
+        it.insert("\u{0}i".to_string(), Value::Num(0.0));
         it.insert("next".to_string(), Value::Native(Native::IterNext));
         Value::Obj(Rc::new(RefCell::new(it)))
     }
@@ -1751,8 +1751,8 @@ impl Interp {
                 .map(|(k, val)| Value::Arr(ArrayObj::new(vec![k.clone(), val.clone()])))
                 .collect(),
             // 재료화된 반복자 객체(__items)는 그대로.
-            Value::Obj(o) if o.borrow().contains_key("__items") => {
-                match o.borrow().get("__items") {
+            Value::Obj(o) if o.borrow().contains_key("\u{0}items") => {
+                match o.borrow().get("\u{0}items") {
                     Some(Value::Arr(items)) => items.borrow().clone(),
                     _ => Vec::new(),
                 }
@@ -1794,7 +1794,7 @@ impl Interp {
         m.insert("cancelable".to_string(), Value::Bool(true));
         m.insert("defaultPrevented".to_string(), Value::Bool(false));
         m.insert("isTrusted".to_string(), Value::Bool(true));
-        m.insert("__stopProp".to_string(), Value::Bool(false));
+        m.insert("\u{0}stopProp".to_string(), Value::Bool(false));
         m.insert("timeStamp".to_string(), Value::Num(0.0));
         m.insert("preventDefault".to_string(), Value::Native(Native::EventPreventDefault));
         m.insert("stopPropagation".to_string(), Value::Native(Native::EventStopProp));
@@ -1843,7 +1843,7 @@ impl Interp {
                 }
             }
             // stopPropagation 되면 상위로 전파 안 함
-            if matches!(evt_obj.borrow().get("__stopProp"), Some(Value::Bool(true))) {
+            if matches!(evt_obj.borrow().get("\u{0}stopProp"), Some(Value::Bool(true))) {
                 break;
             }
         }
@@ -2389,7 +2389,7 @@ impl Interp {
                 // 유한한 내장 이터러블(배열/문자열/Set/Map/재료화 반복자)은 재료화해 순회.
                 let finite = matches!(&target,
                     Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
-                    || matches!(&target, Value::Obj(o) if o.borrow().contains_key("__items"));
+                    || matches!(&target, Value::Obj(o) if o.borrow().contains_key("\u{0}items"));
                 if !finite {
                     // 반복자 프로토콜(지연): 제너레이터/사용자 [Symbol.iterator] 이터러블/
                     // 반복자 객체. 한 번에 하나씩 뽑아 무한+break 에도 대응.
@@ -2601,11 +2601,11 @@ impl Interp {
                     let (state, value) = {
                         let m = o.borrow();
                         (
-                            match m.get("__state") {
+                            match m.get("\u{0}state") {
                                 Some(Value::Str(s)) => s.clone(),
                                 _ => "pending".into(),
                             },
-                            m.get("__value").cloned().unwrap_or(Value::Undefined),
+                            m.get("\u{0}value").cloned().unwrap_or(Value::Undefined),
                         )
                     };
                     match state.as_str() {
@@ -2819,7 +2819,7 @@ impl Interp {
                 if matches!(&**callee, Expr::Super) {
                     arg_vals.extend(self.eval_args(args, env)?);
                     let (Some(sc), Some(this)) =
-                        (env_get(env, "__superclass__"), env_get(env, "this"))
+                        (env_get(env, "\u{0}superclass__"), env_get(env, "this"))
                     else {
                         return Err("super() 는 파생 클래스 생성자에서만".to_string());
                     };
@@ -2843,7 +2843,7 @@ impl Interp {
                     if matches!(&**obj, Expr::Super) {
                         let key = self.member_key(prop, *computed, env)?;
                         let (Some(sc), Some(this)) =
-                            (env_get(env, "__superclass__"), env_get(env, "this"))
+                            (env_get(env, "\u{0}superclass__"), env_get(env, "this"))
                         else {
                             return Err("super.x 는 파생 클래스에서만".to_string());
                         };
@@ -3582,7 +3582,7 @@ impl Interp {
                 }
                 // 메서드 안 super.x 해석용
                 if let Some(sc) = &func.super_class {
-                    env_declare(&scope, "__superclass__", sc.clone());
+                    env_declare(&scope, "\u{0}superclass__", sc.clone());
                 }
                 for (i, p) in func.params.iter().enumerate() {
                     if let Some(rest) = p.strip_prefix("...") {
@@ -3806,9 +3806,9 @@ impl Interp {
                 // super 참조용: 현재 클래스의 부모를 스코프에 숨겨둠.
                 // 부모가 클래스가 아니면(Error/함수 등) 그 생성자 값을 그대로 둔다.
                 if let Some(parent) = &cls.parent {
-                    env_declare(&scope, "__superclass__", Value::Class(parent.clone()));
+                    env_declare(&scope, "\u{0}superclass__", Value::Class(parent.clone()));
                 } else if let Some(pc) = &cls.parent_ctor {
-                    env_declare(&scope, "__superclass__", pc.clone());
+                    env_declare(&scope, "\u{0}superclass__", pc.clone());
                 }
                 for (i, p) in ctor.params.iter().enumerate() {
                     env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
@@ -5185,6 +5185,39 @@ mod tests {
             run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"),
             1.0,
         );
+    }
+
+    #[test]
+    fn engine_markers_are_not_forgeable_from_js() {
+        // 엔진 내부 마커는 NUL 접두 공간에 산다 — JS 문자열 키가 도달할 수 없다.
+        // 예전엔 `obj.__isPromise = true` 로 promise 를, `__isDate` 로 Date 를,
+        // `__items` 로 이터러블을 위장할 수 있었다(타입 시스템 우회).
+        assert!(run_bool(
+            "var f={__isPromise:true,__state:'fulfilled',__value:42}; f.then === undefined"
+        ));
+        assert!(run_bool("var f={__isDate:true,__time:0}; f.getTime === undefined"));
+        assert_eq!(
+            run_str(
+                "var f={__items:[1,2,3],__i:0}; \
+                 try { var n=0; for (var x of f) n++; 'iterated:'+n } catch(e) { 'not-iterable' }"
+            ),
+            "not-iterable",
+        );
+        // 반대로 사용자의 정상 __ 키가 열거에서 사라지지 않는다
+        assert_eq!(
+            run_str("var u={__items:'d',__time:'t',__value:'v',normal:1}; Object.keys(u).join(',')"),
+            "__items,__time,__value,normal",
+        );
+        assert_eq!(
+            run_str("var u={__value:'v'}; JSON.stringify(u)"),
+            "{\"__value\":\"v\"}",
+        );
+        // 진짜 Promise/Date/정규식은 여전히 동작
+        assert!(run_bool("typeof Promise.resolve(1).then === 'function'"));
+        assert!(run_bool("typeof (new Date()).getTime === 'function'"));
+        assert!(run_bool("/a/.test('a')"));
+        // __proto__ 는 표준 이름이라 유지(비열거 + 프로토타입 의미론)
+        assert_eq!(run_str("var o={a:1}; Object.keys(o).join(',')"), "a");
     }
 
     #[test]

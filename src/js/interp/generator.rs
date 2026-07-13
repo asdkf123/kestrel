@@ -1026,7 +1026,7 @@ impl Interp {
         // 이미 반복자 객체(next 보유, 재료화 배열은 제외)
         if let Value::Obj(o) = v {
             let b = o.borrow();
-            if b.contains_key("next") && !b.contains_key("__items") {
+            if b.contains_key("next") && !b.contains_key("\u{0}items") {
                 return Ok(Some(v.clone()));
             }
         }

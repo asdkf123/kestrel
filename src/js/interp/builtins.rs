@@ -252,16 +252,16 @@ fn parse_query(q: &str) -> Vec<(String, String)> {
 
 // 컨텍스트의 __path 배열 조작 ([x0,y0,x1,y1,...] 평탄 저장).
 fn set_path(ctx: &Rc<RefCell<ObjMap>>, pts: Vec<Value>) {
-    ctx.borrow_mut().insert("__path".to_string(), Value::Arr(ArrayObj::new(pts)));
+    ctx.borrow_mut().insert("\u{0}path".to_string(), Value::Arr(ArrayObj::new(pts)));
 }
 fn push_path(ctx: &Rc<RefCell<ObjMap>>, x: f32, y: f32) {
-    if let Some(Value::Arr(a)) = ctx.borrow().get("__path") {
+    if let Some(Value::Arr(a)) = ctx.borrow().get("\u{0}path") {
         a.borrow_mut().push(Value::Num(x as f64));
         a.borrow_mut().push(Value::Num(y as f64));
     }
 }
 fn get_path(ctx: &Rc<RefCell<ObjMap>>) -> Vec<(f32, f32)> {
-    if let Some(Value::Arr(a)) = ctx.borrow().get("__path") {
+    if let Some(Value::Arr(a)) = ctx.borrow().get("\u{0}path") {
         let flat = a.borrow();
         return flat
             .chunks(2)
@@ -300,7 +300,7 @@ impl Interp {
     ) -> Result<Value, String> {
         use CanvasMethod::*;
         let Some(Value::Obj(ctx)) = recv else { return Ok(Value::Undefined) };
-        let canvas_id = match ctx.borrow().get("__canvas") {
+        let canvas_id = match ctx.borrow().get("\u{0}canvas") {
             Some(Value::Num(n)) => *n as crate::dom::NodeId,
             _ => return Ok(Value::Undefined),
         };
@@ -525,7 +525,7 @@ impl Interp {
     // new XMLHttpRequest() → 메서드/속성을 가진 객체
     pub(super) fn make_xhr(&self) -> Value {
         let mut m = ObjMap::new();
-        m.insert("__isXhr".to_string(), Value::Bool(true));
+        m.insert("\u{0}isXhr".to_string(), Value::Bool(true));
         m.insert("readyState".to_string(), Value::Num(0.0));
         m.insert("status".to_string(), Value::Num(0.0));
         m.insert("statusText".to_string(), Value::Str(String::new()));
@@ -561,7 +561,7 @@ impl Interp {
             1 => match &args[0] {
                 Value::Num(n) => *n,
                 Value::Str(s) => parse_date_string(s).unwrap_or(f64::NAN),
-                Value::Obj(m) if is_date_obj(m) => match m.borrow().get("__time") {
+                Value::Obj(m) if is_date_obj(m) => match m.borrow().get("\u{0}time") {
                     Some(Value::Num(n)) => *n,
                     _ => f64::NAN,
                 },
@@ -816,8 +816,8 @@ impl Interp {
                     _ => Vec::new(),
                 };
                 let mut it = ObjMap::new();
-                it.insert("__items".to_string(), Value::Arr(ArrayObj::new(items)));
-                it.insert("__i".to_string(), Value::Num(0.0));
+                it.insert("\u{0}items".to_string(), Value::Arr(ArrayObj::new(items)));
+                it.insert("\u{0}i".to_string(), Value::Num(0.0));
                 it.insert("next".to_string(), Value::Native(Native::IterNext));
                 Ok(Value::Obj(Rc::new(RefCell::new(it))))
             }
@@ -827,7 +827,7 @@ impl Interp {
                 if let Some(Value::Obj(o)) = &recv {
                     let (items, i) = {
                         let b = o.borrow();
-                        (b.get("__items").cloned(), b.get("__i").cloned())
+                        (b.get("\u{0}items").cloned(), b.get("\u{0}i").cloned())
                     };
                     if let (Some(Value::Arr(items)), Some(Value::Num(i))) = (items, i) {
                         let idx = i as usize;
@@ -835,7 +835,7 @@ impl Interp {
                         if idx < len {
                             res.insert("value".to_string(), items.borrow()[idx].clone());
                             res.insert("done".to_string(), Value::Bool(false));
-                            o.borrow_mut().insert("__i".to_string(), Value::Num((idx + 1) as f64));
+                            o.borrow_mut().insert("\u{0}i".to_string(), Value::Num((idx + 1) as f64));
                         } else {
                             res.insert("value".to_string(), Value::Undefined);
                             res.insert("done".to_string(), Value::Bool(true));
@@ -1085,7 +1085,7 @@ impl Interp {
             }
             Native::EventStopProp => {
                 if let Some(Value::Obj(o)) = &recv {
-                    o.borrow_mut().insert("__stopProp".to_string(), Value::Bool(true));
+                    o.borrow_mut().insert("\u{0}stopProp".to_string(), Value::Bool(true));
                 }
                 Ok(Value::Undefined)
             }
@@ -1096,8 +1096,8 @@ impl Interp {
                     let method = args.first().map(to_display).unwrap_or_else(|| "GET".to_string());
                     let url = args.get(1).map(to_display).unwrap_or_default();
                     let mut b = o.borrow_mut();
-                    b.insert("__method".to_string(), Value::Str(method));
-                    b.insert("__url".to_string(), Value::Str(url));
+                    b.insert("\u{0}method".to_string(), Value::Str(method));
+                    b.insert("\u{0}url".to_string(), Value::Str(url));
                     b.insert("readyState".to_string(), Value::Num(1.0));
                 }
                 Ok(Value::Undefined)
@@ -1110,7 +1110,7 @@ impl Interp {
                     Some(Value::Obj(o)) => o.clone(),
                     _ => return Ok(Value::Undefined),
                 };
-                let url = match obj.borrow().get("__url") {
+                let url = match obj.borrow().get("\u{0}url") {
                     Some(Value::Str(u)) => u.clone(),
                     _ => String::new(),
                 };
@@ -1172,7 +1172,7 @@ impl Interp {
             // date.getFullYear() 등 — recv 가 Date 객체
             Native::DateMethod(field) => {
                 let millis = match &recv {
-                    Some(Value::Obj(m)) => match m.borrow().get("__time") {
+                    Some(Value::Obj(m)) => match m.borrow().get("\u{0}time") {
                         Some(Value::Num(n)) => *n,
                         _ => f64::NAN,
                     },
@@ -1406,12 +1406,12 @@ impl Interp {
                 };
                 self.canvas_cmds.entry(canvas_id).or_default();
                 let mut m = ObjMap::new();
-                m.insert("__canvas".to_string(), Value::Num(canvas_id as f64));
+                m.insert("\u{0}canvas".to_string(), Value::Num(canvas_id as f64));
                 m.insert("fillStyle".to_string(), Value::Str("#000000".to_string()));
                 m.insert("strokeStyle".to_string(), Value::Str("#000000".to_string()));
                 m.insert("lineWidth".to_string(), Value::Num(1.0));
                 m.insert("font".to_string(), Value::Str("10px sans-serif".to_string()));
-                m.insert("__path".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
+                m.insert("\u{0}path".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
                 use CanvasMethod::*;
                 for (name, meth) in [
                     ("fillRect", FillRect),
@@ -2396,10 +2396,10 @@ impl Interp {
             }
             Native::UrlCtor => self.make_url(args), // URL(x) (new 없이) — 관대하게 생성
             Native::UrlToString => Ok(Value::Str(recv_prop_str(&recv, "href"))),
-            Native::UrlSearchToString => Ok(Value::Str(recv_prop_str(&recv, "__query"))),
+            Native::UrlSearchToString => Ok(Value::Str(recv_prop_str(&recv, "\u{0}query"))),
             Native::UrlSearchGet => {
                 let key = args.first().map(to_display).unwrap_or_default();
-                Ok(parse_query(&recv_prop_str(&recv, "__query"))
+                Ok(parse_query(&recv_prop_str(&recv, "\u{0}query"))
                     .into_iter()
                     .find(|(k, _)| *k == key)
                     .map(|(_, v)| Value::Str(v))
@@ -2407,7 +2407,7 @@ impl Interp {
             }
             Native::UrlSearchGetAll => {
                 let key = args.first().map(to_display).unwrap_or_default();
-                let vals: Vec<Value> = parse_query(&recv_prop_str(&recv, "__query"))
+                let vals: Vec<Value> = parse_query(&recv_prop_str(&recv, "\u{0}query"))
                     .into_iter()
                     .filter(|(k, _)| *k == key)
                     .map(|(_, v)| Value::Str(v))
@@ -2417,36 +2417,36 @@ impl Interp {
             Native::UrlSearchHas => {
                 let key = args.first().map(to_display).unwrap_or_default();
                 Ok(Value::Bool(
-                    parse_query(&recv_prop_str(&recv, "__query")).iter().any(|(k, _)| *k == key),
+                    parse_query(&recv_prop_str(&recv, "\u{0}query")).iter().any(|(k, _)| *k == key),
                 ))
             }
             Native::UrlSearchSet => {
                 if let Some(Value::Obj(o)) = &recv {
-                    let mut pairs = parse_query(&recv_prop_str(&recv, "__query"));
+                    let mut pairs = parse_query(&recv_prop_str(&recv, "\u{0}query"));
                     let key = args.first().map(to_display).unwrap_or_default();
                     let val = args.get(1).map(to_display).unwrap_or_default();
                     pairs.retain(|(k, _)| *k != key);
                     pairs.push((key, val));
-                    o.borrow_mut().insert("__query".to_string(), Value::Str(build_query(&pairs)));
+                    o.borrow_mut().insert("\u{0}query".to_string(), Value::Str(build_query(&pairs)));
                 }
                 Ok(Value::Undefined)
             }
             Native::UrlSearchAppend => {
                 if let Some(Value::Obj(o)) = &recv {
-                    let mut pairs = parse_query(&recv_prop_str(&recv, "__query"));
+                    let mut pairs = parse_query(&recv_prop_str(&recv, "\u{0}query"));
                     let key = args.first().map(to_display).unwrap_or_default();
                     let val = args.get(1).map(to_display).unwrap_or_default();
                     pairs.push((key, val));
-                    o.borrow_mut().insert("__query".to_string(), Value::Str(build_query(&pairs)));
+                    o.borrow_mut().insert("\u{0}query".to_string(), Value::Str(build_query(&pairs)));
                 }
                 Ok(Value::Undefined)
             }
             Native::UrlSearchDelete => {
                 if let Some(Value::Obj(o)) = &recv {
-                    let mut pairs = parse_query(&recv_prop_str(&recv, "__query"));
+                    let mut pairs = parse_query(&recv_prop_str(&recv, "\u{0}query"));
                     let key = args.first().map(to_display).unwrap_or_default();
                     pairs.retain(|(k, _)| *k != key);
-                    o.borrow_mut().insert("__query".to_string(), Value::Str(build_query(&pairs)));
+                    o.borrow_mut().insert("\u{0}query".to_string(), Value::Str(build_query(&pairs)));
                 }
                 Ok(Value::Undefined)
             }
@@ -2655,7 +2655,7 @@ impl Interp {
                     | Value::MapVal(_)
                     | Value::Gen(_) => self.iterate_to_vec(&src),
                     Value::Obj(o)
-                        if o.borrow().contains_key("__items") || o.borrow().contains_key("next") =>
+                        if o.borrow().contains_key("\u{0}items") || o.borrow().contains_key("next") =>
                     {
                         self.iterate_to_vec(&src)
                     }
@@ -2715,7 +2715,7 @@ impl Interp {
                 if let Some(p) = recv {
                     // 이미 정착된 promise 는 무시 (한 번만)
                     let pending = matches!(&p, Value::Obj(o)
-                        if matches!(o.borrow().get("__state"), Some(Value::Str(s)) if s == "pending"));
+                        if matches!(o.borrow().get("\u{0}state"), Some(Value::Str(s)) if s == "pending"));
                     if pending {
                         self.resolve_promise(&p, v);
                     }
@@ -2727,9 +2727,9 @@ impl Interp {
                 let v = args.into_iter().next().unwrap_or(Value::Undefined);
                 if let Some(Value::Obj(o)) = recv {
                     let mut m = o.borrow_mut();
-                    if matches!(m.get("__state"), Some(Value::Str(s)) if s == "pending") {
-                        m.insert("__state".to_string(), Value::Str("rejected".to_string()));
-                        m.insert("__value".to_string(), v);
+                    if matches!(m.get("\u{0}state"), Some(Value::Str(s)) if s == "pending") {
+                        m.insert("\u{0}state".to_string(), Value::Str("rejected".to_string()));
+                        m.insert("\u{0}value".to_string(), v);
                     }
                 }
                 Ok(Value::Undefined)
@@ -2745,8 +2745,8 @@ impl Interp {
                 let p = self.new_promise();
                 if let Value::Obj(o) = &p {
                     let mut m = o.borrow_mut();
-                    m.insert("__state".to_string(), Value::Str("rejected".to_string()));
-                    m.insert("__value".to_string(), v);
+                    m.insert("\u{0}state".to_string(), Value::Str("rejected".to_string()));
+                    m.insert("\u{0}value".to_string(), v);
                 }
                 Ok(p)
             }
@@ -2840,7 +2840,7 @@ impl Interp {
                             "ok".to_string(),
                             Value::Bool(r.status >= 200 && r.status < 300),
                         );
-                        m.insert("__body".to_string(), Value::Str(body));
+                        m.insert("\u{0}body".to_string(), Value::Str(body));
                         m.insert("text".to_string(), Value::Native(Native::ResponseText));
                         m.insert("json".to_string(), Value::Native(Native::ResponseJson));
                         let response = Value::Obj(Rc::new(RefCell::new(m)));
@@ -2855,7 +2855,7 @@ impl Interp {
             }
             Native::ResponseText | Native::ResponseJson => {
                 let body = match &recv {
-                    Some(Value::Obj(o)) => match o.borrow().get("__body") {
+                    Some(Value::Obj(o)) => match o.borrow().get("\u{0}body") {
                         Some(Value::Str(s)) => s.clone(),
                         _ => String::new(),
                     },

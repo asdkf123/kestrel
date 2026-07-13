@@ -137,7 +137,7 @@ pub(super) fn is_callable(v: &Value) -> bool {
 
 // Obj 기반 Promise 판별 (__isPromise 마커)
 pub(super) fn is_promise(v: &Value) -> bool {
-    matches!(v, Value::Obj(o) if matches!(o.borrow().get("__isPromise"), Some(Value::Bool(true))))
+    matches!(v, Value::Obj(o) if matches!(o.borrow().get("\u{0}isPromise"), Some(Value::Bool(true))))
 }
 
 // element.style.backgroundColor → "background-color" (선두 대문자는 벤더 프리픽스: -webkit-)
@@ -361,34 +361,25 @@ pub(super) fn parse_date_string(s: &str) -> Option<f64> {
 
 pub(super) fn make_date(millis: f64) -> Value {
     let mut m = ObjMap::new();
-    m.insert("__isDate".to_string(), Value::Bool(true));
-    m.insert("__time".to_string(), Value::Num(millis));
+    m.insert("\u{0}isDate".to_string(), Value::Bool(true));
+    m.insert("\u{0}time".to_string(), Value::Num(millis));
     Value::Obj(Rc::new(RefCell::new(m)))
 }
 
 pub(super) fn is_date_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
-    matches!(map.borrow().get("__isDate"), Some(Value::Bool(true)))
+    matches!(map.borrow().get("\u{0}isDate"), Some(Value::Bool(true)))
 }
 
 // 엔진 내부 마커 키(구현 세부). Date/Promise/정규식/반복자 등의 상태를 프로퍼티 맵에
 // 담는데, 이 키들은 열거(Object.keys/for-in/JSON/스프레드)에 노출되면 안 된다.
 // 사용자 데이터 키(__typename, __esModule 등)와 겹치지 않는 엔진 전용 이름만.
+// 엔진 전용 키는 모두 NUL 접두("\0…")로 산다 — 심볼 키("\0@@…")와 내부 마커("\0state" 등).
+// JS 소스가 만들 수 있는 문자열 키는 이 공간에 도달하지 못하므로,
+//  - 사용자가 `obj.__isPromise = true` 로 promise 를 위장할 수 없고,
+//  - 사용자의 정상 `__items`/`__value` 키가 열거에서 사라지지도 않는다.
+// __proto__ 만 예외: JS 표준 이름이고 비열거 접근자라는 의미론이 우리 동작과 일치한다.
 pub(super) fn is_internal_key(k: &str) -> bool {
-    // 심볼 키("\u{0}@@...")는 열거 대상이 아니다(for-in/Object.keys/JSON/스프레드 제외).
-    k.starts_with("\u{0}@@")
-        || matches!(
-            k,
-            "__proto__"
-                | "__isDate"
-                | "__time"
-                | "__isPromise"
-                | "__state"
-                | "__value"
-                | "__cbs"
-                | "__i"
-                | "__items"
-                | "__isRegex"
-        )
+    k.starts_with('\u{0}') || k == "__proto__"
 }
 
 fn two(n: u32) -> String {
@@ -434,7 +425,7 @@ pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
     let mut map = ObjMap::new();
     map.insert("source".to_string(), Value::Str(source.to_string()));
     map.insert("flags".to_string(), Value::Str(flags.to_string()));
-    map.insert("__isRegex".to_string(), Value::Bool(true));
+    map.insert("\u{0}isRegex".to_string(), Value::Bool(true));
     map.insert("global".to_string(), Value::Bool(flags.contains('g')));
     map.insert("ignoreCase".to_string(), Value::Bool(flags.contains('i')));
     map.insert("multiline".to_string(), Value::Bool(flags.contains('m')));
@@ -444,7 +435,7 @@ pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
 
 // 객체가 정규식인지 (__isRegex == true)
 pub(super) fn is_regex_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
-    matches!(map.borrow().get("__isRegex"), Some(Value::Bool(true)))
+    matches!(map.borrow().get("\u{0}isRegex"), Some(Value::Bool(true)))
 }
 
 // 정규식 객체에서 (source, flags) 추출
@@ -856,7 +847,7 @@ fn json_stringify_body(v: &Value, path: &mut Vec<usize>) -> Result<Option<String
         }
         // Date 는 toJSON 규약대로 ISO 문자열로 직렬화(내부 마커 노출 아님).
         Value::Obj(map) if is_date_obj(map) => {
-            let millis = match map.borrow().get("__time") {
+            let millis = match map.borrow().get("\u{0}time") {
                 Some(Value::Num(n)) => *n,
                 _ => 0.0,
             };
