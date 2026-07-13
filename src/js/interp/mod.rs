@@ -837,6 +837,11 @@ pub struct Interp {
     number_proto: Value,
     boolean_proto: Value,
     regexp_proto: Value,
+    // Map/Set/Date/Symbol.prototype — 번들이 Map.prototype.get 등으로 참조(정체성 보존).
+    map_proto: Value,
+    set_proto: Value,
+    date_proto: Value,
+    symbol_proto: Value,
     // 페이지 기준 URL (상대 URL 해석용 — XHR/fetch)
     base_url: Option<String>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
@@ -1037,6 +1042,7 @@ impl Interp {
         // Array.prototype[Symbol.iterator]/toString — core-js uncurryThis 참조
         array_proto.insert("@@iterator".to_string(), Value::Native(Native::MakeIter));
         array_proto.insert("toString".to_string(), Value::Native(Native::Arr(ArrOp::Join)));
+        array_proto.insert("sort".to_string(), Value::Native(Native::Arr(ArrOp::Sort)));
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         env_declare(&global, "Array", Value::Obj(Rc::new(RefCell::new(array_ns))));
         env_declare(&global, "RegExp", Value::Native(Native::RegExpCtor));
@@ -1212,6 +1218,50 @@ impl Interp {
             ("test", Native::RegexTest),
             ("toString", Native::ValueToStr),
         ]);
+        // Map/Set/Date/Symbol.prototype — 인스턴스 멤버 해석과 같은 Native 를 얹는다.
+        // 번들/core-js 의 Map.prototype.get, uncurryThis(Set.prototype.has) 등이 참조.
+        let map_proto = mk_proto(vec![
+            ("get", Native::Map(MapOp::Get)),
+            ("set", Native::Map(MapOp::Set)),
+            ("has", Native::Map(MapOp::Has)),
+            ("delete", Native::Map(MapOp::Delete)),
+            ("clear", Native::Map(MapOp::Clear)),
+            ("forEach", Native::Map(MapOp::ForEach)),
+            ("keys", Native::Map(MapOp::Keys)),
+            ("values", Native::Map(MapOp::Values)),
+            ("entries", Native::Map(MapOp::Entries)),
+            ("@@iterator", Native::Map(MapOp::Entries)),
+        ]);
+        let set_proto = mk_proto(vec![
+            ("add", Native::Set(SetOp::Add)),
+            ("has", Native::Set(SetOp::Has)),
+            ("delete", Native::Set(SetOp::Delete)),
+            ("clear", Native::Set(SetOp::Clear)),
+            ("forEach", Native::Set(SetOp::ForEach)),
+            ("keys", Native::Set(SetOp::Values)),
+            ("values", Native::Set(SetOp::Values)),
+            ("@@iterator", Native::Set(SetOp::Values)),
+        ]);
+        let date_proto = mk_proto(vec![
+            ("getTime", Native::DateMethod(DateField::Time)),
+            ("valueOf", Native::DateMethod(DateField::Time)),
+            ("getFullYear", Native::DateMethod(DateField::FullYear)),
+            ("getMonth", Native::DateMethod(DateField::Month)),
+            ("getDate", Native::DateMethod(DateField::Date)),
+            ("getDay", Native::DateMethod(DateField::Day)),
+            ("getHours", Native::DateMethod(DateField::Hours)),
+            ("getMinutes", Native::DateMethod(DateField::Minutes)),
+            ("getSeconds", Native::DateMethod(DateField::Seconds)),
+            ("getMilliseconds", Native::DateMethod(DateField::Ms)),
+            ("getTimezoneOffset", Native::DateMethod(DateField::TimezoneOffset)),
+            ("toISOString", Native::DateMethod(DateField::ToIso)),
+            ("toJSON", Native::DateMethod(DateField::ToIso)),
+            ("toString", Native::DateMethod(DateField::ToStr)),
+        ]);
+        let symbol_proto = mk_proto(vec![
+            ("toString", Native::ValueToStr),
+            ("valueOf", Native::ValueOfSelf),
+        ]);
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -1234,6 +1284,10 @@ impl Interp {
             next_timer_id: 1,
             microtasks: std::collections::VecDeque::new(),
             fn_proto,
+            map_proto,
+            set_proto,
+            date_proto,
+            symbol_proto,
             string_proto,
             number_proto,
             boolean_proto,
@@ -3200,13 +3254,17 @@ impl Interp {
             }
             // Function.prototype (정체성 보존된 객체)
             Value::Native(Native::FunctionCtor) if key == "prototype" => Ok(self.fn_proto.clone()),
-            // Date.now / Date.parse / Date.UTC
+            // Date.now / Date.parse / Date.UTC / Date.prototype
             Value::Native(Native::DateCtor) => Ok(match key {
                 "now" => Value::Native(Native::DateNow),
                 "parse" => Value::Native(Native::DateParse),
                 "UTC" => Value::Native(Native::DateUTC),
+                "prototype" => self.date_proto.clone(),
                 _ => Value::Undefined,
             }),
+            // Map/Set(=WeakMap/WeakSet).prototype — 번들의 Map.prototype.get 등.
+            Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
+            Value::Native(Native::SetCtor) if key == "prototype" => Ok(self.set_proto.clone()),
             // String.fromCharCode/prototype
             Value::Native(Native::StringCtor) => Ok(match key {
                 "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
@@ -3224,6 +3282,7 @@ impl Interp {
                 "toPrimitive" => Self::well_known_symbol("@@toPrimitive", "Symbol.toPrimitive"),
                 "for" => Value::Native(Native::SymbolFor),
                 "keyFor" => Value::Native(Native::SymbolKeyFor),
+                "prototype" => self.symbol_proto.clone(),
                 _ => Value::Undefined,
             }),
             // 심볼 원시값: .description / .toString()
@@ -4154,6 +4213,35 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn map_set_date_symbol_prototypes() {
+        // 번들/core-js 가 Constructor.prototype.method 를 참조(feature detection, uncurryThis).
+        // 예전엔 Map/Set/Date/Symbol 에 .prototype 자체가 없어 여기서 전부 깨졌다.
+        assert!(run_bool("typeof Map.prototype === 'object' && typeof Set.prototype === 'object'"));
+        assert!(run_bool("typeof Date.prototype === 'object' && typeof Symbol.prototype === 'object'"));
+        // WeakMap/WeakSet 도 (Map/Set 으로 근사)
+        assert!(run_bool("typeof WeakMap.prototype === 'object'"));
+        // 정체성 보존 (같은 객체를 돌려줘야 함)
+        assert!(run_bool("Map.prototype === Map.prototype"));
+        // uncurryThis 패턴: 프로토타입 메서드를 .call 로 빌려 쓰기
+        assert_eq!(
+            run_num("var m=new Map(); m.set('a',1); Map.prototype.get.call(m,'a')"),
+            1.0,
+        );
+        assert!(run_bool("var s=new Set([1,2]); Set.prototype.has.call(s, 2)"));
+        assert_eq!(
+            run_num("var m=new Map([['x',7]]); Map.prototype.size !== undefined ? 0 : Map.prototype.get.call(m,'x')"),
+            7.0,
+        );
+        // Date.prototype.getTime.call
+        assert!(run_bool("var d=new Date(0); Date.prototype.getTime.call(d) === 0"));
+        // Array.prototype.sort (유일하게 빠져 있던 것)
+        assert_eq!(
+            run_str("Array.prototype.sort.call([3,1,2]).join(',')"),
+            "1,2,3",
+        );
     }
 
     #[test]
