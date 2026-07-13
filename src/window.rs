@@ -44,7 +44,8 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
     let style_root = crate::style::style_tree_full(dom, sheet, vp, pseudo);
     let mut viewport: crate::layout::Dimensions = Default::default();
     viewport.content.width = ctx.vw;
-    let layout_root = crate::layout::layout_tree(&style_root, viewport, fonts, img_map);
+    let mut layout_root = crate::layout::layout_tree(&style_root, viewport, fonts, img_map);
+    crate::layout::apply_sticky(&mut layout_root, 0.0, js.scroll_y, ctx.vw, ctx.vh);
     fill_js_maps(js, &style_root, &layout_root);
     js.layout_version = Some(dom.version());
 }
@@ -133,6 +134,9 @@ pub struct Page {
     pub doc_height: f32,
     // 포커스된 <input> (타이핑 대상)
     pub focused_input: Option<crate::dom::NodeId>,
+    // 현재 스크롤 위치 — position: sticky 가 이 값을 보고 붙는다.
+    // 스크롤이 바뀌면 rebuild 해야 스티키가 따라온다(브라우저도 스크롤마다 갱신한다).
+    pub scroll_y: f32,
 }
 
 // <canvas> 2D 명령(캔버스 좌표)을 각 canvas 박스 위치로 옮겨 DisplayItem 목록으로.
@@ -273,8 +277,16 @@ impl Page {
             crate::style::style_tree_full(&self.dom, &self.sheet, vp, &self.pseudo_styles);
         let mut viewport: crate::layout::Dimensions = Default::default();
         viewport.content.width = self.viewport_width;
-        let layout_root =
+        let mut layout_root =
             crate::layout::layout_tree(&style_root, viewport, &self.fonts, &self.img_map);
+        // position: sticky — 현재 스크롤 위치 기준으로 시각 오프셋 적용
+        crate::layout::apply_sticky(
+            &mut layout_root,
+            0.0,
+            self.scroll_y,
+            self.viewport_width,
+            self.viewport_height,
+        );
         self.items = crate::paint::build_display_list(&layout_root);
         self.links.clear();
         crate::layout::collect_link_regions(&layout_root, &mut self.links);
@@ -521,6 +533,11 @@ pub fn run_page(
                         - CHROME_H)
                         .max(1.0);
                     scroll_y = scroll_y.clamp(0.0, (page.doc_height - vh).max(0.0));
+                    // 스티키 요소는 스크롤에 따라 위치가 바뀐다 → 재레이아웃
+                    if page.scroll_y != scroll_y {
+                        page.scroll_y = scroll_y;
+                        page.rebuild();
+                    }
                     window.request_redraw();
                 }
                 // 다음 타이머까지 대기
@@ -881,6 +898,7 @@ mod tests {
             element_rects: Vec::new(),
             focused_input: None,
             doc_height: 0.0,
+            scroll_y: 0.0,
         };
         page.rebuild();
         page

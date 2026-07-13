@@ -111,7 +111,11 @@ impl<'a> StyledNode<'a> {
                 "inline-block" => Display::InlineBlock,
                 // 박스를 만들지 않고 자식만 남긴다 (CSS Display §3.3)
                 "contents" => Display::Contents,
-                // table/list-item/flow-root 등 아직 별도 레이아웃이 없는 값은 블록으로.
+                // 표 계열: 레이아웃(layout_table)은 display 키워드를 직접 본다.
+                // 여기서는 블록 레벨 박스로 취급해 흐름에 참여시킨다.
+                "table" | "inline-table" | "table-row" | "table-cell" | "table-row-group"
+                | "table-header-group" | "table-footer-group" | "table-caption" => Display::Block,
+                // list-item/flow-root 등 아직 별도 레이아웃이 없는 값은 블록으로.
                 // (@supports 는 이 값들을 지원한다고 보고하지 않는다 — supports.rs)
                 _ => Display::Block,
             },

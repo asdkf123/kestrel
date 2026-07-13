@@ -147,6 +147,7 @@ fn main() {
         element_rects: Vec::new(),
         doc_height: 0.0,
         focused_input: None,
+        scroll_y: 0.0,
     };
     page.rebuild();
 
@@ -740,6 +741,7 @@ fn build_page(url: &str) -> Option<window::Page> {
         element_rects: Vec::new(),
         doc_height: 0.0,
         focused_input: None,
+        scroll_y: 0.0,
     };
     page.rebuild();
     println!("[문서 높이 {}px, 링크 {}개]", page.doc_height as u32, page.links.len());
@@ -804,6 +806,11 @@ fn render_url(url: &str) {
             .and_then(|s| s.parse::<f32>().ok())
             .unwrap_or(page.js.scroll_y)
             .clamp(0.0, (page.doc_height - vh as f32).max(0.0));
+        // 스티키 요소는 스크롤 위치를 알아야 붙는다 → 그 위치로 재레이아웃
+        if scroll != page.scroll_y {
+            page.scroll_y = scroll;
+            page.rebuild();
+        }
         let mut cache = raster::GlyphCache::new();
         let canvas = paint::rasterize(
             &page.items,

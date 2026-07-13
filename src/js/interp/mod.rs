@@ -5335,7 +5335,11 @@ mod tests {
                           c.abort(); hit && c.signal.aborted"));
         // CSS.supports 는 CSS 의 @supports 와 같은 평가기를 쓴다
         assert!(prelude_bool("CSS.supports('display','grid')"));
-        assert!(!prelude_bool("CSS.supports('position','sticky')"), "미구현은 거짓 (한 엔진 한 답)");
+        assert!(prelude_bool("CSS.supports('position','sticky')"), "구현했으므로 참");
+        assert!(
+            !prelude_bool("CSS.supports('display','table-cell')"),
+            "미구현 값은 거짓 (한 엔진 한 답)"
+        );
     }
 
     #[test]

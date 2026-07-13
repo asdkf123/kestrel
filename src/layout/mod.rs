@@ -1021,7 +1021,16 @@ impl<'a> LayoutBox<'a> {
             Some(Value::Keyword(s)) if s == "relative" => "relative",
             Some(Value::Keyword(s)) if s == "absolute" => "absolute",
             Some(Value::Keyword(s)) if s == "fixed" => "fixed",
+            Some(Value::Keyword(s)) if s == "sticky" => "sticky",
             _ => "static",
+        }
+    }
+
+    // 인셋 원값 (없거나 auto 면 None) — sticky 는 지정된 축만 붙는다
+    fn inset(&self, prop: &str) -> Option<f32> {
+        match self.styled_node.value(prop) {
+            Some(Length(v, Px)) => Some(v),
+            _ => None,
         }
     }
 
@@ -2357,6 +2366,63 @@ fn styled_subtree_text(sn: &StyledNode) -> String {
     out
 }
 
+// position: sticky (CSS Position §3.4).
+// 정상 흐름에 남아 있되(형제 배치에 영향 없음), 스크롤포트를 인셋만큼 줄인 사각형 안에
+// 머물도록 시각적으로 밀린다. 단 컨테이닝 블록(부모 콘텐츠 상자)을 벗어나지 않는다.
+// 정적 렌더에서도 스크롤 위치가 주어지면(KESTREL_SCROLL / window.scrollTo) 실제로 붙는다.
+pub fn apply_sticky(root: &mut LayoutBox, scroll_x: f32, scroll_y: f32, vw: f32, vh: f32) {
+    fn walk(b: &mut LayoutBox, parent: Rect, sx: f32, sy: f32, vw: f32, vh: f32) {
+        let my_content = b.dimensions.content;
+        for c in &mut b.children {
+            walk(c, my_content, sx, sy, vw, vh);
+        }
+        if b.position() != "sticky" {
+            return;
+        }
+        let bb = b.dimensions.border_box();
+        let mut dy = 0.0f32;
+        if let Some(t) = b.inset("top") {
+            let want = sy + t; // 스크롤포트 상단에서 t 만큼 아래
+            if bb.y < want {
+                // 컨테이닝 블록 하단을 넘지 않는 선까지만
+                let room = (parent.y + parent.height) - (bb.y + bb.height);
+                dy = (want - bb.y).min(room.max(0.0));
+            }
+        } else if let Some(bo) = b.inset("bottom") {
+            let want = sy + vh - bo - bb.height;
+            if bb.y > want {
+                let room = bb.y - parent.y;
+                dy = -((bb.y - want).min(room.max(0.0)));
+            }
+        }
+        let mut dx = 0.0f32;
+        if let Some(l) = b.inset("left") {
+            let want = sx + l;
+            if bb.x < want {
+                let room = (parent.x + parent.width) - (bb.x + bb.width);
+                dx = (want - bb.x).min(room.max(0.0));
+            }
+        } else if let Some(r) = b.inset("right") {
+            let want = sx + vw - r - bb.width;
+            if bb.x > want {
+                let room = bb.x - parent.x;
+                dx = -((bb.x - want).min(room.max(0.0)));
+            }
+        }
+        if dx != 0.0 || dy != 0.0 {
+            if std::env::var("KESTREL_STICKY_DEBUG").is_ok() {
+                eprintln!(
+                    "[sticky] bb.y={} parent.y={} parent.h={} scroll={} → dy={}",
+                    bb.y, parent.y, parent.height, sy, dy
+                );
+            }
+            b.translate(dx, dy);
+        }
+    }
+    let vp = Rect { x: 0.0, y: 0.0, width: vw, height: f32::MAX / 4.0 };
+    walk(root, vp, scroll_x, scroll_y, vw, vh);
+}
+
 pub fn layout_tree<'a>(
     node: &'a StyledNode<'a>,
     mut containing_block: Dimensions,
@@ -2955,6 +3021,58 @@ mod tests {
         let fs = fonts();
         let lb = layout_tree(&styled, viewport, &fs, &no_images());
         lb.children.iter().map(|c| c.dimensions).collect()
+    }
+
+    // 스크롤 위치를 주고 sticky 후처리까지 돌린 뒤, 루트의 자손 박스들을 돌려준다.
+    fn sticky_layout(html: &str, css: &str, scroll_y: f32) -> Vec<(String, Rect)> {
+        let root = crate::html::parse_dom(html.to_string());
+        let ss = crate::css::parse(css.to_string());
+        let styled = crate::style::style_tree(&root, &ss);
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 800.0;
+        let fs = fonts();
+        let mut lb = layout_tree(&styled, viewport, &fs, &no_images());
+        apply_sticky(&mut lb, 0.0, scroll_y, 800.0, 600.0);
+        let mut out = Vec::new();
+        fn walk(b: &LayoutBox, out: &mut Vec<(String, Rect)>) {
+            if let NodeType::Element(e) = &b.styled_node.node.node_type {
+                let id = e.attributes.get("id").cloned().unwrap_or_default();
+                if !id.is_empty() {
+                    out.push((id, b.dimensions.border_box()));
+                }
+            }
+            for c in &b.children {
+                walk(c, out);
+            }
+        }
+        walk(&lb, &mut out);
+        out
+    }
+
+    #[test]
+    fn position_sticky_sticks_and_releases() {
+        // position: sticky (CSS Position §3.4) — 정상 흐름에 남되, 스크롤포트를 인셋만큼
+        // 줄인 사각형 안에 머물도록 밀리고, 컨테이닝 블록을 벗어나지는 않는다.
+        // 예전엔 미구현이라 static 으로 떨어졌다 (@supports 도 거짓으로 보고했다).
+        let html = "<div id=\"sp\"></div><div id=\"wrap\"><div id=\"h\"></div></div>";
+        let css = "#sp { display:block; height: 400px; } \
+                   #wrap { display:block; height: 1000px; } \
+                   #h { display:block; position: sticky; top: 10px; height: 40px; }";
+        let find = |v: &Vec<(String, Rect)>, id: &str| -> Rect {
+            v.iter().find(|(k, _)| k == id).unwrap().1
+        };
+
+        // 스크롤 0: 정상 흐름 위치 (y=400)
+        let v = sticky_layout(html, css, 0.0);
+        assert_eq!(find(&v, "h").y, 400.0, "스크롤 전엔 정상 위치");
+
+        // 스크롤 600: 스크롤포트 상단 + 10 에 붙는다 (문서 좌표 610)
+        let v = sticky_layout(html, css, 600.0);
+        assert_eq!(find(&v, "h").y, 610.0, "top:10 위치에 붙는다");
+
+        // 스크롤 2000: 컨테이닝 블록(400..1400) 밖으로는 못 나간다 → 1400-40 = 1360 에서 멈춤
+        let v = sticky_layout(html, css, 2000.0);
+        assert_eq!(find(&v, "h").y, 1360.0, "컨테이닝 블록 하단에서 놓아준다");
     }
 
     #[test]

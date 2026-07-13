@@ -138,8 +138,8 @@ fn enum_values(prop: &str) -> Option<&'static [&'static str]> {
             "block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid",
             "none", "contents",
         ],
-        // layout/mod.rs LayoutBox::position() — sticky 미구현
-        "position" => &["static", "relative", "absolute", "fixed"],
+        // layout/mod.rs LayoutBox::position()
+        "position" => &["static", "relative", "absolute", "fixed", "sticky"],
         "float" => &["left", "right", "none"],
         "clear" => &["left", "right", "both", "none"],
         _ => return None,
@@ -297,11 +297,12 @@ mod tests {
     #[test]
     fn supports_checks_values_not_just_property_names() {
         // 프로퍼티 이름만 보면 열거형의 미구현 값이 전부 지원으로 보고된다.
-        // position:sticky 를 참이라 하면 사이트는 스티키 헤더를 내보내는데
-        // 우리는 static 으로 그린다 — 폴백을 받을 기회를 스스로 없앤다.
-        assert!(!supports_condition("(position: sticky)"));
+        // sticky 는 이제 실제로 구현했으므로 참이다 (구현하기 전엔 거짓이었다 —
+        // 못 그리는 걸 지원한다고 하면 사이트가 폴백을 줄 기회를 스스로 없앤다).
+        assert!(supports_condition("(position: sticky)"));
         assert!(supports_condition("(position: absolute)"));
         assert!(supports_condition("(position: fixed)"));
+        assert!(!supports_condition("(position: running)"), "미구현 값은 거짓");
 
         // display: 우리가 실제로 레이아웃하는 값만 참
         assert!(supports_condition("(display: contents)"));
