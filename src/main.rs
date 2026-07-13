@@ -483,6 +483,89 @@ fn parse_import_stmt(stmt: &str) -> Option<(String, String)> {
 }
 
 // <link rel=stylesheet> 의 (href, media) 수집. media 조건은 로더가 평가한다.
+// <img src="*.svg"> — SVG 를 그린다.
+//
+// 우리 PNG/JPEG 디코더는 SVG 를 못 읽는다. 그런데 인라인 <svg> 요소는 이미 그린다 —
+// 그러니 SVG 파일을 받아 파싱해서 그 <svg> 요소로 <img> 를 바꿔치면 같은 경로로 그려진다.
+// (예전엔 "디코드 실패"로 조용히 사라졌다. 위키백과의 아이콘/로고가 전부 이 경우다)
+//
+// 한계: SVG 문서는 원래 독립 문서라 부모 CSS 가 스며들지 않아야 하는데, 이렇게 바꿔치면
+// 스며든다. 아이콘/로고 같은 일반적인 경우엔 문제가 없고, 안 그리는 것보단 훨씬 낫다.
+fn inline_svg_images(dom: &mut dom::Dom, base: &url::Url) {
+    // 1) 대상 수집: src 가 .svg 인 <img>
+    // (노드, src, 물려줄 속성들) — id/class/style 을 옮겨야 CSS 선택자가 계속 맞는다
+    let carry = ["width", "height", "id", "class", "style", "alt"];
+    let mut targets: Vec<(dom::NodeId, String, Vec<(String, String)>)> = Vec::new();
+    walk_dom_ids(dom, dom.root, &mut |id| {
+        if let dom::NodeType::Element(e) = &dom.get(id).node_type {
+            if e.tag_name == "img" {
+                if let Some(src) = e.img_source() {
+                    let path = src.split(['?', '#']).next().unwrap_or("");
+                    if path.to_ascii_lowercase().ends_with(".svg") {
+                        let attrs = carry
+                            .iter()
+                            .filter_map(|k| {
+                                e.attributes.get(*k).map(|v| (k.to_string(), v.clone()))
+                            })
+                            .collect();
+                        targets.push((id, src, attrs));
+                    }
+                }
+            }
+        }
+    });
+    if targets.is_empty() {
+        return;
+    }
+
+    // 2) 내려받기 (URL 당 한 번)
+    let mut cache: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    let mut replaced = 0usize;
+    for (id, src, attrs) in targets {
+        let text = cache
+            .entry(src.clone())
+            .or_insert_with(|| {
+                let u = base.join(&src)?;
+                match http::fetch(&u.as_string()) {
+                    Ok(r) if (200..300).contains(&r.status) => {
+                        Some(String::from_utf8_lossy(&r.body).into_owned())
+                    }
+                    Ok(r) => {
+                        println!("[svg] HTTP {} — {}", r.status, src);
+                        None
+                    }
+                    Err(e) => {
+                        println!("[svg] 로드 실패 {:?} — {}", e, src);
+                        None
+                    }
+                }
+            })
+            .clone();
+        let Some(text) = text else { continue };
+        // XML 선언/DOCTYPE/주석을 건너뛰고 <svg 부터
+        let Some(start) = text.find("<svg") else { continue };
+        let trees = html::parse_fragment(text[start..].to_string());
+        let Some(svg_tree) = trees.into_iter().find(|t| {
+            matches!(&t.node_type, dom::NodeType::Element(e) if e.tag_name == "svg")
+        }) else {
+            continue;
+        };
+        // 3) img 자리에 <svg> 를 끼워 넣는다. 크기는 img 의 width/height 를 우선.
+        let Some(parent) = dom.get(id).parent else { continue };
+        let new_id = dom.insert_tree(svg_tree, None);
+        for (k, v) in attrs {
+            dom.set_attr(new_id, &k, v);
+        }
+        dom.insert_before(parent, new_id, Some(id));
+        dom.detach(id);
+        replaced += 1;
+    }
+    if replaced > 0 {
+        println!("[svg] <img src=*.svg> {}개를 인라인 SVG 로 렌더", replaced);
+    }
+}
+
 // <base href> — 문서의 기준 URL (HTML 표준 §4.2.3).
 // 이게 없으면 이 태그를 쓰는 페이지의 CSS/스크립트/이미지/링크가 전부 엉뚱한 곳으로
 // 간다. 예전엔 무시했다 — 서브리소스가 통째로 404 가 나는데 아무 말도 없었다.
@@ -721,6 +804,9 @@ fn build_page(url: &str) -> Option<window::Page> {
     } else {
         merge_images(images, img_map, new_srcs, &base)
     };
+
+    // <img src="*.svg"> → 인라인 <svg> 로 치환 (우리 래스터라이저가 그릴 수 있는 형태)
+    inline_svg_images(&mut dom, &base);
 
     // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
     let pseudo_styles = style::generate_pseudo_elements(&mut dom, &sheet);
