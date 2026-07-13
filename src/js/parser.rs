@@ -1388,8 +1388,11 @@ impl Parser {
         } else {
             None
         };
+        // ClassHeritage 는 LeftHandSideExpression 이다 (표준 §15.7) — **호출식도 온다**.
+        // 믹스인 패턴: `class X extends (0, ns.mixin)(Base) { }` (lit-element, MDN 등이 쓴다).
+        // 예전엔 이름/멤버 경로만 받아서 파서가 죽었고, 모듈 전체가 실행되지 않았다.
         let parent = if self.eat(&Tok::Extends) {
-            Some(Box::new(self.new_callee()?)) // extends Base / extends ns.Base
+            Some(Box::new(self.postfix()?))
         } else {
             None
         };

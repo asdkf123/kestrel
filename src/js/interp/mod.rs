@@ -7604,6 +7604,16 @@ mod tests {
     }
 
     #[test]
+    fn class_heritage_can_be_a_call() {
+        // ClassHeritage 는 LeftHandSideExpression — 믹스인 호출이 온다 (lit-element/MDN).
+        // 예전엔 파서가 죽어서 모듈 전체가 실행되지 않았다.
+        assert_eq!(
+            run_num("class A { m() { return 1 } } var id = x => x; class B extends (0, id)(A) { m() { return super.m() + 1 } } new B().m()"),
+            2.0
+        );
+    }
+
+    #[test]
     fn super_property_read_uses_parent_getter() {
         // super.x 는 호출이 아니라 **읽기**로도 쓴다. 예전엔 super 가 undefined 로 평가돼 터졌다.
         assert_eq!(
