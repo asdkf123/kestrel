@@ -29,7 +29,42 @@ pub enum HttpError {
 trait Stream: Read + Write {}
 impl<T: Read + Write> Stream for T {}
 
+// 일시적 실패는 재시도한다 (GET 은 멱등). 브라우저도 그렇게 한다.
+// 예전엔 한 번 실패하면 그대로 버려서 렌더가 비결정적이었다 — 같은 페이지를 두 번
+// 그리면 이미지가 있다 없다 했다(위키미디어가 병렬 요청을 429 로 조인다).
+const MAX_ATTEMPTS: u32 = 3;
+const RETRY_BASE_MS: u64 = 250;
+
+fn is_transient(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
+}
+
 pub fn fetch(url: &str) -> Result<Response, HttpError> {
+    let mut last: Result<Response, HttpError> = Err(HttpError::BadResponse);
+    for attempt in 0..MAX_ATTEMPTS {
+        if attempt > 0 {
+            // 지수 백오프. Retry-After(초)가 있으면 그걸 따르되 상한을 둔다.
+            let wait = match &last {
+                Ok(r) => header(&r.headers, "retry-after")
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .map(|s| (s * 1000).min(2000))
+                    .unwrap_or(RETRY_BASE_MS << (attempt - 1)),
+                Err(_) => RETRY_BASE_MS << (attempt - 1),
+            };
+            std::thread::sleep(Duration::from_millis(wait));
+        }
+        last = fetch_once(url);
+        match &last {
+            // 일시적 상태 코드가 아니면 그대로 반환 (2xx/4xx 등)
+            Ok(r) if !is_transient(r.status) => return last,
+            // 네트워크/프레이밍 오류와 일시적 상태 코드는 재시도
+            _ => {}
+        }
+    }
+    last
+}
+
+fn fetch_once(url: &str) -> Result<Response, HttpError> {
     let mut current = Url::parse(url).map_err(HttpError::Url)?;
     for _ in 0..6 {
         let raw = request(&current)?;

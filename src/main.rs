@@ -1,6 +1,7 @@
 mod bench;
 mod cff;
 mod css;
+mod dataurl;
 mod dom;
 mod encoding;
 mod font;
@@ -210,10 +211,8 @@ fn collect_img_srcs(dom: &dom::Dom, out: &mut Vec<String>) {
     walk_dom(dom, dom.root, &mut |n| {
         if let dom::NodeType::Element(e) = &n.node_type {
             if e.tag_name == "img" {
-                if let Some(src) = e.attributes.get("src") {
-                    if !src.is_empty() {
-                        out.push(src.clone());
-                    }
+                if let Some(src) = e.img_source() {
+                    out.push(src);
                 }
             }
         }
@@ -276,6 +275,34 @@ fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::
     let next = AtomicUsize::new(0);
     let results: std::sync::Mutex<Vec<Option<png::Image>>> =
         std::sync::Mutex::new((0..uniq.len()).map(|_| None).collect());
+    // 호스트당 동시 연결 수 제한 (브라우저는 대개 6). 한 호스트에 8개를 한꺼번에
+    // 꽂으면 레이트 리미터에 걸린다 — 위키미디어가 429 로 조이고, 그 429 본문(HTML)이
+    // 이미지 디코더로 들어가 "디코드 실패"로 조용히 사라졌다. 렌더가 실행마다 달라졌다.
+    let host_of = |u: &str| -> String {
+        base.join(u).map(|x| x.host.clone()).unwrap_or_default()
+    };
+    let hosts: Vec<String> = uniq.iter().map(|u| host_of(u)).collect();
+    let host_slots: std::collections::HashMap<String, std::sync::Mutex<usize>> = hosts
+        .iter()
+        .map(|h| (h.clone(), std::sync::Mutex::new(0usize)))
+        .collect();
+    let host_gate = |h: &str| -> bool {
+        // 호스트당 최대 6 — 넘으면 잠깐 기다렸다 다시 시도
+        if let Some(m) = host_slots.get(h) {
+            let mut n = m.lock().unwrap();
+            if *n >= 6 {
+                return false;
+            }
+            *n += 1;
+        }
+        true
+    };
+    let host_release = |h: &str| {
+        if let Some(m) = host_slots.get(h) {
+            let mut n = m.lock().unwrap();
+            *n = n.saturating_sub(1);
+        }
+    };
     std::thread::scope(|scope| {
         for _ in 0..uniq.len().min(8) {
             scope.spawn(|| loop {
@@ -283,10 +310,60 @@ fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::
                 if i >= uniq.len() {
                     break;
                 }
-                let img = base
-                    .join(&uniq[i])
-                    .and_then(|u| http::fetch(&u.as_string()).ok())
-                    .and_then(|resp| decode_image(&resp.body));
+                // 호스트 슬롯이 찼으면 잠깐 양보 (호스트당 6 연결 상한)
+                if !dataurl::is_data_url(&uniq[i]) {
+                    while !host_gate(&hosts[i]) {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                }
+                // data: URL 은 네트워크 없이 그 자리에서 디코드 (RFC 2397).
+                // 예전엔 http::fetch 로 넘겨 스킴 오류로 실패했다 — 이미지가 조용히 사라졌다.
+                let img = if dataurl::is_data_url(&uniq[i]) {
+                    dataurl::decode(&uniq[i]).and_then(|b| decode_image(&b))
+                } else {
+                    match base.join(&uniq[i]) {
+                        Some(u) => match http::fetch(&u.as_string()) {
+                            // 2xx 가 아니면 본문은 이미지가 아니다(429 의 HTML 오류 페이지 등).
+                            // 예전엔 상태를 안 보고 그대로 디코더에 넣어서, 429 로 조여진
+                            // 요청이 "디코드 실패"로 조용히 사라졌다.
+                            Ok(resp) if !(200..300).contains(&resp.status) => {
+                                if std::env::var("KESTREL_IMG_DEBUG").is_ok() {
+                                    eprintln!(
+                                        "[img] HTTP {} {}",
+                                        resp.status,
+                                        &uniq[i][..uniq[i].len().min(60)]
+                                    );
+                                }
+                                None
+                            }
+                            Ok(resp) => {
+                                let d = decode_image(&resp.body);
+                                if d.is_none() && std::env::var("KESTREL_IMG_DEBUG").is_ok() {
+                                    eprintln!(
+                                        "[img] 디코드 실패(형식 미지원?) {} ({}바이트)",
+                                        &uniq[i][..uniq[i].len().min(60)],
+                                        resp.body.len()
+                                    );
+                                }
+                                d
+                            }
+                            Err(e) => {
+                                if std::env::var("KESTREL_IMG_DEBUG").is_ok() {
+                                    eprintln!(
+                                        "[img] 요청 실패 {} — {:?}",
+                                        &uniq[i][..uniq[i].len().min(60)],
+                                        e
+                                    );
+                                }
+                                None
+                            }
+                        },
+                        None => None,
+                    }
+                };
+                if !dataurl::is_data_url(&uniq[i]) {
+                    host_release(&hosts[i]);
+                }
                 results.lock().unwrap()[i] = img;
             });
         }
@@ -504,6 +581,17 @@ fn build_page(url: &str) -> Option<window::Page> {
         collect_bg_urls(&style_root, &mut srcs);
     }
     let (images, img_map) = load_images(srcs, &base);
+    if std::env::var("KESTREL_IMG_DEBUG").is_ok() {
+        let mut want = Vec::new();
+        collect_img_srcs(&dom, &mut want);
+        for s in &want {
+            eprintln!(
+                "[img] {} → {}",
+                &s[..s.len().min(80)],
+                if img_map.contains_key(s) { "맵에 있음" } else { "없음!!" }
+            );
+        }
+    }
 
     let mut fonts = load_fonts(needs_korean);
     // @font-face 웹폰트 로드 (ttf/otf 만 — woff/woff2 미지원). 각 패밀리 첫 성공 src 사용.

@@ -39,6 +39,23 @@ impl ElementData {
         self.attributes.get("id")
     }
 
+    // <img> 가 실제로 가리키는 소스. src 가 없으면 srcset 의 첫 후보를 쓴다.
+    // 예전엔 src 만 봐서 srcset 만 있는 이미지가 아예 안 실렸다(반응형 이미지).
+    // (srcset 안의 data: URI 처럼 콤마가 들어간 후보는 아직 다루지 않는다 — 드묾)
+    pub fn img_source(&self) -> Option<String> {
+        if let Some(src) = self.attributes.get("src") {
+            if !src.trim().is_empty() {
+                return Some(src.clone());
+            }
+        }
+        let set = self.attributes.get("srcset")?;
+        set.split(',')
+            .map(|c| c.trim())
+            .find(|c| !c.is_empty())
+            .and_then(|c| c.split_whitespace().next())
+            .map(|u| u.to_string())
+    }
+
     pub fn classes(&self) -> HashSet<&str> {
         match self.attributes.get("class") {
             Some(classlist) => classlist.split(' ').collect(),
@@ -304,6 +321,26 @@ impl Dom {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn img_source_falls_back_to_srcset() {
+        // 예전엔 src 만 봐서 srcset 만 있는 반응형 이미지가 아예 안 실렸다.
+        let mut attrs = AttrMap::new();
+        attrs.insert("srcset".to_string(), "a.png 1x, b.png 2x".to_string());
+        let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
+        assert_eq!(e.img_source().as_deref(), Some("a.png"), "srcset 첫 후보");
+
+        // src 가 있으면 src 우선
+        let mut attrs = AttrMap::new();
+        attrs.insert("src".to_string(), "c.png".to_string());
+        attrs.insert("srcset".to_string(), "a.png 1x".to_string());
+        let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
+        assert_eq!(e.img_source().as_deref(), Some("c.png"));
+
+        // 둘 다 없으면 None
+        let e = ElementData { tag_name: "img".to_string(), attributes: AttrMap::new() };
+        assert_eq!(e.img_source(), None);
+    }
 
     #[test]
     fn text_node_has_no_children() {
