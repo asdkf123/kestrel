@@ -11,9 +11,18 @@ pub mod regex;
 // 실제 브라우저처럼 전역 환경은 페이지의 모든 스크립트가 공유한다.
 // 에러는 해당 스크립트만 중단하고 보고 (관용 원칙). 외부 src 는 미지원.
 // 반환된 Interp 는 페이지가 보관한다 — 등록된 이벤트 핸들러(클로저 포함)가 살아있음.
-pub fn run_scripts(dom: &mut crate::dom::Dom, page_url: &str) -> interp::Interp {
+// 문서의 스크립트를 순서대로 실행한다.
+// layout_ctx: 스크립트가 측정 API 를 읽을 때 강제 레이아웃에 쓸 입력(스타일시트/폰트/이미지).
+// HTML 표준에서 파서가 삽입한 스크립트는 보류된 스타일시트를 기다린 뒤 실행된다 —
+// 그래서 스크립트 시점에 CSS 가 이미 있어야 하고, 측정도 실제 값이 나와야 한다.
+pub fn run_scripts(
+    dom: &mut crate::dom::Dom,
+    page_url: &str,
+    layout_ctx: Option<crate::window::LayoutCtx>,
+) -> interp::Interp {
     let mut it = interp::Interp::new();
     it.install_location(page_url);
+    it.layout_ctx = layout_ctx;
     let base = crate::url::Url::parse(page_url).ok();
     let mut sources = Vec::new();
     collect_scripts(dom, dom.root, base.as_ref(), &mut sources);
@@ -209,7 +218,7 @@ mod tests {
              <script>document.getElementById('t').textContent = 'new ' + (1 + 2);</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "new 3");
     }
 
@@ -223,7 +232,7 @@ mod tests {
              .join(';');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "3;4;a|b");
     }
 
@@ -237,7 +246,7 @@ mod tests {
              document.getElementById('t').textContent = [a, b, x, y].join(',');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "2,1,5,6");
     }
 
@@ -255,7 +264,7 @@ mod tests {
              </script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "111111010");
     }
 
@@ -270,7 +279,7 @@ mod tests {
              </script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "6|DAY|1,2,3");
     }
 
@@ -284,7 +293,7 @@ mod tests {
              </script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "-2,3,NaN,NaN");
     }
 
@@ -298,7 +307,7 @@ mod tests {
              .then(function(v){ document.getElementById('t').textContent = v + '!'; });</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "ok!");
     }
 
@@ -315,7 +324,7 @@ mod tests {
              [a[0](),a[1](),a[2]()].join('') + '|' + [b[0](),b[1](),b[2]()].join('');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "012|333");
     }
 
@@ -328,7 +337,7 @@ mod tests {
              document.getElementById('t').textContent = s + '|' + lc;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "ABC|ab");
     }
 
@@ -341,7 +350,7 @@ mod tests {
              document.getElementById('t').textContent = e + '|' + decodeURIComponent(e);</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(
             text_of_id(&dom, "t").unwrap(),
             "a%20b%2Fc%3Fd%3D%ED%95%9C|a b/c?d=\u{d55c}"
@@ -358,7 +367,7 @@ mod tests {
              </script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(
             text_of_id(&dom, "t").unwrap(),
             "https://localhost/foo/bar?q=1 /foo/bar?q=1"
@@ -374,7 +383,7 @@ mod tests {
              d.append('Z'); d.prepend('A');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "AmidZ");
     }
 
@@ -389,7 +398,7 @@ mod tests {
              </script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(
             text_of_id(&dom, "t").unwrap(),
             "https:|ex.com|8080|/a/b|?x=1&y=two%20words|#frag|1|two words"
@@ -406,7 +415,7 @@ mod tests {
              document.getElementById('t').textContent = u.searchParams.toString();</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "a=9&c=3");
     }
 
@@ -419,7 +428,7 @@ mod tests {
              document.getElementById('t').textContent = u.href;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "https://ex.com/foo?a=1");
     }
 
@@ -433,7 +442,7 @@ mod tests {
              document.getElementById('t').textContent = String(f());</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "undefined");
     }
 
@@ -446,7 +455,7 @@ mod tests {
              document.getElementById('t').textContent = String(f());</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "42");
     }
 
@@ -460,7 +469,7 @@ mod tests {
              document.getElementById('t').textContent = String(g(true));</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "7");
     }
 
@@ -473,7 +482,7 @@ mod tests {
              document.getElementById('t').textContent = String(f(2, 3,));</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "5");
     }
 
@@ -486,7 +495,7 @@ mod tests {
              encodeURI('http://x.com/a b?c=1&d=2');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "http://x.com/a%20b?c=1&d=2");
     }
 
@@ -498,7 +507,7 @@ mod tests {
              <script>document.getElementById('t').textContent = msg;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "from first");
     }
 
@@ -512,7 +521,7 @@ mod tests {
              <script type=\"text/javascript\">document.getElementById('t').textContent = 'ran';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "ran", "JS 타입만 실행, JSON/템플릿/모듈 스킵");
     }
 
@@ -524,7 +533,7 @@ mod tests {
              <script>document.getElementById('t').textContent = 'survived';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "survived");
     }
 
@@ -536,7 +545,7 @@ mod tests {
              if (el === null) { document.getElementById('t').textContent = 'was null'; }</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "t").unwrap(), "was null");
     }
 
@@ -552,7 +561,7 @@ mod tests {
              }</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         let ul = dom.find_by_attr_id("list").unwrap();
         assert_eq!(dom.get(ul).children.len(), 3);
         assert_eq!(dom.text_content(ul), "item 1item 2item 3");
@@ -568,7 +577,7 @@ mod tests {
              b.textContent = 'still me';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert!(dom.find_by_attr_id("a").is_none(), "a 는 트리에서 제거됨");
         assert_eq!(text_of_id(&dom, "b").unwrap(), "still me");
     }
@@ -583,7 +592,7 @@ mod tests {
                + (el.getAttribute('nope') === null ? 'null' : 'oops');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "fancy/null");
     }
 
@@ -595,7 +604,7 @@ mod tests {
                '<p>one</p><p class=\"hi\">two <b>bold</b></p>';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         let boxid = dom.find_by_attr_id("box").unwrap();
         assert_eq!(dom.get(boxid).children.len(), 2, "다중 루트 조각");
         assert_eq!(dom.text_content(boxid), "onetwo bold");
@@ -622,7 +631,7 @@ mod tests {
              a.textContent = b.textContent + '/' + c.textContent;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         // '.card .note' 는 안쪽만, 'p' 는 문서 순서 첫 p
         assert_eq!(text_of_id(&dom, "out").unwrap(), "inside/inside");
     }
@@ -637,7 +646,7 @@ mod tests {
              document.getElementById('out').textContent = s;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "3:abc");
     }
 
@@ -653,7 +662,7 @@ mod tests {
                hit.textContent + '/' + (miss === null ? 'null' : 'self');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "res").unwrap(), "in/null", "자신은 제외, 자손만");
     }
 
@@ -667,7 +676,7 @@ mod tests {
                (a === null ? 'null' : 'oops') + '/' + b.length;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "null/0");
     }
 
@@ -680,7 +689,7 @@ mod tests {
              document.getElementById('out').textContent = was + '/' + f.value;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "initial/changed");
         // 속성에도 반영 (레이아웃/제출이 읽는 단일 진실)
         let f = dom.find_by_attr_id("f").unwrap();
@@ -700,7 +709,7 @@ mod tests {
                document.getElementById('out').textContent = 'got ' + v; });</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "got 5");
     }
 
@@ -712,7 +721,7 @@ mod tests {
              Array.of(1,2).join('') + '/' + 'ab'.at(-1) + '/' + [9,9].fill(5).join('');</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "12/b/55");
     }
 
@@ -726,7 +735,7 @@ mod tests {
                document.getElementById('out').textContent = a.dataset.count + '/' + a.dataset.userName;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "5/ada");
     }
 
@@ -738,7 +747,7 @@ mod tests {
                document.getElementById('out').textContent = a.join('-'); });</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "1-2-3");
     }
 
@@ -751,7 +760,7 @@ mod tests {
                f().then(function(v){ document.getElementById('out').textContent = 'v' + v; });</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "v9");
     }
 
@@ -764,7 +773,7 @@ mod tests {
                .then(function(v){ document.getElementById('out').textContent = 'r' + v; });</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "r20", "체인: 2→20");
     }
 
@@ -777,7 +786,7 @@ mod tests {
                document.getElementById('out').textContent = log; }); log+='A';</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "AB", "동기 A 먼저, 마이크로태스크 B 나중");
     }
 
@@ -794,7 +803,7 @@ mod tests {
              run();</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "r5", "await 로 순차 언랩: 2→5");
     }
 
@@ -807,7 +816,7 @@ mod tests {
              }; f(7);</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "out").unwrap(), "got7");
     }
 
@@ -819,7 +828,7 @@ mod tests {
              a.textContent = a.textContent + '+' + document.getElementById('b').textContent;</script>"
                 .to_string(),
         );
-        run_scripts(&mut dom, "https://localhost/");
+        run_scripts(&mut dom, "https://localhost/", None);
         assert_eq!(text_of_id(&dom, "a").unwrap(), "left+right");
     }
 }

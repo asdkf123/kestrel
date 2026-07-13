@@ -12,6 +12,96 @@ use crate::css::Color;
 use crate::layout::{hit_link, Rect};
 use crate::paint::DisplayItem;
 
+/// 스크립트 실행 중 강제 레이아웃(forced layout)에 필요한 입력.
+/// CSSOM View 의 측정 API(getBoundingClientRect/offset*/getComputedStyle)는 "읽는 순간"
+/// 보류된 스타일·레이아웃을 흘려야 한다. 예전엔 스크립트가 렌더보다 먼저 다 돌아서
+/// 측정값이 전부 0/빈 문자열이었다 — 측정 후 배치하는 코드(스티키 헤더, 캐러셀,
+/// 레이아웃 라이브러리)가 조용히 어긋났다.
+///
+/// Page 가 js 를 가변으로 빌린 상태에서 sheet/fonts 등을 함께 넘겨야 해서 생 포인터로
+/// 든다(dom 포인터와 같은 규약). 스크립트/콜백 실행 구간에서만 설정된다.
+#[derive(Clone, Copy)]
+pub struct LayoutCtx {
+    pub sheet: *const crate::css::Stylesheet,
+    pub fonts: *const crate::font::FontStack,
+    pub img_map: *const crate::layout::ImageMap,
+    pub pseudo: *const crate::style::PseudoStyles,
+    pub vw: f32,
+    pub vh: f32,
+}
+
+/// JS 가 측정 API 를 읽을 때 호출된다. DOM 버전이 지난 레이아웃 이후 바뀌었으면
+/// 스타일 → 레이아웃을 다시 돌려 인터프리터의 측정 맵을 채운다.
+pub fn flush_layout(js: &mut crate::js::interp::Interp) {
+    let (Some(dom_ptr), Some(ctx)) = (js.dom, js.layout_ctx) else { return };
+    let dom = unsafe { &*dom_ptr };
+    if js.layout_version == Some(dom.version()) {
+        return; // 깨끗하다 — 재계산 불필요
+    }
+    let (sheet, fonts, img_map, pseudo) =
+        unsafe { (&*ctx.sheet, &*ctx.fonts, &*ctx.img_map, &*ctx.pseudo) };
+    let vp = crate::style::Viewport { w: ctx.vw, h: ctx.vh };
+    let style_root = crate::style::style_tree_full(dom, sheet, vp, pseudo);
+    let mut viewport: crate::layout::Dimensions = Default::default();
+    viewport.content.width = ctx.vw;
+    let layout_root = crate::layout::layout_tree(&style_root, viewport, fonts, img_map);
+    fill_js_maps(js, &style_root, &layout_root);
+    js.layout_version = Some(dom.version());
+}
+
+// 레이아웃 산출물 → JS 측정 맵(getBoundingClientRect/offset*, getComputedStyle).
+fn fill_js_maps(
+    js: &mut crate::js::interp::Interp,
+    style_root: &crate::style::StyledNode,
+    layout_root: &crate::layout::LayoutBox,
+) {
+    let mut rects = Vec::new();
+    crate::layout::collect_element_rects(layout_root, 0, &mut rects);
+    js.layout_rects.clear();
+    for (r, id, _) in &rects {
+        js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
+    }
+    js.computed_styles.clear();
+    collect_computed_styles(style_root, &mut js.computed_styles);
+    // 표준의 resolved value: 길이는 px 로 확정돼야 한다. %/em/무단위 배수는 스타일 맵에
+    // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
+    let mut metrics = std::collections::HashMap::new();
+    crate::layout::collect_box_metrics(layout_root, &mut metrics);
+    let px = |v: f32| format!("{}px", crate::style::num_css(v));
+    for (id, d) in &metrics {
+        let Some(m) = js.computed_styles.get_mut(id) else { continue };
+        m.insert("width".to_string(), px(d.content.width));
+        m.insert("height".to_string(), px(d.content.height));
+        for (k, v) in [
+            ("margin-top", d.margin.top),
+            ("margin-right", d.margin.right),
+            ("margin-bottom", d.margin.bottom),
+            ("margin-left", d.margin.left),
+            ("padding-top", d.padding.top),
+            ("padding-right", d.padding.right),
+            ("padding-bottom", d.padding.bottom),
+            ("padding-left", d.padding.left),
+            ("border-top-width", d.border.top),
+            ("border-right-width", d.border.right),
+            ("border-bottom-width", d.border.bottom),
+            ("border-left-width", d.border.left),
+        ] {
+            m.insert(k.to_string(), px(v));
+        }
+        // 무단위 line-height 배수는 font-size 를 곱해 px 로 확정 (CSS2 §10.8).
+        let fs = m
+            .get("font-size")
+            .and_then(|s| s.strip_suffix("px"))
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(crate::style::DEFAULT_FONT_SIZE);
+        if let Some(lh) = m.get("line-height").cloned() {
+            if let Ok(factor) = lh.parse::<f32>() {
+                m.insert("line-height".to_string(), px(factor * fs));
+            }
+        }
+    }
+}
+
 /// 페이지: 원본(DOM/스타일시트/JS 런타임)을 소유하고, rebuild() 로 렌더 산출물을
 /// 재생성한다. 이벤트 핸들러가 DOM 을 바꾸면 rebuild 로 화면이 갱신된다.
 /// 스타일/레이아웃 트리는 rebuild 안에서만 사는 일시 산물 (borrow 격리).
@@ -134,6 +224,26 @@ fn urlencode(s: &str) -> String {
 }
 
 impl Page {
+    // JS 실행 구간 진입: DOM 포인터와 강제 레이아웃 컨텍스트를 건다.
+    // 콜백 안에서 el.getBoundingClientRect() 를 읽으면 flush_layout 이 돌아 최신값이 나온다.
+    fn enter_js(&mut self) {
+        let ctx = LayoutCtx {
+            sheet: &self.sheet,
+            fonts: &self.fonts,
+            img_map: &self.img_map,
+            pseudo: &self.pseudo_styles,
+            vw: self.viewport_width,
+            vh: self.viewport_height,
+        };
+        self.js.dom = Some(&mut self.dom as *mut crate::dom::Dom);
+        self.js.layout_ctx = Some(ctx);
+    }
+
+    fn leave_js(&mut self) {
+        self.js.dom = None;
+        self.js.layout_ctx = None;
+    }
+
     pub fn rebuild(&mut self) {
         let vp = crate::style::Viewport { w: self.viewport_width, h: self.viewport_height };
         let style_root =
@@ -147,51 +257,9 @@ impl Page {
         crate::layout::collect_link_regions(&layout_root, &mut self.links);
         self.element_rects.clear();
         crate::layout::collect_element_rects(&layout_root, 0, &mut self.element_rects);
-        // getBoundingClientRect/offset* 용 요소 사각형을 JS 인터프리터로 전달
-        self.js.layout_rects.clear();
-        for (r, id, _) in &self.element_rects {
-            self.js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
-        }
-        // getComputedStyle 용 계산 스타일을 JS 인터프리터로 전달 (요소별 프로퍼티 → CSS 텍스트).
-        self.js.computed_styles.clear();
-        collect_computed_styles(&style_root, &mut self.js.computed_styles);
-        // 표준의 resolved value: 길이는 px 로 확정돼야 한다. %/em/무단위 배수는 스타일 맵에
-        // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
-        let mut metrics = std::collections::HashMap::new();
-        crate::layout::collect_box_metrics(&layout_root, &mut metrics);
-        let px = |v: f32| format!("{}px", crate::style::num_css(v));
-        for (id, d) in &metrics {
-            let Some(m) = self.js.computed_styles.get_mut(id) else { continue };
-            m.insert("width".to_string(), px(d.content.width));
-            m.insert("height".to_string(), px(d.content.height));
-            for (k, v) in [
-                ("margin-top", d.margin.top),
-                ("margin-right", d.margin.right),
-                ("margin-bottom", d.margin.bottom),
-                ("margin-left", d.margin.left),
-                ("padding-top", d.padding.top),
-                ("padding-right", d.padding.right),
-                ("padding-bottom", d.padding.bottom),
-                ("padding-left", d.padding.left),
-                ("border-top-width", d.border.top),
-                ("border-right-width", d.border.right),
-                ("border-bottom-width", d.border.bottom),
-                ("border-left-width", d.border.left),
-            ] {
-                m.insert(k.to_string(), px(v));
-            }
-            // 무단위 line-height 배수는 font-size 를 곱해 px 로 확정 (CSS2 §10.8).
-            let fs = m
-                .get("font-size")
-                .and_then(|s| s.strip_suffix("px"))
-                .and_then(|s| s.parse::<f32>().ok())
-                .unwrap_or(crate::style::DEFAULT_FONT_SIZE);
-            if let Some(lh) = m.get("line-height").cloned() {
-                if let Ok(factor) = lh.parse::<f32>() {
-                    m.insert("line-height".to_string(), px(factor * fs));
-                }
-            }
-        }
+        // JS 측정 맵(rect/computed style) 갱신 — 강제 레이아웃과 같은 경로를 쓴다.
+        fill_js_maps(&mut self.js, &style_root, &layout_root);
+        self.js.layout_version = Some(self.dom.version());
         // <canvas> 2D 그리기 명령을 박스로 매핑해 디스플레이 리스트에 추가
         if !self.js.canvas_cmds.is_empty() {
             let extra = canvas_display_items(&self.element_rects, &self.js.canvas_cmds, &self.fonts);
@@ -206,7 +274,7 @@ impl Page {
         let Some(target) = crate::layout::hit_element(&self.element_rects, x, y) else {
             return false;
         };
-        self.js.dom = Some(&mut self.dom as *mut crate::dom::Dom);
+        self.enter_js();
         let mut fired = self.js.fire_handlers(target, "click");
         // onclick 속성: 타깃부터 조상 순서로 평가
         let mut chain = vec![target];
@@ -224,7 +292,7 @@ impl Page {
         for line in self.js.console.drain(..) {
             println!("[console] {}", line);
         }
-        self.js.dom = None;
+        self.leave_js();
         if fired {
             self.rebuild();
         }
@@ -243,12 +311,12 @@ impl Page {
 
     // 타이머 콜백 실행 → DOM 변형 가능 → rebuild
     pub fn fire_timer(&mut self, callback: crate::js::interp::Value) {
-        self.js.dom = Some(&mut self.dom as *mut crate::dom::Dom);
+        self.enter_js();
         self.js.run_callback(callback);
         for line in self.js.console.drain(..) {
             println!("[console] {}", line);
         }
-        self.js.dom = None;
+        self.leave_js();
         self.rebuild();
     }
 
@@ -768,7 +836,7 @@ mod tests {
 
     fn make_page(html: &str) -> Page {
         let mut dom = crate::html::parse_dom(html.to_string());
-        let js = crate::js::run_scripts(&mut dom, "https://localhost/");
+        let js = crate::js::run_scripts(&mut dom, "https://localhost/", None);
         let sheet = crate::css::user_agent_stylesheet();
         let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
             .unwrap();
@@ -792,6 +860,71 @@ mod tests {
         };
         page.rebuild();
         page
+    }
+
+    // 스크립트가 실행되는 동안 측정 API 가 실제 값을 돌려주는지 (강제 레이아웃).
+    // 스크립트가 CSS/폰트 뒤에 돌고, 측정 시점에 스타일 → 레이아웃이 흐른다.
+    // run_scripts 는 console 을 직접 출력하므로, 결과는 DOM 에 써서 확인한다.
+    fn run_with_layout(html: &str, css: &str) -> Dom {
+        let mut dom = crate::html::parse_dom(html.to_string());
+        let mut sheet = crate::css::user_agent_stylesheet();
+        sheet.rules.extend(crate::css::parse(css.to_string()).rules);
+        let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
+            .unwrap();
+        let fonts = crate::font::FontStack::new(vec![f]);
+        let img_map = crate::layout::ImageMap::new();
+        let pseudo = crate::style::PseudoStyles::new();
+        let ctx = LayoutCtx {
+            sheet: &sheet,
+            fonts: &fonts,
+            img_map: &img_map,
+            pseudo: &pseudo,
+            vw: 400.0,
+            vh: 600.0,
+        };
+        crate::js::run_scripts(&mut dom, "https://localhost/", Some(ctx));
+        dom
+    }
+
+    #[test]
+    fn script_time_measurement_forces_layout() {
+        // 예전엔 스크립트가 첫 레이아웃보다 먼저 전부 돌아서 파싱 중 측정값이 0/빈 문자열이었다.
+        // 측정 후 배치하는 코드(스티키 헤더, 캐러셀 등)가 조용히 어긋났다.
+        let dom = run_with_layout(
+            "<div id=\"b\"></div><p id=\"out\"></p><script>\
+             var e=document.getElementById('b');\
+             document.getElementById('out').textContent = \
+               e.offsetWidth + '|' + e.getBoundingClientRect().width + '|' \
+               + getComputedStyle(e).backgroundColor;\
+             </script>",
+            "#b { width: 120px; height: 30px; background: #ff0000; }",
+        );
+        assert_eq!(
+            text_of_id(&dom, "out").unwrap(),
+            "120|120|rgb(255, 0, 0)",
+            "offsetWidth/getBoundingClientRect/getComputedStyle 이 스크립트 시점에 실제 값"
+        );
+    }
+
+    #[test]
+    fn dom_mutation_invalidates_measurement_cache() {
+        // 측정 → DOM 변경 → 재측정: 두 번째 읽기는 새 레이아웃을 봐야 한다.
+        // (DOM 버전이 바뀌면 캐시가 무효 — 안 그러면 예전 값이 그대로 남는다)
+        let dom = run_with_layout(
+            "<div id=\"b\" class=\"narrow\"></div><p id=\"out\"></p><script>\
+             var e=document.getElementById('b');\
+             var before=e.offsetWidth;\
+             e.className='wide';\
+             document.getElementById('out').textContent = before + '|' + e.offsetWidth;\
+             </script>",
+            // 기본값도 클래스로 준다 (#b 는 특이도가 높아 .wide 를 이겨버린다)
+            "#b { height: 10px; } .narrow { width: 50px; } .wide { width: 300px; }",
+        );
+        assert_eq!(
+            text_of_id(&dom, "out").unwrap(),
+            "50|300",
+            "클래스 변경 후 재측정은 새 레이아웃 값"
+        );
     }
 
     fn text_of_id(dom: &Dom, id: &str) -> Option<String> {

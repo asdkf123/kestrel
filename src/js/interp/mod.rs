@@ -843,6 +843,11 @@ pub struct Interp {
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
+    // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
+    // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
+    pub layout_ctx: Option<crate::window::LayoutCtx>,
+    // 아래 측정 맵이 반영하고 있는 DOM 버전. dom.version() 과 다르면 다시 레이아웃한다.
+    pub layout_version: Option<u64>,
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
     // getBoundingClientRect/offsetWidth 등이 읽는다. 빈 맵이면 0 을 돌려준다.
     pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
@@ -1416,6 +1421,8 @@ impl Interp {
             steps: 0,
             dom: None,
             handlers: Vec::new(),
+            layout_ctx: None,
+            layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
             canvas_cmds: std::collections::HashMap::new(),
@@ -3102,7 +3109,16 @@ impl Interp {
     }
 
     // getComputedStyle(el) → 계산 스타일 뷰(el 이 요소면). 요소 아니면 빈 뷰.
-    pub(super) fn get_computed_style(&self, arg: Option<&Value>) -> Value {
+    // 측정 API 진입점에서 호출한다. DOM 이 지난 레이아웃 이후 바뀌었으면 스타일·레이아웃을
+    // 다시 돌려 측정 맵을 최신화한다 (forced synchronous layout).
+    // 예전엔 스크립트가 첫 레이아웃보다 먼저 전부 실행돼서, 파싱 중이나 load 에서 잰 값이
+    // 항상 0/빈 문자열이었다. 측정 후 배치하는 코드가 전부 조용히 어긋났다.
+    pub(super) fn ensure_layout(&mut self) {
+        crate::window::flush_layout(self);
+    }
+
+    pub(super) fn get_computed_style(&mut self, arg: Option<&Value>) -> Value {
+        self.ensure_layout();
         match arg {
             Some(Value::Dom(id)) => Value::ComputedStyle(*id),
             // 요소가 아니면 어떤 노드와도 겹치지 않는 센티널 → 빈 뷰.
@@ -3207,6 +3223,7 @@ impl Interp {
                 if key == "getPropertyValue" {
                     return Ok(Value::Native(Native::ComputedGetProperty));
                 }
+                self.ensure_layout();
                 let dashed = camel_to_dashed(key);
                 let v = self
                     .computed_styles

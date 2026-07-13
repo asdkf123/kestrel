@@ -64,11 +64,22 @@ pub struct NodeData {
 pub struct Dom {
     nodes: Vec<NodeData>,
     pub root: NodeId,
+    // 변형 카운터. 스타일/레이아웃 캐시가 자신이 본 버전과 비교해 재계산 여부를 정한다.
+    // (JS 가 측정 API 를 읽을 때 강제 레이아웃을 흘려야 하는지 판정 — CSSOM View)
+    version: u64,
 }
 
 impl Dom {
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    fn touch(&mut self) {
+        self.version += 1;
+    }
+
     pub fn from_tree(tree: Node) -> Dom {
-        let mut dom = Dom { nodes: Vec::new(), root: 0 };
+        let mut dom = Dom { nodes: Vec::new(), root: 0, version: 0 };
         let root = dom.insert_tree(tree, None);
         dom.root = root;
         dom
@@ -76,6 +87,7 @@ impl Dom {
 
     // 트리(파서 출력)를 아레나로 흡수. 새 서브트리의 루트 id 반환.
     pub fn insert_tree(&mut self, tree: Node, parent: Option<NodeId>) -> NodeId {
+        self.touch();
         let id = self.nodes.len();
         self.nodes.push(NodeData { parent, children: Vec::new(), node_type: tree.node_type });
         for child in tree.children {
@@ -89,11 +101,15 @@ impl Dom {
         &self.nodes[id]
     }
 
+    // 노드를 가변으로 빌려주는 유일한 통로 — 여기서 버전을 올리면 속성/텍스트 변경이
+    // 전부 잡힌다(호출부마다 표시하는 방식은 누락이 생긴다).
     pub fn get_mut(&mut self, id: NodeId) -> &mut NodeData {
+        self.version += 1;
         &mut self.nodes[id]
     }
 
     pub fn create_element(&mut self, tag: &str) -> NodeId {
+        self.touch();
         let id = self.nodes.len();
         self.nodes.push(NodeData {
             parent: None,
@@ -109,6 +125,7 @@ impl Dom {
     // node.cloneNode(deep): 노드(및 deep 이면 서브트리)를 복사해 분리된 새 노드로.
     // 새 루트의 NodeId 를 반환한다 (부모 없음).
     pub fn clone_node(&mut self, id: NodeId, deep: bool) -> NodeId {
+        self.touch();
         let node_type = self.nodes[id].node_type.clone();
         let new_id = self.nodes.len();
         self.nodes.push(NodeData { parent: None, children: Vec::new(), node_type });
@@ -124,6 +141,7 @@ impl Dom {
     }
 
     pub fn create_text(&mut self, text: String) -> NodeId {
+        self.touch();
         let id = self.nodes.len();
         self.nodes.push(NodeData {
             parent: None,
@@ -135,6 +153,7 @@ impl Dom {
 
     // child 를 기존 부모에서 떼어 parent 의 마지막 자식으로. 자기 자신/순환은 무시.
     pub fn append_child(&mut self, parent: NodeId, child: NodeId) {
+        self.touch();
         if parent == child || self.ancestors(parent).contains(&child) {
             return;
         }
@@ -144,6 +163,7 @@ impl Dom {
     }
 
     pub fn detach(&mut self, id: NodeId) {
+        self.touch();
         if let Some(p) = self.nodes[id].parent.take() {
             self.nodes[p].children.retain(|&c| c != id);
         }
@@ -152,6 +172,7 @@ impl Dom {
     // parent.insertBefore(child, reference): reference 앞에 삽입.
     // reference 가 없거나 parent 의 자식이 아니면 끝에 추가(appendChild 동일).
     pub fn insert_before(&mut self, parent: NodeId, child: NodeId, reference: Option<NodeId>) {
+        self.touch();
         if parent == child || self.ancestors(parent).contains(&child) {
             return;
         }

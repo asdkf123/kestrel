@@ -90,7 +90,6 @@ fn main() {
     let source_korean = page_needs_korean(&html_source);
     let mut root_node = html::parse_dom(html_source);
     let needs_korean = source_korean || page_needs_korean(&root_node.text_content(root_node.root));
-    let js_rt = js::run_scripts(&mut root_node, "https://localhost/");
     // 실제 페이지처럼 UA 스타일시트를 먼저 깔고 그 위에 저작자 CSS 를 얹는다.
     let mut stylesheet = css::user_agent_stylesheet();
     stylesheet.rules.extend(css::parse(css_source).rules);
@@ -109,6 +108,19 @@ fn main() {
         collect_bg_urls(&style_root, &mut srcs);
     }
     let (images, img_map) = load_images(srcs, &base);
+
+    // 스크립트 실행 (스타일시트·폰트·이미지가 준비된 뒤 — 표준 순서).
+    // 강제 레이아웃 컨텍스트를 넘겨 스크립트 안 측정 API 가 실제 값을 돌려주게 한다.
+    let empty_pseudo = style::PseudoStyles::new();
+    let ctx = window::LayoutCtx {
+        sheet: &stylesheet,
+        fonts: &fonts,
+        img_map: &img_map,
+        pseudo: &empty_pseudo,
+        vw: viewport_width as f32,
+        vh: viewport_height as f32,
+    };
+    let js_rt = js::run_scripts(&mut root_node, "https://localhost/", Some(ctx));
 
     // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
     let pseudo_styles = style::generate_pseudo_elements(&mut root_node, &stylesheet);
@@ -227,6 +239,22 @@ fn collect_bg_urls(node: &style::StyledNode, out: &mut Vec<String>) {
     for c in &node.children {
         collect_bg_urls(c, out);
     }
+}
+
+// 이미 받은 이미지 목록에 새 src 들을 이어붙인다 (인덱스 오프셋 보정).
+fn merge_images(
+    mut images: Vec<png::Image>,
+    mut map: layout::ImageMap,
+    new_srcs: Vec<String>,
+    base: &url::Url,
+) -> (Vec<png::Image>, layout::ImageMap) {
+    let (more, more_map) = load_images(new_srcs, base);
+    let offset = images.len();
+    images.extend(more);
+    for (src, (idx, w, h)) in more_map {
+        map.insert(src, (idx + offset, w, h));
+    }
+    (images, map)
 }
 
 fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
@@ -374,10 +402,21 @@ fn collect_links(dom: &dom::Dom, out: &mut Vec<(String, String)>) {
 }
 
 fn extract_css(dom: &dom::Dom, out: &mut String) {
+    let mut seen = std::collections::HashSet::new();
+    extract_new_css(dom, &mut seen, out);
+}
+
+// 아직 읽지 않은 <style> 만 모은다. 스크립트가 나중에 삽입한 스타일을 두 번 넣지 않기 위해
+// 소비한 노드 id 를 기억한다 (스크립트 전 1회, 스크립트 후 1회 호출).
+fn extract_new_css(
+    dom: &dom::Dom,
+    seen: &mut std::collections::HashSet<dom::NodeId>,
+    out: &mut String,
+) {
     let mut style_ids = Vec::new();
     walk_dom_ids(dom, dom.root, &mut |id| {
         if let dom::NodeType::Element(e) = &dom.get(id).node_type {
-            if e.tag_name == "style" {
+            if e.tag_name == "style" && seen.insert(id) {
                 style_ids.push(id);
             }
         }
@@ -427,10 +466,6 @@ fn build_page(url: &str) -> Option<window::Page> {
     // 원문엔 없어도 엔티티(&#51060; 등) 디코드 후 한글이 나올 수 있다 (google.co.kr)
     let needs_korean = source_korean || page_needs_korean(&dom.text_content(dom.root));
 
-    // 인라인 <script> 실행 (동기 스크립트처럼 첫 렌더 전, DOM 변형 가능).
-    // 반환된 JS 런타임은 이벤트 핸들러(클로저)를 들고 Page 에 보관된다.
-    let js_rt = js::run_scripts(&mut dom, url);
-
     let base = url::Url::parse(url).ok()?;
 
     // 스타일: UA → 외부 <link> CSS → 인라인 <style> 순서로 합침.
@@ -453,8 +488,9 @@ fn build_page(url: &str) -> Option<window::Page> {
             load_stylesheet(&u.as_string(), page_vw, &mut sheet, 0, &mut seen_css);
         }
     }
+    let mut seen_styles = std::collections::HashSet::new();
     let mut inline_css = String::new();
-    extract_css(&dom, &mut inline_css);
+    extract_new_css(&dom, &mut seen_styles, &mut inline_css);
     let parsed_inline = css::parse_viewport(inline_css, page_vw);
     sheet.rules.extend(parsed_inline.rules);
     sheet.font_faces.extend(parsed_inline.font_faces);
@@ -492,6 +528,47 @@ fn build_page(url: &str) -> Option<window::Page> {
         if needs_korean { "로드" } else { "생략" },
         loaded_faces
     );
+
+    // 스크립트 실행. HTML 표준에서 파서가 삽입한 스크립트는 보류된 스타일시트를 기다린 뒤
+    // 실행된다 — 그래서 CSS/폰트/이미지가 준비된 이 시점이 맞다. 예전엔 스크립트를 CSS 보다
+    // 먼저 돌려서, 스크립트 안의 측정 API 가 전부 0 을 돌려줬다(스타일도 레이아웃도 없었다).
+    // layout_ctx 를 넘기면 측정 시점에 강제 레이아웃이 돌아 실제 값이 나온다.
+    let empty_pseudo = style::PseudoStyles::new();
+    let js_rt = {
+        let ctx = window::LayoutCtx {
+            sheet: &sheet,
+            fonts: &fonts,
+            img_map: &img_map,
+            pseudo: &empty_pseudo,
+            vw: page_vw,
+            vh: page_vh,
+        };
+        js::run_scripts(&mut dom, url, Some(ctx))
+    };
+
+    // 스크립트가 <style> 을 주입했으면 그때 생긴 것만 추가로 반영한다.
+    let mut injected_css = String::new();
+    extract_new_css(&dom, &mut seen_styles, &mut injected_css);
+    if !injected_css.trim().is_empty() {
+        let parsed = css::parse_viewport(injected_css, page_vw);
+        sheet.rules.extend(parsed.rules);
+        sheet.font_faces.extend(parsed.font_faces);
+        sheet.keyframes.extend(parsed.keyframes);
+    }
+
+    // 스크립트가 넣은 <img>/배경 이미지도 가져온다 (이미 받은 것은 건너뜀).
+    let mut new_srcs = Vec::new();
+    collect_img_srcs(&dom, &mut new_srcs);
+    {
+        let style_root = style::style_tree(&dom, &sheet);
+        collect_bg_urls(&style_root, &mut new_srcs);
+    }
+    new_srcs.retain(|s| !img_map.contains_key(s));
+    let (images, img_map) = if new_srcs.is_empty() {
+        (images, img_map)
+    } else {
+        merge_images(images, img_map, new_srcs, &base)
+    };
 
     // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
     let pseudo_styles = style::generate_pseudo_elements(&mut dom, &sheet);

@@ -985,6 +985,7 @@ impl Interp {
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
             // computedStyle.getPropertyValue('background-color') → CSS 텍스트.
             Native::ComputedGetProperty => {
+                self.ensure_layout();
                 let name = args.first().map(to_display).unwrap_or_default();
                 Ok(match &recv {
                     Some(Value::ComputedStyle(id)) => Value::Str(
@@ -1544,6 +1545,7 @@ impl Interp {
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
             }
             Native::GetBoundingClientRect => {
+                self.ensure_layout();
                 let (x, y, w, h) = match recv {
                     Some(Value::Dom(id)) => {
                         self.layout_rects.get(&id).copied().unwrap_or((0.0, 0.0, 0.0, 0.0))

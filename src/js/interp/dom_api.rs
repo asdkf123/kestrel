@@ -141,6 +141,14 @@ impl Interp {
         // 레이아웃 측정 프로퍼티 (dom 아레나 borrow 전에 처리 — 이중 borrow 방지).
         // offset* 는 border box, client* 는 근사로 같은 박스 크기를 돌려준다.
         match key {
+            "offsetWidth" | "clientWidth" | "scrollWidth" | "offsetHeight" | "clientHeight"
+            | "scrollHeight" | "offsetLeft" | "clientLeft" | "offsetTop" | "clientTop" => {
+                // 측정 전에 보류된 레이아웃을 흘린다 (CSSOM View: forced layout)
+                self.ensure_layout();
+            }
+            _ => {}
+        }
+        match key {
             "offsetWidth" | "clientWidth" | "scrollWidth" => {
                 let w = self.layout_rects.get(&id).map(|r| r.2).unwrap_or(0.0);
                 return Ok(Value::Num(w as f64));
