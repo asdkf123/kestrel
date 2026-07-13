@@ -281,6 +281,17 @@ impl<'a> LayoutBox<'a> {
                         flush(&mut cur, &mut words, &mut break_before); // 공백 접기 → 단어 경계
                     }
                 } else {
+                    // pre-wrap: 공백을 보존하되 그 뒤는 **줄바꿈 기회**다 (CSS Text §4.1.1).
+                    // 예전엔 공백을 단어에 계속 이어 붙여 줄 전체가 한 단어가 됐고,
+                    // 그래서 pre-wrap 이 폭을 넘겨도 절대 끊기지 않았다.
+                    // 보존한 공백은 앞 조각에 남기고(glue=true) 뒤에 암묵적 공백을 더하지 않는다.
+                    if keep_spaces
+                        && can_wrap
+                        && cur.last().map(|&(c, _)| c.is_whitespace()).unwrap_or(false)
+                    {
+                        words.push((std::mem::take(&mut cur), break_before, true));
+                        break_before = false;
+                    }
                     // CJK 는 글자 사이가 줄바꿈 기회다 (UAX #14). 금칙 규칙을 지킨다:
                     // 여는 괄호 뒤에서는 끊지 않고, 닫는 괄호/구두점 앞에서는 끊지 않는다.
                     let prev = cur.last().map(|(c, _)| *c);
@@ -433,7 +444,15 @@ impl<'a> LayoutBox<'a> {
                 .iter()
                 .map(|&(ch, st)| if st.spacer > 0.0 { st.spacer } else { resolve(ch, st.px).2 + letter_spacing })
                 .sum();
-            let need_wrap = can_wrap && pen_x > line_left && pen_x + word_w > line_right;
+            // 단어 끝의 보존된 공백은 줄 끝에 "매달린다" — 그것 때문에 줄을 넘기지 않는다.
+            let trail_ws: f32 = word
+                .iter()
+                .rev()
+                .take_while(|&&(ch, st)| st.spacer <= 0.0 && ch.is_whitespace())
+                .map(|&(ch, st)| resolve(ch, st.px).2 + letter_spacing)
+                .sum();
+            let need_wrap =
+                can_wrap && pen_x > line_left && pen_x + word_w - trail_ws > line_right;
             if *force_break || need_wrap {
                 baseline += line_height;
                 let (l, r) = line_range(baseline);

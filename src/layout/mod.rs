@@ -4921,6 +4921,14 @@ mod tests {
         let normal = height("");
         let nowrap = height("p { white-space: nowrap; }");
         assert!(nowrap < normal, "nowrap 은 한 줄 → normal(여러 줄)보다 낮음: {} < {}", nowrap, normal);
+
+        // pre-wrap 은 공백을 보존하면서도 폭에서 줄바꿈한다 (CSS Text §4.1.1).
+        // 예전엔 보존한 공백을 단어에 계속 이어 붙여 줄 전체가 한 단어가 됐고,
+        // 그래서 아무리 좁아도 끊기지 않았다 (= pre 와 구분이 없었다).
+        let pre = height("p { white-space: pre; }");
+        let pre_wrap = height("p { white-space: pre-wrap; }");
+        assert!(pre < normal, "pre 는 한 줄");
+        assert!(pre_wrap >= normal, "pre-wrap 은 normal 처럼 줄바꿈해야: {} >= {}", pre_wrap, normal);
     }
 
     #[test]
