@@ -2,6 +2,7 @@ mod bench;
 mod cff;
 mod css;
 mod dom;
+mod encoding;
 mod font;
 mod html;
 mod http;
@@ -410,7 +411,17 @@ fn build_page(url: &str) -> Option<window::Page> {
     };
     println!("fetched {} ({} bytes, http {})", url, resp.body.len(), resp.status);
 
-    let html = String::from_utf8_lossy(&resp.body).to_string();
+    // 문자 인코딩 감지 → 디코딩. 예전엔 무조건 UTF-8 로 읽어 EUC-KR 페이지가
+    // 조용히 깨진 글자로 렌더됐다(렌더는 되는데 내용이 쓰레기).
+    let ctype = resp
+        .headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone());
+    let (html, charset) = encoding::decode(&resp.body, ctype.as_deref());
+    if !matches!(charset, encoding::Charset::Utf8) {
+        println!("[charset] {:?} 로 디코딩", charset);
+    }
     let source_korean = page_needs_korean(&html);
     let mut dom = html::parse_dom(html);
     // 원문엔 없어도 엔티티(&#51060; 등) 디코드 후 한글이 나올 수 있다 (google.co.kr)

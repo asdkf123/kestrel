@@ -168,28 +168,14 @@ fn dechunk(mut data: &[u8]) -> Result<Vec<u8>, HttpError> {
     Ok(out)
 }
 
+// 리다이렉트 Location 해석. URL 결합 규칙(RFC 3986: dot-segment 해소, 프로토콜 상대,
+// 쿼리/프래그먼트만)은 Url::join 에 이미 구현돼 있다 — 여기서 중복 구현하지 않는다.
+// (예전엔 자체 복사본이라 dot-segment 를 안 지워 `../x` 리다이렉트가 /a/b/../x 가 됐다)
 fn resolve(base: &Url, location: &str) -> Result<Url, UrlError> {
-    if location.starts_with("http://") || location.starts_with("https://") {
-        Url::parse(location)
-    } else if location.starts_with('/') {
-        Ok(Url {
-            scheme: base.scheme.clone(),
-            host: base.host.clone(),
-            port: base.port,
-            path: location.to_string(),
-        })
+    if let Some(u) = base.join(location) {
+        Ok(u)
     } else {
-        let mut path = base.path.clone();
-        if let Some(idx) = path.rfind('/') {
-            path.truncate(idx + 1);
-        }
-        path.push_str(location);
-        Ok(Url {
-            scheme: base.scheme.clone(),
-            host: base.host.clone(),
-            port: base.port,
-            path,
-        })
+        Url::parse(location)
     }
 }
 
@@ -227,5 +213,19 @@ mod tests {
         // 정확히 도착하면 통과
         let ok = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
         assert_eq!(parse_response(ok).unwrap().body, b"hello");
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+
+    #[test]
+    fn redirect_resolve_normalizes_dot_segments() {
+        // 리다이렉트 Location 이 상대경로일 때 RFC 3986 dot-segment 를 해소해야 한다.
+        let base = Url::parse("https://site.com/a/b/page.html").unwrap();
+        assert_eq!(resolve(&base, "../c.html").unwrap().path, "/a/c.html");
+        assert_eq!(resolve(&base, "./d.html").unwrap().path, "/a/b/d.html");
+        assert_eq!(resolve(&base, "/x/../y.html").unwrap().path, "/y.html");
     }
 }
