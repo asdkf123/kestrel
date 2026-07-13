@@ -27,8 +27,12 @@ pub enum Charset {
     ShiftJis, // 일본 레거시 웹
     Gbk,      // 중국 레거시 웹 (gbk / gb2312 / gb18030)
     Big5,     // 대만/홍콩 레거시 웹
-    /// 감지는 됐지만 아직 디코더가 없는 인코딩 (이름 보존).
-    Unsupported(&'static str),
+    /// WHATWG 단일바이트 인코딩 (iso-8859-*, windows-125*, koi8-*, macintosh …).
+    /// 표는 encoding.spec.whatwg.org 인덱스에서 기계 추출 (src/encoding_sbcs.rs).
+    SingleByte(&'static [u16; 128]),
+    /// 라벨은 읽었지만 우리가 못 읽는 인코딩. **조용히 UTF-8 로 읽지 않는다** —
+    /// 그러면 글자가 전부 깨진 채로 "성공"한 것처럼 보인다.
+    Unsupported,
 }
 
 // charset 이름 → Charset. 별칭 포함.
@@ -45,7 +49,15 @@ fn from_label(label: &str) -> Option<Charset> {
         "gbk" | "gb2312" | "gb18030" | "chinese" | "csgb2312" | "gb_2312" | "gb_2312-80"
         | "x-gbk" => Charset::Gbk,
         "big5" | "big5-hkscs" | "cn-big5" | "csbig5" | "x-x-big5" => Charset::Big5,
-        _ => return None,
+        // WHATWG 단일바이트 인코딩 전부 (라벨 별칭 포함)
+        other => match crate::encoding_sbcs::table_for(other) {
+            Some(t) => Charset::SingleByte(t),
+            None => {
+                // 이름은 있는데 우리가 못 읽는 인코딩 → 정직하게 표시한다.
+                // (호출측이 UTF-8 로 폴백하되 경고를 남긴다)
+                return Some(Charset::Unsupported);
+            }
+        },
     })
 }
 
@@ -114,7 +126,23 @@ pub fn decode(bytes: &[u8], content_type: Option<&str>) -> (String, Charset) {
 
 pub fn decode_as(bytes: &[u8], cs: Charset) -> String {
     match cs {
-        Charset::Utf8 | Charset::Unsupported(_) => String::from_utf8_lossy(bytes).into_owned(),
+        Charset::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
+        // 못 읽는 인코딩: UTF-8 로 시도하되 조용히 넘어가지 않는다 (글자가 깨진다).
+        Charset::Unsupported => {
+            println!("[encoding] 지원하지 않는 인코딩 — UTF-8 로 시도한다 (글자가 깨질 수 있음)");
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+        // 단일바이트: 0x00..0x7F 는 ASCII, 0x80..0xFF 는 표 (WHATWG §단일바이트 디코더)
+        Charset::SingleByte(table) => bytes
+            .iter()
+            .map(|&b| {
+                if b < 0x80 {
+                    b as char
+                } else {
+                    char::from_u32(table[(b - 0x80) as usize] as u32).unwrap_or('\u{FFFD}')
+                }
+            })
+            .collect(),
         Charset::Windows1252 => bytes.iter().map(|&b| w1252_char(b)).collect(),
         Charset::Cp949 => decode_cp949(bytes),
         Charset::ShiftJis => decode_shift_jis(bytes),
@@ -353,6 +381,35 @@ fn cp949_trail_index(t: u8) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_whatwg_single_byte_encodings() {
+        // 예전엔 아는 이름이 아니면 charset 을 통째로 무시하고 UTF-8 로 읽었다.
+        // 글자가 전부 깨진 채로 "성공"한 것처럼 보인다 — 가장 나쁜 종류의 조용한 오류다.
+        // 이제 WHATWG 단일바이트 인코딩 26종을 실제로 디코드한다.
+        let cs = charset_from_content_type("text/html; charset=iso-8859-2").unwrap();
+        assert!(matches!(cs, Charset::SingleByte(_)));
+        // iso-8859-2 의 0xA1 = U+0104 (Ą), 0xE9 = U+00E9 (é)
+        assert_eq!(decode_as(&[0xA1, 0xE9], cs), "Ąé");
+
+        // koi8-r: 0xC1 = U+0430 (а)
+        let koi = charset_from_content_type("text/plain; charset=koi8-r").unwrap();
+        assert_eq!(decode_as(&[0xC1], koi), "а");
+
+        // windows-1251 (키릴): 0xC0 = U+0410 (А)
+        let cp1251 = charset_from_content_type("text/html;charset=windows-1251").unwrap();
+        assert_eq!(decode_as(&[0xC0], cp1251), "А");
+
+        // iso-8859-9(=windows-1254, 터키어): 0xFD = U+0131 (ı)
+        let tr = charset_from_content_type("text/html; charset=iso-8859-9").unwrap();
+        assert_eq!(decode_as(&[0xFD], tr), "ı");
+
+        // 모르는 인코딩은 Unsupported 로 **표시**한다 (조용히 UTF-8 로 읽지 않는다)
+        assert_eq!(
+            charset_from_content_type("text/html; charset=x-made-up-9999"),
+            Some(Charset::Unsupported)
+        );
+    }
 
     #[test]
     fn detects_charset_from_content_type() {

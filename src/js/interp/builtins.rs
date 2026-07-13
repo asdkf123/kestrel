@@ -259,6 +259,35 @@ fn is_fragment(dom: &crate::dom::Dom, id: crate::dom::NodeId) -> bool {
         crate::dom::NodeType::Element(e) if e.tag_name == "#document-fragment")
 }
 
+// 문서의 body (없으면 루트)
+fn find_body(dom: &crate::dom::Dom) -> crate::dom::NodeId {
+    fn walk(dom: &crate::dom::Dom, id: crate::dom::NodeId) -> Option<crate::dom::NodeId> {
+        if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+            if e.tag_name == "body" {
+                return Some(id);
+            }
+        }
+        dom.get(id).children.iter().find_map(|&c| walk(dom, c))
+    }
+    walk(dom, dom.root).unwrap_or(dom.root)
+}
+
+// 서브트리의 <script> 노드를 문서 순서로 모은다
+fn collect_script_nodes(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    out: &mut Vec<crate::dom::NodeId>,
+) {
+    if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+        if e.tag_name == "script" {
+            out.push(id);
+        }
+    }
+    for &c in &dom.get(id).children {
+        collect_script_nodes(dom, c, out);
+    }
+}
+
 impl Interp {
     // JSON.stringify 의 재귀 직렬화 (표준 §25.5.2). toJSON → replacer 함수 → 직렬화 순서.
     // replacer 배열이면 객체 키를 그 목록으로 거른다. indent 가 있으면 표준 들여쓰기.
@@ -1486,6 +1515,50 @@ impl Interp {
                     Some(Value::BigInt(b)) => Ok(Value::Str(b.to_string_radix(radix))),
                     _ => Ok(Value::Str("0".to_string())),
                 }
+            }
+            // document.write(html): 파서 삽입 지점(= 실행 중인 스크립트 자리)에 조각을 넣는다.
+            // 스크립트를 다 돌린 뒤라 삽입 지점을 모르면 body 끝에 붙인다.
+            // 써진 <script> 는 큐에 넣어 호출측이 순서대로 실행한다.
+            Native::DocWrite => {
+                let html: String = args.iter().map(to_display).collect();
+                if html.trim().is_empty() {
+                    return Ok(Value::Undefined);
+                }
+                let Some(dom_ptr) = self.dom else { return Ok(Value::Undefined) };
+                let dom = unsafe { &mut *dom_ptr };
+                // 삽입 부모/기준: 스크립트의 부모에서 스크립트 바로 뒤
+                let (parent, before) = match self.current_script {
+                    Some(sid) => {
+                        let p = dom.get(sid).parent;
+                        match p {
+                            Some(p) => {
+                                let idx = dom.get(p).children.iter().position(|&c| c == sid);
+                                let next = idx
+                                    .and_then(|i| dom.get(p).children.get(i + 1).copied());
+                                (p, next)
+                            }
+                            None => (find_body(dom), None),
+                        }
+                    }
+                    None => (find_body(dom), None),
+                };
+                let mut new_scripts: Vec<crate::dom::NodeId> = Vec::new();
+                for tree in crate::html::parse_fragment(html) {
+                    let sub = dom.insert_tree(tree, Some(parent));
+                    dom.insert_before(parent, sub, before);
+                    collect_script_nodes(dom, sub, &mut new_scripts);
+                }
+                for sid in new_scripts {
+                    let (src, code) = match &dom.get(sid).node_type {
+                        crate::dom::NodeType::Element(e) => (
+                            e.attributes.get("src").cloned(),
+                            dom.text_content(sid),
+                        ),
+                        _ => (None, String::new()),
+                    };
+                    self.written_scripts.push((src, code));
+                }
+                Ok(Value::Undefined)
             }
             Native::ActiveElement => Ok(match self.active_element {
                 Some(id) => Value::Dom(id),
@@ -2742,13 +2815,18 @@ impl Interp {
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        // 표준: 콜백은 (값, 인덱스, **배열**) 로 부르고, 2번째 인자는 thisArg 다.
+                        // 예전엔 (값, 인덱스) 만 넘겨서 a[i-1] 같은 관용 코드가 죽었다
+                        // (IntersectionObserver 폴리필이 정확히 그 모양이다).
+                        let this_arg = args.get(1).cloned();
+                        let arr_val = Value::Arr(a.clone());
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut out = Vec::new();
                         for (i, item) in snapshot.into_iter().enumerate() {
                             let r = self.call_value(
                                 f.clone(),
-                                None,
-                                vec![item.clone(), Value::Num(i as f64)],
+                                this_arg.clone(),
+                                vec![item.clone(), Value::Num(i as f64), arr_val.clone()],
                             )?;
                             match op {
                                 ArrOp::Map => out.push(r),
@@ -2772,14 +2850,16 @@ impl Interp {
                     }
                     ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let this_arg = args.get(1).cloned();
+                        let arr_val = Value::Arr(a.clone());
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut result = Value::Undefined;
                         let mut found = false;
                         for (i, item) in snapshot.into_iter().enumerate() {
                             let r = self.call_value(
                                 f.clone(),
-                                None,
-                                vec![item.clone(), Value::Num(i as f64)],
+                                this_arg.clone(),
+                                vec![item.clone(), Value::Num(i as f64), arr_val.clone()],
                             )?;
                             let truthy = to_bool(&r);
                             match op {
@@ -2819,6 +2899,7 @@ impl Interp {
                     }
                     ArrOp::Reduce => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let arr_val = Value::Arr(a.clone()); // 콜백 4번째 인자 (표준)
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut iter = snapshot.into_iter().enumerate();
                         let mut acc = match args.get(1) {
@@ -2832,13 +2913,14 @@ impl Interp {
                             acc = self.call_value(
                                 f.clone(),
                                 None,
-                                vec![acc, item, Value::Num(i as f64)],
+                                vec![acc, item, Value::Num(i as f64), arr_val.clone()],
                             )?;
                         }
                         acc
                     }
                     ArrOp::ReduceRight => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let arr_val = Value::Arr(a.clone());
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut idx = snapshot.len();
                         let mut acc = match args.get(1) {
@@ -2856,7 +2938,12 @@ impl Interp {
                             acc = self.call_value(
                                 f.clone(),
                                 None,
-                                vec![acc, snapshot[idx].clone(), Value::Num(idx as f64)],
+                                vec![
+                                    acc,
+                                    snapshot[idx].clone(),
+                                    Value::Num(idx as f64),
+                                    arr_val.clone(),
+                                ],
                             )?;
                         }
                         acc

@@ -118,6 +118,12 @@ pub struct Dom {
 }
 
 impl Dom {
+    // 아레나 노드 수 (테스트에서 전체 순회에 쓴다)
+    #[cfg(test)]
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn version(&self) -> u64 {
         self.version
     }
@@ -146,9 +152,6 @@ impl Dom {
     }
 
     // 아레나에 든 노드 수 (테스트/진단용)
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
 
     pub fn get(&self, id: NodeId) -> &NodeData {
         &self.nodes[id]

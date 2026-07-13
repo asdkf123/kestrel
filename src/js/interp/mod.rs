@@ -242,6 +242,13 @@ impl JsClass {
         self.parent.as_ref().and_then(|p| p.find_setter(name))
     }
 
+    fn find_static_setter(&self, name: &str) -> Option<Rc<JsFn>> {
+        if let Some(s) = self.static_setters.get(name) {
+            return Some(s.clone());
+        }
+        self.parent.as_ref().and_then(|p| p.find_static_setter(name))
+    }
+
     fn find_static_getter(&self, name: &str) -> Option<Rc<JsFn>> {
         if let Some(g) = self.static_getters.get(name) {
             return Some(g.clone());
@@ -423,6 +430,7 @@ pub enum Native {
     LocationHref,
     BigIntCtor,
     BigIntToString,
+    DocWrite,
     HistoryPushState,
     HistoryReplaceState,
     DomParserCtor,
@@ -789,9 +797,6 @@ fn hoist_vars(stmts: &[Stmt], scope: &EnvRef) {
     }
 }
 
-pub fn collect_pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
-    pattern_names(pat, out)
-}
 
 fn pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
     use crate::js::ast::Pattern;
@@ -1022,6 +1027,11 @@ pub struct Interp {
     pub module_sources: HashMap<String, String>,
     // 임포트 맵 (베어 명세자 → URL). 긴 키 우선으로 정렬돼 들어온다.
     pub import_map: Vec<(String, String)>,
+    // 지금 실행 중인 클래식 스크립트 노드 (document.write 의 삽입 지점 / document.currentScript).
+    pub current_script: Option<crate::dom::NodeId>,
+    // document.write 로 새로 생긴 스크립트 (src, 인라인 코드). 호출측이 실행한다 —
+    // 인터프리터는 네트워크·실행 순서를 모른다.
+    pub written_scripts: Vec<(Option<String>, String)>,
     // 절대 URL → 네임스페이스 객체 (평가 완료/진행 중). 순환 의존은 부분 채워진 채로 공유한다.
     module_namespaces: HashMap<String, Value>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
@@ -1106,6 +1116,10 @@ impl Interp {
         document.insert("hidden".to_string(), Value::Bool(false));
         document.insert("visibilityState".to_string(), Value::Str("visible".to_string()));
         document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
+        // document.write / writeln (HTML §8.4.3). 레거시지만 아직도 대량으로 쓰인다
+        // (국내 포털·광고 스크립트). 없으면 그 스크립트가 통째로 죽는다.
+        document.insert("write".to_string(), Value::Native(Native::DocWrite));
+        document.insert("writeln".to_string(), Value::Native(Native::DocWrite));
         document
             .insert("getElementsByClassName".to_string(), Value::Native(Native::GetElementsByClass));
         document.insert("getElementsByTagName".to_string(), Value::Native(Native::GetElementsByTag));
@@ -1639,6 +1653,8 @@ impl Interp {
             base_url: None,
             module_sources: HashMap::new(),
             import_map: Vec::new(),
+            current_script: None,
+            written_scripts: Vec::new(),
             module_namespaces: HashMap::new(),
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
@@ -5387,6 +5403,14 @@ impl Interp {
                         Ok(())
                     }
                     Value::Class(c) => {
+                        // static set 접근자가 있으면 호출한다. 예전엔 파서·클래스 생성이
+                        // static setter 를 저장까지 해놓고 **아무도 부르지 않아**,
+                        // Class.prop = v 가 검증/변환 로직을 통째로 우회했다.
+                        if let Some(setter) = c.find_static_setter(&key) {
+                            let cv = Value::Class(c.clone());
+                            self.call_value(Value::Fn(setter), Some(cv), vec![value])?;
+                            return Ok(());
+                        }
                         c.statics.borrow_mut().insert(key, value);
                         Ok(())
                     }
@@ -7005,6 +7029,27 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn array_callbacks_get_index_array_and_thisarg() {
+        // 표준: 콜백은 (값, 인덱스, **배열**) 로 부르고, 두 번째 인자는 thisArg 다.
+        // (값, 인덱스)만 넘기면 a[i-1] 같은 관용 코드가 죽는다 — IntersectionObserver
+        // 폴리필의 _initThresholds 가 정확히 그 모양이라 fmkorea 에서 터졌다.
+        assert_eq!(run_str("[1,1,2].filter((t, i, a) => t !== a[i-1]).join()"), "1,2");
+        assert_eq!(run_str("String([1].map((v, i, a) => Array.isArray(a))[0])"), "true");
+        assert_eq!(run_str("String([1].some((v, i, a) => Array.isArray(a)))"), "true");
+        assert_eq!(run_str("String([1].find((v, i, a) => Array.isArray(a)))"), "1");
+        assert_eq!(
+            run_num("[1,2].reduce((acc, v, i, a) => acc + (Array.isArray(a) ? 1 : 0), 0)"),
+            2.0
+        );
+        // thisArg
+        assert_eq!(run_num("[1].map(function () { return this.x }, { x: 7 })[0]"), 7.0);
+        assert_eq!(
+            run_num("var n = 0; [1,2].forEach(function () { n += this.k }, { k: 3 }); n"),
+            6.0
+        );
     }
 
     #[test]

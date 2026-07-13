@@ -639,6 +639,40 @@ fn decode_css_escapes(s: &str) -> String {
 // 예전엔 단축 프로퍼티들이 split_whitespace()/split(',') 를 그대로 써서
 // `border: 1px solid rgba(0, 0, 0, .1)` 의 색이 통째로 사라지고
 // `background: rgb(1,2,3)` 은 배경이 아예 안 칠해졌다 (아주 흔한 표기다).
+// 괄호·따옴표 **밖**의 '/' 만 공백으로 감싼다. url(a/b) 안의 슬래시는 건드리지 않는다.
+fn space_top_level_slashes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match c {
+            '\'' | '"' if quote.is_none() => {
+                quote = Some(c);
+                out.push(c);
+            }
+            q if Some(q) == quote => {
+                quote = None;
+                out.push(q);
+            }
+            '(' if quote.is_none() => {
+                depth += 1;
+                out.push(c);
+            }
+            ')' if quote.is_none() => {
+                depth = depth.saturating_sub(1);
+                out.push(c);
+            }
+            '/' if quote.is_none() && depth == 0 => {
+                out.push(' ');
+                out.push('/');
+                out.push(' ');
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn split_top_level(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut depth = 0i32;
@@ -714,7 +748,11 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let has_gradient = value_text.contains("gradient(");
     let layer: String = if has_gradient { value_text.to_string() } else { first };
     // "center/cover" 처럼 붙은 슬래시를 토큰화하기 위해 공백 삽입 (gradient 없을 때만).
-    let normalized = if has_gradient { layer.clone() } else { layer.replace('/', " / ") };
+    // "center/cover" 처럼 붙은 슬래시를 토큰화하려면 공백이 필요하다. 하지만 문자열을
+    // 통째로 replace 하면 **url() 안의 경로 슬래시까지** 벌어져서
+    // url(../tpl/images/x.gif) 가 url(.. / tpl / images / x.gif) 가 된다 (실제로 400/404 가 났다).
+    // 괄호/따옴표 밖의 슬래시만 벌린다.
+    let normalized = if has_gradient { layer.clone() } else { space_top_level_slashes(&layer) };
     // 마지막 레이어의 색 (첫 레이어에 색이 있으면 아래 루프가 덮어쓴다)
     if !has_gradient && layers.len() > 1 {
         for tok in split_top_level(&last) {

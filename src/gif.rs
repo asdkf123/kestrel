@@ -125,14 +125,10 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
 
 // 인터레이스 행 순서: 1) 0,8,16… 2) 4,12,… 3) 2,6,10… 4) 1,3,5…
 fn interlace_row(y: usize, h: usize) -> usize {
-    let p1 = h.div_ceil(8);
-    let p2 = h.div_ceil(8); // 4 로 시작하는 행 수 = ceil((h-4)/8) 이지만 아래에서 경계로 처리
-    let _ = p2;
     let rows1: Vec<usize> = (0..h).step_by(8).collect();
     let rows2: Vec<usize> = (4..h).step_by(8).collect();
     let rows3: Vec<usize> = (2..h).step_by(4).collect();
     let rows4: Vec<usize> = (1..h).step_by(2).collect();
-    let _ = p1;
     let mut all = rows1;
     all.extend(rows2);
     all.extend(rows3);

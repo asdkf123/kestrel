@@ -958,46 +958,6 @@ impl<'a> LayoutBox<'a> {
 
     // 서브트리 전체를 (ox, oy) 원점 기준 (sx, sy) 배로 스케일 (transform: scale).
     // 축 정렬 유지 → 사각형/글리프 위치·크기만 조정, 글리프 px 도 스케일해 재래스터.
-    fn scale_subtree(&mut self, ox: f32, oy: f32, sx: f32, sy: f32) {
-        let sc = |v: f32, o: f32, s: f32| o + (v - o) * s;
-        let d = &mut self.dimensions;
-        d.content.x = sc(d.content.x, ox, sx);
-        d.content.y = sc(d.content.y, oy, sy);
-        d.content.width *= sx;
-        d.content.height *= sy;
-        for g in &mut self.glyphs {
-            g.x = sc(g.x, ox, sx);
-            g.baseline_y = sc(g.baseline_y, oy, sy);
-            g.px *= (sx + sy) / 2.0; // 비균일 스케일은 평균으로 근사
-        }
-        for (r, _) in &mut self.links {
-            r.x = sc(r.x, ox, sx);
-            r.y = sc(r.y, oy, sy);
-            r.width *= sx;
-            r.height *= sy;
-        }
-        for (r, _) in &mut self.decorations {
-            r.x = sc(r.x, ox, sx);
-            r.y = sc(r.y, oy, sy);
-            r.width *= sx;
-            r.height *= sy;
-        }
-        for (r, _) in &mut self.inline_bgs {
-            r.x = sc(r.x, ox, sx);
-            r.y = sc(r.y, oy, sy);
-            r.width *= sx;
-            r.height *= sy;
-        }
-        for b in &mut self.inline_borders {
-            b.0.x = sc(b.0.x, ox, sx);
-            b.0.y = sc(b.0.y, oy, sy);
-            b.0.width *= sx;
-            b.0.height *= sy;
-        }
-        for c in &mut self.children {
-            c.scale_subtree(ox, oy, sx, sy);
-        }
-    }
 
     // 재레이아웃 전 누적 페인트 상태를 초기화 (glyphs/links/decorations 는 push 로
     // 쌓이므로, float shrink-to-fit 2차 배치 시 중복 방지를 위해 서브트리를 비운다)
@@ -2507,9 +2467,6 @@ impl Mat {
     }
 
     // 축 정렬인가 (회전/기울임 없음) — 사각형이 사각형으로 남는가
-    pub fn is_axis_aligned(&self) -> bool {
-        self.b.abs() < 1e-6 && self.c.abs() < 1e-6
-    }
 
     // self 다음에 m 을 적용 (m ∘ self)
     pub fn then(&self, m: &Mat) -> Mat {

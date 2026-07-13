@@ -156,15 +156,6 @@ impl BigInt {
         Ordering::Equal
     }
 
-    pub fn cmp(&self, other: &Self) -> Ordering {
-        match (self.neg, other.neg) {
-            (false, true) => Ordering::Greater,
-            (true, false) => Ordering::Less,
-            (false, false) => Self::cmp_mag(&self.mag, &other.mag),
-            (true, true) => Self::cmp_mag(&other.mag, &self.mag),
-        }
-    }
-
     fn add_mag(a: &[u32], b: &[u32]) -> Vec<u32> {
         let mut out = Vec::with_capacity(a.len().max(b.len()) + 1);
         let mut carry = 0u64;

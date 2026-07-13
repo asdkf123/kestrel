@@ -7,6 +7,7 @@ mod dataurl;
 mod dom;
 mod encoding;
 mod encoding_cjk;
+mod encoding_sbcs;
 mod font;
 mod gif;
 mod html;
@@ -455,10 +456,73 @@ fn load_stylesheet(
             }
         }
     }
-    let parsed = css::parse_viewport(text, page_vw);
+    let mut parsed = css::parse_viewport(text, page_vw);
+    // CSS 의 url() 은 **그 스타일시트의 URL 기준**으로 푼다 (CSS Values §4.5.1).
+    // 문서 URL 기준으로 풀면 /css/a.css 안의 url(../img/x.gif) 가 엉뚱한 곳을 가리켜
+    // 404 가 난다 (실제로 배경 이미지가 통째로 안 나왔다).
+    if let Some(b) = &this_base {
+        absolutize_css_urls(&mut parsed, b);
+    }
     sheet.rules.extend(parsed.rules);
     sheet.font_faces.extend(parsed.font_faces);
     sheet.keyframes.extend(parsed.keyframes);
+}
+
+// 스타일시트 안의 상대 url() 을 그 시트의 URL 기준 절대 URL 로 바꾼다 (파싱 시점 해석).
+fn absolutize_css_urls(sheet: &mut css::Stylesheet, base: &url::Url) {
+    let abs = |u: &str| -> String {
+        if u.starts_with("http://") || u.starts_with("https://") || u.starts_with("data:") {
+            return u.to_string();
+        }
+        base.join(u).map(|x| x.as_string()).unwrap_or_else(|| u.to_string())
+    };
+    for rule in &mut sheet.rules {
+        for d in &mut rule.declarations {
+            match &mut d.value {
+                css::Value::Url(u) => *u = abs(u),
+                // 그라디언트·다중 배경 등 원문 보존 값 안의 url(...) 도 바꾼다
+                css::Value::Keyword(k) if k.contains("url(") => *k = rewrite_urls_in_text(k, &abs),
+                _ => {}
+            }
+        }
+    }
+    for ff in &mut sheet.font_faces {
+        for src in &mut ff.srcs {
+            *src = abs(src);
+        }
+    }
+}
+
+// 텍스트 안의 url(...) 안쪽만 치환한다 (따옴표 유무 모두).
+fn rewrite_urls_in_text(text: &str, abs: &dyn Fn(&str) -> String) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("url(") {
+        out.push_str(&rest[..i + 4]);
+        let after = &rest[i + 4..];
+        let Some(end) = after.find(')') else {
+            out.push_str(after);
+            return out;
+        };
+        let raw = after[..end].trim();
+        let (q, inner) = match raw.chars().next() {
+            Some(c @ ('"' | '\'')) => (Some(c), raw.trim_matches(c)),
+            _ => (None, raw),
+        };
+        let replaced = abs(inner);
+        match q {
+            Some(c) => {
+                out.push(c);
+                out.push_str(&replaced);
+                out.push(c);
+            }
+            None => out.push_str(&replaced),
+        }
+        out.push(')');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 // CSS 텍스트에서 @import 규칙 추출 → (url, 미디어조건) 목록.

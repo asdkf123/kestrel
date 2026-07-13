@@ -838,19 +838,11 @@ pub(super) fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
 
 // 직렬화 불가(함수/undefined 등)는 Ok(None). 객체 키는 삽입 순서(ObjMap) 유지.
 // 순환 구조는 Err → 호출측이 TypeError 로 던진다(표준).
-pub(super) fn json_stringify(v: &Value) -> Result<Option<String>, String> {
-    let mut path = Vec::new();
-    json_stringify_d(v, &mut path)
-}
+pub(super) const JSON_CYCLE_MSG: &str = "순환 구조는 JSON 으로 직렬화할 수 없음";
 
-// JSON.stringify(v, replacer, space) 의 replacer/space 처리 (표준 §25.5.2).
-// replacer: 키 배열이면 그 키만, 함수면 (key, value) 로 변환. space: 들여쓰기.
-// 값 변환에 JS 함수 호출이 필요하므로 인터프리터가 있는 쪽(builtins)에서 부른다.
-pub(super) struct JsonOpts {
-    pub keys: Option<Vec<String>>, // replacer 배열
-    pub indent: String,
-}
-
+// 아래 헬퍼는 인터프리터를 아는 직렬화기(builtins::json_ser)가 쓴다.
+// 예전 자유함수 경로(json_stringify/_d/_body)는 replacer·indent·toJSON 을 못 해서
+// 통째로 교체했다 — 남겨두면 "두 개의 진실"이 생긴다.
 pub(super) fn json_quote_pub(s: &str) -> String {
     json_quote(s)
 }
@@ -881,114 +873,6 @@ pub(super) fn json_date_iso(map: &Rc<RefCell<ObjMap>>) -> Option<String> {
     } else {
         None
     }
-}
-
-pub(super) const JSON_CYCLE_MSG: &str = "순환 구조는 JSON 으로 직렬화할 수 없음";
-
-// 순환 참조 탐지: 현재 경로에 있는 객체 신원(Rc 포인터)을 추적한다.
-// 깊이 가드로는 부족하다 — 자기참조가 여러 개면(window.top/parent/self) 경로가
-// 분기해 조합 폭발(3^depth)을 일으켜 메모리를 삼킨다. 반드시 신원 기반이어야 한다.
-fn json_stringify_d(v: &Value, path: &mut Vec<usize>) -> Result<Option<String>, String> {
-    // 컨테이너면 순환 검사 후 경로에 push (반환 전 pop).
-    let ident: Option<usize> = match v {
-        Value::Obj(m) => Some(Rc::as_ptr(m) as usize),
-        Value::Arr(a) => Some(Rc::as_ptr(a) as usize),
-        Value::Instance(i) => Some(Rc::as_ptr(i) as usize),
-        _ => None,
-    };
-    if let Some(id) = ident {
-        if path.contains(&id) {
-            return Err(JSON_CYCLE_MSG.to_string());
-        }
-        path.push(id);
-    }
-    let out = json_stringify_body(v, path);
-    if ident.is_some() {
-        path.pop();
-    }
-    out
-}
-
-fn json_stringify_body(v: &Value, path: &mut Vec<usize>) -> Result<Option<String>, String> {
-    // BigInt 는 JSON 으로 직렬화할 수 없다 (표준: TypeError)
-    if let Value::BigInt(_) = v {
-        return Err("BigInt 는 JSON 으로 직렬화할 수 없음".to_string());
-    }
-    Ok(match v {
-        Value::Undefined
-        | Value::Fn(_)
-        | Value::Native(_)
-        | Value::Dom(_)
-        | Value::Class(_)
-        | Value::Bound(_)
-        | Value::Accessor(_)
-        | Value::MapVal(_)
-        | Value::SetVal(_)
-        | Value::Style(_)
-        | Value::ClassList(_)
-        | Value::Proxy(_)
-        | Value::Gen(_)
-        | Value::Symbol(_)
-        | Value::ComputedStyle(_) => None,
-        | Value::BigInt(_) => None, // 위에서 TypeError 로 처리됨
-        // 인스턴스는 필드를 일반 객체처럼 직렬화
-        Value::Instance(inst) => {
-            let m = inst.fields.borrow();
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
-            let mut parts: Vec<String> = Vec::new();
-            for k in keys {
-                if let Some(s) = json_stringify_d(&m[k], path)? {
-                    parts.push(format!("{}:{}", json_quote(k), s));
-                }
-            }
-            Some(format!("{{{}}}", parts.join(",")))
-        }
-        Value::Null => Some("null".to_string()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Num(n) => {
-            Some(if n.is_finite() { num_to_str(*n) } else { "null".to_string() })
-        }
-        Value::Str(s) => Some(json_quote(s)),
-        Value::Arr(a) => {
-            // 배열 항목은 직렬화 불가면 null (표준)
-            let items = a.borrow().clone();
-            let mut parts: Vec<String> = Vec::with_capacity(items.len());
-            for item in &items {
-                parts.push(json_stringify_d(item, path)?.unwrap_or_else(|| "null".to_string()));
-            }
-            Some(format!("[{}]", parts.join(",")))
-        }
-        // Date 는 toJSON 규약대로 ISO 문자열로 직렬화(내부 마커 노출 아님).
-        Value::Obj(map) if is_date_obj(map) => {
-            let millis = match map.borrow().get("\u{0}time") {
-                Some(Value::Num(n)) => *n,
-                _ => 0.0,
-            };
-            if millis.is_finite() {
-                Some(json_quote(&date_iso(millis)))
-            } else {
-                Some("null".to_string()) // Invalid Date → null (표준)
-            }
-        }
-        Value::Obj(map) => {
-            // 삽입 순서 유지(ObjMap). 엔진 내부 마커(__proto__/__isDate 등)는 제외.
-            // borrow 를 재귀 전에 끊는다(중첩 borrow 충돌 방지).
-            let entries: Vec<(String, Value)> = map
-                .borrow()
-                .iter()
-                .filter(|(k, _)| !is_internal_key(k))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-            let mut parts: Vec<String> = Vec::new();
-            for (k, val) in &entries {
-                if let Some(s) = json_stringify_d(val, path)? {
-                    parts.push(format!("{}:{}", json_quote(k), s));
-                }
-            }
-            Some(format!("{{{}}}", parts.join(",")))
-        }
-    })
 }
 
 pub(super) fn json_quote(s: &str) -> String {

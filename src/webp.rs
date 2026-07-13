@@ -405,10 +405,10 @@ pub fn decode_vp8(frame: &[u8]) -> Option<crate::png::Image> {
     let mut segments: Vec<usize> = vec![0; mb_w * mb_h];
     // 4x4 모드 문맥: 위/왼쪽 (mb 격자 × 4)
     let mut above_bmodes = vec![0usize; mb_w * 4];
-    let mut left_bmodes = [0usize; 4];
+    let mut left_bmodes;
     // 계수 비영 문맥 (Y 4열 + U 2 + V 2 + Y2 1 = 9)
     let mut above_nz = vec![[false; 9]; mb_w];
-    let mut left_nz = [false; 9];
+    let mut left_nz;
 
     for my in 0..mb_h {
         left_bmodes = [0; 4];
@@ -564,7 +564,6 @@ fn decode_coeffs(
     left: &mut [bool; 9],
 ) {
     let has_y2 = mb.ymode != 4;
-    let mut nz_y2 = false;
 
     if has_y2 {
         // Y2 블록 (타입 1)
@@ -579,7 +578,7 @@ fn decode_coeffs(
             q.y2_ac,
             &mut mb.coeffs[24 * 16..24 * 16 + 16],
         );
-        nz_y2 = n > 0;
+        let nz_y2 = n > 0;
         above[8] = nz_y2;
         left[8] = nz_y2;
         mb.nonzero_y2 = nz_y2;

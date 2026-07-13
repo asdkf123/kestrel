@@ -55,18 +55,23 @@ pub fn run_scripts_with_base(
     // 폴리필 프렐류드(Symbol, Object.entries, 옵저버 스텁 등) — 표준 전역을 채운다.
     // webpack 등 번들 런타임은 사이트가 직접 싣고 있으므로 우리가 주입하지 않는다
     // (배열이 객체라 push 재정의가 되므로 사이트 자체 런타임이 그대로 동작).
-    sources.insert(0, JS_PRELUDE.to_string());
+    sources.insert(0, (None, JS_PRELUDE.to_string()));
     it.dom = Some(dom as *mut crate::dom::Dom); // 실행 동안만 유효
-    for src in &sources {
+    for (node, src) in &sources {
         let code = src.strip_prefix(EXT_TAG).unwrap_or(src);
+        // document.write 의 삽입 지점 = 지금 실행 중인 스크립트 자리 (파서 삽입 지점)
+        it.current_script = *node;
         if let Err(e) = it.run(code) {
             println!("[js error] {}", e);
         }
-        it.drain_microtasks(); // Promise .then 콜백 실행 (fetch 등)
+        it.drain_microtasks();
+        // document.write 로 새로 생긴 스크립트를 문서 순서대로 실행한다 (동기 의미론).
+        run_written_scripts(&mut it, base.as_ref(), 0);
         for line in it.console.drain(..) {
             println!("[console] {}", line);
         }
     }
+    it.current_script = None;
     // ── ES 모듈 (type=module) ──
     // 클래식 스크립트가 끝난 뒤 실행한다 (모듈은 defer 의미론).
     if !modules.is_empty() {
@@ -181,7 +186,6 @@ fn parse_import_map(text: &str) -> Vec<(String, String)> {
             continue;
         }
         let mut s = String::new();
-        let mut j = k + 1;
         let bytes: Vec<char> = body.chars().collect();
         let start_idx = body[..k].chars().count() + 1;
         let mut idx = start_idx;
@@ -191,7 +195,7 @@ fn parse_import_map(text: &str) -> Vec<(String, String)> {
         }
         strs.push(s);
         // 소비한 만큼 건너뛰기
-        j = body
+        let j = body
             .char_indices()
             .nth(idx + 1)
             .map(|(b, _)| b)
@@ -342,11 +346,53 @@ fn load_module_graph(it: &mut interp::Interp, url: &str, inline: Option<String>,
     }
 }
 
+// document.write 로 써진 <script> 를 순서대로 실행한다. 써진 스크립트가 또 write 하면
+// 재귀하되 깊이를 제한한다 (실제 광고 스크립트가 2~3단 중첩을 한다).
+fn run_written_scripts(
+    it: &mut interp::Interp,
+    base: Option<&crate::url::Url>,
+    depth: u32,
+) {
+    if depth > 4 {
+        return;
+    }
+    let queued: Vec<(Option<String>, String)> = std::mem::take(&mut it.written_scripts);
+    for (src, inline) in queued {
+        let code = match src {
+            Some(href) => {
+                let Some(u) = base.and_then(|b| b.join(&href)) else { continue };
+                match crate::http::fetch(&u.as_string()) {
+                    Ok(r) if (200..300).contains(&r.status) => {
+                        String::from_utf8_lossy(&r.body).into_owned()
+                    }
+                    Ok(r) => {
+                        println!("[script] HTTP {} — {} (document.write)", r.status, href);
+                        continue;
+                    }
+                    Err(e) => {
+                        println!("[script] 로드 실패 {:?} — {} (document.write)", e, href);
+                        continue;
+                    }
+                }
+            }
+            None => inline,
+        };
+        if code.trim().is_empty() {
+            continue;
+        }
+        if let Err(e) = it.run(&code) {
+            println!("[js error] {}", e);
+        }
+        it.drain_microtasks();
+        run_written_scripts(it, base, depth + 1);
+    }
+}
+
 fn collect_scripts(
     dom: &crate::dom::Dom,
     id: crate::dom::NodeId,
     base: Option<&crate::url::Url>,
-    out: &mut Vec<String>,
+    out: &mut Vec<(Option<crate::dom::NodeId>, String)>,
 ) {
     let node = dom.get(id);
     if let crate::dom::NodeType::Element(e) = &node.node_type {
@@ -379,7 +425,7 @@ fn collect_scripts(
                     // 클래식 스크립트 의미론(동기 실행). async/defer 구분은 생략.
                     Some(href) => {
                         if let Some(b) = base {
-                            let n_ext = out.iter().filter(|s| s.starts_with(EXT_TAG)).count();
+                            let n_ext = out.iter().filter(|(_, s)| s.starts_with(EXT_TAG)).count();
                             if n_ext >= MAX_EXTERNAL_SCRIPTS {
                                 // 상한에 걸려 버리는 건 조용히 하면 안 된다 —
                                 // "다 실행했다"고 착각하게 만든다.
@@ -396,7 +442,7 @@ fn collect_scripts(
                                         let text = String::from_utf8_lossy(&r.body).to_string();
                                         if !text.trim().is_empty() {
                                             // 외부임을 표시(카운트용) — 앞의 마커는 실행 전 제거.
-                                            out.push(format!("{}{}", EXT_TAG, text));
+                                            out.push((Some(id), format!("{}{}", EXT_TAG, text)));
                                         }
                                     }
                                     // 못 받으면 그 스크립트에 의존하는 코드가 줄줄이 죽는다.
@@ -409,7 +455,7 @@ fn collect_scripts(
                     None => {
                         let text = dom.text_content(id);
                         if !text.trim().is_empty() {
-                            out.push(text);
+                            out.push((Some(id), text));
                         }
                     }
                 }
