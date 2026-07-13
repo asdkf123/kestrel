@@ -869,6 +869,216 @@ __kFormData.prototype.toString = function(){
 if (!window.FormData) window.FormData = __kFormData;
 var FormData = window.FormData;
 
+// ── Intl ──
+// 없으면 new Intl.NumberFormat(...) 한 줄에서 죽는다. 날짜/숫자를 로케일에 맞춰
+// 찍는 코드는 아주 흔하다.
+//
+// 로케일 데이터를 다 담을 수는 없다. 담을 수 있는 것만 정확히 하고, 나머지는
+// 표준의 기본 규칙(en-US)으로 떨어뜨린다 — 지어내지 않는다.
+// 지원: 숫자 구분자(그룹/소수점), 최소/최대 소수 자릿수, 퍼센트/통화 표기,
+//       날짜/시간 필드 조합, RelativeTimeFormat, PluralRules(en 규칙), Collator.
+var __kSep = {
+  // [그룹 구분자, 소수점]
+  'en': [',', '.'], 'ko': [',', '.'], 'ja': [',', '.'], 'zh': [',', '.'],
+  'he': [',', '.'], 'th': [',', '.'], 'en-IN': [',', '.'],
+  'de': ['.', ','], 'es': ['.', ','], 'it': ['.', ','], 'pt': ['.', ','],
+  'nl': ['.', ','], 'tr': ['.', ','], 'id': ['.', ','], 'da': ['.', ','],
+  'fr': [' ', ','], 'ru': [' ', ','], 'pl': [' ', ','],
+  'cs': [' ', ','], 'sv': [' ', ','], 'fi': [' ', ','],
+  'nb': [' ', ','], 'uk': [' ', ',']
+};
+function __kLocSep(loc) {
+  var l = String(loc || 'en');
+  if (__kSep[l]) return __kSep[l];
+  var base = l.split('-')[0];
+  return __kSep[base] || __kSep['en'];
+}
+function __kCurrencySymbol(c) {
+  var m = { USD: '$', EUR: '€', GBP: '£', JPY: '¥', KRW: '₩', CNY: 'CN¥' };
+  return m[c] || (c ? c + ' ' : '');
+}
+function __kIntlNumberFormat(locales, opts) {
+  if (!(this instanceof __kIntlNumberFormat)) return new __kIntlNumberFormat(locales, opts);
+  var loc = Array.isArray(locales) ? locales[0] : locales;
+  this._sep = __kLocSep(loc);
+  this._o = opts || {};
+  this._loc = loc || 'en';
+}
+__kIntlNumberFormat.prototype.format = function(n) {
+  n = Number(n);
+  if (n !== n) return 'NaN';
+  if (n === Infinity) return '∞';
+  if (n === -Infinity) return '-∞';
+  var o = this._o;
+  var style = o.style || 'decimal';
+  var value = (style === 'percent') ? n * 100 : n;
+  var minF = o.minimumFractionDigits;
+  var maxF = o.maximumFractionDigits;
+  if (minF === undefined) minF = (style === 'currency') ? 2 : 0;
+  if (maxF === undefined) maxF = (style === 'currency') ? 2 : Math.max(minF, 3);
+  if (maxF < minF) maxF = minF;
+  var neg = value < 0;
+  var abs = Math.abs(value);
+  var fixed = abs.toFixed(maxF);
+  // 최대 자릿수까지 반올림한 뒤, 최소 자릿수 이하의 불필요한 0 은 제거
+  var parts = fixed.split('.');
+  var ip = parts[0], fp = parts[1] || '';
+  while (fp.length > minF && fp.charAt(fp.length - 1) === '0') fp = fp.slice(0, -1);
+  // 그룹 구분자 (useGrouping: false 면 생략)
+  var grouped = ip;
+  if (o.useGrouping !== false && ip.length > 3) {
+    grouped = '';
+    var c = 0;
+    for (var i = ip.length - 1; i >= 0; i--) {
+      grouped = ip.charAt(i) + grouped;
+      if (++c % 3 === 0 && i > 0) grouped = this._sep[0] + grouped;
+    }
+  }
+  var out = grouped + (fp ? this._sep[1] + fp : '');
+  if (neg) out = '-' + out;
+  if (style === 'percent') out += '%';
+  if (style === 'currency') out = __kCurrencySymbol(o.currency) + out;
+  return out;
+};
+__kIntlNumberFormat.prototype.resolvedOptions = function(){
+  return { locale: this._loc, style: this._o.style || 'decimal' };
+};
+
+var __kMonths = {
+  'en': ['January','February','March','April','May','June','July','August','September','October','November','December'],
+  'ko': ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'],
+  'ja': ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
+};
+var __kDays = {
+  'en': ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
+  'ko': ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'],
+  'ja': ['日曜日','月曜日','火曜日','水曜日','木曜日','金曜日','土曜日']
+};
+function __kIntlDateTimeFormat(locales, opts) {
+  if (!(this instanceof __kIntlDateTimeFormat)) return new __kIntlDateTimeFormat(locales, opts);
+  var loc = Array.isArray(locales) ? locales[0] : (locales || 'en');
+  this._loc = loc;
+  this._base = String(loc).split('-')[0];
+  this._o = opts || {};
+}
+__kIntlDateTimeFormat.prototype.format = function(d) {
+  d = (d === undefined) ? new Date() : (d instanceof Date ? d : new Date(d));
+  var o = this._o;
+  var months = __kMonths[this._base] || __kMonths['en'];
+  var days = __kDays[this._base] || __kDays['en'];
+  var pad = function(x){ return x < 10 ? '0' + x : String(x); };
+  var y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+  var out = [];
+  var hasDate = o.year || o.month || o.day || o.weekday;
+  var hasTime = o.hour || o.minute || o.second;
+  if (!hasDate && !hasTime) { o = { year: 'numeric', month: 'numeric', day: 'numeric' }; hasDate = true; }
+  if (o.weekday) out.push(days[d.getDay()]);
+  if (hasDate) {
+    var mo = (o.month === 'long') ? months[m]
+           : (o.month === 'short') ? months[m].slice(0, 3)
+           : (o.month === '2-digit') ? pad(m + 1)
+           : String(m + 1);
+    var dd = (o.day === '2-digit') ? pad(day) : String(day);
+    var yy = (o.year === '2-digit') ? pad(y % 100) : String(y);
+    if (this._base === 'ko' || this._base === 'ja' || this._base === 'zh') {
+      out.push(yy + '. ' + mo + ' ' + dd + '.');
+    } else if (o.month === 'long' || o.month === 'short') {
+      out.push(mo + ' ' + dd + ', ' + yy);
+    } else {
+      out.push(mo + '/' + dd + '/' + yy);
+    }
+  }
+  if (hasTime) {
+    var h = d.getHours(), mi = d.getMinutes(), se = d.getSeconds();
+    var t = (o.hour12 === false) ? (pad(h) + ':' + pad(mi)) :
+            (((h % 12) || 12) + ':' + pad(mi));
+    if (o.second) t += ':' + pad(se);
+    if (o.hour12 !== false) t += (h < 12 ? ' AM' : ' PM');
+    out.push(t);
+  }
+  return out.join(', ');
+};
+__kIntlDateTimeFormat.prototype.formatToParts = function(d){
+  return [{ type: 'literal', value: this.format(d) }];
+};
+__kIntlDateTimeFormat.prototype.resolvedOptions = function(){
+  return { locale: this._loc, timeZone: 'UTC', calendar: 'gregory' };
+};
+
+function __kIntlRelativeTimeFormat(locales, opts) {
+  if (!(this instanceof __kIntlRelativeTimeFormat)) return new __kIntlRelativeTimeFormat(locales, opts);
+  this._o = opts || {};
+}
+__kIntlRelativeTimeFormat.prototype.format = function(v, unit) {
+  v = Number(v);
+  var u = String(unit).replace(/s$/, '');
+  var n = Math.abs(v);
+  var plural = (n === 1) ? u : u + 's';
+  if (v < 0) return n + ' ' + plural + ' ago';
+  return 'in ' + n + ' ' + plural;
+};
+
+function __kIntlPluralRules(locales, opts) {
+  if (!(this instanceof __kIntlPluralRules)) return new __kIntlPluralRules(locales, opts);
+  this._type = (opts && opts.type) || 'cardinal';
+}
+__kIntlPluralRules.prototype.select = function(n) {
+  n = Number(n);
+  if (this._type === 'ordinal') {
+    var r10 = n % 10, r100 = n % 100;
+    if (r10 === 1 && r100 !== 11) return 'one';
+    if (r10 === 2 && r100 !== 12) return 'two';
+    if (r10 === 3 && r100 !== 13) return 'few';
+    return 'other';
+  }
+  return n === 1 ? 'one' : 'other';
+};
+
+function __kIntlCollator(locales, opts) {
+  if (!(this instanceof __kIntlCollator)) return new __kIntlCollator(locales, opts);
+  this._num = !!(opts && opts.numeric);
+  // 표준: collator.compare 는 바인딩된 함수다 — arr.sort(c.compare) 로 넘겨도 동작해야 한다.
+  this.compare = this.compare.bind(this);
+}
+__kIntlCollator.prototype.compare = function(a, b) {
+  a = String(a); b = String(b);
+  if (this._num) {
+    var na = parseFloat(a), nb = parseFloat(b);
+    if (na === na && nb === nb && na !== nb) return na < nb ? -1 : 1;
+  }
+  return a < b ? -1 : (a > b ? 1 : 0);
+};
+
+if (!window.Intl) {
+  window.Intl = {
+    NumberFormat: __kIntlNumberFormat,
+    DateTimeFormat: __kIntlDateTimeFormat,
+    RelativeTimeFormat: __kIntlRelativeTimeFormat,
+    PluralRules: __kIntlPluralRules,
+    Collator: __kIntlCollator,
+    getCanonicalLocales: function(l){ return [].concat(l || []); }
+  };
+}
+var Intl = window.Intl;
+
+// toLocaleString 계열도 Intl 로 (예전엔 그냥 String(this) 였다)
+if (Number.prototype.toLocaleString) {
+  Number.prototype.toLocaleString = function(loc, opts){
+    return new Intl.NumberFormat(loc, opts).format(this);
+  };
+}
+if (Date.prototype.toLocaleDateString) {
+  Date.prototype.toLocaleDateString = function(loc, opts){
+    return new Intl.DateTimeFormat(loc, opts || { year:'numeric', month:'numeric', day:'numeric' }).format(this);
+  };
+  Date.prototype.toLocaleString = function(loc, opts){
+    return new Intl.DateTimeFormat(loc, opts || { year:'numeric', month:'numeric', day:'numeric', hour:'numeric', minute:'numeric' }).format(this);
+  };
+  Date.prototype.toLocaleTimeString = function(loc, opts){
+    return new Intl.DateTimeFormat(loc, opts || { hour:'numeric', minute:'numeric', second:'numeric' }).format(this);
+  };
+}
+
 var Reflect = window.Reflect;
 if (!Reflect) {
   Reflect = {};

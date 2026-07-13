@@ -3980,17 +3980,32 @@ impl Interp {
                 _ => Ok(Value::Undefined),
             },
             // 숫자 메서드: (5).toFixed(2), n.toString(radix). 나머지는 Number.prototype 폴백.
-            Value::Num(_) => Ok(match key {
-                "toFixed" | "toPrecision" => Value::Native(Native::NumToFixed),
-                "toString" | "toLocaleString" => Value::Native(Native::ValueToStr),
-                "valueOf" => Value::Native(Native::ValueOfSelf),
-                _ => proto_prop(&self.number_proto, key),
-            }),
-            Value::Bool(_) => Ok(match key {
-                "toString" => Value::Native(Native::ValueToStr),
-                "valueOf" => Value::Native(Native::ValueOfSelf),
-                _ => proto_prop(&self.boolean_proto, key),
-            }),
+            // 프로토타입에 얹힌 것이 먼저다 (표준: 메서드는 프로토타입에서 찾는다).
+            // 예전엔 네이티브를 먼저 봐서, 페이지가 Number.prototype.toLocaleString 을
+            // 갈아끼워도 조용히 무시됐다 (Intl 폴리필이 통째로 무력화된다).
+            Value::Num(_) => {
+                let over = proto_prop(&self.number_proto, key);
+                if !matches!(over, Value::Undefined) {
+                    return Ok(over);
+                }
+                Ok(match key {
+                    "toFixed" | "toPrecision" => Value::Native(Native::NumToFixed),
+                    "toString" | "toLocaleString" => Value::Native(Native::ValueToStr),
+                    "valueOf" => Value::Native(Native::ValueOfSelf),
+                    _ => Value::Undefined,
+                })
+            }
+            Value::Bool(_) => {
+                let over = proto_prop(&self.boolean_proto, key);
+                if !matches!(over, Value::Undefined) {
+                    return Ok(over);
+                }
+                Ok(match key {
+                    "toString" => Value::Native(Native::ValueToStr),
+                    "valueOf" => Value::Native(Native::ValueOfSelf),
+                    _ => Value::Undefined,
+                })
+            }
             Value::Undefined | Value::Null => {
                 Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
             }
@@ -5319,6 +5334,27 @@ mod tests {
         // Float32 는 실제로 32비트로 반올림된다 (0.1 왕복 시 값이 달라진다)
         assert!(prelude_bool("var a=new Float32Array(1); a[0]=0.1; a[0] !== 0.1"));
         assert_eq!(prelude_str("Array.from(new TextEncoder().encode('가')).join(',')"), "234,176,128");
+    }
+
+    #[test]
+    fn intl_formats_numbers_and_dates() {
+        // 예전엔 Intl 이 아예 없어서 new Intl.NumberFormat(...) 한 줄에서 스크립트가 죽었다.
+        assert_eq!(prelude_str("new Intl.NumberFormat('en-US').format(1234567.891)"), "1,234,567.891");
+        assert_eq!(prelude_str("new Intl.NumberFormat('de-DE').format(1234.5)"), "1.234,5");
+        assert_eq!(
+            prelude_str("new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(12.5)"),
+            "$12.50"
+        );
+        assert_eq!(prelude_str("new Intl.NumberFormat('en-US',{style:'percent'}).format(0.256)"), "25.6%");
+        assert_eq!(prelude_str("new Intl.PluralRules('en').select(1)"), "one");
+        assert_eq!(prelude_str("new Intl.RelativeTimeFormat('en').format(-2,'day')"), "2 days ago");
+        // Collator.compare 는 바인딩된 함수여야 sort 에 그대로 넘길 수 있다 (표준)
+        assert_eq!(
+            prelude_str("['10','9','2'].sort(new Intl.Collator('en',{numeric:true}).compare).join(',')"),
+            "2,9,10"
+        );
+        // 프로토타입 오버라이드가 네이티브를 이긴다 (표준) — 예전엔 조용히 무시됐다
+        assert_eq!(prelude_str("(1234.5).toLocaleString('en-US')"), "1,234.5");
     }
 
     #[test]
