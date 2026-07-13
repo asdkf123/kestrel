@@ -285,10 +285,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "src" | "font-family" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
-        // transform: 함수 목록(translate/scale/rotate...) 원문 보존, 레이아웃이 파싱.
-        // (translate 만 시각 오프셋으로 적용, 나머지는 근사/무시)
-        "transform" => {
+        // transform: 함수 목록(translate/scale/rotate/skew/matrix) 원문 보존.
+        // 레이아웃이 2D 행렬로 파싱하고, 페인트가 서브트리를 그 행렬로 변환한다.
+        "transform" | "-webkit-transform" => {
             vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
+        // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
+        // 일반 값 파서는 다중 토큰을 파싱하지 못해 None 을 돌려주고, 그러면 선언이
+        // 통째로 사라져서 **항상 중심 기준 회전**이 되어 버린다. 원문을 보존한다.
+        "transform-origin" | "-webkit-transform-origin" => {
+            vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
         "filter" | "-webkit-filter" => {

@@ -854,6 +854,11 @@ pub enum DisplayItem {
     // 오프스크린 레이어: 서브트리를 격리 합성한 뒤 opacity + blend 로 한 번에 얹는다
     // (그룹 opacity/mix-blend 정확 — 겹치는 자손이 이중 블렌드되지 않음).
     Layer { opacity: f32, blend: BlendMode, items: Vec<DisplayItem> },
+    // CSS transform: 서브트리를 격리 렌더한 뒤 2D 행렬로 매핑한다.
+    // 회전/기울임은 사각형이 사각형으로 남지 않으므로 개별 프리미티브를 밀고 늘리는
+    // 방식으로는 표현할 수 없다 — 글자·이미지·그림자·그라디언트가 **함께** 돌아야 한다.
+    // (예전엔 translate/scale 만 좌표를 밀고 rotate/skew/matrix 는 조용히 무시했다)
+    Transform { m: crate::layout::Mat, items: Vec<DisplayItem> },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -1842,6 +1847,9 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
         sticky @ DisplayItem::Sticky { .. } => Some(sticky),
         clipped @ DisplayItem::Clipped { .. } => Some(clipped),
         layer @ DisplayItem::Layer { .. } => Some(layer),
+        // 변환된 서브트리는 클립 사각형과 축이 다를 수 있다 — 그대로 둔다
+        // (정확한 클립은 변환 후 마스크가 필요하다. 여기서 잘라내면 회전된 내용이 사라진다)
+        t @ DisplayItem::Transform { .. } => Some(t),
     }
 }
 
@@ -2154,17 +2162,9 @@ fn collect_items(
     for child in &layout_box.children {
         collect_items(child, z, child_clip, round_clip.clone(), sticky_here, buf);
     }
-    // transform: rotate — 서브트리 아이템을 border-box 중심 기준으로 회전.
-    // (translate/scale 는 레이아웃 단계에서 이미 박스에 반영됨.)
-    if let Some(Value::Keyword(t)) = layout_box.styled_node.value("transform") {
-        if let Some(angle) = transform_rotate_rad(&t) {
-            let b = layout_box.dimensions.border_box();
-            let (cx, cy) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
-            for (_, item) in buf[subtree_start..].iter_mut() {
-                rotate_item(item, cx, cy, angle);
-            }
-        }
-    }
+    // (transform 은 아래에서 DisplayItem::Transform 으로 서브트리 전체를 변환한다.
+    //  예전엔 여기서 rotate 만 개별 아이템에 적용하고 그라디언트/이미지/그림자는
+    //  "중심만 근사" 했다 — 회전된 그림자가 회전하지 않는 식으로 조용히 틀렸다.)
     // filter: 서브트리 아이템 색을 함수 체인으로 변환 (grayscale/brightness/invert/sepia/contrast/saturate/hue-rotate).
     if let Some(Value::Keyword(f)) = layout_box.styled_node.value("filter") {
         let funcs = parse_filters(&f);
@@ -2200,6 +2200,16 @@ fn collect_items(
         sub.sort_by(|a, b| a.0.cmp(&b.0)); // 레이어 내부 z 순서 (안정 정렬)
         let items: Vec<DisplayItem> = sub.into_iter().map(|(_, it)| it).collect();
         buf.push((z, DisplayItem::Layer { opacity: op, blend, items }));
+    }
+    // CSS transform — 서브트리 전체(자신 + 자손)를 행렬로 변환한다.
+    // opacity 레이어보다 바깥이다: 먼저 격리 합성하고, 그 결과를 변환한다.
+    if let Some(m) = layout_box.transform {
+        let mut sub: Vec<(i32, DisplayItem)> = buf.drain(subtree_start..).collect();
+        sub.sort_by(|a, b| a.0.cmp(&b.0));
+        let items: Vec<DisplayItem> = sub.into_iter().map(|(_, it)| it).collect();
+        if !items.is_empty() {
+            buf.push((z, DisplayItem::Transform { m, items }));
+        }
     }
 }
 
@@ -2327,88 +2337,13 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| filter_item(it, funcs)),
+        DisplayItem::Transform { items, .. } => {
+            items.iter_mut().for_each(|it| filter_item(it, funcs))
+        }
         DisplayItem::BackdropBlur { .. } => {}
     }
 }
 
-// transform 문자열에서 rotate 각도(라디안)를 추출. deg/rad/turn/무단위(deg) 지원.
-fn transform_rotate_rad(text: &str) -> Option<f32> {
-    let lower = text.to_ascii_lowercase();
-    let idx = lower.find("rotate(")?;
-    let rest = &text[idx + 7..];
-    let close = rest.find(')')?;
-    let arg = rest[..close].trim();
-    let a = if let Some(n) = arg.strip_suffix("deg") {
-        n.trim().parse::<f32>().ok()?.to_radians()
-    } else if let Some(n) = arg.strip_suffix("turn") {
-        n.trim().parse::<f32>().ok()? * std::f32::consts::TAU
-    } else if let Some(n) = arg.strip_suffix("rad") {
-        n.trim().parse::<f32>().ok()?
-    } else {
-        arg.parse::<f32>().ok()?.to_radians()
-    };
-    if a == 0.0 {
-        None
-    } else {
-        Some(a)
-    }
-}
-
-// 한 점을 (cx,cy) 기준 angle(rad) 회전.
-fn rotate_pt(x: f32, y: f32, cx: f32, cy: f32, c: f32, s: f32) -> (f32, f32) {
-    let (dx, dy) = (x - cx, y - cy);
-    (cx + dx * c - dy * s, cy + dx * s + dy * c)
-}
-
-// 디스플레이 아이템을 (cx,cy) 기준 회전. 사각형은 폴리곤(4모서리)으로, 글리프는
-// 위치 회전 + rot 각도 부여, 폴리곤은 점 회전. 그라디언트/이미지/그림자는 근사(중심만).
-fn rotate_item(item: &mut DisplayItem, cx: f32, cy: f32, angle: f32) {
-    let (c, s) = (angle.cos(), angle.sin());
-    let quad = |rect: &Rect| -> Vec<(f32, f32)> {
-        vec![
-            rotate_pt(rect.x, rect.y, cx, cy, c, s),
-            rotate_pt(rect.x + rect.width, rect.y, cx, cy, c, s),
-            rotate_pt(rect.x + rect.width, rect.y + rect.height, cx, cy, c, s),
-            rotate_pt(rect.x, rect.y + rect.height, cx, cy, c, s),
-        ]
-    };
-    match item {
-        DisplayItem::Rect { color, rect } | DisplayItem::RoundRect { color, rect, .. } => {
-            *item = DisplayItem::Polygon { color: *color, contours: vec![quad(rect)] };
-        }
-        DisplayItem::RoundRectRing { .. } => {} // 회전 미지원 (테두리 링, 드묾)
-        DisplayItem::Polygon { contours, .. } => {
-            for ct in contours.iter_mut() {
-                for p in ct.iter_mut() {
-                    *p = rotate_pt(p.0, p.1, cx, cy, c, s);
-                }
-            }
-        }
-        DisplayItem::Glyph(gi) => {
-            let (nx, ny) = rotate_pt(gi.x, gi.baseline_y, cx, cy, c, s);
-            gi.x = nx;
-            gi.baseline_y = ny;
-            gi.rot += angle;
-        }
-        // 그라디언트/이미지/그림자: 중심을 회전해 이동만(축 정렬 유지, 근사)
-        DisplayItem::Gradient { rect, .. }
-        | DisplayItem::Image { rect, .. }
-        | DisplayItem::Shadow { rect, .. }
-        | DisplayItem::InnerShadow { rect, .. } => {
-            let cxr = rect.x + rect.width / 2.0;
-            let cyr = rect.y + rect.height / 2.0;
-            let (nx, ny) = rotate_pt(cxr, cyr, cx, cy, c, s);
-            rect.x = nx - rect.width / 2.0;
-            rect.y = ny - rect.height / 2.0;
-        }
-        DisplayItem::Sticky { inner, .. } => rotate_item(inner, cx, cy, angle),
-        DisplayItem::Clipped { inner, .. } => rotate_item(inner, cx, cy, angle),
-        DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| rotate_item(it, cx, cy, angle)),
-        DisplayItem::BackdropBlur { .. } => {}
-    }
-}
-
-// opacity 프로퍼티 (Length 로 실려옴). 1 미만일 때만 Some.
 fn element_opacity(lb: &LayoutBox) -> Option<f32> {
     match lb.styled_node.value("opacity") {
         Some(Value::Length(op, _)) if op < 1.0 => Some(op.max(0.0)),
@@ -2420,6 +2355,9 @@ fn element_opacity(lb: &LayoutBox) -> Option<f32> {
 fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
     let s = |a: u8| (a as f32 * f).round().clamp(0.0, 255.0) as u8;
     match item {
+        DisplayItem::Transform { items, .. } => {
+            items.iter_mut().for_each(|it| scale_item_alpha(it, f))
+        }
         DisplayItem::Rect { color, .. } => color.a = s(color.a),
         DisplayItem::RoundRect { color, .. } => color.a = s(color.a),
         DisplayItem::RoundRectRing { color, .. } => color.a = s(color.a),
@@ -2621,6 +2559,76 @@ fn draw_item(
                 }
             }
             canvas.blend_mode = prev;
+        }
+        // CSS transform: 서브트리를 격리 렌더한 뒤 역행렬로 매핑한다.
+        // (GPU 합성기가 변환 레이어를 처리하는 방식과 같다 — 글자·이미지·그림자가
+        //  전부 함께 변환된다. 개별 프리미티브를 밀고 늘리는 방식으로는 회전을 표현할 수 없다.)
+        DisplayItem::Transform { m, items } => {
+            let mut layer = Canvas::new_layer(canvas.width, canvas.height);
+            for it in items {
+                draw_item(&mut layer, it, scroll_y, scale, vh, fonts, cache, images);
+            }
+            // 논리(CSS) 좌표 행렬 m 을 장치(캔버스) 좌표 행렬 F 로 옮긴다.
+            //   장치: X = s·x ,  Y = s·(y - k)   (s=scale, k=scroll)
+            //   F = S ∘ m ∘ S⁻¹
+            let (s, k) = (scale, scroll_y);
+            let fwd = crate::layout::Mat {
+                a: m.a,
+                b: m.b,
+                c: m.c,
+                d: m.d,
+                e: s * (m.c * k + m.e),
+                f: s * (m.d * k + m.f - k),
+            };
+            let Some(inv) = fwd.invert() else { return };
+            // 대상 픽셀마다 역매핑해 레이어를 이중선형 샘플 (프리멀티플라이로 가장자리 보존)
+            for py in 0..canvas.height {
+                for px in 0..canvas.width {
+                    let (sx, sy) = inv.apply(px as f32 + 0.5, py as f32 + 0.5);
+                    let (sx, sy) = (sx - 0.5, sy - 0.5);
+                    if sx < -1.0
+                        || sy < -1.0
+                        || sx > layer.width as f32
+                        || sy > layer.height as f32
+                    {
+                        continue;
+                    }
+                    let x0 = sx.floor();
+                    let y0 = sy.floor();
+                    let fx = sx - x0;
+                    let fy = sy - y0;
+                    let (x0, y0) = (x0 as i32, y0 as i32);
+                    let mut acc = [0.0f32; 4]; // 프리멀티플라이 rgba
+                    for (dx, dy, w) in [
+                        (0, 0, (1.0 - fx) * (1.0 - fy)),
+                        (1, 0, fx * (1.0 - fy)),
+                        (0, 1, (1.0 - fx) * fy),
+                        (1, 1, fx * fy),
+                    ] {
+                        let (x, y) = (x0 + dx, y0 + dy);
+                        if x < 0 || y < 0 || x >= layer.width as i32 || y >= layer.height as i32 {
+                            continue;
+                        }
+                        let p = layer.pixels[y as usize * layer.width + x as usize];
+                        let a = p.a as f32 / 255.0;
+                        acc[0] += p.r as f32 * a * w;
+                        acc[1] += p.g as f32 * a * w;
+                        acc[2] += p.b as f32 * a * w;
+                        acc[3] += a * w;
+                    }
+                    if acc[3] <= 0.001 {
+                        continue;
+                    }
+                    let col = Color {
+                        r: (acc[0] / acc[3]).round().clamp(0.0, 255.0) as u8,
+                        g: (acc[1] / acc[3]).round().clamp(0.0, 255.0) as u8,
+                        b: (acc[2] / acc[3]).round().clamp(0.0, 255.0) as u8,
+                        a: 255,
+                    };
+                    let alpha = (acc[3] * 255.0).round().clamp(0.0, 255.0) as u8;
+                    canvas.put(px, py, col, alpha);
+                }
+            }
         }
     }
 }

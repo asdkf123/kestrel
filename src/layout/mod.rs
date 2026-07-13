@@ -91,6 +91,8 @@ pub enum FormControl {
 
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
+    // CSS transform (절대 좌표계 행렬). 기하는 그대로 두고 페인트/CSSOM 이 이걸 쓴다.
+    pub transform: Option<Mat>,
     pub styled_node: &'a StyledNode<'a>,
     // 익명 박스인가. 익명 박스는 부모의 styled_node 를 그대로 쓰므로 NodeId 가 겹친다.
     // 요소별 사각형/메트릭을 수집할 때 반드시 제외해야 한다(안 그러면 익명 박스의
@@ -148,6 +150,7 @@ impl<'a> LayoutBox<'a> {
             gradient: None,
             links: Vec::new(),
             inline_frags: Vec::new(),
+            transform: None,
             decorations: Vec::new(),
             inline_bgs: Vec::new(),
             inline_borders: Vec::new(),
@@ -175,6 +178,7 @@ impl<'a> LayoutBox<'a> {
             gradient: None,
             links: Vec::new(),
             inline_frags: Vec::new(),
+            transform: None,
             decorations: Vec::new(),
             inline_bgs: Vec::new(),
             inline_borders: Vec::new(),
@@ -872,7 +876,10 @@ impl<'a> LayoutBox<'a> {
         let child_abs_cb =
             if self.position() != "static" { self.dimensions.padding_box() } else { abs_cb };
         for child in &mut self.children {
-            let cpos = child.position();
+            // 익명 박스는 부모의 styled_node 를 공유한다 — position 도 부모 것으로 보인다.
+            // 걸러내지 않으면 absolute 부모의 익명 인라인 박스가 **한 번 더** 이동해서
+            // 글자만 두 배 위치에 그려진다 (박스는 맞고 텍스트만 어긋나는 기묘한 버그였다).
+            let cpos = if child.anonymous { "static" } else { child.position() };
             if cpos == "absolute" || cpos == "fixed" {
                 let cb = if cpos == "fixed" { fixed_cb } else { child_abs_cb };
                 let has_left = child.styled_node.value("left").is_some();
@@ -1989,9 +1996,20 @@ fn resolve_width(
 
 // 트리 전체의 링크 히트 영역 수집 (문서 좌표계)
 pub fn collect_link_regions(root: &LayoutBox, out: &mut Vec<(Rect, String)>) {
-    out.extend(root.links.iter().cloned());
+    collect_link_regions_m(root, Mat::IDENTITY, out)
+}
+
+fn collect_link_regions_m(root: &LayoutBox, parent_m: Mat, out: &mut Vec<(Rect, String)>) {
+    let m = match root.transform {
+        Some(t) => t.then(&parent_m),
+        None => parent_m,
+    };
+    for (r, href) in &root.links {
+        let rr = if m.is_identity() { *r } else { m.bounds(*r) };
+        out.push((rr, href.clone()));
+    }
     for child in &root.children {
-        collect_link_regions(child, out);
+        collect_link_regions_m(child, m, out);
     }
 }
 
@@ -2028,8 +2046,25 @@ pub fn collect_element_rects(
     depth: usize,
     out: &mut Vec<(Rect, crate::dom::NodeId, usize)>,
 ) {
+    collect_element_rects_m(root, depth, Mat::IDENTITY, out)
+}
+
+// 변환(transform)을 누적하며 요소 사각형을 모은다.
+// 표준: getBoundingClientRect 는 **변환된** 경계 상자를 돌려준다. 히트 테스트도 마찬가지다.
+// (변환을 무시하면 회전된 버튼을 클릭해도 안 눌린다)
+fn collect_element_rects_m(
+    root: &LayoutBox,
+    depth: usize,
+    parent_m: Mat,
+    out: &mut Vec<(Rect, crate::dom::NodeId, usize)>,
+) {
+    let m = match root.transform {
+        Some(t) => t.then(&parent_m),
+        None => parent_m,
+    };
+    let xf = |r: Rect| if m.is_identity() { r } else { m.bounds(r) };
     if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
-        out.push((root.dimensions.border_box(), root.styled_node.id, depth));
+        out.push((xf(root.dimensions.border_box()), root.styled_node.id, depth));
     }
     // 인라인 요소(span/a/b/em…)는 자체 박스가 없다. 조각들의 합집합을 이 박스보다
     // 한 단계 깊은 것으로 넣어야 클릭이 인라인 요소를 타깃으로 잡는다.
@@ -2051,11 +2086,11 @@ pub fn collect_element_rects(
                 .or_insert(*f);
         }
         for (id, r) in merged {
-            out.push((r, id, depth + 1));
+            out.push((xf(r), id, depth + 1));
         }
     }
     for child in &root.children {
-        collect_element_rects(child, depth + 1, out);
+        collect_element_rects_m(child, depth + 1, m, out);
     }
 }
 
@@ -2376,7 +2411,8 @@ pub fn apply_sticky(root: &mut LayoutBox, scroll_x: f32, scroll_y: f32, vw: f32,
         for c in &mut b.children {
             walk(c, my_content, sx, sy, vw, vh);
         }
-        if b.position() != "sticky" {
+        // 익명 박스는 부모의 styled_node 를 공유 → 부모가 sticky 면 자식도 sticky 로 보인다.
+        if b.anonymous || b.position() != "sticky" {
             return;
         }
         let bb = b.dimensions.border_box();
@@ -2445,65 +2481,241 @@ pub fn layout_tree<'a>(
 
 // 후위 순회로 transform 의 translate/scale 을 서브트리에 적용한다.
 // 흐름/형제 위치에는 영향 없음(레이아웃 후 순수 시각 변환). rotate/matrix 는 미적용.
-fn apply_transforms(b: &mut LayoutBox) {
-    for c in &mut b.children {
-        apply_transforms(c);
+// ── CSS 2D 변환 행렬 ──
+// x' = a·x + c·y + e ;  y' = b·x + d·y + f   (CSS matrix(a,b,c,d,e,f) 와 같은 순서)
+//
+// 예전엔 translate/scale 만 박스 좌표를 직접 밀고 늘리는 식으로 처리하고
+// rotate/skew/matrix 는 `_ => {}` 로 **조용히 무시**했다. 회전을 무시하면 화면은
+// 멀쩡해 보이는데 실제와 다르다 — 가장 알아채기 어려운 종류의 거짓말이다.
+// 이제 모든 함수를 행렬로 합성하고, 페인트가 서브트리 전체(글자·이미지·그림자 포함)를
+// 그 행렬로 변환한다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mat {
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub d: f32,
+    pub e: f32,
+    pub f: f32,
+}
+
+impl Mat {
+    pub const IDENTITY: Mat = Mat { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
+
+    pub fn is_identity(&self) -> bool {
+        *self == Mat::IDENTITY
     }
-    if let Some(Value::Keyword(t)) = b.styled_node.value("transform") {
-        apply_transform_functions(b, &t);
+
+    // 축 정렬인가 (회전/기울임 없음) — 사각형이 사각형으로 남는가
+    pub fn is_axis_aligned(&self) -> bool {
+        self.b.abs() < 1e-6 && self.c.abs() < 1e-6
+    }
+
+    // self 다음에 m 을 적용 (m ∘ self)
+    pub fn then(&self, m: &Mat) -> Mat {
+        Mat {
+            a: m.a * self.a + m.c * self.b,
+            b: m.b * self.a + m.d * self.b,
+            c: m.a * self.c + m.c * self.d,
+            d: m.b * self.c + m.d * self.d,
+            e: m.a * self.e + m.c * self.f + m.e,
+            f: m.b * self.e + m.d * self.f + m.f,
+        }
+    }
+
+    pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
+        (self.a * x + self.c * y + self.e, self.b * x + self.d * y + self.f)
+    }
+
+    pub fn invert(&self) -> Option<Mat> {
+        let det = self.a * self.d - self.b * self.c;
+        if det.abs() < 1e-9 {
+            return None;
+        }
+        let id = 1.0 / det;
+        Some(Mat {
+            a: self.d * id,
+            b: -self.b * id,
+            c: -self.c * id,
+            d: self.a * id,
+            e: (self.c * self.f - self.d * self.e) * id,
+            f: (self.b * self.e - self.a * self.f) * id,
+        })
+    }
+
+    // 사각형의 네 꼭짓점을 변환한 축 정렬 경계 상자
+    pub fn bounds(&self, r: Rect) -> Rect {
+        let pts = [
+            self.apply(r.x, r.y),
+            self.apply(r.x + r.width, r.y),
+            self.apply(r.x, r.y + r.height),
+            self.apply(r.x + r.width, r.y + r.height),
+        ];
+        let (mut x0, mut y0) = (f32::MAX, f32::MAX);
+        let (mut x1, mut y1) = (f32::MIN, f32::MIN);
+        for (x, y) in pts {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
     }
 }
 
-// transform 함수 목록을 순서대로 적용 (translate*, scale*). 원점은 border-box 중앙.
-fn apply_transform_functions(b: &mut LayoutBox, text: &str) {
+// 각도 문자열 → 라디안 (deg/rad/grad/turn)
+fn parse_angle(s: &str) -> f32 {
+    let t = s.trim();
+    let num = |suf: &str| t.strip_suffix(suf).and_then(|n| n.trim().parse::<f32>().ok());
+    if let Some(v) = num("deg") {
+        return v.to_radians();
+    }
+    if let Some(v) = num("rad") {
+        return v;
+    }
+    if let Some(v) = num("grad") {
+        return v * std::f32::consts::PI / 200.0;
+    }
+    if let Some(v) = num("turn") {
+        return v * std::f32::consts::TAU;
+    }
+    t.parse::<f32>().map(|v| v.to_radians()).unwrap_or(0.0)
+}
+
+// transform 함수 목록 → 행렬 (요소 로컬 좌표, 원점은 transform-origin).
+// bw/bh 는 border box 크기 (translate 의 % 해석 기준).
+pub fn parse_transform(text: &str, bw: f32, bh: f32) -> Mat {
+    let mut m = Mat::IDENTITY;
     let mut rest = text;
     while let Some(open) = rest.find('(') {
         let name = rest[..open]
             .trim()
-            .rsplit(|c: char| c.is_whitespace() || c == ')')
+            .rsplit(|c: char| c.is_whitespace() || c == ')' || c == ',')
             .next()
             .unwrap_or("")
             .to_ascii_lowercase();
         let Some(close_rel) = rest[open..].find(')') else { break };
         let close = close_rel + open;
-        let args = &rest[open + 1..close];
-        let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-        let bb = b.dimensions.border_box();
-        let len = |tok: &str, base: f32| -> f32 {
-            if let Some(p) = tok.strip_suffix('%') {
+        let args: Vec<&str> = rest[open + 1..close].split(',').map(|s| s.trim()).collect();
+        let len = |t: &str, base: f32| -> f32 {
+            if let Some(p) = t.strip_suffix('%') {
                 p.trim().parse::<f32>().map(|v| v / 100.0 * base).unwrap_or(0.0)
             } else {
-                crate::css::parse_len_px(tok).unwrap_or(0.0)
+                crate::css::parse_len_px(t).unwrap_or(0.0)
             }
         };
-        let num = |tok: &str| tok.parse::<f32>().unwrap_or(1.0);
-        match name.as_str() {
-            "translate" => {
-                let dx = len(parts[0], bb.width);
-                let dy = parts.get(1).map(|p| len(p, bb.height)).unwrap_or(0.0);
-                b.translate(dx, dy);
-            }
-            "translatex" => b.translate_x(len(parts[0], bb.width)),
-            "translatey" => b.translate(0.0, len(parts[0], bb.height)),
+        let num = |t: &str| t.parse::<f32>().unwrap_or(1.0);
+        let get = |i: usize| args.get(i).copied().unwrap_or("");
+        let step = match name.as_str() {
+            "translate" => Mat {
+                e: len(get(0), bw),
+                f: args.get(1).map(|t| len(t, bh)).unwrap_or(0.0),
+                ..Mat::IDENTITY
+            },
+            "translatex" => Mat { e: len(get(0), bw), ..Mat::IDENTITY },
+            "translatey" => Mat { f: len(get(0), bh), ..Mat::IDENTITY },
             "scale" => {
-                let sx = num(parts[0]);
-                let sy = parts.get(1).map(|p| num(p)).unwrap_or(sx);
-                let (ox, oy) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
-                b.scale_subtree(ox, oy, sx, sy);
+                let sx = num(get(0));
+                let sy = args.get(1).map(|t| num(t)).unwrap_or(sx);
+                Mat { a: sx, d: sy, ..Mat::IDENTITY }
             }
-            "scalex" => {
-                let (ox, oy) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
-                b.scale_subtree(ox, oy, num(parts[0]), 1.0);
+            "scalex" => Mat { a: num(get(0)), ..Mat::IDENTITY },
+            "scaley" => Mat { d: num(get(0)), ..Mat::IDENTITY },
+            "rotate" | "rotatez" => {
+                let (s, c) = parse_angle(get(0)).sin_cos();
+                Mat { a: c, b: s, c: -s, d: c, e: 0.0, f: 0.0 }
             }
-            "scaley" => {
-                let (ox, oy) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
-                b.scale_subtree(ox, oy, 1.0, num(parts[0]));
+            "skew" => {
+                let ax = parse_angle(get(0)).tan();
+                let ay = args.get(1).map(|t| parse_angle(t).tan()).unwrap_or(0.0);
+                Mat { a: 1.0, b: ay, c: ax, d: 1.0, e: 0.0, f: 0.0 }
             }
-            _ => {} // rotate/matrix/skew 등 미적용
-        }
+            "skewx" => Mat { c: parse_angle(get(0)).tan(), ..Mat::IDENTITY },
+            "skewy" => Mat { b: parse_angle(get(0)).tan(), ..Mat::IDENTITY },
+            "matrix" => Mat {
+                a: args.first().map(|t| num(t)).unwrap_or(1.0),
+                b: args.get(1).map(|t| t.parse().unwrap_or(0.0)).unwrap_or(0.0),
+                c: args.get(2).map(|t| t.parse().unwrap_or(0.0)).unwrap_or(0.0),
+                d: args.get(3).map(|t| num(t)).unwrap_or(1.0),
+                e: args.get(4).map(|t| t.parse().unwrap_or(0.0)).unwrap_or(0.0),
+                f: args.get(5).map(|t| t.parse().unwrap_or(0.0)).unwrap_or(0.0),
+            },
+            // 3D 변환은 아직 없다 — 조용히 무시하지 않고 항등으로 두되,
+            // @supports 도 지원한다고 하지 않는다(supports.rs).
+            _ => Mat::IDENTITY,
+        };
+        m = step.then(&m); // CSS 는 왼쪽 함수가 바깥쪽
         rest = &rest[close + 1..];
     }
+    m
 }
+
+// transform-origin → 절대 좌표 (기본 50% 50%, border box 기준)
+fn transform_origin(b: &LayoutBox) -> (f32, f32) {
+    let bb = b.dimensions.border_box();
+    let (mut ox, mut oy) = (bb.width / 2.0, bb.height / 2.0);
+    if let Some(Value::Keyword(s)) = b.styled_node.value("transform-origin") {
+        let mut toks: Vec<&str> = s.split_whitespace().collect();
+        toks.truncate(2); // 3번째 값은 z (2D 에서는 무시)
+        // 키워드 두 개는 순서를 뒤집어 쓸 수 있다 (CSS Transforms §6): "top left" == "left top".
+        if toks.len() == 2
+            && matches!(toks[0], "top" | "bottom")
+            && matches!(toks[1], "left" | "right" | "center")
+        {
+            toks.swap(0, 1);
+        }
+        let axis = |t: &str, base: f32, def: f32| -> f32 {
+            match t {
+                "left" | "top" => 0.0,
+                "center" => base / 2.0,
+                "right" | "bottom" => base,
+                "0" => 0.0,
+                other => {
+                    if let Some(p) = other.strip_suffix('%') {
+                        p.parse::<f32>().map(|v| v / 100.0 * base).unwrap_or(def)
+                    } else {
+                        crate::css::parse_len_px(other).unwrap_or(def)
+                    }
+                }
+            }
+        };
+        if let Some(t) = toks.first() {
+            ox = axis(t, bb.width, ox);
+        }
+        if let Some(t) = toks.get(1) {
+            oy = axis(t, bb.height, oy);
+        }
+    }
+    (bb.x + ox, bb.y + oy)
+}
+
+// 각 박스의 transform 을 절대 좌표계 행렬로 계산해 저장한다 (기하는 건드리지 않는다).
+// 페인트가 이 행렬로 서브트리 전체를 변환하고, CSSOM 사각형은 변환된 경계로 보고한다.
+fn apply_transforms(b: &mut LayoutBox) {
+    for c in &mut b.children {
+        apply_transforms(c);
+    }
+    // 익명 박스는 부모의 styled_node 를 공유한다 — 여기서 걸러내지 않으면 부모의 transform 이
+    // 자식 익명 박스에도 다시 걸려 두 번 변환된다.
+    if b.anonymous {
+        return;
+    }
+    let Some(Value::Keyword(t)) = b.styled_node.value("transform") else { return };
+    if t.trim().eq_ignore_ascii_case("none") || t.trim().is_empty() {
+        return;
+    }
+    let bb = b.dimensions.border_box();
+    let local = parse_transform(&t, bb.width, bb.height);
+    if local.is_identity() {
+        return;
+    }
+    let (ox, oy) = transform_origin(b);
+    // M_abs = T(o) · M · T(-o)
+    let to_origin = Mat { e: -ox, f: -oy, ..Mat::IDENTITY };
+    let back = Mat { e: ox, f: oy, ..Mat::IDENTITY };
+    b.transform = Some(to_origin.then(&local).then(&back));
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -2563,38 +2775,133 @@ mod tests {
         assert_eq!(count_decorations(&lb2), 0, "장식 없어야");
     }
 
-    #[test]
-    fn transform_translate_offsets_box() {
-        // translate(10px, 20px) → 박스가 그만큼 이동 (흐름 불변, 시각 오프셋)
-        let d = layout_for(
-            "<div></div>",
-            "div { display: block; width: 100px; height: 50px; transform: translate(10px, 20px); }",
-            800.0,
-        );
-        assert_eq!(d.content.x, 10.0, "x 오프셋");
-        assert_eq!(d.content.y, 20.0, "y 오프셋");
-        // 퍼센트: translateX(50%) = 자기 border-box 폭의 50%
-        let d2 = layout_for(
-            "<div></div>",
-            "div { display: block; width: 100px; height: 50px; transform: translateX(50%); }",
-            800.0,
-        );
-        assert_eq!(d2.content.x, 50.0, "50% × 100px = 50px");
+    // 트리에서 transform 행렬이 붙은 첫 박스를 찾는다.
+    fn find_transformed<'a, 'b>(b: &'b LayoutBox<'a>) -> Option<&'b LayoutBox<'a>> {
+        if b.transform.is_some() {
+            return Some(b);
+        }
+        b.children.iter().find_map(find_transformed)
+    }
+
+    fn tree_for<'a>(root: &'a StyledNode<'a>, fs: &FontStack) -> LayoutBox<'a> {
+        let mut viewport: Dimensions = Default::default();
+        viewport.content.width = 800.0;
+        viewport.content.height = 600.0;
+        layout_tree(root, viewport, fs, &no_images())
+    }
+
+    fn transformed_for(dom: &crate::dom::Dom, ss: &crate::css::Stylesheet, fs: &FontStack) -> (Rect, Mat) {
+        // styled tree 를 여기서 만들면 수명이 짧아 반환할 수 없으므로 필요한 값만 뽑는다.
+        let styled = crate::style::style_tree(dom, ss);
+        let lb = tree_for(&styled, fs);
+        let t = find_transformed(&lb).expect("transform 박스가 있어야");
+        (t.dimensions.border_box(), t.transform.unwrap())
     }
 
     #[test]
-    fn transform_scale_grows_box_from_center() {
-        // scale(2) → 폭/높이 2배, 중앙 원점 유지 (100x50 중앙 (50,25) 고정)
-        let d = layout_for(
-            "<div></div>",
-            "div { display: block; width: 100px; height: 50px; transform: scale(2); }",
-            800.0,
+    fn transform_translate_is_visual_only() {
+        // transform 은 레이아웃 기하를 바꾸지 않는다 (CSS Transforms §3: 시각 변환).
+        // 박스는 제자리에 있고, 행렬만 붙는다.
+        let fs = fonts();
+        let dom = crate::html::parse_dom("<div></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; width: 100px; height: 50px; transform: translate(10px, 20px); }".to_string(),
         );
-        assert_eq!(d.content.width, 200.0, "폭 2배");
-        assert_eq!(d.content.height, 100.0, "높이 2배");
-        // 중앙 (50,25) 고정 → 좌상단은 (50-100, 25-50) = (-50, -25)
-        assert_eq!(d.content.x, -50.0, "중앙 원점 기준 x");
-        assert_eq!(d.content.y, -25.0, "중앙 원점 기준 y");
+        let (bb, m) = transformed_for(&dom, &ss, &fs);
+        assert_eq!((bb.x, bb.y), (0.0, 0.0), "레이아웃 위치는 그대로");
+        assert_eq!(m.apply(0.0, 0.0), (10.0, 20.0), "행렬이 (10,20) 이동");
+
+        // 퍼센트: translateX(50%) = 자기 border-box 폭의 50%
+        let ss2 = crate::css::parse(
+            "div { display: block; width: 100px; height: 50px; transform: translateX(50%); }".to_string(),
+        );
+        let (_, m2) = transformed_for(&dom, &ss2, &fs);
+        assert_eq!(m2.apply(0.0, 0.0), (50.0, 0.0), "50% × 100px = 50px");
+    }
+
+    #[test]
+    fn transform_scale_maps_around_center() {
+        // scale(2) → 기본 원점은 중심(50,25). 좌상단은 (-50,-25), 우하단은 (150,75).
+        let fs = fonts();
+        let dom = crate::html::parse_dom("<div></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; width: 100px; height: 50px; transform: scale(2); }".to_string(),
+        );
+        let (bb, m) = transformed_for(&dom, &ss, &fs);
+        assert_eq!(m.apply(bb.x, bb.y), (-50.0, -25.0), "좌상단");
+        assert_eq!(m.apply(bb.x + bb.width, bb.y + bb.height), (150.0, 75.0), "우하단");
+        let b = m.bounds(bb);
+        assert_eq!((b.width, b.height), (200.0, 100.0), "변환된 경계는 2배");
+    }
+
+    #[test]
+    fn transform_rotate_honors_transform_origin() {
+        // rotate(90deg) + transform-origin: 0 0 → 원점은 고정, (1,0) 은 (0,1) 로 간다.
+        // transform-origin 은 다중 토큰이라 예전에는 값 파서가 통째로 버려서
+        // **항상 중심 기준**으로 돌았다 (요행).
+        let fs = fonts();
+        let dom = crate::html::parse_dom("<div></div>".to_string());
+        let ss = crate::css::parse(
+            "div { display: block; width: 100px; height: 50px; transform: rotate(90deg); transform-origin: 0 0; }"
+                .to_string(),
+        );
+        let (_, m) = transformed_for(&dom, &ss, &fs);
+        let (ox, oy) = m.apply(0.0, 0.0);
+        assert!(ox.abs() < 1e-4 && oy.abs() < 1e-4, "원점 (0,0) 은 고정: {ox},{oy}");
+        let (x, y) = m.apply(1.0, 0.0);
+        assert!((x - 0.0).abs() < 1e-4 && (y - 1.0).abs() < 1e-4, "(1,0) → (0,1): {x},{y}");
+
+        // 키워드는 순서를 뒤집어 쓸 수 있다: "top left" == "left top"
+        let ss2 = crate::css::parse(
+            "div { display: block; width: 100px; height: 50px; transform: rotate(90deg); transform-origin: top left; }"
+                .to_string(),
+        );
+        let (_, m2) = transformed_for(&dom, &ss2, &fs);
+        let (x2, y2) = m2.apply(1.0, 0.0);
+        assert!((x2 - 0.0).abs() < 1e-4 && (y2 - 1.0).abs() < 1e-4, "top left 도 같은 결과");
+    }
+
+    #[test]
+    fn transform_matrix_and_skew_parse() {
+        // matrix(a,b,c,d,e,f) 는 CSS 순서 그대로
+        let m = parse_transform("matrix(2, 0, 0, 3, 10, 20)", 100.0, 50.0);
+        assert_eq!(m.apply(1.0, 1.0), (12.0, 23.0));
+        // skewX(45deg): x' = x + tan(45)·y = x + y
+        let s = parse_transform("skewX(45deg)", 100.0, 50.0);
+        let (x, y) = s.apply(1.0, 2.0);
+        assert!((x - 3.0).abs() < 1e-4 && (y - 2.0).abs() < 1e-4, "{x},{y}");
+        // 여러 함수는 왼쪽부터 차례로 적용 (좌→우 곱)
+        let c = parse_transform("translate(10px, 0) scale(2)", 100.0, 50.0);
+        assert_eq!(c.apply(1.0, 0.0), (12.0, 0.0), "scale 먼저, 그 다음 translate");
+    }
+
+    #[test]
+    fn absolute_text_is_not_double_offset() {
+        // 익명 박스는 부모의 styled_node 를 공유한다. 예전에는 reposition_abs 가
+        // 익명 자식도 absolute 로 보고 **한 번 더** 옮겨서, 박스는 맞는데
+        // 글자만 좌표 2배 위치에 그려졌다.
+        let fs = fonts();
+        let dom = crate::html::parse_dom("<main><div id=a>hi</div></main>".to_string());
+        let ss = crate::css::parse(
+            "main { display: block; } #a { display: block; position: absolute; left: 100px; top: 100px; }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&dom, &ss);
+        let lb = tree_for(&styled, &fs);
+        fn glyph_xs(b: &LayoutBox, out: &mut Vec<f32>) {
+            out.extend(b.glyphs.iter().map(|g| g.x));
+            for c in &b.children {
+                glyph_xs(c, out);
+            }
+        }
+        let mut xs = Vec::new();
+        glyph_xs(&lb, &mut xs);
+        assert!(!xs.is_empty(), "글리프가 있어야");
+        let min = xs.iter().cloned().fold(f32::INFINITY, f32::min);
+        assert!(
+            (100.0..110.0).contains(&min),
+            "글자는 left:100px 에서 시작해야 (2배인 200 이면 익명 박스 이중 이동): {min}"
+        );
     }
 
     #[test]

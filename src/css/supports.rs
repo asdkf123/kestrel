@@ -82,7 +82,7 @@ fn longhand_supported(prop: &str) -> bool {
 }
 
 // 엔진이 실제로 계산하는 값 함수 전부. 여기 없는 함수(color-mix/oklch/lab/env/attr/
-// image-set/rotate/skew/matrix …)는 파싱만 되고 무시되므로 지원한다고 하면 거짓말이다.
+// image-set …)는 파싱만 되고 무시되므로 지원한다고 하면 거짓말이다.
 // 프로퍼티별로 나누지 않고 합집합으로 본다 — 과소보고는 안전, 과다보고만 위험하다.
 const FUNCS: &[&str] = &[
     // 값 계산
@@ -93,8 +93,9 @@ const FUNCS: &[&str] = &[
     "url", "linear-gradient", "radial-gradient", "conic-gradient",
     // content
     "counter", "counters",
-    // transform (rotate/skew/matrix 는 layout 이 무시한다 — 넣지 않는다)
+    // transform — 2D 함수 전부 (행렬로 합성해 서브트리를 실제로 변환한다)
     "translate", "translatex", "translatey", "scale", "scalex", "scaley",
+    "rotate", "rotatez", "skew", "skewx", "skewy", "matrix",
     // filter / backdrop-filter
     "blur", "grayscale", "brightness", "invert", "contrast", "sepia", "saturate",
     "hue-rotate", "opacity",
@@ -315,9 +316,13 @@ mod tests {
         assert!(!supports_condition("(color: color-mix(in srgb, red, blue))"));
         assert!(!supports_condition("(color: oklch(0.7 0.1 200))"));
         assert!(!supports_condition("(width: env(safe-area-inset-left))"));
-        // transform: 엔진은 translate/scale 만 적용한다 (rotate/skew/matrix 무시)
-        assert!(!supports_condition("(transform: rotate(45deg))"));
+        // transform: 2D 함수는 전부 행렬로 합성해 실제로 변환한다
+        assert!(supports_condition("(transform: rotate(45deg))"));
         assert!(supports_condition("(transform: translateX(10px))"));
+        assert!(supports_condition("(transform: matrix(1, 0, 0, 1, 5, 5))"));
+        // 3D 는 아직 미구현 → 거짓 (지원한다고 하면 사이트가 2D 폴백을 줄 기회를 잃는다)
+        assert!(!supports_condition("(transform: rotate3d(0, 1, 0, 45deg))"));
+        assert!(!supports_condition("(transform: perspective(500px))"));
 
         // 구현된 함수는 참
         assert!(supports_condition("(width: calc(100% - 10px))"));
