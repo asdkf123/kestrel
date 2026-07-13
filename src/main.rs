@@ -19,6 +19,8 @@ mod png;
 mod raster;
 mod style;
 mod url;
+mod vp8_tables;
+mod webp;
 mod woff2;
 mod window;
 
@@ -232,6 +234,10 @@ fn decode_image(bytes: &[u8]) -> Option<png::Image> {
     }
     if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return jpeg::decode(bytes);
+    }
+    // WebP (RIFF....WEBP). 사이트가 .webp 를 URL 에 박아 쓴다 (react.dev 등).
+    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return webp::decode(bytes);
     }
     // SVG: 텍스트 포맷이라 시그니처가 없다. XML 선언/주석/공백을 건너뛰고 <svg 를 찾는다.
     // CSS background-image: url(*.svg) 와 <img src=*.svg> 가 전부 이걸로 온다 —
