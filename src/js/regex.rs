@@ -15,6 +15,8 @@ enum Inst {
     WordBoundary(bool),  // \b(true) / \B(false)
     Backref(usize),      // \1..
     Look { neg: bool, prog: Vec<Inst> }, // (?=..) / (?!..)
+    // (?<=..) / (?<!..) — sp 에서 **끝나는** 매치를 찾는다 (오른쪽에서 왼쪽).
+    LookBehind { neg: bool, prog: Vec<Inst> },
     Match,
 }
 
@@ -68,6 +70,8 @@ pub struct Regex {
     multiline: bool,
     dotall: bool,
     pub global: bool,
+    // 룩비하인드용: Match 는 이 위치에서 끝나야만 성공이다 (없으면 아무 데서나 끝나도 됨).
+    require_end: Option<usize>,
 }
 
 // ── 파서: source → AST ──────────────────────────────────────────────
@@ -83,6 +87,7 @@ enum Ast {
     Group(usize, Box<Ast>),
     NonCap(Box<Ast>),
     Look(bool, Box<Ast>),
+    LookBehind(bool, Box<Ast>),
     Concat(Vec<Ast>),
     Alt(Vec<Ast>),
     Repeat { node: Box<Ast>, min: usize, max: Option<usize>, greedy: bool },
@@ -229,7 +234,11 @@ impl Parser {
                         // (?<name>...) 이름 있는 캡처 그룹 / (?<=..)(?<!..) 룩비하인드
                         Some('<') => match self.peek() {
                             Some('=') | Some('!') => {
-                                Err("룩비하인드 미지원".to_string())
+                                let neg = self.peek() == Some('!');
+                                self.i += 1;
+                                let inner = self.parse_alt()?;
+                                self.expect_close()?;
+                                Ok(Ast::LookBehind(neg, Box::new(inner)))
                             }
                             _ => {
                                 let mut name = String::new();
@@ -452,6 +461,12 @@ fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
             sub.push(Inst::Match);
             prog.push(Inst::Look { neg: *neg, prog: sub });
         }
+        Ast::LookBehind(neg, inner) => {
+            let mut sub = Vec::new();
+            compile(inner, &mut sub);
+            sub.push(Inst::Match);
+            prog.push(Inst::LookBehind { neg: *neg, prog: sub });
+        }
         Ast::Alt(branches) => {
             // Split b0, (Split b1, ...); 각 브랜치 끝에 Jmp end
             let mut jmp_ends = Vec::new();
@@ -546,6 +561,7 @@ impl Regex {
             multiline: flags.contains('m'),
             dotall: flags.contains('s'),
             global: flags.contains('g'),
+            require_end: None,
         })
     }
 
@@ -597,7 +613,8 @@ impl Regex {
             return false;
         }
         match &self.prog[pc] {
-            Inst::Match => true,
+            // 룩비하인드 서브매치는 정확히 그 위치에서 끝나야 한다.
+            Inst::Match => self.require_end.map_or(true, |e| sp == e),
             Inst::Char(c) => {
                 if sp < s.len() && self.char_eq(s[sp], *c) {
                     self.run(pc + 1, s, sp + 1, saves, steps)
@@ -666,19 +683,63 @@ impl Regex {
                 }
             }
             Inst::Look { neg, prog } => {
+                // 룩어라운드 **안의 캡처 그룹도 표준상 값을 남긴다** — /(?=(\d+))/ 는 그룹 1 을
+                // 채운다. 예전엔 ngroups:0 에 임시 saves 를 써서 통째로 버렸다.
                 let sub = Regex {
                     prog: prog.clone(),
-                    ngroups: 0,
+                    ngroups: self.ngroups,
                     group_names: Vec::new(),
                     ignore_case: self.ignore_case,
                     multiline: self.multiline,
                     dotall: self.dotall,
                     global: false,
+                    require_end: None,
                 };
-                let mut sub_saves = vec![None; 2];
+                let mut sub_saves = saves.clone();
                 let mut sub_steps = 0;
                 let matched = sub.run(0, s, sp, &mut sub_saves, &mut sub_steps);
+                *steps += sub_steps;
                 if matched != *neg {
+                    if matched {
+                        *saves = sub_saves; // 긍정 룩어라운드의 캡처는 유지
+                    }
+                    self.run(pc + 1, s, sp, saves, steps)
+                } else {
+                    false
+                }
+            }
+            // (?<=X) / (?<!X): sp 에서 **끝나는** X 매치가 있는가. 시작 후보를 sp 에서
+            // 0 쪽으로 훑으며 "정확히 sp 에서 끝나는" 매치를 찾는다 (require_end).
+            Inst::LookBehind { neg, prog } => {
+                let sub = Regex {
+                    prog: prog.clone(),
+                    ngroups: self.ngroups,
+                    group_names: Vec::new(),
+                    ignore_case: self.ignore_case,
+                    multiline: self.multiline,
+                    dotall: self.dotall,
+                    global: false,
+                    require_end: Some(sp),
+                };
+                let mut found = None;
+                for j in (0..=sp).rev() {
+                    let mut sub_saves = saves.clone();
+                    let mut sub_steps = 0;
+                    let ok = sub.run(0, s, j, &mut sub_saves, &mut sub_steps);
+                    *steps += sub_steps;
+                    if *steps > REGEX_STEP_LIMIT {
+                        return false;
+                    }
+                    if ok {
+                        found = Some(sub_saves);
+                        break;
+                    }
+                }
+                let matched = found.is_some();
+                if matched != *neg {
+                    if let Some(sv) = found {
+                        *saves = sv;
+                    }
                     self.run(pc + 1, s, sp, saves, steps)
                 } else {
                     false
@@ -705,6 +766,33 @@ fn is_word(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lookbehind_and_lookaround_captures() {
+        // (?<=..) / (?<!..) 는 ES2018 표준인데 "미지원" 오류를 던지고 있었다.
+        let re = Regex::compile_pattern(r"(?<=\$)\d+", "").unwrap();
+        let s: Vec<char> = "price: $42".chars().collect();
+        let m = re.find(&s, 0).expect("룩비하인드 매치");
+        assert_eq!(s[m.start..m.end].iter().collect::<String>(), "42");
+
+        // 부정 룩비하인드
+        let re = Regex::compile_pattern(r"(?<!a)\d", "").unwrap();
+        let s: Vec<char> = "a1 b2".chars().collect();
+        let m = re.find(&s, 0).expect("매치");
+        assert_eq!(s[m.start..m.end].iter().collect::<String>(), "2");
+
+        // 가변 길이 룩비하인드 (JS 는 허용한다 — Perl 과 다르다)
+        let re = Regex::compile_pattern(r"(?<=fo+)bar", "").unwrap();
+        let s: Vec<char> = "foobar".chars().collect();
+        assert!(re.find(&s, 0).is_some());
+
+        // 룩어라운드 안의 캡처 그룹은 값을 남긴다 (표준). 예전엔 통째로 버렸다.
+        let re = Regex::compile_pattern(r"(?=(\d+))", "").unwrap();
+        let s: Vec<char> = "123".chars().collect();
+        let m = re.find(&s, 0).expect("매치");
+        let g1 = m.groups.get(1).and_then(|g| *g).expect("그룹 1"); // 0 은 전체 매치
+        assert_eq!(s[g1.0..g1.1].iter().collect::<String>(), "123");
+    }
 
     fn m(pat: &str, flags: &str, text: &str) -> Option<(usize, usize)> {
         let re = Regex::compile_pattern(pat, flags).unwrap();
