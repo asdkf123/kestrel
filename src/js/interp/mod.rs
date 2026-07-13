@@ -184,7 +184,9 @@ pub struct JsFn {
     pub is_async: bool, // async — 반환값을 이행된 Promise 로 감싼다
     pub this: Option<Box<Value>>, // 화살표가 정의 시점에 캡처한 this
     // 이 함수가 클래스 메서드면 그 클래스의 부모 (super.x 해석용)
-    pub super_class: Option<Rc<JsClass>>,
+    // 이 함수가 클래스 메서드면 그 클래스의 부모 생성자 (super.x 해석용).
+    // 클래스일 수도, 일반 생성자(Error/함수)일 수도 있어 Value 로 둔다.
+    pub super_class: Option<Value>,
     // 함수도 객체: F.prototype / F.staticProp 등 (Rc 공유 → 변경 반영)
     pub props: RefCell<HashMap<String, Value>>,
 }
@@ -192,6 +194,9 @@ pub struct JsFn {
 pub struct JsClass {
     pub name: String,
     pub parent: Option<Rc<JsClass>>,
+    // 클래스가 아닌 생성자를 확장한 경우(class E extends Error / extends function).
+    // 표준은 아무 생성자나 확장 가능하다. super() 는 이 생성자를 실행해 this 를 채운다.
+    pub parent_ctor: Option<Value>,
     pub ctor: Option<Rc<JsFn>>,
     pub methods: HashMap<String, Rc<JsFn>>,
     pub getters: HashMap<String, Rc<JsFn>>,
@@ -215,6 +220,14 @@ impl JsClass {
             return Some(g.clone());
         }
         self.parent.as_ref().and_then(|p| p.find_getter(name))
+    }
+
+    // 클래스 체인을 올라가며 첫 non-class 부모 생성자를 찾는다 (extends Error 등).
+    fn find_parent_ctor(&self) -> Option<Value> {
+        if let Some(pc) = &self.parent_ctor {
+            return Some(pc.clone());
+        }
+        self.parent.as_ref().and_then(|p| p.find_parent_ctor())
     }
 }
 
@@ -1087,8 +1100,32 @@ impl Interp {
         env_declare(&global, "localStorage", ls.clone());
         env_declare(&global, "sessionStorage", ls.clone());
         // navigator / alert
+        // navigator — 프레임워크가 흔히 읽는 속성들(없으면 .includes() 등에서 즉사).
         let mut nav = ObjMap::new();
-        nav.insert("userAgent".to_string(), Value::Str("Kestrel/0.1".to_string()));
+        for (k, v) in [
+            ("userAgent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Kestrel/0.1"),
+            ("platform", "MacIntel"),
+            ("vendor", ""),
+            ("appName", "Netscape"),
+            ("appVersion", "5.0 (Macintosh)"),
+            ("product", "Gecko"),
+            ("language", "en-US"),
+            ("doNotTrack", "unspecified"),
+        ] {
+            nav.insert(k.to_string(), Value::Str(v.to_string()));
+        }
+        nav.insert(
+            "languages".to_string(),
+            Value::Arr(ArrayObj::new(vec![
+                Value::Str("en-US".to_string()),
+                Value::Str("en".to_string()),
+            ])),
+        );
+        nav.insert("onLine".to_string(), Value::Bool(true));
+        nav.insert("cookieEnabled".to_string(), Value::Bool(true));
+        nav.insert("webdriver".to_string(), Value::Bool(false));
+        nav.insert("hardwareConcurrency".to_string(), Value::Num(4.0));
+        nav.insert("maxTouchPoints".to_string(), Value::Num(0.0));
         let nav = Value::Obj(Rc::new(RefCell::new(nav)));
         env_declare(&global, "navigator", nav.clone());
         env_declare(&global, "alert", Value::Native(Native::Alert));
@@ -2707,22 +2744,44 @@ impl Interp {
                 // super(...) — 부모 생성자를 현재 this 로 실행
                 if matches!(&**callee, Expr::Super) {
                     arg_vals.extend(self.eval_args(args, env)?);
-                    let (Some(Value::Class(parent)), Some(this)) =
+                    let (Some(sc), Some(this)) =
                         (env_get(env, "__superclass__"), env_get(env, "this"))
                     else {
                         return Err("super() 는 파생 클래스 생성자에서만".to_string());
                     };
-                    self.run_constructor(&parent, &this, arg_vals)?;
+                    match sc {
+                        Value::Class(parent) => {
+                            self.run_constructor(&parent, &this, arg_vals)?;
+                        }
+                        // 클래스가 아닌 생성자(Error/함수 등) 확장: 부모 생성자를 실행해
+                        // 나온 객체의 own 프로퍼티를 this 로 옮긴다(= this 를 채운 효과).
+                        other => {
+                            let produced = self.construct(other, arg_vals)?;
+                            for (k, v) in builtins::own_enumerable_entries(&produced) {
+                                builtins::set_own_property(&this, k, v);
+                            }
+                        }
+                    }
                     return Ok(Value::Undefined);
                 }
                 // super.method(...) — 부모 메서드를 현재 this 로 실행
                 if let Expr::Member { obj, prop, computed } = &**callee {
                     if matches!(&**obj, Expr::Super) {
                         let key = self.member_key(prop, *computed, env)?;
-                        let (Some(Value::Class(parent)), Some(this)) =
+                        let (Some(sc), Some(this)) =
                             (env_get(env, "__superclass__"), env_get(env, "this"))
                         else {
                             return Err("super.x 는 파생 클래스에서만".to_string());
+                        };
+                        // 부모가 클래스가 아니면 그 prototype 에서 메서드를 찾는다.
+                        let parent = match sc {
+                            Value::Class(p) => p,
+                            other => {
+                                let proto = self.member_get(&other, "prototype")?;
+                                let m = self.member_get(&proto, &key)?;
+                                arg_vals.extend(self.eval_args(args, env)?);
+                                return self.call_value(m, Some(this), arg_vals);
+                            }
                         };
                         let m = parent
                             .find_method(&key)
@@ -3213,6 +3272,16 @@ impl Interp {
                 if let Some(m) = inst.class.find_method(key) {
                     return Ok(Value::Fn(m));
                 }
+                // 클래스가 아닌 부모를 확장했으면(extends Error/함수) 그 prototype 에서 찾는다.
+                if let Some(pc) = inst.class.find_parent_ctor() {
+                    let proto = self.member_get(&pc, "prototype")?;
+                    if !matches!(proto, Value::Undefined) {
+                        let m = self.member_get(&proto, key)?;
+                        if !matches!(m, Value::Undefined) {
+                            return Ok(m);
+                        }
+                    }
+                }
                 // Object.prototype 폴백 — 인스턴스도 hasOwnProperty/toString/valueOf 등.
                 match key {
                     "hasOwnProperty" | "propertyIsEnumerable" => {
@@ -3386,7 +3455,7 @@ impl Interp {
                 }
                 // 메서드 안 super.x 해석용
                 if let Some(sc) = &func.super_class {
-                    env_declare(&scope, "__superclass__", Value::Class(sc.clone()));
+                    env_declare(&scope, "__superclass__", sc.clone());
                 }
                 for (i, p) in func.params.iter().enumerate() {
                     if let Some(rest) = p.strip_prefix("...") {
@@ -3603,9 +3672,12 @@ impl Interp {
                 env_declare(&scope, "this", inst.clone());
                 // 클래스 생성자는 항상 new 로 실행 → new.target 은 이 클래스.
                 env_declare(&scope, "\u{0}newtarget", Value::Class(cls.clone()));
-                // super 참조용: 현재 클래스의 부모를 스코프에 숨겨둠
+                // super 참조용: 현재 클래스의 부모를 스코프에 숨겨둠.
+                // 부모가 클래스가 아니면(Error/함수 등) 그 생성자 값을 그대로 둔다.
                 if let Some(parent) = &cls.parent {
                     env_declare(&scope, "__superclass__", Value::Class(parent.clone()));
+                } else if let Some(pc) = &cls.parent_ctor {
+                    env_declare(&scope, "__superclass__", pc.clone());
                 }
                 for (i, p) in ctor.params.iter().enumerate() {
                     env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
@@ -3623,12 +3695,17 @@ impl Interp {
     }
 
     fn make_class(&mut self, def: &crate::js::ast::ClassDef, env: &EnvRef) -> Result<Value, String> {
-        let parent = match &def.parent {
+        // 부모는 클래스일 수도, 일반 생성자(함수/네이티브/Array 같은 네임스페이스 객체)일
+        // 수도 있다 — 표준은 아무 생성자나 확장 가능(class E extends Error 가 대표).
+        let (parent, parent_ctor): (Option<Rc<JsClass>>, Option<Value>) = match &def.parent {
             Some(e) => match self.eval(e, env)? {
-                Value::Class(c) => Some(c),
+                Value::Class(c) => (Some(c), None),
+                v @ (Value::Fn(_) | Value::Native(_) | Value::Obj(_) | Value::Bound(_)) => {
+                    (None, Some(v))
+                }
                 other => return Err(format!("{} 은(는) 확장할 클래스가 아님", to_display(&other))),
             },
-            None => None,
+            None => (None, None),
         };
         let mk = |params: &Vec<String>, body: &Vec<Stmt>, is_generator: bool, is_async: bool| {
             Rc::new(JsFn {
@@ -3639,7 +3716,11 @@ impl Interp {
                 is_generator,
                 is_async,
                 this: None,
-                super_class: parent.clone(), // super.x → 이 클래스의 부모
+                // super.x → 이 클래스의 부모 (클래스 또는 일반 생성자)
+                super_class: parent
+                    .clone()
+                    .map(Value::Class)
+                    .or_else(|| parent_ctor.clone()),
                 props: RefCell::new(HashMap::new()),
             })
         };
@@ -3668,6 +3749,7 @@ impl Interp {
         let cls = Rc::new(JsClass {
             name: def.name.clone().unwrap_or_else(|| "(anonymous)".to_string()),
             parent,
+            parent_ctor,
             ctor,
             methods,
             getters,
@@ -3769,6 +3851,19 @@ impl Interp {
                         cur = c.parent.clone();
                     }
                     return Ok(Value::Bool(found));
+                }
+                // 클래스가 아닌 부모를 확장한 인스턴스: e instanceof Error 등.
+                // 클래스 체인의 parent_ctor 가 r 과 같은 생성자면 참.
+                if let Value::Instance(inst) = &l {
+                    let mut cur = Some(inst.class.clone());
+                    while let Some(c) = cur {
+                        if let Some(pc) = &c.parent_ctor {
+                            if strict_eq(pc, &r) {
+                                return Ok(Value::Bool(true));
+                            }
+                        }
+                        cur = c.parent.clone();
+                    }
                 }
                 // function 생성자: l 의 __proto__ 체인에 F.prototype 이 있으면 인스턴스.
                 if let (Value::Obj(lm), Value::Fn(func)) = (&l, &r) {
@@ -4213,6 +4308,49 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn class_extends_non_class_constructor() {
+        // class E extends Error — 커스텀 에러 클래스(아주 흔함). 예전엔 전부 깨졌다.
+        assert_eq!(
+            run_str(
+                "class E extends Error { constructor(m){ super(m); this.name='E'; } } \
+                 var e = new E('boom'); e.name + ':' + e.message"
+            ),
+            "E:boom",
+        );
+        assert!(run_bool("class E extends Error {} (new E('x')) instanceof E"));
+        assert!(run_bool("class E extends Error {} (new E('x')) instanceof Error"));
+        // 일반 함수 생성자 확장 — super() 가 this 를 채우고 prototype 메서드도 상속
+        assert_eq!(
+            run_str(
+                "function Base(x){ this.x = x; } \
+                 Base.prototype.hi = function(){ return 'hi' + this.x; }; \
+                 class D extends Base { constructor(){ super(5); } } \
+                 var d = new D(); d.x + '|' + d.hi()"
+            ),
+            "5|hi5",
+        );
+        assert!(run_bool(
+            "function B(){}; class D extends B {} (new D()) instanceof B"
+        ));
+        // 파생 클래스 자신의 메서드가 부모 prototype 보다 우선
+        assert_eq!(
+            run_str(
+                "function B(){}; B.prototype.who = function(){ return 'base'; }; \
+                 class D extends B { who(){ return 'derived'; } } (new D()).who()"
+            ),
+            "derived",
+        );
+        // super.method() — 부모 prototype 메서드 호출
+        assert_eq!(
+            run_str(
+                "function B(){}; B.prototype.who = function(){ return 'base'; }; \
+                 class D extends B { who(){ return 'd+' + super.who(); } } (new D()).who()"
+            ),
+            "d+base",
+        );
     }
 
     #[test]

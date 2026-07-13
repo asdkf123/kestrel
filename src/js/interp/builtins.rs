@@ -8,7 +8,7 @@ use std::rc::Rc;
 // UTF-8 바이트별 %XX. encodeURI 는 예약문자를 extra_safe 로 넘겨 보존한다.
 // 값의 own enumerable 프로퍼티 (키, 값) — Object.assign/스프레드의 소스 열거.
 // 엔진 내부 마커(__proto__/@@심볼 등)는 제외한다.
-fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
+pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
     match v {
         Value::Obj(m) => m
             .borrow()
@@ -51,7 +51,7 @@ fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
 }
 
 // 대상에 own 프로퍼티 설정 (Object.assign 의 대상 쓰기). frozen/sealed 는 존중.
-fn set_own_property(target: &Value, k: String, v: Value) {
+pub(super) fn set_own_property(target: &Value, k: String, v: Value) {
     match target {
         Value::Obj(m) => {
             let mut b = m.borrow_mut();
