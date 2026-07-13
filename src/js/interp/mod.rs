@@ -99,6 +99,8 @@ pub enum Value {
     Null,
     Bool(bool),
     Num(f64),
+    // BigInt (임의 정밀도 정수). Number 와 섞어 산술하면 TypeError (표준 §6.1.6.2).
+    BigInt(Rc<crate::js::bigint::BigInt>),
     Str(String),
     Obj(Rc<RefCell<ObjMap>>),
     // 배열은 항목 + own-property 맵을 가진 객체(표준). arr.push 재정의 등 지원.
@@ -419,6 +421,8 @@ pub enum Native {
     Blur,
     ActiveElement,
     LocationHref,
+    BigIntCtor,
+    BigIntToString,
     HistoryPushState,
     HistoryReplaceState,
     DomParserCtor,
@@ -640,6 +644,7 @@ impl std::fmt::Debug for Value {
             Value::Null => write!(f, "null"),
             Value::Bool(b) => write!(f, "{}", b),
             Value::Num(n) => write!(f, "{}", n),
+            Value::BigInt(b) => write!(f, "{}n", b),
             Value::Str(s) => write!(f, "{:?}", s),
             Value::Obj(_) => write!(f, "[object]"),
             Value::Arr(_) => write!(f, "[array]"),
@@ -1169,6 +1174,7 @@ impl Interp {
         json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
         env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
         // 전역 함수
+        env_declare(&global, "BigInt", Value::Native(Native::BigIntCtor));
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "encodeURI", Value::Native(Native::EncodeUri));
@@ -2760,6 +2766,9 @@ impl Interp {
         self.tick()?;
         match expr {
             Expr::Num(n) => Ok(Value::Num(*n)),
+            Expr::BigInt(d) => crate::js::bigint::BigInt::parse(d)
+                .map(|b| Value::BigInt(Rc::new(b)))
+                .ok_or_else(|| format!("잘못된 BigInt 리터럴: {}", d)),
             Expr::Str(s) => Ok(Value::Str(s.clone())),
             Expr::Bool(b) => Ok(Value::Bool(*b)),
             Expr::Null => Ok(Value::Null),
@@ -3016,6 +3025,25 @@ impl Interp {
                     return Ok(Value::Bool(true));
                 }
                 let v = self.eval(expr, env)?;
+                // BigInt 단항: -x 는 부호 반전, ~x 는 2의 보수, +x 는 TypeError (표준).
+                if let Value::BigInt(b) = &v {
+                    return match op {
+                        UnOp::Neg => Ok(Value::BigInt(Rc::new(b.negate()))),
+                        UnOp::BitNot => Ok(Value::BigInt(Rc::new(b.bitnot()))),
+                        UnOp::Pos => {
+                            let msg = "Cannot convert a BigInt value to a number".to_string();
+                            let mut e = ObjMap::new();
+                            e.insert("name".to_string(), Value::Str("TypeError".to_string()));
+                            e.insert("message".to_string(), Value::Str(msg.clone()));
+                            self.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
+                            Err(msg)
+                        }
+                        UnOp::Not => Ok(Value::Bool(b.is_zero())),
+                        UnOp::Typeof => Ok(Value::Str("bigint".to_string())),
+                        UnOp::Void => Ok(Value::Undefined),
+                        UnOp::Delete => Ok(Value::Bool(true)),
+                    };
+                }
                 Ok(match op {
                     // 단항 +/- 도 객체를 원시값으로 변환해야 한다 (ToNumber → ToPrimitive).
                     // 이항 연산만 변환하고 있어서 +obj 는 NaN 이었다.
@@ -4323,6 +4351,13 @@ impl Interp {
                 "toString" => Ok(Value::Native(Native::FnToString)),
                 _ => Ok(Value::Undefined),
             },
+            // BigInt 메서드: toString(radix) / toLocaleString / valueOf
+            Value::BigInt(_) => Ok(match key {
+                "toString" | "toLocaleString" => Value::Native(Native::BigIntToString),
+                "valueOf" => Value::Native(Native::ValueOfSelf),
+                "constructor" => Value::Native(Native::BigIntCtor),
+                _ => Value::Undefined,
+            }),
             // 숫자 메서드: (5).toFixed(2), n.toString(radix). 나머지는 Number.prototype 폴백.
             // 프로토타입에 얹힌 것이 먼저다 (표준: 메서드는 프로토타입에서 찾는다).
             // 예전엔 네이티브를 먼저 봐서, 페이지가 Number.prototype.toLocaleString 을
@@ -4924,6 +4959,78 @@ impl Interp {
         v
     }
 
+    // BigInt 연산 (표준 §6.1.6.2). 두 피연산자가 모두 BigInt 여야 산술이 된다 —
+    // Number 와 섞으면 TypeError (조용히 f64 로 떨어뜨리면 값이 틀린다).
+    // 비교(<,>,<=,>=,==)와 문자열 결합은 섞어도 된다.
+    fn bigint_binary(&mut self, op: BinOp, l: &Value, r: &Value) -> Option<Result<Value, String>> {
+        use crate::js::bigint::BigInt as BI;
+        let (lb, rb) = (matches!(l, Value::BigInt(_)), matches!(r, Value::BigInt(_)));
+        if !lb && !rb {
+            return None;
+        }
+        let big = |b: BI| Ok(Value::BigInt(Rc::new(b)));
+        let type_err = |me: &mut Self| -> Result<Value, String> {
+            let msg = "Cannot mix BigInt and other types, use explicit conversions".to_string();
+            let mut e = ObjMap::new();
+            e.insert("name".to_string(), Value::Str("TypeError".to_string()));
+            e.insert("message".to_string(), Value::Str(msg.clone()));
+            me.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
+            Err(msg)
+        };
+        // 문자열이 끼면 + 는 결합 (표준)
+        if matches!(op, BinOp::Add) && (matches!(l, Value::Str(_)) || matches!(r, Value::Str(_))) {
+            return Some(Ok(Value::Str(format!("{}{}", to_display(l), to_display(r)))));
+        }
+        // 비교는 섞어도 된다 (수치 비교). == 는 값 비교(1n == 1 은 true),
+        // === 는 타입이 달라 false (strict_eq 가 처리).
+        if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge | BinOp::EqEq | BinOp::NotEq) {
+            let (x, y) = (to_num(l), to_num(r));
+            let res = match op {
+                BinOp::Lt => x < y,
+                BinOp::Gt => x > y,
+                BinOp::Le => x <= y,
+                BinOp::Ge => x >= y,
+                BinOp::EqEq => x == y,
+                _ => x != y,
+            };
+            return Some(Ok(Value::Bool(res)));
+        }
+        // === / !== 는 타입까지 본다
+        if matches!(op, BinOp::EqEqEq | BinOp::NotEqEq) {
+            let eq = strict_eq(l, r);
+            return Some(Ok(Value::Bool(if matches!(op, BinOp::EqEqEq) { eq } else { !eq })));
+        }
+        // 산술/비트: 둘 다 BigInt 여야 한다
+        let (Value::BigInt(a), Value::BigInt(b)) = (l, r) else {
+            return Some(type_err(self));
+        };
+        let (a, b) = (a.clone(), b.clone());
+        Some(match op {
+            BinOp::Add => big(a.add(&b)),
+            BinOp::Sub => big(a.sub(&b)),
+            BinOp::Mul => big(a.mul(&b)),
+            BinOp::Div => match a.checked_divrem(&b) {
+                Some((q, _)) => big(q),
+                None => Err("RangeError: Division by zero".to_string()),
+            },
+            BinOp::Mod => match a.checked_divrem(&b) {
+                Some((_, r)) => big(r),
+                None => Err("RangeError: Division by zero".to_string()),
+            },
+            BinOp::Pow => match a.pow(&b) {
+                Some(p) => big(p),
+                None => Err("RangeError: Exponent must be non-negative".to_string()),
+            },
+            BinOp::BitAnd => big(a.bitand(&b)),
+            BinOp::BitOr => big(a.bitor(&b)),
+            BinOp::BitXor => big(a.bitxor(&b)),
+            BinOp::Shl => big(a.shl(&b)),
+            BinOp::Shr => big(a.shr(&b)),
+            BinOp::UShr => Err("TypeError: BigInts have no unsigned right shift".to_string()),
+            _ => Ok(Value::Undefined),
+        })
+    }
+
     fn binary(&mut self, op: BinOp, l: Value, r: Value) -> Result<Value, String> {
         // 산술/비교 연산: 객체 피연산자를 원시값으로 강제변환 (ToPrimitive). in/instanceof 제외.
         let (l, r) = if matches!(
@@ -4943,6 +5050,10 @@ impl Interp {
         } else {
             (l, r)
         };
+        // BigInt 가 끼면 별도 의미론 (혼합 산술은 TypeError)
+        if let Some(res) = self.bigint_binary(op, &l, &r) {
+            return res;
+        }
         Ok(match op {
             BinOp::Add => match (&l, &r) {
                 (Value::Str(_), _) | (_, Value::Str(_)) => {
@@ -7807,6 +7918,30 @@ mod tests {
     fn class_static_block_runs() {
         // ES2022 static 초기화 블록. 예전엔 파서가 여기서 죽어 **스크립트 전체**가 날아갔다.
         assert_eq!(run_num("class C { static x = 1; static { C.x = 4 } } C.x"), 4.0);
+    }
+
+    #[test]
+    fn bigint_is_exact_and_typed() {
+        // 예전엔 렉서가 n 접미를 버리고 f64 로 근사했다 — 2n**64n 이 조용히 틀렸다.
+        // 조용히 틀린 답은 미구현보다 나쁘다 (사이트는 typeof 로 탐지하고 정수 경로를 탄다).
+        assert_eq!(run_str("typeof 1n"), "bigint");
+        assert_eq!(run_str("(2n ** 64n).toString()"), "18446744073709551616");
+        assert_eq!(run_str("String(-7n / 2n)"), "-3", "절단 나눗셈");
+        assert_eq!(run_str("String(-7n % 2n)"), "-1", "나머지는 피제수 부호");
+        assert_eq!(run_str("String(-5n & 3n)"), "3", "2의 보수 비트연산");
+        assert_eq!(run_str("String(~5n)"), "-6");
+        assert_eq!(run_str("(255n).toString(16)"), "ff");
+        assert_eq!(run_str("String(BigInt('0x1f') + 1n)"), "32");
+        // 타입 규칙: === 는 타입까지, == 는 값
+        assert_eq!(run_str("String(1n === 1)"), "false");
+        assert_eq!(run_str("String(1n == 1)"), "true");
+        assert_eq!(run_str("String(2n > 1)"), "true", "비교는 혼합 허용");
+        // 혼합 산술은 TypeError (조용히 f64 로 떨어뜨리면 값이 틀린다)
+        assert_eq!(run_str("try { 1n + 1 } catch (e) { 'TypeError' }"), "TypeError");
+        assert_eq!(run_str("try { +1n } catch (e) { 'TypeError' }"), "TypeError");
+        // 문자열 결합은 허용
+        assert_eq!(run_str("'x' + 1n"), "x1");
+        assert_eq!(run_str("try { 1n / 0n } catch (e) { 'RangeError' }"), "RangeError");
     }
 
     #[test]

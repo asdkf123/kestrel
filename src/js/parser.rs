@@ -1538,6 +1538,7 @@ impl Parser {
     fn primary(&mut self) -> Result<Expr, String> {
         match self.next()? {
             Tok::Num(n) => Ok(Expr::Num(n)),
+            Tok::BigInt(d) => Ok(Expr::BigInt(d)),
             Tok::Str(s) => Ok(Expr::Str(s)),
             Tok::Regex(source, flags) => Ok(Expr::Regex { source, flags }),
             Tok::Template(parts) => {

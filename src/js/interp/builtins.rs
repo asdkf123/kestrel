@@ -346,6 +346,9 @@ impl Interp {
                 close
             )
         };
+        if let Value::BigInt(_) = v {
+            return Err("BigInt 는 JSON 으로 직렬화할 수 없음".to_string());
+        }
         Ok(match v {
             Value::Undefined
             | Value::Fn(_)
@@ -362,6 +365,7 @@ impl Interp {
             | Value::Gen(_)
             | Value::Symbol(_)
             | Value::ComputedStyle(_) => None,
+            | Value::BigInt(_) => None, // 위에서 TypeError 로 처리됨
             Value::Null => Some("null".to_string()),
             Value::Bool(b) => Some(b.to_string()),
             Value::Num(n) => Some(json_num(*n)),
@@ -1453,6 +1457,36 @@ impl Interp {
                 Some(v) => self.member_get(&v, "href")?,
                 None => Value::Str(String::new()),
             }),
+            // BigInt(x): 문자열/불리언/정수 Number → BigInt. 소수면 RangeError (표준).
+            Native::BigIntCtor => {
+                use crate::js::bigint::BigInt as BI;
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                let b = match &v {
+                    Value::BigInt(b) => Some((**b).clone()),
+                    Value::Num(n) => BI::from_f64(*n),
+                    Value::Bool(b) => Some(BI::from_i64(if *b { 1 } else { 0 })),
+                    Value::Str(s) => BI::parse(s),
+                    _ => None,
+                };
+                match b {
+                    Some(b) => Ok(Value::BigInt(Rc::new(b))),
+                    None => Err(format!(
+                        "RangeError: {} 은(는) BigInt 로 변환할 수 없음",
+                        to_display(&v)
+                    )),
+                }
+            }
+            // BigInt.prototype.toString(radix)
+            Native::BigIntToString => {
+                let radix = match args.first() {
+                    Some(Value::Num(n)) if (2.0..=36.0).contains(n) => *n as u32,
+                    _ => 10,
+                };
+                match recv {
+                    Some(Value::BigInt(b)) => Ok(Value::Str(b.to_string_radix(radix))),
+                    _ => Ok(Value::Str("0".to_string())),
+                }
+            }
             Native::ActiveElement => Ok(match self.active_element {
                 Some(id) => Value::Dom(id),
                 None => self.call_native(Native::DocQuery("body"), None, vec![])?,

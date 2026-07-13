@@ -16,6 +16,8 @@ pub enum Expr {
     // is_generator: function* — 호출 시 본문을 즉시 실행해 yield 값을 모아 반복자 반환(eager)
     // name: 명명 함수식 이름 (재귀용 자기 참조). 익명/화살표는 None.
     Func { name: Option<String>, params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool },
+    // BigInt 리터럴 (소스 그대로 — 평가 시 정확히 파싱)
+    BigInt(String),
     // yield [*] expr — 제너레이터 본문에서 값을 산출. star 면 iterable 을 위임 전개.
     Yield { star: bool, arg: Option<Box<Expr>> },
     // ...expr — 스프레드. 배열/호출 인자/객체 리터럴에서 전개.

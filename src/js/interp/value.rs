@@ -55,6 +55,7 @@ pub(super) fn to_bool(v: &Value) -> bool {
         Value::Undefined | Value::Null => false,
         Value::Bool(b) => *b,
         Value::Num(n) => *n != 0.0 && !n.is_nan(),
+        Value::BigInt(b) => !b.is_zero(),
         Value::Str(s) => !s.is_empty(),
         _ => true,
     }
@@ -81,6 +82,7 @@ pub(super) fn to_num(v: &Value) -> f64 {
             }
         }
         Value::Num(n) => *n,
+        Value::BigInt(b) => b.to_f64(),
         Value::Str(s) => {
             let t = s.trim();
             if t.is_empty() {
@@ -533,6 +535,8 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Num(n) => num_to_str(*n),
+        // String(1n) === "1" (n 접미 없음)
+        Value::BigInt(b) => b.to_string(),
         Value::Str(s) => s.clone(),
         Value::Obj(_) => "[object Object]".to_string(),
         Value::Arr(a) => {
@@ -566,6 +570,7 @@ pub(super) fn type_of(v: &Value) -> &'static str {
         Value::Null => "object", // JS 의 유명한 typeof null
         Value::Bool(_) => "boolean",
         Value::Num(_) => "number",
+        Value::BigInt(_) => "bigint",
         Value::Str(_) => "string",
         Value::Symbol(_) => "symbol",
         // Symbol 생성자만 함수, 다른 Native 도 함수.
@@ -656,6 +661,8 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Undefined, Value::Undefined) | (Value::Null, Value::Null) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Num(x), Value::Num(y)) => x == y,
+        // 1n === 1 은 false (타입이 다르다). 1n === 1n 은 값 비교.
+        (Value::BigInt(x), Value::BigInt(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::Obj(x), Value::Obj(y)) => Rc::ptr_eq(x, y),
         (Value::Arr(x), Value::Arr(y)) => Rc::ptr_eq(x, y),
@@ -903,6 +910,10 @@ fn json_stringify_d(v: &Value, path: &mut Vec<usize>) -> Result<Option<String>, 
 }
 
 fn json_stringify_body(v: &Value, path: &mut Vec<usize>) -> Result<Option<String>, String> {
+    // BigInt 는 JSON 으로 직렬화할 수 없다 (표준: TypeError)
+    if let Value::BigInt(_) = v {
+        return Err("BigInt 는 JSON 으로 직렬화할 수 없음".to_string());
+    }
     Ok(match v {
         Value::Undefined
         | Value::Fn(_)
@@ -919,6 +930,7 @@ fn json_stringify_body(v: &Value, path: &mut Vec<usize>) -> Result<Option<String
         | Value::Gen(_)
         | Value::Symbol(_)
         | Value::ComputedStyle(_) => None,
+        | Value::BigInt(_) => None, // 위에서 TypeError 로 처리됨
         // 인스턴스는 필드를 일반 객체처럼 직렬화
         Value::Instance(inst) => {
             let m = inst.fields.borrow();

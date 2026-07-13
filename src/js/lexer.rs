@@ -29,6 +29,9 @@ pub enum TplPart {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Num(f64),
+    // BigInt 리터럴 (123n). 문자열로 보존해 정확히 파싱한다 — f64 로 근사하면
+    // 2n**64n 같은 값이 조용히 틀린다.
+    BigInt(String),
     Str(String),
     Ident(String),
     Template(Vec<TplPart>),
@@ -253,6 +256,7 @@ fn regex_can_start(prev: Option<&Tok>) -> bool {
         prev,
         Some(
             Tok::Num(_)
+            | Tok::BigInt(_)
                 | Tok::Str(_)
                 | Tok::Ident(_)
                 | Tok::Template(_)
@@ -397,11 +401,18 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                     }
                     // 숫자 구분자 _ 제거 (0xff_ff 등)
                     let s: String = b[start..j].iter().filter(|&&ch| ch != '_').collect();
-                    let v = u64::from_str_radix(&s, radix).map_err(|e| e.to_string())?;
                     i = j;
                     if i < b.len() && b[i] == 'n' {
-                        i += 1; // BigInt 접미 — f64 로 근사
+                        i += 1;
+                        let prefix = match radix {
+                            16 => "0x",
+                            2 => "0b",
+                            _ => "0o",
+                        };
+                        out.push(Tok::BigInt(format!("{}{}", prefix, s)));
+                        continue;
                     }
+                    let v = u64::from_str_radix(&s, radix).map_err(|e| e.to_string())?;
                     out.push(Tok::Num(v as f64));
                     continue;
                 }
@@ -419,10 +430,12 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
             lex_exponent(&b, &mut i);
             // 숫자 구분자 _ 제거 (1_000_000 등)
             let s: String = b[start..i].iter().filter(|&&ch| ch != '_').collect();
-            let v = s.parse::<f64>().map_err(|e| e.to_string())?;
             if i < b.len() && b[i] == 'n' {
-                i += 1; // BigInt 접미
+                i += 1; // BigInt 리터럴: 자릿수 그대로 보존
+                out.push(Tok::BigInt(s));
+                continue;
             }
+            let v = s.parse::<f64>().map_err(|e| e.to_string())?;
             out.push(Tok::Num(v));
             continue;
         }
