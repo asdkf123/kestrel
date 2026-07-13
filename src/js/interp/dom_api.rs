@@ -77,12 +77,10 @@ impl Interp {
 
     pub(super) fn set_style_attr(&mut self, id: crate::dom::NodeId, value: String) {
         if let Ok(dom) = self.dom_arena() {
-            if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
-                if value.is_empty() {
-                    e.attributes.remove("style");
-                } else {
-                    e.attributes.insert("style".to_string(), value);
-                }
+            if value.is_empty() {
+                dom.remove_attr(id, "style");
+            } else {
+                dom.set_attr(id, "style", value);
             }
         }
     }
@@ -125,12 +123,10 @@ impl Interp {
     pub(super) fn set_class_tokens(&mut self, id: crate::dom::NodeId, tokens: Vec<String>) {
         let joined = tokens.join(" ");
         if let Ok(dom) = self.dom_arena() {
-            if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
-                if joined.is_empty() {
-                    e.attributes.remove("class");
-                } else {
-                    e.attributes.insert("class".to_string(), joined);
-                }
+            if joined.is_empty() {
+                dom.remove_attr(id, "class");
+            } else {
+                dom.set_attr(id, "class", joined);
             }
         }
     }
@@ -339,17 +335,13 @@ impl Interp {
                 Ok(())
             }
             "value" => {
-                if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
-                    e.attributes.insert("value".to_string(), text);
-                }
+                dom.set_attr(id, "value", text);
                 Ok(())
             }
             // className/id 는 대응 속성으로 (스타일 매칭이 읽음)
             "className" | "id" => {
                 let attr = if key == "className" { "class" } else { "id" };
-                if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
-                    e.attributes.insert(attr.to_string(), text);
-                }
+                dom.set_attr(id, attr, text);
                 Ok(())
             }
             _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)

@@ -237,7 +237,46 @@ __kResizeObserver.prototype._deliver = function(els){
   if (entries.length && this._cb) this._cb(entries, this);
 };
 
-var MutationObserver = window.MutationObserver; if (!MutationObserver) { MutationObserver = __kObs; window.MutationObserver = MutationObserver; }
+// MutationObserver — 진짜 변형 기록을 배달한다. 예전엔 무동작 스텁이라 콜백이 영영
+// 오지 않았다("요소가 나타나면 처리" 패턴이 통째로 죽는다). 엔진(DOM 아레나)이 childList/
+// attributes/characterData 기록을 쌓고, 첫 기록에서 마이크로태스크가 한 번 예약된다.
+var __kMutObs = [];
+function __kMutationObserver(cb) { this._cb = cb; this._regs = []; this._q = []; __kMutObs.push(this); }
+__kMutationObserver.prototype.observe = function(target, opts) {
+  if (!target) return;
+  var o = opts || {};
+  if (!o.childList && !o.attributes && !o.characterData) o.childList = true; // 기본
+  this._regs.push({ t: target, o: o });
+};
+__kMutationObserver.prototype.disconnect = function(){ this._regs = []; this._q = []; };
+__kMutationObserver.prototype.takeRecords = function(){ var r = this._q; this._q = []; return r; };
+__kMutationObserver.prototype._match = function(rec) {
+  for (var i = 0; i < this._regs.length; i++) {
+    var reg = this._regs[i], o = reg.o;
+    var same = reg.t === rec.target;
+    var inSub = o.subtree && reg.t && reg.t.contains && reg.t.contains(rec.target);
+    if (!same && !inSub) continue;
+    if (rec.type === 'childList' && !o.childList) continue;
+    if (rec.type === 'attributes') {
+      if (!o.attributes && !o.attributeFilter) continue;
+      if (o.attributeFilter && o.attributeFilter.indexOf(rec.attributeName) < 0) continue;
+    }
+    if (rec.type === 'characterData' && !o.characterData) continue;
+    return true;
+  }
+  return false;
+};
+// 엔진이 마이크로태스크로 부른다.
+function __kMutationNotify() {
+  var recs = __kTakeMutations();
+  if (!recs || !recs.length) return;
+  for (var i = 0; i < __kMutObs.length; i++) {
+    var ob = __kMutObs[i], out = [];
+    for (var j = 0; j < recs.length; j++) if (ob._match(recs[j])) out.push(recs[j]);
+    if (out.length && ob._cb) ob._cb(out, ob);
+  }
+}
+var MutationObserver = window.MutationObserver; if (!MutationObserver) { MutationObserver = __kMutationObserver; window.MutationObserver = MutationObserver; }
 var IntersectionObserver = window.IntersectionObserver; if (!IntersectionObserver) { IntersectionObserver = __kIntersectionObserver; window.IntersectionObserver = IntersectionObserver; }
 var ResizeObserver = window.ResizeObserver; if (!ResizeObserver) { ResizeObserver = __kResizeObserver; window.ResizeObserver = ResizeObserver; }
 var PerformanceObserver = window.PerformanceObserver; if (!PerformanceObserver) { PerformanceObserver = __kObs; window.PerformanceObserver = PerformanceObserver; }

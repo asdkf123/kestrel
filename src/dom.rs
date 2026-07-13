@@ -60,10 +60,24 @@ pub struct NodeData {
     pub node_type: NodeType,
 }
 
+// MutationObserver 로 배달할 변형 기록. 표준에서도 "mutation record 를 큐에 넣는" 일은
+// DOM 연산의 일부다 — 그래서 JS 층이 아니라 여기(아레나)에서 기록한다.
+#[derive(Debug, Clone)]
+pub struct DomMut {
+    pub target: NodeId,
+    pub kind: &'static str, // childList / attributes / characterData
+    pub attr: Option<String>,
+    pub added: Vec<NodeId>,
+    pub removed: Vec<NodeId>,
+}
+
 #[derive(Debug)]
 pub struct Dom {
     nodes: Vec<NodeData>,
     pub root: NodeId,
+    // 아직 배달하지 않은 변형 기록. 파싱(from_tree/insert_tree)은 기록하지 않는다 —
+    // 그 시점엔 옵저버가 존재할 수 없다.
+    pub records: Vec<DomMut>,
     // 변형 카운터. 스타일/레이아웃 캐시가 자신이 본 버전과 비교해 재계산 여부를 정한다.
     // (JS 가 측정 API 를 읽을 때 강제 레이아웃을 흘려야 하는지 판정 — CSSOM View)
     version: u64,
@@ -79,7 +93,7 @@ impl Dom {
     }
 
     pub fn from_tree(tree: Node) -> Dom {
-        let mut dom = Dom { nodes: Vec::new(), root: 0, version: 0 };
+        let mut dom = Dom { nodes: Vec::new(), root: 0, version: 0, records: Vec::new() };
         let root = dom.insert_tree(tree, None);
         dom.root = root;
         dom
@@ -157,15 +171,17 @@ impl Dom {
         if parent == child || self.ancestors(parent).contains(&child) {
             return;
         }
-        self.detach(child);
+        self.detach(child); // 기존 부모에서의 제거도 기록된다
         self.nodes[child].parent = Some(parent);
         self.nodes[parent].children.push(child);
+        self.record(parent, "childList", None, vec![child], Vec::new());
     }
 
     pub fn detach(&mut self, id: NodeId) {
         self.touch();
         if let Some(p) = self.nodes[id].parent.take() {
             self.nodes[p].children.retain(|&c| c != id);
+            self.record(p, "childList", None, Vec::new(), vec![id]);
         }
     }
 
@@ -183,6 +199,7 @@ impl Dom {
             Some(idx) => self.nodes[parent].children.insert(idx, child),
             None => self.nodes[parent].children.push(child),
         }
+        self.record(parent, "childList", None, vec![child], Vec::new());
     }
 
     // 부모 → 루트 순 조상 체인
@@ -225,17 +242,62 @@ impl Dom {
 
     // 자식들을 텍스트 노드 하나로 교체
     pub fn set_text_content(&mut self, id: NodeId, text: String) {
+        // 텍스트 노드 자체면 characterData, 요소면 자식 교체(childList)
+        if let NodeType::Text(t) = &mut self.nodes[id].node_type {
+            *t = text;
+            self.touch();
+            self.record(id, "characterData", None, Vec::new(), Vec::new());
+            return;
+        }
         self.clear_children(id);
         let t = self.create_text(text);
         self.nodes[t].parent = Some(id);
         self.nodes[id].children.push(t);
+        self.record(id, "childList", None, vec![t], Vec::new());
     }
 
     pub fn clear_children(&mut self, id: NodeId) {
+        self.touch();
         let old: Vec<NodeId> = std::mem::take(&mut self.nodes[id].children);
-        for c in old {
+        for &c in &old {
             self.nodes[c].parent = None; // 고아로 방치 (아레나 재사용 없음)
         }
+        if !old.is_empty() {
+            self.record(id, "childList", None, Vec::new(), old);
+        }
+    }
+
+    // 속성 쓰기의 유일한 통로. 여기로 모아야 attributes 기록에 누락이 없다.
+    pub fn set_attr(&mut self, id: NodeId, name: &str, value: String) {
+        self.touch();
+        if let NodeType::Element(e) = &mut self.nodes[id].node_type {
+            e.attributes.insert(name.to_string(), value);
+            self.record(id, "attributes", Some(name.to_string()), Vec::new(), Vec::new());
+        }
+    }
+
+    pub fn remove_attr(&mut self, id: NodeId, name: &str) {
+        self.touch();
+        if let NodeType::Element(e) = &mut self.nodes[id].node_type {
+            e.attributes.remove(name);
+            self.record(id, "attributes", Some(name.to_string()), Vec::new(), Vec::new());
+        }
+    }
+
+    fn record(
+        &mut self,
+        target: NodeId,
+        kind: &'static str,
+        attr: Option<String>,
+        added: Vec<NodeId>,
+        removed: Vec<NodeId>,
+    ) {
+        self.records.push(DomMut { target, kind, attr, added, removed });
+    }
+
+    // 배달용으로 기록을 비우며 가져간다.
+    pub fn take_records(&mut self) -> Vec<DomMut> {
+        std::mem::take(&mut self.records)
     }
 }
 

@@ -380,6 +380,7 @@ pub enum Native {
     RemoveEventListener,
     RemoveGlobalListener,
     DispatchGlobalEvent,
+    TakeMutations,
     EventCtor,
     CloneNode,
     Matches,
@@ -847,6 +848,8 @@ pub struct Interp {
     pub dom: Option<*mut crate::dom::Dom>,
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     pub handlers: Vec<(crate::dom::NodeId, String, Value)>,
+    // MutationObserver 배달을 이미 예약했는가 (마이크로태스크 중복 예약 방지)
+    mutation_scheduled: bool,
     // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
     // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
     pub layout_ctx: Option<crate::window::LayoutCtx>,
@@ -1078,6 +1081,8 @@ impl Interp {
         // matches:false 를 돌려줘서, CSS 는 데스크톱 규칙을 적용하는데 JS 는 모바일로
         // 분기하는 자기모순이 있었다.
         env_declare(&global, "matchMedia", Value::Native(Native::MatchMedia));
+        // 프렐류드의 MutationObserver 가 쌓인 변형 기록을 가져가는 통로
+        env_declare(&global, "__kTakeMutations", Value::Native(Native::TakeMutations));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();
         object_ns.insert("keys".to_string(), Value::Native(Native::ObjectKeys));
@@ -1443,6 +1448,7 @@ impl Interp {
             steps: 0,
             dom: None,
             handlers: Vec::new(),
+            mutation_scheduled: false,
             layout_ctx: None,
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
@@ -3137,6 +3143,27 @@ impl Interp {
     // 항상 0/빈 문자열이었다. 측정 후 배치하는 코드가 전부 조용히 어긋났다.
     pub(super) fn ensure_layout(&mut self) {
         crate::window::flush_layout(self);
+    }
+
+    // DOM 변형 기록이 쌓여 있으면 배달 마이크로태스크를 한 번 예약한다.
+    // 표준도 동기 콜백이 아니라 마이크로태스크로 모아서 전달한다.
+    pub(super) fn schedule_mutation_delivery(&mut self) {
+        if self.mutation_scheduled {
+            return;
+        }
+        let has = match self.dom {
+            Some(p) => !unsafe { &*p }.records.is_empty(),
+            None => false,
+        };
+        if !has {
+            return;
+        }
+        // 프렐류드가 설치한 배달 함수. 옵저버를 안 쓰는 페이지면 없을 수도 있다.
+        let Some(notify) = env_get(&self.global, "__kMutationNotify") else { return };
+        if is_callable(&notify) {
+            self.mutation_scheduled = true;
+            self.microtasks.push_back((notify, Value::Undefined, Value::Undefined, false));
+        }
     }
 
     // 현재 뷰포트(px). 강제 레이아웃 컨텍스트가 있으면 실제 값, 없으면 기본 창 크기.

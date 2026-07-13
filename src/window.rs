@@ -956,6 +956,36 @@ mod tests {
     }
 
     #[test]
+    fn mutation_observer_delivers_records() {
+        // 예전엔 무동작 스텁 — "요소가 나타나면 처리" 패턴이 통째로 죽었다.
+        // 이제 DOM 아레나가 childList/attributes 기록을 쌓고 마이크로태스크로 배달한다.
+        let mut page = make_page(
+            "<div id=\"root\"><span id=\"s\">x</span></div><p id=\"out\"></p>\
+             <script>\
+             var added = 0, attrs = [];\
+             var mo = new MutationObserver(function(recs){\
+               recs.forEach(function(r){\
+                 if (r.type === 'childList') added += r.addedNodes.length;\
+                 if (r.type === 'attributes') attrs.push(r.attributeName);\
+               });\
+               document.getElementById('out').textContent = added + '|' + attrs.join(',');\
+             });\
+             mo.observe(document.getElementById('root'), \
+                        { childList: true, attributes: true, subtree: true });\
+             document.getElementById('root').appendChild(document.createElement('div'));\
+             document.getElementById('s').setAttribute('data-x', '1');\
+             document.getElementById('s').className = 'c';\
+             </script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(
+            text_of_id(&page.dom, "out").unwrap(),
+            "1|data-x,class",
+            "추가된 노드 1개 + 속성 변경 2건이 배달된다"
+        );
+    }
+
+    #[test]
     fn resize_observer_delivers_initial_size() {
         // 표준: observe() 하면 현재 크기로 초기 관측이 1회 전달된다.
         let mut page = make_page(

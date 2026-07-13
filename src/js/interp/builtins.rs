@@ -562,7 +562,20 @@ impl Interp {
         make_date(millis)
     }
 
+    // 네이티브 호출의 유일한 관문. DOM 을 바꾼 호출이면 여기서 MutationObserver
+    // 배달을 한 번 예약한다 (호출부마다 예약하면 반드시 빠뜨린다).
     pub(super) fn call_native(
+        &mut self,
+        n: Native,
+        recv: Option<Value>,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let r = self.call_native_inner(n, recv, args);
+        self.schedule_mutation_delivery();
+        r
+    }
+
+    fn call_native_inner(
         &mut self,
         n: Native,
         recv: Option<Value>,
@@ -1074,6 +1087,36 @@ impl Interp {
             }
             // getComputedStyle(el) → 계산 스타일 뷰.
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
+            // 프렐류드의 MutationObserver 배달 함수가 호출한다. 쌓인 DOM 변형 기록을
+            // JS MutationRecord 배열로 만들어 넘기고 큐를 비운다.
+            Native::TakeMutations => {
+                self.mutation_scheduled = false;
+                let recs = match self.dom {
+                    Some(p) => unsafe { (*p).take_records() },
+                    None => Vec::new(),
+                };
+                let mut out = Vec::with_capacity(recs.len());
+                for r in recs {
+                    let mut m = ObjMap::new();
+                    m.insert("type".to_string(), Value::Str(r.kind.to_string()));
+                    m.insert("target".to_string(), Value::Dom(r.target));
+                    m.insert(
+                        "attributeName".to_string(),
+                        r.attr.map(Value::Str).unwrap_or(Value::Null),
+                    );
+                    m.insert("oldValue".to_string(), Value::Null);
+                    m.insert(
+                        "addedNodes".to_string(),
+                        Value::Arr(ArrayObj::new(r.added.into_iter().map(Value::Dom).collect())),
+                    );
+                    m.insert(
+                        "removedNodes".to_string(),
+                        Value::Arr(ArrayObj::new(r.removed.into_iter().map(Value::Dom).collect())),
+                    );
+                    out.push(Value::Obj(Rc::new(RefCell::new(m))));
+                }
+                Ok(Value::Arr(ArrayObj::new(out)))
+            }
             // window.matchMedia(query) — CSS @media 와 동일한 평가기로 실제 판정한다.
             // 정적 렌더에는 뷰포트 변화가 없으므로 change 리스너는 발화하지 않는다(정직).
             Native::MatchMedia => {
@@ -1787,9 +1830,7 @@ impl Interp {
                 if let Some(Value::Dom(id)) = recv {
                     let name = args.first().map(to_display).unwrap_or_default();
                     let dom = self.dom_arena()?;
-                    if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
-                        e.attributes.remove(&name);
-                    }
+                    dom.remove_attr(id, &name);
                 }
                 Ok(Value::Undefined)
             }
@@ -1818,9 +1859,7 @@ impl Interp {
                     let name = args.first().map(to_display).unwrap_or_default();
                     let value = args.get(1).map(to_display).unwrap_or_default();
                     let dom = self.dom_arena()?;
-                    if let crate::dom::NodeType::Element(e) = &mut dom.get_mut(id).node_type {
-                        e.attributes.insert(name, value);
-                    }
+                    dom.set_attr(id, &name, value);
                     Ok(Value::Undefined)
                 }
                 _ => Err("setAttribute 는 요소 메서드".to_string()),
