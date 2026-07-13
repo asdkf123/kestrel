@@ -262,8 +262,29 @@ epsilon fudge, 곡선 고정분할, accent-color, 등.
 - [x] **CSSOM 값 직렬화** — el.style.color 를 원문 그대로 돌려줬다 (정규화 안 함). (0c0286e)
 - [x] **window.getSelection 없음** — typeof 검사 후 부르는 코드가 죽었다. (0c0286e)
 
+### 2026-07 3라운드 (fmkorea / naver 를 열어 추적)
+
+- [x] **document.write 없음** (HTML §8.4.3) — 국내 포털·광고 스크립트가 통째로 죽었다. (08d7402)
+- [x] **배열 콜백에 배열(3번째 인자)·thisArg 를 안 넘김** — a[i-1] 관용구가 죽는다
+      (IntersectionObserver 폴리필). (08d7402)
+- [x] **CSS url() 을 문서 URL 기준으로 해석** — 표준은 스타일시트 URL 기준. 배경이 404. (08d7402)
+- [x] **background 단축의 슬래시 정규화가 url() 안 경로까지 벌림** → HTTP 400. (08d7402)
+- [x] **모르는 charset 을 조용히 UTF-8 로** — WHATWG 단일바이트 26종 기계 추출로 구현. (08d7402)
+- [x] **정적 setter 를 저장만 하고 호출 안 함** — Class.prop = v 가 검증을 우회. (08d7402)
+- [x] **쿠키 없음** — document.cookie 가 빈 문자열 상수. HTTP 항아리 + Set-Cookie/Cookie 헤더. (0892b43)
+- [x] **JS 내비게이션 무시** — location.href = "…" 가 문자열 대입. meta refresh 도. (0892b43)
+- [x] **Date 에 setter 가 하나도 없음** — 쿠키 만료 계산이 죽는다. (0892b43)
+- [x] **escape/unescape 없음** (Annex B). (0892b43)
+- [x] **투명 webp 를 불투명하게 그림** — ALPH 무손실 알파를 못 읽어 알파를 버렸다.
+      VP8L 디코더 구현, 참조 디코더와 **비트 정확** 일치. (8800888)
+- [x] **이벤트 캡처 플래그를 통째로 버림** — 캡처 리스너가 타깃보다 늦게 불렸다. (9331787)
+- [x] **이벤트 init 딕셔너리에서 detail/bubbles 만 베낌** — KeyboardEvent.key 가 사라진다. (9331787)
+- [x] **getOwnPropertyDescriptor 가 폴리필** — 게터의 get 이 없고 enumerable 이 항상 true. (1cae077)
+- [x] **defineProperty 의 enumerable 무시** — 숨긴 프로퍼티가 keys/for-in/JSON 에 샌다. (1cae077)
+
 ### 남은 것 (정직하게)
-- [ ] WebP 무손실(VP8L) + 무손실 알파(ALPH method 1) — 투명 webp 는 불투명하게 나온다
+- [ ] **WebAssembly** — fmkorea 의 봇 차단이 wasm 모듈로 챌린지를 푼다. 이게 없으면
+      그런 사이트는 영영 못 본다. 다음 큰 과제.
 - [ ] AVIF
 - [ ] 3D transform (perspective/rotate3d) — @supports 는 거짓으로 답한다 (거짓말은 안 함)
 - [ ] 임포트 맵의 scopes
