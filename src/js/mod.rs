@@ -39,7 +39,11 @@ pub fn run_scripts_with_base(
     let base = crate::url::Url::parse(base_url).ok();
     let mut sources = Vec::new();
     collect_scripts(dom, dom.root, base.as_ref(), &mut sources);
-    if sources.is_empty() {
+    // 모듈 스크립트도 확인한다 — 클래식 스크립트가 없어도 모듈만 있는 페이지가 있다
+    // (예전엔 여기서 일찍 반환해 모듈이 통째로 안 돌았다).
+    let mut modules: Vec<(String, Option<String>)> = Vec::new();
+    collect_modules(dom, dom.root, base.as_ref(), &mut modules);
+    if sources.is_empty() && modules.is_empty() {
         return it;
     }
     // 폴리필 프렐류드(Symbol, Object.entries, 옵저버 스텁 등) — 표준 전역을 채운다.
@@ -57,6 +61,24 @@ pub fn run_scripts_with_base(
             println!("[console] {}", line);
         }
     }
+    // ── ES 모듈 (type=module) ──
+    // 클래식 스크립트가 끝난 뒤 실행한다 (모듈은 defer 의미론).
+    if !modules.is_empty() {
+        for (url, inline) in &modules {
+            load_module_graph(&mut it, url, inline.clone(), 0);
+        }
+        println!("[module] {}개 진입점, 그래프 {}개 모듈", modules.len(), it.module_sources.len());
+        for (url, _) in &modules {
+            if let Err(e) = it.run_module(url) {
+                println!("[js error] 모듈 {} — {}", url, e);
+            }
+            it.drain_microtasks();
+            for line in it.console.drain(..) {
+                println!("[console] {}", line);
+            }
+        }
+    }
+
     // 모든 스크립트 실행 후 문서/윈도우 이벤트 발화: 프레임워크가 여기서
     // 콘텐츠를 구성한다(DOMContentLoaded → load 순). dom 포인터는 아직 유효.
     if std::env::var("KESTREL_JS_DEBUG").is_ok() {
@@ -89,6 +111,122 @@ pub fn run_scripts_with_base(
 // 상한: 외부 스크립트 네트워크 요청 폭주 방지 (실사이트는 수십 개까지 흔함).
 const MAX_EXTERNAL_SCRIPTS: usize = 30;
 
+// <script type="module"> 수집: (모듈 URL, 소스). 인라인 모듈은 합성 URL 을 준다.
+fn collect_modules(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    base: Option<&crate::url::Url>,
+    out: &mut Vec<(String, Option<String>)>,
+) {
+    let node = dom.get(id);
+    if let crate::dom::NodeType::Element(e) = &node.node_type {
+        if e.tag_name == "noscript" {
+            return;
+        }
+        if e.tag_name == "script" {
+            let ty = e
+                .attributes
+                .get("type")
+                .map(|s| s.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if ty == "module" {
+                match e.attributes.get("src").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    Some(href) => {
+                        if let Some(b) = base {
+                            if let Some(u) = b.join(href) {
+                                out.push((u.as_string(), None));
+                            }
+                        }
+                    }
+                    None => {
+                        let text = dom.text_content(id);
+                        if !text.trim().is_empty() {
+                            // 인라인 모듈: 문서 URL 기준으로 상대 import 를 풀 수 있게
+                            // 문서 URL + 프래그먼트를 합성 식별자로 쓴다.
+                            let u = base
+                                .map(|b| b.as_string())
+                                .unwrap_or_else(|| "about:inline".to_string());
+                            out.push((format!("{}#inline-module-{}", u, out.len()), Some(text)));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for &c in &node.children {
+        collect_modules(dom, c, base, out);
+    }
+}
+
+// 모듈 그래프를 내려받아 인터프리터의 소스 맵에 채운다 (의존 → 나중).
+// 인터프리터는 네트워크를 모른다 — 여기서 다 받아 넣는다.
+fn load_module_graph(it: &mut interp::Interp, url: &str, inline: Option<String>, depth: u32) {
+    if depth > 16 || it.module_sources.contains_key(url) {
+        return;
+    }
+    let src = match inline {
+        Some(s) => s,
+        None => match crate::http::fetch(url) {
+            Ok(r) if (200..300).contains(&r.status) => {
+                String::from_utf8_lossy(&r.body).into_owned()
+            }
+            Ok(r) => {
+                println!("[module] HTTP {} — {}", r.status, url);
+                return;
+            }
+            Err(e) => {
+                println!("[module] 로드 실패 {:?} — {}", e, url);
+                return;
+            }
+        },
+    };
+    it.module_sources.insert(url.to_string(), src.clone());
+    // 의존 모듈(정적 import / re-export)을 찾아 재귀로 받는다
+    let Ok(body) = crate::js::parser::parse(&src) else {
+        println!("[module] 파싱 실패 — {}", url);
+        return;
+    };
+    let mut deps: Vec<String> = Vec::new();
+    for st in &body {
+        match st {
+            crate::js::ast::Stmt::Import { source, .. } => deps.push(source.clone()),
+            crate::js::ast::Stmt::ExportAll { source } => deps.push(source.clone()),
+            crate::js::ast::Stmt::ExportNamed { source: Some(s), .. } => deps.push(s.clone()),
+            _ => {}
+        }
+    }
+    // 동적 import('...') 의 문자열 리터럴도 미리 받아 둔다 (인터프리터는 네트워크를 모른다).
+    // 표현식으로 계산되는 명세자는 미리 알 수 없다 — 그건 실행 시 명확한 이유로 거부된다.
+    let bytes = src.as_bytes();
+    let mut i = 0usize;
+    while let Some(pos) = src[i..].find("import(") {
+        let start = i + pos + "import(".len();
+        i = start;
+        let rest = &src[start..];
+        let rest_t = rest.trim_start();
+        let skipped = rest.len() - rest_t.len();
+        let quote = rest_t.chars().next();
+        if let Some(q @ ('"' | '\'')) = quote {
+            if let Some(end) = rest_t[1..].find(q) {
+                deps.push(rest_t[1..1 + end].to_string());
+                i = start + skipped + 1 + end;
+            }
+        }
+        let _ = bytes;
+    }
+
+    let base = crate::url::Url::parse(url).ok();
+    for d in deps {
+        // 베어 명세자('react')는 임포트 맵이 필요하다 — 조용히 틀린 URL 을 만들지 않는다.
+        if !d.starts_with('.') && !d.starts_with('/') && !d.starts_with("http") {
+            println!("[module] 베어 명세자 미지원 (임포트 맵 필요): {}", d);
+            continue;
+        }
+        let Some(abs) = base.as_ref().and_then(|b| b.join(&d)) else { continue };
+        load_module_graph(it, &abs.as_string(), None, depth + 1);
+    }
+}
+
 fn collect_scripts(
     dom: &crate::dom::Dom,
     id: crate::dom::NodeId,
@@ -103,7 +241,7 @@ fn collect_scripts(
         if e.tag_name == "script" {
             // type 이 JS 일 때만 실행. application/json(데이터 임베드),
             // ld+json, text/template 등은 실행 대상이 아니다 (github 등).
-            // module 은 import/export 미지원이라 스킵 (관용).
+            // module 은 별도 파이프라인 (import/export 의미론이 다르다).
             let ty = e
                 .attributes
                 .get("type")
@@ -111,14 +249,7 @@ fn collect_scripts(
                 .unwrap_or_default();
             let is_js =
                 ty.is_empty() || ty == "text/javascript" || ty == "application/javascript";
-            // ESM(type=module)은 import/export 미구현이라 실행하지 않는다.
-            // 조용히 건너뛰면 "스크립트가 다 돌았는데 화면이 비었다"로 보인다 — 알린다.
-            if ty == "module" {
-                println!(
-                    "[script] type=module 미지원 (import/export) — 건너뜀: {}",
-                    e.attributes.get("src").map(|s| s.as_str()).unwrap_or("(인라인)")
-                );
-            }
+            // type=module 은 아래 모듈 파이프라인(run_module)이 따로 실행한다.
             let src = e.attributes.get("src").map(|s| s.trim()).filter(|s| !s.is_empty());
             if is_js {
                 match src {

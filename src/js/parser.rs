@@ -270,7 +270,7 @@ impl Parser {
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "import")
             && !matches!(self.toks.get(self.pos + 1), Some(Tok::LParen) | Some(Tok::Dot))
         {
-            return self.skip_import();
+            return self.import_stmt();
         }
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "export") {
             return self.export_stmt();
@@ -349,64 +349,182 @@ impl Parser {
     }
 
     // import ... (from '...') — 모듈 로딩 미지원. 명세자 문자열까지 소비하고 no-op.
-    fn skip_import(&mut self) -> Result<Stmt, String> {
+    // import 선언 (ES 모듈).
+    //   import 'm';                      부수효과만
+    //   import x from 'm';               기본
+    //   import * as ns from 'm';         네임스페이스
+    //   import { a, b as c } from 'm';   이름
+    //   import x, { a } from 'm';        혼합
+    fn import_stmt(&mut self) -> Result<Stmt, String> {
         self.pos += 1; // import
-        // 명세자 문자열(들)까지 토큰 소비. 최대 32 토큰 안전장치.
-        let mut steps = 0;
-        while !self.eof() && steps < 32 {
-            let t = self.next()?;
-            steps += 1;
-            if matches!(t, Tok::Str(_)) {
-                break; // 명세자 = import 끝
+        let mut specs = Vec::new();
+        // import 'm';  (부수효과 전용)
+        if let Some(Tok::Str(src)) = self.peek().cloned() {
+            self.pos += 1;
+            self.eat(&Tok::Semi);
+            return Ok(Stmt::Import { specs, source: src });
+        }
+        loop {
+            match self.peek().cloned() {
+                Some(Tok::Star) => {
+                    self.pos += 1;
+                    // as ns
+                    if matches!(self.peek(), Some(Tok::Ident(w)) if w == "as") {
+                        self.pos += 1;
+                    }
+                    let name = self.ident_name()?;
+                    specs.push(ImportSpec::Namespace(name));
+                }
+                Some(Tok::LBrace) => {
+                    self.pos += 1;
+                    while !self.eof() && self.peek() != Some(&Tok::RBrace) {
+                        let imported = self.ident_name()?;
+                        let local = if matches!(self.peek(), Some(Tok::Ident(w)) if w == "as") {
+                            self.pos += 1;
+                            self.ident_name()?
+                        } else {
+                            imported.clone()
+                        };
+                        specs.push(ImportSpec::Named(imported, local));
+                        if !self.eat(&Tok::Comma) {
+                            break;
+                        }
+                    }
+                    if !self.eat(&Tok::RBrace) {
+                        return Err("import 목록이 닫히지 않음".to_string());
+                    }
+                }
+                Some(Tok::Ident(_)) => {
+                    let name = self.ident_name()?;
+                    specs.push(ImportSpec::Default(name));
+                }
+                _ => break,
             }
-            if matches!(t, Tok::Semi) {
+            if !self.eat(&Tok::Comma) {
                 break;
             }
         }
+        // from 'm'
+        if matches!(self.peek(), Some(Tok::Ident(w)) if w == "from") {
+            self.pos += 1;
+        }
+        let source = match self.peek().cloned() {
+            Some(Tok::Str(s)) => {
+                self.pos += 1;
+                s
+            }
+            _ => return Err("import 에 모듈 명세자가 없음".to_string()),
+        };
         self.eat(&Tok::Semi);
-        Ok(Stmt::Block(Vec::new())) // no-op
+        Ok(Stmt::Import { specs, source })
     }
 
-    // export [default] <decl|expr> / export { ... } — 수식어를 벗기고 선언은 유지.
+    // 식별자(또는 예약어 형태의 이름) 하나
+    fn ident_name(&mut self) -> Result<String, String> {
+        match self.peek().cloned() {
+            Some(Tok::Ident(w)) => {
+                self.pos += 1;
+                Ok(w)
+            }
+            Some(Tok::Default) => {
+                self.pos += 1;
+                Ok("default".to_string())
+            }
+            other => Err(format!("식별자를 기대: {:?}", other)),
+        }
+    }
+
+    // export 선언 (ES 모듈).
+    //   export default <식|함수|클래스>
+    //   export const/let/var/function/class …
+    //   export { a, b as c } [from 'm']
+    //   export * from 'm'
     fn export_stmt(&mut self) -> Result<Stmt, String> {
         self.pos += 1; // export
-        // export default <expr|decl>
+        // export default …
         if matches!(self.peek(), Some(Tok::Default)) {
             self.pos += 1;
-            // default 뒤가 함수/클래스면 선언, 아니면 식(부수효과 위해 실행)
-            return match self.peek() {
-                Some(Tok::Function) => self.func_decl(),
+            let inner = match self.peek() {
+                Some(Tok::Function) => self.func_decl()?,
                 Some(Tok::Class) => {
                     self.pos += 1;
-                    Ok(Stmt::ClassDecl(self.class_def(true)?))
+                    Stmt::ClassDecl(self.class_def(true)?)
                 }
                 _ => {
-                    let e = self.expr()?;
+                    let e = self.assignment()?;
                     self.eat(&Tok::Semi);
-                    Ok(Stmt::Expr(e))
+                    Stmt::Expr(e)
                 }
             };
+            return Ok(Stmt::ExportDefault(Box::new(inner)));
         }
-        // export { a, b } [from '...'] / export * from '...' — 스킵
-        if matches!(self.peek(), Some(Tok::LBrace) | Some(Tok::Star)) {
-            let mut steps = 0;
-            while !self.eof() && steps < 64 {
-                let t = self.next()?;
-                steps += 1;
-                if matches!(t, Tok::Semi | Tok::Str(_)) {
-                    break;
+        // export * from 'm'  /  export * as ns from 'm'
+        if matches!(self.peek(), Some(Tok::Star)) {
+            self.pos += 1;
+            // export * as ns from 'm' → 네임스페이스 재수출
+            let ns = if matches!(self.peek(), Some(Tok::Ident(w)) if w == "as") {
+                self.pos += 1;
+                Some(self.ident_name()?)
+            } else {
+                None
+            };
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "from") {
+                self.pos += 1;
+            }
+            let source = match self.peek().cloned() {
+                Some(Tok::Str(s)) => {
+                    self.pos += 1;
+                    s
                 }
-                if matches!(t, Tok::RBrace)
-                    && !matches!(self.peek(), Some(Tok::Ident(n)) if n == "from")
-                {
+                _ => return Err("export * 에 모듈 명세자가 없음".to_string()),
+            };
+            self.eat(&Tok::Semi);
+            return Ok(match ns {
+                Some(n) => Stmt::ExportNamed {
+                    specs: vec![("*".to_string(), n)],
+                    source: Some(source),
+                },
+                None => Stmt::ExportAll { source },
+            });
+        }
+        // export { a, b as c } [from 'm']
+        if matches!(self.peek(), Some(Tok::LBrace)) {
+            self.pos += 1;
+            let mut specs = Vec::new();
+            while !self.eof() && self.peek() != Some(&Tok::RBrace) {
+                let local = self.ident_name()?;
+                let exported = if matches!(self.peek(), Some(Tok::Ident(w)) if w == "as") {
+                    self.pos += 1;
+                    self.ident_name()?
+                } else {
+                    local.clone()
+                };
+                specs.push((local, exported));
+                if !self.eat(&Tok::Comma) {
                     break;
                 }
             }
+            if !self.eat(&Tok::RBrace) {
+                return Err("export 목록이 닫히지 않음".to_string());
+            }
+            let source = if matches!(self.peek(), Some(Tok::Ident(w)) if w == "from") {
+                self.pos += 1;
+                match self.peek().cloned() {
+                    Some(Tok::Str(s)) => {
+                        self.pos += 1;
+                        Some(s)
+                    }
+                    _ => return Err("export … from 에 모듈 명세자가 없음".to_string()),
+                }
+            } else {
+                None
+            };
             self.eat(&Tok::Semi);
-            return Ok(Stmt::Block(Vec::new()));
+            return Ok(Stmt::ExportNamed { specs, source });
         }
-        // export const/let/var/function/class/async — 그냥 선언으로
-        self.stmt()
+        // export const/let/var/function/class/async …
+        let inner = self.stmt()?;
+        Ok(Stmt::ExportDecl(Box::new(inner)))
     }
 
     fn block(&mut self) -> Result<Vec<Stmt>, String> {

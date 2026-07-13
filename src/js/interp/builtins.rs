@@ -1086,6 +1086,20 @@ impl Interp {
                 Ok(Value::Obj(Rc::new(RefCell::new(d))))
             }
             // getComputedStyle(el) → 계산 스타일 뷰.
+            // import('./m.js') → 모듈 네임스페이스로 이행되는 Promise
+            Native::DynamicImport => {
+                let spec = args.first().map(to_display).unwrap_or_default();
+                let url = self.absolute_url(&spec);
+                let p = self.new_promise();
+                match self.run_module(&url) {
+                    Ok(ns) => self.resolve_promise(&p, ns),
+                    Err(e) => {
+                        let err = Value::Str(format!("동적 import 실패: {}", e));
+                        self.reject_promise(&p, err);
+                    }
+                }
+                Ok(p)
+            }
             Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
             // queueMicrotask(fn) — 마이크로태스크 큐에 직접 넣는다.
             Native::QueueMicrotask => {

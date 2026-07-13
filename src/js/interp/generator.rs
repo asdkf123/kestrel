@@ -107,6 +107,12 @@ fn stmt_has_yield(s: &Stmt) -> bool {
             init.as_ref().map_or(false, expr_has_yield)
         }),
         Stmt::FuncDecl { .. } | Stmt::ClassDecl(_) | Stmt::Break(_) | Stmt::Continue(_) => false,
+        // 모듈 선언은 제너레이터 본문에 올 수 없다 (최상위 전용)
+        Stmt::Import { .. }
+        | Stmt::ExportNamed { .. }
+        | Stmt::ExportAll { .. }
+        | Stmt::ExportDefault(_)
+        | Stmt::ExportDecl(_) => false,
         Stmt::If { cond, then, other } => {
             expr_has_yield(cond)
                 || then.iter().any(stmt_has_yield)

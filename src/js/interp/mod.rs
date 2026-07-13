@@ -400,6 +400,7 @@ pub enum Native {
     RemoveGlobalListener,
     DispatchGlobalEvent,
     TakeMutations,
+    DynamicImport,
     QueueMicrotask,
     CssSupports,
     ElementAnimate,
@@ -716,6 +717,22 @@ fn camel_to_dashed(s: &str) -> String {
     out
 }
 
+// 선언문이 도입하는 이름들 (export 대상 파악용)
+fn declared_names(st: &Stmt) -> Vec<String> {
+    match st {
+        Stmt::FuncDecl { name, .. } => vec![name.clone()],
+        Stmt::ClassDecl(c) => c.name.clone().into_iter().collect(),
+        Stmt::VarDecl { decls, .. } => {
+            let mut out = Vec::new();
+            for (pat, _) in decls {
+                pattern_names(pat, &mut out);
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn env_get(env: &EnvRef, name: &str) -> Option<Value> {
     if let Some(v) = env.borrow().vars.get(name) {
         return Some(v.clone());
@@ -943,6 +960,10 @@ pub struct Interp {
     // 상대 URL 해석 기준 (문서의 base URL). <base href> 가 있으면 그것이다 —
     // location.href(문서 URL)와는 다를 수 있다.
     base_url: Option<String>,
+    // ES 모듈: 절대 URL → 소스 (호스트가 미리 받아 넣는다. 인터프리터는 네트워크를 모른다)
+    pub module_sources: HashMap<String, String>,
+    // 절대 URL → 네임스페이스 객체 (평가 완료/진행 중). 순환 의존은 부분 채워진 채로 공유한다.
+    module_namespaces: HashMap<String, Value>,
     // 진단용 관대 모드(KESTREL_LENIENT): undefined 멤버 접근/호출을 에러 대신
     // undefined 로 (표준 아님, naver 등 롱테일 거리 측정용). 접근 키를 집계.
     lenient: bool,
@@ -1132,6 +1153,10 @@ impl Interp {
         env_declare(&global, "DOMParser", Value::Native(Native::DomParserCtor));
         // 프렐류드의 MutationObserver 가 쌓인 변형 기록을 가져가는 통로
         env_declare(&global, "__kTakeMutations", Value::Native(Native::TakeMutations));
+        // 동적 import('m') — 렉서가 import 를 식별자로 내므로 호출식이 된다.
+        // 미리 받아둔 모듈만 풀 수 있다(인터프리터는 네트워크를 모른다). 없으면
+        // 조용히 undefined 를 주지 않고 명확한 이유로 거부한다.
+        env_declare(&global, "import", Value::Native(Native::DynamicImport));
         // queueMicrotask — 진짜 마이크로태스크 큐에 넣는다 (setTimeout 으로 흉내내면
         // 실행 순서가 달라진다: 마이크로태스크는 매크로태스크보다 먼저 돈다).
         env_declare(&global, "queueMicrotask", Value::Native(Native::QueueMicrotask));
@@ -1543,6 +1568,8 @@ impl Interp {
             boolean_proto,
             regexp_proto,
             base_url: None,
+            module_sources: HashMap::new(),
+            module_namespaces: HashMap::new(),
             lenient: std::env::var("KESTREL_LENIENT").is_ok(),
             lenient_hits: std::collections::HashMap::new(),
             pending_label: None,
@@ -2342,6 +2369,17 @@ impl Interp {
         // 직전 레이블 문이 남긴 레이블을 이 문(주로 루프)이 가져간다. 루프 아닌 문은 무시.
         let my_label = self.pending_label.take();
         match stmt {
+            // ── ES 모듈 선언 ──
+            // 모듈 평가(run_module)가 미리 처리한다. 여기 도달하면 클래식 스크립트에
+            // 모듈 문법이 섞인 것 — 조용히 무시하지 않고 알린다.
+            Stmt::Import { .. } => Err(
+                "import 는 모듈(type=module)에서만 쓸 수 있음".to_string(),
+            ),
+            Stmt::ExportNamed { .. } | Stmt::ExportAll { .. } => Err(
+                "export 는 모듈(type=module)에서만 쓸 수 있음".to_string(),
+            ),
+            // export default/선언은 모듈 밖에서도 선언 자체는 실행해 준다(관용).
+            Stmt::ExportDefault(inner) | Stmt::ExportDecl(inner) => self.exec_stmt(inner, env),
             Stmt::VarDecl { kind, decls } => {
                 let is_var = matches!(kind, crate::js::ast::DeclKind::Var);
                 let is_const = matches!(kind, crate::js::ast::DeclKind::Const);
@@ -3261,6 +3299,181 @@ impl Interp {
         if is_callable(&notify) {
             self.mutation_scheduled = true;
             self.microtasks.push_back((notify, Value::Undefined, Value::Undefined, false));
+        }
+    }
+
+    // ── ES 모듈 평가 ──
+    //
+    // 표준의 모듈 의미론을 따른다:
+    //  - 각 모듈은 자기 스코프에서 한 번만 평가된다 (URL 로 식별).
+    //  - 의존 모듈이 먼저 평가된다.
+    //  - export 는 **살아있는 바인딩**이다 — 네임스페이스의 프로퍼티는 모듈 스코프의
+    //    현재 값을 읽는 게터다. 값 스냅샷으로 흉내내면 나중에 바뀌는 값이 안 보인다.
+    //  - 순환 의존은 부분 채워진 네임스페이스를 공유해 무한 재귀를 피한다.
+    pub fn run_module(&mut self, url: &str) -> Result<Value, String> {
+        if let Some(ns) = self.module_namespaces.get(url) {
+            return Ok(ns.clone());
+        }
+        let Some(src) = self.module_sources.get(url).cloned() else {
+            return Err(format!("모듈을 못 찾음: {}", url));
+        };
+        let body = parse(&src).map_err(|e| format!("모듈 파싱 실패 {}: {}", url, e))?;
+
+        // 네임스페이스를 먼저 등록 (순환 의존 대비)
+        let ns_map: Rc<RefCell<ObjMap>> = Rc::new(RefCell::new(ObjMap::new()));
+        let ns = Value::Obj(ns_map.clone());
+        self.module_namespaces.insert(url.to_string(), ns.clone());
+
+        let env = Env::new(Some(self.global.clone()));
+
+        // 1) import 먼저: 의존 모듈을 평가하고 이름을 이 스코프에 바인딩
+        for st in &body {
+            let Stmt::Import { specs, source } = st else { continue };
+            let dep = self.resolve_module(url, source);
+            let dep_ns = self.run_module(&dep)?;
+            for sp in specs {
+                match sp {
+                    crate::js::ast::ImportSpec::Default(local) => {
+                        let v = self.member_get(&dep_ns, "default")?;
+                        env_declare(&env, local, v);
+                    }
+                    crate::js::ast::ImportSpec::Named(imported, local) => {
+                        let v = self.member_get(&dep_ns, imported)?;
+                        env_declare(&env, local, v);
+                    }
+                    crate::js::ast::ImportSpec::Namespace(local) => {
+                        env_declare(&env, local, dep_ns.clone());
+                    }
+                }
+            }
+        }
+
+        // 함수 선언 호이스팅 (블록 실행이 하던 일 — 모듈은 문장을 직접 돌리므로 여기서).
+        // 이게 없으면 `export function f(){}` 가 스코프에 안 들어가서, 그 이름을 읽는
+        // 게터가 "f 은(는) 정의되지 않음" 으로 죽는다.
+        for st in &body {
+            let decl = match st {
+                Stmt::FuncDecl { .. } => Some(st),
+                Stmt::ExportDecl(inner) | Stmt::ExportDefault(inner) => {
+                    matches!(&**inner, Stmt::FuncDecl { .. }).then(|| &**inner)
+                }
+                _ => None,
+            };
+            if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async }) = decl {
+                let f = Value::Fn(Rc::new(JsFn {
+                    params: params.clone(),
+                    body: fb.clone(),
+                    env: env.clone(),
+                    is_arrow: false,
+                    is_generator: *is_generator,
+                    is_async: *is_async,
+                    this: None,
+                    super_class: None,
+                    props: RefCell::new(HashMap::new()),
+                }));
+                env_declare(&env, name, f);
+            }
+        }
+
+        // 2) 본문 실행 (import 는 이미 처리, export 는 선언을 실행하고 이름을 기록)
+        let mut exported: Vec<(String, String)> = Vec::new(); // (로컬명, 내보낸 이름)
+        for st in &body {
+            match st {
+                Stmt::Import { .. } => {}
+                Stmt::ExportDecl(inner) => {
+                    self.exec_stmt(inner, &env)?;
+                    for n in declared_names(inner) {
+                        exported.push((n.clone(), n));
+                    }
+                }
+                Stmt::ExportDefault(inner) => {
+                    match &**inner {
+                        Stmt::Expr(e) => {
+                            let v = self.eval(e, &env)?;
+                            ns_map.borrow_mut().insert("default".to_string(), v);
+                        }
+                        other => {
+                            self.exec_stmt(other, &env)?;
+                            // 이름 있는 함수/클래스면 그 이름의 값을 default 로
+                            if let Some(n) = declared_names(other).first() {
+                                if let Some(v) = env_get(&env, n) {
+                                    ns_map.borrow_mut().insert("default".to_string(), v);
+                                }
+                            }
+                        }
+                    }
+                }
+                Stmt::ExportNamed { specs, source } => match source {
+                    // export { a as b } from 'm' / export * as ns from 'm'
+                    Some(src_mod) => {
+                        let dep = self.resolve_module(url, src_mod);
+                        let dep_ns = self.run_module(&dep)?;
+                        for (local, exported_name) in specs {
+                            let v = if local == "*" {
+                                dep_ns.clone()
+                            } else {
+                                self.member_get(&dep_ns, local)?
+                            };
+                            ns_map.borrow_mut().insert(exported_name.clone(), v);
+                        }
+                    }
+                    None => {
+                        for (local, exported_name) in specs {
+                            exported.push((local.clone(), exported_name.clone()));
+                        }
+                    }
+                },
+                Stmt::ExportAll { source } => {
+                    let dep = self.resolve_module(url, source);
+                    let dep_ns = self.run_module(&dep)?;
+                    if let Value::Obj(m) = &dep_ns {
+                        let entries: Vec<(String, Value)> = m
+                            .borrow()
+                            .iter()
+                            .filter(|(k, _)| k.as_str() != "default")
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        for (k, v) in entries {
+                            ns_map.borrow_mut().insert(k, v);
+                        }
+                    }
+                }
+                other => {
+                    self.exec_stmt(other, &env)?;
+                }
+            }
+        }
+
+        // 3) 내보낸 이름은 **살아있는 바인딩**으로 (모듈 스코프를 읽는 게터)
+        for (local, exported_name) in exported {
+            let getter = Value::Fn(Rc::new(JsFn {
+                params: vec![],
+                body: vec![Stmt::Return(Some(Expr::Ident(local.clone())))],
+                env: env.clone(),
+                is_arrow: false,
+                is_generator: false,
+                is_async: false,
+                this: None,
+                super_class: None,
+                props: RefCell::new(HashMap::new()),
+            }));
+            ns_map
+                .borrow_mut()
+                .insert(exported_name, Value::Accessor(AccessorPair::getter(getter)));
+        }
+        self.drain_microtasks();
+        Ok(ns)
+    }
+
+    // 모듈 명세자 → 절대 URL (importer 기준). 베어 명세자('react')는 지원하지 않는다 —
+    // 임포트 맵/노드 해석이 필요하고, 조용히 틀린 URL 을 만들면 더 나쁘다.
+    fn resolve_module(&self, importer: &str, spec: &str) -> String {
+        if spec.starts_with("http://") || spec.starts_with("https://") {
+            return spec.to_string();
+        }
+        match crate::url::Url::parse(importer).ok().and_then(|u| u.join(spec)) {
+            Some(u) => u.as_string(),
+            None => spec.to_string(),
         }
     }
 
@@ -6277,22 +6490,57 @@ mod tests {
     }
 
     #[test]
-    fn module_import_export_syntax() {
-        // import 는 스킵, export 는 벗겨져 선언이 정상 동작 → 파싱 실패로 스크립트가 죽지 않음
-        assert_eq!(
-            run_num(
-                "import foo from './foo.js'; \
-                 import { a, b } from './x.js'; \
-                 export const N = 42; \
-                 export function add(x, y) { return x + y; } \
-                 add(N, 8)"
-            ),
-            50.0
+    fn es_modules_evaluate_with_live_bindings() {
+        // 예전엔 파서가 import 를 통째로 버리고 export 는 수식어만 벗겼다.
+        // 의존성이 사라지니 모듈은 실행돼도 전부 undefined 였다
+        // ("스크립트는 돌았는데 화면이 비었다"). 이제 표준 의미론대로 평가한다.
+        let mut it = Interp::new();
+        it.module_sources.insert(
+            "https://x.test/util.js".to_string(),
+            "export const VERSION = '1.0'; \
+             let n = 0; \
+             export function bump() { n++; return n; } \
+             export function get() { return n; } \
+             export default function greet(w) { return 'hi ' + w; }"
+                .to_string(),
         );
-        // export default
-        assert_eq!(run_num("export default 5; var z = 7; z"), 7.0);
-        // export { ... } 재익스포트 스킵
-        assert_eq!(run_num("var q = 3; export { q }; q"), 3.0);
+        it.module_sources.insert(
+            "https://x.test/re.js".to_string(),
+            "export * from './util.js'; export { bump as inc } from './util.js';".to_string(),
+        );
+        it.module_sources.insert(
+            "https://x.test/main.js".to_string(),
+            "import greet, { VERSION, bump, get } from './util.js'; \
+             import * as U from './util.js'; \
+             import { inc } from './re.js'; \
+             globalThis.r1 = greet('you'); \
+             globalThis.r2 = VERSION; \
+             globalThis.r3 = U.VERSION; \
+             bump(); bump(); \
+             globalThis.r4 = get(); \
+             inc(); \
+             globalThis.r5 = U.get(); \
+             globalThis.r6 = typeof inc;"
+                .to_string(),
+        );
+        it.run_module("https://x.test/main.js").expect("모듈 평가");
+
+        assert_eq!(to_display(&it.run("r1").unwrap()), "hi you", "기본 export");
+        assert_eq!(to_display(&it.run("r2").unwrap()), "1.0", "이름 export");
+        assert_eq!(to_display(&it.run("r3").unwrap()), "1.0", "네임스페이스 import");
+        assert_eq!(to_display(&it.run("r4").unwrap()), "2", "모듈 상태는 공유된다");
+        // 재수출된 함수가 같은 모듈 인스턴스를 건드리고, 그 변화가 네임스페이스로 보인다
+        // (살아있는 바인딩 — 값 스냅샷으로 흉내내면 3 이 안 보인다)
+        assert_eq!(to_display(&it.run("r5").unwrap()), "3", "살아있는 바인딩");
+        assert_eq!(to_display(&it.run("r6").unwrap()), "function", "재수출");
+    }
+
+    #[test]
+    fn import_outside_module_is_an_error_not_silence() {
+        // 클래식 스크립트에 import 가 있으면 표준상 문법 오류다.
+        // 예전엔 조용히 버려서, 의존성 없이 실행되다 엉뚱한 곳에서 죽었다.
+        let mut it = Interp::new();
+        assert!(it.run("import x from './m.js'; x").is_err());
     }
 
     #[test]

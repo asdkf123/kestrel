@@ -210,4 +210,25 @@ pub enum Stmt {
     // for (v of iterable) — 값 순회 (배열/문자열/Set/Map)
     ForOf { name: String, iter: Expr, body: Vec<Stmt> },
     ClassDecl(ClassDef),
+
+    // ── ES 모듈 (import/export) ──
+    // 예전엔 파서가 import 를 통째로 버리고 export 는 수식어만 벗겼다.
+    // 그러면 모듈의 의존성이 사라져서 실행하면 전부 undefined 다 —
+    // "스크립트는 돌았는데 화면이 비었다"가 된다.
+    Import { specs: Vec<ImportSpec>, source: String },
+    // export { a, b as c } [from '...']
+    ExportNamed { specs: Vec<(String, String)>, source: Option<String> },
+    // export * from '...'
+    ExportAll { source: String },
+    // export default <식|함수|클래스>
+    ExportDefault(Box<Stmt>),
+    // export const/let/var/function/class …
+    ExportDecl(Box<Stmt>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportSpec {
+    Default(String),        // import x from 'm'
+    Named(String, String),  // import { a as b } from 'm' → (a, b)
+    Namespace(String),      // import * as ns from 'm'
 }
