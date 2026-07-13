@@ -3465,6 +3465,10 @@ impl Interp {
                 "bind" => Ok(Value::Native(Native::FnBind)),
                 "name" => Ok(Value::Str(String::new())),
                 "length" => Ok(Value::Num(0.0)),
+                // 내장 함수도 toString 을 가진다. jQuery 서두가
+                // `fnToString = hasOwn.toString; fnToString.call(Object)` 로 이걸 쓴다 —
+                // 없으면 undefined.call(...) 로 jQuery 전체가 즉사했다.
+                "toString" => Ok(Value::Native(Native::FnToString)),
                 _ => Ok(Value::Undefined),
             },
             // 숫자 메서드: (5).toFixed(2), n.toString(radix). 나머지는 Number.prototype 폴백.
@@ -4378,6 +4382,41 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn array_methods_are_generic_over_array_likes() {
+        // 표준: 배열 메서드는 "length 를 가진 객체"에도 동작한다(generic).
+        // jQuery 핵심: `var push = arr.push; push.apply(jqObj, elems)` — 예전엔
+        // "push 는 배열 메서드" 로 즉사해 jQuery 전체가 못 떴다.
+        let pre = "var arr=[]; var push=arr.push, slice=arr.slice, indexOf=arr.indexOf;";
+        // own length 를 가진 array-like
+        assert_eq!(
+            run_str(&format!("{pre} var al={{length:0}}; push.call(al,'a','b'); al.length + ':' + al[0] + al[1]")),
+            "2:ab",
+        );
+        // length 가 프로토타입에 있는 경우 (jQuery.fn 패턴)
+        assert_eq!(
+            run_str(&format!(
+                "{pre} function JQ(){{}} JQ.prototype={{length:0, push:push}}; \
+                 var j=new JQ(); push.apply(j,['x','y','z']); j.length + ':' + j[0] + j[2]"
+            )),
+            "3:xz",
+        );
+        // 비변형 메서드도 generic
+        assert_eq!(
+            run_str(&format!("{pre} var al={{0:'x',1:'y',length:2}}; slice.call(al).join(',')")),
+            "x,y",
+        );
+        assert_eq!(
+            run_num(&format!("{pre} var al={{0:'x',1:'y',length:2}}; indexOf.call(al,'y')")),
+            1.0,
+        );
+        // arguments 객체 (가장 흔한 관용구)
+        assert_eq!(
+            run_str(&format!("{pre} function f(){{ return slice.call(arguments).join('-'); }} f(1,2,3)")),
+            "1-2-3",
+        );
     }
 
     #[test]

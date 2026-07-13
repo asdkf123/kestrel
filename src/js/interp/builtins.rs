@@ -6,6 +6,56 @@ use std::rc::Rc;
 
 // URI 인코딩: 비예약문자(A-Za-z0-9 -_.!~*'()) 와 extra_safe 는 보존, 나머지는
 // UTF-8 바이트별 %XX. encodeURI 는 예약문자를 extra_safe 로 넘겨 보존한다.
+// ── 배열 메서드의 generic(array-like) 지원 ─────────────────────────
+// 표준의 배열 메서드는 배열이 아닌 "length 를 가진 객체"에도 동작한다.
+// jQuery 가 이걸 핵심으로 쓴다: `var push = arr.push; push.apply(jqObj, elems)`
+// (jqObj 는 length 만 있는 array-like). 예전엔 "push 는 배열 메서드" 로 즉사했다.
+
+// length 를 프로토타입 체인까지 따라 찾는다. jQuery 객체는 length:0 이 own 이 아니라
+// 프로토타입(jQuery.fn)에 있어서, own 만 보면 array-like 로 인식되지 않는다.
+fn lookup_length(o: &Rc<RefCell<ObjMap>>) -> Option<f64> {
+    let mut cur = o.clone();
+    for _ in 0..100 {
+        let (len, proto) = {
+            let b = cur.borrow();
+            (b.get("length").map(to_num), b.get("__proto__").cloned())
+        };
+        if let Some(n) = len {
+            return Some(n);
+        }
+        match proto {
+            Some(Value::Obj(p)) => cur = p,
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn is_array_like(o: &Rc<RefCell<ObjMap>>) -> bool {
+    matches!(lookup_length(o), Some(n) if n.is_finite() && n >= 0.0)
+}
+
+fn array_like_to_vec(o: &Rc<RefCell<ObjMap>>) -> Vec<Value> {
+    let len = lookup_length(o).unwrap_or(0.0);
+    let len = if len.is_finite() && len > 0.0 { len as usize } else { 0 };
+    let b = o.borrow();
+    (0..len).map(|i| b.get(&i.to_string()).cloned().unwrap_or(Value::Undefined)).collect()
+}
+
+// 변형 결과를 array-like 객체에 되쓴다 (인덱스 + length, 남는 인덱스는 제거).
+fn write_back_array_like(o: &Rc<RefCell<ObjMap>>, items: &[Value]) {
+    let old = lookup_length(o).unwrap_or(0.0);
+    let old = if old.is_finite() && old > 0.0 { old as usize } else { 0 };
+    let mut b = o.borrow_mut();
+    for i in items.len()..old {
+        b.remove(&i.to_string());
+    }
+    for (i, v) in items.iter().enumerate() {
+        b.insert(i.to_string(), v.clone());
+    }
+    b.insert("length".to_string(), Value::Num(items.len() as f64));
+}
+
 // 값의 own enumerable 프로퍼티 (키, 값) — Object.assign/스프레드의 소스 열거.
 // 엔진 내부 마커(__proto__/@@심볼 등)는 제외한다.
 pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
@@ -507,6 +557,14 @@ impl Interp {
                         a.borrow_mut().push(v);
                     }
                     Ok(Value::Num(a.borrow().len() as f64))
+                }
+                // array-like(length 보유 객체)에도 동작 — jQuery 의 push.apply(jqObj, …)
+                Some(Value::Obj(o)) if is_array_like(&o) => {
+                    let mut items = array_like_to_vec(&o);
+                    items.extend(args);
+                    let n = items.len();
+                    write_back_array_like(&o, &items);
+                    Ok(Value::Num(n as f64))
                 }
                 _ => Err("push 는 배열 메서드".to_string()),
             },
@@ -1817,10 +1875,16 @@ impl Interp {
                 })
             }
             Native::Arr(op) => {
-                let Some(Value::Arr(a)) = recv else {
-                    return Err("배열 메서드".to_string());
+                // 배열이면 그대로. array-like(length 보유 객체)면 임시 배열로 옮겨 실행하고
+                // 결과를 되쓴다 → 표준의 generic 배열 메서드(jQuery 가 이걸 의존).
+                let (a, write_back) = match &recv {
+                    Some(Value::Arr(a)) => (a.clone(), None),
+                    Some(Value::Obj(o)) if is_array_like(o) => {
+                        (ArrayObj::new(array_like_to_vec(o)), Some(o.clone()))
+                    }
+                    _ => return Err("배열 메서드".to_string()),
                 };
-                Ok(match op {
+                let out = match op {
                     ArrOp::Join => {
                         let sep = args.first().map(to_display).unwrap_or(",".to_string());
                         Value::Str(
@@ -2133,7 +2197,13 @@ impl Interp {
                         }
                         Value::Arr(a.clone())
                     }
-                })
+                };
+                // 제자리 변형(push/pop/splice/sort/reverse/fill 등)을 array-like 로 되쓴다.
+                if let Some(o) = write_back {
+                    let items = a.borrow().clone();
+                    write_back_array_like(&o, &items);
+                }
+                Ok(out)
             }
             Native::JsonParse => {
                 let src = args.first().map(to_display).unwrap_or_default();
