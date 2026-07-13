@@ -701,7 +701,7 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut image = None;
     let mut color = None;
     let mut repeat = None;
-    let mut size = None;
+    let mut size_tokens: Vec<String> = Vec::new();
     let mut pos_tokens: Vec<String> = Vec::new();
 
     // 레이어는 괄호 밖 콤마로만 나뉜다. 예전엔 그냥 split(',') 이라
@@ -735,18 +735,17 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
             continue;
         }
         if after_slash {
-            // background-size 자리
-            match t {
-                "cover" | "contain" | "auto" => size = Some(Value::Keyword(t.to_string())),
-                _ => {
-                    if size.is_none() {
-                        if let Some(v) = interpret_value(t) {
-                            size = Some(v);
-                        }
-                    }
-                }
+            // background-size 자리: cover|contain|auto|<length-percentage> 최대 2개.
+            // 예전엔 슬래시 뒤 토큰을 **끝까지** 크기로 먹어서, `center / 60% url(x) red`
+            // 처럼 크기 뒤에 이미지나 색이 오면 둘 다 통째로 사라졌다.
+            let is_size = matches!(t, "cover" | "contain" | "auto")
+                || t.ends_with('%')
+                || crate::css::parse_len_px(t).is_some();
+            if is_size && size_tokens.len() < 2 {
+                size_tokens.push(t.to_string());
+                continue;
             }
-            continue;
+            after_slash = false; // 크기 끝 — 이 토큰부터 다시 일반 규칙
         }
         if t.starts_with("url(")
             || t.starts_with("linear-gradient(")
@@ -780,8 +779,11 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     if let Some(v) = repeat {
         out.push(Declaration { important: false, name: "background-repeat".to_string(), value: v });
     }
-    if let Some(v) = size {
-        out.push(Declaration { important: false, name: "background-size".to_string(), value: v });
+    if !size_tokens.is_empty() {
+        out.push(Declaration { important: false,
+            name: "background-size".to_string(),
+            value: Value::Keyword(size_tokens.join(" ")),
+        });
     }
     if !pos_tokens.is_empty() {
         out.push(Declaration { important: false,
@@ -1125,6 +1127,19 @@ mod tests {
         assert!(matches!(d.first().map(|x| &x.value), Some(Value::Keyword(k)) if k == "right bottom"));
         let d2 = expand_declaration("background-position", "center top");
         assert!(matches!(d2.first().map(|x| &x.value), Some(Value::Keyword(k)) if k == "center top"));
+    }
+
+    #[test]
+    fn background_shorthand_size_does_not_swallow_rest() {
+        // `/ <size>` 뒤에 이미지나 색이 와도 삼키지 않는다 (예전엔 둘 다 사라졌다).
+        let d = expand_declaration("background", "no-repeat center / 60% url(x.png) red");
+        assert!(matches!(find(&d, "background-image"), Some(Value::Url(_))), "이미지가 살아야");
+        assert!(matches!(find(&d, "background-color"), Some(Value::Color(_))), "색이 살아야");
+        assert!(matches!(find(&d, "background-size"), Some(Value::Keyword(k)) if k == "60%"), "size 60%");
+        // 두 값 크기
+        let d2 = expand_declaration("background", "url(x.png) center / 50% 25% no-repeat");
+        assert!(matches!(find(&d2, "background-size"), Some(Value::Keyword(k)) if k == "50% 25%"));
+        assert!(matches!(find(&d2, "background-repeat"), Some(Value::Keyword(k)) if k == "no-repeat"));
     }
 
     #[test]
