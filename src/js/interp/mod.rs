@@ -853,6 +853,7 @@ pub struct Interp {
     // Map/Set/Date/Symbol.prototype — 번들이 Map.prototype.get 등으로 참조(정체성 보존).
     map_proto: Value,
     set_proto: Value,
+    error_proto: Value,
     date_proto: Value,
     symbol_proto: Value,
     // 페이지 기준 URL (상대 URL 해석용 — XHR/fetch)
@@ -1303,6 +1304,12 @@ impl Interp {
             ("toString", Native::ValueToStr),
             ("valueOf", Native::ValueOfSelf),
         ]);
+        // Error.prototype — core-js/번들이 Error.prototype 을 참조(확장/기능 탐지).
+        let error_proto = mk_proto(vec![("toString", Native::ObjToString)]);
+        if let Value::Obj(m) = &error_proto {
+            m.borrow_mut().insert("name".to_string(), Value::Str("Error".to_string()));
+            m.borrow_mut().insert("message".to_string(), Value::Str(String::new()));
+        }
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -1327,6 +1334,7 @@ impl Interp {
             fn_proto,
             map_proto,
             set_proto,
+            error_proto,
             date_proto,
             symbol_proto,
             string_proto,
@@ -1464,6 +1472,18 @@ impl Interp {
     // null/undefined → 새 빈 객체, 이미 객체/원시값이면 그대로(근사). 아니면 None.
     fn coerce_object_call(&self, f: &Value, args: &[Value]) -> Option<Value> {
         let Value::Obj(m) = f else { return None };
+        // Array(…) / new Array(…) — Array 는 네임스페이스 객체라 호출 불가였다.
+        // new Array(n) → 길이 n 의 빈 배열, Array(a,b,…) → 항목 배열 (표준).
+        if let Some(Value::Obj(arr_ns)) = env_get(&self.global, "Array") {
+            if Rc::ptr_eq(m, &arr_ns) {
+                return Some(match args {
+                    [Value::Num(n)] if n.fract() == 0.0 && *n >= 0.0 && *n < 4294967296.0 => {
+                        Value::Arr(ArrayObj::new(vec![Value::Undefined; *n as usize]))
+                    }
+                    items => Value::Arr(ArrayObj::new(items.to_vec())),
+                });
+            }
+        }
         match env_get(&self.global, "Object") {
             Some(Value::Obj(obj_ns)) if Rc::ptr_eq(m, &obj_ns) => {
                 let arg = args.first().cloned().unwrap_or(Value::Undefined);
@@ -3346,6 +3366,15 @@ impl Interp {
             // Map/Set(=WeakMap/WeakSet).prototype — 번들의 Map.prototype.get 등.
             Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
             Value::Native(Native::SetCtor) if key == "prototype" => Ok(self.set_proto.clone()),
+            // Error/TypeError/… 의 prototype 과 name (class X extends Error, 기능 탐지).
+            Value::Native(Native::ErrorCtor(n)) => Ok(match key {
+                "prototype" => self.error_proto.clone(),
+                "name" => Value::Str(n.to_string()),
+                "call" => Value::Native(Native::FnCall),
+                "apply" => Value::Native(Native::FnApply),
+                "bind" => Value::Native(Native::FnBind),
+                _ => Value::Undefined,
+            }),
             // String.fromCharCode/prototype
             Value::Native(Native::StringCtor) => Ok(match key {
                 "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
@@ -3542,6 +3571,10 @@ impl Interp {
 
     // new Class(args) / 클래스 호출: 인스턴스 생성 → 생성자 체인 실행 → 인스턴스 반환.
     fn construct(&mut self, class: Value, args: Vec<Value>) -> Result<Value, String> {
+        // new Array(n) / new Object(x) — 네임스페이스 객체를 생성자로 호출(표준).
+        if let Some(v) = self.coerce_object_call(&class, &args) {
+            return Ok(v);
+        }
         let cls = match class {
             Value::Class(c) => c,
             // new Function(params.., body) → 실제 함수로 컴파일
@@ -4327,6 +4360,24 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn array_constructor_and_error_prototype() {
+        // Array 는 네임스페이스 객체라 호출 자체가 안 됐다 (new Array(3) / Array(1,2,3)).
+        assert_eq!(run_num("new Array(3).length"), 3.0);
+        assert_eq!(run_str("Array(1,2,3).join(',')"), "1,2,3");
+        assert_eq!(run_num("new Array(1,2).length"), 2.0); // 인자 2개 이상은 항목들
+        assert!(run_bool("Array.isArray(new Array(2))"));
+        assert!(run_bool("new Array(3)[0] === undefined")); // 길이만 잡힌 빈 슬롯
+        // 정적 메서드는 그대로
+        assert_eq!(run_num("Array.from([1,2]).length"), 2.0);
+        assert_eq!(run_num("Array.of(1,2,3).length"), 3.0);
+        // Error.prototype (core-js/번들의 확장·기능 탐지가 참조)
+        assert!(run_bool("typeof Error.prototype === 'object'"));
+        assert!(run_bool("typeof TypeError.prototype === 'object'"));
+        assert_eq!(run_str("Error.name"), "Error");
+        assert_eq!(run_str("TypeError.name"), "TypeError");
     }
 
     #[test]
