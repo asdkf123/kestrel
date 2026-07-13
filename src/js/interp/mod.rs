@@ -868,6 +868,9 @@ pub struct Interp {
     sym_registry: HashMap<String, Value>,
     // new 로 함수를 호출하기 직전 설정 → call_value 가 스코프에 new.target 을 심는다.
     new_target: Option<Value>,
+    // window 객체 자체(정체성). window 는 전역 객체이므로 own 프로퍼티에 없는 키는
+    // 전역 스코프로 폴백한다 — `window.Promise` 같은 기능 탐지가 실제로 동작해야 한다.
+    window_obj: Rc<RefCell<ObjMap>>,
 }
 
 impl Interp {
@@ -1175,7 +1178,8 @@ impl Interp {
             screen.insert(k.to_string(), Value::Num(v));
         }
         window.insert("screen".to_string(), Value::Obj(Rc::new(RefCell::new(screen.clone()))));
-        let window = Value::Obj(Rc::new(RefCell::new(window)));
+        let window_obj = Rc::new(RefCell::new(window));
+        let window = Value::Obj(window_obj.clone());
         // self / globalThis 는 전역 객체(window) 별칭 (구글/워커 코드)
         env_declare(&global, "window", window.clone());
         env_declare(&global, "self", window.clone());
@@ -1336,6 +1340,7 @@ impl Interp {
             sym_counter: 0,
             sym_registry: HashMap::new(),
             new_target: None,
+            window_obj,
         }
     }
 
@@ -2990,6 +2995,13 @@ impl Interp {
                         if let Some(pv) = self.proto_chain_lookup(map, key, recv)? {
                             return Ok(pv);
                         }
+                        // window 는 전역 객체 — own 에 없으면 전역 스코프를 본다.
+                        // `window.Promise`/`window.Symbol` 같은 기능 탐지가 동작해야 한다.
+                        if Rc::ptr_eq(map, &self.window_obj) {
+                            if let Some(g) = env_get(&self.global, key) {
+                                return Ok(g);
+                            }
+                        }
                         match key {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
                         // propertyIsEnumerable: own 프로퍼티면 열거가능(단순 모델) → hasOwnProperty 로 근사.
@@ -4005,17 +4017,24 @@ impl Interp {
                         Ok(())
                     }
                     Value::Obj(map) => {
-                        let mut m = map.borrow_mut();
-                        // freeze: 변경 금지. seal/preventExtensions: 새 프로퍼티 추가 금지.
-                        if m.contains_key("@@frozen") {
-                            return Ok(());
-                        }
-                        if !m.contains_key(&key)
-                            && (m.contains_key("@@sealed") || m.contains_key("@@nonext"))
+                        // window.x = v 는 전역 변수 x 를 만든다(전역 객체 의미론).
+                        let is_window = Rc::ptr_eq(&map, &self.window_obj);
                         {
-                            return Ok(());
+                            let mut m = map.borrow_mut();
+                            // freeze: 변경 금지. seal/preventExtensions: 새 프로퍼티 추가 금지.
+                            if m.contains_key("@@frozen") {
+                                return Ok(());
+                            }
+                            if !m.contains_key(&key)
+                                && (m.contains_key("@@sealed") || m.contains_key("@@nonext"))
+                            {
+                                return Ok(());
+                            }
+                            m.insert(key.clone(), value.clone());
                         }
-                        m.insert(key, value);
+                        if is_window {
+                            env_declare(&self.global, &key, value);
+                        }
                         Ok(())
                     }
                     Value::Arr(a) => {
@@ -4308,6 +4327,23 @@ mod tests {
         );
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
         assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn window_exposes_globals_as_properties() {
+        // 전역 이름이 window 프로퍼티로도 보여야 한다 (window 는 전역 객체).
+        // `if (window.Promise)` 류 기능 탐지가 실제 코드에 아주 흔한데 전부 실패했었다.
+        assert!(run_bool("typeof window.Promise === 'function'"));
+        assert!(run_bool("typeof window.Symbol === 'function'"));
+        assert!(run_bool("typeof window.Error === 'function'"));
+        assert!(run_bool("typeof window.JSON === 'object'"));
+        assert!(run_bool("typeof window.Math === 'object'"));
+        // 사용자 전역도 보인다
+        assert_eq!(run_num("var myGlobal = 42; window.myGlobal"), 42.0);
+        // own 프로퍼티(직접 심은 값)는 그대로
+        assert_eq!(run_num("window.innerWidth"), 1000.0);
+        // 없는 이름은 undefined (에러 아님)
+        assert!(run_bool("window.definitelyNotDefined === undefined"));
     }
 
     #[test]
