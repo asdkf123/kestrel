@@ -729,7 +729,26 @@ fn walk_dom_ids(dom: &dom::Dom, id: dom::NodeId, f: &mut impl FnMut(dom::NodeId)
 }
 
 // URL 을 fetch 해 렌더 준비가 끝난 Page 로 만든다. 창의 링크 내비게이션에서 재사용.
+// 스크립트가 요청한 내비게이션(location.href = …)과 meta refresh 를 따라간다.
+// 봇 차단 인터스티셜·로그인 리다이렉트가 정확히 이 경로다 — 안 따라가면 영영 못 본다.
 fn build_page(url: &str) -> Option<window::Page> {
+    let mut current = url.to_string();
+    for hop in 0..5 {
+        let (page, next) = build_page_once(&current)?;
+        match next {
+            Some(n) if n != current => {
+                println!("[navigate] {} → {} ({}번째)", current, n, hop + 1);
+                current = n;
+            }
+            _ => return Some(page),
+        }
+    }
+    println!("[navigate] 리다이렉트 상한 초과");
+    build_page_once(&current).map(|(p, _)| p)
+}
+
+// 한 번 그리고, 스크립트/메타가 요청한 다음 URL 이 있으면 함께 돌려준다.
+fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     let resp = match http::fetch(url) {
         Ok(r) => r,
         Err(e) => {
@@ -894,6 +913,12 @@ fn build_page(url: &str) -> Option<window::Page> {
     // <img src="*.svg"> → 인라인 <svg> 로 치환 (우리 래스터라이저가 그릴 수 있는 형태)
     inline_svg_images(&mut dom, &base);
 
+    // 스크립트가 요청한 내비게이션 / <meta http-equiv=refresh>
+    let next_url = js_rt
+        .navigate_to
+        .clone()
+        .or_else(|| meta_refresh_url(&dom).and_then(|t| base.join(&t).map(|u| u.as_string())));
+
     // ::before/::after 생성 콘텐츠 노드를 DOM 에 주입 (스타일/레이아웃 전 1회)
     let pseudo_styles = style::generate_pseudo_elements(&mut dom, &sheet);
 
@@ -917,7 +942,35 @@ fn build_page(url: &str) -> Option<window::Page> {
     };
     page.rebuild();
     println!("[문서 높이 {}px, 링크 {}개]", page.doc_height as u32, page.links.len());
-    Some(page)
+    Some((page, next_url))
+}
+
+// <meta http-equiv="refresh" content="0; url=..."> → 대상 URL (HTML §4.2.5.3)
+fn meta_refresh_url(dom: &dom::Dom) -> Option<String> {
+    fn walk(dom: &dom::Dom, id: dom::NodeId) -> Option<String> {
+        if let dom::NodeType::Element(e) = &dom.get(id).node_type {
+            if e.tag_name == "meta"
+                && e.attributes
+                    .get("http-equiv")
+                    .map(|v| v.eq_ignore_ascii_case("refresh"))
+                    .unwrap_or(false)
+            {
+                if let Some(content) = e.attributes.get("content") {
+                    // "0; url=/next" / "0;URL='/next'"
+                    let lower = content.to_ascii_lowercase();
+                    if let Some(i) = lower.find("url=") {
+                        let raw = content[i + 4..].trim();
+                        let raw = raw.trim_matches(|c| c == '\'' || c == '"');
+                        if !raw.is_empty() {
+                            return Some(raw.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        dom.get(id).children.iter().find_map(|&c| walk(dom, c))
+    }
+    walk(dom, dom.root)
 }
 
 fn render_url(url: &str) {

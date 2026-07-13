@@ -289,6 +289,20 @@ fn collect_script_nodes(
 }
 
 impl Interp {
+    // 현재 문서의 (호스트, 경로) — 쿠키 범위 판정용
+    fn page_host_path(&self) -> (String, String) {
+        let raw = self
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "http://localhost/".to_string());
+        match crate::url::Url::parse(&raw) {
+            Ok(u) => {
+                let path = u.path.split(['?', '#']).next().unwrap_or("/").to_string();
+                (u.host, if path.is_empty() { "/".to_string() } else { path })
+            }
+            Err(_) => ("localhost".to_string(), "/".to_string()),
+        }
+    }
     // JSON.stringify 의 재귀 직렬화 (표준 §25.5.2). toJSON → replacer 함수 → 직렬화 순서.
     // replacer 배열이면 객체 키를 그 목록으로 거른다. indent 가 있으면 표준 들여쓰기.
     #[allow(clippy::too_many_arguments)]
@@ -1481,11 +1495,71 @@ impl Interp {
             // HTMLElement.focus()/blur(): document.activeElement 를 갱신하고
             // focus/blur 이벤트를 실제로 발화한다. 예전엔 메서드 자체가 없어서
             // el?.focus() 가 "함수 아님" 으로 죽었다 (go.dev 의 키보드 내비게이션).
-            // location.toString() → href (stringifier)
+            // location.href 읽기 / toString (stringifier)
             Native::LocationHref => Ok(match recv {
-                Some(v) => self.member_get(&v, "href")?,
-                None => Value::Str(String::new()),
+                Some(v) => self.member_get(&v, "\u{0}href")?,
+                None => Value::Str(self.base_url.clone().unwrap_or_default()),
             }),
+            // location.href = … / assign(…) / replace(…) → 내비게이션 요청
+            Native::LocationHrefSet | Native::LocationAssign => {
+                let target = args.first().map(to_display).unwrap_or_default();
+                if !target.trim().is_empty() {
+                    self.navigate_to = Some(self.absolute_url(&target));
+                }
+                Ok(Value::Undefined)
+            }
+            // escape(s): A-Za-z0-9@*_+-./ 는 그대로, 나머지는 %XX / %uXXXX (Annex B.2.1)
+            Native::Escape => {
+                let s = args.first().map(to_display).unwrap_or_default();
+                let mut out = String::with_capacity(s.len());
+                for c in s.chars() {
+                    let u = c as u32;
+                    if c.is_ascii_alphanumeric() || "@*_+-./".contains(c) {
+                        out.push(c);
+                    } else if u < 256 {
+                        out.push_str(&format!("%{:02X}", u));
+                    } else {
+                        out.push_str(&format!("%u{:04X}", u));
+                    }
+                }
+                Ok(Value::Str(out))
+            }
+            // unescape(s): %XX / %uXXXX 를 되돌린다 (Annex B.2.2)
+            Native::Unescape => {
+                let s: Vec<char> = args.first().map(to_display).unwrap_or_default().chars().collect();
+                let mut out = String::with_capacity(s.len());
+                let mut i = 0;
+                while i < s.len() {
+                    if s[i] == '%' {
+                        if i + 5 < s.len() && s[i + 1] == 'u' {
+                            let hex: String = s[i + 2..i + 6].iter().collect();
+                            if let Ok(v) = u32::from_str_radix(&hex, 16) {
+                                if let Some(c) = char::from_u32(v) {
+                                    out.push(c);
+                                    i += 6;
+                                    continue;
+                                }
+                            }
+                        } else if i + 2 < s.len() {
+                            let hex: String = s[i + 1..i + 3].iter().collect();
+                            if let Ok(v) = u32::from_str_radix(&hex, 16) {
+                                if let Some(c) = char::from_u32(v) {
+                                    out.push(c);
+                                    i += 3;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    out.push(s[i]);
+                    i += 1;
+                }
+                Ok(Value::Str(out))
+            }
+            Native::LocationReload => {
+                self.navigate_to = self.base_url.clone();
+                Ok(Value::Undefined)
+            }
             // BigInt(x): 문자열/불리언/정수 Number → BigInt. 소수면 RangeError (표준).
             Native::BigIntCtor => {
                 use crate::js::bigint::BigInt as BI;
@@ -1558,6 +1632,17 @@ impl Interp {
                     };
                     self.written_scripts.push((src, code));
                 }
+                Ok(Value::Undefined)
+            }
+            // document.cookie (HTML §7.11.2). 항아리는 HTTP 계층과 공유한다.
+            Native::CookieGet => {
+                let (host, path) = self.page_host_path();
+                Ok(Value::Str(crate::http::cookies_for(&host, &path)))
+            }
+            Native::CookieSet => {
+                let line = args.first().map(to_display).unwrap_or_default();
+                let (host, _) = self.page_host_path();
+                crate::http::store_set_cookie(&line, &host);
                 Ok(Value::Undefined)
             }
             Native::ActiveElement => Ok(match self.active_element {
@@ -1904,7 +1989,102 @@ impl Interp {
                     _ => f64::NAN,
                 };
                 let (y, mo, d, h, mi, s, ms, wd) = date_parts(millis);
+                // setter: 현재 값을 구성요소로 풀고 해당 필드만 바꿔 다시 조립한다.
+                // 반환값은 새 타임스탬프 (표준), 객체 자신은 제자리에서 바뀐다.
+                if matches!(
+                    field,
+                    DateField::SetTime
+                        | DateField::SetFullYear
+                        | DateField::SetMonth
+                        | DateField::SetDate
+                        | DateField::SetHours
+                        | DateField::SetMinutes
+                        | DateField::SetSeconds
+                        | DateField::SetMs
+                ) {
+                    let a = |i: usize| args.get(i).map(to_num);
+                    let new_millis = match field {
+                        DateField::SetTime => a(0).unwrap_or(f64::NAN),
+                        DateField::SetFullYear => date_to_millis(
+                            a(0).unwrap_or(y as f64) as i64,
+                            a(1).map(|v| v as i64 + 1).unwrap_or(mo as i64),
+                            a(2).map(|v| v as i64).unwrap_or(d as i64),
+                            h as i64,
+                            mi as i64,
+                            s as i64,
+                            ms as i64,
+                        ),
+                        DateField::SetMonth => date_to_millis(
+                            y,
+                            a(0).unwrap_or((mo - 1) as f64) as i64 + 1,
+                            a(1).map(|v| v as i64).unwrap_or(d as i64),
+                            h as i64,
+                            mi as i64,
+                            s as i64,
+                            ms as i64,
+                        ),
+                        DateField::SetDate => date_to_millis(
+                            y,
+                            mo as i64,
+                            a(0).unwrap_or(d as f64) as i64,
+                            h as i64,
+                            mi as i64,
+                            s as i64,
+                            ms as i64,
+                        ),
+                        DateField::SetHours => date_to_millis(
+                            y,
+                            mo as i64,
+                            d as i64,
+                            a(0).unwrap_or(h as f64) as i64,
+                            a(1).map(|v| v as i64).unwrap_or(mi as i64),
+                            a(2).map(|v| v as i64).unwrap_or(s as i64),
+                            a(3).map(|v| v as i64).unwrap_or(ms as i64),
+                        ),
+                        DateField::SetMinutes => date_to_millis(
+                            y,
+                            mo as i64,
+                            d as i64,
+                            h as i64,
+                            a(0).unwrap_or(mi as f64) as i64,
+                            a(1).map(|v| v as i64).unwrap_or(s as i64),
+                            a(2).map(|v| v as i64).unwrap_or(ms as i64),
+                        ),
+                        DateField::SetSeconds => date_to_millis(
+                            y,
+                            mo as i64,
+                            d as i64,
+                            h as i64,
+                            mi as i64,
+                            a(0).unwrap_or(s as f64) as i64,
+                            a(1).map(|v| v as i64).unwrap_or(ms as i64),
+                        ),
+                        _ => date_to_millis(
+                            y,
+                            mo as i64,
+                            d as i64,
+                            h as i64,
+                            mi as i64,
+                            s as i64,
+                            a(0).unwrap_or(ms as f64) as i64,
+                        ),
+                    };
+                    if let Some(Value::Obj(m)) = &recv {
+                        m.borrow_mut()
+                            .insert("\u{0}time".to_string(), Value::Num(new_millis));
+                    }
+                    return Ok(Value::Num(new_millis));
+                }
                 Ok(match field {
+                    // setter 는 위에서 이미 처리하고 반환했다
+                    DateField::SetTime
+                    | DateField::SetFullYear
+                    | DateField::SetMonth
+                    | DateField::SetDate
+                    | DateField::SetHours
+                    | DateField::SetMinutes
+                    | DateField::SetSeconds
+                    | DateField::SetMs => Value::Undefined,
                     DateField::Time => Value::Num(millis),
                     DateField::FullYear => Value::Num(y as f64),
                     DateField::Month => Value::Num((mo - 1) as f64), // JS 는 0 기준

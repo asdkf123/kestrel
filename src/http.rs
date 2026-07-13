@@ -58,6 +58,81 @@ fn is_transient(status: u16) -> bool {
     matches!(status, 408 | 425 | 429 | 500 | 502 | 503 | 504)
 }
 
+// ── 쿠키 항아리 ────────────────────────────────────────────────────────────
+// 렌더 한 번 동안 유지된다 (세션 쿠키). Set-Cookie 를 저장하고 같은 호스트·경로의
+// 다음 요청에 Cookie 헤더로 되돌려준다. 없으면 봇 차단·로그인·언어 설정이 전부 안 먹는다.
+#[derive(Clone, Debug)]
+struct Cookie {
+    name: String,
+    value: String,
+    domain: String, // 앞의 점은 제거해 저장
+    path: String,
+}
+
+static COOKIES: std::sync::Mutex<Vec<Cookie>> = std::sync::Mutex::new(Vec::new());
+
+fn domain_matches(host: &str, domain: &str) -> bool {
+    host == domain || host.ends_with(&format!(".{}", domain))
+}
+
+fn path_matches(req_path: &str, cookie_path: &str) -> bool {
+    if cookie_path == "/" || req_path == cookie_path {
+        return true;
+    }
+    req_path.starts_with(cookie_path)
+        && (cookie_path.ends_with('/') || req_path[cookie_path.len()..].starts_with('/'))
+}
+
+// 요청에 붙일 Cookie 헤더 값 ("a=1; b=2"). 없으면 None.
+fn cookie_header(host: &str, path: &str) -> Option<String> {
+    let jar = COOKIES.lock().ok()?;
+    let pairs: Vec<String> = jar
+        .iter()
+        .filter(|c| domain_matches(host, &c.domain) && path_matches(path, &c.path))
+        .map(|c| format!("{}={}", c.name, c.value))
+        .collect();
+    if pairs.is_empty() {
+        None
+    } else {
+        Some(pairs.join("; "))
+    }
+}
+
+// Set-Cookie 한 줄을 항아리에 넣는다 (같은 name+domain+path 는 덮어쓴다).
+pub fn store_set_cookie(line: &str, default_host: &str) {
+    let mut parts = line.split(';');
+    let Some(nv) = parts.next() else { return };
+    let Some((name, value)) = nv.split_once('=') else { return };
+    let (mut domain, mut path) = (default_host.to_string(), "/".to_string());
+    for attr in parts {
+        let a = attr.trim();
+        if let Some(d) = a.strip_prefix("Domain=").or_else(|| a.strip_prefix("domain=")) {
+            domain = d.trim().trim_start_matches('.').to_ascii_lowercase();
+        } else if let Some(pp) = a.strip_prefix("Path=").or_else(|| a.strip_prefix("path=")) {
+            path = pp.trim().to_string();
+        }
+    }
+    // Domain 이 요청 호스트와 무관하면 무시한다 (표준: 도메인 매칭 필수)
+    if !domain_matches(default_host, &domain) {
+        domain = default_host.to_string();
+    }
+    let c = Cookie {
+        name: name.trim().to_string(),
+        value: value.trim().to_string(),
+        domain,
+        path,
+    };
+    if let Ok(mut jar) = COOKIES.lock() {
+        jar.retain(|x| !(x.name == c.name && x.domain == c.domain && x.path == c.path));
+        jar.push(c);
+    }
+}
+
+// document.cookie 읽기용 (host/path 에 보낼 쿠키 문자열)
+pub fn cookies_for(host: &str, path: &str) -> String {
+    cookie_header(host, path).unwrap_or_default()
+}
+
 pub fn fetch(url: &str) -> Result<Response, HttpError> {
     let mut last: Result<Response, HttpError> = Err(HttpError::BadResponse);
     for attempt in 0..MAX_ATTEMPTS {
@@ -88,6 +163,13 @@ fn fetch_once(url: &str) -> Result<Response, HttpError> {
     for _ in 0..6 {
         let raw = request(&current)?;
         let resp = parse_response(&raw)?;
+        // Set-Cookie 저장 (리다이렉트 중간 응답의 쿠키도 다음 요청에 실려야 한다 —
+        // 봇 차단·세션이 정확히 그 패턴이다).
+        for (k, v) in &resp.headers {
+            if k.eq_ignore_ascii_case("set-cookie") {
+                store_set_cookie(v, &current.host);
+            }
+        }
         if (300..400).contains(&resp.status) {
             if let Some(loc) = header(&resp.headers, "location") {
                 current = resolve(&current, &loc).map_err(HttpError::Url)?;
@@ -115,9 +197,13 @@ fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
         "https" => Box::new(tls_wrap(tcp, &url.host)?),
         _ => return Err(HttpError::UnsupportedScheme),
     };
+    let cookie_line = match cookie_header(&url.host, &url.path) {
+        Some(c) => format!("Cookie: {}\r\n", c),
+        None => String::new(),
+    };
     let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: {}\r\nAccept-Language: en-US,en;q=0.9\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n",
-        url.path, url.host, USER_AGENT, ACCEPT
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: {}\r\nAccept-Language: ko-KR,ko;q=0.9,en;q=0.8\r\nAccept-Encoding: identity\r\n{}Connection: close\r\n\r\n",
+        url.path, url.host, USER_AGENT, ACCEPT, cookie_line
     );
     stream.write_all(req.as_bytes()).map_err(HttpError::Io)?;
     let mut buf = Vec::new();

@@ -431,6 +431,13 @@ pub enum Native {
     BigIntCtor,
     BigIntToString,
     DocWrite,
+    CookieGet,
+    CookieSet,
+    LocationAssign,
+    LocationReload,
+    LocationHrefSet,
+    Escape,
+    Unescape,
     HistoryPushState,
     HistoryReplaceState,
     DomParserCtor,
@@ -576,6 +583,15 @@ pub enum StrOp {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DateField {
     Time,
+    // setter 계열 (표준 Date 는 가변 객체다 — setter 가 없으면 날짜 계산 코드가 통째로 죽는다)
+    SetTime,
+    SetFullYear,
+    SetMonth,
+    SetDate,
+    SetHours,
+    SetMinutes,
+    SetSeconds,
+    SetMs,
     FullYear,
     Month,
     Date,
@@ -1027,6 +1043,9 @@ pub struct Interp {
     pub module_sources: HashMap<String, String>,
     // 임포트 맵 (베어 명세자 → URL). 긴 키 우선으로 정렬돼 들어온다.
     pub import_map: Vec<(String, String)>,
+    // 스크립트가 요청한 내비게이션 (location.href = … / assign / replace / reload).
+    // 호출측(렌더러)이 새 URL 로 다시 그린다 — 인터프리터는 네트워크를 모른다.
+    pub navigate_to: Option<String>,
     // 지금 실행 중인 클래식 스크립트 노드 (document.write 의 삽입 지점 / document.currentScript).
     pub current_script: Option<crate::dom::NodeId>,
     // document.write 로 새로 생긴 스크립트 (src, 인라인 코드). 호출측이 실행한다 —
@@ -1108,7 +1127,15 @@ impl Interp {
         // 등록하도록. run_scripts 가 이후 interactive → complete 로 갱신.
         document.insert("readyState".to_string(), Value::Str("loading".to_string()));
         // 흔한 document 프로퍼티(미정의 크래시 방지). cookie 는 간이(문자열).
-        document.insert("cookie".to_string(), Value::Str(String::new()));
+        // document.cookie: 진짜 쿠키 항아리에 연결한다 (읽기·쓰기 모두 HTTP 계층과 공유).
+        // 예전엔 빈 문자열 상수라, 쿠키를 심는 스크립트가 아무 일도 안 한 채 성공했다.
+        document.insert(
+            "cookie".to_string(),
+            Value::Accessor(Rc::new(AccessorPair {
+                get: Some(Value::Native(Native::CookieGet)),
+                set: Some(Value::Native(Native::CookieSet)),
+            })),
+        );
         document.insert("title".to_string(), Value::Str(String::new()));
         document.insert("referrer".to_string(), Value::Str(String::new()));
         document.insert("characterSet".to_string(), Value::Str("UTF-8".to_string()));
@@ -1191,6 +1218,10 @@ impl Interp {
         env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
         // 전역 함수
         env_declare(&global, "BigInt", Value::Native(Native::BigIntCtor));
+        // escape/unescape (ECMAScript Annex B.2.1/B.2.2). 레거시지만 표준이고,
+        // 국내 사이트가 쿠키·URL 인코딩에 아직도 쓴다 — 없으면 스크립트가 죽는다.
+        env_declare(&global, "escape", Value::Native(Native::Escape));
+        env_declare(&global, "unescape", Value::Native(Native::Unescape));
         env_declare(&global, "parseInt", Value::Native(Native::ParseInt));
         env_declare(&global, "parseFloat", Value::Native(Native::ParseFloat));
         env_declare(&global, "encodeURI", Value::Native(Native::EncodeUri));
@@ -1594,6 +1625,14 @@ impl Interp {
             ("getSeconds", Native::DateMethod(DateField::Seconds)),
             ("getMilliseconds", Native::DateMethod(DateField::Ms)),
             ("getTimezoneOffset", Native::DateMethod(DateField::TimezoneOffset)),
+            ("setTime", Native::DateMethod(DateField::SetTime)),
+            ("setFullYear", Native::DateMethod(DateField::SetFullYear)),
+            ("setMonth", Native::DateMethod(DateField::SetMonth)),
+            ("setDate", Native::DateMethod(DateField::SetDate)),
+            ("setHours", Native::DateMethod(DateField::SetHours)),
+            ("setMinutes", Native::DateMethod(DateField::SetMinutes)),
+            ("setSeconds", Native::DateMethod(DateField::SetSeconds)),
+            ("setMilliseconds", Native::DateMethod(DateField::SetMs)),
             ("toISOString", Native::DateMethod(DateField::ToIso)),
             ("toJSON", Native::DateMethod(DateField::ToIso)),
             ("toString", Native::DateMethod(DateField::ToStr)),
@@ -1653,6 +1692,7 @@ impl Interp {
             base_url: None,
             module_sources: HashMap::new(),
             import_map: Vec::new(),
+            navigate_to: None,
             current_script: None,
             written_scripts: Vec::new(),
             module_namespaces: HashMap::new(),
@@ -1890,7 +1930,20 @@ impl Interp {
             None => String::new(),
         };
         let mut loc = ObjMap::new();
-        loc.insert("href".to_string(), Value::Str(url.to_string()));
+        // href 는 읽으면 현재 URL, **쓰면 내비게이션**이다 (HTML §7.10.5).
+        // 예전엔 그냥 문자열이라 location.href = "..." 가 아무 일도 안 했다 —
+        // 봇 차단·로그인 리다이렉트가 전부 무시됐다.
+        loc.insert("\u{0}href".to_string(), Value::Str(url.to_string()));
+        loc.insert(
+            "href".to_string(),
+            Value::Accessor(Rc::new(AccessorPair {
+                get: Some(Value::Native(Native::LocationHref)),
+                set: Some(Value::Native(Native::LocationHrefSet)),
+            })),
+        );
+        loc.insert("assign".to_string(), Value::Native(Native::LocationAssign));
+        loc.insert("replace".to_string(), Value::Native(Native::LocationAssign));
+        loc.insert("reload".to_string(), Value::Native(Native::LocationReload));
         // Location 의 stringifier 는 href 다 (HTML 표준). String(location) / new URL(location).
         loc.insert("toString".to_string(), Value::Native(Native::LocationHref));
         loc.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
@@ -3923,6 +3976,16 @@ impl Interp {
                                 "toString" | "toUTCString" | "toGMTString" => Some(DateField::ToStr),
                                 "toDateString" | "toLocaleDateString" | "toLocaleString"
                                 | "toLocaleTimeString" => Some(DateField::ToDateStr),
+                                // Date 는 가변 객체다 (표준). setter 가 없으면
+                                // date.setTime(...) 같은 흔한 코드가 "함수 아님" 으로 죽는다.
+                                "setTime" => Some(DateField::SetTime),
+                                "setFullYear" | "setUTCFullYear" => Some(DateField::SetFullYear),
+                                "setMonth" | "setUTCMonth" => Some(DateField::SetMonth),
+                                "setDate" | "setUTCDate" => Some(DateField::SetDate),
+                                "setHours" | "setUTCHours" => Some(DateField::SetHours),
+                                "setMinutes" | "setUTCMinutes" => Some(DateField::SetMinutes),
+                                "setSeconds" | "setUTCSeconds" => Some(DateField::SetSeconds),
+                                "setMilliseconds" | "setUTCMilliseconds" => Some(DateField::SetMs),
                                 _ => None,
                             };
                             Ok(field
@@ -7029,6 +7092,36 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn date_is_mutable() {
+        // Date 는 가변 객체다 (표준). setter 가 없으면 쿠키 만료 계산 같은 흔한 코드가
+        // "함수 아님" 으로 죽는다 (fmkorea 의 보안 스크립트가 date.setTime 을 쓴다).
+        assert_eq!(
+            run_num("var d = new Date(0); d.setTime(86400000); d.getTime()"),
+            86400000.0
+        );
+        // 쿠키 만료 관용구: date.setTime(date.getTime() + 7일)
+        assert_eq!(
+            run_str("var d = new Date(0); d.setTime(d.getTime() + 7*24*60*60*1000); d.toISOString().slice(0,10)"),
+            "1970-01-08"
+        );
+        assert_eq!(run_num("var d = new Date(2024,0,1); d.setDate(d.getDate()+7); d.getDate()"), 8.0);
+        assert_eq!(run_num("var d = new Date(2024,0,1); d.setDate(32); d.getMonth()"), 1.0, "월 넘김");
+        assert_eq!(run_num("var d = new Date(2024,0,1); d.setFullYear(2030); d.getFullYear()"), 2030.0);
+        // setter 의 반환값은 새 타임스탬프
+        assert_eq!(run_str("typeof new Date(0).setTime(5)"), "number");
+    }
+
+    #[test]
+    fn escape_unescape_annex_b() {
+        // Annex B.2.1/B.2.2. 레거시지만 표준이고 국내 사이트가 쿠키 인코딩에 쓴다.
+        assert_eq!(run_str("escape('a b')"), "a%20b");
+        assert_eq!(run_str("escape('한')"), "%uD55C");
+        assert_eq!(run_str("unescape('a%20b')"), "a b");
+        assert_eq!(run_str("unescape('%uD55C')"), "한");
+        assert_eq!(run_str("unescape(escape('가나다 ABC'))"), "가나다 ABC");
     }
 
     #[test]
