@@ -100,6 +100,10 @@ struct TextStyle {
     bg: Option<Color>, // 인라인 요소 배경(<mark>/background 있는 span 등). 글리프 뒤에 칠함.
     border: Option<(Color, f32, f32)>, // 인라인 테두리 (색, 두께, radius) — 태그/뱃지/kbd.
     border_run: u32, // 테두리 요소 식별자 (인접한 별개 요소가 하나로 병합되지 않게).
+    // 이 조각을 감싼 인라인 요소들(조상 체인)의 인덱스. chains 테이블을 가리킨다.
+    // 인라인 요소는 박스를 안 만들므로, 조각 사각형을 요소별로 합집합해서
+    // getBoundingClientRect/offsetWidth 가 읽을 박스를 만든다(인라인 조각 → 요소 박스).
+    chain: Option<usize>,
     spacer: f32, // >0 이면 이 항목은 글리프 없는 가로 간격(인라인 요소 margin/border/padding 좌우).
 }
 
@@ -173,6 +177,7 @@ impl<'a> LayoutBox<'a> {
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
         let base = TextStyle {
+            chain: None,
             color: base_color,
             px: base_px,
             link: None,
@@ -199,9 +204,10 @@ impl<'a> LayoutBox<'a> {
 
         let mut runs: Vec<(String, TextStyle)> = Vec::new();
         let mut hrefs: Vec<String> = Vec::new();
+        let mut chains: Vec<Vec<crate::dom::NodeId>> = Vec::new();
         let mut next_run: u32 = 0;
         for node in &self.inline_nodes {
-            collect_node(node, base, &mut runs, &mut hrefs, &mut next_run);
+            collect_node(node, base, &mut runs, &mut hrefs, &mut chains, &mut next_run);
         }
         // text-transform (상속 속성): 이 인라인 문맥의 모든 텍스트에 적용
         if let Some(Value::Keyword(tt)) = self.styled_node.value("text-transform") {
@@ -442,6 +448,22 @@ impl<'a> LayoutBox<'a> {
             {
                 border_segs.push((run, baseline - ascent_px, word_x0, pen_x, bc, bw, brd));
             }
+            // 인라인 요소 조각: 이 단어를 감싼 모든 인라인 조상에 사각형을 적립한다.
+            // 인라인 요소는 자체 박스가 없으므로, 조각들의 합집합이 그 요소의 박스가 된다
+            // (CSSOM 의 getBoundingClientRect/offsetWidth 가 이걸 읽는다).
+            if let Some(ci) = word.iter().find_map(|&(_, st)| st.chain) {
+                if let Some(ids) = chains.get(ci) {
+                    let frag = Rect {
+                        x: word_x0,
+                        y: baseline - ascent_px,
+                        width: (pen_x - word_x0).max(0.0),
+                        height: (ascent_px - descent_px).max(0.0),
+                    };
+                    for &id in ids {
+                        self.inline_frags.push((id, frag));
+                    }
+                }
+            }
             // 링크: 히트 영역 (단어 폭, baseline 위아래로)
             if let Some(li) = word.iter().find_map(|&(_, st)| st.link) {
                 self.links.push((
@@ -648,6 +670,7 @@ fn collect_node<'a>(
     style: TextStyle,
     runs: &mut Vec<(String, TextStyle)>,
     hrefs: &mut Vec<String>,
+    chains: &mut Vec<Vec<crate::dom::NodeId>>,
     next_run: &mut u32,
 ) {
     match &node.node.node_type {
@@ -705,6 +728,16 @@ fn collect_node<'a>(
                     bg: cbg,
                     border: cborder,
                     border_run: crun,
+                    // 이 요소를 조상 체인에 추가한 새 체인 (부모 체인 + 자기 NodeId)
+                    chain: Some({
+                        let mut c = style
+                            .chain
+                            .and_then(|i| chains.get(i).cloned())
+                            .unwrap_or_default();
+                        c.push(node.id);
+                        chains.push(c);
+                        chains.len() - 1
+                    }),
                     spacer: 0.0,
                 };
                 // 인라인 요소의 가로 margin/border/padding 은 좌우로 후속 인라인 내용을 민다.
@@ -717,7 +750,7 @@ fn collect_node<'a>(
                     runs.push(("\u{E000}".to_string(), TextStyle { spacer: lead, ..cstyle }));
                 }
                 for child in &node.children {
-                    collect_node(child, cstyle, runs, hrefs, next_run);
+                    collect_node(child, cstyle, runs, hrefs, chains, next_run);
                 }
                 if trail > 0.0 {
                     runs.push(("\u{E000}".to_string(), TextStyle { spacer: trail, ..cstyle }));

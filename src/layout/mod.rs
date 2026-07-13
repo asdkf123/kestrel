@@ -106,6 +106,10 @@ pub struct LayoutBox<'a> {
     pub gradient: Option<crate::css::Gradient>,
     // 클릭 히트 영역: (단어 단위 사각형, href)
     pub links: Vec<(Rect, String)>,
+    // 인라인 요소의 조각 사각형: (요소 NodeId, 조각). 인라인 요소(span/a/b/em…)는
+    // 자체 박스가 없어서 예전엔 getBoundingClientRect 가 전부 0 을 돌려줬다.
+    // 조각들의 합집합이 그 요소의 박스다(CSSOM: 인라인 박스 = 조각들의 경계 합).
+    pub inline_frags: Vec<(crate::dom::NodeId, Rect)>,
     // 링크 밑줄/리스트 불릿 등 (사각형, 색)
     pub decorations: Vec<(Rect, Color)>,
     // 인라인 요소 배경(<mark>, background 있는 <span>/<code> 등) — 글리프 뒤에 칠함
@@ -143,6 +147,7 @@ impl<'a> LayoutBox<'a> {
             background_image: None,
             gradient: None,
             links: Vec::new(),
+            inline_frags: Vec::new(),
             decorations: Vec::new(),
             inline_bgs: Vec::new(),
             inline_borders: Vec::new(),
@@ -169,6 +174,7 @@ impl<'a> LayoutBox<'a> {
             background_image: None,
             gradient: None,
             links: Vec::new(),
+            inline_frags: Vec::new(),
             decorations: Vec::new(),
             inline_bgs: Vec::new(),
             inline_borders: Vec::new(),
@@ -1987,6 +1993,27 @@ pub fn hit_link<'a>(links: &'a [(Rect, String)], x: f32, y: f32) -> Option<&'a s
 
 // 이벤트 히트 테스트용: 요소 박스의 (border box, NodeId, 깊이) 수집.
 // 익명 인라인 박스는 부모 요소의 id 를 공유하므로 텍스트 클릭도 매칭된다.
+// 인라인 요소들의 조각을 요소별로 합집합 (트리 전체).
+pub fn collect_inline_element_rects(
+    root: &LayoutBox,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, Rect>,
+) {
+    for (id, f) in &root.inline_frags {
+        out.entry(*id)
+            .and_modify(|r| {
+                let x0 = r.x.min(f.x);
+                let y0 = r.y.min(f.y);
+                let x1 = (r.x + r.width).max(f.x + f.width);
+                let y1 = (r.y + r.height).max(f.y + f.height);
+                *r = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+            })
+            .or_insert(*f);
+    }
+    for child in &root.children {
+        collect_inline_element_rects(child, out);
+    }
+}
+
 pub fn collect_element_rects(
     root: &LayoutBox,
     depth: usize,
@@ -1994,6 +2021,29 @@ pub fn collect_element_rects(
 ) {
     if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
         out.push((root.dimensions.border_box(), root.styled_node.id, depth));
+    }
+    // 인라인 요소(span/a/b/em…)는 자체 박스가 없다. 조각들의 합집합을 이 박스보다
+    // 한 단계 깊은 것으로 넣어야 클릭이 인라인 요소를 타깃으로 잡는다.
+    // 예전엔 인라인 요소가 히트 목록에 아예 없어서 <span onclick> 이 발화하지 않았다
+    // (블록 조상이 타깃이 되고, 스팬은 그 조상의 자손이라 버블링에도 안 걸린다).
+    if !root.inline_frags.is_empty() {
+        let mut merged: std::collections::HashMap<crate::dom::NodeId, Rect> =
+            std::collections::HashMap::new();
+        for (id, f) in &root.inline_frags {
+            merged
+                .entry(*id)
+                .and_modify(|r| {
+                    let x0 = r.x.min(f.x);
+                    let y0 = r.y.min(f.y);
+                    let x1 = (r.x + r.width).max(f.x + f.width);
+                    let y1 = (r.y + r.height).max(f.y + f.height);
+                    *r = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+                })
+                .or_insert(*f);
+        }
+        for (id, r) in merged {
+            out.push((r, id, depth + 1));
+        }
     }
     for child in &root.children {
         collect_element_rects(child, depth + 1, out);

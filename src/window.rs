@@ -58,6 +58,15 @@ fn fill_js_maps(
     let mut rects = Vec::new();
     crate::layout::collect_element_rects(layout_root, 0, &mut rects);
     js.layout_rects.clear();
+    // 인라인 요소(span/a/b/em…)는 자체 박스가 없다 — 조각들의 합집합이 그 요소의 박스다.
+    // 예전엔 getBoundingClientRect/offsetWidth 가 전부 0 이었다(링크·강조어를 재는
+    // 툴팁·팝오버·하이라이터가 조용히 죽는다).
+    let mut inline_rects = std::collections::HashMap::new();
+    crate::layout::collect_inline_element_rects(layout_root, &mut inline_rects);
+    for (id, r) in inline_rects {
+        js.layout_rects.insert(id, (r.x, r.y, r.width, r.height));
+    }
+    // 블록 박스가 있는 요소는 그 박스가 우선 (인라인 조각보다 정확)
     for (r, id, _) in &rects {
         js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
     }
@@ -948,6 +957,36 @@ mod tests {
             NodeType::Element(e) => e.attributes.get("class").cloned().unwrap_or_default(),
             _ => String::new(),
         }
+    }
+
+    #[test]
+    fn inline_elements_have_boxes_for_measurement_and_hit_testing() {
+        // 인라인 요소(span/a/b/em…)는 자체 레이아웃 박스가 없다. 예전엔 그래서
+        // getBoundingClientRect/offsetWidth 가 전부 0 이었고, 클릭도 인라인 요소를
+        // 타깃으로 잡지 못했다(<span onclick> 이 발화하지 않음).
+        // 표준의 인라인 박스 = 조각(fragment)들의 경계 합집합이다.
+        let mut page = make_page(
+            "<div id=\"d\">before <span id=\"sp\">CLICKME</span> after</div><p id=\"out\">-</p>\
+             <script>\
+             document.getElementById('sp').addEventListener('click', function(){\
+               document.getElementById('out').textContent = 'span'; });\
+             document.getElementById('d').addEventListener('click', function(){\
+               var o = document.getElementById('out');\
+               o.textContent = o.textContent + '+div'; });\
+             </script>",
+        );
+        let sp = page.dom.find_by_attr_id("sp").unwrap();
+        let (x, y, w, h) = *page.js.layout_rects.get(&sp).expect("인라인 요소도 사각형이 있다");
+        assert!(w > 0.0 && h > 0.0, "폭/높이가 0 이 아니다: {}x{}", w, h);
+        assert!(x > 0.0, "앞선 텍스트 뒤에 놓인다 (x={})", x);
+
+        // 그 사각형 한가운데를 클릭하면 타깃은 span 이고, div 로 버블링된다
+        assert!(page.dispatch_click(x + w / 2.0, y + h / 2.0), "핸들러가 실행됐다");
+        assert_eq!(
+            text_of_id(&page.dom, "out").unwrap(),
+            "span+div",
+            "span 이 타깃 → div 로 버블링"
+        );
     }
 
     #[test]
