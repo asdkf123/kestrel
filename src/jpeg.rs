@@ -406,10 +406,48 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
         })
         .collect();
 
-    // ── 엔트로피 디코드: MCU 루프 ──
+    // ── 엔트로피 디코드 ──
     let mut reader = BitReader::new(&data[scan_start..]);
     let mut dc_pred = vec![0i32; comps.len()];
     let mut mcu_count = 0usize;
+
+    // 스캔에 컴포넌트가 하나뿐이면 **비인터리브**다: MCU = 데이터 유닛 1개이고,
+    // 블록은 그 컴포넌트 자기 크기 기준 래스터 순서로 온다 (T.81 §A.2.2).
+    // 그레이스케일 JPEG 이 h=2,v=2 로 인코딩돼 오는 경우가 흔한데, 이걸 인터리브로
+    // 취급하면 한 MCU 에서 4블록을 읽어 데이터가 통째로 어긋난다 (디코드 실패).
+    if scan_order.len() == 1 {
+        let ci = scan_order[0];
+        let c = comps[ci];
+        let dc = dc_tables[c.td].as_ref()?;
+        let ac = ac_tables[c.ta].as_ref()?;
+        // 이 컴포넌트의 실제 샘플 크기 → 블록 격자
+        let cw = (width * c.h).div_ceil(hmax);
+        let ch = (height * c.v).div_ceil(vmax);
+        let bw = cw.div_ceil(8);
+        let bh_n = ch.div_ceil(8);
+        for by in 0..bh_n {
+            for bx in 0..bw {
+                if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
+                    reader.sync_restart()?;
+                    dc_pred.iter_mut().for_each(|p| *p = 0);
+                }
+                let px = decode_block(&mut reader, dc, ac, &qtables[c.tq], &mut dc_pred[ci])?;
+                let plane = &mut planes[ci];
+                let (ox, oy) = (bx * 8, by * 8);
+                for y in 0..8 {
+                    if oy + y >= plane.h {
+                        break;
+                    }
+                    let row = (oy + y) * plane.w + ox;
+                    let n = 8.min(plane.w.saturating_sub(ox));
+                    plane.data[row..row + n].copy_from_slice(&px[y * 8..y * 8 + n]);
+                }
+                mcu_count += 1;
+            }
+        }
+        return finish(width, height, &comps, &planes, hmax, vmax);
+    }
+
     for my in 0..mcus_y {
         for mx in 0..mcus_x {
             if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
@@ -437,7 +475,18 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
         }
     }
 
-    // ── 업샘플링(최근접) + 색변환 → RGBA ──
+    finish(width, height, &comps, &planes, hmax, vmax)
+}
+
+// 업샘플링(최근접) + 색변환 → RGBA. 컴포넌트가 1개면 그레이스케일.
+fn finish(
+    width: usize,
+    height: usize,
+    comps: &[Component],
+    planes: &[Plane],
+    hmax: usize,
+    vmax: usize,
+) -> Option<crate::png::Image> {
     let sample = |ci: usize, x: usize, y: usize| -> u8 {
         let c = comps[ci];
         let p = &planes[ci];
@@ -463,6 +512,29 @@ pub fn decode(data: &[u8]) -> Option<crate::png::Image> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grayscale_single_component_scan_decodes() {
+        // 1채널(그레이스케일) JPEG 이 h=2,v=2 로 인코딩돼 오는 경우가 흔하다.
+        // 스캔에 컴포넌트가 하나면 **비인터리브**라서 MCU = 데이터 유닛 1개다 (T.81 §A.2.2).
+        // 인터리브로 취급하면 한 MCU 에서 4블록을 읽어 데이터가 어긋나고 디코드가 실패한다.
+        // (위키피디아의 흑백 스캔 이미지가 통째로 안 나왔다.)
+        let bytes = std::fs::read("assets/test/gray_h2v2.jpg").unwrap();
+        let img = decode(&bytes).expect("그레이스케일 JPEG 디코드");
+        assert_eq!((img.width, img.height), (250, 289));
+        // 실제 계조가 있어야 한다 (단색이면 디코드가 깨진 것)
+        let mut levels = std::collections::HashSet::new();
+        for y in (0..img.height).step_by(7) {
+            for x in (0..img.width).step_by(7) {
+                levels.insert(img.rgba[(y * img.width + x) * 4]);
+            }
+        }
+        assert!(levels.len() > 20, "계조가 있어야 (단색이면 실패): {}", levels.len());
+        // 그레이스케일 → R=G=B
+        let o = (100 * img.width + 100) * 4;
+        assert_eq!(img.rgba[o], img.rgba[o + 1]);
+        assert_eq!(img.rgba[o + 1], img.rgba[o + 2]);
+    }
 
     #[test]
     fn zigzag_is_a_permutation() {

@@ -1351,6 +1351,77 @@ fn stroke_line_quad(x1: f32, y1: f32, x2: f32, y2: f32, sw: f32) -> Option<Vec<(
 
 // 인라인 SVG 의 기본 도형(rect/circle/ellipse/line/path/polygon)을 viewBox 매핑으로 발행.
 // line 은 방향 맞춘 quad 로 대각선도 정확. arc(A)는 아직 현(chord) 근사.
+// SVG 소스를 RGBA 이미지로 래스터화한다 (CSS background-image: url(*.svg) 용).
+// <img src=*.svg> 는 DOM 에서 인라인 <svg> 로 바꿔치기해 그리지만, CSS 배경은 그럴 수
+// 없다 — 실제 픽셀이 필요하다. 로고/아이콘이 대부분 SVG 라 이게 없으면 통째로 빈다.
+pub fn rasterize_svg(source: &str, w: usize, h: usize) -> Option<crate::png::Image> {
+    if w == 0 || h == 0 || w > 4096 || h > 4096 {
+        return None;
+    }
+    let dom = crate::html::parse_dom(source.to_string());
+    let sheet = crate::css::parse(String::new());
+    let styled = crate::style::style_tree(&dom, &sheet);
+    // 트리에서 <svg> 요소 찾기
+    fn find_svg<'a, 'b>(n: &'b crate::style::StyledNode<'a>) -> Option<&'b crate::style::StyledNode<'a>> {
+        if let crate::dom::NodeType::Element(e) = &n.node.node_type {
+            if e.tag_name == "svg" {
+                return Some(n);
+            }
+        }
+        n.children.iter().find_map(find_svg)
+    }
+    let svg_node = find_svg(&styled)?;
+    let crate::dom::NodeType::Element(svg) = &svg_node.node.node_type else { return None };
+    let box_rect = Rect { x: 0.0, y: 0.0, width: w as f32, height: h as f32 };
+    let (vx, vy, sx, sy) = match svg.attributes.get("viewbox").and_then(|s| crate::layout::parse_viewbox(s)) {
+        Some((vx, vy, vw, vh)) if vw > 0.0 && vh > 0.0 => {
+            (vx, vy, box_rect.width / vw, box_rect.height / vh)
+        }
+        _ => (0.0, 0.0, 1.0, 1.0),
+    };
+    let mut items = Vec::new();
+    emit_svg_children(svg_node, box_rect, vx, vy, sx, sy, &mut items, 0);
+    // 투명 배경 레이어에 그린다 (알파 유지 → 배경 위에 합성된다)
+    let mut canvas = Canvas::new_layer(w, h);
+    let fonts = FontStack::new(Vec::new());
+    let mut cache = GlyphCache::new();
+    for item in &items {
+        draw_item(&mut canvas, item, 0.0, 1.0, h as f32, &fonts, &mut cache, &[]);
+    }
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for px in &canvas.pixels {
+        rgba.extend_from_slice(&[px.r, px.g, px.b, px.a]);
+    }
+    Some(crate::png::Image { width: w, height: h, rgba })
+}
+
+// SVG 의 고유 크기: width/height 속성 → viewBox → 기본 100x100.
+pub fn svg_natural_size(source: &str) -> (usize, usize) {
+    let num = |tag: &str| -> Option<f32> {
+        let key = format!("{}=\"", tag);
+        let i = source.find(&key)? + key.len();
+        let rest = &source[i..];
+        let end = rest.find('"')?;
+        rest[..end].trim().trim_end_matches("px").parse::<f32>().ok()
+    };
+    if let (Some(w), Some(h)) = (num("width"), num("height")) {
+        if w > 0.0 && h > 0.0 {
+            return (w.ceil() as usize, h.ceil() as usize);
+        }
+    }
+    if let Some(i) = source.find("viewBox=\"").or_else(|| source.find("viewbox=\"")) {
+        let rest = &source[i + 9..];
+        if let Some(end) = rest.find('"') {
+            if let Some((_, _, vw, vh)) = crate::layout::parse_viewbox(&rest[..end]) {
+                if vw > 0.0 && vh > 0.0 {
+                    return (vw.ceil() as usize, vh.ceil() as usize);
+                }
+            }
+        }
+    }
+    (100, 100)
+}
+
 fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
     let crate::dom::NodeType::Element(svg) = &lb.styled_node.node.node_type else { return };
     if svg.tag_name != "svg" {
@@ -1364,102 +1435,128 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         }
         _ => (0.0, 0.0, 1.0, 1.0),
     };
+    emit_svg_children(lb.styled_node, box_rect, vx, vy, sx, sy, items, 0);
+}
+
+// SVG 도형을 재귀적으로 그린다. <g> 그룹 안의 도형도 그려야 한다 — 예전엔 <svg> 의
+// **직계 자식만** 봐서, 그룹으로 감싼 아이콘(대부분의 실제 SVG)이 통째로 안 그려졌다.
+#[allow(clippy::too_many_arguments)]
+fn emit_svg_children(
+    parent: &crate::style::StyledNode,
+    box_rect: Rect,
+    vx: f32,
+    vy: f32,
+    sx: f32,
+    sy: f32,
+    items: &mut Vec<DisplayItem>,
+    depth: usize,
+) {
+    if depth > 16 {
+        return; // 병적으로 깊은 중첩 방어
+    }
     let mx = |x: f32| box_rect.x + (x - vx) * sx;
     let my = |y: f32| box_rect.y + (y - vy) * sy;
-    for shape in &lb.styled_node.children {
-        let crate::dom::NodeType::Element(e) = &shape.node.node_type else { continue };
-        let num = |k: &str| e.attributes.get(k).and_then(|v| v.trim().parse::<f32>().ok());
-        // fill: 속성 > 기본 검정. "none" 이면 채우지 않음.
-        let fill = match e.attributes.get("fill").map(|s| s.as_str()) {
-            Some("none") => None,
-            Some(f) => crate::css::parse_color(f),
-            None => Some(Color { r: 0, g: 0, b: 0, a: 255 }),
-        };
-        match e.tag_name.as_str() {
-            "rect" => {
-                if let Some(color) = fill {
-                    let (x, y) = (mx(num("x").unwrap_or(0.0)), my(num("y").unwrap_or(0.0)));
-                    let (w, h) = (num("width").unwrap_or(0.0) * sx, num("height").unwrap_or(0.0) * sy);
-                    let r = num("rx").map(|r| r * sx).unwrap_or(0.0);
-                    if w > 0.0 && h > 0.0 {
-                        let rect = Rect { x, y, width: w, height: h };
-                        if r > 0.0 {
-                            items.push(DisplayItem::RoundRect { color, rect, radii: [r; 4] });
-                        } else {
-                            items.push(DisplayItem::Rect { color, rect });
-                        }
-                    }
-                }
+    for shape in &parent.children {
+        if let crate::dom::NodeType::Element(e) = &shape.node.node_type {
+            if e.tag_name == "g" || e.tag_name == "svg" {
+                emit_svg_children(shape, box_rect, vx, vy, sx, sy, items, depth + 1);
+                continue;
             }
-            "circle" => {
-                if let Some(color) = fill {
-                    let r = num("r").unwrap_or(0.0);
-                    let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
-                    let rect = Rect { x: mx(cx - r), y: my(cy - r), width: 2.0 * r * sx, height: 2.0 * r * sy };
-                    items.push(DisplayItem::RoundRect { color, rect, radii: [r * sx; 4] });
-                }
-            }
-            "ellipse" => {
-                if let Some(color) = fill {
-                    let (rx, ry) = (num("rx").unwrap_or(0.0), num("ry").unwrap_or(0.0));
-                    let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
-                    let rect = Rect { x: mx(cx - rx), y: my(cy - ry), width: 2.0 * rx * sx, height: 2.0 * ry * sy };
-                    items.push(DisplayItem::RoundRect { color, rect, radii: [rx.min(ry) * sx; 4] });
-                }
-            }
-            "line" => {
-                // 두 점을 잇는 굵기 sw 의 선 → 방향에 맞춘 사각형(quad) 폴리곤. 대각선도 정확.
-                let stroke = e.attributes.get("stroke").and_then(|s| crate::css::parse_color(s));
-                if let Some(color) = stroke {
-                    let sw = (num("stroke-width").unwrap_or(1.0) * sx).max(1.0);
-                    let (x1, y1) = (mx(num("x1").unwrap_or(0.0)), my(num("y1").unwrap_or(0.0)));
-                    let (x2, y2) = (mx(num("x2").unwrap_or(0.0)), my(num("y2").unwrap_or(0.0)));
-                    match stroke_line_quad(x1, y1, x2, y2, sw) {
-                        Some(quad) => items.push(DisplayItem::Polygon { color, contours: vec![quad] }),
-                        None => {
-                            // 길이 0: 작은 사각형으로 점 표시
-                            let h = sw / 2.0;
-                            items.push(DisplayItem::Rect {
-                                color,
-                                rect: Rect { x: x1 - h, y: y1 - h, width: sw, height: sw },
-                            });
-                        }
-                    }
-                }
-            }
-            "path" => {
-                if let Some(color) = fill {
-                    if let Some(d) = e.attributes.get("d") {
-                        let contours: Vec<Vec<(f32, f32)>> = flatten_path(d)
-                            .into_iter()
-                            .filter(|c| c.len() >= 3)
-                            .map(|c| c.iter().map(|&(px, py)| (mx(px), my(py))).collect())
-                            .collect();
-                        if !contours.is_empty() {
-                            items.push(DisplayItem::Polygon { color, contours });
-                        }
-                    }
-                }
-            }
-            "polygon" | "polyline" => {
-                if let Some(color) = fill {
-                    if let Some(pts) = e.attributes.get("points") {
-                        let nums: Vec<f32> = pts
-                            .split(|c: char| c == ',' || c.is_whitespace())
-                            .filter_map(|t| t.parse::<f32>().ok())
-                            .collect();
-                        let contour: Vec<(f32, f32)> =
-                            nums.chunks(2).filter(|p| p.len() == 2).map(|p| (mx(p[0]), my(p[1]))).collect();
-                        if contour.len() >= 3 {
-                            items.push(DisplayItem::Polygon { color, contours: vec![contour] });
-                        }
-                    }
-                }
-            }
-            _ => {} // text 등 미지원
         }
+            let crate::dom::NodeType::Element(e) = &shape.node.node_type else { continue };
+            let num = |k: &str| e.attributes.get(k).and_then(|v| v.trim().parse::<f32>().ok());
+            // fill: 속성 > 기본 검정. "none" 이면 채우지 않음.
+            let fill = match e.attributes.get("fill").map(|s| s.as_str()) {
+                Some("none") => None,
+                Some(f) => crate::css::parse_color(f),
+                None => Some(Color { r: 0, g: 0, b: 0, a: 255 }),
+            };
+            match e.tag_name.as_str() {
+                "rect" => {
+                    if let Some(color) = fill {
+                        let (x, y) = (mx(num("x").unwrap_or(0.0)), my(num("y").unwrap_or(0.0)));
+                        let (w, h) = (num("width").unwrap_or(0.0) * sx, num("height").unwrap_or(0.0) * sy);
+                        let r = num("rx").map(|r| r * sx).unwrap_or(0.0);
+                        if w > 0.0 && h > 0.0 {
+                            let rect = Rect { x, y, width: w, height: h };
+                            if r > 0.0 {
+                                items.push(DisplayItem::RoundRect { color, rect, radii: [r; 4] });
+                            } else {
+                                items.push(DisplayItem::Rect { color, rect });
+                            }
+                        }
+                    }
+                }
+                "circle" => {
+                    if let Some(color) = fill {
+                        let r = num("r").unwrap_or(0.0);
+                        let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
+                        let rect = Rect { x: mx(cx - r), y: my(cy - r), width: 2.0 * r * sx, height: 2.0 * r * sy };
+                        items.push(DisplayItem::RoundRect { color, rect, radii: [r * sx; 4] });
+                    }
+                }
+                "ellipse" => {
+                    if let Some(color) = fill {
+                        let (rx, ry) = (num("rx").unwrap_or(0.0), num("ry").unwrap_or(0.0));
+                        let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
+                        let rect = Rect { x: mx(cx - rx), y: my(cy - ry), width: 2.0 * rx * sx, height: 2.0 * ry * sy };
+                        items.push(DisplayItem::RoundRect { color, rect, radii: [rx.min(ry) * sx; 4] });
+                    }
+                }
+                "line" => {
+                    // 두 점을 잇는 굵기 sw 의 선 → 방향에 맞춘 사각형(quad) 폴리곤. 대각선도 정확.
+                    let stroke = e.attributes.get("stroke").and_then(|s| crate::css::parse_color(s));
+                    if let Some(color) = stroke {
+                        let sw = (num("stroke-width").unwrap_or(1.0) * sx).max(1.0);
+                        let (x1, y1) = (mx(num("x1").unwrap_or(0.0)), my(num("y1").unwrap_or(0.0)));
+                        let (x2, y2) = (mx(num("x2").unwrap_or(0.0)), my(num("y2").unwrap_or(0.0)));
+                        match stroke_line_quad(x1, y1, x2, y2, sw) {
+                            Some(quad) => items.push(DisplayItem::Polygon { color, contours: vec![quad] }),
+                            None => {
+                                // 길이 0: 작은 사각형으로 점 표시
+                                let h = sw / 2.0;
+                                items.push(DisplayItem::Rect {
+                                    color,
+                                    rect: Rect { x: x1 - h, y: y1 - h, width: sw, height: sw },
+                                });
+                            }
+                        }
+                    }
+                }
+                "path" => {
+                    if let Some(color) = fill {
+                        if let Some(d) = e.attributes.get("d") {
+                            let contours: Vec<Vec<(f32, f32)>> = flatten_path(d)
+                                .into_iter()
+                                .filter(|c| c.len() >= 3)
+                                .map(|c| c.iter().map(|&(px, py)| (mx(px), my(py))).collect())
+                                .collect();
+                            if !contours.is_empty() {
+                                items.push(DisplayItem::Polygon { color, contours });
+                            }
+                        }
+                    }
+                }
+                "polygon" | "polyline" => {
+                    if let Some(color) = fill {
+                        if let Some(pts) = e.attributes.get("points") {
+                            let nums: Vec<f32> = pts
+                                .split(|c: char| c == ',' || c.is_whitespace())
+                                .filter_map(|t| t.parse::<f32>().ok())
+                                .collect();
+                            let contour: Vec<(f32, f32)> =
+                                nums.chunks(2).filter(|p| p.len() == 2).map(|p| (mx(p[0]), my(p[1]))).collect();
+                            if contour.len() >= 3 {
+                                items.push(DisplayItem::Polygon { color, contours: vec![contour] });
+                            }
+                        }
+                    }
+                }
+                _ => {} // text 등 미지원
+            }
     }
 }
+
 
 // outline: border box 밖으로 offset+width 만큼 나온 균일 링 (4개 사각형). 레이아웃 불변.
 fn emit_outline(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
@@ -2901,6 +2998,30 @@ pub fn paint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn svg_rasterizes_including_groups() {
+        // CSS background-image: url(*.svg) 는 실제 픽셀이 필요하다 (DOM 치환이 안 된다).
+        // 게다가 예전 emit_svg 는 <svg> 의 직계 자식만 봐서 <g> 로 감싼 도형 —
+        // 즉 실제 SVG 대부분 — 이 통째로 안 그려졌다.
+        let src = r##"<svg width="20" height="20" viewBox="0 0 20 20">
+            <g><rect x="0" y="0" width="20" height="10" fill="#ff0000"/></g>
+            <rect x="0" y="10" width="20" height="10" fill="#0000ff"/>
+        </svg>"##;
+        assert_eq!(svg_natural_size(src), (20, 20));
+        let img = rasterize_svg(src, 20, 20).expect("래스터화");
+        assert_eq!((img.width, img.height), (20, 20));
+        let at = |x: usize, y: usize| {
+            let o = (y * img.width + x) * 4;
+            (img.rgba[o], img.rgba[o + 1], img.rgba[o + 2], img.rgba[o + 3])
+        };
+        assert_eq!(at(10, 5), (255, 0, 0, 255), "<g> 안의 빨강 사각");
+        assert_eq!(at(10, 15), (0, 0, 255, 255), "직계 파랑 사각");
+        // viewBox 스케일: 40x40 으로 키워도 같은 색 배치
+        let big = rasterize_svg(src, 40, 40).expect("래스터화");
+        let o = (10 * 40 + 20) * 4;
+        assert_eq!(big.rgba[o], 255, "확대해도 위쪽은 빨강");
+    }
     #[test]
     fn background_size_parses_lengths_and_auto() {
         assert_eq!(parse_bg_size("50% 25%"), Some((BgSize::Pct(0.5), BgSize::Pct(0.25))));

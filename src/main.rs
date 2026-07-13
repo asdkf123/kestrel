@@ -228,12 +228,23 @@ fn collect_img_srcs(dom: &dom::Dom, out: &mut Vec<String>) {
 // 매직 바이트로 포맷 판별 → 해당 디코더 (PNG / JPEG)
 fn decode_image(bytes: &[u8]) -> Option<png::Image> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        png::decode(bytes)
-    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        jpeg::decode(bytes)
-    } else {
-        None
+        return png::decode(bytes);
     }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return jpeg::decode(bytes);
+    }
+    // SVG: 텍스트 포맷이라 시그니처가 없다. XML 선언/주석/공백을 건너뛰고 <svg 를 찾는다.
+    // CSS background-image: url(*.svg) 와 <img src=*.svg> 가 전부 이걸로 온다 —
+    // 없으면 로고·아이콘이 통째로 빈다.
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+    if head.trim_start().starts_with("<?xml") || head.contains("<svg") {
+        let src = String::from_utf8_lossy(bytes).to_string();
+        let (w, h) = paint::svg_natural_size(&src);
+        // 배경 타일/아이콘은 보통 작다. 과도한 래스터는 막는다(메모리).
+        let (w, h) = (w.clamp(1, 1024), h.clamp(1, 1024));
+        return paint::rasterize_svg(&src, w, h);
+    }
+    None
 }
 
 // 스타일 트리에서 적용된 background-image url 수집 (매칭된 규칙만 — 시트 전체가 아님)
