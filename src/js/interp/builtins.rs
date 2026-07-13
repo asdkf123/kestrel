@@ -1445,6 +1445,43 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             // el.scrollIntoView() — 그 요소가 뷰포트 위쪽에 오도록 스크롤.
+            // HTMLElement.focus()/blur(): document.activeElement 를 갱신하고
+            // focus/blur 이벤트를 실제로 발화한다. 예전엔 메서드 자체가 없어서
+            // el?.focus() 가 "함수 아님" 으로 죽었다 (go.dev 의 키보드 내비게이션).
+            // location.toString() → href (stringifier)
+            Native::LocationHref => Ok(match recv {
+                Some(v) => self.member_get(&v, "href")?,
+                None => Value::Str(String::new()),
+            }),
+            Native::ActiveElement => Ok(match self.active_element {
+                Some(id) => Value::Dom(id),
+                None => self.call_native(Native::DocQuery("body"), None, vec![])?,
+            }),
+            Native::Focus => {
+                if let Some(Value::Dom(id)) = recv {
+                    let prev = self.active_element;
+                    if prev != Some(id) {
+                        if let Some(p) = prev {
+                            let e = self.make_event("blur", p);
+                            self.dispatch_event_value(p, "blur", e);
+                        }
+                        self.active_element = Some(id);
+                        let e = self.make_event("focus", id);
+                        self.dispatch_event_value(id, "focus", e);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            Native::Blur => {
+                if let Some(Value::Dom(id)) = recv {
+                    if self.active_element == Some(id) {
+                        self.active_element = None;
+                        let e = self.make_event("blur", id);
+                        self.dispatch_event_value(id, "blur", e);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
             Native::ScrollIntoView => {
                 self.ensure_layout();
                 if let Some(Value::Dom(id)) = recv {

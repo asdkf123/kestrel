@@ -108,6 +108,24 @@ pub(super) fn obj_hint(e: &crate::js::ast::Expr) -> String {
         Expr::Member { obj, computed: true, .. } => format!("{}[..]", obj_hint(obj)),
         Expr::Call { callee, .. } => format!("{}()", obj_hint(callee)),
         Expr::This => "this".to_string(),
+        // 진단은 이름이 전부다 — "?" 만 찍히면 어디를 볼지 알 수 없다.
+        Expr::OptMember { obj, prop, computed: false } => match &**prop {
+            Expr::Str(p) => format!("{}?.{}", obj_hint(obj), p),
+            _ => format!("{}?.…", obj_hint(obj)),
+        },
+        Expr::OptMember { obj, .. } => format!("{}?.[..]", obj_hint(obj)),
+        Expr::OptCall { callee, .. } => format!("{}?.()", obj_hint(callee)),
+        Expr::New { callee, .. } => format!("new {}", obj_hint(callee)),
+        Expr::Assign { target, .. } => format!("({}=…)", obj_hint(target)),
+        Expr::Func { name: Some(n), .. } => format!("function {}", n),
+        Expr::Func { .. } => "function".to_string(),
+        Expr::Str(v) => format!("\"{}\"", v),
+        Expr::Num(n) => n.to_string(),
+        Expr::Ternary { .. } => "(삼항식)".to_string(),
+        Expr::Logical { left, right, .. } => {
+            format!("({} || {})", obj_hint(left), obj_hint(right))
+        }
+        Expr::Nullish { left, right } => format!("({} ?? {})", obj_hint(left), obj_hint(right)),
         _ => "?".to_string(),
     }
 }

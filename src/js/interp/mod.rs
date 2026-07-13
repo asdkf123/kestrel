@@ -415,6 +415,10 @@ pub enum Native {
     ScrollTo,
     ScrollBy,
     ScrollIntoView,
+    Focus,
+    Blur,
+    ActiveElement,
+    LocationHref,
     HistoryPushState,
     HistoryReplaceState,
     DomParserCtor,
@@ -957,6 +961,8 @@ pub struct Interp {
     // 스크립트가 요청한 스크롤 위치(px). 호스트가 렌더에 반영한다.
     pub scroll_x: f32,
     pub scroll_y: f32,
+    // document.activeElement (focus/blur 가 갱신). 없으면 body 로 보고한다.
+    active_element: Option<crate::dom::NodeId>,
     // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
     // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
     pub layout_ctx: Option<crate::window::LayoutCtx>,
@@ -1101,6 +1107,11 @@ impl Interp {
         document.insert("body".to_string(), live("body"));
         document.insert("head".to_string(), live("head"));
         document.insert("documentElement".to_string(), live("html"));
+        // document.activeElement — focus()/blur() 가 갱신한다. 없으면 body (표준).
+        document.insert(
+            "activeElement".to_string(),
+            Value::Accessor(AccessorPair::getter(Value::Native(Native::ActiveElement))),
+        );
         // nodeType: DOCUMENT_NODE(9). jQuery 의 setDocument 가 `doc.nodeType !== 9` 로
         // 문서를 검증하는데, 없으면 조기 반환해 로컬 document 가 undefined 로 남고
         // 이후 document.createElement 가 죽는다 → jQuery 전체가 못 뜬다.
@@ -1591,6 +1602,7 @@ impl Interp {
             shadow_hosts: std::collections::HashSet::new(),
             scroll_x: 0.0,
             scroll_y: 0.0,
+            active_element: None,
             layout_ctx: None,
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
@@ -1854,6 +1866,8 @@ impl Interp {
         };
         let mut loc = ObjMap::new();
         loc.insert("href".to_string(), Value::Str(url.to_string()));
+        // Location 의 stringifier 는 href 다 (HTML 표준). String(location) / new URL(location).
+        loc.insert("toString".to_string(), Value::Native(Native::LocationHref));
         loc.insert("protocol".to_string(), Value::Str(format!("{}:", u.scheme)));
         loc.insert("host".to_string(), Value::Str(u.host.clone()));
         loc.insert("hostname".to_string(), Value::Str(u.host.clone()));
@@ -1869,11 +1883,19 @@ impl Interp {
     }
 
     // new URL(url, base?) — WHATWG URL. 핵심 프로퍼티 + searchParams(get/has/getAll/toString).
-    fn make_url(&self, args: Vec<Value>) -> Result<Value, String> {
-        let input = args.first().map(to_display).unwrap_or_default();
-        let resolved = match args.get(1) {
+    fn make_url(&mut self, args: Vec<Value>) -> Result<Value, String> {
+        // 인자는 ToString 을 거친다 (표준). Location/URL 은 stringifier 가 href 라
+        // new URL(location) 이 정상 동작해야 한다 — 예전엔 "[object Object]" 를 파싱하려
+        // 했다. to_display 는 toString 을 부르지 않으므로 ToPrimitive(string) 를 쓴다.
+        let to_str = |me: &mut Self, v: &Value| -> String {
+            let p = me.to_primitive(v.clone(), true);
+            to_display(&p)
+        };
+        let first = args.first().cloned().unwrap_or(Value::Undefined);
+        let input = to_str(self, &first);
+        let resolved = match args.get(1).cloned() {
             Some(b) if !matches!(b, Value::Undefined | Value::Null) => {
-                let base = to_display(b);
+                let base = to_str(self, &b);
                 crate::url::Url::parse(&base)
                     .ok()
                     .and_then(|bu| bu.join(&input))
@@ -4062,6 +4084,8 @@ impl Interp {
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "scrollIntoView" => Some(Native::ScrollIntoView),
+                    "focus" => Some(Native::Focus),
+                    "blur" => Some(Native::Blur),
                     "animate" => Some(Native::ElementAnimate),
                     "getAttributeNames" => Some(Native::GetAttributeNames),
                     "hasAttributes" => Some(Native::HasAttributes),
@@ -4340,6 +4364,33 @@ impl Interp {
         args: &[Expr],
         env: &EnvRef,
     ) -> Result<Value, String> {
+                    // 옵셔널 체인 호출: a?.m(...) 은 a 가 null/undefined 면 **호출 전체가 단락**된다
+                    // (표준 §13.3.9). 예전엔 a?.m 이 undefined 로 평가된 뒤 그걸 호출하려다
+                    // "함수 아님" 으로 죽었다 — go.dev 가 menuButtonEl?.addEventListener() 를 쓴다.
+                    if let Expr::OptMember { obj, prop, computed } = callee {
+                        let recv = self.eval(obj, env)?;
+                        if matches!(recv, Value::Undefined | Value::Null) {
+                            return Ok(Value::Undefined);
+                        }
+                        let key = self.member_key(prop, *computed, env)?;
+                        let f = self.member_get(&recv, &key)?;
+                        if !is_callable(&f) {
+                            // 단락은 a 가 nullish 일 때만. m 이 없으면 표준은 TypeError.
+                            let name = obj_hint(callee);
+                            if self.lenient {
+                                *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
+                                return Ok(Value::Undefined);
+                            }
+                            return Err(format!(
+                                "{}(…) — {} 이(가) {} (함수 아님)",
+                                name,
+                                name,
+                                to_display(&f)
+                            ));
+                        }
+                        let a = self.eval_args(args, env)?;
+                        return self.call_value(f, Some(recv), a);
+                    }
                     let mut arg_vals = Vec::new();
                     // super(...) — 부모 생성자를 현재 this 로 실행
                     if matches!(callee, Expr::Super) {
@@ -4443,14 +4494,17 @@ impl Interp {
                             return Ok(v);
                         }
                         if !is_callable(&f) {
+                            let name = obj_hint(callee); // 이름이 없으면 진단이 불가능하다
                             if self.lenient {
-                                let name =
-                                    if let Expr::Ident(n) = callee { n.as_str() } else { "?" };
                                 *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
                                 return Ok(Value::Undefined);
                             }
-                            let name = if let Expr::Ident(n) = callee { n.as_str() } else { "?" };
-                            return Err(format!("{}(…) — {} 이(가) {} (함수 아님)", name, name, to_display(&f)));
+                            return Err(format!(
+                                "{}(…) — {} 이(가) {} (함수 아님)",
+                                name,
+                                name,
+                                to_display(&f)
+                            ));
                         }
                         self.call_value(f, None, arg_vals)
                     }
@@ -7753,6 +7807,21 @@ mod tests {
     fn class_static_block_runs() {
         // ES2022 static 초기화 블록. 예전엔 파서가 여기서 죽어 **스크립트 전체**가 날아갔다.
         assert_eq!(run_num("class C { static x = 1; static { C.x = 4 } } C.x"), 4.0);
+    }
+
+    #[test]
+    fn optional_call_short_circuits() {
+        // a?.m() 은 a 가 nullish 면 **호출 전체가 단락**된다 (§13.3.9).
+        // 예전엔 a?.m 이 undefined 로 평가된 뒤 그걸 호출하려다 "함수 아님" 으로 죽었다.
+        assert_eq!(run_str("var a = null; String(a?.m())"), "undefined");
+        assert_eq!(run_str("var a = undefined; String(a?.m(1, 2))"), "undefined");
+        // 인자는 평가되지 않는다 (단락)
+        assert_eq!(
+            run_num("var hit = 0; var a = null; a?.m(hit++); hit"),
+            0.0
+        );
+        // 수신자가 있으면 정상 호출 (this 바인딩 유지)
+        assert_eq!(run_num("var o = { n: 5, m() { return this.n } }; o?.m()"), 5.0);
     }
 
     #[test]
