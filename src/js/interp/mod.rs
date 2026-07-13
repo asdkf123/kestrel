@@ -780,6 +780,10 @@ fn hoist_vars(stmts: &[Stmt], scope: &EnvRef) {
     }
 }
 
+pub fn collect_pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
+    pattern_names(pat, out)
+}
+
 fn pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
     use crate::js::ast::Pattern;
     match pat {
@@ -3368,6 +3372,11 @@ impl Interp {
             }
         }
 
+        // var 호이스팅 — 모듈도 스크립트와 같다. 이게 없으면 `var a, le, ue = …` 처럼
+        // 초기화 없는 선언자가 스코프에 안 들어가고(var 는 호이스팅에 의존한다),
+        // 그 이름을 읽는 순간 "정의되지 않음" 으로 죽는다. (vue 런타임이 정확히 이 모양이다)
+        hoist_vars(&body, &env);
+
         // 함수 선언 호이스팅 (블록 실행이 하던 일 — 모듈은 문장을 직접 돌리므로 여기서).
         // 이게 없으면 `export function f(){}` 가 스코프에 안 들어가서, 그 이름을 읽는
         // 게터가 "f 은(는) 정의되지 않음" 으로 죽는다.
@@ -3462,12 +3471,13 @@ impl Interp {
                 other => {
                     if let Err(e) = self.exec_stmt(other, &env) {
                         if std::env::var("KESTREL_MODULE_DEBUG").is_ok() {
+                            let dump = format!("{:?}", other);
                             eprintln!(
-                                "[module] {} 문장 #{} 에서 오류: {} — {:?}",
+                                "[module] {} 문장 #{} 오류: {}\n  AST: {}",
                                 url,
                                 idx,
                                 e,
-                                std::mem::discriminant(other)
+                                &dump[..dump.len().min(400)]
                             );
                         }
                         return Err(e);
@@ -6530,6 +6540,25 @@ mod tests {
         assert_eq!(run_num("var a=[0,0]; [a[0], a[1]] = [7, 8]; a[0] + a[1]"), 15.0);
         // 기존 동작(이름 대상 / 스왑)도 그대로
         assert_eq!(run_num("var a=1,b=2; [a,b]=[b,a]; a*10+b"), 21.0);
+    }
+
+    #[test]
+    fn module_hoists_vars_like_scripts() {
+        // `var a, le, ue = …` 처럼 초기화 없는 var 선언자는 호이스팅에 의존한다.
+        // 모듈 평가에 var 호이스팅이 없어서, 그 이름을 읽는 순간 "정의되지 않음" 으로
+        // 죽었다 (vue 런타임이 정확히 이 모양이라 사이트가 통째로 안 돌았다).
+        let mut it = Interp::new();
+        it.module_sources.insert(
+            "https://x.test/m.js".to_string(),
+            "var a = 1, le, ue = () => (le = le || 7); \
+             globalThis.k1 = typeof le; \
+             globalThis.k2 = ue(); \
+             export const done = true;"
+                .to_string(),
+        );
+        it.run_module("https://x.test/m.js").expect("모듈 평가");
+        assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
+        assert_eq!(to_display(&it.run("k2").unwrap()), "7");
     }
 
     #[test]
