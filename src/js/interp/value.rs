@@ -878,9 +878,6 @@ pub(super) fn json_num(n: f64) -> String {
     }
 }
 
-pub(super) fn json_is_internal(k: &str) -> bool {
-    is_internal_key(k)
-}
 
 pub(super) fn json_is_date(map: &Rc<RefCell<ObjMap>>) -> bool {
     is_date_obj(map)
