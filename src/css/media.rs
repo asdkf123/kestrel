@@ -93,7 +93,22 @@ fn feature_matches(feat: &str, vw: f32) -> bool {
         "display-mode" => matches!(value, Some("browser")) || value.is_none(),
         "scripting" => matches!(value, Some("enabled")) || value.is_none(),
         "update" => matches!(value, Some("fast")) || value.is_none(),
-        "color-gamut" | "aspect-ratio" | "device-aspect-ratio" => true, // srgb/근사 매칭
+        // 우리 캔버스는 sRGB — p3/rec2020 을 지원한다고 하면 거짓말이다.
+        // (예전엔 값과 무관하게 항상 true 라 넓은 색역 전용 스타일이 잘못 적용됐다)
+        "color-gamut" => matches!(value, Some("srgb") | None),
+        // 실제 뷰포트 비율로 비교한다. 예전엔 항상 true 라
+        // `@media (aspect-ratio: 16/9)` 같은 조건이 무조건 매칭됐다.
+        "aspect-ratio" | "device-aspect-ratio" => match value {
+            None => true, // 특성 존재 여부만 물음 → 있음
+            Some(v) => match parse_ratio(v) {
+                Some(r) => match bound {
+                    Bound::Min => vw / vh >= r,
+                    Bound::Max => vw / vh <= r,
+                    Bound::Exact => (vw / vh - r).abs() < 0.001,
+                },
+                None => false,
+            },
+        },
         _ => false, // 미인식 특성 → 불일치 (표준)
     }
 }
@@ -143,6 +158,22 @@ fn cmp_resolution(bound: Bound, value: Option<&str>) -> bool {
         Bound::Min => 1.0 >= dppx,
         Bound::Max => 1.0 <= dppx,
         Bound::Exact => (1.0 - dppx).abs() < 0.01,
+    }
+}
+
+// 종횡비 값: "16/9" 또는 "1.5" (단일 수). 파싱 실패면 None.
+fn parse_ratio(v: &str) -> Option<f32> {
+    let v = v.trim();
+    match v.split_once('/') {
+        Some((w, h)) => {
+            let w: f32 = w.trim().parse().ok()?;
+            let h: f32 = h.trim().parse().ok()?;
+            if h == 0.0 {
+                return None;
+            }
+            Some(w / h)
+        }
+        None => v.parse().ok(),
     }
 }
 
