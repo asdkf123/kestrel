@@ -2529,12 +2529,15 @@ impl Interp {
                     let key = match k {
                         PropKey::Static(s) => s.clone(),
                         PropKey::Getter(s) => s.clone(),
-                        PropKey::Computed(ke) => key_of(&self.eval(ke, env)?),
+                        // { get [expr]() {..} } — 키를 런타임 평가 (심볼 키도 가능)
+                        PropKey::Computed(ke) | PropKey::ComputedGetter(ke) => {
+                            key_of(&self.eval(ke, env)?)
+                        }
                         PropKey::Spread => unreachable!(),
                     };
                     let val = self.eval(e, env)?;
                     // 접근자: 함수를 Getter 로 감싸 멤버 접근 시 호출되게
-                    let val = if matches!(k, PropKey::Getter(_)) {
+                    let val = if matches!(k, PropKey::Getter(_) | PropKey::ComputedGetter(_)) {
                         Value::Getter(Rc::new(val))
                     } else {
                         val
@@ -6408,6 +6411,44 @@ mod tests {
         );
         // 클래스 생성자 안 new.target 은 클래스
         assert!(run_bool("class A { constructor(){ this.t = new.target === A; } } (new A()).t"));
+    }
+
+    #[test]
+    fn computed_and_keyword_accessors() {
+        // { get [expr]() {} } — 계산된 접근자. 키는 런타임 평가(심볼 키도 가능).
+        assert_eq!(
+            run_num("var k='dyn'; var o={ base:5, get [k]() { return this.base*2; } }; o.dyn"),
+            10.0,
+        );
+        assert_eq!(
+            run_str("var s=Symbol('t'); var o={ get [s]() { return 'sg'; } }; o[s]"),
+            "sg",
+        );
+        // 예약어를 접근자 이름으로 — { get class() {} } (미니파이 번들에 흔함)
+        assert_eq!(
+            run_str("var o={ get class(){ return 'cls'; }, get default(){ return 'def'; } }; o.class + o.default"),
+            "clsdef",
+        );
+        // 기존 접근자는 그대로
+        assert_eq!(run_num("var o={ get x(){ return 42; } }; o.x"), 42.0);
+        // get 이 그냥 프로퍼티명인 경우 오검출 방지
+        assert_eq!(run_num("var o={ get: 7 }; o.get"), 7.0);
+        assert_eq!(run_str("var o={ get(){ return 'm'; } }; o.get()"), "m");
+    }
+
+    #[test]
+    fn await_operand_can_be_async_function_expression() {
+        // `await async function(){}` — await 의 피연산자로 async 함수식이 오는 패턴.
+        // await 는 unary() 로 피연산자를 파싱하는데 async 감지가 assignment() 에만 있어
+        // 번들이 통째로 파싱 실패했다.
+        assert!(run_bool(
+            "var r=null; (async function(){ r = await (async function(a,b){ return a+b; })(3,4); })(); \
+             r === 7"
+        ));
+        // async 화살표도
+        assert!(run_bool(
+            "var r=null; (async function(){ r = await (async (a)=>a*2)(5); })(); r === 10"
+        ));
     }
 
     #[test]

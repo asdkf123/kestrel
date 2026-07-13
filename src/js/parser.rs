@@ -201,6 +201,44 @@ impl Parser {
         }
     }
 
+    // open 위치의 '[' 에 대응하는 ']' 인덱스 (중첩 고려). 계산 키 판별에 쓴다.
+    fn matching_bracket(&self, open: usize) -> Option<usize> {
+        if self.toks.get(open) != Some(&Tok::LBracket) {
+            return None;
+        }
+        let mut depth = 0usize;
+        for i in open..self.toks.len() {
+            match self.toks.get(i) {
+                Some(Tok::LBracket) => depth += 1,
+                Some(Tok::RBracket) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    // `async function(){}` / `async (a)=>b` / `async x=>b` 를 만나면 async 표시 후 소비.
+    // assignment() 와 unary() 양쪽에서 필요하다 — `await async function(){}` 처럼
+    // await 의 피연산자(unary)로 async 함수식이 오는 경우가 번들에 흔하다.
+    fn eat_async_prefix(&mut self) {
+        if !matches!(self.peek(), Some(Tok::Ident(n)) if n == "async") {
+            return;
+        }
+        let n1 = self.toks.get(self.pos + 1);
+        let n2 = self.toks.get(self.pos + 2);
+        let is_async_fn = matches!(n1, Some(Tok::Function) | Some(Tok::LParen))
+            || matches!((n1, n2), (Some(Tok::Ident(_)), Some(Tok::Arrow)));
+        if is_async_fn {
+            self.pos += 1;
+            self.pending_async = true;
+        }
+    }
+
     // 에러 진단용: 현재 위치 주변 토큰 덤프 (필드 로그에서 원인 규명)
     fn ctx(&self) -> String {
         let lo = self.pos.saturating_sub(4);
@@ -800,14 +838,7 @@ impl Parser {
         }
         // async 수식어(식 위치): async () => / async x => / async function(){} — 무시
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "async") {
-            let n1 = self.toks.get(self.pos + 1);
-            let n2 = self.toks.get(self.pos + 2);
-            let is_async_fn = matches!(n1, Some(Tok::Function) | Some(Tok::LParen))
-                || matches!((n1, n2), (Some(Tok::Ident(_)), Some(Tok::Arrow)));
-            if is_async_fn {
-                self.pos += 1;
-                self.pending_async = true;
-            }
+            self.eat_async_prefix();
         }
         // 화살표 함수 먼저 시도 (백트래킹)
         if let Some(f) = self.try_arrow()? {
@@ -1052,6 +1083,9 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, String> {
+        // `await async function(){}` 처럼 피연산자로 async 함수식이 오는 경우를 위해
+        // 여기서도 async 접두를 소비한다(assignment() 만으론 도달하지 않는다).
+        self.eat_async_prefix();
         // await expr (async 함수 내). await 뒤가 식 시작일 때만 연산자로 취급
         // (그 외엔 'await' 를 일반 식별자로 — 관용).
         if matches!(self.peek(), Some(Tok::Ident(n)) if n == "await") {
@@ -1448,15 +1482,44 @@ impl Parser {
                             self.expect(&Tok::RBrace)?;
                             break;
                         }
-                        // 접근자 { get x(){..} } / { set x(v){..} }: get/set 뒤에 이름+'(' 이면
-                        if matches!(self.peek(), Some(Tok::Ident(w)) if w == "get" || w == "set")
+                        // 접근자 { get x(){..} } / { set x(v){..} }.
+                        // 이름은 식별자·문자열·숫자뿐 아니라 예약어({ get class(){} })도 되고,
+                        // 계산 키({ get [expr](){} })도 된다. 셋 다 지원해야 번들이 파싱된다.
+                        let is_acc =
+                            matches!(self.peek(), Some(Tok::Ident(w)) if w == "get" || w == "set");
+                        let acc_named = is_acc
                             && matches!(self.toks.get(self.pos + 1),
                                 Some(Tok::Ident(_) | Tok::Str(_) | Tok::Num(_)))
-                            && self.toks.get(self.pos + 2) == Some(&Tok::LParen)
-                        {
+                            && self.toks.get(self.pos + 2) == Some(&Tok::LParen);
+                        // 예약어 이름: get class() / get default() 등
+                        let acc_keyword = is_acc
+                            && self
+                                .toks
+                                .get(self.pos + 1)
+                                .map_or(false, |t| keyword_word(t).is_some())
+                            && self.toks.get(self.pos + 2) == Some(&Tok::LParen);
+                        // 계산 키: get [expr]() — 매칭 ']' 뒤가 '(' 여야 접근자다
+                        let acc_computed = is_acc
+                            && self.toks.get(self.pos + 1) == Some(&Tok::LBracket)
+                            && self
+                                .matching_bracket(self.pos + 1)
+                                .map_or(false, |c| self.toks.get(c + 1) == Some(&Tok::LParen));
+                        if acc_named || acc_keyword || acc_computed {
                             let is_get = matches!(self.peek(), Some(Tok::Ident(w)) if w == "get");
                             self.pos += 1; // get/set
-                            let name = self.member_name()?;
+                            // 계산 키는 런타임 평가를 위해 식 자체를 보존한다.
+                            let computed_key = if acc_computed {
+                                self.pos += 1; // '['
+                                let e = self.assignment()?;
+                                self.expect(&Tok::RBracket)?;
+                                Some(e)
+                            } else {
+                                None
+                            };
+                            let name = match &computed_key {
+                                Some(_) => String::new(),
+                                None => self.member_name()?,
+                            };
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
                             let f = Expr::Func {
@@ -1468,7 +1531,12 @@ impl Parser {
                                 is_async: false,
                             };
                             if is_get {
-                                props.push((PropKey::Getter(name), f));
+                                match computed_key {
+                                    Some(e) => {
+                                        props.push((PropKey::ComputedGetter(Box::new(e)), f))
+                                    }
+                                    None => props.push((PropKey::Getter(name), f)),
+                                }
                             }
                             // setter 는 할당 훅 미지원 → 버림(파싱만)
                             if self.eat(&Tok::Comma) {
