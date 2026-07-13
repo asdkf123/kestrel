@@ -207,7 +207,7 @@ fn synth_styled(elements: usize, decoys: usize) -> String {
 
 pub fn run_bench() {
     let iters = 50;
-    let fonts = crate::load_fonts(false);
+    let fonts = crate::load_fonts(&std::collections::HashSet::new());
 
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
     let bin_size = std::env::current_exe()

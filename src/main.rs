@@ -6,6 +6,7 @@ mod css;
 mod dataurl;
 mod dom;
 mod encoding;
+mod encoding_cjk;
 mod font;
 mod html;
 mod http;
@@ -91,9 +92,10 @@ fn main() {
     let html_source = fs::read_to_string("examples/test.html").expect("read examples/test.html");
     let css_source = fs::read_to_string("examples/test.css").expect("read examples/test.css");
 
-    let source_korean = page_needs_korean(&html_source);
+    let mut scripts = page_scripts(&html_source);
     let mut root_node = html::parse_dom(html_source);
-    let needs_korean = source_korean || page_needs_korean(&root_node.text_content(root_node.root));
+    // 엔티티(&#51060; 등) 디코드 후에야 드러나는 글자도 있다
+    scripts.extend(page_scripts(&root_node.text_content(root_node.root)));
     // 실제 페이지처럼 UA 스타일시트를 먼저 깔고 그 위에 저작자 CSS 를 얹는다.
     let mut stylesheet = css::user_agent_stylesheet();
     stylesheet.rules.extend(css::parse(css_source).rules);
@@ -101,7 +103,7 @@ fn main() {
     let viewport_width: u32 = 800;
     let viewport_height: u32 = 600;
 
-    let fonts = load_fonts(needs_korean);
+    let fonts = load_fonts(&scripts);
     let mut cache = raster::GlyphCache::new();
     // 로컬 데모도 절대 URL <img>/배경 이미지는 가져온다 (베이스는 상대경로 해석용 임의값).
     let base = url::Url::parse("https://localhost/").unwrap();
@@ -541,10 +543,10 @@ fn build_page(url: &str) -> Option<window::Page> {
     if !matches!(charset, encoding::Charset::Utf8) {
         println!("[charset] {:?} 로 디코딩", charset);
     }
-    let source_korean = page_needs_korean(&html);
+    let mut scripts = page_scripts(&html);
     let mut dom = html::parse_dom(html);
     // 원문엔 없어도 엔티티(&#51060; 등) 디코드 후 한글이 나올 수 있다 (google.co.kr)
-    let needs_korean = source_korean || page_needs_korean(&dom.text_content(dom.root));
+    scripts.extend(page_scripts(&dom.text_content(dom.root)));
 
     let base = url::Url::parse(url).ok()?;
 
@@ -596,7 +598,7 @@ fn build_page(url: &str) -> Option<window::Page> {
         }
     }
 
-    let mut fonts = load_fonts(needs_korean);
+    let mut fonts = load_fonts(&scripts);
     // @font-face 웹폰트 로드 (ttf/otf 만 — woff/woff2 미지원). 각 패밀리 첫 성공 src 사용.
     let mut loaded_faces = 0;
     for ff in &sheet.font_faces {
@@ -627,13 +629,7 @@ fn build_page(url: &str) -> Option<window::Page> {
             }
         }
     }
-    println!(
-        "[fonts] page_korean={} → {} font(s) loaded (한글 {}, @font-face {}개)",
-        needs_korean,
-        fonts.fonts.len(),
-        if needs_korean { "로드" } else { "생략" },
-        loaded_faces
-    );
+    println!("[fonts] {} font(s) loaded (@font-face {}개)", fonts.fonts.len(), loaded_faces);
 
     // 스크립트 실행. HTML 표준에서 파서가 삽입한 스크립트는 보류된 스타일시트를 기다린 뒤
     // 실행된다 — 그래서 CSS/폰트/이미지가 준비된 이 시점이 맞다. 예전엔 스크립트를 CSS 보다
@@ -779,26 +775,131 @@ fn render_url(url: &str) {
 }
 
 // 텍스트에 한글(자모/완성형)이 있는지.
-fn page_needs_korean(text: &str) -> bool {
-    text.chars().any(|c| {
-        ('\u{AC00}'..='\u{D7A3}').contains(&c)
-            || ('\u{1100}'..='\u{11FF}').contains(&c)
-            || ('\u{3130}'..='\u{318F}').contains(&c)
+// 페이지에 쓰인 문자 체계(스크립트) 판별.
+// 예전엔 한글만 봤다. 일본어 가나/중국어/아랍어/태국어 텍스트는 디코딩은 되는데
+// 글리프가 없어서 조용히 안 보였다 — 레이아웃은 자리를 잡고 화면만 빈다.
+// 어느 쪽이 더 나쁜지 분명하다: 실패했다는 것조차 안 보인다.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Script {
+    Korean,
+    Japanese, // 가나 (한자는 CJK 폰트가 함께 덮는다)
+    Han,      // 한자/중국어
+    Cyrillic,
+    Greek,
+    Arabic,
+    Hebrew,
+    Thai,
+    Devanagari,
+}
+
+impl Script {
+    fn probe(self) -> char {
+        match self {
+            Script::Korean => '한',
+            Script::Japanese => 'あ',
+            Script::Han => '漢',
+            Script::Cyrillic => 'А',
+            Script::Greek => 'Α',
+            Script::Arabic => 'ا',
+            Script::Hebrew => 'א',
+            Script::Thai => 'ก',
+            Script::Devanagari => 'क',
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Script::Korean => "한글",
+            Script::Japanese => "일본어 가나",
+            Script::Han => "한자",
+            Script::Cyrillic => "키릴",
+            Script::Greek => "그리스",
+            Script::Arabic => "아랍",
+            Script::Hebrew => "히브리",
+            Script::Thai => "타이",
+            Script::Devanagari => "데바나가리",
+        }
+    }
+
+    // macOS 시스템 폰트 후보 (앞에서부터 시도). Arial Unicode 는 마지막 보루.
+    fn candidates(self) -> &'static [&'static str] {
+        match self {
+            Script::Korean => &[
+                "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+            Script::Japanese => &[
+                "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+                "/System/Library/Fonts/AquaKana.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+            Script::Han => &[
+                "/System/Library/Fonts/Hiragino Sans GB.ttc",
+                "/System/Library/Fonts/Supplemental/Songti.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+            Script::Cyrillic | Script::Greek => &[
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+            Script::Arabic => &[
+                "/System/Library/Fonts/GeezaPro.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+            Script::Hebrew => &[
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+                "/System/Library/Fonts/ArialHB.ttc",
+            ],
+            Script::Thai => &[
+                "/System/Library/Fonts/Supplemental/Thonburi.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+            Script::Devanagari => &[
+                "/System/Library/Fonts/Supplemental/DevanagariMT.ttc",
+                "/System/Library/Fonts/Kohinoor.ttc",
+                "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            ],
+        }
+    }
+}
+
+fn script_of(c: char) -> Option<Script> {
+    let u = c as u32;
+    Some(match u {
+        0xAC00..=0xD7A3 | 0x1100..=0x11FF | 0x3130..=0x318F => Script::Korean,
+        0x3040..=0x309F | 0x30A0..=0x30FF | 0xFF66..=0xFF9D => Script::Japanese,
+        0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0xF900..=0xFAFF => Script::Han,
+        0x0400..=0x04FF => Script::Cyrillic,
+        0x0370..=0x03FF => Script::Greek,
+        0x0600..=0x06FF | 0x0750..=0x077F => Script::Arabic,
+        0x0590..=0x05FF => Script::Hebrew,
+        0x0E00..=0x0E7F => Script::Thai,
+        0x0900..=0x097F => Script::Devanagari,
+        _ => return None,
     })
 }
 
-// 시스템 폰트로 폰트 스택 구성 (번들 없음). 라틴 주 폰트 + (필요시) 한글 폴백.
-// 무거운 한글 폰트(수십 MB)는 페이지에 한글이 있을 때만 읽어 RAM 을 아낀다.
-fn load_fonts(needs_korean: bool) -> font::FontStack {
+// 페이지 텍스트에 실제로 쓰인 스크립트 집합
+fn page_scripts(text: &str) -> std::collections::HashSet<Script> {
+    let mut out = std::collections::HashSet::new();
+    for c in text.chars() {
+        if let Some(s) = script_of(c) {
+            out.insert(s);
+        }
+    }
+    out
+}
+
+// 시스템 폰트로 폰트 스택 구성. 라틴 주 폰트 + 페이지가 실제로 쓰는 스크립트별 폴백.
+// 폰트를 못 찾은 스크립트는 조용히 넘기지 않고 알린다 — 그 글자는 화면에서 사라진다.
+fn load_fonts(scripts: &std::collections::HashSet<Script>) -> font::FontStack {
     let latin: &[&str] = &[
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/HelveticaNeue.ttc",
         "/System/Library/Fonts/SFNS.ttf",
         "assets/fonts/Latin.ttf",
-    ];
-    let korean: &[&str] = &[
-        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
     ];
     let try_load = |paths: &[&str], probe: char| -> Option<font::Font> {
         for p in paths {
@@ -817,9 +918,30 @@ fn load_fonts(needs_korean: bool) -> font::FontStack {
     if let Some(f) = try_load(latin, 'A') {
         fonts.push(f);
     }
-    if needs_korean {
-        if let Some(f) = try_load(korean, '한') {
-            fonts.push(f);
+    // 스크립트 순서를 고정해 렌더가 실행마다 달라지지 않게 한다 (HashSet 순회 순서 무관).
+    let order = [
+        Script::Korean,
+        Script::Japanese,
+        Script::Han,
+        Script::Cyrillic,
+        Script::Greek,
+        Script::Arabic,
+        Script::Hebrew,
+        Script::Thai,
+        Script::Devanagari,
+    ];
+    let mut loaded = Vec::new();
+    let mut missing = Vec::new();
+    for sc in order {
+        if !scripts.contains(&sc) {
+            continue;
+        }
+        match try_load(sc.candidates(), sc.probe()) {
+            Some(f) => {
+                fonts.push(f);
+                loaded.push(sc.label());
+            }
+            None => missing.push(sc.label()),
         }
     }
     if fonts.is_empty() {
@@ -828,6 +950,12 @@ fn load_fonts(needs_korean: bool) -> font::FontStack {
                 fonts.push(f);
             }
         }
+    }
+    if !missing.is_empty() {
+        println!("[fonts] 글꼴 없음: {} — 이 글자들은 안 보인다", missing.join(", "));
+    }
+    if !loaded.is_empty() {
+        println!("[fonts] 스크립트 폰트: {}", loaded.join(", "));
     }
     assert!(!fonts.is_empty(), "no usable font found (system or bundled)");
     font::FontStack::new(fonts)
@@ -840,7 +968,7 @@ fn dump_glyphs(text: &str, path: &str) {
             let f = font::Font::from_bytes(fs::read(&p).expect("read font")).expect("parse font");
             font::FontStack::new(vec![f])
         }
-        Err(_) => load_fonts(page_needs_korean(text)),
+        Err(_) => load_fonts(&page_scripts(text)),
     };
     let px = 96.0f32;
 

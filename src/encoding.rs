@@ -17,11 +17,16 @@ mod cp949 {
     include!("encoding_cp949.rs");
 }
 
+use crate::encoding_cjk as cjk;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Charset {
     Utf8,
     Cp949, // euc-kr / ks_c_5601 / cp949 — 한국 웹의 레거시 표준
     Windows1252,
+    ShiftJis, // 일본 레거시 웹
+    Gbk,      // 중국 레거시 웹 (gbk / gb2312 / gb18030)
+    Big5,     // 대만/홍콩 레거시 웹
     /// 감지는 됐지만 아직 디코더가 없는 인코딩 (이름 보존).
     Unsupported(&'static str),
 }
@@ -35,9 +40,11 @@ fn from_label(label: &str) -> Option<Charset> {
         | "cp949" | "windows-949" | "uhc" => Charset::Cp949,
         "windows-1252" | "cp1252" | "iso-8859-1" | "iso8859-1" | "latin1" | "ascii"
         | "us-ascii" => Charset::Windows1252,
-        "shift_jis" | "sjis" | "shift-jis" | "windows-31j" => Charset::Unsupported("shift_jis"),
-        "gbk" | "gb2312" | "gb18030" => Charset::Unsupported("gbk"),
-        "big5" | "big5-hkscs" => Charset::Unsupported("big5"),
+        "shift_jis" | "sjis" | "shift-jis" | "windows-31j" | "ms_kanji" | "x-sjis"
+        | "csshiftjis" => Charset::ShiftJis,
+        "gbk" | "gb2312" | "gb18030" | "chinese" | "csgb2312" | "gb_2312" | "gb_2312-80"
+        | "x-gbk" => Charset::Gbk,
+        "big5" | "big5-hkscs" | "cn-big5" | "csbig5" | "x-x-big5" => Charset::Big5,
         _ => return None,
     })
 }
@@ -110,7 +117,183 @@ pub fn decode_as(bytes: &[u8], cs: Charset) -> String {
         Charset::Utf8 | Charset::Unsupported(_) => String::from_utf8_lossy(bytes).into_owned(),
         Charset::Windows1252 => bytes.iter().map(|&b| w1252_char(b)).collect(),
         Charset::Cp949 => decode_cp949(bytes),
+        Charset::ShiftJis => decode_shift_jis(bytes),
+        Charset::Gbk => decode_gbk(bytes),
+        Charset::Big5 => decode_big5(bytes),
     }
+}
+
+fn push_cp(out: &mut String, cp: u32) {
+    match char::from_u32(cp) {
+        Some(c) if cp != 0 => out.push(c),
+        _ => out.push('\u{FFFD}'),
+    }
+}
+
+// Shift_JIS 디코더 (WHATWG Encoding §12.3.1 그대로).
+fn decode_shift_jis(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        i += 1;
+        if b <= 0x80 {
+            out.push(b as char); // ASCII (0x80 은 그대로 U+0080)
+            continue;
+        }
+        if (0xA1..=0xDF).contains(&b) {
+            // 반각 가타카나
+            out.push(char::from_u32(0xFF61 - 0xA1 + b as u32).unwrap_or('\u{FFFD}'));
+            continue;
+        }
+        if !((0x81..=0x9F).contains(&b) || (0xE0..=0xFC).contains(&b)) {
+            out.push('\u{FFFD}');
+            continue;
+        }
+        let Some(&t) = bytes.get(i) else {
+            out.push('\u{FFFD}');
+            break;
+        };
+        i += 1;
+        let lead_off = if b < 0xA0 { 0x81u32 } else { 0xC1 };
+        let trail_off = if t < 0x7F { 0x40u32 } else { 0x41 };
+        if !((0x40..=0x7E).contains(&t) || (0x80..=0xFC).contains(&t)) {
+            out.push('\u{FFFD}');
+            i -= 1; // trail 은 다시 해석 (표준: prepend)
+            continue;
+        }
+        let ptr = (b as u32 - lead_off) * 188 + (t as u32 - trail_off);
+        if (8836..=10715).contains(&ptr) {
+            // 사용자 정의 영역
+            push_cp(&mut out, 0xE000 - 8836 + ptr);
+            continue;
+        }
+        match cjk::JIS0208.get(ptr as usize).copied() {
+            Some(cp) if cp != 0 => push_cp(&mut out, cp as u32),
+            _ => out.push('\u{FFFD}'),
+        }
+    }
+    out
+}
+
+// GBK / GB18030 디코더 (WHATWG Encoding §10.2.1). 4바이트 시퀀스도 처리한다.
+fn decode_gbk(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        i += 1;
+        if b < 0x80 {
+            out.push(b as char);
+            continue;
+        }
+        if b == 0x80 {
+            out.push('\u{20AC}'); // GBK 확장: 유로 기호
+            continue;
+        }
+        if !(0x81..=0xFE).contains(&b) {
+            out.push('\u{FFFD}');
+            continue;
+        }
+        let Some(&t) = bytes.get(i) else {
+            out.push('\u{FFFD}');
+            break;
+        };
+        // 4바이트 시퀀스: lead 0x81..0xFE, 2번째 0x30..0x39
+        if (0x30..=0x39).contains(&t) {
+            if i + 2 < bytes.len() {
+                let (b3, b4) = (bytes[i + 1], bytes[i + 2]);
+                if (0x81..=0xFE).contains(&b3) && (0x30..=0x39).contains(&b4) {
+                    let ptr = ((b as u32 - 0x81) * 10 + (t as u32 - 0x30)) * 1260
+                        + (b3 as u32 - 0x81) * 10
+                        + (b4 as u32 - 0x30);
+                    i += 3;
+                    push_cp(&mut out, gb18030_range_cp(ptr));
+                    continue;
+                }
+            }
+            out.push('\u{FFFD}');
+            continue;
+        }
+        i += 1;
+        if t == 0x7F || t < 0x40 {
+            out.push('\u{FFFD}');
+            continue;
+        }
+        let off = if t < 0x7F { 0x40u32 } else { 0x41 };
+        let ptr = (b as u32 - 0x81) * 190 + (t as u32 - off);
+        match cjk::GB18030.get(ptr as usize).copied() {
+            Some(cp) if cp != 0 => push_cp(&mut out, cp as u32),
+            _ => out.push('\u{FFFD}'),
+        }
+    }
+    out
+}
+
+// 4바이트 GB18030 포인터 → 코드포인트 (범위 표 이분 탐색)
+fn gb18030_range_cp(ptr: u32) -> u32 {
+    if ptr > 39419 && ptr < 189000 || ptr > 1237575 {
+        return 0; // 표준: 매핑 없음
+    }
+    if ptr == 7457 {
+        return 0xE7C7;
+    }
+    let mut best = (0u32, 0u32);
+    for &(p, cp) in cjk::GB18030_RANGES.iter() {
+        if p <= ptr {
+            best = (p, cp);
+        } else {
+            break;
+        }
+    }
+    best.1 + (ptr - best.0)
+}
+
+// Big5 디코더 (WHATWG Encoding §11.2.1).
+fn decode_big5(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        i += 1;
+        if b < 0x80 {
+            out.push(b as char);
+            continue;
+        }
+        if !(0x81..=0xFE).contains(&b) {
+            out.push('\u{FFFD}');
+            continue;
+        }
+        let Some(&t) = bytes.get(i) else {
+            out.push('\u{FFFD}');
+            break;
+        };
+        if !((0x40..=0x7E).contains(&t) || (0xA1..=0xFE).contains(&t)) {
+            out.push('\u{FFFD}');
+            continue; // trail 이 아니면 lead 만 버린다
+        }
+        i += 1;
+        let off = if t < 0x7F { 0x40u32 } else { 0x62 };
+        let ptr = (b as u32 - 0x81) * 157 + (t as u32 - off);
+        // 표준의 4개 예외: 두 코드포인트로 펼쳐진다
+        let pair = match ptr {
+            1133 => Some(['\u{00CA}', '\u{0304}']),
+            1135 => Some(['\u{00CA}', '\u{030C}']),
+            1164 => Some(['\u{00EA}', '\u{0304}']),
+            1166 => Some(['\u{00EA}', '\u{030C}']),
+            _ => None,
+        };
+        if let Some(p) = pair {
+            out.push(p[0]);
+            out.push(p[1]);
+            continue;
+        }
+        match cjk::BIG5.get(ptr as usize).copied() {
+            Some(cp) if cp != 0 => push_cp(&mut out, cp),
+            _ => out.push('\u{FFFD}'),
+        }
+    }
+    out
 }
 
 // windows-1252: 0x80..0x9F 만 ISO-8859-1 과 다르다(특수 문자 구간).
@@ -216,6 +399,37 @@ mod tests {
         let (text, cs) = decode(body, None);
         assert_eq!(cs, Charset::Utf8);
         assert_eq!(text, "한글 UTF-8");
+    }
+
+    #[test]
+    fn decodes_shift_jis() {
+        // 바이트는 표준 코덱으로 인코딩한 실제 값이다 (지어낸 벡터가 아니다).
+        let bytes: &[u8] = &[147, 250, 150, 123, 140, 234, 130, 204, 131, 101, 131, 88, 131, 103, 129, 65, 130, 208, 130, 231, 130, 170, 130, 200, 129, 66, 65, 66, 67, 49, 50, 51];
+        let s = decode_as(bytes, Charset::ShiftJis);
+        assert_eq!(s, "日本語のテスト、ひらがな。ABC123", "shift_jis 디코딩");
+    }
+    #[test]
+    fn decodes_gbk() {
+        // 바이트는 표준 코덱으로 인코딩한 실제 값이다 (지어낸 벡터가 아니다).
+        let bytes: &[u8] = &[214, 208, 206, 196, 178, 226, 202, 212, 163, 172, 188, 242, 204, 229, 215, 214, 161, 163, 65, 66, 67, 49, 50, 51];
+        let s = decode_as(bytes, Charset::Gbk);
+        assert_eq!(s, "中文测试，简体字。ABC123", "gbk 디코딩");
+    }
+    #[test]
+    fn decodes_big5() {
+        // 바이트는 표준 코덱으로 인코딩한 실제 값이다 (지어낸 벡터가 아니다).
+        let bytes: &[u8] = &[193, 99, 197, 233, 164, 164, 164, 229, 180, 250, 184, 213, 161, 65, 165, 191, 197, 233, 166, 114, 161, 67, 65, 66, 67, 49, 50, 51];
+        let s = decode_as(bytes, Charset::Big5);
+        assert_eq!(s, "繁體中文測試，正體字。ABC123", "big5 디코딩");
+    }
+    #[test]
+    fn charset_detected_from_meta_for_cjk() {
+        let body = "<meta charset=\"shift_jis\">".as_bytes();
+        assert_eq!(decode(body, None).1, Charset::ShiftJis);
+        let body = "<meta charset=\"big5\">".as_bytes();
+        assert_eq!(decode(body, None).1, Charset::Big5);
+        let body = "<meta charset=\"gb2312\">".as_bytes();
+        assert_eq!(decode(body, None).1, Charset::Gbk);
     }
 
     #[test]

@@ -4187,6 +4187,22 @@ mod tests {
     }
 
     #[test]
+    fn cjk_text_breaks_between_characters() {
+        // CJK 는 공백이 없다. 공백에서만 끊으면 문단 전체가 한 줄로 끝없이 흘러 넘친다
+        // (실제로 그랬다 — 112자가 300px 상자에서 한 줄이었다).
+        // UAX #14: 표의문자/가나 사이는 줄바꿈 기회다.
+        let jp = "日本語のテキストは空白がないので行分割の規則が違います。".repeat(4);
+        let d = flex_layout(
+            &format!("<div class=\"p\">{}</div>", jp),
+            ".p { display: block; width: 300px; font-size: 16px; }",
+            300.0,
+        );
+        let h = d[0].content.height;
+        assert!(h > 60.0, "여러 줄로 나뉘어야 한다 (높이 {}px)", h);
+        assert!(h < 300.0, "한 글자씩 세로로 흐르면 안 된다 (높이 {}px)", h);
+    }
+
+    #[test]
     fn display_contents_removes_box_and_lifts_children() {
         // display: contents — 래퍼의 박스는 생기지 않고 자식이 부모 flex 의 아이템이 된다.
         // 예전엔 미지원 값이라 block 으로 떨어져 래퍼가 통짜 한 아이템이 됐다(자식은 세로 쌓임).

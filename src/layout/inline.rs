@@ -86,6 +86,40 @@ fn bidi_reorder(levels: &[u8]) -> Vec<usize> {
     vis
 }
 
+// CJK 표의문자/가나 — 글자 사이가 줄바꿈 기회다 (UAX #14 의 ID 클래스).
+// 이게 없으면 공백 없는 CJK 문단이 한 줄로 끝없이 흘러 넘친다 (실제로 그랬다).
+fn is_cjk(c: char) -> bool {
+    let u = c as u32;
+    (0x4E00..=0x9FFF).contains(&u)      // CJK 통합 한자
+        || (0x3400..=0x4DBF).contains(&u)  // 확장 A
+        || (0xF900..=0xFAFF).contains(&u)  // 호환 한자
+        || (0x3040..=0x309F).contains(&u)  // 히라가나
+        || (0x30A0..=0x30FF).contains(&u)  // 가타카나
+        || (0xFF66..=0xFF9D).contains(&u)  // 반각 가타카나
+        || (0xAC00..=0xD7A3).contains(&u)  // 한글 음절
+        || (0x3000..=0x303F).contains(&u)  // CJK 문장부호
+}
+
+// 금칙(kinsoku): 줄 첫머리에 올 수 없는 글자 — 앞에서 끊지 않는다.
+fn no_break_before(c: char) -> bool {
+    matches!(
+        c,
+        '、' | '。' | '，' | '．' | '！' | '？' | '：' | '；' | '）' | '」' | '』' | '】'
+            | '〕' | '》' | '〉' | '〙' | '〗' | '｝' | '］' | 'ー' | 'ゝ' | 'ゞ' | 'ヽ' | 'ヾ'
+            | 'っ' | 'ッ' | 'ぁ' | 'ぃ' | 'ぅ' | 'ぇ' | 'ぉ' | 'ァ' | 'ィ' | 'ゥ' | 'ェ' | 'ォ'
+            | ',' | '.' | '!' | '?' | ':' | ';' | ')' | ']' | '}' | '%'
+    )
+}
+
+// 줄 끝에 올 수 없는 글자 — 뒤에서 끊지 않는다.
+fn no_break_after(c: char) -> bool {
+    matches!(
+        c,
+        '（' | '「' | '『' | '【' | '〔' | '《' | '〈' | '〘' | '〖' | '｛' | '［'
+            | '(' | '[' | '{' | '$' | '¥' | '￥'
+    )
+}
+
 // 인라인 텍스트 조각의 계산된 스타일 (런/단어/글리프에 실림).
 #[derive(Clone, Copy)]
 struct TextStyle {
@@ -218,6 +252,9 @@ impl<'a> LayoutBox<'a> {
 
         // 단어 목록: (글자들, 앞의 강제 개행, 뒤에 공백 없음=glue). glue 는 break-word 로
         // 쪼갠 조각을 붙이기 위한 것 (일반 단어는 false).
+        // word-break: keep-all — CJK 글자 사이에서 끊지 않는다 (한국어 문서가 흔히 쓴다)
+        let keep_all = matches!(self.styled_node.value("word-break"),
+            Some(Value::Keyword(ref k)) if k == "keep-all");
         let mut words: Vec<(Vec<(char, TextStyle)>, bool, bool)> = Vec::new();
         let mut cur: Vec<(char, TextStyle)> = Vec::new();
         let mut break_before = false; // 다음에 확정될 단어 앞에 강제 개행
@@ -244,6 +281,19 @@ impl<'a> LayoutBox<'a> {
                         flush(&mut cur, &mut words, &mut break_before); // 공백 접기 → 단어 경계
                     }
                 } else {
+                    // CJK 는 글자 사이가 줄바꿈 기회다 (UAX #14). 금칙 규칙을 지킨다:
+                    // 여는 괄호 뒤에서는 끊지 않고, 닫는 괄호/구두점 앞에서는 끊지 않는다.
+                    let prev = cur.last().map(|(c, _)| *c);
+                    let boundary = !keep_all
+                        && !cur.is_empty()
+                        && (is_cjk(ch) || prev.map(is_cjk).unwrap_or(false))
+                        && !no_break_before(ch)
+                        && !prev.map(no_break_after).unwrap_or(false);
+                    if boundary {
+                        // 이 조각은 공백 없이 이어진다 → glue=true 로 밀어 넣는다
+                        words.push((std::mem::take(&mut cur), break_before, true));
+                        break_before = false;
+                    }
                     cur.push((ch, *st));
                 }
             }
