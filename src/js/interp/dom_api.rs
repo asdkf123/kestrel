@@ -691,11 +691,29 @@ impl Interp {
                 }
                 _ => Ok(Value::Undefined),
             },
-            // 문자열 속성 반사 (원문 그대로).
+            // 문자열 속성 반사. 속성이 없을 때 빈 문자열이 아니라 **기본값**을 내는 것들이
+            // 있다 (HTML 의 반영 규칙): <input> 의 type 은 "text", <form> 의 method 는 "get",
+            // enctype 은 application/x-www-form-urlencoded. 빈 문자열을 주면
+            // `if (input.type === 'text')` 같은 흔한 검사가 조용히 거짓이 된다.
             "alt" | "title" | "name" | "type" | "rel" | "target" | "placeholder" | "method"
-            | "lang" | "dir" => match &dom.get(id).node_type {
+            | "enctype" | "lang" | "dir" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => {
-                    Ok(Value::Str(e.attributes.get(key).cloned().unwrap_or_default()))
+                    let raw = e.attributes.get(key).cloned();
+                    let tag = e.tag_name.as_str();
+                    let v = match raw {
+                        Some(v) if !v.is_empty() => v,
+                        _ => match (tag, key) {
+                            ("input", "type") => "text".to_string(),
+                            ("button", "type") => "submit".to_string(),
+                            ("form", "method") => "get".to_string(),
+                            ("form", "enctype") => {
+                                "application/x-www-form-urlencoded".to_string()
+                            }
+                            _ => String::new(),
+                        },
+                    };
+                    // type 은 소문자로 반영된다 (표준: 열거형 속성)
+                    Ok(Value::Str(if key == "type" { v.to_ascii_lowercase() } else { v }))
                 }
                 _ => Ok(Value::Undefined),
             },
@@ -707,7 +725,7 @@ impl Interp {
         // el.onclick = fn → 핸들러 등록
         if let Some(event) = key.strip_prefix("on") {
             if matches!(value, Value::Fn(_)) {
-                self.handlers.push((id, event.to_string(), value, false)); // on* 속성은 버블 단계
+                self.handlers.push((id, event.to_string(), value, false, false)); // on* 속성은 버블 단계
             }
             return Ok(());
         }

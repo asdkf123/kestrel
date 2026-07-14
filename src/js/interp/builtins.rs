@@ -1364,6 +1364,79 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
+    // 체크박스/라디오면 checked 를 뒤집는다. 뒤집었으면 true.
+    fn pre_click_toggle(&mut self, id: crate::dom::NodeId) -> bool {
+        let Ok(dom) = self.dom_arena() else { return false };
+        let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else { return false };
+        if e.tag_name != "input" {
+            return false;
+        }
+        let ty = e.attributes.get("type").map(|t| t.to_ascii_lowercase()).unwrap_or_default();
+        if ty != "checkbox" && ty != "radio" {
+            return false;
+        }
+        let was = e.attributes.contains_key("checked");
+        if was && ty == "checkbox" {
+            dom.remove_attr(id, "checked");
+        } else {
+            dom.set_attr(id, "checked", String::new());
+        }
+        true
+    }
+
+    // click() 의 기본 동작 (preventDefault 안 됐을 때). HTML §8.3.5 의 activation behavior.
+    // 체크박스/라디오 토글은 표준상 디스패치 **전**이지만, preventDefault 시 되돌려야 하므로
+    // 여기서 한 번에 처리한다 (관측 가능한 결과는 같다 — 핸들러가 checked 를 읽는 경우만
+    // 다르고, 그 경우는 아래에서 미리 토글해 맞춘다).
+    fn click_default_action(&mut self, id: crate::dom::NodeId) {
+        let (tag, ty, href) = {
+            let Ok(dom) = self.dom_arena() else { return };
+            match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => (
+                    e.tag_name.clone(),
+                    e.attributes.get("type").map(|t| t.to_ascii_lowercase()).unwrap_or_default(),
+                    e.attributes.get("href").cloned(),
+                ),
+                _ => return,
+            }
+        };
+        match tag.as_str() {
+            // 링크: 이동 요청 (호출측 렌더러가 새 URL 로 다시 그린다)
+            "a" | "area" => {
+                if let Some(h) = href {
+                    if !h.starts_with('#') && !h.trim().is_empty() {
+                        let abs = self.absolute_url(&h);
+                        self.navigate_to = Some(abs);
+                    }
+                }
+            }
+            // 제출 버튼: 폼에 submit 이벤트를 쏜다 (취소되면 아무 일도 없다)
+            "button" | "input" if ty == "submit" || (tag == "button" && ty.is_empty()) => {
+                let form = self.owner_form(id);
+                if let Some(f) = form {
+                    let evt = self.make_event("submit", f);
+                    self.dispatch_event_value(f, "submit", evt);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 이 요소를 감싸는 <form> (없으면 None)
+    fn owner_form(&mut self, id: crate::dom::NodeId) -> Option<crate::dom::NodeId> {
+        let dom = self.dom_arena().ok()?;
+        let mut cur = Some(id);
+        while let Some(n) = cur {
+            if let crate::dom::NodeType::Element(e) = &dom.get(n).node_type {
+                if e.tag_name == "form" {
+                    return Some(n);
+                }
+            }
+            cur = dom.get(n).parent;
+        }
+        None
+    }
+
     // new WebSocket(url [, protocols]) — 진짜로 연결한다 (RFC 6455 핸드셰이크).
     // 실패하면 error/close 이벤트를 쏜다 (표준: 생성자는 throw 하지 않는다 —
     // 연결 실패는 비동기 이벤트다. 여기서 throw 하면 스크립트가 통째로 죽는다).
@@ -1792,17 +1865,18 @@ impl Interp {
                 if !is_callable(&listener) {
                     return Ok(Value::Undefined); // null/undefined 리스너는 무시 (표준)
                 }
-                // 3번째 인자: true 또는 {capture: true} (표준)
-                let capture = match args.get(2) {
-                    Some(Value::Bool(b)) => *b,
-                    Some(Value::Obj(o)) => {
-                        matches!(o.borrow().get("capture"), Some(v) if to_bool(v))
-                    }
-                    _ => false,
+                // 3번째 인자: true 또는 {capture: true, once: true, passive: …} (표준)
+                let (capture, once) = match args.get(2) {
+                    Some(Value::Bool(b)) => (*b, false),
+                    Some(Value::Obj(o)) => (
+                        matches!(o.borrow().get("capture"), Some(v) if to_bool(v)),
+                        matches!(o.borrow().get("once"), Some(v) if to_bool(v)),
+                    ),
+                    _ => (false, false),
                 };
                 match recv {
                     Some(Value::Dom(id)) => {
-                        self.handlers.push((id, event, listener, capture));
+                        self.handlers.push((id, event, listener, capture, once));
                         Ok(Value::Undefined)
                     }
                     // EventTarget 은 요소 전용이 아니다. XHR 등 객체 수신자는 리스너를
@@ -1833,7 +1907,7 @@ impl Interp {
                 let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
                 match recv {
                     Some(Value::Dom(id)) => {
-                        self.handlers.retain(|(hid, t, f, _)| {
+                        self.handlers.retain(|(hid, t, f, _, _)| {
                             !(*hid == id && *t == event && same_callable(f, &listener))
                         });
                     }
@@ -2788,6 +2862,36 @@ impl Interp {
                 Some(id) => Value::Dom(id),
                 None => self.call_native(Native::DocQuery("body"), None, vec![])?,
             }),
+            // el.click(): 신뢰되지 않은(isTrusted=false) 클릭 이벤트를 캡처→타깃→버블로
+            // 디스패치한다. 기본 동작(링크 이동/폼 제출)은 preventDefault 되지 않았을 때만.
+            Native::ElementClick => {
+                let Some(Value::Dom(id)) = recv else {
+                    return Err("click 은 요소 메서드".to_string());
+                };
+                // 체크박스/라디오는 디스패치 **전에** 토글된다 (표준: pre-click activation).
+                // 핸들러가 e.target.checked 를 읽으면 이미 바뀐 값이어야 한다.
+                let toggled = self.pre_click_toggle(id);
+                let evt = self.make_event("click", id);
+                if let Value::Obj(o) = &evt {
+                    o.borrow_mut().insert("isTrusted".to_string(), Value::Bool(false));
+                }
+                self.dispatch_event_value(id, "click", evt.clone());
+                let prevented = match &evt {
+                    Value::Obj(o) => {
+                        matches!(o.borrow().get("defaultPrevented"), Some(Value::Bool(true)))
+                    }
+                    _ => false,
+                };
+                if prevented {
+                    // 취소되면 토글을 되돌린다 (표준: canceled activation behavior)
+                    if toggled {
+                        self.pre_click_toggle(id);
+                    }
+                } else {
+                    self.click_default_action(id);
+                }
+                Ok(Value::Undefined)
+            }
             Native::Focus => {
                 if let Some(Value::Dom(id)) = recv {
                     let prev = self.active_element;

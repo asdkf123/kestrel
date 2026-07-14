@@ -1346,6 +1346,38 @@ mod tests {
         assert_eq!(text_of_id(&dom, "out").unwrap(), "p,7,3");
     }
 
+    // element.click() — 없어서 프로그램적 클릭 한 줄에 스크립트가 죽었다.
+    // 표준의 activation behavior 까지: 체크박스는 디스패치 **전에** 토글되고
+    // (핸들러가 바뀐 값을 봐야 한다), preventDefault 면 되돌린다.
+    // once 리스너는 한 번만, eventPhase 는 1/2/3 이어야 한다.
+    #[test]
+    fn element_click_dispatches_and_activates() {
+        let dom = run_with_layout(
+            "<div id=\"o\"><button id=\"b\">x</button></div>\
+             <input type=\"checkbox\" id=\"c\">\
+             <p id=\"out\"></p><script>\
+             var order=[], phases=[], once=0;\
+             var o=document.getElementById('o'), b=document.getElementById('b');\
+             o.addEventListener('click', function(e){ order.push('cap'); phases.push(e.eventPhase); }, true);\
+             o.addEventListener('click', function(e){ order.push('bub'); phases.push(e.eventPhase); });\
+             b.addEventListener('click', function(e){ order.push('tgt'); phases.push(e.eventPhase); });\
+             b.addEventListener('click', function(){ once++; }, {once: true});\
+             b.click(); b.click();\
+             var c=document.getElementById('c'), seen=null;\
+             c.addEventListener('click', function(e){ seen = e.target.checked; });\
+             c.click();\
+             document.getElementById('out').textContent = \
+               order.slice(0,3).join(',') + '|' + phases.slice(0,3).join(',') + '|' + once + '|' + seen + '|' + c.checked;\
+             </script>",
+            "",
+        );
+        assert_eq!(
+            text_of_id(&dom, "out").unwrap(),
+            "cap,tgt,bub|1,2,3|1|true|true",
+            "캡처→타깃→버블, eventPhase, once 1회, 체크박스 사전 토글"
+        );
+    }
+
     #[test]
     fn dom_mutation_invalidates_measurement_cache() {
         // 측정 → DOM 변경 → 재측정: 두 번째 읽기는 새 레이아웃을 봐야 한다.

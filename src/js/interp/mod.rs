@@ -555,6 +555,9 @@ pub enum Native {
     ResponseJson,
     // Response.arrayBuffer() — 원본 바이트 그대로 (텍스트로 거치면 바이너리가 망가진다)
     ResponseArrayBuffer,
+    // element.click() — 합성 클릭 이벤트를 실제로 디스패치한다 (HTML §8.3.5).
+    // 없으면 프로그램적 클릭 한 줄에 스크립트가 죽는다 (탭 전환/다운로드 트리거 등 흔하다).
+    ElementClick,
     // WebSocket (RFC 6455) — 진짜 소켓이다. 스텁이면 "연결됐다" 는 거짓말이 된다.
     WebSocketCtor,
     WsSend,
@@ -1073,7 +1076,9 @@ pub struct Interp {
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     // (요소, 이벤트, 리스너, 캡처 여부). 캡처 플래그가 없으면 DOM 이벤트의 3단계
     // (캡처 → 타깃 → 버블)를 지킬 수 없다 — 캡처 리스너가 버블 순서로 늦게 불린다.
-    pub handlers: Vec<(crate::dom::NodeId, String, Value, bool)>,
+    // (요소, 이벤트, 리스너, 캡처, once). once 를 무시하면 리스너가 두 번 이상 불린다 —
+    // "한 번만" 을 전제로 짠 코드(모달 닫기, 애니메이션 종료 처리)가 조용히 두 번 돈다.
+    pub handlers: Vec<(crate::dom::NodeId, String, Value, bool, bool)>,
     // MutationObserver 배달을 이미 예약했는가 (마이크로태스크 중복 예약 방지)
     mutation_scheduled: bool,
     // attachShadow 를 부른 요소들. 우리는 섀도 트리를 따로 두지 않고 요소 자신을
@@ -2424,6 +2429,8 @@ impl Interp {
         m.insert("isTrusted".to_string(), Value::Bool(true));
         m.insert("\u{0}stopProp".to_string(), Value::Bool(false));
         m.insert("timeStamp".to_string(), Value::Num(0.0));
+        // 0=NONE, 1=CAPTURING, 2=AT_TARGET, 3=BUBBLING (디스패치가 단계마다 갱신한다)
+        m.insert("eventPhase".to_string(), Value::Num(0.0));
         m.insert("preventDefault".to_string(), Value::Native(Native::EventPreventDefault));
         m.insert("stopPropagation".to_string(), Value::Native(Native::EventStopProp));
         m.insert("stopImmediatePropagation".to_string(), Value::Native(Native::EventStopProp));
@@ -2457,31 +2464,48 @@ impl Interp {
         let evt_obj = if let Value::Obj(o) = &evt { o.clone() } else { return false };
         evt_obj.borrow_mut().insert("target".to_string(), Value::Dom(target));
 
-        // (노드, 캡처단계인가) 순서: 조상 역순(루트→부모) 캡처 → 타깃(둘 다) → 부모→루트 버블
-        let mut phases: Vec<(crate::dom::NodeId, Option<bool>)> = Vec::new();
+        // (노드, 캡처단계인가, eventPhase) 순서:
+        // 조상 역순(루트→부모) 캡처(1) → 타깃(2, 둘 다) → 부모→루트 버블(3)
+        let mut phases: Vec<(crate::dom::NodeId, Option<bool>, u8)> = Vec::new();
         for &a in ancestors.iter().rev() {
-            phases.push((a, Some(true))); // 캡처 리스너만
+            phases.push((a, Some(true), 1)); // 캡처 리스너만
         }
-        phases.push((target, None)); // 타깃: 등록 순서대로 전부
+        phases.push((target, None, 2)); // 타깃: 등록 순서대로 전부
         for &a in ancestors.iter() {
-            phases.push((a, Some(false))); // 버블 리스너만
+            phases.push((a, Some(false), 3)); // 버블 리스너만
         }
 
         let mut fired = false;
-        for (id, want_capture) in phases {
+        for (id, want_capture, phase) in phases {
+            // 버블 단계는 이벤트가 bubbles=true 일 때만 (표준). focus/blur 등은 안 올라간다.
+            if phase == 3
+                && !matches!(evt_obj.borrow().get("bubbles"), Some(Value::Bool(true)) | None)
+            {
+                break;
+            }
             let to_run: Vec<Value> = self
                 .handlers
                 .iter()
-                .filter(|(hid, t, _, cap)| {
+                .filter(|(hid, t, _, cap, _)| {
                     *hid == id && t == event && want_capture.map_or(true, |w| *cap == w)
                 })
-                .map(|(_, _, f, _)| f.clone())
+                .map(|(_, _, f, _, _)| f.clone())
                 .collect();
             if !to_run.is_empty() {
                 fired = true;
                 evt_obj.borrow_mut().insert("currentTarget".to_string(), Value::Dom(id));
+                evt_obj.borrow_mut().insert("eventPhase".to_string(), Value::Num(phase as f64));
             }
             for f in to_run {
+                // once 리스너는 **부르기 전에** 목록에서 뺀다 (핸들러가 재진입해도 두 번 안 불린다)
+                let once = self.handlers.iter().any(|(hid, t, hf, _, o)| {
+                    *o && *hid == id && t == event && strict_eq(hf, &f)
+                });
+                if once {
+                    self.handlers.retain(|(hid, t, hf, _, o)| {
+                        !(*o && *hid == id && t == event && strict_eq(hf, &f))
+                    });
+                }
                 if let Err(e) = self.call_value(f, Some(Value::Dom(id)), vec![evt.clone()]) {
                     println!("[js error] {}", e);
                 }
@@ -2490,6 +2514,7 @@ impl Interp {
                 break; // stopPropagation
             }
         }
+        evt_obj.borrow_mut().insert("eventPhase".to_string(), Value::Num(0.0)); // NONE (디스패치 끝)
         fired
     }
 
@@ -4592,6 +4617,7 @@ impl Interp {
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "scrollIntoView" => Some(Native::ScrollIntoView),
+                    "click" => Some(Native::ElementClick),
                     "focus" => Some(Native::Focus),
                     "blur" => Some(Native::Blur),
                     "animate" => Some(Native::ElementAnimate),
