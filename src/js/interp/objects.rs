@@ -213,7 +213,9 @@ pub struct JsClass {
     // 이 클래스 평가에서 만들어진 private 이름들의 스코프 id (§6.2.12).
     // 같은 이름 #x 라도 클래스가 다르면 **다른 private 이름**이다 — 그래서 id 가 필요하다.
     pub priv_id: u64,
-    pub name: String,
+    // 클래스 이름. 익명 클래스는 "" 이고, 이름 있는 참조에 대입되면 그 이름을 받는다
+    // (§10.2.9 NamedEvaluation) — 그래서 가변이다.
+    pub name: RefCell<String>,
     pub parent: Option<Rc<JsClass>>,
     // 클래스가 아닌 생성자를 확장한 경우(class E extends Error / extends function).
     // 표준은 아무 생성자나 확장 가능하다. super() 는 이 생성자를 실행해 this 를 채운다.
@@ -302,8 +304,8 @@ impl std::fmt::Debug for Value {
             Value::Fn(_) => write!(f, "[function]"),
             Value::Native(n) => write!(f, "[native {:?}]", n),
             Value::Dom(p) => write!(f, "[dom {:?}]", p),
-            Value::Class(c) => write!(f, "[class {}]", c.name),
-            Value::Instance(i) => write!(f, "[instance {}]", i.class.name),
+            Value::Class(c) => write!(f, "[class {}]", c.name.borrow()),
+            Value::Instance(i) => write!(f, "[instance {}]", i.class.name.borrow()),
             Value::Bound(_) => write!(f, "[bound function]"),
             Value::Accessor(_) => write!(f, "[accessor]"),
             Value::MapVal(_) => write!(f, "[object Map]"),

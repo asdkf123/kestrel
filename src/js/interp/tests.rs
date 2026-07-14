@@ -2912,6 +2912,38 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn named_evaluation_only_for_anonymous_function_expressions() {
+    // §13.15.2 / §14.3.1: 구문상 **익명 함수/클래스**를 이름 있는 참조에 대입할 때만
+    // 그 이름을 갖는다. 예전엔 값이 익명이기만 하면 이름을 줘서,
+    // `var w = makeFn()` 처럼 호출 결과를 받은 함수까지 이름이 붙었다.
+    assert_eq!(run_str("var x; x = function(){}; x.name"), "x");
+    assert_eq!(run_str("var c; c = class {}; c.name"), "c");
+    // 호출 결과를 대입하는 건 해당 없다
+    assert_eq!(
+        run_str("var w = (function(){ return function(){} })(); w.name"),
+        ""
+    );
+    // 매개변수 기본값도 대입으로 펼쳐진다 (§10.2.11)
+    assert_eq!(run_str("function f(a = function(){}) { return a.name; } f()"), "a");
+    // 구조분해 기본값 (§8.6.2 / §14.3.3)
+    assert_eq!(run_str("var { a = function(){} } = {}; a.name"), "a");
+    assert_eq!(run_str("var [b = () => {}] = []; b.name"), "b");
+    // 익명 클래스식 자체의 이름은 "" 다
+    assert_eq!(run_str("(class {}).name"), "");
+    assert_eq!(run_str("(class Named {}).name"), "Named");
+}
+
+#[test]
+fn destructuring_assignment_with_defaults_parses() {
+    // CoverInitializedName: { a = 1 } 은 객체 리터럴로는 문법 오류지만
+    // 구조분해 **대입 대상**으로는 유효하다. 예전엔 파서가 여기서 죽어서
+    // 그 스크립트가 통째로 못 돌았다.
+    assert_eq!(run_str("var f; ({ f = 'dflt' } = {}); f"), "dflt");
+    assert_eq!(run_str("var g; ({ g = 'dflt' } = { g: 'given' }); g"), "given");
+    assert_eq!(run_str("var h; ({ x: h = 'd' } = {}); h"), "d");
+}
+
+#[test]
 fn identifiers_allow_unicode_and_escapes() {
     // §12.7: 식별자는 유니코드다. 예전엔 ASCII 만 받아서, 유니코드 식별자나
     // 식별자 안의 유니코드 이스케이프가 파싱에서 통째로 죽었다.

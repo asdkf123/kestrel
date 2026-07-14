@@ -585,7 +585,7 @@ pub(super) fn to_display(v: &Value) -> String {
         // classList 를 문자열화하면 class 값 (DOMTokenList.toString)
         Value::ClassList(_) => "[object DOMTokenList]".to_string(),
         Value::Dom(_) => "[object Element]".to_string(),
-        Value::Instance(i) => format!("[object {}]", i.class.name),
+        Value::Instance(i) => format!("[object {}]", i.class.name.borrow()),
         // Proxy 문자열화는 target 에 위임 (트랩 없는 근사)
         Value::Proxy(p) => to_display(&p.0),
         Value::Gen(_) => "[object Generator]".to_string(),

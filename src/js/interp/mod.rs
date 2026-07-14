@@ -68,6 +68,16 @@ enum LoopAct {
     Propagate(Flow), // 이 루프 소관 아님 (return, 상위 레이블 대상 break/continue)
 }
 
+// 구문상 익명 함수/클래스 식인가 (NamedEvaluation 의 조건).
+// `function(){}`, `() => {}`, `class {}` 만 해당한다. `makeFn()` 이나 `other` 는 아니다.
+fn is_anonymous_fn_expr(e: &Expr) -> bool {
+    match e {
+        Expr::Func { name: None, .. } => true,
+        Expr::Class(c) => c.name.is_none(),
+        _ => false,
+    }
+}
+
 fn loop_action(f: Flow, my_label: &Option<String>) -> LoopAct {
     match f {
         Flow::Break(None) => LoopAct::Exit,
@@ -461,7 +471,7 @@ pub(super) fn error_text(v: &Value) -> String {
                 .borrow()
                 .get("name")
                 .map(to_display)
-                .unwrap_or_else(|| i.class.name.clone());
+                .unwrap_or_else(|| i.class.name.borrow().clone());
             return format!("{}: {}", name, to_display(m));
         }
     }
@@ -1379,10 +1389,14 @@ impl Interp {
     //   const g = () => {};    g.name === "g"
     // 이미 이름이 있으면 (명명 함수식) 덮지 않는다.
     fn set_fn_name(v: &Value, name: &str) {
-        if let Value::Fn(f) = v {
-            if f.name.borrow().is_empty() {
+        match v {
+            Value::Fn(f) if f.name.borrow().is_empty() => {
                 *f.name.borrow_mut() = name.to_string();
             }
+            Value::Class(c) if c.name.borrow().is_empty() => {
+                *c.name.borrow_mut() = name.to_string();
+            }
+            _ => {}
         }
     }
 
@@ -2178,6 +2192,11 @@ impl Interp {
                     if matches!(v, Value::Undefined) {
                         if let Some(d) = default {
                             v = self.eval(d, env)?;
+                            // 기본값이 익명 함수면 대상 이름을 갖는다 (NamedEvaluation).
+                            //   var { a = function(){} } = {};  a.name === "a"
+                            if let Pattern::Name(n) = sub {
+                                Self::set_fn_name(&v, n);
+                            }
                         }
                     }
                     self.bind_pattern(sub, v, env, assign)?;
@@ -2234,6 +2253,9 @@ impl Interp {
                             if matches!(v, Value::Undefined) {
                                 if let Some(d) = default {
                                     v = self.eval(d, env)?;
+                                    if let Pattern::Name(n) = sub {
+                                        Self::set_fn_name(&v, n);
+                                    }
                                 }
                             }
                             self.bind_pattern(sub, v, env, assign)?;
@@ -2275,6 +2297,9 @@ impl Interp {
                         if matches!(v, Value::Undefined) {
                             if let Some(d) = default {
                                 v = self.eval(d, env)?;
+                                if let Pattern::Name(n) = sub {
+                                    Self::set_fn_name(&v, n);
+                                }
                             }
                         }
                         self.bind_pattern(sub, v, env, assign)?;
@@ -2435,9 +2460,13 @@ impl Interp {
                         // var 는 하이스트된 바인딩에 대입(env_set), let/const 는 새로 선언
                         Some(e) => {
                             let v = self.eval(e, env)?;
-                            // const f = () => {} 에서 f.name 은 "f" 다 (NamedEvaluation)
+                            // const f = () => {} 에서 f.name 은 "f" 다 (NamedEvaluation).
+                            // **구문상 익명 함수/클래스**일 때만이다 —
+                            // `var w = makeFn()` 은 해당 없다 (표준).
                             if let crate::js::ast::Pattern::Name(n) = pat {
-                                Self::set_fn_name(&v, n);
+                                if is_anonymous_fn_expr(e) {
+                                    Self::set_fn_name(&v, n);
+                                }
                             }
                             self.bind_pattern(pat, v, env, is_var)?;
                         }
@@ -3160,6 +3189,16 @@ impl Interp {
                         self.binary(bin, old, rhs)?
                     }
                 };
+                // §13.15.2 NamedEvaluation: `a = function(){}` 처럼 **구문상 익명 함수**를
+                // 이름 있는 참조에 대입하면 그 함수가 그 이름을 갖는다.
+                // (`a = b` 처럼 식별자를 대입하는 건 해당 없음 — 그래서 표현식 모양을 본다.)
+                if matches!(op, AssignOp::Set) {
+                    if let Expr::Ident(n) = &**target {
+                        if is_anonymous_fn_expr(value) {
+                            Self::set_fn_name(&new, n);
+                        }
+                    }
+                }
                 self.assign_to(target, new.clone(), env)?;
                 Ok(new)
             }
@@ -4318,7 +4357,7 @@ impl Interp {
             Value::Class(c) => {
                 // 클래스도 함수다: C.name / C.length (§10.2.9, §15.7)
                 if key == "name" && c.statics.borrow().get("name").is_none() {
-                    return Ok(Value::Str(c.name.clone()));
+                    return Ok(Value::Str(c.name.borrow().clone()));
                 }
                 // C.prototype — 클래스 메서드를 담은 객체 (상속 체인 포함).
                 // 예전엔 undefined 라, 프로토타입에서 메서드를 꺼내 특정 this 로 호출하는
@@ -5179,7 +5218,8 @@ impl Interp {
         let cls = Rc::new(JsClass {
             priv_id,
             proto_cache: RefCell::new(None),
-            name: def.name.clone().unwrap_or_else(|| "(anonymous)".to_string()),
+            // 익명 클래스의 이름은 "" 다 (표준). NamedEvaluation 이 나중에 채운다.
+            name: RefCell::new(def.name.clone().unwrap_or_default()),
             parent,
             parent_ctor,
             ctor,

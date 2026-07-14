@@ -1854,6 +1854,17 @@ impl Parser {
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
                             Expr::Func { name: None, params, body, is_arrow: false, is_generator: false, is_async: false }
+                        } else if self.peek() == Some(&Tok::Assign) {
+                            // CoverInitializedName: { a = 1 } — 객체 리터럴로는 문법 오류지만
+                            // **구조분해 대입 대상**으로는 유효하다: ({a = 1} = o).
+                            // 예전엔 파서가 여기서 죽어서 그 스크립트가 통째로 못 돌았다.
+                            self.pos += 1;
+                            let default = self.assignment()?;
+                            Expr::Assign {
+                                op: AssignOp::Set,
+                                target: Box::new(Expr::Ident(key.clone())),
+                                value: Box::new(default),
+                            }
                         } else {
                             Expr::Ident(key.clone()) // 단축 프로퍼티 { a }
                         };
