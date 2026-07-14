@@ -1626,6 +1626,40 @@ mod tests {
         assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
     }
 
+    // el.style.prop 는 CSSOM 정규 형태로 직렬화한 값을 준다 (§6.7).
+    // 예전엔 style 속성의 원문을 그대로 돌려줘서, 값을 되읽어 비교하는 코드가
+    // 조용히 틀렸다 (setProperty 로 쓸 때는 정규화하면서 읽기만 원문이라 앞뒤가
+    // 맞지 않기까지 했다).
+    #[test]
+    fn inline_style_values_are_serialized() {
+        let dom = run_with_layout(
+            r#"<div id="e"></div><div id="out"></div>
+               <script>
+                 var e = document.getElementById('e');
+                 var log = [];
+                 var t = function (p, v) {
+                   e.setAttribute('style', p + ': ' + v);
+                   var k = p.replace(/-(.)/g, function (m, c) { return c.toUpperCase(); });
+                   log.push(e.style[k]);
+                 };
+                 t('background-color', 'black');       // rgb(0, 0, 0)
+                 t('background-color', 'transparent'); // rgba(0, 0, 0, 0)
+                 t('background-image', 'url(http://x/)'); // url("http://x/")
+                 t('opacity', '.5');                   // 0.5
+                 t('margin-left', '5px');              // 5px
+                 // 우리 파서가 모르는 값은 원문 보존 (지어내지 않는다)
+                 t('border', '1px solid red');
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            "rgb(0, 0, 0)|rgba(0, 0, 0, 0)|url(\"http://x/\")|0.5|5px|1px solid red"
+        );
+    }
+
     // inset 의 resolved value (CSSOM). 위치 지정 요소에서는 **used value**(px) 이고,
     // over-constrained 인 축(양쪽 inset + 크기가 다 지정)에서는 **computed value** 다.
     // 예전엔 언제나 명시값을 그대로 냈다 (top: 10% 를 읽으면 "10%").

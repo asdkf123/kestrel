@@ -86,14 +86,39 @@ impl Interp {
     }
 
     // style.prop 읽기 (prop 은 CSS 케밥 이름)
+    // el.style.prop 읽기. CSSOM 은 **정규 형태로 직렬화한 값**을 준다 (§6.7):
+    //   style="background-color: black"  →  el.style.backgroundColor === "rgb(0, 0, 0)"
+    // 예전엔 style 속성의 원문을 그대로 돌려줬다. 값을 되읽어 비교하는 코드가
+    // 조용히 틀렸다 (setProperty 로 쓴 값은 정규화하면서 읽기만 원문이라 앞뒤가
+    // 맞지 않기까지 했다).
     pub(super) fn style_get(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
         let attr = self.style_attr(id);
-        style_pairs(&attr)
+        let raw = style_pairs(&attr)
             .into_iter()
             .rev() // 뒤 선언 우선 (마지막 것이 유효)
             .find(|(k, _)| k == prop)
             .map(|(_, v)| v)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if raw.is_empty() {
+            return raw;
+        }
+        Self::serialize_decl(prop, &raw)
+    }
+
+    // 선언 하나를 CSSOM 정규 형태로 직렬화. 우리가 모르는 값이면 원문을 보존한다
+    // (지어내지 않는다).
+    pub(super) fn serialize_decl(prop: &str, raw: &str) -> String {
+        let one = |v: &str| -> String {
+            crate::css::parse_inline_style(&format!("{}: {}", prop, v))
+                .iter()
+                .find(|d| d.name == prop)
+                .map(|d| crate::style::computed_value_string(&d.value))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| v.to_string())
+        };
+        // 우리 값 파서가 이해하는 값만 정규화한다. 이해 못 하는 값(단축 속성, 아직
+        // 파싱 안 하는 속성)은 원문 그대로 — 지어내지 않는다.
+        one(raw.trim())
     }
 
     // style.prop = value 쓰기 (빈 값이면 제거)
