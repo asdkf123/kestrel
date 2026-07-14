@@ -223,6 +223,10 @@ pub struct JsClass {
     // 인스턴스 필드 초기화 함수 (없으면 None → undefined). 생성 시 this 로 호출.
     pub fields: Vec<(String, Option<Rc<JsFn>>)>,
     pub statics: RefCell<HashMap<String, Value>>,
+    // C.prototype 객체는 **한 번만** 만든다. 호출마다 새로 만들면 정체성이 흔들려
+    // Object.getPrototypeOf(new C()) === C.prototype 이 거짓이 된다 —
+    // regenerator/babel 런타임이 이 불변식 위에 이터레이터 체인을 세운다.
+    pub proto_cache: RefCell<Option<Value>>,
 }
 
 impl JsClass {
@@ -4319,6 +4323,9 @@ impl Interp {
                 // 예전엔 undefined 라, 프로토타입에서 메서드를 꺼내 특정 this 로 호출하는
                 // 코드(커스텀 엘리먼트의 connectedCallback 등)가 전부 실패했다.
                 if key == "prototype" {
+                    if let Some(p) = c.proto_cache.borrow().clone() {
+                        return Ok(p);
+                    }
                     let mut m = ObjMap::new();
                     fn collect(cls: &Rc<JsClass>, m: &mut ObjMap) {
                         if let Some(p) = &cls.parent {
@@ -4336,7 +4343,9 @@ impl Interp {
                     }
                     collect(c, &mut m);
                     m.insert("constructor".to_string(), recv.clone());
-                    return Ok(Value::Obj(Rc::new(RefCell::new(m))));
+                    let proto = Value::Obj(Rc::new(RefCell::new(m)));
+                    *c.proto_cache.borrow_mut() = Some(proto.clone());
+                    return Ok(proto);
                 }
                 // static get 접근자 (this=클래스). 예전엔 평범한 정적 메서드로 저장돼
                 // C.observedAttributes 가 배열이 아니라 함수를 돌려줬다.
@@ -5044,6 +5053,7 @@ impl Interp {
             statics.insert(name.clone(), Value::Fn(mk(p, b, *gen, *asy)));
         }
         let cls = Rc::new(JsClass {
+            proto_cache: RefCell::new(None),
             name: def.name.clone().unwrap_or_else(|| "(anonymous)".to_string()),
             parent,
             parent_ctor,
@@ -7134,6 +7144,40 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn get_prototype_of_is_real() {
+        // 예전엔 __proto__ 링크가 없으면 무조건 null 이었다 — 평범한 객체·배열·인스턴스가
+        // 전부 null. regenerator/babel 런타임이 getProto(getProto(values([]))) 로 내장
+        // 프로토타입을 캐내는데 null 이면 이터레이터 체인이 통째로 무너진다 (naver 가 죽었다).
+        assert_eq!(run_str("String(Object.getPrototypeOf({}) !== null)"), "true");
+        assert_eq!(run_str("String(Object.getPrototypeOf([]) !== null)"), "true");
+        assert_eq!(
+            run_str("class C {} var c = new C(); String(Object.getPrototypeOf(c) === C.prototype)"),
+            "true"
+        );
+        // C.prototype 은 매번 같은 객체여야 한다 (정체성)
+        assert_eq!(run_str("class C {} String(C.prototype === C.prototype)"), "true");
+        // 체인의 끝은 null 이다 — 자기 자신을 돌려주면 체인을 걷는 코드가 무한 루프에 빠진다
+        assert_eq!(run_str("String(Object.getPrototypeOf(Object.prototype))"), "null");
+        assert_eq!(
+            run_num("var p = Object.getPrototypeOf({}), n = 0; while (p && n < 20) { p = Object.getPrototypeOf(p); n++ } n"),
+            1.0
+        );
+    }
+
+    #[test]
+    fn array_length_overflow_is_range_error() {
+        // 배열 최대 길이는 2^32-1 이다 (§10.4.2.2). 넘으면 RangeError.
+        // 상한이 없어서 core-js 의 기능 탐지(Array.from({length: 2**32}))가 40억 개
+        // 할당을 시도했고 프로세스가 통째로 죽었다 (naver 가 110초 만에 SIGKILL).
+        assert_eq!(
+            run_str("try { Array.from({ length: 4294967296 }) } catch (e) { 'RangeError' }"),
+            "RangeError"
+        );
+        // 정상 범위는 그대로 동작
+        assert_eq!(run_str("Array.from({ length: 3, 0: 'a', 1: 'b', 2: 'c' }).join()"), "a,b,c");
     }
 
     #[test]

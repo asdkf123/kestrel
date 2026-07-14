@@ -85,11 +85,25 @@ fn is_array_like(o: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(lookup_length(o), Some(n) if n.is_finite() && n >= 0.0)
 }
 
-fn array_like_to_vec(o: &Rc<RefCell<ObjMap>>) -> Vec<Value> {
-    let len = lookup_length(o).unwrap_or(0.0);
-    let len = if len.is_finite() && len > 0.0 { len as usize } else { 0 };
+// array-like 의 length 를 실제 길이로. 배열 최대 길이(2^32-1)를 넘으면 RangeError 다
+// (표준 §10.4.2.2 ArrayCreate). 예전엔 상한이 없어서 core-js 의 기능 탐지
+// (Array.from({length: 2**32}))가 40억 개 할당을 시도해 프로세스가 통째로 죽었다.
+const MAX_ARRAY_LEN: f64 = 4_294_967_295.0; // 2^32 - 1
+
+fn array_like_len(len: f64) -> Result<usize, String> {
+    if !len.is_finite() || len <= 0.0 {
+        return Ok(0);
+    }
+    if len > MAX_ARRAY_LEN {
+        return Err("RangeError: Invalid array length".to_string());
+    }
+    Ok(len as usize)
+}
+
+fn array_like_to_vec(o: &Rc<RefCell<ObjMap>>) -> Result<Vec<Value>, String> {
+    let len = array_like_len(lookup_length(o).unwrap_or(0.0))?;
     let b = o.borrow();
-    (0..len).map(|i| b.get(&i.to_string()).cloned().unwrap_or(Value::Undefined)).collect()
+    Ok((0..len).map(|i| b.get(&i.to_string()).cloned().unwrap_or(Value::Undefined)).collect())
 }
 
 // 변형 결과를 array-like 객체에 되쓴다 (인덱스 + length, 남는 인덱스는 제거).
@@ -802,7 +816,7 @@ impl Interp {
                 }
                 // array-like(length 보유 객체)에도 동작 — jQuery 의 push.apply(jqObj, …)
                 Some(Value::Obj(o)) if is_array_like(&o) => {
-                    let mut items = array_like_to_vec(&o);
+                    let mut items = array_like_to_vec(&o)?;
                     items.extend(args);
                     let n = items.len();
                     write_back_array_like(&o, &items);
@@ -1232,11 +1246,51 @@ impl Interp {
                 };
                 Ok(Value::Bool(r))
             }
-            // getPrototypeOf: 객체의 __proto__ 링크(없으면 null)
-            Native::ObjectGetPrototypeOf => Ok(match args.first() {
-                Some(Value::Obj(m)) => m.borrow().get("__proto__").cloned().unwrap_or(Value::Null),
-                _ => Value::Null,
-            }),
+            // Object.getPrototypeOf (표준 §20.1.2.12). 예전엔 __proto__ 링크가 없으면
+            // 무조건 null 을 돌려줬다 — 평범한 객체·배열·인스턴스가 전부 null 이었다.
+            // regenerator/babel 런타임이 getProto(getProto(values([]))) 로 내장 프로토타입을
+            // 캐내는데, null 이 나오면 그 위에 세우는 이터레이터 체인이 통째로 무너진다
+            // (naver 가 여기서 죽고 메모리까지 터졌다).
+            Native::ObjectGetPrototypeOf => {
+                let obj_proto = self.member_get(&self.object_ns.clone(), "prototype")?;
+                Ok(match args.first() {
+                    Some(Value::Obj(m)) => {
+                        // Object.prototype 자신의 프로토타입은 **null** 이다 (체인의 끝).
+                        // 자기 자신을 돌려주면 체인을 걷는 코드가 무한 루프에 빠진다.
+                        if let Value::Obj(op) = &obj_proto {
+                            if Rc::ptr_eq(m, op) {
+                                return Ok(Value::Null);
+                            }
+                        }
+                        match m.borrow().get("__proto__") {
+                            Some(p) => p.clone(),
+                            // 링크가 없으면 Object.prototype (표준)
+                            None => obj_proto,
+                        }
+                    }
+                    Some(Value::Arr(_)) => {
+                        self.member_get(&self.array_ns.clone(), "prototype")?
+                    }
+                    // 인스턴스의 프로토타입은 그 클래스의 prototype 객체
+                    Some(Value::Instance(inst)) => {
+                        self.member_get(&Value::Class(inst.class.clone()), "prototype")?
+                    }
+                    Some(Value::Fn(_)) | Some(Value::Native(_)) | Some(Value::Bound(_)) => {
+                        self.fn_proto.clone()
+                    }
+                    Some(Value::Str(_)) => self.string_proto.clone(),
+                    Some(Value::Num(_)) => self.number_proto.clone(),
+                    Some(Value::Bool(_)) => self.boolean_proto.clone(),
+                    Some(Value::MapVal(_)) => self.map_proto.clone(),
+                    Some(Value::SetVal(_)) => self.set_proto.clone(),
+                    // 제너레이터/그 밖의 객체형은 Object.prototype 으로 (null 보다 정확하다)
+                    Some(Value::Gen(_)) | Some(Value::Class(_)) | Some(Value::Proxy(_)) => {
+                        obj_proto
+                    }
+                    // null/undefined 는 TypeError 지만 관대하게 null
+                    _ => Value::Null,
+                })
+            }
             // Object.prototype.hasOwnProperty.call(obj, key) / obj.hasOwnProperty(key)
             Native::HasOwnProperty => {
                 let key = args.first().map(to_display).unwrap_or_default();
@@ -3095,7 +3149,7 @@ impl Interp {
                     Some(Value::Arr(a)) => (a.clone(), None),
                     // 읽기 전용 연산은 array-like 대상을 변형하지 않는다(되쓰기 없음).
                     Some(Value::Obj(o)) if is_array_like(o) => (
-                        ArrayObj::new(array_like_to_vec(o)),
+                        ArrayObj::new(array_like_to_vec(o)?),
                         if is_mutating_arr_op(op) { Some(o.clone()) } else { None },
                     ),
                     _ => return Err("배열 메서드".to_string()),
@@ -3823,14 +3877,8 @@ impl Interp {
                         self.iterate_to_vec(&src)
                     }
                     _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src),
-                    // array-like: length + 인덱스 프로퍼티
-                    Value::Obj(o) => {
-                        let len = o.borrow().get("length").map(to_num).unwrap_or(0.0);
-                        let len = if len.is_finite() && len > 0.0 { len as usize } else { 0 };
-                        (0..len)
-                            .map(|i| o.borrow().get(&i.to_string()).cloned().unwrap_or(Value::Undefined))
-                            .collect()
-                    }
+                    // array-like: length + 인덱스 프로퍼티 (길이 상한은 표준대로 RangeError)
+                    Value::Obj(o) => array_like_to_vec(o)?,
                     _ => Vec::new(),
                 };
                 // mapFn(value, index) 적용

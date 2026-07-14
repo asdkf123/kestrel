@@ -750,7 +750,16 @@ fn build_page(url: &str) -> Option<window::Page> {
 }
 
 // 한 번 그리고, 스크립트/메타가 요청한 다음 URL 이 있으면 함께 돌려준다.
+// 단계별 소요 시간 (KESTREL_TIME=1). 어디가 느린지 모르면 성능 문제를 못 고친다.
+fn phase(label: &str, t0: &mut std::time::Instant) {
+    if std::env::var("KESTREL_TIME").is_ok() {
+        eprintln!("[time] {:<22} {:>7.0}ms", label, t0.elapsed().as_secs_f64() * 1000.0);
+    }
+    *t0 = std::time::Instant::now();
+}
+
 fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
+    let mut t0 = std::time::Instant::now();
     let resp = match http::fetch(url) {
         Ok(r) => r,
         Err(e) => {
@@ -798,7 +807,8 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     let mut hrefs = Vec::new();
     collect_links(&dom, &mut hrefs);
     if !hrefs.is_empty() {
-        println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
+        phase("html+parse", &mut t0);
+    println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
     }
     let mut seen_css = std::collections::HashSet::new();
     for (href, media) in hrefs.iter().take(10) {
@@ -825,6 +835,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         let style_root = style::style_tree(&dom, &sheet);
         collect_bg_urls(&style_root, &mut srcs);
     }
+    phase("css", &mut t0);
     let (images, img_map) = load_images(srcs, &base);
     if std::env::var("KESTREL_IMG_DEBUG").is_ok() {
         let mut want = Vec::new();
@@ -876,6 +887,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     // 먼저 돌려서, 스크립트 안의 측정 API 가 전부 0 을 돌려줬다(스타일도 레이아웃도 없었다).
     // layout_ctx 를 넘기면 측정 시점에 강제 레이아웃이 돌아 실제 값이 나온다.
     let empty_pseudo = style::PseudoStyles::new();
+    phase("images+fonts", &mut t0);
     let js_rt = {
         let ctx = window::LayoutCtx {
             sheet: &sheet,
@@ -915,6 +927,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     // <img src="*.svg"> → 인라인 <svg> 로 치환 (우리 래스터라이저가 그릴 수 있는 형태)
     inline_svg_images(&mut dom, &base);
 
+    phase("javascript", &mut t0);
     // 스크립트가 요청한 내비게이션 / <meta http-equiv=refresh>
     let next_url = js_rt
         .navigate_to
@@ -942,7 +955,9 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         focused_input: None,
         scroll_y: 0.0,
     };
+    phase("style+pseudo", &mut t0);
     page.rebuild();
+    phase("layout+paint", &mut t0);
     println!("[문서 높이 {}px, 링크 {}개]", page.doc_height as u32, page.links.len());
     Some((page, next_url))
 }

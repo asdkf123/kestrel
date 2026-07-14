@@ -57,12 +57,24 @@ pub fn run_scripts_with_base(
     // (배열이 객체라 push 재정의가 되므로 사이트 자체 런타임이 그대로 동작).
     sources.insert(0, (None, JS_PRELUDE.to_string()));
     it.dom = Some(dom as *mut crate::dom::Dom); // 실행 동안만 유효
-    for (node, src) in &sources {
+    for (idx, (node, src)) in sources.iter().enumerate() {
         let code = src.strip_prefix(EXT_TAG).unwrap_or(src);
         // document.write 의 삽입 지점 = 지금 실행 중인 스크립트 자리 (파서 삽입 지점)
         it.current_script = *node;
+        let t0 = std::time::Instant::now();
+        if std::env::var("KESTREL_TIME").is_ok() {
+            eprintln!("[time] script #{} 시작 ({}바이트)", idx, code.len());
+        }
         if let Err(e) = it.run(code) {
             println!("[js error] {}", e);
+        }
+        if std::env::var("KESTREL_TIME").is_ok() {
+            eprintln!(
+                "[time] script #{} ({}바이트) {:.0}ms",
+                idx,
+                code.len(),
+                t0.elapsed().as_secs_f64() * 1000.0
+            );
         }
         it.drain_microtasks();
         // document.write 로 새로 생긴 스크립트를 문서 순서대로 실행한다 (동기 의미론).
@@ -1402,7 +1414,9 @@ if (!Reflect) {
   Reflect.has = function(t, k){ return k in t; };
   Reflect.deleteProperty = function(t, k){ delete t[k]; return true; };
   Reflect.ownKeys = function(t){ return Object.keys(t || {}); };
-  Reflect.getPrototypeOf = function(){ return null; };
+  // Reflect.getPrototypeOf 는 엔진 네이티브(Object.getPrototypeOf)와 같은 것을 쓴다.
+  // 예전엔 무조건 null 을 돌려주는 거짓말이었다.
+  Reflect.getPrototypeOf = Object.getPrototypeOf;
   Reflect.setPrototypeOf = function(o, p){ Object.setPrototypeOf(o, p); return true; };
   Reflect.defineProperty = function(t, k, d){ Object.defineProperty(t, k, d); return true; };
   Reflect.getOwnPropertyDescriptor = function(t, k){ return Object.getOwnPropertyDescriptor(t, k); };
