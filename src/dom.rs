@@ -86,6 +86,10 @@ pub struct Node {
 pub enum NodeType {
     Text(String),
     Element(ElementData),
+    // 코멘트도 DOM 노드다 (§4.9 Comment). 예전엔 파서가 통째로 버려서 childNodes 가
+    // 표준과 달랐고, document.createComment 도 없었다. 프레임워크가 코멘트를 앵커로
+    // 쓴다 (Vue 의 v-if 자리표시자, React SSR 의 <!--$--> Suspense 경계).
+    Comment(String),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -422,6 +426,17 @@ impl Dom {
         new_id
     }
 
+    pub fn create_comment(&mut self, data: String) -> NodeId {
+        self.touch();
+        let id = self.nodes.len();
+        self.nodes.push(NodeData {
+            parent: None,
+            children: Vec::new(),
+            node_type: NodeType::Comment(data),
+        });
+        id
+    }
+
     pub fn create_text(&mut self, text: String) -> NodeId {
         self.touch();
         let id = self.nodes.len();
@@ -514,6 +529,11 @@ impl Dom {
     fn serialize(&self, id: NodeId, out: &mut String) {
         match &self.get(id).node_type {
             NodeType::Text(t) => out.push_str(&escape_text(t)),
+            NodeType::Comment(c) => {
+                out.push_str("<!--");
+                out.push_str(c);
+                out.push_str("-->");
+            }
             NodeType::Element(e) => {
                 out.push('<');
                 out.push_str(&e.tag_name);
@@ -553,6 +573,16 @@ impl Dom {
     }
 
     // 자식들을 텍스트 노드 하나로 교체
+    // 텍스트/코멘트 노드의 문자 데이터 설정 (요소는 무시 — 표준의 nodeValue 규칙)
+    pub fn set_char_data(&mut self, id: NodeId, data: String) {
+        self.touch();
+        match &mut self.nodes[id].node_type {
+            NodeType::Text(t) => *t = data,
+            NodeType::Comment(c) => *c = data,
+            NodeType::Element(_) => {}
+        }
+    }
+
     pub fn set_text_content(&mut self, id: NodeId, text: String) {
         // 텍스트 노드 자체면 characterData, 요소면 자식 교체(childList)
         if let NodeType::Text(t) = &mut self.nodes[id].node_type {

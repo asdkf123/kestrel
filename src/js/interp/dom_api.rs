@@ -181,6 +181,10 @@ impl Interp {
             let node = dom.get(id);
             match &node.node_type {
                 crate::dom::NodeType::Text(t) => (Vec::new(), true, t.clone(), String::new()),
+                // 코멘트는 텍스트 콘텐츠에 기여하지 않는다 (§4.5 textContent)
+                crate::dom::NodeType::Comment(_) => {
+                    (Vec::new(), true, String::new(), String::new())
+                }
                 crate::dom::NodeType::Element(e) => {
                     (node.children.clone(), false, String::new(), e.tag_name.to_ascii_lowercase())
                 }
@@ -590,15 +594,43 @@ impl Interp {
                 });
                 Ok(result.map(Value::Dom).unwrap_or(Value::Null))
             }
-            "tagName" | "nodeName" => match &dom.get(id).node_type {
+            // tagName 은 요소만. nodeName 은 모든 노드에 있다 (§4.4).
+            "tagName" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(e.tag_name.to_ascii_uppercase())),
                 _ => Ok(Value::Undefined),
+            },
+            "nodeName" => Ok(Value::Str(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => e.tag_name.to_ascii_uppercase(),
+                crate::dom::NodeType::Text(_) => "#text".to_string(),
+                crate::dom::NodeType::Comment(_) => "#comment".to_string(),
+            })),
+            // nodeValue/data: 텍스트·코멘트의 문자 데이터 (§4.9 CharacterData).
+            // 예전엔 아예 없어서 textNode.data 가 undefined 였다.
+            "nodeValue" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Text(t) => Value::Str(t.clone()),
+                crate::dom::NodeType::Comment(c) => Value::Str(c.clone()),
+                crate::dom::NodeType::Element(_) => Value::Null, // 요소는 null (표준)
+            }),
+            "data" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Text(t) => Ok(Value::Str(t.clone())),
+                crate::dom::NodeType::Comment(c) => Ok(Value::Str(c.clone())),
+                crate::dom::NodeType::Element(_) => Ok(Value::Undefined),
+            },
+            "length" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Text(t) => {
+                    Ok(Value::Num(t.encode_utf16().count() as f64))
+                }
+                crate::dom::NodeType::Comment(c) => {
+                    Ok(Value::Num(c.encode_utf16().count() as f64))
+                }
+                crate::dom::NodeType::Element(_) => Ok(Value::Undefined),
             },
             // nodeType: ELEMENT_NODE(1) / TEXT_NODE(3).
             // jQuery·프레임워크가 노드 종류 판별에 광범위하게 쓴다.
             "nodeType" => Ok(Value::Num(match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(_) => 1.0,
                 crate::dom::NodeType::Text(_) => 3.0,
+                crate::dom::NodeType::Comment(_) => 8.0,
             })),
             "id" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => {
@@ -734,6 +766,11 @@ impl Interp {
         match key {
             "textContent" => {
                 dom.set_text_content(id, text);
+                Ok(())
+            }
+            // 문자 데이터 대입 (§4.9). 요소에 대한 nodeValue 대입은 무시 (표준).
+            "nodeValue" | "data" => {
+                dom.set_char_data(id, text);
                 Ok(())
             }
             // innerText 대입: 줄바꿈은 <br> 가 된다 (표준). textContent 로 넣으면

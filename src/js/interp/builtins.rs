@@ -175,7 +175,13 @@ pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
             out
         }
         Value::Instance(i) => {
-            i.fields.borrow().iter().map(|(k, val)| (k.clone(), val.clone())).collect()
+            let f = i.fields.borrow();
+            f.iter()
+                .filter(|(k, _)| {
+                    !is_internal_key(k) && !f.contains_key(&nonenum_marker(k))
+                })
+                .map(|(k, val)| (k.clone(), val.clone()))
+                .collect()
         }
         // 함수도 객체 — F.staticProp 복사 (번들의 Object.assign(Fn, {...}) 패턴)
         Value::Fn(f) => f
@@ -2277,6 +2283,33 @@ impl Interp {
                         Value::Fn(func) => {
                             func.props.borrow_mut().insert(key, val);
                         }
+                        // 클래스 인스턴스. 예전엔 여기서 조용히 아무 일도 안 했다 —
+                        // 생성자 안의 Object.defineProperty(this, ...) 가 통째로 사라져서
+                        // 그 프로퍼티를 읽으면 프로토타입 값이 나왔다 (조용히 틀린 값).
+                        Value::Instance(inst) => {
+                            let marker = nonenum_marker(&key);
+                            inst.fields.borrow_mut().insert(key, val);
+                            if enumerable {
+                                inst.fields.borrow_mut().remove(&marker);
+                            } else {
+                                inst.fields.borrow_mut().insert(marker, Value::Bool(true));
+                            }
+                        }
+                        Value::Arr(a) => {
+                            // 인덱스 키면 요소, 아니면 own 프로퍼티
+                            if let Ok(i) = key.parse::<usize>() {
+                                let mut items = a.borrow_mut();
+                                while items.len() <= i {
+                                    items.push(Value::Undefined);
+                                }
+                                items[i] = val;
+                            } else {
+                                a.set_prop(key, val);
+                            }
+                        }
+                        Value::Class(c) => {
+                            c.statics.borrow_mut().insert(key, val);
+                        }
                         _ => {}
                     }
                 }
@@ -2467,7 +2500,10 @@ impl Interp {
                 let key = args.first().map(to_display).unwrap_or_default();
                 let has = match &recv {
                     // __proto__ 는 own 프로퍼티 아님(상속 accessor)
-                    Some(Value::Obj(m)) => !is_internal_key(&key) && m.borrow().contains_key(&key),
+                    Some(Value::Obj(m)) => {
+                        (!is_internal_key(&key) && m.borrow().contains_key(&key))
+                            || self.global_has(m, &key)
+                    }
                     // 인스턴스는 own 필드만 own 프로퍼티(메서드는 프로토타입 격)
                     Some(Value::Instance(i)) => i.fields.borrow().contains_key(&key),
                     Some(Value::Arr(a)) => {
@@ -3208,6 +3244,60 @@ impl Interp {
                 }
                 let dom = self.dom_arena()?;
                 Ok(Value::Dom(dom.create_element(&tag)))
+            }
+            Native::WindowSelf => {
+                Ok(env_get(&self.global, "window").unwrap_or(Value::Undefined))
+            }
+            Native::CreateComment => {
+                let data = args.first().map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_comment(data)))
+            }
+            // 네임스페이스 속성 (§4.9.2). 우리 AttrMap 은 정규화된 이름(qualified name)을
+            // 키로 쓴다 — setAttributeNS(ns, 'xlink:href', v) 는 'xlink:href' 로 저장되고,
+            // getAttributeNS(ns, 'href') 는 로컬 이름으로 되찾는다.
+            Native::SetAttributeNS => {
+                let Some(Value::Dom(id)) = recv else {
+                    return Err(self.throw_error("TypeError", "setAttributeNS 는 요소 메서드"));
+                };
+                let qname = args.get(1).map(to_display).unwrap_or_default();
+                let value = args.get(2).map(to_display).unwrap_or_default();
+                if qname.is_empty() {
+                    return Err(self.throw_dom("InvalidCharacterError", "속성 이름이 비었다"));
+                }
+                let dom = self.dom_arena()?;
+                dom.set_attr(id, &qname, value);
+                Ok(Value::Undefined)
+            }
+            Native::GetAttributeNS | Native::HasAttributeNS | Native::RemoveAttributeNS => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
+                let local = args.get(1).map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                // 로컬 이름 또는 prefix:local 로 저장된 속성을 찾는다
+                let found = {
+                    let node = dom.get(id);
+                    match &node.node_type {
+                        crate::dom::NodeType::Element(e) => e
+                            .attributes
+                            .iter()
+                            .find(|(k, _)| {
+                                k.as_str() == local
+                                    || k.rsplit(':').next() == Some(local.as_str())
+                            })
+                            .map(|(k, v)| (k.clone(), v.clone())),
+                        _ => None,
+                    }
+                };
+                match n {
+                    Native::HasAttributeNS => Ok(Value::Bool(found.is_some())),
+                    Native::RemoveAttributeNS => {
+                        if let Some((k, _)) = found {
+                            dom.remove_attr(id, &k);
+                        }
+                        Ok(Value::Undefined)
+                    }
+                    _ => Ok(found.map(|(_, v)| Value::Str(v)).unwrap_or(Value::Null)),
+                }
             }
             Native::CreateTextNode => {
                 let text = args.first().map(to_display).unwrap_or_default();
@@ -5227,9 +5317,11 @@ impl Interp {
                         (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
-                Some(Value::Instance(i)) => {
-                    let keys: Vec<Value> =
-                        i.fields.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                Some(v @ Value::Instance(_)) => {
+                    let keys: Vec<Value> = own_enumerable_entries(v)
+                        .into_iter()
+                        .map(|(k, _)| Value::Str(k))
+                        .collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
                 _ => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
@@ -5240,7 +5332,9 @@ impl Interp {
                         enumerable_entries(m).into_iter().map(|(_, v)| v).collect()
                     }
                     Some(Value::Arr(a)) => a.borrow().clone(),
-                    Some(Value::Instance(i)) => i.fields.borrow().values().cloned().collect(),
+                    Some(v @ Value::Instance(_)) => {
+                        own_enumerable_entries(v).into_iter().map(|(_, v)| v).collect()
+                    }
                     _ => Vec::new(),
                 };
                 Ok(Value::Arr(ArrayObj::new(vals)))
@@ -5259,8 +5353,8 @@ impl Interp {
                         .enumerate()
                         .map(|(i, v)| pair(&i.to_string(), v))
                         .collect(),
-                    Some(Value::Instance(inst)) => {
-                        inst.fields.borrow().iter().map(|(k, v)| pair(k, v)).collect()
+                    Some(v @ Value::Instance(_)) => {
+                        own_enumerable_entries(v).iter().map(|(k, v)| pair(k, v)).collect()
                     }
                     _ => Vec::new(),
                 };

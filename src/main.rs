@@ -597,6 +597,8 @@ fn collect_text_chars(
                 out.insert(c as u32);
             }
         }
+        dom::NodeType::Comment(_) => {} // 렌더링 안 됨 — 글리프 수집 대상 아님
+
         dom::NodeType::Element(e) => {
             // 스크립트/스타일 안의 텍스트는 렌더되지 않는다
             if matches!(e.tag_name.as_str(), "script" | "style" | "template" | "noscript") {

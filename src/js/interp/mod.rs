@@ -401,6 +401,15 @@ pub enum Native {
     CreateHTMLDocument,
     DocQuery(&'static str),
     CreateTextNode,
+    // document.createComment (§4.5.1). 코멘트 노드는 DOM 의 일부다.
+    CreateComment,
+    // document.defaultView → window
+    WindowSelf,
+    // Element.setAttributeNS/getAttributeNS/… (§4.9.2). SVG/XML 이 쓴다.
+    SetAttributeNS,
+    GetAttributeNS,
+    RemoveAttributeNS,
+    HasAttributeNS,
     InsertBefore,
     StyleSetProperty,
     StyleGetProperty,
@@ -1453,6 +1462,13 @@ impl Interp {
         document.insert("hidden".to_string(), Value::Bool(false));
         document.insert("visibilityState".to_string(), Value::Str("visible".to_string()));
         document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
+        document.insert("createComment".to_string(), Value::Native(Native::CreateComment));
+        // document.defaultView — 이 문서의 window (§3.1). 없으면 프레임워크가
+        // 문서에서 window 를 못 얻어 기능 탐지가 통째로 어긋난다.
+        document.insert(
+            "defaultView".to_string(),
+            Value::Accessor(AccessorPair::getter(Value::Native(Native::WindowSelf))),
+        );
         // createElementNS(ns, name) — JS 로 SVG 를 만드는 코드가 전부 이걸 쓴다.
         // 없으면 아이콘/차트를 동적으로 그리는 스크립트가 한 줄에서 죽는다.
         document.insert("createElementNS".to_string(), Value::Native(Native::CreateElementNS));
@@ -2261,6 +2277,22 @@ impl Interp {
         self.make_error("Error", Some(msg.to_string()))
     }
 
+    // DOM 이 던지는 표준 오류 (WebIDL DOMException). 이름이 동작을 결정한다:
+    // NotFoundError / InvalidCharacterError / HierarchyRequestError 등.
+    pub(super) fn throw_dom(&mut self, name: &'static str, message: impl Into<String>) -> String {
+        let msg = message.into();
+        if let Some(ctor) = env_get(&self.global, "DOMException") {
+            if let Ok(v) = self.construct(
+                ctor,
+                vec![Value::Str(msg.clone()), Value::Str(name.to_string())],
+            ) {
+                self.thrown = Some(v);
+                return format!("{}: {}", name, msg);
+            }
+        }
+        self.throw_error("Error", msg)
+    }
+
     // 표준이 명시한 종류의 오류를 던진다. 내부 오류를 그냥 Err(String) 으로 올리면
     // catch 가 문자열을 잡게 되어 `e instanceof TypeError` 도 `e.message` 도 거짓이 된다.
     pub(super) fn throw_error(&mut self, kind: &'static str, message: impl Into<String>) -> String {
@@ -2309,6 +2341,20 @@ impl Interp {
             }
             _ => None,
         }
+    }
+
+    // 이 객체가 전역 객체(window === globalThis)인가.
+    // 전역 객체의 프로퍼티는 전역 환경의 바인딩과 같은 것이어야 한다 (§9.3 Global Environment
+    // Record). 예전엔 window.Math 는 되는데 'Math' in window 는 false 였다 — 게터와 in 이
+    // 서로 다른 진실을 말했다. 그래서 testharness.js 가 'document' in globalThis 로
+    // 환경을 판별하다 실패해 우리를 셸 환경으로 오인했다.
+    pub(super) fn is_global_obj(&self, m: &Rc<RefCell<ObjMap>>) -> bool {
+        matches!(env_get(&self.global, "window"), Some(Value::Obj(w)) if Rc::ptr_eq(&w, m))
+    }
+
+    // 전역 객체가 이 이름을 프로퍼티로 갖는가 (own 맵 또는 전역 환경 바인딩).
+    pub(super) fn global_has(&self, m: &Rc<RefCell<ObjMap>>, key: &str) -> bool {
+        self.is_global_obj(m) && !is_internal_key(key) && env_get(&self.global, key).is_some()
     }
 
     // window(전역 객체) 프로퍼티 조회 — 브라우저처럼 window.X 를 맨 X 로 읽게 하는 폴백.
@@ -2984,10 +3030,10 @@ impl Interp {
                                 }
                             }
                         }
-                        Value::Instance(i) => {
-                            for (k, v) in i.fields.borrow().iter() {
+                        v @ Value::Instance(_) => {
+                            for (k, val) in builtins::own_enumerable_entries(v) {
                                 if !consumed.contains(k.as_str()) {
-                                    map.insert(k.clone(), v.clone());
+                                    map.insert(k, val);
                                 }
                             }
                         }
@@ -3572,9 +3618,9 @@ impl Interp {
                                     }
                                 }
                             }
-                            Value::Instance(inst) => {
-                                for (k, v) in inst.fields.borrow().iter() {
-                                    map.insert(k.clone(), v.clone());
+                            v @ Value::Instance(_) => {
+                                for (k, val) in builtins::own_enumerable_entries(&v) {
+                                    map.insert(k, val);
                                 }
                             }
                             Value::Arr(a) => {
@@ -4909,6 +4955,10 @@ impl Interp {
                     "createTextNode" => Some(Native::CreateTextNode),
                     "remove" => Some(Native::RemoveElement),
                     "setAttribute" => Some(Native::SetAttribute),
+                    "setAttributeNS" => Some(Native::SetAttributeNS),
+                    "getAttributeNS" => Some(Native::GetAttributeNS),
+                    "removeAttributeNS" => Some(Native::RemoveAttributeNS),
+                    "hasAttributeNS" => Some(Native::HasAttributeNS),
                     "getAttribute" => Some(Native::GetAttribute),
                     "removeAttribute" => Some(Native::RemoveAttribute),
                     "hasAttribute" => Some(Native::HasAttribute),
@@ -5971,7 +6021,8 @@ impl Interp {
                                 _ => None,
                             };
                         }
-                        Value::Bool(false)
+                        // 전역 객체면 전역 환경의 바인딩도 프로퍼티다
+                        Value::Bool(self.global_has(m, &key))
                     }
                     // 인스턴스: 필드 + 클래스 체인의 메서드/게터
                     Value::Instance(inst) => {

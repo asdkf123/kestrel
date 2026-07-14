@@ -80,6 +80,10 @@ fn elem_node(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
 
 enum Token {
     Doctype,
+    // 코멘트도 토큰이다 (HTML §13.2.5). 예전엔 토크나이저가 통째로 버려서
+    // DOM 에 코멘트 노드가 존재하지 않았다 — childNodes 가 표준과 달랐고,
+    // 프레임워크의 하이드레이션 앵커(<!--$-->, Vue 의 v-if 자리표시자)가 사라졌다.
+    Comment(String),
     Start { name: String, attrs: AttrMap, self_closing: bool },
     End { name: String },
     Text(String),
@@ -133,8 +137,24 @@ impl Tokenizer {
         }
         if self.starts_with(b"<!--") {
             self.pos += 4;
-            self.skip_past(b"-->");
-            return self.next();
+            let start = self.pos;
+            let end = self.input[self.pos..]
+                .windows(3)
+                .position(|w| w == b"-->")
+                .map(|i| self.pos + i);
+            let data = match end {
+                Some(e) => {
+                    let d = String::from_utf8_lossy(&self.input[start..e]).into_owned();
+                    self.pos = e + 3;
+                    d
+                }
+                None => {
+                    let d = String::from_utf8_lossy(&self.input[start..]).into_owned();
+                    self.pos = self.input.len();
+                    d
+                }
+            };
+            return Token::Comment(data);
         }
         if self.starts_with_ci(b"<!doctype") {
             self.skip_past(b">");
@@ -331,6 +351,15 @@ impl Sink {
             }],
         }
     }
+    fn new_comment(&mut self, data: String) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(SinkNode {
+            node_type: NodeType::Comment(data),
+            children: vec![],
+            parent: None,
+        });
+        id
+    }
     fn new_element(&mut self, name: &str, attrs: AttrMap) -> usize {
         let id = self.nodes.len();
         self.nodes.push(SinkNode {
@@ -361,12 +390,13 @@ impl Sink {
         match &self.nodes[id].node_type {
             NodeType::Element(e) => &e.tag_name,
             NodeType::Text(_) => "#text",
+            NodeType::Comment(_) => "#comment",
         }
     }
     fn attrs(&self, id: usize) -> AttrMap {
         match &self.nodes[id].node_type {
             NodeType::Element(e) => e.attributes.clone(),
-            NodeType::Text(_) => AttrMap::new(),
+            NodeType::Text(_) | NodeType::Comment(_) => AttrMap::new(),
         }
     }
 }
@@ -601,6 +631,24 @@ impl Builder {
         let id = self.sink.new_element(name, attrs);
         self.insert_at(id);
         id
+    }
+
+    // 코멘트 삽입 (HTML §13.2.6.1 "Insert a comment").
+    fn insert_comment(&mut self, data: &str) {
+        let (parent, reference) = self.insertion_place();
+        let id = self.sink.new_comment(data.to_string());
+        self.sink.nodes[id].parent = Some(parent);
+        match reference {
+            Some(r) => {
+                let pos = self.sink.nodes[parent]
+                    .children
+                    .iter()
+                    .position(|&c| c == r)
+                    .unwrap_or(self.sink.nodes[parent].children.len());
+                self.sink.nodes[parent].children.insert(pos, id);
+            }
+            None => self.sink.nodes[parent].children.push(id),
+        }
     }
 
     fn insert_text(&mut self, s: &str) {
@@ -960,6 +1008,7 @@ impl Builder {
             match t {
                 Token::Eof => break,
                 Token::Text(s) => self.insert_text(&s),
+                Token::Comment(c) => self.insert_comment(&c),
                 Token::Doctype => {}
                 Token::Start { name, attrs, self_closing } => {
                     if matches!(name.as_str(), "style" | "script" | "title") {
@@ -1216,6 +1265,10 @@ impl Builder {
     fn m_in_body(&mut self, t: Token) -> Option<Token> {
         match t {
             Token::Doctype => None,
+            Token::Comment(c) => {
+                self.insert_comment(&c);
+                None
+            }
             Token::Text(s) => {
                 self.reconstruct_active();
                 if !is_ws(&s) {
@@ -1564,6 +1617,10 @@ impl Builder {
     // ── 테이블 모드들 ──
     fn m_in_table(&mut self, t: Token) -> Option<Token> {
         match t {
+            Token::Comment(c) => {
+                self.insert_comment(&c);
+                None
+            }
             Token::Text(s) => {
                 // 표 안의 텍스트는 "in table text" 로 모아서 처리하고, 끝나면 **원래
                 // 삽입 모드**로 돌아간다 (HTML 표준 §13.2.6.4.9).

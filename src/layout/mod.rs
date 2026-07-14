@@ -2502,6 +2502,8 @@ fn push_flex_items<'a>(
                     root.children.push(LayoutBox::new_anonymous(container, vec![child]));
                 }
             }
+            NodeType::Comment(_) => {} // 박스 없음
+
             NodeType::Element(_) => match child.display() {
                 Display::None => {}
                 Display::Contents => push_flex_items(root, container, &child.children),

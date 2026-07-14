@@ -837,6 +837,50 @@ var __kTagIface = function(tag) {
     return typeof x.tagName === 'string' && x.tagName.toUpperCase() === tag;
   });
 };
+// DOMException (WebIDL §3.14). DOM 이 표준적으로 던지는 오류 타입이다.
+// 없으면 DOM 오류가 전부 평범한 Error 로 나가서, e.name 으로 분기하는 코드가
+// 조용히 다른 길로 샌다. code 는 레거시 상수표 (신규 이름은 0).
+var __kDOMCodes = {
+  IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4,
+  InvalidCharacterError: 5, NoModificationAllowedError: 7, NotFoundError: 8,
+  NotSupportedError: 9, InUseAttributeError: 10, InvalidStateError: 11,
+  SyntaxError: 12, InvalidModificationError: 13, NamespaceError: 14,
+  InvalidAccessError: 15, TypeMismatchError: 17, SecurityError: 18,
+  NetworkError: 19, AbortError: 20, URLMismatchError: 21,
+  QuotaExceededError: 22, TimeoutError: 23, InvalidNodeTypeError: 24,
+  DataCloneError: 25
+};
+class DOMException extends Error {
+  constructor(message, name) {
+    super(message === undefined ? '' : String(message));
+    Object.defineProperty(this, 'name', {
+      value: name === undefined ? 'Error' : String(name),
+      writable: true, enumerable: false, configurable: true
+    });
+  }
+  get code() { return __kDOMCodes[this.name] || 0; }
+}
+window.DOMException = DOMException;
+// 레거시 코드 상수 (생성자와 prototype 양쪽 — WebIDL 이 요구한다)
+for (var __dn in __kDOMCodes) {
+  var __legacy = {
+    IndexSizeError: 'INDEX_SIZE_ERR', HierarchyRequestError: 'HIERARCHY_REQUEST_ERR',
+    WrongDocumentError: 'WRONG_DOCUMENT_ERR', InvalidCharacterError: 'INVALID_CHARACTER_ERR',
+    NoModificationAllowedError: 'NO_MODIFICATION_ALLOWED_ERR', NotFoundError: 'NOT_FOUND_ERR',
+    NotSupportedError: 'NOT_SUPPORTED_ERR', InUseAttributeError: 'INUSE_ATTRIBUTE_ERR',
+    InvalidStateError: 'INVALID_STATE_ERR', SyntaxError: 'SYNTAX_ERR',
+    InvalidModificationError: 'INVALID_MODIFICATION_ERR', NamespaceError: 'NAMESPACE_ERR',
+    InvalidAccessError: 'INVALID_ACCESS_ERR', TypeMismatchError: 'TYPE_MISMATCH_ERR',
+    SecurityError: 'SECURITY_ERR', NetworkError: 'NETWORK_ERR', AbortError: 'ABORT_ERR',
+    URLMismatchError: 'URL_MISMATCH_ERR', QuotaExceededError: 'QUOTA_EXCEEDED_ERR',
+    TimeoutError: 'TIMEOUT_ERR', InvalidNodeTypeError: 'INVALID_NODE_TYPE_ERR',
+    DataCloneError: 'DATA_CLONE_ERR'
+  }[__dn];
+  if (__legacy) {
+    DOMException[__legacy] = __kDOMCodes[__dn];
+    DOMException.prototype[__legacy] = __kDOMCodes[__dn];
+  }
+}
 // EventTarget 은 **진짜 생성 가능한 클래스**여야 한다 — 사이트가 `class X extends EventTarget`
 // 으로 상속한다 (astro.build). 스텁으로 두면 "Illegal constructor" 로 죽는다.
 if (!window.EventTarget) {
@@ -892,6 +936,48 @@ var HTMLInputElement = window.HTMLInputElement, HTMLButtonElement = window.HTMLB
 var SVGElement = window.SVGElement;
 
 // new Image(w, h) — <img> 를 만드는 생성자 (HTML §4.8.4.1). 프리로드/스프라이트에 흔하다.
+// document.createEvent (DOM §4.5.1). 레거시지만 표준이고 아직 널리 쓰인다.
+// 표준이 정한 인터페이스 이름만 받고, 그 외에는 NotSupportedError 를 던진다 —
+// 아무 이름이나 받아 빈 Event 를 주면 조용히 다른 동작이 된다.
+if (typeof document !== 'undefined' && !document.createEvent) {
+  var __kEventIfaces = {
+    beforeunloadevent: 1, compositionevent: 1, customevent: 1, devicemotionevent: 1,
+    deviceorientationevent: 1, dragevent: 1, event: 1, events: 1, focusevent: 1,
+    hashchangeevent: 1, htmlevents: 1, keyboardevent: 1, messageevent: 1,
+    mouseevent: 1, mouseevents: 1, storageevent: 1, svgevents: 1, textevent: 1,
+    touchevent: 1, uievent: 1, uievents: 1
+  };
+  document.createEvent = function (iface) {
+    var key = String(iface).toLowerCase();
+    if (!__kEventIfaces[key]) {
+      throw new DOMException(
+        "The provided value '" + iface + "' is not a valid event interface name.",
+        'NotSupportedError'
+      );
+    }
+    var e = key === 'customevent' ? new CustomEvent('') : new Event('');
+    // createEvent 로 만든 이벤트는 초기화 전까지 dispatch 할 수 없다 (표준의
+    // initialized 플래그). initEvent 가 그 플래그를 세운다.
+    e.__kInitialized = false;
+    e.initEvent = function (type, bubbles, cancelable) {
+      this.type = String(type);
+      this.bubbles = !!bubbles;
+      this.cancelable = !!cancelable;
+      this.__kInitialized = true;
+      return undefined;
+    };
+    e.initCustomEvent = function (type, bubbles, cancelable, detail) {
+      this.initEvent(type, bubbles, cancelable);
+      this.detail = detail;
+    };
+    e.initUIEvent = function (type, bubbles, cancelable, view, detail) {
+      this.initEvent(type, bubbles, cancelable);
+      this.view = view;
+      this.detail = detail;
+    };
+    return e;
+  };
+}
 // 없으면 `new Image()` 한 줄에 스크립트가 죽는다.
 if (!window.Image) {
   window.Image = function(w, h) {

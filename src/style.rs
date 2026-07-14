@@ -1647,6 +1647,13 @@ fn style_node<'a>(
             anc_pos.pop();
             StyledNode { node, id, specified_values: values, children }
         }
+        // 코멘트: 스타일도 박스도 없다 (자식도 없다)
+        NodeType::Comment(_) => StyledNode {
+            node,
+            id,
+            specified_values: HashMap::new(),
+            children: Vec::new(),
+        },
         NodeType::Text(_) => StyledNode {
             node,
             id,

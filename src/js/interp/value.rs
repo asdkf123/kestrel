@@ -635,6 +635,9 @@ pub(super) fn deep_clone(v: &Value, depth: usize) -> Value {
             // 인스턴스는 필드만 복제한 일반 객체로(프로토타입 미복제 — 근사).
             let mut m = ObjMap::new();
             for (k, val) in i.fields.borrow().iter() {
+                if is_internal_key(k) || i.fields.borrow().contains_key(&nonenum_marker(k)) {
+                    continue;
+                }
                 m.insert(k.clone(), deep_clone(val, depth + 1));
             }
             Value::Obj(Rc::new(RefCell::new(m)))
