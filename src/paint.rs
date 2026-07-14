@@ -1587,7 +1587,9 @@ pub fn rasterize_svg(
         _ => (0.0, 0.0, 1.0, 1.0),
     };
     let mut items = Vec::new();
-    emit_svg_children(svg_node, box_rect, vx, vy, sx, sy, &mut items, 0);
+    let crate::dom::NodeType::Element(root_e) = &svg_node.node.node_type else { return None };
+    let inherit = svg_inherit(root_e, SvgInherit::default());
+    emit_svg_children(svg_node, svg_node, box_rect, vx, vy, sx, sy, &mut items, 0, inherit);
     // <text> → 글리프 (예전엔 빈 FontStack 이라 독립 SVG 의 글자가 통째로 사라졌다)
     let mut glyphs = Vec::new();
     crate::layout::collect_svg_text_public(
@@ -1653,14 +1655,52 @@ fn emit_svg(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         }
         _ => (0.0, 0.0, 1.0, 1.0),
     };
-    emit_svg_children(lb.styled_node, box_rect, vx, vy, sx, sy, items, 0);
+    let inherit = svg_inherit(svg, SvgInherit::default());
+    emit_svg_children(lb.styled_node, lb.styled_node, box_rect, vx, vy, sx, sy, items, 0, inherit);
 }
 
 // SVG 도형을 재귀적으로 그린다. <g> 그룹 안의 도형도 그려야 한다 — 예전엔 <svg> 의
 // **직계 자식만** 봐서, 그룹으로 감싼 아이콘(대부분의 실제 SVG)이 통째로 안 그려졌다.
 #[allow(clippy::too_many_arguments)]
-fn emit_svg_children(
-    parent: &crate::style::StyledNode,
+// SVG 의 표현 속성(fill/stroke/stroke-width/opacity)은 **상속된다**.
+// 아이콘 세트는 전부 <svg fill="none" stroke="currentColor" stroke-width="2"> 처럼
+// 루트에 걸어 둔다 — 상속을 안 하면 path 가 기본값(검정 채우기)으로 그려져
+// 얇은 윤곽선 아이콘이 **시커먼 덩어리**가 된다 (조용히 틀린 그림).
+#[derive(Clone, Copy)]
+struct SvgInherit {
+    fill: Option<Color>,
+    stroke: Option<Color>,
+    stroke_width: f32,
+}
+
+impl Default for SvgInherit {
+    fn default() -> Self {
+        SvgInherit {
+            fill: Some(Color { r: 0, g: 0, b: 0, a: 255 }), // SVG 기본 fill 은 검정
+            stroke: None,
+            stroke_width: 1.0,
+        }
+    }
+}
+
+fn svg_inherit(e: &crate::dom::ElementData, base: SvgInherit) -> SvgInherit {
+    let mut out = base;
+    if let Some(v) = e.attributes.get("fill") {
+        out.fill = if v.trim() == "none" { None } else { crate::css::parse_color(v.trim()) };
+    }
+    if let Some(v) = e.attributes.get("stroke") {
+        out.stroke = if v.trim() == "none" { None } else { crate::css::parse_color(v.trim()) };
+    }
+    if let Some(v) = e.attributes.get("stroke-width").and_then(|v| v.trim().parse::<f32>().ok()) {
+        out.stroke_width = v;
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_svg_children<'a, 'b>(
+    parent: &'b crate::style::StyledNode<'a>,
+    root: &'b crate::style::StyledNode<'a>,
     box_rect: Rect,
     vx: f32,
     vy: f32,
@@ -1668,110 +1708,316 @@ fn emit_svg_children(
     sy: f32,
     items: &mut Vec<DisplayItem>,
     depth: usize,
+    inherit: SvgInherit,
 ) {
     if depth > 16 {
         return; // 병적으로 깊은 중첩 방어
     }
-    let mx = |x: f32| box_rect.x + (x - vx) * sx;
-    let my = |y: f32| box_rect.y + (y - vy) * sy;
     for shape in &parent.children {
-        if let crate::dom::NodeType::Element(e) = &shape.node.node_type {
-            if e.tag_name == "g" || e.tag_name == "svg" {
-                emit_svg_children(shape, box_rect, vx, vy, sx, sy, items, depth + 1);
-                continue;
+        let crate::dom::NodeType::Element(e) = &shape.node.node_type else { continue };
+        let tag = e.tag_name.as_str();
+        // <defs> 안의 도형은 직접 그리지 않는다 (<use> 로 참조된다)
+        if tag == "defs" || tag == "text" || tag == "tspan" {
+            continue;
+        }
+        // 이 요소가 만들 아이템은 여기서부터
+        let start_len = items.len();
+
+        if tag == "g" || tag == "svg" {
+            emit_svg_children(
+                shape,
+                root,
+                box_rect,
+                vx,
+                vy,
+                sx,
+                sy,
+                items,
+                depth + 1,
+                svg_inherit(e, inherit),
+            );
+        } else if tag == "use" {
+            // <use href="#id"> — 참조한 도형을 x/y 만큼 옮겨 그린다.
+            // 예전엔 통째로 무시돼서 아이콘 스프라이트가 전부 빈 화면이었다.
+            let href = e
+                .attributes
+                .get("href")
+                .or_else(|| e.attributes.get("xlink:href"))
+                .cloned()
+                .unwrap_or_default();
+            if let Some(id) = href.strip_prefix('#') {
+                if let Some(target) = find_svg_by_id(root, id, 0) {
+                    // 참조 대상을 임시 부모로 삼아 그린다 (자기 자신 하나만)
+                    let before = items.len();
+                    emit_one_svg_shape(target, box_rect, vx, vy, sx, sy, items, inherit);
+                    let (ux, uy) = (
+                        e.attributes.get("x").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0),
+                        e.attributes.get("y").and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0),
+                    );
+                    if ux != 0.0 || uy != 0.0 {
+                        let m = crate::layout::Mat3 {
+                            m: [[1.0, 0.0, ux * sx], [0.0, 1.0, uy * sy], [0.0, 0.0, 1.0]],
+                        };
+                        let inner: Vec<DisplayItem> = items.drain(before..).collect();
+                        items.push(DisplayItem::Transform { m, items: inner });
+                    }
+                }
+            }
+        } else {
+            emit_one_svg_shape(shape, box_rect, vx, vy, sx, sy, items, inherit);
+        }
+
+        // transform 속성 (g 와 도형 공통). 예전엔 <g transform> 을 통째로 무시해서
+        // 그룹 전체가 **엉뚱한 자리에** 그려졌다 (조용히 틀린 그림).
+        if let Some(t) = e.attributes.get("transform") {
+            if items.len() > start_len {
+                let local = crate::layout::parse_svg_transform(t);
+                // viewBox 스케일 좌표계로 옮긴다: S · M · S⁻¹ (S 는 mx/my 매핑)
+                let to_box = crate::layout::Mat3 {
+                    m: [[sx, 0.0, box_rect.x - vx * sx], [0.0, sy, box_rect.y - vy * sy], [0.0, 0.0, 1.0]],
+                };
+                let from_box = crate::layout::Mat3 {
+                    m: [
+                        [1.0 / sx, 0.0, (vx * sx - box_rect.x) / sx],
+                        [0.0, 1.0 / sy, (vy * sy - box_rect.y) / sy],
+                        [0.0, 0.0, 1.0],
+                    ],
+                };
+                let m = from_box.then(&local).then(&to_box);
+                let inner: Vec<DisplayItem> = items.drain(start_len..).collect();
+                items.push(DisplayItem::Transform { m, items: inner });
             }
         }
-            let crate::dom::NodeType::Element(e) = &shape.node.node_type else { continue };
-            let num = |k: &str| e.attributes.get(k).and_then(|v| v.trim().parse::<f32>().ok());
-            // fill: 속성 > 기본 검정. "none" 이면 채우지 않음.
-            let fill = match e.attributes.get("fill").map(|s| s.as_str()) {
-                Some("none") => None,
-                Some(f) => crate::css::parse_color(f),
-                None => Some(Color { r: 0, g: 0, b: 0, a: 255 }),
-            };
-            match e.tag_name.as_str() {
-                "rect" => {
-                    if let Some(color) = fill {
-                        let (x, y) = (mx(num("x").unwrap_or(0.0)), my(num("y").unwrap_or(0.0)));
-                        let (w, h) = (num("width").unwrap_or(0.0) * sx, num("height").unwrap_or(0.0) * sy);
-                        let r = num("rx").map(|r| r * sx).unwrap_or(0.0);
-                        if w > 0.0 && h > 0.0 {
-                            let rect = Rect { x, y, width: w, height: h };
-                            if r > 0.0 {
-                                items.push(DisplayItem::RoundRect { color, rect, radii: [r; 4] });
-                            } else {
-                                items.push(DisplayItem::Rect { color, rect });
-                            }
-                        }
-                    }
-                }
-                "circle" => {
-                    if let Some(color) = fill {
-                        let r = num("r").unwrap_or(0.0);
-                        let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
-                        let rect = Rect { x: mx(cx - r), y: my(cy - r), width: 2.0 * r * sx, height: 2.0 * r * sy };
-                        items.push(DisplayItem::RoundRect { color, rect, radii: [r * sx; 4] });
-                    }
-                }
-                "ellipse" => {
-                    if let Some(color) = fill {
-                        let (rx, ry) = (num("rx").unwrap_or(0.0), num("ry").unwrap_or(0.0));
-                        let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
-                        let rect = Rect { x: mx(cx - rx), y: my(cy - ry), width: 2.0 * rx * sx, height: 2.0 * ry * sy };
-                        items.push(DisplayItem::RoundRect { color, rect, radii: [rx.min(ry) * sx; 4] });
-                    }
-                }
-                "line" => {
-                    // 두 점을 잇는 굵기 sw 의 선 → 방향에 맞춘 사각형(quad) 폴리곤. 대각선도 정확.
-                    let stroke = e.attributes.get("stroke").and_then(|s| crate::css::parse_color(s));
-                    if let Some(color) = stroke {
-                        let sw = (num("stroke-width").unwrap_or(1.0) * sx).max(1.0);
-                        let (x1, y1) = (mx(num("x1").unwrap_or(0.0)), my(num("y1").unwrap_or(0.0)));
-                        let (x2, y2) = (mx(num("x2").unwrap_or(0.0)), my(num("y2").unwrap_or(0.0)));
-                        match stroke_line_quad(x1, y1, x2, y2, sw) {
-                            Some(quad) => items.push(DisplayItem::Polygon { color, contours: vec![quad] }),
-                            None => {
-                                // 길이 0: 작은 사각형으로 점 표시
-                                let h = sw / 2.0;
-                                items.push(DisplayItem::Rect {
-                                    color,
-                                    rect: Rect { x: x1 - h, y: y1 - h, width: sw, height: sw },
-                                });
-                            }
-                        }
-                    }
-                }
-                "path" => {
-                    if let Some(color) = fill {
-                        if let Some(d) = e.attributes.get("d") {
-                            let contours: Vec<Vec<(f32, f32)>> = flatten_path(d)
-                                .into_iter()
-                                .filter(|c| c.len() >= 3)
-                                .map(|c| c.iter().map(|&(px, py)| (mx(px), my(py))).collect())
-                                .collect();
-                            if !contours.is_empty() {
-                                items.push(DisplayItem::Polygon { color, contours });
-                            }
-                        }
-                    }
-                }
-                "polygon" | "polyline" => {
-                    if let Some(color) = fill {
-                        if let Some(pts) = e.attributes.get("points") {
-                            let nums: Vec<f32> = pts
-                                .split(|c: char| c == ',' || c.is_whitespace())
-                                .filter_map(|t| t.parse::<f32>().ok())
-                                .collect();
-                            let contour: Vec<(f32, f32)> =
-                                nums.chunks(2).filter(|p| p.len() == 2).map(|p| (mx(p[0]), my(p[1]))).collect();
-                            if contour.len() >= 3 {
-                                items.push(DisplayItem::Polygon { color, contours: vec![contour] });
-                            }
-                        }
-                    }
-                }
-                _ => {} // text 등 미지원
+        // opacity: 그룹/도형 투명도 (예전엔 무시돼서 전부 불투명하게 나왔다)
+        if let Some(op) = e.attributes.get("opacity").and_then(|v| v.trim().parse::<f32>().ok()) {
+            if op < 1.0 && items.len() > start_len {
+                let inner: Vec<DisplayItem> = items.drain(start_len..).collect();
+                items.push(DisplayItem::Layer {
+                    opacity: op.clamp(0.0, 1.0),
+                    blend: BlendMode::Normal,
+                    items: inner,
+                });
             }
+        }
+    }
+}
+
+fn find_svg_by_id<'a, 'b>(
+    n: &'b crate::style::StyledNode<'a>,
+    id: &str,
+    depth: usize,
+) -> Option<&'b crate::style::StyledNode<'a>> {
+    if depth > 24 {
+        return None;
+    }
+    if let crate::dom::NodeType::Element(e) = &n.node.node_type {
+        if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+            return Some(n);
+        }
+    }
+    n.children.iter().find_map(|c| find_svg_by_id(c, id, depth + 1))
+}
+
+// 도형 하나 → 아이템들 (fill 과 stroke 를 **둘 다** 그린다).
+// 예전엔 fill 만 그렸다 — Feather/Lucide 같은 아이콘 세트는 전부 fill="none" + stroke 라서
+// **아무것도 안 나왔다** (아이콘이 통째로 사라졌다).
+#[allow(clippy::too_many_arguments)]
+fn emit_one_svg_shape(
+    shape: &crate::style::StyledNode,
+    box_rect: Rect,
+    vx: f32,
+    vy: f32,
+    sx: f32,
+    sy: f32,
+    items: &mut Vec<DisplayItem>,
+    inherit: SvgInherit,
+) {
+    let crate::dom::NodeType::Element(e) = &shape.node.node_type else { return };
+    let mx = |x: f32| box_rect.x + (x - vx) * sx;
+    let my = |y: f32| box_rect.y + (y - vy) * sy;
+    let num = |k: &str| e.attributes.get(k).and_then(|v| v.trim().parse::<f32>().ok());
+    let with_op = |c: Option<Color>, key: &str| -> Option<Color> {
+        let mut c = c?;
+        if let Some(o) = e.attributes.get(key).and_then(|v| v.trim().parse::<f32>().ok()) {
+            c.a = (c.a as f32 * o.clamp(0.0, 1.0)).round() as u8;
+        }
+        Some(c)
+    };
+    // 자기 속성이 있으면 그것, 없으면 **상속값** (아이콘 세트는 루트에 걸어 둔다)
+    let own = svg_inherit(e, inherit);
+    let fill = with_op(own.fill, "fill-opacity");
+    let stroke = with_op(own.stroke, "stroke-opacity");
+    let sw = (own.stroke_width * sx).max(1.0);
+
+    // 겹치는 스트로크 조각들의 방향이 뒤섞이면 nonzero winding 에서 **서로 상쇄돼 구멍**이 난다
+    // (원의 윤곽선이 흐릿하게 사라졌다). 전부 같은 방향(양의 면적)으로 맞춘다.
+    fn ccw(mut c: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+        let n = c.len();
+        let area: f32 = (0..n)
+            .map(|i| {
+                let (x1, y1) = c[i];
+                let (x2, y2) = c[(i + 1) % n];
+                x1 * y2 - x2 * y1
+            })
+            .sum();
+        if area < 0.0 {
+            c.reverse();
+        }
+        c
+    }
+
+    // 열린 경로(윤곽선)를 굵기 sw 의 폴리곤들로
+    let stroke_contour = |pts: &[(f32, f32)], closed: bool, color: Color, out: &mut Vec<DisplayItem>| {
+        let n = pts.len();
+        if n < 2 {
+            return;
+        }
+        let segs: Vec<((f32, f32), (f32, f32))> = if closed {
+            (0..n).map(|i| (pts[i], pts[(i + 1) % n])).collect()
+        } else {
+            (0..n - 1).map(|i| (pts[i], pts[i + 1])).collect()
+        };
+        let mut contours = Vec::new();
+        for ((x1, y1), (x2, y2)) in segs {
+            if let Some(q) = stroke_line_quad(x1, y1, x2, y2, sw) {
+                contours.push(ccw(q));
+            }
+        }
+        // 이음새를 원으로 메운다 (SVG 기본 join 은 miter 지만, 얇은 선에선 차이가 안 보인다)
+        if sw > 2.0 {
+            for &(px, py) in pts.iter() {
+                let r = sw / 2.0;
+                contours.push(ccw(
+                    (0..12)
+                        .map(|k| {
+                            let t = k as f32 / 12.0 * std::f32::consts::TAU;
+                            (px + t.cos() * r, py + t.sin() * r)
+                        })
+                        .collect(),
+                ));
+            }
+        }
+        if !contours.is_empty() {
+            out.push(DisplayItem::Polygon { color, contours });
+        }
+    };
+
+    match e.tag_name.as_str() {
+        "rect" => {
+            let (x, y) = (mx(num("x").unwrap_or(0.0)), my(num("y").unwrap_or(0.0)));
+            let (w, h) = (num("width").unwrap_or(0.0) * sx, num("height").unwrap_or(0.0) * sy);
+            if w <= 0.0 || h <= 0.0 {
+                return;
+            }
+            let r = num("rx").map(|r| r * sx).unwrap_or(0.0);
+            let rect = Rect { x, y, width: w, height: h };
+            if let Some(color) = fill {
+                if r > 0.0 {
+                    items.push(DisplayItem::RoundRect { color, rect, radii: [r; 4] });
+                } else {
+                    items.push(DisplayItem::Rect { color, rect });
+                }
+            }
+            if let Some(color) = stroke {
+                let pts = [
+                    (x, y),
+                    (x + w, y),
+                    (x + w, y + h),
+                    (x, y + h),
+                ];
+                stroke_contour(&pts, true, color, items);
+            }
+        }
+        "circle" | "ellipse" => {
+            let (rx, ry) = if e.tag_name == "circle" {
+                let r = num("r").unwrap_or(0.0);
+                (r, r)
+            } else {
+                (num("rx").unwrap_or(0.0), num("ry").unwrap_or(0.0))
+            };
+            let (cx, cy) = (num("cx").unwrap_or(0.0), num("cy").unwrap_or(0.0));
+            let rect = Rect {
+                x: mx(cx - rx),
+                y: my(cy - ry),
+                width: 2.0 * rx * sx,
+                height: 2.0 * ry * sy,
+            };
+            if let Some(color) = fill {
+                items.push(DisplayItem::RoundRect {
+                    color,
+                    rect,
+                    radii: [rx.min(ry) * sx; 4],
+                });
+            }
+            if let Some(color) = stroke {
+                // 타원 둘레를 다각형으로 근사해 스트로크
+                let pts: Vec<(f32, f32)> = (0..48)
+                    .map(|k| {
+                        let t = k as f32 / 48.0 * std::f32::consts::TAU;
+                        (mx(cx + rx * t.cos()), my(cy + ry * t.sin()))
+                    })
+                    .collect();
+                stroke_contour(&pts, true, color, items);
+            }
+        }
+        "line" => {
+            if let Some(color) = stroke {
+                let (x1, y1) = (mx(num("x1").unwrap_or(0.0)), my(num("y1").unwrap_or(0.0)));
+                let (x2, y2) = (mx(num("x2").unwrap_or(0.0)), my(num("y2").unwrap_or(0.0)));
+                match stroke_line_quad(x1, y1, x2, y2, sw) {
+                    Some(quad) => items.push(DisplayItem::Polygon { color, contours: vec![quad] }),
+                    None => {
+                        let h = sw / 2.0;
+                        items.push(DisplayItem::Rect {
+                            color,
+                            rect: Rect { x: x1 - h, y: y1 - h, width: sw, height: sw },
+                        });
+                    }
+                }
+            }
+        }
+        "path" => {
+            let Some(d) = e.attributes.get("d") else { return };
+            let raw = flatten_path(d);
+            let contours: Vec<Vec<(f32, f32)>> = raw
+                .iter()
+                .map(|c| c.iter().map(|&(px, py)| (mx(px), my(py))).collect())
+                .collect();
+            if let Some(color) = fill {
+                let filled: Vec<Vec<(f32, f32)>> =
+                    contours.iter().filter(|c| c.len() >= 3).cloned().collect();
+                if !filled.is_empty() {
+                    items.push(DisplayItem::Polygon { color, contours: filled });
+                }
+            }
+            if let Some(color) = stroke {
+                for c in &contours {
+                    stroke_contour(c, false, color, items);
+                }
+            }
+        }
+        "polygon" | "polyline" => {
+            let Some(pts_attr) = e.attributes.get("points") else { return };
+            let nums: Vec<f32> = pts_attr
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter_map(|t| t.parse::<f32>().ok())
+                .collect();
+            let contour: Vec<(f32, f32)> = nums
+                .chunks(2)
+                .filter(|p| p.len() == 2)
+                .map(|p| (mx(p[0]), my(p[1])))
+                .collect();
+            let closed = e.tag_name == "polygon";
+            if let Some(color) = fill {
+                if contour.len() >= 3 && closed {
+                    items.push(DisplayItem::Polygon { color, contours: vec![contour.clone()] });
+                }
+            }
+            if let Some(color) = stroke {
+                stroke_contour(&contour, closed, color, items);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -3575,6 +3821,27 @@ mod tests {
     }
     // filter/opacity 가 **이미지에도** 걸린다. 예전엔 이미지만 조용히 건너뛰어
     // filter: grayscale(1) 인 로고가 컬러로 나왔다 (흔한 패턴이다).
+    // SVG 아이콘 세트는 전부 <svg fill="none" stroke="…" stroke-width="2"> 형태다.
+    // 표현 속성이 **상속되지 않으면** path 가 기본값(검정 채우기)으로 그려져
+    // 얇은 윤곽선 아이콘이 시커먼 덩어리가 된다. 게다가 stroke 자체가 없으면
+    // 아이콘이 **통째로 안 보인다**.
+    #[test]
+    fn svg_stroke_icon_renders_as_outline_not_blob() {
+        let src = r##"<svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#ff0000" stroke-width="4">
+            <rect x="8" y="8" width="24" height="24"/>
+        </svg>"##;
+        let fs = FontStack::new(Vec::new());
+        let img = rasterize_svg(src, 40, 40, &fs).expect("래스터화");
+        let at = |x: usize, y: usize| {
+            let o = (y * 40 + x) * 4;
+            (img.rgba[o], img.rgba[o + 1], img.rgba[o + 2], img.rgba[o + 3])
+        };
+        // 테두리 위 (y=8) 는 빨강, 안쪽 (20,20) 은 **비어 있어야** 한다
+        assert_eq!(at(20, 8).0, 255, "윤곽선이 그려져야 (stroke 상속)");
+        assert_eq!(at(20, 8).3, 255);
+        assert_eq!(at(20, 20).3, 0, "fill=none 이 상속돼 안쪽은 비어야 (덩어리가 되면 안 된다)");
+    }
+
     #[test]
     fn image_filters_apply_per_pixel() {
         let red = crate::png::Image {

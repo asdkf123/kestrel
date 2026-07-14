@@ -1900,6 +1900,67 @@ fn is_cell(b: &LayoutBox) -> bool {
 }
 
 // SVG viewBox "minx miny width height" → (minx, miny, width, height)
+// SVG 의 transform 속성. CSS 와 **문법이 다르다**: 단위 없는 수(사용자 단위)를 쓰고,
+// rotate(각도 [cx cy]) 처럼 회전 중심을 인자로 받으며, 구분자가 공백일 수 있다.
+// CSS 파서에 넘기면 조용히 항등이 된다 (그룹이 엉뚱한 자리에 그려진다).
+pub fn parse_svg_transform(text: &str) -> Mat3 {
+    let mut m = Mat3::IDENTITY;
+    let mut rest = text;
+    while let Some(open) = rest.find('(') {
+        let name = rest[..open]
+            .trim()
+            .rsplit(|c: char| c.is_whitespace() || c == ')' || c == ',')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let Some(close_rel) = rest[open..].find(')') else { break };
+        let close = close_rel + open;
+        let a: Vec<f32> = rest[open + 1..close]
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|t| !t.is_empty())
+            .filter_map(|t| t.parse::<f32>().ok())
+            .collect();
+        let g = |i: usize| a.get(i).copied().unwrap_or(0.0);
+        let step = match name.as_str() {
+            "translate" => Mat3 {
+                m: [[1.0, 0.0, g(0)], [0.0, 1.0, a.get(1).copied().unwrap_or(0.0)], [0.0, 0.0, 1.0]],
+            },
+            "scale" => {
+                let sx = a.first().copied().unwrap_or(1.0);
+                let sy = a.get(1).copied().unwrap_or(sx);
+                Mat3 { m: [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, 1.0]] }
+            }
+            "rotate" => {
+                let (s, c) = g(0).to_radians().sin_cos();
+                let r = Mat3 { m: [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]] };
+                if a.len() >= 3 {
+                    // rotate(deg cx cy) = T(c) · R · T(-c)
+                    let (cx, cy) = (g(1), g(2));
+                    let t1 = Mat3 { m: [[1.0, 0.0, -cx], [0.0, 1.0, -cy], [0.0, 0.0, 1.0]] };
+                    let t2 = Mat3 { m: [[1.0, 0.0, cx], [0.0, 1.0, cy], [0.0, 0.0, 1.0]] };
+                    t1.then(&r).then(&t2)
+                } else {
+                    r
+                }
+            }
+            "skewx" => Mat3 {
+                m: [[1.0, g(0).to_radians().tan(), 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            },
+            "skewy" => Mat3 {
+                m: [[1.0, 0.0, 0.0], [g(0).to_radians().tan(), 1.0, 0.0], [0.0, 0.0, 1.0]],
+            },
+            "matrix" => Mat3 {
+                m: [[g(0), g(2), g(4)], [g(1), g(3), g(5)], [0.0, 0.0, 1.0]],
+            },
+            _ => Mat3::IDENTITY,
+        };
+        // SVG 도 왼쪽 함수가 바깥쪽
+        m = step.then(&m);
+        rest = &rest[close + 1..];
+    }
+    m
+}
+
 // paint(독립 SVG 래스터)에서도 쓴다.
 pub fn collect_svg_text_public(
     node: &crate::style::StyledNode,
