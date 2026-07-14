@@ -121,6 +121,9 @@ pub enum Value {
     SetVal(Rc<RefCell<Vec<Value>>>),
     // element.style — 요소의 inline style 속성에 대한 라이브 프록시(CSSStyleDeclaration).
     Style(crate::dom::NodeId),
+    // el.dataset — **살아있는 뷰**다. 예전엔 스냅샷 객체라 el.dataset.x = '1' 이
+    // 조용히 사라졌다 (속성이 안 바뀐다).
+    Dataset(crate::dom::NodeId),
     // element.classList — 요소의 class 속성에 대한 라이브 프록시(DOMTokenList).
     ClassList(crate::dom::NodeId),
     // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
@@ -437,6 +440,7 @@ pub enum Native {
     DocWrite,
     CookieGet,
     CookieSet,
+    GetNamedItem,
     ObjectGetOwnPropertyDescriptor,
     LocationAssign,
     LocationReload,
@@ -688,6 +692,7 @@ impl std::fmt::Debug for Value {
             Value::MapVal(_) => write!(f, "[object Map]"),
             Value::SetVal(_) => write!(f, "[object Set]"),
             Value::Style(id) => write!(f, "[style {:?}]", id),
+            Value::Dataset(id) => write!(f, "[dataset {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
             Value::Proxy(_) => write!(f, "[object Proxy]"),
             Value::Gen(_) => write!(f, "[object Generator]"),
@@ -3952,6 +3957,19 @@ impl Interp {
                 Ok(Value::Str(v))
             }
             // 지연 제너레이터: 반복자 프로토콜 메서드. @@iterator 는 자기 자신 반환.
+            // el.dataset.x → data-x 속성 (살아있는 뷰)
+            Value::Dataset(id) => {
+                let dom = self.dom_arena()?;
+                let attr = format!("data-{}", camel_to_kebab(key));
+                Ok(match &dom.get(*id).node_type {
+                    crate::dom::NodeType::Element(e) => e
+                        .attributes
+                        .get(&attr)
+                        .map(|v| Value::Str(v.clone()))
+                        .unwrap_or(Value::Undefined),
+                    _ => Value::Undefined,
+                })
+            }
             Value::Gen(_) => Ok(match key {
                 "next" => Value::Native(Native::GenNext),
                 "return" => Value::Native(Native::GenReturn),
@@ -5515,6 +5533,13 @@ impl Interp {
                             return Ok(());
                         }
                         inst.fields.borrow_mut().insert(key, value);
+                        Ok(())
+                    }
+                    // el.dataset.x = v → data-x 속성을 실제로 바꾼다
+                    Value::Dataset(id) => {
+                        let attr = format!("data-{}", camel_to_kebab(&key));
+                        let dom = self.dom_arena()?;
+                        dom.set_attr(id, &attr, to_display(&value));
                         Ok(())
                     }
                     Value::Class(c) => {

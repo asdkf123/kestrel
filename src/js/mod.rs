@@ -626,6 +626,75 @@ var PerformanceObserver = window.PerformanceObserver; if (!PerformanceObserver) 
 // matchMedia 는 엔진이 CSS @media 와 같은 평가기로 제공(Native). 스텁 불필요.
 window.matchMedia = matchMedia;
 
+// Blob / File / FileReader / URL.createObjectURL (File API).
+// 사이트가 기능 탐지로 typeof Blob 을 보고, 있으면 그 경로를 탄다 — 없으면 죽는다.
+// 텍스트 조각만 다루는 최소 구현이다 (바이너리는 문자열로 보관).
+if (typeof Blob === "undefined") {
+  window.Blob = function (parts, opts) {
+    var s = "";
+    var list = parts || [];
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      s += (p && p.__text !== undefined) ? p.__text : String(p);
+    }
+    this.__text = s;
+    this.size = s.length;
+    this.type = (opts && opts.type) || "";
+  };
+  Blob.prototype.text = function () { var t = this.__text; return Promise.resolve(t); };
+  Blob.prototype.slice = function (a, b, type) {
+    return new Blob([this.__text.slice(a === undefined ? 0 : a, b)], { type: type || this.type });
+  };
+  Blob.prototype.arrayBuffer = function () {
+    var t = this.__text;
+    var buf = new ArrayBuffer(t.length);
+    var view = new Uint8Array(buf);
+    for (var i = 0; i < t.length; i++) view[i] = t.charCodeAt(i) & 0xff;
+    return Promise.resolve(buf);
+  };
+  window.File = function (parts, name, opts) {
+    Blob.call(this, parts, opts);
+    this.name = name;
+    this.lastModified = 0;
+  };
+  File.prototype = Object.create(Blob.prototype);
+}
+if (typeof FileReader === "undefined") {
+  window.FileReader = function () { this.result = null; this.onload = null; this.onloadend = null; };
+  FileReader.prototype.readAsText = function (blob) {
+    this.result = blob && blob.__text !== undefined ? blob.__text : String(blob);
+    var self = this;
+    queueMicrotask(function () {
+      var e = { target: self };
+      if (self.onload) self.onload(e);
+      if (self.onloadend) self.onloadend(e);
+    });
+  };
+  FileReader.prototype.readAsDataURL = function (blob) {
+    var t = blob && blob.__text !== undefined ? blob.__text : String(blob);
+    this.result = "data:" + ((blob && blob.type) || "text/plain") + ";base64," + btoa(t);
+    var self = this;
+    queueMicrotask(function () {
+      var e = { target: self };
+      if (self.onload) self.onload(e);
+      if (self.onloadend) self.onloadend(e);
+    });
+  };
+}
+// URL.createObjectURL: 실제 네트워크가 아니라 data: URL 로 만든다 (내용이 살아 있어야
+// <img src=blobUrl> 이 뜬다). 못 만들면 조용히 빈 문자열을 주지 않고 정직하게 blob: 를 준다.
+if (typeof URL !== "undefined" && !URL.createObjectURL) {
+  URL.createObjectURL = function (blob) {
+    try {
+      var t = blob && blob.__text !== undefined ? blob.__text : "";
+      return "data:" + ((blob && blob.type) || "application/octet-stream") + ";base64," + btoa(t);
+    } catch (e) {
+      return "blob:kestrel/unsupported";
+    }
+  };
+  URL.revokeObjectURL = function () {};
+}
+
 // getSelection: 정적 렌더에는 사용자 선택이 없다 → 항상 빈 Selection.
 // 없으면 typeof 검사 후 .toString() 을 부르는 코드가 죽는다. 빈 선택은 거짓말이 아니다.
 window.getSelection = function () {
@@ -1434,6 +1503,43 @@ mod tests {
 
     fn text_of_id(dom: &Dom, id: &str) -> Option<String> {
         dom.find_by_attr_id(id).map(|n| dom.text_content(n))
+    }
+
+    #[test]
+    fn dataset_is_live_and_attributes_have_named_access() {
+        // dataset 은 살아있는 뷰다 (DOMStringMap). 예전엔 스냅샷이라 쓰기가 조용히 사라졌다.
+        // attributes 는 NamedNodeMap 이라 이름으로도 접근한다 (jQuery 가 그렇게 쓴다).
+        let mut dom = crate::html::parse_dom(
+            "<div id=\"d\" data-x=\"1\" class=\"c\"></div><p id=\"t\">?</p>\
+             <script>\
+             var d = document.getElementById('d');\
+             d.dataset.y = '2';\
+             var named = d.attributes['class'] ? d.attributes['class'].value : 'none';\
+             var got = d.attributes.getNamedItem('data-x').value;\
+             document.getElementById('t').textContent = \
+               d.getAttribute('data-y') + ',' + d.dataset.x + ',' + named + ',' + got;\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://localhost/", None);
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "2,1,c,1");
+    }
+
+    #[test]
+    fn anchor_exposes_url_parts() {
+        // <a> 는 URL 분해 속성을 갖는다 (HTMLHyperlinkElementUtils).
+        // 없으면 a.pathname 같은 흔한 코드가 undefined 를 읽고 죽는다 (naver).
+        let mut dom = crate::html::parse_dom(
+            "<a id=\"a\" href=\"/p/x?q=1#f\">L</a><p id=\"t\">?</p>\
+             <script>\
+             var a = document.getElementById('a');\
+             document.getElementById('t').textContent = \
+               a.pathname + '|' + a.search + '|' + a.hash + '|' + a.protocol + '|' + a.hostname;\
+             </script>"
+                .to_string(),
+        );
+        run_scripts(&mut dom, "https://example.test/base/", None);
+        assert_eq!(text_of_id(&dom, "t").unwrap(), "/p/x|?q=1|#f|https:|example.test");
     }
 
     #[test]

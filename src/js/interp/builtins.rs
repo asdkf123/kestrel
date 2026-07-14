@@ -412,6 +412,7 @@ impl Interp {
             | Value::MapVal(_)
             | Value::SetVal(_)
             | Value::Style(_)
+            | Value::Dataset(_)
             | Value::ClassList(_)
             | Value::Proxy(_)
             | Value::Gen(_)
@@ -1805,6 +1806,14 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             // document.cookie (HTML §7.11.2). 항아리는 HTTP 계층과 공유한다.
+            // NamedNodeMap.getNamedItem(name) — 속성 목록의 이름 접근 (DOM 표준).
+            Native::GetNamedItem => {
+                let name = args.first().map(to_display).unwrap_or_default();
+                Ok(match recv {
+                    Some(Value::Arr(a)) => a.get_prop(&name).unwrap_or(Value::Null),
+                    _ => Value::Null,
+                })
+            }
             Native::CookieGet => {
                 let (host, path) = self.page_host_path();
                 Ok(Value::Str(crate::http::cookies_for(&host, &path)))

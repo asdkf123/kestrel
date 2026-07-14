@@ -173,18 +173,9 @@ impl Interp {
                 return Ok(Value::Num(y as f64));
             }
             // element.dataset — data-* 속성을 camelCase 키 객체로 (읽기 스냅샷)
-            "dataset" => {
-                let dom = self.dom_arena()?;
-                let mut map = ObjMap::new();
-                if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
-                    for (k, v) in e.attributes.iter() {
-                        if let Some(rest) = k.strip_prefix("data-") {
-                            map.insert(kebab_to_camel(rest), Value::Str(v.clone()));
-                        }
-                    }
-                }
-                return Ok(Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(map))));
-            }
+            // dataset 은 **살아있는 뷰**다 (DOMStringMap): 읽기도 쓰기도 data-* 속성에 직결.
+            // 예전엔 스냅샷 객체를 돌려줘서 el.dataset.x = '1' 이 조용히 사라졌다.
+            "dataset" => return Ok(Value::Dataset(id)),
             _ => {}
         }
         let dom = self.dom_arena()?;
@@ -235,7 +226,18 @@ impl Interp {
                         .collect(),
                     _ => Vec::new(),
                 };
-                Ok(Value::Arr(ArrayObj::new(list)))
+                // NamedNodeMap: 인덱스뿐 아니라 **이름으로도** 접근한다 (attrs['class']).
+                // jQuery 가 elem.attributes[name].expando 로 검사한다 — 없으면 죽는다.
+                let arr = ArrayObj::new(list.clone());
+                for v in &list {
+                    if let Value::Obj(m) = v {
+                        if let Some(Value::Str(name)) = m.borrow().get("name") {
+                            arr.set_prop(name.clone(), v.clone());
+                        }
+                    }
+                }
+                arr.set_prop("getNamedItem".to_string(), Value::Native(Native::GetNamedItem));
+                Ok(Value::Arr(arr))
             }
             // 문서 트리에 붙어 있는가 (분리된 노드인지 판별 — 프레임워크가 흔히 본다)
             "isConnected" => {
@@ -414,6 +416,69 @@ impl Interp {
                 _ => Ok(Value::Undefined),
             },
             // URL 반사 프로퍼티: 절대 URL 로 해석 (getAttribute 는 원문 반환).
+            // <a>/<area>/<link> 의 URL 분해 속성 (HTML 표준 HTMLHyperlinkElementUtils).
+            // 없으면 a.pathname 같은 흔한 코드가 undefined 를 읽고 죽는다 (naver).
+            "protocol" | "hostname" | "host" | "port" | "pathname" | "search" | "hash"
+            | "origin" => {
+                let raw = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Element(e) => {
+                        e.attributes.get("href").cloned().unwrap_or_default()
+                    }
+                    _ => String::new(),
+                };
+                if raw.is_empty() {
+                    return Ok(Value::Str(String::new()));
+                }
+                let abs = match &base {
+                    Some(b) => crate::url::Url::parse(b)
+                        .ok()
+                        .and_then(|u| u.join(&raw))
+                        .map(|u| u.as_string())
+                        .unwrap_or(raw.clone()),
+                    None => raw.clone(),
+                };
+                let Ok(u) = crate::url::Url::parse(&abs) else {
+                    return Ok(Value::Str(String::new()));
+                };
+                let path_no_hash = u.path.split('#').next().unwrap_or("").to_string();
+                let (pathname, search) = match path_no_hash.split_once('?') {
+                    Some((p, q)) => (p.to_string(), format!("?{}", q)),
+                    None => (path_no_hash.clone(), String::new()),
+                };
+                // 프래그먼트는 Url 파서가 떼어내므로 **속성 원문**에서 뽑는다
+                // (join 이 이미 버린 뒤라 절대 URL 에는 남아 있지 않다).
+                let hash = match raw.split_once('#') {
+                    Some((_, h)) if !h.is_empty() => format!("#{}", h),
+                    _ => String::new(),
+                };
+                // host 는 포트를 포함한다 (기본 포트면 생략) — hostname 은 포트 없이.
+                let default_port = matches!(
+                    (u.scheme.as_str(), u.port),
+                    ("http", 80) | ("https", 443)
+                );
+                let host = if default_port {
+                    u.host.clone()
+                } else {
+                    format!("{}:{}", u.host, u.port)
+                };
+                let port = if default_port { String::new() } else { u.port.to_string() };
+                Ok(Value::Str(match key {
+                    "protocol" => format!("{}:", u.scheme),
+                    "hostname" => u.host.clone(),
+                    "host" => host.clone(),
+                    "port" => port,
+                    "pathname" => {
+                        if pathname.is_empty() {
+                            "/".to_string()
+                        } else {
+                            pathname
+                        }
+                    }
+                    "search" => search,
+                    "hash" => hash,
+                    _ => format!("{}://{}", u.scheme, host),
+                }))
+            }
             "href" | "src" | "action" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => {
                     let raw = e.attributes.get(key).cloned().unwrap_or_default();
@@ -565,18 +630,3 @@ pub(super) fn option_value(dom: &crate::dom::Dom, o: crate::dom::NodeId) -> Stri
 }
 
 // data-foo-bar → fooBar (dataset 키 변환)
-fn kebab_to_camel(s: &str) -> String {
-    let mut out = String::new();
-    let mut upper = false;
-    for c in s.chars() {
-        if c == '-' {
-            upper = true;
-        } else if upper {
-            out.extend(c.to_uppercase());
-            upper = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
