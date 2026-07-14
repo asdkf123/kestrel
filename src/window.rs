@@ -79,9 +79,50 @@ fn fill_js_maps(
     // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
     let mut metrics = std::collections::HashMap::new();
     crate::layout::collect_box_metrics(layout_root, &mut metrics);
+    // CSSOM View: client*/scroll*/offset* 는 서로 다른 상자다 (테두리·패딩·오버플로).
+    let mut scrolls = std::collections::HashMap::new();
+    crate::layout::collect_scroll_sizes(layout_root, &mut scrolls);
+    js.layout_metrics.clear();
+    for (id, d) in &metrics {
+        let pb = d.padding_box();
+        let (sw, sh) = scrolls.get(id).copied().unwrap_or((pb.width, pb.height));
+        js.layout_metrics.insert(
+            *id,
+            crate::js::interp::BoxMetrics {
+                border: (d.border.top, d.border.right, d.border.bottom, d.border.left),
+                padding_w: pb.width,
+                padding_h: pb.height,
+                scroll_w: sw.max(pb.width),
+                scroll_h: sh.max(pb.height),
+            },
+        );
+    }
     let px = |v: f32| format!("{}px", crate::style::num_css(v));
     for (id, d) in &metrics {
         let Some(m) = js.computed_styles.get_mut(id) else { continue };
+        // transform 의 resolved value 는 **matrix(...)** 다 (원문이 아니라). GSAP/jQuery 같은
+        // 라이브러리는 matrix 를 파싱해 현재 변환을 읽는다 — 원문을 주면 파싱에 실패하고
+        // "변환 없음" 으로 취급해 애니메이션이 튄다.
+        if let Some(t) = m.get("transform").cloned() {
+            if t != "none" && !t.is_empty() && !t.starts_with("matrix") {
+                let bb = d.border_box();
+                let mt = crate::layout::parse_transform(&t, bb.width, bb.height);
+                // cos(90°) 는 정확히 0 이 아니라 -4e-8 이다 → "-0" 으로 찍힌다. 0 으로 정리.
+                let n = |v: f32| crate::style::num_css(if v.abs() < 1e-6 { 0.0 } else { v });
+                m.insert(
+                    "transform".to_string(),
+                    format!(
+                        "matrix({}, {}, {}, {}, {}, {})",
+                        n(mt.a),
+                        n(mt.b),
+                        n(mt.c),
+                        n(mt.d),
+                        n(mt.e),
+                        n(mt.f)
+                    ),
+                );
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [
@@ -380,6 +421,34 @@ fn collect_computed_styles(
         let mut m = std::collections::HashMap::with_capacity(node.specified_values.len());
         for (k, v) in &node.specified_values {
             m.insert(k.clone(), crate::style::computed_value_string(v));
+        }
+        // 단축 프로퍼티(gap/margin/border…)의 계산값은 **롱핸드에서 나온다**. 초기값을
+        // 그대로 두면 gap: clamp(4px,1vw,8px) 인데 getComputedStyle(el).gap 이 "normal"
+        // 이라고 답한다 — 거짓말이다. 어떤 롱핸드로 펼쳐지는지는 확장기에게 물어본다
+        // (프로퍼티마다 손으로 적지 않는다).
+        let mut shorthand_vals: Vec<(String, String)> = Vec::new();
+        for prop in crate::css::SUPPORTED {
+            let longs = crate::css::longhands_of(prop);
+            if longs.is_empty() {
+                continue;
+            }
+            let vals: Vec<String> = longs
+                .iter()
+                .map(|l| m.get(l.as_str()).cloned().unwrap_or_default())
+                .collect();
+            if vals.iter().any(|v| v.is_empty()) {
+                continue;
+            }
+            // 값이 전부 같으면 하나로 (표준 직렬화: gap: 8px, margin: 0px)
+            let joined = if vals.windows(2).all(|w| w[0] == w[1]) {
+                vals[0].clone()
+            } else {
+                vals.join(" ")
+            };
+            shorthand_vals.push((prop.to_string(), joined));
+        }
+        for (k, v) in shorthand_vals {
+            m.insert(k, v);
         }
         // 규칙이 없는 프로퍼티도 resolved value 를 돌려줘야 한다(초기값/상속값).
         // 예전엔 빈 문자열이라 getComputedStyle(el).position === 'static' 같은 검사가
@@ -1218,6 +1287,46 @@ mod tests {
             "120|120|rgb(255, 0, 0)",
             "offsetWidth/getBoundingClientRect/getComputedStyle 이 스크립트 시점에 실제 값"
         );
+    }
+
+    // CSSOM View §4 — offset*/client*/scroll* 는 서로 다른 상자다.
+    // 예전엔 셋 다 테두리 박스였다: clientLeft 가 좌표를 돌려주고(테두리 두께여야 한다),
+    // scrollHeight 가 clientHeight 와 같아 "넘쳤나?" 검사가 **항상 거짓**이었다
+    // (더보기 버튼, 스크롤 그림자, 무한 스크롤이 통째로 죽는다).
+    #[test]
+    fn cssom_view_boxes_are_distinct() {
+        let dom = run_with_layout(
+            "<div id=\"s\"><div id=\"tall\"></div></div><p id=\"out\"></p><script>\
+             var e = document.getElementById('s');\
+             document.getElementById('out').textContent = [\
+               e.offsetWidth, e.clientWidth, e.clientLeft, e.clientTop,\
+               e.scrollHeight, e.clientHeight].join(',');\
+             </script>",
+            "#s { width: 100px; height: 50px; padding: 10px; border: 5px solid #000; \
+                  overflow: auto; } \
+             #tall { height: 300px; }",
+        );
+        // 테두리 박스 = 100 + 패딩 20 + 테두리 10 = 130, 패딩 박스 = 120,
+        // clientLeft/Top = 테두리 두께 5, scrollHeight = 내용 300 + 패딩 20 = 320 (> clientHeight 70)
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "130,120,5,5,320,70");
+    }
+
+    // offsetParent = 가장 가까운 위치 지정 조상, offsetLeft/Top 은 그 기준 상대 좌표.
+    // 예전엔 offsetParent 가 아예 없었고(undefined) offsetLeft 는 절대 좌표였다 —
+    // 툴팁/드롭다운 배치가 통째로 어긋난다.
+    #[test]
+    fn offset_parent_and_relative_offsets() {
+        let dom = run_with_layout(
+            "<div id=\"p\"><div id=\"c\">x</div></div><p id=\"out\"></p><script>\
+             var c = document.getElementById('c');\
+             document.getElementById('out').textContent = \
+               (c.offsetParent ? c.offsetParent.id : 'null') + ',' + c.offsetLeft + ',' + c.offsetTop;\
+             </script>",
+            "#p { position: relative; margin: 30px; padding: 10px; } \
+             #c { position: absolute; left: 7px; top: 3px; }",
+        );
+        // offsetParent 는 #p, 좌표는 #p 의 패딩 모서리 기준 (절대좌표 37,33 이 아니다)
+        assert_eq!(text_of_id(&dom, "out").unwrap(), "p,7,3");
     }
 
     #[test]

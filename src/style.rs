@@ -870,9 +870,19 @@ fn resolve_units(v: &mut Value, fs: f32, root_fs: f32, vp: Viewport) {
             }
             _ => {}
         },
-        Value::MinMax(_, args) => {
+        Value::MinMax(kind, args) => {
             for a in args.iter_mut() {
                 resolve_units(a, fs, root_fs, vp);
+            }
+            // 인자가 전부 px 로 확정됐으면 지금 계산해 Length 로 접는다 (calc 과 같은 규칙).
+            // 안 접으면 %가 없는데도 MinMax 로 남아, getComputedStyle 직렬화가 빈 문자열이
+            // 되고(gap: clamp(...) → "normal" 이라 답했다) 값이 필요한 곳마다 0 으로 샌다.
+            let all_px = args
+                .iter()
+                .all(|a| matches!(a, Value::Length(_, Unit::Px)));
+            if all_px && !args.is_empty() {
+                let r = crate::css::eval_minmax(*kind, args, 0.0);
+                *v = Value::Length(r, Unit::Px);
             }
         }
         Value::Calc(c) => {

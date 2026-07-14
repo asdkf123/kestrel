@@ -141,6 +141,43 @@ impl Interp {
         }
     }
 
+    // offsetParent: 가장 가까운 위치 지정(static 아님) 조상. 없으면 body (표준 §CSSOM View).
+    // position: fixed 인 요소와 body/html 자신은 null.
+    fn offset_parent(&mut self, id: crate::dom::NodeId) -> Option<crate::dom::NodeId> {
+        let pos = |me: &Self, n: crate::dom::NodeId| -> String {
+            me.computed_styles
+                .get(&n)
+                .and_then(|m| m.get("position"))
+                .cloned()
+                .unwrap_or_else(|| "static".to_string())
+        };
+        if pos(self, id) == "fixed" {
+            return None;
+        }
+        let dom = self.dom_arena().ok()?;
+        // 조상 사슬 (아레나 borrow 를 먼저 끝낸다)
+        let mut chain = Vec::new();
+        let mut cur = dom.get(id).parent;
+        while let Some(p) = cur {
+            chain.push(p);
+            cur = dom.get(p).parent;
+        }
+        let mut body = None;
+        for p in &chain {
+            if let crate::dom::NodeType::Element(e) = &self.dom_arena().ok()?.get(*p).node_type {
+                if e.tag_name.eq_ignore_ascii_case("body") {
+                    body = Some(*p);
+                }
+            }
+        }
+        for p in chain {
+            if matches!(pos(self, p).as_str(), "relative" | "absolute" | "fixed" | "sticky") {
+                return Some(p);
+            }
+        }
+        body
+    }
+
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
         // href/src 절대 URL 해석용 base (dom borrow 전에 복제).
         let base = self.base_url.clone();
@@ -149,28 +186,73 @@ impl Interp {
         // offset* 는 border box, client* 는 근사로 같은 박스 크기를 돌려준다.
         match key {
             "offsetWidth" | "clientWidth" | "scrollWidth" | "offsetHeight" | "clientHeight"
-            | "scrollHeight" | "offsetLeft" | "clientLeft" | "offsetTop" | "clientTop" => {
+            | "scrollHeight" | "offsetLeft" | "clientLeft" | "offsetTop" | "clientTop"
+            | "offsetParent" => {
                 // 측정 전에 보류된 레이아웃을 흘린다 (CSSOM View: forced layout)
                 self.ensure_layout();
             }
             _ => {}
         }
+        // CSSOM View §4 — 셋은 서로 다른 상자다:
+        //   offset* = 테두리 박스, client* = 패딩 박스(테두리 제외), scroll* = 스크롤 오버플로.
+        //   clientLeft/clientTop 은 **좌표가 아니라 테두리 두께**다.
+        //   offsetLeft/offsetTop 은 offsetParent 의 패딩 모서리 기준 상대 좌표다.
         match key {
-            "offsetWidth" | "clientWidth" | "scrollWidth" => {
+            "offsetWidth" => {
                 let w = self.layout_rects.get(&id).map(|r| r.2).unwrap_or(0.0);
                 return Ok(Value::Num(w as f64));
             }
-            "offsetHeight" | "clientHeight" | "scrollHeight" => {
+            "offsetHeight" => {
                 let h = self.layout_rects.get(&id).map(|r| r.3).unwrap_or(0.0);
                 return Ok(Value::Num(h as f64));
             }
-            "offsetLeft" | "clientLeft" => {
-                let x = self.layout_rects.get(&id).map(|r| r.0).unwrap_or(0.0);
-                return Ok(Value::Num(x as f64));
+            "clientWidth" => {
+                let m = self.layout_metrics.get(&id).copied().unwrap_or_default();
+                return Ok(Value::Num(m.padding_w as f64));
             }
-            "offsetTop" | "clientTop" => {
-                let y = self.layout_rects.get(&id).map(|r| r.1).unwrap_or(0.0);
-                return Ok(Value::Num(y as f64));
+            "clientHeight" => {
+                let m = self.layout_metrics.get(&id).copied().unwrap_or_default();
+                return Ok(Value::Num(m.padding_h as f64));
+            }
+            "scrollWidth" => {
+                let m = self.layout_metrics.get(&id).copied().unwrap_or_default();
+                return Ok(Value::Num(m.scroll_w.round() as f64));
+            }
+            "scrollHeight" => {
+                let m = self.layout_metrics.get(&id).copied().unwrap_or_default();
+                return Ok(Value::Num(m.scroll_h.round() as f64));
+            }
+            "clientLeft" => {
+                let m = self.layout_metrics.get(&id).copied().unwrap_or_default();
+                return Ok(Value::Num(m.border.3 as f64));
+            }
+            "clientTop" => {
+                let m = self.layout_metrics.get(&id).copied().unwrap_or_default();
+                return Ok(Value::Num(m.border.0 as f64));
+            }
+            "offsetLeft" | "offsetTop" => {
+                let (x, y, ..) = self.layout_rects.get(&id).copied().unwrap_or_default();
+                // offsetParent 의 패딩 모서리를 원점으로
+                let (ox, oy) = match self.offset_parent(id) {
+                    Some(p) => {
+                        let (px, py, ..) = self.layout_rects.get(&p).copied().unwrap_or_default();
+                        let m = self.layout_metrics.get(&p).copied().unwrap_or_default();
+                        (px + m.border.3, py + m.border.0)
+                    }
+                    None => (0.0, 0.0),
+                };
+                return Ok(Value::Num(if key == "offsetLeft" {
+                    (x - ox) as f64
+                } else {
+                    (y - oy) as f64
+                }));
+            }
+            // 가장 가까운 위치 지정 조상 (없으면 body). 툴팁/드롭다운 배치가 이걸로 좌표계를 잡는다.
+            "offsetParent" => {
+                return Ok(match self.offset_parent(id) {
+                    Some(p) => Value::Dom(p),
+                    None => Value::Null,
+                });
             }
             // element.dataset — data-* 속성을 camelCase 키 객체로 (읽기 스냅샷)
             // dataset 은 **살아있는 뷰**다 (DOMStringMap): 읽기도 쓰기도 data-* 속성에 직결.

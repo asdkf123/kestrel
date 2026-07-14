@@ -1073,6 +1073,10 @@ pub struct Interp {
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
     // getBoundingClientRect/offsetWidth 등이 읽는다. 빈 맵이면 0 을 돌려준다.
     pub layout_rects: std::collections::HashMap<crate::dom::NodeId, (f32, f32, f32, f32)>,
+    // CSSOM View 용 상자 메트릭. 예전엔 client*/scroll*/offset* 를 전부 테두리 박스로
+    // 근사했다 — clientLeft 가 좌표를 돌려주고(테두리 두께여야 한다), scrollHeight 가
+    // clientHeight 와 같아(콘텐츠가 넘쳐도) "넘쳤나?" 검사가 항상 거짓이었다.
+    pub layout_metrics: std::collections::HashMap<crate::dom::NodeId, BoxMetrics>,
     // 계산된 스타일 (NodeId → 대시 프로퍼티명 → CSS 텍스트). 리빌드 후 호스트가 채움.
     // getComputedStyle 이 읽는다. 빈 맵이면 빈 문자열.
     pub computed_styles: std::collections::HashMap<crate::dom::NodeId, HashMap<String, String>>,
@@ -1280,6 +1284,16 @@ pub(super) fn js_to_wasm_typed(v: &Value, t: u8) -> crate::wasm::Val {
     }
 }
 
+
+// 요소의 상자 메트릭 (CSSOM View §4). 전부 CSS px.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BoxMetrics {
+    pub border: (f32, f32, f32, f32), // top, right, bottom, left
+    pub padding_w: f32,               // 패딩 박스 크기 = clientWidth/Height
+    pub padding_h: f32,
+    pub scroll_w: f32, // 스크롤 가능 오버플로 크기
+    pub scroll_h: f32,
+}
 
 // 무결성 상태를 걸 수 있는 값의 신원(Rc 포인터). 원시값은 None.
 pub(super) fn integrity_ptr(v: &Value) -> Option<usize> {
@@ -1943,6 +1957,7 @@ impl Interp {
             window_obj,
             native_props: HashMap::new(),
             integrity: HashMap::new(),
+            layout_metrics: std::collections::HashMap::new(),
             wasm_modules: Vec::new(),
             wasm_memories: Vec::new(),
             wasm_instances: Vec::new(),

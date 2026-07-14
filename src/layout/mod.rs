@@ -2103,6 +2103,51 @@ pub fn collect_box_metrics(
     }
 }
 
+// 스크롤 가능 오버플로 크기 (scrollWidth/scrollHeight). 패딩 박스보다 내용이 크면 그 크기.
+// 예전엔 그냥 테두리 박스를 돌려줬다 — el.scrollHeight > el.clientHeight 검사가 **항상 거짓**이라
+// "더보기" 버튼, 스크롤 그림자, 무한 스크롤이 통째로 죽는다.
+pub fn collect_scroll_sizes(
+    root: &LayoutBox,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, (f32, f32)>,
+) {
+    if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
+        let pb = root.dimensions.padding_box();
+        let (mut right, mut bottom) = (pb.x + pb.width, pb.y + pb.height);
+        for child in &root.children {
+            let (r, b) = overflow_extent(child);
+            // 넘친 내용 **뒤에도** 끝쪽 패딩이 붙는다 (CSS Overflow §3 — 브라우저 동작).
+            right = right.max(r + root.dimensions.padding.right);
+            bottom = bottom.max(b + root.dimensions.padding.bottom);
+        }
+        out.insert(root.styled_node.id, ((right - pb.x).max(0.0), (bottom - pb.y).max(0.0)));
+    }
+    for child in &root.children {
+        collect_scroll_sizes(child, out);
+    }
+}
+
+// 이 박스(와 클립하지 않는 자손들)가 차지하는 오른쪽/아래쪽 끝 (절대 좌표).
+// 자식이 overflow 를 자르면 그 자식의 테두리 박스에서 멈춘다 — 잘린 내용은 부모를 밀지 않는다.
+fn overflow_extent(b: &LayoutBox) -> (f32, f32) {
+    let bb = b.dimensions.margin_box();
+    let (mut right, mut bottom) = (bb.x + bb.width, bb.y + bb.height);
+    let clips = matches!(
+        b.styled_node.value("overflow"),
+        Some(Value::Keyword(ref k)) if k == "hidden" || k == "auto" || k == "scroll"
+    ) || matches!(
+        b.styled_node.value("overflow-y"),
+        Some(Value::Keyword(ref k)) if k == "hidden" || k == "auto" || k == "scroll"
+    );
+    if !clips {
+        for c in &b.children {
+            let (r, bo) = overflow_extent(c);
+            right = right.max(r);
+            bottom = bottom.max(bo);
+        }
+    }
+    (right, bottom)
+}
+
 // 클릭 지점을 포함하는 가장 깊은 요소의 NodeId (동률이면 나중에 그려진 쪽)
 pub fn hit_element(
     rects: &[(Rect, crate::dom::NodeId, usize)],

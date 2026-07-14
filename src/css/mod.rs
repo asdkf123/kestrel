@@ -5,6 +5,16 @@ mod values;
 
 pub(crate) use media::{media_matches, media_matches_vp};
 pub(crate) use supports::SUPPORTED;
+
+// 이 프로퍼티가 단축(shorthand)이면 펼쳐지는 롱핸드 이름들. 아니면 빈 벡터.
+// 확장기(expand_declaration)에게 직접 물어본다 — 프로퍼티마다 목록을 손으로 적지 않는다.
+pub(crate) fn longhands_of(name: &str) -> Vec<String> {
+    let probe = shorthand::expand_declaration(name, "0px");
+    if probe.len() <= 1 && probe.first().map(|d| d.name.as_str()) == Some(name) {
+        return Vec::new(); // 자기 자신으로만 펼쳐지면 롱핸드다
+    }
+    probe.into_iter().map(|d| d.name).filter(|n| n != name).collect()
+}
 use shorthand::expand_declaration;
 pub(crate) use supports::supports_condition;
 use values::valid_identifier_char;
