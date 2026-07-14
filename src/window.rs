@@ -694,7 +694,102 @@ impl Page {
         self.rebuild();
     }
 
-    // Enter 제출: 조상 form 의 input[name] 수집 → GET URL. POST/폼 없음은 None.
+    // 폼 엔트리 목록 (HTML §4.10.21.4 "constructing the entry list").
+    // 예전엔 <input> 만, 그것도 checkbox/radio 를 통째로 제외하고 모았다 —
+    // 체크박스 하나 켠 검색 폼이 그 값 없이 제출됐다 (조용히 다른 질의가 나간다).
+    // select/textarea 도 아예 없었다.
+    fn form_entries(&self, form: crate::dom::NodeId) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        fn walk(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<(String, String)>) {
+            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                let name = e.attributes.get("name").cloned();
+                let disabled = e.attributes.contains_key("disabled");
+                match e.tag_name.as_str() {
+                    "input" if !disabled => {
+                        let ty = e
+                            .attributes
+                            .get("type")
+                            .map(|t| t.to_ascii_lowercase())
+                            .unwrap_or_else(|| "text".to_string());
+                        // 버튼류는 (활성화된 제출 버튼만) 제출된다 — 우리는 제외한다
+                        if matches!(ty.as_str(), "submit" | "button" | "image" | "reset" | "file") {
+                        } else if let Some(name) = name {
+                            let checked = e.attributes.contains_key("checked");
+                            if matches!(ty.as_str(), "checkbox" | "radio") {
+                                // 체크된 것만, 값이 없으면 "on" (표준)
+                                if checked {
+                                    let v = e
+                                        .attributes
+                                        .get("value")
+                                        .cloned()
+                                        .unwrap_or_else(|| "on".to_string());
+                                    out.push((name, v));
+                                }
+                            } else {
+                                out.push((
+                                    name,
+                                    e.attributes.get("value").cloned().unwrap_or_default(),
+                                ));
+                            }
+                        }
+                    }
+                    "textarea" if !disabled => {
+                        if let Some(name) = name {
+                            out.push((name, dom.text_content(id)));
+                        }
+                    }
+                    "select" if !disabled => {
+                        if let Some(name) = name {
+                            // 선택된 option (없으면 첫 option — 표준의 기본 선택)
+                            let mut first: Option<String> = None;
+                            let mut chosen: Option<String> = None;
+                            fn opts(
+                                dom: &crate::dom::Dom,
+                                id: crate::dom::NodeId,
+                                first: &mut Option<String>,
+                                chosen: &mut Option<String>,
+                            ) {
+                                if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                                    if e.tag_name == "option" {
+                                        let v = e
+                                            .attributes
+                                            .get("value")
+                                            .cloned()
+                                            .unwrap_or_else(|| dom.text_content(id));
+                                        if first.is_none() {
+                                            *first = Some(v.clone());
+                                        }
+                                        if e.attributes.contains_key("selected")
+                                            && chosen.is_none()
+                                        {
+                                            *chosen = Some(v);
+                                        }
+                                    }
+                                }
+                                for &c in &dom.get(id).children {
+                                    opts(dom, c, first, chosen);
+                                }
+                            }
+                            opts(dom, id, &mut first, &mut chosen);
+                            if let Some(v) = chosen.or(first) {
+                                out.push((name, v));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for &c in &dom.get(id).children {
+                walk(dom, c, out);
+            }
+        }
+        walk(&self.dom, form, &mut out);
+        out
+    }
+
+    // Enter 제출. GET 이면 쿼리스트링 URL 로 이동, POST 면 **실제로 POST 를 보내고**
+    // 그 응답으로 이동한다. 예전엔 POST 를 조용히 무시했다 (Enter 를 눌러도 아무 일도
+    // 안 일어난다 — 로그인/검색 폼의 절반이 POST 다).
     pub fn submit_url(&self, input_id: crate::dom::NodeId) -> Option<String> {
         let form = std::iter::once(input_id).chain(self.dom.ancestors(input_id)).find(|&n| {
             matches!(&self.dom.get(n).node_type,
@@ -705,31 +800,8 @@ impl Page {
         };
         let method =
             fe.attributes.get("method").map(|m| m.to_ascii_lowercase()).unwrap_or_default();
-        if !(method.is_empty() || method == "get") {
-            return None; // POST 미지원
-        }
         let action = fe.attributes.get("action").cloned().unwrap_or_default();
-        // form 하위 input 의 name=value (submit/button 류 제외)
-        let mut pairs: Vec<(String, String)> = Vec::new();
-        fn collect(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut Vec<(String, String)>) {
-            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
-                if e.tag_name == "input" {
-                    let ty = e.attributes.get("type").map(|t| t.as_str()).unwrap_or("");
-                    if !matches!(ty, "submit" | "button" | "image" | "reset" | "checkbox" | "radio")
-                    {
-                        if let Some(name) = e.attributes.get("name") {
-                            let value =
-                                e.attributes.get("value").cloned().unwrap_or_default();
-                            out.push((name.clone(), value));
-                        }
-                    }
-                }
-            }
-            for &c in &dom.get(id).children {
-                collect(dom, c, out);
-            }
-        }
-        collect(&self.dom, form, &mut pairs);
+        let pairs = self.form_entries(form);
         let qs = pairs
             .iter()
             .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
@@ -738,8 +810,26 @@ impl Page {
         let mut target =
             if action.is_empty() { self.url.clone() } else { self.url.join(&action)? };
         let path = target.path.split('?').next().unwrap_or("/").to_string();
-        target.path = if qs.is_empty() { path } else { format!("{}?{}", path, qs) };
-        Some(target.as_string())
+        if method == "post" {
+            target.path = path;
+            let url = target.as_string();
+            let req = crate::http::Request {
+                method: "POST".to_string(),
+                headers: vec![(
+                    "Content-Type".to_string(),
+                    "application/x-www-form-urlencoded".to_string(),
+                )],
+                body: Some(qs.into_bytes()),
+            };
+            // 로더가 이 URL 을 열 때 이 요청으로 보내게 예약한다 (그래야 **POST 의 응답**을
+            // 렌더한다). POST 를 보내고 응답을 버린 뒤 다시 GET 으로 여는 건 편법이다 —
+            // 서버가 다른 걸 돌려주고, 우리는 그걸 POST 의 결과라고 우기게 된다.
+            crate::http::stage_request(&url, req);
+            Some(url)
+        } else {
+            target.path = if qs.is_empty() { path } else { format!("{}?{}", path, qs) };
+            Some(target.as_string())
+        }
     }
 }
 
@@ -1755,15 +1845,58 @@ mod tests {
     }
 
     #[test]
-    fn submit_without_form_or_post_is_none() {
+    fn submit_without_form_is_none() {
         let page = make_page("<input id=\"lonely\" name=\"x\">");
         let id = page.dom.find_by_attr_id("lonely").unwrap();
         assert!(page.submit_url(id).is_none(), "form 없으면 None");
-        let page2 = make_page(
-            "<form action=\"/p\" method=\"post\"><input id=\"i\" name=\"x\"></form>",
+    }
+
+    // 폼 엔트리 목록 (HTML §4.10.21.4). 예전엔 <input> 만, 그것도 checkbox/radio 를
+    // 통째로 제외하고 모았다 — 체크박스를 켠 검색 폼이 그 값 없이 제출됐다.
+    // select/textarea 는 아예 없었다.
+    #[test]
+    fn form_entries_include_checkbox_select_textarea() {
+        let page = make_page(
+            "<form action=\"/s\"><input id=\"q\" name=\"q\" value=\"kestrel\">\
+             <input type=\"checkbox\" name=\"safe\" checked>\
+             <input type=\"checkbox\" name=\"off\">\
+             <input type=\"radio\" name=\"r\" value=\"b\" checked>\
+             <input type=\"submit\" name=\"btn\" value=\"go\">\
+             <input name=\"dis\" value=\"x\" disabled>\
+             <select name=\"lang\"><option value=\"en\">EN</option>\
+               <option value=\"ko\" selected>KO</option></select>\
+             <textarea name=\"msg\">hi</textarea></form>",
         );
-        let id2 = page2.dom.find_by_attr_id("i").unwrap();
-        assert!(page2.submit_url(id2).is_none(), "POST 미지원");
+        let id = page.dom.find_by_attr_id("q").unwrap();
+        let url = page.submit_url(id).expect("GET 제출 URL");
+        // 체크된 체크박스는 값 없으면 "on", 안 켠 것과 disabled/submit 은 빠진다
+        assert!(url.contains("q=kestrel"), "{}", url);
+        assert!(url.contains("safe=on"), "체크된 체크박스는 on: {}", url);
+        assert!(!url.contains("off="), "안 켠 체크박스는 제외: {}", url);
+        assert!(url.contains("r=b"), "체크된 라디오: {}", url);
+        assert!(!url.contains("btn="), "제출 버튼은 제외: {}", url);
+        assert!(!url.contains("dis="), "disabled 는 제외: {}", url);
+        assert!(url.contains("lang=ko"), "선택된 option: {}", url);
+        assert!(url.contains("msg=hi"), "textarea 내용: {}", url);
+    }
+
+    // method=post 는 **실제로 POST 를 보내야** 한다 (예전엔 조용히 None — Enter 를 눌러도
+    // 아무 일도 안 일어났다. 로그인/검색 폼의 절반이 POST 다).
+    #[test]
+    fn post_form_stages_a_real_post_request() {
+        let page = make_page(
+            "<form action=\"/p\" method=\"post\"><input id=\"i\" name=\"x\" value=\"7\"></form>",
+        );
+        let id = page.dom.find_by_attr_id("i").unwrap();
+        let url = page.submit_url(id).expect("POST 도 URL 을 준다");
+        assert!(url.ends_with("/p"), "쿼리스트링이 아니라 본문으로: {}", url);
+        let staged = crate::http::take_staged(&url).expect("POST 요청이 예약돼야 한다");
+        assert_eq!(staged.method, "POST");
+        assert_eq!(String::from_utf8_lossy(&staged.body.unwrap()), "x=7");
+        assert!(staged
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v.contains("x-www-form-urlencoded")));
     }
 
     #[test]

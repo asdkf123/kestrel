@@ -193,7 +193,40 @@ pub fn fetch_all(urls: &[String]) -> Vec<Result<Response, HttpError>> {
         .collect()
 }
 
+// HTTP 요청 명세. 예전엔 메서드/헤더/본문이 아예 없었다 — fetch(url, {method:'POST', body})
+// 도, xhr.open('POST', …) 도 **조용히 GET 을 보냈다**. 서버는 다른 걸 돌려주고,
+// 사이트는 그걸 자기가 보낸 POST 의 응답이라고 믿는다. 조용히 틀린 답이다.
+#[derive(Clone, Debug, Default)]
+pub struct Request {
+    pub method: String, // 빈 문자열이면 GET
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+}
+
+// 다음 내비게이션에 쓸 요청 (폼 POST). 로더가 그 URL 을 열 때 **한 번만** 소비한다 —
+// 남겨 두면 새로고침이 POST 를 재전송한다 (브라우저가 재전송 여부를 묻는 이유가 이것이다).
+static PENDING: Mutex<Option<(String, Request)>> = Mutex::new(None);
+
+pub fn stage_request(url: &str, req: Request) {
+    *PENDING.lock().unwrap() = Some((url.to_string(), req));
+}
+
+pub fn take_staged(url: &str) -> Option<Request> {
+    let mut p = PENDING.lock().unwrap();
+    if p.as_ref().map(|(u, _)| u == url).unwrap_or(false) {
+        return p.take().map(|(_, r)| r);
+    }
+    None
+}
+
 pub fn fetch(url: &str) -> Result<Response, HttpError> {
+    // 이 URL 로 보류된 요청(폼 POST)이 있으면 그것으로 보낸다
+    let req = take_staged(url).unwrap_or_default();
+    fetch_req(url, &req)
+}
+
+// 메서드/헤더/본문을 실어 보낸다.
+pub fn fetch_req(url: &str, req: &Request) -> Result<Response, HttpError> {
     let mut last: Result<Response, HttpError> = Err(HttpError::BadResponse);
     for attempt in 0..MAX_ATTEMPTS {
         if attempt > 0 {
@@ -207,7 +240,7 @@ pub fn fetch(url: &str) -> Result<Response, HttpError> {
             };
             std::thread::sleep(Duration::from_millis(wait));
         }
-        last = fetch_once(url);
+        last = fetch_once(url, req);
         match &last {
             // 일시적 상태 코드가 아니면 그대로 반환 (2xx/4xx 등)
             Ok(r) if !is_transient(r.status) => return last,
@@ -218,10 +251,11 @@ pub fn fetch(url: &str) -> Result<Response, HttpError> {
     last
 }
 
-fn fetch_once(url: &str) -> Result<Response, HttpError> {
+fn fetch_once(url: &str, req: &Request) -> Result<Response, HttpError> {
     let mut current = Url::parse(url).map_err(HttpError::Url)?;
+    let mut req = req.clone();
     for _ in 0..6 {
-        let raw = request(&current)?;
+        let raw = request(&current, &req)?;
         let resp = parse_response(&raw)?;
         // Set-Cookie 저장 (리다이렉트 중간 응답의 쿠키도 다음 요청에 실려야 한다 —
         // 봇 차단·세션이 정확히 그 패턴이다).
@@ -233,6 +267,18 @@ fn fetch_once(url: &str) -> Result<Response, HttpError> {
         if (300..400).contains(&resp.status) {
             if let Some(loc) = header(&resp.headers, "location") {
                 current = resolve(&current, &loc).map_err(HttpError::Url)?;
+                // 303, 그리고 301/302 의 POST 는 GET 으로 바뀐다 (RFC 9110 §15.4).
+                // 본문을 그대로 다시 보내면 서버가 같은 동작을 두 번 한다.
+                let m = req.method.to_ascii_uppercase();
+                if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && m == "POST")
+                {
+                    req.method = "GET".to_string();
+                    req.body = None;
+                    req.headers.retain(|(k, _)| {
+                        !k.eq_ignore_ascii_case("content-type")
+                            && !k.eq_ignore_ascii_case("content-length")
+                    });
+                }
                 continue;
             }
         }
@@ -241,7 +287,7 @@ fn fetch_once(url: &str) -> Result<Response, HttpError> {
     Err(HttpError::TooManyRedirects)
 }
 
-fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
+fn request(url: &Url, req: &Request) -> Result<Vec<u8>, HttpError> {
     let addr = (url.host.as_str(), url.port)
         .to_socket_addrs()
         .map_err(HttpError::Io)?
@@ -261,11 +307,37 @@ fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
         Some(c) => format!("Cookie: {}\r\n", c),
         None => String::new(),
     };
-    let req = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: {}\r\nAccept-Language: ko-KR,ko;q=0.9,en;q=0.8\r\nAccept-Encoding: identity\r\n{}Connection: close\r\n\r\n",
-        url.path, url.host, USER_AGENT, ACCEPT, cookie_line
+    let method = if req.method.is_empty() {
+        "GET".to_string()
+    } else {
+        req.method.to_ascii_uppercase()
+    };
+    // 호출자가 준 헤더 (기본 헤더를 덮어쓸 수 있다 — Content-Type 등)
+    let mut extra = String::new();
+    for (k, v) in &req.headers {
+        // 우리가 프레이밍을 책임지는 헤더는 호출자가 못 건드리게 한다
+        if k.eq_ignore_ascii_case("content-length")
+            || k.eq_ignore_ascii_case("host")
+            || k.eq_ignore_ascii_case("connection")
+        {
+            continue;
+        }
+        extra.push_str(&format!("{}: {}\r\n", k, v));
+    }
+    let body = req.body.clone().unwrap_or_default();
+    let len_line = if req.body.is_some() {
+        format!("Content-Length: {}\r\n", body.len())
+    } else {
+        String::new()
+    };
+    let head = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {}\r\nAccept: {}\r\nAccept-Language: ko-KR,ko;q=0.9,en;q=0.8\r\nAccept-Encoding: identity\r\n{}{}{}Connection: close\r\n\r\n",
+        method, url.path, url.host, USER_AGENT, ACCEPT, cookie_line, extra, len_line
     );
-    stream.write_all(req.as_bytes()).map_err(HttpError::Io)?;
+    stream.write_all(head.as_bytes()).map_err(HttpError::Io)?;
+    if !body.is_empty() {
+        stream.write_all(&body).map_err(HttpError::Io)?;
+    }
     let mut buf = Vec::new();
     match stream.read_to_end(&mut buf) {
         Ok(_) => {}

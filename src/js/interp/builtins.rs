@@ -3201,8 +3201,59 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
-            Native::XhrSetHeader => Ok(Value::Undefined), // 헤더 저장 생략(요청은 GET 위주)
-            Native::XhrGetHeader => Ok(Value::Null),
+            // setRequestHeader 를 버리면 Content-Type/Authorization 없이 요청이 나간다 —
+            // 서버는 다른 답을 주고, 사이트는 그걸 자기 요청의 답이라고 믿는다.
+            Native::XhrSetHeader => {
+                if let Some(Value::Obj(o)) = &recv {
+                    let k = args.first().map(to_display).unwrap_or_default();
+                    let v = args.get(1).map(to_display).unwrap_or_default();
+                    let key = "\u{0}reqheaders".to_string();
+                    let existing = o.borrow().get(&key).cloned();
+                    let arr = match existing {
+                        Some(Value::Arr(a)) => a,
+                        _ => {
+                            let a = ArrayObj::new(Vec::new());
+                            o.borrow_mut().insert(key, Value::Arr(a.clone()));
+                            a
+                        }
+                    };
+                    arr.borrow_mut()
+                        .push(Value::Arr(ArrayObj::new(vec![Value::Str(k), Value::Str(v)])));
+                }
+                Ok(Value::Undefined)
+            }
+            // getResponseHeader(name) — 실제 응답 헤더. 예전엔 무조건 null 이었다
+            // (Content-Type 을 보고 분기하는 코드가 전부 틀린 길로 갔다).
+            Native::XhrGetHeader => {
+                let Some(Value::Obj(o)) = &recv else { return Ok(Value::Null) };
+                let want = args.first().map(to_display).unwrap_or_default();
+                let hs = o.borrow().get("\u{0}resheaders").cloned();
+                let Some(Value::Arr(a)) = hs else { return Ok(Value::Null) };
+                // 인자가 없으면 getAllResponseHeaders() — 전체를 한 문자열로
+                if want.is_empty() {
+                    let mut out = String::new();
+                    for row in a.borrow().iter() {
+                        if let Value::Arr(kv) = row {
+                            let kv = kv.borrow();
+                            out.push_str(&format!(
+                                "{}: {}\r\n",
+                                to_display(&kv[0]),
+                                to_display(&kv[1])
+                            ));
+                        }
+                    }
+                    return Ok(Value::Str(out));
+                }
+                for row in a.borrow().iter() {
+                    if let Value::Arr(kv) = row {
+                        let kv = kv.borrow();
+                        if to_display(&kv[0]).eq_ignore_ascii_case(&want) {
+                            return Ok(kv[1].clone());
+                        }
+                    }
+                }
+                Ok(Value::Null)
+            }
             // XHR: send() → 동기 HTTP, 필드 설정 후 readystatechange/load 발화
             Native::XhrSend => {
                 let obj = match &recv {
@@ -3214,10 +3265,49 @@ impl Interp {
                     _ => String::new(),
                 };
                 let full = self.resolve_url(&url);
-                match crate::http::fetch(&full) {
+                // 메서드/헤더/본문을 실제로 보낸다. 예전엔 전부 무시하고 GET 을 보냈다.
+                let method = match obj.borrow().get("\u{0}method") {
+                    Some(Value::Str(m)) => m.clone(),
+                    _ => "GET".to_string(),
+                };
+                let headers: Vec<(String, String)> = match obj.borrow().get("\u{0}reqheaders") {
+                    Some(Value::Arr(a)) => a
+                        .borrow()
+                        .iter()
+                        .filter_map(|row| match row {
+                            Value::Arr(kv) => {
+                                let kv = kv.borrow();
+                                Some((to_display(&kv[0]), to_display(&kv[1])))
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let body_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let body = match &body_arg {
+                    Value::Undefined | Value::Null => None,
+                    v => Some(to_display(v).into_bytes()),
+                };
+                let req = crate::http::Request { method, headers, body };
+                match crate::http::fetch_req(&full, &req) {
                     Ok(r) => {
                         let body = String::from_utf8_lossy(&r.body).to_string();
+                        let res_headers: Vec<Value> = r
+                            .headers
+                            .iter()
+                            .map(|(k, v)| {
+                                Value::Arr(ArrayObj::new(vec![
+                                    Value::Str(k.clone()),
+                                    Value::Str(v.clone()),
+                                ]))
+                            })
+                            .collect();
                         let mut b = obj.borrow_mut();
+                        b.insert(
+                            "\u{0}resheaders".to_string(),
+                            Value::Arr(ArrayObj::new(res_headers)),
+                        );
                         b.insert("status".to_string(), Value::Num(r.status as f64));
                         b.insert(
                             "statusText".to_string(),
@@ -5233,8 +5323,47 @@ impl Interp {
                 // 상대 URL 은 문서 URL 기준으로 절대화한다. 예전엔 그대로 넘겨
                 // fetch('/api/x') 가 Url(NoScheme) 로 실패했다 — SPA 는 거의 다 상대경로다.
                 let url = self.absolute_url(&raw);
+                // init: { method, headers, body } — 예전엔 통째로 무시하고 **GET 을 보냈다**.
+                // 서버는 다른 걸 돌려주고, 사이트는 그걸 자기 POST 의 답이라고 믿는다.
+                let init = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let mut req = crate::http::Request::default();
+                if !matches!(init, Value::Undefined | Value::Null) {
+                    let m = self.member_get(&init, "method")?;
+                    if !matches!(m, Value::Undefined | Value::Null) {
+                        req.method = to_display(&m);
+                    }
+                    let h = self.member_get(&init, "headers")?;
+                    match &h {
+                        // Headers 객체(우리 표현: "\0h:name" 키) 또는 평범한 객체
+                        Value::Obj(o) => {
+                            for (k, v) in o.borrow().iter() {
+                                if let Some(name) = k.strip_prefix("\u{0}h:") {
+                                    req.headers.push((name.to_string(), to_display(v)));
+                                } else if !k.starts_with('\u{0}') && !is_callable(v) {
+                                    req.headers.push((k.clone(), to_display(v)));
+                                }
+                            }
+                        }
+                        Value::Arr(a) => {
+                            for row in a.borrow().iter() {
+                                if let Value::Arr(kv) = row {
+                                    let kv = kv.borrow();
+                                    if kv.len() >= 2 {
+                                        req.headers
+                                            .push((to_display(&kv[0]), to_display(&kv[1])));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    let b = self.member_get(&init, "body")?;
+                    if !matches!(b, Value::Undefined | Value::Null) {
+                        req.body = Some(to_display(&b).into_bytes());
+                    }
+                }
                 let resp = self.new_promise();
-                match crate::http::fetch(&url) {
+                match crate::http::fetch_req(&url, &req) {
                     Ok(r) => {
                         let body = String::from_utf8_lossy(&r.body).to_string();
                         let mut m = ObjMap::new();
