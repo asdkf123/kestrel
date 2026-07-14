@@ -427,11 +427,7 @@ fn collect_computed_styles(
         // 이라고 답한다 — 거짓말이다. 어떤 롱핸드로 펼쳐지는지는 확장기에게 물어본다
         // (프로퍼티마다 손으로 적지 않는다).
         let mut shorthand_vals: Vec<(String, String)> = Vec::new();
-        for prop in crate::css::SUPPORTED {
-            let longs = crate::css::longhands_of(prop);
-            if longs.is_empty() {
-                continue;
-            }
+        for (prop, longs) in crate::css::shorthand_table() {
             let vals: Vec<String> = longs
                 .iter()
                 .map(|l| m.get(l.as_str()).cloned().unwrap_or_default())
@@ -582,19 +578,34 @@ impl Page {
 
     // 타이머 콜백 실행 → DOM 변형 가능 → rebuild
     pub fn fire_timer(&mut self, callback: crate::js::interp::Value) {
+        self.fire_timer_inner(callback);
+        self.rebuild();
+    }
+
+    // 레이아웃을 다시 짓지 않고 콜백만 실행한다. 여러 타이머를 연달아 돌릴 때 쓴다 —
+    // 타이머마다 전체 레이아웃을 다시 지으면 (타이머 수 × 레이아웃 시간) 이 든다
+    // (react.dev 에서 그것만 6초였다). 콜백이 측정 API 를 읽으면 ensure_layout 이
+    // 그 순간 강제 레이아웃을 흘리므로 값은 여전히 정확하다.
+    fn fire_timer_inner(&mut self, callback: crate::js::interp::Value) {
         self.enter_js();
         self.js.run_callback(callback);
         for line in self.js.console.drain(..) {
             println!("[console] {}", line);
         }
         self.leave_js();
-        self.rebuild();
     }
 
     // 헤드리스: 대기 타이머를 지연 오름차순으로 실행 (interval 도 1회, 라운드 제한).
     // setTimeout(fn, 0) 지연 초기화 등을 렌더 전에 반영한다.
     pub fn flush_timers_headless(&mut self) {
+        let mut last_version = self.dom.version();
         for _round in 0..50 {
+            // 페이지 전체 JS 예산이 바닥나면 더 돌리지 않는다. 개별 콜백 예산만 있으면
+            // 폭주 콜백이 N개일 때 N × 예산이 든다 (fmkorea 에서 25초를 먹었다).
+            if self.js.budget_exhausted() {
+                println!("[js] 타이머 중단 — 페이지 JS 예산 소진");
+                break;
+            }
             let mut pending = self.take_timers();
             pending.retain(|t| !self.js.cleared.contains(&t.id));
             if pending.is_empty() {
@@ -602,10 +613,16 @@ impl Page {
             }
             pending.sort_by(|a, b| a.delay_ms.partial_cmp(&b.delay_ms).unwrap());
             for t in pending {
-                if self.js.cleared.contains(&t.id) {
+                if self.js.cleared.contains(&t.id) || self.js.budget_exhausted() {
                     continue;
                 }
-                self.fire_timer(t.callback);
+                self.fire_timer_inner(t.callback);
+            }
+            // 이 라운드에서 DOM 이 실제로 바뀌었을 때만 다시 짓는다.
+            // (레이아웃은 큰 페이지에서 수 초다 — 안 바뀌었는데 다시 지으면 순수 낭비다.)
+            if self.dom.version() != last_version {
+                last_version = self.dom.version();
+                self.rebuild();
             }
         }
     }

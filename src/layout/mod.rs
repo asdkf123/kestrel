@@ -2110,27 +2110,39 @@ pub fn collect_scroll_sizes(
     root: &LayoutBox,
     out: &mut std::collections::HashMap<crate::dom::NodeId, (f32, f32)>,
 ) {
-    if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
-        let pb = root.dimensions.padding_box();
-        let (mut right, mut bottom) = (pb.x + pb.width, pb.y + pb.height);
-        for child in &root.children {
-            let (r, b) = overflow_extent(child);
-            // 넘친 내용 **뒤에도** 끝쪽 패딩이 붙는다 (CSS Overflow §3 — 브라우저 동작).
-            right = right.max(r + root.dimensions.padding.right);
-            bottom = bottom.max(b + root.dimensions.padding.bottom);
-        }
-        out.insert(root.styled_node.id, ((right - pb.x).max(0.0), (bottom - pb.y).max(0.0)));
-    }
-    for child in &root.children {
-        collect_scroll_sizes(child, out);
-    }
+    scroll_walk(root, out);
 }
 
-// 이 박스(와 클립하지 않는 자손들)가 차지하는 오른쪽/아래쪽 끝 (절대 좌표).
-// 자식이 overflow 를 자르면 그 자식의 테두리 박스에서 멈춘다 — 잘린 내용은 부모를 밀지 않는다.
-fn overflow_extent(b: &LayoutBox) -> (f32, f32) {
-    let bb = b.dimensions.margin_box();
-    let (mut right, mut bottom) = (bb.x + bb.width, bb.y + bb.height);
+// 한 번의 상향식 패스. 각 박스는 부모에게 "내가(와 클립하지 않는 내 자손이) 차지하는
+// 오른쪽/아래쪽 끝"(절대 좌표)을 돌려주고, 지나가는 길에 자기 scrollWidth/Height 를 기록한다.
+// (노드마다 서브트리를 다시 훑으면 O(n²) 다 — 레이아웃마다 도는 패스라 큰 페이지가 몇 초씩 먹는다.)
+fn scroll_walk(
+    b: &LayoutBox,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, (f32, f32)>,
+) -> (f32, f32) {
+    let mut child_r = f32::NEG_INFINITY;
+    let mut child_b = f32::NEG_INFINITY;
+    for c in &b.children {
+        let (r, bo) = scroll_walk(c, out);
+        child_r = child_r.max(r);
+        child_b = child_b.max(bo);
+    }
+    if !b.anonymous && matches!(b.styled_node.node.node_type, NodeType::Element(_)) {
+        let pb = b.dimensions.padding_box();
+        let mut right = pb.x + pb.width;
+        let mut bottom = pb.y + pb.height;
+        if child_r.is_finite() {
+            // 넘친 내용 **뒤에도** 끝쪽 패딩이 붙는다 (CSS Overflow §3 — 브라우저 동작).
+            right = right.max(child_r + b.dimensions.padding.right);
+            bottom = bottom.max(child_b + b.dimensions.padding.bottom);
+        }
+        out.insert(b.styled_node.id, ((right - pb.x).max(0.0), (bottom - pb.y).max(0.0)));
+    }
+
+    // 부모에게 돌려줄 범위: 내가 overflow 를 자르면 내 마진 박스에서 멈춘다
+    // (잘린 내용은 부모를 밀지 않는다).
+    let mb = b.dimensions.margin_box();
+    let (mut right, mut bottom) = (mb.x + mb.width, mb.y + mb.height);
     let clips = matches!(
         b.styled_node.value("overflow"),
         Some(Value::Keyword(ref k)) if k == "hidden" || k == "auto" || k == "scroll"
@@ -2138,12 +2150,9 @@ fn overflow_extent(b: &LayoutBox) -> (f32, f32) {
         b.styled_node.value("overflow-y"),
         Some(Value::Keyword(ref k)) if k == "hidden" || k == "auto" || k == "scroll"
     );
-    if !clips {
-        for c in &b.children {
-            let (r, bo) = overflow_extent(c);
-            right = right.max(r);
-            bottom = bottom.max(bo);
-        }
+    if !clips && child_r.is_finite() {
+        right = right.max(child_r);
+        bottom = bottom.max(child_b);
     }
     (right, bottom)
 }

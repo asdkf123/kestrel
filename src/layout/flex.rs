@@ -191,18 +191,39 @@ impl<'a> LayoutBox<'a> {
         // row 에서 아이템 폭이 바뀌면 글이 다시 줄바꿈되어 높이가 달라진다. 예전엔 컨테이너
         // 폭에서 잰 높이를 그대로 써서, flex:1 로 폭이 줄어든 아이템이 두 줄이 돼도 줄 높이는
         // 한 줄이었다 — 컨테이너가 짜부라지고 stretch 도 틀린 높이로 늘렸다 (가장 흔한 모양).
+        //
+        // 비용을 아끼려고 **최종 main 위치**에서 잰다 (main 위치는 cross 를 몰라도 정해진다).
+        // 그러면 정렬 오프셋이 0 이고 stretch 가 높이를 안 바꾸는 흔한 경우엔 아래 배치
+        // 패스에서 다시 레이아웃할 필요가 없다 — 패스가 늘지 않는다.
+        // measured_at[i] = 이 아이템이 이미 레이아웃된 (main 좌표, cross 좌표)
+        let mut measured_at: Vec<Option<(f32, f32)>> = vec![None; n];
         if row {
+            let mut cross_probe = oy;
             for (li, line) in lines.iter().enumerate() {
+                let cnt = line.len();
+                let sum_basis: f32 = line.iter().map(|&i| basis[i]).sum();
+                let sum_gap = gap * (cnt as f32 - 1.0).max(0.0);
+                let free =
+                    if cont_main.is_finite() { cont_main - sum_basis - sum_gap } else { 0.0 };
+                let total_grow: f32 = line.iter().map(|&i| grow[i]).sum();
+                let leftover = if total_grow > 0.0 { 0.0 } else { free.max(0.0) };
+                let (start_off, between_extra) = justify_offsets(&justify, leftover, cnt);
+                let mut main_pen = ox + start_off;
                 for (k, &i) in line.iter().enumerate() {
+                    let msize = all_sizes[li][k];
                     let child = &mut self.children[i];
                     let mut cb: Dimensions = Default::default();
-                    cb.content.x = ox;
-                    cb.content.y = oy;
-                    cb.content.width = all_sizes[li][k];
+                    cb.content.x = main_pen;
+                    cb.content.y = cross_probe;
+                    cb.content.width = msize;
                     child.clear_render(); // layout 은 비멱등 (글리프 누적)
                     child.layout(cb, fonts, images);
                     cross[i] = child.dimensions.margin_box().height;
+                    measured_at[i] = Some((main_pen, cross_probe));
+                    main_pen += msize + gap + between_extra;
                 }
+                // 다음 줄의 잠정 cross 시작 (align-content 는 아래에서 다시 계산한다)
+                cross_probe += line.iter().map(|&i| cross[i]).fold(0.0f32, f32::max) + cross_gap;
             }
         }
 
@@ -271,8 +292,18 @@ impl<'a> LayoutBox<'a> {
                     cb.content.y = main_pen;
                     cb.content.width = item_cross;
                 }
-                child.clear_render(); // 측정 패스에서 쌓인 글리프 제거 (이중 렌더 방지)
-                child.layout(cb, fonts, images);
+                // 3b 에서 이미 **같은 자리, 같은 크기**로 레이아웃했으면 다시 하지 않는다.
+                // (row 의 흔한 경우: 정렬 오프셋 0. 레이아웃은 비싸다 — react.dev 에서
+                //  이 한 번을 아끼면 레이아웃 시간이 절반이 된다.)
+                let already = measured_at[i]
+                    .map(|(mx, my)| {
+                        (mx - cb.content.x).abs() < 0.01 && (my - cb.content.y).abs() < 0.01
+                    })
+                    .unwrap_or(false);
+                if !already {
+                    child.clear_render(); // 측정 패스에서 쌓인 글리프 제거 (이중 렌더 방지)
+                    child.layout(cb, fonts, images);
+                }
                 // flex main 크기를 강제 (fixed width/height 인 아이템이 grow/shrink 됐을 때).
                 // calculate_width 가 CSS 크기로 덮으므로 여기서 flex 계산값으로 재지정.
                 if main_fixed[i] {

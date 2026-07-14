@@ -1043,7 +1043,9 @@ fn render_url(url: &str) {
 
     // 헤드리스: (viewport 크기) 슬라이스를 PPM 으로. KESTREL_SCROLL 로 시작 오프셋 지정.
     if let Ok(path) = std::env::var("KESTREL_RENDER_TO") {
+        let mut t0 = std::time::Instant::now();
         page.flush_timers_headless();
+        phase("timers", &mut t0);
         let (vw, vh) = (1000usize, 1400usize);
         // 스크롤 위치: KESTREL_SCROLL 이 우선, 없으면 스크립트가 요청한 위치
         // (window.scrollTo/scrollIntoView). 상태만 바꾸고 렌더는 안 움직이면 반쪽 거짓말이다.
@@ -1068,6 +1070,7 @@ fn render_url(url: &str) {
             &mut cache,
             &page.images,
         );
+        phase("rasterize", &mut t0);
         write_ppm(&canvas, &path);
         println!("rendered to {}", path);
         return;

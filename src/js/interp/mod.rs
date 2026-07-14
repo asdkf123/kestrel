@@ -15,7 +15,16 @@ mod generator;
 use generator::GenState;
 use value::*;
 
-const STEP_LIMIT: u64 = 5_000_000;
+// 스크립트 하나(또는 이벤트 핸들러 하나)에 줄 **시간** 예산. 스텝 수로 자르면 무한 루프뿐
+// 아니라 무겁지만 정상적인 번들도 잘린다 — 실제로 fmkorea 의 스크립트가 5,000,000 스텝에서
+// 잘려 나갔다. 브라우저도 "느린 스크립트" 를 스텝이 아니라 시간으로 판정한다.
+const SCRIPT_BUDGET_MS: u64 = 5_000;
+// 페이지 전체(모든 스크립트 + 핸들러 + 타이머)에 줄 총 예산. 개별 예산만 두면 폭주하는
+// 콜백이 N개일 때 N × 예산이 든다 — fmkorea 의 타이머 드레인이 실제로 25초를 먹었다.
+// 브라우저의 "페이지가 응답하지 않습니다" 에 해당한다.
+const TOTAL_BUDGET_MS: u64 = 10_000;
+// 시각 확인은 비싸다 — 이만큼마다 한 번만 본다 (2^16).
+const TIME_CHECK_MASK: u64 = 0xffff;
 // 이 접두사의 에러는 try/catch 로 잡을 수 없다 (무한 루프 가드가 무력화되지 않게)
 const STEP_LIMIT_MSG: &str = "실행 한도 초과";
 
@@ -1047,6 +1056,12 @@ pub struct Interp {
     pub global: EnvRef,
     pub console: Vec<String>, // console.log 캡처 (호출측이 터미널에 출력)
     steps: u64,
+    // 지금 실행 중인 스크립트/핸들러가 시작한 시각과 그 예산 (시간 기반 가드)
+    script_start: Option<std::time::Instant>,
+    script_budget_ms: u64,
+    // 페이지 전체 누적 JS 시간과 그 총예산
+    js_spent_ms: u64,
+    total_budget_ms: u64,
     // JS 호출 스택 (호출식에서 뽑은 이름). 오류 메시지에 "어디서" 를 붙인다.
     // 스택이 없으면 진단이 사실상 불가능하다.
     js_stack: Vec<String>,
@@ -1916,6 +1931,16 @@ impl Interp {
             global,
             console: Vec::new(),
             steps: 0,
+            script_start: None,
+            script_budget_ms: std::env::var("KESTREL_SCRIPT_BUDGET_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(SCRIPT_BUDGET_MS),
+            js_spent_ms: 0,
+            total_budget_ms: std::env::var("KESTREL_TOTAL_BUDGET_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(TOTAL_BUDGET_MS),
             js_stack: Vec::new(),
             err_stack: None,
             dom: None,
@@ -2409,7 +2434,7 @@ impl Interp {
     // this 는 currentTarget. stopPropagation 시 상위 전파 중단.
     // 반환: 핸들러가 하나라도 실행됐는지(호출측 리플로우 판단용).
     pub fn fire_handlers(&mut self, target: crate::dom::NodeId, event: &str) -> bool {
-        self.steps = 0;
+        self.begin_unit();
         let evt = self.make_event(event, target);
         self.dispatch_event_value(target, event, evt)
     }
@@ -2635,7 +2660,7 @@ impl Interp {
     // document/window 레벨 이벤트 발화 (DOMContentLoaded/load). 프레임워크가
     // 여기 등록한 콜백에서 콘텐츠를 구성한다. 호출측이 dom 포인터를 잡고 있어야 함.
     pub fn fire_global(&mut self, event: &str) -> bool {
-        self.steps = 0;
+        self.begin_unit();
         let to_run: Vec<Value> = self
             .global_handlers
             .iter()
@@ -2661,7 +2686,7 @@ impl Interp {
     // 예전엔 안 비워서, 타이머 안에서 일어난 DOM 변경의 MutationObserver 배달과
     // 그 안에서 만든 Promise 의 .then 이 영영 안 돌았다 (조용히).
     pub fn run_callback(&mut self, cb: Value) {
-        self.steps = 0;
+        self.begin_unit();
         if let Err(e) = self.call_value(cb, None, Vec::new()) {
             println!("[js error] {}", e);
         }
@@ -2673,7 +2698,7 @@ impl Interp {
 
     // onclick 속성 등 인라인 핸들러 소스 실행 (전역 환경에서)
     pub fn run_inline_handler(&mut self, src: &str) {
-        self.steps = 0;
+        self.begin_unit();
         if let Err(e) = self.run(src) {
             println!("[js error] {}", e);
         }
@@ -2681,7 +2706,7 @@ impl Interp {
     }
 
     pub fn run(&mut self, src: &str) -> Result<Value, String> {
-        self.steps = 0; // 실행 단위(스크립트/핸들러)마다 한도 리셋
+        self.begin_unit(); // 실행 단위(스크립트/핸들러)마다 한도 리셋
         self.js_stack.clear();
         self.err_stack = None;
         let program = parse(src)?;
@@ -2791,12 +2816,42 @@ impl Interp {
         Ok(())
     }
 
+    // 새 실행 단위(스크립트/핸들러/타이머) 시작: 직전 단위가 쓴 시간을 총합에 누적한다.
+    fn begin_unit(&mut self) {
+        if let Some(s) = self.script_start.take() {
+            self.js_spent_ms += s.elapsed().as_millis() as u64;
+        }
+        self.steps = 0;
+        self.script_start = Some(std::time::Instant::now());
+    }
+
     fn tick(&mut self) -> Result<(), String> {
         self.steps += 1;
-        if self.steps > STEP_LIMIT {
-            return Err(format!("{} (무한 루프?)", STEP_LIMIT_MSG));
+        if self.steps & TIME_CHECK_MASK == 0 {
+            if self.js_spent_ms() > self.total_budget_ms {
+                return Err(format!("{} (페이지 전체 JS 예산 소진)", STEP_LIMIT_MSG));
+            }
+            if let Some(start) = self.script_start {
+                if start.elapsed().as_millis() as u64 > self.script_budget_ms {
+                    return Err(format!(
+                        "{} ({}초 넘게 돌았다 — 무한 루프?)",
+                        STEP_LIMIT_MSG,
+                        self.script_budget_ms / 1000
+                    ));
+                }
+            }
         }
         Ok(())
+    }
+
+    // 이 페이지에서 지금까지 JS 에 쓴 총 시간 (실행 단위마다 누적)
+    fn js_spent_ms(&self) -> u64 {
+        self.js_spent_ms + self.script_start.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0)
+    }
+
+    // 예산이 이미 바닥났는가 — 새 실행 단위(타이머/핸들러)를 시작하기 전에 본다.
+    pub fn budget_exhausted(&self) -> bool {
+        self.js_spent_ms() > self.total_budget_ms
     }
 
     // 함수 선언 호이스팅: 블록 실행 전에 FuncDecl 을 먼저 바인딩
@@ -7037,7 +7092,13 @@ mod tests {
 
     #[test]
     fn infinite_loop_is_bounded() {
-        assert!(Interp::new().run("while (true) {}").is_err());
+        // 가드는 **시간** 기반이다 (스텝 수가 아니라). 테스트는 짧은 예산으로 확인한다.
+        let mut it = Interp::new();
+        it.script_budget_ms = 200;
+        let t0 = std::time::Instant::now();
+        let err = it.run("while (true) {}").unwrap_err();
+        assert!(err.starts_with(STEP_LIMIT_MSG), "한도 메시지: {}", err);
+        assert!(t0.elapsed().as_secs() < 3, "예산 안에서 끊겨야 한다");
     }
 
     #[test]
@@ -8888,8 +8949,10 @@ mod tests {
             run_str("function f() { throw 'deep'; } try { f(); } catch (e) { e }"),
             "deep"
         );
-        // 스텝 한도는 잡을 수 없음
-        assert!(Interp::new().run("try { while (true) {} } catch (e) { 'nope' }").is_err());
+        // 실행 한도는 try/catch 로 못 잡는다 (가드 무력화 방지). 짧은 예산으로 확인.
+        let mut it = Interp::new();
+        it.script_budget_ms = 200;
+        assert!(it.run("try { while (true) {} } catch (e) { 'nope' }").is_err());
     }
 
     #[test]
