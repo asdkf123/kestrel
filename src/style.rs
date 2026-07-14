@@ -149,11 +149,22 @@ pub struct SiblingCtx<'a> {
     pub type_total: usize, // 같은 타입 형제 수
     pub prev: &'a [&'a ElementData], // 선행 요소 형제 (문서 순서)
     pub has_children: bool,          // :empty 판별용
+    // :has() 는 **자손/뒤형제**를 봐야 한다 — 다른 의사 클래스와 달리 요소 하나로는
+    // 판정할 수 없다. 그래서 앵커의 DOM 위치를 들고 다닌다.
+    pub anchor: Option<(&'a Dom, NodeId)>,
 }
 
 impl Default for SiblingCtx<'_> {
     fn default() -> Self {
-        SiblingCtx { index: 1, total: 1, type_index: 1, type_total: 1, prev: &[], has_children: false }
+        SiblingCtx {
+            index: 1,
+            total: 1,
+            type_index: 1,
+            type_total: 1,
+            prev: &[],
+            has_children: false,
+            anchor: None,
+        }
     }
 }
 
@@ -186,6 +197,7 @@ impl NodePos {
             type_total: self.type_total,
             prev: &[],
             has_children: self.has_children,
+            anchor: None,
         }
     }
 }
@@ -319,9 +331,65 @@ fn nth_matches(a: i32, b: i32, pos: usize) -> bool {
     }
 }
 
+// :has(rel) — 앵커의 자손/형제 중 rel 에 맞는 요소가 있는가.
+// 요소 하나만 보고는 절대 판정할 수 없다 (다른 의사 클래스와 다른 점). 앵커의 DOM 위치가
+// 없으면(예: 조상 근사 평가) 판정을 미루고 통과시킨다 — 조용히 비매칭시키면 규칙이 사라진다.
+fn matches_has(rels: &[(crate::css::Combinator, crate::css::Selector)], sib: Option<&SiblingCtx>) -> bool {
+    use crate::css::Combinator;
+    let Some(sctx) = sib else { return true };
+    let Some((dom, anchor)) = sctx.anchor else { return true };
+
+    let candidates = |c: Combinator| -> Vec<NodeId> {
+        match c {
+            Combinator::Child => dom
+                .get(anchor)
+                .children
+                .iter()
+                .copied()
+                .filter(|&n| matches!(dom.get(n).node_type, NodeType::Element(_)))
+                .collect(),
+            Combinator::Descendant => {
+                let mut out = Vec::new();
+                let mut stack: Vec<NodeId> = dom.get(anchor).children.clone();
+                while let Some(n) = stack.pop() {
+                    if matches!(dom.get(n).node_type, NodeType::Element(_)) {
+                        out.push(n);
+                    }
+                    stack.extend(dom.get(n).children.iter().copied());
+                }
+                out
+            }
+            Combinator::NextSibling | Combinator::LaterSibling => {
+                let Some(parent) = dom.get(anchor).parent else { return Vec::new() };
+                let sibs: Vec<NodeId> = dom
+                    .get(parent)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|&n| matches!(dom.get(n).node_type, NodeType::Element(_)))
+                    .collect();
+                let Some(k) = sibs.iter().position(|&n| n == anchor) else { return Vec::new() };
+                let after = &sibs[(k + 1).min(sibs.len())..];
+                if c == Combinator::NextSibling {
+                    after.first().copied().into_iter().collect()
+                } else {
+                    after.to_vec()
+                }
+            }
+        }
+    };
+
+    rels.iter().any(|(comb, sel)| {
+        candidates(*comb)
+            .into_iter()
+            .any(|n| element_matches(dom, n, std::slice::from_ref(sel)))
+    })
+}
+
 fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&SiblingCtx>) -> bool {
     use crate::css::Pseudo;
     match p {
+        Pseudo::Has(rels) => matches_has(rels, sib),
         Pseudo::Dynamic => false, // hover/focus/active/visited 등 정적 렌더에선 비매칭
         Pseudo::Not(inner) => !inner.iter().any(|s| matches_compound(elem, s, sib)),
         Pseudo::Is(inner) | Pseudo::Where(inner) => {
@@ -813,6 +881,7 @@ fn sibling_ctx_for<'a>(dom: &'a Dom, id: NodeId) -> SiblingCtx<'a> {
         type_total,
         prev: &[],
         has_children,
+        anchor: Some((dom, id)),
     }
 }
 
@@ -1140,6 +1209,7 @@ fn collect_pseudo_plans<'a>(
                 type_total: *type_totals.get(ce.tag_name.as_str()).unwrap_or(&1),
                 prev: &prev_elems,
                 has_children,
+                anchor: Some((dom, child)),
             };
             collect_pseudo_plans(dom, child, index, ancestors, anc_pos, &csib, out, counters);
             prev_elems.push(ce);
@@ -1472,6 +1542,7 @@ fn style_node<'a>(
                         type_total,
                         prev: &prev_elems,
                         has_children,
+                        anchor: Some((dom, child)),
                     };
                     children.push(style_node(dom, child, index, ancestors, anc_pos, Some(&values), &csib, vp, pseudo, keyframes, child_root_fs));
                     prev_elems.push(ce);
@@ -1513,6 +1584,49 @@ fn style_node<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // :has() — 요소 하나만 보고는 판정할 수 없는 유일한 의사 클래스. 예전엔 미지원이라
+    // Pseudo::Dynamic 으로 떨어져 **규칙이 조용히 사라졌다** (2023년부터 전 브라우저 지원).
+    #[test]
+    fn has_selector_matches_descendants_and_siblings() {
+        let dom = crate::html::parse_dom(
+            "<div id=p><span><b class=kid>x</b></span></div>\
+             <div id=q><img src=i></div>\
+             <div id=r><span>없음</span></div>\
+             <div id=s></div><div class=next></div>\
+             <div id=t><span>없음</span></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            "#p:has(.kid) { color: rgb(1, 1, 1) } \
+             #q:has(> img) { color: rgb(2, 2, 2) } \
+             #r:has(> img) { color: rgb(3, 3, 3) } \
+             #s:has(+ .next) { color: rgb(4, 4, 4) } \
+             #t:not(:has(.kid)) { color: rgb(5, 5, 5) }"
+                .to_string(),
+        );
+        let styled = style_tree(&dom, &ss);
+        fn find<'a, 'b>(n: &'b StyledNode<'a>, id: &str) -> Option<&'b StyledNode<'a>> {
+            if let NodeType::Element(e) = &n.node.node_type {
+                if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+                    return Some(n);
+                }
+            }
+            n.children.iter().find_map(|c| find(c, id))
+        }
+        let col = |id: &str| {
+            find(&styled, id)
+                .and_then(|n| n.specified_values.get("color").cloned())
+                .map(|v| computed_value_string(&v))
+                .unwrap_or_default()
+        };
+        assert_eq!(col("p"), "rgb(1, 1, 1)", ":has(.kid) 는 깊은 자손도 본다");
+        assert_eq!(col("q"), "rgb(2, 2, 2)", ":has(> img) 직계");
+        assert_eq!(col("r"), "", ":has(> img) 는 img 가 없으면 비매칭");
+        assert_eq!(col("s"), "rgb(4, 4, 4)", ":has(+ .next) 인접 형제");
+        // 중첩 괄호: 예전 파서는 첫 ')' 에서 끊어 ":has(.kid" 로 잘랐다 → 규칙이 죽었다
+        assert_eq!(col("t"), "rgb(5, 5, 5)", ":not(:has(.kid))");
+    }
 
     #[test]
     fn css_wide_keywords_initial_and_revert() {

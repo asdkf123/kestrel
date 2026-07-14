@@ -58,7 +58,7 @@ pub struct Rule {
     pub ua: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Selector {
     Simple(SimpleSelector),
     // 결합자 체인: [(결합자, 단순), ...]. 첫 항목의 결합자는 무시(대상 기준).
@@ -97,6 +97,10 @@ pub enum Pseudo {
     Required, // 폼 필드[required]
     Optional, // 폼 필드 && !required
     Link,     // :link — href 있는 a/area/link (정적 렌더에선 방문 이력 없어 모든 링크가 매칭)
+    // :has(상대선택자 목록) — 자손/뒤형제를 본다. 요소 하나로는 판정할 수 없는 유일한
+    // 의사 클래스라, 매칭 시 앵커의 DOM 위치가 필요하다.
+    // 각 항목은 (선행 결합자, 선택자). ":has(.a)" 는 Descendant, ":has(> .a)" 는 Child.
+    Has(Vec<(Combinator, Selector)>),
     Dynamic,  // hover/focus/active/visited 등 — 정적 렌더에선 비매칭
 }
 
@@ -294,6 +298,12 @@ fn pseudo_specificity(p: &Pseudo) -> Specificity {
         Pseudo::Is(args) | Pseudo::Not(args) => {
             args.iter().map(simple_specificity).max().unwrap_or((0, 0, 0))
         }
+        // :has() 도 인자 중 가장 특이한 것 (표준 §17)
+        Pseudo::Has(rels) => rels
+            .iter()
+            .map(|(_, s)| s.specificity())
+            .max()
+            .unwrap_or((0, 0, 0)),
         _ => (0, 1, 0), // 그 외 의사 클래스 = 클래스 하나
     }
 }
@@ -906,6 +916,27 @@ impl Parser {
 
     // 의사 클래스 파싱. 함수형(nth-child(..)/not(..))과 키워드형.
     // :is()/:not() 인자: 콤마로 구분된 compound 선택자 목록을 파싱 (복합 결합자는 근사로 첫 compound).
+    // :has() 의 상대 선택자 목록: ".a, > .b, + .c, ~ .d"
+    // 선행 결합자가 없으면 자손(Descendant)이다.
+    fn parse_relative_list(arg: &str) -> Vec<(Combinator, Selector)> {
+        arg.split(',')
+            .filter_map(|part| {
+                let p = part.trim();
+                if p.is_empty() {
+                    return None;
+                }
+                let (comb, rest) = match p.as_bytes().first() {
+                    Some(b'>') => (Combinator::Child, &p[1..]),
+                    Some(b'+') => (Combinator::NextSibling, &p[1..]),
+                    Some(b'~') => (Combinator::LaterSibling, &p[1..]),
+                    _ => (Combinator::Descendant, p),
+                };
+                let sels = parse_selector_list(rest.trim())?;
+                sels.into_iter().next().map(|s| (comb, s))
+            })
+            .collect()
+    }
+
     fn parse_selector_arg_list(arg: &str) -> Vec<SimpleSelector> {
         arg.split(',')
             .filter_map(|part| {
@@ -924,9 +955,26 @@ impl Parser {
         // 함수형: 괄호 안 인자
         if self.peek() == Some('(') {
             self.consume_char();
-            let arg = self.consume_while(|c| c != ')');
-            if self.peek() == Some(')') {
+            // 괄호 균형을 맞춰 읽는다. 첫 ')' 에서 끊으면 :not(:has(.x)) 처럼 중첩된
+            // 인자가 ":has(.x" 로 잘려 규칙이 통째로 죽는다.
+            let mut depth = 1usize;
+            let mut arg = String::new();
+            while let Some(c) = self.peek() {
                 self.consume_char();
+                match c {
+                    '(' => {
+                        depth += 1;
+                        arg.push(c);
+                    }
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        arg.push(c);
+                    }
+                    _ => arg.push(c),
+                }
             }
             return match name.as_str() {
                 "nth-child" => {
@@ -965,7 +1013,15 @@ impl Parser {
                         Some(Pseudo::Is(sels))
                     }
                 }
-                _ => Some(Pseudo::Dynamic), // lang/has 등 미지원 → 근사
+                "has" => {
+                    let rels = Self::parse_relative_list(&arg);
+                    if rels.is_empty() {
+                        Some(Pseudo::Dynamic)
+                    } else {
+                        Some(Pseudo::Has(rels))
+                    }
+                }
+                _ => Some(Pseudo::Dynamic), // lang 등 미지원 → 근사
             };
         }
         Some(match name.as_str() {
