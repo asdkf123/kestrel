@@ -356,6 +356,8 @@ pub enum Native {
     FnApply,
     FnBind,
     FunctionCtor,
+    // eval (§19.2.1). 직접 호출은 현재 스코프에서, 간접 호출은 전역 스코프에서 평가한다.
+    Eval,
     // Object/Array 전역 자체 (typeof 가 "function" 이어야 하고 호출/new 가 가능해야 함)
     ObjectCtor,
     ArrayCtor,
@@ -1723,6 +1725,7 @@ impl Interp {
         }
         // Function 생성자: Function(params.., body) 를 실제로 컴파일 (호출/ new 둘 다)
         env_declare(&global, "Function", Value::Native(Native::FunctionCtor));
+        env_declare(&global, "eval", Value::Native(Native::Eval));
         // Map / Set / WeakMap / WeakSet (약한 참조는 일반 Map/Set 으로 근사)
         env_declare(&global, "Map", Value::Native(Native::MapCtor));
         env_declare(&global, "WeakMap", Value::Native(Native::MapCtor));
@@ -2222,6 +2225,35 @@ impl Interp {
             .unwrap_or_else(|| self.error_proto.clone());
         map.insert("__proto__".to_string(), proto);
         Value::Obj(Rc::new(RefCell::new(map)))
+    }
+
+    // eval (§19.2.1 / §19.2.1.1 PerformEval).
+    // - 인자가 문자열이 아니면 그대로 돌려준다 (표준).
+    // - 파싱 실패는 SyntaxError 객체를 던진다 (문자열이 아니라).
+    // - direct 면 호출 지점의 스코프에서, indirect 면 전역 스코프에서 평가한다.
+    //   번들이 globalThis 를 찾을 때 쓰는 (0,eval)('this') 가 이 구분에 의존한다.
+    // - 완료값(마지막 표현식 문의 값)을 반환한다.
+    pub(super) fn do_eval(
+        &mut self,
+        arg: Value,
+        var_env: &Rc<RefCell<Env>>,
+        lex_env: &Rc<RefCell<Env>>,
+    ) -> Result<Value, String> {
+        let Value::Str(src) = arg else {
+            return Ok(arg);
+        };
+        let program = match parse(&src) {
+            Ok(p) => p,
+            Err(e) => return Err(self.throw_error("SyntaxError", e)),
+        };
+        // var 와 함수 선언은 '변수 환경'(호출자의 함수/전역 스코프)에 만든다.
+        // let/const 는 eval 전용 렉시컬 스코프에 갇힌다 (§19.2.1.1).
+        hoist_vars(&program, var_env);
+        match self.exec_block(&program, lex_env) {
+            Ok(Flow::Normal(v)) | Ok(Flow::Return(v)) => Ok(v),
+            Ok(_) => Ok(Value::Undefined),
+            Err(e) => Err(e),
+        }
     }
 
     // 종류가 지정되지 않은 내부 오류를 잡을 때 쓰는 Error 객체.
@@ -5259,6 +5291,15 @@ impl Interp {
                     } else {
                         let f = self.eval(callee, env)?;
                         arg_vals.extend(self.eval_args(args, env)?);
+                        // 직접 eval: 식별자 `eval` 로 부른 경우에만 호출 지점 스코프에서
+                        // 평가한다 (§19.2.1.1). 그 외(간접)는 call_value 가 전역에서 돌린다.
+                        if matches!(f, Value::Native(Native::Eval))
+                            && matches!(callee, Expr::Ident(n) if n == "eval")
+                        {
+                            let a = arg_vals.into_iter().next().unwrap_or(Value::Undefined);
+                            let scope = Env::new(Some(env.clone()));
+                            return self.do_eval(a, env, &scope);
+                        }
                         // Object(x) — 전역 Object 네임스페이스를 함수로 호출 = 객체 강제변환.
                         // core-js/프레임워크가 Object(this) 로 this 를 객체화하는 흔한 패턴.
                         if let Some(v) = self.coerce_object_call(&f, &arg_vals) {

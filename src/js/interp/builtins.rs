@@ -2127,6 +2127,12 @@ impl Interp {
                 Ok(Value::Bound(Rc::new((target, this_arg, partial))))
             }
             Native::FunctionCtor => self.make_function(args),
+            // 간접 eval: 전역 스코프에서 평가 (§19.2.1)
+            Native::Eval => {
+                let a = args.into_iter().next().unwrap_or(Value::Undefined);
+                let g = self.global.clone();
+                self.do_eval(a, &g, &g)
+            }
             // Object.getOwnPropertyDescriptor(o, k) — 접근자면 get/set, 값이면 value.
             // 예전엔 프렐류드 폴리필이 {value: o[k], enumerable: true} 를 만들었다:
             //   1) 게터 프로퍼티의 디스크립터에 get 이 없다 (게터를 **실행해** 값만 준다).
