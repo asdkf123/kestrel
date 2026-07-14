@@ -2912,6 +2912,46 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn with_statement_uses_object_environment_record() {
+    // §14.11 + §9.1.1.2. 없어서 with 를 쓰는 스크립트가 통째로 죽었다.
+    assert_eq!(run_str("var o = {a:'x'}; with (o) { a }"), "x");
+    // 객체 프로퍼티가 바깥 변수를 가린다
+    assert_eq!(run_str("var o = {b:'inner'}; var b = 'outer'; with (o) { b }"), "inner");
+    // 대입은 객체의 프로퍼티에 간다 (바깥 변수가 아니라)
+    assert_eq!(run_str("var o = {a:1}; var a = 9; with (o) { a = 2; } o.a + ',' + a"), "2,9");
+    // 세터가 실제로 돈다
+    assert_eq!(
+        run_str("var hit = ''; var s = { set x(v) { hit = v; } }; with (s) { x = 'set'; } hit"),
+        "set"
+    );
+    // 프로토타입 체인도 본다
+    assert_eq!(
+        run_str("var p = {q:'proto'}; var c = Object.create(p); with (c) { q }"),
+        "proto"
+    );
+    // null/undefined 에는 쓸 수 없다
+    assert!(run_bool("try { with (null) {} } catch (e) { e instanceof TypeError }"));
+}
+
+#[test]
+fn class_members_are_non_enumerable() {
+    // §15.4: 클래스의 메서드/접근자/constructor 는 비열거다.
+    // 예전엔 열거 가능해서 Object.keys(C.prototype) 가 ["m","g","constructor"] 였다 —
+    // for-in 이나 JSON 으로 프로토타입 메서드가 새어 나온다.
+    assert_eq!(run_str("class C { m(){} get g(){return 1} } JSON.stringify(Object.keys(C.prototype))"), "[]");
+    assert!(run_bool(
+        "class C { m(){} } !Object.getOwnPropertyDescriptor(C.prototype, 'm').enumerable"
+    ));
+    // 그래도 호출은 된다
+    assert_eq!(run_str("class C { m(){ return 'ok' } } new C().m()"), "ok");
+    // for-in 에도 안 나온다
+    assert_eq!(
+        run_str("class C { m(){} } var s = []; for (var k in new C()) s.push(k); JSON.stringify(s)"),
+        "[]"
+    );
+}
+
+#[test]
 fn event_interfaces_have_real_prototype_chains() {
     // 예전엔 MouseEvent/KeyboardEvent 가 전부 같은 EventCtor 로 "근사" 되어 있었다.
     // new Event('x') instanceof Event 조차 false 였다.

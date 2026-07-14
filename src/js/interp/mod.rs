@@ -2375,6 +2375,20 @@ impl Interp {
         // 직전 레이블 문이 남긴 레이블을 이 문(주로 루프)이 가져간다. 루프 아닌 문은 무시.
         let my_label = self.pending_label.take();
         match stmt {
+            // with (obj) stmt — 객체 환경 레코드를 스코프 체인에 얹는다 (§14.11).
+            // 이 스코프에서 이름을 찾을 때 obj 의 프로퍼티(프로토타입 체인 포함)를 본다.
+            // (Symbol.unscopables 는 아직 반영하지 않는다 — 그건 별도 항목이다.)
+            Stmt::With { obj, body } => {
+                let o = self.eval(obj, env)?;
+                if matches!(o, Value::Undefined | Value::Null) {
+                    let d = to_display(&o);
+                    return Err(self
+                        .throw_error("TypeError", format!("{} 에는 with 를 쓸 수 없음", d)));
+                }
+                let scope = Env::new(Some(env.clone()));
+                scope.borrow_mut().with_obj = Some(o);
+                self.exec_stmt(body, &scope)
+            }
             // ── ES 모듈 선언 ──
             // 모듈 평가(run_module)가 미리 처리한다. 여기 도달하면 클래식 스크립트에
             // 모듈 문법이 섞인 것 — 조용히 무시하지 않고 알린다.
@@ -4269,22 +4283,28 @@ impl Interp {
                         return Ok(p);
                     }
                     let mut m = ObjMap::new();
+                    // 클래스의 메서드/접근자/constructor 는 **비열거**다 (§15.4).
+                    // 예전엔 열거 가능해서 Object.keys(C.prototype) 가 ["m","g","constructor"]
+                    // 였다 — for-in 이나 JSON 으로 프로토타입 메서드가 새어 나온다.
                     fn collect(cls: &Rc<JsClass>, m: &mut ObjMap) {
                         if let Some(p) = &cls.parent {
                             collect(p, m);
                         }
                         for (k, f) in &cls.methods {
                             m.insert(k.clone(), Value::Fn(f.clone()));
+                            m.insert(nonenum_marker(k), Value::Bool(true));
                         }
                         for (k, g) in &cls.getters {
                             m.insert(
                                 k.clone(),
                                 Value::Accessor(AccessorPair::getter(Value::Fn(g.clone()))),
                             );
+                            m.insert(nonenum_marker(k), Value::Bool(true));
                         }
                     }
                     collect(c, &mut m);
                     m.insert("constructor".to_string(), recv.clone());
+                    m.insert(nonenum_marker("constructor"), Value::Bool(true));
                     let proto = Value::Obj(Rc::new(RefCell::new(m)));
                     *c.proto_cache.borrow_mut() = Some(proto.clone());
                     return Ok(proto);
@@ -5681,6 +5701,11 @@ impl Interp {
                         "TypeError: Assignment to constant variable."
                     )));
                     return Err(format!("상수 '{}' 에 재대입", name));
+                }
+                // with 스코프의 객체가 그 이름을 가지면 **그 객체의 프로퍼티**에 쓴다
+                // (§9.1.1.2 SetMutableBinding). 세터가 있으면 세터가 돈다.
+                if let Some(o) = env_with_owner(env, name) {
+                    return self.member_assign(o, name.clone(), value);
                 }
                 env_set(env, name, value);
                 Ok(())

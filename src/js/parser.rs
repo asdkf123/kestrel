@@ -62,6 +62,7 @@ fn keyword_word(t: &Tok) -> Option<String> {
         Tok::Finally => "finally",
         Tok::Throw => "throw",
         Tok::Switch => "switch",
+        Tok::With => "with",
         Tok::Case => "case",
         Tok::Default => "default",
         Tok::Instanceof => "instanceof",
@@ -354,6 +355,15 @@ impl Parser {
                 Ok(Stmt::ClassDecl(self.class_def(true)?))
             }
             Some(Tok::Switch) => self.switch_stmt(),
+            // with (obj) stmt (§14.11)
+            Some(Tok::With) => {
+                self.pos += 1;
+                self.expect(&Tok::LParen)?;
+                let obj = self.expr()?;
+                self.expect(&Tok::RParen)?;
+                let body = Box::new(self.stmt()?);
+                Ok(Stmt::With { obj, body })
+            }
             Some(Tok::LBrace) => Ok(Stmt::Block(self.block()?)),
             Some(Tok::Semi) => {
                 self.pos += 1;

@@ -214,6 +214,9 @@ pub enum Stmt {
     // 레이블 붙은 문 (outer: for(...)). break/continue 가 이 레이블을 지목할 수 있다.
     Labeled(String, Box<Stmt>),
     Block(Vec<Stmt>),
+    // with (obj) stmt — 객체 환경 레코드를 스코프 체인에 얹는다 (§14.11).
+    // 레거시지만 표준이고, 없으면 그걸 쓰는 스크립트가 통째로 죽는다.
+    With { obj: Expr, body: Box<Stmt> },
     Expr(Expr),
     Throw(Expr),
     // catch: (바인딩 이름 — ES2019 생략 가능, 몸통)

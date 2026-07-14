@@ -9,7 +9,37 @@ pub struct Env {
     pub(crate) vars: HashMap<String, Value>,
     // const 로 선언된 이름 (재대입 시 TypeError). 바인딩과 같은 스코프에 표시.
     pub(crate) consts: std::collections::HashSet<String>,
+    // 객체 환경 레코드 (§9.1.1.2): with (obj) { ... } 의 obj.
+    // 이 스코프에서 이름을 찾을 때 이 객체의 프로퍼티(프로토타입 체인 포함)를 본다.
+    pub(crate) with_obj: Option<Value>,
     parent: Option<EnvRef>,
+}
+
+// 객체(프로토타입 체인 포함)에서 프로퍼티를 찾는다. with 의 이름 해석에 쓴다.
+// 게터는 여기서 호출하지 않는다 (Accessor 는 그대로 돌려준다 — 호출부가 처리).
+pub(crate) fn obj_lookup(v: &Value, name: &str) -> Option<Value> {
+    match v {
+        Value::Obj(m) => {
+            let mut cur = Some(m.clone());
+            let mut depth = 0;
+            while let Some(o) = cur {
+                if let Some(val) = o.borrow().get(name) {
+                    return Some(val.clone());
+                }
+                depth += 1;
+                if depth > 100 {
+                    return None;
+                }
+                cur = match o.borrow().get("__proto__") {
+                    Some(Value::Obj(p)) => Some(p.clone()),
+                    _ => None,
+                };
+            }
+            None
+        }
+        Value::Instance(i) => i.fields.borrow().get(name).cloned(),
+        _ => None,
+    }
 }
 
 impl Env {
@@ -17,6 +47,7 @@ impl Env {
         Rc::new(RefCell::new(Env {
             vars: HashMap::new(),
             consts: std::collections::HashSet::new(),
+            with_obj: None,
             parent,
         }))
     }
@@ -80,8 +111,30 @@ pub(crate) fn env_get(env: &EnvRef, name: &str) -> Option<Value> {
     if let Some(v) = env.borrow().vars.get(name) {
         return Some(v.clone());
     }
+    // 객체 환경 레코드 (with): 이 스코프의 객체가 그 이름을 가지면 그 값이다.
+    let with_obj = env.borrow().with_obj.clone();
+    if let Some(o) = with_obj {
+        if let Some(v) = obj_lookup(&o, name) {
+            return Some(v);
+        }
+    }
     let parent = env.borrow().parent.clone();
     parent.and_then(|p| env_get(&p, name))
+}
+
+// with 스코프에서 이 이름이 객체 프로퍼티인가 (대입 대상 판별용).
+pub(crate) fn env_with_owner(env: &EnvRef, name: &str) -> Option<Value> {
+    if env.borrow().vars.contains_key(name) {
+        return None; // 진짜 바인딩이 가린다
+    }
+    let with_obj = env.borrow().with_obj.clone();
+    if let Some(o) = with_obj {
+        if obj_lookup(&o, name).is_some() {
+            return Some(o);
+        }
+    }
+    let parent = env.borrow().parent.clone();
+    parent.and_then(|p| env_with_owner(&p, name))
 }
 
 // 체인에서 기존 바인딩을 갱신. 없으면 전역(최상위)에 새로 만든다 (sloppy 모드 유사).

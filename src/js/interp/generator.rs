@@ -107,6 +107,7 @@ fn stmt_has_yield(s: &Stmt) -> bool {
             init.as_ref().map_or(false, expr_has_yield)
         }),
         Stmt::FuncDecl { .. } | Stmt::ClassDecl(_) | Stmt::Break(_) | Stmt::Continue(_) => false,
+        Stmt::With { obj, body } => expr_has_yield(obj) || stmt_has_yield(body),
         // 모듈 선언은 제너레이터 본문에 올 수 없다 (최상위 전용)
         Stmt::Import { .. }
         | Stmt::ExportNamed { .. }
