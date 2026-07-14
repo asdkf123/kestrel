@@ -4610,6 +4610,26 @@ mod tests {
         assert_eq!(lb.dimensions.content.height, 80.0);
     }
 
+    // flex:1 로 폭이 줄어들면 글이 다시 줄바꿈돼 아이템이 **더 높아진다**. 줄 높이는 그
+    // 확정된 폭에서 다시 재야 한다 (Flexbox §9.4). 예전엔 컨테이너 폭에서 잰 높이를 그대로
+    // 써서, 두 줄이 된 아이템이 있어도 줄 높이는 한 줄이었다 — 컨테이너가 짜부라지고
+    // 형제들도 틀린 높이로 stretch 됐다.
+    #[test]
+    fn flex_cross_size_is_remeasured_after_main_size() {
+        // 폰트 16px 기준: 컨테이너 300px 를 셋이 100px 씩 나눠 갖는다.
+        // 가운데 아이템의 글은 100px 안에서 두 줄이 된다 → 줄 높이 = 두 줄.
+        let d = flex_layout(
+            "<div class=\"row\"><div class=\"i\">가</div>\
+             <div class=\"i\">가나다라마바사아자차카타파하</div>\
+             <div class=\"i\">나</div></div>",
+            ".row { display: flex; width: 300px; } .i { display: block; flex: 1; }",
+            300.0,
+        );
+        // flex_layout 은 루트의 자식(=컨테이너)만 준다. 컨테이너 높이가 가장 높은 아이템만큼.
+        let h = d[0].content.height;
+        assert!(h > 20.0, "컨테이너가 두 줄 높이여야 (지금 {}px)", h);
+    }
+
     #[test]
     fn flex_column_stacks_vertically() {
         let d = flex_layout(

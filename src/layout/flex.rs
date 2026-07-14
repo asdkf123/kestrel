@@ -12,9 +12,9 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    // flexbox: row/column, flex-wrap, justify-content, align-items, gap, flex-grow, flex-shrink.
-    // align-self, order(재정렬) 지원. 미지원: flex-basis(폭/높이 or 내용폭 근사),
-    // align-content, wrap-reverse 세부.
+    // flexbox: row/column, flex-wrap, justify-content, align-items/align-self, align-content,
+    // gap(row/column), flex-grow/shrink/basis, order, 자동 최소 크기(min-content).
+    // 미지원: wrap-reverse 의 줄 역순, 절대 위치 자식의 정적 위치.
     pub(super) fn layout_flex_children(&mut self, fonts: &FontStack, images: &ImageMap) {
         let n = self.children.len();
         if n == 0 {
@@ -155,28 +155,10 @@ impl<'a> LayoutBox<'a> {
             lines.push(order_seq.clone());
         }
 
-        // align-content: 다중 줄 flex 에서 cross 축 여유 공간을 줄 시작/사이에 분배 (§8.3).
-        // 고정 cross(height/width)가 줄 cross 합보다 클 때만. justify_offsets 재사용.
-        let align_content = self.flex_keyword("align-content");
-        let (ac_start, ac_between) = if lines.len() > 1 && !align_content.is_empty() {
-            if let Some(cc) = cont_cross {
-                let total_lc: f32 = lines
-                    .iter()
-                    .map(|l| l.iter().map(|&i| cross[i]).fold(0.0f32, f32::max))
-                    .sum::<f32>()
-                    + cross_gap * (lines.len() as f32 - 1.0).max(0.0);
-                justify_offsets(&align_content, (cc - total_lc).max(0.0), lines.len())
-            } else {
-                (0.0, 0.0)
-            }
-        } else {
-            (0.0, 0.0)
-        };
-
-        // 3) 줄마다 main 크기 배분(grow) + justify/align 배치
-        let mut cross_pen = (if row { oy } else { ox }) + ac_start;
-        let mut max_main = 0.0f32;
+        // 3) 줄마다 main 크기 배분 (grow/shrink) — **먼저** 확정한다.
+        let mut all_sizes: Vec<Vec<f32>> = Vec::with_capacity(lines.len());
         let mut natural_main = 0.0f32; // 내용 기반 main 폭 (shrink-to-fit used_width 용)
+        let mut max_main = 0.0f32;
         for line in &lines {
             let cnt = line.len();
             let sum_basis: f32 = line.iter().map(|&i| basis[i]).sum();
@@ -200,12 +182,63 @@ impl<'a> LayoutBox<'a> {
                     }
                 }
             }
+            max_main =
+                max_main.max(sum_basis + sum_gap + if total_grow > 0.0 { free.max(0.0) } else { 0.0 });
+            all_sizes.push(sizes);
+        }
+
+        // 3b) cross 재측정 — 표준 순서다 (§9.4: 가설 cross 크기는 main 확정 **뒤**에 잰다).
+        // row 에서 아이템 폭이 바뀌면 글이 다시 줄바꿈되어 높이가 달라진다. 예전엔 컨테이너
+        // 폭에서 잰 높이를 그대로 써서, flex:1 로 폭이 줄어든 아이템이 두 줄이 돼도 줄 높이는
+        // 한 줄이었다 — 컨테이너가 짜부라지고 stretch 도 틀린 높이로 늘렸다 (가장 흔한 모양).
+        if row {
+            for (li, line) in lines.iter().enumerate() {
+                for (k, &i) in line.iter().enumerate() {
+                    let child = &mut self.children[i];
+                    let mut cb: Dimensions = Default::default();
+                    cb.content.x = ox;
+                    cb.content.y = oy;
+                    cb.content.width = all_sizes[li][k];
+                    child.clear_render(); // layout 은 비멱등 (글리프 누적)
+                    child.layout(cb, fonts, images);
+                    cross[i] = child.dimensions.margin_box().height;
+                }
+            }
+        }
+
+        // align-content: 다중 줄 flex 에서 cross 축 여유 공간을 줄 시작/사이에 분배 (§8.3).
+        // 고정 cross(height/width)가 줄 cross 합보다 클 때만. justify_offsets 재사용.
+        let align_content = self.flex_keyword("align-content");
+        let (ac_start, ac_between) = if lines.len() > 1 && !align_content.is_empty() {
+            if let Some(cc) = cont_cross {
+                let total_lc: f32 = lines
+                    .iter()
+                    .map(|l| l.iter().map(|&i| cross[i]).fold(0.0f32, f32::max))
+                    .sum::<f32>()
+                    + cross_gap * (lines.len() as f32 - 1.0).max(0.0);
+                justify_offsets(&align_content, (cc - total_lc).max(0.0), lines.len())
+            } else {
+                (0.0, 0.0)
+            }
+        } else {
+            (0.0, 0.0)
+        };
+
+        // 4) 배치 (justify/align)
+        let mut cross_pen = (if row { oy } else { ox }) + ac_start;
+        for (li, line) in lines.iter().enumerate() {
+            let cnt = line.len();
+            let sizes = &all_sizes[li];
+            let sum_basis: f32 = line.iter().map(|&i| basis[i]).sum();
+            let sum_gap = gap * (cnt as f32 - 1.0).max(0.0);
+            let free = if cont_main.is_finite() { cont_main - sum_basis - sum_gap } else { 0.0 };
+            let total_grow: f32 = line.iter().map(|&i| grow[i]).sum();
             // justify: grow 가 free 를 소진 못했을 때만 남은 공간 분배
             let leftover = if total_grow > 0.0 { 0.0 } else { free.max(0.0) };
             let (start_off, between_extra) = justify_offsets(&justify, leftover, cnt);
             let mut main_pen = if row { ox } else { oy } + start_off;
 
-            // 줄 cross 크기
+            // 줄 cross 크기 (재측정된 cross 로)
             let line_cross_natural = line.iter().map(|&i| cross[i]).fold(0.0f32, f32::max);
             let line_cross = if lines.len() == 1 {
                 cont_cross.unwrap_or(line_cross_natural).max(line_cross_natural)
@@ -265,7 +298,6 @@ impl<'a> LayoutBox<'a> {
                 }
                 main_pen += msize + gap + between_extra;
             }
-            max_main = max_main.max(sum_basis + sum_gap + if total_grow > 0.0 { free.max(0.0) } else { 0.0 });
             cross_pen += line_cross + cross_gap + ac_between;
         }
 
