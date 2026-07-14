@@ -185,6 +185,70 @@ impl Interp {
         it.all(Self::is_name_char)
     }
 
+    // §4.4 "locate a namespace": 요소에서 조상으로 올라가며 네임스페이스를 찾는다.
+    // prefix 가 비면 기본 네임스페이스(xmlns), 아니면 xmlns:prefix 선언을 본다.
+    // 선언이 없으면 요소 자신의 네임스페이스(접두사가 일치할 때)를 쓴다.
+    pub(super) fn locate_namespace(
+        &mut self,
+        id: crate::dom::NodeId,
+        prefix: &str,
+    ) -> Result<Option<String>, String> {
+        let dom = self.dom_arena()?;
+        let mut cur = Some(id);
+        while let Some(nid) = cur {
+            if let crate::dom::NodeType::Element(e) = &dom.get(nid).node_type {
+                // 요소 자신의 네임스페이스: 접두사가 일치하면 그것이다
+                let own_prefix = e.prefix().unwrap_or("");
+                if own_prefix == prefix && e.namespace.is_some() {
+                    return Ok(e.namespace.clone());
+                }
+                // xmlns / xmlns:prefix 선언
+                let attr = if prefix.is_empty() {
+                    "xmlns".to_string()
+                } else {
+                    format!("xmlns:{}", prefix)
+                };
+                if let Some(v) = e.attributes.get(&attr) {
+                    return Ok(if v.is_empty() { None } else { Some(v.clone()) });
+                }
+                // HTML 네임스페이스 요소이고 기본 네임스페이스를 찾는 중이면 HTML ns
+                if prefix.is_empty() && own_prefix.is_empty() && e.namespace.is_none() {
+                    return Ok(Some(crate::dom::NS_HTML.to_string()));
+                }
+            }
+            cur = dom.get(nid).parent;
+        }
+        Ok(None)
+    }
+
+    // §4.4 "locate a namespace prefix": 이 네임스페이스를 선언한 접두사를 찾는다.
+    pub(super) fn locate_prefix(
+        &mut self,
+        id: crate::dom::NodeId,
+        ns: &str,
+    ) -> Result<Option<String>, String> {
+        let dom = self.dom_arena()?;
+        let mut cur = Some(id);
+        while let Some(nid) = cur {
+            if let crate::dom::NodeType::Element(e) = &dom.get(nid).node_type {
+                if e.ns() == ns {
+                    if let Some(p) = e.prefix() {
+                        return Ok(Some(p.to_string()));
+                    }
+                }
+                for (k, v) in e.attributes.iter() {
+                    if let Some(p) = k.strip_prefix("xmlns:") {
+                        if v == ns {
+                            return Ok(Some(p.to_string()));
+                        }
+                    }
+                }
+            }
+            cur = dom.get(nid).parent;
+        }
+        Ok(None)
+    }
+
     // 속성 이름 정규화 (§4.9): HTML 네임스페이스 요소의 속성 이름은 **소문자**다.
     // 검증도 함께 — 유효한 이름이 아니면 InvalidCharacterError.
     // 예전엔 둘 다 없어서 setAttribute('FOO', v) 가 "FOO" 라는 속성을 만들었고,

@@ -709,7 +709,23 @@ impl Builder {
 
     // void/self-closing: 삽입하되 스택에 남기지 않음
     fn insert_void(&mut self, name: &str, attrs: AttrMap) -> usize {
-        let id = self.sink.new_element(name, attrs);
+        self.insert_void_ns(name, attrs, Ns::Html)
+    }
+
+    // 네임스페이스를 아는 void/self-closing 삽입.
+    // 외래 콘텐츠(SVG/MathML)의 <rect/> 같은 자체 닫는 태그는 그 네임스페이스여야 한다.
+    // 예전엔 무조건 HTML 네임스페이스로 들어가서, SVG 안의 자체 닫는 요소가
+    // namespaceURI 는 xhtml 이고 이름은 대문자화되는 **가짜 HTML 요소**가 됐다.
+    fn insert_void_ns(&mut self, name: &str, attrs: AttrMap, ns: Ns) -> usize {
+        let adjusted = if matches!(ns, Ns::Svg) { adjust_svg_tag(name) } else { name };
+        let id = self.sink.new_element(adjusted, attrs);
+        if let NodeType::Element(e) = &mut self.sink.nodes[id].node_type {
+            e.namespace = match ns {
+                Ns::Html => None,
+                Ns::Svg => Some(crate::dom::NS_SVG.to_string()),
+                Ns::Math => Some(crate::dom::NS_MATHML.to_string()),
+            };
+        }
         self.insert_at(id);
         id
     }
@@ -1097,7 +1113,7 @@ impl Builder {
                         continue;
                     }
                     if self_closing {
-                        self.insert_void(&name, attrs);
+                        self.insert_void_ns(&name, attrs, ns);
                     } else {
                         self.insert_element(&name, attrs, ns);
                     }

@@ -106,6 +106,10 @@ pub enum Native {
     SplitText,
     // Attr 노드 접근 (§4.9.2)
     GetAttributeNode,
+    // 네임스페이스 조회 (DOM §4.4)
+    LookupNamespaceURI,
+    LookupPrefix,
+    IsDefaultNamespace,
     // CSSOM (§CSSOM 6)
     StyleSheets,
     // 플랫폼 객체의 브랜드 문자열 (§WebIDL 의 인터페이스 판별). instanceof 에 쓴다.

@@ -2261,6 +2261,43 @@ impl Interp {
                 }
                 Ok(Value::Dom(new_id))
             }
+            // 네임스페이스 조회 (DOM §4.4 "locate a namespace" / "locate a namespace prefix").
+            // 요소에서 시작해 조상으로 올라가며 xmlns / xmlns:prefix 선언을 찾는다.
+            // 예전엔 아예 없어서 XML/SVG 를 다루는 코드가 그 줄에서 죽었다.
+            Native::LookupNamespaceURI | Native::IsDefaultNamespace => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
+                let want_default = matches!(n, Native::IsDefaultNamespace);
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let prefix = match (&arg, want_default) {
+                    // isDefaultNamespace(ns) 는 인자가 네임스페이스다 (접두사가 아니다)
+                    (_, true) => String::new(),
+                    (Value::Null | Value::Undefined, false) => String::new(),
+                    (v, false) => to_display(v),
+                };
+                let ns = self.locate_namespace(id, &prefix)?;
+                if want_default {
+                    let want = match &arg {
+                        Value::Null | Value::Undefined => None,
+                        v => {
+                            let s = to_display(v);
+                            if s.is_empty() { None } else { Some(s) }
+                        }
+                    };
+                    return Ok(Value::Bool(ns == want));
+                }
+                Ok(ns.map(Value::Str).unwrap_or(Value::Null))
+            }
+            Native::LookupPrefix => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
+                let ns = match args.first() {
+                    None | Some(Value::Null) | Some(Value::Undefined) => return Ok(Value::Null),
+                    Some(v) => to_display(v),
+                };
+                if ns.is_empty() {
+                    return Ok(Value::Null);
+                }
+                Ok(self.locate_prefix(id, &ns)?.map(Value::Str).unwrap_or(Value::Null))
+            }
             // getAttributeNode(name) → Attr 노드 또는 null (§4.9.2)
             Native::GetAttributeNode => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };

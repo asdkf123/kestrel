@@ -339,7 +339,18 @@ pub(super) fn collect_elements(
                     .unwrap_or_default();
                 !want.is_empty() && want.iter().all(|w| have.contains(w))
             } else {
-                query == "*" || e.tag_name.eq_ignore_ascii_case(query)
+                // getElementsByTagName (§4.5): HTML 문서에서
+                //  - HTML 네임스페이스 요소는 **소문자화한** 이름과 비교한다
+                //  - 그 외(SVG/MathML)는 **그대로** 비교한다 (대소문자 구분)
+                // 예전엔 무조건 eq_ignore_ascii_case 라서 SVG 의 <ABC> 와 <abc> 를
+                // 구분하지 못했다.
+                if query == "*" {
+                    true
+                } else if e.namespace.is_none() {
+                    e.tag_name == query.to_ascii_lowercase()
+                } else {
+                    e.tag_name == query
+                }
             };
             if hit {
                 out.push(Value::Dom(id));

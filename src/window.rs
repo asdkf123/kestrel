@@ -1742,6 +1742,44 @@ mod tests {
         );
     }
 
+    // 네임스페이스 조회 (DOM §4.4)와 getElementsByTagName 의 대소문자 규칙 (§4.5).
+    // lookupNamespaceURI 계열은 아예 없었고(그걸 쓰는 코드는 그 줄에서 죽었다),
+    // getElementsByTagName 은 무조건 대소문자를 무시해서 SVG 의 <ABC> 와 <abc> 를
+    // 구분하지 못했다. 그리고 외래 콘텐츠의 자체 닫는 태그(<rect/>)가 HTML
+    // 네임스페이스로 들어가 **가짜 HTML 요소**가 됐다.
+    #[test]
+    fn namespace_lookup_and_tag_name_matching() {
+        let dom = run_with_layout(
+            r#"<div id="d"></div><svg id="s"><rect id="r"/></svg><div id="out"></div>
+               <script>
+                 var HTML = 'http://www.w3.org/1999/xhtml';
+                 var SVG = 'http://www.w3.org/2000/svg';
+                 var d = document.getElementById('d');
+                 var r = document.getElementById('r');
+                 var log = [];
+                 // 외래 콘텐츠의 자체 닫는 태그는 그 네임스페이스다
+                 log.push(r.namespaceURI === SVG ? 'svg' : r.namespaceURI);
+                 log.push(r.tagName); // SVG 는 대문자화하지 않는다
+                 // §4.4
+                 log.push(String(d.lookupNamespaceURI(null) === HTML));
+                 log.push(String(r.lookupNamespaceURI(null) === SVG));
+                 log.push(String(d.isDefaultNamespace(HTML)) + ',' + String(d.isDefaultNamespace(SVG)));
+                 // §4.5: HTML 요소는 소문자로, 그 외는 그대로 비교
+                 var box = document.createElement('div');
+                 box.appendChild(document.createElement('abc'));
+                 box.appendChild(document.createElementNS(SVG, 'abc'));
+                 box.appendChild(document.createElementNS(SVG, 'ABC'));
+                 log.push(box.getElementsByTagName('abc').length + ',' +
+                          box.getElementsByTagName('ABC').length + ',' +
+                          box.getElementsByTagName('*').length);
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(dom.text_content(out), "svg|rect|true|true|true,false|2,2,3");
+    }
+
     // MutationObserver (DOM §4.3). takeRecords() 는 그 옵저버의 기록 큐를 비우고 돌려준다.
     // 예전엔 옵저버의 큐에 기록을 넣는 코드가 **아예 없어서** takeRecords() 가 항상
     // 빈 배열이었다 (콜백 배달은 큐를 우회해 직접 호출했다). oldValue 도 항상 null 이었다.
