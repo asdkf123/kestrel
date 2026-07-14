@@ -89,6 +89,7 @@ pub enum FormControl {
     Gauge { frac: f32, meter: bool }, // progress / meter (채움 비율)
 }
 
+#[derive(Clone)]
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
     // CSS transform (절대 좌표계 행렬). 기하는 그대로 두고 페인트/CSSOM 이 이걸 쓴다.
@@ -1453,8 +1454,9 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
-    // CSS 다단(column-count): 자식을 열 폭으로 단일 열 배치한 뒤, 균형 잡히도록
-    // 자식 경계에서 여러 열로 분배한다(한 자식을 열 사이로 쪼개진 않음 — 실용 근사).
+    // CSS 다단(column-count). **줄 경계에서 조각화한다** (CSS Multicol §3).
+    // 예전엔 자식 경계에서만 쪼개서, 자식이 하나면 — 즉 <div style="column-count:2">
+    // <p>…</p></div> 라는 가장 흔한 모양에서 — 전혀 나뉘지 않고 한 단으로 남았다.
     fn layout_columns(&mut self, fonts: &FontStack, images: &ImageMap, ncols: usize) {
         let full_w = self.dimensions.content.width;
         let gap = self.column_gap();
@@ -1465,26 +1467,59 @@ impl<'a> LayoutBox<'a> {
         self.dimensions.content.width = full_w;
         let oy = self.dimensions.content.y;
         let total_h = self.dimensions.content.height;
-        if total_h <= 0.0 || self.children.is_empty() {
+        if total_h <= 0.0 || self.children.is_empty() || ncols < 2 {
             return;
         }
-        let target = total_h / ncols as f32;
-        // 2) 그리디로 자식을 열에 분배
-        let mut col = 0usize;
-        let mut col_start = 0.0f32; // 현재 열 시작 y (oy 상대)
-        let mut max_h = 0.0f32;
-        for child in &mut self.children {
-            let cy = child.dimensions.content.y - oy;
-            if col + 1 < ncols && cy - col_start >= target && cy > col_start + 0.1 {
-                col += 1;
-                col_start = cy;
-            }
-            let dx = col as f32 * (col_w + gap);
-            child.translate(dx, -col_start);
-            let bottom = (cy - col_start) + child.dimensions.margin_box().height;
-            max_h = max_h.max(bottom);
+
+        // 2) 줄 경계(글리프 줄의 윗변) 수집 — 열은 줄 사이에서만 끊는다
+        let mut tops: Vec<f32> = Vec::new();
+        collect_line_tops(self, &mut tops);
+        // 자식 경계도 후보에 넣는다 (그림/블록만 있는 경우)
+        for c in &self.children {
+            tops.push(c.dimensions.margin_box().y);
         }
-        self.dimensions.content.height = max_h;
+        tops.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        tops.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+
+        // 3) 균형 잡힌 분할점: 각 열 목표 높이에 가장 가까운 줄 경계
+        let target = total_h / ncols as f32;
+        let mut breaks: Vec<f32> = vec![oy];
+        for k in 1..ncols {
+            let want = oy + target * k as f32;
+            let prev = *breaks.last().unwrap();
+            let b = tops
+                .iter()
+                .copied()
+                .filter(|&t| t > prev + 0.5 && t >= want - target * 0.5)
+                .min_by(|a, b| {
+                    (a - want).abs().partial_cmp(&(b - want).abs()).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(oy + total_h);
+            breaks.push(b);
+        }
+        breaks.push(oy + total_h + 1.0); // 마지막 열의 끝
+
+        // 4) 각 열의 y 구간으로 조각화해서 옆으로 옮긴다
+        let originals: Vec<LayoutBox> = std::mem::take(&mut self.children);
+        let mut max_h = 0.0f32;
+        for k in 0..ncols {
+            let (y0, y1) = (breaks[k], breaks[k + 1]);
+            if y1 <= y0 {
+                continue;
+            }
+            let dx = k as f32 * (col_w + gap);
+            for c in &originals {
+                if let Some(mut frag) = fragment_by_y(c, y0, y1) {
+                    frag.translate(dx, -(y0 - oy));
+                    let bottom = frag.dimensions.margin_box().y
+                        + frag.dimensions.margin_box().height
+                        - oy;
+                    max_h = max_h.max(bottom);
+                    self.children.push(frag);
+                }
+            }
+        }
+        self.dimensions.content.height = max_h.max(0.0);
     }
 
     // <table>: 모든 행의 셀을 모아 공통 열 폭을 계산해 열을 정렬한다.
@@ -2646,6 +2681,50 @@ fn transform_origin(b: &LayoutBox) -> (f32, f32) {
     (bb.x + ox, bb.y + oy)
 }
 
+// 서브트리의 글리프 줄 윗변(y) 을 모은다 — 다단이 줄 사이에서만 끊도록.
+fn collect_line_tops(b: &LayoutBox, out: &mut Vec<f32>) {
+    for g in &b.glyphs {
+        out.push(g.baseline_y - g.px);
+    }
+    for c in &b.children {
+        collect_line_tops(c, out);
+    }
+}
+
+// [y0, y1) 구간의 내용만 남긴 박스 조각 (없으면 None). 다단에서 한 박스가 여러 열에
+// 걸치면 열마다 조각이 하나씩 생긴다 (CSS 의 박스 조각화).
+fn fragment_by_y<'a>(b: &LayoutBox<'a>, y0: f32, y1: f32) -> Option<LayoutBox<'a>> {
+    let mut f = b.clone();
+    let in_range = |y: f32| y >= y0 && y < y1;
+    // 글리프는 **베이스라인**으로 열을 정한다. 줄 윗변(baseline - px)은 박스 위쪽 경계보다
+    // 위로 올라갈 수 있어서, 그걸 쓰면 다음 열에 속할 줄이 앞 열로 새어 들어온다.
+    f.glyphs.retain(|g| in_range(g.baseline_y));
+    // 사각형 항목은 중심 y 로 판정 (경계에 걸친 것이 양쪽에 중복되지 않게)
+    let mid = |r: &Rect| r.y + r.height * 0.5;
+    f.links.retain(|(r, _)| in_range(mid(r)));
+    f.decorations.retain(|(r, _)| in_range(mid(r)));
+    f.inline_bgs.retain(|(r, _)| in_range(mid(r)));
+    f.inline_borders.retain(|(r, _, _, _)| in_range(mid(r)));
+    f.inline_frags.retain(|(_, r)| in_range(mid(r)));
+    f.children = b.children.iter().filter_map(|c| fragment_by_y(c, y0, y1)).collect();
+
+    // 박스 자신의 사각형을 구간으로 자른다 (배경·테두리가 열마다 조각난다)
+    let c = f.dimensions.content;
+    let top = c.y.max(y0);
+    let bot = (c.y + c.height).min(y1);
+    let has_content = !f.glyphs.is_empty()
+        || !f.children.is_empty()
+        || f.image.is_some()
+        || f.background_image.is_some();
+    // 부동소수 오차로 높이 0 인 빈 조각이 남지 않게 (열마다 유령 박스가 생긴다)
+    if bot - top <= 0.5 && !has_content {
+        return None;
+    }
+    f.dimensions.content.y = top;
+    f.dimensions.content.height = (bot - top).max(0.0);
+    Some(f)
+}
+
 // 각 박스의 transform 을 절대 좌표계 행렬로 계산해 저장한다 (기하는 건드리지 않는다).
 // 페인트가 이 행렬로 서브트리 전체를 변환하고, CSSOM 사각형은 변환된 경계로 보고한다.
 fn apply_transforms(b: &mut LayoutBox) {
@@ -2830,6 +2909,83 @@ mod tests {
         // 여러 함수는 왼쪽부터 차례로 적용 (좌→우 곱)
         let c = parse_transform("translate(10px, 0) scale(2)", 100.0, 50.0);
         assert_eq!(c.apply(1.0, 0.0), (12.0, 0.0), "scale 먼저, 그 다음 translate");
+    }
+
+    #[test]
+    fn multicol_splits_a_single_text_child() {
+        // 다단은 **줄 경계에서 조각화**해야 한다. 예전엔 자식 경계에서만 쪼개서,
+        // 자식이 하나인 가장 흔한 모양(<div style="column-count:2"><p>…</p></div>)에서
+        // 전혀 나뉘지 않고 한 단으로 남았다 — 두 번째 열은 완전히 비어 있었다.
+        let fs = fonts();
+        let text = "<div id=x><p>aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp</p></div>";
+        let one = {
+            let dom = crate::html::parse_dom(text.to_string());
+            let ss = crate::css::parse(
+                "div { display: block; width: 100px } p { display: block; margin: 0 }".to_string(),
+            );
+            let styled = crate::style::style_tree(&dom, &ss);
+            tree_for(&styled, &fs).dimensions.content.height
+        };
+        let dom = crate::html::parse_dom(text.to_string());
+        let ss = crate::css::parse(
+            "div { display: block; width: 216px; column-count: 2; column-gap: 16px } \
+             p { display: block; margin: 0 }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&dom, &ss);
+        let lb = tree_for(&styled, &fs);
+        let two = lb.dimensions.content.height;
+        // 같은 열 폭(100px)이면 2단은 1단의 절반 근처여야 한다
+        assert!(
+            two < one * 0.75 && two > one * 0.3,
+            "2단 높이가 1단의 절반 근처여야: 1단 {} vs 2단 {}",
+            one,
+            two
+        );
+        // 두 번째 열에 실제로 글리프가 있어야 한다 (x >= 116)
+        fn glyph_xs(b: &LayoutBox, out: &mut Vec<f32>) {
+            out.extend(b.glyphs.iter().map(|g| g.x));
+            for c in &b.children {
+                glyph_xs(c, out);
+            }
+        }
+        let mut xs = Vec::new();
+        glyph_xs(&lb, &mut xs);
+        assert!(
+            xs.iter().any(|&x| x >= 116.0),
+            "두 번째 열(x >= 116)에 글자가 있어야 — 없으면 한 단으로 남은 것"
+        );
+    }
+
+    #[test]
+    fn absolute_inline_is_blockified() {
+        // CSS Display §2.7: position:absolute/fixed 나 float 이 있으면 인라인 레벨 값은
+        // 블록 레벨로 계산된다. 예전엔 <span style="position:absolute; width:30px"> 이
+        // 인라인으로 남아 width/right 가 통째로 무시됐다 (아주 흔한 패턴).
+        let fs = fonts();
+        let dom = crate::html::parse_dom(
+            "<div id=p><span id=s>x</span></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "#p { display: block; position: relative; width: 200px; height: 50px } \
+             #s { position: absolute; right: 0; width: 30px; height: 10px }"
+                .to_string(),
+        );
+        let styled = crate::style::style_tree(&dom, &ss);
+        let lb = tree_for(&styled, &fs);
+        fn find_abs<'a, 'b>(b: &'b LayoutBox<'a>) -> Option<&'b LayoutBox<'a>> {
+            if b.position() == "absolute" && !b.anonymous {
+                return Some(b);
+            }
+            b.children.iter().find_map(find_abs)
+        }
+        let s = find_abs(&lb).expect("absolute 박스가 있어야");
+        assert_eq!(s.dimensions.content.width, 30.0, "width 가 적용돼야");
+        assert_eq!(
+            s.dimensions.border_box().x + s.dimensions.border_box().width,
+            200.0,
+            "right: 0 이 적용돼야"
+        );
     }
 
     #[test]

@@ -97,6 +97,22 @@ impl<'a> StyledNode<'a> {
     }
 
     pub fn display(&self) -> Display {
+        let d = self.display_specified();
+        // 블록화 (CSS Display §2.7): position 이 absolute/fixed 이거나 float 이 있으면
+        // 인라인 레벨 값은 블록 레벨로 계산된다. 예전엔 이걸 안 해서
+        // <span style="position:absolute; right:0; width:30px"> 이 인라인으로 남았고
+        // width/right 가 통째로 무시됐다 (아주 흔한 패턴이다).
+        let positioned = matches!(self.value("position"),
+            Some(Value::Keyword(ref p)) if p == "absolute" || p == "fixed");
+        let floated = matches!(self.value("float"),
+            Some(Value::Keyword(ref f)) if f == "left" || f == "right");
+        if (positioned || floated) && matches!(d, Display::Inline | Display::InlineBlock) {
+            return Display::Block;
+        }
+        d
+    }
+
+    fn display_specified(&self) -> Display {
         match self.value("display") {
             Some(Value::Keyword(s)) => match &*s {
                 "block" => Display::Block,
