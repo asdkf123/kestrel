@@ -39,6 +39,13 @@ const TIME_CHECK_MASK: u64 = 0xffff;
 // 이 접두사의 에러는 try/catch 로 잡을 수 없다 (무한 루프 가드가 무력화되지 않게)
 const STEP_LIMIT_MSG: &str = "실행 한도 초과";
 
+// 배열을 한 번에 밀도 있게 확보할 수 있는 최대 요소 수 (방어선).
+// new Array(2**32-1) 같은 표준적 호출은 **밀집 배열로는** 64GB+ 를 즉시 요구한다.
+// 진짜 브라우저는 희박 배열이라 length 만 키우고 저장은 안 한다. 우리는 아직
+// 밀집 배열이라, 이 상한을 넘는 확보는 거부해 머신을 지킨다 (희박 배열은 별도 작업).
+// 이 값(약 100만 * 24바이트 ≈ 24MB)이면 실사이트도 test262 도 다 통과한다.
+const MAX_DENSE_ARRAY: usize = 1 << 20;
+
 // 표준 네이티브 오류 종류 (ECMA-262 §20.5). Error 가 첫째여야 한다 (나머지의 프로토타입 부모).
 pub(super) const ERROR_KINDS: [&str; 8] = [
     "Error",
@@ -1492,7 +1499,15 @@ impl Interp {
             Value::Native(Native::ArrayCtor) => Some(match args {
                 // new Array(n) → 길이 n 의 빈 배열, Array(a,b,…) → 항목 배열
                 [Value::Num(n)] if n.fract() == 0.0 && *n >= 0.0 && *n < 4294967296.0 => {
-                    Value::Arr(ArrayObj::new(vec![Value::Undefined; *n as usize]))
+                    let len = *n as usize;
+                    // 상한을 넘으면 밀집 확보를 거부하고 length 만 기억한다 (근사 희박).
+                    if len > MAX_DENSE_ARRAY {
+                        let a = ArrayObj::new(Vec::new());
+                        a.set_prop("\u{0}sparse_len".to_string(), Value::Num(*n));
+                        Value::Arr(a)
+                    } else {
+                        Value::Arr(ArrayObj::new(vec![Value::Undefined; len]))
+                    }
                 }
                 items => Value::Arr(ArrayObj::new(items.to_vec())),
             }),
@@ -3405,6 +3420,9 @@ impl Interp {
                     if i >= a.borrow().len() && self.is_nonextensible_val(target) {
                         return;
                     }
+                    if i >= MAX_DENSE_ARRAY {
+                        return; // 방어: 초거대 인덱스는 무시 (희박 배열 미구현)
+                    }
                     let mut items = a.borrow_mut();
                     if i >= items.len() {
                         items.resize(i + 1, Value::Undefined);
@@ -4088,6 +4106,12 @@ impl Interp {
                     return Ok(v);
                 }
                 if key == "length" {
+                    // 근사 희박 배열: length 만 크게 잡은 경우 그 값을 돌려준다
+                    if let Some(Value::Num(n)) = a.get_prop("\u{0}sparse_len") {
+                        if n as usize > a.borrow().len() {
+                            return Ok(Value::Num(n));
+                        }
+                    }
                     return Ok(Value::Num(a.borrow().len() as f64));
                 }
                 if key == "push" {
@@ -5789,6 +5813,9 @@ impl Interp {
                             if is_new && self.is_nonextensible_val(&av) {
                                 return Ok(());
                             }
+                            if i >= MAX_DENSE_ARRAY {
+                                return Ok(()); // 방어: 초거대 인덱스 (희박 배열 미구현)
+                            }
                             let mut arr = a.borrow_mut();
                             if i >= arr.len() {
                                 arr.resize(i + 1, Value::Undefined);
@@ -5796,7 +5823,12 @@ impl Interp {
                             arr[i] = value;
                         } else if key == "length" {
                             let n = to_num(&value).max(0.0) as usize;
-                            a.borrow_mut().resize(n, Value::Undefined);
+                            if n > MAX_DENSE_ARRAY {
+                                // length 만 크게: 밀집 확보 대신 기록만 (근사 희박)
+                                a.set_prop("\u{0}sparse_len".to_string(), value.clone());
+                            } else {
+                                a.borrow_mut().resize(n, Value::Undefined);
+                            }
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
                             if a.get_prop(&key).is_none() && self.is_nonextensible_val(&av) {

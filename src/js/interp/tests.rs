@@ -2912,6 +2912,21 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn huge_array_lengths_do_not_allocate_densely() {
+    // new Array(2**32-1) 나 arr.length = 큰수 는 표준 동작이다. 밀집 배열로 확보하면
+    // 요소당 24바이트라 64GB+ 를 즉시 요구해 머신을 다운시킨다 (실제로 그랬다 —
+    // 전량 test262 실행이 맥을 멈췄다). length 만 기억하고 저장은 안 한다 (근사 희박).
+    assert_eq!(run_str("'' + new Array(4294967295).length"), "4294967295");
+    assert_eq!(run_str("var a = []; a.length = 1000000000; '' + a.length"), "1000000000");
+    // 초거대 인덱스 대입도 폭주하지 않는다
+    assert_eq!(run_str("var a = []; a[2000000000] = 1; typeof a[2000000000]"), "undefined");
+    // 정상 크기 배열은 그대로 동작한다
+    assert_eq!(run_str("'' + new Array(100).length"), "100");
+    assert_eq!(run_str("var a = [1,2,3]; a[5] = 9; a.length + ',' + a[5]"), "6,9");
+    assert_eq!(run_str("'' + [1,2,3].length"), "3");
+}
+
+#[test]
 fn class_and_function_property_descriptors() {
     // §15.7.14: 클래스의 static 멤버는 클래스 객체의 own 프로퍼티다.
     // 예전엔 서술자 경로가 클래스를 몰라서 hasOwnProperty(C, 'm') 이 false 였고,
