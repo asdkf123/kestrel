@@ -105,21 +105,35 @@ impl Interp {
         Self::serialize_decl(prop, &raw)
     }
 
-    // 선언 하나를 CSSOM 정규 형태로 직렬화. 우리가 모르는 값이면 원문을 보존한다
-    // (지어내지 않는다).
+    // 선언 하나를 CSSOM 정규 형태로 직렬화 (§6.7).
+    //
+    // 인라인 스타일은 **지정값**을 직렬화한다 (계산값이 아니다):
+    //   style="background-color: black"  →  el.style.backgroundColor === "black"
+    //   getComputedStyle(el).backgroundColor === "rgb(0, 0, 0)"   ← 여기서만 rgb()
+    // 색 키워드는 키워드로 남고, 숫자 표기(#f00 / rgb(1,2,3))만 rgb()/rgba() 로 접힌다.
+    // font-weight: bold 도 700 이 아니라 bold 그대로, content: "x" 도 따옴표를 유지한다.
+    // (파싱된 값으로 전부 직렬화하면 이 모두가 계산값으로 접혀 버린다 — 실제로 그랬다.)
     pub(super) fn serialize_decl(prop: &str, raw: &str) -> String {
-        let one = |v: &str| -> String {
-            crate::css::parse_inline_style(&format!("{}: {}", prop, v))
-                .iter()
-                .find(|d| d.name == prop)
-                .map(|d| crate::style::computed_value_string(&d.value))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| v.to_string())
-        };
-        // 우리 값 파서가 이해하는 값만 정규화한다. 이해 못 하는 값(단축 속성, 아직
-        // 파싱 안 하는 속성)은 원문 그대로 — 지어내지 않는다.
-        one(raw.trim())
+        let raw = raw.trim();
+        let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))
+            .into_iter()
+            .find(|d| d.name == prop)
+            .map(|d| d.value);
+        match parsed {
+            // 색: 키워드(black/transparent/currentcolor)는 그대로(소문자),
+            // 그 외 표기(#f00, rgb(1,2,3))는 rgb()/rgba() 로 정규화
+            Some(v @ crate::css::Value::Color(_)) => {
+                if raw.chars().all(|c| c.is_ascii_alphabetic() || c == '-') {
+                    raw.to_ascii_lowercase()
+                } else {
+                    crate::style::computed_value_string(&v)
+                }
+            }
+            Some(v @ crate::css::Value::Url(_)) => crate::style::computed_value_string(&v),
+            _ => normalize_numbers(raw),
+        }
     }
+
 
     // style.prop = value 쓰기 (빈 값이면 제거)
     pub(super) fn style_set(&mut self, id: crate::dom::NodeId, prop: &str, value: &str) {
@@ -127,16 +141,11 @@ impl Interp {
         let mut pairs = style_pairs(&attr);
         pairs.retain(|(k, _)| k != prop);
         if !value.trim().is_empty() {
-            // CSSOM 은 값을 **정규 형태**로 직렬화한다 (CSSOM §6.7.2):
-            // el.style.color = "rgb(9,9,9)" 를 읽으면 "rgb(9, 9, 9)" 가 나와야 한다.
-            // 예전엔 원문을 그대로 저장해서, 값을 되읽어 비교하는 코드가 조용히 틀렸다.
-            // 파싱에 실패하면(우리가 모르는 값) 원문을 보존한다 — 지어내지 않는다.
-            let decls = crate::css::parse_inline_style(&format!("{}: {}", prop, value.trim()));
-            let canonical = decls
-                .iter()
-                .find(|d| d.name == prop)
-                .map(|d| crate::style::computed_value_string(&d.value));
-            let text = canonical.unwrap_or_else(|| value.trim().to_string());
+            // 인라인 스타일은 **지정값**을 보관한다 (계산값으로 접지 않는다).
+            // 예전엔 여기서 computed_value_string 으로 접어서 `el.style.color = "black"`
+            // 이 rgb(0, 0, 0) 으로 저장됐다 — 지정값이 통째로 사라졌다.
+            // 직렬화는 **읽을 때** serialize_decl 이 한 번만 한다.
+            let text = value.trim().to_string();
             pairs.push((prop.to_string(), text));
         }
         let s = style_serialize(&pairs);
@@ -1063,3 +1072,88 @@ pub(super) fn option_value(dom: &crate::dom::Dom, o: crate::dom::NodeId) -> Stri
 }
 
 // data-foo-bar → fooBar (dataset 키 변환)
+
+// CSS 값 원문 안의 숫자를 정규 형태로 (§6.7.2 "serialize a CSS component value"):
+//   .5 → 0.5,  1.50 → 1.5,  +3 → 3
+// 문자열 리터럴과 url(...) 안은 건드리지 않는다 (그 안의 숫자는 값이 아니다).
+fn normalize_numbers(s: &str) -> String {
+    let b: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        // 문자열 리터럴: 그대로 복사
+        if c == '"' || c == '\'' {
+            let quote = c;
+            out.push(c);
+            i += 1;
+            while i < b.len() {
+                out.push(b[i]);
+                let esc = b[i] == '\\';
+                i += 1;
+                if !esc && b.get(i - 1) == Some(&quote) {
+                    break;
+                }
+            }
+            continue;
+        }
+        // url( ... ) 안은 그대로
+        if b[i..].starts_with(&['u', 'r', 'l', '(']) || b[i..].starts_with(&['U', 'R', 'L', '(']) {
+            while i < b.len() {
+                out.push(b[i]);
+                i += 1;
+                if b.get(i - 1) == Some(&')') {
+                    break;
+                }
+            }
+            continue;
+        }
+        // 숫자 시작인가. 식별자 중간의 숫자(예: rgb1)는 건드리지 않는다.
+        let prev_ident = i > 0 && (b[i - 1].is_alphanumeric() || b[i - 1] == '-' || b[i - 1] == '_');
+        let starts_num = c.is_ascii_digit()
+            || (c == '.' && b.get(i + 1).map_or(false, |d| d.is_ascii_digit()))
+            || ((c == '+' || c == '-')
+                && b.get(i + 1).map_or(false, |d| {
+                    d.is_ascii_digit() || (*d == '.' && b.get(i + 2).map_or(false, |e| e.is_ascii_digit()))
+                }));
+        if !starts_num || prev_ident {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        if b[i] == '+' || b[i] == '-' {
+            i += 1;
+        }
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i < b.len() && b[i] == '.' {
+            i += 1;
+            while i < b.len() && b[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        // 지수 표기 (1e3)
+        if i < b.len() && (b[i] == 'e' || b[i] == 'E') {
+            let save = i;
+            i += 1;
+            if i < b.len() && (b[i] == '+' || b[i] == '-') {
+                i += 1;
+            }
+            if i < b.len() && b[i].is_ascii_digit() {
+                while i < b.len() && b[i].is_ascii_digit() {
+                    i += 1;
+                }
+            } else {
+                i = save;
+            }
+        }
+        let text: String = b[start..i].iter().collect();
+        match text.parse::<f32>() {
+            Ok(n) => out.push_str(&crate::style::num_css(n)),
+            Err(_) => out.push_str(&text),
+        }
+    }
+    out
+}
