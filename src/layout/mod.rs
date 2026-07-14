@@ -1900,6 +1900,17 @@ fn is_cell(b: &LayoutBox) -> bool {
 }
 
 // SVG viewBox "minx miny width height" → (minx, miny, width, height)
+// paint(독립 SVG 래스터)에서도 쓴다.
+pub fn collect_svg_text_public(
+    node: &crate::style::StyledNode,
+    box_rect: Rect,
+    vb: (f32, f32, f32, f32),
+    fonts: &FontStack,
+    out: &mut Vec<GlyphInstance>,
+) {
+    collect_svg_text(node, box_rect, vb, fonts, out, 0)
+}
+
 // <svg> 하위의 <text> 를 재귀로 찾아 글리프로 성형한다.
 #[allow(clippy::too_many_arguments)]
 fn collect_svg_text(

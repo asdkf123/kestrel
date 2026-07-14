@@ -1556,7 +1556,12 @@ pub fn rasterize_items(
 // SVG 소스를 RGBA 이미지로 래스터화한다 (CSS background-image: url(*.svg) 용).
 // <img src=*.svg> 는 DOM 에서 인라인 <svg> 로 바꿔치기해 그리지만, CSS 배경은 그럴 수
 // 없다 — 실제 픽셀이 필요하다. 로고/아이콘이 대부분 SVG 라 이게 없으면 통째로 빈다.
-pub fn rasterize_svg(source: &str, w: usize, h: usize) -> Option<crate::png::Image> {
+pub fn rasterize_svg(
+    source: &str,
+    w: usize,
+    h: usize,
+    fonts: &FontStack,
+) -> Option<crate::png::Image> {
     if w == 0 || h == 0 || w > 4096 || h > 4096 {
         return None;
     }
@@ -1583,12 +1588,23 @@ pub fn rasterize_svg(source: &str, w: usize, h: usize) -> Option<crate::png::Ima
     };
     let mut items = Vec::new();
     emit_svg_children(svg_node, box_rect, vx, vy, sx, sy, &mut items, 0);
+    // <text> → 글리프 (예전엔 빈 FontStack 이라 독립 SVG 의 글자가 통째로 사라졌다)
+    let mut glyphs = Vec::new();
+    crate::layout::collect_svg_text_public(
+        svg_node,
+        box_rect,
+        (vx, vy, sx, sy),
+        fonts,
+        &mut glyphs,
+    );
+    for g in glyphs {
+        items.push(DisplayItem::Glyph(g));
+    }
     // 투명 배경 레이어에 그린다 (알파 유지 → 배경 위에 합성된다)
     let mut canvas = Canvas::new_layer(w, h);
-    let fonts = FontStack::new(Vec::new());
     let mut cache = GlyphCache::new();
     for item in &items {
-        draw_item(&mut canvas, item, 0.0, 1.0, h as f32, &fonts, &mut cache, &[]);
+        draw_item(&mut canvas, item, 0.0, 1.0, h as f32, fonts, &mut cache, &[]);
     }
     let mut rgba = Vec::with_capacity(w * h * 4);
     for px in &canvas.pixels {
@@ -3543,7 +3559,8 @@ mod tests {
             <rect x="0" y="10" width="20" height="10" fill="#0000ff"/>
         </svg>"##;
         assert_eq!(svg_natural_size(src), (20, 20));
-        let img = rasterize_svg(src, 20, 20).expect("래스터화");
+        let fs = FontStack::new(Vec::new());
+        let img = rasterize_svg(src, 20, 20, &fs).expect("래스터화");
         assert_eq!((img.width, img.height), (20, 20));
         let at = |x: usize, y: usize| {
             let o = (y * img.width + x) * 4;
@@ -3552,7 +3569,7 @@ mod tests {
         assert_eq!(at(10, 5), (255, 0, 0, 255), "<g> 안의 빨강 사각");
         assert_eq!(at(10, 15), (0, 0, 255, 255), "직계 파랑 사각");
         // viewBox 스케일: 40x40 으로 키워도 같은 색 배치
-        let big = rasterize_svg(src, 40, 40).expect("래스터화");
+        let big = rasterize_svg(src, 40, 40, &fs).expect("래스터화");
         let o = (10 * 40 + 20) * 4;
         assert_eq!(big.rgba[o], 255, "확대해도 위쪽은 빨강");
     }

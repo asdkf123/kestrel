@@ -121,7 +121,7 @@ fn main() {
         let style_root = style::style_tree(&root_node, &stylesheet);
         collect_bg_urls(&style_root, &mut srcs);
     }
-    let (images, img_map) = load_images(srcs, &base);
+    let (images, img_map) = load_images(srcs, &base, &fonts);
 
     // 스크립트 실행 (스타일시트·폰트·이미지가 준비된 뒤 — 표준 순서).
     // 강제 레이아웃 컨텍스트를 넘겨 스크립트 안 측정 API 가 실제 값을 돌려주게 한다.
@@ -292,7 +292,7 @@ fn collect_img_srcs(dom: &dom::Dom, out: &mut Vec<String>) {
 }
 
 // 매직 바이트로 포맷 판별 → 해당 디코더 (PNG / JPEG)
-fn decode_image(bytes: &[u8]) -> Option<png::Image> {
+fn decode_image(bytes: &[u8], fonts: &font::FontStack) -> Option<png::Image> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         return png::decode(bytes);
     }
@@ -316,7 +316,7 @@ fn decode_image(bytes: &[u8]) -> Option<png::Image> {
         let (w, h) = paint::svg_natural_size(&src);
         // 배경 타일/아이콘은 보통 작다. 과도한 래스터는 막는다(메모리).
         let (w, h) = (w.clamp(1, 1024), h.clamp(1, 1024));
-        return paint::rasterize_svg(&src, w, h);
+        return paint::rasterize_svg(&src, w, h, fonts);
     }
     None
 }
@@ -344,8 +344,9 @@ fn merge_images(
     mut map: layout::ImageMap,
     new_srcs: Vec<String>,
     base: &url::Url,
+    fonts: &font::FontStack,
 ) -> (Vec<png::Image>, layout::ImageMap) {
-    let (more, more_map) = load_images(new_srcs, base);
+    let (more, more_map) = load_images(new_srcs, base, fonts);
     let offset = images.len();
     images.extend(more);
     for (src, (idx, w, h)) in more_map {
@@ -354,7 +355,11 @@ fn merge_images(
     (images, map)
 }
 
-fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::ImageMap) {
+fn load_images(
+    srcs: Vec<String>,
+    base: &url::Url,
+    fonts: &font::FontStack,
+) -> (Vec<png::Image>, layout::ImageMap) {
     // 중복 제거 (순서 보존)
     let mut uniq: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -417,7 +422,7 @@ fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::
                 // data: URL 은 네트워크 없이 그 자리에서 디코드 (RFC 2397).
                 // 예전엔 http::fetch 로 넘겨 스킴 오류로 실패했다 — 이미지가 조용히 사라졌다.
                 let img = if dataurl::is_data_url(&uniq[i]) {
-                    dataurl::decode(&uniq[i]).and_then(|b| decode_image(&b))
+                    dataurl::decode(&uniq[i]).and_then(|b| decode_image(&b, fonts))
                 } else {
                     match base.join(&uniq[i]) {
                         Some(u) => match http::fetch(&u.as_string()) {
@@ -435,7 +440,7 @@ fn load_images(srcs: Vec<String>, base: &url::Url) -> (Vec<png::Image>, layout::
                                 None
                             }
                             Ok(resp) => {
-                                let d = decode_image(&resp.body);
+                                let d = decode_image(&resp.body, fonts);
                                 if d.is_none() && std::env::var("KESTREL_IMG_DEBUG").is_ok() {
                                     eprintln!(
                                         "[img] 디코드 실패(형식 미지원?) {} ({}바이트)",
@@ -943,19 +948,8 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         collect_bg_urls(&style_root, &mut srcs);
     }
     phase("css", &mut t0);
-    let (images, img_map) = load_images(srcs, &base);
-    if std::env::var("KESTREL_IMG_DEBUG").is_ok() {
-        let mut want = Vec::new();
-        collect_img_srcs(&dom, &mut want);
-        for s in &want {
-            eprintln!(
-                "[img] {} → {}",
-                &s[..s.len().min(80)],
-                if img_map.contains_key(s) { "맵에 있음" } else { "없음!!" }
-            );
-        }
-    }
-
+    // 폰트를 **이미지보다 먼저** 로드한다: 독립 SVG(<img src=x.svg>)를 래스터화할 때
+    // 폰트가 있어야 <text> 가 그려진다 (없으면 글자가 통째로 사라진다).
     let mut fonts = load_fonts(&scripts);
     // @font-face 웹폰트 로드. 각 패밀리의 src 후보들을 **한꺼번에 병렬로** 받는다.
     // 직렬로 받으면 폰트 20개짜리 페이지가 RTT × 20 만큼 그냥 멈춘다 —
@@ -1058,6 +1052,20 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     }
     println!("[fonts] {} font(s) loaded (@font-face {}개)", fonts.fonts.len(), loaded_faces);
 
+    let (images, img_map) = load_images(srcs, &base, &fonts);
+    if std::env::var("KESTREL_IMG_DEBUG").is_ok() {
+        let mut want = Vec::new();
+        collect_img_srcs(&dom, &mut want);
+        for s in &want {
+            eprintln!(
+                "[img] {} → {}",
+                &s[..s.len().min(80)],
+                if img_map.contains_key(s) { "맵에 있음" } else { "없음!!" }
+            );
+        }
+    }
+
+
     // 스크립트 실행. HTML 표준에서 파서가 삽입한 스크립트는 보류된 스타일시트를 기다린 뒤
     // 실행된다 — 그래서 CSS/폰트/이미지가 준비된 이 시점이 맞다. 예전엔 스크립트를 CSS 보다
     // 먼저 돌려서, 스크립트 안의 측정 API 가 전부 0 을 돌려줬다(스타일도 레이아웃도 없었다).
@@ -1096,7 +1104,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     let (images, img_map) = if new_srcs.is_empty() {
         (images, img_map)
     } else {
-        merge_images(images, img_map, new_srcs, &base)
+        merge_images(images, img_map, new_srcs, &base, &fonts)
     };
 
     // <img src="*.svg"> → 인라인 <svg> 로 치환 (우리 래스터라이저가 그릴 수 있는 형태)
