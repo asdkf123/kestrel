@@ -797,11 +797,10 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
             }
             after_slash = false; // 크기 끝 — 이 토큰부터 다시 일반 규칙
         }
-        if t.starts_with("url(")
-            || t.starts_with("linear-gradient(")
-            || t.starts_with("radial-gradient(")
-            || t.starts_with("conic-gradient(")
-        {
+        // 이름을 하나씩 나열하면 repeating-* 처럼 새 함수가 생길 때마다 조용히 빠진다.
+        // "이미지 값으로 해석되는가" 로 판정한다.
+        let tl = t.to_ascii_lowercase();
+        if tl.starts_with("url(") || tl.contains("gradient(") {
             if let Some(v) = interpret_value(t) {
                 image = Some(v);
             }

@@ -56,6 +56,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "border-top-color", "border-top-width", "border-width", "bottom", "box-shadow",
     // 컨테이너 쿼리 (레이아웃 후 두 번째 스타일 패스로 실제 평가한다)
     "container", "container-name", "container-type",
+    // 마스크 (그라디언트/이미지의 알파로 서브트리를 곱한다)
+    "mask-image", "-webkit-mask-image",
     "box-sizing", "clear", "clip-path", "color", "column-count", "column-gap", "content",
     "direction", "display", "filter", "flex", "flex-basis", "flex-direction",
     "flex-grow", "flex-shrink", "flex-wrap", "float", "font-family", "font-size",

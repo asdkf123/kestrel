@@ -276,7 +276,21 @@ impl Canvas {
     // 그라디언트 채우기. linear 는 픽셀을 축(angle: 0deg=위, 90deg=오른쪽)에 투영,
     // radial 은 중심에서의 거리를 farthest-corner 반경으로 정규화해 0..1 위치를 구하고
     // 스톱 사이를 보간한다. linear 선 길이 = |w*sin| + |h*cos| (모서리가 0/1 에 대응).
-    pub fn fill_gradient(&mut self, rect: Rect, angle_deg: f32, radial: bool, circle: bool, conic: bool, stops: &[(Color, f32)]) {
+    // CSS 그라디언트. 스톱 위치(px/%/auto)는 여기서 **그라디언트 선 길이**로 푼다 —
+    // px 위치는 박스 크기를 알아야 정규화된다 (파싱 시점엔 알 수 없다).
+    // repeating-* 은 스톱 구간을 반복한다.
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_gradient(
+        &mut self,
+        rect: Rect,
+        angle_deg: f32,
+        radial: bool,
+        circle: bool,
+        conic: bool,
+        repeating: bool,
+        stops: &[(Color, crate::css::StopPos)],
+        scale: f32,
+    ) {
         if rect.width <= 0.0 || rect.height <= 0.0 || stops.is_empty() {
             return;
         }
@@ -291,6 +305,23 @@ impl Canvas {
             (rect.width / 2.0 * std::f32::consts::SQRT_2).max(1.0),
             (rect.height / 2.0 * std::f32::consts::SQRT_2).max(1.0),
         );
+        // 그라디언트 선의 길이 (px 스톱을 0..1 로 옮길 기준). 물리 px 가 아니라 CSS px 다.
+        let line_len = if conic {
+            360.0 // conic 의 px 위치는 의미 없다 (deg/% 만)
+        } else if radial {
+            (if circle { radius } else { rx.max(ry) }) / scale
+        } else {
+            len / scale
+        };
+        let resolved = resolve_stops(stops, line_len);
+        if resolved.is_empty() {
+            return;
+        }
+        // 반복 구간 [p0, p1]
+        let p0 = resolved[0].1;
+        let p1 = resolved[resolved.len() - 1].1;
+        let period = p1 - p0;
+
         let x0 = rect.x.clamp(0.0, self.width as f32) as usize;
         let y0 = rect.y.clamp(0.0, self.height as f32) as usize;
         let x1 = (rect.x + rect.width).clamp(0.0, self.width as f32) as usize;
@@ -299,23 +330,28 @@ impl Canvas {
             let fy = y as f32 + 0.5;
             for x in x0..x1 {
                 let fx = x as f32 + 0.5;
-                let p = if conic {
+                let mut p = if conic {
                     // 중심 기준 각도(위쪽 0, 시계방향) 0..1
                     let ang = (fx - cx).atan2(-(fy - cy)); // -π..π, 위쪽=0
                     let norm = if ang < 0.0 { ang + std::f32::consts::TAU } else { ang };
                     norm / std::f32::consts::TAU
                 } else if radial {
                     if circle {
-                        (((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() / radius).clamp(0.0, 1.0)
+                        ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() / radius
                     } else {
-                        // 타원: 축별 정규화 후 반경 거리
-                        (((fx - cx) / rx).powi(2) + ((fy - cy) / ry).powi(2)).sqrt().clamp(0.0, 1.0)
+                        (((fx - cx) / rx).powi(2) + ((fy - cy) / ry).powi(2)).sqrt()
                     }
                 } else {
                     let t = (fx - cx) * dx + (fy - cy) * dy;
-                    ((t + len / 2.0) / len).clamp(0.0, 1.0)
+                    (t + len / 2.0) / len
                 };
-                let color = gradient_color_at(stops, p);
+                if repeating && period > 1e-6 {
+                    // 구간을 반복 (표준: 스톱 구간 밖은 주기적으로 되풀이)
+                    p = p0 + (p - p0).rem_euclid(period);
+                } else {
+                    p = p.clamp(0.0, 1.0);
+                }
+                let color = gradient_color_at(&resolved, p);
                 if color.a == 0 {
                     continue;
                 }
@@ -425,11 +461,24 @@ impl Canvas {
 
     // 안쪽 그림자: 박스 내부에서 경계(오프셋 반영)로부터 blur 만큼 안으로 감쇠.
     // 경계 근처가 가장 진하고 중심으로 갈수록 옅어진다. rect(=border box)로 클립.
-    pub fn fill_inner_shadow(&mut self, color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32) {
+    // 안쪽 그림자. spread 는 그림자의 안쪽 모서리를 **박스 안으로** 밀어 넣는다
+    // (box-shadow: inset 0 0 0 10px c 는 두께 10px 의 안쪽 링이 된다).
+    #[allow(clippy::too_many_arguments)]
+    pub fn fill_inner_shadow(
+        &mut self,
+        color: Color,
+        rect: Rect,
+        radius: f32,
+        blur: f32,
+        spread: f32,
+        dx: f32,
+        dy: f32,
+    ) {
         if rect.width <= 0.0 || rect.height <= 0.0 {
             return;
         }
-        let soft = blur.max(1.0);
+        // blur 가 0 이고 spread 만 있으면 딱딱한 링이어야 한다 (soft 를 1 로 두면 1px 만 나온다)
+        let soft = if blur > 0.0 { blur } else { 0.5 };
         let (hw, hh) = (rect.width / 2.0, rect.height / 2.0);
         let (ccx, ccy) = (rect.x + hw, rect.y + hh);
         let r = radius.min(hw).min(hh).max(0.0);
@@ -448,7 +497,8 @@ impl Canvas {
                 let qx = (sx - ccx).abs() - (hw - r);
                 let qy = (sy - ccy).abs() - (hh - r);
                 let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
-                let sdf = outside + qx.max(qy).min(0.0) - r;
+                // spread 만큼 그림자의 안쪽 경계를 안으로 민다 (sdf 를 spread 만큼 더한다)
+                let sdf = outside + qx.max(qy).min(0.0) - r + spread;
                 // 경계(sdf~0)에서 1, 안으로 soft 만큼 들어가면(sdf=-soft) 0
                 let cov = (1.0 + sdf / soft).clamp(0.0, 1.0);
                 if cov <= 0.0 {
@@ -640,6 +690,63 @@ fn blend_mode_compose(bg: Color, fg: Color, a: u8, mode: BlendMode) -> Color {
 }
 
 // 위치 p(0..1)에서 그라디언트 색을 선형 보간. stops 는 위치 오름차순 가정.
+// 스톱 위치를 0..1 로 확정한다. px 는 그라디언트 선 길이 기준, auto 는 이웃 사이 균등 보간,
+// 그리고 위치는 단조 증가해야 한다 (앞 스톱보다 작으면 앞 값으로 끌어올린다 — 표준).
+pub fn resolve_stops(
+    stops: &[(Color, crate::css::StopPos)],
+    line_len: f32,
+) -> Vec<(Color, f32)> {
+    use crate::css::StopPos;
+    let n = stops.len();
+    let mut pos: Vec<Option<f32>> = stops
+        .iter()
+        .map(|(_, sp)| match sp {
+            StopPos::Auto => None,
+            StopPos::Pct(v) => Some(*v),
+            StopPos::Px(v) => Some(if line_len > 0.0 { v / line_len } else { 0.0 }),
+            StopPos::Deg(d) => Some(d / 360.0),
+        })
+        .collect();
+    // 양 끝은 위치가 없으면 0 과 1
+    if pos[0].is_none() {
+        pos[0] = Some(0.0);
+    }
+    if pos[n - 1].is_none() {
+        pos[n - 1] = Some(1.0);
+    }
+    // 사이의 빈 위치는 알려진 두 이웃 사이로 균등 분배
+    let mut i = 0usize;
+    while i < n {
+        if pos[i].is_some() {
+            i += 1;
+            continue;
+        }
+        let start = i - 1;
+        let mut end = i;
+        while end < n && pos[end].is_none() {
+            end += 1;
+        }
+        let (a, b) = (pos[start].unwrap(), pos[end].unwrap());
+        let gap = end - start;
+        for (k, slot) in pos.iter_mut().enumerate().take(end).skip(i) {
+            *slot = Some(a + (b - a) * ((k - start) as f32 / gap as f32));
+        }
+        i = end;
+    }
+    // 단조 증가 보정
+    let mut out: Vec<(Color, f32)> = Vec::with_capacity(n);
+    let mut last = f32::NEG_INFINITY;
+    for (k, (c, _)) in stops.iter().enumerate() {
+        let mut p = pos[k].unwrap();
+        if p < last {
+            p = last;
+        }
+        last = p;
+        out.push((*c, p));
+    }
+    out
+}
+
 fn gradient_color_at(stops: &[(Color, f32)], p: f32) -> Color {
     if stops.is_empty() {
         return Color { r: 0, g: 0, b: 0, a: 0 };
@@ -901,12 +1008,47 @@ pub enum DisplayItem {
     RoundRectRing { color: Color, outer: Rect, outer_radii: [f32; 4], inner: Rect, inner_radii: [f32; 4] },
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
-    InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
+    // mask-image: 서브트리를 그린 뒤 마스크의 **알파**로 곱한다 (CSS Masking §3).
+    // 예전엔 통째로 무시했다 — 페이드아웃 마스크나 아이콘 마스크가 전혀 안 먹었다.
+    Masked {
+        rect: Rect,
+        gradient: Option<crate::css::Gradient>,
+        image: Option<usize>,
+        items: Vec<DisplayItem>,
+    },
+    // filter: drop-shadow(dx dy blur color) — 서브트리의 **실루엣**(알파)을 밀고 흐려서
+    // 뒤에 깔고, 그 위에 원본을 그린다. box-shadow 와 달리 박스가 아니라 그려진 모양을 따른다.
+    // 예전엔 통째로 무시됐다 (그림자가 아예 안 나왔다).
+    DropShadow {
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+        items: Vec<DisplayItem>,
+    },
+    InnerShadow {
+        color: Color,
+        rect: Rect,
+        radius: f32,
+        blur: f32,
+        spread: f32,
+        dx: f32,
+        dy: f32,
+    },
     Image { image: usize, rect: Rect, fit: ImageFit, pos: Option<(BgCoord, BgCoord)>, adj: ImgAdj },
     // 인라인 픽셀 이미지 (canvas putImageData). 이미지 배열에 없는 즉석 픽셀.
     RawImage { rect: Rect, img: std::rc::Rc<crate::png::Image>, adj: ImgAdj },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, circle: 원/타원, stops: (색, 위치 0-1).
-    Gradient { rect: Rect, angle: f32, radial: bool, circle: bool, conic: bool, stops: Vec<(Color, f32)> },
+    Gradient {
+        rect: Rect,
+        angle: f32,
+        radial: bool,
+        circle: bool,
+        conic: bool,
+        repeating: bool,
+        // 스톱 위치는 px/%/auto 그대로 — 그라디언트 선 길이를 알아야 풀린다(페인트 시점).
+        stops: Vec<(Color, crate::css::StopPos)>,
+    },
     // SVG path 채우기 (여러 윤곽선, nonzero winding). points 는 논리 좌표.
     Polygon { color: Color, contours: Vec<Vec<(f32, f32)>> },
     // 캔버스 그라디언트 (createLinearGradient/createRadialGradient). CSS 그라디언트와 달리
@@ -1649,33 +1791,26 @@ fn emit_outline(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
 
 // 안쪽 그림자(inset): 박스 내부 경계에서 안으로 번진다. 배경/테두리 위에 그린다.
 fn emit_inner_shadow(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
-    let len = |name: &str| match lb.styled_node.value(name) {
-        Some(Value::Length(v, crate::css::Unit::Px)) => Some(v),
-        _ => None,
-    };
-    let (dx, dy) = match (len("box-shadow-x"), len("box-shadow-y")) {
-        (Some(x), Some(y)) => (x, y),
-        _ => return,
-    };
-    if !matches!(lb.styled_node.value("box-shadow-inset"),
-        Some(Value::Keyword(ref k)) if k == "inset")
-    {
-        return;
+    // outset 과 **같은 파서**를 쓴다. 예전엔 inset 만 롱핸드(box-shadow-x/y/blur/color)를
+    // 읽었고, 그래서 **spread 를 통째로 무시**했고 다중 inset 도 못 그렸다
+    // (box-shadow: inset 0 0 0 10px green 같은 "안쪽 링"이 아예 안 나왔다).
+    let Some(Value::Keyword(raw)) = lb.styled_node.value("box-shadow") else { return };
+    let base_r = uniform_radius(lb).max(0.0);
+    let b = lb.dimensions.border_box();
+    for sh in parse_box_shadows(&raw).iter().rev() {
+        if !sh.inset {
+            continue; // 바깥 그림자는 emit_box_shadow 가 배경 앞에 발행
+        }
+        items.push(DisplayItem::InnerShadow {
+            color: sh.color,
+            rect: b,
+            radius: base_r,
+            blur: sh.blur,
+            spread: sh.spread,
+            dx: sh.dx,
+            dy: sh.dy,
+        });
     }
-    let blur = len("box-shadow-blur").unwrap_or(0.0);
-    let color = match lb.styled_node.value("box-shadow-color") {
-        Some(Value::Color(c)) => c,
-        _ => Color { r: 0, g: 0, b: 0, a: 128 },
-    };
-    let radius = uniform_radius(lb).max(0.0);
-    items.push(DisplayItem::InnerShadow {
-        color,
-        rect: lb.dimensions.border_box(),
-        radius,
-        blur,
-        dx,
-        dy,
-    });
 }
 
 // 박스 배경 + 테두리를 발행. border-radius 가 있으면 둥근 사각형으로,
@@ -1976,8 +2111,16 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
         }
         // 그라디언트: 보이는 영역으로 rect 만 자르고 각도/스톱은 유지
         // (클립된 부분만 다시 계산 — overflow 클립 하의 그라디언트는 드묾, 근사).
-        DisplayItem::Gradient { rect, angle, radial, circle, conic, stops } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, radial, circle, conic, stops })
+        DisplayItem::Gradient { rect, angle, radial, circle, conic, repeating, stops } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Gradient {
+                rect: r,
+                angle,
+                radial,
+                circle,
+                conic,
+                repeating,
+                stops,
+            })
         }
         // 캔버스 그라디언트: 보이는 영역으로 rect 만 자른다 (좌표계는 유지 —
         // 그라디언트 정의가 절대 좌표라 자른 뒤에도 색이 그대로여야 한다).
@@ -2019,9 +2162,10 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
             };
             rect_intersect(expanded, c).map(|_| DisplayItem::Shadow { color, rect, radius, blur })
         }
-        DisplayItem::InnerShadow { color, rect, radius, blur, dx, dy } => {
+        DisplayItem::InnerShadow { color, rect, radius, blur, spread, dx, dy } => {
             // 박스 안에만 그려지므로 rect 로 컬링만 (SDF 파라미터 유지)
-            rect_intersect(rect, c).map(|_| DisplayItem::InnerShadow { color, rect, radius, blur, dx, dy })
+            rect_intersect(rect, c)
+                .map(|_| DisplayItem::InnerShadow { color, rect, radius, blur, spread, dx, dy })
         }
         DisplayItem::Glyph(gi) => {
             // 글리프 대략 bbox: x..x+px, baseline 위 1.1em ~ 아래 0.4em
@@ -2045,6 +2189,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
         // 변환된 서브트리는 클립 사각형과 축이 다를 수 있다 — 그대로 둔다
         // (정확한 클립은 변환 후 마스크가 필요하다. 여기서 잘라내면 회전된 내용이 사라진다)
         t @ DisplayItem::Transform { .. } => Some(t),
+        t @ DisplayItem::DropShadow { .. } => Some(t),
+        t @ DisplayItem::Masked { .. } => Some(t),
     }
 }
 
@@ -2273,6 +2419,7 @@ fn collect_items(
             radial: g.radial,
             circle: g.circle,
             conic: g.conic,
+            repeating: g.repeating,
             stops: g.stops.clone(),
         });
     }
@@ -2403,6 +2550,60 @@ fn collect_items(
                 buf.push((maxz, DisplayItem::BackdropBlur { rect: ex, radius }));
             }
         }
+        // drop-shadow(dx dy [blur] [color]): 서브트리를 하나의 그룹으로 묶어 실루엣 그림자를
+        // 만든다. box-shadow 와 달리 **그려진 모양**(투명 배경의 아이콘 등)을 따라간다.
+        for ds in parse_drop_shadows(&f) {
+            let items: Vec<DisplayItem> =
+                buf.split_off(subtree_start).into_iter().map(|(_, it)| it).collect();
+            buf.push((
+                z,
+                DisplayItem::DropShadow {
+                    dx: ds.0,
+                    dy: ds.1,
+                    blur: ds.2,
+                    color: ds.3,
+                    items,
+                },
+            ));
+        }
+    }
+    // mask-image: 서브트리를 마스크의 알파로 곱한다 (CSS Masking §3).
+    {
+        let mask = layout_box
+            .styled_node
+            .value("mask-image")
+            .or_else(|| layout_box.styled_node.value("-webkit-mask-image"));
+        match mask {
+            Some(Value::Gradient(g)) => {
+                let items: Vec<DisplayItem> =
+                    buf.split_off(subtree_start).into_iter().map(|(_, it)| it).collect();
+                buf.push((
+                    z,
+                    DisplayItem::Masked {
+                        rect: layout_box.dimensions.border_box(),
+                        gradient: Some(g),
+                        image: None,
+                        items,
+                    },
+                ));
+            }
+            Some(Value::Url(_)) => {
+                if let Some(idx) = layout_box.mask_image {
+                    let items: Vec<DisplayItem> =
+                        buf.split_off(subtree_start).into_iter().map(|(_, it)| it).collect();
+                    buf.push((
+                        z,
+                        DisplayItem::Masked {
+                            rect: layout_box.dimensions.border_box(),
+                            gradient: None,
+                            image: Some(idx),
+                            items,
+                        },
+                    ));
+                }
+            }
+            _ => {}
+        }
     }
     // 그룹 opacity / mix-blend-mode → 오프스크린 레이어로 서브트리를 격리 합성.
     // (겹치는 반투명 자손이 이중 블렌드되지 않고, 그룹 blend 가 정확해진다.)
@@ -2451,6 +2652,85 @@ fn parse_filters(text: &str) -> Vec<(String, f32)> {
             out.push((name, 1.0)); // 인자 없는 경우 기본 강도
         }
         rest = &rest[close + 1..];
+    }
+    out
+}
+
+// filter 문자열에서 drop-shadow(...) 들을 뽑는다 → (dx, dy, blur, color)
+fn parse_drop_shadows(f: &str) -> Vec<(f32, f32, f32, Color)> {
+    let mut out = Vec::new();
+    let lower = f.to_ascii_lowercase();
+    let mut rest = lower.as_str();
+    let mut base = 0usize;
+    while let Some(i) = rest.find("drop-shadow(") {
+        let start = base + i + "drop-shadow(".len();
+        // 괄호 균형 (색 함수 rgba(...) 가 안에 올 수 있다)
+        let bytes = f.as_bytes();
+        let mut depth = 1i32;
+        let mut j = start;
+        while j < bytes.len() {
+            match bytes[j] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        if j >= bytes.len() {
+            break;
+        }
+        let args = &f[start..j];
+        let mut lens: Vec<f32> = Vec::new();
+        let mut color = Color { r: 0, g: 0, b: 0, a: 255 };
+        for tok in split_top_level_ws(args) {
+            let t = tok.trim();
+            if let Some(px) = t.strip_suffix("px").and_then(|n| n.trim().parse::<f32>().ok()) {
+                lens.push(px);
+            } else if let Ok(v) = t.parse::<f32>() {
+                lens.push(v);
+            } else if let Some(c) = crate::css::parse_color(t) {
+                color = c;
+            }
+        }
+        if lens.len() >= 2 {
+            out.push((lens[0], lens[1], lens.get(2).copied().unwrap_or(0.0), color));
+        }
+        base = j + 1;
+        rest = &lower[base.min(lower.len())..];
+    }
+    out
+}
+
+// 괄호를 존중하며 공백으로 토큰 분리 (rgba(1, 2, 3) 을 한 토큰으로)
+fn split_top_level_ws(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
     }
     out
 }
@@ -2544,7 +2824,12 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         | DisplayItem::InnerShadow { color, .. }
         | DisplayItem::Polygon { color, .. } => *color = apply_filters(*color, funcs),
         DisplayItem::Glyph(gi) => gi.color = apply_filters(gi.color, funcs),
-        DisplayItem::Gradient { stops, .. } | DisplayItem::CanvasGradient { stops, .. } => {
+        DisplayItem::Gradient { stops, .. } => {
+            for (c, _) in stops.iter_mut() {
+                *c = apply_filters(*c, funcs);
+            }
+        }
+        DisplayItem::CanvasGradient { stops, .. } => {
             for (c, _) in stops.iter_mut() {
                 *c = apply_filters(*c, funcs);
             }
@@ -2555,7 +2840,11 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         }
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
-        DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| filter_item(it, funcs)),
+        DisplayItem::Layer { items, .. }
+        | DisplayItem::DropShadow { items, .. }
+        | DisplayItem::Masked { items, .. } => {
+            items.iter_mut().for_each(|it| filter_item(it, funcs))
+        }
         DisplayItem::Transform { items, .. } => {
             items.iter_mut().for_each(|it| filter_item(it, funcs))
         }
@@ -2575,7 +2864,9 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
     let s = |a: u8| (a as f32 * f).round().clamp(0.0, 255.0) as u8;
     match item {
         DisplayItem::RawImage { adj, .. } => adj.alpha *= f,
-        DisplayItem::Transform { items, .. } => {
+        DisplayItem::Transform { items, .. }
+        | DisplayItem::DropShadow { items, .. }
+        | DisplayItem::Masked { items, .. } => {
             items.iter_mut().for_each(|it| scale_item_alpha(it, f))
         }
         DisplayItem::CanvasGradient { stops, .. } => {
@@ -2692,12 +2983,20 @@ fn draw_item(
             }
             canvas.fill_soft_round_rect(*color, r, radius * scale, blur * scale);
         }
-        DisplayItem::InnerShadow { color, rect, radius, blur, dx, dy } => {
+        DisplayItem::InnerShadow { color, rect, radius, blur, spread, dx, dy } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
-            canvas.fill_inner_shadow(*color, r, radius * scale, blur * scale, dx * scale, dy * scale);
+            canvas.fill_inner_shadow(
+                *color,
+                r,
+                radius * scale,
+                blur * scale,
+                spread * scale,
+                dx * scale,
+                dy * scale,
+            );
         }
         DisplayItem::Image { image, rect, fit, pos, adj } => {
             let r = scale_rect(rect);
@@ -2708,12 +3007,12 @@ fn draw_item(
                 blit_image(canvas, img, r, scale, *fit, *pos, adj);
             }
         }
-        DisplayItem::Gradient { rect, angle, radial, circle, conic, stops } => {
+        DisplayItem::Gradient { rect, angle, radial, circle, conic, repeating, stops } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
-            canvas.fill_gradient(r, *angle, *radial, *circle, *conic, stops);
+            canvas.fill_gradient(r, *angle, *radial, *circle, *conic, *repeating, stops, scale);
         }
         DisplayItem::RawImage { rect, img, adj } => {
             let r = scale_rect(rect);
@@ -2815,6 +3114,102 @@ fn draw_item(
                 return;
             }
             canvas.blur_region(r, radius * scale);
+        }
+        // mask-image: 서브트리를 그린 뒤 마스크의 **알파**로 곱한다 (CSS Masking §3).
+        DisplayItem::Masked { rect, gradient, image, items } => {
+            let mut layer = Canvas::new_layer(canvas.width, canvas.height);
+            for it in items {
+                draw_item(&mut layer, it, scroll_y, scale, vh, fonts, cache, images);
+            }
+            // 마스크를 별도 레이어에 그린다 (알파만 쓴다)
+            let r = scale_rect(rect);
+            let mut mask = Canvas::new_layer(canvas.width, canvas.height);
+            if let Some(g) = gradient {
+                mask.fill_gradient(
+                    r,
+                    g.angle_deg,
+                    g.radial,
+                    g.circle,
+                    g.conic,
+                    g.repeating,
+                    &g.stops,
+                    scale,
+                );
+            } else if let Some(idx) = image {
+                if let Some(img) = images.get(*idx) {
+                    blit_image(&mut mask, img, r, scale, ImageFit::Fill, None, &ImgAdj::none());
+                }
+            }
+            for py in 0..canvas.height {
+                for px in 0..canvas.width {
+                    let lp = layer.pixels[py * canvas.width + px];
+                    if lp.a == 0 {
+                        continue;
+                    }
+                    let m = mask.pixels[py * canvas.width + px].a;
+                    let a = ((lp.a as u32 * m as u32) / 255) as u8;
+                    if a > 0 {
+                        canvas.put(px, py, lp, a);
+                    }
+                }
+            }
+        }
+        DisplayItem::DropShadow { dx, dy, blur, color, items } => {
+            // 1) 서브트리를 격리 레이어에 그린다
+            let mut layer = Canvas::new_layer(canvas.width, canvas.height);
+            for it in items {
+                draw_item(&mut layer, it, scroll_y, scale, vh, fonts, cache, images);
+            }
+            // 2) 알파 실루엣을 오프셋해 그림자 색으로 칠한다
+            let (odx, ody) = ((dx * scale).round() as i32, (dy * scale).round() as i32);
+            let mut shadow = Canvas::new_layer(canvas.width, canvas.height);
+            let (mut minx, mut miny, mut maxx, mut maxy) =
+                (canvas.width as i32, canvas.height as i32, 0i32, 0i32);
+            for py in 0..canvas.height as i32 {
+                for px in 0..canvas.width as i32 {
+                    let lp = layer.pixels[py as usize * canvas.width + px as usize];
+                    if lp.a == 0 {
+                        continue;
+                    }
+                    let (tx, ty) = (px + odx, py + ody);
+                    if tx < 0 || ty < 0 || tx >= canvas.width as i32 || ty >= canvas.height as i32 {
+                        continue;
+                    }
+                    let a = ((lp.a as f32 / 255.0) * (color.a as f32 / 255.0) * 255.0) as u8;
+                    shadow.put(tx as usize, ty as usize, *color, a);
+                    minx = minx.min(tx);
+                    miny = miny.min(ty);
+                    maxx = maxx.max(tx);
+                    maxy = maxy.max(ty);
+                }
+            }
+            if maxx >= minx && *blur > 0.0 {
+                let m = (blur * scale).ceil() as i32 + 2;
+                let r = Rect {
+                    x: (minx - m).max(0) as f32,
+                    y: (miny - m).max(0) as f32,
+                    width: (maxx - minx + 2 * m) as f32,
+                    height: (maxy - miny + 2 * m) as f32,
+                };
+                shadow.blur_region(r, blur * scale);
+            }
+            // 3) 그림자 → 원본 순으로 합성
+            for py in 0..canvas.height {
+                for px in 0..canvas.width {
+                    let sp = shadow.pixels[py * canvas.width + px];
+                    if sp.a > 0 {
+                        canvas.put(px, py, sp, sp.a);
+                    }
+                }
+            }
+            for py in 0..canvas.height {
+                for px in 0..canvas.width {
+                    let lp = layer.pixels[py * canvas.width + px];
+                    if lp.a > 0 {
+                        canvas.put(px, py, lp, lp.a);
+                    }
+                }
+            }
         }
         DisplayItem::Layer { opacity, blend, items } => {
             // 서브트리를 투명 레이어에 격리 렌더 → opacity/blend 로 한 번에 합성
@@ -3722,11 +4117,82 @@ mod tests {
         assert_eq!(c.pixels[4], white);
     }
 
+    // 스톱 위치 해석: px 는 그라디언트 선 길이 기준, auto 는 이웃 사이 균등 분배.
+    // 예전엔 % 만 읽고 **px 는 통째로 무시**했다 (균등 분배로 뭉개졌다) —
+    // linear-gradient(#fff 0, #fff 10px, transparent 10px) 처럼 흔한 패턴이 조용히 틀렸다.
+    // repeating-linear-gradient: 스톱 구간이 반복돼야 한다.
+    // 예전엔 함수 이름을 몰라 값 파싱이 실패했고 → **배경이 통째로 안 그려졌다**.
+    #[test]
+    fn repeating_gradient_tiles_the_stop_range() {
+        use crate::css::StopPos;
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let blue = Color { r: 0, g: 0, b: 255, a: 255 };
+        // 90deg(오른쪽), 0-10px 빨강 / 10-20px 파랑 이 반복
+        let stops = vec![
+            (red, StopPos::Px(0.0)),
+            (red, StopPos::Px(10.0)),
+            (blue, StopPos::Px(10.0)),
+            (blue, StopPos::Px(20.0)),
+        ];
+        let mut c = Canvas::new(40, 1);
+        c.fill_gradient(
+            Rect { x: 0.0, y: 0.0, width: 40.0, height: 1.0 },
+            90.0,
+            false,
+            false,
+            false,
+            true,
+            &stops,
+            1.0,
+        );
+        let px = |x: usize| c.pixels[x];
+        assert_eq!(px(5).r, 255, "0-10px 빨강");
+        assert_eq!(px(15).b, 255, "10-20px 파랑");
+        assert_eq!(px(25).r, 255, "20-30px 다시 빨강 (반복)");
+        assert_eq!(px(35).b, 255, "30-40px 다시 파랑");
+    }
+
+    // inset box-shadow 의 spread — 예전엔 inset 만 롱핸드를 읽어서 spread 를 무시했다
+    // (box-shadow: inset 0 0 0 10px c 같은 "안쪽 링"이 아예 안 나왔다).
+    #[test]
+    fn inset_shadow_spread_draws_inner_ring() {
+        let green = Color { r: 0, g: 255, b: 0, a: 255 };
+        // 투명 레이어에 그려야 "중앙이 비었는가"를 알파로 볼 수 있다
+        let mut c = Canvas::new_layer(40, 40);
+        c.fill_inner_shadow(
+            green,
+            Rect { x: 0.0, y: 0.0, width: 40.0, height: 40.0 },
+            0.0,
+            0.0,  // blur 0
+            10.0, // spread 10 → 두께 10 의 안쪽 링
+            0.0,
+            0.0,
+        );
+        assert_eq!(c.pixels[20 * 40 + 5].g, 255, "가장자리 5px 는 링 안");
+        assert_eq!(c.pixels[20 * 40 + 20].a, 0, "중앙은 비어 있어야");
+    }
+
+    #[test]
+    fn stop_positions_resolve_px_and_auto() {
+        use crate::css::StopPos;
+        let c = Color { r: 0, g: 0, b: 0, a: 255 };
+        // px: 선 길이 100 → 10px = 0.1
+        let r = resolve_stops(&[(c, StopPos::Px(0.0)), (c, StopPos::Px(10.0))], 100.0);
+        assert_eq!(r[0].1, 0.0);
+        assert!((r[1].1 - 0.1).abs() < 1e-6, "10px/100 = 0.1, 실제 {}", r[1].1);
+        // auto: 양끝 0/1, 중간은 균등
+        let r = resolve_stops(&[(c, StopPos::Auto), (c, StopPos::Auto), (c, StopPos::Auto)], 100.0);
+        assert_eq!(r.iter().map(|(_, p)| *p).collect::<Vec<_>>(), vec![0.0, 0.5, 1.0]);
+        // 단조 증가 보정: 앞보다 작은 위치는 앞 값으로 끌어올린다 (표준)
+        let r = resolve_stops(&[(c, StopPos::Pct(0.5)), (c, StopPos::Pct(0.2))], 100.0);
+        assert_eq!(r[1].1, 0.5);
+    }
+
     #[test]
     fn gradient_color_interpolates_between_stops() {
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        let stops = vec![(black, 0.0), (white, 1.0)];
+        let stops = vec![(black, 0.0f32), (white, 1.0f32)];
         assert_eq!(gradient_color_at(&stops, 0.0), black);
         assert_eq!(gradient_color_at(&stops, 1.0), white);
         let mid = gradient_color_at(&stops, 0.5);
@@ -3755,8 +4221,20 @@ mod tests {
         let mut canvas = Canvas::new(4, 1);
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 }, 90.0, false, false, false, &stops);
+        let stops = vec![
+            (black, crate::css::StopPos::Pct(0.0)),
+            (white, crate::css::StopPos::Pct(1.0)),
+        ];
+        canvas.fill_gradient(
+            Rect { x: 0.0, y: 0.0, width: 4.0, height: 1.0 },
+            90.0,
+            false,
+            false,
+            false,
+            false,
+            &stops,
+            1.0,
+        );
         assert!(canvas.pixels[0].r < canvas.pixels[3].r, "왼쪽이 오른쪽보다 어두워야 함");
         assert!(canvas.pixels[0].r < 64, "왼쪽 끝은 검정에 가까움");
         assert!(canvas.pixels[3].r > 192, "오른쪽 끝은 흰색에 가까움");
@@ -3770,7 +4248,7 @@ mod tests {
             *p = Color { r: 255, g: 255, b: 255, a: 255 };
         }
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
-        canvas.fill_inner_shadow(black, Rect { x: 0.0, y: 0.0, width: 20.0, height: 20.0 }, 0.0, 8.0, 0.0, 0.0);
+        canvas.fill_inner_shadow(black, Rect { x: 0.0, y: 0.0, width: 20.0, height: 20.0 }, 0.0, 8.0, 0.0, 0.0, 0.0);
         let edge = canvas.pixels[10 * 20 + 0]; // 왼쪽 가장자리 (0,10)
         let center = canvas.pixels[10 * 20 + 10]; // 중심 (10,10)
         assert!(edge.r < center.r, "가장자리({})가 중심({})보다 어두워야", edge.r, center.r);
@@ -3783,8 +4261,20 @@ mod tests {
         let mut canvas = Canvas::new(11, 11);
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 11.0, height: 11.0 }, 0.0, false, false, true, &stops);
+        let stops = vec![
+            (black, crate::css::StopPos::Pct(0.0)),
+            (white, crate::css::StopPos::Pct(1.0)),
+        ];
+        canvas.fill_gradient(
+            Rect { x: 0.0, y: 0.0, width: 11.0, height: 11.0 },
+            0.0,
+            false,
+            false,
+            true,
+            false,
+            &stops,
+            1.0,
+        );
         let top = canvas.pixels[0 * 11 + 5]; // 중심 위쪽 (5,0) 각도~0 → 검정
         let left = canvas.pixels[5 * 11 + 0]; // 중심 왼쪽 (0,5) 각도~270 → 밝음
         assert!(top.r < left.r, "위쪽({})이 왼쪽({})보다 어두워야", top.r, left.r);
@@ -3796,8 +4286,8 @@ mod tests {
         let mut canvas = Canvas::new(5, 5);
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        let stops = vec![(black, 0.0), (white, 1.0)];
-        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 5.0, height: 5.0 }, 0.0, true, false, false, &stops);
+        let stops = vec![(black, crate::css::StopPos::Pct(0.0)), (white, crate::css::StopPos::Pct(1.0))];
+        canvas.fill_gradient(Rect { x: 0.0, y: 0.0, width: 5.0, height: 5.0 }, 0.0, true, false, false, false, &stops, 1.0);
         let center = canvas.pixels[2 * 5 + 2]; // (2,2)
         let corner = canvas.pixels[0]; // (0,0)
         assert!(center.r < 40, "중심은 검정에 가까움, 실제 {}", center.r);
@@ -3927,12 +4417,12 @@ mod tests {
         // 원보다 어둡다(정규화 거리 p 가 더 작음). 원과 결과가 달라야 함.
         let black = Color { r: 0, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
-        let stops = vec![(black, 0.0), (white, 1.0)];
+        let stops = vec![(black, crate::css::StopPos::Pct(0.0)), (white, crate::css::StopPos::Pct(1.0))];
         let rect = Rect { x: 0.0, y: 0.0, width: 20.0, height: 4.0 };
         let mut ell = Canvas::new(20, 4);
-        ell.fill_gradient(rect, 0.0, true, false, false, &stops); // ellipse
+        ell.fill_gradient(rect, 0.0, true, false, false, false, &stops, 1.0); // ellipse
         let mut cir = Canvas::new(20, 4);
-        cir.fill_gradient(rect, 0.0, true, true, false, &stops); // circle
+        cir.fill_gradient(rect, 0.0, true, true, false, false, &stops, 1.0); // circle
         // 오른쪽 가장자리 중앙 (19,2)
         let ell_edge = ell.pixels[2 * 20 + 19];
         let cir_edge = cir.pixels[2 * 20 + 19];

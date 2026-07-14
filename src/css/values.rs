@@ -20,6 +20,28 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("calc(") && text.ends_with(')') {
         return eval_calc(&text[5..text.len() - 1]);
     }
+    // repeating-* 는 같은 문법에 반복 플래그만 다르다
+    if lower.starts_with("repeating-linear-gradient(") && text.ends_with(')') {
+        let inner = &text["repeating-linear-gradient(".len()..text.len() - 1];
+        return parse_linear_gradient(inner).map(|mut g| {
+            g.repeating = true;
+            Value::Gradient(g)
+        });
+    }
+    if lower.starts_with("repeating-radial-gradient(") && text.ends_with(')') {
+        let inner = &text["repeating-radial-gradient(".len()..text.len() - 1];
+        return parse_radial_gradient(inner).map(|mut g| {
+            g.repeating = true;
+            Value::Gradient(g)
+        });
+    }
+    if lower.starts_with("repeating-conic-gradient(") && text.ends_with(')') {
+        let inner = &text["repeating-conic-gradient(".len()..text.len() - 1];
+        return parse_conic_gradient(inner).map(|mut g| {
+            g.repeating = true;
+            Value::Gradient(g)
+        });
+    }
     if lower.starts_with("linear-gradient(") && text.ends_with(')') {
         return parse_linear_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
     }
@@ -360,7 +382,14 @@ fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
         }
     }
     let stops = parse_color_stops(&parts[idx..])?;
-    Some(crate::css::Gradient { angle_deg: angle, radial: false, circle: false, conic: false, stops })
+    Some(crate::css::Gradient {
+        angle_deg: angle,
+        radial: false,
+        circle: false,
+        conic: false,
+        repeating: false,
+        stops,
+    })
 }
 
 // radial-gradient([shape size at pos,]? stop, ...) — 모양/크기/위치는 근사(중심 방사,
@@ -383,7 +412,14 @@ fn parse_radial_gradient(inner: &str) -> Option<crate::css::Gradient> {
     // 서술자(첫 파트)에 'circle' 이 있으면 원, 아니면 타원(기본). 크기/위치는 근사.
     let circle = idx == 1 && parts[0].to_ascii_lowercase().split_whitespace().any(|t| t == "circle");
     let stops = parse_color_stops(&parts[idx..])?;
-    Some(crate::css::Gradient { angle_deg: 0.0, radial: true, circle, conic: false, stops })
+    Some(crate::css::Gradient {
+        angle_deg: 0.0,
+        radial: true,
+        circle,
+        conic: false,
+        repeating: false,
+        stops,
+    })
 }
 
 // conic-gradient([from Ndeg] [at pos,]? stop, ...) — from/at 서술자는 근사로 무시.
@@ -399,40 +435,44 @@ fn parse_conic_gradient(inner: &str) -> Option<crate::css::Gradient> {
         return None;
     }
     // 각도 위치(Ndeg)를 % 로 바꿔 parse_color_stops 가 처리하도록 전처리
-    let mut stops: Vec<(Color, Option<f32>)> = Vec::new();
-    for p in &parts[idx..] {
-        let toks = split_top_level(p.trim());
-        if toks.is_empty() {
-            continue;
-        }
-        let color = match interpret_value(&toks[0]) {
-            Some(Value::Color(c)) => c,
-            _ => continue,
-        };
-        let pos = toks.get(1).and_then(|t| {
-            if let Some(d) = t.strip_suffix("deg") {
-                d.trim().parse::<f32>().ok().map(|v| v / 360.0)
-            } else {
-                t.strip_suffix('%').and_then(|n| n.trim().parse::<f32>().ok()).map(|v| v / 100.0)
-            }
-        });
-        stops.push((color, pos));
-    }
-    if stops.len() < 2 {
-        return None;
-    }
-    let n = stops.len();
-    let resolved: Vec<(Color, f32)> = stops
-        .iter()
-        .enumerate()
-        .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
-        .collect();
-    Some(crate::css::Gradient { angle_deg: 0.0, radial: false, circle: false, conic: true, stops: resolved })
+    let stops = parse_color_stops(&parts[idx..])?;
+    Some(crate::css::Gradient {
+        angle_deg: 0.0,
+        radial: false,
+        circle: false,
+        conic: true,
+        repeating: false,
+        stops,
+    })
 }
 
-// 색 스톱 목록 파싱. 위치 미지정 스톱은 균등 분배. 스톱 2개 미만이면 None.
-fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, f32)>> {
-    let mut stops: Vec<(Color, Option<f32>)> = Vec::new();
+// 색 스톱 목록. 위치는 %/px/deg 를 그대로 보존한다 (px 는 페인트 때 그라디언트 선
+// 길이로 푼다). 이중 위치("#f00 0 10px")는 같은 색의 스톱 두 개로 펼친다 (표준).
+fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos)>> {
+    use crate::css::StopPos;
+    let parse_pos = |t: &str| -> Option<StopPos> {
+        let t = t.trim();
+        if let Some(n) = t.strip_suffix('%') {
+            return n.trim().parse::<f32>().ok().map(|p| StopPos::Pct(p / 100.0));
+        }
+        if let Some(n) = t.strip_suffix("px") {
+            return n.trim().parse::<f32>().ok().map(StopPos::Px);
+        }
+        if let Some(n) = t.strip_suffix("deg") {
+            return n.trim().parse::<f32>().ok().map(|d| StopPos::Deg(d));
+        }
+        if let Some(n) = t.strip_suffix("turn") {
+            return n.trim().parse::<f32>().ok().map(|d| StopPos::Deg(d * 360.0));
+        }
+        // 단위 없는 0 (표준에서 허용)
+        if let Ok(v) = t.parse::<f32>() {
+            if v == 0.0 {
+                return Some(StopPos::Px(0.0));
+            }
+        }
+        None
+    };
+    let mut stops: Vec<(Color, StopPos)> = Vec::new();
     for p in parts {
         let toks = split_top_level(p.trim());
         if toks.is_empty() {
@@ -442,24 +482,22 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, f32)>> {
             Some(Value::Color(c)) => c,
             _ => continue,
         };
-        let pos = toks
-            .get(1)
-            .and_then(|t| t.strip_suffix('%'))
-            .and_then(|n| n.trim().parse::<f32>().ok())
-            .map(|p| p / 100.0);
-        stops.push((color, pos));
+        let p1 = toks.get(1).and_then(|t| parse_pos(t));
+        let p2 = toks.get(2).and_then(|t| parse_pos(t));
+        match (p1, p2) {
+            // 이중 위치: 같은 색의 스톱 두 개 (딱딱한 경계를 만든다)
+            (Some(a), Some(b)) => {
+                stops.push((color, a));
+                stops.push((color, b));
+            }
+            (Some(a), None) => stops.push((color, a)),
+            _ => stops.push((color, StopPos::Auto)),
+        }
     }
     if stops.len() < 2 {
         return None;
     }
-    let n = stops.len();
-    Some(
-        stops
-            .iter()
-            .enumerate()
-            .map(|(i, (c, p))| (*c, p.unwrap_or(i as f32 / (n as f32 - 1.0))))
-            .collect(),
-    )
+    Some(stops)
 }
 
 // 최상위(괄호 밖) 콤마로 분리

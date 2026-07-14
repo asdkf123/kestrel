@@ -326,6 +326,13 @@ fn collect_bg_urls(node: &style::StyledNode, out: &mut Vec<String>) {
     if let Some(css::Value::Url(u)) = node.value("background-image") {
         out.push(u);
     }
+    // 마스크 이미지도 받아야 한다 (아이콘 색칠에 -webkit-mask-image 를 쓰는 UI 가 흔하다).
+    // 안 받으면 마스크가 없다고 판단해 요소가 통째로 보이거나 통째로 사라진다.
+    for p in ["mask-image", "-webkit-mask-image"] {
+        if let Some(css::Value::Url(u)) = node.value(p) {
+            out.push(u);
+        }
+    }
     for c in &node.children {
         collect_bg_urls(c, out);
     }

@@ -106,6 +106,8 @@ pub struct LayoutBox<'a> {
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
     pub image: Option<usize>,
     pub background_image: Option<usize>,
+    // mask-image: url(...) 로 지정된 마스크 이미지 (다운로드된 인덱스)
+    pub mask_image: Option<usize>,
     pub gradient: Option<crate::css::Gradient>,
     // 클릭 히트 영역: (단어 단위 사각형, href)
     pub links: Vec<(Rect, String)>,
@@ -148,6 +150,7 @@ impl<'a> LayoutBox<'a> {
             inline_nodes: Vec::new(),
             image: None,
             background_image: None,
+            mask_image: None,
             gradient: None,
             links: Vec::new(),
             inline_frags: Vec::new(),
@@ -176,6 +179,7 @@ impl<'a> LayoutBox<'a> {
             inline_nodes: nodes,
             image: None,
             background_image: None,
+            mask_image: None,
             gradient: None,
             links: Vec::new(),
             inline_frags: Vec::new(),
@@ -350,6 +354,13 @@ impl<'a> LayoutBox<'a> {
             }
             Some(Value::Gradient(g)) => self.gradient = Some(g),
             _ => {}
+        }
+        for p in ["mask-image", "-webkit-mask-image"] {
+            if let Some(Value::Url(u)) = self.styled_node.value(p) {
+                if let Some(&(idx, _, _)) = images.get(&u) {
+                    self.mask_image = Some(idx);
+                }
+            }
         }
         let tag = match &self.styled_node.node.node_type {
             NodeType::Element(e) => e.tag_name.as_str(),

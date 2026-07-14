@@ -286,11 +286,25 @@ impl CalcSum {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gradient {
-    pub angle_deg: f32,          // CSS 각도 (0=위, 90=오른쪽, 180=아래). radial/conic 이면 무시.
-    pub radial: bool,            // true=radial(중심에서 방사)
-    pub circle: bool,            // radial 일 때 true=circle(원), false=ellipse(기본)
-    pub conic: bool,             // true=conic(중심 기준 각도 스윕)
-    pub stops: Vec<(Color, f32)>, // (색, 위치 0-1)
+    pub angle_deg: f32, // CSS 각도 (0=위, 90=오른쪽, 180=아래). radial/conic 이면 무시.
+    pub radial: bool,   // true=radial(중심에서 방사)
+    pub circle: bool,   // radial 일 때 true=circle(원), false=ellipse(기본)
+    pub conic: bool,    // true=conic(중심 기준 각도 스윕)
+    // repeating-* 그라디언트: 스톱 구간을 반복한다. 예전엔 이 함수 이름을 몰라서
+    // 값 파싱이 실패했고 → **배경이 통째로 안 그려졌다** (조용히 사라졌다).
+    pub repeating: bool,
+    pub stops: Vec<(Color, StopPos)>,
+}
+
+// 색 스톱의 위치. px 는 그라디언트 선 길이를 알아야 풀리므로 **페인트 시점까지** 남긴다.
+// 예전엔 % 만 읽고 px 는 통째로 무시했다 — linear-gradient(#fff 0, #fff 10px, transparent 10px)
+// 처럼 흔한 패턴이 균등 분배로 뭉개졌다 (조용히 틀린 그림).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StopPos {
+    Auto,     // 위치 미지정 → 이웃 사이로 균등 보간 (표준)
+    Pct(f32), // 0..1
+    Px(f32),
+    Deg(f32), // conic 전용 (0..360 → 0..1 로 정규화해서 저장)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1548,6 +1562,28 @@ mod tests {
     fn specificity_counts_id_class_tag() {
         let ss = parse("#x { color: #000000; }".to_string());
         assert_eq!(ss.rules[0].selectors[0].specificity(), (1, 0, 0));
+    }
+
+    #[test]
+    fn repeating_gradient_parses() {
+        let ss = crate::css::parse(
+            "#d { background: repeating-linear-gradient(90deg, #ff0000 0 10px, #0000ff 10px 20px); }"
+                .to_string(),
+        );
+        let d = &ss.rules[0].declarations;
+        let g = d
+            .iter()
+            .find(|x| x.name == "background-image")
+            .map(|x| &x.value)
+            .expect("background-image 선언이 나와야 한다 (안 나오면 배경이 통째로 사라진다)");
+        match g {
+            crate::css::Value::Gradient(g) => {
+                assert!(g.repeating, "repeating 플래그");
+                assert_eq!(g.stops.len(), 4, "이중 위치는 스톱 두 개로 펼쳐진다");
+                assert_eq!(g.stops[1].1, crate::css::StopPos::Px(10.0));
+            }
+            other => panic!("그라디언트가 아니다: {:?}", other),
+        }
     }
 
     #[test]
