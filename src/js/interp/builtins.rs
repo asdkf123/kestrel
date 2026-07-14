@@ -3747,17 +3747,55 @@ impl Interp {
             }
             Native::LsGetItem => {
                 let k = args.first().map(to_display).unwrap_or_default();
-                Ok(self.storage.get(&k).map(|v| Value::Str(v.clone())).unwrap_or(Value::Null))
+                Ok(self
+                    .storage
+                    .iter()
+                    .find(|(sk, _)| *sk == k)
+                    .map(|(_, v)| Value::Str(v.clone()))
+                    .unwrap_or(Value::Null))
+            }
+            // Storage.length / Storage.key(i) — 삽입 순서 기준 (표준 §12.2)
+            Native::LsLength => Ok(Value::Num(self.storage.len() as f64)),
+            // Headers.get/has (Fetch 표준). 이름은 대소문자를 구분하지 않는다.
+            Native::HeadersGet | Native::HeadersHas => {
+                let name = args
+                    .first()
+                    .map(to_display)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let key = format!("\u{0}h:{}", name);
+                let found = match &recv {
+                    Some(Value::Obj(o)) => o.borrow().get(&key).cloned(),
+                    _ => None,
+                };
+                Ok(match n {
+                    Native::HeadersHas => Value::Bool(found.is_some()),
+                    _ => found.unwrap_or(Value::Null),
+                })
+            }
+            Native::LsKey => {
+                let i = args.first().map(to_num).unwrap_or(f64::NAN);
+                if !i.is_finite() || i < 0.0 {
+                    return Ok(Value::Null);
+                }
+                Ok(self
+                    .storage
+                    .get(i as usize)
+                    .map(|(k, _)| Value::Str(k.clone()))
+                    .unwrap_or(Value::Null))
             }
             Native::LsSetItem => {
                 let k = args.first().map(to_display).unwrap_or_default();
                 let v = args.get(1).map(to_display).unwrap_or_default();
-                self.storage.insert(k, v);
+                match self.storage.iter_mut().find(|(sk, _)| *sk == k) {
+                    Some(slot) => slot.1 = v,
+                    None => self.storage.push((k, v)),
+                }
                 Ok(Value::Undefined)
             }
             Native::LsRemoveItem => {
                 let k = args.first().map(to_display).unwrap_or_default();
-                self.storage.remove(&k);
+                self.storage.retain(|(sk, _)| *sk != k);
                 Ok(Value::Undefined)
             }
             Native::LsClear => {
@@ -4066,6 +4104,47 @@ impl Interp {
                         m.insert("\u{0}body".to_string(), Value::Str(body));
                         m.insert("text".to_string(), Value::Native(Native::ResponseText));
                         m.insert("json".to_string(), Value::Native(Native::ResponseJson));
+                        // Response 는 headers/url/statusText/type/redirected 를 갖는다 (Fetch 표준).
+                        // 없으면 r.headers.get('content-type') 같은 흔한 코드가 즉사한다.
+                        m.insert("url".to_string(), Value::Str(url.clone()));
+                        m.insert("redirected".to_string(), Value::Bool(false));
+                        m.insert("type".to_string(), Value::Str("basic".to_string()));
+                        m.insert(
+                            "statusText".to_string(),
+                            Value::Str(
+                                match r.status {
+                                    200 => "OK",
+                                    201 => "Created",
+                                    204 => "No Content",
+                                    301 => "Moved Permanently",
+                                    302 => "Found",
+                                    304 => "Not Modified",
+                                    400 => "Bad Request",
+                                    401 => "Unauthorized",
+                                    403 => "Forbidden",
+                                    404 => "Not Found",
+                                    500 => "Internal Server Error",
+                                    _ => "",
+                                }
+                                .to_string(),
+                            ),
+                        );
+                        let mut hm = ObjMap::new();
+                        let mut pairs: Vec<Value> = Vec::new();
+                        for (k, v) in &r.headers {
+                            hm.insert(
+                                format!("\u{0}h:{}", k.to_ascii_lowercase()),
+                                Value::Str(v.clone()),
+                            );
+                            pairs.push(Value::Arr(ArrayObj::new(vec![
+                                Value::Str(k.to_ascii_lowercase()),
+                                Value::Str(v.clone()),
+                            ])));
+                        }
+                        hm.insert("get".to_string(), Value::Native(Native::HeadersGet));
+                        hm.insert("has".to_string(), Value::Native(Native::HeadersHas));
+                        hm.insert("\u{0}items".to_string(), Value::Arr(ArrayObj::new(pairs)));
+                        m.insert("headers".to_string(), Value::Obj(Rc::new(RefCell::new(hm))));
                         let response = Value::Obj(Rc::new(RefCell::new(m)));
                         self.resolve_promise(&resp, response);
                     }

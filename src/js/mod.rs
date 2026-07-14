@@ -695,6 +695,11 @@ if (typeof URL !== "undefined" && !URL.createObjectURL) {
   URL.revokeObjectURL = function () {};
 }
 
+// Storage 인터페이스 전역 (표준). 사이트가 typeof Storage !== 'undefined' 로 탐지한다.
+if (typeof Storage === "undefined") {
+  window.Storage = function () {};
+}
+
 // getSelection: 정적 렌더에는 사용자 선택이 없다 → 항상 빈 Selection.
 // 없으면 typeof 검사 후 .toString() 을 부르는 코드가 죽는다. 빈 선택은 거짓말이 아니다.
 window.getSelection = function () {
@@ -858,7 +863,19 @@ __kURLSearchParams.prototype.forEach = function(fn){
 };
 __kURLSearchParams.prototype.keys = function(){ return this._p.map(function(e){ return e[0]; }); };
 __kURLSearchParams.prototype.values = function(){ return this._p.map(function(e){ return e[1]; }); };
-__kURLSearchParams.prototype.entries = function(){ return this._p.map(function(e){ return [e[0], e[1]]; }); };
+// entries/keys/values 는 이터레이터다 (표준). 그리고 URLSearchParams 자신도 이터러블이다 —
+// [...params] / for-of 가 표준 관용구인데 예전엔 통째로 안 됐다.
+__kURLSearchParams.prototype.entries = function(){
+  var arr = this._p.map(function(e){ return [e[0], e[1]]; });
+  return arr[Symbol.iterator]();
+};
+__kURLSearchParams.prototype.keys = function(){
+  return this._p.map(function(e){ return e[0]; })[Symbol.iterator]();
+};
+__kURLSearchParams.prototype.values = function(){
+  return this._p.map(function(e){ return e[1]; })[Symbol.iterator]();
+};
+__kURLSearchParams.prototype[Symbol.iterator] = function(){ return this.entries(); };
 __kURLSearchParams.prototype.toString = function(){
   return this._p.map(function(e){
     return encodeURIComponent(e[0]) + '=' + encodeURIComponent(e[1]);

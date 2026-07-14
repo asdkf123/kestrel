@@ -441,6 +441,10 @@ pub enum Native {
     CookieGet,
     CookieSet,
     GetNamedItem,
+    LsKey,
+    LsLength,
+    HeadersGet,
+    HeadersHas,
     ObjectGetOwnPropertyDescriptor,
     LocationAssign,
     LocationReload,
@@ -1022,7 +1026,8 @@ pub struct Interp {
     // throw 된 값 (에러 채널은 String 이라 값은 사이드 채널로 전달)
     thrown: Option<Value>,
     // localStorage 스텁 저장소 (페이지 수명)
-    storage: HashMap<String, String>,
+    // Storage 는 삽입 순서를 유지해야 한다 (key(i) 가 인덱스로 접근 — 표준 §12.2).
+    storage: Vec<(String, String)>,
     // setTimeout/setInterval 로 등록된 미처리 타이머 (호출측이 드레인해 실행)
     pub timers: Vec<Timer>,
     pub cleared: std::collections::HashSet<u64>,
@@ -1432,6 +1437,16 @@ impl Interp {
         ls.insert("setItem".to_string(), Value::Native(Native::LsSetItem));
         ls.insert("removeItem".to_string(), Value::Native(Native::LsRemoveItem));
         ls.insert("clear".to_string(), Value::Native(Native::LsClear));
+        // Storage 인터페이스: length(접근자) + key(i). 없으면 스토리지를 순회하는
+        // 흔한 코드(for i < localStorage.length)가 죽는다.
+        ls.insert("key".to_string(), Value::Native(Native::LsKey));
+        ls.insert(
+            "length".to_string(),
+            Value::Accessor(Rc::new(AccessorPair {
+                get: Some(Value::Native(Native::LsLength)),
+                set: None,
+            })),
+        );
         let ls = Value::Obj(Rc::new(RefCell::new(ls)));
         env_declare(&global, "localStorage", ls.clone());
         env_declare(&global, "sessionStorage", ls.clone());
@@ -1690,7 +1705,7 @@ impl Interp {
             global_handlers: Vec::new(),
             rng: seed,
             thrown: None,
-            storage: HashMap::new(),
+            storage: Vec::new(),
             timers: Vec::new(),
             cleared: std::collections::HashSet::new(),
             next_timer_id: 1,
@@ -7169,6 +7184,24 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn storage_has_length_and_key() {
+        // Storage 인터페이스는 length 와 key(i) 를 갖는다 (표준 §12.2, 삽입 순서).
+        // 없으면 for (i < localStorage.length) 로 순회하는 흔한 코드가 죽는다.
+        assert_eq!(
+            run_str(
+                "localStorage.setItem('a', '1'); localStorage.setItem('b', '2'); \
+                 var r = localStorage.length + ',' + localStorage.key(0) + ',' + localStorage.key(1); \
+                 localStorage.setItem('a', '9'); \
+                 r += '|' + localStorage.length; \
+                 r += '|' + String(localStorage.key(99)); \
+                 localStorage.removeItem('a'); \
+                 r + '|' + localStorage.length + ',' + localStorage.key(0)"
+            ),
+            "2,a,b|2|null|1,b"
+        );
     }
 
     #[test]
