@@ -119,25 +119,61 @@ impl Interp {
     }
 
     // element.classList: class 속성을 공백 구분 토큰 목록으로
-    pub(super) fn class_tokens(&mut self, id: crate::dom::NodeId) -> Vec<String> {
-        if let Ok(dom) = self.dom_arena() {
-            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
-                if let Some(c) = e.attributes.get("class") {
-                    return c.split_whitespace().map(|s| s.to_string()).collect();
-                }
-            }
+    // 토큰 검증 (§7.1): 빈 문자열은 SyntaxError, ASCII 공백이 들어 있으면
+    // InvalidCharacterError. 예전엔 검증이 없어서 조용히 통과했고, 공백이 든 토큰이
+    // class 속성에 들어가 **두 개의 클래스**가 돼 버렸다.
+    // 검증 순서가 중요하다 (표준): **모든** 토큰의 빈 문자열을 먼저 보고,
+    // 그다음 **모든** 토큰의 공백을 본다. replace(" ", "") 는 InvalidCharacterError 가
+    // 아니라 SyntaxError 다 (두 번째 인자가 빈 문자열이므로).
+    pub(super) fn validate_tokens(&mut self, tokens: &[String]) -> Result<(), String> {
+        if tokens.iter().any(|t| t.is_empty()) {
+            return Err(self.throw_dom("SyntaxError", "빈 토큰"));
         }
-        Vec::new()
+        if tokens.iter().any(|t| t.contains([' ', '\t', '\n', '\x0C', '\r'])) {
+            return Err(self.throw_dom("InvalidCharacterError", "토큰에 공백이 있다"));
+        }
+        Ok(())
     }
 
+    // DOMTokenList 의 토큰 집합 (§7.1): ASCII 공백으로 자르고 **중복을 없앤 순서 집합**.
+    // 예전엔 유니코드 공백으로 자르고 중복도 남겨서, class="a a b" 의 length 가 3 이었다.
+    pub(super) fn class_tokens(&mut self, id: crate::dom::NodeId) -> Vec<String> {
+        let raw = self.class_attr(id);
+        let mut out: Vec<String> = Vec::new();
+        for t in crate::dom::split_ascii_ws(&raw) {
+            if !out.iter().any(|x| x == t) {
+                out.push(t.to_string());
+            }
+        }
+        out
+    }
+
+    // class 속성의 **원문** (§7.1 value 는 반영 속성이라 정규화하지 않는다)
+    pub(super) fn class_attr(&mut self, id: crate::dom::NodeId) -> String {
+        if let Ok(dom) = self.dom_arena() {
+            if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                return e.attributes.get("class").cloned().unwrap_or_default();
+            }
+        }
+        String::new()
+    }
+
+    // "update steps" (§7.1): 토큰 집합을 공백 하나로 이어 class 속성에 쓴다.
+    // 단 속성이 원래 없고 집합도 비면 **속성을 만들지 않는다** (표준).
     pub(super) fn set_class_tokens(&mut self, id: crate::dom::NodeId, tokens: Vec<String>) {
+        let had = {
+            match self.dom_arena() {
+                Ok(dom) => matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.attributes.get("class").is_some()),
+                Err(_) => false,
+            }
+        };
+        if !had && tokens.is_empty() {
+            return;
+        }
         let joined = tokens.join(" ");
         if let Ok(dom) = self.dom_arena() {
-            if joined.is_empty() {
-                dom.remove_attr(id, "class");
-            } else {
-                dom.set_attr(id, "class", joined);
-            }
+            dom.set_attr(id, "class", joined);
         }
     }
 

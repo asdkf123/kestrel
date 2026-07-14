@@ -1302,6 +1302,13 @@ impl Interp {
                     Some(Value::Instance(inst)) => {
                         self.member_get(&Value::Class(inst.class.clone()), "prototype")?
                     }
+                    // NativeError 생성자의 [[Prototype]] 은 **Error 생성자**다 (§20.5.6.2).
+                    // 없으면 TypeError 가 Error 의 서브타입임을 확인하는 코드
+                    // (testharness 의 assert_throws_js 가 정확히 이 체인을 걷는다)가
+                    // "Error 의 서브타입이 아니다" 라고 판정한다.
+                    Some(Value::Native(Native::ErrorCtor(n))) if *n != "Error" => {
+                        env_get(&self.global, "Error").unwrap_or_else(|| self.fn_proto.clone())
+                    }
                     Some(Value::Fn(_)) | Some(Value::Native(_)) | Some(Value::Bound(_)) => {
                         self.fn_proto.clone()
                     }
@@ -2371,49 +2378,105 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
-            // classList.add(...names) / remove(...names) / toggle(name[,force]) / contains(name)
+            // DOMTokenList (§7.1). 토큰 검증 → 순서 보존 → update steps.
+            // 예전엔 검증이 없었고(빈 토큰/공백 든 토큰을 조용히 통과), add 가 기존
+            // 토큰을 지웠다 다시 붙여 **순서를 바꿨다**. toggle 의 force 규칙도 틀렸다.
             Native::ClassAdd | Native::ClassRemove => {
-                if let Some(Value::ClassList(id)) = recv {
-                    let mut tokens = self.class_tokens(id);
-                    for a in &args {
-                        let name = to_display(a);
-                        if name.is_empty() {
-                            continue;
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Undefined) };
+                let names: Vec<String> = args.iter().map(to_display).collect();
+                self.validate_tokens(&names)?;
+                let mut tokens = self.class_tokens(id);
+                for name in &names {
+                    if matches!(n, Native::ClassAdd) {
+                        // 이미 있으면 **그 자리에 그대로** 둔다 (순서 보존)
+                        if !tokens.iter().any(|t| t == name) {
+                            tokens.push(name.clone());
                         }
-                        tokens.retain(|t| t != &name);
-                        if matches!(n, Native::ClassAdd) {
-                            tokens.push(name);
-                        }
+                    } else {
+                        tokens.retain(|t| t != name);
                     }
-                    self.set_class_tokens(id, tokens);
                 }
+                self.set_class_tokens(id, tokens);
                 Ok(Value::Undefined)
             }
+            // toggle(token[, force]) — force 가 주어지면:
+            //   있고 force=true  → 아무것도 안 하고 true (속성도 안 건드린다)
+            //   있고 force=false → 제거하고 false
+            //   없고 force=true  → 추가하고 true
+            //   없고 force=false → 아무것도 안 하고 false
             Native::ClassToggle => {
-                if let Some(Value::ClassList(id)) = recv {
-                    let name = args.first().map(to_display).unwrap_or_default();
-                    let mut tokens = self.class_tokens(id);
-                    let present = tokens.iter().any(|t| t == &name);
-                    // 두 번째 인자(force)가 있으면 강제 설정
-                    let want = match args.get(1) {
-                        Some(v) => to_bool(v),
-                        None => !present,
-                    };
-                    tokens.retain(|t| t != &name);
-                    if want && !name.is_empty() {
-                        tokens.push(name);
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Bool(false)) };
+                let name = args.first().map(to_display).unwrap_or_default();
+                self.validate_tokens(std::slice::from_ref(&name))?;
+                let mut tokens = self.class_tokens(id);
+                let present = tokens.iter().any(|t| t == &name);
+                // 인자를 아예 안 준 경우와 undefined 를 준 경우는 다르다 (표준)
+                let force = args.get(1).filter(|v| !matches!(v, Value::Undefined)).map(to_bool);
+                match (present, force) {
+                    (true, Some(true)) => Ok(Value::Bool(true)), // 변경 없음
+                    (true, _) => {
+                        tokens.retain(|t| t != &name);
+                        self.set_class_tokens(id, tokens);
+                        Ok(Value::Bool(false))
                     }
-                    self.set_class_tokens(id, tokens);
-                    return Ok(Value::Bool(want));
+                    (false, Some(false)) => Ok(Value::Bool(false)), // 변경 없음
+                    (false, _) => {
+                        tokens.push(name);
+                        self.set_class_tokens(id, tokens);
+                        Ok(Value::Bool(true))
+                    }
                 }
-                Ok(Value::Bool(false))
+            }
+            // replace(old, new) — old 가 없으면 false (속성도 안 건드린다).
+            // 있으면 **그 자리에서** new 로 바꾼다 (뒤에 붙이지 않는다).
+            Native::ClassReplace => {
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Bool(false)) };
+                let old = args.first().map(to_display).unwrap_or_default();
+                let new = args.get(1).map(to_display).unwrap_or_default();
+                self.validate_tokens(&[old.clone(), new.clone()])?;
+                let mut tokens = self.class_tokens(id);
+                if !tokens.iter().any(|t| t == &old) {
+                    return Ok(Value::Bool(false)); // 없으면 속성도 안 건드린다
+                }
+                // 순서 집합의 replace (Infra): old 또는 new 와 같은 항목을 모두 없애고,
+                // **둘 중 먼저 나온 위치**에 new 를 하나 넣는다.
+                //   "c b a" 에서 c → a 는 "a b" 다 ("b a" 가 아니다)
+                let pos = tokens
+                    .iter()
+                    .position(|t| t == &old || t == &new)
+                    .unwrap_or(0);
+                let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+                for (i, t) in tokens.drain(..).enumerate() {
+                    if i == pos {
+                        out.push(new.clone());
+                    } else if t != old && t != new {
+                        out.push(t);
+                    }
+                }
+                self.set_class_tokens(id, out);
+                Ok(Value::Bool(true))
+            }
+            // supports(token) — class 속성에는 지원 토큰 목록이 없다 → TypeError (표준)
+            Native::ClassSupports => {
+                Err(self.throw_error("TypeError", "class 속성은 지원 토큰 목록이 없다"))
+            }
+            Native::ClassItem => {
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Null) };
+                let i = args.first().map(to_num).unwrap_or(0.0);
+                if i < 0.0 {
+                    return Ok(Value::Null);
+                }
+                let t = self.class_tokens(id);
+                Ok(t.get(i as usize).cloned().map(Value::Str).unwrap_or(Value::Null))
+            }
+            Native::ClassValue => {
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Str(String::new())) };
+                Ok(Value::Str(self.class_attr(id)))
             }
             Native::ClassContains => {
-                if let Some(Value::ClassList(id)) = recv {
-                    let name = args.first().map(to_display).unwrap_or_default();
-                    return Ok(Value::Bool(self.class_tokens(id).iter().any(|t| t == &name)));
-                }
-                Ok(Value::Bool(false))
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Bool(false)) };
+                let name = args.first().map(to_display).unwrap_or_default();
+                Ok(Value::Bool(self.class_tokens(id).iter().any(|t| t == &name)))
             }
             // event.preventDefault() / stopPropagation() — recv 가 이벤트 객체
             // getElementsByClassName / getElementsByTagName — 서브트리 수집

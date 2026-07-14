@@ -2912,6 +2912,22 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn native_error_constructors_inherit_from_error() {
+    // §20.5.6.2: NativeError 생성자의 [[Prototype]] 은 **Error 생성자**다.
+    // 없으면 "TypeError 가 Error 의 서브타입인가" 를 프로토타입 체인으로 확인하는
+    // 코드(testharness 의 assert_throws_js 가 정확히 이렇게 한다)가 아니라고 답한다.
+    assert!(run_bool("Object.getPrototypeOf(TypeError) === Error"));
+    assert!(run_bool("Object.getPrototypeOf(RangeError) === Error"));
+    assert!(run_bool("Object.getPrototypeOf(SyntaxError) === Error"));
+    // 체인을 걸어 name === 'Error' 인 생성자를 찾을 수 있어야 한다
+    assert!(run_bool(
+        "var o = TypeError; var found = false; \
+         while (o) { if (typeof o === 'function' && o.name === 'Error') { found = true; break; } \
+                     o = Object.getPrototypeOf(o); } found"
+    ));
+}
+
+#[test]
 fn in_operator_sees_array_length_and_methods() {
     // 예전엔 인덱스만 봐서 `"length" in []` 가 false 였다 — 값이 배열인지 확인하는
     // 코드(testharness 의 assert_array_equals 가 정확히 이렇게 한다)가 우리 배열을

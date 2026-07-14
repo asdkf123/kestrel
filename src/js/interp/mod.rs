@@ -4055,8 +4055,14 @@ impl Interp {
                     "remove" => Ok(Value::Native(Native::ClassRemove)),
                     "toggle" => Ok(Value::Native(Native::ClassToggle)),
                     "contains" => Ok(Value::Native(Native::ClassContains)),
+                    "replace" => Ok(Value::Native(Native::ClassReplace)),
+                    "supports" => Ok(Value::Native(Native::ClassSupports)),
+                    "item" => Ok(Value::Native(Native::ClassItem)),
                     "length" => Ok(Value::Num(self.class_tokens(id).len() as f64)),
-                    "value" => Ok(Value::Str(self.class_tokens(id).join(" "))),
+                    // value 는 class 속성을 반영한다 — **원문 그대로** (정규화하지 않는다).
+                    // 예전엔 토큰을 다시 이어 붙여서 "  a  a b" 가 "a b" 로 보였다.
+                    "value" => Ok(Value::Str(self.class_attr(id))),
+                    "toString" => Ok(Value::Native(Native::ClassValue)),
                     _ => {
                         if let Ok(i) = key.parse::<usize>() {
                             Ok(self

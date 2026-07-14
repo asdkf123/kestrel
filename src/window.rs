@@ -1614,6 +1614,49 @@ mod tests {
         assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
     }
 
+    // DOMTokenList (DOM §7.1). 순서 집합이고, 토큰을 검증하며, value 는 원문이다.
+    #[test]
+    fn classlist_follows_dom_token_list_spec() {
+        let dom = run_with_layout(
+            r#"<div id="e" class="   a  a b"></div><div id="out"></div>
+               <script>
+                 var e = document.getElementById('e');
+                 var log = [];
+                 // 순서 집합: 중복은 하나로 센다
+                 log.push(String(e.classList.length));           // 2 (a, b)
+                 // value 는 class 속성 **원문** (정규화하지 않는다)
+                 log.push(JSON.stringify(e.classList.value));
+                 // 이미 있는 토큰을 add 해도 순서가 바뀌지 않는다
+                 e.classList.add('a');
+                 log.push(e.getAttribute('class'));              // "a b"
+                 // toggle(force=true) 이고 이미 있으면 속성을 건드리지 않는다
+                 e.setAttribute('class', '   a  a b');
+                 log.push(String(e.classList.toggle('a', true)));
+                 log.push(JSON.stringify(e.getAttribute('class')));  // 원문 그대로
+                 // replace 는 순서 집합 규칙: "c b a" 에서 c→a 는 "a b"
+                 e.setAttribute('class', 'c b a');
+                 log.push(String(e.classList.replace('c', 'a')) + ':' + e.getAttribute('class'));
+                 // 토큰 검증: 빈 토큰 → SyntaxError, 공백 든 토큰 → InvalidCharacterError
+                 try { e.classList.add(''); } catch (x) { log.push(x.name); }
+                 try { e.classList.add('a b'); } catch (x) { log.push(x.name); }
+                 // 검증 순서: 빈 문자열을 먼저 본다
+                 try { e.classList.replace(' ', ''); } catch (x) { log.push(x.name); }
+                 // supports 는 TypeError (class 는 지원 토큰 목록이 없다)
+                 try { e.classList.supports('a'); } catch (x) { log.push(x.name); }
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            "2|\"   a  a b\"|a b|true|\"   a  a b\"|true:a b|\
+             SyntaxError|InvalidCharacterError|SyntaxError|TypeError"
+                .replace("\n", "")
+                .replace("             ", "")
+        );
+    }
+
     // IDL 속성 반영 (HTML §2.6). 표는 표준 데이터에서 기계 추출한 357개다.
     // 예전엔 id/className 등 몇 개만 손으로 처리하고 나머지는 조용히 무시했다:
     // a.title 은 undefined 였고, img.width = 100 은 아무 일도 안 했다.
