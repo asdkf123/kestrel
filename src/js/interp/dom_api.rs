@@ -185,6 +185,24 @@ impl Interp {
         it.all(Self::is_name_char)
     }
 
+    // 속성 이름 정규화 (§4.9): HTML 네임스페이스 요소의 속성 이름은 **소문자**다.
+    // 검증도 함께 — 유효한 이름이 아니면 InvalidCharacterError.
+    // 예전엔 둘 다 없어서 setAttribute('FOO', v) 가 "FOO" 라는 속성을 만들었고,
+    // getAttribute('foo') 는 그걸 못 찾았다 (조회는 소문자로 하니까).
+    pub(super) fn attr_name(
+        &mut self,
+        id: crate::dom::NodeId,
+        raw: &str,
+    ) -> Result<String, String> {
+        if !Self::is_valid_name(raw) {
+            return Err(self.throw_dom("InvalidCharacterError", "유효하지 않은 속성 이름"));
+        }
+        let dom = self.dom_arena()?;
+        let html_ns = matches!(&dom.get(id).node_type,
+            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+        Ok(if html_ns { raw.to_ascii_lowercase() } else { raw.to_string() })
+    }
+
     // createElement 의 이름 검증 (§4.5): 유효한 Name 이 아니면 InvalidCharacterError.
     // 예전엔 빈 문자열만 걸렀다 — createElement("<div>") 가 조용히 통과했다.
     pub(super) fn validate_element_name(&mut self, name: &str) -> Result<(), String> {

@@ -1742,6 +1742,66 @@ mod tests {
         );
     }
 
+    // MutationObserver (DOM §4.3). takeRecords() 는 그 옵저버의 기록 큐를 비우고 돌려준다.
+    // 예전엔 옵저버의 큐에 기록을 넣는 코드가 **아예 없어서** takeRecords() 가 항상
+    // 빈 배열이었다 (콜백 배달은 큐를 우회해 직접 호출했다). oldValue 도 항상 null 이었다.
+    #[test]
+    fn mutation_observer_records_and_old_value() {
+        let dom = run_with_layout(
+            r#"<div id="e" class="a"></div><div id="out"></div>
+               <script>
+                 var e = document.getElementById('e');
+                 var log = [];
+                 var obs = new MutationObserver(function(){});
+                 obs.observe(e, { attributes: true, attributeOldValue: true });
+                 e.setAttribute('class', 'b');
+                 var r = obs.takeRecords();
+                 log.push(r.length + ',' + r[0].type + ',' + r[0].attributeName + ',' + r[0].oldValue);
+                 // 큐를 비웠으니 다시 부르면 빈 배열
+                 log.push(String(obs.takeRecords().length));
+                 // 변경이 없으면 기록도 없다
+                 e.classList.replace('zz', 'yy');
+                 log.push(String(obs.takeRecords().length));
+                 // 새로 등록한 옵저버는 자기가 생기기 **전의** 변경을 받지 않는다
+                 e.setAttribute('data-x', '1');
+                 var o2 = new MutationObserver(function(){});
+                 o2.observe(e, { attributes: true });
+                 log.push(String(o2.takeRecords().length));
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(dom.text_content(out), "1,attributes,class,a|0|0|0");
+    }
+
+    // 속성 이름은 HTML 요소에서 **소문자**로 정규화된다 (DOM §4.9).
+    // 예전엔 정규화도 검증도 없어서 setAttribute('FOO', v) 가 "FOO" 라는 속성을
+    // 만들었고, getAttribute('foo') 는 그걸 못 찾았다 (조회는 소문자로 하니까).
+    #[test]
+    fn attribute_names_are_lowercased_and_validated() {
+        let dom = run_with_layout(
+            r#"<div id="e"></div><div id="out"></div>
+               <script>
+                 var e = document.getElementById('e');
+                 var log = [];
+                 e.setAttribute('FOO', '1');
+                 log.push(e.getAttribute('foo') + ',' + e.hasAttribute('foo'));
+                 e.toggleAttribute('BAR');
+                 log.push(String(e.hasAttribute('bar')));
+                 try { e.setAttribute('<x>', '1'); } catch (x) { log.push(x.name); }
+                 try { e.toggleAttribute(''); } catch (x) { log.push(x.name); }
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            "1,true|true|InvalidCharacterError|InvalidCharacterError"
+        );
+    }
+
     // DOMTokenList (DOM §7.1). 순서 집합이고, 토큰을 검증하며, value 는 원문이다.
     #[test]
     fn classlist_follows_dom_token_list_spec() {

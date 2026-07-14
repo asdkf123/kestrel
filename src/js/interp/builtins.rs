@@ -1710,7 +1710,8 @@ impl Interp {
             // toggleAttribute(name[, force]) — 있으면 제거, 없으면 추가. 반환은 최종 존재 여부.
             Native::ToggleAttribute => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Bool(false)) };
-                let name = args.first().map(to_display).unwrap_or_default();
+                let raw = args.first().map(to_display).unwrap_or_default();
+                let name = self.attr_name(id, &raw)?;
                 let force = args.get(1).map(to_bool);
                 let dom = self.dom_arena()?;
                 let has = matches!(&dom.get(id).node_type,
@@ -2081,7 +2082,10 @@ impl Interp {
                         "attributeName".to_string(),
                         r.attr.map(Value::Str).unwrap_or(Value::Null),
                     );
-                    m.insert("oldValue".to_string(), Value::Null);
+                    m.insert(
+                        "oldValue".to_string(),
+                        r.old_value.map(Value::Str).unwrap_or(Value::Null),
+                    );
                     m.insert(
                         "addedNodes".to_string(),
                         Value::Arr(ArrayObj::new(r.added.into_iter().map(Value::Dom).collect())),
@@ -3484,7 +3488,14 @@ impl Interp {
             },
             Native::RemoveAttribute => {
                 if let Some(Value::Dom(id)) = recv {
-                    let name = args.first().map(to_display).unwrap_or_default();
+                    let raw = args.first().map(to_display).unwrap_or_default();
+                    // removeAttribute 는 이름을 검증하지 않는다 (표준) — 소문자화만 한다
+                    let name = {
+                        let dom = self.dom_arena()?;
+                        let html_ns = matches!(&dom.get(id).node_type,
+                            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+                        if html_ns { raw.to_ascii_lowercase() } else { raw }
+                    };
                     let dom = self.dom_arena()?;
                     dom.remove_attr(id, &name);
                 }
@@ -3492,7 +3503,13 @@ impl Interp {
             }
             Native::HasAttribute => {
                 let has = if let Some(Value::Dom(id)) = recv {
-                    let name = args.first().map(to_display).unwrap_or_default();
+                    let raw = args.first().map(to_display).unwrap_or_default();
+                    let name = {
+                        let dom = self.dom_arena()?;
+                        let html_ns = matches!(&dom.get(id).node_type,
+                            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+                        if html_ns { raw.to_ascii_lowercase() } else { raw }
+                    };
                     let dom = self.dom_arena()?;
                     matches!(&dom.get(id).node_type,
                         crate::dom::NodeType::Element(e) if e.attributes.contains_key(&name))
@@ -3512,13 +3529,14 @@ impl Interp {
             }
             Native::SetAttribute => match recv {
                 Some(Value::Dom(id)) => {
-                    let name = args.first().map(to_display).unwrap_or_default();
+                    let raw = args.first().map(to_display).unwrap_or_default();
+                    let name = self.attr_name(id, &raw)?;
                     let value = args.get(1).map(to_display).unwrap_or_default();
                     let dom = self.dom_arena()?;
                     dom.set_attr(id, &name, value);
                     Ok(Value::Undefined)
                 }
-                _ => Err("setAttribute 는 요소 메서드".to_string()),
+                _ => Err(self.throw_error("TypeError", "setAttribute 는 요소 메서드")),
             },
             Native::QuerySelector | Native::QuerySelectorAll => {
                 let all = n == Native::QuerySelectorAll;
@@ -5083,7 +5101,13 @@ impl Interp {
 
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
-                    let name = args.first().map(to_display).unwrap_or_default();
+                    let raw = args.first().map(to_display).unwrap_or_default();
+                    let name = {
+                        let dom = self.dom_arena()?;
+                        let html_ns = matches!(&dom.get(id).node_type,
+                            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+                        if html_ns { raw.to_ascii_lowercase() } else { raw }
+                    };
                     let dom = self.dom_arena()?;
                     match &dom.get(id).node_type {
                         crate::dom::NodeType::Element(e) => Ok(e

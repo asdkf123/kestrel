@@ -593,12 +593,32 @@ var __kMutObs = [];
 function __kMutationObserver(cb) { this._cb = cb; this._regs = []; this._q = []; __kMutObs.push(this); }
 __kMutationObserver.prototype.observe = function(target, opts) {
   if (!target) return;
+  // 기록은 **그 변경이 일어난 시점에 등록돼 있던** 옵저버에게만 간다 (표준).
+  // 아직 배분 안 된 기록을 지금 등록된 옵저버들에게 먼저 넘긴 뒤에 등록한다 —
+  // 안 그러면 새 옵저버가 자기가 생기기 전의 변경까지 받아 간다.
+  __kDrainMutations();
   var o = opts || {};
   if (!o.childList && !o.attributes && !o.characterData) o.childList = true; // 기본
   this._regs.push({ t: target, o: o });
 };
 __kMutationObserver.prototype.disconnect = function(){ this._regs = []; this._q = []; };
-__kMutationObserver.prototype.takeRecords = function(){ var r = this._q; this._q = []; return r; };
+// 엔진의 대기 기록을 각 옵저버의 큐로 옮긴다 (표준의 "queue a mutation record").
+// 예전엔 이게 없어서 옵저버의 _q 가 **영영 비어 있었다** — takeRecords() 가 항상
+// 빈 배열이었다 (그리고 콜백 배달은 큐를 우회해 직접 호출했다).
+function __kDrainMutations() {
+  var recs = __kTakeMutations();
+  if (!recs || !recs.length) return;
+  for (var i = 0; i < __kMutObs.length; i++) {
+    var ob = __kMutObs[i];
+    for (var j = 0; j < recs.length; j++) {
+      if (ob._match(recs[j])) ob._q.push(recs[j]);
+    }
+  }
+}
+__kMutationObserver.prototype.takeRecords = function(){
+  __kDrainMutations();
+  var r = this._q; this._q = []; return r;
+};
 __kMutationObserver.prototype._match = function(rec) {
   for (var i = 0; i < this._regs.length; i++) {
     var reg = this._regs[i], o = reg.o;
@@ -617,12 +637,14 @@ __kMutationObserver.prototype._match = function(rec) {
 };
 // 엔진이 마이크로태스크로 부른다.
 function __kMutationNotify() {
-  var recs = __kTakeMutations();
-  if (!recs || !recs.length) return;
+  __kDrainMutations();
   for (var i = 0; i < __kMutObs.length; i++) {
-    var ob = __kMutObs[i], out = [];
-    for (var j = 0; j < recs.length; j++) if (ob._match(recs[j])) out.push(recs[j]);
-    if (out.length && ob._cb) ob._cb(out, ob);
+    var ob = __kMutObs[i];
+    if (ob._q.length && ob._cb) {
+      var out = ob._q;
+      ob._q = [];
+      ob._cb(out, ob);
+    }
   }
 }
 var MutationObserver = window.MutationObserver; if (!MutationObserver) { MutationObserver = __kMutationObserver; window.MutationObserver = MutationObserver; }

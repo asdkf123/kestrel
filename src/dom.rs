@@ -214,6 +214,9 @@ pub struct DomMut {
     pub target: NodeId,
     pub kind: &'static str, // childList / attributes / characterData
     pub attr: Option<String>,
+    // 변경 전 값 (attributes/characterData). 예전엔 항상 null 이었다 —
+    // attributeOldValue 를 요청한 옵저버가 조용히 아무것도 못 받았다.
+    pub old_value: Option<String>,
     pub added: Vec<NodeId>,
     pub removed: Vec<NodeId>,
 }
@@ -773,18 +776,26 @@ impl Dom {
     // 속성 쓰기의 유일한 통로. 여기로 모아야 attributes 기록에 누락이 없다.
     pub fn set_attr(&mut self, id: NodeId, name: &str, value: String) {
         self.touch();
-        if let NodeType::Element(e) = &mut self.nodes[id].node_type {
+        let old = if let NodeType::Element(e) = &mut self.nodes[id].node_type {
+            let old = e.attributes.get(name).cloned();
             e.attributes.insert(name.to_string(), value);
-            self.record(id, "attributes", Some(name.to_string()), Vec::new(), Vec::new());
-        }
+            old
+        } else {
+            return;
+        };
+        self.record_attr(id, name.to_string(), old);
     }
 
     pub fn remove_attr(&mut self, id: NodeId, name: &str) {
         self.touch();
-        if let NodeType::Element(e) = &mut self.nodes[id].node_type {
+        let old = if let NodeType::Element(e) = &mut self.nodes[id].node_type {
+            let old = e.attributes.get(name).cloned();
             e.attributes.remove(name);
-            self.record(id, "attributes", Some(name.to_string()), Vec::new(), Vec::new());
-        }
+            old
+        } else {
+            return;
+        };
+        self.record_attr(id, name.to_string(), old);
     }
 
     fn record(
@@ -795,7 +806,18 @@ impl Dom {
         added: Vec<NodeId>,
         removed: Vec<NodeId>,
     ) {
-        self.records.push(DomMut { target, kind, attr, added, removed });
+        self.records.push(DomMut { target, kind, attr, old_value: None, added, removed });
+    }
+
+    fn record_attr(&mut self, target: NodeId, name: String, old_value: Option<String>) {
+        self.records.push(DomMut {
+            target,
+            kind: "attributes",
+            attr: Some(name),
+            old_value,
+            added: Vec::new(),
+            removed: Vec::new(),
+        });
     }
 
     // 배달용으로 기록을 비우며 가져간다.
