@@ -504,7 +504,11 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                         ));
                     }
                     i += 2;
-                    // ${...} 식 소스 추출: 중괄호 깊이 추적 + 내부 문자열 스킵
+                    // ${...} 식 소스 추출: 중괄호 깊이 추적 + 내부 문자열/**중첩 템플릿** 스킵.
+                    //
+                    // 중첩 템플릿을 모르면 그 안의 아포스트로피(예: `Hi, I'm ${c}!`)를
+                    // 문자열 시작으로 오해해 **그 뒤 소스 전체가 어긋난다** — 실제로
+                    // 5MB 짜리 번들 하나가 통째로 죽었다 (bun.sh 의 inkeep 위젯).
                     let start = i;
                     let mut depth = 1usize;
                     while i < b.len() {
@@ -514,6 +518,25 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                                 depth -= 1;
                                 if depth == 0 {
                                     break;
+                                }
+                            }
+                            '`' => {
+                                // 중첩 템플릿: 짝이 되는 백틱까지 건너뛴다
+                                // (그 안의 ${…} 는 다시 중첩될 수 있다 → 깊이로 센다)
+                                i += 1;
+                                let mut tdepth = 0usize;
+                                while i < b.len() {
+                                    match b[i] {
+                                        '\\' => i += 1, // 이스케이프 (\` 포함)
+                                        '$' if b.get(i + 1) == Some(&'{') => {
+                                            tdepth += 1;
+                                            i += 1;
+                                        }
+                                        '}' if tdepth > 0 => tdepth -= 1,
+                                        '`' if tdepth == 0 => break,
+                                        _ => {}
+                                    }
+                                    i += 1;
                                 }
                             }
                             '\'' | '"' => {

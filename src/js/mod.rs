@@ -744,11 +744,172 @@ if (!window.performance) {
     measure: function(){ },
     getEntriesByName: function(){ return []; },
     getEntriesByType: function(){ return []; },
+    getEntries: function(){ return []; },
     clearMarks: function(){ __kMarks = {}; },
     clearMeasures: __kNoop
   };
+  // performance.timing (레거시 Navigation Timing). 분석 스크립트가 아직 대량으로 읽는다.
+  // 없으면 t.navigationStart 한 줄에서 죽는다 (bun.sh 가 그랬다).
+  window.performance.timing = {
+    navigationStart: __kT0, fetchStart: __kT0, domainLookupStart: __kT0,
+    domainLookupEnd: __kT0, connectStart: __kT0, connectEnd: __kT0,
+    requestStart: __kT0, responseStart: __kT0, responseEnd: __kT0,
+    domLoading: __kT0, domInteractive: __kT0, domContentLoadedEventStart: __kT0,
+    domContentLoadedEventEnd: __kT0, domComplete: __kT0,
+    loadEventStart: __kT0, loadEventEnd: __kT0, unloadEventStart: 0, unloadEventEnd: 0,
+    redirectStart: 0, redirectEnd: 0, secureConnectionStart: 0
+  };
+  window.performance.navigation = { type: 0, redirectCount: 0 };
 }
 var performance = window.performance;
+
+// ── Iterator Helpers (ES2025) ──────────────────────────────────────────────
+// arr.values().find(…) / .map(…).toArray() 처럼 이터레이터에 직접 거는 메서드들.
+// 크롬이 이미 출시했고 사이트가 쓴다 (astro.build). 없으면 undefined 호출로 죽는다.
+// 네이티브 이터레이터 객체가 이 객체를 __proto__ 로 단다.
+var __kIterProto = {
+  next: undefined, // 각 이터레이터 자신의 next 가 가린다
+  map: function(fn){ var out = []; var i = 0, r;
+    while (!(r = this.next()).done) out.push(fn(r.value, i++));
+    return __kIterOf(out); },
+  filter: function(fn){ var out = []; var i = 0, r;
+    while (!(r = this.next()).done) { if (fn(r.value, i++)) out.push(r.value); }
+    return __kIterOf(out); },
+  find: function(fn){ var i = 0, r;
+    while (!(r = this.next()).done) { if (fn(r.value, i++)) return r.value; }
+    return undefined; },
+  forEach: function(fn){ var i = 0, r;
+    while (!(r = this.next()).done) fn(r.value, i++); },
+  some: function(fn){ var i = 0, r;
+    while (!(r = this.next()).done) { if (fn(r.value, i++)) return true; }
+    return false; },
+  every: function(fn){ var i = 0, r;
+    while (!(r = this.next()).done) { if (!fn(r.value, i++)) return false; }
+    return true; },
+  reduce: function(fn, init){ var acc = init, first = arguments.length < 2, r;
+    while (!(r = this.next()).done) {
+      if (first) { acc = r.value; first = false; } else { acc = fn(acc, r.value); }
+    }
+    return acc; },
+  take: function(n){ var out = [], r;
+    while (out.length < n && !(r = this.next()).done) out.push(r.value);
+    return __kIterOf(out); },
+  drop: function(n){ var out = [], i = 0, r;
+    while (!(r = this.next()).done) { if (i++ >= n) out.push(r.value); }
+    return __kIterOf(out); },
+  flatMap: function(fn){ var out = [], i = 0, r;
+    while (!(r = this.next()).done) {
+      var v = fn(r.value, i++);
+      if (v && typeof v.length === 'number' && typeof v !== 'string') {
+        for (var k = 0; k < v.length; k++) out.push(v[k]);
+      } else { out.push(v); }
+    }
+    return __kIterOf(out); },
+  toArray: function(){ var out = [], r;
+    while (!(r = this.next()).done) out.push(r.value);
+    return out; }
+};
+// 배열 → 이터레이터 (헬퍼들이 돌려주는 것도 이터레이터여야 체이닝된다)
+function __kIterOf(arr) {
+  var i = 0;
+  var it = {
+    next: function(){
+      return i < arr.length ? { value: arr[i++], done: false } : { value: undefined, done: true };
+    }
+  };
+  it.__proto__ = __kIterProto;
+  it[Symbol.iterator] = function(){ return this; };
+  return it;
+}
+window.__kIterProto = __kIterProto;
+
+// ── DOM 인터페이스 생성자 ──────────────────────────────────────────────────
+// `el instanceof HTMLAnchorElement`, `class X extends HTMLElement` 처럼 쓰인다.
+// 없으면 "HTMLAnchorElement 은(는) 정의되지 않음" 으로 스크립트가 통째로 죽는다.
+// instanceof 판정은 표준 메커니즘(Symbol.hasInstance)으로 한다 — 흉내가 아니다.
+function __kIface(check) {
+  var f = function(){ throw new TypeError('Illegal constructor'); };
+  f[Symbol.hasInstance] = function(x){ return !!x && check(x); };
+  return f;
+}
+var __kTagIface = function(tag) {
+  return __kIface(function(x){
+    return typeof x.tagName === 'string' && x.tagName.toUpperCase() === tag;
+  });
+};
+// EventTarget 은 **진짜 생성 가능한 클래스**여야 한다 — 사이트가 `class X extends EventTarget`
+// 으로 상속한다 (astro.build). 스텁으로 두면 "Illegal constructor" 로 죽는다.
+if (!window.EventTarget) {
+  window.EventTarget = function EventTarget() {
+    Object.defineProperty(this, '__kEvts', { value: {}, enumerable: false, writable: true });
+  };
+  window.EventTarget.prototype.addEventListener = function(type, fn, opts) {
+    if (typeof fn !== 'function') return;
+    if (!this.__kEvts) this.__kEvts = {};
+    var once = !!(opts && opts.once);
+    (this.__kEvts[type] = this.__kEvts[type] || []).push({ fn: fn, once: once });
+  };
+  window.EventTarget.prototype.removeEventListener = function(type, fn) {
+    var l = this.__kEvts && this.__kEvts[type];
+    if (!l) return;
+    this.__kEvts[type] = l.filter(function(e){ return e.fn !== fn; });
+  };
+  window.EventTarget.prototype.dispatchEvent = function(evt) {
+    var type = evt && evt.type;
+    var l = (this.__kEvts && this.__kEvts[type]) || [];
+    if (evt && evt.target === undefined) evt.target = this;
+    var keep = [];
+    for (var i = 0; i < l.length; i++) {
+      try { l[i].fn.call(this, evt); } catch (e) { console.error(e); }
+      if (!l[i].once) keep.push(l[i]);
+    }
+    if (this.__kEvts) this.__kEvts[type] = keep;
+    return !(evt && evt.defaultPrevented);
+  };
+  // DOM 노드도 EventTarget 이다 (instanceof 판정은 표준 메커니즘으로)
+  window.EventTarget[Symbol.hasInstance] = function(x) {
+    return !!x && typeof x.addEventListener === 'function';
+  };
+}
+if (!window.Node) window.Node = __kIface(function(x){ return typeof x.nodeType === 'number'; });
+if (!window.Element) window.Element = __kIface(function(x){ return typeof x.tagName === 'string'; });
+if (!window.Document) window.Document = __kIface(function(x){ return x.nodeType === 9; });
+if (!window.HTMLAnchorElement) window.HTMLAnchorElement = __kTagIface('A');
+if (!window.HTMLImageElement) window.HTMLImageElement = __kTagIface('IMG');
+if (!window.HTMLInputElement) window.HTMLInputElement = __kTagIface('INPUT');
+if (!window.HTMLButtonElement) window.HTMLButtonElement = __kTagIface('BUTTON');
+if (!window.HTMLFormElement) window.HTMLFormElement = __kTagIface('FORM');
+if (!window.HTMLCanvasElement) window.HTMLCanvasElement = __kTagIface('CANVAS');
+if (!window.HTMLScriptElement) window.HTMLScriptElement = __kTagIface('SCRIPT');
+if (!window.HTMLSelectElement) window.HTMLSelectElement = __kTagIface('SELECT');
+if (!window.HTMLTextAreaElement) window.HTMLTextAreaElement = __kTagIface('TEXTAREA');
+if (!window.SVGElement) window.SVGElement = __kIface(function(x){
+  return typeof x.tagName === 'string' && ['SVG','PATH','G','CIRCLE','RECT','LINE','POLYGON','POLYLINE','ELLIPSE','USE','TEXT'].indexOf(x.tagName.toUpperCase()) >= 0;
+});
+var EventTarget = window.EventTarget, Node = window.Node, Element = window.Element;
+var HTMLAnchorElement = window.HTMLAnchorElement, HTMLImageElement = window.HTMLImageElement;
+var HTMLInputElement = window.HTMLInputElement, HTMLButtonElement = window.HTMLButtonElement;
+var SVGElement = window.SVGElement;
+
+// new Image(w, h) — <img> 를 만드는 생성자 (HTML §4.8.4.1). 프리로드/스프라이트에 흔하다.
+// 없으면 `new Image()` 한 줄에 스크립트가 죽는다.
+if (!window.Image) {
+  window.Image = function(w, h) {
+    var img = document.createElement('img');
+    if (w !== undefined) img.setAttribute('width', String(w));
+    if (h !== undefined) img.setAttribute('height', String(h));
+    return img;
+  };
+}
+var Image = window.Image;
+// Audio 도 같은 꼴 (미디어는 재생하지 않지만 객체는 있어야 죽지 않는다)
+if (!window.Audio) {
+  window.Audio = function(src) {
+    var a = document.createElement('audio');
+    if (src !== undefined) a.setAttribute('src', String(src));
+    return a;
+  };
+}
 
 // btoa / atob — 진짜 base64 (RFC 4648).
 var __kB64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';

@@ -556,6 +556,8 @@ pub enum Native {
     // Response.arrayBuffer() — 원본 바이트 그대로 (텍스트로 거치면 바이너리가 망가진다)
     ResponseArrayBuffer,
     CurrentScript,
+    // document.createElementNS(namespace, qualifiedName)
+    CreateElementNS,
     // element.click() — 합성 클릭 이벤트를 실제로 디스패치한다 (HTML §8.3.5).
     // 없으면 프로그램적 클릭 한 줄에 스크립트가 죽는다 (탭 전환/다운로드 트리거 등 흔하다).
     ElementClick,
@@ -1430,6 +1432,9 @@ impl Interp {
         document.insert("hidden".to_string(), Value::Bool(false));
         document.insert("visibilityState".to_string(), Value::Str("visible".to_string()));
         document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
+        // createElementNS(ns, name) — JS 로 SVG 를 만드는 코드가 전부 이걸 쓴다.
+        // 없으면 아이콘/차트를 동적으로 그리는 스크립트가 한 줄에서 죽는다.
+        document.insert("createElementNS".to_string(), Value::Native(Native::CreateElementNS));
         // document.write / writeln (HTML §8.4.3). 레거시지만 아직도 대량으로 쓰인다
         // (국내 포털·광고 스크립트). 없으면 그 스크립트가 통째로 죽는다.
         document.insert("write".to_string(), Value::Native(Native::DocWrite));
@@ -2416,6 +2421,12 @@ impl Interp {
         it.insert("next".to_string(), Value::Native(Native::IterNext));
         // 이터레이터는 스스로 이터러블이다 (표준): it[Symbol.iterator]() === it
         it.insert("\u{0}@@iterator".to_string(), Value::Native(Native::ReturnThis));
+        // Iterator Helpers (ES2025: map/filter/find/take/drop/toArray…).
+        // 프렐류드가 정의한 프로토타입을 달아 준다 — 사이트가 실제로 쓴다
+        // (astro.build 가 el.querySelectorAll().values().find(…) 를 쓴다).
+        if let Some(proto) = env_get(&self.global, "__kIterProto") {
+            it.insert("__proto__".to_string(), proto);
+        }
         Value::Obj(Rc::new(RefCell::new(it)))
     }
 
@@ -5067,20 +5078,32 @@ impl Interp {
                                     env_set(env, "this", obj);
                                 }
                             }
-                            // 클래스가 아닌 생성자(함수/Error 등) 확장.
-                            // 표준: 파생 클래스의 this 는 super() 가 반환한 객체다.
-                            // 예전엔 그 객체의 own 프로퍼티만 this 로 복사했다 — 겉보기엔
-                            // 비슷해 보이지만 진짜 대상이 아니다. 커스텀 엘리먼트에서
-                            // HTMLElement 가 DOM 노드를 돌려줘도 this 는 여전히 빈 인스턴스라
-                            // this.innerHTML 이 아무 데도 안 그린다.
+                            // 클래스가 아닌 생성자(함수/Error/EventTarget 등) 확장.
+                            //
+                            // 표준(§10.2.2): 파생 생성자의 this 는 **new.target.prototype**
+                            // 을 가진 객체다 — 즉 파생 클래스의 인스턴스다. 부모 생성자는
+                            // 그 this 위에서 돈다.
+                            // 예전엔 부모를 new 로 따로 만들어 그 객체로 this 를 **갈아끼웠다**.
+                            // 그러면 파생 클래스의 메서드가 통째로 사라진다
+                            // (class Bus extends EventTarget { on(){} } → bus.on 이 undefined).
+                            //
+                            // 예외는 커스텀 엘리먼트다: HTMLElement 가 진짜 DOM 노드를 돌려주고,
+                            // 표준도 그 노드가 this 가 되도록 정의한다. 그때만 갈아끼운다.
                             other => {
-                                let produced = self.construct(other, arg_vals)?;
-                                if is_object(&produced) {
-                                    env_set(env, "this", produced);
-                                } else {
-                                    for (k, v) in builtins::own_enumerable_entries(&produced) {
-                                        self.set_own_property(&this, k, v);
+                                let produced =
+                                    self.call_value(other.clone(), Some(this.clone()), arg_vals)?;
+                                match produced {
+                                    // 커스텀 엘리먼트 업그레이드: 진짜 DOM 노드가 this 다
+                                    Value::Dom(_) => env_set(env, "this", produced),
+                                    // 부모가 별도 객체를 만들어 돌려준 경우(Error 등):
+                                    // 그 own 프로퍼티를 this 에 얹는다 (클래스 정체성은 유지)
+                                    v if is_object(&v) => {
+                                        for (k, val) in builtins::own_enumerable_entries(&v) {
+                                            self.set_own_property(&this, k, val);
+                                        }
                                     }
+                                    // 부모가 this 위에서 직접 작업한 경우 — 할 일 없음
+                                    _ => {}
                                 }
                             }
                         }
@@ -5450,9 +5473,25 @@ impl Interp {
                 }
             }
             None => {
-                // 암묵 생성자: 부모가 있으면 부모 생성자를 같은 인자로 실행
+                // 암묵 생성자 constructor(...a){ super(...a) } (표준 §15.7.10).
                 if let Some(parent) = &cls.parent {
                     return self.run_constructor(parent, inst, args);
+                }
+                // 부모가 클래스가 아닌 생성자(Error/함수/EventTarget)여도 super(...args) 는
+                // 돈다. 예전엔 이 경로가 없어서 class F extends Error {} 의 message 가
+                // 통째로 사라졌다 (new F('x').message === undefined).
+                if let Some(pc) = &cls.parent_ctor {
+                    let produced =
+                        self.call_value(pc.clone(), Some(inst.clone()), args)?;
+                    match produced {
+                        Value::Dom(_) => return Ok(Some(produced)),
+                        v if is_object(&v) => {
+                            for (k, val) in builtins::own_enumerable_entries(&v) {
+                                self.set_own_property(inst, k, val);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -8972,6 +9011,40 @@ mod tests {
     }
 
     // instanceof 는 [Symbol.hasInstance] 가 있으면 그것이 최우선이다 (§13.10.2)
+    // 일반 함수를 extends 한 클래스에서 super() 가 this 를 **부모가 만든 객체로 갈아끼워**
+    // 파생 클래스의 메서드가 통째로 사라졌다 (astro.build 의 class Bus extends EventTarget).
+    // 표준(§10.2.2): 파생 생성자의 this 는 new.target.prototype 을 가진 객체다.
+    #[test]
+    fn super_with_function_parent_keeps_derived_methods() {
+        assert_eq!(
+            run_num(
+                "function Base(){ this.b = 1; } \
+                 class D extends Base { constructor(){ super(); this.n = 1; } inc(){ return ++this.n; } } \
+                 var d = new D(); d.inc() + d.b"
+            ),
+            3.0
+        );
+        // 부모의 prototype 메서드도 여전히 보인다
+        assert_eq!(
+            run_num(
+                "function Base(){} Base.prototype.p = function(){ return 7; }; \
+                 class D extends Base { constructor(){ super(); } } \
+                 (new D()).p()"
+            ),
+            7.0
+        );
+        // 암묵 생성자여도 super(...args) 는 돈다 (class F extends Error {})
+        assert_eq!(
+            run_str("class F extends Error {} (new F('x')).message"),
+            "x"
+        );
+        // 명시 생성자 + extends Error: 클래스 정체성이 유지된다
+        assert!(run_bool(
+            "class E extends Error { constructor(m){ super(m); this.name='E'; } } \
+             var e = new E('b'); e instanceof E && e.message === 'b' && e.name === 'E'"
+        ));
+    }
+
     #[test]
     fn instanceof_honors_symbol_has_instance() {
         assert!(prelude_bool(

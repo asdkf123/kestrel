@@ -3146,6 +3146,16 @@ impl Interp {
                 };
                 Ok(self.set_method(s, op, args))
             }
+            // createElementNS(ns, name): 우리 DOM 은 네임스페이스를 따로 두지 않는다.
+            // 태그 이름으로 만들고 (svg/rect 등) 그대로 렌더 파이프라인을 태운다.
+            Native::CreateElementNS => {
+                let tag = args.get(1).map(to_display).unwrap_or_default();
+                if tag.is_empty() {
+                    return Err("createElementNS 에 태그 이름이 필요".to_string());
+                }
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_element(&tag)))
+            }
             Native::CreateElement => {
                 let tag = args.first().map(to_display).unwrap_or_default();
                 if tag.is_empty() {

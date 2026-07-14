@@ -49,10 +49,21 @@ fn parse_document(source: String) -> Node {
         .iter()
         .copied()
         .find(|&c| matches!(b.sink.nodes[c].node_type, NodeType::Element(_)));
-    match html {
-        Some(h) => b.to_node(h),
-        None => elem_node("html".to_string(), AttrMap::new(), vec![]),
+    let Some(h) = html else {
+        return elem_node("html".to_string(), AttrMap::new(), vec![]);
+    };
+    // 문서에는 **항상** <body> 가 있다 (HTML 표준: EOF 처리에서 만들어진다).
+    // 본문 콘텐츠가 하나도 없는 문서(스크립트만 있는 페이지)에서 우리는 body 를
+    // 만들지 않았고, 그래서 document.body 가 null 이었다 —
+    // body 에 뭔가 붙이려는 스크립트가 전부 그 자리에서 죽는다.
+    let has_body = b.sink.nodes[h].children.iter().any(|&c| {
+        matches!(&b.sink.nodes[c].node_type, NodeType::Element(e) if e.tag_name == "body")
+    });
+    if !has_body {
+        let body = b.sink.new_element("body", AttrMap::new());
+        b.sink.nodes[h].children.push(body);
     }
+    b.to_node(h)
 }
 
 // 문서 파싱 대상인지 휴리스틱 (실제로 fetch 된 페이지는 반드시 doctype/html 을 가진다).
