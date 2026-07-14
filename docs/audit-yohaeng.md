@@ -325,11 +325,38 @@ epsilon fudge, 곡선 고정분할, accent-color, 등.
       모듈 시그니처로 변환한다 (값의 모양으로 추측하지 않는다).
 - [x] **ToInt32 가 포화(saturate)** — 표준은 2^32 랩. `n as i32` 가 범위 밖에서 포화한다.
 
+## 라운드 6 — 어설션 페이지 감사 (33a0a3c … 0aabbe6)
+
+브라우저 API/CSS 를 어설션 페이지로 훑어 찾은 것들. 전부 **조용히 틀리던** 것이다.
+
+- [x] **filter/opacity 가 이미지에서만 무시됐다** — grayscale(1) 인 로고가 컬러로 나왔다.
+- [x] **flex 가 cross 를 main 확정 전에 쟀다** (§9.4) — flex:1 + 텍스트라는 가장 흔한
+      모양에서 컨테이너가 짜부라지고 stretch 가 틀린 높이로 늘렸다.
+- [x] **CSSOM View 가 전부 테두리 박스 근사** — clientLeft 가 좌표를(테두리 두께여야 한다),
+      scrollHeight 가 clientHeight 와 같아 "넘쳤나?" 검사가 **항상 거짓**이었다.
+      offsetParent 는 아예 없었다. transform 은 원문 문자열(표준은 matrix(...)).
+- [x] **innerText 가 textContent 별칭** — <script> 소스와 display:none 내용까지 돌려줬다.
+- [x] **속성이 HashMap** — outerHTML/getAttributeNames 순서가 매번 달랐다 (DOM 은 순서 있는 목록).
+- [x] **element.click() 이 없었다**, addEventListener 의 **once 를 무시**, eventPhase 없음,
+      비버블 이벤트가 조상까지 올라감, input.type/form.method 의 IDL 기본값 없음.
+- [x] **:has() 미지원** — 규칙이 조용히 사라졌다. 의사 클래스 인자를 첫 ')' 까지만 읽어
+      :not(:has(.x)) 가 잘리던 파싱 버그도 함께.
+- [x] **@layer / @container 미지원** — at-rule 을 스킵해 그 안의 규칙이 통째로 사라졌다.
+      Tailwind v4 는 **모든 것**을 @layer 로 감싼다.
+- [x] **@supports 가 subgrid 를 지원한다고 거짓말** (프로퍼티 이름만 보고 값을 안 봄).
+- [x] **obj.m?.() 이 this 를 잃었다** — el.getAttribute?.('src') 가 죽었다.
+- [x] **for await / 계산된 구조분해 키 파싱 실패** → 그 스크립트가 통째로 죽었다.
+- [x] **document.currentScript 가 없었다** — 번들러 런타임이 청크 URL 을 못 구해 죽는다.
+- [x] **스텝 한도가 시간이 아니라 스텝 수** — 무겁지만 정상인 번들도 잘렸다. 시간 예산
+      (실행 단위 5초 / 페이지 전체 10초)으로. 낭비 레이아웃 2건도 제거 (측정으로 찾았다).
+
 ### 남은 것 (정직하게)
 - [ ] **wasm SIMD (0xFD)** — 요즘 이미지·비디오 코덱 빌드가 쓴다. 지금은 CompileError 로
       정직하게 거절한다(조용히 틀리진 않는다). 다음 후보.
 - [ ] **wasm 다중값 블록 타입 / 테이블 임포트** — 거절한다.
-- [ ] **WebSocket 없음** — fmkorea 가 부른다.
+- [ ] **fmkorea 의 스크립트 하나는 60초를 줘도 끝나지 않는다.** 트리워킹 인터프리터가
+      못 따라가는 작업량이거나 영영 참이 되지 않는 조건을 폴링하는 것 — 예산은 피해를
+      가둘 뿐 고치지 못한다. **바이트코드 VM** 이 필요하다.
 - [ ] naver 잔여 js 오류 3건 (사이트 자체 라이브러리 쪽). 본문은 클라이언트 렌더라
       앱이 완주해야 보인다.
 - [ ] AVIF
