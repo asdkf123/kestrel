@@ -22,7 +22,10 @@ use crate::paint::DisplayItem;
 /// 든다(dom 포인터와 같은 규약). 스크립트/콜백 실행 구간에서만 설정된다.
 #[derive(Clone, Copy)]
 pub struct LayoutCtx {
-    pub sheet: *const crate::css::Stylesheet,
+    // 스크립트가 <style> 을 넣거나 지우면 스타일시트 자체가 달라진다 —
+    // 그래서 가변이다. base 는 UA + 외부 CSS (스크립트가 못 바꾸는 부분).
+    pub sheet: *mut crate::css::Stylesheet,
+    pub css_base: *const crate::css::Stylesheet,
     pub fonts: *const crate::font::FontStack,
     pub img_map: *const crate::layout::ImageMap,
     // 실제 이미지 픽셀 (canvas getImageData 가 오프스크린 래스터에 쓴다)
@@ -32,6 +35,25 @@ pub struct LayoutCtx {
     pub vh: f32,
 }
 
+/// 문서 안 모든 <style> 요소의 내용을 문서 순서로 이어 붙인다.
+/// 이 문자열이 곧 "저작자 인라인 CSS 의 현재 상태" 다.
+fn collect_style_css(dom: &crate::dom::Dom) -> String {
+    fn walk(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut String) {
+        if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+            if e.tag_name == "style" {
+                out.push_str(&dom.text_content(id));
+                out.push('\n');
+            }
+        }
+        for &c in &dom.get(id).children {
+            walk(dom, c, out);
+        }
+    }
+    let mut out = String::new();
+    walk(dom, dom.root, &mut out);
+    out
+}
+
 /// JS 가 측정 API 를 읽을 때 호출된다. DOM 버전이 지난 레이아웃 이후 바뀌었으면
 /// 스타일 → 레이아웃을 다시 돌려 인터프리터의 측정 맵을 채운다.
 pub fn flush_layout(js: &mut crate::js::interp::Interp) {
@@ -39,6 +61,18 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
     let dom = unsafe { &*dom_ptr };
     if js.layout_version == Some(dom.version()) {
         return; // 깨끗하다 — 재계산 불필요
+    }
+    // 스크립트가 <style> 을 넣었거나 지웠거나 내용을 바꿨으면 스타일시트를 다시 만든다.
+    // 예전엔 시트가 **스크립트 실행 전 스냅샷**이라, style 을 주입하고 바로
+    // getComputedStyle 을 읽는 코드(styled-components/emotion 같은 CSS-in-JS 가
+    // 정확히 이렇게 한다)가 옛 값을 받았다 — 조용히 틀린 값.
+    let css_now = collect_style_css(dom);
+    if js.css_text_version.as_deref() != Some(css_now.as_str()) {
+        let sheet = unsafe { &mut *ctx.sheet };
+        let base = unsafe { &*ctx.css_base };
+        *sheet = base.clone();
+        sheet.merge(crate::css::parse_viewport(css_now.clone(), ctx.vw));
+        js.css_text_version = Some(css_now);
     }
     let (sheet, fonts, img_map, pseudo) =
         unsafe { (&*ctx.sheet, &*ctx.fonts, &*ctx.img_map, &*ctx.pseudo) };
@@ -193,6 +227,8 @@ fn fill_js_maps(
 pub struct Page {
     pub dom: crate::dom::Dom,
     pub sheet: crate::css::Stylesheet,
+    // UA + 외부 CSS (스크립트가 못 바꾸는 부분). <style> 이 바뀌면 이 위에 다시 얹는다.
+    pub css_base: crate::css::Stylesheet,
     pub images: Vec<crate::png::Image>,
     pub img_map: crate::layout::ImageMap,
     pub fonts: crate::font::FontStack,
@@ -539,7 +575,8 @@ impl Page {
     // 콜백 안에서 el.getBoundingClientRect() 를 읽으면 flush_layout 이 돌아 최신값이 나온다.
     fn enter_js(&mut self) {
         let ctx = LayoutCtx {
-            sheet: &self.sheet,
+            sheet: &mut self.sheet,
+            css_base: &self.css_base,
             fonts: &self.fonts,
             img_map: &self.img_map,
             images: &self.images,

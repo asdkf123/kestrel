@@ -34,7 +34,7 @@ use shorthand::expand_declaration;
 pub(crate) use supports::supports_condition;
 use values::valid_identifier_char;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
     // @layer 선언 순서. 뒤 레이어가 이긴다 (일반 선언), !important 는 **역순** (표준 §6.4.4).
@@ -119,7 +119,7 @@ pub fn parse_unicode_range(s: &str) -> Vec<(u32, u32)> {
     out
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Rule {
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
@@ -210,7 +210,7 @@ pub struct SimpleSelector {
     pub pseudo_element: Option<PseudoElement>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Declaration {
     pub name: String,
     pub value: Value,

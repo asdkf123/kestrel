@@ -183,6 +183,8 @@ pub struct Interp {
     // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
     // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
     pub layout_ctx: Option<crate::window::LayoutCtx>,
+    // 마지막으로 반영한 <style> 요소들의 CSS 텍스트. 달라지면 시트를 다시 만든다.
+    pub css_text_version: Option<String>,
     // 아래 측정 맵이 반영하고 있는 DOM 버전. dom.version() 과 다르면 다시 레이아웃한다.
     pub layout_version: Option<u64>,
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
@@ -1124,6 +1126,7 @@ impl Interp {
             scroll_y: 0.0,
             active_element: None,
             layout_ctx: None,
+            css_text_version: None,
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
@@ -1413,20 +1416,43 @@ impl Interp {
     }
 
     // 전역 객체가 이 이름을 프로퍼티로 갖는가 (own 맵 또는 전역 환경 바인딩).
-    pub(super) fn global_has(&self, m: &Rc<RefCell<ObjMap>>, key: &str) -> bool {
-        self.is_global_obj(m) && !is_internal_key(key) && env_get(&self.global, key).is_some()
+    pub(super) fn global_has(&mut self, m: &Rc<RefCell<ObjMap>>, key: &str) -> bool {
+        if !self.is_global_obj(m) || is_internal_key(key) {
+            return false;
+        }
+        env_get(&self.global, key).is_some() || self.named_access(key).is_some()
     }
 
     // window(전역 객체) 프로퍼티 조회 — 브라우저처럼 window.X 를 맨 X 로 읽게 하는 폴백.
-    fn window_prop(&self, name: &str) -> Option<Value> {
+    fn window_prop(&mut self, name: &str) -> Option<Value> {
         if let Some(Value::Obj(m)) = env_get(&self.global, "window") {
             let v = m.borrow().get(name).cloned();
             // window.window 등 자기참조로 인한 무의미 순환 방지: window 자신은 제외
-            if name != "window" {
+            if name != "window" && v.is_some() {
                 return v;
             }
         }
-        None
+        self.named_access(name)
+    }
+
+    // 전역 객체의 이름 붙은 프로퍼티 (HTML §7.3.3 "named access on the Window object").
+    // id 를 가진 요소와, name 을 가진 form/img/iframe/embed/object 는 그 이름으로
+    // 전역에서 바로 읽힌다. 없으면 <div id=target> 을 쓰는 코드가 ReferenceError 로
+    // 죽는다 — 레거시가 아니라 지금도 살아 있는 표준이다.
+    fn named_access(&mut self, name: &str) -> Option<Value> {
+        if name.is_empty() {
+            return None;
+        }
+        let dom = self.dom_arena().ok()?;
+        if let Some(id) = dom.find_by_attr_id(name) {
+            return Some(Value::Dom(id));
+        }
+        // name 속성으로 노출되는 요소들 (표준이 정한 태그 목록만)
+        let hit = dom.find(|e| {
+            matches!(e.tag_name.as_str(), "form" | "img" | "iframe" | "embed" | "object")
+                && e.attributes.get("name").map(|v| v == name).unwrap_or(false)
+        });
+        hit.map(Value::Dom)
     }
 
     // promise 를 드레인해 정착 상태를 (true=이행/false=거부, 값/이유)로 반환.
@@ -2820,8 +2846,13 @@ impl Interp {
                 // typeof window !== 'undefined', typeof require !== 'undefined' 등)
                 if matches!(op, UnOp::Typeof) {
                     if let Expr::Ident(name) = expr.as_ref() {
+                        // 전역 객체의 이름 붙은 프로퍼티(id 있는 요소 등)도 '있는' 것이다 —
+                        // 그래야 typeof 와 실제 조회가 같은 답을 한다.
                         if env_get(env, name).is_none() {
-                            return Ok(Value::Str("undefined".to_string()));
+                            return Ok(match self.window_prop(name) {
+                                Some(v) => Value::Str(type_of(&v).to_string()),
+                                None => Value::Str("undefined".to_string()),
+                            });
                         }
                     }
                 }
@@ -3750,6 +3781,10 @@ impl Interp {
                         if Rc::ptr_eq(map, &self.window_obj) {
                             if let Some(g) = env_get(&self.global, key) {
                                 return Ok(g);
+                            }
+                            // 이름 붙은 프로퍼티 (HTML §7.3.3): window.target === <div id=target>
+                            if let Some(v) = self.named_access(key) {
+                                return Ok(v);
                             }
                         }
                         match key {

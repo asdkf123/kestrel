@@ -156,8 +156,11 @@ fn main() {
     // 스크립트 실행 (스타일시트·폰트·이미지가 준비된 뒤 — 표준 순서).
     // 강제 레이아웃 컨텍스트를 넘겨 스크립트 안 측정 API 가 실제 값을 돌려주게 한다.
     let empty_pseudo = style::PseudoStyles::new();
+    // 기준 시트 = 지금까지의 시트(UA + 외부 CSS). <style> 이 바뀌면 이 위에 다시 얹는다.
+    let css_base_local = stylesheet.clone();
     let ctx = window::LayoutCtx {
-        sheet: &stylesheet,
+        sheet: &mut stylesheet,
+        css_base: &css_base_local,
         fonts: &fonts,
         img_map: &img_map,
         images: &images,
@@ -173,6 +176,7 @@ fn main() {
     let mut page = window::Page {
         dom: root_node,
         sheet: stylesheet,
+        css_base: css_base_local,
         images,
         img_map,
         fonts,
@@ -964,6 +968,9 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     for (u, r) in top_urls.iter().zip(top_bodies) {
         load_stylesheet_body(u, r, page_vw, &mut sheet, 0, &mut seen_css);
     }
+    // UA + 외부 CSS 는 스크립트가 바꿀 수 없는 부분이다. 인라인 <style> 은 스크립트가
+    // 넣고 빼므로, 스타일을 다시 계산할 때마다 이 기준 위에 현재 <style> 들을 다시 얹는다.
+    let css_base = sheet.clone();
     let mut seen_styles = std::collections::HashSet::new();
     let mut inline_css = String::new();
     extract_new_css(&dom, &mut seen_styles, &mut inline_css);
@@ -1106,7 +1113,8 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     phase("images+fonts", &mut t0);
     let js_rt = {
         let ctx = window::LayoutCtx {
-            sheet: &sheet,
+            sheet: &mut sheet,
+            css_base: &css_base,
             fonts: &fonts,
             img_map: &img_map,
             images: &images,
@@ -1155,6 +1163,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     let mut page = window::Page {
         dom,
         sheet,
+        css_base,
         images,
         img_map,
         fonts,

@@ -509,6 +509,23 @@ impl Dom {
         rec(self, self.root, want)
     }
 
+    // 술어를 만족하는 첫 요소 (문서 순서). named access 등에 쓴다.
+    pub fn find<F: Fn(&ElementData) -> bool + Copy>(&self, pred: F) -> Option<NodeId> {
+        fn rec<F: Fn(&ElementData) -> bool + Copy>(
+            dom: &Dom,
+            id: NodeId,
+            pred: F,
+        ) -> Option<NodeId> {
+            if let NodeType::Element(e) = &dom.get(id).node_type {
+                if pred(e) {
+                    return Some(id);
+                }
+            }
+            dom.get(id).children.iter().find_map(|&c| rec(dom, c, pred))
+        }
+        rec(self, self.root, pred)
+    }
+
     // HTML 직렬화 (innerHTML / outerHTML).
     // 예전엔 innerHTML 을 쓰기만 되고 읽기가 없어서, el.innerHTML 을 읽는 코드가
     // undefined 를 받고 그 자리에서 죽었다 (아주 흔한 패턴이다).
