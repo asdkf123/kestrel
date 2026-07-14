@@ -937,7 +937,10 @@ impl Interp {
             if let Err(e) = &result {
                 if !e.starts_with(super::STEP_LIMIT_MSG) {
                     if let Some((param, cbody)) = catch {
-                        let caught = self.thrown.take().unwrap_or(Value::Str(e.clone()));
+                        let caught = match self.thrown.take() {
+                            Some(v) => v,
+                            None => self.error_from_msg(e),
+                        };
                         let cscope = Env::new(Some(scope.clone()));
                         if let Some(p) = param {
                             env_declare(&cscope, p, caught);

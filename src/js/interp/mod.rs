@@ -28,6 +28,18 @@ const TIME_CHECK_MASK: u64 = 0xffff;
 // 이 접두사의 에러는 try/catch 로 잡을 수 없다 (무한 루프 가드가 무력화되지 않게)
 const STEP_LIMIT_MSG: &str = "실행 한도 초과";
 
+// 표준 네이티브 오류 종류 (ECMA-262 §20.5). Error 가 첫째여야 한다 (나머지의 프로토타입 부모).
+pub(super) const ERROR_KINDS: [&str; 8] = [
+    "Error",
+    "TypeError",
+    "RangeError",
+    "SyntaxError",
+    "ReferenceError",
+    "EvalError",
+    "URIError",
+    "AggregateError",
+];
+
 // 정규 배열 인덱스인가 (0 ~ 2^32-2, 선행 0 없음). 열거 순서 결정에 쓰인다.
 fn array_index(k: &str) -> Option<u32> {
     if k.is_empty() || (k.len() > 1 && k.starts_with('0')) {
@@ -362,6 +374,8 @@ pub enum Native {
     ObjectIsPrototypeOf,
     HasOwnProperty,
     ObjToString,
+    // Error.prototype.toString (§20.5.3.4): name + ": " + message (빈 쪽은 생략)
+    ErrorToString,
     ReturnFalse,
     ReturnThis, // valueOf 등 — 수신자(this) 반환
     FnToString, // Function.prototype.toString
@@ -1142,6 +1156,11 @@ pub struct Interp {
     map_proto: Value,
     set_proto: Value,
     error_proto: Value,
+    // 오류 종류별 prototype (TypeError.prototype 등). 예전엔 8종이 Error.prototype 하나를
+    // 공유해서 TypeError.prototype === Error.prototype 이었고, 던져진 오류 객체에는
+    // __proto__ 도 constructor 도 없었다 — instanceof 는 "message 가 있나?" 오리 판별로,
+    // e.constructor 는 Object 로 나왔다. 이제 각자 진짜 프로토타입 체인을 갖는다.
+    error_protos: Vec<(&'static str, Value)>,
     // Object/Array 의 정적 멤버·prototype 을 담은 네임스페이스 맵.
     // 전역은 Native 생성자이고, 멤버 조회는 이 맵에 위임한다.
     object_ns: Value,
@@ -1974,11 +1993,29 @@ impl Interp {
             ("toString", Native::ValueToStr),
             ("valueOf", Native::ValueOfSelf),
         ]);
-        // Error.prototype — core-js/번들이 Error.prototype 을 참조(확장/기능 탐지).
-        let error_proto = mk_proto(vec![("toString", Native::ObjToString)]);
-        if let Value::Obj(m) = &error_proto {
-            m.borrow_mut().insert("name".to_string(), Value::Str("Error".to_string()));
-            m.borrow_mut().insert("message".to_string(), Value::Str(String::new()));
+        // Error.prototype 및 서브타입 prototype (ECMA-262 §20.5.3, §20.5.6.3).
+        // NativeError.prototype 의 [[Prototype]] 은 Error.prototype 이고,
+        // 각자 자기 name 과 constructor 를 갖는다. 프로퍼티는 전부 비열거.
+        let error_proto = mk_proto(vec![("toString", Native::ErrorToString)]);
+        let mut error_protos: Vec<(&'static str, Value)> = Vec::new();
+        for kind in ERROR_KINDS {
+            let proto = if kind == "Error" {
+                error_proto.clone()
+            } else {
+                let mut m = ObjMap::new();
+                m.insert("__proto__".to_string(), error_proto.clone());
+                Value::Obj(Rc::new(RefCell::new(m)))
+            };
+            if let Value::Obj(m) = &proto {
+                let mut b = m.borrow_mut();
+                b.insert("name".to_string(), Value::Str(kind.to_string()));
+                b.insert("message".to_string(), Value::Str(String::new()));
+                b.insert("constructor".to_string(), Value::Native(Native::ErrorCtor(kind)));
+                for k in ["name", "message", "constructor", "toString"] {
+                    b.insert(nonenum_marker(k), Value::Bool(true));
+                }
+            }
+            error_protos.push((kind, proto));
         }
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2025,6 +2062,7 @@ impl Interp {
             map_proto,
             set_proto,
             error_proto,
+            error_protos,
             object_ns,
             array_ns,
             date_proto,
@@ -2160,6 +2198,45 @@ impl Interp {
 
     // 마이크로태스크 드레인: 콜백 실행 → 그 결과로 의존 promise 이행 (체이닝).
     // 값 타입에 대응하는 전역 생성자 (x.constructor 용).
+    // 진짜 네이티브 오류 객체를 만든다 (ECMA-262 §20.5.1.1).
+    // message 는 인자가 있을 때만 own 프로퍼티이고, 비열거다 — Object.keys(new Error('x'))
+    // 는 [] 여야 한다. __proto__ 는 해당 종류의 prototype 이므로 instanceof 와
+    // e.constructor 가 프로토타입 체인만으로 표준대로 동작한다.
+    pub(super) fn make_error(&self, kind: &str, message: Option<String>) -> Value {
+        let mut map = ObjMap::new();
+        if let Some(msg) = message {
+            map.insert("message".to_string(), Value::Str(msg));
+            map.insert(nonenum_marker("message"), Value::Bool(true));
+        }
+        // stack: 표준은 아니지만 모든 엔진이 준다. 비열거로 둔다.
+        map.insert(
+            "stack".to_string(),
+            Value::Str(self.err_stack.clone().unwrap_or_default().join("\n")),
+        );
+        map.insert(nonenum_marker("stack"), Value::Bool(true));
+        let proto = self
+            .error_protos
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .map(|(_, p)| p.clone())
+            .unwrap_or_else(|| self.error_proto.clone());
+        map.insert("__proto__".to_string(), proto);
+        Value::Obj(Rc::new(RefCell::new(map)))
+    }
+
+    // 종류가 지정되지 않은 내부 오류를 잡을 때 쓰는 Error 객체.
+    pub(super) fn error_from_msg(&self, msg: &str) -> Value {
+        self.make_error("Error", Some(msg.to_string()))
+    }
+
+    // 표준이 명시한 종류의 오류를 던진다. 내부 오류를 그냥 Err(String) 으로 올리면
+    // catch 가 문자열을 잡게 되어 `e instanceof TypeError` 도 `e.message` 도 거짓이 된다.
+    pub(super) fn throw_error(&mut self, kind: &'static str, message: impl Into<String>) -> String {
+        let msg = message.into();
+        self.thrown = Some(self.make_error(kind, Some(msg.clone())));
+        format!("{}: {}", kind, msg)
+    }
+
     fn constructor_of(&self, v: &Value) -> Value {
         let name = match v {
             Value::Arr(_) => "Array",
@@ -3191,8 +3268,13 @@ impl Interp {
                             // 잡힌 오류의 스택 스냅샷은 버린다 (다음 오류가 자기 스택을 갖도록)
                             self.err_stack = None;
                             // throw 된 값이 있으면 그 값, 네이티브 에러면 메시지 문자열
-                            let caught =
-                                self.thrown.take().unwrap_or(Value::Str(e.clone()));
+                            // 내부 오류(엔진이 Err(String) 으로 올린 것)도 진짜 Error
+                            // 객체로 잡힌다. 예전엔 문자열이 잡혀서 e.message 가 undefined,
+                            // e instanceof Error 가 false 였다.
+                            let caught = match self.thrown.take() {
+                                Some(v) => v,
+                                None => self.error_from_msg(e),
+                            };
                             let cscope = Env::new(Some(env.clone()));
                             if let Some(p) = param {
                                 env_declare(&cscope, p, caught);
@@ -3270,7 +3352,8 @@ impl Interp {
                         }
                         return Ok(Flow::Normal(Value::Undefined));
                     }
-                    return Err(format!("{} 은(는) 반복 가능하지 않음", type_of(&target)));
+                    let t = type_of(&target).to_string();
+                    return Err(self.throw_error("TypeError", format!("{} 은(는) 반복 가능하지 않음", t)));
                 }
                 let values = self.iterate_to_vec(&target);
                 for v in values {
@@ -3352,7 +3435,7 @@ impl Interp {
                         *self.lenient_hits.entry(name.clone()).or_default() += 1;
                         Ok(Value::Undefined)
                     } else {
-                        Err(format!("{} 은(는) 정의되지 않음", name))
+                        Err(self.throw_error("ReferenceError", format!("{} 은(는) 정의되지 않음", name)))
                     }
                 }
             },
@@ -3364,10 +3447,9 @@ impl Interp {
                         // null/undefined 전개는 TypeError (표준). 조용히 빈 배열로 넘기면
                         // 진짜 버그가 숨는다.
                         if matches!(val, Value::Undefined | Value::Null) {
-                            return Err(format!(
-                                "TypeError: {} 은(는) 이터러블이 아님",
-                                to_display(&val)
-                            ));
+                            let d = to_display(&val);
+                            return Err(self
+                                .throw_error("TypeError", format!("{} 은(는) 이터러블이 아님", d)));
                         }
                         v.extend(self.iterate_to_vec(&val));
                     } else {
@@ -3588,14 +3670,8 @@ impl Interp {
                     return match op {
                         UnOp::Neg => Ok(Value::BigInt(Rc::new(b.negate()))),
                         UnOp::BitNot => Ok(Value::BigInt(Rc::new(b.bitnot()))),
-                        UnOp::Pos => {
-                            let msg = "Cannot convert a BigInt value to a number".to_string();
-                            let mut e = ObjMap::new();
-                            e.insert("name".to_string(), Value::Str("TypeError".to_string()));
-                            e.insert("message".to_string(), Value::Str(msg.clone()));
-                            self.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
-                            Err(msg)
-                        }
+                        UnOp::Pos => Err(self
+                            .throw_error("TypeError", "Cannot convert a BigInt value to a number")),
                         UnOp::Not => Ok(Value::Bool(b.is_zero())),
                         UnOp::Typeof => Ok(Value::Str("bigint".to_string())),
                         UnOp::Void => Ok(Value::Undefined),
@@ -3763,13 +3839,14 @@ impl Interp {
                         *self.lenient_hits.entry(format!(".{}", key)).or_default() += 1;
                         return Ok(Value::Undefined);
                     }
-                    return Err(format!(
+                    let m = format!(
                         "{}.{} — {} 이(가) {} (읽을 수 없음)",
                         obj_hint(obj),
                         key,
                         obj_hint(obj),
                         to_display(&recv)
-                    ));
+                    );
+                    return Err(self.throw_error("TypeError", m));
                 }
                 self.member_get(&recv, &key)
             }
@@ -4897,7 +4974,13 @@ impl Interp {
             Value::Native(Native::SetCtor) if key == "prototype" => Ok(self.set_proto.clone()),
             // Error/TypeError/… 의 prototype 과 name (class X extends Error, 기능 탐지).
             Value::Native(Native::ErrorCtor(n)) => Ok(match key {
-                "prototype" => self.error_proto.clone(),
+                // 종류별 prototype (TypeError.prototype !== Error.prototype)
+                "prototype" => self
+                    .error_protos
+                    .iter()
+                    .find(|(k, _)| k == n)
+                    .map(|(_, p)| p.clone())
+                    .unwrap_or_else(|| self.error_proto.clone()),
                 "name" => Value::Str(n.to_string()),
                 "call" => Value::Native(Native::FnCall),
                 "apply" => Value::Native(Native::FnApply),
@@ -5023,7 +5106,8 @@ impl Interp {
                 })
             }
             Value::Undefined | Value::Null => {
-                Err(format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key))
+                let m = format!("{} 의 '{}' 를 읽을 수 없음", to_display(recv), key);
+                Err(self.throw_error("TypeError", m))
             }
             _ => Ok(Value::Undefined),
         }
@@ -5053,12 +5137,13 @@ impl Interp {
                                 *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
                                 return Ok(Value::Undefined);
                             }
-                            return Err(format!(
+                            let m = format!(
                                 "{}(…) — {} 이(가) {} (함수 아님)",
                                 name,
                                 name,
                                 to_display(&f)
-                            ));
+                            );
+                            return Err(self.throw_error("TypeError", m));
                         }
                         let a = self.eval_args(args, env)?;
                         return self.call_value(f, Some(recv), a);
@@ -5098,7 +5183,7 @@ impl Interp {
                                     // 부모가 별도 객체를 만들어 돌려준 경우(Error 등):
                                     // 그 own 프로퍼티를 this 에 얹는다 (클래스 정체성은 유지)
                                     v if is_object(&v) => {
-                                        for (k, val) in builtins::own_enumerable_entries(&v) {
+                                        for (k, val) in builtins::own_entries_all(&v) {
                                             self.set_own_property(&this, k, val);
                                         }
                                     }
@@ -5144,13 +5229,14 @@ impl Interp {
                                 }
                                 return Ok(Value::Undefined);
                             }
-                            return Err(format!(
+                            let m = format!(
                                 "{}.{}(…) — {} 이(가) {}",
                                 obj_hint(obj),
                                 key,
                                 obj_hint(obj),
                                 to_display(&recv)
-                            ));
+                            );
+                            return Err(self.throw_error("TypeError", m));
                         }
                         let f = self.member_get(&recv, &key)?;
                         arg_vals.extend(self.eval_args(args, env)?);
@@ -5159,14 +5245,15 @@ impl Interp {
                                 *self.lenient_hits.entry(format!("{}() 비함수", key)).or_default() += 1;
                                 return Ok(Value::Undefined);
                             }
-                            return Err(format!(
+                            let m = format!(
                                 "{}(…) — {}.{} 이(가) {} (함수 아님, 수신자={})",
                                 key,
                                 obj_hint(obj),
                                 key,
                                 to_display(&f),
                                 type_of(&recv)
-                            ));
+                            );
+                            return Err(self.throw_error("TypeError", m));
                         }
                         self.call_value(f, Some(recv), arg_vals)
                     } else {
@@ -5183,12 +5270,13 @@ impl Interp {
                                 *self.lenient_hits.entry(format!("{}() 비함수", name)).or_default() += 1;
                                 return Ok(Value::Undefined);
                             }
-                            return Err(format!(
+                            let m = format!(
                                 "{}(…) — {} 이(가) {} (함수 아님)",
                                 name,
                                 name,
                                 to_display(&f)
-                            ));
+                            );
+                            return Err(self.throw_error("TypeError", m));
                         }
                         self.call_value(f, None, arg_vals)
                     }
@@ -5285,7 +5373,10 @@ impl Interp {
                 all.extend(args);
                 self.call_value(target, Some(this_val), all)
             }
-            other => Err(format!("{} 은(는) 함수가 아님", to_display(&other))),
+            other => {
+                let d = to_display(&other);
+                Err(self.throw_error("TypeError", format!("{} 은(는) 함수가 아님", d)))
+            }
         }
     }
 
@@ -5338,7 +5429,10 @@ impl Interp {
                 if let Err(e) = self.call_value(executor, None, vec![resolve, reject.clone()]) {
                     // executor throw → reject (스텝 한도는 제외)
                     if !e.starts_with(STEP_LIMIT_MSG) {
-                        let err = self.thrown.take().unwrap_or(Value::Str(e));
+                        let err = match self.thrown.take() {
+                            Some(v) => v,
+                            None => self.error_from_msg(&e),
+                        };
                         let _ = self.call_value(reject, None, vec![err]);
                     } else {
                         return Err(e);
@@ -5361,13 +5455,12 @@ impl Interp {
                 return self.construct(target, all);
             }
             Value::Native(Native::ErrorCtor(name)) => {
-                let mut map = ObjMap::new();
-                map.insert("name".to_string(), Value::Str(name.to_string()));
-                map.insert(
-                    "message".to_string(),
-                    Value::Str(args.first().map(to_display).unwrap_or_default()),
-                );
-                return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+                // message 는 인자가 undefined 가 아닐 때만 own 프로퍼티 (§20.5.1.1)
+                let msg = match args.first() {
+                    None | Some(Value::Undefined) => None,
+                    Some(v) => Some(to_display(v)),
+                };
+                return Ok(self.make_error(name, msg));
             }
             // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
             // new f() — 일반 함수를 생성자로 (ES6 이전 패턴, 미니파이 코드 다수).
@@ -5486,7 +5579,7 @@ impl Interp {
                     match produced {
                         Value::Dom(_) => return Ok(Some(produced)),
                         v if is_object(&v) => {
-                            for (k, val) in builtins::own_enumerable_entries(&v) {
+                            for (k, val) in builtins::own_entries_all(&v) {
                                 self.set_own_property(inst, k, val);
                             }
                         }
@@ -5641,12 +5734,10 @@ impl Interp {
         }
         let big = |b: BI| Ok(Value::BigInt(Rc::new(b)));
         let type_err = |me: &mut Self| -> Result<Value, String> {
-            let msg = "Cannot mix BigInt and other types, use explicit conversions".to_string();
-            let mut e = ObjMap::new();
-            e.insert("name".to_string(), Value::Str("TypeError".to_string()));
-            e.insert("message".to_string(), Value::Str(msg.clone()));
-            me.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
-            Err(msg)
+            Err(me.throw_error(
+                "TypeError",
+                "Cannot mix BigInt and other types, use explicit conversions",
+            ))
         };
         // 문자열이 끼면 + 는 결합 (표준)
         if matches!(op, BinOp::Add) && (matches!(l, Value::Str(_)) || matches!(r, Value::Str(_))) {
@@ -5859,12 +5950,38 @@ impl Interp {
                     Value::Native(Native::FunctionCtor) => {
                         matches!(l, Value::Fn(_) | Value::Native(_) | Value::Bound(_) | Value::Class(_))
                     }
-                    // Error 및 서브타입: 에러 객체(name/message 보유). 정확한 이름은 subtype.
+                    // Error 및 서브타입: 프로토타입 체인에 해당 종류의 prototype 이 있는가.
+                    // (예전엔 "message 프로퍼티가 있나?" 라는 오리 판별이었다 — 그래서
+                    //  {message:'x'} 같은 평범한 객체도 Error 로 통과했다.)
                     Value::Native(Native::ErrorCtor(name)) => {
-                        obj_has("message")
-                            && (*name == "Error"
-                                || matches!(&l, Value::Obj(m)
-                                    if matches!(m.borrow().get("name"), Some(Value::Str(s)) if s == name)))
+                        let target = self
+                            .error_protos
+                            .iter()
+                            .find(|(k, _)| k == name)
+                            .map(|(_, p)| p.clone());
+                        match (&l, target) {
+                            (Value::Obj(lm), Some(Value::Obj(tp))) => {
+                                let mut cur = Some(lm.clone());
+                                let mut hit = false;
+                                let mut depth = 0;
+                                while let Some(m) = cur {
+                                    if Rc::ptr_eq(&m, &tp) {
+                                        hit = true;
+                                        break;
+                                    }
+                                    depth += 1;
+                                    if depth > 100 {
+                                        break;
+                                    }
+                                    cur = match m.borrow().get("__proto__") {
+                                        Some(Value::Obj(p)) => Some(p.clone()),
+                                        _ => None,
+                                    };
+                                }
+                                hit
+                            }
+                            _ => false,
+                        }
                     }
                     // Array/Object 는 Native 생성자
                     Value::Native(Native::ArrayCtor) => matches!(l, Value::Arr(_)),

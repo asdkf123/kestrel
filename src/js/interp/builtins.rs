@@ -143,6 +143,23 @@ fn write_back_array_like(o: &Rc<RefCell<ObjMap>>, items: &[Value]) {
 
 // 값의 own enumerable 프로퍼티 (키, 값) — Object.assign/스프레드의 소스 열거.
 // 엔진 내부 마커(__proto__/@@심볼 등)는 제외한다.
+// 부모 생성자가 만들어 돌려준 객체를 this 로 옮길 때 쓰는 own 프로퍼티 전량.
+// 열거 가능 여부와 무관하게 다 옮긴다 — Error 의 message/stack 은 비열거라서,
+// 열거 가능한 것만 옮기면 `class E extends Error` 인스턴스의 message 가 사라진다.
+// 비열거 표식(\0ne:*)도 함께 옮겨 속성까지 보존한다. __proto__ 는 제외(파생 클래스의
+// 프로토타입 체인을 덮어쓰면 안 된다).
+pub(super) fn own_entries_all(v: &Value) -> Vec<(String, Value)> {
+    match v {
+        Value::Obj(m) => m
+            .borrow()
+            .iter()
+            .filter(|(k, _)| k.as_str() != "__proto__")
+            .map(|(k, val)| (k.clone(), val.clone()))
+            .collect(),
+        other => own_enumerable_entries(other),
+    }
+}
+
 pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
     match v {
         Value::Obj(m) => enumerable_entries(m),
@@ -2455,6 +2472,29 @@ impl Interp {
                 Ok(Value::Bool(has))
             }
             // Object.prototype.toString.call(x) → "[object Array]" 등 (타입 판별 관용)
+            // Error.prototype.toString (§20.5.3.4): name 과 message 를 ": " 로 잇되,
+            // 한쪽이 비면 다른 쪽만. 둘 다 프로토타입 체인에서 읽는다.
+            Native::ErrorToString => {
+                let this = recv.clone().unwrap_or(Value::Undefined);
+                let get = |me: &mut Self, k: &str| -> String {
+                    match me.member_get(&this, k) {
+                        Ok(Value::Undefined) | Err(_) => String::new(),
+                        Ok(v) => to_display(&v),
+                    }
+                };
+                let name = {
+                    let n = get(self, "name");
+                    if n.is_empty() { "Error".to_string() } else { n }
+                };
+                let msg = get(self, "message");
+                Ok(Value::Str(if msg.is_empty() {
+                    name
+                } else if name.is_empty() {
+                    msg
+                } else {
+                    format!("{}: {}", name, msg)
+                }))
+            }
             Native::ObjToString => {
                 let tag = match &recv {
                     Some(Value::Arr(_)) => "Array",
@@ -3125,14 +3165,13 @@ impl Interp {
             Native::MapCtor => self.make_map(args),
             Native::SetCtor => self.make_set(args),
             Native::ErrorCtor(name) => {
-                let mut map = ObjMap::new();
-                map.insert("name".to_string(), Value::Str(name.to_string()));
-                map.insert(
-                    "message".to_string(),
-                    Value::Str(args.first().map(to_display).unwrap_or_default()),
-                );
-                map.insert("stack".to_string(), Value::Str(String::new()));
-                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+                // Error('m') 은 new Error('m') 과 같다 (§20.5.1.1). message 는 인자가
+                // 있을 때만 own 프로퍼티이고 비열거 — 객체 생성은 make_error 한 곳에서만.
+                let msg = match args.first() {
+                    None | Some(Value::Undefined) => None,
+                    Some(v) => Some(to_display(v)),
+                };
+                Ok(self.make_error(name, msg))
             }
             Native::Map(op) => {
                 let Some(Value::MapVal(m)) = recv else {
@@ -4899,13 +4938,7 @@ impl Interp {
                 let holder = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
                 match self.json_ser(&v, "", &holder, &fnrep, &keys, &indent, 0, &mut path) {
                     Ok(s) => Ok(s.map(Value::Str).unwrap_or(Value::Undefined)),
-                    Err(msg) => {
-                        let mut e = ObjMap::new();
-                        e.insert("name".to_string(), Value::Str("TypeError".to_string()));
-                        e.insert("message".to_string(), Value::Str(msg.clone()));
-                        self.thrown = Some(Value::Obj(Rc::new(RefCell::new(e))));
-                        Err(msg)
-                    }
+                    Err(msg) => Err(self.throw_error("TypeError", msg)),
                 }
             }
             Native::ParseInt => {
