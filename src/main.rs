@@ -222,6 +222,63 @@ fn count_elements(dom: &dom::Dom) -> usize {
     count
 }
 
+// <picture> 의 <source> 를 적용한다 (HTML §4.8.1).
+// 조건(media)이 맞고 우리가 디코드할 수 있는 타입인 첫 <source> 의 srcset/sizes 를
+// 안쪽 <img> 에 얹는다 — 그러면 이후 경로(다운로드/레이아웃/페인트)가 하나로 통일된다.
+// 예전엔 <source> 를 통째로 무시했다: 아트 디렉션(다른 크롭)이나 <img> 가 저해상도
+// 폴백만 가진 경우 그 저해상도가 그대로 나왔다.
+fn apply_picture_sources(dom: &mut dom::Dom, vw: f32) {
+    // 우리가 실제로 디코드할 수 있는 타입만 받는다 (avif 는 아직 없다 → 건너뛴다).
+    let can_decode = |t: &str| {
+        matches!(
+            t.trim().to_ascii_lowercase().as_str(),
+            "image/png" | "image/jpeg" | "image/jpg" | "image/gif" | "image/webp"
+                | "image/svg+xml" | ""
+        )
+    };
+    let mut pictures: Vec<dom::NodeId> = Vec::new();
+    walk_dom_ids(dom, dom.root, &mut |id| {
+        if let dom::NodeType::Element(e) = &dom.get(id).node_type {
+            if e.tag_name == "picture" {
+                pictures.push(id);
+            }
+        }
+    });
+    for pic in pictures {
+        let children = dom.get(pic).children.clone();
+        let mut chosen: Option<(String, Option<String>)> = None;
+        let mut img_id: Option<dom::NodeId> = None;
+        for c in children {
+            let dom::NodeType::Element(e) = &dom.get(c).node_type else { continue };
+            match e.tag_name.as_str() {
+                "source" if chosen.is_none() => {
+                    let media = e.attributes.get("media").cloned().unwrap_or_default();
+                    if !media.is_empty() && !css::media_matches(&media, vw) {
+                        continue;
+                    }
+                    let ty = e.attributes.get("type").cloned().unwrap_or_default();
+                    if !can_decode(&ty) {
+                        continue;
+                    }
+                    let Some(set) = e.attributes.get("srcset").cloned() else { continue };
+                    if set.trim().is_empty() {
+                        continue;
+                    }
+                    chosen = Some((set, e.attributes.get("sizes").cloned()));
+                }
+                "img" => img_id = Some(c),
+                _ => {}
+            }
+        }
+        if let (Some((set, sizes)), Some(img)) = (chosen, img_id) {
+            dom.set_attr(img, "srcset", set);
+            if let Some(sz) = sizes {
+                dom.set_attr(img, "sizes", sz);
+            }
+        }
+    }
+}
+
 fn collect_img_srcs(dom: &dom::Dom, out: &mut Vec<String>) {
     walk_dom(dom, dom.root, &mut |n| {
         if let dom::NodeType::Element(e) = &n.node_type {
@@ -869,6 +926,8 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     let parsed_inline = css::parse_viewport(inline_css, page_vw);
     sheet.merge(parsed_inline);
 
+    // <picture> 의 <source> 를 먼저 적용한다 (선택된 소스가 img 에 얹힌다)
+    apply_picture_sources(&mut dom, page_vw);
     // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리는 일시 사용)
     let mut srcs = Vec::new();
     collect_img_srcs(&dom, &mut srcs);

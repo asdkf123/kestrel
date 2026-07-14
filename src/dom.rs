@@ -113,21 +113,36 @@ impl ElementData {
         self.attributes.get("id")
     }
 
-    // <img> 가 실제로 가리키는 소스. src 가 없으면 srcset 의 첫 후보를 쓴다.
-    // 예전엔 src 만 봐서 srcset 만 있는 이미지가 아예 안 실렸다(반응형 이미지).
-    // (srcset 안의 data: URI 처럼 콤마가 들어간 후보는 아직 다루지 않는다 — 드묾)
+    // <img> 가 실제로 가리키는 소스.
+    //
+    // 예전엔 srcset 의 **첫 후보**를 그냥 썼다. 첫 후보는 보통 가장 작은 이미지라
+    // (예: 200w) 화면에서 흐리게 확대됐다. 표준은 sizes 와 디스크립터로 고른다
+    // (HTML §4.8.4.4). 이제 그 알고리즘을 따른다: 뷰포트 폭 vw 로 sizes 를 풀어
+    // 목표 폭을 구하고, 그 폭 이상인 후보 중 가장 작은 것을 쓴다.
     pub fn img_source(&self) -> Option<String> {
+        self.img_source_vw(1000.0)
+    }
+
+    pub fn img_source_vw(&self, vw: f32) -> Option<String> {
+        if let Some(set) = self.attributes.get("srcset") {
+            let cands = parse_srcset(set);
+            if !cands.is_empty() {
+                let target = self
+                    .attributes
+                    .get("sizes")
+                    .map(|s| resolve_sizes(s, vw))
+                    .unwrap_or(vw); // sizes 가 없으면 100vw (표준 기본값)
+                if let Some(u) = pick_candidate(&cands, target) {
+                    return Some(u);
+                }
+            }
+        }
         if let Some(src) = self.attributes.get("src") {
             if !src.trim().is_empty() {
                 return Some(src.clone());
             }
         }
-        let set = self.attributes.get("srcset")?;
-        set.split(',')
-            .map(|c| c.trim())
-            .find(|c| !c.is_empty())
-            .and_then(|c| c.split_whitespace().next())
-            .map(|u| u.to_string())
+        None
     }
 
     pub fn classes(&self) -> HashSet<&str> {
@@ -160,6 +175,143 @@ pub struct DomMut {
     pub attr: Option<String>,
     pub added: Vec<NodeId>,
     pub removed: Vec<NodeId>,
+}
+
+// srcset 후보: (URL, 디스크립터). w=폭(px), x=배율.
+#[derive(Debug, PartialEq, Clone)]
+pub enum Descriptor {
+    Width(f32),
+    Density(f32),
+}
+
+// srcset 파싱 (HTML §4.8.4.4.1). URL 토큰은 **공백까지** 읽는다 — 그래서 콤마가 든
+// data: URI 도 안전하다 (예전 구현은 콤마로 잘라서 data URI 를 조각냈다).
+pub fn parse_srcset(s: &str) -> Vec<(String, Descriptor)> {
+    let b: Vec<char> = s.chars().collect();
+    let mut i = 0usize;
+    let mut out = Vec::new();
+    while i < b.len() {
+        // 공백/콤마 건너뛰기
+        while i < b.len() && (b[i].is_whitespace() || b[i] == ',') {
+            i += 1;
+        }
+        if i >= b.len() {
+            break;
+        }
+        // URL: 공백이 나올 때까지
+        let start = i;
+        while i < b.len() && !b[i].is_whitespace() {
+            i += 1;
+        }
+        let raw: String = b[start..i].iter().collect();
+        let trimmed = raw.trim_end_matches(',');
+        let had_comma = trimmed.len() != raw.len();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut desc = Descriptor::Density(1.0);
+        if !had_comma {
+            // 디스크립터: 콤마 전까지
+            while i < b.len() && b[i].is_whitespace() {
+                i += 1;
+            }
+            let dstart = i;
+            while i < b.len() && b[i] != ',' {
+                i += 1;
+            }
+            let dtext: String = b[dstart..i].iter().collect();
+            for tok in dtext.split_whitespace() {
+                if let Some(n) = tok.strip_suffix('w').and_then(|n| n.parse::<f32>().ok()) {
+                    desc = Descriptor::Width(n);
+                } else if let Some(n) = tok.strip_suffix('x').and_then(|n| n.parse::<f32>().ok()) {
+                    desc = Descriptor::Density(n);
+                }
+            }
+        }
+        out.push((trimmed.to_string(), desc));
+    }
+    out
+}
+
+// sizes 를 풀어 목표 폭(px)을 구한다: "(max-width: 600px) 100vw, 50vw"
+pub fn resolve_sizes(sizes: &str, vw: f32) -> f32 {
+    for part in sizes.split(',') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        // 마지막 토큰이 길이, 앞은 미디어 조건
+        let (cond, len) = match p.rfind(char::is_whitespace) {
+            Some(k) if p.starts_with('(') => (p[..k].trim(), p[k..].trim()),
+            _ => ("", p),
+        };
+        if !cond.is_empty() && !crate::css::media_matches(cond, vw) {
+            continue;
+        }
+        if let Some(px) = parse_length_px(len, vw) {
+            return px;
+        }
+    }
+    vw
+}
+
+fn parse_length_px(s: &str, vw: f32) -> Option<f32> {
+    let t = s.trim();
+    if let Some(n) = t.strip_suffix("px").and_then(|n| n.trim().parse::<f32>().ok()) {
+        return Some(n);
+    }
+    if let Some(n) = t.strip_suffix("vw").and_then(|n| n.trim().parse::<f32>().ok()) {
+        return Some(n / 100.0 * vw);
+    }
+    if let Some(n) = t.strip_suffix("em").and_then(|n| n.trim().parse::<f32>().ok()) {
+        return Some(n * 16.0);
+    }
+    if let Some(n) = t.strip_suffix("rem").and_then(|n| n.trim().parse::<f32>().ok()) {
+        return Some(n * 16.0);
+    }
+    t.parse::<f32>().ok()
+}
+
+// 목표 폭에 맞는 후보 고르기 (DPR 1 가정): 목표 이상인 것 중 가장 작은 것,
+// 없으면 가장 큰 것. x 디스크립터만 있으면 1x 에 가장 가까운 것.
+pub fn pick_candidate(cands: &[(String, Descriptor)], target: f32) -> Option<String> {
+    let has_w = cands.iter().any(|(_, d)| matches!(d, Descriptor::Width(_)));
+    if has_w {
+        let mut best: Option<(f32, &String)> = None;
+        let mut largest: Option<(f32, &String)> = None;
+        for (u, d) in cands {
+            let Descriptor::Width(w) = d else { continue };
+            if largest.map(|(lw, _)| *w > lw).unwrap_or(true) {
+                largest = Some((*w, u));
+            }
+            if *w >= target && best.map(|(bw, _)| *w < bw).unwrap_or(true) {
+                best = Some((*w, u));
+            }
+        }
+        return best.or(largest).map(|(_, u)| u.clone());
+    }
+    // 밀도 디스크립터: 1x 이상 중 가장 작은 것
+    let mut best: Option<(f32, &String)> = None;
+    for (u, d) in cands {
+        let Descriptor::Density(x) = d else { continue };
+        let better = match best {
+            None => true,
+            Some((bx, _)) => {
+                // 1 이상인 것 우선, 그중 작은 것
+                if *x >= 1.0 && bx < 1.0 {
+                    true
+                } else if *x >= 1.0 && bx >= 1.0 {
+                    *x < bx
+                } else {
+                    *x > bx && bx < 1.0
+                }
+            }
+        };
+        if better {
+            best = Some((*x, u));
+        }
+    }
+    best.map(|(_, u)| u.clone())
 }
 
 // 닫는 태그가 없는 요소 (HTML 표준의 void elements)
@@ -466,17 +618,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn srcset_selection_follows_standard() {
+        // 예전엔 srcset 의 **첫 후보**를 그냥 썼다 — 보통 가장 작은 이미지라 흐리게 확대됐다.
+        let c = parse_srcset("/a.png 200w, /b.png 800w, /c.png 1600w");
+        assert_eq!(c.len(), 3);
+        assert_eq!(c[1], ("/b.png".to_string(), Descriptor::Width(800.0)));
+        // 목표 폭 이상 중 가장 작은 것
+        assert_eq!(pick_candidate(&c, 700.0).as_deref(), Some("/b.png"));
+        assert_eq!(pick_candidate(&c, 900.0).as_deref(), Some("/c.png"));
+        // 목표보다 큰 후보가 없으면 가장 큰 것
+        assert_eq!(pick_candidate(&c, 5000.0).as_deref(), Some("/c.png"));
+        // 밀도 디스크립터: DPR 1 → 1x
+        let d = parse_srcset("/a.png, /b.png 2x");
+        assert_eq!(pick_candidate(&d, 100.0).as_deref(), Some("/a.png"));
+        // URL 토큰은 공백까지 읽는다 → 콤마가 든 data: URI 도 안 깨진다
+        let e = parse_srcset("data:image/png;base64,AAA=,BBB 1x, /x.png 2x");
+        assert_eq!(e[0].0, "data:image/png;base64,AAA=,BBB");
+        // sizes 해석
+        assert_eq!(resolve_sizes("100vw", 1000.0), 1000.0);
+        assert_eq!(resolve_sizes("(max-width: 600px) 100vw, 50vw", 1000.0), 500.0);
+        assert_eq!(resolve_sizes("(max-width: 600px) 100vw, 50vw", 500.0), 500.0);
+    }
+
+    #[test]
     fn img_source_falls_back_to_srcset() {
         // 예전엔 src 만 봐서 srcset 만 있는 반응형 이미지가 아예 안 실렸다.
         let mut attrs = AttrMap::new();
         attrs.insert("srcset".to_string(), "a.png 1x, b.png 2x".to_string());
         let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
-        assert_eq!(e.img_source().as_deref(), Some("a.png"), "srcset 첫 후보");
+        assert_eq!(e.img_source().as_deref(), Some("a.png"), "DPR 1 → 1x 후보");
 
-        // src 가 있으면 src 우선
+        // srcset 이 있으면 **srcset 이 이긴다** (src 는 srcset 을 모르는 브라우저용 폴백이다).
+        // 예전엔 src 를 우선해서, 사이트가 폴백으로 둔 저해상도 이미지가 그대로 나왔다.
         let mut attrs = AttrMap::new();
         attrs.insert("src".to_string(), "c.png".to_string());
         attrs.insert("srcset".to_string(), "a.png 1x".to_string());
+        let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
+        assert_eq!(e.img_source().as_deref(), Some("a.png"));
+
+        // srcset 이 비었으면 src
+        let mut attrs = AttrMap::new();
+        attrs.insert("src".to_string(), "c.png".to_string());
+        attrs.insert("srcset".to_string(), "".to_string());
         let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
         assert_eq!(e.img_source().as_deref(), Some("c.png"));
 

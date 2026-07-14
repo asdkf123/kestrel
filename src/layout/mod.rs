@@ -198,8 +198,10 @@ impl<'a> LayoutBox<'a> {
         // 이미지 대체 요소: 고유 크기 박스
         if let NodeType::Element(e) = &self.styled_node.node.node_type {
             if e.tag_name == "img" {
-                if let Some(src) = e.attributes.get("src") {
-                    if let Some(&(idx, iw, ih)) = images.get(src) {
+                // src 만 보면 **srcset 전용 이미지가 화면에서 사라진다** (다운로드는 되는데
+                // 레이아웃이 못 찾는다). 다운로드와 같은 선택 함수를 써야 키가 맞는다.
+                if let Some(src) = e.img_source() {
+                    if let Some(&(idx, iw, ih)) = images.get(&src) {
                         self.calculate_position(containing_block);
                         let (iw, ih) = (iw as f32, ih as f32);
                         let cbw = containing_block.content.width;
