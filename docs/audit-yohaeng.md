@@ -305,9 +305,31 @@ epsilon fudge, 곡선 고정분할, accent-color, 등.
 - [x] **다단이 자식 경계에서만 쪼갬** — 자식이 하나면(가장 흔한 모양) 전혀 안 나뉜다.
   줄 경계 박스 조각화로 다시 씀. (8380bdb)
 
+## 라운드 5 — WebAssembly (bc4c2c2)
+
+- [x] **WebAssembly 가 통째로 없었다.** 파서 + 스택 머신 + JS 바인딩을 새로 썼다(src/wasm.rs).
+      검증은 rustc 로 컴파일한 진짜 모듈(1.5MB)을 V8(node)과 한 줄씩 대조 — fib / FNV 체크섬 /
+      f64 평균 / i64(BigInt) / 메모리 왕복 / grow 후 옛 버퍼 분리까지 전부 동일.
+- [x] **메모리를 사본으로 주면 조용히 틀린다.** wasm 선형 메모리를 JS ArrayBuffer 의
+      바이트 배열과 **같은 배열**로 공유한다. 게다가 wasm 내부 memory.grow 는 배열을
+      갈아끼우므로, JS 가 메모리를 볼 수 있는 모든 경계(호출 반환, 임포트 콜백 직전)에서
+      buffer 를 다시 묶는다. 안 하면 grow 뒤로 wasm 이 쓴 값이 JS 에 **아예 안 보인다**.
+- [x] **fetch 가 바이너리를 망가뜨렸다** — 본문을 lossy UTF-8 문자열로만 보관해
+      (U+FFFD 로 덮어씀) wasm/이미지 바이트를 되돌릴 수 없었다. 원본 바이트 보존 +
+      Response.arrayBuffer().
+- [x] **ArrayBuffer 0 채우기가 JS 루프** — 1MB 버퍼면 100만 반복. new Uint8Array(1e6)
+      조차 사실상 못 썼다. 네이티브로.
+- [x] **타입 배열 length 가 박제** — 분리(detach)된 버퍼의 죽은 뷰가 살아있는 척했다.
+      버퍼에서 파생하게 고쳤다 (wasm-bindgen 이 정확히 byteLength===0 으로 판별한다).
+- [x] **i64 를 Number 로 주면 2^53 위에서 조용히 틀린다** → BigInt 로. 임포트 반환 타입은
+      모듈 시그니처로 변환한다 (값의 모양으로 추측하지 않는다).
+- [x] **ToInt32 가 포화(saturate)** — 표준은 2^32 랩. `n as i32` 가 범위 밖에서 포화한다.
+
 ### 남은 것 (정직하게)
-- [ ] **WebAssembly** — fmkorea 의 봇 차단이 wasm 모듈로 챌린지를 푼다. 이게 없으면
-      그런 사이트는 영영 못 본다. 다음 큰 과제.
+- [ ] **wasm SIMD (0xFD)** — 요즘 이미지·비디오 코덱 빌드가 쓴다. 지금은 CompileError 로
+      정직하게 거절한다(조용히 틀리진 않는다). 다음 후보.
+- [ ] **wasm 다중값 블록 타입 / 테이블 임포트** — 거절한다.
+- [ ] **WebSocket 없음** — fmkorea 가 부른다.
 - [ ] naver 잔여 js 오류 3건 (사이트 자체 라이브러리 쪽). 본문은 클라이언트 렌더라
       앱이 완주해야 보인다.
 - [ ] AVIF

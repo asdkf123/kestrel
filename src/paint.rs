@@ -867,6 +867,32 @@ fn parse_bg_position(s: &str) -> (BgCoord, BgCoord) {
 }
 
 // 트리 borrow 없이 스크롤 오프셋만 바꿔 반복 래스터화할 수 있다 (실제 브라우저 구조).
+// 이미지에 걸린 색/알파 보정. 이미지는 색 하나가 아니라 픽셀 배열이라, 다른 아이템처럼
+// "칠할 색을 미리 바꾸는" 방식이 통하지 않는다 — blit 할 때 픽셀마다 적용해야 한다.
+// (예전엔 filter/opacity 함수가 이미지에서 조용히 무시됐다: filter: grayscale(1) 인
+//  로고가 컬러로 나왔다.)
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImgAdj {
+    pub alpha: f32,
+    pub filters: Vec<(String, f32)>,
+}
+
+impl ImgAdj {
+    pub fn none() -> ImgAdj {
+        ImgAdj { alpha: 1.0, filters: Vec::new() }
+    }
+    // 픽셀 색/알파에 적용
+    pub fn apply(&self, c: Color, a: u8) -> (Color, u8) {
+        let c = if self.filters.is_empty() { c } else { apply_filters(c, &self.filters) };
+        let a = if self.alpha >= 1.0 {
+            a
+        } else {
+            (a as f32 * self.alpha).round().clamp(0.0, 255.0) as u8
+        };
+        (c, a)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     Rect { color: Color, rect: Rect },
@@ -876,9 +902,9 @@ pub enum DisplayItem {
     Shadow { color: Color, rect: Rect, radius: f32, blur: f32 },
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
     InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
-    Image { image: usize, rect: Rect, fit: ImageFit, pos: Option<(BgCoord, BgCoord)> },
+    Image { image: usize, rect: Rect, fit: ImageFit, pos: Option<(BgCoord, BgCoord)>, adj: ImgAdj },
     // 인라인 픽셀 이미지 (canvas putImageData). 이미지 배열에 없는 즉석 픽셀.
-    RawImage { rect: Rect, img: std::rc::Rc<crate::png::Image> },
+    RawImage { rect: Rect, img: std::rc::Rc<crate::png::Image>, adj: ImgAdj },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, circle: 원/타원, stops: (색, 위치 0-1).
     Gradient { rect: Rect, angle: f32, radial: bool, circle: bool, conic: bool, stops: Vec<(Color, f32)> },
     // SVG path 채우기 (여러 윤곽선, nonzero winding). points 는 논리 좌표.
@@ -1942,8 +1968,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
                 None
             }
         }
-        DisplayItem::Image { image, rect, fit, pos } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit, pos })
+        DisplayItem::Image { image, rect, fit, pos, adj } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::Image { image, rect: r, fit, pos, adj })
         }
         DisplayItem::BackdropBlur { rect, radius } => {
             rect_intersect(rect, c).map(|r| DisplayItem::BackdropBlur { rect: r, radius })
@@ -1961,8 +1987,8 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
         DisplayItem::RoundRect { color, rect, radii } => {
             rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radii })
         }
-        DisplayItem::RawImage { rect, img } => {
-            rect_intersect(rect, c).map(|r| DisplayItem::RawImage { rect: r, img })
+        DisplayItem::RawImage { rect, img, adj } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::RawImage { rect: r, img, adj })
         }
         DisplayItem::Polygon { color, contours } => {
             // bbox 로 컬링만 (윤곽 좌표는 유지)
@@ -2237,6 +2263,7 @@ fn collect_items(
             rect: layout_box.dimensions.border_box(),
             fit,
             pos,
+            adj: ImgAdj::none(),
         });
     }
     if let Some(g) = &layout_box.gradient {
@@ -2264,7 +2291,13 @@ fn collect_items(
             Value::Keyword(s) => Some(parse_bg_position(&s)),
             _ => None,
         });
-        local.push(DisplayItem::Image { image: idx, rect: layout_box.dimensions.content, fit, pos });
+        local.push(DisplayItem::Image {
+            image: idx,
+            rect: layout_box.dimensions.content,
+            fit,
+            pos,
+            adj: ImgAdj::none(),
+        });
     }
     // text-shadow: 글리프 뒤에 오프셋+색으로 복제 (blur 미지원, 단일 그림자)
     let text_shadow = {
@@ -2516,7 +2549,10 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
                 *c = apply_filters(*c, funcs);
             }
         }
-        DisplayItem::Image { .. } | DisplayItem::RawImage { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
+        // 이미지는 픽셀마다 적용해야 한다 — 여기서는 보정만 실어 둔다 (blit 시 적용).
+        DisplayItem::Image { adj, .. } | DisplayItem::RawImage { adj, .. } => {
+            adj.filters.extend(funcs.iter().filter(|(n, _)| n != "opacity" && n != "blur").cloned());
+        }
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| filter_item(it, funcs)),
@@ -2538,7 +2574,7 @@ fn element_opacity(lb: &LayoutBox) -> Option<f32> {
 fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
     let s = |a: u8| (a as f32 * f).round().clamp(0.0, 255.0) as u8;
     match item {
-        DisplayItem::RawImage { .. } => {} // 인라인 픽셀은 알파 조정 미지원(근사)
+        DisplayItem::RawImage { adj, .. } => adj.alpha *= f,
         DisplayItem::Transform { items, .. } => {
             items.iter_mut().for_each(|it| scale_item_alpha(it, f))
         }
@@ -2559,7 +2595,7 @@ fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
             }
         }
         DisplayItem::Polygon { color, .. } => color.a = s(color.a),
-        DisplayItem::Image { .. } => {} // 이미지 per-pixel 알파는 별도 — 근사로 스킵
+        DisplayItem::Image { adj, .. } => adj.alpha *= f,
         DisplayItem::Sticky { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Clipped { inner, .. } => scale_item_alpha(inner, f),
         DisplayItem::Layer { opacity, .. } => *opacity *= f,
@@ -2663,13 +2699,13 @@ fn draw_item(
             }
             canvas.fill_inner_shadow(*color, r, radius * scale, blur * scale, dx * scale, dy * scale);
         }
-        DisplayItem::Image { image, rect, fit, pos } => {
+        DisplayItem::Image { image, rect, fit, pos, adj } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
             if let Some(img) = images.get(*image) {
-                blit_image(canvas, img, r, scale, *fit, *pos);
+                blit_image(canvas, img, r, scale, *fit, *pos, adj);
             }
         }
         DisplayItem::Gradient { rect, angle, radial, circle, conic, stops } => {
@@ -2679,12 +2715,12 @@ fn draw_item(
             }
             canvas.fill_gradient(r, *angle, *radial, *circle, *conic, stops);
         }
-        DisplayItem::RawImage { rect, img } => {
+        DisplayItem::RawImage { rect, img, adj } => {
             let r = scale_rect(rect);
             if r.y + r.height < 0.0 || r.y > vh {
                 return;
             }
-            blit_image(canvas, img, r, scale, ImageFit::Fill, None);
+            blit_image(canvas, img, r, scale, ImageFit::Fill, None, adj);
         }
         // 캔버스 그라디언트: 픽셀마다 t 를 구해 색을 정한다. 모양은 바깥의 Clipped 가 자른다.
         DisplayItem::CanvasGradient { rect, kind, stops } => {
@@ -2877,6 +2913,7 @@ fn draw_item(
 // rect 크기로 클리핑 (<img> 는 rect == 고유 크기 × scale 이라 무손실).
 // rect(물리 px)에 이미지를 fit 방식으로 그린다. 목적지 하위영역 `dr` 을 구하고,
 // dr 안 각 픽셀의 상대 위치로 소스 픽셀을 샘플(최근접), rect 로 클립한다.
+#[allow(clippy::too_many_arguments)]
 fn blit_image(
     canvas: &mut Canvas,
     img: &crate::png::Image,
@@ -2884,6 +2921,7 @@ fn blit_image(
     scale: f32,
     fit: ImageFit,
     pos: Option<(BgCoord, BgCoord)>,
+    adj: &ImgAdj,
 ) {
     let (iw, ih) = (img.width as f32, img.height as f32);
     if iw <= 0.0 || ih <= 0.0 || rect.width <= 0.0 || rect.height <= 0.0 {
@@ -2951,6 +2989,7 @@ fn blit_image(
                     continue;
                 }
                 let fg = Color { r: img.rgba[s], g: img.rgba[s + 1], b: img.rgba[s + 2], a: 255 };
+                let (fg, alpha) = adj.apply(fg, alpha);
                 canvas.put(px, py, fg, alpha);
             }
         }
@@ -2998,7 +3037,8 @@ fn blit_image(
             if alpha == 0 {
                 continue;
             }
-            canvas.put(px, py, Color { r, g, b, a: 255 }, alpha);
+            let (c, alpha) = adj.apply(Color { r, g, b, a: 255 }, alpha);
+            canvas.put(px, py, c, alpha);
         }
     }
 }
@@ -3121,6 +3161,32 @@ mod tests {
         let o = (10 * 40 + 20) * 4;
         assert_eq!(big.rgba[o], 255, "확대해도 위쪽은 빨강");
     }
+    // filter/opacity 가 **이미지에도** 걸린다. 예전엔 이미지만 조용히 건너뛰어
+    // filter: grayscale(1) 인 로고가 컬러로 나왔다 (흔한 패턴이다).
+    #[test]
+    fn image_filters_apply_per_pixel() {
+        let red = crate::png::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![255, 0, 0, 255].repeat(4),
+        };
+        let rect = Rect { x: 0.0, y: 0.0, width: 2.0, height: 2.0 };
+        let px = |adj: ImgAdj| {
+            let mut canvas = Canvas::new_layer(2, 2);
+            blit_image(&mut canvas, &red, rect, 1.0, ImageFit::Fill, None, &adj);
+            let p = canvas.pixels[0];
+            (p.r, p.g, p.b, p.a)
+        };
+        assert_eq!(px(ImgAdj::none()), (255, 0, 0, 255), "보정 없으면 그대로");
+        // 회색조: 순수 빨강의 휘도 = 0.2126 × 255 ≈ 54
+        let gray = px(ImgAdj { alpha: 1.0, filters: vec![("grayscale".into(), 1.0)] });
+        assert_eq!(gray, (54, 54, 54, 255), "grayscale(1)");
+        let inv = px(ImgAdj { alpha: 1.0, filters: vec![("invert".into(), 1.0)] });
+        assert_eq!(inv, (0, 255, 255, 255), "invert(1)");
+        let half = px(ImgAdj { alpha: 0.5, filters: vec![] });
+        assert_eq!(half.3, 128, "opacity(0.5) 는 알파에");
+    }
+
     #[test]
     fn background_size_parses_lengths_and_auto() {
         assert_eq!(parse_bg_size("50% 25%"), Some((BgSize::Pct(0.5), BgSize::Pct(0.25))));
@@ -3341,6 +3407,7 @@ mod tests {
             1.0,
             ImageFit::Natural,
             Some((BgCoord::Pct(0.5), BgCoord::Pct(0.5))),
+            &ImgAdj::none(),
         );
         let red = Color { r: 255, g: 0, b: 0, a: 255 };
         let white = Color { r: 255, g: 255, b: 255, a: 255 };
@@ -3481,13 +3548,13 @@ mod tests {
         // 1x1 빨강 이미지를 4x4 rect 에 Tile → 전체가 빨강
         let img = crate::png::Image { width: 1, height: 1, rgba: vec![255, 0, 0, 255] };
         let mut canvas = Canvas::new(4, 4);
-        blit_image(&mut canvas, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::Tile, None);
+        blit_image(&mut canvas, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::Tile, None, &ImgAdj::none());
         let red = Color { r: 255, g: 0, b: 0, a: 255 };
         assert_eq!(canvas.pixels[0], red);
         assert_eq!(canvas.pixels[3 * 4 + 3], red, "우하단도 타일로 채워짐");
         // TileX: 세로는 한 줄만 (1px 높이) → (0,2)는 안 칠해짐(흰색)
         let mut c2 = Canvas::new(4, 4);
-        blit_image(&mut c2, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::TileX, None);
+        blit_image(&mut c2, &img, Rect { x: 0.0, y: 0.0, width: 4.0, height: 4.0 }, 1.0, ImageFit::TileX, None, &ImgAdj::none());
         assert_eq!(c2.pixels[0], red, "가로 타일 첫 줄");
         assert_eq!(c2.pixels[2 * 4 + 0], Color { r: 255, g: 255, b: 255, a: 255 }, "TileX 는 세로 미반복");
     }

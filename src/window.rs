@@ -247,7 +247,13 @@ fn canvas_display_items(
                     } else {
                         crate::paint::ImageFit::Natural
                     };
-                    let item = DisplayItem::Image { image: *idx, rect: r, fit, pos: None };
+                    let item = DisplayItem::Image {
+                        image: *idx,
+                        rect: r,
+                        fit,
+                        pos: None,
+                        adj: crate::paint::ImgAdj::none(),
+                    };
                     let item = match shape {
                         Some(pts) => DisplayItem::Clipped {
                             shape: crate::paint::ClipShape::Polygon(
@@ -268,6 +274,7 @@ fn canvas_display_items(
                             height: img.height as f32,
                         },
                         img: img.clone(),
+                        adj: crate::paint::ImgAdj::none(),
                     });
                 }
                 CanvasOp::SetTransform { m } => {
@@ -287,7 +294,13 @@ fn canvas_display_items(
                     } else {
                         crate::paint::ImageFit::Fill
                     };
-                    out.push(DisplayItem::Image { image: *idx, rect, fit, pos: None });
+                    out.push(DisplayItem::Image {
+                        image: *idx,
+                        rect,
+                        fit,
+                        pos: None,
+                        adj: crate::paint::ImgAdj::none(),
+                    });
                 }
                 CanvasOp::FillRect { x, y, w, h, color } => out.push(DisplayItem::Rect {
                     color: *color,
