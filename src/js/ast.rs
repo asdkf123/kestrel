@@ -40,6 +40,9 @@ pub enum Expr {
     Nullish { left: Box<Expr>, right: Box<Expr> },
     // 템플릿 리터럴: 리터럴/보간 식 조각의 연결
     Template(Vec<TemplatePart>),
+    // 태그드 템플릿: tag`a${x}b` → tag(strings, x) 이고 strings.raw 가 있어야 한다.
+    // (styled-components / lit-html / graphql-tag 가 전부 strings.raw 를 읽는다)
+    Tagged { tag: Box<Expr>, cooked: Vec<String>, raw: Vec<String>, values: Vec<Expr> },
     // 정규식 리터럴 — 매칭 엔진 없이 {source, flags} 객체로 평가 (관용)
     Regex { source: String, flags: String },
     // 콤마 연산자 (a, b, c) — 전부 평가, 마지막 값

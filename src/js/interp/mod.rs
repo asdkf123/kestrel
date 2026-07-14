@@ -3483,6 +3483,22 @@ impl Interp {
                 Ok(last)
             }
             Expr::Regex { source, flags } => Ok(make_regex_obj(source, flags)),
+            // 태그드 템플릿: tag(strings, ...values). strings.raw 는 이스케이프 처리 전 원문.
+            Expr::Tagged { tag, cooked, raw, values } => {
+                let f = self.eval(tag, env)?;
+                let strings = ArrayObj::new(
+                    cooked.iter().map(|c| Value::Str(c.clone())).collect::<Vec<_>>(),
+                );
+                let raws = ArrayObj::new(
+                    raw.iter().map(|r| Value::Str(r.clone())).collect::<Vec<_>>(),
+                );
+                strings.set_prop("raw".to_string(), Value::Arr(raws));
+                let mut args = vec![Value::Arr(strings)];
+                for v in values {
+                    args.push(self.eval(v, env)?);
+                }
+                self.call_value(f, None, args)
+            }
             Expr::Template(parts) => {
                 let mut s = String::new();
                 for part in parts {
@@ -5733,6 +5749,13 @@ impl Interp {
                 }
             }
             BinOp::Instanceof => {
+                // 표준 §13.10.2: 오른쪽에 [Symbol.hasInstance] 가 있으면 **그것이 최우선**이다.
+                // (Symbol.hasInstance 로 instanceof 를 커스터마이즈하는 라이브러리가 있다)
+                let hi = self.member_get(&r, "\u{0}@@hasInstance").unwrap_or(Value::Undefined);
+                if is_callable(&hi) {
+                    let res = self.call_value(hi, Some(r.clone()), vec![l.clone()])?;
+                    return Ok(Value::Bool(to_bool(&res)));
+                }
                 // 사용자 클래스: 인스턴스의 클래스 체인에 r 이 있는가
                 if let (Value::Instance(inst), Value::Class(rc)) = (&l, &r) {
                     let mut cur = Some(inst.class.clone());
@@ -8928,6 +8951,32 @@ mod tests {
         // 문자열 결합은 허용
         assert_eq!(run_str("'x' + 1n"), "x1");
         assert_eq!(run_str("try { 1n / 0n } catch (e) { 'RangeError' }"), "RangeError");
+    }
+
+    // 태그드 템플릿의 strings.raw — styled-components / lit-html / graphql-tag 가
+    // 전부 이걸 읽는다. 없으면 그 라이브러리를 쓰는 페이지가 통째로 죽는다.
+    #[test]
+    fn tagged_template_provides_raw_strings() {
+        assert_eq!(
+            run_str("function t(s, ...v){ return s.raw.join('|') + '#' + v.join(','); } t`a${1}b${2}c`"),
+            "a|b|c#1,2"
+        );
+        // raw 는 이스케이프를 처리하지 않은 원문이다
+        assert_eq!(run_str("function t(s){ return s.raw[0]; } t`a\\nb`"), "a\\nb");
+        assert_eq!(run_str("function t(s){ return s[0]; } t`a\\nb`"), "a\nb");
+        // strings.length === values.length + 1 (표준)
+        assert_eq!(run_str("function t(s, ...v){ return s.length + ',' + v.length; } t`${1}${2}`"), "3,2");
+    }
+
+    // instanceof 는 [Symbol.hasInstance] 가 있으면 그것이 최우선이다 (§13.10.2)
+    #[test]
+    fn instanceof_honors_symbol_has_instance() {
+        assert!(prelude_bool(
+            "var O = {}; O[Symbol.hasInstance] = function(x){ return typeof x === 'number'; }; 5 instanceof O"
+        ));
+        assert!(!prelude_bool(
+            "var O = {}; O[Symbol.hasInstance] = function(x){ return typeof x === 'number'; }; 'a' instanceof O"
+        ));
     }
 
     #[test]

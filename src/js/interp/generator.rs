@@ -156,6 +156,9 @@ fn expr_has_yield(e: &Expr) -> bool {
         | Expr::Ident(_) | Expr::This | Expr::Super | Expr::Regex { .. }
         | Expr::NewTarget => false,
         Expr::Array(items) => items.iter().any(expr_has_yield),
+        Expr::Tagged { tag, values, .. } => {
+            expr_has_yield(tag) || values.iter().any(expr_has_yield)
+        }
         Expr::Object(props) => props.iter().any(|(k, v)| {
             expr_has_yield(v)
                 || matches!(k, PropKey::Computed(ke) if expr_has_yield(ke))
@@ -1387,6 +1390,16 @@ fn flatten(e: &Expr, out: &mut Vec<Stmt>, ctr: &mut usize) -> Expr {
             _ => Expr::Update { op: *op, prefix: *prefix, target: target.clone() },
         },
         Expr::Spread(inner) => Expr::Spread(Box::new(flatten(inner, out, ctr))),
+        // 태그드 템플릿 안의 보간식도 yield 를 품을 수 있다 — 평가 순서를 지켜 끌어올린다
+        Expr::Tagged { tag, cooked, raw, values } => Expr::Tagged {
+            tag: Box::new(capture(flatten(tag, out, ctr), out, ctr)),
+            cooked: cooked.clone(),
+            raw: raw.clone(),
+            values: values
+                .iter()
+                .map(|v| capture(flatten(v, out, ctr), out, ctr))
+                .collect(),
+        },
         Expr::Template(parts) => Expr::Template(
             parts
                 .iter()

@@ -1310,21 +1310,35 @@ impl Parser {
                     let args = self.arg_list()?;
                     e = Expr::Call { callee: Box::new(e), args };
                 }
-                // 태그드 템플릿: tag`a${x}b` → tag(["a","b"], x). 보간식은 소스라 재파싱.
+                // 태그드 템플릿: tag`a${x}b` → tag(strings, x). strings 에는 raw 도 실린다.
                 Some(Tok::Template(parts)) => {
                     let parts = parts.clone();
                     self.pos += 1;
-                    let mut strings = Vec::new();
+                    let mut cooked = Vec::new();
+                    let mut raw = Vec::new();
                     let mut values = Vec::new();
                     for part in parts {
                         match part {
-                            TplPart::Lit(s) => strings.push(Expr::Str(s)),
-                            TplPart::Expr(src) => values.push(parse_expr_source(&src)?),
+                            TplPart::Lit(c, r) => {
+                                cooked.push(c);
+                                raw.push(r);
+                            }
+                            TplPart::Expr(src) => {
+                                // 보간 앞에 리터럴이 없으면 빈 문자열 자리를 채운다
+                                // (표준: strings.length === values.length + 1)
+                                if cooked.len() == values.len() {
+                                    cooked.push(String::new());
+                                    raw.push(String::new());
+                                }
+                                values.push(parse_expr_source(&src)?);
+                            }
                         }
                     }
-                    let mut args = vec![Expr::Array(strings)];
-                    args.extend(values);
-                    e = Expr::Call { callee: Box::new(e), args };
+                    while cooked.len() < values.len() + 1 {
+                        cooked.push(String::new());
+                        raw.push(String::new());
+                    }
+                    e = Expr::Tagged { tag: Box::new(e), cooked, raw, values };
                 }
                 // 옵셔널 체이닝: ?.prop / ?.[expr] / ?.(args)
                 Some(Tok::OptChain) => {
@@ -1585,7 +1599,7 @@ impl Parser {
                 let mut out = Vec::new();
                 for part in parts {
                     out.push(match part {
-                        TplPart::Lit(s) => TemplatePart::Lit(s),
+                        TplPart::Lit(s, _) => TemplatePart::Lit(s),
                         TplPart::Expr(src) => {
                             TemplatePart::Expr(Box::new(parse_expr_source(&src)?))
                         }

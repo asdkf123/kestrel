@@ -22,7 +22,10 @@ fn lex_exponent(b: &[char], i: &mut usize) {
 // 템플릿 리터럴 조각: 리터럴 텍스트 / ${...} 안의 식 소스 (파서가 재귀 파싱)
 #[derive(Debug, Clone, PartialEq)]
 pub enum TplPart {
-    Lit(String),
+    // (cooked, raw) — 태그드 템플릿의 strings.raw 는 **이스케이프 처리 전** 원문이다.
+    // raw 가 없으면 styled-components / lit-html / graphql-tag 가 전부 죽는다
+    // (전부 strings.raw 를 읽는다).
+    Lit(String, String),
     Expr(String),
 }
 
@@ -472,6 +475,7 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
             i += 1;
             let mut parts: Vec<TplPart> = Vec::new();
             let mut lit = String::new();
+            let mut raw = String::new();
             loop {
                 if i >= b.len() {
                     return Err("닫히지 않은 템플릿 리터럴".to_string());
@@ -482,16 +486,22 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                     break;
                 }
                 if ch == '\\' {
+                    let esc_start = i;
                     i += 1;
                     if i >= b.len() {
                         return Err("템플릿 끝의 역슬래시".to_string());
                     }
                     read_escape(&b, &mut i, &mut lit);
+                    // raw 는 이스케이프를 **처리하지 않은** 원문 그대로
+                    raw.extend(b[esc_start..i].iter());
                     continue;
                 }
                 if ch == '$' && b.get(i + 1) == Some(&'{') {
-                    if !lit.is_empty() {
-                        parts.push(TplPart::Lit(std::mem::take(&mut lit)));
+                    if !lit.is_empty() || !raw.is_empty() {
+                        parts.push(TplPart::Lit(
+                            std::mem::take(&mut lit),
+                            std::mem::take(&mut raw),
+                        ));
                     }
                     i += 2;
                     // ${...} 식 소스 추출: 중괄호 깊이 추적 + 내부 문자열 스킵
@@ -528,10 +538,11 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                     continue;
                 }
                 lit.push(ch);
+                raw.push(ch);
                 i += 1;
             }
             if !lit.is_empty() || parts.is_empty() {
-                parts.push(TplPart::Lit(lit));
+                parts.push(TplPart::Lit(lit, raw));
             }
             out.push(Tok::Template(parts));
             continue;
