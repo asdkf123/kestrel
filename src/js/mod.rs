@@ -1903,11 +1903,17 @@ var TextEncoder = window.TextEncoder, TextDecoder = window.TextDecoder;
 var __kUpgrading = null;
 function __kHTMLElement() { return __kUpgrading; }
 __kHTMLElement.prototype = {};
-if (!window.HTMLElement) window.HTMLElement = __kHTMLElement;
+// HTMLElement 는 인터페이스 객체이면서 **생성 가능**해야 한다: instanceof 판정에도
+// 쓰이고, 커스텀 엘리먼트가 `class X extends HTMLElement` 로 상속도 한다.
+// 앞서 만든 인터페이스 객체의 브랜드 판정(Symbol.hasInstance)을 그대로 옮겨 온다.
+// (이걸 안 하면 둘 중 하나가 죽는다 — 실제로 인터페이스 객체를 얹자마자 커스텀
+//  엘리먼트가 "Illegal constructor" 로 전부 죽었다.)
+if (window.HTMLElement && window.HTMLElement[Symbol.hasInstance]) {
+  __kHTMLElement[Symbol.hasInstance] = window.HTMLElement[Symbol.hasInstance];
+}
+Object.defineProperty(__kHTMLElement, 'name', { value: 'HTMLElement', configurable: true });
+window.HTMLElement = __kHTMLElement;
 var HTMLElement = window.HTMLElement;
-// 흔히 확장하는 다른 기반 클래스들도 같은 규약으로
-if (!window.HTMLDivElement) window.HTMLDivElement = __kHTMLElement;
-if (!window.HTMLSpanElement) window.HTMLSpanElement = __kHTMLElement;
 
 var __kCE = {};      // 태그명 → 생성자
 var __kCEDone = [];  // 이미 업그레이드한 요소들

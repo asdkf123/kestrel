@@ -210,6 +210,18 @@ fn fill_js_maps(
             },
         );
     }
+    // inset 의 resolved value 는 **used value** 다 (위치 지정 요소, §CSSOM).
+    // static 요소는 계산값 그대로 (표준) — 그래서 여기서 덮지 않는다.
+    let mut insets = std::collections::HashMap::new();
+    crate::layout::collect_used_insets(layout_root, &mut insets);
+    for (id, sides) in &insets {
+        let Some(m) = js.computed_styles.get_mut(id) else { continue };
+        for (k, v) in ["top", "right", "bottom", "left"].iter().zip(sides.iter()) {
+            if let Some(px) = v {
+                m.insert(k.to_string(), format!("{}px", crate::style::num_css(*px)));
+            }
+        }
+    }
     let px = |v: f32| format!("{}px", crate::style::num_css(v));
     for (id, d) in &metrics {
         let Some(m) = js.computed_styles.get_mut(id) else { continue };
@@ -1612,6 +1624,38 @@ mod tests {
         let got = dom.text_content(out);
         // 주입 직후엔 적용되고, 지우면 사라진다
         assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
+    }
+
+    // inset 의 resolved value (CSSOM). 위치 지정 요소에서는 **used value**(px) 이고,
+    // over-constrained 인 축(양쪽 inset + 크기가 다 지정)에서는 **computed value** 다.
+    // 예전엔 언제나 명시값을 그대로 냈다 (top: 10% 를 읽으면 "10%").
+    #[test]
+    fn inset_resolved_values_follow_cssom() {
+        let dom = run_with_layout(
+            r#"<div id="c"><div id="r"></div><div id="a"></div><div id="o"></div></div>
+               <div id="out"></div>
+               <script>
+                 var g = function (id) { return getComputedStyle(document.getElementById(id)); };
+                 var log = [];
+                 log.push(g('r').top + ',' + g('r').left);      // relative %: used px
+                 log.push(g('a').top + ',' + g('a').left + ',' + g('a').right); // abs auto
+                 // over-constrained: 계산값 그대로
+                 log.push(g('o').left + ',' + g('o').right);
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "#c { position: relative; width: 400px; height: 200px; } \
+             #r { position: relative; top: 10%; left: 25%; width: 50px; height: 50px; } \
+             #a { position: absolute; top: 10%; left: auto; right: 20px; width: 50px; height: 50px; } \
+             #o { position: absolute; left: 5px; right: 7px; width: 50px; height: 10px; }",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            // relative: 10% of 200 = 20px, 25% of 400 = 100px
+            // absolute: top 20px, left auto → 330px (기하에서 유도), right 20px
+            // over-constrained 축: 명시값 그대로
+            "20px,100px|20px,330px,20px|5px,7px"
+        );
     }
 
     // 요소의 네임스페이스 (DOM §4.9). 예전엔 요소에 네임스페이스가 저장되지 않아서

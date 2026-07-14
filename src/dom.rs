@@ -107,7 +107,9 @@ pub const NS_SVG: &str = "http://www.w3.org/2000/svg";
 pub const NS_MATHML: &str = "http://www.w3.org/1998/Math/MathML";
 
 impl ElementData {
-    // HTML 네임스페이스 요소 (기본). 테스트와 내부 생성에서 쓴다.
+    // HTML 네임스페이스 요소 (기본). 테스트에서 노드를 손으로 만들 때 쓴다 —
+    // 필드가 늘어도 테스트가 안 깨지도록.
+    #[cfg(test)]
     pub fn html(tag: &str, attributes: AttrMap) -> ElementData {
         ElementData { tag_name: tag.to_string(), attributes, namespace: None }
     }

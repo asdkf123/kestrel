@@ -105,6 +105,12 @@ pub struct LayoutBox<'a> {
     pub children: Vec<LayoutBox<'a>>,
     // 네이티브 폼 컨트롤(체크박스/라디오/셀렉트 화살표) 표식
     pub form_control: Option<FormControl>,
+    // 위치 지정 요소의 **used** inset [top, right, bottom, left] — CSSOM 의 resolved value.
+    // None 인 축은 계산값(computed)을 그대로 쓴다: 표준은 **over-constrained** 인 축
+    // (양쪽 inset 이 다 지정되고 크기도 auto 가 아닌 축)에서는 used 가 아니라 computed 를
+    // resolved value 로 정한다. 예전엔 항상 명시값("10%")을 냈다 — 그 반대로 항상 used 를
+    // 내도 틀린다.
+    pub used_insets: [Option<f32>; 4],
     pub glyphs: Vec<GlyphInstance>,
     pub inline_nodes: Vec<&'a StyledNode<'a>>,
     pub image: Option<usize>,
@@ -165,6 +171,7 @@ impl<'a> LayoutBox<'a> {
             used_width: 0.0,
             float_ctx: None,
             form_control: None,
+            used_insets: [None; 4],
             collapse_top: false,
             collapse_bottom: false,
             bfc_item: false,
@@ -194,6 +201,7 @@ impl<'a> LayoutBox<'a> {
             used_width: 0.0,
             float_ctx: None,
             form_control: None,
+            used_insets: [None; 4],
             collapse_top: false,
             collapse_bottom: false,
             bfc_item: false,
@@ -417,12 +425,36 @@ impl<'a> LayoutBox<'a> {
         self.add_list_marker(fonts);
         // position: relative — 정상 흐름 위치를 유지한 채 시각적으로만 offset 이동
         // (형제 배치엔 영향 없음). absolute/fixed 는 layout_children 에서 흐름 제거 처리
-        if self.position() == "relative" {
-            let dx = self.offset("left", "right");
-            let dy = self.offset("top", "bottom");
+    }
+
+    // position: relative 는 **후처리**로 적용한다. 흐름 중에는 컨테이닝 블록의 높이가
+    // 아직 확정되지 않아서 `top: 10%` 같은 퍼센트를 풀 수 없다 (예전엔 그래서 0 이 됐다).
+    // 흐름/형제 배치에는 영향이 없으므로 나중에 옮겨도 결과는 같다.
+    fn apply_relative(&mut self, cb: Rect) {
+        if !self.anonymous && self.position() == "relative" {
+            // % 기준: 좌우는 컨테이닝 블록 폭, 상하는 그 높이 (CSS §9.4.3)
+            let dx = self.offset("left", "right", cb.width);
+            let dy = self.offset("top", "bottom", cb.height);
+            // over-constrained 축(양쪽 다 지정)은 계산값을 그대로 쓴다 (CSSOM).
+            let h_over = self.offset_len("left", cb.width).is_some()
+                && self.offset_len("right", cb.width).is_some();
+            let v_over = self.offset_len("top", cb.height).is_some()
+                && self.offset_len("bottom", cb.height).is_some();
+            if !h_over {
+                self.used_insets[3] = Some(dx); // left
+                self.used_insets[1] = Some(-dx); // right
+            }
+            if !v_over {
+                self.used_insets[0] = Some(dy); // top
+                self.used_insets[2] = Some(-dy); // bottom
+            }
             if dx != 0.0 || dy != 0.0 {
                 self.translate(dx, dy);
             }
+        }
+        let my = self.dimensions.content;
+        for c in &mut self.children {
+            c.apply_relative(my);
         }
     }
 
@@ -915,10 +947,35 @@ impl<'a> LayoutBox<'a> {
     // 각 fixed 요소를 뷰포트의 패딩 박스 기준으로 재배치한다. 레이아웃 단계에선
     // 직속 컨테이너 기준 정적 위치에 둔 뒤, 여기서 올바른 컨테이닝 블록으로 원점만
     // 옮긴다(서브트리째 translate). 흐름/형제 위치엔 영향 없음.
+    // transform / filter / perspective / will-change / contain 이 걸린 요소는
+    // **fixed 자손의 컨테이닝 블록**이 된다 (CSS Transforms §3, CSS Contain).
+    // 예전엔 fixed 의 컨테이닝 블록이 언제나 뷰포트라서, 변환된 조상 안의 fixed 박스가
+    // 엉뚱한 곳에 놓였다 (그리고 inset 의 used value 도 전부 틀렸다).
+    fn creates_fixed_cb(&self) -> bool {
+        let not_none = |p: &str| match self.styled_node.value(p) {
+            None => false,
+            Some(Keyword(ref k)) if k == "none" => false,
+            Some(_) => true,
+        };
+        not_none("transform")
+            || not_none("filter")
+            || not_none("backdrop-filter")
+            || not_none("perspective")
+            || not_none("contain")
+            || matches!(self.styled_node.value("will-change"),
+                Some(Keyword(ref k)) if k == "transform" || k == "filter" || k == "perspective")
+    }
+
     fn reposition_abs(&mut self, abs_cb: Rect, fixed_cb: Rect) {
         // self 가 positioned 면 그 패딩 박스가 자식 absolute 의 컨테이닝 블록이 된다.
         let child_abs_cb =
             if self.position() != "static" { self.dimensions.padding_box() } else { abs_cb };
+        // fixed 의 컨테이닝 블록: 변환/필터 등이 걸린 조상이 있으면 그 패딩 박스.
+        let fixed_cb = if !self.anonymous && self.creates_fixed_cb() {
+            self.dimensions.padding_box()
+        } else {
+            fixed_cb
+        };
         for child in &mut self.children {
             // 익명 박스는 부모의 styled_node 를 공유한다 — position 도 부모 것으로 보인다.
             // 걸러내지 않으면 absolute 부모의 익명 인라인 박스가 **한 번 더** 이동해서
@@ -926,40 +983,67 @@ impl<'a> LayoutBox<'a> {
             let cpos = if child.anonymous { "static" } else { child.position() };
             if cpos == "absolute" || cpos == "fixed" {
                 let cb = if cpos == "fixed" { fixed_cb } else { child_abs_cb };
-                let has_left = child.styled_node.value("left").is_some();
-                let has_right = child.styled_node.value("right").is_some();
-                let has_top = child.styled_node.value("top").is_some();
-                let has_bottom = child.styled_node.value("bottom").is_some();
+                // auto 는 "지정 안 됨" 이다 (표준). 예전엔 값의 존재 여부만 봐서
+                // `left: auto; right: 20px` 이 **양쪽 지정**으로 오인돼 박스가
+                // 컨테이닝 블록 폭으로 늘어났다.
+                let (cbw0, cbh0) = (cb.width, cb.height);
+                let has_left = child.offset_len("left", cbw0).is_some();
+                let has_right = child.offset_len("right", cbw0).is_some();
+                let has_top = child.offset_len("top", cbh0).is_some();
+                let has_bottom = child.offset_len("bottom", cbh0).is_some();
                 // 스트레치: 양쪽 오프셋 지정 + 크기 auto 면 컨테이닝 블록을 채운다
                 // (inset:0 오버레이 등). 박스만 리사이즈(콘텐츠 재배치는 안 함 — 근사).
                 let width_auto = !matches!(child.styled_node.value("width"), Some(Length(_, _)));
                 let height_auto = !matches!(child.styled_node.value("height"), Some(Length(_, _)));
+                // % 기준: 좌우는 컨테이닝 블록 폭, 상하는 그 높이
+                let (cbw, cbh) = (cb.width, cb.height);
                 if has_left && has_right && width_auto {
                     let bp = child.dimensions.border_box().width - child.dimensions.content.width;
-                    let w = cb.width - child.offset_val("left") - child.offset_val("right") - bp;
+                    let w = cb.width
+                        - child.offset_val("left", cbw)
+                        - child.offset_val("right", cbw)
+                        - bp;
                     child.dimensions.content.width = w.max(0.0);
                 }
                 if has_top && has_bottom && height_auto {
                     let bp = child.dimensions.border_box().height - child.dimensions.content.height;
-                    let h = cb.height - child.offset_val("top") - child.offset_val("bottom") - bp;
+                    let h = cb.height
+                        - child.offset_val("top", cbh)
+                        - child.offset_val("bottom", cbh)
+                        - bp;
                     child.dimensions.content.height = h.max(0.0);
                 }
                 let cur = child.dimensions.border_box();
                 let tx = if has_right && !has_left {
-                    cb.x + cb.width - cur.width - child.offset_val("right")
+                    cb.x + cb.width - cur.width - child.offset_val("right", cbw)
                 } else if has_left {
-                    cb.x + child.offset_val("left")
+                    cb.x + child.offset_val("left", cbw)
                 } else {
                     cur.x // 정적 위치 유지 (auto)
                 };
                 let ty = if has_top {
-                    cb.y + child.offset_val("top")
+                    cb.y + child.offset_val("top", cbh)
                 } else if has_bottom {
-                    cb.y + cb.height - cur.height - child.offset_val("bottom")
+                    cb.y + cb.height - cur.height - child.offset_val("bottom", cbh)
                 } else {
                     cur.y
                 };
                 child.translate(tx - cur.x, ty - cur.y);
+                // CSSOM: 위치 지정 요소의 inset resolved value 는 **used value** 다.
+                // 기하에서 유도한다 — 컨테이닝 블록 가장자리부터 마진 박스 가장자리까지.
+                // auto 여도 실제 쓰인 거리가 나온다 (표준이 그렇게 정의한다).
+                let mb = child.dimensions.margin_box();
+                // over-constrained 축(양쪽 inset + 크기가 모두 지정)은 계산값을 쓴다 (CSSOM).
+                let h_over = has_left && has_right && !width_auto;
+                let v_over = has_top && has_bottom && !height_auto;
+                if !h_over {
+                    child.used_insets[3] = Some(mb.x - cb.x);
+                    child.used_insets[1] = Some((cb.x + cb.width) - (mb.x + mb.width));
+                }
+                if !v_over {
+                    child.used_insets[0] = Some(mb.y - cb.y);
+                    child.used_insets[2] = Some((cb.y + cb.height) - (mb.y + mb.height));
+                }
             }
             child.reposition_abs(child_abs_cb, fixed_cb);
         }
@@ -1065,22 +1149,42 @@ impl<'a> LayoutBox<'a> {
     }
 
     // top/left 등 오프셋 px (prop 우선, 없으면 반대편 opp 의 음수, 둘 다 없으면 0)
-    fn offset(&self, prop: &str, opp: &str) -> f32 {
+    // 오프셋 (top/right/bottom/left). 한쪽이 auto/미지정이면 반대쪽의 음수 (relative).
+    // pct_base: % 의 기준 (좌우는 컨테이닝 블록 **폭**, 상하는 **높이** — CSS §9.4.3).
+    // 예전엔 Length(px) 만 봐서 `top: 10%` 와 `top: calc(...)` 가 **조용히 0** 이었다.
+    fn offset(&self, prop: &str, opp: &str, pct_base: f32) -> f32 {
+        match self.offset_len(prop, pct_base) {
+            Some(v) => v,
+            None => -self.offset_len(opp, pct_base).unwrap_or(0.0),
+        }
+    }
+
+    // 단일 오프셋 길이. auto/미지정이면 None.
+    fn offset_len(&self, prop: &str, pct_base: f32) -> Option<f32> {
         match self.styled_node.value(prop) {
-            Some(Length(v, Px)) => v,
-            _ => match self.styled_node.value(opp) {
-                Some(Length(v, Px)) => -v,
-                _ => 0.0,
+            None => None,
+            Some(Keyword(ref k)) if k == "auto" => None,
+            Some(v) => match len_px(v, pct_base) {
+                Length(px, Px) => Some(px),
+                _ => None,
             },
         }
     }
 
-    // 단일 오프셋 길이 (미지정 0)
-    fn offset_val(&self, prop: &str) -> f32 {
+    // 명시된 마진 (auto/미지정 0). % 는 컨테이닝 블록 폭 기준 (CSS §8.3).
+    fn specified_margin(&self, prop: &str, cbw: f32) -> f32 {
         match self.styled_node.value(prop) {
-            Some(Length(v, Px)) => v,
-            _ => 0.0,
+            Some(v) => match len_px(v, cbw) {
+                Length(px, Px) => px,
+                _ => 0.0,
+            },
+            None => 0.0,
         }
+    }
+
+    // 단일 오프셋 길이 (auto/미지정 0)
+    fn offset_val(&self, prop: &str, pct_base: f32) -> f32 {
+        self.offset_len(prop, pct_base).unwrap_or(0.0)
     }
 
     fn layout_children(&mut self, fonts: &FontStack, images: &ImageMap) {
@@ -1202,6 +1306,11 @@ impl<'a> LayoutBox<'a> {
                 cb.content.y = cy;
                 cb.content.width = avail;
                 child.layout(cb, fonts, images);
+                // 블록 규칙은 남는 공간을 margin-right 에 몰아준다. 절대 위치 박스에는
+                // 그 규칙이 없다 (§10.3.7 — 남는 공간은 left/right 가 흡수한다).
+                // 이 '유령 마진' 을 지우지 않으면 마진 박스가 컨테이닝 블록 폭만큼
+                // 넓어져서, inset 의 used value 와 offsetWidth 가 조용히 틀린다.
+                child.dimensions.margin.right = child.specified_margin("margin-right", avail);
                 continue; // 흐름 높이에 미반영
             }
 
@@ -2242,6 +2351,21 @@ fn collect_element_rects_m(
 
 // 요소별 박스 메트릭(px 확정된 used value). getComputedStyle 이 표준의 resolved value
 // (길이는 px)를 돌려주려면 % / em / 무단위 배수를 레이아웃이 확정한 값으로 써야 한다.
+// 위치 지정 요소의 used inset (CSSOM resolved value)
+pub fn collect_used_insets(
+    root: &LayoutBox,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, [Option<f32>; 4]>,
+) {
+    if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
+        if root.used_insets.iter().any(|v| v.is_some()) {
+            out.insert(root.styled_node.id, root.used_insets);
+        }
+    }
+    for child in &root.children {
+        collect_used_insets(child, out);
+    }
+}
+
 pub fn collect_box_metrics(
     root: &LayoutBox,
     out: &mut std::collections::HashMap<crate::dom::NodeId, Dimensions>,
@@ -2710,6 +2834,9 @@ pub fn layout_tree<'a>(
     // 초기 컨테이닝 블록은 BFC 를 만든다 — 루트의 float 은 문서를 벗어나지 않고 담긴다(§9.4.1).
     root_box.bfc_item = true;
     root_box.layout(containing_block, fonts, images);
+    // position: relative — 흐름이 끝나 컨테이닝 블록 높이가 확정된 뒤에 적용한다
+    // (그래야 top: 10% 같은 퍼센트를 풀 수 있다).
+    root_box.apply_relative(containing_block.content);
     // 절대/고정 위치를 올바른 컨테이닝 블록 기준으로 재배치 (transform 적용 전)
     root_box.reposition_abs(viewport_rect, viewport_rect);
     // 레이아웃 완료 후 CSS transform(translate) 을 시각 오프셋으로 적용 (흐름 불변)
