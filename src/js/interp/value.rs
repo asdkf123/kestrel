@@ -702,6 +702,13 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::ClassList(x), Value::ClassList(y)) => x == y,
         // 심볼 동일성은 고유 key 비교 (Symbol('x')!==Symbol('x'), Symbol.for 은 ===).
         (Value::Symbol(x), Value::Symbol(y)) => x.key == y.key,
+        // 제너레이터·프록시·접근자도 신원(Rc 포인터)으로 비교한다. 빠뜨리면 항상 false 라
+        // it[Symbol.iterator]() === it 같은 표준 불변식이 거짓이 된다 (라이브러리가
+        // 이터레이터인지 판정하는 데 이 비교를 쓴다).
+        (Value::Gen(x), Value::Gen(y)) => Rc::ptr_eq(x, y),
+        (Value::Proxy(x), Value::Proxy(y)) => Rc::ptr_eq(x, y),
+        (Value::Accessor(x), Value::Accessor(y)) => Rc::ptr_eq(x, y),
+        (Value::ComputedStyle(x), Value::ComputedStyle(y)) => x == y,
         _ => false,
     }
 }

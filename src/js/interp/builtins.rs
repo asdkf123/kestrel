@@ -3337,13 +3337,28 @@ impl Interp {
                         a.borrow_mut().reverse();
                         Value::Arr(a.clone())
                     }
+                    // keys/values 는 **이터레이터**다 (배열이 아니다 — 표준).
+                    // 배열을 주면 .next() 가 없어서 이터레이터 프로토콜을 직접 쓰는
+                    // 코드(core-js/regenerator)가 "next 가 undefined" 로 죽는다.
                     ArrOp::Keys => {
                         let n = a.borrow().len();
-                        Value::Arr(ArrayObj::new(
-                            (0..n).map(|i| Value::Num(i as f64)).collect(),
-                        ))
+                        self.make_iter_from_vec((0..n).map(|i| Value::Num(i as f64)).collect())
                     }
-                    ArrOp::Values => Value::Arr(ArrayObj::new(a.borrow().clone())),
+                    ArrOp::Values => {
+                        let items = a.borrow().clone();
+                        self.make_iter_from_vec(items)
+                    }
+                    ArrOp::Entries => {
+                        let items: Vec<Value> = a
+                            .borrow()
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| {
+                                Value::Arr(ArrayObj::new(vec![Value::Num(i as f64), v.clone()]))
+                            })
+                            .collect();
+                        self.make_iter_from_vec(items)
+                    }
                     ArrOp::Sort => {
                         // 제자리 정렬 후 같은 배열 반환. 비교자 있으면 부호, 없으면 문자열 비교.
                         // 비교자가 Result 를 반환하므로 삽입정렬로 에러를 전파한다.

@@ -632,6 +632,7 @@ pub enum SetOp {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ArrOp {
+    Entries,
     Join,
     Pop,
     IndexOf,
@@ -1352,6 +1353,7 @@ impl Interp {
             ("reverse", ArrOp::Reverse),
             ("keys", ArrOp::Keys),
             ("values", ArrOp::Values),
+            ("entries", ArrOp::Entries),
         ] {
             array_proto.insert(name.to_string(), Value::Native(Native::Arr(op)));
         }
@@ -2069,11 +2071,13 @@ impl Interp {
     }
 
     // 값들의 Vec 을 반복자 객체로 (MakeIter 와 동일 구조: __items/__i/next).
-    fn make_iter_from_vec(&self, items: Vec<Value>) -> Value {
+    pub(super) fn make_iter_from_vec(&self, items: Vec<Value>) -> Value {
         let mut it = ObjMap::new();
         it.insert("\u{0}items".to_string(), Value::Arr(ArrayObj::new(items)));
         it.insert("\u{0}i".to_string(), Value::Num(0.0));
         it.insert("next".to_string(), Value::Native(Native::IterNext));
+        // 이터레이터는 스스로 이터러블이다 (표준): it[Symbol.iterator]() === it
+        it.insert("\u{0}@@iterator".to_string(), Value::Native(Native::ReturnThis));
         Value::Obj(Rc::new(RefCell::new(it)))
     }
 
@@ -2304,18 +2308,21 @@ impl Interp {
                 }
                 Value::Undefined
             }
-            MapOp::Keys => Value::Arr(ArrayObj::new(
-                m.borrow().iter().map(|(k, _)| k.clone()).collect(),
-            )),
-            MapOp::Values => Value::Arr(ArrayObj::new(
-                m.borrow().iter().map(|(_, v)| v.clone()).collect(),
-            )),
-            MapOp::Entries => Value::Arr(ArrayObj::new(
+            // keys/values/entries 는 **이터레이터**를 돌려준다 (배열이 아니다 — 표준).
+            // 배열을 주면 for-of 는 되지만 .next() 가 없어서, 이터레이터 프로토콜을
+            // 직접 쓰는 코드(core-js/date-fns/regenerator)가 "next 가 undefined" 로 죽는다.
+            MapOp::Keys => {
+                self.make_iter_from_vec(m.borrow().iter().map(|(k, _)| k.clone()).collect())
+            }
+            MapOp::Values => {
+                self.make_iter_from_vec(m.borrow().iter().map(|(_, v)| v.clone()).collect())
+            }
+            MapOp::Entries => self.make_iter_from_vec(
                 m.borrow()
                     .iter()
                     .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
                     .collect(),
-            )),
+            ),
         })
     }
 
@@ -2349,7 +2356,11 @@ impl Interp {
                 }
                 Value::Undefined
             }
-            SetOp::Values => Value::Arr(ArrayObj::new(s.borrow().clone())),
+            // values/keys 는 이터레이터다 (배열이 아니다 — 표준).
+            SetOp::Values => {
+                let items = s.borrow().clone();
+                self.make_iter_from_vec(items)
+            }
         }
     }
 
@@ -2895,6 +2906,14 @@ impl Interp {
                 for item in items {
                     if let Expr::Spread(inner) = item {
                         let val = self.eval(inner, env)?;
+                        // null/undefined 전개는 TypeError (표준). 조용히 빈 배열로 넘기면
+                        // 진짜 버그가 숨는다.
+                        if matches!(val, Value::Undefined | Value::Null) {
+                            return Err(format!(
+                                "TypeError: {} 은(는) 이터러블이 아님",
+                                to_display(&val)
+                            ));
+                        }
                         v.extend(self.iterate_to_vec(&val));
                     } else {
                         v.push(self.eval(item, env)?);
@@ -4052,6 +4071,7 @@ impl Interp {
                     "reverse" => Some(ArrOp::Reverse),
                     "keys" => Some(ArrOp::Keys),
                     "values" => Some(ArrOp::Values),
+                    "entries" => Some(ArrOp::Entries),
                     "sort" => Some(ArrOp::Sort),
                     "flat" => Some(ArrOp::Flat),
                     "flatMap" => Some(ArrOp::FlatMap),
@@ -7114,6 +7134,31 @@ mod tests {
         it.run_module("https://x.test/m.js").expect("모듈 평가");
         assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
         assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+    }
+
+    #[test]
+    fn keys_values_entries_return_iterators() {
+        // 표준: Array/Map/Set 의 keys/values/entries 는 **이터레이터**를 돌려준다.
+        // 배열을 주면 for-of 는 되지만 .next() 가 없어서, 이터레이터 프로토콜을 직접
+        // 쓰는 코드(core-js/regenerator/babel 헬퍼)가 "next 가 undefined" 로 죽는다.
+        assert_eq!(run_num("[7, 8].values().next().value"), 7.0);
+        assert_eq!(run_num("[7, 8].keys().next().value"), 0.0);
+        assert_eq!(run_str("[7].entries().next().value.join()"), "0,7");
+        assert_eq!(run_str("new Map([['a', 1]]).entries().next().value.join()"), "a,1");
+        assert_eq!(run_num("new Set([5]).values().next().value"), 5.0);
+        // 이터레이터는 스스로 이터러블이다 (it[Symbol.iterator]() === it)
+        assert_eq!(
+            run_str("var it = [1].values(); String(it[Symbol.iterator]() === it)"),
+            "true"
+        );
+        assert_eq!(
+            run_str("function* g() { yield 1 } var it = g(); String(it[Symbol.iterator]() === it)"),
+            "true"
+        );
+        // 여전히 for-of / 전개도 된다
+        assert_eq!(run_str("[...new Map([['a',1]]).keys()].join()"), "a");
+        // null 전개는 TypeError (조용히 빈 배열로 넘기면 진짜 버그가 숨는다)
+        assert_eq!(run_str("try { [...null] } catch (e) { 'TypeError' }"), "TypeError");
     }
 
     #[test]
