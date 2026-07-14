@@ -7,7 +7,7 @@ Rust 로 처음부터 만드는 웹 브라우저. 이 문서는 웹 표준(HTML/
 기준 스펙: HTML(whatwg §13 파싱, §15 Rendering), CSS(drafts.csswg.org),
 ECMAScript(tc39), DOM(dom.spec.whatwg.org). 검증: WPT + 실사이트 렌더.
 
-**현재(2026-07): 666 단위 테스트 통과.** 정적 문서 웹은 상용 브라우저 근접 —
+**현재(2026-07): 674 단위 테스트 통과.** 정적 문서 웹은 상용 브라우저 근접 —
 위키백과, HN, lobste.rs, MDN, go.dev, react.dev, Rust 블로그, Guardian, gov.uk,
 old.reddit, Tailwind 정상 렌더. JS 무거운 SPA(GitHub 등)와 무거운 디자인시스템
 (Stack Overflow)은 아직 부분.

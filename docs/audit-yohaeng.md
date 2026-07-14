@@ -282,9 +282,34 @@ epsilon fudge, 곡선 고정분할, accent-color, 등.
 - [x] **getOwnPropertyDescriptor 가 폴리필** — 게터의 get 이 없고 enumerable 이 항상 true. (1cae077)
 - [x] **defineProperty 의 enumerable 무시** — 숨긴 프로퍼티가 keys/for-in/JSON 에 샌다. (1cae077)
 
+### 2026-07 4라운드 (naver 를 열어 추적 + 미감사 영역 훑기)
+
+- [x] **naver 는 렌더가 끝나지도 않았다** (CPU 110초 → 메모리 폭주 SIGKILL). 원인 둘:
+  - **Object.getPrototypeOf 가 거짓말**이었다 — __proto__ 링크가 없으면 무조건 null.
+    평범한 객체·배열·인스턴스·제너레이터가 전부 null. (Reflect.getPrototypeOf 는 아예
+    `return null` 상수 함수.) regenerator/babel 런타임이 이걸로 내장 이터레이터
+    프로토타입을 캐낸다 — null 이면 무너진다. C.prototype 정체성도 흔들렸다(매번 새 객체).
+  - **배열 길이 상한이 없었다** — core-js 의 Array.from({length: 2**32}) 가 40억 개
+    할당을 시도했다. 표준은 RangeError. (180282b)
+  → 110초 사망 → 4.6초 렌더. 단계별 계측(KESTREL_TIME=1)도 추가.
+- [x] **keys/values/entries 가 배열을 돌려줬다** — 표준은 이터레이터. for-of 는 되니
+  멀쩡해 보이지만 it.next() 를 직접 쓰는 코드(babel for-of 헬퍼/core-js)는 죽는다.
+  strict_eq 가 제너레이터를 신원 비교 안 해 it[Symbol.iterator]() === it 도 거짓이었다. (f168cb0)
+- [x] **el.dataset 이 스냅샷** — dataset.x = '1' 이 조용히 사라졌다. 살아있는 뷰로. (09cc66d)
+- [x] **attributes 이름 접근 없음** (NamedNodeMap), **<a> 의 URL 분해 속성 없음**,
+  **Blob/File/FileReader/createObjectURL 없음**. (09cc66d)
+- [x] **localStorage.length/key 없음**, **fetch 응답에 headers/url 없음**,
+  **URLSearchParams 가 이터러블이 아님**, **Storage 전역 없음**. (c47a34d)
+- [x] **인라인 요소 블록화 안 함** (CSS Display §2.7) — position:absolute 인 <span> 의
+  width/right 가 통째로 무시됐다. (8380bdb)
+- [x] **다단이 자식 경계에서만 쪼갬** — 자식이 하나면(가장 흔한 모양) 전혀 안 나뉜다.
+  줄 경계 박스 조각화로 다시 씀. (8380bdb)
+
 ### 남은 것 (정직하게)
 - [ ] **WebAssembly** — fmkorea 의 봇 차단이 wasm 모듈로 챌린지를 푼다. 이게 없으면
       그런 사이트는 영영 못 본다. 다음 큰 과제.
+- [ ] naver 잔여 js 오류 3건 (사이트 자체 라이브러리 쪽). 본문은 클라이언트 렌더라
+      앱이 완주해야 보인다.
 - [ ] AVIF
 - [ ] 3D transform (perspective/rotate3d) — @supports 는 거짓으로 답한다 (거짓말은 안 함)
 - [ ] 임포트 맵의 scopes
