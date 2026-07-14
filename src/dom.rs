@@ -151,10 +151,19 @@ impl ElementData {
 
     pub fn classes(&self) -> HashSet<&str> {
         match self.attributes.get("class") {
-            Some(classlist) => classlist.split(' ').collect(),
+            Some(classlist) => split_ascii_ws(classlist).collect(),
             None => HashSet::new(),
         }
     }
+}
+
+// DOM 표준의 "ASCII whitespace" 로 토큰화 (§Infra: TAB, LF, FF, CR, SPACE).
+// 유니코드 공백(NBSP, EN QUAD, OGHAM SPACE MARK 등)은 **구분자가 아니다** —
+// 클래스 이름의 일부다. 예전엔 class 를 ' ' 하나로만 자르거나(탭이 든 클래스가
+// 한 덩어리가 됨) Rust 의 split_whitespace(유니코드 공백까지 자름)를 썼다.
+// 둘 다 조용히 틀린 매칭을 만든다.
+pub fn split_ascii_ws(s: &str) -> impl Iterator<Item = &str> {
+    s.split(|c| matches!(c, '\t' | '\n' | '\x0C' | '\r' | ' ')).filter(|t| !t.is_empty())
 }
 
 // ── 아레나 DOM ──────────────────────────────────────────────────────
@@ -806,6 +815,38 @@ mod tests {
         let n = text("hello".to_string());
         assert_eq!(n.children.len(), 0);
         assert_eq!(n.node_type, NodeType::Text("hello".to_string()));
+    }
+
+    // DOM 표준의 클래스 토큰화는 **ASCII 공백**만 구분자로 본다 (§Infra).
+    // 유니코드 공백(NBSP, EN QUAD 등)은 클래스 이름의 일부다.
+    // 예전엔 ' ' 하나로만 잘라서 탭이 든 class 가 한 덩어리가 됐다.
+    #[test]
+    fn class_tokenization_uses_ascii_whitespace_only() {
+        let e = ElementData {
+            tag_name: "div".to_string(),
+            attributes: {
+                let mut a = AttrMap::new();
+                a.insert("class".to_string(), "a\tb\nc  d".to_string());
+                a
+            },
+        };
+        let cs = e.classes();
+        assert_eq!(cs.len(), 4, "{:?}", cs);
+        for want in ["a", "b", "c", "d"] {
+            assert!(cs.contains(want), "{:?}", cs);
+        }
+        // NBSP 는 구분자가 아니다 — 이름의 일부
+        let e2 = ElementData {
+            tag_name: "div".to_string(),
+            attributes: {
+                let mut a = AttrMap::new();
+                a.insert("class".to_string(), "x\u{00A0}y".to_string());
+                a
+            },
+        };
+        let cs2 = e2.classes();
+        assert_eq!(cs2.len(), 1, "{:?}", cs2);
+        assert!(cs2.contains("x\u{00A0}y"), "{:?}", cs2);
     }
 
     #[test]

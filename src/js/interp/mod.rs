@@ -5246,8 +5246,15 @@ impl Interp {
                                 || inst.class.find_getter(&key).is_some(),
                         )
                     }
+                    // 배열의 in: 인덱스 + length + own 프로퍼티 + Array.prototype 메서드.
+                    // 예전엔 인덱스만 봐서 `"length" in []` 가 false 였다 — 그래서
+                    // 값이 배열인지 확인하는 코드(testharness 의 assert_array_equals 가
+                    // 정확히 이렇게 한다)가 우리 컬렉션을 배열이 아니라고 판정했다.
                     Value::Arr(a) => Value::Bool(
-                        key.parse::<usize>().map_or(false, |i| i < a.borrow().len()),
+                        key.parse::<usize>().map_or(false, |i| i < a.borrow().len())
+                            || key == "length"
+                            || a.get_prop(&key).is_some()
+                            || self.proto_method("Array", &key).is_some(),
                     ),
                     _ => Value::Bool(false),
                 }

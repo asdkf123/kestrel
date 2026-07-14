@@ -2912,6 +2912,18 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn in_operator_sees_array_length_and_methods() {
+    // 예전엔 인덱스만 봐서 `"length" in []` 가 false 였다 — 값이 배열인지 확인하는
+    // 코드(testharness 의 assert_array_equals 가 정확히 이렇게 한다)가 우리 배열을
+    // 배열이 아니라고 판정했다.
+    assert!(run_bool("'length' in []"));
+    assert!(run_bool("'push' in []"));
+    assert!(run_bool("0 in [1]"));
+    assert!(run_bool("!(1 in [1])"));
+    assert!(run_bool("!('nope' in [1])"));
+}
+
+#[test]
 fn function_names_follow_standard() {
     // §10.2.9 SetFunctionName / NamedEvaluation. 예전엔 f.name 이 항상 "" 였다.
     assert_eq!(run_str("function f(){} f.name"), "f");

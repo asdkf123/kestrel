@@ -305,7 +305,10 @@ fn matches_compound(
             AttrOp::Prefix(v) => !v.is_empty() && av.starts_with(&val(v)),
             AttrOp::Suffix(v) => !v.is_empty() && av.ends_with(&val(v)),
             AttrOp::Contains(v) => !v.is_empty() && av.contains(&val(v)),
-            AttrOp::Word(v) => !v.is_empty() && av.split_whitespace().any(|w| w == val(v)),
+            // [attr~=v] — 공백 구분 목록. CSS 도 ASCII 공백만 구분자다.
+            AttrOp::Word(v) => {
+                !v.is_empty() && crate::dom::split_ascii_ws(&av).any(|w| w == val(v))
+            }
             AttrOp::Dash(v) => av == val(v) || av.starts_with(&format!("{}-", val(v))),
         };
         if !ok {

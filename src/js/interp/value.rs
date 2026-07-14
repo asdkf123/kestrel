@@ -329,10 +329,15 @@ pub(super) fn collect_elements(
     if !skip_self {
         if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
             let hit = if by_class {
-                e.attributes
+                // 인자도 ASCII 공백으로 쪼갠다: 여러 클래스를 **모두** 가진 요소만 (표준).
+                // 빈 인자는 아무것도 매치하지 않는다.
+                let want: Vec<&str> = crate::dom::split_ascii_ws(query).collect();
+                let have: std::collections::HashSet<&str> = e
+                    .attributes
                     .get("class")
-                    .map(|c| c.split_whitespace().any(|t| t == query))
-                    .unwrap_or(false)
+                    .map(|c| crate::dom::split_ascii_ws(c).collect())
+                    .unwrap_or_default();
+                !want.is_empty() && want.iter().all(|w| have.contains(w))
             } else {
                 query == "*" || e.tag_name.eq_ignore_ascii_case(query)
             };
