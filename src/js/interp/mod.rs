@@ -11,6 +11,7 @@ use super::parser::parse;
 mod builtins;
 mod canvas;
 mod cssom;
+mod reflect_api;
 mod net;
 mod wasm_bind;
 mod env;

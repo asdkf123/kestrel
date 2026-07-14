@@ -6,6 +6,7 @@ mod css;
 mod dataurl;
 mod dom;
 mod entities;
+mod reflect;
 mod encoding;
 mod encoding_cjk;
 mod encoding_sbcs;

@@ -746,33 +746,9 @@ impl Interp {
                 }
                 _ => Ok(Value::Undefined),
             },
-            // 문자열 속성 반사. 속성이 없을 때 빈 문자열이 아니라 **기본값**을 내는 것들이
-            // 있다 (HTML 의 반영 규칙): <input> 의 type 은 "text", <form> 의 method 는 "get",
-            // enctype 은 application/x-www-form-urlencoded. 빈 문자열을 주면
-            // `if (input.type === 'text')` 같은 흔한 검사가 조용히 거짓이 된다.
-            "alt" | "title" | "name" | "type" | "rel" | "target" | "placeholder" | "method"
-            | "enctype" | "lang" | "dir" => match &dom.get(id).node_type {
-                crate::dom::NodeType::Element(e) => {
-                    let raw = e.attributes.get(key).cloned();
-                    let tag = e.tag_name.as_str();
-                    let v = match raw {
-                        Some(v) if !v.is_empty() => v,
-                        _ => match (tag, key) {
-                            ("input", "type") => "text".to_string(),
-                            ("button", "type") => "submit".to_string(),
-                            ("form", "method") => "get".to_string(),
-                            ("form", "enctype") => {
-                                "application/x-www-form-urlencoded".to_string()
-                            }
-                            _ => String::new(),
-                        },
-                    };
-                    // type 은 소문자로 반영된다 (표준: 열거형 속성)
-                    Ok(Value::Str(if key == "type" { v.to_ascii_lowercase() } else { v }))
-                }
-                _ => Ok(Value::Undefined),
-            },
-            _ => Ok(Value::Undefined),
+            // 여기까지 안 잡혔으면 IDL 반영 표를 본다 (HTML §2.6).
+            // 표에도 없으면 undefined (표준의 "그런 IDL 속성 없음").
+            _ => Ok(self.reflect_get(id, key)?.unwrap_or(Value::Undefined)),
         }
     }
 
@@ -863,7 +839,12 @@ impl Interp {
                 dom.set_attr(id, attr, text);
                 Ok(())
             }
-            _ => Ok(()), // 미지원 프로퍼티는 조용히 무시 (관용)
+            // IDL 반영 표 (HTML §2.6). 예전엔 표에 있는 속성도 조용히 무시했다 —
+            // img.width = 100 이 아무 일도 안 했다.
+            _ => {
+                self.reflect_set(id, key, &value)?;
+                Ok(())
+            }
         }
     }
 }

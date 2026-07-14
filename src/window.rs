@@ -1614,6 +1614,46 @@ mod tests {
         assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
     }
 
+    // IDL 속성 반영 (HTML §2.6). 표는 표준 데이터에서 기계 추출한 357개다.
+    // 예전엔 id/className 등 몇 개만 손으로 처리하고 나머지는 조용히 무시했다:
+    // a.title 은 undefined 였고, img.width = 100 은 아무 일도 안 했다.
+    #[test]
+    fn idl_attributes_reflect_content_attributes() {
+        let dom = run_with_layout(
+            r#"<a id="a" href="/p?x=1" title="T" hreflang="ko"></a>
+               <img id="i" src="/i.png" width="100" alt="A">
+               <input id="n" disabled tabindex="3">
+               <div id="out"></div>
+               <script>
+                 var a = document.getElementById('a');
+                 var i = document.getElementById('i');
+                 var n = document.getElementById('n');
+                 var log = [];
+                 log.push(a.title);                      // string
+                 log.push(a.hreflang);
+                 log.push(String(i.width === 100));      // unsigned long (숫자)
+                 log.push(String(n.disabled === true));  // boolean = 속성 존재
+                 log.push(String(n.tabIndex === 3));     // long
+                 a.title = 'X';
+                 log.push(a.getAttribute('title'));      // IDL 쓰기 → 콘텐츠 속성
+                 i.width = 250;
+                 log.push(i.getAttribute('width') + ',' + i.width);
+                 n.disabled = false;
+                 log.push(String(n.hasAttribute('disabled')));  // false → 속성 제거
+                 a.dir = 'RTL';
+                 log.push(a.dir);                        // 열거형: 소문자로 한정
+                 log.push(String(a.nosuchidl));          // 표에 없으면 undefined
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            "T|ko|true|true|true|X|250,250|false|rtl|undefined"
+        );
+    }
+
     // WebIDL: 모든 DOM 노드는 인터페이스 객체를 갖는다.
     // <div> → HTMLDivElement → HTMLElement → Element → Node → EventTarget.
     // 예전엔 el.constructor 가 undefined 라, 노드 종류를 constructor 로 판별하는
