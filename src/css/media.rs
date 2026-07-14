@@ -4,6 +4,18 @@
 const VH_DEFAULT: f32 = 800.0;
 const ROOT_FS: f32 = 16.0; // @media 의 em/rem 은 초기 폰트크기 기준
 
+// @container 조건 평가. 컨테이너의 인라인/블록 크기를 뷰포트처럼 넣고 미디어 특성
+// 평가기를 그대로 쓴다 (min-width/max-width/width 범위 문법이 동일하다).
+// inline-size/block-size 는 width/height 로 정규화한다.
+pub(crate) fn container_matches(cond: &str, cw: f32, ch: f32) -> bool {
+    let c = cond.trim();
+    if c.is_empty() {
+        return true; // 조건 없는 @container (이름만) → 컨테이너가 있으면 매칭
+    }
+    let normalized = c.replace("inline-size", "width").replace("block-size", "height");
+    media_matches_vp(&normalized, cw, ch)
+}
+
 pub(crate) fn media_matches(query: &str, vw: f32) -> bool {
     media_matches_vp(query, vw, VH_DEFAULT)
 }

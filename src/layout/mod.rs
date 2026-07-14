@@ -2103,6 +2103,42 @@ pub fn collect_box_metrics(
     }
 }
 
+// 쿼리 컨테이너(container-type: inline-size|size)의 실측 크기를 모은다.
+// @container 조건은 이 크기로 판정된다 — 레이아웃 전엔 알 수 없으므로 두 번째 스타일
+// 패스가 필요하다 (브라우저도 같은 구조다).
+pub fn collect_containers(
+    root: &LayoutBox,
+    out: &mut crate::style::ContainerMap,
+) {
+    if !root.anonymous && matches!(root.styled_node.node.node_type, NodeType::Element(_)) {
+        let kw = |p: &str| match root.styled_node.value(p) {
+            Some(Value::Keyword(k)) => k,
+            _ => String::new(),
+        };
+        // 'container: <name> / <type>' 단축도 받는다
+        let short = kw("container");
+        let (short_name, short_type) = match short.split_once('/') {
+            Some((n, t)) => (n.trim().to_string(), t.trim().to_string()),
+            None => (String::new(), short.trim().to_string()),
+        };
+        let ctype = {
+            let t = kw("container-type");
+            if t.is_empty() { short_type } else { t }
+        };
+        if ctype == "inline-size" || ctype == "size" {
+            let name = {
+                let n = kw("container-name");
+                if n.is_empty() { short_name } else { n }
+            };
+            let c = root.dimensions.content;
+            out.insert(root.styled_node.id, (name, c.width, c.height));
+        }
+    }
+    for child in &root.children {
+        collect_containers(child, out);
+    }
+}
+
 // 스크롤 가능 오버플로 크기 (scrollWidth/scrollHeight). 패딩 박스보다 내용이 크면 그 크기.
 // 예전엔 그냥 테두리 박스를 돌려줬다 — el.scrollHeight > el.clientHeight 검사가 **항상 거짓**이라
 // "더보기" 버튼, 스크롤 그림자, 무한 스크롤이 통째로 죽는다.

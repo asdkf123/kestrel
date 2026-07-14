@@ -2864,6 +2864,10 @@ impl Interp {
             }),
             // el.click(): 신뢰되지 않은(isTrusted=false) 클릭 이벤트를 캡처→타깃→버블로
             // 디스패치한다. 기본 동작(링크 이동/폼 제출)은 preventDefault 되지 않았을 때만.
+            Native::CurrentScript => Ok(match self.current_script {
+                Some(id) => Value::Dom(id),
+                None => Value::Null, // 실행 중인 클래식 스크립트가 없으면 null (표준)
+            }),
             Native::ElementClick => {
                 let Some(Value::Dom(id)) = recv else {
                     return Err("click 은 요소 메서드".to_string());
@@ -5495,7 +5499,10 @@ impl Interp {
                         _ => Ok(Value::Null),
                     }
                 }
-                _ => Err("getAttribute 는 요소 메서드".to_string()),
+                other => Err(format!(
+                    "getAttribute 는 요소 메서드 (수신자={})",
+                    other.map(|v| type_of(&v)).unwrap_or("없음")
+                )),
             },
         }
     }

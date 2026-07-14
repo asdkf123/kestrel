@@ -173,14 +173,22 @@ pub enum DeclKind {
 
 // 선언 바인딩 대상: 단순 이름 또는 구조분해 패턴
 #[derive(Debug, Clone, PartialEq)]
+pub enum PatKey {
+    Static(String),
+    Computed(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Name(String),
     // 구조분해 대상이 멤버 표현식일 수 있다: [o.p, o.q] = [1, 2] / ({x: o.a} = v)
     // 표준이 허용하는 형태다. 예전엔 "잘못된 구조분해 할당 대상" 으로 파싱이 죽어서,
     // 이 패턴을 쓰는 번들(예: vue 런타임)이 통째로 안 돌았다.
     Member(Box<Expr>),
-    // { key: sub = default, ..., ...rest } — 중첩/기본값/rest 지원
-    Object(Vec<(String, Pattern, Option<Expr>)>, Option<String>),
+    // { key: sub = default, ..., ...rest } — 중첩/기본값/rest 지원.
+    // 키는 정적 이름이거나 **계산된 키**다: let { [ex]: v } = o (ES6).
+    // 예전엔 정적 이름만 받아서, 계산된 키를 쓰는 번들이 파싱에서 통째로 죽었다.
+    Object(Vec<(PatKey, Pattern, Option<Expr>)>, Option<String>),
     // [ sub = default, , ..., ...rest ] — None = 홀(건너뜀)
     Array(Vec<Option<(Pattern, Option<Expr>)>>, Option<String>),
 }
@@ -214,7 +222,8 @@ pub enum Stmt {
     // for (k in obj) — 객체 키 / 배열 인덱스 순회
     ForIn { name: String, obj: Expr, body: Vec<Stmt> },
     // for (v of iterable) — 값 순회 (배열/문자열/Set/Map)
-    ForOf { name: String, iter: Expr, body: Vec<Stmt> },
+    // is_await: `for await (const x of asyncIterable)` — 각 값이 promise 면 언랩한다 (ES2018).
+    ForOf { name: String, iter: Expr, body: Vec<Stmt>, is_await: bool },
     ClassDecl(ClassDef),
 
     // ── ES 모듈 (import/export) ──

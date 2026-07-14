@@ -43,13 +43,37 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
     let (sheet, fonts, img_map, pseudo) =
         unsafe { (&*ctx.sheet, &*ctx.fonts, &*ctx.img_map, &*ctx.pseudo) };
     let vp = crate::style::Viewport { w: ctx.vw, h: ctx.vh };
-    let style_root = crate::style::style_tree_full(dom, sheet, vp, pseudo);
     let mut viewport: crate::layout::Dimensions = Default::default();
     viewport.content.width = ctx.vw;
+    // @container: 컨테이너 크기는 레이아웃이 정한다 → 한 번 재고 다시 스타일한다.
+    let conts = container_sizes(dom, sheet, vp, pseudo, viewport, fonts, img_map);
+    let style_root = crate::style::style_tree_containers(dom, sheet, vp, pseudo, conts);
     let mut layout_root = crate::layout::layout_tree(&style_root, viewport, fonts, img_map);
     crate::layout::apply_sticky(&mut layout_root, 0.0, js.scroll_y, ctx.vw, ctx.vh);
     fill_js_maps(js, &style_root, &layout_root);
     js.layout_version = Some(dom.version());
+}
+
+// @container 가 있는 시트에서만: 한 번 스타일+레이아웃해 컨테이너들의 실측 크기를 얻는다.
+// (없으면 빈 맵 — 추가 비용 0)
+#[allow(clippy::too_many_arguments)]
+fn container_sizes(
+    dom: &crate::dom::Dom,
+    sheet: &crate::css::Stylesheet,
+    vp: crate::style::Viewport,
+    pseudo: &crate::style::PseudoStyles,
+    viewport: crate::layout::Dimensions,
+    fonts: &crate::font::FontStack,
+    img_map: &crate::layout::ImageMap,
+) -> crate::style::ContainerMap {
+    let mut out = crate::style::ContainerMap::new();
+    if !sheet.has_containers() {
+        return out;
+    }
+    let probe_style = crate::style::style_tree_full(dom, sheet, vp, pseudo);
+    let probe_layout = crate::layout::layout_tree(&probe_style, viewport, fonts, img_map);
+    crate::layout::collect_containers(&probe_layout, &mut out);
+    out
 }
 
 // 레이아웃 산출물 → JS 측정 맵(getBoundingClientRect/offset*, getComputedStyle).
@@ -505,10 +529,25 @@ impl Page {
 
     pub fn rebuild(&mut self) {
         let vp = crate::style::Viewport { w: self.viewport_width, h: self.viewport_height };
-        let style_root =
-            crate::style::style_tree_full(&self.dom, &self.sheet, vp, &self.pseudo_styles);
         let mut viewport: crate::layout::Dimensions = Default::default();
         viewport.content.width = self.viewport_width;
+        // @container: 컨테이너 크기는 레이아웃이 정한다 → 한 번 재고 다시 스타일한다.
+        let conts = container_sizes(
+            &self.dom,
+            &self.sheet,
+            vp,
+            &self.pseudo_styles,
+            viewport,
+            &self.fonts,
+            &self.img_map,
+        );
+        let style_root = crate::style::style_tree_containers(
+            &self.dom,
+            &self.sheet,
+            vp,
+            &self.pseudo_styles,
+            conts,
+        );
         let mut layout_root =
             crate::layout::layout_tree(&style_root, viewport, &self.fonts, &self.img_map);
         // position: sticky — 현재 스크롤 위치 기준으로 시각 오프셋 적용
@@ -1266,7 +1305,7 @@ mod tests {
     fn run_with_layout(html: &str, css: &str) -> Dom {
         let mut dom = crate::html::parse_dom(html.to_string());
         let mut sheet = crate::css::user_agent_stylesheet();
-        sheet.rules.extend(crate::css::parse(css.to_string()).rules);
+        sheet.merge(crate::css::parse(css.to_string()));
         let f = crate::font::Font::from_bytes(std::fs::read("assets/fonts/Latin.ttf").unwrap())
             .unwrap();
         let fonts = crate::font::FontStack::new(vec![f]);
@@ -1375,6 +1414,30 @@ mod tests {
             text_of_id(&dom, "out").unwrap(),
             "cap,tgt,bub|1,2,3|1|true|true",
             "캡처→타깃→버블, eventPhase, once 1회, 체크박스 사전 토글"
+        );
+    }
+
+    // @container — 컨테이너의 폭은 레이아웃이 정한다. 스타일이 레이아웃보다 먼저 도는
+    // 구조라 두 번째 패스가 필요하다. 예전엔 at-rule 을 통째로 스킵해서 그 안의 규칙이
+    // **소리 없이 사라졌다**. 참/거짓 양쪽을 다 확인한다 (무조건 참이면 그것도 거짓말이다).
+    #[test]
+    fn container_queries_evaluate_against_real_container_size() {
+        let dom = run_with_layout(
+            "<div class=\"big\"><span class=\"t\" id=\"a\">A</span></div>\
+             <div class=\"small\"><span class=\"t\" id=\"b\">B</span></div>\
+             <span class=\"t\" id=\"c\">C</span>\
+             <p id=\"out\"></p><script>\
+             var g = function(id){ return getComputedStyle(document.getElementById(id)).color; };\
+             document.getElementById('out').textContent = [g('a'), g('b'), g('c')].join('|');\
+             </script>",
+            ".big { container-type: inline-size; width: 400px } \
+             .small { container-type: inline-size; width: 100px } \
+             @container (min-width: 200px) { .t { color: rgb(1, 1, 1) } }",
+        );
+        assert_eq!(
+            text_of_id(&dom, "out").unwrap(),
+            "rgb(1, 1, 1)|rgb(0, 0, 0)|rgb(0, 0, 0)",
+            "400px 컨테이너만 매칭 (100px 은 거짓, 컨테이너 없는 요소도 거짓)"
         );
     }
 

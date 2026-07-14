@@ -106,7 +106,7 @@ fn main() {
     scripts.extend(page_scripts(&root_node.text_content(root_node.root)));
     // 실제 페이지처럼 UA 스타일시트를 먼저 깔고 그 위에 저작자 CSS 를 얹는다.
     let mut stylesheet = css::user_agent_stylesheet();
-    stylesheet.rules.extend(css::parse(css_source).rules);
+    stylesheet.merge(css::parse(css_source));
 
     let viewport_width: u32 = 800;
     let viewport_height: u32 = 600;
@@ -468,9 +468,7 @@ fn load_stylesheet(
     if let Some(b) = &this_base {
         absolutize_css_urls(&mut parsed, b);
     }
-    sheet.rules.extend(parsed.rules);
-    sheet.font_faces.extend(parsed.font_faces);
-    sheet.keyframes.extend(parsed.keyframes);
+    sheet.merge(parsed);
 }
 
 // 스타일시트 안의 상대 url() 을 그 시트의 URL 기준 절대 URL 로 바꾼다 (파싱 시점 해석).
@@ -827,9 +825,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     let mut inline_css = String::new();
     extract_new_css(&dom, &mut seen_styles, &mut inline_css);
     let parsed_inline = css::parse_viewport(inline_css, page_vw);
-    sheet.rules.extend(parsed_inline.rules);
-    sheet.font_faces.extend(parsed_inline.font_faces);
-    sheet.keyframes.extend(parsed_inline.keyframes);
+    sheet.merge(parsed_inline);
 
     // 이미지: <img src> (DOM) + 적용된 background-image (스타일 트리는 일시 사용)
     let mut srcs = Vec::new();
@@ -909,9 +905,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     extract_new_css(&dom, &mut seen_styles, &mut injected_css);
     if !injected_css.trim().is_empty() {
         let parsed = css::parse_viewport(injected_css, page_vw);
-        sheet.rules.extend(parsed.rules);
-        sheet.font_faces.extend(parsed.font_faces);
-        sheet.keyframes.extend(parsed.keyframes);
+        sheet.merge(parsed);
     }
 
     // 스크립트가 넣은 <img>/배경 이미지도 가져온다 (이미 받은 것은 건너뜀).

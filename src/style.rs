@@ -467,16 +467,58 @@ struct RuleIndex<'a> {
     by_class: HashMap<String, Vec<usize>>,
     by_tag: HashMap<String, Vec<usize>>,
     universal: Vec<usize>,
+    // @layer 이름 → 선언 순서(1부터). 레이어 밖은 0.
+    layer_rank: HashMap<String, u32>,
+    // 쿼리 컨테이너: NodeId → (container-name, 인라인 크기, 블록 크기).
+    // 레이아웃이 정하는 값이라 **첫 패스에선 비어 있다** (두 번째 패스에서 채워진다).
+    containers: ContainerMap,
 }
 
+// 쿼리 컨테이너의 실측 크기 (레이아웃 후에 채운다)
+pub type ContainerMap = HashMap<NodeId, (String, f32, f32)>;
+
 impl<'a> RuleIndex<'a> {
+    // 캐스케이드 정렬 키. 일반 선언은 **뒤 레이어가 이기고**, 레이어 밖이 가장 세다.
+    // !important 는 순서가 **뒤집힌다** (표준 §6.4.4: 앞 레이어가 이기고, 레이어 밖이 가장 약하다).
+    fn cascade_key(&self, rule: &Rule, spec: Specificity, important: bool) -> (u32, Specificity) {
+        let rank = match &rule.layer {
+            None => 0,
+            Some(name) => *self.layer_rank.get(name).unwrap_or(&0),
+        };
+        let key = if important {
+            // 레이어 밖(0) → 가장 약함, 앞 레이어일수록 강함
+            match rank {
+                0 => 0,
+                r => u32::MAX - r,
+            }
+        } else {
+            // 레이어 밖(0) → 가장 강함, 뒤 레이어일수록 강함
+            match rank {
+                0 => u32::MAX,
+                r => r,
+            }
+        };
+        (key, spec)
+    }
+
     fn build(sheet: &'a Stylesheet) -> RuleIndex<'a> {
+        RuleIndex::build_with(sheet, ContainerMap::new())
+    }
+
+    fn build_with(sheet: &'a Stylesheet, containers: ContainerMap) -> RuleIndex<'a> {
         let mut idx = RuleIndex {
+            containers,
             rules: &sheet.rules,
             by_id: HashMap::new(),
             by_class: HashMap::new(),
             by_tag: HashMap::new(),
             universal: Vec::new(),
+            layer_rank: sheet
+                .layers
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (n.clone(), i as u32 + 1))
+                .collect(),
         };
         for (i, rule) in sheet.rules.iter().enumerate() {
             for selector in &rule.selectors {
@@ -535,7 +577,7 @@ fn pseudo_specified_values(
         .into_iter()
         .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, &index.rules[i], Some(which)))
         .collect();
-    rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
+    rules.sort_by_key(|&(spec, rule)| index.cascade_key(rule, spec, false));
     // 일반 선언 먼저, 그다음 important (important 가 특이도 무관하게 이긴다)
     for (_, rule) in &rules {
         for d in &rule.declarations {
@@ -544,6 +586,7 @@ fn pseudo_specified_values(
             }
         }
     }
+    rules.sort_by_key(|&(spec, rule)| index.cascade_key(rule, spec, true));
     for (_, rule) in &rules {
         for d in &rule.declarations {
             if d.important {
@@ -763,6 +806,27 @@ fn presentational_css(elem: &ElementData) -> String {
 
 // 반환: (최종 명시값, UA 원점만의 명시값). `revert` 는 저자 선언을 되돌려 UA 원점
 // 값으로 계산해야 하므로 원점별 맵이 필요하다 (CSS Cascade §6.2).
+// 이 규칙의 @container 조건이 이 요소에 대해 참인가.
+// 컨테이너는 **조상**이다 (자기 자신은 아니다). 이름이 있으면 그 이름의 가장 가까운 컨테이너.
+// 컨테이너 맵이 비어 있으면(첫 패스, 아직 레이아웃 전) 조건은 참으로 본다 — 그래야
+// 컨테이너의 크기가 그 안의 스타일에 의존하는 경우에도 첫 근사가 나온다.
+fn container_ok(index: &RuleIndex, sib: &SiblingCtx, name: &str, cond: &str) -> bool {
+    if index.containers.is_empty() {
+        return true;
+    }
+    let Some((dom, node)) = sib.anchor else { return true };
+    let mut cur = dom.get(node).parent;
+    while let Some(n) = cur {
+        if let Some((cname, cw, ch)) = index.containers.get(&n) {
+            if name.is_empty() || cname == name {
+                return crate::css::container_matches(cond, *cw, *ch);
+            }
+        }
+        cur = dom.get(n).parent;
+    }
+    false // 컨테이너가 없으면 매칭 안 한다 (표준)
+}
+
 fn specified_values(
     elem: &ElementData,
     ancestors: &[&ElementData],
@@ -782,10 +846,14 @@ fn specified_values(
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
+        .filter(|&i| match &index.rules[i].container {
+            None => true,
+            Some((name, cond)) => container_ok(index, sib, name, cond),
+        })
         .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, &index.rules[i], None))
         .collect();
-    // 오름차순 특이도, 안정 정렬 → 동일 특이도는 문서 순서 유지 (뒤 규칙이 이김)
-    rules.sort_by(|&(a, _), &(b, _)| a.cmp(&b));
+    // 오름차순 (레이어 순위, 특이도), 안정 정렬 → 동일 순위는 문서 순서 유지 (뒤 규칙이 이김)
+    rules.sort_by_key(|&(spec, rule)| index.cascade_key(rule, spec, false));
     // 캐스케이드 우선순위: 일반 저작자 → 일반 인라인 → important 저작자 → important 인라인.
     for (_, rule) in &rules {
         for d in &rule.declarations {
@@ -807,6 +875,8 @@ fn specified_values(
             values.insert(d.name.clone(), d.value.clone());
         }
     }
+    // !important 는 레이어 순서가 뒤집힌다 (표준 §6.4.4) → 그 키로 다시 정렬한다
+    rules.sort_by_key(|&(spec, rule)| index.cascade_key(rule, spec, true));
     for (_, rule) in &rules {
         for d in &rule.declarations {
             if d.important {
@@ -1008,7 +1078,18 @@ pub fn style_tree_full<'a>(
     vp: Viewport,
     pseudo: &PseudoStyles,
 ) -> StyledNode<'a> {
-    let index = RuleIndex::build(stylesheet);
+    style_tree_containers(dom, stylesheet, vp, pseudo, ContainerMap::new())
+}
+
+// 컨테이너 크기를 알고 다시 스타일 (두 번째 패스). @container 조건이 여기서 판정된다.
+pub fn style_tree_containers<'a>(
+    dom: &'a Dom,
+    stylesheet: &'a Stylesheet,
+    vp: Viewport,
+    pseudo: &PseudoStyles,
+    containers: ContainerMap,
+) -> StyledNode<'a> {
+    let index = RuleIndex::build_with(stylesheet, containers);
     let mut ancestors: Vec<&ElementData> = Vec::new();
     style_node(dom, dom.root, &index, &mut ancestors, &mut Vec::new(), None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, DEFAULT_FONT_SIZE)
 }
@@ -1626,6 +1707,46 @@ mod tests {
         assert_eq!(col("s"), "rgb(4, 4, 4)", ":has(+ .next) 인접 형제");
         // 중첩 괄호: 예전 파서는 첫 ')' 에서 끊어 ":has(.kid" 로 잘랐다 → 규칙이 죽었다
         assert_eq!(col("t"), "rgb(5, 5, 5)", ":not(:has(.kid))");
+    }
+
+    // @layer — Tailwind v4 는 **모든 것**을 @layer 로 감싼다. 모르면 스타일이 통째로 날아간다.
+    // 일반 선언은 뒤 레이어가 이기고 레이어 밖이 가장 세다. !important 는 **역순**이다 (§6.4.4).
+    #[test]
+    fn cascade_layers_order_and_important_reversal() {
+        let dom = crate::html::parse_dom(
+            "<div id=x></div><div id=y></div><div id=z></div><div id=w></div>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "@layer a, b; \
+             @layer b { #x { color: rgb(2, 2, 2) } } \
+             @layer a { #x { color: rgb(1, 1, 1) } } \
+             #y { color: rgb(9, 9, 9) } \
+             @layer b { #y { color: rgb(8, 8, 8) } } \
+             @layer a { #z { color: rgb(1, 1, 1) !important } } \
+             @layer b { #z { color: rgb(2, 2, 2) !important } } \
+             #w { color: rgb(7, 7, 7) !important } \
+             @layer a { #w { color: rgb(1, 1, 1) !important } }"
+                .to_string(),
+        );
+        let styled = style_tree(&dom, &ss);
+        fn find<'a, 'b>(n: &'b StyledNode<'a>, id: &str) -> Option<&'b StyledNode<'a>> {
+            if let NodeType::Element(e) = &n.node.node_type {
+                if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+                    return Some(n);
+                }
+            }
+            n.children.iter().find_map(|c| find(c, id))
+        }
+        let col = |id: &str| {
+            find(&styled, id)
+                .and_then(|n| n.specified_values.get("color").cloned())
+                .map(|v| computed_value_string(&v))
+                .unwrap_or_default()
+        };
+        assert_eq!(col("x"), "rgb(2, 2, 2)", "뒤 레이어(b)가 이긴다");
+        assert_eq!(col("y"), "rgb(9, 9, 9)", "레이어 밖이 레이어보다 세다");
+        assert_eq!(col("z"), "rgb(1, 1, 1)", "!important 는 앞 레이어(a)가 이긴다");
+        assert_eq!(col("w"), "rgb(1, 1, 1)", "!important 는 레이어 밖이 가장 약하다");
     }
 
     #[test]

@@ -108,9 +108,30 @@ fn expr_to_pattern(e: Expr) -> Option<Pattern> {
                 match key {
                     PropKey::Static(name) => match val {
                         Expr::Assign { op: AssignOp::Set, target, value } => {
-                            out.push((name, expr_to_pattern(*target)?, Some(*value)));
+                            out.push((
+                                crate::js::ast::PatKey::Static(name),
+                                expr_to_pattern(*target)?,
+                                Some(*value),
+                            ));
                         }
-                        other => out.push((name, expr_to_pattern(other)?, None)),
+                        other => out.push((
+                            crate::js::ast::PatKey::Static(name),
+                            expr_to_pattern(other)?,
+                            None,
+                        )),
+                    },
+                    // ({ [ex]: t } = v) — 계산된 키 구조분해 대입
+                    PropKey::Computed(e) => match val {
+                        Expr::Assign { op: AssignOp::Set, target, value } => out.push((
+                            crate::js::ast::PatKey::Computed(*e),
+                            expr_to_pattern(*target)?,
+                            Some(*value),
+                        )),
+                        other => out.push((
+                            crate::js::ast::PatKey::Computed(*e),
+                            expr_to_pattern(other)?,
+                            None,
+                        )),
                     },
                     PropKey::Spread => match val {
                         Expr::Ident(n) => rest = Some(n),
@@ -576,12 +597,23 @@ impl Parser {
                         self.eat(&Tok::Comma);
                         break;
                     }
-                    let key = self.prop_name()?;
+                    // 계산된 키: { [ex]: sub } (ES6)
+                    let key = if self.eat(&Tok::LBracket) {
+                        let e = self.assignment()?;
+                        self.expect(&Tok::RBracket)?;
+                        crate::js::ast::PatKey::Computed(e)
+                    } else {
+                        crate::js::ast::PatKey::Static(self.prop_name()?)
+                    };
                     // { key: subpattern } (중첩 가능) 또는 { key }
                     let sub = if self.eat(&Tok::Colon) {
                         self.binding_pattern()?
                     } else {
-                        Pattern::Name(key.clone())
+                        match &key {
+                            crate::js::ast::PatKey::Static(k) => Pattern::Name(k.clone()),
+                            // { [ex] } 는 문법 오류 (반드시 : 대상이 있어야 한다)
+                            _ => return Err("계산된 키에는 대상이 필요하다".to_string()),
+                        }
                     };
                     // 기본값 { a = 1 } / { a: b = 1 }
                     let default =
@@ -758,6 +790,14 @@ impl Parser {
 
     fn for_stmt(&mut self) -> Result<Stmt, String> {
         self.expect(&Tok::For)?;
+        // `for await (... of asyncIterable)` (ES2018). 없으면 이 스크립트가 통째로 죽는다
+        // (파싱 실패는 파일 하나를 통째로 버린다 — 실제로 tailwindcss.com 이 그랬다).
+        let is_await = if matches!(self.peek(), Some(Tok::Ident(s)) if s == "await") {
+            self.pos += 1;
+            true
+        } else {
+            false
+        };
         self.expect(&Tok::LParen)?;
         // 구조분해 for-of/in: for ([var|let|const] {..}|[..] of|in ...) — 임시 변수로 디슈가
         let destr = {
@@ -801,7 +841,7 @@ impl Parser {
             return Ok(if is_in {
                 Stmt::ForIn { name: tmp, obj: seq, body }
             } else {
-                Stmt::ForOf { name: tmp, iter: seq, body }
+                Stmt::ForOf { name: tmp, iter: seq, body, is_await }
             });
         }
         // for (k in obj) / for (var k in obj)
@@ -835,7 +875,7 @@ impl Parser {
             self.pos += 1; // "of"
             let iter = self.expr()?;
             self.expect(&Tok::RParen)?;
-            return Ok(Stmt::ForOf { name, iter, body: self.body_of_clause()? });
+            return Ok(Stmt::ForOf { name, iter, body: self.body_of_clause()?, is_await });
         }
         let init = if self.eat(&Tok::Semi) {
             None

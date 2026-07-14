@@ -360,7 +360,7 @@ impl Interp {
             Stmt::For { init, cond, step, body } => {
                 self.gen_for(init, cond, step, body, scope, drive, &my_label)
             }
-            Stmt::ForOf { name, iter, body } => {
+            Stmt::ForOf { name, iter, body, .. } => {
                 self.gen_for_of(name, iter, body, scope, drive, &my_label)
             }
             Stmt::ForIn { name, obj, body } => {
@@ -1023,6 +1023,16 @@ impl Interp {
     // GetIterator 추상연산. 반복자 프로토콜로 반복자를 얻는다: 이미 반복자(next 보유)면
     // 그대로, `[Symbol.iterator]`(@@iterator) 메서드가 있으면 호출해 얻는다(사용자 정의
     // 이터러블/인스턴스 포함). 반복 불가면 None.
+    // for await 용: @@asyncIterator 를 **먼저** 찾는다 (없으면 동기 이터레이터로 폴백 — 표준).
+    // 이걸 안 하면 진짜 비동기 이터러블(스트림 리더 등)에서 "반복 가능하지 않음" 이 된다.
+    pub(super) fn try_get_async_iterator(&mut self, v: &Value) -> Result<Option<Value>, String> {
+        let itf = self.member_get(v, "\u{0}@@asyncIterator")?;
+        if is_callable(&itf) {
+            return Ok(Some(self.call_value(itf, Some(v.clone()), vec![])?));
+        }
+        self.try_get_iterator(v)
+    }
+
     pub(super) fn try_get_iterator(&mut self, v: &Value) -> Result<Option<Value>, String> {
         // 이미 반복자 객체(next 보유, 재료화 배열은 제외)
         if let Value::Obj(o) = v {
@@ -1059,8 +1069,19 @@ impl Interp {
         iter: &Value,
         sent: Value,
     ) -> Result<(Value, bool), String> {
+        self.gen_iter_next_maybe_async(iter, sent, false)
+    }
+
+    // r#await=true 면 next() 가 돌려준 promise 를 이행값으로 푼다 (비동기 이터레이터).
+    pub(super) fn gen_iter_next_maybe_async(
+        &mut self,
+        iter: &Value,
+        sent: Value,
+        await_result: bool,
+    ) -> Result<(Value, bool), String> {
         let next = self.member_get(iter, "next")?;
         let r = self.call_value(next, Some(iter.clone()), vec![sent])?;
+        let r = if await_result { self.await_value(r)? } else { r };
         match &r {
             Value::Obj(o) => {
                 let b = o.borrow();
@@ -1699,13 +1720,14 @@ fn desugar_stmt(s: &Stmt, ctr: &mut usize) -> Vec<Stmt> {
                 vec![Stmt::Block(outer)]
             }
         }
-        Stmt::ForOf { name, iter, body } => {
+        Stmt::ForOf { name, iter, body, is_await } => {
             let mut out = Vec::new();
             let it = flatten(iter, &mut out, ctr);
             out.push(Stmt::ForOf {
                 name: name.clone(),
                 iter: it,
                 body: desugar_stmts(body, ctr),
+                is_await: *is_await,
             });
             out
         }

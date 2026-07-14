@@ -555,6 +555,7 @@ pub enum Native {
     ResponseJson,
     // Response.arrayBuffer() — 원본 바이트 그대로 (텍스트로 거치면 바이너리가 망가진다)
     ResponseArrayBuffer,
+    CurrentScript,
     // element.click() — 합성 클릭 이벤트를 실제로 디스패치한다 (HTML §8.3.5).
     // 없으면 프로그램적 클릭 한 줄에 스크립트가 죽는다 (탭 전환/다운로드 트리거 등 흔하다).
     ElementClick,
@@ -1325,6 +1326,42 @@ pub struct BoxMetrics {
 }
 
 // 무결성 상태를 걸 수 있는 값의 신원(Rc 포인터). 원시값은 None.
+// 던져진 값의 사람이 읽을 문자열. Error 객체면 "TypeError: 메시지" 로 —
+// to_display 는 표준대로 "[object Object]" 라, 진단만 보면 **무엇이 틀렸는지 알 수 없다**.
+pub(super) fn error_text(v: &Value) -> String {
+    if let Value::Obj(o) = v {
+        let b = o.borrow();
+        let name = match b.get("name") {
+            Some(Value::Str(s)) => s.clone(),
+            _ => String::new(),
+        };
+        let msg = match b.get("message") {
+            Some(m) => to_display(m),
+            None => String::new(),
+        };
+        if !name.is_empty() || !msg.is_empty() {
+            return match (name.is_empty(), msg.is_empty()) {
+                (false, false) => format!("{}: {}", name, msg),
+                (true, false) => msg,
+                _ => name,
+            };
+        }
+    }
+    if let Value::Instance(i) = v {
+        // class X extends Error 로 만든 인스턴스
+        if let Some(m) = i.fields.borrow().get("message") {
+            let name = i
+                .fields
+                .borrow()
+                .get("name")
+                .map(to_display)
+                .unwrap_or_else(|| i.class.name.clone());
+            return format!("{}: {}", name, to_display(m));
+        }
+    }
+    to_display(v)
+}
+
 pub(super) fn integrity_ptr(v: &Value) -> Option<usize> {
     Some(match v {
         Value::Obj(m) => Rc::as_ptr(m) as usize,
@@ -1402,6 +1439,13 @@ impl Interp {
         document.insert("body".to_string(), live("body"));
         document.insert("head".to_string(), live("head"));
         document.insert("documentElement".to_string(), live("html"));
+        // document.currentScript — **지금 실행 중인 클래식 스크립트 요소** (HTML §4.12.1).
+        // 번들러 런타임이 이걸로 자기 청크 URL 을 구한다 (Turbopack/webpack 의
+        // publicPath 자동 감지). 없으면 "chunk path empty" 로 런타임이 통째로 죽는다.
+        document.insert(
+            "currentScript".to_string(),
+            Value::Accessor(AccessorPair::getter(Value::Native(Native::CurrentScript))),
+        );
         // document.activeElement — focus()/blur() 가 갱신한다. 없으면 body (표준).
         document.insert(
             "activeElement".to_string(),
@@ -2781,7 +2825,18 @@ impl Interp {
                 self.assign_to(e, value, env)?;
             }
             Pattern::Object(props, rest) => {
-                for (key, sub, default) in props {
+                // 계산된 키는 지금 평가한다 (평가 순서: 선언 순서 — 표준)
+                let mut keys: Vec<String> = Vec::with_capacity(props.len());
+                for (key, _, _) in props {
+                    keys.push(match key {
+                        crate::js::ast::PatKey::Static(k) => k.clone(),
+                        crate::js::ast::PatKey::Computed(e) => {
+                            let kv = self.eval(e, env)?;
+                            key_of(&kv)
+                        }
+                    });
+                }
+                for ((_, sub, default), key) in props.iter().zip(keys.iter()) {
                     let mut v = self.member_get(&value, key).unwrap_or(Value::Undefined);
                     if matches!(v, Value::Undefined) {
                         if let Some(d) = default {
@@ -2793,7 +2848,7 @@ impl Interp {
                 // { a, ...rest } — 분해되지 않은 나머지 own 프로퍼티를 객체로
                 if let Some(rest_name) = rest {
                     let consumed: std::collections::HashSet<&str> =
-                        props.iter().map(|(k, _, _)| k.as_str()).collect();
+                        keys.iter().map(|k| k.as_str()).collect();
                     let mut map = ObjMap::new();
                     match &value {
                         Value::Obj(o) => {
@@ -2848,6 +2903,38 @@ impl Interp {
         }
         self.steps = 0;
         self.script_start = Some(std::time::Instant::now());
+    }
+
+    // await 한 값의 이행값 (promise 가 아니면 그대로, 거부면 throw).
+    // for await 도 각 값에 이 규칙을 적용한다 (ES2018 §14.7.5).
+    pub(super) fn await_value(&mut self, v: Value) -> Result<Value, String> {
+        if !is_promise(&v) {
+            return Ok(v); // thenable 아닌 값은 그대로
+        }
+        self.drain_microtasks();
+        if let Value::Obj(o) = &v {
+            let (state, value) = {
+                let m = o.borrow();
+                (
+                    match m.get("\u{0}state") {
+                        Some(Value::Str(s)) => s.clone(),
+                        _ => "pending".into(),
+                    },
+                    m.get("\u{0}value").cloned().unwrap_or(Value::Undefined),
+                )
+            };
+            match state.as_str() {
+                "fulfilled" => return Ok(value),
+                // 거부된 promise 를 await → 그 이유를 throw (표준)
+                "rejected" => {
+                    let msg = to_display(&value);
+                    self.thrown = Some(value);
+                    return Err(msg);
+                }
+                _ => {}
+            }
+        }
+        Ok(Value::Undefined) // 펜딩(동기 모델에서 해소 불가) — 근사
     }
 
     fn tick(&mut self) -> Result<(), String> {
@@ -3076,7 +3163,7 @@ impl Interp {
             Stmt::Expr(e) => Ok(Flow::Normal(self.eval(e, env)?)),
             Stmt::Throw(e) => {
                 let v = self.eval(e, env)?;
-                let msg = to_display(&v);
+                let msg = error_text(&v);
                 self.thrown = Some(v);
                 Err(msg)
             }
@@ -3131,8 +3218,11 @@ impl Interp {
                 }
                 Ok(Flow::Normal(Value::Undefined))
             }
-            Stmt::ForOf { name, iter, body } => {
+            Stmt::ForOf { name, iter, body, is_await } => {
                 let target = self.eval(iter, env)?;
+                // for await: 각 값이 promise 면 이행값을 꺼낸다 (ES2018 §14.7.5).
+                // 우리 promise 는 동기 정착 모델이라 마이크로태스크를 흘리고 값을 읽으면 된다.
+                let unwrap = *is_await;
                 // 유한한 내장 이터러블(배열/문자열/Set/Map/재료화 반복자)은 재료화해 순회.
                 let finite = matches!(&target,
                     Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
@@ -3140,13 +3230,22 @@ impl Interp {
                 if !finite {
                     // 반복자 프로토콜(지연): 제너레이터/사용자 [Symbol.iterator] 이터러블/
                     // 반복자 객체. 한 번에 하나씩 뽑아 무한+break 에도 대응.
-                    if let Some(iter_obj) = self.try_get_iterator(&target)? {
+                    // for await 는 @@asyncIterator 를 먼저 찾는다 (표준)
+                    let found = if unwrap {
+                        self.try_get_async_iterator(&target)?
+                    } else {
+                        self.try_get_iterator(&target)?
+                    };
+                    if let Some(iter_obj) = found {
                         loop {
                             self.tick()?;
-                            let (v, done) = self.gen_iter_next(&iter_obj, Value::Undefined)?;
+                            // 비동기 이터레이터의 next() 는 promise 를 돌려준다 → 풀어야 한다
+                            let (v, done) =
+                                self.gen_iter_next_maybe_async(&iter_obj, Value::Undefined, unwrap)?;
                             if done {
                                 break;
                             }
+                            let v = if unwrap { self.await_value(v)? } else { v };
                             let scope = Env::new(Some(env.clone()));
                             env_declare(&scope, name, v);
                             match loop_action(self.exec_block(body, &scope)?, &my_label) {
@@ -3162,6 +3261,7 @@ impl Interp {
                 let values = self.iterate_to_vec(&target);
                 for v in values {
                     self.tick()?;
+                    let v = if unwrap { self.await_value(v)? } else { v };
                     let scope = Env::new(Some(env.clone()));
                     env_declare(&scope, name, v);
                     match loop_action(self.exec_block(body, &scope)?, &my_label) {
@@ -3372,33 +3472,7 @@ impl Interp {
             // (우리 promise 는 동기 resolve 모델이라 드레인만으로 이행됨)
             Expr::Await(inner) => {
                 let v = self.eval(inner, env)?;
-                if !is_promise(&v) {
-                    return Ok(v); // thenable 아닌 값은 그대로
-                }
-                self.drain_microtasks();
-                if let Value::Obj(o) = &v {
-                    let (state, value) = {
-                        let m = o.borrow();
-                        (
-                            match m.get("\u{0}state") {
-                                Some(Value::Str(s)) => s.clone(),
-                                _ => "pending".into(),
-                            },
-                            m.get("\u{0}value").cloned().unwrap_or(Value::Undefined),
-                        )
-                    };
-                    match state.as_str() {
-                        "fulfilled" => return Ok(value),
-                        // 거부된 promise 를 await → 그 이유를 throw (표준)
-                        "rejected" => {
-                            let msg = to_display(&value);
-                            self.thrown = Some(value);
-                            return Err(msg);
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(Value::Undefined) // 펜딩(동기 모델에서 해소 불가) — 근사
+                self.await_value(v)
             }
             Expr::Class(def) => self.make_class(def, env),
             Expr::Sequence(items) => {
@@ -3685,14 +3759,36 @@ impl Interp {
                 let key = self.member_key(prop, *computed, env)?;
                 self.member_get(&recv, &key)
             }
+            // obj.m?.(args) — 함수가 없으면 단락, 있으면 **평범한 메서드 호출**이다.
+            // 즉 this 는 obj 다 (표준 §13.3.6.1: OptionalCall 도 참조의 base 를 this 로 쓴다).
+            // 예전엔 수신자를 버려서 el.getAttribute?.('src') 같은 코드가
+            // "요소 메서드가 아니다" 로 죽었다 (tailwindcss.com 이 그렇다).
             Expr::OptCall { callee, args } => {
-                let f = self.eval(callee, env)?;
+                // 수신자를 살리려면 callee 가 멤버식일 때 base 를 따로 평가해야 한다
+                let (f, recv) = match &**callee {
+                    Expr::Member { obj, prop, computed } => {
+                        let base = self.eval(obj, env)?;
+                        let key = self.member_key(prop, *computed, env)?;
+                        let f = self.member_get(&base, &key)?;
+                        (f, Some(base))
+                    }
+                    Expr::OptMember { obj, prop, computed } => {
+                        let base = self.eval(obj, env)?;
+                        if matches!(base, Value::Undefined | Value::Null) {
+                            return Ok(Value::Undefined);
+                        }
+                        let key = self.member_key(prop, *computed, env)?;
+                        let f = self.member_get(&base, &key)?;
+                        (f, Some(base))
+                    }
+                    other => (self.eval(other, env)?, None),
+                };
                 if matches!(f, Value::Undefined | Value::Null) {
                     return Ok(Value::Undefined);
                 }
                 let mut arg_vals = Vec::new();
                 arg_vals.extend(self.eval_args(args, env)?);
-                self.call_value(f, None, arg_vals)
+                self.call_value(f, recv, arg_vals)
             }
             Expr::Call { callee, args } => {
                 // 호출 스택 프레임 (오류 위치 보고용). 호출식에서 이름을 뽑아 쌓는다.
@@ -8832,6 +8928,59 @@ mod tests {
         // 문자열 결합은 허용
         assert_eq!(run_str("'x' + 1n"), "x1");
         assert_eq!(run_str("try { 1n / 0n } catch (e) { 'RangeError' }"), "RangeError");
+    }
+
+    #[test]
+    fn optional_call_keeps_receiver() {
+        // obj.m?.(args) 는 평범한 메서드 호출이다 — this 는 obj 다 (표준 §13.3.6.1).
+        // 예전엔 수신자를 버려서 el.getAttribute?.('src') 같은 코드가 죽었다.
+        assert_eq!(
+            run_num("var o = { n: 7, get: function(){ return this.n; } }; o.get?.()"),
+            7.0
+        );
+        // 옵셔널 멤버 + 옵셔널 호출 조합
+        assert_eq!(
+            run_num("var o = { n: 5, get: function(){ return this.n; } }; o?.get?.()"),
+            5.0
+        );
+        // 함수가 없으면 단락 (호출 안 함)
+        assert!(matches!(run("var o = {}; o.missing?.()"), Value::Undefined));
+    }
+
+    #[test]
+    fn for_await_unwraps_promises_and_async_iterators() {
+        // for await (ES2018). 파싱이 안 되면 그 스크립트가 **통째로** 죽는다
+        // (tailwindcss.com 이 그랬다). 값이 promise 면 이행값을 꺼내야 한다.
+        assert_eq!(
+            prelude_str(
+                "var out = [];\
+                 async function f(){ for await (const v of [Promise.resolve(1), 2]) out.push(v); }\
+                 f(); out.join(',')"
+            ),
+            "1,2"
+        );
+        // Symbol.asyncIterator 를 먼저 찾는다
+        assert_eq!(
+            prelude_str(
+                "var o = {}; o[Symbol.asyncIterator] = function(){ var i = 0; return { next: function(){ \
+                   i++; return Promise.resolve({value: i, done: i > 2}); } }; };\
+                 var out = [];\
+                 async function g(){ for await (const v of o) out.push(v); }\
+                 g(); out.join(',')"
+            ),
+            "1,2"
+        );
+    }
+
+    #[test]
+    fn computed_keys_in_destructuring() {
+        // let { [ex]: v } = o (ES6). 예전엔 파서가 죽어서 그 번들 전체가 안 돌았다.
+        assert_eq!(run_num("var k = 'a'; var o = {a: 3}; let { [k]: v } = o; v"), 3.0);
+        assert_eq!(
+            run_num("var k = 'miss'; var o = {a: 3}; let { [k]: v = 9 } = o; v"),
+            9.0
+        );
+        assert_eq!(run_num("var k = 'a'; var o = {a: 4}; var t; ({ [k]: t } = o); t"), 4.0);
     }
 
     #[test]

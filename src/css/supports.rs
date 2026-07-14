@@ -54,6 +54,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "border-color", "border-left-width", "border-radius",
     "border-right-width", "border-spacing", "border-style",
     "border-top-color", "border-top-width", "border-width", "bottom", "box-shadow",
+    // 컨테이너 쿼리 (레이아웃 후 두 번째 스타일 패스로 실제 평가한다)
+    "container", "container-name", "container-type",
     "box-sizing", "clear", "clip-path", "color", "column-count", "column-gap", "content",
     "direction", "display", "filter", "flex", "flex-basis", "flex-direction",
     "flex-grow", "flex-shrink", "flex-wrap", "float", "font-family", "font-size",
@@ -132,6 +134,9 @@ fn value_functions(value: &str) -> Vec<String> {
 // 열거형 프로퍼티: 엔진이 키워드를 하나씩 매칭하고 나머지는 조용히 기본값으로 떨어뜨린다.
 // 그래서 값 검사 없이는 `@supports (position: sticky)` 가 참이 되고, 사이트는 스티키
 // 헤더를 내보내지만 우리는 static 으로 그린다. 각 집합은 엔진 코드의 match 와 1:1 이다.
+// 우리가 실제로 그리지 못하는 값들 (어느 프로퍼티에 오든).
+const UNSUPPORTED_VALUES: &[&str] = &["subgrid", "masonry"];
+
 fn enum_values(prop: &str) -> Option<&'static [&'static str]> {
     Some(match prop {
         // style.rs StyledNode::display()
@@ -165,6 +170,13 @@ fn longhand_decl_supported(prop: &str, value: &str) -> bool {
     if matches!(v.as_str(), "inherit" | "initial" | "unset" | "revert") {
         return true;
     }
+    // 값 자체가 미구현인 것들. 프로퍼티 이름만 보면 (grid-template-columns 는 지원하니)
+    // subgrid 도 지원한다고 거짓말하게 된다 → 사이트가 우리가 못 그리는 레이아웃을 보낸다.
+    // UA 도 값 단위 지원 표를 갖는다.
+    if v.split(|c: char| !c.is_alphanumeric() && c != '-').any(|t| UNSUPPORTED_VALUES.contains(&t))
+    {
+        return false;
+    }
     match enum_values(&p) {
         Some(allowed) => allowed.contains(&v.as_str()),
         None => true,
@@ -173,7 +185,7 @@ fn longhand_decl_supported(prop: &str, value: &str) -> bool {
 
 // "prop: value" 원자 지원 여부.
 // 선언을 longhand 로 확장한 뒤, 확장 결과가 전부 우리가 실제로 해석하는 프로퍼티여야
-// 참이다. 예전엔 "파싱만 되면 지원" 이라 container-type/subgrid 같은 미구현 기능도
+// 참이다. 예전엔 "파싱만 되면 지원" 이라 subgrid 같은 미구현 기능도
 // 지원한다고 거짓말했다(과다보고 → 사이트가 못 그리는 레이아웃을 보냄).
 fn declaration_supported(atom: &str) -> bool {
     let Some(colon) = atom.find(':') else { return false };
@@ -267,18 +279,20 @@ mod tests {
     fn supports_does_not_overreport_unimplemented_features() {
         // 예전엔 "선언이 파싱되면 지원" 이라 미구현 기능도 참이었다(거짓말).
         // 사이트가 우리가 못 그리는 모던 레이아웃을 내보내 렌더가 깨진다.
-        assert!(!supports_condition("(container-type: inline-size)"));
+        assert!(supports_condition("(container-type: inline-size)"), "이제 진짜로 지원한다");
         // 엔진이 해석하지 않는 프로퍼티 → 거짓
         assert!(!supports_condition("(border-left-color: red)"));
         assert!(!supports_condition("(unknown-prop: 1px)"));
-        // and 중 하나라도 미지원이면 거짓
-        assert!(!supports_condition("(display: grid) and (container-type: inline-size)"));
+        // and 중 하나라도 미지원이면 거짓 (subgrid 는 아직 없다)
+        assert!(!supports_condition("(display: grid) and (grid-template-columns: subgrid)"));
+        assert!(supports_condition("(display: grid) and (container-type: inline-size)"));
         // or 는 지원되는 쪽이 있으면 참
         assert!(supports_condition("(container-type: inline-size) or (display: grid)"));
         // 커스텀 프로퍼티는 지원(var())
         assert!(supports_condition("(--x: 1px)"));
-        // not 은 뒤집는다
-        assert!(supports_condition("not (container-type: inline-size)"));
+        // not 은 뒤집는다 (container-type 은 이제 지원하므로 not 은 거짓)
+        assert!(!supports_condition("not (container-type: inline-size)"));
+        assert!(supports_condition("not (unknown-prop: 1px)"));
     }
 
     #[test]

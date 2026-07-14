@@ -3,7 +3,7 @@ mod shorthand;
 mod supports;
 mod values;
 
-pub(crate) use media::{media_matches, media_matches_vp};
+pub(crate) use media::{container_matches, media_matches, media_matches_vp};
 pub(crate) use supports::SUPPORTED;
 
 // 단축(shorthand) → 롱핸드 이름들. 확장기에게 직접 물어본다 — 프로퍼티마다 목록을 손으로
@@ -37,9 +37,33 @@ use values::valid_identifier_char;
 #[derive(Debug, PartialEq)]
 pub struct Stylesheet {
     pub rules: Vec<Rule>,
+    // @layer 선언 순서. 뒤 레이어가 이긴다 (일반 선언), !important 는 **역순** (표준 §6.4.4).
+    // 레이어 없는 선언은 모든 레이어보다 세다 (important 면 반대로 가장 약하다).
+    pub layers: Vec<String>,
     pub font_faces: Vec<FontFace>,
     // @keyframes 이름 → 최종(100%/to) 프레임 선언. 정적 렌더는 애니메이션 종료 상태를 적용.
     pub keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
+}
+
+impl Stylesheet {
+    // @container 규칙이 하나라도 있는가 (있을 때만 두 번째 스타일 패스를 돈다)
+    pub fn has_containers(&self) -> bool {
+        self.rules.iter().any(|r| r.container.is_some())
+    }
+
+    // 다른 시트를 뒤에 합친다. 규칙뿐 아니라 **레이어 순서와 @font-face/@keyframes 도**
+    // 합쳐야 한다 — 규칙만 옮기면 그 시트의 @layer 가 순위 0(레이어 밖)으로 떨어져
+    // 캐스케이드가 뒤집힌다.
+    pub fn merge(&mut self, other: Stylesheet) {
+        for l in other.layers {
+            if !self.layers.contains(&l) {
+                self.layers.push(l);
+            }
+        }
+        self.rules.extend(other.rules);
+        self.font_faces.extend(other.font_faces);
+        self.keyframes.extend(other.keyframes);
+    }
 }
 
 // @font-face 규칙: 패밀리 이름 + src URL 목록(우선순위 순).
@@ -53,6 +77,11 @@ pub struct FontFace {
 pub struct Rule {
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
+    // 이 규칙이 속한 @layer 이름 (없으면 레이어 밖).
+    pub layer: Option<String>,
+    // @container 조건 (컨테이너 이름, 조건문). 조건은 **레이아웃 후** 컨테이너의 실제
+    // 크기로 평가한다 — 스타일 시점엔 아직 모른다.
+    pub container: Option<(String, String)>,
     // UA(브라우저 기본) 스타일에서 온 규칙인가. `revert` 는 저자 선언을 되돌려
     // UA 원점 값으로 계산해야 하므로 원점을 구분해야 한다 (CSS Cascade §6.2).
     pub ua: bool,
@@ -447,9 +476,24 @@ pub fn strip_comments(s: &str) -> String {
 // 뷰포트 폭을 알고 파스 — @media (min/max-width) 를 이 폭에 대해 평가해
 // 매칭되는 규칙만 포함한다. 페이지 스타일시트는 실제 뷰포트 폭으로 호출.
 pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
-    let mut parser = Parser { pos: 0, input: strip_comments(&source), viewport_width, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
+    let mut parser = Parser {
+        pos: 0,
+        input: strip_comments(&source),
+        viewport_width,
+        font_faces: Vec::new(),
+        keyframes: std::collections::HashMap::new(),
+        layers: Vec::new(),
+        cur_container: None,
+        cur_layer: None,
+        anon_count: 0,
+    };
     let rules = parser.parse_rules();
-    Stylesheet { rules, font_faces: parser.font_faces, keyframes: parser.keyframes }
+    Stylesheet {
+        rules,
+        layers: parser.layers,
+        font_faces: parser.font_faces,
+        keyframes: parser.keyframes,
+    }
 }
 
 // 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
@@ -477,7 +521,17 @@ fn parse_nth(s: &str) -> Option<(i32, i32)> {
 }
 
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
-    let mut parser = Parser { pos: 0, input: strip_comments(text), viewport_width: 0.0, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
+    let mut parser = Parser {
+        pos: 0,
+        input: strip_comments(text),
+        viewport_width: 0.0,
+        font_faces: Vec::new(),
+        keyframes: std::collections::HashMap::new(),
+        layers: Vec::new(),
+        cur_container: None,
+        cur_layer: None,
+        anon_count: 0,
+    };
     parser.parse_declarations()
 }
 
@@ -577,6 +631,13 @@ struct Parser {
     viewport_width: f32,
     font_faces: Vec<FontFace>,
     keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
+    // @layer 선언 순서 (이름). 익명 레이어는 "\u{0}anon<N>" 로 유일한 이름을 준다.
+    layers: Vec<String>,
+    // 지금 파싱 중인 @container 블록 (이름, 조건)
+    cur_container: Option<(String, String)>,
+    // 지금 파싱 중인 @layer 블록 이름 (중첩 시 "a.b")
+    cur_layer: Option<String>,
+    anon_count: usize,
 }
 
 impl Parser {
@@ -602,6 +663,10 @@ impl Parser {
                     }
                 } else if ident == "keyframes" || ident == "-webkit-keyframes" {
                     self.parse_keyframes();
+                } else if ident == "layer" {
+                    rules.extend(self.parse_layer());
+                } else if ident == "container" {
+                    rules.extend(self.parse_container());
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -646,6 +711,129 @@ impl Parser {
             inner
         } else {
             Vec::new()
+        }
+    }
+
+    // '@layer a, b;'  (순서만 선언)  또는  '@layer name { rules }'  또는  '@layer { rules }'.
+    // 레이어를 모르면 그 안의 규칙이 통째로 사라진다 — Tailwind v4 는 **모든 것**을
+    // @layer 로 감싼다. 즉 스타일이 전부 날아간다.
+    fn parse_layer(&mut self) -> Vec<Rule> {
+        let head = self.consume_while(|c| c != '{' && c != ';' && c != '}');
+        let names: Vec<String> = head
+            .split(',')
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .collect();
+        // '@layer a, b;' — 순서만 선언한다
+        if self.peek() == Some(';') {
+            self.consume_char();
+            for n in names {
+                self.register_layer(&n);
+            }
+            return Vec::new();
+        }
+        if self.peek() != Some('{') {
+            return Vec::new();
+        }
+        self.consume_char(); // '{'
+        // 이름 없는 블록은 익명 레이어 (고유 이름)
+        let name = match names.first() {
+            Some(n) => n.clone(),
+            None => {
+                self.anon_count += 1;
+                format!("\u{0}anon{}", self.anon_count)
+            }
+        };
+        // 중첩: 부모 레이어가 있으면 "부모.자식"
+        let full = match &self.cur_layer {
+            Some(p) => format!("{}.{}", p, name),
+            None => name,
+        };
+        self.register_layer(&full);
+        let prev = self.cur_layer.replace(full);
+
+        let mut inner = Vec::new();
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                Some('@') => {
+                    self.consume_char();
+                    let id = self.parse_identifier().to_ascii_lowercase();
+                    match id.as_str() {
+                        "layer" => inner.extend(self.parse_layer()),
+                        "media" => inner.extend(self.parse_media_block()),
+                        "supports" => inner.extend(self.parse_supports_block()),
+                        _ => self.skip_at_rule(),
+                    }
+                }
+                _ => {
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
+                }
+            }
+        }
+        self.cur_layer = prev;
+        inner
+    }
+
+    // '@container [이름] (조건) { rules }'. 조건은 스타일 시점에 평가할 수 없다
+    // (컨테이너의 폭은 레이아웃이 정한다) → 규칙에 조건을 달아 두고 레이아웃 뒤에 판정한다.
+    // 예전엔 통째로 스킵해서 그 안의 규칙이 **소리 없이 사라졌다**.
+    fn parse_container(&mut self) -> Vec<Rule> {
+        let head = self.consume_while(|c| c != '{' && c != ';' && c != '}').trim().to_string();
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return Vec::new();
+        }
+        self.consume_char(); // '{'
+        // "이름 (조건)" 또는 "(조건)" — 첫 '(' 앞이 이름
+        let (name, cond) = match head.find('(') {
+            Some(i) => (head[..i].trim().to_string(), head[i..].to_string()),
+            None => (head.clone(), String::new()),
+        };
+        let prev = self.cur_container.replace((name, cond));
+        let mut inner = Vec::new();
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                Some('@') => {
+                    self.consume_char();
+                    let id = self.parse_identifier().to_ascii_lowercase();
+                    match id.as_str() {
+                        "container" => inner.extend(self.parse_container()),
+                        "media" => inner.extend(self.parse_media_block()),
+                        "supports" => inner.extend(self.parse_supports_block()),
+                        "layer" => inner.extend(self.parse_layer()),
+                        _ => self.skip_at_rule(),
+                    }
+                }
+                _ => {
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
+                }
+            }
+        }
+        self.cur_container = prev;
+        inner
+    }
+
+    fn register_layer(&mut self, name: &str) {
+        if !self.layers.iter().any(|l| l == name) {
+            self.layers.push(name.to_string());
         }
     }
 
@@ -765,7 +953,13 @@ impl Parser {
         match self.parse_selectors() {
             Some(selectors) => {
                 let declarations = self.parse_declarations();
-                Some(Rule { selectors, declarations, ua: false })
+                Some(Rule {
+                    selectors,
+                    declarations,
+                    ua: false,
+                    layer: self.cur_layer.clone(),
+                    container: self.cur_container.clone(),
+                })
             }
             None => {
                 self.skip_to_block_end();
@@ -944,7 +1138,17 @@ impl Parser {
                 if p.is_empty() {
                     return None;
                 }
-                let mut inner = Parser { pos: 0, input: p.to_string(), viewport_width: 0.0, font_faces: Vec::new(), keyframes: std::collections::HashMap::new() };
+                let mut inner = Parser {
+                    pos: 0,
+                    input: p.to_string(),
+                    viewport_width: 0.0,
+                    font_faces: Vec::new(),
+                    keyframes: std::collections::HashMap::new(),
+                    layers: Vec::new(),
+                    cur_container: None,
+                    cur_layer: None,
+                    anon_count: 0,
+                };
                 inner.parse_simple_selector()
             })
             .collect()
