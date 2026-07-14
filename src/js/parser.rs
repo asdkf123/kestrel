@@ -89,10 +89,9 @@ fn expr_to_pattern(e: Expr) -> Option<Pattern> {
             for it in items {
                 match it {
                     Expr::Undefined => out.push(None), // 홀 [a, , b]
-                    Expr::Spread(inner) => match *inner {
-                        Expr::Ident(n) => rest = Some(n),
-                        _ => return None,
-                    },
+                    Expr::Spread(inner) => {
+                        rest = Some(Box::new(expr_to_pattern(*inner)?));
+                    }
                     Expr::Assign { op: AssignOp::Set, target, value } => {
                         out.push(Some((expr_to_pattern(*target)?, Some(*value))));
                     }
@@ -133,10 +132,7 @@ fn expr_to_pattern(e: Expr) -> Option<Pattern> {
                             None,
                         )),
                     },
-                    PropKey::Spread => match val {
-                        Expr::Ident(n) => rest = Some(n),
-                        _ => return None,
-                    },
+                    PropKey::Spread => rest = Some(Box::new(expr_to_pattern(val)?)),
                     _ => return None, // computed/getter 키는 미지원
                 }
             }
@@ -593,7 +589,7 @@ impl Parser {
                 while self.peek() != Some(&Tok::RBrace) {
                     // rest { a, ...others }
                     if self.eat_spread() {
-                        rest = Some(self.ident()?);
+                        rest = Some(Box::new(self.binding_pattern()?));
                         self.eat(&Tok::Comma);
                         break;
                     }
@@ -658,7 +654,7 @@ impl Parser {
                     }
                     // rest [a, ...others]
                     if self.eat_spread() {
-                        rest = Some(self.ident()?);
+                        rest = Some(Box::new(self.binding_pattern()?));
                         self.eat(&Tok::Comma);
                         break;
                     }

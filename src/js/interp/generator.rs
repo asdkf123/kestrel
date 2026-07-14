@@ -1063,7 +1063,7 @@ impl Interp {
         match self.try_get_iterator(&v)? {
             Some(it) => Ok(it),
             None => {
-                let items = self.iterate_to_vec(&v);
+                let items = self.iterate_to_vec(&v)?;
                 Ok(self.make_iter_from_vec(items))
             }
         }

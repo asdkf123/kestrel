@@ -191,9 +191,11 @@ pub enum Pattern {
     // { key: sub = default, ..., ...rest } — 중첩/기본값/rest 지원.
     // 키는 정적 이름이거나 **계산된 키**다: let { [ex]: v } = o (ES6).
     // 예전엔 정적 이름만 받아서, 계산된 키를 쓰는 번들이 파싱에서 통째로 죽었다.
-    Object(Vec<(PatKey, Pattern, Option<Expr>)>, Option<String>),
+    // rest 는 이름만이 아니라 **패턴**이다: [a, ...[b, c]] / [a, ...o.p] 도 표준.
+    // 예전엔 Option<String> 이라서 `...[` 를 만나면 파싱이 통째로 죽었다.
+    Object(Vec<(PatKey, Pattern, Option<Expr>)>, Option<Box<Pattern>>),
     // [ sub = default, , ..., ...rest ] — None = 홀(건너뜀)
-    Array(Vec<Option<(Pattern, Option<Expr>)>>, Option<String>),
+    Array(Vec<Option<(Pattern, Option<Expr>)>>, Option<Box<Pattern>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

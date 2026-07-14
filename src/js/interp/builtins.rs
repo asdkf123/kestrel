@@ -5270,7 +5270,7 @@ impl Interp {
                 // [[k,v], ...] 또는 Map → 객체. 이터러블 순회.
                 let mut map = ObjMap::new();
                 if let Some(src) = args.first() {
-                    for entry in self.iterate_to_vec(src) {
+                    for entry in self.iterate_to_vec(src)? {
                         let (k, v) = match &entry {
                             Value::Arr(a) => {
                                 let b = a.borrow();
@@ -5314,13 +5314,13 @@ impl Interp {
                     | Value::Str(_)
                     | Value::SetVal(_)
                     | Value::MapVal(_)
-                    | Value::Gen(_) => self.iterate_to_vec(&src),
+                    | Value::Gen(_) => self.iterate_to_vec(&src)?,
                     Value::Obj(o)
                         if o.borrow().contains_key("\u{0}items") || o.borrow().contains_key("next") =>
                     {
-                        self.iterate_to_vec(&src)
+                        self.iterate_to_vec(&src)?
                     }
-                    _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src),
+                    _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src)?,
                     // array-like: length + 인덱스 프로퍼티 (길이 상한은 표준대로 RangeError)
                     Value::Obj(o) => array_like_to_vec(o)?,
                     _ => Vec::new(),

@@ -915,7 +915,7 @@ fn pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
                 pattern_names(sub, out);
             }
             if let Some(r) = rest {
-                out.push(r.clone());
+                pattern_names(r, out);
             }
         }
         Pattern::Array(elems, rest) => {
@@ -923,7 +923,7 @@ fn pattern_names(pat: &crate::js::ast::Pattern, out: &mut Vec<String>) {
                 pattern_names(&slot.0, out);
             }
             if let Some(r) = rest {
-                out.push(r.clone());
+                pattern_names(r, out);
             }
         }
     }
@@ -2514,7 +2514,7 @@ impl Interp {
         for a in args {
             if let crate::js::ast::Expr::Spread(inner) = a {
                 let v = self.eval(inner, env)?;
-                out.extend(self.iterate_to_vec(&v));
+                out.extend(self.iterate_to_vec(&v)?);
             } else {
                 out.push(self.eval(a, env)?);
             }
@@ -2540,8 +2540,10 @@ impl Interp {
     }
 
     // 이터러블(배열/문자열/Set/Map/반복자 객체)을 값 Vec 으로. yield* 와 for-of 공용.
-    fn iterate_to_vec(&mut self, v: &Value) -> Vec<Value> {
-        match v {
+    // 반복자가 던진 오류는 반드시 전파한다. 예전엔 Err(_) => break 로 삼켜서,
+    // 검증하다 throw 하는 이터러블이 조용히 빈 결과가 됐다.
+    fn iterate_to_vec(&mut self, v: &Value) -> Result<Vec<Value>, String> {
+        Ok(match v {
             Value::Arr(a) => a.borrow().clone(),
             Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
             Value::SetVal(s) => s.borrow().clone(),
@@ -2560,28 +2562,22 @@ impl Interp {
             // 그 외: 반복자 프로토콜(제너레이터/사용자 [Symbol.iterator]/반복자 객체)로
             // done 까지 재료화. 무한이면 step 상한이 방어.
             _ => {
-                let it = match self.try_get_iterator(v) {
-                    Ok(Some(it)) => it,
-                    _ => return Vec::new(),
+                let it = match self.try_get_iterator(v)? {
+                    Some(it) => it,
+                    None => return Ok(Vec::new()),
                 };
                 let mut out = Vec::new();
                 loop {
-                    match self.gen_iter_next(&it, Value::Undefined) {
-                        Ok((val, done)) => {
-                            if done {
-                                break;
-                            }
-                            out.push(val);
-                        }
-                        Err(_) => break,
-                    }
-                    if self.tick().is_err() {
+                    let (val, done) = self.gen_iter_next(&it, Value::Undefined)?;
+                    if done {
                         break;
                     }
+                    out.push(val);
+                    self.tick()?;
                 }
                 out
             }
-        }
+        })
     }
 
     pub(super) fn make_event(&self, event: &str, target: crate::dom::NodeId) -> Value {
@@ -2948,6 +2944,12 @@ impl Interp {
                 self.assign_to(e, value, env)?;
             }
             Pattern::Object(props, rest) => {
+                // null/undefined 구조분해는 TypeError (§14.3.3.3 RequireObjectCoercible)
+                if matches!(value, Value::Undefined | Value::Null) {
+                    let d = to_display(&value);
+                    return Err(self
+                        .throw_error("TypeError", format!("{} 은(는) 구조분해할 수 없음", d)));
+                }
                 // 계산된 키는 지금 평가한다 (평가 순서: 선언 순서 — 표준)
                 let mut keys: Vec<String> = Vec::with_capacity(props.len());
                 for (key, _, _) in props {
@@ -2960,7 +2962,8 @@ impl Interp {
                     });
                 }
                 for ((_, sub, default), key) in props.iter().zip(keys.iter()) {
-                    let mut v = self.member_get(&value, key).unwrap_or(Value::Undefined);
+                    // 게터가 던지면 전파한다 (예전엔 unwrap_or 로 삼켜서 undefined 가 됐다)
+                    let mut v = self.member_get(&value, key)?;
                     if matches!(v, Value::Undefined) {
                         if let Some(d) = default {
                             v = self.eval(d, env)?;
@@ -2969,7 +2972,7 @@ impl Interp {
                     self.bind_pattern(sub, v, env, assign)?;
                 }
                 // { a, ...rest } — 분해되지 않은 나머지 own 프로퍼티를 객체로
-                if let Some(rest_name) = rest {
+                if let Some(rest_pat) = rest {
                     let consumed: std::collections::HashSet<&str> =
                         keys.iter().map(|k| k.as_str()).collect();
                     let mut map = ObjMap::new();
@@ -2990,14 +2993,74 @@ impl Interp {
                         }
                         _ => {}
                     }
-                    bind(env, rest_name, Value::Obj(Rc::new(RefCell::new(map))));
+                    self.bind_pattern(
+                        rest_pat,
+                        Value::Obj(Rc::new(RefCell::new(map))),
+                        env,
+                        assign,
+                    )?;
                 }
             }
+            // 배열 패턴은 반복자 프로토콜을 쓴다 (§8.6.2 IteratorBindingInitialization).
+            // 예전엔 무조건 인덱스 접근이라 Set/Map/제너레이터/사용자 이터러블을 분해하면
+            // 조용히 undefined 가 나왔다. 배열·문자열·Set·Map 은 유한하고 사용자 코드가
+            // 끼지 않으므로 재료화 경로로 빠르게, 그 외는 지연 순회한다(무한 이터러블 방어).
             Pattern::Array(elems, rest) => {
-                for (i, slot) in elems.iter().enumerate() {
+                if matches!(value, Value::Undefined | Value::Null) {
+                    let d = to_display(&value);
+                    return Err(self
+                        .throw_error("TypeError", format!("{} 은(는) 이터러블이 아님", d)));
+                }
+                let eager = matches!(
+                    value,
+                    Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_)
+                );
+                if eager {
+                    let items = self.iterate_to_vec(&value)?;
+                    for (i, slot) in elems.iter().enumerate() {
+                        if let Some((sub, default)) = slot {
+                            let mut v = items.get(i).cloned().unwrap_or(Value::Undefined);
+                            if matches!(v, Value::Undefined) {
+                                if let Some(d) = default {
+                                    v = self.eval(d, env)?;
+                                }
+                            }
+                            self.bind_pattern(sub, v, env, assign)?;
+                        }
+                    }
+                    if let Some(rest_pat) = rest {
+                        let tail: Vec<Value> =
+                            items.iter().skip(elems.len()).cloned().collect();
+                        self.bind_pattern(
+                            rest_pat,
+                            Value::Arr(ArrayObj::new(tail)),
+                            env,
+                            assign,
+                        )?;
+                    }
+                    return Ok(());
+                }
+                let it = match self.try_get_iterator(&value)? {
+                    Some(it) => it,
+                    None => {
+                        let t = type_of(&value).to_string();
+                        return Err(self
+                            .throw_error("TypeError", format!("{} 은(는) 이터러블이 아님", t)));
+                    }
+                };
+                let mut done = false;
+                // 구멍(elision)도 반복자를 한 칸 전진시킨다 — 표준
+                for slot in elems.iter() {
+                    let mut v = Value::Undefined;
+                    if !done {
+                        let (val, d) = self.gen_iter_next(&it, Value::Undefined)?;
+                        if d {
+                            done = true;
+                        } else {
+                            v = val;
+                        }
+                    }
                     if let Some((sub, default)) = slot {
-                        let mut v =
-                            self.member_get(&value, &i.to_string()).unwrap_or(Value::Undefined);
                         if matches!(v, Value::Undefined) {
                             if let Some(d) = default {
                                 v = self.eval(d, env)?;
@@ -3006,13 +3069,17 @@ impl Interp {
                         self.bind_pattern(sub, v, env, assign)?;
                     }
                 }
-                // [a, ...rest] — elems.len() 부터 남은 요소를 배열로
-                if let Some(rest_name) = rest {
-                    let items: Vec<Value> = match &value {
-                        Value::Arr(a) => a.borrow().iter().skip(elems.len()).cloned().collect(),
-                        _ => Vec::new(),
-                    };
-                    bind(env, rest_name, Value::Arr(ArrayObj::new(items)));
+                if let Some(rest_pat) = rest {
+                    let mut items = Vec::new();
+                    while !done {
+                        let (val, d) = self.gen_iter_next(&it, Value::Undefined)?;
+                        if d {
+                            break;
+                        }
+                        items.push(val);
+                        self.tick()?;
+                    }
+                    self.bind_pattern(rest_pat, Value::Arr(ArrayObj::new(items)), env, assign)?;
                 }
             }
         }
@@ -3387,7 +3454,7 @@ impl Interp {
                     let t = type_of(&target).to_string();
                     return Err(self.throw_error("TypeError", format!("{} 은(는) 반복 가능하지 않음", t)));
                 }
-                let values = self.iterate_to_vec(&target);
+                let values = self.iterate_to_vec(&target)?;
                 for v in values {
                     self.tick()?;
                     let v = if unwrap { self.await_value(v)? } else { v };
@@ -3483,7 +3550,7 @@ impl Interp {
                             return Err(self
                                 .throw_error("TypeError", format!("{} 은(는) 이터러블이 아님", d)));
                         }
-                        v.extend(self.iterate_to_vec(&val));
+                        v.extend(self.iterate_to_vec(&val)?);
                     } else {
                         v.push(self.eval(item, env)?);
                     }
@@ -9172,6 +9239,98 @@ mod tests {
     // 일반 함수를 extends 한 클래스에서 super() 가 this 를 **부모가 만든 객체로 갈아끼워**
     // 파생 클래스의 메서드가 통째로 사라졌다 (astro.build 의 class Bus extends EventTarget).
     // 표준(§10.2.2): 파생 생성자의 this 는 new.target.prototype 을 가진 객체다.
+    // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
+
+    #[test]
+    fn errors_are_real_objects_with_prototype_chain() {
+        // 8종이 Error.prototype 하나를 공유했었다
+        assert!(run_bool("TypeError.prototype !== Error.prototype"));
+        assert!(run_bool("new TypeError('x').constructor === TypeError"));
+        assert!(run_bool("new TypeError('x') instanceof TypeError"));
+        assert!(run_bool("new TypeError('x') instanceof Error"));
+        assert!(run_bool("!(new TypeError('x') instanceof RangeError)"));
+        // "message 가 있으면 Error" 라는 오리 판별은 죽었다
+        assert!(run_bool("!(({message:'x'}) instanceof Error)"));
+        // message 는 비열거, 인자가 없으면 own 도 아니다
+        assert_eq!(run_str("JSON.stringify(Object.keys(new Error('x')))"), "[]");
+        assert!(run_bool(
+            "!Object.prototype.hasOwnProperty.call(new Error(), 'message')"
+        ));
+        assert_eq!(run_str("String(new TypeError('boom'))"), "TypeError: boom");
+        assert_eq!(run_str("String(new Error())"), "Error");
+    }
+
+    #[test]
+    fn internal_errors_have_standard_types() {
+        // 예전엔 전부 Err(String) 이라 catch 가 문자열을 잡았다
+        assert!(run_bool("try { null.x } catch (e) { e instanceof TypeError }"));
+        assert!(run_bool("try { nope() } catch (e) { e instanceof ReferenceError }"));
+        assert!(run_bool("try { (5)() } catch (e) { e instanceof TypeError }"));
+        assert!(run_bool("try { for (const q of 5) {} } catch (e) { e instanceof TypeError }"));
+        assert!(run_bool("try { var {z} = null; } catch (e) { e instanceof TypeError }"));
+        assert!(run_bool("try { null.x } catch (e) { typeof e.message === 'string' }"));
+    }
+
+    #[test]
+    fn array_destructuring_uses_iterator_protocol() {
+        // 예전엔 인덱스 접근만 해서 Set/Map/제너레이터가 조용히 undefined 였다
+        assert_eq!(run_str("var [a,b] = new Set([1,2]); a + ',' + b"), "1,2");
+        assert_eq!(
+            run_str("function* g(){ yield 7; yield 8; yield 9; } var [p,,q] = g(); p + ',' + q"),
+            "7,9"
+        );
+        assert_eq!(
+            run_str("var [[k,v]] = new Map([['k',1]]); k + ',' + v"),
+            "k,1"
+        );
+        assert_eq!(run_str("var [...r] = new Set([3,4]); r.join('-')"), "3-4");
+        // 무한 이터러블도 필요한 만큼만 당긴다 (지연)
+        assert_eq!(
+            run_str("function* inf(){ var i=0; while(true) yield i++; } var [i0,i1] = inf(); i0 + ',' + i1"),
+            "0,1"
+        );
+        // rest 는 이름이 아니라 패턴이다
+        assert_eq!(run_str("var [x, ...[y, z]] = [1,2,3]; x + ',' + y + ',' + z"), "1,2,3");
+    }
+
+    #[test]
+    fn destructuring_propagates_thrown_errors() {
+        // 이터레이터/게터가 던진 오류를 삼키면 안 된다
+        assert!(run_bool(
+            "var bad = { [Symbol.iterator]() { return { next() { throw new RangeError('i'); } }; } }; \
+             try { var [a] = bad; false } catch (e) { e instanceof RangeError }"
+        ));
+        assert!(run_bool(
+            "var g = { get x() { throw new RangeError('g'); } }; \
+             try { var {x} = g; false } catch (e) { e instanceof RangeError }"
+        ));
+        assert!(run_bool(
+            "var bad = { [Symbol.iterator]() { return { next() { throw new RangeError('s'); } }; } }; \
+             try { var arr = [...bad]; false } catch (e) { e instanceof RangeError }"
+        ));
+    }
+
+    #[test]
+    fn eval_direct_and_indirect() {
+        assert_eq!(run_str("String(eval('1+1'))"), "2");
+        // 직접 eval 은 호출 지점 스코프를 본다
+        assert_eq!(
+            run_str("var x = 10; function f(){ var y = 5; return String(eval('y + x')); } f()"),
+            "15"
+        );
+        // 간접 eval 은 전역 스코프 (번들의 (0,eval)('this') 패턴)
+        assert_eq!(
+            run_str("var e = eval; function h(){ var z = 99; return e('typeof z'); } h()"),
+            "undefined"
+        );
+        assert_eq!(run_str("typeof (0,eval)('this')"), "object");
+        // var 는 호출자의 변수 환경에 만들어진다
+        assert_eq!(run_str("eval('var ev1 = 7;'); String(ev1)"), "7");
+        // 문자열이 아니면 그대로, 파싱 실패는 SyntaxError
+        assert_eq!(run_str("String(eval(42))"), "42");
+        assert!(run_bool("try { eval('var 1 = ;') } catch (e) { e instanceof SyntaxError }"));
+    }
+
     #[test]
     fn super_with_function_parent_keeps_derived_methods() {
         assert_eq!(
