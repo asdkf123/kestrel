@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::url::{Url, UrlError};
@@ -131,6 +131,66 @@ pub fn store_set_cookie(line: &str, default_host: &str) {
 // document.cookie 읽기용 (host/path 에 보낼 쿠키 문자열)
 pub fn cookies_for(host: &str, path: &str) -> String {
     cookie_header(host, path).unwrap_or_default()
+}
+
+// 여러 URL 을 **동시에** 받는다 (브라우저는 리소스를 병렬로 받는다 — 직렬로 받으면
+// 폰트 20개짜리 페이지가 RTT × 20 만큼 그냥 멈춘다. developer.chrome.com 이 그랬다).
+// 호스트당 동시 연결은 6으로 제한한다 (브라우저 관행). 결과는 입력 순서를 지킨다.
+pub fn fetch_all(urls: &[String]) -> Vec<Result<Response, HttpError>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    if urls.is_empty() {
+        return Vec::new();
+    }
+    let n = urls.len();
+    let next = AtomicUsize::new(0);
+    let results: Mutex<Vec<Option<Result<Response, HttpError>>>> =
+        Mutex::new((0..n).map(|_| None).collect());
+    // 호스트별 슬롯 (동시 6)
+    let host_of = |u: &str| -> String {
+        Url::parse(u).map(|x| x.host).unwrap_or_default()
+    };
+    let mut host_names: Vec<String> = urls.iter().map(|u| host_of(u)).collect();
+    host_names.sort();
+    host_names.dedup();
+    let host_slots: std::collections::HashMap<String, Mutex<usize>> =
+        host_names.into_iter().map(|h| (h, Mutex::new(0usize))).collect();
+    let workers = n.min(8);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                if i >= n {
+                    return;
+                }
+                let host = host_of(&urls[i]);
+                // 호스트당 6 슬롯 확보 (없으면 잠깐 기다린다)
+                loop {
+                    if let Some(slot) = host_slots.get(&host) {
+                        let mut c = slot.lock().unwrap();
+                        if *c < 6 {
+                            *c += 1;
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                let r = fetch(&urls[i]);
+                if let Some(slot) = host_slots.get(&host) {
+                    let mut c = slot.lock().unwrap();
+                    *c = c.saturating_sub(1);
+                }
+                results.lock().unwrap()[i] = Some(r);
+            });
+        }
+    });
+    results
+        .into_inner()
+        .unwrap()
+        .into_iter()
+        .map(|r| r.unwrap_or(Err(HttpError::BadResponse)))
+        .collect()
 }
 
 pub fn fetch(url: &str) -> Result<Response, HttpError> {

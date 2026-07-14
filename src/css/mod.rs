@@ -71,6 +71,52 @@ impl Stylesheet {
 pub struct FontFace {
     pub family: String,
     pub srcs: Vec<String>,
+    // unicode-range: 이 face 가 덮는 코드포인트 구간들 (비면 전체).
+    // **이걸 무시하면 서브셋 폰트를 전부 받는다** — Google 폰트 CSS 는 스크립트마다
+    // 수백 개 서브셋을 선언한다 (developer.chrome.com 에서 1240개를 받고 있었다).
+    // 브라우저는 문서에 실제로 나오는 문자를 덮는 face 만 받는다.
+    pub unicode_range: Vec<(u32, u32)>,
+}
+
+impl FontFace {
+    // 이 face 가 주어진 문자 집합 중 하나라도 덮는가 (범위가 없으면 항상 참).
+    pub fn covers_any(&self, chars: &std::collections::HashSet<u32>) -> bool {
+        if self.unicode_range.is_empty() {
+            return true;
+        }
+        chars
+            .iter()
+            .any(|&c| self.unicode_range.iter().any(|&(a, b)| c >= a && c <= b))
+    }
+}
+
+// "U+0-7F, U+30??, U+4E00-9FFF" → [(0,0x7f), (0x3000,0x30ff), (0x4e00,0x9fff)]
+pub fn parse_unicode_range(s: &str) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let p = part.trim();
+        let Some(rest) = p.strip_prefix("U+").or_else(|| p.strip_prefix("u+")) else { continue };
+        if let Some((a, b)) = rest.split_once('-') {
+            // U+4E00-9FFF
+            if let (Ok(a), Ok(b)) =
+                (u32::from_str_radix(a.trim(), 16), u32::from_str_radix(b.trim(), 16))
+            {
+                out.push((a, b));
+            }
+        } else if rest.contains('?') {
+            // U+30?? → 3000..30FF (와일드카드)
+            let lo = rest.replace('?', "0");
+            let hi = rest.replace('?', "F");
+            if let (Ok(a), Ok(b)) =
+                (u32::from_str_radix(&lo, 16), u32::from_str_radix(&hi, 16))
+            {
+                out.push((a, b));
+            }
+        } else if let Ok(a) = u32::from_str_radix(rest.trim(), 16) {
+            out.push((a, a));
+        }
+    }
+    out
 }
 
 #[derive(Debug, PartialEq)]
@@ -886,8 +932,18 @@ impl Parser {
         let decls = self.parse_declarations();
         let mut family = String::new();
         let mut srcs = Vec::new();
+        let mut unicode_range = Vec::new();
         for d in &decls {
-            if d.name == "font-family" {
+            if d.name == "unicode-range" {
+                // 값이 어떤 Value 로 파싱됐든 원문을 되살려 읽는다 (U+0-7F 는 색/길이가 아니다)
+                let raw = crate::style::computed_value_string(&d.value);
+                unicode_range = parse_unicode_range(&raw);
+                if unicode_range.is_empty() {
+                    if let Value::Keyword(k) = &d.value {
+                        unicode_range = parse_unicode_range(k);
+                    }
+                }
+            } else if d.name == "font-family" {
                 if let Value::Keyword(f) = &d.value {
                     family = f.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
                 } else if let Value::Url(u) = &d.value {
@@ -905,7 +961,7 @@ impl Parser {
         if family.is_empty() {
             return None;
         }
-        Some(FontFace { family, srcs })
+        Some(FontFace { family, srcs, unicode_range })
     }
 
     // '@keyframes name { 0%{...} 100%{...} }' — 최종(100%/to) 프레임 선언만 보관.
@@ -1492,6 +1548,28 @@ mod tests {
     fn specificity_counts_id_class_tag() {
         let ss = parse("#x { color: #000000; }".to_string());
         assert_eq!(ss.rules[0].selectors[0].specificity(), (1, 0, 0));
+    }
+
+    #[test]
+    fn unicode_range_is_parsed() {
+        let ss = crate::css::parse(
+            "@font-face { font-family: 'X'; src: url(a.woff2) format('woff2'); \
+             unicode-range: U+0000-00FF, U+4E00-9FFF, U+30??; }"
+                .to_string(),
+        );
+        let ff = &ss.font_faces[0];
+        assert_eq!(ff.family, "X");
+        assert_eq!(
+            ff.unicode_range,
+            vec![(0x0, 0xff), (0x4e00, 0x9fff), (0x3000, 0x30ff)],
+            "unicode-range 를 못 읽으면 서브셋 폰트를 전부 받는다"
+        );
+        let mut ko = std::collections::HashSet::new();
+        ko.insert('가' as u32);
+        assert!(!ff.covers_any(&ko), "한글은 이 face 가 안 덮는다");
+        let mut en = std::collections::HashSet::new();
+        en.insert('A' as u32);
+        assert!(ff.covers_any(&en));
     }
 
     #[test]

@@ -429,8 +429,24 @@ fn load_stylesheet(
     if depth > 6 || seen.contains(css_url) {
         return;
     }
+    let r = http::fetch(css_url);
+    load_stylesheet_body(css_url, r, page_vw, sheet, depth, seen);
+}
+
+// 이미 받아 온 응답으로 시트를 파싱해 합친다 (병렬 다운로드 결과를 받는 입구).
+fn load_stylesheet_body(
+    css_url: &str,
+    resp: Result<http::Response, http::HttpError>,
+    page_vw: f32,
+    sheet: &mut css::Stylesheet,
+    depth: u32,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if depth > 6 || seen.contains(css_url) {
+        return;
+    }
     seen.insert(css_url.to_string());
-    let r = match http::fetch(css_url) {
+    let r = match resp {
         Ok(r) => r,
         Err(e) => {
             println!("[css] 로드 실패 {:?} — {}", e, css_url);
@@ -469,6 +485,30 @@ fn load_stylesheet(
         absolutize_css_urls(&mut parsed, b);
     }
     sheet.merge(parsed);
+}
+
+// 문서 텍스트에 나오는 코드포인트 집합 (@font-face 의 unicode-range 판정용).
+fn collect_text_chars(
+    dom: &dom::Dom,
+    id: dom::NodeId,
+    out: &mut std::collections::HashSet<u32>,
+) {
+    match &dom.get(id).node_type {
+        dom::NodeType::Text(t) => {
+            for c in t.chars() {
+                out.insert(c as u32);
+            }
+        }
+        dom::NodeType::Element(e) => {
+            // 스크립트/스타일 안의 텍스트는 렌더되지 않는다
+            if matches!(e.tag_name.as_str(), "script" | "style" | "template" | "noscript") {
+                return;
+            }
+        }
+    }
+    for &c in &dom.get(id).children {
+        collect_text_chars(dom, c, out);
+    }
 }
 
 // 스타일시트 안의 상대 url() 을 그 시트의 URL 기준 절대 URL 로 바꾼다 (파싱 시점 해석).
@@ -811,15 +851,17 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         phase("html+parse", &mut t0);
     println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
     }
+    // 최상위 <link> 시트들은 **한꺼번에 병렬로** 받는다 (@import 는 그 안에서 재귀).
     let mut seen_css = std::collections::HashSet::new();
-    for (href, media) in hrefs.iter().take(10) {
-        // <link media="..."> 조건 (다크 테마·print 등) 불일치 시 건너뜀
-        if !media.is_empty() && !css::media_matches(media, page_vw) {
-            continue;
-        }
-        if let Some(u) = base.join(href) {
-            load_stylesheet(&u.as_string(), page_vw, &mut sheet, 0, &mut seen_css);
-        }
+    let top_urls: Vec<String> = hrefs
+        .iter()
+        .take(10)
+        .filter(|(_, media)| media.is_empty() || css::media_matches(media, page_vw))
+        .filter_map(|(href, _)| base.join(href).map(|u| u.as_string()))
+        .collect();
+    let top_bodies = http::fetch_all(&top_urls);
+    for (u, r) in top_urls.iter().zip(top_bodies) {
+        load_stylesheet_body(u, r, page_vw, &mut sheet, 0, &mut seen_css);
     }
     let mut seen_styles = std::collections::HashSet::new();
     let mut inline_css = String::new();
@@ -849,33 +891,102 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     }
 
     let mut fonts = load_fonts(&scripts);
-    // @font-face 웹폰트 로드 (ttf/otf 만 — woff/woff2 미지원). 각 패밀리 첫 성공 src 사용.
-    let mut loaded_faces = 0;
-    for ff in &sheet.font_faces {
-        for src in &ff.srcs {
-            if let Some(u) = base.join(src) {
-                if let Ok(r) = http::fetch(&u.as_string()) {
-                    // woff2 는 brotli 압축 + glyf/loca 변환이 걸린 sfnt 다 — 되돌려서 넘긴다.
-                    // 모던 사이트의 웹폰트는 사실상 전부 이 형식이다.
-                    let bytes = if r.body.starts_with(b"wOF2") {
-                        match woff2::decode(&r.body) {
-                            Some(sfnt) => sfnt,
-                            None => {
-                                if std::env::var("KESTREL_FONT_DEBUG").is_ok() {
-                                    eprintln!("[font] woff2 복원 실패: {}", src);
-                                }
-                                continue;
-                            }
+    // @font-face 웹폰트 로드. 각 패밀리의 src 후보들을 **한꺼번에 병렬로** 받는다.
+    // 직렬로 받으면 폰트 20개짜리 페이지가 RTT × 20 만큼 그냥 멈춘다 —
+    // developer.chrome.com 이 몇 분씩 걸렸다 (브라우저는 병렬로 받는다).
+    // unicode-range: 문서에 **실제로 나오는 문자**를 덮는 face 만 받는다 (표준의 폰트 매칭).
+    // 무시하면 서브셋 폰트를 전부 받는다 — Google 폰트 CSS 는 스크립트마다 수백 개
+    // 서브셋을 선언해서, developer.chrome.com 에서 1240개(!)를 내려받고 있었다.
+    let doc_chars: std::collections::HashSet<u32> = {
+        let mut set = std::collections::HashSet::new();
+        collect_text_chars(&dom, dom.root, &mut set);
+        set
+    };
+    // 어떤 규칙도 참조하지 않는 패밀리의 face 는 영영 쓰이지 않는다 — 받을 이유가 없다.
+    let used_families: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        for rule in &sheet.rules {
+            for d in &rule.declarations {
+                if d.name == "font-family" {
+                    if let css::Value::Keyword(list) = &d.value {
+                        for f in list.split(',') {
+                            set.insert(
+                                f.trim()
+                                    .trim_matches(|c| c == '"' || c == '\'')
+                                    .to_ascii_lowercase(),
+                            );
                         }
-                    } else {
-                        r.body
-                    };
-                    if let Ok(font) = font::Font::from_bytes(bytes) {
-                        fonts.add_named_font(font, ff.family.clone());
-                        loaded_faces += 1;
-                        break;
                     }
                 }
+            }
+        }
+        set
+    };
+    let mut face_urls: Vec<String> = Vec::new();
+    let mut face_index: Vec<(usize, usize)> = Vec::new(); // (font_face 인덱스, src 인덱스)
+    let mut skipped_faces = 0usize;
+    // 같은 (패밀리, unicode-range) 의 두 번째 face 는 우리 엔진이 고를 방법이 없다
+    // (굵기/기울기 매칭이 없다) → 받아도 영영 안 쓰인다. 정직하게: 이건 근사다.
+    let mut seen_face: std::collections::HashSet<(String, Vec<(u32, u32)>)> =
+        std::collections::HashSet::new();
+    for (fi, ff) in sheet.font_faces.iter().enumerate() {
+        if !seen_face.insert((ff.family.to_ascii_lowercase(), ff.unicode_range.clone())) {
+            skipped_faces += 1;
+            continue;
+        }
+        if !used_families.is_empty()
+            && !used_families.contains(&ff.family.to_ascii_lowercase())
+        {
+            skipped_faces += 1;
+            continue; // 아무 규칙도 이 패밀리를 부르지 않는다
+        }
+        if !ff.covers_any(&doc_chars) {
+            skipped_faces += 1;
+            continue; // 이 서브셋은 이 문서에 쓰이는 문자가 하나도 없다
+        }
+        for (si, src) in ff.srcs.iter().enumerate() {
+            if let Some(u) = base.join(src) {
+                face_urls.push(u.as_string());
+                face_index.push((fi, si));
+            }
+        }
+    }
+    if skipped_faces > 0 {
+        println!("[fonts] unicode-range 로 {}개 서브셋 건너뜀", skipped_faces);
+    }
+    let mut loaded_faces = 0;
+    if !face_urls.is_empty() {
+        println!("[fonts] 웹폰트 {}개 병렬 다운로드", face_urls.len());
+        let results = http::fetch_all(&face_urls);
+        // 패밀리마다 첫 성공 src 만 쓴다 (표준: src 목록은 우선순위 순)
+        let mut done: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for (k, r) in results.into_iter().enumerate() {
+            let (fi, _si) = face_index[k];
+            if done.contains(&fi) {
+                continue;
+            }
+            let Ok(r) = r else { continue };
+            if !(200..300).contains(&r.status) {
+                continue;
+            }
+            // woff2 는 brotli 압축 + glyf/loca 변환이 걸린 sfnt 다 — 되돌려서 넘긴다.
+            let bytes = if r.body.starts_with(b"wOF2") {
+                match woff2::decode(&r.body) {
+                    Some(sfnt) => sfnt,
+                    None => {
+                        if std::env::var("KESTREL_FONT_DEBUG").is_ok() {
+                            eprintln!("[font] woff2 복원 실패: {}", face_urls[k]);
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                r.body
+            };
+            if let Ok(font) = font::Font::from_bytes(bytes) {
+                fonts.add_named_font(font, sheet.font_faces[fi].family.clone());
+                loaded_faces += 1;
+                done.insert(fi);
             }
         }
     }

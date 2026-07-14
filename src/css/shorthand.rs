@@ -14,6 +14,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
     if value_text.contains("var(") {
         return vec![Declaration { important: false, name: name.to_string(), value: Value::Var(value_text.to_string()) }];
     }
+    // @font-face 디스크립터: 값이 프로퍼티 문법이 아니다 (U+0-7F 는 색도 길이도 아니다).
+    // 해석기에 넘기면 None → **선언이 통째로 버려진다**. 원문을 보존한다.
+    // (unicode-range 를 잃으면 서브셋 폰트를 전부 받게 된다 — 1240개를 받고 있었다)
+    if matches!(name, "unicode-range" | "src" | "font-display" | "size-adjust" | "ascent-override"
+        | "descent-override" | "line-gap-override")
+    {
+        return vec![Declaration {
+            important: false,
+            name: name.to_string(),
+            value: Value::Keyword(value_text.trim().to_string()),
+        }];
+    }
     // CSS 논리 속성 → 물리 속성 (LTR/가로쓰기 가정). 모던 CSS 에서 흔함.
     match name {
         // 크기
