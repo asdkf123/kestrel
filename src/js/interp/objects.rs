@@ -109,6 +109,10 @@ pub enum Value {
     Dataset(crate::dom::NodeId),
     // element.classList — 요소의 class 속성에 대한 라이브 프록시(DOMTokenList).
     ClassList(crate::dom::NodeId),
+    // Attr 노드 (§4.9.2): (소유 요소, 정규화된 이름) 에 대한 **살아 있는** 뷰다.
+    // 예전엔 el.attributes 가 평범한 {name, value} 객체를 줬다 — value 를 바꿔도
+    // 요소에 반영되지 않았고 ownerElement 도 없었다 (조용히 아무 일도 안 함).
+    Attr(crate::dom::NodeId, String),
     // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
     Proxy(Rc<(Value, Value)>),
     // function* 로 만든 지연 제너레이터. 호출 시 즉시 평가하지 않고, next()마다 다음
@@ -289,6 +293,7 @@ impl std::fmt::Debug for Value {
             Value::MapVal(_) => write!(f, "[object Map]"),
             Value::SetVal(_) => write!(f, "[object Set]"),
             Value::Style(id) => write!(f, "[style {:?}]", id),
+            Value::Attr(id, n) => write!(f, "[attr {} of {:?}]", n, id),
             Value::Dataset(id) => write!(f, "[dataset {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
             Value::Proxy(_) => write!(f, "[object Proxy]"),

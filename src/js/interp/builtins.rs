@@ -387,6 +387,7 @@ impl Interp {
             | Value::Fn(_)
             | Value::Native(_)
             | Value::Dom(_)
+            | Value::Attr(_, _)
             | Value::Class(_)
             | Value::Bound(_)
             | Value::Accessor(_)
@@ -2066,6 +2067,123 @@ impl Interp {
             }
             Native::WindowSelf => {
                 Ok(env_get(&self.global, "window").unwrap_or(Value::Undefined))
+            }
+            // CharacterData 메서드 (§4.9). 오프셋은 UTF-16 코드 단위. 범위를 벗어나면
+            // IndexSizeError — 조용히 자르면 편집기가 엉뚱한 곳을 고친다.
+            Native::CharData(op) => {
+                let Some(Value::Dom(id)) = recv else {
+                    return Err(self.throw_error("TypeError", "CharacterData 메서드"));
+                };
+                let dom = self.dom_arena()?;
+                let cur: Vec<u16> = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Text(t) => t.encode_utf16().collect(),
+                    crate::dom::NodeType::Comment(c) => c.encode_utf16().collect(),
+                    crate::dom::NodeType::Element(_) => {
+                        return Err(self.throw_error("TypeError", "요소에는 문자 데이터가 없다"))
+                    }
+                };
+                let len = cur.len();
+                let num = |v: Option<&Value>| -> f64 { v.map(to_num).unwrap_or(0.0) };
+                let (offset, count, data) = match op {
+                    CharDataOp::Append => (len, 0usize, args.first().map(to_display).unwrap_or_default()),
+                    CharDataOp::Insert => (
+                        num(args.first()).max(0.0) as usize,
+                        0,
+                        args.get(1).map(to_display).unwrap_or_default(),
+                    ),
+                    CharDataOp::Substring | CharDataOp::Delete => (
+                        num(args.first()).max(0.0) as usize,
+                        num(args.get(1)).max(0.0) as usize,
+                        String::new(),
+                    ),
+                    CharDataOp::Replace => (
+                        num(args.first()).max(0.0) as usize,
+                        num(args.get(1)).max(0.0) as usize,
+                        args.get(2).map(to_display).unwrap_or_default(),
+                    ),
+                };
+                if offset > len {
+                    return Err(self.throw_dom("IndexSizeError", "offset 이 데이터 길이를 넘음"));
+                }
+                let count = count.min(len - offset);
+                if matches!(op, CharDataOp::Substring) {
+                    let sub = String::from_utf16_lossy(&cur[offset..offset + count]);
+                    return Ok(Value::Str(sub));
+                }
+                let mut next: Vec<u16> = cur[..offset].to_vec();
+                next.extend(data.encode_utf16());
+                next.extend_from_slice(&cur[offset + count..]);
+                let s = String::from_utf16_lossy(&next);
+                let dom = self.dom_arena()?;
+                dom.set_char_data(id, s);
+                Ok(Value::Undefined)
+            }
+            // Text.splitText(offset) (§4.10): offset 부터를 새 텍스트 노드로 떼어
+            // 바로 뒤 형제로 넣고 그 노드를 반환한다.
+            Native::SplitText => {
+                let Some(Value::Dom(id)) = recv else {
+                    return Err(self.throw_error("TypeError", "splitText 는 Text 메서드"));
+                };
+                let offset = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                let dom = self.dom_arena()?;
+                let cur: Vec<u16> = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Text(t) => t.encode_utf16().collect(),
+                    _ => return Err(self.throw_error("TypeError", "splitText 는 Text 메서드")),
+                };
+                if offset > cur.len() {
+                    return Err(self.throw_dom("IndexSizeError", "offset 이 데이터 길이를 넘음"));
+                }
+                let head = String::from_utf16_lossy(&cur[..offset]);
+                let tail = String::from_utf16_lossy(&cur[offset..]);
+                let dom = self.dom_arena()?;
+                dom.set_char_data(id, head);
+                let new_id = dom.create_text(tail);
+                if let Some(parent) = dom.get(id).parent {
+                    // 원래 노드 바로 뒤에 넣는다 (다음 형제 앞, 없으면 끝)
+                    let sibs = &dom.get(parent).children;
+                    let next = sibs
+                        .iter()
+                        .position(|&c| c == id)
+                        .and_then(|i| sibs.get(i + 1).copied());
+                    dom.insert_before(parent, new_id, next);
+                }
+                Ok(Value::Dom(new_id))
+            }
+            // getAttributeNode(name) → Attr 노드 또는 null (§4.9.2)
+            Native::GetAttributeNode => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
+                let name = args.first().map(to_display).unwrap_or_default().to_ascii_lowercase();
+                let dom = self.dom_arena()?;
+                let has = matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.attributes.get(&name).is_some());
+                Ok(if has { Value::Attr(id, name) } else { Value::Null })
+            }
+            // setAttributeNode(attr) → 같은 이름의 기존 Attr 를 반환(없으면 null)
+            Native::SetAttributeNode => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
+                let Some(Value::Attr(src, name)) = args.first().cloned() else {
+                    return Err(self.throw_error("TypeError", "setAttributeNode 인자는 Attr"));
+                };
+                let dom = self.dom_arena()?;
+                let value = match &dom.get(src).node_type {
+                    crate::dom::NodeType::Element(e) => {
+                        e.attributes.get(&name).cloned().unwrap_or_default()
+                    }
+                    _ => String::new(),
+                };
+                let old = matches!(&dom.get(id).node_type,
+                    crate::dom::NodeType::Element(e) if e.attributes.get(&name).is_some());
+                dom.set_attr(id, &name, value);
+                Ok(if old { Value::Attr(id, name) } else { Value::Null })
+            }
+            Native::RemoveAttributeNode => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
+                let Some(Value::Attr(_, name)) = args.first().cloned() else {
+                    return Err(self.throw_error("TypeError", "removeAttributeNode 인자는 Attr"));
+                };
+                let dom = self.dom_arena()?;
+                dom.remove_attr(id, &name);
+                Ok(Value::Attr(id, name))
             }
             Native::CreateComment => {
                 let data = args.first().map(to_display).unwrap_or_default();

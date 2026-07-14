@@ -936,6 +936,456 @@ var HTMLInputElement = window.HTMLInputElement, HTMLButtonElement = window.HTMLB
 var SVGElement = window.SVGElement;
 
 // new Image(w, h) — <img> 를 만드는 생성자 (HTML §4.8.4.1). 프리로드/스프라이트에 흔하다.
+// DOM Range (§5). 경계점 두 개(노드+오프셋)로 문서의 한 구간을 가리킨다.
+// 에디터, 텍스트 선택, 하이라이터, 클립보드가 전부 이걸 쓴다. 없으면 그런 코드가
+// document.createRange 한 줄에서 죽는다.
+function __kNodeLength(node) {
+  var t = node.nodeType;
+  if (t === 3 || t === 8) return node.data.length;   // Text / Comment
+  return node.childNodes.length;
+}
+function __kNodeIndex(node) {
+  var p = node.parentNode;
+  if (!p) return 0;
+  var kids = p.childNodes;
+  for (var i = 0; i < kids.length; i++) if (kids[i] === node) return i;
+  return 0;
+}
+function __kAncestors(node) {
+  var out = [];
+  for (var n = node; n; n = n.parentNode) out.push(n);
+  return out;
+}
+// 경계점 (nodeA, offsetA) 가 (nodeB, offsetB) 보다 before(-1)/equal(0)/after(1) 인가 (§5.1)
+function __kComparePoints(nodeA, offsetA, nodeB, offsetB) {
+  if (nodeA === nodeB) {
+    return offsetA < offsetB ? -1 : offsetA > offsetB ? 1 : 0;
+  }
+  // B 가 A 의 조상인가?
+  var ancB = __kAncestors(nodeB);
+  var ancA = __kAncestors(nodeA);
+  if (ancA.indexOf(nodeB) >= 0) {
+    // nodeB 의 자식들 중 nodeA 를 품은 것의 인덱스와 offsetB 비교
+    var child = nodeA;
+    while (child.parentNode !== nodeB) child = child.parentNode;
+    return __kNodeIndex(child) < offsetB ? -1 : 1;
+  }
+  if (ancB.indexOf(nodeA) >= 0) {
+    var child2 = nodeB;
+    while (child2.parentNode !== nodeA) child2 = child2.parentNode;
+    return __kNodeIndex(child2) < offsetA ? 1 : -1;
+  }
+  // 공통 조상을 찾아 형제 순서로 비교
+  for (var i = 0; i < ancA.length; i++) {
+    var j = ancB.indexOf(ancA[i]);
+    if (j >= 0) {
+      var ca = ancA[i - 1], cb = ancB[j - 1];
+      if (!ca || !cb) return 0;
+      return __kNodeIndex(ca) < __kNodeIndex(cb) ? -1 : 1;
+    }
+  }
+  return 0; // 서로 다른 트리 — 순서 미정
+}
+function Range() {
+  var d = typeof document !== 'undefined' ? document : null;
+  var root = d && d.body ? d.body : null;
+  this.startContainer = root;
+  this.startOffset = 0;
+  this.endContainer = root;
+  this.endOffset = 0;
+}
+Object.defineProperty(Range.prototype, 'collapsed', {
+  get: function () {
+    return this.startContainer === this.endContainer && this.startOffset === this.endOffset;
+  },
+  configurable: true
+});
+Object.defineProperty(Range.prototype, 'commonAncestorContainer', {
+  get: function () {
+    var a = __kAncestors(this.startContainer);
+    for (var n = this.endContainer; n; n = n.parentNode) {
+      if (a.indexOf(n) >= 0) return n;
+    }
+    return null;
+  },
+  configurable: true
+});
+Range.prototype.__kSet = function (which, node, offset) {
+  if (offset < 0 || offset > __kNodeLength(node)) {
+    throw new DOMException('offset 이 범위를 벗어남', 'IndexSizeError');
+  }
+  if (which === 'start') {
+    this.startContainer = node;
+    this.startOffset = offset;
+    // start 가 end 를 넘어서면 end 를 start 로 당긴다 (표준)
+    if (__kComparePoints(node, offset, this.endContainer, this.endOffset) > 0) {
+      this.endContainer = node;
+      this.endOffset = offset;
+    }
+  } else {
+    this.endContainer = node;
+    this.endOffset = offset;
+    if (__kComparePoints(this.startContainer, this.startOffset, node, offset) > 0) {
+      this.startContainer = node;
+      this.startOffset = offset;
+    }
+  }
+};
+Range.prototype.setStart = function (node, offset) { this.__kSet('start', node, offset); };
+Range.prototype.setEnd = function (node, offset) { this.__kSet('end', node, offset); };
+Range.prototype.setStartBefore = function (node) { this.setStart(node.parentNode, __kNodeIndex(node)); };
+Range.prototype.setStartAfter = function (node) { this.setStart(node.parentNode, __kNodeIndex(node) + 1); };
+Range.prototype.setEndBefore = function (node) { this.setEnd(node.parentNode, __kNodeIndex(node)); };
+Range.prototype.setEndAfter = function (node) { this.setEnd(node.parentNode, __kNodeIndex(node) + 1); };
+Range.prototype.collapse = function (toStart) {
+  if (toStart) { this.endContainer = this.startContainer; this.endOffset = this.startOffset; }
+  else { this.startContainer = this.endContainer; this.startOffset = this.endOffset; }
+};
+Range.prototype.selectNode = function (node) {
+  var p = node.parentNode;
+  if (!p) throw new DOMException('부모가 없는 노드', 'InvalidNodeTypeError');
+  var i = __kNodeIndex(node);
+  this.startContainer = p; this.startOffset = i;
+  this.endContainer = p; this.endOffset = i + 1;
+};
+Range.prototype.selectNodeContents = function (node) {
+  this.startContainer = node; this.startOffset = 0;
+  this.endContainer = node; this.endOffset = __kNodeLength(node);
+};
+Range.prototype.cloneRange = function () {
+  var r = new Range();
+  r.startContainer = this.startContainer; r.startOffset = this.startOffset;
+  r.endContainer = this.endContainer; r.endOffset = this.endOffset;
+  return r;
+};
+Range.prototype.detach = function () {}; // 표준: 아무 일도 안 한다
+Range.START_TO_START = 0; Range.START_TO_END = 1;
+Range.END_TO_END = 2; Range.END_TO_START = 3;
+Range.prototype.compareBoundaryPoints = function (how, other) {
+  var mine, theirs;
+  if (how === 0) { mine = [this.startContainer, this.startOffset]; theirs = [other.startContainer, other.startOffset]; }
+  else if (how === 1) { mine = [this.endContainer, this.endOffset]; theirs = [other.startContainer, other.startOffset]; }
+  else if (how === 2) { mine = [this.endContainer, this.endOffset]; theirs = [other.endContainer, other.endOffset]; }
+  else if (how === 3) { mine = [this.startContainer, this.startOffset]; theirs = [other.endContainer, other.endOffset]; }
+  else throw new DOMException('알 수 없는 비교 방식', 'NotSupportedError');
+  return __kComparePoints(mine[0], mine[1], theirs[0], theirs[1]);
+};
+Range.prototype.isPointInRange = function (node, offset) {
+  return __kComparePoints(node, offset, this.startContainer, this.startOffset) >= 0 &&
+         __kComparePoints(node, offset, this.endContainer, this.endOffset) <= 0;
+};
+Range.prototype.comparePoint = function (node, offset) {
+  if (__kComparePoints(node, offset, this.startContainer, this.startOffset) < 0) return -1;
+  if (__kComparePoints(node, offset, this.endContainer, this.endOffset) > 0) return 1;
+  return 0;
+};
+Range.prototype.intersectsNode = function (node) {
+  var p = node.parentNode;
+  if (!p) return false;
+  var i = __kNodeIndex(node);
+  return __kComparePoints(p, i, this.endContainer, this.endOffset) < 0 &&
+         __kComparePoints(p, i + 1, this.startContainer, this.startOffset) > 0;
+};
+// §5.5 이 구간이 포함하는 노드들 (완전히 포함된 노드만)
+Range.prototype.__kContained = function () {
+  var out = [];
+  var common = this.commonAncestorContainer;
+  if (!common) return out;
+  var self = this;
+  var walk = function (node) {
+    var kids = node.childNodes;
+    for (var i = 0; i < kids.length; i++) {
+      var c = kids[i];
+      var p = c.parentNode;
+      var idx = __kNodeIndex(c);
+      var startsAfter = __kComparePoints(p, idx, self.startContainer, self.startOffset) >= 0;
+      var endsBefore = __kComparePoints(p, idx + 1, self.endContainer, self.endOffset) <= 0;
+      if (startsAfter && endsBefore) out.push(c);
+      else walk(c);
+    }
+  };
+  walk(common);
+  return out;
+};
+Range.prototype.toString = function () {
+  var s = this.startContainer, e = this.endContainer;
+  if (s === e && s.nodeType === 3) {
+    return s.data.slice(this.startOffset, this.endOffset);
+  }
+  var out = '';
+  if (s.nodeType === 3) out += s.data.slice(this.startOffset);
+  var contained = this.__kContained();
+  for (var i = 0; i < contained.length; i++) {
+    var c = contained[i];
+    if (c.nodeType === 3) out += c.data;
+    else if (c.nodeType === 1) out += c.textContent;
+  }
+  if (e.nodeType === 3) out += e.data.slice(0, this.endOffset);
+  return out;
+};
+Range.prototype.deleteContents = function () {
+  if (this.collapsed) return;
+  var s = this.startContainer, e = this.endContainer;
+  if (s === e && s.nodeType === 3) {
+    s.data = s.data.slice(0, this.startOffset) + s.data.slice(this.endOffset);
+    this.collapse(true);
+    return;
+  }
+  var contained = this.__kContained();
+  if (e.nodeType === 3) e.data = e.data.slice(this.endOffset);
+  if (s.nodeType === 3) s.data = s.data.slice(0, this.startOffset);
+  for (var i = 0; i < contained.length; i++) contained[i].remove();
+  this.collapse(true);
+};
+Range.prototype.cloneContents = function () {
+  var frag = document.createDocumentFragment();
+  var s = this.startContainer, e = this.endContainer;
+  if (s === e && s.nodeType === 3) {
+    frag.appendChild(document.createTextNode(s.data.slice(this.startOffset, this.endOffset)));
+    return frag;
+  }
+  if (s.nodeType === 3) frag.appendChild(document.createTextNode(s.data.slice(this.startOffset)));
+  var contained = this.__kContained();
+  for (var i = 0; i < contained.length; i++) frag.appendChild(contained[i].cloneNode(true));
+  if (e.nodeType === 3) frag.appendChild(document.createTextNode(e.data.slice(0, this.endOffset)));
+  return frag;
+};
+Range.prototype.extractContents = function () {
+  var frag = this.cloneContents();
+  this.deleteContents();
+  return frag;
+};
+Range.prototype.insertNode = function (node) {
+  var s = this.startContainer;
+  if (s.nodeType === 3) {
+    // 텍스트 중간이면 쪼갠 뒤 그 사이에 넣는다
+    var after = document.createTextNode(s.data.slice(this.startOffset));
+    s.data = s.data.slice(0, this.startOffset);
+    var parent = s.parentNode;
+    var kids = parent.childNodes;
+    var idx = __kNodeIndex(s);
+    var ref = kids[idx + 1] || null;
+    parent.insertBefore(node, ref);
+    parent.insertBefore(after, node.nextSibling);
+  } else {
+    var ref2 = s.childNodes[this.startOffset] || null;
+    s.insertBefore(node, ref2);
+  }
+};
+Range.prototype.surroundContents = function (newParent) {
+  var frag = this.extractContents();
+  this.insertNode(newParent);
+  newParent.appendChild(frag);
+  this.selectNode(newParent);
+};
+window.Range = Range;
+if (typeof document !== 'undefined') {
+  document.createRange = function () { return new Range(); };
+}
+// DOM Traversal (§6) — NodeFilter / TreeWalker / NodeIterator.
+// 스펙 알고리즘을 DOM 원시연산 위에 그대로 옮긴 것이다 (근사 아님).
+// 없으면 텍스트를 훑는 코드(하이라이터, 번역기, 접근성 도구)가 통째로 죽는다.
+var NodeFilter = {
+  FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3,
+  SHOW_ALL: 0xFFFFFFFF,
+  SHOW_ELEMENT: 0x1, SHOW_ATTRIBUTE: 0x2, SHOW_TEXT: 0x4,
+  SHOW_CDATA_SECTION: 0x8, SHOW_ENTITY_REFERENCE: 0x10, SHOW_ENTITY: 0x20,
+  SHOW_PROCESSING_INSTRUCTION: 0x40, SHOW_COMMENT: 0x80, SHOW_DOCUMENT: 0x100,
+  SHOW_DOCUMENT_TYPE: 0x200, SHOW_DOCUMENT_FRAGMENT: 0x400, SHOW_NOTATION: 0x800
+};
+window.NodeFilter = NodeFilter;
+
+// §6.1 filter 실행: whatToShow 비트마스크 → 콜백(함수 또는 {acceptNode})
+function __kFilterNode(walker, node) {
+  var n = node.nodeType;
+  if (!(walker.whatToShow & (1 << (n - 1)))) return NodeFilter.FILTER_SKIP;
+  var f = walker.filter;
+  if (f === null || f === undefined) return NodeFilter.FILTER_ACCEPT;
+  var r = typeof f === 'function' ? f(node) : f.acceptNode(node);
+  return r;
+}
+
+function TreeWalker(root, whatToShow, filter) {
+  this.root = root;
+  this.whatToShow = whatToShow === undefined ? NodeFilter.SHOW_ALL : (whatToShow >>> 0);
+  this.filter = filter === undefined ? null : filter;
+  this.currentNode = root;
+}
+// §6.2 traverseChildren
+TreeWalker.prototype.__kChildren = function (first) {
+  var node = first ? this.currentNode.firstChild : this.currentNode.lastChild;
+  while (node) {
+    var result = __kFilterNode(this, node);
+    if (result === NodeFilter.FILTER_ACCEPT) { this.currentNode = node; return node; }
+    if (result === NodeFilter.FILTER_SKIP) {
+      var child = first ? node.firstChild : node.lastChild;
+      if (child) { node = child; continue; }
+    }
+    // 형제로, 없으면 조상을 타고 올라가며 형제를 찾는다
+    while (node) {
+      var sibling = first ? node.nextSibling : node.previousSibling;
+      if (sibling) { node = sibling; break; }
+      var parent = node.parentNode;
+      if (!parent || parent === this.root || parent === this.currentNode) return null;
+      node = parent;
+      if (node === this.root) return null;
+    }
+    if (!node) return null;
+  }
+  return null;
+};
+TreeWalker.prototype.firstChild = function () { return this.__kChildren(true); };
+TreeWalker.prototype.lastChild = function () { return this.__kChildren(false); };
+// §6.2 traverseSiblings
+TreeWalker.prototype.__kSiblings = function (next) {
+  var node = this.currentNode;
+  if (node === this.root) return null;
+  while (true) {
+    var sibling = next ? node.nextSibling : node.previousSibling;
+    while (sibling) {
+      node = sibling;
+      var result = __kFilterNode(this, node);
+      if (result === NodeFilter.FILTER_ACCEPT) { this.currentNode = node; return node; }
+      sibling = next ? node.firstChild : node.lastChild;
+      if (result === NodeFilter.FILTER_REJECT || !sibling) {
+        sibling = next ? node.nextSibling : node.previousSibling;
+      }
+    }
+    node = node.parentNode;
+    if (!node || node === this.root) return null;
+    if (__kFilterNode(this, node) === NodeFilter.FILTER_ACCEPT) return null;
+  }
+};
+TreeWalker.prototype.nextSibling = function () { return this.__kSiblings(true); };
+TreeWalker.prototype.previousSibling = function () { return this.__kSiblings(false); };
+TreeWalker.prototype.parentNode = function () {
+  var node = this.currentNode;
+  while (node && node !== this.root) {
+    node = node.parentNode;
+    if (node && __kFilterNode(this, node) === NodeFilter.FILTER_ACCEPT) {
+      this.currentNode = node;
+      return node;
+    }
+  }
+  return null;
+};
+TreeWalker.prototype.nextNode = function () {
+  var node = this.currentNode;
+  var result = NodeFilter.FILTER_ACCEPT;
+  while (true) {
+    while (result !== NodeFilter.FILTER_REJECT && node.firstChild) {
+      node = node.firstChild;
+      result = __kFilterNode(this, node);
+      if (result === NodeFilter.FILTER_ACCEPT) { this.currentNode = node; return node; }
+    }
+    var sibling = null;
+    var temporary = node;
+    while (temporary) {
+      if (temporary === this.root) return null;
+      sibling = temporary.nextSibling;
+      if (sibling) break;
+      temporary = temporary.parentNode;
+    }
+    if (!sibling) return null;
+    node = sibling;
+    result = __kFilterNode(this, node);
+    if (result === NodeFilter.FILTER_ACCEPT) { this.currentNode = node; return node; }
+  }
+};
+TreeWalker.prototype.previousNode = function () {
+  var node = this.currentNode;
+  while (node !== this.root) {
+    var sibling = node.previousSibling;
+    while (sibling) {
+      node = sibling;
+      var result = __kFilterNode(this, node);
+      while (result !== NodeFilter.FILTER_REJECT && node.lastChild) {
+        node = node.lastChild;
+        result = __kFilterNode(this, node);
+      }
+      if (result === NodeFilter.FILTER_ACCEPT) { this.currentNode = node; return node; }
+      sibling = node.previousSibling;
+    }
+    if (node === this.root || !node.parentNode) return null;
+    node = node.parentNode;
+    if (__kFilterNode(this, node) === NodeFilter.FILTER_ACCEPT) {
+      this.currentNode = node;
+      return node;
+    }
+  }
+  return null;
+};
+window.TreeWalker = TreeWalker;
+
+// §6.1 NodeIterator — 전위 순회 + 포인터가 참조 노드 '앞/뒤' 중 어디인지 기억
+function NodeIterator(root, whatToShow, filter) {
+  this.root = root;
+  this.whatToShow = whatToShow === undefined ? NodeFilter.SHOW_ALL : (whatToShow >>> 0);
+  this.filter = filter === undefined ? null : filter;
+  this.referenceNode = root;
+  this.pointerBeforeReferenceNode = true;
+}
+function __kNextInOrder(node, root) {
+  if (node.firstChild) return node.firstChild;
+  var n = node;
+  while (n && n !== root) {
+    if (n.nextSibling) return n.nextSibling;
+    n = n.parentNode;
+  }
+  return null;
+}
+function __kPrevInOrder(node, root) {
+  if (node === root) return null;
+  var p = node.previousSibling;
+  if (!p) return node.parentNode;
+  while (p.lastChild) p = p.lastChild;
+  return p;
+}
+NodeIterator.prototype.__kTraverse = function (forward) {
+  var node = this.referenceNode;
+  var before = this.pointerBeforeReferenceNode;
+  while (true) {
+    if (forward) {
+      if (before) { before = false; }
+      else {
+        var nx = __kNextInOrder(node, this.root);
+        if (!nx) return null;
+        node = nx;
+      }
+    } else {
+      if (!before) { before = true; }
+      else {
+        var pv = __kPrevInOrder(node, this.root);
+        if (!pv) return null;
+        node = pv;
+      }
+    }
+    if (__kFilterNode(this, node) === NodeFilter.FILTER_ACCEPT) {
+      this.referenceNode = node;
+      this.pointerBeforeReferenceNode = before;
+      return node;
+    }
+  }
+};
+NodeIterator.prototype.nextNode = function () { return this.__kTraverse(true); };
+NodeIterator.prototype.previousNode = function () { return this.__kTraverse(false); };
+NodeIterator.prototype.detach = function () {}; // 표준: 아무 일도 안 한다 (레거시)
+window.NodeIterator = NodeIterator;
+
+if (typeof document !== 'undefined') {
+  document.createTreeWalker = function (root, whatToShow, filter) {
+    if (root === undefined || root === null) {
+      throw new TypeError('createTreeWalker: root 가 필요하다');
+    }
+    return new TreeWalker(root, whatToShow, filter);
+  };
+  document.createNodeIterator = function (root, whatToShow, filter) {
+    if (root === undefined || root === null) {
+      throw new TypeError('createNodeIterator: root 가 필요하다');
+    }
+    return new NodeIterator(root, whatToShow, filter);
+  };
+}
 // document.createEvent (DOM §4.5.1). 레거시지만 표준이고 아직 널리 쓰인다.
 // 표준이 정한 인터페이스 이름만 받고, 그 외에는 NotSupportedError 를 던진다 —
 // 아무 이름이나 받아 빈 Event 를 주면 조용히 다른 동작이 된다.

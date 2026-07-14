@@ -572,6 +572,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::MapVal(_) => "[object Map]".to_string(),
         Value::SetVal(_) => "[object Set]".to_string(),
         Value::Style(_) => "[object CSSStyleDeclaration]".to_string(),
+        Value::Attr(_, _) => "[object Attr]".to_string(),
         Value::Dataset(_) => "[object DOMStringMap]".to_string(),
         // classList 를 문자열화하면 class 값 (DOMTokenList.toString)
         Value::ClassList(_) => "[object DOMTokenList]".to_string(),

@@ -412,30 +412,22 @@ impl Interp {
                     .map(Value::Dom)
                     .unwrap_or(Value::Null))
             }
-            // el.attributes — [{name, value}, …] (예전엔 undefined 라 읽는 순간 죽었다)
+            // el.attributes — NamedNodeMap (§4.9.1). 진짜 Attr 노드들이다.
+            // 예전엔 평범한 {name, value} 객체 배열이라, attr.value 를 바꿔도 요소에
+            // 아무 반영이 없었고 attr.ownerElement 도 없었다.
             "attributes" => {
-                let list: Vec<Value> = match &dom.get(id).node_type {
-                    crate::dom::NodeType::Element(e) => e
-                        .attributes
-                        .iter()
-                        .map(|(k, v)| {
-                            let mut m = ObjMap::new();
-                            m.insert("name".to_string(), Value::Str(k.clone()));
-                            m.insert("value".to_string(), Value::Str(v.clone()));
-                            Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m)))
-                        })
-                        .collect(),
+                let names: Vec<String> = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Element(e) => {
+                        e.attributes.iter().map(|(k, _)| k.clone()).collect()
+                    }
                     _ => Vec::new(),
                 };
-                // NamedNodeMap: 인덱스뿐 아니라 **이름으로도** 접근한다 (attrs['class']).
-                // jQuery 가 elem.attributes[name].expando 로 검사한다 — 없으면 죽는다.
+                let list: Vec<Value> =
+                    names.iter().map(|n| Value::Attr(id, n.clone())).collect();
+                // NamedNodeMap 은 인덱스와 이름 양쪽으로 접근한다 (attrs['class'])
                 let arr = ArrayObj::new(list.clone());
-                for v in &list {
-                    if let Value::Obj(m) = v {
-                        if let Some(Value::Str(name)) = m.borrow().get("name") {
-                            arr.set_prop(name.clone(), v.clone());
-                        }
-                    }
+                for (n, v) in names.iter().zip(list.iter()) {
+                    arr.set_prop(n.clone(), v.clone());
                 }
                 arr.set_prop("getNamedItem".to_string(), Value::Native(Native::GetNamedItem));
                 Ok(Value::Arr(arr))
@@ -569,8 +561,30 @@ impl Interp {
             "lastChild" => {
                 Ok(dom.get(id).children.last().copied().map(Value::Dom).unwrap_or(Value::Null))
             }
-            "parentElement" | "parentNode" => {
-                Ok(dom.get(id).parent.map(Value::Dom).unwrap_or(Value::Null))
+            // parentNode 는 모든 부모, parentElement 는 부모가 **요소일 때만** (§4.4).
+            // 예전엔 둘이 같았다.
+            "parentNode" => Ok(dom.get(id).parent.map(Value::Dom).unwrap_or(Value::Null)),
+            "parentElement" => Ok(dom
+                .get(id)
+                .parent
+                .filter(|&p| is_el(dom, p))
+                .map(Value::Dom)
+                .unwrap_or(Value::Null)),
+            // nextSibling/previousSibling — **모든** 노드 종류를 센다 (텍스트/코멘트 포함).
+            // 예전엔 nextElementSibling 만 있어서 이 둘이 undefined 였다. DOM 순회의
+            // 기본 연산이라, 이게 없으면 TreeWalker 도 하이라이터도 한 노드에서 멈춘다.
+            "nextSibling" | "previousSibling" => {
+                let next = key.starts_with("next");
+                let result = dom.get(id).parent.and_then(|p| {
+                    let sibs = &dom.get(p).children;
+                    let idx = sibs.iter().position(|&c| c == id)?;
+                    if next {
+                        sibs.get(idx + 1).copied()
+                    } else {
+                        idx.checked_sub(1).and_then(|i| sibs.get(i).copied())
+                    }
+                });
+                Ok(result.map(Value::Dom).unwrap_or(Value::Null))
             }
             // 요소가 속한 문서. jQuery 의 setDocument 가 `node.ownerDocument || node` 로
             // 문서를 정하는데, 없으면 요소 자신을 document 로 삼아 document.createElement

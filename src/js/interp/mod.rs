@@ -3901,6 +3901,36 @@ impl Interp {
                 };
                 Ok(op.map(|o| Value::Native(Native::Set(o))).unwrap_or(Value::Undefined))
             }
+            // Attr 노드 읽기 (§4.9.2). 소유 요소의 속성을 실시간으로 본다.
+            Value::Attr(id, name) => {
+                let (id, name) = (*id, name.clone());
+                match key {
+                    "name" | "nodeName" => Ok(Value::Str(name)),
+                    // 정규화된 이름에서 접두사를 뗀 것이 로컬 이름
+                    "localName" => Ok(Value::Str(
+                        name.rsplit(':').next().unwrap_or(&name).to_string(),
+                    )),
+                    "prefix" => Ok(match name.split_once(':') {
+                        Some((p, _)) => Value::Str(p.to_string()),
+                        None => Value::Null,
+                    }),
+                    "value" | "nodeValue" | "textContent" => {
+                        let dom = self.dom_arena()?;
+                        let v = match &dom.get(id).node_type {
+                            crate::dom::NodeType::Element(e) => {
+                                e.attributes.get(&name).cloned().unwrap_or_default()
+                            }
+                            _ => String::new(),
+                        };
+                        Ok(Value::Str(v))
+                    }
+                    "ownerElement" => Ok(Value::Dom(id)),
+                    "nodeType" => Ok(Value::Num(2.0)), // ATTRIBUTE_NODE
+                    "specified" => Ok(Value::Bool(true)), // 표준: 항상 true
+                    "namespaceURI" => Ok(Value::Null),
+                    _ => Ok(Value::Undefined),
+                }
+            }
             // element.style.prop 읽기 (라이브 프록시)
             Value::Style(id) => {
                 let id = *id;
@@ -4041,6 +4071,15 @@ impl Interp {
                     "attachShadow" => Some(Native::AttachShadow),
                     "dispatchEvent" => Some(Native::DispatchEvent),
                     "cloneNode" => Some(Native::CloneNode),
+                    "substringData" => Some(Native::CharData(CharDataOp::Substring)),
+                    "appendData" => Some(Native::CharData(CharDataOp::Append)),
+                    "insertData" => Some(Native::CharData(CharDataOp::Insert)),
+                    "deleteData" => Some(Native::CharData(CharDataOp::Delete)),
+                    "replaceData" => Some(Native::CharData(CharDataOp::Replace)),
+                    "splitText" => Some(Native::SplitText),
+                    "getAttributeNode" => Some(Native::GetAttributeNode),
+                    "setAttributeNode" => Some(Native::SetAttributeNode),
+                    "removeAttributeNode" => Some(Native::RemoveAttributeNode),
                     "matches" => Some(Native::Matches),
                     "closest" => Some(Native::Closest),
                     "contains" => Some(Native::DomContains),
@@ -5340,6 +5379,15 @@ impl Interp {
                         Ok(())
                     }
                     Value::Dom(id) => self.dom_set(id, &key, value),
+                    // attr.value = x → 소유 요소의 속성을 실제로 바꾼다
+                    Value::Attr(id, name) => {
+                        if matches!(key.as_str(), "value" | "nodeValue" | "textContent") {
+                            let text = to_display(&value);
+                            let dom = self.dom_arena()?;
+                            dom.set_attr(id, &name, text);
+                        }
+                        Ok(())
+                    }
                     // element.style.prop = value (라이브 프록시 → inline style 갱신)
                     Value::Style(id) => {
                         let text = to_display(&value);

@@ -100,6 +100,14 @@ pub enum Native {
     CreateTextNode,
     // document.createComment (§4.5.1). 코멘트 노드는 DOM 의 일부다.
     CreateComment,
+    // CharacterData 메서드 (§4.9): 텍스트/코멘트의 문자 데이터 조작.
+    CharData(CharDataOp),
+    // Text.splitText(offset) (§4.10): 텍스트 노드를 둘로 쪼갠다.
+    SplitText,
+    // Attr 노드 접근 (§4.9.2)
+    GetAttributeNode,
+    SetAttributeNode,
+    RemoveAttributeNode,
     // document.defaultView → window
     WindowSelf,
     // Element.setAttributeNS/getAttributeNS/… (§4.9.2). SVG/XML 이 쓴다.
@@ -455,4 +463,14 @@ pub enum ArrOp {
     FindLastIndex,
     Fill,
     ReduceRight,
+}
+
+// CharacterData 의 문자 데이터 연산 (§4.9). 오프셋/길이는 UTF-16 코드 단위 기준.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CharDataOp {
+    Substring,
+    Append,
+    Insert,
+    Delete,
+    Replace,
 }
