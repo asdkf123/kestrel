@@ -317,7 +317,8 @@ impl Tokenizer {
                 value = String::from_utf8_lossy(&self.input[vs..self.pos]).to_string();
             }
         }
-        (name, decode_entities(&value))
+        // 속성 값은 표준의 예외 규칙을 적용해 디코드한다 (URL 의 ?a=1&copy=2 보존)
+        (name, decode_entities_in(&value, true))
     }
 
     // RAWTEXT/RCDATA: </name 까지 원문 반환 후 종료 태그 소비. decode=true 면 엔티티 해석.
@@ -2199,7 +2200,14 @@ const LIST_SCOPE: &[&str] = &[
 
 // ── 엔티티 디코드 ───────────────────────────────────────────────────
 
-fn decode_entities(s: &str) -> String {
+// 문자 참조 해석 (HTML 표준 §13.5). 숫자 참조(&#123; / &#x7B;)와 명명 참조.
+// 명명 참조는 **최장 일치**로 찾는다: &notin; 은 "notin;" 이지 "not" + "in;" 이 아니다.
+// 세미콜론 없는 레거시 형태(&amp, &copy 등 106개)도 표준이 인정한다.
+//
+// in_attr: 속성 값 안인가. 표준은 속성 값 안에서, 세미콜론 없는 참조 뒤에 '=' 나
+// 영숫자가 오면 **해석하지 않는다** (§13.5.7 "Named character reference state").
+// 이 규칙이 없으면 URL 의 ?a=1&copy=2 가 ?a=1©=2 로 망가진다.
+fn decode_entities_in(s: &str, in_attr: bool) -> String {
     if !s.contains('&') {
         return s.to_string();
     }
@@ -2207,109 +2215,111 @@ fn decode_entities(s: &str) -> String {
     let mut rest = s;
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
-        let after = &rest[amp..];
-        if let Some(semi) = after.find(';') {
-            if semi <= 12 {
-                if let Some(ch) = decode_one(&after[1..semi]) {
-                    out.push_str(&ch);
-                    rest = &after[semi + 1..];
-                    continue;
-                }
+        let after = &rest[amp + 1..]; // '&' 다음
+        // 숫자 참조
+        if let Some(body) = after.strip_prefix('#') {
+            if let Some((ch, used)) = decode_numeric(body) {
+                out.push_str(&ch);
+                rest = &after[1 + used..];
+                continue;
             }
         }
-        // 세미콜론 없는 레거시 명명 참조 (&copy, &reg, &amp 등 — HTML 표준의 no-semicolon 목록)
-        if let Some((ch, len)) = decode_legacy(&after[1..]) {
-            out.push_str(&ch);
-            rest = &after[1 + len..];
-            continue;
+        // 명명 참조: 최장 일치
+        match longest_named_match(after) {
+            Some((repl, used)) => {
+                let name = &after[..used];
+                let has_semi = name.ends_with(';');
+                if in_attr && !has_semi {
+                    // 속성 값 안: 뒤에 '=' 나 영숫자가 오면 해석하지 않는다 (표준)
+                    let next = after[used..].chars().next();
+                    if matches!(next, Some('=')) || matches!(next, Some(c) if c.is_ascii_alphanumeric())
+                    {
+                        out.push('&');
+                        rest = after;
+                        continue;
+                    }
+                }
+                out.push_str(repl);
+                rest = &after[used..];
+            }
+            None => {
+                out.push('&');
+                rest = after;
+            }
         }
-        out.push('&');
-        rest = &after[1..];
     }
     out.push_str(rest);
     out
 }
 
-// 세미콜론 없이도 해석되는 레거시 명명 참조 여부 (HTML 표준 no-semicolon 목록 중 실사용분).
-// 이 이름들만 세미콜론 없이 해석한다 (mdash/trade/hellip 등은 세미콜론 필수).
-fn is_legacy_entity(name: &str) -> bool {
-    matches!(
-        name,
-        "amp" | "lt" | "gt" | "quot" | "nbsp" | "copy" | "reg" | "laquo" | "raquo" | "middot"
-            | "deg" | "times" | "divide" | "para" | "sect" | "pound" | "cent" | "yen" | "shy"
-    )
+fn decode_entities(s: &str) -> String {
+    decode_entities_in(s, false)
 }
 
-// '&' 다음 문자열에서 세미콜론 없는 레거시 참조를 최장 일치로 해석.
-// 반환: (해석 문자열, 소비한 이름 바이트 수). 뒤가 '=' 면 URL 쿼리로 보고 해석 안 함.
-fn decode_legacy(body: &str) -> Option<(String, usize)> {
-    let name_len = body.bytes().take_while(|b| b.is_ascii_alphabetic()).count();
-    for len in (1..=name_len).rev() {
-        if is_legacy_entity(&body[..len]) {
-            if body[len..].starts_with('=') {
-                return None;
-            }
-            return decode_one(&body[..len]).map(|s| (s, len));
+// '&' 다음 문자열에서 표의 이름과 최장 일치. 반환: (치환 문자열, 소비한 바이트 수).
+fn longest_named_match(after: &str) -> Option<(&'static str, usize)> {
+    // 이름에 쓰일 수 있는 최대 길이만큼만 본다 (세미콜론 포함).
+    // 멀티바이트 문자 중간에서 자르면 안 된다 — 문자 경계로 내린다.
+    let mut limit = after.len().min(crate::entities::MAX_NAME_LEN);
+    while limit > 0 && !after.is_char_boundary(limit) {
+        limit -= 1;
+    }
+    let head = &after[..limit];
+    let mut best: Option<(&'static str, usize)> = None;
+    // 표는 이름 순 정렬 — 이진 탐색으로 접두사 후보를 좁힌다.
+    for len in (1..=head.len()).rev() {
+        if !head.is_char_boundary(len) {
+            continue;
+        }
+        let cand = &head[..len];
+        if let Ok(i) = crate::entities::NAMED_REFS.binary_search_by(|(n, _)| (*n).cmp(cand)) {
+            best = Some((crate::entities::NAMED_REFS[i].1, len));
+            break; // 뒤에서부터 보므로 첫 일치가 곧 최장 일치
         }
     }
-    None
+    best
 }
 
-fn decode_one(entity: &str) -> Option<String> {
-    let named = match entity {
-        "amp" => Some('&'),
-        "lt" => Some('<'),
-        "gt" => Some('>'),
-        "quot" => Some('"'),
-        "apos" => Some('\''),
-        "nbsp" => Some('\u{00A0}'),
-        "copy" => Some('\u{00A9}'),
-        "reg" => Some('\u{00AE}'),
-        "trade" => Some('\u{2122}'),
-        "hellip" => Some('\u{2026}'),
-        "mdash" => Some('\u{2014}'),
-        "ndash" => Some('\u{2013}'),
-        "lsquo" => Some('\u{2018}'),
-        "rsquo" => Some('\u{2019}'),
-        "ldquo" => Some('\u{201C}'),
-        "rdquo" => Some('\u{201D}'),
-        "laquo" => Some('\u{00AB}'),
-        "raquo" => Some('\u{00BB}'),
-        "middot" => Some('\u{00B7}'),
-        "bull" => Some('\u{2022}'),
-        "deg" => Some('\u{00B0}'),
-        "times" => Some('\u{00D7}'),
-        "divide" => Some('\u{00F7}'),
-        "para" => Some('\u{00B6}'),
-        "sect" => Some('\u{00A7}'),
-        "euro" => Some('\u{20AC}'),
-        "pound" => Some('\u{00A3}'),
-        "cent" => Some('\u{00A2}'),
-        "yen" => Some('\u{00A5}'),
-        "shy" => Some('\u{00AD}'),
-        "emsp" => Some('\u{2003}'),
-        "ensp" => Some('\u{2002}'),
-        "thinsp" => Some('\u{2009}'),
-        "larr" => Some('\u{2190}'),
-        "uarr" => Some('\u{2191}'),
-        "rarr" => Some('\u{2192}'),
-        "darr" => Some('\u{2193}'),
-        "harr" => Some('\u{2194}'),
-        "check" => Some('\u{2713}'),
-        "star" => Some('\u{2605}'),
-        _ => None,
+// &#123; / &#x7B; — '#' 다음 문자열을 해석. 반환: (문자, '#' 다음부터 소비한 바이트 수).
+// 표준의 오류 처리도 따른다: 0 → U+FFFD, 서로게이트 → U+FFFD, 범위 초과 → U+FFFD,
+// 그리고 C1 제어 문자(0x80~0x9F)는 윈도우 코드페이지 매핑으로 대체한다 (§13.5.5).
+fn decode_numeric(body: &str) -> Option<(String, usize)> {
+    let (digits, radix, prefix) = if let Some(hex) = body.strip_prefix(['x', 'X']) {
+        (hex, 16u32, 1usize)
+    } else {
+        (body, 10u32, 0usize)
     };
-    if let Some(c) = named {
-        return Some(c.to_string());
+    let n = digits
+        .bytes()
+        .take_while(|b| (b as &u8).is_ascii_digit() || (radix == 16 && b.is_ascii_hexdigit()))
+        .count();
+    if n == 0 {
+        return None;
     }
-    let num = entity.strip_prefix('#')?;
-    let (radix, digits) = match num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
-        Some(hex) => (16, hex),
-        None => (10, num),
-    };
-    let code = u32::from_str_radix(digits, radix).ok()?;
-    char::from_u32(code).map(|c| c.to_string())
+    let num = u32::from_str_radix(&digits[..n], radix).unwrap_or(0xFFFD);
+    let used = prefix + n + usize::from(digits[n..].starts_with(';'));
+    let ch = numeric_char(num);
+    Some((ch.to_string(), used))
 }
+
+// 숫자 참조의 코드포인트 → 문자 (§13.5.5 "Numeric character reference end state")
+fn numeric_char(num: u32) -> char {
+    // C1 제어 문자 영역은 윈도우-1252 문자로 대체한다 (표준이 정한 표)
+    const C1: [u32; 32] = [
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
+        0x2039, 0x0152, 0x008D, 0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022,
+        0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+    ];
+    let cp = match num {
+        0 => 0xFFFD,
+        0x80..=0x9F => C1[(num - 0x80) as usize],
+        0xD800..=0xDFFF => 0xFFFD, // 서로게이트
+        n if n > 0x10FFFF => 0xFFFD,
+        n => n,
+    };
+    char::from_u32(cp).unwrap_or('\u{FFFD}')
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -2549,6 +2559,57 @@ mod tests {
         assert!(names.contains(&"head".to_string()), "{:?}", names);
         assert!(names.contains(&"body".to_string()), "{:?}", names);
         assert!(names.contains(&"div".to_string()), "{:?}", names);
+    }
+
+    // 문자 참조 (HTML §13.5). 표는 spec 의 entities.json 에서 기계 추출한 2,231개다.
+    // 예전엔 손으로 고른 40개뿐이라 나머지는 조용히 원문 그대로 남았다.
+    #[test]
+    fn character_references_follow_spec() {
+        let one = |src: &str| -> String {
+            let n = parse_frag_root(format!("<p>{}</p>", src));
+            let mut s = String::new();
+            fn text(n: &Node, s: &mut String) {
+                if let NodeType::Text(t) = &n.node_type {
+                    s.push_str(t);
+                }
+                for c in &n.children {
+                    text(c, s);
+                }
+            }
+            text(&n, &mut s);
+            s
+        };
+        // 최장 일치: &notin; 은 "notin;" 이지 "not" + "in;" 이 아니다
+        assert_eq!(one("&notin;"), "\u{2209}");
+        assert_eq!(one("&not;"), "\u{00AC}");
+        // 세미콜론 없는 레거시 형태도 표준이 인정한다
+        assert_eq!(one("&amp"), "&");
+        assert_eq!(one("&copy"), "\u{00A9}");
+        // 다중 문자로 확장되는 참조
+        assert_eq!(one("&NotEqualTilde;"), "\u{2242}\u{0338}");
+        assert_eq!(one("&fjlig;"), "fj");
+        // 모르는 이름은 원문 그대로
+        assert_eq!(one("&nosuchentity;"), "&nosuchentity;");
+        // 숫자 참조: 0 과 서로게이트는 U+FFFD, C1 은 윈도우-1252 매핑 (§13.5.5)
+        assert_eq!(one("&#x1F600;"), "\u{1F600}");
+        assert_eq!(one("&#0;"), "\u{FFFD}");
+        assert_eq!(one("&#128;"), "\u{20AC}"); // 0x80 → €
+        assert_eq!(one("&#xD800;"), "\u{FFFD}");
+        // 멀티바이트 문자가 '&' 뒤에 바로 와도 패닉하지 않는다 (문자 경계)
+        assert_eq!(one("&日本語テキストのサンプルです"), "&日本語テキストのサンプルです");
+    }
+
+    // 속성 값 안에서는 세미콜론 없는 참조 뒤에 '=' 나 영숫자가 오면 해석하지 않는다
+    // (§13.5.7). 이 규칙이 없으면 URL 의 ?a=1&copy=2 가 ?a=1©=2 로 망가진다.
+    #[test]
+    fn attribute_value_keeps_ambiguous_ampersand() {
+        let n = parse_frag_root(r#"<a href="/x?a=1&copy=2&amp;b=3">L</a>"#.to_string());
+        match &n.node_type {
+            NodeType::Element(e) => {
+                assert_eq!(e.attributes.get("href").map(|s| s.as_str()), Some("/x?a=1&copy=2&b=3"));
+            }
+            _ => panic!("요소여야 한다"),
+        }
     }
 
     #[test]
