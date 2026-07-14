@@ -158,9 +158,11 @@ fn main() {
     let empty_pseudo = style::PseudoStyles::new();
     // 기준 시트 = 지금까지의 시트(UA + 외부 CSS). <style> 이 바뀌면 이 위에 다시 얹는다.
     let css_base_local = stylesheet.clone();
+    let mut sheets_local: Vec<css::SheetEntry> = Vec::new();
     let ctx = window::LayoutCtx {
         sheet: &mut stylesheet,
         css_base: &css_base_local,
+        sheets: &mut sheets_local,
         fonts: &fonts,
         img_map: &img_map,
         images: &images,
@@ -177,6 +179,7 @@ fn main() {
         dom: root_node,
         sheet: stylesheet,
         css_base: css_base_local,
+        sheets: sheets_local,
         images,
         img_map,
         fonts,
@@ -822,21 +825,35 @@ fn base_href(dom: &dom::Dom) -> Option<String> {
     found
 }
 
-fn collect_links(dom: &dom::Dom, out: &mut Vec<(String, String)>) {
-    walk_dom(dom, dom.root, &mut |n| {
-        if let dom::NodeType::Element(e) = &n.node_type {
-            if e.tag_name == "link" {
-                let rel = e.attributes.get("rel").map(|s| s.as_str()).unwrap_or("");
-                if rel.split_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
-                    if let Some(href) = e.attributes.get("href") {
-                        let media = e.attributes.get("media").cloned().unwrap_or_default();
-                        out.push((href.clone(), media));
+// 문서 순서로 스타일 소스를 모은다: <link rel=stylesheet> 와 <style>.
+// 캐스케이드 순서는 **문서 순서**다 (CSS Cascade §6.4.4) — 예전엔 외부 CSS 를 전부
+// 먼저 얹고 인라인 <style> 을 나중에 얹어서, <style> 뒤에 오는 <link> 가 이겨야 하는
+// 경우에 순서가 뒤집혔다.
+enum CssSrc {
+    Link(dom::NodeId, String, String), // (노드, href, media)
+    Style(dom::NodeId),
+}
+
+fn collect_css_sources(dom: &dom::Dom, out: &mut Vec<CssSrc>) {
+    walk_dom_ids(dom, dom.root, &mut |id| {
+        if let dom::NodeType::Element(e) = &dom.get(id).node_type {
+            match e.tag_name.as_str() {
+                "link" => {
+                    let rel = e.attributes.get("rel").map(|s| s.as_str()).unwrap_or("");
+                    if rel.split_whitespace().any(|r| r.eq_ignore_ascii_case("stylesheet")) {
+                        if let Some(href) = e.attributes.get("href") {
+                            let media = e.attributes.get("media").cloned().unwrap_or_default();
+                            out.push(CssSrc::Link(id, href.clone(), media));
+                        }
                     }
                 }
+                "style" => out.push(CssSrc::Style(id)),
+                _ => {}
             }
         }
     });
 }
+
 
 fn extract_css(dom: &dom::Dom, out: &mut String) {
     let mut seen = std::collections::HashSet::new();
@@ -949,33 +966,74 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     // 저작자 CSS 는 실제 뷰포트 폭으로 파싱해 @media 를 평가한다.
     let page_vw = 1000.0f32;
     let page_vh = 800.0f32; // vh 단위 해석용 기본 뷰포트 높이
-    let mut sheet = css::user_agent_stylesheet();
-    let mut hrefs = Vec::new();
-    collect_links(&dom, &mut hrefs);
-    if !hrefs.is_empty() {
+    // 문서 순서로 스타일 소스를 모은다 (<link> 와 <style> 이 섞인 순서 그대로).
+    let mut srcs = Vec::new();
+    collect_css_sources(&dom, &mut srcs);
+    let link_count = srcs.iter().filter(|s| matches!(s, CssSrc::Link(..))).count();
+    if link_count > 0 {
         phase("html+parse", &mut t0);
-    println!("[css] 외부 스타일시트 {}개 로드 중...", hrefs.len().min(10));
+        println!("[css] 외부 스타일시트 {}개 로드 중...", link_count.min(10));
     }
     // 최상위 <link> 시트들은 **한꺼번에 병렬로** 받는다 (@import 는 그 안에서 재귀).
     let mut seen_css = std::collections::HashSet::new();
-    let top_urls: Vec<String> = hrefs
+    let top_urls: Vec<String> = srcs
         .iter()
+        .filter_map(|s| match s {
+            CssSrc::Link(_, href, media)
+                if media.is_empty() || css::media_matches(media, page_vw) =>
+            {
+                base.join(href).map(|u| u.as_string())
+            }
+            _ => None,
+        })
         .take(10)
-        .filter(|(_, media)| media.is_empty() || css::media_matches(media, page_vw))
-        .filter_map(|(href, _)| base.join(href).map(|u| u.as_string()))
         .collect();
     let top_bodies = http::fetch_all(&top_urls);
+    let mut fetched: std::collections::HashMap<String, _> = std::collections::HashMap::new();
     for (u, r) in top_urls.iter().zip(top_bodies) {
-        load_stylesheet_body(u, r, page_vw, &mut sheet, 0, &mut seen_css);
+        fetched.insert(u.clone(), r);
     }
-    // UA + 외부 CSS 는 스크립트가 바꿀 수 없는 부분이다. 인라인 <style> 은 스크립트가
-    // 넣고 빼므로, 스타일을 다시 계산할 때마다 이 기준 위에 현재 <style> 들을 다시 얹는다.
-    let css_base = sheet.clone();
-    let mut seen_styles = std::collections::HashSet::new();
-    let mut inline_css = String::new();
-    extract_new_css(&dom, &mut seen_styles, &mut inline_css);
-    let parsed_inline = css::parse_viewport(inline_css, page_vw);
-    sheet.merge(parsed_inline);
+    // CSSOM: 시트를 개별로 보존한다 (document.styleSheets 가 이걸 그대로 노출한다).
+    let mut sheets: Vec<css::SheetEntry> = Vec::new();
+    for src in &srcs {
+        match src {
+            CssSrc::Link(node, href, media) => {
+                if !(media.is_empty() || css::media_matches(media, page_vw)) {
+                    continue;
+                }
+                let Some(u) = base.join(href).map(|u| u.as_string()) else { continue };
+                let Some(r) = fetched.remove(&u) else { continue };
+                let mut one = css::Stylesheet::empty();
+                load_stylesheet_body(&u, r, page_vw, &mut one, 0, &mut seen_css);
+                sheets.push(css::SheetEntry {
+                    href: Some(u),
+                    owner: Some(*node),
+                    text: String::new(),
+                    sheet: one,
+                    disabled: false,
+                });
+            }
+            CssSrc::Style(node) => {
+                let text = dom.text_content(*node);
+                let one = css::parse_viewport(text.clone(), page_vw);
+                sheets.push(css::SheetEntry {
+                    href: None,
+                    owner: Some(*node),
+                    text,
+                    sheet: one,
+                    disabled: false,
+                });
+            }
+        }
+    }
+    // UA 시트는 스크립트가 못 바꾼다. 그 위에 저작자 시트들을 문서 순서로 얹는다.
+    let css_base = css::user_agent_stylesheet();
+    let mut sheet = css_base.clone();
+    for e in &sheets {
+        if !e.disabled {
+            sheet.merge(e.sheet.clone());
+        }
+    }
 
     // <picture> 의 <source> 를 먼저 적용한다 (선택된 소스가 img 에 얹힌다)
     apply_picture_sources(&mut dom, page_vw);
@@ -1115,6 +1173,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         let ctx = window::LayoutCtx {
             sheet: &mut sheet,
             css_base: &css_base,
+            sheets: &mut sheets,
             fonts: &fonts,
             img_map: &img_map,
             images: &images,
@@ -1125,12 +1184,15 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         js::run_scripts_with_base(&mut dom, url, &base.as_string(), Some(ctx))
     };
 
-    // 스크립트가 <style> 을 주입했으면 그때 생긴 것만 추가로 반영한다.
-    let mut injected_css = String::new();
-    extract_new_css(&dom, &mut seen_styles, &mut injected_css);
-    if !injected_css.trim().is_empty() {
-        let parsed = css::parse_viewport(injected_css, page_vw);
-        sheet.merge(parsed);
+    // 스크립트가 <style> 을 넣었거나 지웠거나 내용을 바꿨으면 시트 목록을 갱신하고
+    // 병합 시트를 다시 만든다 (한 곳에서만 — 예전엔 '새로 생긴 것만' 추가로 얹어서
+    // 지워진 <style> 이 계속 적용됐다).
+    window::sync_style_sheets(&dom, &mut sheets, page_vw);
+    sheet = css_base.clone();
+    for e in &sheets {
+        if !e.disabled {
+            sheet.merge(e.sheet.clone());
+        }
     }
 
     // 스크립트가 넣은 <img>/배경 이미지도 가져온다 (이미 받은 것은 건너뜀).
@@ -1164,6 +1226,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
         dom,
         sheet,
         css_base,
+        sheets,
         images,
         img_map,
         fonts,

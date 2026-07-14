@@ -432,6 +432,15 @@ impl Interp {
                 arr.set_prop("getNamedItem".to_string(), Value::Native(Native::GetNamedItem));
                 Ok(Value::Arr(arr))
             }
+            // <style>/<link> 의 .sheet — 그 요소가 만든 CSSStyleSheet (§CSSOM 6.3)
+            "sheet" => {
+                self.sync_sheets();
+                let owner = id;
+                let idx = self
+                    .sheets()
+                    .and_then(|ss| ss.iter().position(|e| e.owner == Some(owner)));
+                return Ok(idx.map(Value::Sheet).unwrap_or(Value::Null));
+            }
             // 문서 트리에 붙어 있는가 (분리된 노드인지 판별 — 프레임워크가 흔히 본다)
             "isConnected" => {
                 let root = dom.root;

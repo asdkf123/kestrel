@@ -3102,13 +3102,13 @@ mod tests {
     fn text_decoration_line_through_emits_decoration() {
         let fs = fonts();
         // line-through 지정 → 장식 1개 이상
-        let root = crate::html::parse_dom("<p>hi</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>hi</p>".to_string());
         let ss = crate::css::parse("p { display: block; text-decoration: line-through; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let lb = layout_tree_for(&styled, &fs);
         assert!(count_decorations(&lb) >= 1, "line-through 장식이 있어야");
         // 데코 없는 문단은 장식 0
-        let root2 = crate::html::parse_dom("<p>hi</p>".to_string());
+        let root2 = crate::html::parse_dom_fragment("<p>hi</p>".to_string());
         let ss2 = crate::css::parse("p { display: block; }".to_string());
         let styled2 = crate::style::style_tree(&root2, &ss2);
         let lb2 = layout_tree_for(&styled2, &fs);
@@ -3147,7 +3147,7 @@ mod tests {
         // transform 은 레이아웃 기하를 바꾸지 않는다 (CSS Transforms §3: 시각 변환).
         // 박스는 제자리에 있고, 행렬만 붙는다.
         let fs = fonts();
-        let dom = crate::html::parse_dom("<div></div>".to_string());
+        let dom = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; width: 100px; height: 50px; transform: translate(10px, 20px); }".to_string(),
         );
@@ -3167,7 +3167,7 @@ mod tests {
     fn transform_scale_maps_around_center() {
         // scale(2) → 기본 원점은 중심(50,25). 좌상단은 (-50,-25), 우하단은 (150,75).
         let fs = fonts();
-        let dom = crate::html::parse_dom("<div></div>".to_string());
+        let dom = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; width: 100px; height: 50px; transform: scale(2); }".to_string(),
         );
@@ -3184,7 +3184,7 @@ mod tests {
         // transform-origin 은 다중 토큰이라 예전에는 값 파서가 통째로 버려서
         // **항상 중심 기준**으로 돌았다 (요행).
         let fs = fonts();
-        let dom = crate::html::parse_dom("<div></div>".to_string());
+        let dom = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; width: 100px; height: 50px; transform: rotate(90deg); transform-origin: 0 0; }"
                 .to_string(),
@@ -3212,7 +3212,7 @@ mod tests {
     #[test]
     fn inline_svg_text_produces_glyphs() {
         let fs = fonts();
-        let dom = crate::html::parse_dom(
+        let dom = crate::html::parse_dom_fragment(
             "<svg width=\"100\" height=\"50\" viewBox=\"0 0 100 50\">\
              <text x=\"10\" y=\"30\" font-size=\"20\">Hi</text></svg>"
                 .to_string(),
@@ -3284,14 +3284,14 @@ mod tests {
         let fs = fonts();
         let text = "<div id=x><p>aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp</p></div>";
         let one = {
-            let dom = crate::html::parse_dom(text.to_string());
+            let dom = crate::html::parse_dom_fragment(text.to_string());
             let ss = crate::css::parse(
                 "div { display: block; width: 100px } p { display: block; margin: 0 }".to_string(),
             );
             let styled = crate::style::style_tree(&dom, &ss);
             tree_for(&styled, &fs).dimensions.content.height
         };
-        let dom = crate::html::parse_dom(text.to_string());
+        let dom = crate::html::parse_dom_fragment(text.to_string());
         let ss = crate::css::parse(
             "div { display: block; width: 216px; column-count: 2; column-gap: 16px } \
              p { display: block; margin: 0 }"
@@ -3328,7 +3328,7 @@ mod tests {
         // 블록 레벨로 계산된다. 예전엔 <span style="position:absolute; width:30px"> 이
         // 인라인으로 남아 width/right 가 통째로 무시됐다 (아주 흔한 패턴).
         let fs = fonts();
-        let dom = crate::html::parse_dom(
+        let dom = crate::html::parse_dom_fragment(
             "<div id=p><span id=s>x</span></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -3359,7 +3359,7 @@ mod tests {
         // 익명 자식도 absolute 로 보고 **한 번 더** 옮겨서, 박스는 맞는데
         // 글자만 좌표 2배 위치에 그려졌다.
         let fs = fonts();
-        let dom = crate::html::parse_dom("<main><div id=a>hi</div></main>".to_string());
+        let dom = crate::html::parse_dom_fragment("<main><div id=a>hi</div></main>".to_string());
         let ss = crate::css::parse(
             "main { display: block; } #a { display: block; position: absolute; left: 100px; top: 100px; }"
                 .to_string(),
@@ -3386,7 +3386,7 @@ mod tests {
     fn before_pseudo_content_renders_glyphs() {
         let fs = fonts();
         // ::before content 가 있으면 글리프가 늘어난다 (생성 텍스트가 흐름에 들어감)
-        let mut dom = crate::html::parse_dom("<p class=\"a\">x</p>".to_string());
+        let mut dom = crate::html::parse_dom_fragment("<p class=\"a\">x</p>".to_string());
         let ss = crate::css::parse(
             "p { display: block; } .a::before { content: \"AB\"; }".to_string(),
         );
@@ -3403,7 +3403,7 @@ mod tests {
         let fs = fonts();
         let text = "a".repeat(40);
         // nowrap + ellipsis: 40px 폭이면 글리프가 잘리고 … 하나 붙음 → 40개 미만
-        let root = crate::html::parse_dom(format!("<p>{}</p>", text));
+        let root = crate::html::parse_dom_fragment(format!("<p>{}</p>", text));
         let ss = crate::css::parse(
             "p { display: block; width: 40px; white-space: nowrap; text-overflow: ellipsis; font-size: 16px; }"
                 .to_string(),
@@ -3457,7 +3457,7 @@ mod tests {
     fn br_forces_line_breaks() {
         let fs = fonts();
         // "aaa<br>bbb<br>ccc" — <br> 두 개로 3줄. 서로 다른 baseline_y 3개여야.
-        let root = crate::html::parse_dom("<p>aaa<br>bbb<br>ccc</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>aaa<br>bbb<br>ccc</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 16px; }".to_string());
         let s = crate::style::style_tree(&root, &ss);
         let lb = layout_tree_for(&s, &fs);
@@ -3470,7 +3470,7 @@ mod tests {
         // 연속 <br><br> 는 빈 줄을 만든다: "a<br><br>b" 의 두 글리프 줄 간격이
         // 한 번 개행("a<br>b")보다 정확히 한 줄 더 크다.
         let gap = |html: &str| {
-            let r = crate::html::parse_dom(html.to_string());
+            let r = crate::html::parse_dom_fragment(html.to_string());
             let st = crate::style::style_tree(&r, &ss);
             let l = layout_tree_for(&st, &fs);
             let gs = glyphs_of(&l);
@@ -3488,13 +3488,13 @@ mod tests {
         let fs = fonts();
         let text = "one two three four five six seven eight nine ten eleven twelve";
         // justify: 첫 줄이 오른쪽 끝까지 채워짐 (마지막 글리프 x 가 크다)
-        let jroot = crate::html::parse_dom(format!("<p>{}</p>", text));
+        let jroot = crate::html::parse_dom_fragment(format!("<p>{}</p>", text));
         let jss = crate::css::parse("p { display: block; width: 120px; text-align: justify; font-size: 14px; }".to_string());
         let js = crate::style::style_tree(&jroot, &jss);
         let jlb = layout_tree_for(&js, &fs);
         let jg = glyphs_of(&jlb);
         // 왼쪽 정렬과 비교: justify 의 첫 줄 오른쪽 끝 글리프가 더 오른쪽
-        let lroot = crate::html::parse_dom(format!("<p>{}</p>", text));
+        let lroot = crate::html::parse_dom_fragment(format!("<p>{}</p>", text));
         let lss = crate::css::parse("p { display: block; width: 120px; text-align: left; font-size: 14px; }".to_string());
         let ls = crate::style::style_tree(&lroot, &lss);
         let llb = layout_tree_for(&ls, &fs);
@@ -3510,7 +3510,7 @@ mod tests {
     fn vertical_align_super_raises_glyph() {
         let fs = fonts();
         // "a<sup>1</sup>" — sup 글리프가 baseline 위로(작은 y)
-        let root = crate::html::parse_dom("<p>a<sup>1</sup></p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>a<sup>1</sup></p>".to_string());
         let mut ss = crate::css::user_agent_stylesheet();
         ss.rules.extend(crate::css::parse("p { display: block; } sup { vertical-align: super; }".to_string()).rules);
         let styled = crate::style::style_tree(&root, &ss);
@@ -3524,7 +3524,7 @@ mod tests {
     #[test]
     fn text_indent_offsets_first_line() {
         let fs = fonts();
-        let root = crate::html::parse_dom("<p>hello</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>hello</p>".to_string());
         let ss = crate::css::parse("p { display: block; text-indent: 30px; }".to_string());
         let s = crate::style::style_tree(&root, &ss);
         let lb = layout_tree_for(&s, &fs);
@@ -3536,13 +3536,13 @@ mod tests {
     #[test]
     fn letter_spacing_widens_text() {
         let fs = fonts();
-        let base = crate::html::parse_dom("<p>hello</p>".to_string());
+        let base = crate::html::parse_dom_fragment("<p>hello</p>".to_string());
         let ss0 = crate::css::parse("p { display: block; }".to_string());
         let s0 = crate::style::style_tree(&base, &ss0);
         let lb0 = layout_tree_for(&s0, &fs);
         let g0 = glyphs_of(&lb0);
         // letter-spacing 5px → 마지막 글리프가 더 오른쪽
-        let sp = crate::html::parse_dom("<p>hello</p>".to_string());
+        let sp = crate::html::parse_dom_fragment("<p>hello</p>".to_string());
         let ss1 = crate::css::parse("p { display: block; letter-spacing: 5px; }".to_string());
         let s1 = crate::style::style_tree(&sp, &ss1);
         let lb1 = layout_tree_for(&s1, &fs);
@@ -3554,7 +3554,7 @@ mod tests {
     #[test]
     fn ua_underlines_links() {
         let fs = fonts();
-        let root = crate::html::parse_dom("<p><a href=\"/x\">link</a></p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p><a href=\"/x\">link</a></p>".to_string());
         let mut ss = crate::css::user_agent_stylesheet();
         ss.rules.extend(crate::css::parse("p { display: block; }".to_string()).rules);
         let styled = crate::style::style_tree(&root, &ss);
@@ -3563,7 +3563,7 @@ mod tests {
     }
 
     fn layout_for(html: &str, css: &str, viewport_width: f32) -> Dimensions {
-        let root = crate::html::parse_dom(html.to_string());
+        let root = crate::html::parse_dom_fragment(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3725,7 +3725,7 @@ mod tests {
 
     #[test]
     fn children_stack_vertically() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"outer\"><div class=\"inner\"></div><div class=\"inner\"></div></div>"
                 .to_string(),
         );
@@ -3745,7 +3745,7 @@ mod tests {
 
     #[test]
     fn text_box_produces_glyphs_and_height() {
-        let root = crate::html::parse_dom("<p>hello world</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>hello world</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3759,7 +3759,7 @@ mod tests {
     #[test]
     fn long_text_wraps_to_multiple_lines() {
         let root =
-            crate::html::parse_dom("<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh</p>".to_string());
+            crate::html::parse_dom_fragment("<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3774,7 +3774,7 @@ mod tests {
 
     #[test]
     fn inline_element_text_is_collected() {
-        let root = crate::html::parse_dom("<p>a <span>b</span> c</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>a <span>b</span> c</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3786,7 +3786,7 @@ mod tests {
 
     #[test]
     fn inline_only_block_has_nonzero_height() {
-        let root = crate::html::parse_dom("<div><a>link</a></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><a>link</a></div>".to_string());
         let ss = crate::css::parse("div { display: block; } a { display: inline; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3798,7 +3798,7 @@ mod tests {
     }
 
     fn flex_layout(html: &str, css: &str, width: f32) -> Vec<Dimensions> {
-        let root = crate::html::parse_dom(html.to_string());
+        let root = crate::html::parse_dom_fragment(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3810,7 +3810,7 @@ mod tests {
 
     // 스크롤 위치를 주고 sticky 후처리까지 돌린 뒤, 루트의 자손 박스들을 돌려준다.
     fn sticky_layout(html: &str, css: &str, scroll_y: f32) -> Vec<(String, Rect)> {
-        let root = crate::html::parse_dom(html.to_string());
+        let root = crate::html::parse_dom_fragment(html.to_string());
         let ss = crate::css::parse(css.to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -3862,7 +3862,7 @@ mod tests {
 
     #[test]
     fn position_relative_offsets_without_affecting_siblings() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"a\"></div><div class=\"b\"></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -3884,7 +3884,7 @@ mod tests {
 
     #[test]
     fn position_absolute_out_of_flow_and_placed() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"abs\"></div><div class=\"flow\"></div></div>"
                 .to_string(),
         );
@@ -3922,7 +3922,7 @@ mod tests {
             .rules,
         );
         let root =
-            crate::html::parse_dom("<div class=\"p\"><div class=\"c\"></div></div>".to_string());
+            crate::html::parse_dom_fragment("<div class=\"p\"><div class=\"c\"></div></div>".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut vp: Dimensions = Default::default();
         vp.content.width = 400.0;
@@ -3944,7 +3944,7 @@ mod tests {
     #[test]
     fn position_absolute_uses_nearest_positioned_ancestor() {
         // abs 는 정적 wrapper(.mid)를 건너뛰고 positioned 조상(.rel) 기준으로 배치돼야.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"rel\"><div class=\"mid\"><div class=\"abs\"></div></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -3967,7 +3967,7 @@ mod tests {
     #[test]
     fn checkbox_and_radio_render_as_native_controls() {
         let fs = fonts();
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><input type=\"checkbox\" checked><input type=\"radio\"></div>".to_string(),
         );
         let ss = crate::css::user_agent_stylesheet();
@@ -4000,7 +4000,7 @@ mod tests {
     #[test]
     fn select_shows_only_selected_option() {
         let fs = fonts();
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<select><option>Apple</option><option selected>Banana</option><option>Cherry</option></select>"
                 .to_string(),
         );
@@ -4017,7 +4017,7 @@ mod tests {
     #[test]
     fn table_caption_renders_above_rows() {
         let fs = fonts();
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<table><caption>Cap</caption><tr><td>A</td></tr></table>".to_string(),
         );
         let ss = crate::css::user_agent_stylesheet();
@@ -4047,7 +4047,7 @@ mod tests {
     #[test]
     fn ua_heading_font_sizes() {
         let ss = crate::css::user_agent_stylesheet();
-        let root = crate::html::parse_dom("<h1>T</h1><h2>S</h2><p>b</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<h1>T</h1><h2>S</h2><p>b</p>".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         fn find(n: &StyledNode, tag: &str) -> Option<f32> {
             if let NodeType::Element(e) = &n.node.node_type {
@@ -4074,7 +4074,7 @@ mod tests {
             ".c{display:block;column-count:3;column-gap:10px;} .b{display:block;height:20px;}"
                 .to_string(),
         );
-        let root = crate::html::parse_dom(html);
+        let root = crate::html::parse_dom_fragment(html);
         let styled = crate::style::style_tree(&root, &ss);
         let mut vp: Dimensions = Default::default();
         vp.content.width = 330.0;
@@ -4098,7 +4098,7 @@ mod tests {
                 .to_string(),
         );
         let root =
-            crate::html::parse_dom("<div class=\"a\"></div><div class=\"b\"></div>".to_string());
+            crate::html::parse_dom_fragment("<div class=\"a\"></div><div class=\"b\"></div>".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut vp: Dimensions = Default::default();
         vp.content.width = 300.0;
@@ -4125,7 +4125,7 @@ mod tests {
              .innerp{display:block;height:20px;margin-top:40px;}"
                 .to_string(),
         );
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"a\"></div>\
              <div class=\"b\"><div class=\"inner\"></div></div>\
              <div class=\"p\"><div class=\"innerp\"></div></div>"
@@ -4161,7 +4161,7 @@ mod tests {
              .c { display: block; }"
                 .to_string(),
         );
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"g\"><div class=\"c\"></div><div class=\"c\"></div><div class=\"c\"></div></div>"
                 .to_string(),
         );
@@ -4187,7 +4187,7 @@ mod tests {
              .b { display: block; float: left; width: 40%; }"
                 .to_string(),
         );
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
         );
         let styled = crate::style::style_tree(&root, &ss);
@@ -4208,7 +4208,7 @@ mod tests {
         let ss = crate::css::parse(
             "div { display: block; font-size: 16px; } .p { padding-left: 30px; }".to_string(),
         );
-        let root = crate::html::parse_dom("<div>A<span class=\"p\">B</span></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div>A<span class=\"p\">B</span></div>".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut vp: Dimensions = Default::default();
         vp.content.width = 300.0;
@@ -4231,7 +4231,7 @@ mod tests {
         let fs = fonts();
         // §9.5: float 은 최근접 BFC 소속. 비BFC 래퍼는 float 을 담지 않아 높이가 0 이고,
         // float 은 래퍼 밖(부모 BFC)으로 넘쳐 뒤 형제가 우회하게 된다.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"outer\"><div class=\"wrap\"><div class=\"fl\"></div></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4256,7 +4256,7 @@ mod tests {
         let fs = fonts();
         let ss = crate::css::user_agent_stylesheet();
         let markers = |html: &str| -> Vec<String> {
-            let root = crate::html::parse_dom(html.to_string());
+            let root = crate::html::parse_dom_fragment(html.to_string());
             let styled = crate::style::style_tree(&root, &ss);
             let mut vp: Dimensions = Default::default();
             vp.content.width = 300.0;
@@ -4288,7 +4288,7 @@ mod tests {
     fn hr_rule_and_blockquote_dd_indent() {
         let fs = fonts();
         let ss = crate::css::user_agent_stylesheet();
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<hr><blockquote>q</blockquote><dl><dd>d</dd></dl>".to_string(),
         );
         let styled = crate::style::style_tree(&root, &ss);
@@ -4320,7 +4320,7 @@ mod tests {
     fn inline_element_background_paints() {
         let fs = fonts();
         let ss = crate::css::user_agent_stylesheet();
-        let root = crate::html::parse_dom("<p>a <mark>hi</mark> b</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>a <mark>hi</mark> b</p>".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut vp: Dimensions = Default::default();
         vp.content.width = 300.0;
@@ -4347,7 +4347,7 @@ mod tests {
     fn progress_and_meter_render_as_gauges() {
         let fs = fonts();
         let ss = crate::css::user_agent_stylesheet();
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<progress value=\"70\" max=\"100\"></progress><meter value=\"30\" min=\"0\" max=\"100\"></meter>"
                 .to_string(),
         );
@@ -4378,7 +4378,7 @@ mod tests {
     fn password_input_is_masked() {
         let fs = fonts();
         let root =
-            crate::html::parse_dom("<input type=\"password\" value=\"secret\">".to_string());
+            crate::html::parse_dom_fragment("<input type=\"password\" value=\"secret\">".to_string());
         let ss = crate::css::user_agent_stylesheet();
         let styled = crate::style::style_tree(&root, &ss);
         let mut vp: Dimensions = Default::default();
@@ -4394,7 +4394,7 @@ mod tests {
     #[test]
     fn text_align_center_offsets_inline_line() {
         // 가운데 정렬 문단: 글리프가 왼쪽 밖으로 밀려 시작 (content_x 보다 큼)
-        let root = crate::html::parse_dom("<p>hi</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p>hi</p>".to_string());
         let ss = crate::css::parse(
             "p { display: block; font-size: 20px; text-align: center; }".to_string(),
         );
@@ -4410,7 +4410,7 @@ mod tests {
     #[test]
     fn rtl_block_right_aligns_text() {
         // dir="rtl" 블록은 text-align 미지정 시 오른쪽 정렬(start=right)
-        let root = crate::html::parse_dom("<p dir=\"rtl\">hi</p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p dir=\"rtl\">hi</p>".to_string());
         let ss = crate::css::parse("p { display: block; font-size: 20px; width: 400px; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -4424,7 +4424,7 @@ mod tests {
     #[test]
     fn center_element_centers_narrow_block_child() {
         // <center> 안의 고정폭 블록이 가로 중앙으로 이동
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<center><div class=\"box\"></div></center>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4503,7 +4503,7 @@ mod tests {
 
     #[test]
     fn percentage_width_resolves_against_container() {
-        let root = crate::html::parse_dom("<div class=\"half\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"half\"></div>".to_string());
         let ss = crate::css::parse(
             ".half { display: block; width: 50%; height: 10px; }".to_string(),
         );
@@ -4517,7 +4517,7 @@ mod tests {
 
     #[test]
     fn float_left_packs_side_by_side() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4540,7 +4540,7 @@ mod tests {
 
     #[test]
     fn float_right_anchors_right_edge() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"r\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4559,7 +4559,7 @@ mod tests {
 
     #[test]
     fn inline_block_flows_horizontally() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4584,7 +4584,7 @@ mod tests {
 
     #[test]
     fn inline_block_wraps_when_exceeding_width() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"i\"></div><div class=\"i\"></div><div class=\"i\"></div></div>"
                 .to_string(),
         );
@@ -4609,7 +4609,7 @@ mod tests {
     fn inline_block_shrinks_to_nested_auto_block() {
         // 구글 버튼 구조: inline-block 안에 auto 폭 블록, 그 안에 고정 폭 리프.
         // inline-block 은 avail 을 채우지 않고 내부 리프 폭으로 줄어들어 나란히 놓여야 함.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\">\
              <div class=\"ib\"><div class=\"inner\"><div class=\"leaf\"></div></div></div>\
              <div class=\"ib\"><div class=\"inner\"><div class=\"leaf\"></div></div></div>\
@@ -4640,7 +4640,7 @@ mod tests {
     fn inline_block_margin_absorbed_not_stolen_from_content() {
         // margin-right 가 있는 auto 폭 inline-block: margin 이 내부 content 를 깎지 않고
         // (내부 40px 리프 유지), 다음 형제는 리프폭+margin 만큼 뒤에 놓여야 함.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\">\
              <div class=\"ib\"><div class=\"leaf\"></div></div>\
              <div class=\"ib\"><div class=\"leaf\"></div></div>\
@@ -4667,7 +4667,7 @@ mod tests {
 
     #[test]
     fn inline_block_line_centers_with_text_align() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"i\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4686,7 +4686,7 @@ mod tests {
 
     #[test]
     fn float_band_clears_following_block() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"f\"></div><div class=\"after\"></div></div>"
                 .to_string(),
         );
@@ -4709,7 +4709,7 @@ mod tests {
     fn text_and_inline_block_share_line() {
         // "Home" 텍스트 + inline-block 버튼 + "tail" 이 같은 줄에 (세로로 안 쌓임).
         // 네비게이션 바/버튼 그룹의 기본 패턴.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"nav\">Home <span class=\"btn\"></span> tail</div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4734,7 +4734,7 @@ mod tests {
     fn text_wraps_around_left_float() {
         // float left(100px, 30px 높이) + 텍스트: 초반 줄은 float 우측(x>=95),
         // float 아래 줄은 전체폭(x<95). 이미지 주위 텍스트 흐름.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"f\"></div>aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz a1 b2 c3 d4 e5 f6 g7 h8 i9</div>"
                 .to_string(),
         );
@@ -4765,7 +4765,7 @@ mod tests {
         // 줄만 float 을 우회한다. 밴드 아래로 clear 되지 않고 float 옆(같은 y)에 배치.
         // (위키백과 인포박스 옆 본문 흐름의 핵심 패턴 — 예전엔 문단이 float 아래로 밀렸음)
         let words = "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz a1 b2 c3 d4 e5 f6 g7 h8 i9 j0 k1 l2 m3 n4";
-        let root = crate::html::parse_dom(format!(
+        let root = crate::html::parse_dom_fragment(format!(
             "<div class=\"wrap\"><div class=\"f\"></div><div class=\"t\">{words}</div></div>"
         ));
         let ss = crate::css::parse(
@@ -4798,7 +4798,7 @@ mod tests {
         // float 뒤 중첩 래퍼(<div><div>텍스트</div></div>): 밴드가 BFC 아닌 블록을
         // 통해 재귀적으로 전파돼 안쪽 텍스트가 float 을 우회한다. (예: float + 감싼 본문)
         let words = "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq rrr sss ttt uuu vvv www xxx yyy zzz a1 b2 c3 d4 e5 f6 g7 h8 i9 j0 k1 l2 m3 n4";
-        let root = crate::html::parse_dom(format!(
+        let root = crate::html::parse_dom_fragment(format!(
             "<div class=\"cont\"><div class=\"f\"></div><div class=\"outer\"><div class=\"inner\">{words}</div></div></div>"
         ));
         let ss = crate::css::parse(
@@ -4828,7 +4828,7 @@ mod tests {
     fn inline_elements_get_borders() {
         // 인접한 두 인라인 태그가 각각 별개 테두리를 얻는다 (하나로 병합 안 됨).
         // 태그/뱃지/kbd 등 인라인 요소 border 렌더.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<p>x <span class=\"t\">foo</span> <span class=\"t\">bar</span> y</p>".to_string(),
         );
         let ss = crate::css::parse(
@@ -4846,7 +4846,7 @@ mod tests {
     fn clear_both_drops_below_float() {
         // float:left(100x40) 뒤 clear:both 블록: 옆으로 우회하지 않고 float 아래로 내려간다.
         // (clearfix 의 핵심 — clear 없으면 텍스트가 float 옆으로 흐름)
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"cont\"><div class=\"f\"></div><div class=\"t\">hello world text</div></div>"
                 .to_string(),
         );
@@ -4872,7 +4872,7 @@ mod tests {
     fn float_column_main_sits_beside_with_margin() {
         // float 사이드바 + margin 으로 float 을 클리어하는 본문 → 같은 y 에 나란히
         // (clear 되어 아래로 밀리지 않음). 고전 float 다단 레이아웃.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"side\"></div><div class=\"main\"></div></div>"
                 .to_string(),
         );
@@ -4958,7 +4958,7 @@ mod tests {
 
     #[test]
     fn flex_container_height_is_tallest_item() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"row\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -5176,7 +5176,7 @@ mod tests {
         // 더 큰 font-size 인라인이 오면 줄 상자가 그만큼 커진다(겹침 방지). 균일 문단은 불변.
         let fs = fonts();
         let mk = |html: &str, css: &str| -> f32 {
-            let root = crate::html::parse_dom(html.to_string());
+            let root = crate::html::parse_dom_fragment(html.to_string());
             let ss = crate::css::parse(css.to_string());
             let styled = crate::style::style_tree(&root, &ss);
             let mut vp: Dimensions = Default::default();
@@ -5255,7 +5255,7 @@ mod tests {
     }
 
     fn ul_markers(css: &str) -> Vec<Option<String>> {
-        let root = crate::html::parse_dom("<ul><li></li><li></li><li></li></ul>".to_string());
+        let root = crate::html::parse_dom_fragment("<ul><li></li><li></li><li></li></ul>".to_string());
         // 실제 렌더처럼 UA 스타일시트(li→block 등) 위에 테스트 CSS 를 얹는다
         let mut ss = crate::css::user_agent_stylesheet();
         ss.rules.extend(crate::css::parse(css.to_string()).rules);
@@ -5271,7 +5271,7 @@ mod tests {
     fn list_style_none_draws_no_marker_glyph() {
         // list-style:none 이면 마커 글리프가 실제로 안 그려져야 (add_list_marker 가 None→불릿 하지 않음)
         let count = |css: &str| {
-            let root = crate::html::parse_dom("<ul class=\"l\"><li>x</li></ul>".to_string());
+            let root = crate::html::parse_dom_fragment("<ul class=\"l\"><li>x</li></ul>".to_string());
             let mut ss = crate::css::user_agent_stylesheet();
             ss.rules.extend(crate::css::parse(css.to_string()).rules);
             let styled = crate::style::style_tree(&root, &ss);
@@ -5307,7 +5307,7 @@ mod tests {
     #[test]
     fn box_sizing_border_box_subtracts_padding_border() {
         let mk = |css: &str| -> (f32, f32) {
-            let root = crate::html::parse_dom("<div class=\"b\"></div>".to_string());
+            let root = crate::html::parse_dom_fragment("<div class=\"b\"></div>".to_string());
             let ss = crate::css::parse(css.to_string());
             let styled = crate::style::style_tree(&root, &ss);
             let mut vp: Dimensions = Default::default();
@@ -5329,7 +5329,7 @@ mod tests {
 
     #[test]
     fn sticky_wraps_items_with_offset() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><div class=\"h\">x</div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -5353,7 +5353,7 @@ mod tests {
     #[test]
     fn overflow_hidden_clips_child() {
         // overflow:hidden 부모(100px) 안의 넓은 자식(300px) 배경이 부모로 클리핑됨
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"clip\"><div class=\"big\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -5378,7 +5378,7 @@ mod tests {
     #[test]
     fn z_index_paints_higher_on_top() {
         // 문서상 먼저인 A(z:2)가 나중인 B(z:1)보다 디스플레이 리스트 뒤(=위)에 와야 함
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"w\"><div class=\"a\"></div><div class=\"b\"></div></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -5407,7 +5407,7 @@ mod tests {
     fn white_space_nowrap_stays_one_line() {
         let long = "<p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii</p>";
         let height = |css: &str| -> f32 {
-            let root = crate::html::parse_dom(long.to_string());
+            let root = crate::html::parse_dom_fragment(long.to_string());
             let mut ss = crate::css::user_agent_stylesheet();
             ss.rules.extend(crate::css::parse(css.to_string()).rules);
             let styled = crate::style::style_tree(&root, &ss);
@@ -5432,7 +5432,7 @@ mod tests {
     #[test]
     fn table_rowspan_spans_rows() {
         // 1열 첫 셀 rowspan=2. 둘째 행은 그 열을 건너뛰고 한 셀만.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<table><tbody>\
              <tr><td rowspan=\"2\">L</td><td>a</td></tr>\
              <tr><td>b</td></tr>\
@@ -5463,7 +5463,7 @@ mod tests {
     #[test]
     fn table_colspan_spans_columns() {
         // 첫 행: colspan=2 헤더. 둘째 행: 두 셀. 헤더 폭 = 두 열 합
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<table><tbody><tr><td colspan=\"2\">head</td></tr><tr><td>a</td><td>b</td></tr></tbody></table>"
                 .to_string(),
         );
@@ -5489,7 +5489,7 @@ mod tests {
     #[test]
     fn table_columns_align_across_rows() {
         // 내용 폭이 다른 셀이 행마다 있어도 열은 공통 폭으로 정렬돼야 함
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<table><tbody><tr><td>a</td><td>bbbbbbbbbb</td></tr><tr><td>cccc</td><td>d</td></tr></tbody></table>"
                 .to_string(),
         );
@@ -5518,7 +5518,7 @@ mod tests {
     fn table_row_respects_cell_width_attribute() {
         // 구글 검색 테이블 사례: 25% | auto | 25% (HTML width 속성)
         // §13 정식 파서는 bare <tr> 을 무시하므로 <table> 로 감싼다.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<table><tr><td width=\"25%\"></td><td></td><td width=\"25%\"></td></tr></table>"
                 .to_string(),
         );
@@ -5569,7 +5569,7 @@ mod tests {
     #[test]
     fn table_cell_vertical_align_middle() {
         // 짧은 셀 내용이 행 높이(60) 안에서 vertical-align:middle 로 내려감
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"t\"><div class=\"r\"><div class=\"tall\"></div>\
              <div class=\"mid\"><div class=\"inner\">x</div></div></div></div>"
                 .to_string(),
@@ -5601,7 +5601,7 @@ mod tests {
     #[test]
     fn css_display_table_full_structure() {
         // display:table > table-row > table-cell 완전 구조
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"t\"><div class=\"r\"><div class=\"c\">a</div><div class=\"c\">b</div></div></div>"
                 .to_string(),
         );
@@ -5625,7 +5625,7 @@ mod tests {
     #[test]
     fn block_inside_inline_is_hoisted() {
         // <span> 안의 블록 <div> 는 인라인 흐름에서 사라지지 않고 블록으로 편입 (구글 푸터 사례)
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><span id=\"f\"><div class=\"blk\">x</div></span></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -5649,7 +5649,7 @@ mod tests {
 
     #[test]
     fn link_regions_cover_anchor_words_only() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<p>plain <a href=\"https://x.com/a\">click here</a> tail</p>".to_string(),
         );
         let ss = crate::css::parse("p { display: block; font-size: 20px; }".to_string());
@@ -5673,7 +5673,7 @@ mod tests {
 
     #[test]
     fn background_image_resolves_from_map() {
-        let root = crate::html::parse_dom("<div class=\"hero\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"hero\"></div>".to_string());
         let ss = crate::css::parse(
             ".hero { display: block; height: 40px; background-image: url(bg.jpg); }".to_string(),
         );
@@ -5692,7 +5692,7 @@ mod tests {
 
     #[test]
     fn image_box_uses_intrinsic_size() {
-        let root = crate::html::parse_dom("<div><img src=\"a.png\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><img src=\"a.png\"></div>".to_string());
         let ss = crate::css::parse("div { display: block; } img { display: block; }".to_string());
         let styled = crate::style::style_tree(&root, &ss);
         let mut viewport: Dimensions = Default::default();
@@ -5711,7 +5711,7 @@ mod tests {
     #[test]
     fn image_css_width_preserves_aspect_ratio() {
         // 고유 32x24, CSS width:64px → 높이는 종횡비 유지로 48px
-        let root = crate::html::parse_dom("<div><img src=\"a.png\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><img src=\"a.png\"></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; } img { display: block; width: 64px; }".to_string(),
         );
@@ -5731,7 +5731,7 @@ mod tests {
     fn image_max_width_percent_scales_down() {
         // 고유 800x400 이미지, 컨테이닝 폭 400, img { max-width: 100% } → 폭 400 으로 축소,
         // height: auto 이므로 종횡비 유지해 200 으로 재계산 (반응형 이미지 핵심 패턴).
-        let root = crate::html::parse_dom("<div><img src=\"a.png\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><img src=\"a.png\"></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; } img { display: block; max-width: 100%; }".to_string(),
         );
@@ -5750,7 +5750,7 @@ mod tests {
     #[test]
     fn block_max_width_percent_clamps() {
         // 컨테이닝 폭 400, div { max-width: 50% } → 폭 200 으로 상한 적용 (기존엔 % 무시됨).
-        let root = crate::html::parse_dom("<div class=\"c\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"c\"></div>".to_string());
         let ss = crate::css::parse(
             "div { display: block; } .c { max-width: 50%; height: 10px; }".to_string(),
         );
@@ -5765,7 +5765,7 @@ mod tests {
     #[test]
     fn image_html_width_height_attrs() {
         // HTML width/height 속성으로 크기 지정
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><img src=\"a.png\" width=\"100\" height=\"40\"></div>".to_string(),
         );
         let ss = crate::css::parse("div { display: block; } img { display: block; }".to_string());

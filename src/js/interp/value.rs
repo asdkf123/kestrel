@@ -573,6 +573,9 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::SetVal(_) => "[object Set]".to_string(),
         Value::Style(_) => "[object CSSStyleDeclaration]".to_string(),
         Value::Attr(_, _) => "[object Attr]".to_string(),
+        Value::Sheet(_) => "[object CSSStyleSheet]".to_string(),
+        Value::CssRule(_, _) => "[object CSSStyleRule]".to_string(),
+        Value::RuleStyle(_, _) => "[object CSSStyleDeclaration]".to_string(),
         Value::Dataset(_) => "[object DOMStringMap]".to_string(),
         // classList 를 문자열화하면 class 값 (DOMTokenList.toString)
         Value::ClassList(_) => "[object DOMTokenList]".to_string(),
@@ -704,6 +707,11 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::SetVal(x), Value::SetVal(y)) => Rc::ptr_eq(x, y),
         (Value::Bound(x), Value::Bound(y)) => Rc::ptr_eq(x, y),
         (Value::Style(x), Value::Style(y)) => x == y,
+        // CSSOM/Attr 은 (대상, 키) 로 식별되는 살아 있는 뷰다 — 같은 대상이면 같은 것.
+        (Value::Attr(a, x), Value::Attr(b, y)) => a == b && x == y,
+        (Value::Sheet(x), Value::Sheet(y)) => x == y,
+        (Value::CssRule(a, x), Value::CssRule(b, y)) => a == b && x == y,
+        (Value::RuleStyle(a, x), Value::RuleStyle(b, y)) => a == b && x == y,
         (Value::Dataset(x), Value::Dataset(y)) => x == y,
         (Value::ClassList(x), Value::ClassList(y)) => x == y,
         // 심볼 동일성은 고유 key 비교 (Symbol('x')!==Symbol('x'), Symbol.for 은 ===).

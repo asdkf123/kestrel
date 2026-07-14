@@ -113,6 +113,11 @@ pub enum Value {
     // 예전엔 el.attributes 가 평범한 {name, value} 객체를 줬다 — value 를 바꿔도
     // 요소에 반영되지 않았고 ownerElement 도 없었다 (조용히 아무 일도 안 함).
     Attr(crate::dom::NodeId, String),
+    // CSSOM (§CSSOM 6): 스타일시트와 규칙에 대한 살아 있는 뷰.
+    // Sheet(시트 인덱스) / CssRule(시트, 규칙) / RuleStyle(시트, 규칙)
+    Sheet(usize),
+    CssRule(usize, usize),
+    RuleStyle(usize, usize),
     // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
     Proxy(Rc<(Value, Value)>),
     // function* 로 만든 지연 제너레이터. 호출 시 즉시 평가하지 않고, next()마다 다음
@@ -294,6 +299,9 @@ impl std::fmt::Debug for Value {
             Value::SetVal(_) => write!(f, "[object Set]"),
             Value::Style(id) => write!(f, "[style {:?}]", id),
             Value::Attr(id, n) => write!(f, "[attr {} of {:?}]", n, id),
+            Value::Sheet(i) => write!(f, "[object CSSStyleSheet #{}]", i),
+            Value::CssRule(s, r) => write!(f, "[object CSSStyleRule {}:{}]", s, r),
+            Value::RuleStyle(s, r) => write!(f, "[object CSSStyleDeclaration {}:{}]", s, r),
             Value::Dataset(id) => write!(f, "[dataset {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
             Value::Proxy(_) => write!(f, "[object Proxy]"),

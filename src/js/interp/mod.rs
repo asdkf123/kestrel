@@ -10,6 +10,7 @@ use super::parser::parse;
 
 mod builtins;
 mod canvas;
+mod cssom;
 mod net;
 mod wasm_bind;
 mod env;
@@ -183,8 +184,9 @@ pub struct Interp {
     // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
     // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
     pub layout_ctx: Option<crate::window::LayoutCtx>,
-    // 마지막으로 반영한 <style> 요소들의 CSS 텍스트. 달라지면 시트를 다시 만든다.
-    pub css_text_version: Option<String>,
+    // CSSOM 변경(insertRule/deleteRule/disabled) 세대. 반영된 세대와 다르면 재구성.
+    pub css_epoch: u64,
+    pub css_applied_epoch: u64,
     // 아래 측정 맵이 반영하고 있는 DOM 버전. dom.version() 과 다르면 다시 레이아웃한다.
     pub layout_version: Option<u64>,
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
@@ -525,6 +527,12 @@ impl Interp {
         document.insert("visibilityState".to_string(), Value::Str("visible".to_string()));
         document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
         document.insert("createComment".to_string(), Value::Native(Native::CreateComment));
+        // document.styleSheets (§CSSOM 6.1). 예전엔 아예 없어서, 이걸 읽는 스크립트가
+        // 그 줄에서 통째로 죽었다.
+        document.insert(
+            "styleSheets".to_string(),
+            Value::Accessor(AccessorPair::getter(Value::Native(Native::StyleSheets))),
+        );
         // document.defaultView — 이 문서의 window (§3.1). 없으면 프레임워크가
         // 문서에서 window 를 못 얻어 기능 탐지가 통째로 어긋난다.
         document.insert(
@@ -804,6 +812,7 @@ impl Interp {
         // Function 생성자: Function(params.., body) 를 실제로 컴파일 (호출/ new 둘 다)
         env_declare(&global, "Function", Value::Native(Native::FunctionCtor));
         env_declare(&global, "eval", Value::Native(Native::Eval));
+        env_declare(&global, "__kBrand", Value::Native(Native::Brand));
         // Map / Set / WeakMap / WeakSet (약한 참조는 일반 Map/Set 으로 근사)
         env_declare(&global, "Map", Value::Native(Native::MapCtor));
         env_declare(&global, "WeakMap", Value::Native(Native::MapCtor));
@@ -1126,7 +1135,8 @@ impl Interp {
             scroll_y: 0.0,
             active_element: None,
             layout_ctx: None,
-            css_text_version: None,
+            css_epoch: 0,
+            css_applied_epoch: 0,
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
@@ -3936,6 +3946,10 @@ impl Interp {
                 };
                 Ok(op.map(|o| Value::Native(Native::Set(o))).unwrap_or(Value::Undefined))
             }
+            // CSSOM: 시트/규칙/규칙스타일
+            Value::Sheet(_) | Value::CssRule(_, _) | Value::RuleStyle(_, _) => {
+                self.cssom_get(recv, key)
+            }
             // Attr 노드 읽기 (§4.9.2). 소유 요소의 속성을 실시간으로 본다.
             Value::Attr(id, name) => {
                 let (id, name) = (*id, name.clone());
@@ -5414,6 +5428,26 @@ impl Interp {
                         Ok(())
                     }
                     Value::Dom(id) => self.dom_set(id, &key, value),
+                    // rule.style.color = 'red' → 규칙의 선언을 실제로 바꾼다
+                    Value::RuleStyle(si, ri) => {
+                        let text = to_display(&value);
+                        let prop = camel_to_dashed(&key);
+                        self.rule_set_prop(si, ri, &prop, &text);
+                        Ok(())
+                    }
+                    // sheet.disabled = true → 그 시트를 캐스케이드에서 뺀다
+                    Value::Sheet(si) => {
+                        if key == "disabled" {
+                            let on = to_bool(&value);
+                            if let Some(sheets) = self.sheets() {
+                                if let Some(e) = sheets.get_mut(si) {
+                                    e.disabled = on;
+                                }
+                            }
+                            self.css_epoch += 1;
+                        }
+                        Ok(())
+                    }
                     // attr.value = x → 소유 요소의 속성을 실제로 바꾼다
                     Value::Attr(id, name) => {
                         if matches!(key.as_str(), "value" | "nodeValue" | "textContent") {

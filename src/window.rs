@@ -26,6 +26,8 @@ pub struct LayoutCtx {
     // 그래서 가변이다. base 는 UA + 외부 CSS (스크립트가 못 바꾸는 부분).
     pub sheet: *mut crate::css::Stylesheet,
     pub css_base: *const crate::css::Stylesheet,
+    // CSSOM: 개별 시트 목록 (document.styleSheets 가 이것을 노출한다)
+    pub sheets: *mut Vec<crate::css::SheetEntry>,
     pub fonts: *const crate::font::FontStack,
     pub img_map: *const crate::layout::ImageMap,
     // 실제 이미지 픽셀 (canvas getImageData 가 오프스크린 래스터에 쓴다)
@@ -35,44 +37,97 @@ pub struct LayoutCtx {
     pub vh: f32,
 }
 
-/// 문서 안 모든 <style> 요소의 내용을 문서 순서로 이어 붙인다.
-/// 이 문자열이 곧 "저작자 인라인 CSS 의 현재 상태" 다.
-fn collect_style_css(dom: &crate::dom::Dom) -> String {
-    fn walk(dom: &crate::dom::Dom, id: crate::dom::NodeId, out: &mut String) {
-        if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
-            if e.tag_name == "style" {
-                out.push_str(&dom.text_content(id));
-                out.push('\n');
+/// 시트 목록을 현재 DOM 과 맞춘다: <style> 이 새로 생겼거나 내용이 바뀌었으면 다시
+/// 파싱하고, 문서에서 사라진 <style> 시트는 목록에서 뺀다. <link> 시트는 그대로 둔다.
+/// 반환값: 뭔가 바뀌었는가.
+pub fn sync_style_sheets(
+    dom: &crate::dom::Dom,
+    sheets: &mut Vec<crate::css::SheetEntry>,
+    vw: f32,
+) -> bool {
+    let mut changed = false;
+    // 문서에서 사라진 <style> 시트 제거
+    let alive = |id: crate::dom::NodeId| -> bool {
+        (id == dom.root || dom.ancestors(id).contains(&dom.root))
+            && matches!(&dom.get(id).node_type,
+                crate::dom::NodeType::Element(e) if e.tag_name == "style")
+    };
+    let before = sheets.len();
+    sheets.retain(|e| e.href.is_some() || e.owner.map(alive).unwrap_or(true));
+    if sheets.len() != before {
+        changed = true;
+    }
+    // 내용이 바뀐 <style> 재파싱 + 새로 생긴 <style> 추가 (문서 순서 유지)
+    let mut style_ids = Vec::new();
+    collect_style_ids(dom, dom.root, &mut style_ids);
+    for id in style_ids {
+        let text = dom.text_content(id);
+        match sheets.iter_mut().find(|e| e.owner == Some(id) && e.href.is_none()) {
+            Some(e) => {
+                if e.text != text {
+                    e.sheet = crate::css::parse_viewport(text.clone(), vw);
+                    e.text = text;
+                    changed = true;
+                }
+            }
+            None => {
+                let sheet = crate::css::parse_viewport(text.clone(), vw);
+                sheets.push(crate::css::SheetEntry {
+                    href: None,
+                    owner: Some(id),
+                    text,
+                    sheet,
+                    disabled: false,
+                });
+                changed = true;
             }
         }
-        for &c in &dom.get(id).children {
-            walk(dom, c, out);
+    }
+    changed
+}
+
+fn collect_style_ids(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    out: &mut Vec<crate::dom::NodeId>,
+) {
+    if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+        if e.tag_name == "style" {
+            out.push(id);
         }
     }
-    let mut out = String::new();
-    walk(dom, dom.root, &mut out);
-    out
+    for &c in &dom.get(id).children {
+        collect_style_ids(dom, c, out);
+    }
 }
+
 
 /// JS 가 측정 API 를 읽을 때 호출된다. DOM 버전이 지난 레이아웃 이후 바뀌었으면
 /// 스타일 → 레이아웃을 다시 돌려 인터프리터의 측정 맵을 채운다.
 pub fn flush_layout(js: &mut crate::js::interp::Interp) {
     let (Some(dom_ptr), Some(ctx)) = (js.dom, js.layout_ctx) else { return };
     let dom = unsafe { &*dom_ptr };
-    if js.layout_version == Some(dom.version()) {
+    // CSSOM 변경(insertRule/deleteRule/rule.style/disabled)은 DOM 을 건드리지 않는다.
+    // 그래서 dom.version() 만 보면 "깨끗하다" 고 오판해 옛 스타일을 돌려준다.
+    if js.layout_version == Some(dom.version()) && js.css_epoch == js.css_applied_epoch {
         return; // 깨끗하다 — 재계산 불필요
     }
-    // 스크립트가 <style> 을 넣었거나 지웠거나 내용을 바꿨으면 스타일시트를 다시 만든다.
-    // 예전엔 시트가 **스크립트 실행 전 스냅샷**이라, style 을 주입하고 바로
-    // getComputedStyle 을 읽는 코드(styled-components/emotion 같은 CSS-in-JS 가
-    // 정확히 이렇게 한다)가 옛 값을 받았다 — 조용히 틀린 값.
-    let css_now = collect_style_css(dom);
-    if js.css_text_version.as_deref() != Some(css_now.as_str()) {
+    // 스크립트가 <style> 을 넣었거나 지웠거나 내용을 바꿨거나, CSSOM 으로 규칙을
+    // 넣고 뺐으면 병합 시트를 다시 만든다. 예전엔 시트가 **스크립트 실행 전 스냅샷**
+    // 이라, style 을 주입하고 바로 getComputedStyle 을 읽는 코드(CSS-in-JS 가 정확히
+    // 이렇게 한다)가 옛 값을 받았다 — 조용히 틀린 값.
+    let sheets = unsafe { &mut *ctx.sheets };
+    let dom_changed = sync_style_sheets(dom, sheets, ctx.vw);
+    if dom_changed || js.css_epoch != js.css_applied_epoch {
         let sheet = unsafe { &mut *ctx.sheet };
         let base = unsafe { &*ctx.css_base };
         *sheet = base.clone();
-        sheet.merge(crate::css::parse_viewport(css_now.clone(), ctx.vw));
-        js.css_text_version = Some(css_now);
+        for e in sheets.iter() {
+            if !e.disabled {
+                sheet.merge(e.sheet.clone());
+            }
+        }
+        js.css_applied_epoch = js.css_epoch;
     }
     let (sheet, fonts, img_map, pseudo) =
         unsafe { (&*ctx.sheet, &*ctx.fonts, &*ctx.img_map, &*ctx.pseudo) };
@@ -227,8 +282,10 @@ fn fill_js_maps(
 pub struct Page {
     pub dom: crate::dom::Dom,
     pub sheet: crate::css::Stylesheet,
-    // UA + 외부 CSS (스크립트가 못 바꾸는 부분). <style> 이 바뀌면 이 위에 다시 얹는다.
+    // UA 시트 (스크립트가 못 바꾼다). 저작자 시트들을 이 위에 문서 순서로 얹는다.
     pub css_base: crate::css::Stylesheet,
+    // CSSOM: 개별 저작자 시트 목록
+    pub sheets: Vec<crate::css::SheetEntry>,
     pub images: Vec<crate::png::Image>,
     pub img_map: crate::layout::ImageMap,
     pub fonts: crate::font::FontStack,
@@ -577,6 +634,7 @@ impl Page {
         let ctx = LayoutCtx {
             sheet: &mut self.sheet,
             css_base: &self.css_base,
+            sheets: &mut self.sheets,
             fonts: &self.fonts,
             img_map: &self.img_map,
             images: &self.images,
@@ -1470,6 +1528,8 @@ mod tests {
         let mut page = Page {
             dom,
             sheet,
+            css_base: crate::css::user_agent_stylesheet(),
+            sheets: Vec::new(),
             images: Vec::new(),
             img_map: crate::layout::ImageMap::new(),
             fonts,
@@ -1489,6 +1549,87 @@ mod tests {
         page
     }
 
+    // CSSOM (§CSSOM 6): document.styleSheets 는 **살아 있는 뷰**여야 한다.
+    // 규칙을 바꾸면 계산 스타일이 실제로 따라와야 한다 — 스냅샷이면 조용히 틀린다.
+    #[test]
+    fn cssom_stylesheets_are_live() {
+        let dom = run_with_layout(
+            r#"<style id="s">.a { color: red; }</style><div class="a" id="d"></div>
+               <div id="out"></div>
+               <script>
+                 var o = document.getElementById('out');
+                 var sh = document.styleSheets[0];
+                 var d = document.getElementById('d');
+                 var log = [];
+                 log.push('n=' + document.styleSheets.length);
+                 log.push('owner=' + sh.ownerNode.id);
+                 log.push('sel=' + sh.cssRules[0].selectorText);
+                 log.push('before=' + getComputedStyle(d).color);
+                 sh.cssRules[0].style.color = 'green';
+                 log.push('after=' + getComputedStyle(d).color);
+                 sh.insertRule('.a { background-color: yellow; }', 1);
+                 log.push('ins=' + getComputedStyle(d).backgroundColor);
+                 sh.deleteRule(1);
+                 log.push('del=' + getComputedStyle(d).backgroundColor);
+                 sh.disabled = true;
+                 log.push('off=' + getComputedStyle(d).color);
+                 o.textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        let got = dom.text_content(out);
+        assert!(got.contains("n=1"), "{}", got);
+        assert!(got.contains("owner=s"), "{}", got);
+        assert!(got.contains("sel=.a"), "{}", got);
+        assert!(got.contains("before=rgb(255, 0, 0)"), "{}", got);
+        // 규칙을 고치면 계산 스타일이 따라와야 한다
+        assert!(got.contains("after=rgb(0, 128, 0)"), "{}", got);
+        assert!(got.contains("ins=rgb(255, 255, 0)"), "{}", got);
+        assert!(got.contains("del=rgba(0, 0, 0, 0)"), "{}", got);
+        // 시트를 끄면 저작자 선언이 사라진다
+        assert!(got.contains("off=rgb(0, 0, 0)"), "{}", got);
+    }
+
+    // 스크립트가 <style> 을 넣고 바로 재면 새 CSS 가 반영돼야 한다 (CSS-in-JS 패턴).
+    // 예전엔 시트가 스크립트 실행 전 스냅샷이라 옛 값이 나왔다.
+    #[test]
+    fn injected_style_element_affects_computed_style() {
+        let dom = run_with_layout(
+            r#"<div id="d"></div><div id="out"></div>
+               <script>
+                 var st = document.createElement('style');
+                 st.textContent = '#d { color: rgb(1, 2, 3); }';
+                 document.head.appendChild(st);
+                 var a = getComputedStyle(document.getElementById('d')).color;
+                 st.remove();
+                 var b = getComputedStyle(document.getElementById('d')).color;
+                 document.getElementById('out').textContent = a + '|' + b;
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        let got = dom.text_content(out);
+        // 주입 직후엔 적용되고, 지우면 사라진다
+        assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
+    }
+
+    // HTML §7.3.3: id 를 가진 요소는 전역 이름으로 읽힌다.
+    #[test]
+    fn named_access_on_window() {
+        let dom = run_with_layout(
+            r#"<div id="target"></div><div id="out"></div>
+               <script>
+                 var ok = (typeof target === 'object') && (window.target === target)
+                          && ('target' in window) && (target.id === 'target');
+                 document.getElementById('out').textContent = ok ? 'yes' : 'no';
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(dom.text_content(out), "yes");
+    }
+
     // 스크립트가 실행되는 동안 측정 API 가 실제 값을 돌려주는지 (강제 레이아웃).
     // 스크립트가 CSS/폰트 뒤에 돌고, 측정 시점에 스타일 → 레이아웃이 흐른다.
     // run_scripts 는 console 을 직접 출력하므로, 결과는 DOM 에 써서 확인한다.
@@ -1502,8 +1643,12 @@ mod tests {
         let img_map = crate::layout::ImageMap::new();
         let images: Vec<crate::png::Image> = Vec::new();
         let pseudo = crate::style::PseudoStyles::new();
+        let css_base = crate::css::user_agent_stylesheet();
+        let mut sheets: Vec<crate::css::SheetEntry> = Vec::new();
         let ctx = LayoutCtx {
-            sheet: &sheet,
+            sheet: &mut sheet,
+            css_base: &css_base,
+            sheets: &mut sheets,
             fonts: &fonts,
             img_map: &img_map,
             images: &images,

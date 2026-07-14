@@ -388,6 +388,9 @@ impl Interp {
             | Value::Native(_)
             | Value::Dom(_)
             | Value::Attr(_, _)
+            | Value::Sheet(_)
+            | Value::CssRule(_, _)
+            | Value::RuleStyle(_, _)
             | Value::Class(_)
             | Value::Bound(_)
             | Value::Accessor(_)
@@ -2184,6 +2187,75 @@ impl Interp {
                 let dom = self.dom_arena()?;
                 dom.remove_attr(id, &name);
                 Ok(Value::Attr(id, name))
+            }
+            // document.styleSheets — 저작자 시트 목록 (문서 순서)
+            Native::StyleSheets => {
+                self.sync_sheets();
+                let n = self.sheets().map(|s| s.len()).unwrap_or(0);
+                let list: Vec<Value> = (0..n).map(Value::Sheet).collect();
+                let arr = ArrayObj::new(list);
+                arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+                Ok(Value::Arr(arr))
+            }
+            // 컬렉션의 item(i) — 범위를 벗어나면 null (표준)
+            Native::ListItem => {
+                let i = args.first().map(to_num).unwrap_or(0.0);
+                let Some(Value::Arr(a)) = recv else { return Ok(Value::Null) };
+                if i < 0.0 {
+                    return Ok(Value::Null);
+                }
+                let v = a.borrow().get(i as usize).cloned();
+                Ok(v.unwrap_or(Value::Null))
+            }
+            // 플랫폼 객체 브랜드 (WebIDL 인터페이스 판별). instanceof 가 이걸 쓴다 —
+            // 예전엔 오리 판별(프로퍼티 존재 여부)이라 평범한 객체도 통과했다.
+            Native::Brand => Ok(Value::Str(
+                match args.first() {
+                    Some(Value::Sheet(_)) => "CSSStyleSheet",
+                    Some(Value::CssRule(_, _)) => "CSSStyleRule",
+                    Some(Value::RuleStyle(_, _)) | Some(Value::Style(_)) => "CSSStyleDeclaration",
+                    Some(Value::ComputedStyle(_)) => "CSSStyleDeclaration",
+                    Some(Value::Attr(_, _)) => "Attr",
+                    _ => "",
+                }
+                .to_string(),
+            )),
+            // CSSOM 메서드
+            Native::SheetInsertRule => {
+                let Some(Value::Sheet(si)) = recv else { return Ok(Value::Num(0.0)) };
+                let text = args.first().map(to_display).unwrap_or_default();
+                let idx = args.get(1).map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                self.sheet_insert_rule(si, &text, idx)
+            }
+            Native::SheetDeleteRule => {
+                let Some(Value::Sheet(si)) = recv else { return Ok(Value::Undefined) };
+                let idx = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                self.sheet_delete_rule(si, idx)
+            }
+            Native::RuleStyleGet => {
+                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };
+                let prop = args.first().map(to_display).unwrap_or_default();
+                Ok(Value::Str(self.rule_prop(si, ri, &prop)))
+            }
+            Native::RuleStyleSet => {
+                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Undefined) };
+                let prop = args.first().map(to_display).unwrap_or_default();
+                let val = args.get(1).map(to_display).unwrap_or_default();
+                self.rule_set_prop(si, ri, &prop, &val);
+                Ok(Value::Undefined)
+            }
+            Native::RuleStyleRemove => {
+                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };
+                let prop = args.first().map(to_display).unwrap_or_default();
+                let old = self.rule_prop(si, ri, &prop);
+                self.rule_set_prop(si, ri, &prop, "");
+                Ok(Value::Str(old))
+            }
+            Native::RuleStyleItem => {
+                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };
+                let i = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                let key = i.to_string();
+                self.cssom_get(&Value::RuleStyle(si, ri), &key)
             }
             Native::CreateComment => {
                 let data = args.first().map(to_display).unwrap_or_default();

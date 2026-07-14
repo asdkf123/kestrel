@@ -1677,7 +1677,7 @@ mod tests {
     // Pseudo::Dynamic 으로 떨어져 **규칙이 조용히 사라졌다** (2023년부터 전 브라우저 지원).
     #[test]
     fn has_selector_matches_descendants_and_siblings() {
-        let dom = crate::html::parse_dom(
+        let dom = crate::html::parse_dom_fragment(
             "<div id=p><span><b class=kid>x</b></span></div>\
              <div id=q><img src=i></div>\
              <div id=r><span>없음</span></div>\
@@ -1720,7 +1720,7 @@ mod tests {
     // 일반 선언은 뒤 레이어가 이기고 레이어 밖이 가장 세다. !important 는 **역순**이다 (§6.4.4).
     #[test]
     fn cascade_layers_order_and_important_reversal() {
-        let dom = crate::html::parse_dom(
+        let dom = crate::html::parse_dom_fragment(
             "<div id=x></div><div id=y></div><div id=z></div><div id=w></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -1762,7 +1762,7 @@ mod tests {
         // 그냥 지워서 상속 루프가 부모색을 물려줬다 — color: initial 이 검정이 아니었다.
         // revert 는 저자 선언을 되돌려 UA 원점 값으로 계산한다. 예전엔 아예 몰라서
         // 키워드 문자열이 그대로 값이 됐다 (display: revert → display 가 "revert").
-        let dom = crate::html::parse_dom(
+        let dom = crate::html::parse_dom_fragment(
             "<div id=p><div id=a>a</div><div id=b>b</div></div>".to_string(),
         );
         let mut ss = crate::css::user_agent_stylesheet();
@@ -1800,7 +1800,7 @@ mod tests {
 
     #[test]
     fn matching_class_rule_is_applied() {
-        let root = crate::html::parse_dom("<div class=\"box\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"box\"></div>".to_string());
         let ss = crate::css::parse(".box { width: 50px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(50.0, Unit::Px)));
@@ -1817,7 +1817,7 @@ mod tests {
 
     #[test]
     fn content_open_close_quote() {
-        let mut dom = crate::html::parse_dom("<q>hi</q>".to_string());
+        let mut dom = crate::html::parse_dom_fragment("<q>hi</q>".to_string());
         let ss = crate::css::parse(
             "q::before { content: open-quote; } q::after { content: close-quote; }".to_string(),
         );
@@ -1838,7 +1838,7 @@ mod tests {
     #[test]
     fn css_counters_number_content() {
         // section 마다 counter-increment, ::before content: counter(sec) → "1","2","3"
-        let mut dom = crate::html::parse_dom(
+        let mut dom = crate::html::parse_dom_fragment(
             "<div><section>a</section><section>b</section><section>c</section></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -1865,7 +1865,7 @@ mod tests {
     #[test]
     fn before_pseudo_generates_content_box() {
         let mut dom =
-            crate::html::parse_dom("<div class=\"a\"><span>x</span></div>".to_string());
+            crate::html::parse_dom_fragment("<div class=\"a\"><span>x</span></div>".to_string());
         let ss = crate::css::parse(
             ".a::before { content: \"\\2022\"; color: #ff0000; }".to_string(),
         );
@@ -1887,7 +1887,7 @@ mod tests {
     #[test]
     fn animation_applies_final_keyframe() {
         // 진입 애니메이션: 초기 opacity:0 이지만 @keyframes 최종(to)에서 1 → 정적 렌더는 1
-        let root = crate::html::parse_dom("<div class=\"a\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"a\"></div>".to_string());
         let ss = crate::css::parse(
             "@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } } \
              .a { opacity: 0; animation: fadeIn 1s ease forwards; }"
@@ -1914,7 +1914,7 @@ mod tests {
             n.children.iter().find_map(|c| find_tag(c, tag))
         }
         // 닫힌 details: summary 는 보이고 p 는 display:none
-        let closed = crate::html::parse_dom(
+        let closed = crate::html::parse_dom_fragment(
             "<details><summary>제목</summary><p>내용</p></details>".to_string(),
         );
         let ss = crate::css::user_agent_stylesheet();
@@ -1922,7 +1922,7 @@ mod tests {
         assert_eq!(find_tag(&sc, "p").unwrap().value("display"), Some(Value::Keyword("none".to_string())), "닫힌 details 내용 숨김");
         assert_ne!(find_tag(&sc, "summary").unwrap().value("display"), Some(Value::Keyword("none".to_string())), "summary 는 보임");
         // 열린 details: p 도 보임
-        let open = crate::html::parse_dom(
+        let open = crate::html::parse_dom_fragment(
             "<details open><summary>제목</summary><p>내용</p></details>".to_string(),
         );
         let so = style_tree(&open, &ss);
@@ -1931,7 +1931,7 @@ mod tests {
 
     #[test]
     fn is_where_selectors() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><h2 class=\"t\">a</h2><p>b</p><span>c</span></div>".to_string(),
         );
         // :is(h2, p) → h2 와 p 만 매칭, span 은 아님
@@ -1961,7 +1961,7 @@ mod tests {
     #[test]
     fn nth_of_type_and_last_selectors() {
         // 혼합 타입: h2, p, p, span. nth-of-type/last-child/of-type 정확 판별
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><h2>a</h2><p>b</p><p>c</p><span>d</span></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -1993,7 +1993,7 @@ mod tests {
 
     #[test]
     fn current_color_resolves_to_element_color() {
-        let root = crate::html::parse_dom("<div></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { color: #ff0000; border-top-color: currentColor; background-color: currentcolor; }"
                 .to_string(),
@@ -2006,7 +2006,7 @@ mod tests {
 
     #[test]
     fn form_state_pseudo_classes() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<form><input required checked><input disabled></form>".to_string(),
         );
         let ss = crate::css::parse(
@@ -2037,7 +2037,7 @@ mod tests {
 
     #[test]
     fn no_pseudo_without_content() {
-        let mut dom = crate::html::parse_dom("<div class=\"a\"></div>".to_string());
+        let mut dom = crate::html::parse_dom_fragment("<div class=\"a\"></div>".to_string());
         // content 없는 ::before 규칙 → 생성 안 함
         let ss = crate::css::parse(".a::before { color: #ff0000; }".to_string());
         let map = generate_pseudo_elements(&mut dom, &ss);
@@ -2046,7 +2046,7 @@ mod tests {
 
     #[test]
     fn higher_specificity_wins() {
-        let root = crate::html::parse_dom("<div id=\"a\" class=\"b\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div id=\"a\" class=\"b\"></div>".to_string());
         let ss = crate::css::parse(".b { width: 10px; } #a { width: 99px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(99.0, Unit::Px)));
@@ -2054,7 +2054,7 @@ mod tests {
 
     #[test]
     fn where_and_is_specificity() {
-        let root = crate::html::parse_dom("<div id=\"x\" class=\"c\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div id=\"x\" class=\"c\"></div>".to_string());
         let green = Some(Value::Color(crate::css::Color { r: 0, g: 255, b: 0, a: 255 }));
         let blue = Some(Value::Color(crate::css::Color { r: 0, g: 0, b: 255, a: 255 }));
         // :where(#x) 특이도 0 → 뒤 .c 가 이김
@@ -2070,7 +2070,7 @@ mod tests {
     #[test]
     fn important_beats_higher_specificity() {
         // 낮은 특이도 !important 가 높은 특이도 일반 선언을 이긴다 (캐스케이드 origin 우선)
-        let root = crate::html::parse_dom("<div id=\"a\" class=\"b\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div id=\"a\" class=\"b\"></div>".to_string());
         let ss = crate::css::parse(
             "#a { width: 99px; } .b { width: 10px !important; }".to_string(),
         );
@@ -2081,7 +2081,7 @@ mod tests {
     #[test]
     fn important_beats_inline_style() {
         // important 저작자 선언이 일반 인라인 스타일을 이긴다
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"b\" style=\"width: 5px\"></div>".to_string(),
         );
         let ss = crate::css::parse(".b { width: 10px !important; }".to_string());
@@ -2093,7 +2093,7 @@ mod tests {
     fn ancestor_nth_child_zebra_striping() {
         // tr:nth-child(even) td → 짝수 행 td 만. 이전엔 조상 구조 의사클래스가
         // 무조건 참이라 모든 td 가 매칭됐다(zebra 깨짐).
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<table><tr><td>1</td></tr><tr><td>2</td></tr><tr><td>3</td></tr></table>"
                 .to_string(),
         );
@@ -2120,7 +2120,7 @@ mod tests {
 
     #[test]
     fn universal_selector_applies_to_all() {
-        let root = crate::html::parse_dom("<div></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse("* { width: 7px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(7.0, Unit::Px)));
@@ -2128,7 +2128,7 @@ mod tests {
 
     #[test]
     fn later_rule_wins_at_equal_specificity() {
-        let root = crate::html::parse_dom("<p class=\"x\"></p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p class=\"x\"></p>".to_string());
         let ss = crate::css::parse(".x { width: 1px; } .x { width: 2px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(2.0, Unit::Px)));
@@ -2136,7 +2136,7 @@ mod tests {
 
     #[test]
     fn compound_selector_needs_both_parts() {
-        let root = crate::html::parse_dom("<div><p></p><p class=\"note\"></p></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><p></p><p class=\"note\"></p></div>".to_string());
         let ss = crate::css::parse("p.note { width: 5px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.children[0].value("width"), None, "plain <p> must not match p.note");
@@ -2149,7 +2149,7 @@ mod tests {
 
     #[test]
     fn descendant_selector_matches_only_nested() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><section class=\"a\"><p>in</p></section><p>out</p></div>".to_string(),
         );
         let ss = crate::css::parse(".a p { width: 9px; }".to_string());
@@ -2164,7 +2164,7 @@ mod tests {
     #[test]
     fn descendant_selector_skips_levels() {
         // 자손 결합자는 중간 단계를 건너뛴다 (자식 한정이 아님)
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"wrap\"><section><p>deep</p></section></div>".to_string(),
         );
         let ss = crate::css::parse(".wrap p { width: 7px; }".to_string());
@@ -2176,7 +2176,7 @@ mod tests {
     #[test]
     fn descendant_out_of_order_does_not_match() {
         // "div .x" 인데 .x 가 div 의 조상인 경우 → 비매칭
-        let root = crate::html::parse_dom("<span class=\"x\"><div><p>t</p></div></span>".to_string());
+        let root = crate::html::parse_dom_fragment("<span class=\"x\"><div><p>t</p></div></span>".to_string());
         let ss = crate::css::parse("div .x { width: 3px; }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), None);
@@ -2184,7 +2184,7 @@ mod tests {
 
     #[test]
     fn descendant_specificity_beats_single_class() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"a\"><p class=\"b\">t</p></div>".to_string(),
         );
         let ss = crate::css::parse(".b { width: 1px; } .a .b { width: 2px; }".to_string());
@@ -2195,7 +2195,7 @@ mod tests {
 
     #[test]
     fn color_inherits_to_descendants() {
-        let root = crate::html::parse_dom("<div><p>t</p></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><p>t</p></div>".to_string());
         let ss = crate::css::parse("div { color: #ff0000; }".to_string());
         let styled = style_tree(&root, &ss);
         let p = &styled.children[0];
@@ -2208,7 +2208,7 @@ mod tests {
 
     #[test]
     fn own_color_overrides_inherited() {
-        let root = crate::html::parse_dom("<div><p>t</p></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><p>t</p></div>".to_string());
         let ss = crate::css::parse("div { color: #ff0000; } p { color: #0000ff; }".to_string());
         let styled = style_tree(&root, &ss);
         let p = &styled.children[0];
@@ -2220,7 +2220,7 @@ mod tests {
 
     #[test]
     fn font_size_relative_units_resolve() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><p class=\"em\">a</p><p class=\"pc\">b</p><p class=\"rem\">c</p><p>d</p></div>"
                 .to_string(),
         );
@@ -2243,7 +2243,7 @@ mod tests {
     fn rem_follows_root_font_size() {
         // 루트 font-size:62.5% → 1rem=10px (흔한 트릭). 자손의 rem 은 상수 16 이 아니라
         // 루트 계산 font-size 기준. (이전엔 rem 이 항상 16 하드코딩이라 요행 통과)
-        let root = crate::html::parse_dom("<div><p class=\"x\">a</p></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div><p class=\"x\">a</p></div>".to_string());
         let ss = crate::css::parse(
             "div { font-size: 62.5%; } .x { width: 1.6rem; }".to_string(),
         );
@@ -2255,16 +2255,16 @@ mod tests {
     #[test]
     fn unknown_display_falls_back_to_block() {
         // 미지원 display 값(table-cell 등)은 블록으로 폴백 — 자식 보존
-        let root = crate::html::parse_dom("<div>content</div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div>content</div>".to_string());
         let ss = crate::css::parse("div { display: table-cell; }".to_string());
         let styled = style_tree(&root, &ss);
         assert!(matches!(styled.display(), Display::Block));
         // inline-block 은 전용 Display (자체 박스 + 가로 흐름)
-        let root2 = crate::html::parse_dom("<span></span>".to_string());
+        let root2 = crate::html::parse_dom_fragment("<span></span>".to_string());
         let ss2 = crate::css::parse("span { display: inline-block; }".to_string());
         assert!(matches!(style_tree(&root2, &ss2).display(), Display::InlineBlock));
         // 순수 inline 은 그대로
-        let root3 = crate::html::parse_dom("<span></span>".to_string());
+        let root3 = crate::html::parse_dom_fragment("<span></span>".to_string());
         let ss3 = crate::css::parse("span { display: inline; }".to_string());
         assert!(matches!(style_tree(&root3, &ss3).display(), Display::Inline));
     }
@@ -2272,7 +2272,7 @@ mod tests {
     #[test]
     fn css_wide_inherit_and_unset() {
         // background-color 는 비상속 속성 → inherit 키워드로 부모값을 가져와야
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"p\"><span class=\"c\">x</span></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -2301,10 +2301,10 @@ mod tests {
     fn link_pseudo_matches_href_anchors() {
         // a:link 는 href 있는 링크에 적용 (정적 렌더에선 모든 링크가 unvisited)
         let ss = crate::css::parse("a:link { color: #ff0000; }".to_string());
-        let linked = crate::html::parse_dom("<a href=\"/x\">go</a>".to_string());
+        let linked = crate::html::parse_dom_fragment("<a href=\"/x\">go</a>".to_string());
         assert!(style_tree(&linked, &ss).value("color").is_some(), "href 링크 → :link 매칭");
         // href 없는 <a> 는 :link 아님
-        let bare = crate::html::parse_dom("<a>text</a>".to_string());
+        let bare = crate::html::parse_dom_fragment("<a>text</a>".to_string());
         assert!(style_tree(&bare, &ss).value("color").is_none(), "href 없으면 :link 아님");
     }
 
@@ -2312,17 +2312,17 @@ mod tests {
     fn presentational_hints_map_and_lose_to_author() {
         let ss = crate::css::parse(String::new());
         // <div align="center"> → text-align:center
-        let root = crate::html::parse_dom("<div align=\"center\">x</div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div align=\"center\">x</div>".to_string());
         assert!(
             matches!(style_tree(&root, &ss).value("text-align"),
                 Some(crate::css::Value::Keyword(k)) if k == "center"),
             "align 속성 → text-align"
         );
         // <font color="red"> → color 지정됨
-        let rf = crate::html::parse_dom("<font color=\"red\">x</font>".to_string());
+        let rf = crate::html::parse_dom_fragment("<font color=\"red\">x</font>".to_string());
         assert!(style_tree(&rf, &ss).value("color").is_some(), "font color 매핑");
         // <table bgcolor="00ff00" width="300"> → background-color + width:300px
-        let rt = crate::html::parse_dom("<table bgcolor=\"00ff00\" width=\"300\"></table>".to_string());
+        let rt = crate::html::parse_dom_fragment("<table bgcolor=\"00ff00\" width=\"300\"></table>".to_string());
         let st = style_tree(&rt, &ss);
         assert!(st.value("background-color").is_some(), "bgcolor 매핑");
         assert!(
@@ -2340,7 +2340,7 @@ mod tests {
 
     #[test]
     fn font_size_clamp_resolves() {
-        let root = crate::html::parse_dom("<div></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div></div>".to_string());
         // clamp(1rem, 2vw, 2rem): 1rem=16, 2vw(vp 1000)=20, 2rem=32 → 20
         let ss = crate::css::parse("div { font-size: clamp(1rem, 2vw, 2rem); }".to_string());
         let styled = style_tree_vp(&root, &ss, Viewport { w: 1000.0, h: 600.0 });
@@ -2349,7 +2349,7 @@ mod tests {
 
     #[test]
     fn viewport_units_resolve_against_viewport() {
-        let root = crate::html::parse_dom("<div></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { width: 50vw; height: 100vh; padding-left: 10vmin; }".to_string(),
         );
@@ -2363,7 +2363,7 @@ mod tests {
 
     #[test]
     fn em_rem_resolved_to_px_percent_kept_for_layout() {
-        let root = crate::html::parse_dom("<div></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div></div>".to_string());
         let ss = crate::css::parse(
             "div { width: 50%; font-size: 20px; margin-top: 2em; padding-left: 1rem; }"
                 .to_string(),
@@ -2380,14 +2380,14 @@ mod tests {
     #[test]
     fn bold_italic_from_ua_and_inheritance() {
         // <b>/<i> 는 UA 로 볼드/이탤릭
-        let root = crate::html::parse_dom("<p><b>x</b><i>y</i></p>".to_string());
+        let root = crate::html::parse_dom_fragment("<p><b>x</b><i>y</i></p>".to_string());
         let ss = crate::css::user_agent_stylesheet();
         let p = style_tree(&root, &ss);
         assert!(p.children[0].is_bold(), "<b> 볼드");
         assert!(p.children[1].is_italic(), "<i> 이탤릭");
 
         // font-weight: 700(숫자) → bold 정규화 + 자식 상속
-        let root2 = crate::html::parse_dom("<div><span>t</span></div>".to_string());
+        let root2 = crate::html::parse_dom_fragment("<div><span>t</span></div>".to_string());
         let mut ss2 = crate::css::user_agent_stylesheet();
         ss2.rules.extend(crate::css::parse("div { font-weight: 700; }".to_string()).rules);
         let div = style_tree(&root2, &ss2);
@@ -2397,7 +2397,7 @@ mod tests {
 
     #[test]
     fn inline_style_attribute_beats_selectors() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div id=\"a\" style=\"color: #00ff00; width: 5px\"></div>".to_string(),
         );
         // #id 선택자가 있어도 인라인 style 이 이겨야 함 (최고 우선순위)
@@ -2413,7 +2413,7 @@ mod tests {
     #[test]
     fn custom_property_and_var_resolve() {
         // 커스텀 프로퍼티는 상속되고 var() 로 해석된다 (테마 토큰)
-        let root = crate::html::parse_dom("<div class=\"t\"><p class=\"b\"></p></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"t\"><p class=\"b\"></p></div>".to_string());
         let ss = crate::css::parse(".t { --c: #ff0000; } .b { color: var(--c); }".to_string());
         let styled = style_tree(&root, &ss);
         let p = &styled.children[0];
@@ -2426,7 +2426,7 @@ mod tests {
 
     #[test]
     fn var_fallback_when_undefined() {
-        let root = crate::html::parse_dom("<div class=\"b\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"b\"></div>".to_string());
         let ss = crate::css::parse(".b { width: var(--missing, 42px); }".to_string());
         let styled = style_tree(&root, &ss);
         assert_eq!(styled.value("width"), Some(Value::Length(42.0, Unit::Px)), "미정의 → fallback");
@@ -2439,7 +2439,7 @@ mod tests {
     #[test]
     fn pseudo_classes_and_child_combinator() {
         let root =
-            crate::html::parse_dom("<ul><li>a</li><li>b</li><li>c</li></ul>".to_string());
+            crate::html::parse_dom_fragment("<ul><li>a</li><li>b</li><li>c</li></ul>".to_string());
         let ss = crate::css::parse(
             "ul > li:first-child { color: #ff0000; } \
              li:nth-child(2) { color: #00ff00; } \
@@ -2454,7 +2454,7 @@ mod tests {
 
     #[test]
     fn nth_child_formula_and_not() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<ul><li></li><li></li><li></li><li></li></ul>".to_string(),
         );
         // 2n(짝수) 빨강, :not(:first-child) 파랑(1번 제외 나머지가 파랑이지만 짝수는 빨강이 이김?
@@ -2473,7 +2473,7 @@ mod tests {
 
     #[test]
     fn child_combinator_excludes_grandchildren() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div class=\"a\"><p>direct</p><span><p>deep</p></span></div>".to_string(),
         );
         let ss = crate::css::parse(".a > p { color: #ff0000; }".to_string());
@@ -2486,7 +2486,7 @@ mod tests {
 
     #[test]
     fn adjacent_sibling_combinator() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><h2></h2><p class=\"x\"></p><p class=\"y\"></p></div>".to_string(),
         );
         let ss = crate::css::parse("h2 + p { color: #ff0000; }".to_string());
@@ -2498,7 +2498,7 @@ mod tests {
 
     #[test]
     fn attribute_selector_matches_by_value() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><input type=\"submit\"><input type=\"text\"></div>".to_string(),
         );
         let ss = crate::css::parse("input[type=submit] { width: 5px; }".to_string());
@@ -2515,7 +2515,7 @@ mod tests {
     fn attribute_selector_case_insensitive_flag() {
         // 기본은 대소문자 구분: [type=SUBMIT] 는 type="submit" 과 비매칭.
         // [type=SUBMIT i] 는 i 플래그로 매칭.
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><input type=\"submit\"></div>".to_string(),
         );
         let ss = crate::css::parse(
@@ -2534,7 +2534,7 @@ mod tests {
 
     #[test]
     fn attribute_operator_selectors() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><a href=\"https://x.com\"></a><a href=\"http://y.io\"></a><a href=\"https://z.org\"></a></div>"
                 .to_string(),
         );
@@ -2554,7 +2554,7 @@ mod tests {
 
     #[test]
     fn attribute_presence_selector() {
-        let root = crate::html::parse_dom(
+        let root = crate::html::parse_dom_fragment(
             "<div><input disabled=\"\"><input></div>".to_string(),
         );
         let ss = crate::css::parse("input[disabled] { width: 3px; }".to_string());
@@ -2565,7 +2565,7 @@ mod tests {
 
     #[test]
     fn target_wins_among_many_irrelevant_rules() {
-        let root = crate::html::parse_dom("<div class=\"target\"></div>".to_string());
+        let root = crate::html::parse_dom_fragment("<div class=\"target\"></div>".to_string());
         let mut css = String::new();
         for i in 0..200 {
             css.push_str(&format!(".n{} {{ width: {}px; }}", i, i));

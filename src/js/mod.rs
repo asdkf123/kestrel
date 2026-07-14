@@ -915,6 +915,12 @@ if (!window.EventTarget) {
     return !!x && typeof x.addEventListener === 'function';
   };
 }
+// CSSOM 인터페이스 객체 (§CSSOM). instanceof 가 브랜드로 판별한다.
+window.CSSStyleSheet = __kIface(function(x){ return __kBrand(x) === 'CSSStyleSheet'; });
+window.CSSStyleRule = __kIface(function(x){ return __kBrand(x) === 'CSSStyleRule'; });
+window.CSSStyleDeclaration = __kIface(function(x){ return __kBrand(x) === 'CSSStyleDeclaration'; });
+window.CSSRule = __kIface(function(x){ return __kBrand(x) === 'CSSStyleRule'; });
+window.Attr = __kIface(function(x){ return __kBrand(x) === 'Attr'; });
 if (!window.Node) window.Node = __kIface(function(x){ return typeof x.nodeType === 'number'; });
 if (!window.Element) window.Element = __kIface(function(x){ return typeof x.tagName === 'string'; });
 if (!window.Document) window.Document = __kIface(function(x){ return x.nodeType === 9; });

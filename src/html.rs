@@ -13,17 +13,30 @@ use crate::dom::{AttrMap, ElementData, Node, NodeType};
 
 // ── 공개 진입점 ─────────────────────────────────────────────────────
 
+// 문서 파싱 (HTML §13.2). doctype 이나 <html> 이 없어도 **문서는 문서다** —
+// 트리 구축이 html/head/body 를 만든다. 예전엔 "doctype 이 보이면 문서, 아니면
+// 조각" 이라는 휴리스틱이었고, doctype 없는 페이지는 <head> 가 없는 트리가 됐다.
+// 그러면 document.head.appendChild(...) 가 그 자리에서 죽는다.
+// 조각 파싱(innerHTML)은 parse_fragment 로 따로 있다.
 pub fn parse(source: String) -> Node {
-    if looks_like_document(&source) {
-        parse_document(source)
+    parse_document(source)
+}
+
+// 조각 파싱의 루트 노드. 테스트가 "이 마크업이 어떤 트리가 되는가" 를 볼 때 쓴다.
+// 문서 파싱(html/head/body 자동 생성)과 달리 마크업 그대로의 트리를 준다.
+#[cfg(test)]
+pub fn parse_frag_root(source: String) -> Node {
+    let mut roots = parse_fragment(source);
+    if roots.len() == 1 {
+        roots.pop().unwrap()
     } else {
-        let mut roots = parse_fragment(source);
-        if roots.len() == 1 {
-            roots.pop().unwrap()
-        } else {
-            elem_node("html".to_string(), AttrMap::new(), roots)
-        }
+        elem_node("html".to_string(), AttrMap::new(), roots)
     }
+}
+
+#[cfg(test)]
+pub fn parse_dom_fragment(source: String) -> crate::dom::Dom {
+    crate::dom::Dom::from_tree(parse_frag_root(source))
 }
 
 pub fn parse_dom(source: String) -> crate::dom::Dom {
@@ -50,8 +63,23 @@ fn parse_document(source: String) -> Node {
         .copied()
         .find(|&c| matches!(b.sink.nodes[c].node_type, NodeType::Element(_)));
     let Some(h) = html else {
-        return elem_node("html".to_string(), AttrMap::new(), vec![]);
+        return elem_node(
+            "html".to_string(),
+            AttrMap::new(),
+            vec![
+                elem_node("head".to_string(), AttrMap::new(), vec![]),
+                elem_node("body".to_string(), AttrMap::new(), vec![]),
+            ],
+        );
     };
+    // 문서에는 **항상** <head> 가 있다 (HTML 표준). 없으면 <body> 앞에 만든다.
+    let has_head = b.sink.nodes[h].children.iter().any(|&c| {
+        matches!(&b.sink.nodes[c].node_type, NodeType::Element(e) if e.tag_name == "head")
+    });
+    if !has_head {
+        let head = b.sink.new_element("head", AttrMap::new());
+        b.sink.nodes[h].children.insert(0, head);
+    }
     // 문서에는 **항상** <body> 가 있다 (HTML 표준: EOF 처리에서 만들어진다).
     // 본문 콘텐츠가 하나도 없는 문서(스크립트만 있는 페이지)에서 우리는 body 를
     // 만들지 않았고, 그래서 document.body 가 null 이었다 —
@@ -64,12 +92,6 @@ fn parse_document(source: String) -> Node {
         b.sink.nodes[h].children.push(body);
     }
     b.to_node(h)
-}
-
-// 문서 파싱 대상인지 휴리스틱 (실제로 fetch 된 페이지는 반드시 doctype/html 을 가진다).
-fn looks_like_document(s: &str) -> bool {
-    let head: String = s.chars().take(512).collect::<String>().to_ascii_lowercase();
-    head.contains("<!doctype") || head.contains("<html")
 }
 
 fn elem_node(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
@@ -2349,7 +2371,7 @@ mod tests {
 
     #[test]
     fn parses_single_element_with_text() {
-        let node = parse("<p>hello</p>".to_string());
+        let node = parse_frag_root("<p>hello</p>".to_string());
         match node.node_type {
             NodeType::Element(ref e) => assert_eq!(e.tag_name, "p"),
             _ => panic!("expected element"),
@@ -2361,7 +2383,7 @@ mod tests {
 
     #[test]
     fn parses_attributes() {
-        let node = parse("<div id=\"main\" class=\"a b\"></div>".to_string());
+        let node = parse_frag_root("<div id=\"main\" class=\"a b\"></div>".to_string());
         if let NodeType::Element(ref e) = node.node_type {
             assert_eq!(e.attributes.get("id").map(|s| s.as_str()), Some("main"));
             assert_eq!(e.attributes.get("class").map(|s| s.as_str()), Some("a b"));
@@ -2372,7 +2394,7 @@ mod tests {
 
     #[test]
     fn wraps_multiple_roots_in_html() {
-        let node = parse("<p></p><p></p>".to_string());
+        let node = parse_frag_root("<p></p><p></p>".to_string());
         if let NodeType::Element(ref e) = node.node_type {
             assert_eq!(e.tag_name, "html");
         } else {
@@ -2382,7 +2404,7 @@ mod tests {
 
     #[test]
     fn skips_doctype_and_void_meta() {
-        let n = parse(
+        let n = parse_frag_root(
             "<!doctype html><html><head><meta charset=\"utf-8\"></head><body><p>hi</p></body></html>"
                 .to_string(),
         );
@@ -2395,7 +2417,7 @@ mod tests {
 
     #[test]
     fn auto_closes_unclosed_tags() {
-        let n = parse("<div><p>a<p>b</div>".to_string());
+        let n = parse_frag_root("<div><p>a<p>b</div>".to_string());
         let mut names = vec![];
         tag_names(&n, &mut names);
         assert!(names.iter().filter(|s| *s == "p").count() >= 1);
@@ -2404,7 +2426,7 @@ mod tests {
 
     #[test]
     fn raw_text_style_not_parsed_as_html() {
-        let n = parse("<style>.a > .b { color: red; }</style>".to_string());
+        let n = parse_frag_root("<style>.a > .b { color: red; }</style>".to_string());
         let mut css = String::new();
         all_text(&n, &mut css);
         assert!(css.contains(".a > .b"), "style content preserved: {:?}", css);
@@ -2412,7 +2434,7 @@ mod tests {
 
     #[test]
     fn decodes_entities() {
-        let n = parse("<p>a &amp; b &#65;</p>".to_string());
+        let n = parse_frag_root("<p>a &amp; b &#65;</p>".to_string());
         let mut s = String::new();
         all_text(&n, &mut s);
         assert!(s.contains("a & b A"), "got {:?}", s);
@@ -2421,24 +2443,24 @@ mod tests {
     #[test]
     fn decodes_legacy_entities_without_semicolon() {
         // &copy, &reg 등 레거시 참조는 세미콜론 없이도 해석 (NPR 푸터 "&copy NPR")
-        let n = parse("<p>&copy 2026 &reg &amp x</p>".to_string());
+        let n = parse_frag_root("<p>&copy 2026 &reg &amp x</p>".to_string());
         let mut s = String::new();
         all_text(&n, &mut s);
         assert!(s.contains("\u{00A9} 2026 \u{00AE} & x"), "got {:?}", s);
         // 세미콜론 필수 엔티티는 세미콜론 없이 해석하지 않음
-        let n2 = parse("<p>&mdash x</p>".to_string());
+        let n2 = parse_frag_root("<p>&mdash x</p>".to_string());
         let mut s2 = String::new();
         all_text(&n2, &mut s2);
         assert!(s2.contains("&mdash x"), "mdash 는 세미콜론 필수: {:?}", s2);
         // URL 쿼리 보호: &copy= 는 해석 안 함
-        let n3 = parse("<a href=\"/x?a=1&copy=2\">l</a>".to_string());
+        let n3 = parse_frag_root("<a href=\"/x?a=1&copy=2\">l</a>".to_string());
         let href = find_href(&n3);
         assert_eq!(href.as_deref(), Some("/x?a=1&copy=2"), "쿼리스트링 &copy= 보존");
     }
 
     #[test]
     fn lowercases_tags_no_panic_on_messy() {
-        let n = parse("<DIV><BR><img src=x><span>ok".to_string());
+        let n = parse_frag_root("<DIV><BR><img src=x><span>ok".to_string());
         let mut names = vec![];
         tag_names(&n, &mut names);
         assert!(names.contains(&"div".to_string()));
@@ -2450,7 +2472,7 @@ mod tests {
 
     #[test]
     fn implicit_p_close_makes_siblings() {
-        let n = parse("<div><p>a<p>b</div>".to_string());
+        let n = parse_frag_root("<div><p>a<p>b</div>".to_string());
         let count = n
             .children
             .iter()
@@ -2461,7 +2483,7 @@ mod tests {
 
     #[test]
     fn table_implicit_tbody() {
-        let n = parse("<table><tr><td>x</td></tr></table>".to_string());
+        let n = parse_frag_root("<table><tr><td>x</td></tr></table>".to_string());
         assert!(matches!(&n.node_type, NodeType::Element(e) if e.tag_name == "table"));
         let tbody = &n.children[0];
         assert!(
@@ -2476,7 +2498,7 @@ mod tests {
 
     #[test]
     fn heading_auto_closes_previous() {
-        let n = parse("<div><h1>a<h2>b</div>".to_string());
+        let n = parse_frag_root("<div><h1>a<h2>b</div>".to_string());
         let count = |name: &str| {
             n.children
                 .iter()
@@ -2489,7 +2511,7 @@ mod tests {
 
     #[test]
     fn list_items_are_siblings() {
-        let n = parse("<ul><li>a<li>b<li>c</ul>".to_string());
+        let n = parse_frag_root("<ul><li>a<li>b<li>c</ul>".to_string());
         let lis = n
             .children
             .iter()
@@ -2500,7 +2522,7 @@ mod tests {
 
     #[test]
     fn adoption_agency_misnested_formatting() {
-        let n = parse("<p><b>1<i>2</b>3</i></p>".to_string());
+        let n = parse_frag_root("<p><b>1<i>2</b>3</i></p>".to_string());
         let mut text = String::new();
         all_text(&n, &mut text);
         assert_eq!(text, "123", "텍스트 보존");
@@ -2513,6 +2535,20 @@ mod tests {
     fn numeric_entities_decode_to_hangul() {
         let dom = super::parse_dom("<p>&#51060;&#48120;&#51648;</p>".to_string());
         assert_eq!(dom.text_content(dom.root), "이미지");
+    }
+
+    #[test]
+    // doctype 이 없어도 문서는 문서다 (HTML §13.2): html/head/body 가 생겨야 한다.
+    // 예전엔 "doctype 이 보이면 문서" 라는 휴리스틱이라, doctype 없는 페이지에는
+    // <head> 가 없었고 document.head.appendChild(...) 가 그 자리에서 죽었다.
+    fn document_without_doctype_still_gets_head_and_body() {
+        let n = parse("<div id=\"d\">x</div>".to_string());
+        assert!(matches!(&n.node_type, NodeType::Element(e) if e.tag_name == "html"));
+        let mut names = vec![];
+        tag_names(&n, &mut names);
+        assert!(names.contains(&"head".to_string()), "{:?}", names);
+        assert!(names.contains(&"body".to_string()), "{:?}", names);
+        assert!(names.contains(&"div".to_string()), "{:?}", names);
     }
 
     #[test]
@@ -2531,7 +2567,7 @@ mod tests {
 
     #[test]
     fn stray_table_text_is_foster_parented() {
-        let n = parse("<table>oops<tr><td>x</td></tr></table>".to_string());
+        let n = parse_frag_root("<table>oops<tr><td>x</td></tr></table>".to_string());
         let mut text = String::new();
         all_text(&n, &mut text);
         assert!(text.contains("oops"), "foster 된 텍스트 보존: {:?}", text);

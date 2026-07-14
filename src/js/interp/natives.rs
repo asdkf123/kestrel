@@ -106,6 +106,18 @@ pub enum Native {
     SplitText,
     // Attr 노드 접근 (§4.9.2)
     GetAttributeNode,
+    // CSSOM (§CSSOM 6)
+    StyleSheets,
+    // 플랫폼 객체의 브랜드 문자열 (§WebIDL 의 인터페이스 판별). instanceof 에 쓴다.
+    Brand,
+    // NodeList/CSSRuleList 의 item(i) — 표준 컬렉션 인터페이스
+    ListItem,
+    SheetInsertRule,
+    SheetDeleteRule,
+    RuleStyleGet,
+    RuleStyleSet,
+    RuleStyleRemove,
+    RuleStyleItem,
     SetAttributeNode,
     RemoveAttributeNode,
     // document.defaultView → window

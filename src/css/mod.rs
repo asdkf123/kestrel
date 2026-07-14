@@ -45,7 +45,31 @@ pub struct Stylesheet {
     pub keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
 }
 
+// CSSOM 의 한 스타일시트 (§CSSOM 6.2 CSSStyleSheet).
+// document.styleSheets 는 이것들의 목록이다. 예전엔 모든 CSS 를 하나로 합쳐서
+// 개별 시트라는 개념 자체가 없었고, document.styleSheets 는 undefined 였다.
+#[derive(Debug, Clone)]
+pub struct SheetEntry {
+    // <link> 의 절대 URL. <style> 이면 None.
+    pub href: Option<String>,
+    // 이 시트를 만든 요소 (<style> 또는 <link>)
+    pub owner: Option<crate::dom::NodeId>,
+    // <style> 이면 마지막으로 파싱한 텍스트 (바뀌면 다시 파싱한다)
+    pub text: String,
+    pub sheet: Stylesheet,
+    pub disabled: bool,
+}
+
 impl Stylesheet {
+    pub fn empty() -> Stylesheet {
+        Stylesheet {
+            rules: Vec::new(),
+            layers: Vec::new(),
+            font_faces: Vec::new(),
+            keyframes: std::collections::HashMap::new(),
+        }
+    }
+
     // @container 규칙이 하나라도 있는가 (있을 때만 두 번째 스타일 패스를 돈다)
     pub fn has_containers(&self) -> bool {
         self.rules.iter().any(|r| r.container.is_some())
@@ -128,6 +152,9 @@ pub struct Rule {
     // @container 조건 (컨테이너 이름, 조건문). 조건은 **레이아웃 후** 컨테이너의 실제
     // 크기로 평가한다 — 스타일 시점엔 아직 모른다.
     pub container: Option<(String, String)>,
+    // 선택자 원문 (CSSOM 의 selectorText). 파싱된 구조에서 되짚어 만들면 정보가
+    // 새기 때문에(의사클래스 인자 등) 원문을 그대로 보존한다.
+    pub selector_text: String,
     // UA(브라우저 기본) 스타일에서 온 규칙인가. `revert` 는 저자 선언을 되돌려
     // UA 원점 값으로 계산해야 하므로 원점을 구분해야 한다 (CSS Cascade §6.2).
     pub ua: bool,
@@ -1020,12 +1047,19 @@ impl Parser {
     }
 
     fn parse_rule(&mut self) -> Option<Rule> {
+        let sel_start = self.pos;
         match self.parse_selectors() {
             Some(selectors) => {
+                // 선택자 원문: '{' 직전까지 (parse_selectors 가 '{' 를 소비한 상태)
+                let selector_text = self.input[sel_start..self.pos]
+                    .trim_end_matches(|c: char| c == '{' || c.is_whitespace())
+                    .trim()
+                    .to_string();
                 let declarations = self.parse_declarations();
                 Some(Rule {
                     selectors,
                     declarations,
+                    selector_text,
                     ua: false,
                     layer: self.cur_layer.clone(),
                     container: self.cur_container.clone(),
