@@ -2912,6 +2912,24 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn function_names_follow_standard() {
+    // §10.2.9 SetFunctionName / NamedEvaluation. 예전엔 f.name 이 항상 "" 였다.
+    assert_eq!(run_str("function f(){} f.name"), "f");
+    assert_eq!(run_str("var g = function(){}; g.name"), "g"); // NamedEvaluation
+    assert_eq!(run_str("var h = function named(){}; h.name"), "named"); // 명명식이 이긴다
+    assert_eq!(run_str("const k = () => {}; k.name"), "k");
+    assert_eq!(run_str("class C { m(){} } C.name"), "C");
+    assert_eq!(run_str("class C { m(){} } C.prototype.m.name"), "m");
+    assert_eq!(run_str("({ p: function(){} }).p.name"), "p");
+    assert_eq!(run_str("({ q(){} }).q.name"), "q");
+    // __proto__: v 는 프로퍼티 정의가 아니라 [[Prototype]] 설정 — 이름을 주지 않는다
+    assert_eq!(
+        run_str("var o = { __proto__: function(){} }; Object.getPrototypeOf(o).name"),
+        ""
+    );
+}
+
+#[test]
 fn errors_are_real_objects_with_prototype_chain() {
     // 8종이 Error.prototype 하나를 공유했었다
     assert!(run_bool("TypeError.prototype !== Error.prototype"));

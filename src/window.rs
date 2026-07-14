@@ -1614,6 +1614,41 @@ mod tests {
         assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
     }
 
+    // WebIDL: 모든 DOM 노드는 인터페이스 객체를 갖는다.
+    // <div> → HTMLDivElement → HTMLElement → Element → Node → EventTarget.
+    // 예전엔 el.constructor 가 undefined 라, 노드 종류를 constructor 로 판별하는
+    // 코드가 그 자리에서 죽었다.
+    #[test]
+    fn dom_nodes_have_interface_objects() {
+        let dom = run_with_layout(
+            r#"<div id="d"></div><input id="i"><foo id="u"></foo><out id="out"></out>
+               <script>
+                 var d = document.getElementById('d');
+                 var log = [];
+                 log.push(d.constructor.name);
+                 log.push(document.getElementById('i').constructor.name);
+                 log.push(document.getElementById('u').constructor.name);
+                 log.push([d instanceof HTMLDivElement, d instanceof HTMLElement,
+                           d instanceof Element, d instanceof Node,
+                           d instanceof HTMLInputElement].join(','));
+                 log.push(document.createTextNode('x').constructor.name);
+                 log.push(document.createComment('x').constructor.name);
+                 // 오리 판별이 아니다 — 평범한 객체는 통과하지 못한다
+                 log.push(String(({tagName:'DIV'}) instanceof HTMLDivElement));
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        let got = dom.text_content(out);
+        assert_eq!(
+            got,
+            "HTMLDivElement|HTMLInputElement|HTMLUnknownElement|\
+             true,true,true,true,false|Text|Comment|false"
+                .replace(char::is_whitespace, "")
+        );
+    }
+
     // HTML §7.3.3: id 를 가진 요소는 전역 이름으로 읽힌다.
     #[test]
     fn named_access_on_window() {

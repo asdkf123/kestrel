@@ -915,12 +915,50 @@ if (!window.EventTarget) {
     return !!x && typeof x.addEventListener === 'function';
   };
 }
-// CSSOM 인터페이스 객체 (§CSSOM). instanceof 가 브랜드로 판별한다.
-window.CSSStyleSheet = __kIface(function(x){ return __kBrand(x) === 'CSSStyleSheet'; });
-window.CSSStyleRule = __kIface(function(x){ return __kBrand(x) === 'CSSStyleRule'; });
-window.CSSStyleDeclaration = __kIface(function(x){ return __kBrand(x) === 'CSSStyleDeclaration'; });
-window.CSSRule = __kIface(function(x){ return __kBrand(x) === 'CSSStyleRule'; });
-window.Attr = __kIface(function(x){ return __kBrand(x) === 'Attr'; });
+// 플랫폼 인터페이스 객체 (WebIDL). instanceof 는 **브랜드 상속 체인**으로 판별한다 —
+// 오리 판별(프로퍼티가 있나?)이 아니다. 요소는 HTML 표준의 요소-인터페이스 매핑을 따른다:
+// <div> → HTMLDivElement → HTMLElement → Element → Node → EventTarget.
+function __kMakeIface(name) {
+  var f = __kIface(function (x) {
+    var chain = __kBrand(x);
+    return !!chain && chain.indexOf(name) >= 0;
+  });
+  Object.defineProperty(f, 'name', { value: name, configurable: true });
+  return f;
+}
+var __kIfaceNames = [
+  'EventTarget2', 'Node2', 'Element', 'CharacterData', 'Text', 'Comment', 'Attr',
+  'HTMLElement', 'HTMLUnknownElement', 'HTMLAnchorElement', 'HTMLAreaElement',
+  'HTMLAudioElement', 'HTMLBaseElement', 'HTMLQuoteElement', 'HTMLBodyElement',
+  'HTMLBRElement', 'HTMLButtonElement', 'HTMLCanvasElement', 'HTMLTableCaptionElement',
+  'HTMLTableColElement', 'HTMLDataElement', 'HTMLDataListElement', 'HTMLModElement',
+  'HTMLDetailsElement', 'HTMLDialogElement', 'HTMLDivElement', 'HTMLDListElement',
+  'HTMLEmbedElement', 'HTMLFieldSetElement', 'HTMLFormElement', 'HTMLHeadingElement',
+  'HTMLHeadElement', 'HTMLHRElement', 'HTMLHtmlElement', 'HTMLIFrameElement',
+  'HTMLImageElement', 'HTMLInputElement', 'HTMLLabelElement', 'HTMLLegendElement',
+  'HTMLLIElement', 'HTMLLinkElement', 'HTMLMapElement', 'HTMLMenuElement',
+  'HTMLMetaElement', 'HTMLMeterElement', 'HTMLObjectElement', 'HTMLOListElement',
+  'HTMLOptGroupElement', 'HTMLOptionElement', 'HTMLOutputElement',
+  'HTMLParagraphElement', 'HTMLPictureElement', 'HTMLPreElement', 'HTMLProgressElement',
+  'HTMLScriptElement', 'HTMLSelectElement', 'HTMLSlotElement', 'HTMLSourceElement',
+  'HTMLSpanElement', 'HTMLStyleElement', 'HTMLTableElement', 'HTMLTableSectionElement',
+  'HTMLTableCellElement', 'HTMLTemplateElement', 'HTMLTextAreaElement', 'HTMLTimeElement',
+  'HTMLTitleElement', 'HTMLTableRowElement', 'HTMLTrackElement', 'HTMLUListElement',
+  'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
+  'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSStyleDeclaration'
+];
+for (var __i = 0; __i < __kIfaceNames.length; __i++) {
+  var __n = __kIfaceNames[__i];
+  if (__n === 'EventTarget2' || __n === 'Node2') continue; // 아래에서 따로
+  window[__n] = __kMakeIface(__n);
+}
+// Node 는 상수(ELEMENT_NODE 등)를 가진 네임스페이스라 이미 있다 — hasInstance 만 얹는다.
+if (window.Node) {
+  window.Node[Symbol.hasInstance] = function (x) {
+    var chain = __kBrand(x);
+    return !!chain && chain.indexOf('Node') >= 0;
+  };
+}
 if (!window.Node) window.Node = __kIface(function(x){ return typeof x.nodeType === 'number'; });
 if (!window.Element) window.Element = __kIface(function(x){ return typeof x.tagName === 'string'; });
 if (!window.Document) window.Document = __kIface(function(x){ return x.nodeType === 9; });

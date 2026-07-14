@@ -1345,6 +1345,19 @@ impl Interp {
         }
     }
 
+    // §10.2.9 SetFunctionName / NamedEvaluation:
+    // 익명 함수(또는 익명 클래스)가 이름 있는 바인딩에 대입되면 그 이름을 갖는다.
+    //   var f = function(){};  f.name === "f"
+    //   const g = () => {};    g.name === "g"
+    // 이미 이름이 있으면 (명명 함수식) 덮지 않는다.
+    fn set_fn_name(v: &Value, name: &str) {
+        if let Value::Fn(f) = v {
+            if f.name.borrow().is_empty() {
+                *f.name.borrow_mut() = name.to_string();
+            }
+        }
+    }
+
     // 종류가 지정되지 않은 내부 오류를 잡을 때 쓰는 Error 객체.
     pub(super) fn error_from_msg(&self, msg: &str) -> Value {
         self.make_error("Error", Some(msg.to_string()))
@@ -1841,6 +1854,7 @@ impl Interp {
         }
         let body = parse(&body_src).map_err(|e| format!("Function 본문 파싱 실패: {}", e))?;
         Ok(Value::Fn(Rc::new(JsFn {
+            name: RefCell::new("anonymous".to_string()),
             params,
             body,
             env: self.global.clone(),
@@ -2303,6 +2317,7 @@ impl Interp {
         for s in stmts {
             if let Stmt::FuncDecl { name, params, body, is_generator, is_async } = s {
                 let f = Value::Fn(Rc::new(JsFn {
+                    name: RefCell::new(name.clone()),
                     params: params.clone(),
                     body: body.clone(),
                     env: env.clone(),
@@ -2350,6 +2365,10 @@ impl Interp {
                         // var 는 하이스트된 바인딩에 대입(env_set), let/const 는 새로 선언
                         Some(e) => {
                             let v = self.eval(e, env)?;
+                            // const f = () => {} 에서 f.name 은 "f" 다 (NamedEvaluation)
+                            if let crate::js::ast::Pattern::Name(n) = pat {
+                                Self::set_fn_name(&v, n);
+                            }
                             self.bind_pattern(pat, v, env, is_var)?;
                         }
                         // var x; (초기화 없음)은 하이스트된 값 보존(덮지 않음). let x; 는 undefined.
@@ -2738,6 +2757,13 @@ impl Interp {
                         PropKey::Spread => unreachable!(),
                     };
                     let val = self.eval(e, env)?;
+                    // 객체 리터럴의 메서드/익명 함수 프로퍼티도 이름을 갖는다
+                    // ({ m(){} }).m.name === "m" (§13.2.5.5 PropertyDefinitionEvaluation).
+                    // 단 `__proto__: v` 는 프로퍼티 정의가 아니라 [[Prototype]] 설정이므로
+                    // 이름을 주지 않는다 (§B.3.1) — 표준이 명시적으로 제외한다.
+                    if key != "__proto__" {
+                        Self::set_fn_name(&val, &key);
+                    }
                     // 접근자: get/set 함수를 Accessor 로 감싼다. 같은 키에 get 과 set 이
                     // 따로 오면({get x(){}, set x(v){}}) 하나의 접근자로 병합해야 한다.
                     let is_get = matches!(k, PropKey::Getter(_) | PropKey::ComputedGetter(_));
@@ -2768,6 +2794,8 @@ impl Interp {
                     None => env.clone(),
                 };
                 let f = Rc::new(JsFn {
+                    // 명명 함수식은 그 이름, 익명이면 NamedEvaluation 이 나중에 채운다
+                    name: RefCell::new(name.clone().unwrap_or_default()),
                     params: params.clone(),
                     body: body.clone(),
                     env: fn_env.clone(),
@@ -3395,6 +3423,7 @@ impl Interp {
             };
             if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async }) = decl {
                 let f = Value::Fn(Rc::new(JsFn {
+                    name: RefCell::new(name.clone()),
                     params: params.clone(),
                     body: fb.clone(),
                     env: env.clone(),
@@ -3432,6 +3461,7 @@ impl Interp {
         }
         for (local, exported_name) in &exported {
             let getter = Value::Fn(Rc::new(JsFn {
+                name: RefCell::new(format!("get {}", exported_name)),
                 params: vec![],
                 body: vec![Stmt::Return(Some(Expr::Ident(local.clone())))],
                 env: env.clone(),
@@ -3694,6 +3724,28 @@ impl Interp {
         // .constructor — 값 타입의 전역 생성자 (core-js/프레임워크의 타입판별·종/species 에 필수).
         // 객체/인스턴스가 자체 constructor 프로퍼티를 가지면 그것 우선.
         if key == "constructor" {
+            // 플랫폼 객체의 constructor 는 그 인터페이스 객체다 (WebIDL).
+            // el.constructor.name === "HTMLDivElement". 예전엔 undefined 라,
+            // 노드 종류를 constructor 로 판별하는 코드가 그 자리에서 죽었다.
+            if matches!(
+                recv,
+                Value::Dom(_)
+                    | Value::Attr(_, _)
+                    | Value::Sheet(_)
+                    | Value::CssRule(_, _)
+                    | Value::RuleStyle(_, _)
+                    | Value::Style(_)
+                    | Value::ComputedStyle(_)
+            ) {
+                let chain = self.call_native(Native::Brand, None, vec![recv.clone()])?;
+                if let Value::Arr(a) = &chain {
+                    if let Some(Value::Str(iface)) = a.borrow().first() {
+                        if let Some(ctor) = env_get(&self.global, iface) {
+                            return Ok(ctor);
+                        }
+                    }
+                }
+            }
             match recv {
                 Value::Obj(m) => {
                     if let Some(v) = m.borrow().get("constructor") {
@@ -4170,6 +4222,10 @@ impl Interp {
                 }
             }
             Value::Class(c) => {
+                // 클래스도 함수다: C.name / C.length (§10.2.9, §15.7)
+                if key == "name" && c.statics.borrow().get("name").is_none() {
+                    return Ok(Value::Str(c.name.clone()));
+                }
                 // C.prototype — 클래스 메서드를 담은 객체 (상속 체인 포함).
                 // 예전엔 undefined 라, 프로토타입에서 메서드를 꺼내 특정 this 로 호출하는
                 // 코드(커스텀 엘리먼트의 connectedCallback 등)가 전부 실패했다.
@@ -4232,7 +4288,7 @@ impl Interp {
                     "call" => Ok(Value::Native(Native::FnCall)),
                     "apply" => Ok(Value::Native(Native::FnApply)),
                     "bind" => Ok(Value::Native(Native::FnBind)),
-                    "name" => Ok(Value::Str(String::new())),
+                    "name" => Ok(Value::Str(func.name.borrow().clone())),
                     "length" => Ok(Value::Num(func.params.len() as f64)),
                     // 함수도 toString 을 가진다 (번들이 fn.toString() 으로 소스 검사)
                     "toString" => Ok(Value::Native(Native::FnToString)),
@@ -4912,6 +4968,7 @@ impl Interp {
         };
         let mk = |params: &Vec<String>, body: &Vec<Stmt>, is_generator: bool, is_async: bool| {
             Rc::new(JsFn {
+                name: RefCell::new(String::new()),
                 params: params.clone(),
                 body: body.clone(),
                 env: env.clone(),
@@ -4927,26 +4984,33 @@ impl Interp {
                 props: RefCell::new(HashMap::new()),
             })
         };
-        let ctor = def.ctor.as_ref().map(|(p, b)| mk(p, b, false, false));
+        // 메서드/접근자도 이름을 갖는다 (§15.4): 접근자는 "get x" / "set x" (§10.2.9)
+        let named = |f: Rc<JsFn>, n: &str| -> Rc<JsFn> {
+            *f.name.borrow_mut() = n.to_string();
+            f
+        };
+        let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false), def.name.as_deref().unwrap_or("")));
         let mut methods = HashMap::new();
         for (name, p, b, gen, asy) in &def.methods {
-            methods.insert(name.clone(), mk(p, b, *gen, *asy));
+            methods.insert(name.clone(), named(mk(p, b, *gen, *asy), name));
         }
         let mut getters = HashMap::new();
         let mut setters = HashMap::new();
         for (name, p, b) in &def.setters {
-            setters.insert(name.clone(), mk(p, b, false, false));
+            setters.insert(name.clone(), named(mk(p, b, false, false), &format!("set {}", name)));
         }
         let mut static_getters = HashMap::new();
         for (name, p, b) in &def.static_getters {
-            static_getters.insert(name.clone(), mk(p, b, false, false));
+            static_getters
+                .insert(name.clone(), named(mk(p, b, false, false), &format!("get {}", name)));
         }
         let mut static_setters = HashMap::new();
         for (name, p, b) in &def.static_setters {
-            static_setters.insert(name.clone(), mk(p, b, false, false));
+            static_setters
+                .insert(name.clone(), named(mk(p, b, false, false), &format!("set {}", name)));
         }
         for (name, p, b) in &def.getters {
-            getters.insert(name.clone(), mk(p, b, false, false));
+            getters.insert(name.clone(), named(mk(p, b, false, false), &format!("get {}", name)));
         }
         // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출
         let mut fields = Vec::new();

@@ -186,6 +186,10 @@ impl ArrayObj {
 }
 
 pub struct JsFn {
+    // 함수 이름 (§10.2.9 SetFunctionName). 선언/명명 함수식은 그 이름, 익명 함수는
+    // 대입 대상 이름(NamedEvaluation)이 붙는다. 예전엔 필드 자체가 없어서 f.name 이
+    // 항상 "" 였다 — 이름으로 함수를 판별하는 코드가 조용히 어긋난다.
+    pub name: RefCell<String>,
     pub params: Vec<String>,
     pub body: Vec<Stmt>,
     pub env: EnvRef, // 클로저가 캡처한 렉시컬 환경

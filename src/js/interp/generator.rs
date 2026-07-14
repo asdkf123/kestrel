@@ -295,6 +295,7 @@ impl Interp {
             for s in stmts {
                 if let Stmt::FuncDecl { name, params, body, is_generator, is_async } = s {
                     let f = Value::Fn(Rc::new(JsFn {
+                        name: RefCell::new(name.clone()),
                         params: params.clone(),
                         body: body.clone(),
                         env: scope.clone(),

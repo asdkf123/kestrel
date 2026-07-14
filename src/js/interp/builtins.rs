@@ -2207,19 +2207,49 @@ impl Interp {
                 let v = a.borrow().get(i as usize).cloned();
                 Ok(v.unwrap_or(Value::Null))
             }
-            // 플랫폼 객체 브랜드 (WebIDL 인터페이스 판별). instanceof 가 이걸 쓴다 —
-            // 예전엔 오리 판별(프로퍼티 존재 여부)이라 평범한 객체도 통과했다.
-            Native::Brand => Ok(Value::Str(
-                match args.first() {
-                    Some(Value::Sheet(_)) => "CSSStyleSheet",
-                    Some(Value::CssRule(_, _)) => "CSSStyleRule",
-                    Some(Value::RuleStyle(_, _)) | Some(Value::Style(_)) => "CSSStyleDeclaration",
-                    Some(Value::ComputedStyle(_)) => "CSSStyleDeclaration",
-                    Some(Value::Attr(_, _)) => "Attr",
-                    _ => "",
-                }
-                .to_string(),
-            )),
+            // 플랫폼 객체의 인터페이스 상속 체인 (WebIDL). instanceof 와 constructor 가
+            // 이걸 쓴다 — 예전엔 오리 판별(프로퍼티 존재 여부)이라 평범한 객체도 통과했고,
+            // 요소에는 constructor 자체가 없었다.
+            Native::Brand => {
+                let chain: Vec<&str> = match args.first() {
+                    Some(Value::Dom(id)) => {
+                        let dom = self.dom_arena()?;
+                        match &dom.get(*id).node_type {
+                            crate::dom::NodeType::Element(e) => {
+                                let iface = crate::dom::Dom::element_interface(&e.tag_name);
+                                let mut c = vec![iface];
+                                if iface.starts_with("SVG") {
+                                    if iface != "SVGElement" {
+                                        c.push("SVGElement");
+                                    }
+                                } else {
+                                    if iface != "HTMLElement" {
+                                        c.push("HTMLElement");
+                                    }
+                                }
+                                c.extend(["Element", "Node", "EventTarget"]);
+                                c
+                            }
+                            crate::dom::NodeType::Text(_) => {
+                                vec!["Text", "CharacterData", "Node", "EventTarget"]
+                            }
+                            crate::dom::NodeType::Comment(_) => {
+                                vec!["Comment", "CharacterData", "Node", "EventTarget"]
+                            }
+                        }
+                    }
+                    Some(Value::Attr(_, _)) => vec!["Attr", "Node", "EventTarget"],
+                    Some(Value::Sheet(_)) => vec!["CSSStyleSheet", "StyleSheet"],
+                    Some(Value::CssRule(_, _)) => vec!["CSSStyleRule", "CSSRule"],
+                    Some(Value::RuleStyle(_, _))
+                    | Some(Value::Style(_))
+                    | Some(Value::ComputedStyle(_)) => vec!["CSSStyleDeclaration"],
+                    _ => vec![],
+                };
+                Ok(Value::Arr(ArrayObj::new(
+                    chain.into_iter().map(|s| Value::Str(s.to_string())).collect(),
+                )))
+            }
             // CSSOM 메서드
             Native::SheetInsertRule => {
                 let Some(Value::Sheet(si)) = recv else { return Ok(Value::Num(0.0)) };

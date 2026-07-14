@@ -509,6 +509,92 @@ impl Dom {
         rec(self, self.root, want)
     }
 
+    // HTML 요소 → IDL 인터페이스 이름 (HTML 표준의 "element interface" 매핑).
+    // 이 표는 명세가 정한 것이지 추측이 아니다. 목록에 없는 HTML 태그는
+    // HTMLElement, 알 수 없는 태그는 HTMLUnknownElement (§4.13).
+    pub fn element_interface(tag: &str) -> &'static str {
+        match tag {
+            "a" => "HTMLAnchorElement",
+            "area" => "HTMLAreaElement",
+            "audio" => "HTMLAudioElement",
+            "base" => "HTMLBaseElement",
+            "blockquote" | "q" => "HTMLQuoteElement",
+            "body" => "HTMLBodyElement",
+            "br" => "HTMLBRElement",
+            "button" => "HTMLButtonElement",
+            "canvas" => "HTMLCanvasElement",
+            "caption" => "HTMLTableCaptionElement",
+            "col" | "colgroup" => "HTMLTableColElement",
+            "data" => "HTMLDataElement",
+            "datalist" => "HTMLDataListElement",
+            "del" | "ins" => "HTMLModElement",
+            "details" => "HTMLDetailsElement",
+            "dialog" => "HTMLDialogElement",
+            "div" => "HTMLDivElement",
+            "dl" => "HTMLDListElement",
+            "embed" => "HTMLEmbedElement",
+            "fieldset" => "HTMLFieldSetElement",
+            "form" => "HTMLFormElement",
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "HTMLHeadingElement",
+            "head" => "HTMLHeadElement",
+            "hr" => "HTMLHRElement",
+            "html" => "HTMLHtmlElement",
+            "iframe" => "HTMLIFrameElement",
+            "img" => "HTMLImageElement",
+            "input" => "HTMLInputElement",
+            "label" => "HTMLLabelElement",
+            "legend" => "HTMLLegendElement",
+            "li" => "HTMLLIElement",
+            "link" => "HTMLLinkElement",
+            "map" => "HTMLMapElement",
+            "menu" => "HTMLMenuElement",
+            "meta" => "HTMLMetaElement",
+            "meter" => "HTMLMeterElement",
+            "object" => "HTMLObjectElement",
+            "ol" => "HTMLOListElement",
+            "optgroup" => "HTMLOptGroupElement",
+            "option" => "HTMLOptionElement",
+            "output" => "HTMLOutputElement",
+            "p" => "HTMLParagraphElement",
+            "picture" => "HTMLPictureElement",
+            "pre" => "HTMLPreElement",
+            "progress" => "HTMLProgressElement",
+            "script" => "HTMLScriptElement",
+            "select" => "HTMLSelectElement",
+            "slot" => "HTMLSlotElement",
+            "source" => "HTMLSourceElement",
+            "span" => "HTMLSpanElement",
+            "style" => "HTMLStyleElement",
+            "table" => "HTMLTableElement",
+            "tbody" | "tfoot" | "thead" => "HTMLTableSectionElement",
+            "td" | "th" => "HTMLTableCellElement",
+            "template" => "HTMLTemplateElement",
+            "textarea" => "HTMLTextAreaElement",
+            "time" => "HTMLTimeElement",
+            "title" => "HTMLTitleElement",
+            "tr" => "HTMLTableRowElement",
+            "track" => "HTMLTrackElement",
+            "ul" => "HTMLUListElement",
+            "video" => "HTMLVideoElement",
+            // 알려진 HTML 태그이지만 전용 인터페이스가 없는 것들
+            "abbr" | "address" | "article" | "aside" | "b" | "bdi" | "bdo" | "cite" | "code"
+            | "dd" | "dfn" | "dt" | "em" | "figcaption" | "figure" | "footer" | "header"
+            | "hgroup" | "i" | "kbd" | "main" | "mark" | "nav" | "noscript" | "rp" | "rt"
+            | "ruby" | "s" | "samp" | "search" | "section" | "small" | "strong" | "sub"
+            | "summary" | "sup" | "u" | "var" | "wbr" => "HTMLElement",
+            // SVG
+            "svg" => "SVGSVGElement",
+            "path" | "rect" | "circle" | "ellipse" | "line" | "polygon" | "polyline" | "g"
+            | "defs" | "use" | "text" | "tspan" | "clipPath" | "mask" | "pattern" => {
+                "SVGElement"
+            }
+            // 그 외 (커스텀 요소 포함): 하이픈이 있으면 커스텀 요소라 HTMLElement,
+            // 아니면 알 수 없는 요소.
+            t if t.contains('-') => "HTMLElement",
+            _ => "HTMLUnknownElement",
+        }
+    }
+
     // 술어를 만족하는 첫 요소 (문서 순서). named access 등에 쓴다.
     pub fn find<F: Fn(&ElementData) -> bool + Copy>(&self, pred: F) -> Option<NodeId> {
         fn rec<F: Fn(&ElementData) -> bool + Copy>(
