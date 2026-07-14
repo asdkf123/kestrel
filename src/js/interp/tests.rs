@@ -2912,6 +2912,34 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn identifiers_allow_unicode_and_escapes() {
+    // §12.7: 식별자는 유니코드다. 예전엔 ASCII 만 받아서, 유니코드 식별자나
+    // 식별자 안의 유니코드 이스케이프가 파싱에서 통째로 죽었다.
+    assert_eq!(run_str("var \u{c790}\u{bc14} = 'ko'; \u{c790}\u{bc14}"), "ko");
+    assert_eq!(run_str("var caf\u{e9} = 'fr'; caf\u{e9}"), "fr");
+    // Other_ID_Start (℘)
+    assert_eq!(run_str("var \u{2118} = 'weierstrass'; \u{2118}"), "weierstrass");
+    // 식별자 안의 유니코드 이스케이프
+    assert_eq!(run_str(r"var \u0061bc = 'esc'; abc"), "esc");
+    assert_eq!(run_str(r"var \u{1D49C} = 'ext'; \u{1D49C}"), "ext");
+}
+
+#[test]
+fn private_names_are_not_properties() {
+    // §6.2.12: private 이름은 프로퍼티가 아니다. 예전엔 "#x" 라는 이름의 필드였고,
+    // Object.keys(instance) 가 ["#x"] 를 냈다 — JSON.stringify 로 private 데이터가
+    // 그대로 새어 나갔다.
+    assert_eq!(run_str("class C { #x = 1; p = 2; } JSON.stringify(Object.keys(new C()))"), "[\"p\"]");
+    assert_eq!(run_str("class C { #x = 1; p = 2; } JSON.stringify(new C())"), "{\"p\":2}");
+    // 그래도 클래스 안에서는 읽고 쓴다
+    assert_eq!(run_str("class C { #x = 1; get(){ return this.#x } set(v){ this.#x = v; return this.#x } } var c = new C(); c.get() + ',' + c.set(9)"), "1,9");
+    // #x in obj — 브랜드 검사 (§13.10.1). 왼쪽은 값이 아니라 private 이름이다.
+    assert!(run_bool("class C { #x = 1; static has(o){ return #x in o } } C.has(new C())"));
+    assert!(run_bool("class C { #x = 1; static has(o){ return #x in o } } !C.has({})"));
+    assert!(run_bool("class C { #x = 1; static has(o){ return #x in o } } !C.has({'#x': 1})"));
+}
+
+#[test]
 fn with_statement_uses_object_environment_record() {
     // §14.11 + §9.1.1.2. 없어서 with 를 쓰는 스크립트가 통째로 죽었다.
     assert_eq!(run_str("var o = {a:'x'}; with (o) { a }"), "x");

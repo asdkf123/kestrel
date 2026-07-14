@@ -1384,6 +1384,25 @@ impl Interp {
         self.event_protos.iter().find(|(k, _)| *k == iface).map(|(_, p)| p.clone())
     }
 
+    // 이 값이 그 private 이름을 갖는가 (#x in obj). 필드든 메서드든 접근자든 센다.
+    fn has_private(&self, v: &Value, name: &str) -> bool {
+        let key = format!("#{}", name);
+        match v {
+            Value::Instance(i) => {
+                if i.fields.borrow().contains_key(&priv_key(&key)) {
+                    return true;
+                }
+                // private 메서드/접근자는 클래스에 산다
+                i.class.find_method(&key).is_some()
+                    || i.class.find_getter(&key).is_some()
+                    || i.class.find_setter(&key).is_some()
+            }
+            // static private 은 클래스 자신에 산다
+            Value::Class(c) => c.statics.borrow().contains_key(&key),
+            _ => false,
+        }
+    }
+
     // 종류가 지정되지 않은 내부 오류를 잡을 때 쓰는 Error 객체.
     pub(super) fn error_from_msg(&self, msg: &str) -> Value {
         self.make_error("Error", Some(msg.to_string()))
@@ -3024,6 +3043,16 @@ impl Interp {
                 Ok(Value::Num(if *prefix { new } else { old }))
             }
             Expr::Binary { op, left, right } => {
+                // `#x in obj` — 브랜드 검사 (§13.10.1). 왼쪽은 **값이 아니라 private 이름**
+                // 이라 평가하면 안 된다. 예전엔 평가해서 ReferenceError 가 났다.
+                if matches!(op, BinOp::In) {
+                    if let Expr::Ident(name) = left.as_ref() {
+                        if let Some(priv_name) = name.strip_prefix('#') {
+                            let r = self.eval(right, env)?;
+                            return Ok(Value::Bool(self.has_private(&r, priv_name)));
+                        }
+                    }
+                }
                 let l = self.eval(left, env)?;
                 let r = self.eval(right, env)?;
                 self.binary(*op, l, r)
@@ -3286,6 +3315,7 @@ impl Interp {
                     let _ = self.call_value(Value::Fn(setter), Some(target.clone()), vec![v]);
                     return;
                 }
+                let k = field_key(&k);
                 if !inst.fields.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
                     return;
                 }
@@ -4242,8 +4272,10 @@ impl Interp {
                 self.dom_get(*id, key)
             }
             Value::Instance(inst) => {
-                // 필드 우선, 그다음 get 접근자(호출해 값 산출), 그다음 메서드 체인
-                if let Some(v) = inst.fields.borrow().get(key) {
+                // 필드 우선, 그다음 get 접근자(호출해 값 산출), 그다음 메서드 체인.
+                // private 이름은 내부 키로 저장돼 있다 (프로퍼티가 아니다).
+                let fkey = field_key(key);
+                if let Some(v) = inst.fields.borrow().get(&fkey) {
                     return Ok(v.clone());
                 }
                 if let Some(g) = inst.class.find_getter(key) {
@@ -4944,7 +4976,7 @@ impl Interp {
                 None => Value::Undefined,
             };
             if let Value::Instance(i) = inst {
-                i.fields.borrow_mut().insert(name.clone(), v);
+                i.fields.borrow_mut().insert(field_key(name), v);
             }
         }
         Ok(())
@@ -5641,6 +5673,7 @@ impl Interp {
                         if self.is_frozen_val(&iv) {
                             return Ok(());
                         }
+                        let key = field_key(&key);
                         if !inst.fields.borrow().contains_key(&key)
                             && self.is_nonextensible_val(&iv)
                         {

@@ -572,15 +572,41 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
             out.push(Tok::Template(parts));
             continue;
         }
-        // 식별자/키워드. 유니코드 식별자 지원(café/你好 등): ID_Start≈is_alphabetic,
-        // ID_Continue≈is_alphanumeric. '#'은 private 필드, '_'/'$'는 허용.
-        if c.is_alphabetic() || c == '_' || c == '$' || c == '#' {
-            let start = i;
-            i += 1;
-            while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_' || b[i] == '$') {
+        // 식별자/키워드 (§12.7). '#' 은 private 이름.
+        // 식별자 안에는 유니코드 이스케이프(\u0041, \u{1F600})도 올 수 있다 —
+        // 예전엔 '\' 를 만나면 "알 수 없는 문자" 로 렉싱이 통째로 죽었다.
+        if is_id_start(c) || c == '#' || (c == '\\' && b.get(i + 1) == Some(&'u')) {
+            let mut word = String::new();
+            if c == '#' {
+                word.push('#');
                 i += 1;
             }
-            let word: String = b[start..i].iter().collect();
+            let mut first = true;
+            while i < b.len() {
+                let ch = b[i];
+                if ch == '\\' && b.get(i + 1) == Some(&'u') {
+                    let (esc, used) = match read_unicode_escape(&b[i + 2..]) {
+                        Some(v) => v,
+                        None => break,
+                    };
+                    let ok = if first { is_id_start(esc) } else { is_id_continue(esc) };
+                    if !ok {
+                        break;
+                    }
+                    word.push(esc);
+                    i += 2 + used;
+                } else if (first && is_id_start(ch)) || (!first && is_id_continue(ch)) {
+                    word.push(ch);
+                    i += 1;
+                } else {
+                    break;
+                }
+                first = false;
+            }
+            if word.is_empty() || word == "#" {
+                return Err(format!("빈 식별자 (위치 {})", i));
+            }
+            // 이스케이프로 쓴 이름은 예약어가 아니다 (표준) — \u0069f 는 식별자 "if" 다.
             out.push(keyword(&word).unwrap_or(Tok::Ident(word)));
             continue;
         }
@@ -777,4 +803,39 @@ mod tests {
         assert!(tokenize("'abc").is_err());
         assert!(tokenize("/* abc").is_err());
     }
+}
+
+// ID_Start (§12.7): 유니코드 문자 + '$' + '_' + Other_ID_Start.
+// Rust 표준에는 유니코드 속성표가 없어서 is_alphabetic 으로 근사한다 (L* 범주를 덮는다).
+// 표준이 명시적으로 더 허용하는 문자들(Other_ID_Start)은 직접 나열한다.
+fn is_id_start(c: char) -> bool {
+    c == '$'
+        || c == '_'
+        || c.is_alphabetic()
+        || matches!(c, '\u{1885}' | '\u{1886}' | '\u{2118}' | '\u{212E}' | '\u{309B}' | '\u{309C}')
+}
+
+// ID_Continue: ID_Start + 숫자 + 결합 문자 + ZWNJ/ZWJ + Other_ID_Continue.
+fn is_id_continue(c: char) -> bool {
+    is_id_start(c)
+        || c.is_numeric()
+        || c == '\u{200C}' // ZWNJ
+        || c == '\u{200D}' // ZWJ
+        || matches!(c, '\u{00B7}' | '\u{0387}' | '\u{1369}'..='\u{1371}' | '\u{19DA}')
+}
+
+// '\u' 다음을 읽어 (문자, 소비한 길이). \uXXXX 와 \u{...} 둘 다.
+fn read_unicode_escape(b: &[char]) -> Option<(char, usize)> {
+    if b.first() == Some(&'{') {
+        let end = b.iter().position(|&c| c == '}')?;
+        let hex: String = b[1..end].iter().collect();
+        let n = u32::from_str_radix(&hex, 16).ok()?;
+        return char::from_u32(n).map(|c| (c, end + 1));
+    }
+    if b.len() < 4 {
+        return None;
+    }
+    let hex: String = b[..4].iter().collect();
+    let n = u32::from_str_radix(&hex, 16).ok()?;
+    char::from_u32(n).map(|c| (c, 4))
 }

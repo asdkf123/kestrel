@@ -315,3 +315,24 @@ impl std::fmt::Debug for Value {
         }
     }
 }
+
+// private 이름(#x)은 **프로퍼티가 아니다** (§6.2.12 Private Names).
+// 내부 키로 저장해 Object.keys / for-in / JSON 에 절대 새지 않게 한다.
+// 예전엔 그냥 "#x" 라는 이름의 필드였고, Object.keys(instance) 가 ["#x"] 를 냈다 —
+// JSON.stringify 로 private 데이터가 그대로 새어 나갔다.
+pub fn priv_key(k: &str) -> String {
+    format!("\u{0}{}", k)
+}
+
+pub fn is_private_name(k: &str) -> bool {
+    k.starts_with('#')
+}
+
+// 인스턴스 필드 조회/저장에 쓸 실제 키
+pub fn field_key(k: &str) -> String {
+    if is_private_name(k) {
+        priv_key(k)
+    } else {
+        k.to_string()
+    }
+}

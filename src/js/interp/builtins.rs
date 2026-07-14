@@ -440,7 +440,9 @@ impl Interp {
             }
             Value::Instance(inst) => {
                 let m = inst.fields.borrow().clone();
-                let mut ks: Vec<&String> = m.keys().collect();
+                // 내부 키(private 이름, 비열거 표식)는 직렬화하지 않는다
+                let mut ks: Vec<&String> =
+                    m.keys().filter(|k| !is_internal_key(k) && !m.contains_key(&nonenum_marker(k))).collect();
                 ks.sort();
                 let mut parts = Vec::new();
                 for k in ks {
