@@ -2912,6 +2912,24 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn event_interfaces_have_real_prototype_chains() {
+    // 예전엔 MouseEvent/KeyboardEvent 가 전부 같은 EventCtor 로 "근사" 되어 있었다.
+    // new Event('x') instanceof Event 조차 false 였다.
+    assert!(run_bool("new Event('x') instanceof Event"));
+    assert!(run_bool("Object.getPrototypeOf(new Event('x')) === Event.prototype"));
+    // MouseEvent → UIEvent → Event 상속 체인
+    assert!(run_bool("new MouseEvent('click') instanceof MouseEvent"));
+    assert!(run_bool("new MouseEvent('click') instanceof UIEvent"));
+    assert!(run_bool("new MouseEvent('click') instanceof Event"));
+    // 다른 인터페이스는 아니다
+    assert!(run_bool("!(new MouseEvent('click') instanceof KeyboardEvent)"));
+    assert!(run_bool("Event.prototype !== MouseEvent.prototype"));
+    assert_eq!(run_str("new MouseEvent('click').constructor.name"), "MouseEvent");
+    // 스크립트가 만든 이벤트는 신뢰되지 않는다 (표준)
+    assert!(run_bool("new Event('x').isTrusted === false"));
+}
+
+#[test]
 fn native_error_constructors_inherit_from_error() {
     // §20.5.6.2: NativeError 생성자의 [[Prototype]] 은 **Error 생성자**다.
     // 없으면 "TypeError 가 Error 의 서브타입인가" 를 프로토타입 체인으로 확인하는

@@ -1385,7 +1385,7 @@ impl Interp {
                 };
                 Ok(Value::Str(format!("[object {}]", tag)))
             }
-            Native::ReturnFalse => Ok(Value::Bool(false)),
+            Native::ReturnTrue => Ok(Value::Bool(true)),
             Native::ReturnThis => Ok(recv.unwrap_or(Value::Undefined)),
             Native::FnToString => Ok(Value::Str("function () { [native code] }".to_string())),
             // obj[Symbol.iterator]() → 반복자 객체 { next(), value/done }
@@ -3187,11 +3187,18 @@ impl Interp {
                     Value::Obj(o) if matches!(o.borrow().get("defaultPrevented"), Some(Value::Bool(true))));
                 Ok(Value::Bool(!prevented))
             }
-            Native::EventCtor => {
-                // new Event(type, opts) / new CustomEvent(type, {detail}) → 이벤트 객체
+            Native::EventCtor(iface) => {
+                // new Event(type, opts) / new MouseEvent(type, {...}) → 이벤트 객체.
+                // 인터페이스별 prototype 을 붙인다 — 그래야 instanceof 와
+                // Object.getPrototypeOf 가 표준대로 답한다.
                 let etype = args.first().map(to_display).unwrap_or_default();
                 let mut m = ObjMap::new();
+                if let Some(p) = self.event_proto(iface) {
+                    m.insert("__proto__".to_string(), p);
+                }
                 m.insert("type".to_string(), Value::Str(etype));
+                // 스크립트가 만든 이벤트는 신뢰되지 않는다 (표준)
+                m.insert("isTrusted".to_string(), Value::Bool(false));
                 // init 딕셔너리의 **모든 멤버**가 이벤트의 프로퍼티가 된다 (DOM 표준 §2.2).
                 // 예전엔 detail/bubbles 만 베껴서 KeyboardEvent 의 key, MouseEvent 의
                 // clientX/ctrlKey 같은 것이 통째로 사라졌다 — 키 핸들러가 조용히 안 먹는다.

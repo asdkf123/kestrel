@@ -1434,22 +1434,41 @@ if (typeof document !== 'undefined') {
 // 표준이 정한 인터페이스 이름만 받고, 그 외에는 NotSupportedError 를 던진다 —
 // 아무 이름이나 받아 빈 Event 를 주면 조용히 다른 동작이 된다.
 if (typeof document !== 'undefined' && !document.createEvent) {
+  // DOM §4.5.1 의 createEvent 표 그대로다. 이름 → 인터페이스.
+  // 예전엔 이름 목록만 갖고 전부 Event 로 만들었다 — MouseEvent 를 달라고 해도
+  // Event 가 나왔고, instanceof 로 구분할 수도 없었다.
   var __kEventIfaces = {
-    beforeunloadevent: 1, compositionevent: 1, customevent: 1, devicemotionevent: 1,
-    deviceorientationevent: 1, dragevent: 1, event: 1, events: 1, focusevent: 1,
-    hashchangeevent: 1, htmlevents: 1, keyboardevent: 1, messageevent: 1,
-    mouseevent: 1, mouseevents: 1, storageevent: 1, svgevents: 1, textevent: 1,
-    touchevent: 1, uievent: 1, uievents: 1
+    beforeunloadevent: 'BeforeUnloadEvent',
+    compositionevent: 'CompositionEvent',
+    customevent: 'CustomEvent',
+    devicemotionevent: 'DeviceMotionEvent',
+    deviceorientationevent: 'DeviceOrientationEvent',
+    dragevent: 'DragEvent',
+    event: 'Event',
+    events: 'Event',
+    focusevent: 'FocusEvent',
+    hashchangeevent: 'HashChangeEvent',
+    htmlevents: 'Event',
+    keyboardevent: 'KeyboardEvent',
+    messageevent: 'MessageEvent',
+    mouseevent: 'MouseEvent',
+    mouseevents: 'MouseEvent',
+    storageevent: 'StorageEvent',
+    svgevents: 'Event',
+    textevent: 'CompositionEvent',
+    touchevent: 'TouchEvent',
+    uievent: 'UIEvent',
+    uievents: 'UIEvent'
   };
   document.createEvent = function (iface) {
-    var key = String(iface).toLowerCase();
-    if (!__kEventIfaces[key]) {
+    var name = __kEventIfaces[String(iface).toLowerCase()];
+    if (!name) {
       throw new DOMException(
         "The provided value '" + iface + "' is not a valid event interface name.",
         'NotSupportedError'
       );
     }
-    var e = key === 'customevent' ? new CustomEvent('') : new Event('');
+    var e = new window[name]('');
     // createEvent 로 만든 이벤트는 초기화 전까지 dispatch 할 수 없다 (표준의
     // initialized 플래그). initEvent 가 그 플래그를 세운다.
     e.__kInitialized = false;

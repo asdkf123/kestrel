@@ -75,7 +75,7 @@ pub enum Native {
     ObjToString,
     // Error.prototype.toString (§20.5.3.4): name + ": " + message (빈 쪽은 생략)
     ErrorToString,
-    ReturnFalse,
+    ReturnTrue,
     ReturnThis, // valueOf 등 — 수신자(this) 반환
     FnToString, // Function.prototype.toString
     MakeIter,
@@ -232,7 +232,10 @@ pub enum Native {
     HistoryReplaceState,
     DomParserCtor,
     DomParserParse,
-    EventCtor,
+    // 이벤트 인터페이스 생성자. 이름을 들고 있어야 프로토타입 체인을 구분한다 —
+    // 예전엔 MouseEvent/KeyboardEvent 가 전부 같은 EventCtor 로 "근사" 되어서,
+    // new Event('x') instanceof Event 조차 false 였다.
+    EventCtor(&'static str),
     CloneNode,
     Matches,
     Closest,
@@ -490,3 +493,33 @@ pub enum CharDataOp {
     Delete,
     Replace,
 }
+
+// 이벤트 인터페이스 상속 표 (DOM §2.2 및 각 명세). (인터페이스, 부모).
+// createEvent 의 표(§4.5.1)가 참조하는 이름들을 모두 담는다.
+pub static EVENT_IFACES: &[(&str, &str)] = &[
+    ("Event", ""),
+    ("CustomEvent", "Event"),
+    ("UIEvent", "Event"),
+    ("MouseEvent", "UIEvent"),
+    ("PointerEvent", "MouseEvent"),
+    ("DragEvent", "MouseEvent"),
+    ("WheelEvent", "MouseEvent"),
+    ("KeyboardEvent", "UIEvent"),
+    ("FocusEvent", "UIEvent"),
+    ("InputEvent", "UIEvent"),
+    ("CompositionEvent", "UIEvent"),
+    ("TouchEvent", "UIEvent"),
+    ("BeforeUnloadEvent", "Event"),
+    ("HashChangeEvent", "Event"),
+    ("MessageEvent", "Event"),
+    ("StorageEvent", "Event"),
+    ("DeviceMotionEvent", "Event"),
+    ("DeviceOrientationEvent", "Event"),
+    ("ProgressEvent", "Event"),
+    ("PopStateEvent", "Event"),
+    ("AnimationEvent", "Event"),
+    ("TransitionEvent", "Event"),
+    ("ErrorEvent", "Event"),
+    ("SubmitEvent", "Event"),
+    ("ClipboardEvent", "Event"),
+];

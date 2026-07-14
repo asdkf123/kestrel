@@ -237,6 +237,8 @@ pub struct Interp {
     // __proto__ 도 constructor 도 없었다 — instanceof 는 "message 가 있나?" 오리 판별로,
     // e.constructor 는 Object 로 나왔다. 이제 각자 진짜 프로토타입 체인을 갖는다.
     error_protos: Vec<(&'static str, Value)>,
+    // 이벤트 인터페이스별 prototype (Event/UIEvent/MouseEvent…). 진짜 상속 체인이다.
+    event_protos: Vec<(&'static str, Value)>,
     // Object/Array 의 정적 멤버·prototype 을 담은 네임스페이스 맵.
     // 전역은 Native 생성자이고, 멤버 조회는 이 맵에 위임한다.
     object_ns: Value,
@@ -576,7 +578,10 @@ impl Interp {
         let mut implementation = ObjMap::new();
         implementation
             .insert("createHTMLDocument".to_string(), Value::Native(Native::CreateHTMLDocument));
-        implementation.insert("hasFeature".to_string(), Value::Native(Native::ReturnFalse));
+        // hasFeature 는 **언제나 true** 다 (DOM §4.5.1: "useless; always returns true").
+        // 우리는 ReturnFalse 였다 — 표준과 정반대라, 기능 탐지를 하는 코드가 조용히
+        // 다른 길로 샜다.
+        implementation.insert("hasFeature".to_string(), Value::Native(Native::ReturnTrue));
         document.insert(
             "implementation".to_string(),
             Value::Obj(Rc::new(RefCell::new(implementation))),
@@ -819,8 +824,9 @@ impl Interp {
         env_declare(&global, "WeakMap", Value::Native(Native::MapCtor));
         env_declare(&global, "Set", Value::Native(Native::SetCtor));
         env_declare(&global, "WeakSet", Value::Native(Native::SetCtor));
-        env_declare(&global, "Event", Value::Native(Native::EventCtor));
-        env_declare(&global, "CustomEvent", Value::Native(Native::EventCtor));
+        for (iface, _) in natives::EVENT_IFACES {
+            env_declare(&global, iface, Value::Native(Native::EventCtor(iface)));
+        }
         env_declare(&global, "Proxy", Value::Native(Native::ProxyCtor));
         // localStorage: 페이지 수명 동안 실제로 동작하는 인메모리 스토리지
         let mut ls = ObjMap::new();
@@ -895,9 +901,9 @@ impl Interp {
         window.insert("cancelAnimationFrame".to_string(), Value::Native(Native::ClearTimer));
         window.insert("setTimeout".to_string(), Value::Native(Native::SetTimeout));
         window.insert("setInterval".to_string(), Value::Native(Native::SetInterval));
-        // Event 생성자류(window.Event.prototype 참조 등) — 모두 EventCtor 로 근사.
-        for ev in ["Event", "CustomEvent", "MouseEvent", "KeyboardEvent", "PointerEvent", "FocusEvent", "InputEvent"] {
-            window.insert(ev.to_string(), Value::Native(Native::EventCtor));
+        // 이벤트 인터페이스 생성자 (각자 자기 prototype 을 갖는다)
+        for (iface, _) in natives::EVENT_IFACES {
+            window.insert(iface.to_string(), Value::Native(Native::EventCtor(iface)));
         }
         // history: pushState/replaceState 는 location 을 실제로 갱신한다(SPA 라우터가
         // 그 뒤 location.pathname 을 읽는다). 예전엔 no-op 이라 라우팅이 조용히 어긋났다.
@@ -1108,6 +1114,20 @@ impl Interp {
             }
             error_protos.push((kind, proto));
         }
+        // 이벤트 인터페이스 prototype: MouseEvent.prototype 의 [[Prototype]] 은
+        // UIEvent.prototype 이고, 그건 다시 Event.prototype 이다 (진짜 상속 체인).
+        let mut event_protos: Vec<(&'static str, Value)> = Vec::new();
+        for (iface, parent) in natives::EVENT_IFACES {
+            let mut m = ObjMap::new();
+            if !parent.is_empty() {
+                if let Some((_, p)) = event_protos.iter().find(|(k, _)| k == parent) {
+                    m.insert("__proto__".to_string(), p.clone());
+                }
+            }
+            m.insert("constructor".to_string(), Value::Native(Native::EventCtor(iface)));
+            m.insert(nonenum_marker("constructor"), Value::Bool(true));
+            event_protos.push((iface, Value::Obj(Rc::new(RefCell::new(m)))));
+        }
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.subsec_nanos() as u64 | 1)
@@ -1156,6 +1176,7 @@ impl Interp {
             set_proto,
             error_proto,
             error_protos,
+            event_protos,
             object_ns,
             array_ns,
             date_proto,
@@ -1357,6 +1378,10 @@ impl Interp {
                 *f.name.borrow_mut() = name.to_string();
             }
         }
+    }
+
+    pub(super) fn event_proto(&self, iface: &str) -> Option<Value> {
+        self.event_protos.iter().find(|(k, _)| *k == iface).map(|(_, p)| p.clone())
     }
 
     // 종류가 지정되지 않은 내부 오류를 잡을 때 쓰는 Error 객체.
@@ -1738,6 +1763,9 @@ impl Interp {
 
     pub(super) fn make_event(&self, event: &str, target: crate::dom::NodeId) -> Value {
         let mut m = ObjMap::new();
+        if let Some(p) = self.event_proto("Event") {
+            m.insert("__proto__".to_string(), p);
+        }
         m.insert("type".to_string(), Value::Str(event.to_string()));
         m.insert("target".to_string(), Value::Dom(target));
         m.insert("currentTarget".to_string(), Value::Dom(target));
@@ -4333,6 +4361,14 @@ impl Interp {
             Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
             Value::Native(Native::SetCtor) if key == "prototype" => Ok(self.set_proto.clone()),
             // Error/TypeError/… 의 prototype 과 name (class X extends Error, 기능 탐지).
+            Value::Native(Native::EventCtor(n)) => Ok(match key {
+                "prototype" => self.event_proto(n).unwrap_or(Value::Undefined),
+                "name" => Value::Str(n.to_string()),
+                "call" => Value::Native(Native::FnCall),
+                "apply" => Value::Native(Native::FnApply),
+                "bind" => Value::Native(Native::FnBind),
+                _ => Value::Undefined,
+            }),
             Value::Native(Native::ErrorCtor(n)) => Ok(match key {
                 // 종류별 prototype (TypeError.prototype !== Error.prototype)
                 "prototype" => self
@@ -4761,8 +4797,8 @@ impl Interp {
             Value::Native(Native::FunctionCtor) => return self.make_function(args),
             Value::Native(Native::MapCtor) => return self.make_map(args),
             Value::Native(Native::SetCtor) => return self.make_set(args),
-            Value::Native(Native::EventCtor) => {
-                return self.call_native(Native::EventCtor, None, args)
+            Value::Native(Native::EventCtor(n)) => {
+                return self.call_native(Native::EventCtor(n), None, args)
             }
             Value::Native(Native::ProxyCtor) => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
@@ -5334,6 +5370,34 @@ impl Interp {
                     Value::Native(Native::UrlCtor) => obj_has("searchParams"),
                     Value::Native(Native::FunctionCtor) => {
                         matches!(l, Value::Fn(_) | Value::Native(_) | Value::Bound(_) | Value::Class(_))
+                    }
+                    // 이벤트 인터페이스: 프로토타입 체인에 그 인터페이스의 prototype 이
+                    // 있는가. 예전엔 전부 같은 EventCtor 라 구분 자체가 불가능했고,
+                    // new Event('x') instanceof Event 조차 false 였다.
+                    Value::Native(Native::EventCtor(name)) => {
+                        match (&l, self.event_proto(name)) {
+                            (Value::Obj(lm), Some(Value::Obj(tp))) => {
+                                let mut cur = Some(lm.clone());
+                                let mut hit = false;
+                                let mut depth = 0;
+                                while let Some(m) = cur {
+                                    if Rc::ptr_eq(&m, &tp) {
+                                        hit = true;
+                                        break;
+                                    }
+                                    depth += 1;
+                                    if depth > 100 {
+                                        break;
+                                    }
+                                    cur = match m.borrow().get("__proto__") {
+                                        Some(Value::Obj(p)) => Some(p.clone()),
+                                        _ => None,
+                                    };
+                                }
+                                hit
+                            }
+                            _ => false,
+                        }
                     }
                     // Error 및 서브타입: 프로토타입 체인에 해당 종류의 prototype 이 있는가.
                     // (예전엔 "message 프로퍼티가 있나?" 라는 오리 판별이었다 — 그래서
