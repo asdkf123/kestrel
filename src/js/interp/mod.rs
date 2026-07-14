@@ -9024,6 +9024,20 @@ mod tests {
         );
     }
 
+    // 구조분해의 **문자열/숫자 키** — 미니파이된 번들이 흔히 쓴다
+    // ({"icon-node": a}) => …. 예전엔 식별자 키만 받아서 그 스크립트가
+    // **파싱에서 통째로 죽었다** (lucide.dev 의 번들이 그렇다).
+    #[test]
+    fn string_and_number_keys_in_destructuring() {
+        assert_eq!(run_num("var f = ({\"a-b\": x}) => x; f({\"a-b\": 5})"), 5.0);
+        assert_eq!(run_num("var o = {\"k\": 7}; let {\"k\": v} = o; v"), 7.0);
+        assert_eq!(run_num("var f = ({1: x}) => x; f({1: 9})"), 9.0);
+        assert_eq!(
+            run_num("function f({\"a-b\": x}) { return x; } f({\"a-b\": 3})"),
+            3.0
+        );
+    }
+
     #[test]
     fn computed_keys_in_destructuring() {
         // let { [ex]: v } = o (ES6). 예전엔 파서가 죽어서 그 번들 전체가 안 돌았다.

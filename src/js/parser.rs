@@ -597,13 +597,33 @@ impl Parser {
                         self.eat(&Tok::Comma);
                         break;
                     }
-                    // 계산된 키: { [ex]: sub } (ES6)
+                    // 계산된 키: { [ex]: sub } (ES6),
+                    // 문자열/숫자 키: { "a-b": x }, { 1: y } — 미니파이된 번들이 흔히 쓴다.
+                    // 예전엔 식별자만 받아서 그 스크립트가 **파싱에서 통째로 죽었다**
+                    // (lucide.dev 의 번들이 { "icon-node": a } 를 쓴다).
                     let key = if self.eat(&Tok::LBracket) {
                         let e = self.assignment()?;
                         self.expect(&Tok::RBracket)?;
                         crate::js::ast::PatKey::Computed(e)
                     } else {
-                        crate::js::ast::PatKey::Static(self.prop_name()?)
+                        match self.peek() {
+                            Some(Tok::Str(_)) => {
+                                let Some(Tok::Str(k)) = self.peek().cloned() else { unreachable!() };
+                                self.pos += 1;
+                                crate::js::ast::PatKey::Static(k)
+                            }
+                            Some(Tok::Num(_)) => {
+                                let Some(Tok::Num(n)) = self.peek().cloned() else { unreachable!() };
+                                self.pos += 1;
+                                // 숫자 키는 문자열로 정규화된다 (표준: 프로퍼티 키는 문자열)
+                                crate::js::ast::PatKey::Static(if n.fract() == 0.0 && n.abs() < 1e21 {
+                                    format!("{}", n as i64)
+                                } else {
+                                    n.to_string()
+                                })
+                            }
+                            _ => crate::js::ast::PatKey::Static(self.prop_name()?),
+                        }
                     };
                     // { key: subpattern } (중첩 가능) 또는 { key }
                     let sub = if self.eat(&Tok::Colon) {
