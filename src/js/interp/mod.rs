@@ -185,6 +185,10 @@ pub struct Interp {
     // 강제 레이아웃(forced layout) 입력. 스크립트/콜백 실행 구간에만 설정된다.
     // 측정 API 를 읽는 순간 보류된 스타일·레이아웃을 흘리기 위한 것 (CSSOM View).
     pub layout_ctx: Option<crate::window::LayoutCtx>,
+    // 지금 실행 중인 코드가 속한 클래스의 private 스코프 id (0 = 없음).
+    // 함수를 만들 때 이 값을 그 함수에 새기고(렉시컬), 호출할 때 복원한다.
+    priv_id: u64,
+    priv_counter: u64,
     // CSSOM 변경(insertRule/deleteRule/disabled) 세대. 반영된 세대와 다르면 재구성.
     pub css_epoch: u64,
     pub css_applied_epoch: u64,
@@ -1156,6 +1160,8 @@ impl Interp {
             scroll_y: 0.0,
             active_element: None,
             layout_ctx: None,
+            priv_id: 0,
+            priv_counter: 0,
             css_epoch: 0,
             css_applied_epoch: 0,
             layout_version: None,
@@ -1389,7 +1395,7 @@ impl Interp {
         let key = format!("#{}", name);
         match v {
             Value::Instance(i) => {
-                if i.fields.borrow().contains_key(&priv_key(&key)) {
+                if i.fields.borrow().contains_key(&field_key(&key, self.priv_id)) {
                     return true;
                 }
                 // private 메서드/접근자는 클래스에 산다
@@ -1902,6 +1908,7 @@ impl Interp {
         }
         let body = parse(&body_src).map_err(|e| format!("Function 본문 파싱 실패: {}", e))?;
         Ok(Value::Fn(Rc::new(JsFn {
+            priv_id: std::cell::Cell::new(0),
             name: RefCell::new("anonymous".to_string()),
             params,
             body,
@@ -2365,6 +2372,7 @@ impl Interp {
         for s in stmts {
             if let Stmt::FuncDecl { name, params, body, is_generator, is_async } = s {
                 let f = Value::Fn(Rc::new(JsFn {
+                    priv_id: std::cell::Cell::new(0),
                     name: RefCell::new(name.clone()),
                     params: params.clone(),
                     body: body.clone(),
@@ -2856,6 +2864,9 @@ impl Interp {
                     None => env.clone(),
                 };
                 let f = Rc::new(JsFn {
+                    // 클래스 본문 안에서 만든 함수/화살표는 그 클래스의 private 이름을
+                    // 본다 (렉시컬). 나중에 콜백으로 호출돼도 마찬가지다.
+                    priv_id: std::cell::Cell::new(self.priv_id),
                     // 명명 함수식은 그 이름, 익명이면 NamedEvaluation 이 나중에 채운다
                     name: RefCell::new(name.clone().unwrap_or_default()),
                     params: params.clone(),
@@ -3315,7 +3326,7 @@ impl Interp {
                     let _ = self.call_value(Value::Fn(setter), Some(target.clone()), vec![v]);
                     return;
                 }
-                let k = field_key(&k);
+                let k = field_key(&k, self.priv_id);
                 if !inst.fields.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
                     return;
                 }
@@ -3496,6 +3507,7 @@ impl Interp {
             };
             if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async }) = decl {
                 let f = Value::Fn(Rc::new(JsFn {
+                    priv_id: std::cell::Cell::new(0),
                     name: RefCell::new(name.clone()),
                     params: params.clone(),
                     body: fb.clone(),
@@ -3534,6 +3546,7 @@ impl Interp {
         }
         for (local, exported_name) in &exported {
             let getter = Value::Fn(Rc::new(JsFn {
+                priv_id: std::cell::Cell::new(0),
                 name: RefCell::new(format!("get {}", exported_name)),
                 params: vec![],
                 body: vec![Stmt::Return(Some(Expr::Ident(local.clone())))],
@@ -4274,7 +4287,7 @@ impl Interp {
             Value::Instance(inst) => {
                 // 필드 우선, 그다음 get 접근자(호출해 값 산출), 그다음 메서드 체인.
                 // private 이름은 내부 키로 저장돼 있다 (프로퍼티가 아니다).
-                let fkey = field_key(key);
+                let fkey = field_key(key, self.priv_id);
                 if let Some(v) = inst.fields.borrow().get(&fkey) {
                     return Ok(v.clone());
                 }
@@ -4739,7 +4752,25 @@ impl Interp {
                     }
     }
 
+    // private 이름 해석은 그 함수가 **만들어진** 클래스 스코프를 따른다 (렉시컬).
+    // 호출하는 쪽이 어디든 상관없다 — 클래스 메서드가 만든 콜백을 나중에 밖에서
+    // 불러도 그 클래스의 #x 를 본다.
     fn call_value(
+        &mut self,
+        f: Value,
+        recv: Option<Value>,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let saved = self.priv_id;
+        if let Value::Fn(func) = &f {
+            self.priv_id = func.priv_id.get();
+        }
+        let r = self.call_value_inner(f, recv, args);
+        self.priv_id = saved;
+        r
+    }
+
+    fn call_value_inner(
         &mut self,
         f: Value,
         recv: Option<Value>,
@@ -4976,7 +5007,9 @@ impl Interp {
                 None => Value::Undefined,
             };
             if let Value::Instance(i) = inst {
-                i.fields.borrow_mut().insert(field_key(name), v);
+                // 저장 키는 **그 필드를 선언한 클래스**의 private 스코프를 쓴다.
+                // self.priv_id 는 초기화 함수가 끝나며 복원돼 있어 쓰면 안 된다.
+                i.fields.borrow_mut().insert(field_key(name, cls.priv_id), v);
             }
         }
         Ok(())
@@ -5049,6 +5082,23 @@ impl Interp {
     }
 
     fn make_class(&mut self, def: &crate::js::ast::ClassDef, env: &EnvRef) -> Result<Value, String> {
+        // 이 클래스 평가마다 **새 private 스코프**를 만든다 (§6.2.12).
+        // 같은 이름 #x 라도 클래스가 다르면 다른 private 이름이다.
+        self.priv_counter += 1;
+        let priv_id = self.priv_counter;
+        let outer_priv = self.priv_id;
+        self.priv_id = priv_id; // 클래스 본문(메서드/필드 초기화)은 이 스코프 안이다
+        let result = self.make_class_inner(def, env, priv_id);
+        self.priv_id = outer_priv;
+        result
+    }
+
+    fn make_class_inner(
+        &mut self,
+        def: &crate::js::ast::ClassDef,
+        env: &EnvRef,
+        priv_id: u64,
+    ) -> Result<Value, String> {
         // 부모는 클래스일 수도, 일반 생성자(함수/네이티브/Array 같은 네임스페이스 객체)일
         // 수도 있다 — 표준은 아무 생성자나 확장 가능(class E extends Error 가 대표).
         let (parent, parent_ctor): (Option<Rc<JsClass>>, Option<Value>) = match &def.parent {
@@ -5061,12 +5111,18 @@ impl Interp {
             },
             None => (None, None),
         };
+        // 클래스 본문 전용 스코프: 클래스 이름의 내부 바인딩이 여기 산다 (§15.7.14).
+        // 메서드가 자기 클래스를 이름으로 참조할 수 있어야 한다 (클래스 표현식 포함).
+        // 예전엔 static 필드 초기화에만 있어서, 메서드 안의 E.#s 가 ReferenceError 였다.
+        let class_env = Env::new(Some(env.clone()));
         let mk = |params: &Vec<String>, body: &Vec<Stmt>, is_generator: bool, is_async: bool| {
             Rc::new(JsFn {
+                // 클래스 본문의 함수들은 이 클래스의 private 스코프 안에 있다
+                priv_id: std::cell::Cell::new(priv_id),
                 name: RefCell::new(String::new()),
                 params: params.clone(),
                 body: body.clone(),
-                env: env.clone(),
+                env: class_env.clone(),
                 is_arrow: false,
                 is_generator,
                 is_async,
@@ -5121,6 +5177,7 @@ impl Interp {
             statics.insert(name.clone(), Value::Fn(mk(p, b, *gen, *asy)));
         }
         let cls = Rc::new(JsClass {
+            priv_id,
             proto_cache: RefCell::new(None),
             name: def.name.clone().unwrap_or_else(|| "(anonymous)".to_string()),
             parent,
@@ -5134,6 +5191,10 @@ impl Interp {
             static_getters,
             static_setters,
         });
+        // 클래스 이름 바인딩을 본문 스코프에 심는다 (메서드가 이제 이걸 본다)
+        if let Some(n) = &def.name {
+            env_declare(&class_env, n, Value::Class(cls.clone()));
+        }
         // static 필드: 클래스 완성 후 this=클래스로 평가해 statics 에 설정
         for (name, init) in &def.static_fields {
             let v = match init {
@@ -5673,7 +5734,7 @@ impl Interp {
                         if self.is_frozen_val(&iv) {
                             return Ok(());
                         }
-                        let key = field_key(&key);
+                        let key = field_key(&key, self.priv_id);
                         if !inst.fields.borrow().contains_key(&key)
                             && self.is_nonextensible_val(&iv)
                         {

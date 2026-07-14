@@ -2940,6 +2940,38 @@ fn private_names_are_not_properties() {
 }
 
 #[test]
+fn private_names_are_scoped_per_class() {
+    // §6.2.12: 클래스를 평가할 때마다 **새 private 이름**이 만들어진다.
+    // 같은 이름 #x 라도 클래스가 다르면 다른 이름이다.
+    // 예전엔 키가 그냥 "#x" 라서 서로 다른 클래스가 같은 필드를 봤고,
+    // 브랜드 검사도 서로를 통과시켰다.
+    assert_eq!(
+        run_str(
+            "class C { #x = 1; get(){ return this.#x } } \
+             class D { #x = 9; get(){ return this.#x } } \
+             new C().get() + ',' + new D().get()"
+        ),
+        "1,9"
+    );
+    assert!(run_bool(
+        "class C { #x = 1; static has(o){ return #x in o } } class D { #x = 9; } \
+         C.has(new C()) && !C.has(new D())"
+    ));
+    // private 이름 해석은 렉시컬이다 — 클래스 메서드가 만든 콜백을 나중에 밖에서
+    // 불러도 그 클래스의 #x 를 본다.
+    assert_eq!(
+        run_str("class F { #v = 42; cb(){ return () => this.#v; } } String(new F().cb()())"),
+        "42"
+    );
+    // 클래스 본문 안에는 클래스 이름의 내부 바인딩이 있다 (§15.7.14) —
+    // 메서드에서도 보여야 한다 (예전엔 static 필드 초기화에만 있었다).
+    assert_eq!(
+        run_str("String((class E { static #s = 5; static r(){ return E.#s } }).r())"),
+        "5"
+    );
+}
+
+#[test]
 fn with_statement_uses_object_environment_record() {
     // §14.11 + §9.1.1.2. 없어서 with 를 쓰는 스크립트가 통째로 죽었다.
     assert_eq!(run_str("var o = {a:'x'}; with (o) { a }"), "x");

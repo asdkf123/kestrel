@@ -186,6 +186,10 @@ impl ArrayObj {
 }
 
 pub struct JsFn {
+    // 이 함수가 어느 클래스의 private 스코프 안에서 만들어졌는가 (0 = 없음).
+    // private 이름 해석은 **렉시컬**이다 — 클래스 메서드 안에서 만든 콜백도
+    // 나중에 호출되면 그 클래스의 #x 를 볼 수 있어야 한다.
+    pub priv_id: std::cell::Cell<u64>,
     // 함수 이름 (§10.2.9 SetFunctionName). 선언/명명 함수식은 그 이름, 익명 함수는
     // 대입 대상 이름(NamedEvaluation)이 붙는다. 예전엔 필드 자체가 없어서 f.name 이
     // 항상 "" 였다 — 이름으로 함수를 판별하는 코드가 조용히 어긋난다.
@@ -206,6 +210,9 @@ pub struct JsFn {
 }
 
 pub struct JsClass {
+    // 이 클래스 평가에서 만들어진 private 이름들의 스코프 id (§6.2.12).
+    // 같은 이름 #x 라도 클래스가 다르면 **다른 private 이름**이다 — 그래서 id 가 필요하다.
+    pub priv_id: u64,
     pub name: String,
     pub parent: Option<Rc<JsClass>>,
     // 클래스가 아닌 생성자를 확장한 경우(class E extends Error / extends function).
@@ -320,18 +327,15 @@ impl std::fmt::Debug for Value {
 // 내부 키로 저장해 Object.keys / for-in / JSON 에 절대 새지 않게 한다.
 // 예전엔 그냥 "#x" 라는 이름의 필드였고, Object.keys(instance) 가 ["#x"] 를 냈다 —
 // JSON.stringify 로 private 데이터가 그대로 새어 나갔다.
-pub fn priv_key(k: &str) -> String {
-    format!("\u{0}{}", k)
-}
-
 pub fn is_private_name(k: &str) -> bool {
     k.starts_with('#')
 }
 
 // 인스턴스 필드 조회/저장에 쓸 실제 키
-pub fn field_key(k: &str) -> String {
+// private 이름의 실제 저장 키. 클래스 스코프 id 를 붙여 클래스마다 다른 이름이 되게 한다.
+pub fn field_key(k: &str, priv_id: u64) -> String {
     if is_private_name(k) {
-        priv_key(k)
+        format!("\u{0}{}@{}", k, priv_id)
     } else {
         k.to_string()
     }
