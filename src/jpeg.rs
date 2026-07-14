@@ -774,7 +774,6 @@ mod tests {
         assert_eq!(img.rgba[o + 1], img.rgba[o + 2]);
     }
 
-    #[test]
     // 프로그레시브 JPEG (SOF2). 스캔이 여러 번 와서 계수의 일부/하위 비트를 채운다.
     // 예전엔 SOF2 를 만나면 그냥 None 이었다 — 프로그레시브는 웹에서 아주 흔하고,
     // 그런 이미지는 **조용히 사라졌다** (tailwindcss.com 이 그랬다).

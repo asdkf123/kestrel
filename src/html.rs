@@ -2318,7 +2318,6 @@ mod tests {
         assert_eq!((tbody, tr, td), (1, 1, 2), "한 행 두 칸이어야 한다");
     }
 
-    use super::*;
     use crate::dom::NodeType;
 
     fn tag_names(node: &Node, out: &mut Vec<String>) {

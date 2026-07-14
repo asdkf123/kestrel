@@ -17,6 +17,7 @@ mod jpeg;
 mod js;
 mod layout;
 mod paint;
+mod paint_svg;
 mod png;
 mod raster;
 mod style;

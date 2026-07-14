@@ -1,0 +1,3745 @@
+// 인터프리터 테스트. 표준 동작을 못 박는 회귀 테스트다 — 여기 있는 각 항목은
+// 실제로 조용히 틀렸던 적이 있는 동작이다.
+use super::*;
+
+fn run(src: &str) -> Value {
+    Interp::new().run(src).unwrap()
+}
+
+// 프렐류드(플랫폼 전역들)를 깔고 실행 — 실제 페이지와 같은 환경.
+fn run_prelude(src: &str) -> Value {
+    let mut it = Interp::new();
+    it.run(crate::js::JS_PRELUDE).expect("프렐류드 실행");
+    it.run(src).unwrap()
+}
+
+fn prelude_str(src: &str) -> String {
+    to_display(&run_prelude(src))
+}
+
+fn prelude_num(src: &str) -> f64 {
+    match run_prelude(src) {
+        Value::Num(n) => n,
+        v => panic!("수를 기대: {:?}", v),
+    }
+}
+
+fn prelude_bool(src: &str) -> bool {
+    matches!(run_prelude(src), Value::Bool(true))
+}
+
+fn run_bool_in(it: &mut Interp, src: &str) -> bool {
+    matches!(it.run(src).unwrap(), Value::Bool(true))
+}
+
+fn run_num(src: &str) -> f64 {
+    match run(src) {
+        Value::Num(n) => n,
+        other => panic!("expected number, got {:?}", other),
+    }
+}
+
+fn run_str(src: &str) -> String {
+    match run(src) {
+        Value::Str(s) => s,
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+fn run_bool(src: &str) -> bool {
+    match run(src) {
+        Value::Bool(b) => b,
+        other => panic!("expected bool, got {:?}", other),
+    }
+}
+
+// ── WebAssembly (JS API) ───────────────────────────────────────────────
+// 바이트는 테스트 안에서 기계적으로 만든다. 손으로 센 오프셋은 반드시 틀린다.
+// 모듈: memory 1페이지, add(i32,i32)->i32, poke(i32) [메모리 0번지에 store8],
+//       grow() -> memory.grow(1), 데이터 세그먼트로 0x10 에 'OK'.
+fn wasm_test_bytes() -> String {
+    fn leb(mut n: u32) -> Vec<u8> {
+        let mut o = Vec::new();
+        loop {
+            let b = (n & 0x7f) as u8;
+            n >>= 7;
+            if n == 0 {
+                o.push(b);
+                return o;
+            }
+            o.push(b | 0x80);
+        }
+    }
+    fn sec(id: u8, body: Vec<u8>) -> Vec<u8> {
+        let mut o = vec![id];
+        o.extend(leb(body.len() as u32));
+        o.extend(body);
+        o
+    }
+    fn vecs(items: Vec<Vec<u8>>) -> Vec<u8> {
+        let mut o = leb(items.len() as u32);
+        for i in items {
+            o.extend(i);
+        }
+        o
+    }
+    fn nm(s: &str) -> Vec<u8> {
+        let mut o = leb(s.len() as u32);
+        o.extend_from_slice(s.as_bytes());
+        o
+    }
+    fn body(code: Vec<u8>) -> Vec<u8> {
+        let mut b = leb(0); // 로컬 없음
+        b.extend(code);
+        b.push(0x0b);
+        let mut o = leb(b.len() as u32);
+        o.extend(b);
+        o
+    }
+    let i32t = 0x7fu8;
+    let types = vec![
+        vec![0x60, 0x02, i32t, i32t, 0x01, i32t], // (i32,i32)->i32
+        vec![0x60, 0x01, i32t, 0x00],             // (i32)->()
+        vec![0x60, 0x00, 0x01, i32t],             // ()->i32
+    ];
+    let mut data = vec![0x00, 0x41, 0x10, 0x0b]; // active, offset=16
+    data.extend(leb(2));
+    data.extend_from_slice(b"OK");
+
+    let mut m = Vec::new();
+    m.extend_from_slice(b"\0asm");
+    m.extend_from_slice(&1u32.to_le_bytes());
+    m.extend(sec(1, vecs(types)));
+    m.extend(sec(3, vecs(vec![leb(0), leb(1), leb(2)])));
+    m.extend(sec(5, vecs(vec![vec![0x00, 0x01]])));
+    m.extend(sec(
+        7,
+        vecs(vec![
+            {
+                let mut v = nm("add");
+                v.push(0x00);
+                v.extend(leb(0));
+                v
+            },
+            {
+                let mut v = nm("poke");
+                v.push(0x00);
+                v.extend(leb(1));
+                v
+            },
+            {
+                let mut v = nm("grow");
+                v.push(0x00);
+                v.extend(leb(2));
+                v
+            },
+            {
+                let mut v = nm("memory");
+                v.push(0x02);
+                v.extend(leb(0));
+                v
+            },
+        ]),
+    ));
+    m.extend(sec(
+        10,
+        vecs(vec![
+            body(vec![0x20, 0x00, 0x20, 0x01, 0x6a]), // add
+            body(vec![0x41, 0x00, 0x20, 0x00, 0x3a, 0x00, 0x00]), // mem[0] = x
+            body(vec![0x41, 0x01, 0x40, 0x00]),       // memory.grow(1)
+        ]),
+    ));
+    m.extend(sec(11, vecs(vec![data])));
+
+    let items: Vec<String> = m.iter().map(|b| b.to_string()).collect();
+    format!("new Uint8Array([{}])", items.join(","))
+}
+
+#[test]
+fn wasm_js_api_roundtrip() {
+    let b = wasm_test_bytes();
+    assert!(
+        prelude_bool(&format!("WebAssembly.validate({})", b)),
+        "유효한 모듈"
+    );
+    assert!(
+        !prelude_bool("WebAssembly.validate(new Uint8Array([1,2,3,4]))"),
+        "쓰레기 바이트는 거부"
+    );
+    // 동기 경로(new Module/new Instance)로 내보낸 함수를 부른다
+    assert_eq!(
+        prelude_num(&format!(
+            "var m = new WebAssembly.Module({}); \
+             var i = new WebAssembly.Instance(m, {{}}); i.exports.add(20, 22)",
+            b
+        )),
+        42.0
+    );
+}
+
+// 메모리가 **살아있는 뷰**인가 — 사본이면 여기서 걸린다.
+#[test]
+fn wasm_memory_is_a_live_view() {
+    let b = wasm_test_bytes();
+    assert_eq!(
+        prelude_str(&format!(
+            "var i = new WebAssembly.Instance(new WebAssembly.Module({}), {{}}); \
+             var u8 = new Uint8Array(i.exports.memory.buffer); \
+             var before = u8[0]; \
+             i.exports.poke(200); \
+             [before, u8[0], u8[16], u8[17]].join(',')",
+            b
+        )),
+        // 데이터 세그먼트('OK' = 79,75)도 실려 있어야 한다
+        "0,200,79,75"
+    );
+}
+
+// memory.grow 후에도 JS 가 새 버퍼를 본다. 옛 버퍼는 분리(length 0).
+#[test]
+fn wasm_grow_rebinds_buffer_and_detaches_old() {
+    let b = wasm_test_bytes();
+    assert_eq!(
+        prelude_str(&format!(
+            "var i = new WebAssembly.Instance(new WebAssembly.Module({}), {{}}); \
+             var old = new Uint8Array(i.exports.memory.buffer); \
+             var prev = i.exports.grow(); \
+             var now = new Uint8Array(i.exports.memory.buffer); \
+             [prev, old.length, now.length, now[16]].join(',')",
+            b
+        )),
+        // 이전 페이지 수 1, 옛 뷰는 분리되어 0, 새 뷰는 2페이지, 데이터는 살아 있다
+        "1,0,131072,79"
+    );
+}
+
+#[test]
+fn arithmetic_and_precedence() {
+    assert_eq!(run_num("1 + 2 * 3"), 7.0);
+    assert_eq!(run_num("(1 + 2) * 3"), 9.0);
+    assert_eq!(run_num("7 % 3"), 1.0);
+    assert_eq!(run_num("-3 + 1"), -2.0);
+}
+
+#[test]
+fn labeled_break_exits_outer_loop() {
+    // i=0: j 0,1,2 → r=3. i=1: j=0 → r=4, j=1 → break outer. 결과 4.
+    let src = "let r = 0; \
+        outer: for (let i = 0; i < 3; i++) { \
+          for (let j = 0; j < 3; j++) { \
+            if (i === 1 && j === 1) break outer; \
+            r++; \
+          } \
+        } r";
+    assert_eq!(run_num(src), 4.0);
+}
+
+#[test]
+fn labeled_continue_skips_to_outer() {
+    // 각 i 에서 j=0 만 세고 j=1 이면 outer 로 continue → i 당 1씩, 총 3.
+    let src = "let r = 0; \
+        outer: for (let i = 0; i < 3; i++) { \
+          for (let j = 0; j < 3; j++) { \
+            if (j === 1) continue outer; \
+            r++; \
+          } \
+        } r";
+    assert_eq!(run_num(src), 3.0);
+}
+
+#[test]
+fn unlabeled_break_continue_still_work() {
+    assert_eq!(run_num("let r=0; for(let i=0;i<5;i++){ if(i===3) break; r++; } r"), 3.0);
+    assert_eq!(run_num("let r=0; for(let i=0;i<5;i++){ if(i%2===0) continue; r++; } r"), 2.0);
+}
+
+#[test]
+fn labeled_block_break() {
+    // 레이블 붙은 블록에서 break 로 탈출 → 이후 문 건너뜀.
+    assert_eq!(run_num("let r=0; block: { r=1; break block; r=99; } r"), 1.0);
+}
+
+#[test]
+fn class_generator_method() {
+    // *gen() 메서드가 반복자를 돌려주고 for-of 로 소비 가능.
+    let src = "class C { *gen() { yield 1; yield 2; yield 3; } } \
+        let s = 0; for (const x of new C().gen()) s += x; s";
+    assert_eq!(run_num(src), 6.0);
+}
+
+#[test]
+fn class_async_method_returns_thenable() {
+    // async 메서드는 파싱/실행되고 then 을 가진 값(Promise)을 돌려준다.
+    let src = "class C { async foo() { return 42; } } \
+        typeof new C().foo().then";
+    assert_eq!(run_str(src), "function");
+}
+
+#[test]
+fn class_regular_and_static_methods_still_work() {
+    assert_eq!(run_num("class C { m() { return 7; } static s() { return 9; } } \
+        new C().m() + C.s()"), 16.0);
+}
+
+#[test]
+fn exponent_literals_and_operator() {
+    // 지수 표기 숫자 리터럴 (미니파이 코드에 필수)
+    assert_eq!(run_num("1e3"), 1000.0);
+    assert_eq!(run_num("1.5e-1"), 0.15);
+    assert_eq!(run_num(".5e2"), 50.0);
+    assert_eq!(run_num("0b101"), 5.0);
+    assert_eq!(run_num("0o17"), 15.0);
+    // ** 연산자: 곱셈보다 강하고 우결합
+    assert_eq!(run_num("2 ** 10"), 1024.0);
+    assert_eq!(run_num("2 ** 3 ** 2"), 512.0); // 2**(3**2)=2**9
+    assert_eq!(run_num("3 * 2 ** 2"), 12.0); // 3*(2**2)
+    assert_eq!(run_num("let x=3; x**=2; x"), 9.0);
+}
+
+#[test]
+fn ushr_assign_and_do_while() {
+    // >>>= (부호 없는 우시프트 대입)
+    assert_eq!(run_num("let x=-1; x>>>=28; x"), 15.0);
+    // do-while: 조건 거짓이어도 최소 1회 실행
+    assert_eq!(run_num("let n=0; do { n++; } while(false); n"), 1.0);
+    assert_eq!(run_num("let i=0,s=0; do { s+=i; i++; } while(i<3); s"), 3.0);
+    // do-while 안 break/continue
+    assert_eq!(run_num("let i=0,s=0; do { i++; if(i==2) continue; s+=i; } while(i<4); s"), 8.0);
+}
+
+#[test]
+fn iterator_protocol() {
+    // 진짜 Symbol.iterator (엔진 제공 원시값). 배열 반복자.
+    assert_eq!(
+        run_num(
+            "var a=[10,20,30]; var it=a[Symbol.iterator](); var s=0,r; \
+             while(!(r=it.next()).done){ s+=r.value; } s"
+        ),
+        60.0
+    );
+    // Set 반복자
+    assert_eq!(
+        run_num(
+            "var it=new Set([1,2,3])[Symbol.iterator](); var s=0,r; \
+             while(!(r=it.next()).done){ s+=r.value; } s"
+        ),
+        6.0
+    );
+}
+
+#[test]
+fn symbol_primitive_type() {
+    // typeof 는 'symbol'
+    assert!(run_bool("typeof Symbol() === 'symbol'"));
+    assert!(run_bool("typeof Symbol.iterator === 'symbol'"));
+    // 고유성: 같은 설명이어도 서로 다름
+    assert!(run_bool("Symbol('x') !== Symbol('x')"));
+    assert!(run_bool("var s=Symbol('a'); s === s"));
+    // description
+    assert_eq!(run_str("Symbol('hello').description"), "hello");
+    // 잘 알려진 심볼은 안정적 동일성
+    assert!(run_bool("Symbol.iterator === Symbol.iterator"));
+    // Symbol.for 레지스트리: 같은 키면 동일
+    assert!(run_bool("Symbol.for('k') === Symbol.for('k')"));
+    assert!(run_bool("Symbol.for('k') !== Symbol('k')"));
+    assert_eq!(run_str("Symbol.keyFor(Symbol.for('abc'))"), "abc");
+    assert!(run_bool("Symbol.keyFor(Symbol('x')) === undefined"));
+}
+
+#[test]
+fn user_defined_iterable() {
+    // obj[Symbol.iterator] = function(){...} — 사용자 정의 이터러블
+    let iter = "var range={n:4}; \
+        range[Symbol.iterator]=function(){ var i=0; var self=this; \
+          return { next:function(){ return i<self.n?{value:i++,done:false}:{value:undefined,done:true}; } }; };";
+    // for-of
+    assert_eq!(
+        run_num(&format!("{iter} var s=0; for(var x of range) s+=x; s")),
+        6.0, // 0+1+2+3
+    );
+    // 스프레드
+    assert_eq!(
+        run_str(&format!("{iter} [...range].join(',')")),
+        "0,1,2,3",
+    );
+    // Array.from
+    assert_eq!(
+        run_num(&format!("{iter} Array.from(range).length")),
+        4.0,
+    );
+    // 제너레이터를 반복자로 반환하는 이터러블
+    let gi = "var g={}; g[Symbol.iterator]=function*(){ yield 'a'; yield 'b'; yield 'c'; };";
+    assert_eq!(
+        run_str(&format!("{gi} var out=''; for(var x of g) out+=x; out")),
+        "abc",
+    );
+}
+
+#[test]
+fn class_symbol_iterator_method() {
+    // class C { [Symbol.iterator]() {...} } — 계산된 메서드 키(사용자 정의 이터러블)
+    let src = "class Range { \
+          constructor(n){ this.n = n; } \
+          [Symbol.iterator]() { var i=0; var n=this.n; \
+            return { next: function(){ return i<n ? {value:i++,done:false} : {value:undefined,done:true}; } }; } \
+        } \
+        var s=0; for(const x of new Range(5)) s+=x; s";
+    assert_eq!(run_num(src), 10.0); // 0+1+2+3+4
+    // 제너레이터 메서드 *[Symbol.iterator]()
+    let src2 = "class Chars { \
+          constructor(s){ this.s = s; } \
+          *[Symbol.iterator]() { for (var c of this.s) yield c.toUpperCase(); } \
+        } \
+        var out=''; for(const c of new Chars('abc')) out+=c; out";
+    assert_eq!(run_str(src2), "ABC");
+    // 스프레드로도 소비 가능
+    assert_eq!(run_num("class R { constructor(n){this.n=n;} [Symbol.iterator](){ var i=0,n=this.n; return {next:function(){return i<n?{value:i++,done:false}:{value:0,done:true};}}; } } [...new R(3)].length"), 3.0);
+    // 객체 리터럴 계산 메서드 { [Symbol.iterator]() {...} }
+    let obj = "var o={ data:[1,2,3], [Symbol.iterator]() { var i=0; var d=this.data; \
+        return { next: function(){ return i<d.length?{value:d[i++],done:false}:{value:0,done:true}; } }; } };";
+    assert_eq!(run_num(&format!("{obj} var s=0; for(var x of o) s+=x; s")), 6.0);
+}
+
+#[test]
+fn symbol_as_property_key() {
+    // 심볼 키로 저장/조회
+    assert_eq!(
+        run_num("var s=Symbol('k'); var o={}; o[s]=42; o[s]"),
+        42.0
+    );
+    // 계산된 심볼 키 객체 리터럴
+    assert_eq!(
+        run_num("var s=Symbol(); var o={[s]: 7, a: 1}; o[s] + o.a"),
+        8.0
+    );
+    // 심볼 키는 열거되지 않는다(for-in/Object.keys/JSON 제외)
+    assert_eq!(
+        run_str(
+            "var s=Symbol('hidden'); var o={a:1, b:2}; o[s]='x'; \
+             var k=[]; for(var p in o) k.push(p); k.join(',')"
+        ),
+        "a,b"
+    );
+    assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; Object.keys(o).join(',')"), "a");
+    assert_eq!(run_str("var s=Symbol(); var o={a:1}; o[s]=9; JSON.stringify(o)"), "{\"a\":1}");
+}
+
+#[test]
+fn dom_node_type_and_owner_document() {
+    let mut dom = crate::html::parse_dom("<div id=\"box\">hi</div>".to_string());
+    let box_id = dom.find_by_attr_id("box").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // document.nodeType === 9 — jQuery 의 setDocument 가 이걸로 문서를 검증한다.
+    // 없으면 조기 반환해 jQuery 의 로컬 document 가 undefined 로 남아 전체가 죽었다.
+    assert_eq!(to_display(&interp.run("document.nodeType").unwrap()), "9");
+    // 요소 nodeType === 1
+    assert_eq!(
+        to_display(&interp.run("document.getElementById('box').nodeType").unwrap()),
+        "1",
+    );
+    // element.ownerDocument === document (jQuery setDocument 의 `node.ownerDocument || node`)
+    assert_eq!(
+        to_display(
+            &interp
+                .run("document.getElementById('box').ownerDocument === document")
+                .unwrap()
+        ),
+        "true",
+    );
+    let _ = box_id;
+    // document.implementation.createHTMLDocument — 분리 문서(body/head 보유)
+    assert_eq!(
+        to_display(
+            &interp
+                .run("var d = document.implementation.createHTMLDocument(''); \
+                      (d.nodeType) + ',' + (d.body ? 'body' : 'no') + ',' + (d.head ? 'head' : 'no')")
+                .unwrap()
+        ),
+        "9,body,head",
+    );
+}
+
+#[test]
+fn constructor_found_on_prototype_chain() {
+    // jQuery 는 `jQuery.fn.constructor = jQuery` 로 프로토타입에 둔다.
+    // own 만 보면 this.constructor() 가 전역 Object 로 떨어져 "함수 아님" 이 됐다.
+    assert!(run_bool(
+        "function F(){}; F.prototype = { constructor: F, tag: 'proto' }; \
+         var o = new F(); o.constructor === F"
+    ));
+    // 인스턴스가 자기 constructor 를 가지면 그것이 우선
+    assert_eq!(
+        run_str(
+            "function F(){}; F.prototype = { constructor: F }; \
+             var o = new F(); o.constructor = 'own'; o.constructor"
+        ),
+        "own",
+    );
+}
+
+#[test]
+fn array_methods_are_generic_over_array_likes() {
+    // 표준: 배열 메서드는 "length 를 가진 객체"에도 동작한다(generic).
+    // jQuery 핵심: `var push = arr.push; push.apply(jqObj, elems)` — 예전엔
+    // "push 는 배열 메서드" 로 즉사해 jQuery 전체가 못 떴다.
+    let pre = "var arr=[]; var push=arr.push, slice=arr.slice, indexOf=arr.indexOf;";
+    // own length 를 가진 array-like
+    assert_eq!(
+        run_str(&format!("{pre} var al={{length:0}}; push.call(al,'a','b'); al.length + ':' + al[0] + al[1]")),
+        "2:ab",
+    );
+    // length 가 프로토타입에 있는 경우 (jQuery.fn 패턴)
+    assert_eq!(
+        run_str(&format!(
+            "{pre} function JQ(){{}} JQ.prototype={{length:0, push:push}}; \
+             var j=new JQ(); push.apply(j,['x','y','z']); j.length + ':' + j[0] + j[2]"
+        )),
+        "3:xz",
+    );
+    // 비변형 메서드도 generic
+    assert_eq!(
+        run_str(&format!("{pre} var al={{0:'x',1:'y',length:2}}; slice.call(al).join(',')")),
+        "x,y",
+    );
+    assert_eq!(
+        run_num(&format!("{pre} var al={{0:'x',1:'y',length:2}}; indexOf.call(al,'y')")),
+        1.0,
+    );
+    // arguments 객체 (가장 흔한 관용구)
+    assert_eq!(
+        run_str(&format!("{pre} function f(){{ return slice.call(arguments).join('-'); }} f(1,2,3)")),
+        "1-2-3",
+    );
+}
+
+#[test]
+fn polyfill_can_assign_props_to_natives() {
+    // 폴리필의 `if (!X.method) X.method = fn` 패턴 — 내장에 프로퍼티 저장소가
+    // 없어 "function 에 할당할 수 없음" 으로 전부 죽었다.
+    // (allSettled 는 이미 내장이라 폴리필 분기를 안 탄다 — 없는 이름으로 검증)
+    assert_eq!(
+        run_str("if (!Promise.any) { Promise.any = function(){ return 'p'; }; } Promise.any()"),
+        "p",
+    );
+    assert_eq!(run_str("Symbol.observable = 'obs'; Symbol.observable"), "obs");
+    assert_eq!(run_num("Date.helper = function(){ return 3; }; Date.helper()"), 3.0);
+    // 기존 내장 멤버는 그대로 (덮어쓰지 않은 것)
+    assert!(run_bool("Symbol.observable = 'x'; typeof Symbol.iterator === 'symbol'"));
+    assert!(run_bool("Date.helper = 1; typeof Date.now === 'function'"));
+    // 얹은 값이 내장보다 우선 (명시적 덮어쓰기)
+    assert_eq!(run_str("Date.now = function(){ return 'stub'; }; Date.now()"), "stub");
+    // 함수의 toString (번들이 fn.toString() 으로 소스 검사)
+    assert!(run_bool("typeof (function f(){}).toString === 'function'"));
+    assert_eq!(run_str("(function f(a){ return a; }).toString().slice(0,8)"), "function");
+}
+
+#[test]
+fn array_constructor_and_error_prototype() {
+    // Array 는 네임스페이스 객체라 호출 자체가 안 됐다 (new Array(3) / Array(1,2,3)).
+    assert_eq!(run_num("new Array(3).length"), 3.0);
+    assert_eq!(run_str("Array(1,2,3).join(',')"), "1,2,3");
+    assert_eq!(run_num("new Array(1,2).length"), 2.0); // 인자 2개 이상은 항목들
+    assert!(run_bool("Array.isArray(new Array(2))"));
+    assert!(run_bool("new Array(3)[0] === undefined")); // 길이만 잡힌 빈 슬롯
+    // 정적 메서드는 그대로
+    assert_eq!(run_num("Array.from([1,2]).length"), 2.0);
+    assert_eq!(run_num("Array.of(1,2,3).length"), 3.0);
+    // Error.prototype (core-js/번들의 확장·기능 탐지가 참조)
+    assert!(run_bool("typeof Error.prototype === 'object'"));
+    assert!(run_bool("typeof TypeError.prototype === 'object'"));
+    assert_eq!(run_str("Error.name"), "Error");
+    assert_eq!(run_str("TypeError.name"), "TypeError");
+}
+
+#[test]
+fn remove_event_listener_actually_removes() {
+    // 예전엔 요소에 removeEventListener 메서드 자체가 없어 TypeError 로 스크립트가 죽고,
+    // document/window/XHR 은 무동작 스텁이라 "제거했다"고 믿는 코드에서 계속 발화했다.
+    let mut dom = crate::html::parse_dom("<button id=\"b\">x</button>".to_string());
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    let n = it
+        .run(
+            "var n = 0; function h(){ n++; } \
+             var b = document.getElementById('b'); \
+             b.addEventListener('click', h); \
+             b.dispatchEvent(new Event('click')); \
+             b.removeEventListener('click', h); \
+             b.dispatchEvent(new Event('click')); \
+             n",
+        )
+        .unwrap();
+    assert!(matches!(n, Value::Num(x) if x == 1.0), "제거 후엔 발화 안 함: {:?}", n);
+
+    // document 리스너도 제거되고, dispatchEvent 로 실제 호출된다
+    let m = it
+        .run(
+            "var m = 0; function g(){ m++; } \
+             document.addEventListener('ping', g); \
+             document.dispatchEvent(new CustomEvent('ping')); \
+             document.removeEventListener('ping', g); \
+             document.dispatchEvent(new CustomEvent('ping')); \
+             m",
+        )
+        .unwrap();
+    assert!(matches!(m, Value::Num(x) if x == 1.0), "document 리스너 제거: {:?}", m);
+}
+
+#[test]
+fn xhr_is_an_event_target() {
+    // xhr.addEventListener 는 예전에 "요소 메서드"라며 던졌다 — 한 줄에 스크립트 전체가 죽었다.
+    // 이제 객체 수신자도 EventTarget 이다(등록/제거/디스패치).
+    let mut it = Interp::new();
+    let v = it
+        .run(
+            "var x = new XMLHttpRequest(); var hits = 0; \
+             function f(){ hits++; } \
+             x.addEventListener('load', f); \
+             x.dispatchEvent(new Event('load')); \
+             x.removeEventListener('load', f); \
+             x.dispatchEvent(new Event('load')); \
+             hits",
+        )
+        .unwrap();
+    assert!(matches!(v, Value::Num(n) if n == 1.0), "XHR 리스너 등록/제거: {:?}", v);
+}
+
+#[test]
+fn form_state_properties_reflect_attributes() {
+    // checked/select.value 는 undefined/"" 였다 — 폼 로직이 통째로 어긋난다.
+    let mut dom = crate::html::parse_dom(
+        "<input id=\"cb\" type=\"checkbox\">\
+         <select id=\"s\"><option value=\"a\">A</option>\
+         <option value=\"b\" selected>B</option></select>"
+            .to_string(),
+    );
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    assert!(!run_bool_in(&mut it, "document.getElementById('cb').checked"), "기본 false");
+    assert!(
+        run_bool_in(&mut it, "var c=document.getElementById('cb'); c.checked=true; c.checked"),
+        "쓰기 후 true"
+    );
+    assert_eq!(
+        to_display(&it.run("document.getElementById('s').value").unwrap()),
+        "b",
+        "select.value 는 선택된 option 의 값"
+    );
+    assert_eq!(
+        to_display(&it.run("document.getElementById('s').selectedIndex").unwrap()),
+        "1"
+    );
+    // select.value = 'a' → 그 option 이 선택된다
+    assert_eq!(
+        to_display(
+            &it.run("var s=document.getElementById('s'); s.value='a'; s.value").unwrap()
+        ),
+        "a"
+    );
+}
+
+#[test]
+fn insert_adjacent_html_and_template_content() {
+    let mut dom = crate::html::parse_dom(
+        "<div id=\"h\"></div><template id=\"t\"><i class=\"in\">x</i></template>"
+            .to_string(),
+    );
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    // 예전엔 insertAdjacentHTML 메서드가 없어 TypeError 로 스크립트가 죽었다
+    let v = it
+        .run(
+            "document.getElementById('h')\
+               .insertAdjacentHTML('beforeend', '<b id=\"ins\">i</b>'); \
+             !!document.getElementById('ins')",
+        )
+        .unwrap();
+    assert!(matches!(v, Value::Bool(true)), "insertAdjacentHTML 로 삽입");
+    let t = it.run("!!document.getElementById('t').content.querySelector('.in')").unwrap();
+    assert!(matches!(t, Value::Bool(true)), "template.content 조회");
+}
+
+#[test]
+fn history_push_state_updates_location() {
+    // 예전엔 no-op 이라 SPA 라우터가 pushState 후 읽는 location 이 그대로였다.
+    let mut it = Interp::new();
+    it.install_location("https://x.test/a/b?q=1");
+    it.run("history.pushState({}, '', '/c/d?z=2')").unwrap();
+    assert_eq!(to_display(&it.run("location.pathname").unwrap()), "/c/d");
+    assert_eq!(to_display(&it.run("location.search").unwrap()), "?z=2");
+    assert_eq!(to_display(&it.run("history.length").unwrap()), "2");
+    // 상대 경로도 현재 URL 기준으로 결합
+    it.run("history.replaceState(null, '', 'e')").unwrap();
+    assert_eq!(to_display(&it.run("location.pathname").unwrap()), "/c/e");
+}
+
+#[test]
+fn window_scroll_updates_state() {
+    // 예전엔 window.scrollTo 자체가 없어 TypeError 로 스크립트가 죽었다.
+    let mut it = Interp::new();
+    it.run("window.scrollTo(0, 120)").unwrap();
+    assert_eq!(to_display(&it.run("window.scrollY").unwrap()), "120");
+    it.run("window.scrollBy(0, 30)").unwrap();
+    assert_eq!(to_display(&it.run("window.pageYOffset").unwrap()), "150");
+    it.run("window.scrollTo({ top: 5, left: 2 })").unwrap();
+    assert_eq!(to_display(&it.run("window.scrollY").unwrap()), "5");
+    assert_eq!(to_display(&it.run("window.scrollX").unwrap()), "2");
+}
+
+#[test]
+fn derived_this_is_what_super_returned() {
+    // 표준: 파생 클래스의 this 는 super() 가 만들어낸 객체다.
+    // 예전엔 그 객체의 own 프로퍼티만 this 로 복사했다 — 겉보기엔 비슷하지만
+    // 진짜 대상이 아니다. 커스텀 엘리먼트에서 HTMLElement 가 DOM 노드를 돌려줘도
+    // this 는 여전히 빈 인스턴스라 this.innerHTML 이 아무 데도 안 그렸다.
+    assert_eq!(
+        run_str("class A { constructor(){ return {x:1}; } } \
+                 class B extends A { constructor(){ super(); this.y=2; } } \
+                 var b=new B(); b.x+':'+b.y"),
+        "1:2"
+    );
+    assert_eq!(
+        run_str("function A(){ return {x:3}; } \
+                 class B extends A { constructor(){ super(); this.y=4; } } \
+                 var b=new B(); b.x+':'+b.y"),
+        "3:4"
+    );
+}
+
+#[test]
+fn class_setters_and_static_accessors_work() {
+    // 파서가 클래스 setter 를 조용히 버렸다 — obj.x = v 가 아무 일도 안 했다.
+    assert_eq!(
+        run_num("class C { set v(x){ this._v = x * 2; } get v(){ return this._v; } } \
+                 var c = new C(); c.v = 5; c.v"),
+        10.0
+    );
+    // static get 은 평범한 정적 메서드로 저장돼 값이 아니라 함수를 돌려줬다.
+    // (커스텀 엘리먼트의 static get observedAttributes 가 대표적인 피해자)
+    assert_eq!(run_num("class C { static get list(){ return [1,2,3]; } } C.list.length"), 3.0);
+    // C.prototype 으로 메서드를 꺼내 특정 this 로 호출할 수 있어야 한다
+    assert_eq!(
+        run_num("class C { m(){ return this.n; } } \
+                 C.prototype.m.call({n: 7})"),
+        7.0
+    );
+}
+
+#[test]
+fn constructor_returning_object_wins_over_this() {
+    // 표준: 생성자가 객체를 반환하면 그게 결과다. 예전엔 Obj/Instance/Arr 만
+    // 객체로 봐서 Proxy 반환이 조용히 버려졌다 — Proxy 로 인덱스를 가로채는
+    // 구현(타입드 배열)이 통째로 무력화되고, 값이 그냥 평범한 프로퍼티로 저장됐다.
+    assert_eq!(run_num("function F(){ this.a=1; return {a:2}; } new F().a"), 2.0);
+    assert_eq!(run_num("function F(){ this.a=1; return 5; } new F().a"), 1.0, "원시값 반환은 무시");
+    assert_eq!(
+        run_num("function F(){ return new Proxy({}, {get:function(){return 9}}); } new F().x"),
+        9.0,
+        "Proxy 반환도 객체다"
+    );
+}
+
+#[test]
+fn typed_arrays_have_real_semantics() {
+    // 숫자 배열로 흉내내면 랩어라운드/버퍼 공유가 전부 조용히 틀린다.
+    assert_eq!(prelude_num("var a=new Uint8Array(2); a[0]=300; a[0]"), 44.0, "8비트 랩어라운드");
+    assert_eq!(prelude_num("var a=new Int8Array(1); a[0]=200; a[0]"), -56.0, "부호 있는 8비트");
+    assert_eq!(
+        prelude_num("var b=new ArrayBuffer(4); var u8=new Uint8Array(b); var u32=new Uint32Array(b); u8[0]=1; u32[0]"),
+        1.0,
+        "두 뷰가 같은 바이트를 본다"
+    );
+    // Float32 는 실제로 32비트로 반올림된다 (0.1 왕복 시 값이 달라진다)
+    assert!(prelude_bool("var a=new Float32Array(1); a[0]=0.1; a[0] !== 0.1"));
+    assert_eq!(prelude_str("Array.from(new TextEncoder().encode('가')).join(',')"), "234,176,128");
+}
+
+#[test]
+fn intl_formats_numbers_and_dates() {
+    // 예전엔 Intl 이 아예 없어서 new Intl.NumberFormat(...) 한 줄에서 스크립트가 죽었다.
+    assert_eq!(prelude_str("new Intl.NumberFormat('en-US').format(1234567.891)"), "1,234,567.891");
+    assert_eq!(prelude_str("new Intl.NumberFormat('de-DE').format(1234.5)"), "1.234,5");
+    assert_eq!(
+        prelude_str("new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(12.5)"),
+        "$12.50"
+    );
+    assert_eq!(prelude_str("new Intl.NumberFormat('en-US',{style:'percent'}).format(0.256)"), "25.6%");
+    assert_eq!(prelude_str("new Intl.PluralRules('en').select(1)"), "one");
+    assert_eq!(prelude_str("new Intl.RelativeTimeFormat('en').format(-2,'day')"), "2 days ago");
+    // Collator.compare 는 바인딩된 함수여야 sort 에 그대로 넘길 수 있다 (표준)
+    assert_eq!(
+        prelude_str("['10','9','2'].sort(new Intl.Collator('en',{numeric:true}).compare).join(',')"),
+        "2,9,10"
+    );
+    // 프로토타입 오버라이드가 네이티브를 이긴다 (표준) — 예전엔 조용히 무시됐다
+    assert_eq!(prelude_str("(1234.5).toLocaleString('en-US')"), "1,234.5");
+}
+
+#[test]
+fn platform_globals_exist_and_work() {
+    // 이 전역들이 없으면 그걸 쓰는 첫 줄에서 TypeError 가 나고 번들 전체가 멈춘다.
+    assert_eq!(prelude_str("typeof queueMicrotask"), "function");
+    assert_eq!(prelude_str("typeof performance.now()"), "number");
+    assert_eq!(prelude_str("atob(btoa('hi'))"), "hi");
+    assert_eq!(prelude_str("typeof Promise.any"), "function");
+    assert_eq!(prelude_str("new URLSearchParams('a=1&b=2').get('b')"), "2");
+    assert_eq!(prelude_str("typeof crypto.randomUUID()"), "string");
+    assert!(prelude_bool("var c=new AbortController(); var hit=false; \
+                      c.signal.addEventListener('abort', function(){hit=true;}); \
+                      c.abort(); hit && c.signal.aborted"));
+    // CSS.supports 는 CSS 의 @supports 와 같은 평가기를 쓴다
+    assert!(prelude_bool("CSS.supports('display','grid')"));
+    assert!(prelude_bool("CSS.supports('position','sticky')"), "구현했으므로 참");
+    assert!(
+        !prelude_bool("CSS.supports('display','table-cell')"),
+        "미구현 값은 거짓 (한 엔진 한 답)"
+    );
+}
+
+#[test]
+fn match_media_agrees_with_css_media_queries() {
+    // 예전엔 프렐류드가 항상 matches:false 를 돌려줬다 — CSS 는 데스크톱 규칙을
+    // 적용하는데 JS 는 모바일로 분기하는 자기모순. 같은 평가기를 쓴다(뷰포트 1000x800).
+    assert!(run_bool("matchMedia('(min-width: 768px)').matches"));
+    assert!(!run_bool("matchMedia('(max-width: 500px)').matches"));
+    assert!(run_bool("window.matchMedia('(min-width: 100px) and (max-width: 2000px)').matches"));
+    assert!(!run_bool("matchMedia('(prefers-color-scheme: dark)').matches"));
+    assert_eq!(run_str("matchMedia('(min-width: 768px)').media"), "(min-width: 768px)");
+}
+
+#[test]
+fn window_exposes_globals_as_properties() {
+    // 전역 이름이 window 프로퍼티로도 보여야 한다 (window 는 전역 객체).
+    // `if (window.Promise)` 류 기능 탐지가 실제 코드에 아주 흔한데 전부 실패했었다.
+    assert!(run_bool("typeof window.Promise === 'function'"));
+    assert!(run_bool("typeof window.Symbol === 'function'"));
+    assert!(run_bool("typeof window.Error === 'function'"));
+    assert!(run_bool("typeof window.JSON === 'object'"));
+    assert!(run_bool("typeof window.Math === 'object'"));
+    // 사용자 전역도 보인다
+    assert_eq!(run_num("var myGlobal = 42; window.myGlobal"), 42.0);
+    // own 프로퍼티(직접 심은 값)는 그대로
+    assert_eq!(run_num("window.innerWidth"), 1000.0);
+    // 없는 이름은 undefined (에러 아님)
+    assert!(run_bool("window.definitelyNotDefined === undefined"));
+}
+
+#[test]
+fn class_extends_non_class_constructor() {
+    // class E extends Error — 커스텀 에러 클래스(아주 흔함). 예전엔 전부 깨졌다.
+    assert_eq!(
+        run_str(
+            "class E extends Error { constructor(m){ super(m); this.name='E'; } } \
+             var e = new E('boom'); e.name + ':' + e.message"
+        ),
+        "E:boom",
+    );
+    assert!(run_bool("class E extends Error {} (new E('x')) instanceof E"));
+    assert!(run_bool("class E extends Error {} (new E('x')) instanceof Error"));
+    // 일반 함수 생성자 확장 — super() 가 this 를 채우고 prototype 메서드도 상속
+    assert_eq!(
+        run_str(
+            "function Base(x){ this.x = x; } \
+             Base.prototype.hi = function(){ return 'hi' + this.x; }; \
+             class D extends Base { constructor(){ super(5); } } \
+             var d = new D(); d.x + '|' + d.hi()"
+        ),
+        "5|hi5",
+    );
+    assert!(run_bool(
+        "function B(){}; class D extends B {} (new D()) instanceof B"
+    ));
+    // 파생 클래스 자신의 메서드가 부모 prototype 보다 우선
+    assert_eq!(
+        run_str(
+            "function B(){}; B.prototype.who = function(){ return 'base'; }; \
+             class D extends B { who(){ return 'derived'; } } (new D()).who()"
+        ),
+        "derived",
+    );
+    // super.method() — 부모 prototype 메서드 호출
+    assert_eq!(
+        run_str(
+            "function B(){}; B.prototype.who = function(){ return 'base'; }; \
+             class D extends B { who(){ return 'd+' + super.who(); } } (new D()).who()"
+        ),
+        "d+base",
+    );
+}
+
+#[test]
+fn map_set_date_symbol_prototypes() {
+    // 번들/core-js 가 Constructor.prototype.method 를 참조(feature detection, uncurryThis).
+    // 예전엔 Map/Set/Date/Symbol 에 .prototype 자체가 없어 여기서 전부 깨졌다.
+    assert!(run_bool("typeof Map.prototype === 'object' && typeof Set.prototype === 'object'"));
+    assert!(run_bool("typeof Date.prototype === 'object' && typeof Symbol.prototype === 'object'"));
+    // WeakMap/WeakSet 도 (Map/Set 으로 근사)
+    assert!(run_bool("typeof WeakMap.prototype === 'object'"));
+    // 정체성 보존 (같은 객체를 돌려줘야 함)
+    assert!(run_bool("Map.prototype === Map.prototype"));
+    // uncurryThis 패턴: 프로토타입 메서드를 .call 로 빌려 쓰기
+    assert_eq!(
+        run_num("var m=new Map(); m.set('a',1); Map.prototype.get.call(m,'a')"),
+        1.0,
+    );
+    assert!(run_bool("var s=new Set([1,2]); Set.prototype.has.call(s, 2)"));
+    assert_eq!(
+        run_num("var m=new Map([['x',7]]); Map.prototype.size !== undefined ? 0 : Map.prototype.get.call(m,'x')"),
+        7.0,
+    );
+    // Date.prototype.getTime.call
+    assert!(run_bool("var d=new Date(0); Date.prototype.getTime.call(d) === 0"));
+    // Array.prototype.sort (유일하게 빠져 있던 것)
+    assert_eq!(
+        run_str("Array.prototype.sort.call([3,1,2]).join(',')"),
+        "1,2,3",
+    );
+}
+
+#[test]
+fn builtin_prototypes() {
+    // Function.prototype.call/apply/bind
+    assert_eq!(run_num("Function.prototype.call.call(function(){return 5})"), 5.0);
+    // Array.prototype.slice.call (배열형 → 배열)
+    assert_eq!(run_num("var a=[1,2,3]; Array.prototype.slice.call(a,1).length"), 2.0);
+    assert_eq!(run_num("Array.prototype.indexOf.call([7,8,9], 8)"), 1.0);
+    // Object.prototype.toString.call (타입 판별 관용)
+    assert_eq!(run_str("Object.prototype.toString.call([])"), "[object Array]");
+    assert_eq!(run_str("Object.prototype.toString.call({})"), "[object Object]");
+    assert_eq!(run_str("Object.prototype.toString.call('x')"), "[object String]");
+    assert_eq!(run_str("Object.prototype.toString.call(5)"), "[object Number]");
+}
+
+#[test]
+fn arrays_are_objects() {
+    // push 재정의 (webpack 청크 배열이 하는 핵심 동작)
+    assert_eq!(
+        run_num("var a=[]; var n=0; a.push=function(){n++;}; a.push(1); a.push(2); n"),
+        2.0
+    );
+    // 커스텀 프로퍼티
+    assert_eq!(run_num("var a=[1,2]; a.foo=42; a.foo"), 42.0);
+    // 커스텀 프로퍼티가 항목/length 를 안 건드림
+    assert_eq!(run_num("var a=[1,2]; a.foo=42; a.length"), 2.0);
+    // length 대입으로 절단
+    assert_eq!(run_num("var a=[1,2,3,4]; a.length=2; a.length"), 2.0);
+    // 재정의 안 하면 내장 메서드 그대로
+    assert_eq!(run_num("var a=[3,1,2]; a.push(9); a.length"), 4.0);
+}
+
+#[test]
+fn date_object() {
+    assert_eq!(run_num("new Date(2026, 6, 11).getFullYear()"), 2026.0);
+    assert_eq!(run_num("new Date(2026, 6, 11).getMonth()"), 6.0); // 0 기준(7월)
+    assert_eq!(run_num("new Date(2026, 6, 11).getDate()"), 11.0);
+    assert_eq!(run_str("new Date('2020-01-15T00:00:00Z').toISOString()"), "2020-01-15T00:00:00.000Z");
+    assert_eq!(run_num("new Date('2020-01-15T00:00:00Z').getTime()"), 1579046400000.0);
+    assert_eq!(run_num("new Date(0).getUTCFullYear()"), 1970.0);
+    assert_eq!(run_str("typeof Date.now()"), "number");
+    // 왕복
+    assert_eq!(run_num("new Date(new Date(1234567890000).getTime()).getTime()"), 1234567890000.0);
+}
+
+#[test]
+fn string_number_boolean_globals() {
+    assert_eq!(run_str("String(42)"), "42");
+    assert_eq!(run_num("Number('3.5')"), 3.5);
+    assert!(!run_bool("Boolean(0)"));
+    assert!(run_bool("Boolean(1)"));
+    assert_eq!(run_str("String.fromCharCode(72,73)"), "HI");
+    assert!(run_bool("Number.isInteger(5)"));
+    assert!(!run_bool("Number.isInteger(5.5)"));
+    assert_eq!(run_str("(3.14159).toFixed(2)"), "3.14");
+    assert_eq!(run_str("(255).toString(16)"), "ff");
+    assert_eq!(run_num("Number.MAX_SAFE_INTEGER"), 9007199254740991.0);
+    // String.prototype.slice.call
+    assert_eq!(run_str("String.prototype.slice.call('hello', 1, 3)"), "el");
+}
+
+#[test]
+fn regex_and_string_methods() {
+    // test/exec
+    assert!(run_bool("/\\d+/.test('abc123')"));
+    assert!(!run_bool("/^\\d+$/.test('ab12')"));
+    assert_eq!(run_str("/(\\d+)-(\\d+)/.exec('x 12-34')[2]"), "34");
+    // new RegExp + i 플래그
+    assert!(run_bool("new RegExp('abc','i').test('XABC')"));
+    // replace: 전역, 그룹 $1, 함수
+    assert_eq!(run_str("'a1b2c3'.replace(/\\d/g,'#')"), "a#b#c#");
+    assert_eq!(
+        run_str("'2026-07-11'.replace(/(\\d+)-(\\d+)-(\\d+)/,'$3/$2/$1')"),
+        "11/07/2026"
+    );
+    assert_eq!(run_str("'abc'.replace(/[a-z]/g,function(m){return m.toUpperCase()})"), "ABC");
+    // match/search/split
+    assert_eq!(run_num("'a1b2'.match(/\\d/g).length"), 2.0);
+    assert_eq!(run_num("'hello world'.search(/wor/)"), 6.0);
+    assert_eq!(run_num("'a,b;c'.split(/[,;]/).length"), 3.0);
+    // 문자열 유틸
+    assert_eq!(run_str("'5'.padStart(3,'0')"), "005");
+    assert_eq!(run_str("'ab'.repeat(3)"), "ababab");
+    assert_eq!(run_num("'A'.charCodeAt(0)"), 65.0);
+}
+
+#[test]
+fn map_and_set() {
+    assert_eq!(run_num("var m=new Map(); m.set('a',1); m.set('b',2); m.get('b')"), 2.0);
+    assert_eq!(run_num("var m=new Map(); m.set('a',1); m.set('a',9); m.size"), 1.0);
+    assert!(run_bool("var m=new Map([['x',1]]); m.has('x')"));
+    assert_eq!(run_num("var m=new Map(); m.set(1,'a'); m.delete(1); m.size"), 0.0);
+    assert_eq!(run_num("var s=new Set([1,2,2,3]); s.size"), 3.0);
+    assert!(run_bool("var s=new Set(); s.add(5); s.has(5)"));
+    assert_eq!(
+        run_num("var s=new Set([1,2,3]); var t=0; s.forEach(function(v){t+=v}); t"),
+        6.0
+    );
+    // Map.forEach (value, key)
+    assert_eq!(
+        run_num("var m=new Map([['a',10],['b',20]]); var t=0; m.forEach(function(v){t+=v}); t"),
+        30.0
+    );
+}
+
+#[test]
+fn define_property_getter_and_value() {
+    // Object.defineProperty 값
+    assert_eq!(run_num("var o={}; Object.defineProperty(o,'x',{value:7}); o.x"), 7.0);
+    // 접근자(get) — 읽을 때 호출
+    assert_eq!(
+        run_num("var o={}; var n=0; Object.defineProperty(o,'g',{get:function(){return ++n}}); o.g; o.g"),
+        2.0
+    );
+    // hasOwnProperty
+    assert!(run_bool("var o={a:1}; Object.prototype.hasOwnProperty.call(o,'a')"));
+    assert!(!run_bool("var o={a:1}; o.hasOwnProperty('b')"));
+}
+
+#[test]
+fn array_methods_batch() {
+    assert!(run_bool("[1,2,3].some(function(x){return x>2})"));
+    assert!(run_bool("[1,2,3].every(function(x){return x>0})"));
+    assert_eq!(run_num("[1,2,3,4].reduce(function(a,b){return a+b},0)"), 10.0);
+    assert_eq!(run_num("[1,2,3].find(function(x){return x>1})"), 2.0);
+    assert_eq!(run_num("[5,6,7].findIndex(function(x){return x===7})"), 2.0);
+    assert!(run_bool("[1,2,3].includes(2)"));
+    assert_eq!(run_num("[1,2].concat([3,4]).length"), 4.0);
+    // splice: 원본 변형 + 제거분 반환
+    assert_eq!(run_num("var a=[1,2,3,4]; a.splice(1,2); a.length"), 2.0);
+    assert_eq!(run_num("var a=[1,2,3]; a.unshift(0); a[0]"), 0.0);
+    assert_eq!(run_num("var a=[1,2,3]; a.shift(); a[0]"), 2.0);
+}
+
+#[test]
+fn function_constructor_compiles() {
+    // Function 생성자가 문자열 본문을 실제 함수로 컴파일
+    assert_eq!(run_num("var f = Function('return 42'); f()"), 42.0);
+    assert_eq!(run_num("var f = new Function('a','b','return a+b'); f(2,3)"), 5.0);
+    // 한 인자에 콤마로 여러 파라미터
+    assert_eq!(run_num("var f = new Function('a,b','return a*b'); f(4,5)"), 20.0);
+}
+
+#[test]
+fn functions_are_objects() {
+    // 함수 프로퍼티 (정적 + prototype)
+    assert_eq!(run_num("function F(){}; F.x = 5; F.x"), 5.0);
+    assert_eq!(run_num("function F(){}; F.prototype.v = 9; F.prototype.v"), 9.0);
+    // call / apply / bind
+    assert_eq!(run_num("function add(a,b){return a+b} add.call(null, 2, 3)"), 5.0);
+    assert_eq!(run_num("function add(a,b){return a+b} add.apply(null, [4,5])"), 9.0);
+    assert_eq!(run_num("function add(a,b){return a+b} add.bind(null,10)(5)"), 15.0);
+    // this 바인딩 (call)
+    assert_eq!(run_num("function f(){return this.x} f.call({x:7})"), 7.0);
+    // bind 로 this 고정
+    assert_eq!(run_num("function f(){return this.x} let g=f.bind({x:3}); g()"), 3.0);
+}
+
+#[test]
+fn default_parameters() {
+    // 기본값 파라미터: 인자 없으면 기본값, 있으면 그 값
+    assert_eq!(run_num("function f(a, b=10){ return a+b; } f(5)"), 15.0);
+    assert_eq!(run_num("function f(a, b=10){ return a+b; } f(5, 2)"), 7.0);
+    // 화살표 기본값
+    assert_eq!(run_num("let f=(x=3)=>x*2; f()"), 6.0);
+    assert_eq!(run_num("let f=(x=3)=>x*2; f(5)"), 10.0);
+    // undefined 명시 전달도 기본값
+    assert_eq!(run_num("function f(a=7){ return a; } f(undefined)"), 7.0);
+}
+
+#[test]
+fn reserved_and_computed_object_keys() {
+    // 예약어를 객체 키로 (미니파이 코드에 흔함)
+    assert_eq!(run_str("let o={return:'r', class:'c'}; o.return"), "r");
+    assert_eq!(run_str("let o={in:'x', for:'y'}; o.for"), "y");
+    // 정적 계산 키
+    assert_eq!(run_str("let o={['a'+'b']:'v'}; o.ab"), "v");
+}
+
+#[test]
+fn string_concat_and_coercion() {
+    assert_eq!(run_str("'a' + 'b'"), "ab");
+    assert_eq!(run_str("'x=' + (1 + 2)"), "x=3");
+    assert_eq!(run_str("1 + '2'"), "12"); // JS 의 그 동작
+    assert_eq!(run_num("'3' * '4'"), 12.0);
+}
+
+#[test]
+fn variables_and_compound_assign() {
+    assert_eq!(run_num("var x = 1; x += 3; x *= 2; x"), 8.0);
+    assert_eq!(run_num("let a = 5; a - 2"), 3.0);
+}
+
+#[test]
+fn control_flow() {
+    assert_eq!(run_num("var s = 0; for (var i = 1; i <= 10; i++) s += i; s"), 55.0);
+    assert_eq!(run_num("var n = 0; while (n < 5) { n++; } n"), 5.0);
+    assert_eq!(
+        run_num("var s = 0; for (var i = 0; i < 10; i++) { if (i % 2) continue; if (i > 6) break; s += i; } s"),
+        12.0 // 0+2+4+6
+    );
+    assert_eq!(run_str("if (false) 'a'; else 'b'"), "b");
+}
+
+#[test]
+fn functions_closures_recursion() {
+    assert_eq!(run_num("function add(a, b) { return a + b; } add(2, 3)"), 5.0);
+    // 클로저 카운터
+    assert_eq!(
+        run_num(
+            "function counter() { var n = 0; return function() { n++; return n; }; } \
+             var c = counter(); c(); c(); c()"
+        ),
+        3.0
+    );
+    // 재귀 (선언 전 호출 = 호이스팅)
+    assert_eq!(run_num("fib(10); function fib(n) { return n < 2 ? n : fib(n-1) + fib(n-2); } fib(10)"), 55.0);
+    // 화살표 + 고차 함수
+    assert_eq!(run_num("var twice = f => x => f(f(x)); twice(n => n + 3)(1)"), 7.0);
+}
+
+#[test]
+fn arrays_and_objects() {
+    assert_eq!(run_num("var a = [1, 2, 3]; a[0] + a[2]"), 4.0);
+    assert_eq!(run_num("var a = []; a.push(7); a.push(8, 9); a.length"), 3.0);
+    assert_eq!(run_num("var a = [1]; a[3] = 9; a.length"), 4.0);
+    assert_eq!(run_num("var o = { x: 1, y: { z: 2 } }; o.x + o.y.z"), 3.0);
+    assert_eq!(run_num("var o = {}; o.k = 5; o['k'] + 1"), 6.0);
+    assert_eq!(run_str("var k = 'name'; var o = {}; o[k] = 'kestrel'; o.name"), "kestrel");
+}
+
+#[test]
+fn equality_semantics() {
+    assert!(run_bool("1 == '1'"));
+    assert!(!run_bool("1 === '1'"));
+    assert!(run_bool("null == undefined"));
+    assert!(!run_bool("null === undefined"));
+    assert!(run_bool("'b' > 'a'"));
+    assert!(run_bool("typeof null === 'object'"));
+    assert!(run_bool("typeof (x => x) === 'function'"));
+}
+
+#[test]
+fn logical_short_circuit() {
+    // 우변이 평가되면 에러가 났을 것 (미정의 함수 호출)
+    assert_eq!(run_num("false && boom() ? 1 : 2"), 2.0);
+    assert_eq!(run_num("true || boom() ? 1 : 2"), 1.0);
+    assert_eq!(run_str("'' || 'fallback'"), "fallback");
+}
+
+#[test]
+fn update_operators() {
+    assert_eq!(run_num("var i = 5; i++"), 5.0);
+    assert_eq!(run_num("var i = 5; ++i"), 6.0);
+    assert_eq!(run_num("var i = 5; i--; i"), 4.0);
+}
+
+#[test]
+fn console_log_captures() {
+    let mut it = Interp::new();
+    it.run("console.log('hello', 1 + 1, [1,2], { a: 1 })").unwrap();
+    assert_eq!(it.console, vec!["hello 2 1,2 [object Object]"]);
+}
+
+#[test]
+fn block_scoping_let() {
+    assert_eq!(run_num("let x = 1; { let x = 2; } x"), 1.0);
+}
+
+#[test]
+fn runtime_errors() {
+    assert!(Interp::new().run("undefinedVar + 1").is_err());
+    assert!(Interp::new().run("null.foo").is_err());
+    assert!(Interp::new().run("var x = 3; x()").is_err());
+}
+
+#[test]
+fn infinite_loop_is_bounded() {
+    // 가드는 **시간** 기반이다 (스텝 수가 아니라). 테스트는 짧은 예산으로 확인한다.
+    let mut it = Interp::new();
+    it.script_budget_ms = 200;
+    let t0 = std::time::Instant::now();
+    let err = it.run("while (true) {}").unwrap_err();
+    assert!(err.starts_with(STEP_LIMIT_MSG), "한도 메시지: {}", err);
+    assert!(t0.elapsed().as_secs() < 3, "예산 안에서 끊겨야 한다");
+}
+
+#[test]
+fn math_builtins() {
+    assert_eq!(run_num("Math.floor(3.7)"), 3.0);
+    assert_eq!(run_num("Math.ceil(3.1)"), 4.0);
+    assert_eq!(run_num("Math.round(2.5)"), 3.0);
+    assert_eq!(run_num("Math.abs(-5)"), 5.0);
+    assert_eq!(run_num("Math.min(3, 1, 2)"), 1.0);
+    assert_eq!(run_num("Math.max(3, 1, 2)"), 3.0);
+    assert_eq!(run_num("Math.sqrt(16)"), 4.0);
+    assert_eq!(run_num("Math.pow(2, 10)"), 1024.0);
+    assert!(run_bool("Math.PI > 3.14 && Math.PI < 3.15"));
+    assert!(run_bool("var r = Math.random(); r >= 0 && r < 1"));
+    assert!(run_bool("Math.random() !== Math.random()"));
+}
+
+#[test]
+fn string_methods() {
+    assert_eq!(run_num("'hello world'.indexOf('world')"), 6.0);
+    assert_eq!(run_num("'abc'.indexOf('z')"), -1.0);
+    assert_eq!(run_str("'hello'.slice(1, 3)"), "el");
+    assert_eq!(run_str("'hello'.slice(-3)"), "llo");
+    assert_eq!(run_str("'a,b,c'.split(',').join('|')"), "a|b|c");
+    assert_eq!(run_num("'abc'.split('').length"), 3.0);
+    assert_eq!(run_str("'  x  '.trim()"), "x");
+    assert_eq!(run_str("'AbC'.toUpperCase()"), "ABC");
+    assert_eq!(run_str("'AbC'.toLowerCase()"), "abc");
+    assert_eq!(run_str("'aaa'.replace('a', 'b')"), "baa");
+    assert_eq!(run_str("'hey'.charAt(1)"), "e");
+    assert!(run_bool("'hello'.includes('ell')"));
+    assert!(run_bool("'hello'.startsWith('he') && 'hello'.endsWith('lo')"));
+    // 한글도 문자 단위로
+    assert_eq!(run_str("'황조롱이'.slice(0, 2)"), "황조");
+}
+
+#[test]
+fn array_methods() {
+    assert_eq!(run_str("[1,2,3].join('-')"), "1-2-3");
+    assert_eq!(run_num("var a = [1,2,3]; a.pop(); a.length"), 2.0);
+    assert_eq!(run_num("[5,6,7].indexOf(6)"), 1.0);
+    assert_eq!(run_num("[1,2,3,4].slice(1, 3).length"), 2.0);
+    assert_eq!(run_num("var s = 0; [1,2,3].forEach(function(x) { s += x; }); s"), 6.0);
+    assert_eq!(run_str("[1,2,3].map(x => x * 10).join(',')"), "10,20,30");
+    assert_eq!(run_str("[1,2,3,4,5].filter(x => x % 2).join(',')"), "1,3,5");
+    assert_eq!(
+        run_num("[1,2,3].map((x, i) => x + i).indexOf(5)"),
+        2.0,
+        "콜백 두 번째 인자 = 인덱스"
+    );
+}
+
+#[test]
+fn proxy_get_set_traps() {
+    // get 트랩: 없는 키에 기본값
+    assert_eq!(
+        run_num(
+            "var p = new Proxy({a: 1}, { get: function(t, k) { return k in t ? t[k] : 99; } }); p.a + p.zzz"
+        ),
+        100.0
+    );
+    // set 트랩: 값 가로채 변형 후 저장
+    assert_eq!(
+        run_num(
+            "var log = 0; \
+             var p = new Proxy({}, { set: function(t, k, v) { log = v * 2; t[k] = v; return true; } }); \
+             p.x = 5; log"
+        ),
+        10.0
+    );
+    // 트랩 없으면 target 위임
+    assert_eq!(
+        run_num("var p = new Proxy({n: 7}, {}); p.n"),
+        7.0
+    );
+    assert_eq!(
+        run_num("var p = new Proxy({}, {}); p.k = 3; p.k"),
+        3.0
+    );
+}
+
+#[test]
+fn document_fragment_moves_children() {
+    let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
+    let _ = dom.find_by_attr_id("list").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // 프래그먼트에 li 2개 추가 후 ul 에 appendChild → 자식만 옮겨진다
+    let n = interp
+        .run(
+            "var f = document.createDocumentFragment(); \
+             var a = document.createElement('li'); \
+             var b = document.createElement('li'); \
+             f.appendChild(a); f.appendChild(b); \
+             var ul = document.getElementById('list'); \
+             ul.appendChild(f); \
+             ul.children.length",
+        )
+        .unwrap();
+    assert_eq!(to_display(&n), "2", "프래그먼트 자식 2개가 ul 로 이동");
+}
+
+#[test]
+fn matches_closest_contains() {
+    let mut dom = crate::html::parse_dom(
+        "<div class=\"outer\"><ul><li id=\"a\" class=\"item\">x</li></ul></div>".to_string(),
+    );
+    let a = dom.find_by_attr_id("a").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // matches
+    assert_eq!(
+        to_display(&interp.run("document.getElementById('a').matches('.item')").unwrap()),
+        "true"
+    );
+    assert_eq!(
+        to_display(&interp.run("document.getElementById('a').matches('.nope')").unwrap()),
+        "false"
+    );
+    // closest 는 조상 중 첫 매칭 (.outer)
+    assert_eq!(
+        to_display(
+            &interp
+                .run("document.getElementById('a').closest('.outer').className")
+                .unwrap()
+        ),
+        "outer"
+    );
+    // contains: outer 가 a 를 포함
+    let _ = a;
+    assert_eq!(
+        to_display(
+            &interp
+                .run("document.getElementById('a').closest('.outer').contains(document.getElementById('a'))")
+                .unwrap()
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn clone_node_deep_and_shallow() {
+    let mut dom = crate::html::parse_dom(
+        "<div id=\"t\"><span>hi</span></div>".to_string(),
+    );
+    let _ = dom.find_by_attr_id("t").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // deep clone → 자식 텍스트 포함
+    let r = interp
+        .run("var c = document.getElementById('t').cloneNode(true); c.textContent")
+        .unwrap();
+    assert_eq!(to_display(&r), "hi");
+    // shallow clone → 자식 없음
+    let r2 = interp
+        .run("var c = document.getElementById('t').cloneNode(false); c.children.length")
+        .unwrap();
+    assert_eq!(to_display(&r2), "0");
+}
+
+#[test]
+fn dispatch_event_and_custom_event() {
+    let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
+    let _ = dom.find_by_attr_id("box").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // addEventListener + dispatchEvent(CustomEvent) → 핸들러가 detail 을 읽는다
+    let r = interp
+        .run(
+            "var got = null; \
+             var e = document.getElementById('box'); \
+             e.addEventListener('ping', function(ev) { got = ev.detail.n; }); \
+             e.dispatchEvent(new CustomEvent('ping', { detail: { n: 42 } })); \
+             got",
+        )
+        .unwrap();
+    assert_eq!(to_display(&r), "42");
+}
+
+#[test]
+fn get_bounding_client_rect_and_offsets() {
+    let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
+    let box_id = dom.find_by_attr_id("box").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    interp.layout_rects.insert(box_id, (10.0, 20.0, 100.0, 50.0));
+    // getBoundingClientRect: width/top/right/bottom
+    let r = interp
+        .run("var r = document.getElementById('box').getBoundingClientRect(); r.width + ',' + r.top + ',' + r.right + ',' + r.bottom")
+        .unwrap();
+    assert_eq!(to_display(&r), "100,20,110,70");
+    // offsetWidth/offsetHeight/offsetLeft/offsetTop
+    let o = interp
+        .run("var e = document.getElementById('box'); e.offsetWidth + ',' + e.offsetHeight + ',' + e.offsetLeft + ',' + e.offsetTop")
+        .unwrap();
+    assert_eq!(to_display(&o), "100,50,10,20");
+}
+
+#[test]
+fn object_assign_to_object_types() {
+    // 기본: 객체 → 객체
+    assert_eq!(run_num("var t={a:1}; Object.assign(t,{b:2},{c:3}); t.a+t.b+t.c"), 6.0);
+    // 대상이 함수 (번들의 정적 복사 패턴 Object.assign(Fn, {...}))
+    assert_eq!(
+        run_num("function F(){}; Object.assign(F, {version: 7, x: 1}); F.version + F.x"),
+        8.0,
+    );
+    // 대상이 인스턴스 (Object.assign(this, props))
+    assert_eq!(
+        run_num("class C { constructor(p){ Object.assign(this, p); } } (new C({v:9})).v"),
+        9.0,
+    );
+    // 소스가 배열/인스턴스/함수여도 own 프로퍼티 복사
+    assert_eq!(run_str("var t={}; Object.assign(t, ['x','y']); t[0]+t[1]"), "xy");
+    assert_eq!(
+        run_num("function S(){}; S.k = 4; var t={}; Object.assign(t, S); t.k"),
+        4.0,
+    );
+    // 반환값은 대상 (체이닝)
+    assert_eq!(run_num("Object.assign({}, {n:5}).n"), 5.0);
+    // null/undefined 대상만 에러
+    assert_eq!(
+        run_str("try { Object.assign(null, {}); 'no-throw' } catch(e) { 'threw' }"),
+        "threw",
+    );
+    // frozen 대상은 변경 안 됨
+    assert_eq!(
+        run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"),
+        1.0,
+    );
+}
+
+#[test]
+fn setters_actually_run() {
+    // setter 가 파싱만 되고 버려져 대입이 조용히 setter 를 우회했다(부작용 미발생).
+    assert_eq!(
+        run_str(
+            "var log=''; var o={ _v:0, get v(){return this._v;}, set v(x){ log='set:'+x; this._v=x*10; } }; \
+             o.v = 5; log + '|' + o.v"
+        ),
+        "set:5|50",
+    );
+    // set 만 있는 프로퍼티: 읽으면 undefined, 부작용은 발생
+    assert_eq!(
+        run_str("var o={ set only(x){ this.got=x; } }; o.only='z'; (o.only===undefined) + '|' + o.got"),
+        "true|z",
+    );
+    // get 만 있는 프로퍼티: 대입 무시
+    assert_eq!(run_num("var o={ get ro(){return 1;} }; o.ro=9; o.ro"), 1.0);
+    // 계산 키 setter (심볼 키)
+    assert_eq!(
+        run_num("var k=Symbol('k'); var o={ set [k](x){ this.hit=x; } }; o[k]=7; o.hit"),
+        7.0,
+    );
+    // 프로토타입의 setter 도 호출된다
+    assert_eq!(
+        run_num(
+            "function P(){}; Object.defineProperty(P.prototype,'p',\
+             { get:function(){return this.s;}, set:function(x){ this.s=x*2; } }); \
+             var i=new P(); i.p=4; i.p"
+        ),
+        8.0,
+    );
+    // 같은 키의 get/set 이 하나의 접근자로 병합된다
+    assert_eq!(
+        run_num("var o={ get x(){return this._x;}, set x(v){ this._x=v+1; } }; o.x=1; o.x"),
+        2.0,
+    );
+}
+
+#[test]
+fn integrity_is_uniform_across_object_kinds() {
+    // isFrozen 이 인스턴스/함수/Map 을 "원시값" 취급해 안 얼렸는데 true 를 반환했다(거짓말).
+    assert!(run_bool("class K{}; !Object.isFrozen(new K())"));
+    assert!(run_bool("function F(){}; !Object.isFrozen(F)"));
+    assert!(run_bool("!Object.isFrozen(new Map()) && !Object.isFrozen(new Set())"));
+    // 얼리면 실제로 막힌다
+    assert_eq!(
+        run_num("class K{ constructor(){ this.a=1; } }; var i=new K(); Object.freeze(i); i.a=99; i.a"),
+        1.0,
+    );
+    assert_eq!(
+        run_num("function F(){}; F.x=1; Object.freeze(F); F.x=99; F.y=2; F.x + (F.y||0)"),
+        1.0,
+    );
+    // 얼린 뒤 isFrozen 은 true
+    assert!(run_bool("var m=new Map(); Object.freeze(m); Object.isFrozen(m)"));
+    // Object.assign 도 무결성을 존중
+    assert_eq!(run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"), 1.0);
+    // 원시값은 표준대로 frozen/sealed=true, extensible=false
+    assert!(run_bool("Object.isFrozen(5) && Object.isSealed('x') && !Object.isExtensible(3)"));
+}
+
+#[test]
+fn prototype_and_descriptor_apis_are_real() {
+    // 전부 "거짓말하는 스텁" 이었다: setPrototypeOf=no-op, isPrototypeOf=항상 false,
+    // defineProperties=defineProperty 별칭(시그니처 불일치), getOwnPropertySymbols=항상 [].
+    assert!(run_bool(
+        "var proto={ hi:function(){return 'h';} }; var o={}; Object.setPrototypeOf(o, proto); \
+         typeof o.hi === 'function' && Object.getPrototypeOf(o) === proto"
+    ));
+    assert!(run_bool(
+        "var proto={}; var o={}; Object.setPrototypeOf(o, proto); \
+         proto.isPrototypeOf(o) && !proto.isPrototypeOf({})"
+    ));
+    assert_eq!(
+        run_num("var d={}; Object.defineProperties(d, { x:{value:1}, y:{value:2} }); d.x + d.y"),
+        3.0,
+    );
+    assert_eq!(
+        run_num("var s=Symbol('s'); var o={}; o[s]=1; Object.getOwnPropertySymbols(o).length"),
+        1.0,
+    );
+    // 복원된 심볼이 원본과 같은 키(=동일성)와 설명을 갖는다
+    assert!(run_bool(
+        "var s=Symbol('desc'); var o={}; o[s]=1; \
+         var got=Object.getOwnPropertySymbols(o)[0]; got === s && got.description === 'desc'"
+    ));
+}
+
+#[test]
+fn engine_markers_are_not_forgeable_from_js() {
+    // 엔진 내부 마커는 NUL 접두 공간에 산다 — JS 문자열 키가 도달할 수 없다.
+    // 예전엔 `obj.__isPromise = true` 로 promise 를, `__isDate` 로 Date 를,
+    // `__items` 로 이터러블을 위장할 수 있었다(타입 시스템 우회).
+    assert!(run_bool(
+        "var f={__isPromise:true,__state:'fulfilled',__value:42}; f.then === undefined"
+    ));
+    assert!(run_bool("var f={__isDate:true,__time:0}; f.getTime === undefined"));
+    assert_eq!(
+        run_str(
+            "var f={__items:[1,2,3],__i:0}; \
+             try { var n=0; for (var x of f) n++; 'iterated:'+n } catch(e) { 'not-iterable' }"
+        ),
+        "not-iterable",
+    );
+    // 반대로 사용자의 정상 __ 키가 열거에서 사라지지 않는다
+    assert_eq!(
+        run_str("var u={__items:'d',__time:'t',__value:'v',normal:1}; Object.keys(u).join(',')"),
+        "__items,__time,__value,normal",
+    );
+    assert_eq!(
+        run_str("var u={__value:'v'}; JSON.stringify(u)"),
+        "{\"__value\":\"v\"}",
+    );
+    // 진짜 Promise/Date/정규식은 여전히 동작
+    assert!(run_bool("typeof Promise.resolve(1).then === 'function'"));
+    assert!(run_bool("typeof (new Date()).getTime === 'function'"));
+    assert!(run_bool("/a/.test('a')"));
+    // __proto__ 는 표준 이름이라 유지(비열거 + 프로토타입 의미론)
+    assert_eq!(run_str("var o={a:1}; Object.keys(o).join(',')"), "a");
+}
+
+#[test]
+fn symbol_keys_do_not_share_string_keyspace() {
+    // 심볼 키는 문자열이 도달할 수 없는 내부 공간(NUL 접두)에 산다.
+    // 예전엔 "@@iterator" 라는 그냥 문자열로 이터러블을 위장할 수 있었고,
+    // 반대로 "@@" 로 시작하는 정상 문자열 키가 열거에서 조용히 사라졌다.
+    // 문자열 "@@iterator" 로는 이터러블이 되지 않는다
+    assert_eq!(
+        run_num(
+            "var o={}; o['@@iterator']=function(){var i=0;return{next:function(){\
+             return i<2?{value:i++,done:false}:{done:true};}};}; [...o].length"
+        ),
+        0.0,
+    );
+    // "@@" 로 시작하는 문자열 키는 정상 프로퍼티 (열거·JSON 에 보인다)
+    assert_eq!(
+        run_str("var o={}; o['@@myprop']=1; o.normal=2; Object.keys(o).join(',')"),
+        "@@myprop,normal",
+    );
+    assert_eq!(
+        run_str("var o={}; o['@@x']=1; JSON.stringify(o)"),
+        "{\"@@x\":1}",
+    );
+    // 진짜 심볼 키는 여전히 비열거
+    assert_eq!(
+        run_str("var s=Symbol('k'); var o={a:1}; o[s]=9; Object.keys(o).join(',')"),
+        "a",
+    );
+    // 진짜 Symbol.iterator 로는 이터러블이 된다
+    assert_eq!(
+        run_num(
+            "var o={}; o[Symbol.iterator]=function(){var i=0;return{next:function(){\
+             return i<2?{value:i++,done:false}:{done:true};}};}; [...o].length"
+        ),
+        2.0,
+    );
+}
+
+#[test]
+fn builtin_constructors_are_functions() {
+    // 표준: 전역 생성자는 함수다. Array/Object 가 네임스페이스 객체라
+    // typeof 가 "object" 였다 — 기능 탐지(typeof Object === 'function')가 실패했다.
+    assert!(run_bool("typeof Array === 'function'"));
+    assert!(run_bool("typeof Object === 'function'"));
+    assert!(run_bool("typeof Promise === 'function' && typeof Date === 'function'"));
+    // 호출/new 는 그대로
+    assert_eq!(run_num("new Array(3).length"), 3.0);
+    assert_eq!(run_str("Array(1,2).join(',')"), "1,2");
+    assert_eq!(run_num("Object({a:5}).a"), 5.0);
+    // 정적 멤버·prototype 도 그대로
+    assert_eq!(run_num("Array.from([1,2]).length"), 2.0);
+    assert!(run_bool("typeof Object.keys === 'function' && typeof Array.prototype.map === 'function'"));
+    // instanceof 유지
+    assert!(run_bool("[1,2] instanceof Array && ({}) instanceof Object"));
+}
+
+#[test]
+fn frozen_arrays_are_actually_frozen() {
+    // isFrozen 이 참을 반환하면서 실제로는 변경되던 구멍 — 표준대로 막는다.
+    assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a[0]=99; a[0]"), 1.0);
+    assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a.push(4); a.length"), 3.0);
+    assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a.pop(); a.length"), 3.0);
+    assert_eq!(run_str("var a=[3,1,2]; Object.freeze(a); a.sort(); a.join(',')"), "3,1,2");
+    assert!(run_bool("var a=[1]; Object.freeze(a); Object.isFrozen(a)"));
+    // seal: 기존 인덱스 변경은 되고 새 인덱스 추가는 안 된다
+    assert_eq!(run_num("var a=[1,2]; Object.seal(a); a[0]=9; a[0]"), 9.0);
+    assert_eq!(run_num("var a=[1,2]; Object.seal(a); a.push(3); a.length"), 2.0);
+    // 안 얼린 배열은 그대로
+    assert_eq!(run_num("var a=[1]; a[0]=7; a.push(8); a.length + a[0]"), 9.0);
+}
+
+#[test]
+fn readonly_array_methods_do_not_mutate_array_like() {
+    // 읽기 전용 연산이 array-like 대상에 own length/인덱스를 심던 부작용 제거.
+    let pre = "var arr=[]; var indexOf=arr.indexOf, slice=arr.slice, join=arr.join;";
+    assert_eq!(
+        run_num(&format!(
+            "{pre} function P(){{}} P.prototype={{length:0}}; var al=new P(); \
+             indexOf.call(al,'x'); slice.call(al); join.call(al); Object.keys(al).length"
+        )),
+        0.0,
+    );
+    // 변형 연산은 여전히 되쓴다
+    assert_eq!(
+        run_num(&format!(
+            "{pre} var push=arr.push; var al={{length:0}}; push.call(al,'a'); al.length"
+        )),
+        1.0,
+    );
+}
+
+#[test]
+fn object_integrity_methods() {
+    // freeze 후 isFrozen, 변경 무시
+    assert!(run_bool("var o={a:1}; Object.freeze(o); Object.isFrozen(o)"));
+    assert_eq!(run_num("var o={a:1}; Object.freeze(o); o.a=99; o.b=5; o.a"), 1.0);
+    assert!(run_bool("var o={a:1}; Object.freeze(o); o.b=5; o.b === undefined"));
+    // 안 얼린 객체는 isFrozen false, 변경 가능
+    assert!(run_bool("!Object.isFrozen({})"));
+    assert_eq!(run_num("var o={}; o.x=7; o.x"), 7.0);
+    // seal: 기존 값 변경 가능, 새 프로퍼티 추가 금지
+    assert_eq!(run_num("var o={a:1}; Object.seal(o); o.a=2; o.b=9; o.a"), 2.0);
+    assert!(run_bool("var o={a:1}; Object.seal(o); o.b=9; o.b === undefined"));
+    assert!(run_bool("var o={a:1}; Object.seal(o); Object.isSealed(o) && !Object.isFrozen(o)"));
+    // isExtensible
+    assert!(run_bool("Object.isExtensible({})"));
+    assert!(run_bool("var o={}; Object.preventExtensions(o); !Object.isExtensible(o)"));
+    // 원시값: frozen/sealed=true, extensible=false
+    assert!(run_bool("Object.isFrozen(5) && Object.isSealed('x') && !Object.isExtensible(3)"));
+    // freeze 는 인자를 반환 (체이닝)
+    assert_eq!(run_num("Object.freeze({a:42}).a"), 42.0);
+    // 배열도 정확: 안 얼린 배열은 not frozen
+    assert!(run_bool("!Object.isFrozen([1,2,3])"));
+    assert!(run_bool("var a=[1]; Object.freeze(a); Object.isFrozen(a)"));
+}
+
+#[test]
+fn get_computed_style_reads_real_values() {
+    let mut dom = crate::html::parse_dom("<div id=\"box\"></div>".to_string());
+    let box_id = dom.find_by_attr_id("box").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // 호스트(리빌드)가 채우는 계산 스타일을 흉내낸다.
+    let mut m = HashMap::new();
+    m.insert("display".to_string(), "flex".to_string());
+    m.insert("background-color".to_string(), "rgb(204, 0, 0)".to_string());
+    m.insert("font-size".to_string(), "20px".to_string());
+    m.insert("width".to_string(), "240px".to_string());
+    interp.computed_styles.insert(box_id, m);
+    // 카멜케이스 프로퍼티 + getPropertyValue(대시) 둘 다 동작
+    let r = interp
+        .run(
+            "var cs = getComputedStyle(document.getElementById('box')); \
+             cs.display + '|' + cs.backgroundColor + '|' + cs.getPropertyValue('font-size') + '|' + cs.width",
+        )
+        .unwrap();
+    assert_eq!(to_display(&r), "flex|rgb(204, 0, 0)|20px|240px");
+    // 없는 프로퍼티는 빈 문자열
+    assert_eq!(to_display(&interp.run("getComputedStyle(document.getElementById('box')).color").unwrap()), "");
+    // getComputedStyle 은 CSSStyleDeclaration 유형(존재 자체로 크래시 방지)
+    assert_eq!(to_display(&interp.run("'' + getComputedStyle(document.getElementById('box'))").unwrap()), "[object CSSStyleDeclaration]");
+}
+
+#[test]
+fn canvas_2d_records_ops() {
+    let mut dom = crate::html::parse_dom("<canvas id=\"c\" width=\"100\" height=\"50\"></canvas>".to_string());
+    let cid = dom.find_by_attr_id("c").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    interp
+        .run(
+            "var ctx = document.getElementById('c').getContext('2d'); \
+             ctx.fillStyle = '#ff0000'; ctx.fillRect(10, 20, 30, 40); \
+             ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(50,0); ctx.lineTo(0,50); ctx.fill();",
+        )
+        .unwrap();
+    let ops = interp.canvas_cmds.get(&cid).expect("canvas ops");
+    assert_eq!(ops.len(), 2, "fillRect + fillPath");
+    match &ops[0] {
+        CanvasOp::FillRect { x, y, w, h, color } => {
+            assert_eq!((*x, *y, *w, *h), (10.0, 20.0, 30.0, 40.0));
+            assert_eq!(*color, crate::css::Color { r: 255, g: 0, b: 0, a: 255 });
+        }
+        other => panic!("expected FillRect, got {:?}", other),
+    }
+    assert!(matches!(&ops[1], CanvasOp::FillPath { pts, .. } if pts.len() == 3));
+}
+
+#[test]
+fn destructuring_targets_can_be_members() {
+    // 표준: 구조분해 대상은 멤버 표현식일 수 있다. 예전엔 "잘못된 구조분해 할당 대상"
+    // 으로 파싱이 죽어서, 이 패턴을 쓰는 번들(vue 런타임 등)이 통째로 안 돌았다.
+    assert_eq!(run_num("var o={}; [o.p, o.q] = [5, 6]; o.p + o.q"), 11.0);
+    assert_eq!(run_num("var o={}; ({x: o.a, y: o.b} = {x:1, y:2}); o.a + o.b"), 3.0);
+    assert_eq!(run_num("var a=[0,0]; [a[0], a[1]] = [7, 8]; a[0] + a[1]"), 15.0);
+    // 기존 동작(이름 대상 / 스왑)도 그대로
+    assert_eq!(run_num("var a=1,b=2; [a,b]=[b,a]; a*10+b"), 21.0);
+}
+
+#[test]
+fn module_hoists_vars_like_scripts() {
+    // `var a, le, ue = …` 처럼 초기화 없는 var 선언자는 호이스팅에 의존한다.
+    // 모듈 평가에 var 호이스팅이 없어서, 그 이름을 읽는 순간 "정의되지 않음" 으로
+    // 죽었다 (vue 런타임이 정확히 이 모양이라 사이트가 통째로 안 돌았다).
+    let mut it = Interp::new();
+    it.module_sources.insert(
+        "https://x.test/m.js".to_string(),
+        "var a = 1, le, ue = () => (le = le || 7); \
+         globalThis.k1 = typeof le; \
+         globalThis.k2 = ue(); \
+         export const done = true;"
+            .to_string(),
+    );
+    it.run_module("https://x.test/m.js").expect("모듈 평가");
+    assert_eq!(to_display(&it.run("k1").unwrap()), "undefined", "선언은 됐고 값은 undefined");
+    assert_eq!(to_display(&it.run("k2").unwrap()), "7");
+}
+
+#[test]
+fn storage_has_length_and_key() {
+    // Storage 인터페이스는 length 와 key(i) 를 갖는다 (표준 §12.2, 삽입 순서).
+    // 없으면 for (i < localStorage.length) 로 순회하는 흔한 코드가 죽는다.
+    assert_eq!(
+        run_str(
+            "localStorage.setItem('a', '1'); localStorage.setItem('b', '2'); \
+             var r = localStorage.length + ',' + localStorage.key(0) + ',' + localStorage.key(1); \
+             localStorage.setItem('a', '9'); \
+             r += '|' + localStorage.length; \
+             r += '|' + String(localStorage.key(99)); \
+             localStorage.removeItem('a'); \
+             r + '|' + localStorage.length + ',' + localStorage.key(0)"
+        ),
+        "2,a,b|2|null|1,b"
+    );
+}
+
+#[test]
+fn get_prototype_of_is_real() {
+    // 예전엔 __proto__ 링크가 없으면 무조건 null 이었다 — 평범한 객체·배열·인스턴스가
+    // 전부 null. regenerator/babel 런타임이 getProto(getProto(values([]))) 로 내장
+    // 프로토타입을 캐내는데 null 이면 이터레이터 체인이 통째로 무너진다 (naver 가 죽었다).
+    assert_eq!(run_str("String(Object.getPrototypeOf({}) !== null)"), "true");
+    assert_eq!(run_str("String(Object.getPrototypeOf([]) !== null)"), "true");
+    assert_eq!(
+        run_str("class C {} var c = new C(); String(Object.getPrototypeOf(c) === C.prototype)"),
+        "true"
+    );
+    // C.prototype 은 매번 같은 객체여야 한다 (정체성)
+    assert_eq!(run_str("class C {} String(C.prototype === C.prototype)"), "true");
+    // 체인의 끝은 null 이다 — 자기 자신을 돌려주면 체인을 걷는 코드가 무한 루프에 빠진다
+    assert_eq!(run_str("String(Object.getPrototypeOf(Object.prototype))"), "null");
+    assert_eq!(
+        run_num("var p = Object.getPrototypeOf({}), n = 0; while (p && n < 20) { p = Object.getPrototypeOf(p); n++ } n"),
+        1.0
+    );
+}
+
+#[test]
+fn array_length_overflow_is_range_error() {
+    // 배열 최대 길이는 2^32-1 이다 (§10.4.2.2). 넘으면 RangeError.
+    // 상한이 없어서 core-js 의 기능 탐지(Array.from({length: 2**32}))가 40억 개
+    // 할당을 시도했고 프로세스가 통째로 죽었다 (naver 가 110초 만에 SIGKILL).
+    assert_eq!(
+        run_str("try { Array.from({ length: 4294967296 }) } catch (e) { 'RangeError' }"),
+        "RangeError"
+    );
+    // 정상 범위는 그대로 동작
+    assert_eq!(run_str("Array.from({ length: 3, 0: 'a', 1: 'b', 2: 'c' }).join()"), "a,b,c");
+}
+
+#[test]
+fn keys_values_entries_return_iterators() {
+    // 표준: Array/Map/Set 의 keys/values/entries 는 **이터레이터**를 돌려준다.
+    // 배열을 주면 for-of 는 되지만 .next() 가 없어서, 이터레이터 프로토콜을 직접
+    // 쓰는 코드(core-js/regenerator/babel 헬퍼)가 "next 가 undefined" 로 죽는다.
+    assert_eq!(run_num("[7, 8].values().next().value"), 7.0);
+    assert_eq!(run_num("[7, 8].keys().next().value"), 0.0);
+    assert_eq!(run_str("[7].entries().next().value.join()"), "0,7");
+    assert_eq!(run_str("new Map([['a', 1]]).entries().next().value.join()"), "a,1");
+    assert_eq!(run_num("new Set([5]).values().next().value"), 5.0);
+    // 이터레이터는 스스로 이터러블이다 (it[Symbol.iterator]() === it)
+    assert_eq!(
+        run_str("var it = [1].values(); String(it[Symbol.iterator]() === it)"),
+        "true"
+    );
+    assert_eq!(
+        run_str("function* g() { yield 1 } var it = g(); String(it[Symbol.iterator]() === it)"),
+        "true"
+    );
+    // 여전히 for-of / 전개도 된다
+    assert_eq!(run_str("[...new Map([['a',1]]).keys()].join()"), "a");
+    // null 전개는 TypeError (조용히 빈 배열로 넘기면 진짜 버그가 숨는다)
+    assert_eq!(run_str("try { [...null] } catch (e) { 'TypeError' }"), "TypeError");
+}
+
+#[test]
+fn property_descriptors_and_enumerable() {
+    // 게터 프로퍼티의 디스크립터에는 get 이 있어야 한다. 예전 프렐류드 폴리필은
+    // {value: o[k]} 를 만들어 **게터를 실행해 값만** 줬다 — 라이브러리가 d.get 으로
+    // 분기하므로 조용히 틀린 길로 간다 (naver 가 여기서 죽었다).
+    assert_eq!(
+        run_str("var o = { get a() { return 1 } }; typeof Object.getOwnPropertyDescriptor(o, 'a').get"),
+        "function"
+    );
+    // 배열 length / 함수 prototype 도 own 프로퍼티다
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor([1,2], 'length').value"), 2.0);
+    assert_eq!(
+        run_str("function F(){}; typeof Object.getOwnPropertyDescriptor(F, 'prototype').value"),
+        "object"
+    );
+    // enumerable: false 는 Object.keys / for-in / JSON 에서 빠져야 한다.
+    // 예전엔 이 플래그를 통째로 무시해서 숨겨야 할 프로퍼티가 그대로 새어 나왔다.
+    assert_eq!(
+        run_num("var o = {}; Object.defineProperty(o, 'h', { value: 1 }); Object.keys(o).length"),
+        0.0
+    );
+    assert_eq!(
+        run_str("var o = {}; Object.defineProperty(o, 'h', { value: 1 }); JSON.stringify(o)"),
+        "{}"
+    );
+    assert_eq!(
+        run_num("var o = {}; Object.defineProperty(o, 'h', { value: 1 }); var n = 0; for (var k in o) n++; n"),
+        0.0
+    );
+    // enumerable: true 는 보인다
+    assert_eq!(
+        run_str("var o = {}; Object.defineProperty(o, 'v', { value: 9, enumerable: true }); Object.keys(o).join()"),
+        "v"
+    );
+    // 숨긴 뒤에도 값은 읽힌다
+    assert_eq!(
+        run_num("var o = {}; Object.defineProperty(o, 'h', { value: 7 }); o.h"),
+        7.0
+    );
+}
+
+#[test]
+fn date_is_mutable() {
+    // Date 는 가변 객체다 (표준). setter 가 없으면 쿠키 만료 계산 같은 흔한 코드가
+    // "함수 아님" 으로 죽는다 (fmkorea 의 보안 스크립트가 date.setTime 을 쓴다).
+    assert_eq!(
+        run_num("var d = new Date(0); d.setTime(86400000); d.getTime()"),
+        86400000.0
+    );
+    // 쿠키 만료 관용구: date.setTime(date.getTime() + 7일)
+    assert_eq!(
+        run_str("var d = new Date(0); d.setTime(d.getTime() + 7*24*60*60*1000); d.toISOString().slice(0,10)"),
+        "1970-01-08"
+    );
+    assert_eq!(run_num("var d = new Date(2024,0,1); d.setDate(d.getDate()+7); d.getDate()"), 8.0);
+    assert_eq!(run_num("var d = new Date(2024,0,1); d.setDate(32); d.getMonth()"), 1.0, "월 넘김");
+    assert_eq!(run_num("var d = new Date(2024,0,1); d.setFullYear(2030); d.getFullYear()"), 2030.0);
+    // setter 의 반환값은 새 타임스탬프
+    assert_eq!(run_str("typeof new Date(0).setTime(5)"), "number");
+}
+
+#[test]
+fn escape_unescape_annex_b() {
+    // Annex B.2.1/B.2.2. 레거시지만 표준이고 국내 사이트가 쿠키 인코딩에 쓴다.
+    assert_eq!(run_str("escape('a b')"), "a%20b");
+    assert_eq!(run_str("escape('한')"), "%uD55C");
+    assert_eq!(run_str("unescape('a%20b')"), "a b");
+    assert_eq!(run_str("unescape('%uD55C')"), "한");
+    assert_eq!(run_str("unescape(escape('가나다 ABC'))"), "가나다 ABC");
+}
+
+#[test]
+fn array_callbacks_get_index_array_and_thisarg() {
+    // 표준: 콜백은 (값, 인덱스, **배열**) 로 부르고, 두 번째 인자는 thisArg 다.
+    // (값, 인덱스)만 넘기면 a[i-1] 같은 관용 코드가 죽는다 — IntersectionObserver
+    // 폴리필의 _initThresholds 가 정확히 그 모양이라 fmkorea 에서 터졌다.
+    assert_eq!(run_str("[1,1,2].filter((t, i, a) => t !== a[i-1]).join()"), "1,2");
+    assert_eq!(run_str("String([1].map((v, i, a) => Array.isArray(a))[0])"), "true");
+    assert_eq!(run_str("String([1].some((v, i, a) => Array.isArray(a)))"), "true");
+    assert_eq!(run_str("String([1].find((v, i, a) => Array.isArray(a)))"), "1");
+    assert_eq!(
+        run_num("[1,2].reduce((acc, v, i, a) => acc + (Array.isArray(a) ? 1 : 0), 0)"),
+        2.0
+    );
+    // thisArg
+    assert_eq!(run_num("[1].map(function () { return this.x }, { x: 7 })[0]"), 7.0);
+    assert_eq!(
+        run_num("var n = 0; [1,2].forEach(function () { n += this.k }, { k: 3 }); n"),
+        6.0
+    );
+}
+
+#[test]
+fn import_map_resolves_bare_specifiers() {
+    // <script type="importmap"> 은 베어 명세자를 URL 로 해석하는 표준 메커니즘이다
+    // (HTML §4.12.5). 없으면 import "react" 는 해석 불가로 실패한다.
+    let mut it = Interp::new();
+    it.import_map = vec![
+        ("pkg/".to_string(), "https://x.test/js/".to_string()),
+        ("mylib".to_string(), "https://x.test/lib.js".to_string()),
+    ];
+    assert_eq!(
+        it.map_specifier("mylib").as_deref(),
+        Some("https://x.test/lib.js"),
+        "정확 매핑"
+    );
+    assert_eq!(
+        it.map_specifier("pkg/deep/a.js").as_deref(),
+        Some("https://x.test/js/deep/a.js"),
+        "접두 매핑"
+    );
+    assert_eq!(it.map_specifier("./rel.js"), None, "상대 경로는 맵 대상이 아니다");
+    assert_eq!(it.map_specifier("unknown"), None, "맵에 없으면 None (지어내지 않는다)");
+}
+
+#[test]
+fn module_namespace_is_live_during_own_evaluation() {
+    // ESM 네임스페이스는 모듈 환경의 **살아있는 뷰**다 (§10.4.6).
+    // rspack/webpack 청크는 자기 자신을 import 해서 본문 도중 자기 네임스페이스를
+    // 런타임에 넘긴다 (import * as a from "./self.js"; __webpack_require__.C(a)).
+    // 예전엔 본문이 끝난 뒤에야 네임스페이스를 채워서 그때는 통째로 비어 있었고,
+    // MDN 의 메인 모듈이 여기서 죽었다.
+    let mut it = Interp::new();
+    it.module_sources.insert(
+        "https://x.test/self.js".to_string(),
+        "import * as me from \"./self.js\"; \
+         export const IDS = [\"a\", \"b\"]; \
+         globalThis.seen = me.IDS ? me.IDS.length : -1;"
+            .to_string(),
+    );
+    it.run_module("https://x.test/self.js").expect("모듈 평가");
+    assert_eq!(to_display(&it.run("seen").unwrap()), "2", "본문 도중 자기 export 가 보여야");
+}
+
+#[test]
+fn es_modules_evaluate_with_live_bindings() {
+    // 예전엔 파서가 import 를 통째로 버리고 export 는 수식어만 벗겼다.
+    // 의존성이 사라지니 모듈은 실행돼도 전부 undefined 였다
+    // ("스크립트는 돌았는데 화면이 비었다"). 이제 표준 의미론대로 평가한다.
+    let mut it = Interp::new();
+    it.module_sources.insert(
+        "https://x.test/util.js".to_string(),
+        "export const VERSION = '1.0'; \
+         let n = 0; \
+         export function bump() { n++; return n; } \
+         export function get() { return n; } \
+         export default function greet(w) { return 'hi ' + w; }"
+            .to_string(),
+    );
+    it.module_sources.insert(
+        "https://x.test/re.js".to_string(),
+        "export * from './util.js'; export { bump as inc } from './util.js';".to_string(),
+    );
+    it.module_sources.insert(
+        "https://x.test/main.js".to_string(),
+        "import greet, { VERSION, bump, get } from './util.js'; \
+         import * as U from './util.js'; \
+         import { inc } from './re.js'; \
+         globalThis.r1 = greet('you'); \
+         globalThis.r2 = VERSION; \
+         globalThis.r3 = U.VERSION; \
+         bump(); bump(); \
+         globalThis.r4 = get(); \
+         inc(); \
+         globalThis.r5 = U.get(); \
+         globalThis.r6 = typeof inc;"
+            .to_string(),
+    );
+    it.run_module("https://x.test/main.js").expect("모듈 평가");
+
+    assert_eq!(to_display(&it.run("r1").unwrap()), "hi you", "기본 export");
+    assert_eq!(to_display(&it.run("r2").unwrap()), "1.0", "이름 export");
+    assert_eq!(to_display(&it.run("r3").unwrap()), "1.0", "네임스페이스 import");
+    assert_eq!(to_display(&it.run("r4").unwrap()), "2", "모듈 상태는 공유된다");
+    // 재수출된 함수가 같은 모듈 인스턴스를 건드리고, 그 변화가 네임스페이스로 보인다
+    // (살아있는 바인딩 — 값 스냅샷으로 흉내내면 3 이 안 보인다)
+    assert_eq!(to_display(&it.run("r5").unwrap()), "3", "살아있는 바인딩");
+    assert_eq!(to_display(&it.run("r6").unwrap()), "function", "재수출");
+}
+
+#[test]
+fn import_outside_module_is_an_error_not_silence() {
+    // 클래식 스크립트에 import 가 있으면 표준상 문법 오류다.
+    // 예전엔 조용히 버려서, 의존성 없이 실행되다 엉뚱한 곳에서 죽었다.
+    let mut it = Interp::new();
+    assert!(it.run("import x from './m.js'; x").is_err());
+}
+
+#[test]
+fn spread_array_call_object() {
+    // 배열 스프레드
+    assert_eq!(run_str("var a=[1,2]; var b=[0,...a,3]; b.join(',')"), "0,1,2,3");
+    // 호출 인자 스프레드
+    assert_eq!(run_num("function add(x,y,z){return x+y+z;} var a=[1,2,3]; add(...a)"), 6.0);
+    // Math.max(...arr)
+    assert_eq!(run_num("var a=[3,7,2]; Math.max(...a)"), 7.0);
+    // 객체 스프레드 (병합, 뒤가 이김)
+    assert_eq!(run_num("var o={a:1,b:2}; var p={...o, b:9, c:3}; p.a + p.b + p.c"), 13.0);
+    // 문자열/Set 스프레드
+    assert_eq!(run_str("[...'ab', 'c'].join('-')"), "a-b-c");
+}
+
+#[test]
+fn generators_eager() {
+    // 기본 제너레이터: for-of 로 소비
+    assert_eq!(
+        run_num("function* g(){ yield 1; yield 2; yield 3; } var s=0; for(const x of g()) s+=x; s"),
+        6.0
+    );
+    // .next() 직접 호출
+    assert_eq!(
+        run_num("function* g(){ yield 10; yield 20; } var it=g(); it.next().value + it.next().value"),
+        30.0
+    );
+    // done 플래그
+    assert!(run_bool("function* g(){ yield 1; } var it=g(); it.next(); it.next().done"));
+    // yield* 위임
+    assert_eq!(
+        run_str("function* inner(){ yield 'a'; yield 'b'; } function* g(){ yield* inner(); yield 'c'; } var out=''; for(const x of g()) out+=x; out"),
+        "abc"
+    );
+    // 루프 안 yield
+    assert_eq!(
+        run_num("function* range(n){ for(var i=0;i<n;i++) yield i; } var s=0; for(const x of range(4)) s+=x; s"),
+        6.0
+    );
+    // 함수 식 제너레이터
+    assert_eq!(
+        run_num("var g = function*(){ yield 5; yield 7; }; var s=0; for(const x of g()) s+=x; s"),
+        12.0
+    );
+}
+
+#[test]
+fn generator_is_lazy_infinite() {
+    // 무한 제너레이터를 유한하게 소비 — eager 였다면 여기서 멈춘다.
+    assert_eq!(
+        run_num(
+            "function* nat(){ var i=0; while(true) yield i++; } \
+             var it=nat(); it.next().value + it.next().value + it.next().value"
+        ),
+        3.0, // 0+1+2
+    );
+    // for-of + break 로 무한 제너레이터 순회
+    assert_eq!(
+        run_num(
+            "function* nat(){ var i=0; while(true) yield i++; } \
+             var s=0; for(const x of nat()){ if(x>=5) break; s+=x; } s"
+        ),
+        10.0, // 0+1+2+3+4
+    );
+}
+
+#[test]
+fn generator_lazy_side_effects_interleave() {
+    // 본문 부작용이 생성 시점이 아니라 next() 마다 하나씩 일어난다.
+    // 생성 직후엔 로그가 비어 있어야 한다(eager 였다면 'ab').
+    assert_eq!(
+        run_str(
+            "var log=[]; function* g(){ log.push('a'); yield 1; log.push('b'); yield 2; } \
+             var it=g(); var before=log.join(''); it.next(); var mid=log.join(''); \
+             it.next(); before + '|' + mid + '|' + log.join('')"
+        ),
+        "|a|ab",
+    );
+}
+
+#[test]
+fn generator_two_way_next() {
+    // next(v) 로 넘긴 값이 yield 식의 값이 된다.
+    assert_eq!(
+        run_num("function* g(){ var x = yield 1; yield x + 10; } var it=g(); it.next(); it.next(5).value"),
+        15.0,
+    );
+    // 선언 초기화 형태 let x = yield
+    assert_eq!(
+        run_num("function* g(){ let a = yield 1; let b = yield 2; yield a + b; } \
+                 var it=g(); it.next(); it.next(10); it.next(20).value"),
+        30.0,
+    );
+}
+
+#[test]
+fn generator_return_value_and_done() {
+    // return 값이 { value, done:true } 로 나온다.
+    assert!(run_bool(
+        "function* g(){ yield 1; return 99; yield 2; } var it=g(); it.next(); \
+         var r=it.next(); r.value===99 && r.done===true"
+    ));
+    // 끝난 뒤 next() 는 { undefined, true }
+    assert!(run_bool(
+        "function* g(){ yield 1; } var it=g(); it.next(); it.next(); it.next().done"
+    ));
+}
+
+#[test]
+fn generator_yield_star_delegation() {
+    // yield* 로 내부 제너레이터/배열을 위임 전개
+    assert_eq!(
+        run_str("function* inner(){ yield 'a'; yield 'b'; } \
+                 function* g(){ yield* inner(); yield* ['c','d']; yield 'e'; } \
+                 var out=''; for(const x of g()) out+=x; out"),
+        "abcde",
+    );
+    // yield* 의 값 = 내부 제너레이터의 return 값
+    assert_eq!(
+        run_num("function* inner(){ yield 1; return 42; } \
+                 function* g(){ var r = yield* inner(); yield r; } \
+                 var out=[]; for(const x of g()) out.push(x); out[0]*1 + out[1]"),
+        43.0, // 1 + 42
+    );
+}
+
+#[test]
+fn generator_try_finally_runs() {
+    // 제너레이터 안 try/finally: finally 의 yield 도 산출된다.
+    assert_eq!(
+        run_str("function* g(){ try { yield 1; yield 2; } finally { yield 9; } } \
+                 var out=''; for(const x of g()) out+=x; out"),
+        "129",
+    );
+    // try 안에서 throw → catch 로 이어 실행
+    assert_eq!(
+        run_str("function* g(){ try { yield 1; throw 'e'; yield 2; } catch(e) { yield e; } } \
+                 var out=''; for(const x of g()) out+=x; out"),
+        "1e",
+    );
+}
+
+#[test]
+fn generator_early_return_method() {
+    // it.return(v) 로 조기 종료 — { v, done:true }, 이후엔 done.
+    assert!(run_bool(
+        "function* g(){ yield 1; yield 2; yield 3; } var it=g(); it.next(); \
+         var r=it.return(77); r.value===77 && r.done===true && it.next().done===true"
+    ));
+}
+
+#[test]
+fn generator_yield_in_expression_positions() {
+    // 이항식 내부 yield — 평가 순서 보존(왼쪽 먼저)
+    assert_eq!(
+        run_num("function* g(){ return 10 + (yield 1); } var it=g(); it.next(); it.next(5).value"),
+        15.0,
+    );
+    // 함수 호출 인자 위치 yield (부작용 함수)
+    assert_eq!(
+        run_num("function* g(){ return Math.max(yield 1, yield 2); } \
+                 var it=g(); it.next(); it.next(3); it.next(8).value"),
+        8.0,
+    );
+    // 메서드 호출 인자 위치 yield — this 보존
+    assert_eq!(
+        run_str("function* g(){ var a=[]; a.push(yield 1); a.push(yield 2); return a.join(','); } \
+                 var it=g(); it.next(); it.next('x'); var r=it.next('y'); r.value"),
+        "x,y",
+    );
+    // 배열 리터럴 안 yield, 순서 보존
+    assert_eq!(
+        run_str("function* g(){ return [yield 1, yield 2, 3].join('-'); } \
+                 var it=g(); it.next(); it.next('a'); it.next('b').value"),
+        "a-b-3",
+    );
+    // 삼항식 분기 안 yield — 선택된 분기만 산출
+    assert_eq!(
+        run_num("function* g(cond){ return cond ? (yield 1) : (yield 2); } \
+                 var it=g(true); it.next(); it.next(42).value"),
+        42.0,
+    );
+}
+
+#[test]
+fn generator_yield_in_loop_condition() {
+    // while 조건 안 yield: 매 반복 조건 재평가(양방향 next 로 종료 제어)
+    // g: 소비자가 0 을 보낼 때까지 받은 값을 합산.
+    assert_eq!(
+        run_num("function* g(){ var sum=0, v; while((v = yield sum)) { sum += v; } return sum; } \
+                 var it=g(); it.next(); it.next(3); it.next(4); it.next(0).value"),
+        7.0,
+    );
+    // do-while 조건 안 yield: 본문 최소 1회 후 조건 검사
+    // next(): 본문 n=1, cond=yield 1. next(true): cond 참 → n=2, cond=yield 2.
+    // next(false): cond 거짓 → 종료, return n=2.
+    assert_eq!(
+        run_num("function* g(){ var n=0; do { n++; } while(yield n); return n; } \
+                 var it=g(); it.next(); it.next(true); it.next(false).value"),
+        2.0,
+    );
+}
+
+#[test]
+fn generator_yield_short_circuit() {
+    // && 오른쪽 yield 는 왼쪽이 truthy 일 때만 실행(부작용 로그로 확인)
+    assert_eq!(
+        run_str("var log=[]; function* g(){ false && (yield log.push('R')); return log.join(''); } \
+                 var it=g(); var r=it.next(); r.value"),
+        "", // 오른쪽 미실행 → 첫 next 가 바로 done
+    );
+    // || 왼쪽 falsy → 오른쪽 yield 실행
+    assert_eq!(
+        run_num("function* g(){ var x = 0 || (yield 1); return x; } \
+                 var it=g(); it.next(); it.next(7).value"),
+        7.0,
+    );
+}
+
+#[test]
+fn generator_for_of_in_body() {
+    // 제너레이터 본문 안 for-of (지연 위임과 동류) — 값을 변환해 산출
+    assert_eq!(
+        run_num("function* g(){ for(const x of [1,2,3]) yield x*x; } \
+                 var s=0; for(const v of g()) s+=v; s"),
+        14.0, // 1+4+9
+    );
+    // 본문 안 switch + yield
+    assert_eq!(
+        run_str("function* g(n){ switch(n){ case 1: yield 'a'; case 2: yield 'b'; break; default: yield 'z'; } } \
+                 var out=''; for(const x of g(1)) out+=x; out"),
+        "ab",
+    );
+}
+
+#[test]
+fn for_of_iterates_values() {
+    // 배열 값 순회
+    assert_eq!(run_num("var s = 0; for (const x of [1,2,3,4]) s += x; s"), 10.0);
+    // 문자열 문자 순회
+    assert_eq!(run_str("var out = ''; for (var c of 'abc') out = c + out; out"), "cba");
+    // Set 값 순회
+    assert_eq!(run_num("var s = 0; for (const x of new Set([2,2,3])) s += x; s"), 5.0);
+    // break 동작
+    assert_eq!(run_num("var n = 0; for (const x of [1,2,3,4]) { if (x === 3) break; n++; } n"), 2.0);
+}
+
+#[test]
+fn array_prototype_method_dispatch() {
+    // 배열 인스턴스가 Array.prototype 폴리필 메서드를 호출 (this 바인딩)
+    assert_eq!(
+        run_num("Array.prototype.at = function(i){ return this[i < 0 ? this.length + i : i]; }; [1,2,3].at(-1)"),
+        3.0
+    );
+    assert_eq!(
+        run_str("Array.prototype.flatMap = function(f){ return this.map(f).flat(); }; [1,2].flatMap(x => [x, x*10]).join(',')"),
+        "1,10,2,20"
+    );
+}
+
+#[test]
+fn array_sort_and_flat() {
+    // 기본 정렬(문자열): 10 이 2 앞에 온다
+    assert_eq!(run_str("[10, 2, 1].sort().join(',')"), "1,10,2");
+    // 숫자 비교자
+    assert_eq!(run_str("[10, 2, 1].sort((a, b) => a - b).join(',')"), "1,2,10");
+    assert_eq!(run_str("[3, 1, 2].sort((a, b) => b - a).join(',')"), "3,2,1");
+    // 제자리 정렬 + 같은 배열 반환
+    assert_eq!(run_num("var a = [3,1,2]; a.sort(); a[0]"), 1.0);
+    // flat 깊이 1
+    assert_eq!(run_str("[1, [2, 3], 4].flat().join(',')"), "1,2,3,4");
+}
+
+#[test]
+fn object_property_insertion_order() {
+    // Object.keys / for-in / JSON 은 삽입 순서를 따른다(정렬/무작위 아님).
+    assert_eq!(run_str("Object.keys({z:1, a:2, m:3}).join(',')"), "z,a,m");
+    assert_eq!(run_str("var o={}; o.b=1; o.a=2; o.c=3; Object.keys(o).join(',')"), "b,a,c");
+    assert_eq!(run_str("var s=''; for(var k in {y:1,x:2,w:3}) s+=k; s"), "yxw");
+    assert_eq!(run_str("JSON.stringify({one:1, two:2, three:3})"),
+        "{\"one\":1,\"two\":2,\"three\":3}");
+    // 정수 인덱스 키는 오름차순으로 먼저, 그다음 문자열 키 삽입 순서
+    assert_eq!(run_str("var o={}; o.b=1; o[2]=1; o.a=1; o[1]=1; Object.keys(o).join(',')"),
+        "1,2,b,a");
+    // 재대입은 순서 유지
+    assert_eq!(run_str("var o={x:1,y:2}; o.x=9; Object.keys(o).join(',')"), "x,y");
+}
+
+#[test]
+fn promise_rejection_and_catch() {
+    // .catch 가 거부를 잡는다(예전엔 no-op).
+    assert_eq!(run_num("await Promise.reject(5).catch(function(e){ return e + 1; })"), 6.0);
+    // .then(null, onR) 두 번째 인자로 거부 처리
+    assert_eq!(run_num("await Promise.reject(3).then(null, function(e){ return e * 2; })"), 6.0);
+    // await 로 거부된 promise → throw (try/catch 로 잡힘)
+    assert_eq!(run_num("var r; try { await Promise.reject(9); r=-1; } catch(e){ r=e; } r"), 9.0);
+    // .then 핸들러가 throw → 체인 거부 → .catch 로 잡힘
+    assert_eq!(
+        run_num("await Promise.resolve(1).then(function(){ throw 8; }).catch(function(e){ return e; })"),
+        8.0
+    );
+    // onRejected 없는 .then 뒤로 거부가 통과해 .catch 로
+    assert_eq!(
+        run_num("await Promise.reject(4).then(function(v){ return v; }).catch(function(e){ return e + 100; })"),
+        104.0
+    );
+    // async 함수 본문 throw → 거부된 promise
+    assert_eq!(run_num("await (async function(){ throw 11; })().catch(function(e){ return e; })"), 11.0);
+}
+
+#[test]
+fn promise_all_rejects_on_any() {
+    // Promise.all 은 하나라도 거부되면 그 이유로 거부.
+    assert_eq!(
+        run_num("var r; try { await Promise.all([Promise.resolve(1), Promise.reject(2)]); r=-1; } catch(e){ r=e; } r"),
+        2.0
+    );
+    // 모두 이행이면 값 배열로 이행
+    assert_eq!(run_num("var a = await Promise.all([Promise.resolve(3), Promise.resolve(4)]); a[0]+a[1]"), 7.0);
+    // allSettled 는 거부돼도 status/reason 으로 수집(거부 안 함)
+    assert_eq!(
+        run_str("var a = await Promise.allSettled([Promise.resolve(1), Promise.reject(2)]); a[1].status"),
+        "rejected"
+    );
+}
+
+#[test]
+fn delete_removes_property() {
+    // delete 가 실제로 own 프로퍼티를 제거한다(예전엔 항상 true 만 반환).
+    assert_eq!(run_str("var o={a:1,b:2,c:3}; delete o.b; Object.keys(o).join(',')"), "a,c");
+    assert_eq!(run_str("var o={a:1}; delete o.a; typeof o.a"), "undefined");
+    assert!(run_bool("var o={a:1}; delete o['a']; !('a' in o)"));
+    assert!(run_bool("var o={a:1}; delete o.a === true"));
+}
+
+#[test]
+fn internal_markers_not_leaked() {
+    // Date/Promise 의 엔진 내부 마커가 Object.keys/JSON 에 노출되지 않는다.
+    assert_eq!(run_num("Object.keys(new Date(0)).length"), 0.0);
+    assert_eq!(run_num("Object.keys(Promise.resolve(1)).length"), 0.0);
+    // Date 는 JSON 에서 ISO 문자열(toJSON 규약).
+    assert_eq!(run_str("JSON.stringify(new Date(0))"), "\"1970-01-01T00:00:00.000Z\"");
+    assert_eq!(run_str("JSON.stringify({d: new Date(0)})"),
+        "{\"d\":\"1970-01-01T00:00:00.000Z\"}");
+    // 사용자 __ 키(__typename 등)는 보존 — 내부 마커만 필터.
+    assert_eq!(run_str("JSON.stringify({__typename:'X', a:1})"),
+        "{\"__typename\":\"X\",\"a\":1}");
+    assert_eq!(run_str("Object.keys({__typename:'X'}).join(',')"), "__typename");
+}
+
+#[test]
+fn instance_object_prototype_fallback() {
+    // 클래스 인스턴스도 Object.prototype 메서드를 상속(hasOwnProperty/toString/valueOf).
+    assert!(run_bool("class P{constructor(x){this.x=x;}} new P(5).hasOwnProperty('x')"));
+    assert!(run_bool("class P{constructor(x){this.x=x;}} !new P(5).hasOwnProperty('y')"));
+    assert_eq!(run_str("class A{} new A().toString()"), "[object Object]");
+    assert!(run_bool("class A{} var a=new A(); a.valueOf() === a"));
+    // 클래스가 toString 정의하면 그것 우선
+    assert_eq!(run_str("class A{ toString(){ return 'custom'; } } new A().toString()"), "custom");
+}
+
+#[test]
+fn object_values_entries_fromentries() {
+    assert_eq!(run_num("Object.values({a:1,b:2,c:3}).length"), 3.0);
+    assert_eq!(run_str("Object.values({a:1,b:2}).join(',')"), "1,2");
+    assert_eq!(run_str("Object.entries({x:5})[0].join('=')"), "x=5");
+    assert_eq!(run_num("Object.entries({a:1,b:2}).length"), 2.0);
+    assert_eq!(run_num("Object.fromEntries([['a',1],['b',2]]).b"), 2.0);
+    assert_eq!(run_str("Object.fromEntries(new Map([['k','v']])).k"), "v");
+    // 삽입 순서 유지
+    assert_eq!(run_str("Object.keys(Object.fromEntries([['z',1],['a',2]])).join(',')"), "z,a");
+}
+
+#[test]
+fn reflect_namespace() {
+    assert_eq!(run_num("Reflect.get({a:5},'a')"), 5.0);
+    assert_eq!(run_num("var o={}; Reflect.set(o,'x',9); o.x"), 9.0);
+    assert!(run_bool("Reflect.has({a:1},'a')"));
+    assert!(run_bool("!Reflect.has({a:1},'b')"));
+    assert_eq!(run_num("Reflect.ownKeys({a:1,b:2}).length"), 2.0);
+    assert!(run_bool("var o={a:1}; Reflect.deleteProperty(o,'a'); o.a === undefined"));
+    assert_eq!(run_num("Reflect.apply(function(a,b){return a+b;},null,[2,3])"), 5.0);
+    assert_eq!(run_num("function P(x){this.x=x;} Reflect.construct(P,[7]).x"), 7.0);
+}
+
+#[test]
+fn more_array_string_methods() {
+    assert_eq!(run_num("[1,2,3,4].findLast(function(x){return x<3;})"), 2.0);
+    assert_eq!(run_num("[1,2,3,4].findLastIndex(function(x){return x<3;})"), 1.0);
+    assert_eq!(run_str("[1,2,3].fill(0).join(',')"), "0,0,0");
+    assert_eq!(run_str("[1,2,3,4].fill(9,1,3).join(',')"), "1,9,9,4");
+    assert_eq!(run_num("[1,2,3,4].reduceRight(function(a,b){return a-b;})"), -2.0); // 4-3-2-1
+    assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
+    assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
+    assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
+}
+
+#[test]
+fn structured_clone_deep() {
+    // 깊은 복제 — 복제본 변경이 원본에 영향 없음.
+    assert_eq!(run_num("var o={a:1,b:{c:2}}; var d=structuredClone(o); d.b.c=9; o.b.c"), 2.0);
+    assert_eq!(run_num("var a=[1,[2,3]]; var d=structuredClone(a); d[1][0]=9; a[1][0]"), 2.0);
+    assert_eq!(run_num("structuredClone({x:5}).x"), 5.0);
+    assert_eq!(run_num("structuredClone([1,2,3]).length"), 3.0);
+    assert_eq!(run_num("structuredClone(new Map([['a',7]])).get('a')"), 7.0);
+}
+
+#[test]
+fn array_string_at_and_flatmap() {
+    // .at (음수 인덱스)
+    assert_eq!(run_num("[10,20,30].at(-1)"), 30.0);
+    assert_eq!(run_num("[10,20,30].at(0)"), 10.0);
+    assert!(run_bool("[1,2].at(5) === undefined"));
+    assert_eq!(run_str("'abc'.at(-1)"), "c");
+    assert_eq!(run_str("'abc'.at(0)"), "a");
+    // flatMap
+    assert_eq!(run_str("[1,2,3].flatMap(function(x){return [x, x*2];}).join(',')"), "1,2,2,4,3,6");
+    assert_eq!(run_num("[1,2].flatMap(function(x){return x;}).length"), 2.0);
+}
+
+#[test]
+fn regex_named_groups() {
+    // (?<name>...) 이름 있는 그룹: 번호 접근 + .groups 이름 접근 + 번호 치환.
+    assert_eq!(run_str("'2020-01-15'.match(/(?<y>\\d{4})-(?<m>\\d{2})/)[1]"), "2020");
+    assert_eq!(run_str("'2020-01-15'.match(/(?<y>\\d{4})-(?<m>\\d{2})/).groups.y"), "2020");
+    assert_eq!(run_str("'2020-01-15'.match(/(?<y>\\d{4})-(?<m>\\d{2})/).groups.m"), "01");
+    assert_eq!(
+        run_str("'2020-01-15'.replace(/(?<y>\\d{4})-(?<m>\\d{2})-(?<d>\\d{2})/, '$3.$2.$1')"),
+        "15.01.2020"
+    );
+    assert!(run_bool("/(?<year>\\d+)/.test('abc123')"));
+    // 이름 그룹 없으면 groups 는 undefined
+    assert!(run_bool("'ab'.match(/a/).groups === undefined"));
+}
+
+#[test]
+fn array_from_and_of() {
+    // Array.from: 이터러블/문자열(코드포인트)/Set/array-like/mapFn.
+    assert_eq!(run_str("Array.from([1,2,3]).join(',')"), "1,2,3");
+    assert_eq!(run_num("Array.from('a😀b').length"), 3.0); // 코드 포인트
+    assert_eq!(run_num("Array.from(new Set([1,1,2,2,3])).length"), 3.0);
+    assert_eq!(run_str("Array.from({length:3}, function(v,i){return i*2;}).join(',')"), "0,2,4");
+    assert_eq!(run_str("Array.from({0:'a',1:'b',length:2}).join(',')"), "a,b");
+    // Array.of: 인자 그대로(Array(7)과 달리 [7])
+    assert_eq!(run_num("Array.of(7).length"), 1.0);
+    assert_eq!(run_str("Array.of(1,2,3).join(',')"), "1,2,3");
+}
+
+#[test]
+fn string_utf16_semantics() {
+    // 문자열은 UTF-16 코드 유닛열: astral 문자는 길이 2.
+    assert_eq!(run_num("'😀'.length"), 2.0);
+    assert_eq!(run_num("'a😀b'.length"), 4.0);
+    assert_eq!(run_num("'café'.length"), 4.0); // é는 BMP → 1
+    // charCodeAt=코드 유닛(서로게이트), codePointAt=코드 포인트
+    assert_eq!(run_num("'😀'.charCodeAt(0)"), 55357.0); // 0xD83D 하이 서로게이트
+    assert_eq!(run_num("'😀'.codePointAt(0)"), 128512.0); // 0x1F600
+    // 인덱싱/slice/indexOf 는 UTF-16 유닛 기준
+    assert_eq!(run_num("'a😀b'.indexOf('b')"), 3.0);
+    assert_eq!(run_str("'a😀b'.slice(0,1)"), "a");
+    assert_eq!(run_str("'a😀b'[0]"), "a");
+    assert_eq!(run_num("'a😀b'.charCodeAt(1)"), 55357.0);
+    // BMP 문자열은 그대로(코드포인트==코드유닛)
+    assert_eq!(run_num("'hello'.length"), 5.0);
+    assert_eq!(run_num("'hello'.indexOf('llo')"), 2.0);
+    assert_eq!(run_str("'hello'.slice(1,3)"), "el");
+    // 반복/스프레드는 코드 포인트(astral=1)
+    assert_eq!(run_num("[...'😀'].length"), 1.0);
+}
+
+#[test]
+fn string_conversion_calls_toprimitive() {
+    // String(obj) 는 ToString → ToPrimitive(hint string) → toString 호출.
+    assert_eq!(run_str("String({toString:function(){return 'Z';}})"), "Z");
+    // hint string: toString(상속) 우선 → valueOf 만 있어도 "[object Object]"(스펙 정확)
+    assert_eq!(run_str("String({valueOf:function(){return 42;}})"), "[object Object]");
+    // 원시값은 그대로
+    assert_eq!(run_str("String(5)"), "5");
+    assert_eq!(run_str("String(true)"), "true");
+    assert_eq!(run_str("String([1,2,3])"), "1,2,3");
+}
+
+#[test]
+fn regex_vs_division_after_paren() {
+    // 제어문 헤더 ')' 뒤는 정규식 허용.
+    assert!(run_bool("if(1) /ab/.test('xabx')"));
+    assert_eq!(run_num("var r; if(true) r = /x/.test('x') ? 1 : 0; r"), 1.0);
+    // 그룹/호출 ')' 뒤는 나눗셈 유지.
+    assert_eq!(run_num("var a=6,b=2,c=3; (a)/b/c"), 1.0);
+    assert_eq!(run_num("var r=(function(){return 10;})()/2; r"), 5.0);
+    // 일반 위치의 정규식도 유지.
+    assert_eq!(run_num("'a1b2'.match(/\\d/g).length"), 2.0);
+}
+
+#[test]
+fn date_parse_and_utc() {
+    // Date.parse 는 new Date(문자열).getTime 과 일치, 미파싱은 NaN.
+    assert!(run_bool("Date.parse('2020-01-15') === new Date('2020-01-15').getTime()"));
+    assert!(run_bool("isNaN(Date.parse('nonsense'))"));
+    assert!(run_bool("typeof Date.parse === 'function'"));
+    // Date.UTC 는 UTC 컴포넌트의 밀리초.
+    assert_eq!(run_num("Date.UTC(1970,0,1)"), 0.0);
+    assert!(run_bool("Date.UTC(2020,0,1) === new Date('2020-01-01T00:00:00.000Z').getTime()"));
+    assert!(run_bool("typeof Date.UTC === 'function'"));
+}
+
+#[test]
+fn unicode_identifiers() {
+    // 유니코드 식별자(비ASCII 문자·숫자) 인식.
+    assert_eq!(run_num("var café = 5; café"), 5.0);
+    assert_eq!(run_num("let 你好 = 7; 你好"), 7.0);
+    assert_eq!(run_num("const Ω = 3; Ω * 2"), 6.0);
+    assert_eq!(run_num("var π=3; π"), 3.0);
+}
+
+#[test]
+fn native_function_strict_equality() {
+    // 같은 내장 함수는 === 로 동일 (기능 탐지/함수 비교에 쓰임).
+    assert!(run_bool("Math.round === Math.round"));
+    assert!(run_bool("[].push === [].push"));
+    assert!(run_bool("JSON.stringify === JSON.stringify"));
+    // 다른 내장 함수는 다름
+    assert!(run_bool("Math.round !== Math.floor"));
+}
+
+#[test]
+fn const_reassignment_throws() {
+    // const 재대입은 TypeError(잡을 수 있음). 재선언 없는 정상 사용은 유지.
+    assert!(Interp::new().run("const x=1; x=2;").is_err());
+    assert_eq!(run_num("const x=1; try{ x=2; }catch(e){} x"), 1.0);
+    // const 객체의 프로퍼티 변경은 허용(바인딩만 상수)
+    assert_eq!(run_num("const o={a:1}; o.a=5; o.a"), 5.0);
+    // for-of/for-in const 루프 변수는 반복마다 새 바인딩 → 정상
+    assert_eq!(run_num("var s=0; for(const v of [1,2,3]) s+=v; s"), 6.0);
+    // let 은 재대입 가능
+    assert_eq!(run_num("let y=1; y=2; y"), 2.0);
+}
+
+#[test]
+fn map_set_same_value_zero_nan() {
+    // Set/Map 은 SameValueZero — NaN 은 서로 같다(중복 제거/조회).
+    assert_eq!(run_num("var s=new Set(); s.add(NaN); s.add(NaN); s.size"), 1.0);
+    assert!(run_bool("var s=new Set(); s.add(NaN); s.has(NaN)"));
+    assert_eq!(run_num("var m=new Map(); m.set(NaN,1); m.set(NaN,2); m.size"), 1.0);
+    assert_eq!(run_num("var m=new Map(); m.set(NaN,7); m.get(NaN)"), 7.0);
+    // 일반 값은 그대로 strict
+    assert_eq!(run_num("var s=new Set(); s.add(1); s.add(2); s.add(1); s.size"), 2.0);
+}
+
+#[test]
+fn number_to_string_ecmascript() {
+    let s = |src: &str| run_str(&format!("String({})", src));
+    // 지수 임계: n>21 또는 n≤-6 에서 지수 표기, 형식 "de+X"/"de-X"
+    assert_eq!(s("1e21"), "1e+21");
+    assert_eq!(s("1e-7"), "1e-7");
+    assert_eq!(s("0.0000001"), "1e-7");
+    // 경계: 1e-6 은 지수 아님(소수)
+    assert_eq!(s("0.000001"), "0.000001");
+    // 일반 정수/소수
+    assert_eq!(s("100"), "100");
+    assert_eq!(s("123.45"), "123.45");
+    assert_eq!(s("0.5"), "0.5");
+    assert_eq!(s("1000000"), "1000000");
+    assert_eq!(s("-0"), "0");
+    assert_eq!(s("-12.5"), "-12.5");
+    // 큰 정수(<1e21)는 전체 자리, ≥1e21 은 지수
+    assert_eq!(s("1e20"), "100000000000000000000");
+    assert_eq!(s("1.5e21"), "1.5e+21");
+}
+
+#[test]
+fn json_roundtrip() {
+    assert_eq!(run_num("JSON.parse('42')"), 42.0);
+    assert_eq!(run_str("JSON.parse('\"hi\\\\n\"')"), "hi\n");
+    assert_eq!(run_num("JSON.parse('[1, 2, 3]')[1]"), 2.0);
+    assert_eq!(run_num("JSON.parse('{\"a\": {\"b\": 7}}').a.b"), 7.0);
+    assert!(run_bool("JSON.parse('true') === true && JSON.parse('null') === null"));
+    // 삽입(소스) 순서 보존 — 정렬 아님(ECMAScript OrdinaryOwnPropertyKeys)
+    assert_eq!(run_str("JSON.stringify({ b: 2, a: 'x' })"), "{\"b\":2,\"a\":\"x\"}");
+    assert_eq!(run_str("JSON.stringify([1, 'two', null, true])"), "[1,\"two\",null,true]");
+    // 라운드트립
+    assert_eq!(
+        run_str("JSON.stringify(JSON.parse('{\"k\":[1,2,{\"n\":null}]}'))"),
+        "{\"k\":[1,2,{\"n\":null}]}"
+    );
+    // 파싱 실패는 스크립트 에러
+    assert!(Interp::new().run("JSON.parse('{oops')").is_err());
+}
+
+#[test]
+fn for_of_destructuring() {
+    // for-of 루프 변수 구조분해 (배열/entries 순회의 핵심 패턴)
+    assert_eq!(run_num("var s=0; for(var [a,b] of [[1,2],[3,4]]){s+=a+b;} s"), 10.0);
+    assert_eq!(run_str("var r=''; for(const [k,v] of [['x',1],['y',2]]){r+=k+v;} r"), "x1y2");
+}
+
+#[test]
+fn destructuring_rest() {
+    // { a, ...rest } / [ f, ...tail ]
+    assert_eq!(run_num("var {a,...r}={a:1,b:2,c:3}; a + r.b + r.c"), 6.0);
+    assert_eq!(run_num("var [f,...t]=[1,2,3,4]; f + t.length"), 4.0);
+    // 기본값 + rest 조합 (소비된 키는 rest 에서 제외)
+    assert_eq!(run_num("var {x,y=9,...o}={x:1,z:5}; x + y + o.z"), 15.0);
+}
+
+#[test]
+fn destructuring_defaults_and_nesting() {
+    // 기본값: 없는 프로퍼티/슬롯은 default 사용
+    assert_eq!(run_num("var {a=3,b=4}={a:1}; a+b"), 5.0);
+    assert_eq!(run_num("var [p=1,q=2]=[7]; p+q"), 9.0);
+    // 중첩 구조분해
+    assert_eq!(run_num("var {x:{y}}={x:{y:9}}; y"), 9.0);
+    assert_eq!(run_num("var [[m],[n]]=[[3],[4]]; m+n"), 7.0);
+    // 중첩 + 기본값 (없는 서브객체에 기본값 후 내부 분해)
+    assert_eq!(run_num("var {d:{k=5}={}}={}; k"), 5.0);
+}
+
+#[test]
+fn destructuring_parameters_bind() {
+    // 객체/배열 구조분해 파라미터가 실제로 바인딩돼야 (기존엔 자리표시로 버려짐)
+    assert_eq!(run_num("(function({a,b}){return a+b;})({a:3,b:4})"), 7.0);
+    assert_eq!(run_num("(({x,y})=>x*y)({x:5,y:6})"), 30.0);
+    assert_eq!(run_num("(function([p,,q]){return p+q;})([1,2,3])"), 4.0);
+}
+
+#[test]
+fn rest_parameters_collect_remaining_args() {
+    // ...rest 는 남은 인자를 배열로 모은다 (기존엔 단일 인자만 받았음)
+    assert_eq!(run_num("(function(a, ...r){return a + r.length;})(1,2,3,4)"), 4.0);
+    assert_eq!(run_num("((...n) => n.reduce((a,b)=>a+b,0))(1,2,3,4,5)"), 15.0);
+    assert_eq!(run_str("(function(a, ...r){return a + r.join('');})('X','Y','Z')"), "XYZ");
+}
+
+#[test]
+fn tagged_template_literals() {
+    // tag`a${1}b${2}c` → tag(["a","b","c"], 1, 2)
+    assert_eq!(
+        run_str("function t(s){return s.join('|');} t`a${1}b${2}c`"),
+        "a|b|c"
+    );
+    assert_eq!(
+        run_str("function t(s,x,y){return s[0]+x+s[1]+y+s[2];} t`(${5})[${6}]`"),
+        "(5)[6]"
+    );
+}
+
+#[test]
+fn object_literal_getters_are_invoked() {
+    // { get x(){..} } 접근자는 접근 시 호출 (this=객체)
+    assert_eq!(run_num("var o={n:10, get d(){return this.n*2;}}; o.d"), 20.0);
+    assert_eq!(run_str("({get g(){return 'ok';}}).g"), "ok");
+    // getter + setter 공존 (setter 는 무시)
+    assert_eq!(run_num("({base:5, set v(x){}, get v(){return this.base+1;}}).v"), 6.0);
+}
+
+#[test]
+fn class_fields_and_numeric_separators() {
+    // 인스턴스 필드 (this 참조 가능) + 상속 + static
+    assert_eq!(run_num("class C{x=5; y=this.x+1;} var c=new C(); c.x+c.y"), 11.0);
+    assert_eq!(run_num("class B{a=1;} class D extends B{b=2;} var d=new D(); d.a+d.b"), 3.0);
+    assert_eq!(run_num("class E{static v=7;} E.v"), 7.0);
+    // 숫자 구분자
+    assert_eq!(run_num("1_000_000 + 2_500"), 1002500.0);
+    assert_eq!(run_num("0xff_ff"), 65535.0);
+}
+
+#[test]
+fn named_function_expression_self_reference() {
+    // 명명 함수식은 자기 이름으로 재귀 가능, 이름은 외부로 누출 안 됨
+    assert_eq!(run_num("var f=function fac(n){return n<=1?1:n*fac(n-1)}; f(5)"), 120.0);
+    assert_eq!(run_num("(function fib(n){return n<2?n:fib(n-1)+fib(n-2)})(10)"), 55.0);
+    assert_eq!(run_str("var f=function g(){return typeof g}; typeof g"), "undefined");
+}
+
+#[test]
+fn class_getters_are_invoked() {
+    // get 접근자는 프로퍼티 접근 시 호출돼 값을 낸다 (함수가 아니라)
+    assert_eq!(
+        run_num("class C{constructor(){this.n=20;} get double(){return this.n*2;}} new C().double"),
+        40.0
+    );
+    // 상속된 getter
+    assert_eq!(
+        run_str("class B{get k(){return 'b';}} class S extends B{} new S().k"),
+        "b"
+    );
+}
+
+#[test]
+fn arguments_object() {
+    // 비화살표 함수의 arguments (가변 인자 — 미니파이/구코드 흔함)
+    assert_eq!(run_num("(function(){var t=0;for(var i=0;i<arguments.length;i++)t+=arguments[i];return t;})(1,2,3,4)"), 10.0);
+    assert_eq!(run_str("(function(){return Array.prototype.slice.call(arguments).join('-');})('a','b')"), "a-b");
+}
+
+#[test]
+fn var_hoisting() {
+    // var x = x || default (미니파이/UMD 흔한 패턴 — 하이스팅으로 자기참조 동작)
+    assert_eq!(run_num("var a = a || 3; a"), 3.0);
+    assert_eq!(run_num("(function(){ var n=n||{v:7}; return n.v; })()"), 7.0);
+    // 블록 안 var 는 함수 스코프
+    assert_eq!(run_num("(function(){ if(true){var z=42;} return z; })()"), 42.0);
+    // for 루프 var 는 루프 밖에서도 보임
+    assert_eq!(run_num("var s=0; for(var i=0;i<3;i++)s+=i; i"), 3.0);
+    // 선언 전 사용 시 하이스트된 undefined
+    assert_eq!(run_num("var r=(typeof q==='undefined'?1:2); var q=5; r"), 1.0);
+}
+
+#[test]
+fn new_regular_function_as_constructor() {
+    // ES6 이전 생성자 패턴: new F() + F.prototype.method (미니파이/구코드 다수)
+    assert_eq!(run_num("function P(x,y){this.x=x;this.y=y;} var p=new P(3,4); p.x+p.y"), 7.0);
+    assert_eq!(
+        run_num("function C(){this.n=1;} C.prototype.inc=function(){return ++this.n;}; var c=new C(); c.inc()"),
+        2.0
+    );
+    // 함수가 객체를 반환하면 그것 우선 (JS 규칙)
+    assert_eq!(run_num("function F(){return {v:99};} new F().v"), 99.0);
+    assert_eq!(run_str("typeof isFinite"), "function");
+}
+
+#[test]
+fn prototype_linked_not_snapshotted() {
+    // 인스턴스 생성 '후'에 prototype 에 추가한 메서드도 보여야 함(링크, 스냅샷 아님).
+    let src = "function C(){this.n=10;} var c = new C(); \
+        C.prototype.later = function(){ return this.n + 5; }; c.later()";
+    assert_eq!(run_num(src), 15.0);
+    // 공유 프로토타입: 두 인스턴스가 같은 메서드를 본다
+    let src2 = "function P(){} P.prototype.hi = function(){ return 7; }; \
+        var a = new P(), b = new P(); a.hi() + b.hi()";
+    assert_eq!(run_num(src2), 14.0);
+}
+
+#[test]
+fn object_create_links_prototype() {
+    // Object.create(proto) 는 proto 를 링크 → 상속 메서드 조회, getPrototypeOf 반환.
+    assert_eq!(
+        run_str("var proto = { greet: function(){ return 'hi'; } }; \
+            var o = Object.create(proto); o.greet()"),
+        "hi"
+    );
+    assert!(run_bool("var p = {a:1}; var o = Object.create(p); Object.getPrototypeOf(o) === p"));
+    // 생성 후 proto 에 추가한 것도 링크로 보인다
+    assert_eq!(
+        run_num("var p = {}; var o = Object.create(p); p.late = 9; o.late"),
+        9.0
+    );
+    // 2번째 인자 서술자의 value 반영
+    assert_eq!(run_num("var o = Object.create({}, { x: { value: 5 } }); o.x"), 5.0);
+    // 링크는 열거 안 됨
+    assert_eq!(run_num("var o = Object.create({a:1}); o.b = 2; Object.keys(o).length"), 1.0);
+}
+
+#[test]
+fn instanceof_function_constructor() {
+    assert!(run_bool("function F(){} var x = new F(); x instanceof F"));
+    assert!(run_bool("function F(){} function G(){} var x = new F(); !(x instanceof G)"));
+}
+
+#[test]
+fn proto_link_not_enumerated() {
+    // __proto__ 링크는 Object.keys/for-in/JSON 에 노출되지 않는다.
+    assert_eq!(run_num("function C(){this.a=1;} var c=new C(); Object.keys(c).length"), 1.0);
+    assert_eq!(run_str("function C(){this.a=1;} var c=new C(); Object.keys(c)[0]"), "a");
+    assert_eq!(run_str("function C(){this.a=1;} var c=new C(); JSON.stringify(c)"), "{\"a\":1}");
+    assert!(run_bool("function C(){this.a=1;} var c=new C(); !c.hasOwnProperty('__proto__')"));
+    // for-in 은 own 키만(__proto__ 제외)
+    assert_eq!(run_num(
+        "function C(){this.a=1;this.b=2;} var c=new C(); var n=0; for(var k in c) n++; n"), 2.0);
+}
+
+#[test]
+fn instance_consults_prototype() {
+    // 인스턴스 객체가 Object.prototype 메서드를 봄 (uncurryThis 및 인스턴스 호출)
+    assert!(run_bool("({a:1}).hasOwnProperty('a')"));
+    assert!(run_bool("!({a:1}).hasOwnProperty('b')"));
+    assert_eq!(run_num("({n:5}).valueOf().n"), 5.0);
+    assert_eq!(run_str("({}).toString()"), "[object Object]");
+    assert!(run_bool("({a:1}).propertyIsEnumerable('a')"));
+}
+
+#[test]
+fn constructor_property() {
+    // x.constructor → 전역 생성자 (core-js/프레임워크 타입판별에 필수)
+    assert!(run_bool("[].constructor === Array"));
+    assert!(run_bool("({}).constructor === Object"));
+    assert_eq!(run_str("typeof (5).constructor"), "function");
+    // 자체 constructor 프로퍼티가 있으면 우선
+    assert_eq!(run_num("({constructor: 42}).constructor"), 42.0);
+}
+
+#[test]
+fn object_callable_coercion() {
+    // Object(x) — 함수로 호출 시 객체 강제변환 (core-js 의 Object(this) 등)
+    assert_eq!(run_num("var o={n:9}; Object(o).n"), 9.0); // 객체는 그대로
+    assert_eq!(run_str("typeof Object(null)"), "object"); // null → 새 {}
+    assert_eq!(run_num("var A=Object; A(7)"), 7.0); // 별칭 + 원시값 근사
+}
+
+#[test]
+fn window_is_global_object() {
+    // window.X = v 를 맨 X 로 읽음 (브라우저에서 window 는 전역 객체)
+    assert_eq!(run_num("window.foo = 42; foo"), 42.0);
+    assert_eq!(run_num("window.obj = {n:7}; obj.n"), 7.0);
+    // naver 패턴: window.X = window.X || {} 후 맨 X 사용
+    assert_eq!(run_num("window.sdk = window.sdk || {cmd:[]}; sdk.cmd.push(1); sdk.cmd.length"), 1.0);
+}
+
+#[test]
+fn typeof_undeclared_returns_undefined() {
+    // 미선언 식별자에 typeof 는 던지지 않고 "undefined" (기능 탐지 관용)
+    assert_eq!(run_str("typeof someUndeclaredGlobal"), "undefined");
+    assert_eq!(run_str("typeof require"), "undefined");
+    assert_eq!(run_str("var x=5; typeof x"), "number");
+    assert!(run_bool("typeof module !== 'undefined' ? false : true"));
+}
+
+#[test]
+fn logical_assignment_operators() {
+    // ??= 는 null/undefined 일 때만, ||= 는 falsy 일 때만, &&= 는 truthy 일 때만 대입
+    assert_eq!(run_num("var a=null; a??=10; a"), 10.0);
+    assert_eq!(run_num("var b=5; b??=10; b"), 5.0);
+    assert_eq!(run_num("var c=0; c||=99; c"), 99.0);
+    assert_eq!(run_num("var d=1; d&&=7; d"), 7.0);
+    // 멤버 타깃 + 단락 (두 번째 ??= 는 이미 값이 있어 무시)
+    assert_eq!(run_num("var o={}; o.x??=3; o.x??=4; o.x"), 3.0);
+}
+
+#[test]
+fn parse_int_with_radix() {
+    assert_eq!(run_num("parseInt('0xFF', 16)"), 255.0);
+    assert_eq!(run_num("parseInt('FF', 16)"), 255.0);
+    assert_eq!(run_num("parseInt('101', 2)"), 5.0);
+    assert_eq!(run_num("parseInt('0xff')"), 255.0); // 자동 감지
+    assert_eq!(run_num("parseInt('42px')"), 42.0); // 접미 무시
+    assert_eq!(run_num("parseInt('z', 36)"), 35.0);
+}
+
+#[test]
+fn math_extended_methods() {
+    assert_eq!(run_num("Math.trunc(4.7)"), 4.0);
+    assert_eq!(run_num("Math.sign(-3)"), -1.0);
+    assert_eq!(run_num("Math.hypot(3,4)"), 5.0);
+    assert_eq!(run_num("Math.log2(8)"), 3.0);
+    assert_eq!(run_num("Math.cbrt(27)"), 3.0);
+    assert_eq!(run_num("Math.log10(1000)"), 3.0);
+}
+
+#[test]
+fn bitwise_operators() {
+    assert_eq!(run_num("5 ^ 3"), 6.0);
+    assert_eq!(run_num("5 & 3"), 1.0);
+    assert_eq!(run_num("5 | 2"), 7.0);
+    assert_eq!(run_num("~5"), -6.0);
+    assert_eq!(run_num("1 << 8"), 256.0);
+    assert_eq!(run_num("-8 >> 1"), -4.0);
+    assert_eq!(run_num("-1 >>> 28"), 15.0);
+    assert_eq!(run_num("4294967296 | 0"), 0.0, "ToInt32 랩어라운드");
+    assert_eq!(run_num("3.9 | 0"), 3.0, "| 0 절삭 관용구");
+    // 우선순위: & > ^ > | , 시프트 > 비교
+    assert_eq!(run_num("1 | 2 & 3"), 3.0);
+    assert!(run_bool("1 << 2 > 3"));
+    assert!(run_bool("(5 & 3) === 1 && true"));
+}
+
+#[test]
+fn class_static_block_runs() {
+    // ES2022 static 초기화 블록. 예전엔 파서가 여기서 죽어 **스크립트 전체**가 날아갔다.
+    assert_eq!(run_num("class C { static x = 1; static { C.x = 4 } } C.x"), 4.0);
+}
+
+#[test]
+fn bigint_is_exact_and_typed() {
+    // 예전엔 렉서가 n 접미를 버리고 f64 로 근사했다 — 2n**64n 이 조용히 틀렸다.
+    // 조용히 틀린 답은 미구현보다 나쁘다 (사이트는 typeof 로 탐지하고 정수 경로를 탄다).
+    assert_eq!(run_str("typeof 1n"), "bigint");
+    assert_eq!(run_str("(2n ** 64n).toString()"), "18446744073709551616");
+    assert_eq!(run_str("String(-7n / 2n)"), "-3", "절단 나눗셈");
+    assert_eq!(run_str("String(-7n % 2n)"), "-1", "나머지는 피제수 부호");
+    assert_eq!(run_str("String(-5n & 3n)"), "3", "2의 보수 비트연산");
+    assert_eq!(run_str("String(~5n)"), "-6");
+    assert_eq!(run_str("(255n).toString(16)"), "ff");
+    assert_eq!(run_str("String(BigInt('0x1f') + 1n)"), "32");
+    // 타입 규칙: === 는 타입까지, == 는 값
+    assert_eq!(run_str("String(1n === 1)"), "false");
+    assert_eq!(run_str("String(1n == 1)"), "true");
+    assert_eq!(run_str("String(2n > 1)"), "true", "비교는 혼합 허용");
+    // 혼합 산술은 TypeError (조용히 f64 로 떨어뜨리면 값이 틀린다)
+    assert_eq!(run_str("try { 1n + 1 } catch (e) { 'TypeError' }"), "TypeError");
+    assert_eq!(run_str("try { +1n } catch (e) { 'TypeError' }"), "TypeError");
+    // 문자열 결합은 허용
+    assert_eq!(run_str("'x' + 1n"), "x1");
+    assert_eq!(run_str("try { 1n / 0n } catch (e) { 'RangeError' }"), "RangeError");
+}
+
+// 태그드 템플릿의 strings.raw — styled-components / lit-html / graphql-tag 가
+// 전부 이걸 읽는다. 없으면 그 라이브러리를 쓰는 페이지가 통째로 죽는다.
+#[test]
+fn tagged_template_provides_raw_strings() {
+    assert_eq!(
+        run_str("function t(s, ...v){ return s.raw.join('|') + '#' + v.join(','); } t`a${1}b${2}c`"),
+        "a|b|c#1,2"
+    );
+    // raw 는 이스케이프를 처리하지 않은 원문이다
+    assert_eq!(run_str("function t(s){ return s.raw[0]; } t`a\\nb`"), "a\\nb");
+    assert_eq!(run_str("function t(s){ return s[0]; } t`a\\nb`"), "a\nb");
+    // strings.length === values.length + 1 (표준)
+    assert_eq!(run_str("function t(s, ...v){ return s.length + ',' + v.length; } t`${1}${2}`"), "3,2");
+}
+
+// instanceof 는 [Symbol.hasInstance] 가 있으면 그것이 최우선이다 (§13.10.2)
+// 일반 함수를 extends 한 클래스에서 super() 가 this 를 **부모가 만든 객체로 갈아끼워**
+// 파생 클래스의 메서드가 통째로 사라졌다 (astro.build 의 class Bus extends EventTarget).
+// 표준(§10.2.2): 파생 생성자의 this 는 new.target.prototype 을 가진 객체다.
+// test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
+
+#[test]
+fn errors_are_real_objects_with_prototype_chain() {
+    // 8종이 Error.prototype 하나를 공유했었다
+    assert!(run_bool("TypeError.prototype !== Error.prototype"));
+    assert!(run_bool("new TypeError('x').constructor === TypeError"));
+    assert!(run_bool("new TypeError('x') instanceof TypeError"));
+    assert!(run_bool("new TypeError('x') instanceof Error"));
+    assert!(run_bool("!(new TypeError('x') instanceof RangeError)"));
+    // "message 가 있으면 Error" 라는 오리 판별은 죽었다
+    assert!(run_bool("!(({message:'x'}) instanceof Error)"));
+    // message 는 비열거, 인자가 없으면 own 도 아니다
+    assert_eq!(run_str("JSON.stringify(Object.keys(new Error('x')))"), "[]");
+    assert!(run_bool(
+        "!Object.prototype.hasOwnProperty.call(new Error(), 'message')"
+    ));
+    assert_eq!(run_str("String(new TypeError('boom'))"), "TypeError: boom");
+    assert_eq!(run_str("String(new Error())"), "Error");
+}
+
+#[test]
+fn internal_errors_have_standard_types() {
+    // 예전엔 전부 Err(String) 이라 catch 가 문자열을 잡았다
+    assert!(run_bool("try { null.x } catch (e) { e instanceof TypeError }"));
+    assert!(run_bool("try { nope() } catch (e) { e instanceof ReferenceError }"));
+    assert!(run_bool("try { (5)() } catch (e) { e instanceof TypeError }"));
+    assert!(run_bool("try { for (const q of 5) {} } catch (e) { e instanceof TypeError }"));
+    assert!(run_bool("try { var {z} = null; } catch (e) { e instanceof TypeError }"));
+    assert!(run_bool("try { null.x } catch (e) { typeof e.message === 'string' }"));
+}
+
+#[test]
+fn array_destructuring_uses_iterator_protocol() {
+    // 예전엔 인덱스 접근만 해서 Set/Map/제너레이터가 조용히 undefined 였다
+    assert_eq!(run_str("var [a,b] = new Set([1,2]); a + ',' + b"), "1,2");
+    assert_eq!(
+        run_str("function* g(){ yield 7; yield 8; yield 9; } var [p,,q] = g(); p + ',' + q"),
+        "7,9"
+    );
+    assert_eq!(
+        run_str("var [[k,v]] = new Map([['k',1]]); k + ',' + v"),
+        "k,1"
+    );
+    assert_eq!(run_str("var [...r] = new Set([3,4]); r.join('-')"), "3-4");
+    // 무한 이터러블도 필요한 만큼만 당긴다 (지연)
+    assert_eq!(
+        run_str("function* inf(){ var i=0; while(true) yield i++; } var [i0,i1] = inf(); i0 + ',' + i1"),
+        "0,1"
+    );
+    // rest 는 이름이 아니라 패턴이다
+    assert_eq!(run_str("var [x, ...[y, z]] = [1,2,3]; x + ',' + y + ',' + z"), "1,2,3");
+}
+
+#[test]
+fn destructuring_propagates_thrown_errors() {
+    // 이터레이터/게터가 던진 오류를 삼키면 안 된다
+    assert!(run_bool(
+        "var bad = { [Symbol.iterator]() { return { next() { throw new RangeError('i'); } }; } }; \
+         try { var [a] = bad; false } catch (e) { e instanceof RangeError }"
+    ));
+    assert!(run_bool(
+        "var g = { get x() { throw new RangeError('g'); } }; \
+         try { var {x} = g; false } catch (e) { e instanceof RangeError }"
+    ));
+    assert!(run_bool(
+        "var bad = { [Symbol.iterator]() { return { next() { throw new RangeError('s'); } }; } }; \
+         try { var arr = [...bad]; false } catch (e) { e instanceof RangeError }"
+    ));
+}
+
+#[test]
+fn eval_direct_and_indirect() {
+    assert_eq!(run_str("String(eval('1+1'))"), "2");
+    // 직접 eval 은 호출 지점 스코프를 본다
+    assert_eq!(
+        run_str("var x = 10; function f(){ var y = 5; return String(eval('y + x')); } f()"),
+        "15"
+    );
+    // 간접 eval 은 전역 스코프 (번들의 (0,eval)('this') 패턴)
+    assert_eq!(
+        run_str("var e = eval; function h(){ var z = 99; return e('typeof z'); } h()"),
+        "undefined"
+    );
+    assert_eq!(run_str("typeof (0,eval)('this')"), "object");
+    // var 는 호출자의 변수 환경에 만들어진다
+    assert_eq!(run_str("eval('var ev1 = 7;'); String(ev1)"), "7");
+    // 문자열이 아니면 그대로, 파싱 실패는 SyntaxError
+    assert_eq!(run_str("String(eval(42))"), "42");
+    assert!(run_bool("try { eval('var 1 = ;') } catch (e) { e instanceof SyntaxError }"));
+}
+
+#[test]
+fn super_with_function_parent_keeps_derived_methods() {
+    assert_eq!(
+        run_num(
+            "function Base(){ this.b = 1; } \
+             class D extends Base { constructor(){ super(); this.n = 1; } inc(){ return ++this.n; } } \
+             var d = new D(); d.inc() + d.b"
+        ),
+        3.0
+    );
+    // 부모의 prototype 메서드도 여전히 보인다
+    assert_eq!(
+        run_num(
+            "function Base(){} Base.prototype.p = function(){ return 7; }; \
+             class D extends Base { constructor(){ super(); } } \
+             (new D()).p()"
+        ),
+        7.0
+    );
+    // 암묵 생성자여도 super(...args) 는 돈다 (class F extends Error {})
+    assert_eq!(
+        run_str("class F extends Error {} (new F('x')).message"),
+        "x"
+    );
+    // 명시 생성자 + extends Error: 클래스 정체성이 유지된다
+    assert!(run_bool(
+        "class E extends Error { constructor(m){ super(m); this.name='E'; } } \
+         var e = new E('b'); e instanceof E && e.message === 'b' && e.name === 'E'"
+    ));
+}
+
+#[test]
+fn instanceof_honors_symbol_has_instance() {
+    assert!(prelude_bool(
+        "var O = {}; O[Symbol.hasInstance] = function(x){ return typeof x === 'number'; }; 5 instanceof O"
+    ));
+    assert!(!prelude_bool(
+        "var O = {}; O[Symbol.hasInstance] = function(x){ return typeof x === 'number'; }; 'a' instanceof O"
+    ));
+}
+
+#[test]
+fn optional_call_keeps_receiver() {
+    // obj.m?.(args) 는 평범한 메서드 호출이다 — this 는 obj 다 (표준 §13.3.6.1).
+    // 예전엔 수신자를 버려서 el.getAttribute?.('src') 같은 코드가 죽었다.
+    assert_eq!(
+        run_num("var o = { n: 7, get: function(){ return this.n; } }; o.get?.()"),
+        7.0
+    );
+    // 옵셔널 멤버 + 옵셔널 호출 조합
+    assert_eq!(
+        run_num("var o = { n: 5, get: function(){ return this.n; } }; o?.get?.()"),
+        5.0
+    );
+    // 함수가 없으면 단락 (호출 안 함)
+    assert!(matches!(run("var o = {}; o.missing?.()"), Value::Undefined));
+}
+
+#[test]
+fn for_await_unwraps_promises_and_async_iterators() {
+    // for await (ES2018). 파싱이 안 되면 그 스크립트가 **통째로** 죽는다
+    // (tailwindcss.com 이 그랬다). 값이 promise 면 이행값을 꺼내야 한다.
+    assert_eq!(
+        prelude_str(
+            "var out = [];\
+             async function f(){ for await (const v of [Promise.resolve(1), 2]) out.push(v); }\
+             f(); out.join(',')"
+        ),
+        "1,2"
+    );
+    // Symbol.asyncIterator 를 먼저 찾는다
+    assert_eq!(
+        prelude_str(
+            "var o = {}; o[Symbol.asyncIterator] = function(){ var i = 0; return { next: function(){ \
+               i++; return Promise.resolve({value: i, done: i > 2}); } }; };\
+             var out = [];\
+             async function g(){ for await (const v of o) out.push(v); }\
+             g(); out.join(',')"
+        ),
+        "1,2"
+    );
+}
+
+// 구조분해의 **문자열/숫자 키** — 미니파이된 번들이 흔히 쓴다
+// ({"icon-node": a}) => …. 예전엔 식별자 키만 받아서 그 스크립트가
+// **파싱에서 통째로 죽었다** (lucide.dev 의 번들이 그렇다).
+#[test]
+fn string_and_number_keys_in_destructuring() {
+    assert_eq!(run_num("var f = ({\"a-b\": x}) => x; f({\"a-b\": 5})"), 5.0);
+    assert_eq!(run_num("var o = {\"k\": 7}; let {\"k\": v} = o; v"), 7.0);
+    assert_eq!(run_num("var f = ({1: x}) => x; f({1: 9})"), 9.0);
+    assert_eq!(
+        run_num("function f({\"a-b\": x}) { return x; } f({\"a-b\": 3})"),
+        3.0
+    );
+}
+
+#[test]
+fn computed_keys_in_destructuring() {
+    // let { [ex]: v } = o (ES6). 예전엔 파서가 죽어서 그 번들 전체가 안 돌았다.
+    assert_eq!(run_num("var k = 'a'; var o = {a: 3}; let { [k]: v } = o; v"), 3.0);
+    assert_eq!(
+        run_num("var k = 'miss'; var o = {a: 3}; let { [k]: v = 9 } = o; v"),
+        9.0
+    );
+    assert_eq!(run_num("var k = 'a'; var o = {a: 4}; var t; ({ [k]: t } = o); t"), 4.0);
+}
+
+#[test]
+fn optional_call_short_circuits() {
+    // a?.m() 은 a 가 nullish 면 **호출 전체가 단락**된다 (§13.3.9).
+    // 예전엔 a?.m 이 undefined 로 평가된 뒤 그걸 호출하려다 "함수 아님" 으로 죽었다.
+    assert_eq!(run_str("var a = null; String(a?.m())"), "undefined");
+    assert_eq!(run_str("var a = undefined; String(a?.m(1, 2))"), "undefined");
+    // 인자는 평가되지 않는다 (단락)
+    assert_eq!(
+        run_num("var hit = 0; var a = null; a?.m(hit++); hit"),
+        0.0
+    );
+    // 수신자가 있으면 정상 호출 (this 바인딩 유지)
+    assert_eq!(run_num("var o = { n: 5, m() { return this.n } }; o?.m()"), 5.0);
+}
+
+#[test]
+fn assignment_evaluates_left_reference_first() {
+    // 표준 §13.15.2: 왼쪽 참조 → 오른쪽 값 순서. jQuery 가 이 순서에 의존한다:
+    //   (b = se.selectors = {…}).pseudos.nth = b.pseudos.eq
+    // 오른쪽을 먼저 평가하면 b 가 아직 undefined 라 jQuery 가 통째로 죽는다.
+    assert_eq!(
+        run_str("var b, se = {}; (b = se.sel = { p: { eq: 'E' } }).p.nth = b.p.eq; se.sel.p.nth"),
+        "E"
+    );
+    // 복합 대입도 같은 순서 (왼쪽 참조 먼저)
+    assert_eq!(
+        run_num("var o, box = {}; (o = box.v = { n: 1 }).n += o.n; box.v.n"),
+        2.0
+    );
+}
+
+#[test]
+fn class_heritage_can_be_a_call() {
+    // ClassHeritage 는 LeftHandSideExpression — 믹스인 호출이 온다 (lit-element/MDN).
+    // 예전엔 파서가 죽어서 모듈 전체가 실행되지 않았다.
+    assert_eq!(
+        run_num("class A { m() { return 1 } } var id = x => x; class B extends (0, id)(A) { m() { return super.m() + 1 } } new B().m()"),
+        2.0
+    );
+}
+
+#[test]
+fn super_property_read_uses_parent_getter() {
+    // super.x 는 호출이 아니라 **읽기**로도 쓴다. 예전엔 super 가 undefined 로 평가돼 터졌다.
+    assert_eq!(
+        run_num("class A { get v() { return 1 } } class B extends A { get v() { return super.v + 1 } } new B().v"),
+        2.0
+    );
+    // super.method 를 값으로 꺼내 쓰기
+    assert_eq!(
+        run_num("class A { m() { return 5 } } class B extends A { m() { return super.m.call(this) } } new B().m()"),
+        5.0
+    );
+}
+
+#[test]
+fn in_operator_walks_prototype_chain() {
+    // in 은 own 프로퍼티만이 아니라 프로토타입 체인까지 본다 (§13.10)
+    assert_eq!(run_str("var o = Object.create({a:1}); ('a' in o) + ',' + ('b' in o)"), "true,false");
+    // 클래스 인스턴스: 메서드도 in 으로 보인다
+    assert_eq!(run_str("class C { m(){} } var c = new C(); String('m' in c)"), "true");
+}
+
+#[test]
+fn proxy_has_delete_ownkeys_traps() {
+    // Vue 3 같은 반응성 라이브러리가 실제로 쓰는 트랩들. 없으면 조용히 틀린 답을 준다.
+    assert_eq!(run_str("var p = new Proxy({}, {has: () => true}); String('z' in p)"), "true");
+    assert_eq!(
+        run_str("var hit=false; var p=new Proxy({a:1},{deleteProperty(t,k){hit=true; delete t[k]; return true}}); delete p.a; String(hit)"),
+        "true"
+    );
+    assert_eq!(
+        run_str("var p=new Proxy({a:1},{ownKeys:()=>['a','b']}); Object.keys(p).join()"),
+        "a,b"
+    );
+}
+
+#[test]
+fn to_primitive_for_unary_and_symbol() {
+    // 단항 + 도 ToPrimitive 를 거친다 (이항만 거쳐서 +obj 가 NaN 이었다)
+    assert_eq!(run_num("+{ valueOf() { return 5 } }"), 5.0);
+    assert_eq!(run_num("-{ valueOf() { return 5 } }"), -5.0);
+    // Symbol.toPrimitive 가 valueOf/toString 보다 우선
+    assert_eq!(run_num("+{ [Symbol.toPrimitive]() { return 42 }, valueOf() { return 1 } }"), 42.0);
+}
+
+#[test]
+fn json_stringify_replacer_and_indent() {
+    // replacer 배열 = 키 필터
+    assert_eq!(run_str("JSON.stringify({a:1,b:2}, ['a'])"), "{\"a\":1}");
+    // replacer 함수 = 값 변환
+    assert_eq!(
+        run_str("JSON.stringify({a:1}, (k,v) => typeof v === 'number' ? v * 2 : v)"),
+        "{\"a\":2}"
+    );
+    // space = 들여쓰기 (JSON.stringify(o, null, 2) 는 아주 흔하다)
+    assert_eq!(run_str("JSON.stringify({a:1}, null, 2)"), "{\n  \"a\": 1\n}");
+    assert_eq!(run_str("JSON.stringify([1,2], null, 1)"), "[\n 1,\n 2\n]");
+    // 들여쓰기 없으면 예전 그대로 한 줄
+    assert_eq!(run_str("JSON.stringify({a:[1,{b:2}]})"), "{\"a\":[1,{\"b\":2}]}");
+}
+
+#[test]
+fn template_literals() {
+    assert_eq!(run_str("var x = 3; `a ${x + 1} b`"), "a 4 b");
+    assert_eq!(run_str("`no interp`"), "no interp");
+    assert_eq!(run_str("``"), "");
+    assert_eq!(run_str("`line1\nline2`"), "line1\nline2", "리터럴 줄바꿈 허용");
+    assert_eq!(run_str("`\\`tick\\` ${'and'} \\${notinterp}`"), "`tick` and ${notinterp}");
+    // 보간 안에 중괄호 포함 문자열
+    assert_eq!(run_str("`v=${ '{'.length }`"), "v=1");
+    // 중첩 식
+    assert_eq!(run_str("var f = n => n * 2; `r=${f(3) + 1}`"), "r=7");
+}
+
+#[test]
+fn try_catch_finally_throw() {
+    assert_eq!(run_str("try { throw 'boom'; } catch (e) { 'caught ' + e }"), "caught boom");
+    // throw 된 값 그대로 바인딩 (객체)
+    assert_eq!(
+        run_num("try { throw { code: 42 }; } catch (e) { e.code }"),
+        42.0
+    );
+    // 네이티브 런타임 에러도 잡힘
+    assert_eq!(run_str("try { undefinedVar + 1; } catch (e) { 'survived' }"), "survived");
+    // finally 는 항상 실행
+    assert_eq!(
+        run_str("var log = ''; try { log += 'a'; throw 1; } catch (e) { log += 'b'; } finally { log += 'c'; } log"),
+        "abc"
+    );
+    // catch 없는 try/finally: 에러 전파 + finally 실행
+    assert!(Interp::new()
+        .run("var x = 0; try { throw 'up'; } finally { x = 1; }")
+        .is_err());
+    // 바인딩 생략 catch (ES2019)
+    assert_eq!(run_num("try { throw 9; } catch { 7 }"), 7.0);
+    // 함수 경계 넘는 전파
+    assert_eq!(
+        run_str("function f() { throw 'deep'; } try { f(); } catch (e) { e }"),
+        "deep"
+    );
+    // 실행 한도는 try/catch 로 못 잡는다 (가드 무력화 방지). 짧은 예산으로 확인.
+    let mut it = Interp::new();
+    it.script_budget_ms = 200;
+    assert!(it.run("try { while (true) {} } catch (e) { 'nope' }").is_err());
+}
+
+#[test]
+fn switch_statement() {
+    let src = "function grade(n) { \
+         switch (n) { \
+           case 1: return 'one'; \
+           case 2: \
+           case 3: return 'few'; \
+           default: return 'many'; \
+         } \
+       }";
+    assert_eq!(run_str(&format!("{} grade(1)", src)), "one");
+    assert_eq!(run_str(&format!("{} grade(2)", src)), "few", "폴스루");
+    assert_eq!(run_str(&format!("{} grade(3)", src)), "few");
+    assert_eq!(run_str(&format!("{} grade(99)", src)), "many");
+    // break 로 탈출, 문자열 판별, 스위치 뒤 계속 실행
+    assert_eq!(
+        run_num("var r = 0; switch ('b') { case 'a': r = 1; break; case 'b': r = 2; break; case 'c': r = 3; } r"),
+        2.0
+    );
+    // 엄격 비교 (1 !== '1')
+    assert_eq!(
+        run_num("var r = 0; switch ('1') { case 1: r = 10; break; default: r = 20; } r"),
+        20.0
+    );
+}
+
+#[test]
+fn object_method_shorthand() {
+    assert_eq!(run_num("var o = { double(n) { return n * 2; } }; o.double(4)"), 8.0);
+    assert_eq!(
+        run_str("var api = { name: 'k', hello() { return 'hi'; }, }; api.hello() + api.name"),
+        "hik"
+    );
+}
+
+#[test]
+fn window_globals_history_top_event() {
+    // history 전역 + 메서드(no-op) 존재
+    assert!(run_bool("typeof history === 'object' && typeof history.pushState === 'function'"));
+    assert_eq!(run_str("history.scrollRestoration"), "auto");
+    assert!(run_bool("(history.pushState({}, '', '/x'), true)")); // 크래시 없이 실행
+    // top/parent/frames = window (프레임 없음 → 자기 자신)
+    assert!(run_bool("top === window && parent === window && window.top === window"));
+    // window.Event 접근 가능(프레임워크가 window.Event.prototype 참조)
+    assert!(run_bool("typeof window.Event === 'function'"));
+}
+
+#[test]
+fn json_stringify_throws_on_circular() {
+    // 표준: 순환 구조는 TypeError. (깊이 가드로는 분기 순환의 조합 폭발을 못 막는다)
+    assert_eq!(
+        run_str(
+            "var o={a:1}; o.self=o; \
+             try { JSON.stringify(o); 'no-throw' } catch(e) { e.name }"
+        ),
+        "TypeError",
+    );
+    // 배열 순환도
+    assert_eq!(
+        run_str("var a=[1]; a.push(a); try { JSON.stringify(a); 'no-throw' } catch(e) { e.name }"),
+        "TypeError",
+    );
+    // 상호 순환 (a→b→a)
+    assert_eq!(
+        run_str(
+            "var a={},b={}; a.b=b; b.a=a; \
+             try { JSON.stringify(a); 'no-throw' } catch(e) { e.name }"
+        ),
+        "TypeError",
+    );
+    // 같은 객체를 두 번 참조(순환 아님)는 정상 직렬화 — 경로 기반이라 오탐 없음
+    assert_eq!(
+        run_str("var s={n:1}; JSON.stringify({x:s, y:s})"),
+        "{\"x\":{\"n\":1},\"y\":{\"n\":1}}",
+    );
+    // 정상 중첩은 그대로
+    assert_eq!(run_str("JSON.stringify({a:[1,{b:2}]})"), "{\"a\":[1,{\"b\":2}]}");
+}
+
+#[test]
+fn new_target_meta_property() {
+    // 일반 호출: new.target 은 undefined
+    assert!(run_bool("function f(){ return new.target === undefined; } f()"));
+    // new 호출: new.target 은 그 함수 (truthy)
+    assert!(run_bool("function f(){ return new.target !== undefined; } (new f()) instanceof f"));
+    // 흔한 가드 패턴: new 강제
+    assert_eq!(
+        run_str(
+            "function C(){ if(!new.target) return 'called'; this.ok='new'; } \
+             C() + '|' + (new C()).ok"
+        ),
+        "called|new",
+    );
+    // 클래스 생성자 안 new.target 은 클래스
+    assert!(run_bool("class A { constructor(){ this.t = new.target === A; } } (new A()).t"));
+}
+
+#[test]
+fn computed_and_keyword_accessors() {
+    // { get [expr]() {} } — 계산된 접근자. 키는 런타임 평가(심볼 키도 가능).
+    assert_eq!(
+        run_num("var k='dyn'; var o={ base:5, get [k]() { return this.base*2; } }; o.dyn"),
+        10.0,
+    );
+    assert_eq!(
+        run_str("var s=Symbol('t'); var o={ get [s]() { return 'sg'; } }; o[s]"),
+        "sg",
+    );
+    // 예약어를 접근자 이름으로 — { get class() {} } (미니파이 번들에 흔함)
+    assert_eq!(
+        run_str("var o={ get class(){ return 'cls'; }, get default(){ return 'def'; } }; o.class + o.default"),
+        "clsdef",
+    );
+    // 기존 접근자는 그대로
+    assert_eq!(run_num("var o={ get x(){ return 42; } }; o.x"), 42.0);
+    // get 이 그냥 프로퍼티명인 경우 오검출 방지
+    assert_eq!(run_num("var o={ get: 7 }; o.get"), 7.0);
+    assert_eq!(run_str("var o={ get(){ return 'm'; } }; o.get()"), "m");
+}
+
+#[test]
+fn await_operand_can_be_async_function_expression() {
+    // `await async function(){}` — await 의 피연산자로 async 함수식이 오는 패턴.
+    // await 는 unary() 로 피연산자를 파싱하는데 async 감지가 assignment() 에만 있어
+    // 번들이 통째로 파싱 실패했다.
+    assert!(run_bool(
+        "var r=null; (async function(){ r = await (async function(a,b){ return a+b; })(3,4); })(); \
+         r === 7"
+    ));
+    // async 화살표도
+    assert!(run_bool(
+        "var r=null; (async function(){ r = await (async (a)=>a*2)(5); })(); r === 10"
+    ));
+}
+
+#[test]
+fn object_async_generator_method_shorthand() {
+    // 제너레이터 메서드 단축 { *gen() {} }
+    assert_eq!(
+        run_num("var o = { *gen() { yield 1; yield 2; yield 3; } }; var s=0; for(var x of o.gen()) s+=x; s"),
+        6.0,
+    );
+    // async 메서드 단축 { async fetch() {} } — thenable 반환
+    assert!(run_bool(
+        "var o = { async load() { return 42; } }; typeof o.load().then === 'function'"
+    ));
+    // async 가 프로퍼티명/메서드명인 경우는 그대로 (오검출 방지)
+    assert_eq!(run_num("var o = { async: 5 }; o.async"), 5.0);
+    assert_eq!(run_str("var o = { async() { return 'x'; } }; o.async()"), "x");
+    // async 제너레이터 메서드 { async *stream() {} } — 파싱만 (호출 안 함)
+    assert_eq!(run_num("var o = { async *stream() { yield 1; }, n: 7 }; o.n"), 7.0);
+}
+
+#[test]
+fn regex_literal_tolerated_and_division_intact() {
+    // 정규식 리터럴이 렉서를 죽이지 않고 {source, flags} 객체가 됨
+    assert_eq!(run_str("var re = /a[/]b+/gi; re.source"), "a[/]b+");
+    assert_eq!(run_str("var re = /x/; re.flags !== undefined ? 'obj' : 'no'"), "obj");
+    // 나눗셈은 그대로
+    assert_eq!(run_num("10 / 2"), 5.0);
+    assert_eq!(run_num("var a = 8; a / 2 / 2"), 2.0);
+    assert_eq!(run_num("(4 + 4) / 2"), 4.0);
+    assert_eq!(run_num("var x = 9; x /= 3; x"), 3.0);
+    // return 뒤는 정규식 문맥
+    assert_eq!(run_str("function f() { return /ok/.source; } f()"), "ok");
+}
+
+#[test]
+fn labeled_statements_and_labeled_break() {
+    // 레이블은 파싱만 하고 무시 (break label = 일반 break)
+    assert_eq!(
+        run_num("var n = 0; outer: for (var i = 0; i < 3; i++) { n++; break outer; } n"),
+        1.0
+    );
+    assert_eq!(
+        run_num("var s = 0; loop: while (s < 5) { s++; continue loop; } s"),
+        5.0
+    );
+}
+
+#[test]
+fn array_holes() {
+    assert_eq!(run_num("[1,,2].length"), 3.0);
+    assert!(run_bool("[1,,2][1] === undefined"));
+    assert_eq!(run_num("[,,].length"), 2.0);
+}
+
+#[test]
+fn hash_identifiers_tolerated() {
+    // 클래스 미지원이지만 #priv 가 렉서를 죽이진 않음
+    assert!(super::super::lexer::tokenize("obj.#priv").is_ok());
+}
+
+#[test]
+fn storage_and_misc_stubs() {
+    // localStorage 는 실제로 동작 (페이지 수명)
+    assert_eq!(
+        run_str("localStorage.setItem('k', 'v1'); localStorage.getItem('k')"),
+        "v1"
+    );
+    assert!(run_bool("localStorage.getItem('none') === null"));
+    assert!(run_bool(
+        "localStorage.setItem('x', 1); localStorage.removeItem('x'); localStorage.getItem('x') === null"
+    ));
+    // window 를 통해서도 같은 스토리지
+    assert_eq!(
+        run_str("window.localStorage.setItem('w', 'ok'); localStorage.getItem('w')"),
+        "ok"
+    );
+    assert!(run_bool("typeof navigator.userAgent === 'string'"));
+    // alert 는 콘솔로
+    let mut it = Interp::new();
+    it.run("alert('hi', 2)").unwrap();
+    assert_eq!(it.console, vec!["[alert] hi 2"]);
+    // window.addEventListener 는 no-op (죽지 않음)
+    assert!(Interp::new().run("window.addEventListener('load', x => x)").is_ok());
+}
+
+#[test]
+fn class_basics_this_and_methods() {
+    let src = "class Counter { \
+         constructor(start) { this.n = start; } \
+         inc() { this.n = this.n + 1; return this.n; } \
+         get() { return this.n; } \
+       }";
+    assert_eq!(run_num(&format!("{} var c = new Counter(10); c.inc(); c.inc()", src)), 12.0);
+    assert_eq!(run_num(&format!("{} var c = new Counter(5); c.get()", src)), 5.0);
+    // 각 인스턴스는 독립 상태
+    assert_eq!(
+        run_num(&format!(
+            "{} var a = new Counter(0), b = new Counter(100); a.inc(); b.get()",
+            src
+        )),
+        100.0
+    );
+}
+
+#[test]
+fn class_this_in_arrow_is_lexical() {
+    // 메서드 안 화살표가 바깥 this 를 캡처
+    let src = "class Box { \
+         constructor(v) { this.v = v; } \
+         mapped(arr) { return arr.map(x => x + this.v); } \
+       }";
+    assert_eq!(
+        run_str(&format!("{} new Box(10).mapped([1, 2, 3]).join(',')", src)),
+        "11,12,13"
+    );
+}
+
+#[test]
+fn class_inheritance_and_super() {
+    let src = "class Animal { \
+         constructor(name) { this.name = name; } \
+         speak() { return this.name + ' makes a sound'; } \
+       } \
+       class Dog extends Animal { \
+         constructor(name) { super(name); this.legs = 4; } \
+         speak() { return super.speak() + ' (woof)'; } \
+       }";
+    assert_eq!(
+        run_str(&format!("{} new Dog('Rex').speak()", src)),
+        "Rex makes a sound (woof)"
+    );
+    assert_eq!(run_num(&format!("{} new Dog('Rex').legs", src)), 4.0);
+    // 상속받은 필드 접근
+    assert_eq!(run_str(&format!("{} new Dog('Fido').name", src)), "Fido");
+    // instanceof 는 체인 전체
+    assert!(run_bool(&format!("{} var d = new Dog('x'); d instanceof Dog", src)));
+    assert!(run_bool(&format!("{} var d = new Dog('x'); d instanceof Animal", src)));
+}
+
+#[test]
+fn unary_plus_and_self_global() {
+    assert_eq!(run_num("+'42'"), 42.0);
+    assert_eq!(run_num("var a = '3'; a = +a; a + 1"), 4.0);
+    assert!(run_bool("+true === 1"));
+    // self / globalThis 는 window 별칭
+    assert!(run_bool("self.localStorage !== undefined"));
+    assert!(run_bool("typeof globalThis === 'object'"));
+    // void 0 === undefined 관용구
+    assert!(run_bool("void 0 === undefined"));
+    assert!(run_bool("var x = 5; (x === void 0) === false"));
+    // 선행 소수점 숫자
+    assert_eq!(run_num(".5 + .25"), 0.75);
+    assert!(run_bool("0.3 >= .1"));
+    // 예약어를 프로퍼티 이름으로
+    assert_eq!(run_num("var o = {}; o.for = 3; o['default'] = 4; o.for + o.default"), 7.0);
+}
+
+#[test]
+fn class_static_members() {
+    let src = "class MathUtil { \
+         static double(n) { return n * 2; } \
+       }";
+    assert_eq!(run_num(&format!("{} MathUtil.double(21)", src)), 42.0);
+}
+
+#[test]
+fn class_expression_and_new_error() {
+    // 클래스 식
+    assert_eq!(
+        run_num("var C = class { constructor() { this.x = 7; } }; new C().x"),
+        7.0
+    );
+    // 네이티브 생성자 스텁: new Error('msg') → message
+    assert_eq!(run_str("var e = new Error('boom'); e.message"), "boom");
+    // throw new + try/catch 조합
+    assert_eq!(
+        run_str("try { throw new Error('bad'); } catch (e) { e.message }"),
+        "bad"
+    );
+}
+
+#[test]
+fn set_timeout_registers_and_clear_cancels() {
+    let mut it = Interp::new();
+    it.run("setTimeout(function() {}, 100); setInterval(function() {}, 50)").unwrap();
+    assert_eq!(it.timers.len(), 2);
+    assert_eq!(it.timers[0].delay_ms, 100.0);
+    assert!(!it.timers[0].repeat);
+    assert!(it.timers[1].repeat);
+    // clearTimeout 은 id 로 취소
+    let mut it2 = Interp::new();
+    it2.run("var id = setTimeout(function() {}, 10); clearTimeout(id);").unwrap();
+    assert!(it2.timers.is_empty(), "취소된 타이머 제거");
+}
+
+#[test]
+fn set_timeout_returns_incrementing_ids() {
+    let mut it = Interp::new();
+    let a = it.run("setTimeout(function() {}, 0)").unwrap();
+    let b = it.run("setTimeout(function() {}, 0)").unwrap();
+    assert!(matches!((a, b), (Value::Num(x), Value::Num(y)) if y > x));
+}
+
+#[test]
+fn compound_assignments() {
+    assert_eq!(run_num("var x = 10; x %= 3; x"), 1.0);
+    assert_eq!(run_num("var x = 6; x &= 3; x"), 2.0);
+    assert_eq!(run_num("var x = 5; x |= 2; x"), 7.0);
+    assert_eq!(run_num("var x = 5; x ^= 1; x"), 4.0);
+    assert_eq!(run_num("var x = 1; x <<= 4; x"), 16.0);
+    assert_eq!(run_num("var x = 64; x >>= 2; x"), 16.0);
+    // 멤버 복합 대입
+    assert_eq!(run_num("var o = { n: 10 }; o.n += 5; o.n"), 15.0);
+    // 논리 대입 (단락)
+    assert_eq!(run_str("var a = ''; a ||= 'fallback'; a"), "fallback");
+    assert_eq!(run_num("var a = 5; a &&= 9; a"), 9.0);
+    assert_eq!(run_str("var a = 'keep'; a ||= 'no'; a"), "keep");
+}
+
+#[test]
+fn optional_chaining_and_nullish() {
+    assert!(run_bool("var o = null; o?.x === undefined"));
+    assert!(run_bool("var o = { a: { b: 5 } }; o?.a?.b === 5"));
+    assert!(run_bool("var o = {}; o?.a?.b === undefined"));
+    // 옵셔널 인덱스/호출
+    assert!(run_bool("var o = null; o?.['x'] === undefined"));
+    assert!(run_bool("var f = null; f?.(1, 2) === undefined"));
+    assert_eq!(run_num("var o = { f: function() { return 7; } }; o.f?.()"), 7.0);
+    // nullish 병합: null/undefined 만 폴백 (0/'' 는 그대로)
+    assert_eq!(run_num("var x = 0; x ?? 9"), 0.0);
+    assert_eq!(run_str("null ?? 'd'"), "d");
+    assert_eq!(run_str("undefined ?? 'd'"), "d");
+    assert_eq!(run_num("var o = {}; o.missing ?? 42"), 42.0);
+}
+
+#[test]
+fn destructuring_declarations() {
+    assert_eq!(run_num("var { a, b } = { a: 1, b: 2 }; a + b"), 3.0);
+    assert_eq!(run_str("var { x: first } = { x: 'hi' }; first"), "hi");
+    assert_eq!(run_num("var [p, q] = [10, 20]; p + q"), 30.0);
+    assert_eq!(run_num("var [, second] = [1, 2]; second"), 2.0);
+    // 중첩 없는 혼합/누락
+    assert!(run_bool("var { z } = {}; z === undefined"));
+    assert_eq!(run_num("var [a, b, c] = [1, 2]; a + b + (c === undefined ? 100 : 0)"), 103.0);
+    // 함수 반환값 구조분해
+    assert_eq!(
+        run_num("function pair() { return { lo: 3, hi: 7 }; } var { lo, hi } = pair(); hi - lo"),
+        4.0
+    );
+}
+
+#[test]
+fn multi_declarator_and_comma_operator() {
+    // 미니파이 코드의 두 필수 패턴
+    assert_eq!(run_num("var a = 1, b = 2, c; c = a + b; c"), 3.0);
+    assert_eq!(run_num("let x = 1, y = x + 1; y"), 2.0);
+    assert_eq!(run_num("var a; a = (1, 2, 3)"), 3.0, "콤마 연산자: 마지막 값");
+    assert_eq!(
+        run_num("var s = 0; for (var i = 0, j = 10; i < j; i++, j--) s++; s"),
+        5.0
+    );
+    // 함수 인자의 콤마는 구분자 그대로
+    assert_eq!(run_num("Math.max(1, 2, 3)"), 3.0);
+}
+
+#[test]
+fn for_in_iterates_keys_and_indices() {
+    assert_eq!(
+        run_num("var o = { a: 1, b: 2, c: 3 }; var n = 0; for (var k in o) n += o[k]; n"),
+        6.0
+    );
+    assert_eq!(
+        run_str("var out = ''; for (var i in ['x', 'y']) out += i; out"),
+        "01"
+    );
+    assert_eq!(run_num("var n = 0; for (k in null) n++; n"), 0.0);
+}
+
+#[test]
+fn instanceof_and_in_operators() {
+    assert!(run_bool("[1] instanceof Array"));
+    assert!(run_bool("({}) instanceof Object"));
+    assert!(!run_bool("'str' instanceof Array"));
+    assert!(!run_bool("[] instanceof RegExp"));
+    assert!(run_bool("'a' in { a: 1 }"));
+    assert!(!run_bool("'z' in { a: 1 }"));
+    assert!(run_bool("0 in [7]"));
+    assert!(!run_bool("3 in [7]"));
+}
+
+#[test]
+fn object_array_statics() {
+    assert_eq!(run_num("Object.keys({ a: 1, b: 2 }).length"), 2.0);
+    assert_eq!(
+        run_num("var t = { a: 1 }; Object.assign(t, { b: 2 }, { c: 3 }); Object.keys(t).length"),
+        3.0
+    );
+    assert!(run_bool("Array.isArray([1]) && !Array.isArray('no')"));
+}
+
+#[test]
+fn parse_errors_include_token_context() {
+    let err = Interp::new().run("var x = ;").unwrap_err();
+    assert!(err.contains("근처"), "에러에 토큰 문맥 포함: {}", err);
+}
+
+#[test]
+fn window_and_screen_metrics() {
+    let mut it = Interp::new();
+    assert!(matches!(it.run("window.innerWidth").unwrap(), Value::Num(n) if n == 1000.0));
+    assert!(matches!(it.run("window.devicePixelRatio").unwrap(), Value::Num(n) if n == 1.0));
+    assert!(matches!(it.run("screen.width").unwrap(), Value::Num(n) if n == 1000.0));
+    assert!(matches!(it.run("window.screen.height").unwrap(), Value::Num(n) if n == 800.0));
+}
+
+#[test]
+fn this_defaults_to_window() {
+    // 최상위 this === window, 일반 함수 호출의 this === window (sloppy)
+    let mut it = Interp::new();
+    assert!(matches!(it.run("this === window").unwrap(), Value::Bool(true)));
+    it.run("function f(){ return this === window; }").unwrap();
+    assert!(matches!(it.run("f()").unwrap(), Value::Bool(true)));
+    // .call(this) 로 window 에 프로퍼티 설정 (구글 gbar 패턴)
+    it.run("(function(){ this.gv = 42; }).call(this);").unwrap();
+    assert!(matches!(it.run("window.gv").unwrap(), Value::Num(n) if n == 42.0));
+}
+
+#[test]
+fn location_reflects_page_url() {
+    let mut it = Interp::new();
+    it.install_location("https://example.com/a/b?q=1#top");
+    // pathname 은 쿼리 제외, search/hash 분리 (DOM 표준)
+    let v = it.run("location.pathname + '|' + location.search + '|' + location.hash").unwrap();
+    match v {
+        Value::Str(s) => assert_eq!(s, "/a/b|?q=1|#top"),
+        other => panic!("{:?}", other),
+    }
+    assert!(matches!(it.run("location.hostname").unwrap(), Value::Str(s) if s == "example.com"));
+    assert!(matches!(it.run("location.origin").unwrap(), Value::Str(s) if s == "https://example.com"));
+    let w = it.run("window.location.href").unwrap();
+    assert!(matches!(w, Value::Str(s) if s.starts_with("https://example.com")));
+    // location.search.indexOf 가 동작해야 (구글 등에서 흔한 패턴)
+    assert!(matches!(it.run("location.search.indexOf('q')").unwrap(), Value::Num(n) if n == 1.0));
+}
+
+#[test]
+fn global_number_functions() {
+    assert_eq!(run_num("parseInt('42px')"), 42.0);
+    assert_eq!(run_num("parseInt('-7')"), -7.0);
+    assert!(run_bool("isNaN(parseInt('abc'))"));
+    assert_eq!(run_num("parseFloat('3.14 rad')"), 3.14);
+    assert!(run_bool("isNaN('x' * 2)"));
+    assert!(run_bool("!isNaN(5)"));
+}
