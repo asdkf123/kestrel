@@ -1018,6 +1018,9 @@ pub enum CanvasOp {
     Clip { pts: Option<Vec<(f32, f32)>> },
     // putImageData: 즉석 픽셀을 그대로 얹는다
     PutImage { x: f32, y: f32, img: std::rc::Rc<crate::png::Image> },
+    // 그림자 상태 (shadowColor/Blur/OffsetX/Y). 이후 그리기 op 에 적용된다.
+    // 예전엔 이 프로퍼티들이 **있기만 하고 아무도 안 읽었다** — 그림자가 아예 안 나왔다.
+    SetShadow { color: crate::css::Color, blur: f32, dx: f32, dy: f32 },
 }
 
 // 복합 대입 연산자 → 대응하는 이항 연산자

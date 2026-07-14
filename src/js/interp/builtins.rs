@@ -534,6 +534,41 @@ impl Interp {
                 _ => crate::css::Color { r: 0, g: 0, b: 0, a: 255 },
             }
         };
+        // 그림자 상태를 op 스트림에 흘려보낸다 (캔버스는 상태 기계다).
+        // shadowColor/Blur/OffsetX/Y 는 프로퍼티로 **있기만 하고 아무도 안 읽었다** —
+        // 그림자를 지정해도 아무 일도 안 일어났다.
+        {
+            let sc = match ctx.borrow().get("shadowColor") {
+                Some(Value::Str(s)) => crate::css::parse_color(s)
+                    .unwrap_or(crate::css::Color { r: 0, g: 0, b: 0, a: 0 }),
+                _ => crate::css::Color { r: 0, g: 0, b: 0, a: 0 },
+            };
+            let n = |k: &str| match ctx.borrow().get(k) {
+                Some(Value::Num(v)) => *v as f32,
+                _ => 0.0,
+            };
+            let next = CanvasOp::SetShadow {
+                color: sc,
+                blur: n("shadowBlur"),
+                dx: n("shadowOffsetX"),
+                dy: n("shadowOffsetY"),
+            };
+            let ops = self.canvas_cmds.entry(canvas_id).or_default();
+            // 마지막으로 흘려보낸 상태와 같으면 다시 넣지 않는다
+            let same = ops.iter().rev().find_map(|o| match o {
+                CanvasOp::SetShadow { color, blur, dx, dy } => {
+                    Some((*color, *blur, *dx, *dy))
+                }
+                _ => None,
+            });
+            let cur = match &next {
+                CanvasOp::SetShadow { color, blur, dx, dy } => (*color, *blur, *dx, *dy),
+                _ => unreachable!(),
+            };
+            if same != Some(cur) && (cur.0.a > 0 || same.is_some()) {
+                ops.push(next);
+            }
+        }
         // 현재 변환 행렬(CTM). 캔버스는 상태 기계다 — translate/rotate/scale 이
         // 이후 그리기에 실제로 적용돼야 한다. 예전엔 전부 조용한 no-op 이라
         // 그림이 엉뚱한 자리에 그려지거나 사라졌다 (아무 말도 없이).
@@ -1153,16 +1188,39 @@ impl Interp {
                     Some(Value::Num(n)) => (*n as f32).max(1.0),
                     _ => 1.0,
                 };
+                // lineCap/lineJoin 은 프로퍼티로 **있기만 하고 아무도 안 읽었다**
+                // (round 캡을 지정해도 butt 로 나왔다 — 속성은 있는데 아무 일도 안 하는 거짓말).
+                let cap = match ctx.borrow().get("lineCap") {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => "butt".to_string(),
+                };
+                let join = match ctx.borrow().get("lineJoin") {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => "miter".to_string(),
+                };
                 let color = with_alpha(style("strokeStyle"), a);
                 let ops = self.canvas_cmds.entry(canvas_id).or_default();
-                for w in pts.windows(2) {
-                    let ((x0, y0), (x1, y1)) = (w[0], w[1]);
+                let n = pts.len();
+                for (i, w) in pts.windows(2).enumerate() {
+                    let ((mut x0, mut y0), (mut x1, mut y1)) = (w[0], w[1]);
                     let (dx, dy) = (x1 - x0, y1 - y0);
                     let len = (dx * dx + dy * dy).sqrt();
                     if len < 0.01 {
                         continue;
                     }
-                    let (nx, ny) = (-dy / len * lw / 2.0, dx / len * lw / 2.0);
+                    let (ux, uy) = (dx / len, dy / len);
+                    // square 캡: 끝을 반두께만큼 연장 (표준)
+                    if cap == "square" {
+                        if i == 0 {
+                            x0 -= ux * lw / 2.0;
+                            y0 -= uy * lw / 2.0;
+                        }
+                        if i + 2 == n {
+                            x1 += ux * lw / 2.0;
+                            y1 += uy * lw / 2.0;
+                        }
+                    }
+                    let (nx, ny) = (-uy * lw / 2.0, ux * lw / 2.0);
                     ops.push(CanvasOp::FillPath {
                         pts: vec![
                             (x0 + nx, y0 + ny),
@@ -1172,6 +1230,61 @@ impl Interp {
                         ],
                         color,
                     });
+                    // round 캡/조인: 끝점/이음새에 반지름 lw/2 의 원을 얹는다
+                    let circle = |cx: f32, cy: f32| -> Vec<(f32, f32)> {
+                        (0..16)
+                            .map(|k| {
+                                let t = k as f32 / 16.0 * std::f32::consts::TAU;
+                                (cx + t.cos() * lw / 2.0, cy + t.sin() * lw / 2.0)
+                            })
+                            .collect()
+                    };
+                    if cap == "round" {
+                        if i == 0 {
+                            ops.push(CanvasOp::FillPath { pts: circle(w[0].0, w[0].1), color });
+                        }
+                        if i + 2 == n {
+                            ops.push(CanvasOp::FillPath { pts: circle(w[1].0, w[1].1), color });
+                        }
+                    }
+                    // 이음새 (마지막 선분 제외). 아무것도 안 하면 바깥쪽에 V 자 홈이 남는다.
+                    if i + 2 < n {
+                        let (jx, jy) = w[1];
+                        let (x2, y2) = pts[i + 2];
+                        let (dx2, dy2) = (x2 - jx, y2 - jy);
+                        let l2 = (dx2 * dx2 + dy2 * dy2).sqrt();
+                        if l2 < 0.01 {
+                            continue;
+                        }
+                        let (ux2, uy2) = (dx2 / l2, dy2 / l2);
+                        match join.as_str() {
+                            "round" => ops.push(CanvasOp::FillPath { pts: circle(jx, jy), color }),
+                            _ => {
+                                // 바깥쪽 코너 두 점 (양쪽 다 채워도 안쪽은 이미 덮여 있어 무해)
+                                let (n1x, n1y) = (-uy * lw / 2.0, ux * lw / 2.0);
+                                let (n2x, n2y) = (-uy2 * lw / 2.0, ux2 * lw / 2.0);
+                                for sgn in [1.0f32, -1.0] {
+                                    let a1 = (jx + n1x * sgn, jy + n1y * sgn);
+                                    let a2 = (jx + n2x * sgn, jy + n2y * sgn);
+                                    // 마이터 점 = 두 오프셋 선의 교점 (평행이면 없음)
+                                    let cross = ux * uy2 - uy * ux2;
+                                    let mut poly = vec![(jx, jy), a1, a2];
+                                    if join == "miter" && cross.abs() > 1e-4 {
+                                        // a1 + t·u = a2 + s·u2 를 풀어 교점
+                                        let t = ((a2.0 - a1.0) * uy2 - (a2.1 - a1.1) * ux2) / cross;
+                                        let m = (a1.0 + ux * t, a1.1 + uy * t);
+                                        // 마이터 길이 한계 (기본 10) — 넘으면 bevel 로
+                                        let ml = ((m.0 - jx).powi(2) + (m.1 - jy).powi(2)).sqrt()
+                                            / (lw / 2.0);
+                                        if ml <= 10.0 {
+                                            poly = vec![(jx, jy), a1, m, a2];
+                                        }
+                                    }
+                                    ops.push(CanvasOp::FillPath { pts: poly, color });
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Noop => {}
@@ -3706,6 +3819,9 @@ impl Interp {
                 );
                 m.insert("shadowBlur".to_string(), Value::Num(0.0));
                 m.insert("shadowColor".to_string(), Value::Str("rgba(0,0,0,0)".to_string()));
+                m.insert("shadowOffsetX".to_string(), Value::Num(0.0));
+                m.insert("shadowOffsetY".to_string(), Value::Num(0.0));
+                m.insert("miterLimit".to_string(), Value::Num(10.0));
                 m.insert("canvas".to_string(), Value::Dom(canvas_id));
                 // CTM 초기값(단위행렬). 없으면 save() 가 undefined 를 저장하고
                 // restore() 가 변환을 되돌리지 못한다 (변환이 영원히 남는다).

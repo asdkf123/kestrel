@@ -260,9 +260,14 @@ fn canvas_display_items(
         }
         // 현재 클립 (canvas 좌표 다각형). clip() 이 설정하고 restore 가 되돌린다.
         let mut clip: Option<Vec<(f32, f32)>> = None;
+        // 현재 그림자 상태 (shadowColor/Blur/OffsetX/Y)
+        let mut shadow: Option<(crate::css::Color, f32, f32, f32)> = None;
         for op in ops {
             let before = out.len();
             match op {
+                CanvasOp::SetShadow { color, blur, dx, dy } => {
+                    shadow = if color.a > 0 { Some((*color, *blur, *dx, *dy)) } else { None };
+                }
                 CanvasOp::Clip { pts } => {
                     clip = pts.clone();
                 }
@@ -421,6 +426,19 @@ fn canvas_display_items(
                         }));
                         pen += adv;
                     }
+                }
+            }
+            // 그림자: 이 op 가 만든 항목의 **실루엣**을 밀고 흐려 뒤에 깐다 (캔버스 표준).
+            if let Some((sc, blur, sdx, sdy)) = shadow {
+                if out.len() > before {
+                    let items: Vec<DisplayItem> = out.drain(before..).collect();
+                    out.push(DisplayItem::DropShadow {
+                        dx: sdx,
+                        dy: sdy,
+                        blur,
+                        color: sc,
+                        items,
+                    });
                 }
             }
             // clip() 이 걸려 있으면 이 op 가 만든 항목들을 다각형으로 자른다.
@@ -1293,6 +1311,40 @@ mod tests {
             "픽셀을 읽거나(렌더 컨텍스트 있음) 정직하게 실패해야: {}",
             got
         );
+    }
+
+    // 캔버스의 lineCap / shadow — 프로퍼티로 **있기만 하고 아무도 안 읽었다**
+    // (round 캡을 줘도 butt 로 나오고, 그림자를 지정해도 아무 일도 안 일어났다).
+    #[test]
+    fn canvas_line_cap_and_shadow_are_real() {
+        let mut dom = crate::html::parse_dom(
+            "<canvas id=\"c\" width=\"120\" height=\"120\"></canvas>\
+             <script>\
+             var x = document.getElementById('c').getContext('2d');\
+             x.lineWidth = 10; x.strokeStyle = '#ff0000'; x.lineCap = 'round';\
+             x.beginPath(); x.moveTo(20, 20); x.lineTo(80, 20); x.stroke();\
+             x.shadowColor = '#0000ff'; x.shadowOffsetX = 10; x.shadowOffsetY = 10;\
+             x.fillStyle = '#00aa00'; x.fillRect(20, 50, 40, 40);\
+             </script>"
+                .to_string(),
+        );
+        let rt = crate::js::run_scripts(&mut dom, "https://localhost/", None);
+        let ops = rt.canvas_cmds.values().next().expect("캔버스 명령");
+        use crate::js::interp::CanvasOp;
+        // round 캡: 선분 사각형 말고 **원**(다각형)이 양 끝에 추가돼야 한다
+        let polys = ops
+            .iter()
+            .filter(|o| matches!(o, CanvasOp::FillPath { .. }))
+            .count();
+        assert!(polys >= 3, "선분 1개 + 양끝 원 2개 = 최소 3 (실제 {})", polys);
+        // 그림자 상태가 op 스트림에 흘러야 한다
+        let shadow = ops.iter().find_map(|o| match o {
+            CanvasOp::SetShadow { color, dx, dy, .. } if color.a > 0 => Some((*dx, *dy, *color)),
+            _ => None,
+        });
+        let (dx, dy, c) = shadow.expect("shadowColor 를 주면 그림자 상태가 흘러야 한다");
+        assert_eq!((dx, dy), (10.0, 10.0));
+        assert_eq!((c.r, c.g, c.b), (0, 0, 255));
     }
 
     #[test]

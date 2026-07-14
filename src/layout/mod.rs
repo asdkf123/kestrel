@@ -199,6 +199,29 @@ impl<'a> LayoutBox<'a> {
         }
     }
 
+    // <svg> 안의 <text>/<tspan> 을 글리프로 성형해 self.glyphs 에 넣는다.
+    // 좌표는 viewBox → 박스 좌표 매핑을 거친다 (페인트의 도형 매핑과 같은 규칙).
+    fn shape_svg_text(&mut self, fonts: &FontStack) {
+        let NodeType::Element(svg) = &self.styled_node.node.node_type else { return };
+        let box_rect = self.dimensions.content;
+        let (vx, vy, sx, sy) = match svg.attributes.get("viewbox").and_then(|s| parse_viewbox(s)) {
+            Some((vx, vy, vw, vh)) if vw > 0.0 && vh > 0.0 => {
+                (vx, vy, box_rect.width / vw, box_rect.height / vh)
+            }
+            _ => (0.0, 0.0, 1.0, 1.0),
+        };
+        let mut out: Vec<GlyphInstance> = Vec::new();
+        collect_svg_text(
+            self.styled_node,
+            box_rect,
+            (vx, vy, sx, sy),
+            fonts,
+            &mut out,
+            0,
+        );
+        self.glyphs.extend(out);
+    }
+
     fn layout(&mut self, containing_block: Dimensions, fonts: &FontStack, images: &ImageMap) {
         // 이미지 대체 요소: 고유 크기 박스
         if let NodeType::Element(e) = &self.styled_node.node.node_type {
@@ -333,6 +356,10 @@ impl<'a> LayoutBox<'a> {
                 };
                 self.dimensions.content.width = w;
                 self.dimensions.content.height = h;
+                // SVG <text> 를 글리프로 성형한다. 예전엔 SVG 도형만 그리고 텍스트는
+                // **통째로 빠졌다** (차트 축 라벨, 로고의 글자가 아무 말 없이 사라졌다).
+                // 여기서 하는 이유: 폰트는 레이아웃에 있고 페인트엔 없다.
+                self.shape_svg_text(fonts);
                 return;
             }
         }
@@ -1873,6 +1900,103 @@ fn is_cell(b: &LayoutBox) -> bool {
 }
 
 // SVG viewBox "minx miny width height" → (minx, miny, width, height)
+// <svg> 하위의 <text> 를 재귀로 찾아 글리프로 성형한다.
+#[allow(clippy::too_many_arguments)]
+fn collect_svg_text(
+    node: &crate::style::StyledNode,
+    box_rect: Rect,
+    vb: (f32, f32, f32, f32),
+    fonts: &FontStack,
+    out: &mut Vec<GlyphInstance>,
+    depth: usize,
+) {
+    if depth > 16 {
+        return;
+    }
+    let (vx, vy, sx, sy) = vb;
+    for child in &node.children {
+        let NodeType::Element(e) = &child.node.node_type else { continue };
+        match e.tag_name.as_str() {
+            "g" | "svg" => {
+                collect_svg_text(child, box_rect, vb, fonts, out, depth + 1);
+            }
+            "text" | "tspan" => {
+                let num = |k: &str| e.attributes.get(k).and_then(|v| v.trim().parse::<f32>().ok());
+                let x = num("x").unwrap_or(0.0);
+                let y = num("y").unwrap_or(0.0);
+                let fs = e
+                    .attributes
+                    .get("font-size")
+                    .and_then(|v| v.trim().trim_end_matches("px").parse::<f32>().ok())
+                    .or_else(|| match child.value("font-size") {
+                        Some(Value::Length(v, crate::css::Unit::Px)) => Some(v),
+                        _ => None,
+                    })
+                    .unwrap_or(16.0);
+                let fill = match e.attributes.get("fill").map(|s| s.as_str()) {
+                    Some("none") => None,
+                    Some(f) => crate::css::parse_color(f),
+                    None => Some(crate::css::Color { r: 0, g: 0, b: 0, a: 255 }),
+                };
+                let Some(color) = fill else { continue };
+                let mut text = String::new();
+                collect_text_content(child, &mut text);
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let anchor = e
+                    .attributes
+                    .get("text-anchor")
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "start".to_string());
+                let px = fs * sy; // 박스 좌표계의 글자 크기
+                let mut width = 0.0f32;
+                for ch in text.chars() {
+                    let (fi, gid) = fonts.glyph_for(ch);
+                    let f = fonts.font(fi);
+                    width += f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+                }
+                let mut pen = box_rect.x + (x - vx) * sx;
+                match anchor.as_str() {
+                    "middle" => pen -= width / 2.0,
+                    "end" => pen -= width,
+                    _ => {}
+                }
+                let baseline = box_rect.y + (y - vy) * sy;
+                for ch in text.chars() {
+                    let (fi, gid) = fonts.glyph_for(ch);
+                    let f = fonts.font(fi);
+                    let adv = f.advance_width(gid) as f32 * (px / f.units_per_em() as f32);
+                    out.push(GlyphInstance {
+                        font_index: fi,
+                        glyph_id: gid,
+                        x: pen,
+                        baseline_y: baseline,
+                        px,
+                        color,
+                        bold: false,
+                        italic: false,
+                        rot: 0.0,
+                    });
+                    pen += adv;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_text_content(node: &crate::style::StyledNode, out: &mut String) {
+    match &node.node.node_type {
+        NodeType::Text(t) => out.push_str(t),
+        _ => {
+            for c in &node.children {
+                collect_text_content(c, out);
+            }
+        }
+    }
+}
+
 pub(crate) fn parse_viewbox(s: &str) -> Option<(f32, f32, f32, f32)> {
     let nums: Vec<f32> = s
         .split(|c: char| c == ',' || c.is_whitespace())
@@ -3348,6 +3472,33 @@ mod tests {
 
     // 3D 변환 — 예전엔 rotateX/rotateY/rotate3d/perspective/matrix3d 를 만나면
     // **항등으로 무시**했다 (요소가 안 돌아간 채 그려졌다).
+    // 인라인 SVG 의 <text> — 예전엔 도형만 그리고 텍스트는 **통째로 빠졌다**
+    // (차트 축 라벨, 로고의 글자가 아무 말 없이 사라졌다).
+    #[test]
+    fn inline_svg_text_produces_glyphs() {
+        let fs = fonts();
+        let dom = crate::html::parse_dom(
+            "<svg width=\"100\" height=\"50\" viewBox=\"0 0 100 50\">\
+             <text x=\"10\" y=\"30\" font-size=\"20\">Hi</text></svg>"
+                .to_string(),
+        );
+        let ss = crate::css::user_agent_stylesheet();
+        let styled = crate::style::style_tree(&dom, &ss);
+        let lb = tree_for(&styled, &fs);
+        fn find_svg<'a, 'b>(b: &'b LayoutBox<'a>) -> Option<&'b LayoutBox<'a>> {
+            if matches!(&b.styled_node.node.node_type, NodeType::Element(e) if e.tag_name == "svg") {
+                return Some(b);
+            }
+            b.children.iter().find_map(find_svg)
+        }
+        let svg = find_svg(&lb).expect("svg 박스");
+        assert_eq!(svg.glyphs.len(), 2, "'Hi' 두 글자가 글리프로 나와야");
+        // viewBox 스케일 1:1 → x=10, 베이스라인 y=30
+        assert!((svg.glyphs[0].x - 10.0).abs() < 0.5, "x={}", svg.glyphs[0].x);
+        assert!((svg.glyphs[0].baseline_y - 30.0).abs() < 0.5);
+        assert!((svg.glyphs[0].px - 20.0).abs() < 0.5, "font-size 20");
+    }
+
     #[test]
     fn transform_3d_rotates_and_perspective_projects() {
         // rotateY(60deg): 원근이 없으면 가로만 cos(60)=0.5 배로 줄어든다 (사각형 유지)
