@@ -193,7 +193,15 @@ pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
             .map(|(k, val)| (k.clone(), val.clone()))
             .collect(),
         Value::Class(c) => {
-            c.statics.borrow().iter().map(|(k, val)| (k.clone(), val.clone())).collect()
+            let st = c.statics.borrow();
+            st.iter()
+                .filter(|(k, _)| {
+                    !is_internal_key(k)
+                        && !is_private_name(k)
+                        && !st.contains_key(&nonenum_marker(k))
+                })
+                .map(|(k, val)| (k.clone(), val.clone()))
+                .collect()
         }
         Value::Str(s) => s
             .chars()
@@ -1023,11 +1031,23 @@ impl Interp {
                         }
                     }
                     Value::Fn(f) => {
-                        let v = if key == "prototype" {
-                            Some(self.member_get(&target, "prototype")?)
-                        } else {
-                            f.props.borrow().get(&key).cloned()
+                        // 함수의 name/length/prototype 은 own 프로퍼티다 (§10.2.4~10.2.9)
+                        let v = match key.as_str() {
+                            "prototype" => Some(self.member_get(&target, "prototype")?),
+                            "name" => Some(Value::Str(f.name.borrow().clone())),
+                            "length" => Some(Value::Num(f.params.len() as f64)),
+                            _ => f.props.borrow().get(&key).cloned(),
                         };
+                        // name/length 는 읽기 전용이다 (§10.2.4)
+                        if matches!(key.as_str(), "name" | "length") {
+                            if let Some(val) = v {
+                                d.insert("value".to_string(), val);
+                                d.insert("writable".to_string(), Value::Bool(false));
+                                d.insert("enumerable".to_string(), Value::Bool(false));
+                                d.insert("configurable".to_string(), Value::Bool(true));
+                                return Ok(Value::Obj(Rc::new(RefCell::new(d))));
+                            }
+                        }
                         match v {
                             Some(Value::Accessor(acc)) => {
                                 d.insert(
@@ -1048,25 +1068,80 @@ impl Interp {
                             None => false,
                         }
                     }
-                    Value::Instance(inst) => match inst.fields.borrow().get(&key) {
-                        Some(v) => {
-                            d.insert("value".to_string(), v.clone());
-                            d.insert("writable".to_string(), Value::Bool(true));
-                            true
+                    Value::Instance(inst) => {
+                        // private 이름은 프로퍼티가 아니다 — 서술자도 없다
+                        let fk = field_key(&key, self.priv_id);
+                        match inst.fields.borrow().get(&fk) {
+                            Some(v) if !is_private_name(&key) => {
+                                d.insert("value".to_string(), v.clone());
+                                d.insert("writable".to_string(), Value::Bool(true));
+                                true
+                            }
+                            _ => false,
                         }
-                        None => false,
-                    },
+                    }
+                    // 클래스의 static 멤버는 클래스 객체의 own 프로퍼티다 (§15.7.14).
+                    // 예전엔 여기 자체가 없어서 hasOwnProperty(C, 'm') 이 false 였고,
+                    // getOwnPropertyDescriptor(C, 'm') 이 undefined 였다.
+                    Value::Class(c) => {
+                        if let Some(g) = c.static_getters.get(&key) {
+                            d.insert("get".to_string(), Value::Fn(g.clone()));
+                            d.insert(
+                                "set".to_string(),
+                                c.static_setters
+                                    .get(&key)
+                                    .map(|s| Value::Fn(s.clone()))
+                                    .unwrap_or(Value::Undefined),
+                            );
+                            true
+                        } else if let Some(st) = c.static_setters.get(&key) {
+                            d.insert("get".to_string(), Value::Undefined);
+                            d.insert("set".to_string(), Value::Fn(st.clone()));
+                            true
+                        } else if key == "prototype" {
+                            d.insert("value".to_string(), self.member_get(&target, "prototype")?);
+                            d.insert("writable".to_string(), Value::Bool(false));
+                            true
+                        } else if key == "name" {
+                            d.insert("value".to_string(), Value::Str(c.name.borrow().clone()));
+                            d.insert("writable".to_string(), Value::Bool(false));
+                            true
+                        } else {
+                            match c.statics.borrow().get(&key) {
+                                Some(v) if !is_private_name(&key) => {
+                                    d.insert("value".to_string(), v.clone());
+                                    d.insert("writable".to_string(), Value::Bool(true));
+                                    true
+                                }
+                                _ => false,
+                            }
+                        }
+                    }
                     _ => false,
                 };
                 if !found {
                     return Ok(Value::Undefined);
                 }
+                // 열거 가능 여부 (표준):
+                //  - 일반 객체: 비열거 표식으로 판정
+                //  - 클래스의 static 멤버, 함수의 name/length/prototype: 전부 비열거
                 let enumerable = match &target {
                     Value::Obj(m) => !m.borrow().contains_key(&nonenum_marker(&key)),
+                    // static 메서드/접근자/prototype/name 은 비열거, static 필드는 열거 가능
+                    Value::Class(c) => {
+                        !matches!(key.as_str(), "prototype" | "name")
+                            && !c.static_getters.contains_key(&key)
+                            && !c.static_setters.contains_key(&key)
+                            && !c.statics.borrow().contains_key(&nonenum_marker(&key))
+                    }
+                    Value::Fn(_) => !matches!(key.as_str(), "prototype" | "name" | "length"),
                     _ => true,
                 };
+                // 함수의 prototype 은 재설정 불가다 (§10.2.4). name/length 는 재설정 가능.
+                let configurable = !(matches!(&target, Value::Fn(_) | Value::Class(_))
+                    && key == "prototype");
                 d.insert("enumerable".to_string(), Value::Bool(enumerable));
-                d.insert("configurable".to_string(), Value::Bool(true));
+                d.insert("configurable".to_string(), Value::Bool(configurable));
                 Ok(Value::Obj(Rc::new(RefCell::new(d))))
             }
             // Object.defineProperty(target, key, {get|value}) — 접근자/값 정의
@@ -1340,6 +1415,21 @@ impl Interp {
                     Some(Value::Instance(i)) => i.fields.borrow().contains_key(&key),
                     Some(Value::Arr(a)) => {
                         key.parse::<usize>().map(|i| i < a.borrow().len()).unwrap_or(false)
+                            || a.get_prop(&key).is_some()
+                            || key == "length"
+                    }
+                    // 클래스의 static 멤버는 클래스 객체의 own 프로퍼티다
+                    Some(Value::Class(c)) => {
+                        !is_private_name(&key)
+                            && (c.statics.borrow().contains_key(&key)
+                                || c.static_getters.contains_key(&key)
+                                || c.static_setters.contains_key(&key)
+                                || key == "prototype"
+                                || key == "name")
+                    }
+                    Some(Value::Fn(f)) => {
+                        f.props.borrow().contains_key(&key)
+                            || matches!(key.as_str(), "prototype" | "name" | "length")
                     }
                     _ => false,
                 };
@@ -4434,7 +4524,7 @@ impl Interp {
                         (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
-                Some(v @ Value::Instance(_)) => {
+                Some(v @ (Value::Instance(_) | Value::Class(_))) => {
                     let keys: Vec<Value> = own_enumerable_entries(v)
                         .into_iter()
                         .map(|(k, _)| Value::Str(k))

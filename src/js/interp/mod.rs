@@ -5213,7 +5213,11 @@ impl Interp {
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
         for (name, p, b, gen, asy) in &def.statics {
-            statics.insert(name.clone(), Value::Fn(mk(p, b, *gen, *asy)));
+            let f = named(mk(p, b, *gen, *asy), name);
+            statics.insert(name.clone(), Value::Fn(f));
+            // static **메서드**는 비열거다 (§15.7.14). static **필드**는 열거 가능하다 —
+            // 그래서 구분해서 표시한다. 예전엔 둘 다 같은 맵에 섞여 구분이 없었다.
+            statics.insert(nonenum_marker(name), Value::Bool(true));
         }
         let cls = Rc::new(JsClass {
             priv_id,

@@ -2912,6 +2912,44 @@ fn tagged_template_provides_raw_strings() {
 // test262 로 드러난 것들 — 표준이 요구하는데 조용히 틀렸던 동작들.
 
 #[test]
+fn class_and_function_property_descriptors() {
+    // §15.7.14: 클래스의 static 멤버는 클래스 객체의 own 프로퍼티다.
+    // 예전엔 서술자 경로가 클래스를 몰라서 hasOwnProperty(C, 'm') 이 false 였고,
+    // getOwnPropertyDescriptor(C, 'm') 이 undefined 였다.
+    assert!(run_bool(
+        "class C { static m(){} } Object.prototype.hasOwnProperty.call(C, 'm')"
+    ));
+    // static 메서드는 비열거, static 필드는 열거 가능
+    assert!(run_bool(
+        "class C { static m(){} } !Object.getOwnPropertyDescriptor(C, 'm').enumerable"
+    ));
+    assert!(run_bool(
+        "class C { static F = 1; } Object.getOwnPropertyDescriptor(C, 'F').enumerable"
+    ));
+    assert_eq!(
+        run_str("class C { static m(){} static F = 1; } JSON.stringify(Object.keys(C))"),
+        "[\"F\"]"
+    );
+    // 클래스의 prototype 은 재설정 불가 (§15.7.14)
+    assert!(run_bool(
+        "class C {} var d = Object.getOwnPropertyDescriptor(C, 'prototype'); \
+         !d.writable && !d.enumerable && !d.configurable"
+    ));
+    // 함수의 prototype/name/length 는 own 프로퍼티다 (§10.2.4~10.2.9)
+    assert!(run_bool(
+        "function f(a,b){} var d = Object.getOwnPropertyDescriptor(f, 'prototype'); \
+         d.writable && !d.enumerable && !d.configurable"
+    ));
+    assert!(run_bool(
+        "function f(a,b){} var d = Object.getOwnPropertyDescriptor(f, 'length'); \
+         d.value === 2 && !d.writable && !d.enumerable && d.configurable"
+    ));
+    assert!(run_bool(
+        "function f(){} Object.getOwnPropertyDescriptor(f, 'name').value === 'f'"
+    ));
+}
+
+#[test]
 fn named_evaluation_only_for_anonymous_function_expressions() {
     // §13.15.2 / §14.3.1: 구문상 **익명 함수/클래스**를 이름 있는 참조에 대입할 때만
     // 그 이름을 갖는다. 예전엔 값이 익명이기만 하면 이름을 줘서,
