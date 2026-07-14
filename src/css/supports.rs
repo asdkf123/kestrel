@@ -58,6 +58,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "container", "container-name", "container-type",
     // 마스크 (그라디언트/이미지의 알파로 서브트리를 곱한다)
     "mask-image", "-webkit-mask-image",
+    // 3D 변환 (4x4 로 조립해 평면 요소를 투영행렬로 접는다)
+    "perspective", "perspective-origin",
     "box-sizing", "clear", "clip-path", "color", "column-count", "column-gap", "content",
     "direction", "display", "filter", "flex", "flex-basis", "flex-direction",
     "flex-grow", "flex-shrink", "flex-wrap", "float", "font-family", "font-size",

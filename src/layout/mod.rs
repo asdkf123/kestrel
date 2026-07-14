@@ -93,7 +93,8 @@ pub enum FormControl {
 pub struct LayoutBox<'a> {
     pub dimensions: Dimensions,
     // CSS transform (절대 좌표계 행렬). 기하는 그대로 두고 페인트/CSSOM 이 이걸 쓴다.
-    pub transform: Option<Mat>,
+    // 절대 좌표계의 투영행렬 (2D 는 아핀, 3D 는 원근 항 포함)
+    pub transform: Option<Mat3>,
     pub styled_node: &'a StyledNode<'a>,
     // 익명 박스인가. 익명 박스는 부모의 styled_node 를 그대로 쓰므로 NodeId 가 겹친다.
     // 요소별 사각형/메트릭을 수집할 때 반드시 제외해야 한다(안 그러면 익명 박스의
@@ -2004,10 +2005,10 @@ fn resolve_width(
 
 // 트리 전체의 링크 히트 영역 수집 (문서 좌표계)
 pub fn collect_link_regions(root: &LayoutBox, out: &mut Vec<(Rect, String)>) {
-    collect_link_regions_m(root, Mat::IDENTITY, out)
+    collect_link_regions_m(root, Mat3::IDENTITY, out)
 }
 
-fn collect_link_regions_m(root: &LayoutBox, parent_m: Mat, out: &mut Vec<(Rect, String)>) {
+fn collect_link_regions_m(root: &LayoutBox, parent_m: Mat3, out: &mut Vec<(Rect, String)>) {
     let m = match root.transform {
         Some(t) => t.then(&parent_m),
         None => parent_m,
@@ -2054,7 +2055,7 @@ pub fn collect_element_rects(
     depth: usize,
     out: &mut Vec<(Rect, crate::dom::NodeId, usize)>,
 ) {
-    collect_element_rects_m(root, depth, Mat::IDENTITY, out)
+    collect_element_rects_m(root, depth, Mat3::IDENTITY, out)
 }
 
 // 변환(transform)을 누적하며 요소 사각형을 모은다.
@@ -2063,7 +2064,7 @@ pub fn collect_element_rects(
 fn collect_element_rects_m(
     root: &LayoutBox,
     depth: usize,
-    parent_m: Mat,
+    parent_m: Mat3,
     out: &mut Vec<(Rect, crate::dom::NodeId, usize)>,
 ) {
     let m = match root.transform {
@@ -2597,48 +2598,80 @@ pub struct Mat {
     pub f: f32,
 }
 
-impl Mat {
-    pub const IDENTITY: Mat = Mat { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
+// 3x3 투영행렬 (평면 요소의 3D 변환 결과). [x', y', w'] = M · [x, y, 1] 이고 실제 좌표는
+// (x'/w', y'/w') 다 — perspective 가 있으면 w' 가 1 이 아니다.
+//
+// 왜 필요한가: rotateY/rotateX/perspective 는 2x3 아핀행렬로 표현할 수 없다.
+// 예전엔 3D 함수를 만나면 **항등행렬로 두고 조용히 무시**했다 (요소가 안 돌아간 채 나왔다).
+// 요소는 평평하므로(z=0) 4x4 를 만든 뒤 z 행/열을 접으면 3x3 투영행렬로 정확히 떨어진다.
+// (preserve-3d 로 자손이 진짜 3D 공간에 서는 경우는 아직 다루지 않는다 — 정직하게.)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mat3 {
+    pub m: [[f32; 3]; 3],
+}
 
-    pub fn is_identity(&self) -> bool {
-        *self == Mat::IDENTITY
+impl Mat3 {
+    pub const IDENTITY: Mat3 =
+        Mat3 { m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] };
+
+    pub fn from_affine(a: &Mat) -> Mat3 {
+        Mat3 { m: [[a.a, a.c, a.e], [a.b, a.d, a.f], [0.0, 0.0, 1.0]] }
     }
 
-    // 축 정렬인가 (회전/기울임 없음) — 사각형이 사각형으로 남는가
-
-    // self 다음에 m 을 적용 (m ∘ self)
-    pub fn then(&self, m: &Mat) -> Mat {
-        Mat {
-            a: m.a * self.a + m.c * self.b,
-            b: m.b * self.a + m.d * self.b,
-            c: m.a * self.c + m.c * self.d,
-            d: m.b * self.c + m.d * self.d,
-            e: m.a * self.e + m.c * self.f + m.e,
-            f: m.b * self.e + m.d * self.f + m.f,
+    // self 다음에 other 를 적용 (other ∘ self)
+    pub fn then(&self, other: &Mat3) -> Mat3 {
+        let mut r = [[0.0f32; 3]; 3];
+        for (i, row) in r.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell = (0..3).map(|k| other.m[i][k] * self.m[k][j]).sum();
+            }
         }
+        Mat3 { m: r }
     }
 
     pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
-        (self.a * x + self.c * y + self.e, self.b * x + self.d * y + self.f)
+        let w = self.m[2][0] * x + self.m[2][1] * y + self.m[2][2];
+        let ix = self.m[0][0] * x + self.m[0][1] * y + self.m[0][2];
+        let iy = self.m[1][0] * x + self.m[1][1] * y + self.m[1][2];
+        if w.abs() < 1e-9 {
+            return (ix, iy);
+        }
+        (ix / w, iy / w)
     }
 
-    pub fn invert(&self) -> Option<Mat> {
-        let det = self.a * self.d - self.b * self.c;
+    pub fn invert(&self) -> Option<Mat3> {
+        let m = &self.m;
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
         if det.abs() < 1e-9 {
             return None;
         }
         let id = 1.0 / det;
-        Some(Mat {
-            a: self.d * id,
-            b: -self.b * id,
-            c: -self.c * id,
-            d: self.a * id,
-            e: (self.c * self.f - self.d * self.e) * id,
-            f: (self.b * self.e - self.a * self.f) * id,
-        })
+        let mut r = [[0.0f32; 3]; 3];
+        r[0][0] = (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * id;
+        r[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * id;
+        r[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * id;
+        r[1][0] = (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * id;
+        r[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * id;
+        r[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * id;
+        r[2][0] = (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * id;
+        r[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * id;
+        r[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * id;
+        Some(Mat3 { m: r })
     }
 
-    // 사각형의 네 꼭짓점을 변환한 축 정렬 경계 상자
+    pub fn is_identity(&self) -> bool {
+        *self == Mat3::IDENTITY
+    }
+
+    // 아핀인가 (원근 항 없음)
+    #[cfg(test)]
+    pub fn is_affine(&self) -> bool {
+        self.m[2][0].abs() < 1e-6 && self.m[2][1].abs() < 1e-6
+    }
+
+    // 변환된 사각형의 경계 상자 (getBoundingClientRect/히트 테스트용)
     pub fn bounds(&self, r: Rect) -> Rect {
         let pts = [
             self.apply(r.x, r.y),
@@ -2656,6 +2689,90 @@ impl Mat {
         }
         Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
     }
+
+}
+
+// 4x4 (3D 변환 조립용). 행렬 곱만 쓰고, 마지막에 z 를 접어 Mat3 로 만든다.
+#[derive(Clone, Copy)]
+pub(crate) struct Mat4 {
+    m: [[f32; 4]; 4],
+}
+
+impl Mat4 {
+    pub(crate) const IDENTITY: Mat4 = Mat4 {
+        m: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+    };
+    pub(crate) fn mul(&self, o: &Mat4) -> Mat4 {
+        let mut r = [[0.0f32; 4]; 4];
+        for (i, row) in r.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell = (0..4).map(|k| self.m[i][k] * o.m[k][j]).sum();
+            }
+        }
+        Mat4 { m: r }
+    }
+    // 평행이동 (4x4)
+    pub(crate) fn translate(tx: f32, ty: f32) -> Mat4 {
+        let mut t = Mat4::IDENTITY;
+        t.m[0][3] = tx;
+        t.m[1][3] = ty;
+        t
+    }
+
+    // 원근: 보는 거리 d (양수). z 가 커질수록 화면에서 작아진다.
+    pub(crate) fn perspective(d: f32) -> Mat4 {
+        let mut p = Mat4::IDENTITY;
+        if d > 0.0 {
+            p.m[3][2] = -1.0 / d;
+        }
+        p
+    }
+
+    // 평면 요소(z=0) → 3x3 투영행렬 (0,1,3 행/열만 남긴다)
+    pub(crate) fn flatten(&self) -> Mat3 {
+        let m = &self.m;
+        Mat3 {
+            m: [
+                [m[0][0], m[0][1], m[0][3]],
+                [m[1][0], m[1][1], m[1][3]],
+                [m[3][0], m[3][1], m[3][3]],
+            ],
+        }
+    }
+}
+
+impl Mat {
+    pub const IDENTITY: Mat = Mat { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
+
+    pub fn is_identity(&self) -> bool {
+        *self == Mat::IDENTITY
+    }
+
+    // 축 정렬인가 (회전/기울임 없음) — 사각형이 사각형으로 남는가
+
+    // 2D 파서 검증용 (실행 경로는 Mat3 를 쓴다)
+    #[cfg(test)]
+    pub fn apply(&self, x: f32, y: f32) -> (f32, f32) {
+        (self.a * x + self.c * y + self.e, self.b * x + self.d * y + self.f)
+    }
+
+    // self 다음에 m 을 적용 (m ∘ self)
+    pub fn then(&self, m: &Mat) -> Mat {
+        Mat {
+            a: m.a * self.a + m.c * self.b,
+            b: m.b * self.a + m.d * self.b,
+            c: m.a * self.c + m.c * self.d,
+            d: m.b * self.c + m.d * self.d,
+            e: m.a * self.e + m.c * self.f + m.e,
+            f: m.b * self.e + m.d * self.f + m.f,
+        }
+    }
+
 }
 
 // 각도 문자열 → 라디안 (deg/rad/grad/turn)
@@ -2735,13 +2852,192 @@ pub fn parse_transform(text: &str, bw: f32, bh: f32) -> Mat {
                 e: args.get(4).map(|t| t.parse().unwrap_or(0.0)).unwrap_or(0.0),
                 f: args.get(5).map(|t| t.parse().unwrap_or(0.0)).unwrap_or(0.0),
             },
-            // 3D 변환은 아직 없다 — 조용히 무시하지 않고 항등으로 두되,
-            // @supports 도 지원한다고 하지 않는다(supports.rs).
-            _ => Mat::IDENTITY,
+            _ => Mat::IDENTITY, // 3D 함수는 parse_transform3d 가 다룬다
+
         };
         m = step.then(&m); // CSS 는 왼쪽 함수가 바깥쪽
         rest = &rest[close + 1..];
     }
+    m
+}
+
+// 3D 를 포함한 변환 목록 → 투영행렬. 요소는 평평하므로(z=0) 4x4 를 접어 3x3 로 만든다.
+// 예전엔 rotateX/rotateY/rotate3d/perspective/matrix3d 를 만나면 **항등으로 무시**했다
+// (요소가 안 돌아간 채 그려졌다 — 조용히 틀린 그림).
+// 변환 목록이 3D 함수를 포함하면 4x4 의 16개 값(열 우선)을 돌려준다.
+// getComputedStyle 은 3D 변환에 대해 matrix3d(...) 를 돌려줘야 한다 (표준).
+pub fn transform_matrix3d(text: &str, bw: f32, bh: f32) -> Option<[f32; 16]> {
+    if !has_3d_function(text) {
+        return None;
+    }
+    let m = parse_transform4(text, bw, bh);
+    let mut out = [0.0f32; 16];
+    for c in 0..4 {
+        for r in 0..4 {
+            out[c * 4 + r] = m.m[r][c]; // CSS 는 열 우선
+        }
+    }
+    Some(out)
+}
+
+pub fn has_3d_function(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    ["translate3d", "translatez", "rotatex", "rotatey", "rotate3d", "scale3d", "scalez",
+     "perspective(", "matrix3d"]
+        .iter()
+        .any(|f| t.contains(f))
+}
+
+pub(crate) fn parse_transform4(text: &str, bw: f32, bh: f32) -> Mat4 {
+    let mut m = Mat4::IDENTITY;
+    let mut rest = text;
+    let mut saw_3d = false;
+    while let Some(open) = rest.find('(') {
+        let name = rest[..open]
+            .trim()
+            .rsplit(|c: char| c.is_whitespace() || c == ')' || c == ',')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let Some(close_rel) = rest[open..].find(')') else { break };
+        let close = close_rel + open;
+        let args: Vec<&str> = rest[open + 1..close].split(',').map(|s| s.trim()).collect();
+        let len = |t: &str, base: f32| -> f32 {
+            if let Some(p) = t.strip_suffix('%') {
+                p.trim().parse::<f32>().map(|v| v / 100.0 * base).unwrap_or(0.0)
+            } else {
+                crate::css::parse_len_px(t).unwrap_or(0.0)
+            }
+        };
+        let num = |t: &str| t.parse::<f32>().unwrap_or(0.0);
+        let get = |i: usize| args.get(i).copied().unwrap_or("");
+        let rot_x = |a: f32| {
+            let (s, c) = a.sin_cos();
+            Mat4 {
+                m: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, c, -s, 0.0],
+                    [0.0, s, c, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        };
+        let rot_y = |a: f32| {
+            let (s, c) = a.sin_cos();
+            Mat4 {
+                m: [
+                    [c, 0.0, s, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [-s, 0.0, c, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        };
+        let rot_z = |a: f32| {
+            let (s, c) = a.sin_cos();
+            Mat4 {
+                m: [
+                    [c, -s, 0.0, 0.0],
+                    [s, c, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        };
+        let step: Mat4 = match name.as_str() {
+            "translate3d" => {
+                saw_3d = true;
+                let mut t = Mat4::IDENTITY;
+                t.m[0][3] = len(get(0), bw);
+                t.m[1][3] = len(get(1), bh);
+                t.m[2][3] = len(get(2), 0.0);
+                t
+            }
+            "translatez" => {
+                saw_3d = true;
+                let mut t = Mat4::IDENTITY;
+                t.m[2][3] = len(get(0), 0.0);
+                t
+            }
+            "rotatex" => {
+                saw_3d = true;
+                rot_x(parse_angle(get(0)))
+            }
+            "rotatez" => {
+                saw_3d = true;
+                rot_z(parse_angle(get(0)))
+            }
+            "rotatey" => {
+                saw_3d = true;
+                rot_y(parse_angle(get(0)))
+            }
+            "rotate3d" => {
+                saw_3d = true;
+                let (x, y, z) = (num(get(0)), num(get(1)), num(get(2)));
+                let a = parse_angle(get(3));
+                let l = (x * x + y * y + z * z).sqrt();
+                if l < 1e-6 {
+                    Mat4::IDENTITY
+                } else {
+                    let (x, y, z) = (x / l, y / l, z / l);
+                    let (s, c) = a.sin_cos();
+                    let t = 1.0 - c;
+                    Mat4 {
+                        m: [
+                            [t * x * x + c, t * x * y - s * z, t * x * z + s * y, 0.0],
+                            [t * x * y + s * z, t * y * y + c, t * y * z - s * x, 0.0],
+                            [t * x * z - s * y, t * y * z + s * x, t * z * z + c, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ],
+                    }
+                }
+            }
+            "scale3d" => {
+                saw_3d = true;
+                let mut t = Mat4::IDENTITY;
+                t.m[0][0] = args.first().map(|v| v.parse().unwrap_or(1.0)).unwrap_or(1.0);
+                t.m[1][1] = args.get(1).map(|v| v.parse().unwrap_or(1.0)).unwrap_or(1.0);
+                t.m[2][2] = args.get(2).map(|v| v.parse().unwrap_or(1.0)).unwrap_or(1.0);
+                t
+            }
+            "perspective" => {
+                saw_3d = true;
+                let d = crate::css::parse_len_px(get(0)).unwrap_or(0.0);
+                let mut t = Mat4::IDENTITY;
+                if d > 0.0 {
+                    t.m[3][2] = -1.0 / d;
+                }
+                t
+            }
+            "matrix3d" => {
+                saw_3d = true;
+                // CSS 는 열 우선(column-major)으로 16개를 준다
+                let v: Vec<f32> = (0..16).map(|i| num(get(i))).collect();
+                let mut t = Mat4::IDENTITY;
+                for c in 0..4 {
+                    for r in 0..4 {
+                        t.m[r][c] = v[c * 4 + r];
+                    }
+                }
+                t
+            }
+            // 2D 함수는 아핀 파서에게 맡기고 여기선 그 결과를 4x4 로 올린다
+            _ => {
+                let one = parse_transform(&rest[..close + 1], bw, bh);
+                Mat4 {
+                    m: [
+                        [one.a, one.c, 0.0, one.e],
+                        [one.b, one.d, 0.0, one.f],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ],
+                }
+            }
+        };
+        m = m.mul(&step); // CSS: 왼쪽 함수가 바깥쪽 → M = F1·F2·…
+        rest = &rest[close + 1..];
+    }
+    let _ = saw_3d;
     m
 }
 
@@ -2831,8 +3127,47 @@ fn fragment_by_y<'a>(b: &LayoutBox<'a>, y0: f32, y1: f32) -> Option<LayoutBox<'a
 // 각 박스의 transform 을 절대 좌표계 행렬로 계산해 저장한다 (기하는 건드리지 않는다).
 // 페인트가 이 행렬로 서브트리 전체를 변환하고, CSSOM 사각형은 변환된 경계로 보고한다.
 fn apply_transforms(b: &mut LayoutBox) {
+    apply_transforms_p(b, None)
+}
+
+// persp: 부모가 준 (거리 d, 원근 원점 x, y). CSS 의 perspective 는 **직계 자식**의
+// 변환에만 적용된다 (자식의 3D 변환 뒤에 곱해야 z 가 살아 있다 — 먼저 평면으로 접으면
+// 원근이 사라져 rotateY 가 그냥 가로 축소로 보인다).
+fn apply_transforms_p(b: &mut LayoutBox, persp: Option<(f32, f32, f32)>) {
+    // 이 박스의 perspective 는 **직계 자식**에게만 준다 (표준). 원근 원점은 이 박스 기준.
+    let my_persp = match b.styled_node.value("perspective") {
+        Some(Value::Length(d, crate::css::Unit::Px)) if d > 0.0 => {
+            let bb = b.dimensions.border_box();
+            let (mut px, mut py) = (bb.x + bb.width / 2.0, bb.y + bb.height / 2.0);
+            if let Some(Value::Keyword(o)) = b.styled_node.value("perspective-origin") {
+                let toks: Vec<&str> = o.split_whitespace().collect();
+                let res = |t: &str, base: f32, off: f32| -> f32 {
+                    match t {
+                        "left" | "top" => off,
+                        "right" | "bottom" => off + base,
+                        "center" => off + base / 2.0,
+                        v => {
+                            if let Some(p) = v.strip_suffix('%') {
+                                off + p.parse::<f32>().unwrap_or(50.0) / 100.0 * base
+                            } else {
+                                off + crate::css::parse_len_px(v).unwrap_or(base / 2.0)
+                            }
+                        }
+                    }
+                };
+                if !toks.is_empty() {
+                    px = res(toks[0], bb.width, bb.x);
+                }
+                if toks.len() > 1 {
+                    py = res(toks[1], bb.height, bb.y);
+                }
+            }
+            Some((d, px, py))
+        }
+        _ => None,
+    };
     for c in &mut b.children {
-        apply_transforms(c);
+        apply_transforms_p(c, my_persp);
     }
     // 익명 박스는 부모의 styled_node 를 공유한다 — 여기서 걸러내지 않으면 부모의 transform 이
     // 자식 익명 박스에도 다시 걸려 두 번 변환된다.
@@ -2844,15 +3179,22 @@ fn apply_transforms(b: &mut LayoutBox) {
         return;
     }
     let bb = b.dimensions.border_box();
-    let local = parse_transform(&t, bb.width, bb.height);
-    if local.is_identity() {
+    let (ox, oy) = transform_origin(b);
+    // 4x4 로 조립한다: [부모 원근] · T(o) · M · T(-o)
+    let m4 = parse_transform4(&t, bb.width, bb.height);
+    let mut total = Mat4::translate(ox, oy).mul(&m4).mul(&Mat4::translate(-ox, -oy));
+    if let Some((d, px, py)) = persp {
+        // T(po) · P(d) · T(-po) 를 **자식 변환 뒤에** (즉 왼쪽에) 곱한다
+        let p = Mat4::translate(px, py)
+            .mul(&Mat4::perspective(d))
+            .mul(&Mat4::translate(-px, -py));
+        total = p.mul(&total);
+    }
+    let m3 = total.flatten();
+    if m3.is_identity() {
         return;
     }
-    let (ox, oy) = transform_origin(b);
-    // M_abs = T(o) · M · T(-o)
-    let to_origin = Mat { e: -ox, f: -oy, ..Mat::IDENTITY };
-    let back = Mat { e: ox, f: oy, ..Mat::IDENTITY };
-    b.transform = Some(to_origin.then(&local).then(&back));
+    b.transform = Some(m3);
 }
 
 
@@ -2929,7 +3271,11 @@ mod tests {
         layout_tree(root, viewport, fs, &no_images())
     }
 
-    fn transformed_for(dom: &crate::dom::Dom, ss: &crate::css::Stylesheet, fs: &FontStack) -> (Rect, Mat) {
+    fn transformed_for(
+        dom: &crate::dom::Dom,
+        ss: &crate::css::Stylesheet,
+        fs: &FontStack,
+    ) -> (Rect, Mat3) {
         // styled tree 를 여기서 만들면 수명이 짧아 반환할 수 없으므로 필요한 값만 뽑는다.
         let styled = crate::style::style_tree(dom, ss);
         let lb = tree_for(&styled, fs);
@@ -2998,6 +3344,36 @@ mod tests {
         let (_, m2) = transformed_for(&dom, &ss2, &fs);
         let (x2, y2) = m2.apply(1.0, 0.0);
         assert!((x2 - 0.0).abs() < 1e-4 && (y2 - 1.0).abs() < 1e-4, "top left 도 같은 결과");
+    }
+
+    // 3D 변환 — 예전엔 rotateX/rotateY/rotate3d/perspective/matrix3d 를 만나면
+    // **항등으로 무시**했다 (요소가 안 돌아간 채 그려졌다).
+    #[test]
+    fn transform_3d_rotates_and_perspective_projects() {
+        // rotateY(60deg): 원근이 없으면 가로만 cos(60)=0.5 배로 줄어든다 (사각형 유지)
+        let m = parse_transform4("rotateY(60deg)", 100.0, 50.0).flatten();
+        let (x, y) = m.apply(1.0, 1.0);
+        assert!((x - 0.5).abs() < 1e-4, "x 가 절반: {}", x);
+        assert!((y - 1.0).abs() < 1e-4, "y 는 그대로: {}", y);
+        assert!(m.is_affine(), "원근이 없으면 아핀");
+
+        // perspective(300px) rotateY(60deg): 투영 항이 생긴다 (w 가 x 에 의존)
+        let p = parse_transform4("perspective(300px) rotateY(60deg)", 100.0, 50.0).flatten();
+        assert!(!p.is_affine(), "원근이 있으면 아핀이 아니다");
+        // 같은 |x| 라도 앞으로 나온 쪽(양의 z)이 더 크게 보인다 → 좌우 비대칭
+        let (lx, _) = p.apply(-100.0, 0.0);
+        let (rx, _) = p.apply(100.0, 0.0);
+        assert!(
+            lx.abs() > rx.abs(),
+            "가까운 쪽이 더 멀리 투영돼야: 좌 {} 우 {}",
+            lx,
+            rx
+        );
+
+        // rotate3d(0,1,0,60deg) 는 rotateY(60deg) 와 같아야 한다
+        let r3 = parse_transform4("rotate3d(0, 1, 0, 60deg)", 100.0, 50.0).flatten();
+        let (a, b) = r3.apply(1.0, 1.0);
+        assert!((a - x).abs() < 1e-4 && (b - y).abs() < 1e-4);
     }
 
     #[test]

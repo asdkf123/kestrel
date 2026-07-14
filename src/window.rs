@@ -130,21 +130,29 @@ fn fill_js_maps(
         if let Some(t) = m.get("transform").cloned() {
             if t != "none" && !t.is_empty() && !t.starts_with("matrix") {
                 let bb = d.border_box();
-                let mt = crate::layout::parse_transform(&t, bb.width, bb.height);
-                // cos(90°) 는 정확히 0 이 아니라 -4e-8 이다 → "-0" 으로 찍힌다. 0 으로 정리.
-                let n = |v: f32| crate::style::num_css(if v.abs() < 1e-6 { 0.0 } else { v });
-                m.insert(
-                    "transform".to_string(),
-                    format!(
-                        "matrix({}, {}, {}, {}, {}, {})",
-                        n(mt.a),
-                        n(mt.b),
-                        n(mt.c),
-                        n(mt.d),
-                        n(mt.e),
-                        n(mt.f)
-                    ),
-                );
+                // 3D 변환은 matrix3d(...) 로 직렬화해야 한다 (표준). matrix() 로 접으면
+                // z/원근 정보가 사라져 라이브러리가 틀린 변환을 읽는다.
+                if let Some(v) = crate::layout::transform_matrix3d(&t, bb.width, bb.height) {
+                    let n = |x: f32| crate::style::num_css(if x.abs() < 1e-6 { 0.0 } else { x });
+                    let parts: Vec<String> = v.iter().map(|x| n(*x)).collect();
+                    m.insert("transform".to_string(), format!("matrix3d({})", parts.join(", ")));
+                } else {
+                    let mt = crate::layout::parse_transform(&t, bb.width, bb.height);
+                    // cos(90°) 는 정확히 0 이 아니라 -4e-8 이다 → "-0" 으로 찍힌다. 0 으로 정리.
+                    let n = |v: f32| crate::style::num_css(if v.abs() < 1e-6 { 0.0 } else { v });
+                    m.insert(
+                        "transform".to_string(),
+                        format!(
+                            "matrix({}, {}, {}, {}, {}, {})",
+                            n(mt.a),
+                            n(mt.b),
+                            n(mt.c),
+                            n(mt.d),
+                            n(mt.e),
+                            n(mt.f)
+                        ),
+                    );
+                }
             }
         }
         m.insert("width".to_string(), px(d.content.width));
@@ -242,7 +250,10 @@ fn canvas_display_items(
                     let to_origin = crate::layout::Mat { e: -bx, f: -by, ..crate::layout::Mat::IDENTITY };
                     let back = crate::layout::Mat { e: bx, f: by, ..crate::layout::Mat::IDENTITY };
                     let abs = to_origin.then(&$m).then(&back);
-                    out.push(DisplayItem::Transform { m: abs, items });
+                    out.push(DisplayItem::Transform {
+                        m: crate::layout::Mat3::from_affine(&abs),
+                        items,
+                    });
                 }
                 start = out.len();
             };

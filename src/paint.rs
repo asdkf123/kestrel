@@ -1069,7 +1069,7 @@ pub enum DisplayItem {
     // 회전/기울임은 사각형이 사각형으로 남지 않으므로 개별 프리미티브를 밀고 늘리는
     // 방식으로는 표현할 수 없다 — 글자·이미지·그림자·그라디언트가 **함께** 돌아야 한다.
     // (예전엔 translate/scale 만 좌표를 밀고 rotate/skew/matrix 는 조용히 무시했다)
-    Transform { m: crate::layout::Mat, items: Vec<DisplayItem> },
+    Transform { m: crate::layout::Mat3, items: Vec<DisplayItem> },
 }
 
 // CSS 테두리 4변을 사각형으로 발행. 변마다 그리는 조건: border-<side>-width > 0
@@ -3239,18 +3239,18 @@ fn draw_item(
             for it in items {
                 draw_item(&mut layer, it, scroll_y, scale, vh, fonts, cache, images);
             }
-            // 논리(CSS) 좌표 행렬 m 을 장치(캔버스) 좌표 행렬 F 로 옮긴다.
+            // 논리(CSS) 좌표 투영행렬 m 을 장치(캔버스) 좌표 행렬 F 로 옮긴다.
             //   장치: X = s·x ,  Y = s·(y - k)   (s=scale, k=scroll)
-            //   F = S ∘ m ∘ S⁻¹
+            //   F = S ∘ m ∘ S⁻¹   (S 는 스케일+스크롤 아핀)
             let (s, k) = (scale, scroll_y);
-            let fwd = crate::layout::Mat {
-                a: m.a,
-                b: m.b,
-                c: m.c,
-                d: m.d,
-                e: s * (m.c * k + m.e),
-                f: s * (m.d * k + m.f - k),
+            let s_mat = crate::layout::Mat3 {
+                m: [[s, 0.0, 0.0], [0.0, s, -s * k], [0.0, 0.0, 1.0]],
             };
+            let s_inv = crate::layout::Mat3 {
+                m: [[1.0 / s, 0.0, 0.0], [0.0, 1.0 / s, k], [0.0, 0.0, 1.0]],
+            };
+            // S⁻¹ 먼저, 그다음 m, 그다음 S
+            let fwd = s_inv.then(m).then(&s_mat);
             let Some(inv) = fwd.invert() else { return };
             // 대상 픽셀마다 역매핑해 레이어를 이중선형 샘플 (프리멀티플라이로 가장자리 보존)
             for py in 0..canvas.height {
