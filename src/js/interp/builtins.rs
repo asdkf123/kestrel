@@ -497,35 +497,304 @@ impl Interp {
                 _ => crate::css::Color { r: 0, g: 0, b: 0, a: 255 },
             }
         };
-        let ops = self.canvas_cmds.entry(canvas_id).or_default();
+        // 현재 변환 행렬(CTM). 캔버스는 상태 기계다 — translate/rotate/scale 이
+        // 이후 그리기에 실제로 적용돼야 한다. 예전엔 전부 조용한 no-op 이라
+        // 그림이 엉뚱한 자리에 그려지거나 사라졌다 (아무 말도 없이).
+        let get_ctm = |ctx: &Rc<RefCell<ObjMap>>| -> crate::layout::Mat {
+            match ctx.borrow().get("\u{0}ctm") {
+                Some(Value::Arr(a)) => {
+                    let v = a.borrow();
+                    let g = |i: usize| v.get(i).map(to_num).unwrap_or(0.0) as f32;
+                    crate::layout::Mat { a: g(0), b: g(1), c: g(2), d: g(3), e: g(4), f: g(5) }
+                }
+                _ => crate::layout::Mat::IDENTITY,
+            }
+        };
+        let set_ctm = |ctx: &Rc<RefCell<ObjMap>>, m: crate::layout::Mat| {
+            let v = vec![
+                Value::Num(m.a as f64),
+                Value::Num(m.b as f64),
+                Value::Num(m.c as f64),
+                Value::Num(m.d as f64),
+                Value::Num(m.e as f64),
+                Value::Num(m.f as f64),
+            ];
+            ctx.borrow_mut().insert("\u{0}ctm".to_string(), Value::Arr(ArrayObj::new(v)));
+        };
+        let alpha = |ctx: &Rc<RefCell<ObjMap>>| -> f32 {
+            match ctx.borrow().get("globalAlpha") {
+                Some(Value::Num(n)) => (*n as f32).clamp(0.0, 1.0),
+                _ => 1.0,
+            }
+        };
+        // globalAlpha 는 색의 알파에 곱해진다 (표준)
+        let with_alpha = |c: crate::css::Color, a: f32| crate::css::Color {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            a: ((c.a as f32) * a).round().clamp(0.0, 255.0) as u8,
+        };
+        let font_px_of = |ctx: &Rc<RefCell<ObjMap>>| -> f32 {
+            match ctx.borrow().get("font") {
+                Some(Value::Str(f)) => font_px(f),
+                _ => 10.0,
+            }
+        };
+        // 텍스트 폭 (실제 폰트 메트릭). 폰트가 없으면 근사.
+        let text_width = |text: &str, px: f32, ctx_fonts: Option<&crate::font::FontStack>| -> f32 {
+            match ctx_fonts {
+                Some(fonts) => text
+                    .chars()
+                    .map(|ch| {
+                        let (fi, gid) = fonts.glyph_for(ch);
+                        let f = fonts.font(fi);
+                        f.advance_width(gid) as f32 * (px / f.units_per_em() as f32)
+                    })
+                    .sum(),
+                None => text.chars().count() as f32 * px * 0.5,
+            }
+        };
+        let fonts_ptr: Option<&crate::font::FontStack> =
+            self.layout_ctx.as_ref().map(|c| unsafe { &*c.fonts });
+
+        let a = alpha(&ctx);
+        let cur_m = get_ctm(&ctx);
         match method {
-            FillRect => ops.push(CanvasOp::FillRect {
-                x: num(0), y: num(1), w: num(2), h: num(3), color: style("fillStyle"),
+            // ── 변환 상태 ──
+            Translate | Rotate | Scale | Transform | SetTransform | ResetTransform => {
+                use crate::layout::Mat;
+                let m = match method {
+                    Translate => Mat { e: num(0), f: num(1), ..Mat::IDENTITY },
+                    Rotate => {
+                        let t = num(0);
+                        Mat { a: t.cos(), b: t.sin(), c: -t.sin(), d: t.cos(), e: 0.0, f: 0.0 }
+                    }
+                    Scale => Mat { a: num(0), d: num(1), ..Mat::IDENTITY },
+                    _ => Mat {
+                        a: num(0),
+                        b: num(1),
+                        c: num(2),
+                        d: num(3),
+                        e: num(4),
+                        f: num(5),
+                    },
+                };
+                let new_m = match method {
+                    // setTransform/resetTransform 은 CTM 을 **대체**한다
+                    SetTransform => m,
+                    ResetTransform => Mat::IDENTITY,
+                    // 나머지는 현재 CTM 에 **누적**된다 (새 변환이 먼저 적용)
+                    _ => m.then(&cur_m),
+                };
+                set_ctm(&ctx, new_m);
+                self.canvas_cmds
+                    .entry(canvas_id)
+                    .or_default()
+                    .push(CanvasOp::SetTransform { m: new_m });
+            }
+            Save => {
+                // 상태 전체를 스택에 (CTM + 스타일)
+                let snap = vec![
+                    ctx.borrow().get("\u{0}ctm").cloned().unwrap_or(Value::Undefined),
+                    ctx.borrow().get("fillStyle").cloned().unwrap_or(Value::Undefined),
+                    ctx.borrow().get("strokeStyle").cloned().unwrap_or(Value::Undefined),
+                    ctx.borrow().get("lineWidth").cloned().unwrap_or(Value::Undefined),
+                    ctx.borrow().get("font").cloned().unwrap_or(Value::Undefined),
+                    ctx.borrow().get("globalAlpha").cloned().unwrap_or(Value::Undefined),
+                ];
+                let stack = match ctx.borrow().get("\u{0}stack") {
+                    Some(Value::Arr(st)) => Some(st.clone()),
+                    _ => None,
+                };
+                match stack {
+                    Some(st) => st.borrow_mut().push(Value::Arr(ArrayObj::new(snap))),
+                    None => {
+                        ctx.borrow_mut().insert(
+                            "\u{0}stack".to_string(),
+                            Value::Arr(ArrayObj::new(vec![Value::Arr(ArrayObj::new(snap))])),
+                        );
+                    }
+                }
+            }
+            Restore => {
+                let popped = match ctx.borrow().get("\u{0}stack") {
+                    Some(Value::Arr(st)) => st.borrow_mut().pop(),
+                    _ => None,
+                };
+                if let Some(Value::Arr(snap)) = popped {
+                    let v = snap.borrow().clone();
+                    let keys = [
+                        "\u{0}ctm",
+                        "fillStyle",
+                        "strokeStyle",
+                        "lineWidth",
+                        "font",
+                        "globalAlpha",
+                    ];
+                    for (k, val) in keys.iter().zip(v.into_iter()) {
+                        if !matches!(val, Value::Undefined) {
+                            ctx.borrow_mut().insert(k.to_string(), val);
+                        }
+                    }
+                    let m = get_ctm(&ctx);
+                    self.canvas_cmds
+                        .entry(canvas_id)
+                        .or_default()
+                        .push(CanvasOp::SetTransform { m });
+                }
+            }
+            // ── 측정 ──
+            MeasureText => {
+                let text = args.first().map(to_display).unwrap_or_default();
+                let px = font_px_of(&ctx);
+                let w = text_width(&text, px, fonts_ptr);
+                let mut m = ObjMap::new();
+                m.insert("width".to_string(), Value::Num(w as f64));
+                m.insert("actualBoundingBoxAscent".to_string(), Value::Num((px * 0.8) as f64));
+                m.insert("actualBoundingBoxDescent".to_string(), Value::Num((px * 0.2) as f64));
+                return Ok(Value::Obj(Rc::new(RefCell::new(m))));
+            }
+            // ── 이미지 ──
+            DrawImage => {
+                // drawImage(img, dx, dy [, dw, dh]) — <img> 요소만 지원 (캔버스 소스는 미지원).
+                // 이미지 맵은 src(절대 URL) → (인덱스, 폭, 높이) 다.
+                let src = match args.first() {
+                    Some(Value::Dom(id)) => {
+                        let dom = self.dom_arena()?;
+                        match &dom.get(*id).node_type {
+                            crate::dom::NodeType::Element(e) => e.attributes.get("src").cloned(),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                let idx = src.as_ref().and_then(|raw| {
+                    let abs = self.absolute_url(raw);
+                    self.layout_ctx.as_ref().and_then(|c| unsafe {
+                        (*c.img_map)
+                            .get(&abs)
+                            .or_else(|| (*c.img_map).get(raw))
+                            .map(|(i, _, _)| *i)
+                    })
+                });
+                let Some(idx) = idx else {
+                    self.canvas_warn("drawImage 의 소스를 찾지 못했다 (<img> 요소만 지원)");
+                    return Ok(Value::Undefined);
+                };
+                let (dx, dy) = (num(1), num(2));
+                let (dw, dh) = if args.len() >= 5 {
+                    (num(3), num(4))
+                } else {
+                    (0.0, 0.0) // 0 이면 호스트가 고유 크기로 그린다
+                };
+                self.canvas_cmds
+                    .entry(canvas_id)
+                    .or_default()
+                    .push(CanvasOp::DrawImage { idx, x: dx, y: dy, w: dw, h: dh });
+            }
+            // ── 경로 ──
+            Ellipse => {
+                // ellipse(cx, cy, rx, ry, rot, start, end)
+                let (cx, cy, rx, ry) = (num(0), num(1), num(2), num(3));
+                let rot = num(4);
+                let (s, e) = (num(5), num(6));
+                for k in 0..=32 {
+                    let t = s + (e - s) * k as f32 / 32.0;
+                    let (px0, py0) = (rx * t.cos(), ry * t.sin());
+                    let x = cx + px0 * rot.cos() - py0 * rot.sin();
+                    let y = cy + px0 * rot.sin() + py0 * rot.cos();
+                    push_path(&ctx, x, y);
+                }
+            }
+            RoundRect => {
+                let (x, y, w, h) = (num(0), num(1), num(2), num(3));
+                let r = args.get(4).map(to_num).unwrap_or(0.0) as f32;
+                let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+                let corner = |cx: f32, cy: f32, a0: f32, a1: f32, out: &mut Vec<(f32, f32)>| {
+                    for k in 0..=6 {
+                        let t = a0 + (a1 - a0) * k as f32 / 6.0;
+                        out.push((cx + r * t.cos(), cy + r * t.sin()));
+                    }
+                };
+                let mut pts = Vec::new();
+                use std::f32::consts::PI;
+                corner(x + w - r, y + r, -PI / 2.0, 0.0, &mut pts);
+                corner(x + w - r, y + h - r, 0.0, PI / 2.0, &mut pts);
+                corner(x + r, y + h - r, PI / 2.0, PI, &mut pts);
+                corner(x + r, y + r, PI, 1.5 * PI, &mut pts);
+                for (px0, py0) in pts {
+                    push_path(&ctx, px0, py0);
+                }
+            }
+            FillRect => self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::FillRect {
+                x: num(0),
+                y: num(1),
+                w: num(2),
+                h: num(3),
+                color: with_alpha(style("fillStyle"), a),
             }),
-            ClearRect => ops.push(CanvasOp::ClearRect { x: num(0), y: num(1), w: num(2), h: num(3) }),
+            ClearRect => self
+                .canvas_cmds
+                .entry(canvas_id)
+                .or_default()
+                .push(CanvasOp::ClearRect { x: num(0), y: num(1), w: num(2), h: num(3) }),
             StrokeRect => {
-                let lw = match ctx.borrow().get("lineWidth") { Some(Value::Num(n)) => *n as f32, _ => 1.0 };
-                ops.push(CanvasOp::StrokeRect {
-                    x: num(0), y: num(1), w: num(2), h: num(3), color: style("strokeStyle"), lw,
+                let lw = match ctx.borrow().get("lineWidth") {
+                    Some(Value::Num(n)) => *n as f32,
+                    _ => 1.0,
+                };
+                self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::StrokeRect {
+                    x: num(0),
+                    y: num(1),
+                    w: num(2),
+                    h: num(3),
+                    color: with_alpha(style("strokeStyle"), a),
+                    lw,
                 });
             }
             FillText => {
                 let text = args.first().map(to_display).unwrap_or_default();
-                let px = match ctx.borrow().get("font") { Some(Value::Str(f)) => font_px(f), _ => 10.0 };
-                ops.push(CanvasOp::FillText { text, x: num(0), y: num(1), color: style("fillStyle"), px });
+                let px = font_px_of(&ctx);
+                // textAlign/textBaseline 을 실제로 반영한다 (표준). 예전엔 속성 자체가 없어
+                // 가운데 정렬한 텍스트가 왼쪽으로 밀렸다.
+                let w = text_width(&text, px, fonts_ptr);
+                let align = match ctx.borrow().get("textAlign") {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => "start".to_string(),
+                };
+                let dx = match align.as_str() {
+                    "center" => -w / 2.0,
+                    "right" | "end" => -w,
+                    _ => 0.0,
+                };
+                let baseline = match ctx.borrow().get("textBaseline") {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => "alphabetic".to_string(),
+                };
+                let dy = match baseline.as_str() {
+                    "top" | "hanging" => px * 0.8,
+                    "middle" => px * 0.3,
+                    "bottom" | "ideographic" => -px * 0.2,
+                    _ => 0.0,
+                };
+                self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::FillText {
+                    text,
+                    x: num(0) + dx,
+                    y: num(1) + dy,
+                    color: with_alpha(style("fillStyle"), a),
+                    px,
+                });
             }
-            // 경로: __path 에 점을 쌓았다가 fill 시 폴리곤으로.
+            // 경로: __path 에 점을 쌓았다가 fill/stroke 시 폴리곤으로.
             BeginPath => set_path(&ctx, Vec::new()),
             MoveTo | LineTo => push_path(&ctx, num(0), num(1)),
             Rect => {
-                // 사각형 경로(4모서리) 추가
                 let (x, y, w, h) = (num(0), num(1), num(2), num(3));
-                for (px, py) in [(x, y), (x + w, y), (x + w, y + h), (x, y + h)] {
-                    push_path(&ctx, px, py);
+                for (px0, py0) in [(x, y), (x + w, y), (x + w, y + h), (x, y + h)] {
+                    push_path(&ctx, px0, py0);
                 }
             }
             Arc => {
-                // (cx, cy, r, start, end) 를 선분으로 근사해 경로에 추가
                 let (cx, cy, r) = (num(0), num(1), num(2));
                 let (s, e) = (num(3), num(4));
                 let seg = 24;
@@ -540,14 +809,52 @@ impl Interp {
                 if pts.len() >= 3 {
                     self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::FillPath {
                         pts,
-                        color: style("fillStyle"),
+                        color: with_alpha(style("fillStyle"), a),
                     });
                 }
             }
-            Stroke => {} // 경로 스트로크는 미지원(근사로 생략)
+            // 경로 스트로크: 각 선분을 두께만큼의 사각형(폴리곤)으로 그린다.
+            // 예전엔 통째로 무시돼서 stroke() 한 그림이 아예 안 나왔다.
+            Stroke => {
+                let pts = get_path(&ctx);
+                let lw = match ctx.borrow().get("lineWidth") {
+                    Some(Value::Num(n)) => (*n as f32).max(1.0),
+                    _ => 1.0,
+                };
+                let color = with_alpha(style("strokeStyle"), a);
+                let ops = self.canvas_cmds.entry(canvas_id).or_default();
+                for w in pts.windows(2) {
+                    let ((x0, y0), (x1, y1)) = (w[0], w[1]);
+                    let (dx, dy) = (x1 - x0, y1 - y0);
+                    let len = (dx * dx + dy * dy).sqrt();
+                    if len < 0.01 {
+                        continue;
+                    }
+                    let (nx, ny) = (-dy / len * lw / 2.0, dx / len * lw / 2.0);
+                    ops.push(CanvasOp::FillPath {
+                        pts: vec![
+                            (x0 + nx, y0 + ny),
+                            (x1 + nx, y1 + ny),
+                            (x1 - nx, y1 - ny),
+                            (x0 - nx, y0 - ny),
+                        ],
+                        color,
+                    });
+                }
+            }
+            // 아직 구현하지 않은 것들. **조용히 무시하지 않고** 한 번 알린다 —
+            // 조용한 no-op 은 "그렸는데 안 나온다" 는 미궁을 만든다.
+            Unimplemented => self.canvas_warn("clip/gradient/pattern/ImageData 는 아직 미지원"),
             Noop => {}
         }
         Ok(Value::Undefined)
+    }
+
+    // 캔버스 미지원 기능 경고 (같은 메시지는 한 번만)
+    fn canvas_warn(&mut self, msg: &str) {
+        if self.canvas_warned.insert(msg.to_string()) {
+            println!("[canvas] {}", msg);
+        }
     }
 
     // 정규식 매치 → [full, g1, ...] 배열 (+ index/input/groups own-property)
@@ -2495,6 +2802,31 @@ impl Interp {
                 m.insert("strokeStyle".to_string(), Value::Str("#000000".to_string()));
                 m.insert("lineWidth".to_string(), Value::Num(1.0));
                 m.insert("font".to_string(), Value::Str("10px sans-serif".to_string()));
+                m.insert("globalAlpha".to_string(), Value::Num(1.0));
+                m.insert("textAlign".to_string(), Value::Str("start".to_string()));
+                m.insert("textBaseline".to_string(), Value::Str("alphabetic".to_string()));
+                m.insert("lineCap".to_string(), Value::Str("butt".to_string()));
+                m.insert("lineJoin".to_string(), Value::Str("miter".to_string()));
+                m.insert(
+                    "globalCompositeOperation".to_string(),
+                    Value::Str("source-over".to_string()),
+                );
+                m.insert("shadowBlur".to_string(), Value::Num(0.0));
+                m.insert("shadowColor".to_string(), Value::Str("rgba(0,0,0,0)".to_string()));
+                m.insert("canvas".to_string(), Value::Dom(canvas_id));
+                // CTM 초기값(단위행렬). 없으면 save() 가 undefined 를 저장하고
+                // restore() 가 변환을 되돌리지 못한다 (변환이 영원히 남는다).
+                m.insert(
+                    "\u{0}ctm".to_string(),
+                    Value::Arr(ArrayObj::new(vec![
+                        Value::Num(1.0),
+                        Value::Num(0.0),
+                        Value::Num(0.0),
+                        Value::Num(1.0),
+                        Value::Num(0.0),
+                        Value::Num(0.0),
+                    ])),
+                );
                 m.insert("\u{0}path".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
                 use CanvasMethod::*;
                 for (name, meth) in [
@@ -2511,21 +2843,29 @@ impl Interp {
                     ("stroke", Stroke),
                     ("fillText", FillText),
                     ("strokeText", FillText),
-                    ("save", Noop),
-                    ("restore", Noop),
-                    ("scale", Noop),
-                    ("translate", Noop),
-                    ("rotate", Noop),
-                    ("transform", Noop),
-                    ("setTransform", Noop),
-                    ("setLineDash", Noop),
-                    ("clip", Noop),
-                    ("measureText", Noop),
-                    ("createLinearGradient", Noop),
-                    ("bezierCurveTo", Noop),
-                    ("quadraticCurveTo", Noop),
-                    ("drawImage", Noop),
-                    ("putImageData", Noop),
+                    ("save", Save),
+                    ("restore", Restore),
+                    ("scale", Scale),
+                    ("translate", Translate),
+                    ("rotate", Rotate),
+                    ("transform", Transform),
+                    ("setTransform", SetTransform),
+                    ("resetTransform", ResetTransform),
+                    ("measureText", MeasureText),
+                    ("drawImage", DrawImage),
+                    ("ellipse", Ellipse),
+                    ("roundRect", RoundRect),
+                    ("setLineDash", Noop), // 점선은 시각 세부 (그림은 나온다)
+                    // 아직 미지원 — **조용히 무시하지 않고** 쓰이면 알린다
+                    ("clip", Unimplemented),
+                    ("createLinearGradient", Unimplemented),
+                    ("createRadialGradient", Unimplemented),
+                    ("createPattern", Unimplemented),
+                    ("putImageData", Unimplemented),
+                    ("getImageData", Unimplemented),
+                    ("createImageData", Unimplemented),
+                    ("bezierCurveTo", Unimplemented),
+                    ("quadraticCurveTo", Unimplemented),
                 ] {
                     m.insert(name.to_string(), Value::Native(Native::Canvas(meth)));
                 }

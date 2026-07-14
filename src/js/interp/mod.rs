@@ -287,6 +287,19 @@ pub struct Instance {
 // canvas 2D 컨텍스트 메서드
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CanvasMethod {
+    Translate,
+    Rotate,
+    Scale,
+    Transform,
+    SetTransform,
+    ResetTransform,
+    Save,
+    Restore,
+    MeasureText,
+    DrawImage,
+    Ellipse,
+    RoundRect,
+    Unimplemented,
     FillRect,
     ClearRect,
     StrokeRect,
@@ -942,6 +955,11 @@ pub enum CanvasOp {
     StrokeRect { x: f32, y: f32, w: f32, h: f32, color: crate::css::Color, lw: f32 },
     FillPath { pts: Vec<(f32, f32)>, color: crate::css::Color },
     FillText { text: String, x: f32, y: f32, color: crate::css::Color, px: f32 },
+    // 현재 변환 행렬(CTM). 이후 op 들에 적용된다. 예전엔 translate/rotate/scale 이
+    // 조용한 no-op 이라 그림이 엉뚱한 자리에 그려졌다 (아무 말도 없이).
+    SetTransform { m: crate::layout::Mat },
+    // drawImage(img, dx, dy [, dw, dh]) — 예전엔 no-op 이라 그림이 통째로 사라졌다.
+    DrawImage { idx: usize, x: f32, y: f32, w: f32, h: f32 },
 }
 
 // 복합 대입 연산자 → 대응하는 이항 연산자
@@ -1018,6 +1036,8 @@ pub struct Interp {
     // getComputedStyle 이 읽는다. 빈 맵이면 빈 문자열.
     pub computed_styles: std::collections::HashMap<crate::dom::NodeId, HashMap<String, String>>,
     // <canvas> 2D 그리기 명령 (NodeId → ops). 호스트가 렌더 시 DisplayItem 으로 변환.
+    // 캔버스 미지원 기능 경고 중복 방지
+    canvas_warned: std::collections::HashSet<String>,
     pub canvas_cmds: std::collections::HashMap<crate::dom::NodeId, Vec<CanvasOp>>,
     // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
     pub global_handlers: Vec<(String, Value)>,
@@ -1701,6 +1721,7 @@ impl Interp {
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
+            canvas_warned: std::collections::HashSet::new(),
             canvas_cmds: std::collections::HashMap::new(),
             global_handlers: Vec::new(),
             rng: seed,

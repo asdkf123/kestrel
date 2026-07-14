@@ -151,8 +151,45 @@ fn canvas_display_items(
     for (r, id, _) in element_rects {
         let Some(ops) = canvas_cmds.get(id) else { continue };
         let (bx, by) = (r.x, r.y);
+        // 현재 CTM (캔버스 좌표계). 변환이 걸린 op 들은 DisplayItem::Transform 으로 감싸
+        // 페인트가 오프스크린 레이어에 그린 뒤 역매핑한다 — 텍스트·이미지까지 정확히 변환된다.
+        let mut ctm = crate::layout::Mat::IDENTITY;
+        let mut start = out.len();
+        // 변환이 바뀔 때마다 지금까지 쌓인 item 을 감싼다
+        macro_rules! flush_transform {
+            ($m:expr) => {
+                if !$m.is_identity() && out.len() > start {
+                    let items: Vec<DisplayItem> = out.drain(start..).collect();
+                    // 캔버스 좌표계 → 페이지 좌표계: T(원점) · M · T(-원점)
+                    let to_origin = crate::layout::Mat { e: -bx, f: -by, ..crate::layout::Mat::IDENTITY };
+                    let back = crate::layout::Mat { e: bx, f: by, ..crate::layout::Mat::IDENTITY };
+                    let abs = to_origin.then(&$m).then(&back);
+                    out.push(DisplayItem::Transform { m: abs, items });
+                }
+                start = out.len();
+            };
+        }
         for op in ops {
             match op {
+                CanvasOp::SetTransform { m } => {
+                    flush_transform!(ctm);
+                    ctm = *m;
+                }
+                CanvasOp::DrawImage { idx, x, y, w, h } => {
+                    let rect = Rect {
+                        x: bx + x,
+                        y: by + y,
+                        width: *w,
+                        height: *h,
+                    };
+                    // dw/dh 가 0 이면 고유 크기로 (Natural), 아니면 지정 크기에 맞춰 늘린다
+                    let fit = if *w <= 0.0 || *h <= 0.0 {
+                        crate::paint::ImageFit::Natural
+                    } else {
+                        crate::paint::ImageFit::Fill
+                    };
+                    out.push(DisplayItem::Image { image: *idx, rect, fit, pos: None });
+                }
                 CanvasOp::FillRect { x, y, w, h, color } => out.push(DisplayItem::Rect {
                     color: *color,
                     rect: Rect { x: bx + x, y: by + y, width: *w, height: *h },
@@ -199,6 +236,7 @@ fn canvas_display_items(
                 }
             }
         }
+        flush_transform!(ctm);
     }
     out
 }
@@ -873,6 +911,40 @@ pub fn run_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_transform_and_stroke_are_applied() {
+        // 캔버스는 상태 기계다: translate/rotate/scale 은 이후 그리기에 실제로 적용되고,
+        // save/restore 로 되돌아간다. 예전엔 전부 조용한 no-op 이라 그림이 엉뚱한 자리에
+        // 그려지거나(변환 무시) stroke() 한 경로가 통째로 안 나왔다.
+        let mut dom = crate::html::parse_dom(
+            "<canvas id=\"c\" width=\"200\" height=\"200\"></canvas><p id=\"t\">?</p>\
+             <script>\
+             var x = document.getElementById('c').getContext('2d');\
+             x.save(); x.translate(50, 20); x.fillRect(0, 0, 10, 10); x.restore();\
+             x.fillRect(0, 0, 5, 5);\
+             x.beginPath(); x.moveTo(0, 100); x.lineTo(100, 100); x.lineWidth = 4; x.stroke();\
+             document.getElementById('t').textContent = \
+               x.measureText('AB').width > 0 ? 'ok' : 'measureText 가 0';\
+             </script>"
+                .to_string(),
+        );
+        let rt = crate::js::run_scripts(&mut dom, "https://localhost/", None);
+        assert_eq!(
+            dom.find_by_attr_id("t").map(|n| dom.text_content(n)).unwrap(),
+            "ok",
+            "measureText 는 실제 폭을 준다"
+        );
+        let ops = rt.canvas_cmds.values().next().expect("캔버스 명령");
+        use crate::js::interp::CanvasOp;
+        // 변환이 명령으로 기록되고(restore 로 되돌아가고), stroke 가 폴리곤을 만든다
+        let transforms = ops.iter().filter(|o| matches!(o, CanvasOp::SetTransform { .. })).count();
+        assert!(transforms >= 2, "translate + restore 로 변환 명령이 두 번 이상: {}", transforms);
+        assert!(
+            ops.iter().any(|o| matches!(o, CanvasOp::FillPath { .. })),
+            "stroke() 가 경로를 그려야 (예전엔 통째로 무시됐다)"
+        );
+    }
     use crate::dom::{Dom, NodeType};
 
     fn make_page(html: &str) -> Page {
