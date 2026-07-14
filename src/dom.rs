@@ -96,6 +96,32 @@ pub enum NodeType {
 pub struct ElementData {
     pub tag_name: String,
     pub attributes: AttrMap,
+    // 요소의 네임스페이스 (DOM §4.9). None = HTML 네임스페이스.
+    // 예전엔 아예 없어서 createElementNS 가 네임스페이스를 **버렸다** —
+    // SVG 의 <linearGradient> 를 만들어도 소문자 html 요소가 됐다.
+    pub namespace: Option<String>,
+}
+
+pub const NS_HTML: &str = "http://www.w3.org/1999/xhtml";
+pub const NS_SVG: &str = "http://www.w3.org/2000/svg";
+pub const NS_MATHML: &str = "http://www.w3.org/1998/Math/MathML";
+
+impl ElementData {
+    // HTML 네임스페이스 요소 (기본). 테스트와 내부 생성에서 쓴다.
+    pub fn html(tag: &str, attributes: AttrMap) -> ElementData {
+        ElementData { tag_name: tag.to_string(), attributes, namespace: None }
+    }
+
+    pub fn ns(&self) -> &str {
+        self.namespace.as_deref().unwrap_or(NS_HTML)
+    }
+    // 로컬 이름 (접두사를 뗀 부분)
+    pub fn local_name(&self) -> &str {
+        self.tag_name.rsplit(':').next().unwrap_or(&self.tag_name)
+    }
+    pub fn prefix(&self) -> Option<&str> {
+        self.tag_name.split_once(':').map(|(p, _)| p)
+    }
 }
 
 // text/elem: 테스트에서만 쓰이는 노드 생성자 (비-테스트 빌드에선 미사용).
@@ -108,7 +134,7 @@ pub fn text(data: String) -> Node {
 pub fn elem(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
     Node {
         children,
-        node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs }),
+        node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None }),
     }
 }
 
@@ -412,6 +438,27 @@ impl Dom {
             node_type: NodeType::Element(ElementData {
                 tag_name: tag.to_ascii_lowercase(),
                 attributes: AttrMap::new(),
+                namespace: None, // HTML 네임스페이스
+            }),
+        });
+        id
+    }
+
+    // createElementNS: 네임스페이스를 보존하고 **대소문자도 그대로** 둔다.
+    // SVG 의 linearGradient / clipPath 는 대소문자가 의미를 갖는다 — 소문자로
+    // 내리면 다른 요소가 된다.
+    pub fn create_element_ns(&mut self, ns: Option<&str>, qname: &str) -> NodeId {
+        self.touch();
+        let id = self.nodes.len();
+        let is_html = ns.is_none() || ns == Some(NS_HTML);
+        self.nodes.push(NodeData {
+            parent: None,
+            children: Vec::new(),
+            node_type: NodeType::Element(ElementData {
+                // HTML 네임스페이스면 소문자로 정규화 (표준), 그 외는 원문 유지
+                tag_name: if is_html { qname.to_ascii_lowercase() } else { qname.to_string() },
+                attributes: AttrMap::new(),
+                namespace: ns.filter(|n| *n != NS_HTML).map(|n| n.to_string()),
             }),
         });
         id
@@ -787,7 +834,7 @@ mod tests {
         // 예전엔 src 만 봐서 srcset 만 있는 반응형 이미지가 아예 안 실렸다.
         let mut attrs = AttrMap::new();
         attrs.insert("srcset".to_string(), "a.png 1x, b.png 2x".to_string());
-        let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
+        let e = ElementData::html("img", attrs);
         assert_eq!(e.img_source().as_deref(), Some("a.png"), "DPR 1 → 1x 후보");
 
         // srcset 이 있으면 **srcset 이 이긴다** (src 는 srcset 을 모르는 브라우저용 폴백이다).
@@ -795,18 +842,18 @@ mod tests {
         let mut attrs = AttrMap::new();
         attrs.insert("src".to_string(), "c.png".to_string());
         attrs.insert("srcset".to_string(), "a.png 1x".to_string());
-        let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
+        let e = ElementData::html("img", attrs);
         assert_eq!(e.img_source().as_deref(), Some("a.png"));
 
         // srcset 이 비었으면 src
         let mut attrs = AttrMap::new();
         attrs.insert("src".to_string(), "c.png".to_string());
         attrs.insert("srcset".to_string(), "".to_string());
-        let e = ElementData { tag_name: "img".to_string(), attributes: attrs };
+        let e = ElementData::html("img", attrs);
         assert_eq!(e.img_source().as_deref(), Some("c.png"));
 
         // 둘 다 없으면 None
-        let e = ElementData { tag_name: "img".to_string(), attributes: AttrMap::new() };
+        let e = ElementData::html("img", AttrMap::new());
         assert_eq!(e.img_source(), None);
     }
 
@@ -822,28 +869,22 @@ mod tests {
     // 예전엔 ' ' 하나로만 잘라서 탭이 든 class 가 한 덩어리가 됐다.
     #[test]
     fn class_tokenization_uses_ascii_whitespace_only() {
-        let e = ElementData {
-            tag_name: "div".to_string(),
-            attributes: {
-                let mut a = AttrMap::new();
-                a.insert("class".to_string(), "a\tb\nc  d".to_string());
-                a
-            },
-        };
+        let e = ElementData::html("div", {
+            let mut a = AttrMap::new();
+            a.insert("class".to_string(), "a\tb\nc  d".to_string());
+            a
+        });
         let cs = e.classes();
         assert_eq!(cs.len(), 4, "{:?}", cs);
         for want in ["a", "b", "c", "d"] {
             assert!(cs.contains(want), "{:?}", cs);
         }
         // NBSP 는 구분자가 아니다 — 이름의 일부
-        let e2 = ElementData {
-            tag_name: "div".to_string(),
-            attributes: {
-                let mut a = AttrMap::new();
-                a.insert("class".to_string(), "x\u{00A0}y".to_string());
-                a
-            },
-        };
+        let e2 = ElementData::html("div", {
+            let mut a = AttrMap::new();
+            a.insert("class".to_string(), "x\u{00A0}y".to_string());
+            a
+        });
         let cs2 = e2.classes();
         assert_eq!(cs2.len(), 1, "{:?}", cs2);
         assert!(cs2.contains("x\u{00A0}y"), "{:?}", cs2);
@@ -877,23 +918,14 @@ mod arena_tests {
         let mut attrs = AttrMap::new();
         attrs.insert("id".to_string(), "b".to_string());
         Node {
-            node_type: NodeType::Element(ElementData {
-                tag_name: "div".to_string(),
-                attributes: AttrMap::new(),
-            }),
+            node_type: NodeType::Element(ElementData::html("div", AttrMap::new())),
             children: vec![
                 Node {
-                    node_type: NodeType::Element(ElementData {
-                        tag_name: "p".to_string(),
-                        attributes: AttrMap::new(),
-                    }),
+                    node_type: NodeType::Element(ElementData::html("p", AttrMap::new())),
                     children: vec![text("a".to_string())],
                 },
                 Node {
-                    node_type: NodeType::Element(ElementData {
-                        tag_name: "p".to_string(),
-                        attributes: attrs,
-                    }),
+                    node_type: NodeType::Element(ElementData::html("p", attrs)),
                     children: vec![text("b".to_string())],
                 },
             ],

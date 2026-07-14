@@ -95,7 +95,7 @@ fn parse_document(source: String) -> Node {
 }
 
 fn elem_node(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
-    Node { children, node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs }) }
+    Node { children, node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None }) }
 }
 
 // ── 토큰 ────────────────────────────────────────────────────────────
@@ -368,6 +368,7 @@ impl Sink {
                 node_type: NodeType::Element(ElementData {
                     tag_name: "#document".to_string(),
                     attributes: AttrMap::new(),
+                    namespace: None,
                 }),
                 children: vec![],
                 parent: None,
@@ -386,7 +387,7 @@ impl Sink {
     fn new_element(&mut self, name: &str, attrs: AttrMap) -> usize {
         let id = self.nodes.len();
         self.nodes.push(SinkNode {
-            node_type: NodeType::Element(ElementData { tag_name: name.to_string(), attributes: attrs }),
+            node_type: NodeType::Element(ElementData { tag_name: name.to_string(), attributes: attrs, namespace: None }),
             children: vec![],
             parent: None,
         });
@@ -452,6 +453,52 @@ enum Ns {
     Html,
     Svg,
     Math,
+}
+
+// SVG 태그 이름 조정 표 (HTML 표준 §13.2.6.5 "Adjust SVG tag names").
+// 표준이 정한 목록 그대로다 — 이게 없으면 <linearGradient> 가 <lineargradient> 가
+// 되고, DOM 을 이름으로 뒤지는 코드(그리고 SVG 렌더러)가 그 요소를 못 찾는다.
+fn adjust_svg_tag(name: &str) -> &str {
+    match name {
+        "altglyph" => "altGlyph",
+        "altglyphdef" => "altGlyphDef",
+        "altglyphitem" => "altGlyphItem",
+        "animatecolor" => "animateColor",
+        "animatemotion" => "animateMotion",
+        "animatetransform" => "animateTransform",
+        "clippath" => "clipPath",
+        "feblend" => "feBlend",
+        "fecolormatrix" => "feColorMatrix",
+        "fecomponenttransfer" => "feComponentTransfer",
+        "fecomposite" => "feComposite",
+        "feconvolvematrix" => "feConvolveMatrix",
+        "fediffuselighting" => "feDiffuseLighting",
+        "fedisplacementmap" => "feDisplacementMap",
+        "fedistantlight" => "feDistantLight",
+        "fedropshadow" => "feDropShadow",
+        "feflood" => "feFlood",
+        "fefunca" => "feFuncA",
+        "fefuncb" => "feFuncB",
+        "fefuncg" => "feFuncG",
+        "fefuncr" => "feFuncR",
+        "fegaussianblur" => "feGaussianBlur",
+        "feimage" => "feImage",
+        "femerge" => "feMerge",
+        "femergenode" => "feMergeNode",
+        "femorphology" => "feMorphology",
+        "feoffset" => "feOffset",
+        "fepointlight" => "fePointLight",
+        "fespecularlighting" => "feSpecularLighting",
+        "fespotlight" => "feSpotLight",
+        "fetile" => "feTile",
+        "feturbulence" => "feTurbulence",
+        "foreignobject" => "foreignObject",
+        "glyphref" => "glyphRef",
+        "lineargradient" => "linearGradient",
+        "radialgradient" => "radialGradient",
+        "textpath" => "textPath",
+        other => other,
+    }
 }
 
 struct OpenElem {
@@ -643,7 +690,18 @@ impl Builder {
     }
 
     fn insert_element(&mut self, name: &str, attrs: AttrMap, ns: Ns) -> usize {
-        let id = self.sink.new_element(name, attrs);
+        // SVG 태그 이름 조정 (HTML §13.2.6.5). 토크나이저는 이름을 소문자로 내리지만
+        // SVG 는 대소문자가 의미를 갖는다 — 표준이 정한 표로 되돌린다.
+        let adjusted = if matches!(ns, Ns::Svg) { adjust_svg_tag(name) } else { name };
+        let id = self.sink.new_element(adjusted, attrs);
+        // 외래 콘텐츠(SVG/MathML)는 그 네임스페이스를 갖는다 (HTML §13.2.6.5)
+        if let NodeType::Element(e) = &mut self.sink.nodes[id].node_type {
+            e.namespace = match ns {
+                Ns::Html => None,
+                Ns::Svg => Some(crate::dom::NS_SVG.to_string()),
+                Ns::Math => Some(crate::dom::NS_MATHML.to_string()),
+            };
+        }
         self.insert_at(id);
         self.open.push(OpenElem { id, name: name.to_string(), ns });
         id

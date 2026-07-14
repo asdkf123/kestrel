@@ -122,6 +122,72 @@ impl Interp {
     // 토큰 검증 (§7.1): 빈 문자열은 SyntaxError, ASCII 공백이 들어 있으면
     // InvalidCharacterError. 예전엔 검증이 없어서 조용히 통과했고, 공백이 든 토큰이
     // class 속성에 들어가 **두 개의 클래스**가 돼 버렸다.
+    // XML Name 문법 (Namespaces in XML §2 / DOM §Validate).
+    fn is_name_start(c: char) -> bool {
+        c == ':'
+            || c == '_'
+            || c.is_ascii_alphabetic()
+            || matches!(c as u32,
+                0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0x2FF | 0x370..=0x37D | 0x37F..=0x1FFF
+                | 0x200C..=0x200D | 0x2070..=0x218F | 0x2C00..=0x2FEF | 0x3001..=0xD7FF
+                | 0xF900..=0xFDCF | 0xFDF0..=0xFFFD | 0x10000..=0xEFFFF)
+    }
+
+    fn is_name_char(c: char) -> bool {
+        Self::is_name_start(c)
+            || c == '-'
+            || c == '.'
+            || c.is_ascii_digit()
+            || c as u32 == 0xB7
+            || matches!(c as u32, 0x0300..=0x036F | 0x203F..=0x2040)
+    }
+
+    fn is_valid_name(name: &str) -> bool {
+        let mut it = name.chars();
+        match it.next() {
+            Some(c) if Self::is_name_start(c) => {}
+            _ => return false,
+        }
+        it.all(Self::is_name_char)
+    }
+
+    // createElement 의 이름 검증 (§4.5): 유효한 Name 이 아니면 InvalidCharacterError.
+    // 예전엔 빈 문자열만 걸렀다 — createElement("<div>") 가 조용히 통과했다.
+    pub(super) fn validate_element_name(&mut self, name: &str) -> Result<(), String> {
+        if !Self::is_valid_name(name) {
+            return Err(self.throw_dom("InvalidCharacterError", "유효하지 않은 요소 이름"));
+        }
+        Ok(())
+    }
+
+    // createElementNS 의 (네임스페이스, 정규화 이름) 검증 (§Validate and extract).
+    pub(super) fn validate_qualified_name(
+        &mut self,
+        qname: &str,
+        ns: Option<&str>,
+    ) -> Result<(), String> {
+        if !Self::is_valid_name(qname) {
+            return Err(self.throw_dom("InvalidCharacterError", "유효하지 않은 이름"));
+        }
+        let parts: Vec<&str> = qname.split(':').collect();
+        if parts.len() > 2 || parts.iter().any(|p| p.is_empty()) {
+            return Err(self.throw_dom("InvalidCharacterError", "유효하지 않은 정규화 이름"));
+        }
+        let prefix = if parts.len() == 2 { Some(parts[0]) } else { None };
+        if prefix.is_some() && ns.is_none() {
+            return Err(self.throw_dom("NamespaceError", "접두사에 네임스페이스가 없다"));
+        }
+        if prefix == Some("xml") && ns != Some("http://www.w3.org/XML/1998/namespace") {
+            return Err(self.throw_dom("NamespaceError", "xml 접두사의 네임스페이스가 다르다"));
+        }
+        let xmlns_ns = "http://www.w3.org/2000/xmlns/";
+        let is_xmlns = qname == "xmlns" || prefix == Some("xmlns");
+        if is_xmlns != (ns == Some(xmlns_ns)) {
+            return Err(self.throw_dom("NamespaceError", "xmlns 네임스페이스가 맞지 않다"));
+        }
+        Ok(())
+    }
+
     // 검증 순서가 중요하다 (표준): **모든** 토큰의 빈 문자열을 먼저 보고,
     // 그다음 **모든** 토큰의 공백을 본다. replace(" ", "") 는 InvalidCharacterError 가
     // 아니라 SyntaxError 다 (두 번째 인자가 빈 문자열이므로).
@@ -654,12 +720,41 @@ impl Interp {
                 Ok(result.map(Value::Dom).unwrap_or(Value::Null))
             }
             // tagName 은 요소만. nodeName 은 모든 노드에 있다 (§4.4).
+            // tagName: HTML 네임스페이스에서만 대문자로 (§4.9). SVG 의 clipPath 를
+            // 대문자로 만들면 다른 이름이 된다.
             "tagName" => match &dom.get(id).node_type {
-                crate::dom::NodeType::Element(e) => Ok(Value::Str(e.tag_name.to_ascii_uppercase())),
+                crate::dom::NodeType::Element(e) => Ok(Value::Str(
+                    if e.namespace.is_none() {
+                        e.tag_name.to_ascii_uppercase()
+                    } else {
+                        e.tag_name.clone()
+                    },
+                )),
                 _ => Ok(Value::Undefined),
             },
+            // 네임스페이스 관련 (DOM §4.9). 예전엔 아예 없어서 undefined 였다.
+            "localName" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => Value::Str(e.local_name().to_string()),
+                _ => Value::Undefined,
+            }),
+            "namespaceURI" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => Value::Str(e.ns().to_string()),
+                _ => Value::Null,
+            }),
+            "prefix" => Ok(match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => {
+                    e.prefix().map(|p| Value::Str(p.to_string())).unwrap_or(Value::Null)
+                }
+                _ => Value::Null,
+            }),
             "nodeName" => Ok(Value::Str(match &dom.get(id).node_type {
-                crate::dom::NodeType::Element(e) => e.tag_name.to_ascii_uppercase(),
+                crate::dom::NodeType::Element(e) => {
+                    if e.namespace.is_none() {
+                        e.tag_name.to_ascii_uppercase()
+                    } else {
+                        e.tag_name.clone()
+                    }
+                }
                 crate::dom::NodeType::Text(_) => "#text".to_string(),
                 crate::dom::NodeType::Comment(_) => "#comment".to_string(),
             })),

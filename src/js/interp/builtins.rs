@@ -2059,19 +2059,25 @@ impl Interp {
             }
             // createElementNS(ns, name): 우리 DOM 은 네임스페이스를 따로 두지 않는다.
             // 태그 이름으로 만들고 (svg/rect 등) 그대로 렌더 파이프라인을 태운다.
+            // createElementNS(namespace, qualifiedName) — DOM §4.5.
+            // 예전엔 네임스페이스를 **버리고** create_element 로 넘겨서 소문자
+            // HTML 요소를 만들었다. SVG 의 <linearGradient> 가 <lineargradient> 가 됐다.
             Native::CreateElementNS => {
-                let tag = args.get(1).map(to_display).unwrap_or_default();
-                if tag.is_empty() {
-                    return Err("createElementNS 에 태그 이름이 필요".to_string());
-                }
+                let ns = match args.first() {
+                    None | Some(Value::Null) | Some(Value::Undefined) => None,
+                    Some(v) => {
+                        let s = to_display(v);
+                        if s.is_empty() { None } else { Some(s) }
+                    }
+                };
+                let qname = args.get(1).map(to_display).unwrap_or_default();
+                self.validate_qualified_name(&qname, ns.as_deref())?;
                 let dom = self.dom_arena()?;
-                Ok(Value::Dom(dom.create_element(&tag)))
+                Ok(Value::Dom(dom.create_element_ns(ns.as_deref(), &qname)))
             }
             Native::CreateElement => {
                 let tag = args.first().map(to_display).unwrap_or_default();
-                if tag.is_empty() {
-                    return Err("createElement 에 태그 이름이 필요".to_string());
-                }
+                self.validate_element_name(&tag)?;
                 let dom = self.dom_arena()?;
                 Ok(Value::Dom(dom.create_element(&tag)))
             }

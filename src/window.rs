@@ -1614,6 +1614,47 @@ mod tests {
         assert_eq!(got, "rgb(1, 2, 3)|rgb(0, 0, 0)", "문서: {}", dom.inner_html(dom.root));
     }
 
+    // 요소의 네임스페이스 (DOM §4.9). 예전엔 요소에 네임스페이스가 저장되지 않아서
+    // createElementNS 가 그걸 **버렸다** — SVG 의 <linearGradient> 가 소문자 HTML
+    // 요소가 됐다. 이름 검증도 없어서 createElement("<div>") 가 조용히 통과했다.
+    #[test]
+    fn element_namespaces_and_name_validation() {
+        let dom = run_with_layout(
+            r#"<svg id="s"><linearGradient id="g"></linearGradient></svg>
+               <div id="d"></div><div id="out"></div>
+               <script>
+                 var SVG = 'http://www.w3.org/2000/svg';
+                 var HTML = 'http://www.w3.org/1999/xhtml';
+                 var log = [];
+                 var d = document.getElementById('d');
+                 log.push(d.tagName + ',' + d.localName + ',' + (d.namespaceURI === HTML));
+                 // createElementNS 는 대소문자를 보존한다
+                 var lg = document.createElementNS(SVG, 'linearGradient');
+                 log.push(lg.tagName + ',' + (lg.namespaceURI === SVG));
+                 // 파서도 SVG 태그 이름 조정 표를 따른다 (§13.2.6.5)
+                 var parsed = document.getElementById('s').firstChild;
+                 log.push(parsed.tagName + ',' + (parsed.namespaceURI === SVG));
+                 // 이름 검증
+                 try { document.createElement(''); } catch (e) { log.push(e.name); }
+                 try { document.createElement('<div>'); } catch (e) { log.push(e.name); }
+                 try { document.createElementNS(null, 'a:b'); } catch (e) { log.push(e.name); }
+                 // 접두사 분해
+                 var p = document.createElementNS(SVG, 'svg:rect');
+                 log.push(p.prefix + ',' + p.localName);
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            "DIV,div,true|linearGradient,true|linearGradient,true|\
+             InvalidCharacterError|InvalidCharacterError|NamespaceError|svg,rect"
+                .replace("\n", "")
+                .replace("             ", "")
+        );
+    }
+
     // DOMTokenList (DOM §7.1). 순서 집합이고, 토큰을 검증하며, value 는 원문이다.
     #[test]
     fn classlist_follows_dom_token_list_spec() {
