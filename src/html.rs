@@ -8,7 +8,6 @@
 //   parse_dom(String) -> Dom
 //   parse_fragment(String) -> Vec<Node>   (innerHTML 용)
 
-use std::collections::HashMap;
 
 use crate::dom::{AttrMap, ElementData, Node, NodeType};
 
@@ -22,7 +21,7 @@ pub fn parse(source: String) -> Node {
         if roots.len() == 1 {
             roots.pop().unwrap()
         } else {
-            elem_node("html".to_string(), HashMap::new(), roots)
+            elem_node("html".to_string(), AttrMap::new(), roots)
         }
     }
 }
@@ -52,7 +51,7 @@ fn parse_document(source: String) -> Node {
         .find(|&c| matches!(b.sink.nodes[c].node_type, NodeType::Element(_)));
     match html {
         Some(h) => b.to_node(h),
-        None => elem_node("html".to_string(), HashMap::new(), vec![]),
+        None => elem_node("html".to_string(), AttrMap::new(), vec![]),
     }
 }
 
@@ -196,7 +195,7 @@ impl Tokenizer {
     fn read_start_tag(&mut self) -> Token {
         self.pos += 1; // '<'
         let name = self.read_tag_name();
-        let mut attrs: AttrMap = HashMap::new();
+        let mut attrs = AttrMap::new();
         let mut self_closing = false;
         loop {
             self.skip_whitespace();
@@ -219,7 +218,7 @@ impl Tokenizer {
                 _ => {
                     let (k, v) = self.read_attr();
                     if !k.is_empty() {
-                        attrs.entry(k).or_insert(v); // 중복 속성은 첫 값 유지 (표준)
+                        attrs.insert_if_absent(k, v); // 중복 속성은 첫 값 유지 (표준)
                     }
                 }
             }
@@ -314,7 +313,7 @@ impl Sink {
             nodes: vec![SinkNode {
                 node_type: NodeType::Element(ElementData {
                     tag_name: "#document".to_string(),
-                    attributes: HashMap::new(),
+                    attributes: AttrMap::new(),
                 }),
                 children: vec![],
                 parent: None,
@@ -356,7 +355,7 @@ impl Sink {
     fn attrs(&self, id: usize) -> AttrMap {
         match &self.nodes[id].node_type {
             NodeType::Element(e) => e.attributes.clone(),
-            NodeType::Text(_) => HashMap::new(),
+            NodeType::Text(_) => AttrMap::new(),
         }
     }
 }
@@ -445,7 +444,7 @@ impl Builder {
         let mut b = Builder::new_document();
         b.fragment = true;
         // 합성 <html> 루트를 만들어 문서에 붙이고 open 에 push, context=body → InBody
-        let html = b.sink.new_element("html", HashMap::new());
+        let html = b.sink.new_element("html", AttrMap::new());
         b.sink.append(0, html);
         b.open.push(OpenElem { id: html, name: "html".to_string(), ns: Ns::Html });
         b.fragment_root = html;
@@ -1055,7 +1054,7 @@ impl Builder {
     }
 
     fn default_html_root(&mut self) {
-        let id = self.sink.new_element("html", HashMap::new());
+        let id = self.sink.new_element("html", AttrMap::new());
         self.sink.append(0, id);
         self.open.push(OpenElem { id, name: "html".to_string(), ns: Ns::Html });
     }
@@ -1075,14 +1074,14 @@ impl Builder {
                 None
             }
             Token::End { ref name } if matches!(name.as_str(), "head" | "body" | "html" | "br") => {
-                let id = self.insert_element("head", HashMap::new(), Ns::Html);
+                let id = self.insert_element("head", AttrMap::new(), Ns::Html);
                 self.head = Some(id);
                 self.mode = Mode::InHead;
                 Some(t)
             }
             Token::End { .. } => None,
             other => {
-                let id = self.insert_element("head", HashMap::new(), Ns::Html);
+                let id = self.insert_element("head", AttrMap::new(), Ns::Html);
                 self.head = Some(id);
                 self.mode = Mode::InHead;
                 Some(other)
@@ -1178,13 +1177,13 @@ impl Builder {
                 None
             }
             Token::End { ref name } if matches!(name.as_str(), "body" | "html" | "br") => {
-                self.insert_element("body", HashMap::new(), Ns::Html);
+                self.insert_element("body", AttrMap::new(), Ns::Html);
                 self.mode = Mode::InBody;
                 Some(t)
             }
             Token::End { .. } => None,
             other => {
-                self.insert_element("body", HashMap::new(), Ns::Html);
+                self.insert_element("body", AttrMap::new(), Ns::Html);
                 self.mode = Mode::InBody;
                 Some(other)
             }
@@ -1196,7 +1195,7 @@ impl Builder {
         if let Some(id) = html_id {
             if let NodeType::Element(e) = &mut self.sink.nodes[id].node_type {
                 for (k, v) in attrs {
-                    e.attributes.entry(k).or_insert(v);
+                    e.attributes.insert_if_absent(k, v);
                 }
             }
         }
@@ -1239,7 +1238,7 @@ impl Builder {
                 if let Some(bid) = self.open.iter().find(|e| e.name == "body").map(|e| e.id) {
                     if let NodeType::Element(e) = &mut self.sink.nodes[bid].node_type {
                         for (k, v) in attrs {
-                            e.attributes.entry(k).or_insert(v);
+                            e.attributes.insert_if_absent(k, v);
                         }
                     }
                 }
@@ -1486,7 +1485,7 @@ impl Builder {
             }
             "p" => {
                 if !self.in_button_scope("p") {
-                    self.insert_element("p", HashMap::new(), Ns::Html);
+                    self.insert_element("p", AttrMap::new(), Ns::Html);
                     self.open.pop();
                 }
                 self.close_p();
@@ -1524,7 +1523,7 @@ impl Builder {
             }
             "br" => {
                 self.reconstruct_active();
-                self.insert_void("br", HashMap::new());
+                self.insert_void("br", AttrMap::new());
                 self.frameset_ok = false;
             }
             _ => self.any_other_end(&name),
@@ -1584,7 +1583,7 @@ impl Builder {
                 }
                 "col" => {
                     self.clear_to_table_ctx();
-                    self.insert_element("colgroup", HashMap::new(), Ns::Html);
+                    self.insert_element("colgroup", AttrMap::new(), Ns::Html);
                     self.mode = Mode::InColumnGroup;
                     Some(Token::Start { name, attrs, self_closing })
                 }
@@ -1596,7 +1595,7 @@ impl Builder {
                 }
                 "td" | "th" | "tr" => {
                     self.clear_to_table_ctx();
-                    self.insert_element("tbody", HashMap::new(), Ns::Html);
+                    self.insert_element("tbody", AttrMap::new(), Ns::Html);
                     self.mode = Mode::InTableBody;
                     Some(Token::Start { name, attrs, self_closing })
                 }
@@ -1771,7 +1770,7 @@ impl Builder {
                 }
                 "td" | "th" => {
                     self.clear_to_table_body_ctx();
-                    self.insert_element("tr", HashMap::new(), Ns::Html);
+                    self.insert_element("tr", AttrMap::new(), Ns::Html);
                     self.mode = Mode::InRow;
                     Some(Token::Start { name, attrs, self_closing })
                 }

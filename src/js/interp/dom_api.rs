@@ -141,6 +141,113 @@ impl Interp {
         }
     }
 
+    // 렌더된 텍스트 (innerText). display:none 은 건너뛰고, 블록 경계마다 줄을 나누고,
+    // 공백은 접는다 (white-space: pre* 면 보존).
+    fn inner_text(&mut self, id: crate::dom::NodeId) -> String {
+        // 자기 자신이 렌더되지 않으면 textContent 를 돌려준다 (표준 §3.6.1 1단계).
+        let hidden = self
+            .computed_styles
+            .get(&id)
+            .and_then(|m| m.get("display"))
+            .map(|d| d == "none")
+            .unwrap_or(false);
+        if hidden {
+            if let Ok(dom) = self.dom_arena() {
+                return dom.text_content(id);
+            }
+        }
+        let mut lines: Vec<String> = vec![String::new()];
+        self.render_text_into(id, &mut lines, true);
+        let out: Vec<String> = lines.iter().map(|l| l.trim_end().to_string()).collect();
+        // 앞뒤 빈 줄은 버린다 (표준: 시작/끝의 줄바꿈 제거)
+        let start = out.iter().position(|l| !l.is_empty()).unwrap_or(out.len());
+        let end = out.iter().rposition(|l| !l.is_empty()).map(|i| i + 1).unwrap_or(start);
+        out[start..end].join("\n")
+    }
+
+    fn render_text_into(&mut self, id: crate::dom::NodeId, lines: &mut Vec<String>, root: bool) {
+        let disp = self
+            .computed_styles
+            .get(&id)
+            .and_then(|m| m.get("display"))
+            .cloned()
+            .unwrap_or_default();
+        // 루트 자신이 렌더되지 않으면 textContent 를 돌려준다 (표준).
+        if disp == "none" && !root {
+            return;
+        }
+        let (kids, is_text, text, tag) = {
+            let Ok(dom) = self.dom_arena() else { return };
+            let node = dom.get(id);
+            match &node.node_type {
+                crate::dom::NodeType::Text(t) => (Vec::new(), true, t.clone(), String::new()),
+                crate::dom::NodeType::Element(e) => {
+                    (node.children.clone(), false, String::new(), e.tag_name.to_ascii_lowercase())
+                }
+            }
+        };
+        if is_text {
+            let ws = self
+                .computed_styles
+                .get(&id)
+                .and_then(|m| m.get("white-space"))
+                .cloned()
+                .unwrap_or_default();
+            let keep = ws.starts_with("pre");
+            if keep {
+                let mut parts = text.split('\n');
+                if let Some(first) = parts.next() {
+                    lines.last_mut().unwrap().push_str(first);
+                }
+                for p in parts {
+                    lines.push(p.to_string());
+                }
+            } else {
+                // 공백 접기: 연속 공백/줄바꿈 → 공백 하나
+                let mut collapsed = String::new();
+                let mut sp = false;
+                for c in text.chars() {
+                    if c.is_whitespace() {
+                        if !sp {
+                            collapsed.push(' ');
+                            sp = true;
+                        }
+                    } else {
+                        collapsed.push(c);
+                        sp = false;
+                    }
+                }
+                let cur = lines.last_mut().unwrap();
+                // 줄 맨 앞의 공백은 버린다 (블록 시작의 공백은 렌더되지 않는다)
+                if cur.is_empty() {
+                    cur.push_str(collapsed.trim_start());
+                } else {
+                    cur.push_str(&collapsed);
+                }
+            }
+            return;
+        }
+        if tag == "br" {
+            lines.push(String::new());
+            return;
+        }
+        // 블록 레벨이면 앞뒤로 줄을 나눈다
+        let block = matches!(
+            disp.as_str(),
+            "block" | "flex" | "grid" | "list-item" | "table" | "table-row" | "table-cell"
+                | "table-row-group" | "table-header-group" | "table-footer-group" | "flow-root"
+        );
+        if block && !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+            lines.push(String::new());
+        }
+        for c in kids {
+            self.render_text_into(c, lines, false);
+        }
+        if block && !lines.last().map(|l| l.is_empty()).unwrap_or(true) {
+            lines.push(String::new());
+        }
+    }
+
     // offsetParent: 가장 가까운 위치 지정(static 아님) 조상. 없으면 body (표준 §CSSOM View).
     // position: fixed 인 요소와 body/html 자신은 null.
     fn offset_parent(&mut self, id: crate::dom::NodeId) -> Option<crate::dom::NodeId> {
@@ -187,11 +294,19 @@ impl Interp {
         match key {
             "offsetWidth" | "clientWidth" | "scrollWidth" | "offsetHeight" | "clientHeight"
             | "scrollHeight" | "offsetLeft" | "clientLeft" | "offsetTop" | "clientTop"
-            | "offsetParent" => {
+            | "offsetParent" | "innerText" => {
                 // 측정 전에 보류된 레이아웃을 흘린다 (CSSOM View: forced layout)
+                // innerText 도 "렌더된 텍스트" 라 렌더 정보가 있어야 한다.
                 self.ensure_layout();
             }
             _ => {}
+        }
+        // innerText: **렌더된** 텍스트 (HTML §3.6.1). textContent 와 다르다 —
+        // display:none 인 가지, <script>/<style>/<template> 의 내용은 빠지고,
+        // 블록 경계에서 줄바꿈이 들어가고, 공백은 접힌다.
+        // (예전엔 textContent 별칭이라 스크립트 소스까지 그대로 돌려줬다.)
+        if key == "innerText" {
+            return Ok(Value::Str(self.inner_text(id)));
         }
         // CSSOM View §4 — 셋은 서로 다른 상자다:
         //   offset* = 테두리 박스, client* = 패딩 박스(테두리 제외), scroll* = 스크롤 오버플로.
@@ -345,7 +460,7 @@ impl Interp {
             // element.style/classList → 속성에 대한 라이브 프록시
             "style" => Ok(Value::Style(id)),
             "classList" => Ok(Value::ClassList(id)),
-            "textContent" | "innerText" => Ok(Value::Str(dom.text_content(id))),
+            "textContent" => Ok(Value::Str(dom.text_content(id))),
             "innerHTML" => Ok(Value::Str(dom.inner_html(id))),
             "outerHTML" => Ok(Value::Str(dom.outer_html(id))),
             // value: <select> 는 선택된 option 의 값, <option> 은 value 속성 없으면 텍스트,
@@ -599,8 +714,29 @@ impl Interp {
         let text = to_display(&value);
         let dom = self.dom_arena()?;
         match key {
-            "textContent" | "innerText" => {
+            "textContent" => {
                 dom.set_text_content(id, text);
+                Ok(())
+            }
+            // innerText 대입: 줄바꿈은 <br> 가 된다 (표준). textContent 로 넣으면
+            // 줄이 통째로 붙어 버린다.
+            "innerText" => {
+                if text.contains('\n') {
+                    let html = text
+                        .split('\n')
+                        .map(|l| {
+                            l.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("<br>");
+                    dom.clear_children(id);
+                    for tree in crate::html::parse_fragment(html) {
+                        let sub = dom.insert_tree(tree, Some(id));
+                        dom.get_mut(id).children.push(sub);
+                    }
+                } else {
+                    dom.set_text_content(id, text);
+                }
                 Ok(())
             }
             "innerHTML" => {

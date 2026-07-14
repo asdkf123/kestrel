@@ -1,6 +1,80 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-pub type AttrMap = HashMap<String, String>;
+// 속성은 **순서 있는 목록**이다 (DOM §4.9: element's attribute list). HashMap 이면
+// outerHTML/getAttributeNames 가 매번 다른 순서를 내놓는다 — 직렬화 결과가 원본과
+// 달라지고(스냅샷/캐시 비교가 깨진다) 재현도 안 된다. 개수가 적으니 선형 탐색이면 충분하다.
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct AttrMap {
+    items: Vec<(String, String)>,
+}
+
+impl AttrMap {
+    pub fn new() -> AttrMap {
+        AttrMap::default()
+    }
+    pub fn get(&self, k: &str) -> Option<&String> {
+        self.items.iter().find(|(n, _)| n == k).map(|(_, v)| v)
+    }
+    // 기존 키면 **자리를 유지한 채** 값만 바꾼다 (표준: 순서는 처음 추가된 순서)
+    pub fn insert(&mut self, k: String, v: String) -> Option<String> {
+        if let Some(slot) = self.items.iter_mut().find(|(n, _)| *n == k) {
+            return Some(std::mem::replace(&mut slot.1, v));
+        }
+        self.items.push((k, v));
+        None
+    }
+    pub fn remove(&mut self, k: &str) -> Option<String> {
+        let i = self.items.iter().position(|(n, _)| n == k)?;
+        Some(self.items.remove(i).1)
+    }
+    // 없을 때만 넣는다 (HTML 파서: 중복 속성은 첫 값이 이긴다)
+    pub fn insert_if_absent(&mut self, k: String, v: String) {
+        if !self.contains_key(&k) {
+            self.items.push((k, v));
+        }
+    }
+    pub fn contains_key(&self, k: &str) -> bool {
+        self.items.iter().any(|(n, _)| n == k)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.items.iter().map(|(k, v)| (k, v))
+    }
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.items.iter().map(|(k, _)| k)
+    }
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+impl FromIterator<(String, String)> for AttrMap {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(it: I) -> AttrMap {
+        let mut m = AttrMap::new();
+        for (k, v) in it {
+            m.insert(k, v);
+        }
+        m
+    }
+}
+
+impl IntoIterator for AttrMap {
+    type Item = (String, String);
+    type IntoIter = std::vec::IntoIter<(String, String)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a AttrMap {
+    type Item = (&'a String, &'a String);
+    type IntoIter = std::vec::IntoIter<(&'a String, &'a String)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter().map(|(k, v)| (k, v)).collect::<Vec<_>>().into_iter()
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Node {
