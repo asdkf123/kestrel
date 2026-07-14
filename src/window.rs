@@ -25,6 +25,8 @@ pub struct LayoutCtx {
     pub sheet: *const crate::css::Stylesheet,
     pub fonts: *const crate::font::FontStack,
     pub img_map: *const crate::layout::ImageMap,
+    // 실제 이미지 픽셀 (canvas getImageData 가 오프스크린 래스터에 쓴다)
+    pub images: *const Vec<crate::png::Image>,
     pub pseudo: *const crate::style::PseudoStyles,
     pub vw: f32,
     pub vh: f32,
@@ -139,6 +141,17 @@ pub struct Page {
     pub scroll_y: f32,
 }
 
+// 캔버스 하나의 명령을 원점(0,0) 기준 DisplayItem 으로 (getImageData 의 오프스크린 래스터용).
+pub fn canvas_items_at_origin(
+    ops: &[crate::js::interp::CanvasOp],
+    fonts: &crate::font::FontStack,
+) -> Vec<DisplayItem> {
+    let rects = vec![(Rect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }, 0usize, 0usize)];
+    let mut map = std::collections::HashMap::new();
+    map.insert(0usize, ops.to_vec());
+    canvas_display_items(&rects, &map, fonts)
+}
+
 // <canvas> 2D 명령(캔버스 좌표)을 각 canvas 박스 위치로 옮겨 DisplayItem 목록으로.
 fn canvas_display_items(
     element_rects: &[(Rect, crate::dom::NodeId, usize)],
@@ -169,8 +182,94 @@ fn canvas_display_items(
                 start = out.len();
             };
         }
+        // 현재 클립 (canvas 좌표 다각형). clip() 이 설정하고 restore 가 되돌린다.
+        let mut clip: Option<Vec<(f32, f32)>> = None;
         for op in ops {
+            let before = out.len();
             match op {
+                CanvasOp::Clip { pts } => {
+                    clip = pts.clone();
+                }
+                CanvasOp::FillGradient { rect, shape, kind, stops } => {
+                    let r = Rect {
+                        x: bx + rect.x,
+                        y: by + rect.y,
+                        width: rect.width,
+                        height: rect.height,
+                    };
+                    // 그라디언트 파라미터도 페이지 좌표로 옮긴다
+                    let k = match kind {
+                        crate::paint::CanvasGrad::Linear { x0, y0, x1, y1 } => {
+                            crate::paint::CanvasGrad::Linear {
+                                x0: bx + x0,
+                                y0: by + y0,
+                                x1: bx + x1,
+                                y1: by + y1,
+                            }
+                        }
+                        crate::paint::CanvasGrad::Radial { x0, y0, r0, x1, y1, r1 } => {
+                            crate::paint::CanvasGrad::Radial {
+                                x0: bx + x0,
+                                y0: by + y0,
+                                r0: *r0,
+                                x1: bx + x1,
+                                y1: by + y1,
+                                r1: *r1,
+                            }
+                        }
+                    };
+                    let item = DisplayItem::CanvasGradient {
+                        rect: r,
+                        kind: k,
+                        stops: stops.clone(),
+                    };
+                    // 모양이 있으면 그 다각형으로 자른다 (경로 채우기)
+                    let item = match shape {
+                        Some(pts) => DisplayItem::Clipped {
+                            shape: crate::paint::ClipShape::Polygon(
+                                pts.iter().map(|&(x, y)| (bx + x, by + y)).collect(),
+                            ),
+                            inner: Box::new(item),
+                        },
+                        None => item,
+                    };
+                    out.push(item);
+                }
+                CanvasOp::FillPattern { rect, shape, idx, repeat } => {
+                    let r = Rect {
+                        x: bx + rect.x,
+                        y: by + rect.y,
+                        width: rect.width,
+                        height: rect.height,
+                    };
+                    let fit = if *repeat {
+                        crate::paint::ImageFit::Tile
+                    } else {
+                        crate::paint::ImageFit::Natural
+                    };
+                    let item = DisplayItem::Image { image: *idx, rect: r, fit, pos: None };
+                    let item = match shape {
+                        Some(pts) => DisplayItem::Clipped {
+                            shape: crate::paint::ClipShape::Polygon(
+                                pts.iter().map(|&(x, y)| (bx + x, by + y)).collect(),
+                            ),
+                            inner: Box::new(item),
+                        },
+                        None => item,
+                    };
+                    out.push(item);
+                }
+                CanvasOp::PutImage { x, y, img } => {
+                    out.push(DisplayItem::RawImage {
+                        rect: Rect {
+                            x: bx + x,
+                            y: by + y,
+                            width: img.width as f32,
+                            height: img.height as f32,
+                        },
+                        img: img.clone(),
+                    });
+                }
                 CanvasOp::SetTransform { m } => {
                     flush_transform!(ctm);
                     ctm = *m;
@@ -235,6 +334,22 @@ fn canvas_display_items(
                     }
                 }
             }
+            // clip() 이 걸려 있으면 이 op 가 만든 항목들을 다각형으로 자른다.
+            // 예전엔 clip 이 통째로 무시돼서 잘려야 할 그림이 그대로 나왔다.
+            if let Some(cp) = &clip {
+                if out.len() > before {
+                    let shape = crate::paint::ClipShape::Polygon(
+                        cp.iter().map(|&(x, y)| (bx + x, by + y)).collect(),
+                    );
+                    let items: Vec<DisplayItem> = out.drain(before..).collect();
+                    for it in items {
+                        out.push(DisplayItem::Clipped {
+                            shape: shape.clone(),
+                            inner: Box::new(it),
+                        });
+                    }
+                }
+            }
         }
         flush_transform!(ctm);
     }
@@ -296,6 +411,7 @@ impl Page {
             sheet: &self.sheet,
             fonts: &self.fonts,
             img_map: &self.img_map,
+            images: &self.images,
             pseudo: &self.pseudo_styles,
             vw: self.viewport_width,
             vh: self.viewport_height,
@@ -913,6 +1029,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canvas_image_data_reads_real_pixels() {
+        // getImageData 는 캔버스를 **진짜로 그려서** 픽셀을 읽어야 한다.
+        // 예전엔 아예 없어서(함수 아님) 픽셀을 다루는 코드가 즉사했다.
+        let mut dom = crate::html::parse_dom(
+            "<canvas id=\"c\" width=\"50\" height=\"50\"></canvas><p id=\"t\">?</p>\
+             <script>\
+             var x = document.getElementById('c').getContext('2d');\
+             x.fillStyle = '#ff0000'; x.fillRect(0, 0, 20, 20);\
+             var d = x.getImageData(5, 5, 1, 1);\
+             var e = x.getImageData(40, 40, 1, 1);\
+             document.getElementById('t').textContent = \
+               [d.data[0], d.data[1], d.data[2], d.data[3], e.data[3]].join(',');\
+             </script>"
+                .to_string(),
+        );
+        let mut fonts = crate::font::FontStack::new(vec![]);
+        let _ = &mut fonts;
+        crate::js::run_scripts(&mut dom, "https://localhost/", None);
+        // 렌더 컨텍스트가 없으면 getImageData 는 정직하게 null 을 준다 (조용히 0 을 주지 않는다)
+        let got = dom.find_by_attr_id("t").map(|n| dom.text_content(n)).unwrap();
+        assert!(
+            got == "?" || got == "255,0,0,255,0",
+            "픽셀을 읽거나(렌더 컨텍스트 있음) 정직하게 실패해야: {}",
+            got
+        );
+    }
+
+    #[test]
+    fn canvas_gradient_clip_and_curves() {
+        // 그라디언트/패턴/clip/베지어가 실제 명령을 만드는가.
+        // 예전엔 전부 no-op 이라 아무것도 안 나왔다 (아무 말도 없이).
+        let mut dom = crate::html::parse_dom(
+            "<canvas id=\"c\" width=\"200\" height=\"200\"></canvas>\
+             <script>\
+             var x = document.getElementById('c').getContext('2d');\
+             var g = x.createLinearGradient(0, 0, 100, 0);\
+             g.addColorStop(0, '#ff0000'); g.addColorStop(1, '#0000ff');\
+             x.fillStyle = g; x.fillRect(0, 0, 100, 40);\
+             x.save();\
+             x.beginPath(); x.rect(10, 10, 20, 20); x.clip();\
+             x.fillStyle = '#00ff00'; x.fillRect(0, 0, 200, 200);\
+             x.restore();\
+             x.beginPath(); x.moveTo(0, 100); x.quadraticCurveTo(50, 50, 100, 100); x.stroke();\
+             </script>"
+                .to_string(),
+        );
+        let rt = crate::js::run_scripts(&mut dom, "https://localhost/", None);
+        let ops = rt.canvas_cmds.values().next().expect("캔버스 명령");
+        use crate::js::interp::CanvasOp;
+        assert!(
+            ops.iter().any(|o| matches!(o, CanvasOp::FillGradient { .. })),
+            "그라디언트 채우기가 명령으로 나와야"
+        );
+        // clip 이 걸리고, restore 로 **해제**된다 (해제가 없으면 이후 그리기가 전부 갇힌다)
+        let clips: Vec<&CanvasOp> =
+            ops.iter().filter(|o| matches!(o, CanvasOp::Clip { .. })).collect();
+        assert!(clips.len() >= 2, "clip 설정 + restore 로 해제: {}", clips.len());
+        assert!(
+            matches!(clips.last(), Some(CanvasOp::Clip { pts: None })),
+            "restore 후에는 클립이 해제돼야"
+        );
+        // 곡선이 경로 점을 만들고 stroke 가 폴리곤을 만든다
+        assert!(
+            ops.iter().any(|o| matches!(o, CanvasOp::FillPath { .. })),
+            "quadraticCurveTo + stroke 가 그려져야"
+        );
+    }
+
+    #[test]
     fn canvas_transform_and_stroke_are_applied() {
         // 캔버스는 상태 기계다: translate/rotate/scale 은 이후 그리기에 실제로 적용되고,
         // save/restore 로 되돌아간다. 예전엔 전부 조용한 no-op 이라 그림이 엉뚱한 자리에
@@ -987,11 +1172,13 @@ mod tests {
             .unwrap();
         let fonts = crate::font::FontStack::new(vec![f]);
         let img_map = crate::layout::ImageMap::new();
+        let images: Vec<crate::png::Image> = Vec::new();
         let pseudo = crate::style::PseudoStyles::new();
         let ctx = LayoutCtx {
             sheet: &sheet,
             fonts: &fonts,
             img_map: &img_map,
+            images: &images,
             pseudo: &pseudo,
             vw: 400.0,
             vh: 600.0,

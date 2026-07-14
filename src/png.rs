@@ -1,6 +1,7 @@
 // PNG 디코더 — 청크 파싱 + zlib 해제 + 스캔라인 언필터 + 색상타입 → RGBA8. 직접 구현.
 use crate::inflate;
 
+#[derive(Clone, Debug)]
 pub struct Image {
     pub width: usize,
     pub height: usize,

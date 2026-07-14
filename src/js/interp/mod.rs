@@ -287,6 +287,16 @@ pub struct Instance {
 // canvas 2D 컨텍스트 메서드
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CanvasMethod {
+    GetImageData,
+    PutImageData,
+    CreateImageData,
+    CreateLinearGradient,
+    CreateRadialGradient,
+    AddColorStop,
+    CreatePattern,
+    Clip,
+    BezierCurveTo,
+    QuadraticCurveTo,
     Translate,
     Rotate,
     Scale,
@@ -299,7 +309,6 @@ pub enum CanvasMethod {
     DrawImage,
     Ellipse,
     RoundRect,
-    Unimplemented,
     FillRect,
     ClearRect,
     StrokeRect,
@@ -960,6 +969,19 @@ pub enum CanvasOp {
     SetTransform { m: crate::layout::Mat },
     // drawImage(img, dx, dy [, dw, dh]) — 예전엔 no-op 이라 그림이 통째로 사라졌다.
     DrawImage { idx: usize, x: f32, y: f32, w: f32, h: f32 },
+    // 그라디언트로 칠하기 (모양은 shape, 없으면 rect 전체)
+    FillGradient {
+        rect: crate::layout::Rect,
+        shape: Option<Vec<(f32, f32)>>,
+        kind: crate::paint::CanvasGrad,
+        stops: Vec<(crate::css::Color, f32)>,
+    },
+    // 패턴(이미지 반복)으로 칠하기
+    FillPattern { rect: crate::layout::Rect, shape: Option<Vec<(f32, f32)>>, idx: usize, repeat: bool },
+    // clip(): 이후 그리기를 이 다각형으로 자른다 (save/restore 로 복원)
+    Clip { pts: Option<Vec<(f32, f32)>> },
+    // putImageData: 즉석 픽셀을 그대로 얹는다
+    PutImage { x: f32, y: f32, img: std::rc::Rc<crate::png::Image> },
 }
 
 // 복합 대입 연산자 → 대응하는 이항 연산자

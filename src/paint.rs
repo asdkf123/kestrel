@@ -15,6 +15,14 @@ pub struct Canvas {
     is_layer: bool,
 }
 
+// 캔버스 그라디언트 (createLinearGradient/createRadialGradient): 두 점 또는 두 원으로
+// 정의된다 (CSS 그라디언트와 좌표 규약이 다르다).
+#[derive(Clone, Copy, Debug)]
+pub enum CanvasGrad {
+    Linear { x0: f32, y0: f32, x1: f32, y1: f32 },
+    Radial { x0: f32, y0: f32, r0: f32, x1: f32, y1: f32, r1: f32 },
+}
+
 // 픽셀 마스크 도형 (물리 px). 둥근 사각형(사각/원 포함), 타원, 다각형.
 #[derive(Debug, Clone)]
 pub enum ClipShape {
@@ -869,10 +877,15 @@ pub enum DisplayItem {
     // 안쪽 그림자 (box-shadow inset). dx/dy 는 오프셋, rect 는 border box.
     InnerShadow { color: Color, rect: Rect, radius: f32, blur: f32, dx: f32, dy: f32 },
     Image { image: usize, rect: Rect, fit: ImageFit, pos: Option<(BgCoord, BgCoord)> },
+    // 인라인 픽셀 이미지 (canvas putImageData). 이미지 배열에 없는 즉석 픽셀.
+    RawImage { rect: Rect, img: std::rc::Rc<crate::png::Image> },
     // 그라디언트 배경. angle: CSS 각도(linear), radial: 방사 여부, circle: 원/타원, stops: (색, 위치 0-1).
     Gradient { rect: Rect, angle: f32, radial: bool, circle: bool, conic: bool, stops: Vec<(Color, f32)> },
     // SVG path 채우기 (여러 윤곽선, nonzero winding). points 는 논리 좌표.
     Polygon { color: Color, contours: Vec<Vec<(f32, f32)>> },
+    // 캔버스 그라디언트 (createLinearGradient/createRadialGradient). CSS 그라디언트와 달리
+    // 두 점(또는 두 원)으로 정의되므로 별도 항목이다. 모양은 Clipped 로 자른다.
+    CanvasGradient { rect: Rect, kind: CanvasGrad, stops: Vec<(Color, f32)> },
     Glyph(GlyphInstance),
     // position: sticky — 스크롤 시 뷰포트 상단 top 만큼 아래에 고정. top=스티키 임계,
     // y0=요소의 자연 문서 y. 렌더 시 inner 를 보정된 스크롤로 그린다.
@@ -1351,6 +1364,27 @@ fn stroke_line_quad(x1: f32, y1: f32, x2: f32, y2: f32, sw: f32) -> Option<Vec<(
 
 // 인라인 SVG 의 기본 도형(rect/circle/ellipse/line/path/polygon)을 viewBox 매핑으로 발행.
 // line 은 방향 맞춘 quad 로 대각선도 정확. arc(A)는 아직 현(chord) 근사.
+// DisplayItem 목록을 오프스크린 RGBA 로 래스터화한다 (canvas getImageData 용).
+// 캔버스의 실제 픽셀을 읽으려면 진짜로 그려 봐야 한다 — 명령 목록만으로는 알 수 없다.
+pub fn rasterize_items(
+    items: &[DisplayItem],
+    w: usize,
+    h: usize,
+    fonts: &FontStack,
+    images: &[crate::png::Image],
+) -> crate::png::Image {
+    let mut canvas = Canvas::new_layer(w, h);
+    let mut cache = GlyphCache::new();
+    for item in items {
+        draw_item(&mut canvas, item, 0.0, 1.0, h as f32, fonts, &mut cache, images);
+    }
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for px in &canvas.pixels {
+        rgba.extend_from_slice(&[px.r, px.g, px.b, px.a]);
+    }
+    crate::png::Image { width: w, height: h, rgba }
+}
+
 // SVG 소스를 RGBA 이미지로 래스터화한다 (CSS background-image: url(*.svg) 용).
 // <img src=*.svg> 는 DOM 에서 인라인 <svg> 로 바꿔치기해 그리지만, CSS 배경은 그럴 수
 // 없다 — 실제 픽셀이 필요하다. 로고/아이콘이 대부분 SVG 라 이게 없으면 통째로 빈다.
@@ -1919,8 +1953,16 @@ fn clip_apply(item: DisplayItem, clip: Option<Rect>, round_active: bool) -> Opti
         DisplayItem::Gradient { rect, angle, radial, circle, conic, stops } => {
             rect_intersect(rect, c).map(|r| DisplayItem::Gradient { rect: r, angle, radial, circle, conic, stops })
         }
+        // 캔버스 그라디언트: 보이는 영역으로 rect 만 자른다 (좌표계는 유지 —
+        // 그라디언트 정의가 절대 좌표라 자른 뒤에도 색이 그대로여야 한다).
+        DisplayItem::CanvasGradient { rect, kind, stops } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::CanvasGradient { rect: r, kind, stops })
+        }
         DisplayItem::RoundRect { color, rect, radii } => {
             rect_intersect(rect, c).map(|r| DisplayItem::RoundRect { color, rect: r, radii })
+        }
+        DisplayItem::RawImage { rect, img } => {
+            rect_intersect(rect, c).map(|r| DisplayItem::RawImage { rect: r, img })
         }
         DisplayItem::Polygon { color, contours } => {
             // bbox 로 컬링만 (윤곽 좌표는 유지)
@@ -2469,12 +2511,12 @@ fn filter_item(item: &mut DisplayItem, funcs: &[(String, f32)]) {
         | DisplayItem::InnerShadow { color, .. }
         | DisplayItem::Polygon { color, .. } => *color = apply_filters(*color, funcs),
         DisplayItem::Glyph(gi) => gi.color = apply_filters(gi.color, funcs),
-        DisplayItem::Gradient { stops, .. } => {
+        DisplayItem::Gradient { stops, .. } | DisplayItem::CanvasGradient { stops, .. } => {
             for (c, _) in stops.iter_mut() {
                 *c = apply_filters(*c, funcs);
             }
         }
-        DisplayItem::Image { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
+        DisplayItem::Image { .. } | DisplayItem::RawImage { .. } => {} // 이미지 per-pixel 변환은 미지원(근사)
         DisplayItem::Sticky { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Clipped { inner, .. } => filter_item(inner, funcs),
         DisplayItem::Layer { items, .. } => items.iter_mut().for_each(|it| filter_item(it, funcs)),
@@ -2496,8 +2538,14 @@ fn element_opacity(lb: &LayoutBox) -> Option<f32> {
 fn scale_item_alpha(item: &mut DisplayItem, f: f32) {
     let s = |a: u8| (a as f32 * f).round().clamp(0.0, 255.0) as u8;
     match item {
+        DisplayItem::RawImage { .. } => {} // 인라인 픽셀은 알파 조정 미지원(근사)
         DisplayItem::Transform { items, .. } => {
             items.iter_mut().for_each(|it| scale_item_alpha(it, f))
+        }
+        DisplayItem::CanvasGradient { stops, .. } => {
+            for (c, _) in stops.iter_mut() {
+                c.a = s(c.a);
+            }
         }
         DisplayItem::Rect { color, .. } => color.a = s(color.a),
         DisplayItem::RoundRect { color, .. } => color.a = s(color.a),
@@ -2630,6 +2678,57 @@ fn draw_item(
                 return;
             }
             canvas.fill_gradient(r, *angle, *radial, *circle, *conic, stops);
+        }
+        DisplayItem::RawImage { rect, img } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
+            }
+            blit_image(canvas, img, r, scale, ImageFit::Fill, None);
+        }
+        // 캔버스 그라디언트: 픽셀마다 t 를 구해 색을 정한다. 모양은 바깥의 Clipped 가 자른다.
+        DisplayItem::CanvasGradient { rect, kind, stops } => {
+            let r = scale_rect(rect);
+            if r.y + r.height < 0.0 || r.y > vh {
+                return;
+            }
+            let x0 = r.x.max(0.0) as usize;
+            let y0 = r.y.max(0.0) as usize;
+            let x1 = (r.x + r.width).min(canvas.width as f32).max(0.0) as usize;
+            let y1 = (r.y + r.height).min(canvas.height as f32).max(0.0) as usize;
+            for py in y0..y1 {
+                for px in x0..x1 {
+                    // 논리(캔버스) 좌표로 되돌려 그라디언트 파라미터와 같은 계에서 계산
+                    let lx = (px as f32 + 0.5) / scale;
+                    let ly = (py as f32 + 0.5) / scale + scroll_y;
+                    let t = match kind {
+                        CanvasGrad::Linear { x0: gx0, y0: gy0, x1: gx1, y1: gy1 } => {
+                            let (dx, dy) = (gx1 - gx0, gy1 - gy0);
+                            let len2 = dx * dx + dy * dy;
+                            if len2 <= 0.0 {
+                                0.0
+                            } else {
+                                ((lx - gx0) * dx + (ly - gy0) * dy) / len2
+                            }
+                        }
+                        // 방사: 두 원 사이의 보간 (표준은 원뿔 방정식이지만, 중심이 같은
+                        // 흔한 경우엔 반지름 비로 정확하다)
+                        CanvasGrad::Radial { x0: gx0, y0: gy0, r0, x1: gx1, y1: gy1, r1 } => {
+                            let d = ((lx - gx1).powi(2) + (ly - gy1).powi(2)).sqrt();
+                            let _ = (gx0, gy0);
+                            if (r1 - r0).abs() < 0.001 {
+                                0.0
+                            } else {
+                                (d - r0) / (r1 - r0)
+                            }
+                        }
+                    };
+                    let color = gradient_color_at(stops, t.clamp(0.0, 1.0));
+                    if color.a > 0 {
+                        canvas.put(px, py, color, color.a);
+                    }
+                }
+            }
         }
         DisplayItem::Polygon { color, contours } => {            let scaled: Vec<Vec<(f32, f32)>> = contours
                 .iter()

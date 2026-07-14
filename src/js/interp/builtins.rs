@@ -483,6 +483,22 @@ impl Interp {
         args: Vec<Value>,
     ) -> Result<Value, String> {
         use CanvasMethod::*;
+        // addColorStop 의 수신자는 **그라디언트 객체**다 (컨텍스트가 아니다) — 먼저 처리.
+        if matches!(method, AddColorStop) {
+            if let Some(Value::Obj(g)) = &recv {
+                let pos = args.first().map(to_num).unwrap_or(0.0);
+                let col = args.get(1).map(to_display).unwrap_or_default();
+                let entry = Value::Arr(ArrayObj::new(vec![Value::Num(pos), Value::Str(col)]));
+                let stops = match g.borrow().get("\u{0}stops") {
+                    Some(Value::Arr(st)) => Some(st.clone()),
+                    _ => None,
+                };
+                if let Some(st) = stops {
+                    st.borrow_mut().push(entry);
+                }
+            }
+            return Ok(Value::Undefined);
+        }
         let Some(Value::Obj(ctx)) = recv else { return Ok(Value::Undefined) };
         let canvas_id = match ctx.borrow().get("\u{0}canvas") {
             Some(Value::Num(n)) => *n as crate::dom::NodeId,
@@ -559,7 +575,254 @@ impl Interp {
 
         let a = alpha(&ctx);
         let cur_m = get_ctm(&ctx);
+
+        // fillStyle/strokeStyle 이 그라디언트·패턴 객체면 그걸 쓴다 (문자열이면 색).
+        // 예전엔 createLinearGradient 가 no-op 이라 그라디언트 채우기가 통째로 사라졌다.
+        let paint_source = |ctx: &Rc<RefCell<ObjMap>>, key: &str| -> Option<Value> {
+            match ctx.borrow().get(key) {
+                Some(v @ Value::Obj(o)) if o.borrow().contains_key("\u{0}grad")
+                    || o.borrow().contains_key("\u{0}pattern") =>
+                {
+                    Some(v.clone())
+                }
+                _ => None,
+            }
+        };
+        // 그라디언트 객체 → (kind, stops)
+        let grad_of = |v: &Value| -> Option<(crate::paint::CanvasGrad, Vec<(crate::css::Color, f32)>)> {
+            let Value::Obj(o) = v else { return None };
+            let b = o.borrow();
+            let Some(Value::Arr(p)) = b.get("\u{0}grad") else { return None };
+            let pv = p.borrow();
+            let g = |i: usize| pv.get(i).map(to_num).unwrap_or(0.0) as f32;
+            let radial = pv.len() >= 6;
+            let kind = if radial {
+                crate::paint::CanvasGrad::Radial {
+                    x0: g(0), y0: g(1), r0: g(2), x1: g(3), y1: g(4), r1: g(5),
+                }
+            } else {
+                crate::paint::CanvasGrad::Linear { x0: g(0), y0: g(1), x1: g(2), y1: g(3) }
+            };
+            let mut stops: Vec<(crate::css::Color, f32)> = Vec::new();
+            if let Some(Value::Arr(st)) = b.get("\u{0}stops") {
+                for e in st.borrow().iter() {
+                    if let Value::Arr(pair) = e {
+                        let pv = pair.borrow();
+                        let pos = pv.first().map(to_num).unwrap_or(0.0) as f32;
+                        let col = pv
+                            .get(1)
+                            .map(to_display)
+                            .and_then(|s| crate::css::parse_color(&s))
+                            .unwrap_or(crate::css::Color { r: 0, g: 0, b: 0, a: 255 });
+                        stops.push((col, pos));
+                    }
+                }
+            }
+            stops.sort_by(|x, y| x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal));
+            Some((kind, stops))
+        };
+        let pattern_of = |v: &Value| -> Option<(usize, bool)> {
+            let Value::Obj(o) = v else { return None };
+            let b = o.borrow();
+            let Some(Value::Arr(p)) = b.get("\u{0}pattern") else { return None };
+            let pv = p.borrow();
+            let idx = pv.first().map(to_num)? as usize;
+            let repeat = pv.get(1).map(to_bool).unwrap_or(true);
+            Some((idx, repeat))
+        };
+        // 다각형의 경계 상자
+        let bbox = |pts: &[(f32, f32)]| -> crate::layout::Rect {
+            let (mut x0, mut y0, mut x1, mut y1) =
+                (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+            for &(x, y) in pts {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+            crate::layout::Rect { x: x0, y: y0, width: (x1 - x0).max(0.0), height: (y1 - y0).max(0.0) }
+        };
+
         match method {
+            // ── 그라디언트 / 패턴 객체 ──
+            CreateLinearGradient | CreateRadialGradient => {
+                let n = if matches!(method, CreateRadialGradient) { 6 } else { 4 };
+                let params: Vec<Value> = (0..n).map(|i| Value::Num(num(i) as f64)).collect();
+                let mut g = ObjMap::new();
+                g.insert("\u{0}grad".to_string(), Value::Arr(ArrayObj::new(params)));
+                g.insert("\u{0}stops".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
+                g.insert("addColorStop".to_string(), Value::Native(Native::Canvas(AddColorStop)));
+                return Ok(Value::Obj(Rc::new(RefCell::new(g))));
+            }
+            AddColorStop => {}
+            CreatePattern => {
+                let src = match args.first() {
+                    Some(Value::Dom(id)) => {
+                        let dom = self.dom_arena()?;
+                        match &dom.get(*id).node_type {
+                            crate::dom::NodeType::Element(e) => e.attributes.get("src").cloned(),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                let idx = src.as_ref().and_then(|raw| {
+                    let abs = self.absolute_url(raw);
+                    self.layout_ctx.as_ref().and_then(|c| unsafe {
+                        (*c.img_map).get(&abs).or_else(|| (*c.img_map).get(raw)).map(|(i, _, _)| *i)
+                    })
+                });
+                let Some(idx) = idx else {
+                    self.canvas_warn("createPattern 의 소스를 찾지 못했다 (<img> 요소만 지원)");
+                    return Ok(Value::Null);
+                };
+                let rep = args.get(1).map(to_display).unwrap_or_else(|| "repeat".to_string());
+                let mut p = ObjMap::new();
+                p.insert(
+                    "\u{0}pattern".to_string(),
+                    Value::Arr(ArrayObj::new(vec![
+                        Value::Num(idx as f64),
+                        Value::Bool(rep != "no-repeat"),
+                    ])),
+                );
+                return Ok(Value::Obj(Rc::new(RefCell::new(p))));
+            }
+            // ── ImageData (실제 픽셀) ──
+            // 캔버스의 픽셀을 읽으려면 **진짜로 그려 봐야** 한다. 지금까지의 명령을
+            // 오프스크린으로 래스터화해서 그 영역을 잘라 준다.
+            GetImageData => {
+                let (sx, sy, sw, sh) = (num(0), num(1), num(2), num(3));
+                let (sw, sh) = (sw.max(0.0) as usize, sh.max(0.0) as usize);
+                if sw == 0 || sh == 0 {
+                    return Ok(Value::Null);
+                }
+                let Some(lc) = self.layout_ctx.as_ref() else {
+                    self.canvas_warn("getImageData 는 렌더 컨텍스트가 필요하다");
+                    return Ok(Value::Null);
+                };
+                let (fonts, images) = unsafe { (&*lc.fonts, &*lc.images) };
+                let ops = self.canvas_cmds.get(&canvas_id).cloned().unwrap_or_default();
+                // 캔버스 크기
+                let (cw, ch) = {
+                    let dom = self.dom_arena()?;
+                    match &dom.get(canvas_id).node_type {
+                        crate::dom::NodeType::Element(e) => (
+                            e.attributes
+                                .get("width")
+                                .and_then(|v| v.parse::<usize>().ok())
+                                .unwrap_or(300),
+                            e.attributes
+                                .get("height")
+                                .and_then(|v| v.parse::<usize>().ok())
+                                .unwrap_or(150),
+                        ),
+                        _ => (300, 150),
+                    }
+                };
+                let items = crate::window::canvas_items_at_origin(&ops, fonts);
+                let img = crate::paint::rasterize_items(&items, cw, ch, fonts, images);
+                let mut data: Vec<Value> = Vec::with_capacity(sw * sh * 4);
+                for y in 0..sh {
+                    for x in 0..sw {
+                        let (px0, py0) = (sx as usize + x, sy as usize + y);
+                        if px0 < cw && py0 < ch {
+                            let o = (py0 * cw + px0) * 4;
+                            for k in 0..4 {
+                                data.push(Value::Num(img.rgba[o + k] as f64));
+                            }
+                        } else {
+                            for _ in 0..4 {
+                                data.push(Value::Num(0.0));
+                            }
+                        }
+                    }
+                }
+                let mut m = ObjMap::new();
+                m.insert("width".to_string(), Value::Num(sw as f64));
+                m.insert("height".to_string(), Value::Num(sh as f64));
+                m.insert("data".to_string(), Value::Arr(ArrayObj::new(data)));
+                return Ok(Value::Obj(Rc::new(RefCell::new(m))));
+            }
+            CreateImageData => {
+                let (w0, h0) = (num(0).max(0.0) as usize, num(1).max(0.0) as usize);
+                let data: Vec<Value> = vec![Value::Num(0.0); w0 * h0 * 4];
+                let mut m = ObjMap::new();
+                m.insert("width".to_string(), Value::Num(w0 as f64));
+                m.insert("height".to_string(), Value::Num(h0 as f64));
+                m.insert("data".to_string(), Value::Arr(ArrayObj::new(data)));
+                return Ok(Value::Obj(Rc::new(RefCell::new(m))));
+            }
+            PutImageData => {
+                let Some(Value::Obj(d)) = args.first() else { return Ok(Value::Undefined) };
+                let b = d.borrow();
+                let w0 = b.get("width").map(to_num).unwrap_or(0.0) as usize;
+                let h0 = b.get("height").map(to_num).unwrap_or(0.0) as usize;
+                let Some(Value::Arr(px)) = b.get("data") else { return Ok(Value::Undefined) };
+                let vals = px.borrow();
+                if w0 == 0 || h0 == 0 || vals.len() < w0 * h0 * 4 {
+                    return Ok(Value::Undefined);
+                }
+                let rgba: Vec<u8> = vals
+                    .iter()
+                    .take(w0 * h0 * 4)
+                    .map(|v| to_num(v).clamp(0.0, 255.0) as u8)
+                    .collect();
+                drop(vals);
+                drop(b);
+                let img = std::rc::Rc::new(crate::png::Image { width: w0, height: h0, rgba });
+                self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::PutImage {
+                    x: num(1),
+                    y: num(2),
+                    img,
+                });
+            }
+            // ── 클립 ──
+            Clip => {
+                let pts = get_path(&ctx);
+                if pts.len() < 3 {
+                    self.canvas_warn("clip() 에 경로가 없다");
+                    return Ok(Value::Undefined);
+                }
+                // 클립도 그리기 상태다 — save/restore 로 복원돼야 한다 (표준).
+                let flat: Vec<Value> = pts
+                    .iter()
+                    .flat_map(|&(x, y)| [Value::Num(x as f64), Value::Num(y as f64)])
+                    .collect();
+                ctx.borrow_mut()
+                    .insert("\u{0}clip".to_string(), Value::Arr(ArrayObj::new(flat)));
+                self.canvas_cmds
+                    .entry(canvas_id)
+                    .or_default()
+                    .push(CanvasOp::Clip { pts: Some(pts) });
+            }
+            // ── 곡선 ──
+            BezierCurveTo | QuadraticCurveTo => {
+                let path = get_path(&ctx);
+                let Some(&(px0, py0)) = path.last() else {
+                    return Ok(Value::Undefined); // 시작점이 없으면 무시 (표준)
+                };
+                let seg = 20;
+                for k in 1..=seg {
+                    let t = k as f32 / seg as f32;
+                    let (x, y) = if matches!(method, BezierCurveTo) {
+                        let (c1x, c1y, c2x, c2y, ex, ey) =
+                            (num(0), num(1), num(2), num(3), num(4), num(5));
+                        let u = 1.0 - t;
+                        (
+                            u * u * u * px0 + 3.0 * u * u * t * c1x + 3.0 * u * t * t * c2x + t * t * t * ex,
+                            u * u * u * py0 + 3.0 * u * u * t * c1y + 3.0 * u * t * t * c2y + t * t * t * ey,
+                        )
+                    } else {
+                        let (cx, cy, ex, ey) = (num(0), num(1), num(2), num(3));
+                        let u = 1.0 - t;
+                        (
+                            u * u * px0 + 2.0 * u * t * cx + t * t * ex,
+                            u * u * py0 + 2.0 * u * t * cy + t * t * ey,
+                        )
+                    };
+                    push_path(&ctx, x, y);
+                }
+            }
             // ── 변환 상태 ──
             Translate | Rotate | Scale | Transform | SetTransform | ResetTransform => {
                 use crate::layout::Mat;
@@ -601,6 +864,7 @@ impl Interp {
                     ctx.borrow().get("lineWidth").cloned().unwrap_or(Value::Undefined),
                     ctx.borrow().get("font").cloned().unwrap_or(Value::Undefined),
                     ctx.borrow().get("globalAlpha").cloned().unwrap_or(Value::Undefined),
+                    ctx.borrow().get("\u{0}clip").cloned().unwrap_or(Value::Null),
                 ];
                 let stack = match ctx.borrow().get("\u{0}stack") {
                     Some(Value::Arr(st)) => Some(st.clone()),
@@ -631,16 +895,32 @@ impl Interp {
                         "font",
                         "globalAlpha",
                     ];
-                    for (k, val) in keys.iter().zip(v.into_iter()) {
+                    for (k, val) in keys.iter().zip(v.iter().cloned()) {
                         if !matches!(val, Value::Undefined) {
                             ctx.borrow_mut().insert(k.to_string(), val);
                         }
                     }
+                    // 클립 복원 (Null 이면 클립 해제). 예전엔 restore 가 클립을 되돌리지
+                    // 않아서, 그 뒤 그리기가 전부 옛 클립에 갇혀 사라졌다.
+                    let saved_clip = v.get(6).cloned().unwrap_or(Value::Null);
+                    let pts = match &saved_clip {
+                        Value::Arr(a) => {
+                            let f = a.borrow();
+                            let mut out = Vec::new();
+                            let mut i = 0;
+                            while i + 1 < f.len() {
+                                out.push((to_num(&f[i]) as f32, to_num(&f[i + 1]) as f32));
+                                i += 2;
+                            }
+                            Some(out)
+                        }
+                        _ => None,
+                    };
+                    ctx.borrow_mut().insert("\u{0}clip".to_string(), saved_clip);
                     let m = get_ctm(&ctx);
-                    self.canvas_cmds
-                        .entry(canvas_id)
-                        .or_default()
-                        .push(CanvasOp::SetTransform { m });
+                    let ops = self.canvas_cmds.entry(canvas_id).or_default();
+                    ops.push(CanvasOp::SetTransform { m });
+                    ops.push(CanvasOp::Clip { pts });
                 }
             }
             // ── 측정 ──
@@ -726,13 +1006,31 @@ impl Interp {
                     push_path(&ctx, px0, py0);
                 }
             }
-            FillRect => self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::FillRect {
-                x: num(0),
-                y: num(1),
-                w: num(2),
-                h: num(3),
-                color: with_alpha(style("fillStyle"), a),
-            }),
+            FillRect => {
+                let rect = crate::layout::Rect {
+                    x: num(0),
+                    y: num(1),
+                    width: num(2),
+                    height: num(3),
+                };
+                let src = paint_source(&ctx, "fillStyle");
+                let op = match src.as_ref().and_then(|v| grad_of(v)) {
+                    Some((kind, stops)) => CanvasOp::FillGradient { rect, shape: None, kind, stops },
+                    None => match src.as_ref().and_then(|v| pattern_of(v)) {
+                        Some((idx, repeat)) => {
+                            CanvasOp::FillPattern { rect, shape: None, idx, repeat }
+                        }
+                        None => CanvasOp::FillRect {
+                            x: rect.x,
+                            y: rect.y,
+                            w: rect.width,
+                            h: rect.height,
+                            color: with_alpha(style("fillStyle"), a),
+                        },
+                    },
+                };
+                self.canvas_cmds.entry(canvas_id).or_default().push(op);
+            }
             ClearRect => self
                 .canvas_cmds
                 .entry(canvas_id)
@@ -807,10 +1105,23 @@ impl Interp {
             Fill => {
                 let pts = get_path(&ctx);
                 if pts.len() >= 3 {
-                    self.canvas_cmds.entry(canvas_id).or_default().push(CanvasOp::FillPath {
-                        pts,
-                        color: with_alpha(style("fillStyle"), a),
-                    });
+                    let src = paint_source(&ctx, "fillStyle");
+                    let rect = bbox(&pts);
+                    let op = match src.as_ref().and_then(|v| grad_of(v)) {
+                        Some((kind, stops)) => {
+                            CanvasOp::FillGradient { rect, shape: Some(pts), kind, stops }
+                        }
+                        None => match src.as_ref().and_then(|v| pattern_of(v)) {
+                            Some((idx, repeat)) => {
+                                CanvasOp::FillPattern { rect, shape: Some(pts), idx, repeat }
+                            }
+                            None => CanvasOp::FillPath {
+                                pts,
+                                color: with_alpha(style("fillStyle"), a),
+                            },
+                        },
+                    };
+                    self.canvas_cmds.entry(canvas_id).or_default().push(op);
                 }
             }
             // 경로 스트로크: 각 선분을 두께만큼의 사각형(폴리곤)으로 그린다.
@@ -842,9 +1153,6 @@ impl Interp {
                     });
                 }
             }
-            // 아직 구현하지 않은 것들. **조용히 무시하지 않고** 한 번 알린다 —
-            // 조용한 no-op 은 "그렸는데 안 나온다" 는 미궁을 만든다.
-            Unimplemented => self.canvas_warn("clip/gradient/pattern/ImageData 는 아직 미지원"),
             Noop => {}
         }
         Ok(Value::Undefined)
@@ -2856,16 +3164,15 @@ impl Interp {
                     ("ellipse", Ellipse),
                     ("roundRect", RoundRect),
                     ("setLineDash", Noop), // 점선은 시각 세부 (그림은 나온다)
-                    // 아직 미지원 — **조용히 무시하지 않고** 쓰이면 알린다
-                    ("clip", Unimplemented),
-                    ("createLinearGradient", Unimplemented),
-                    ("createRadialGradient", Unimplemented),
-                    ("createPattern", Unimplemented),
-                    ("putImageData", Unimplemented),
-                    ("getImageData", Unimplemented),
-                    ("createImageData", Unimplemented),
-                    ("bezierCurveTo", Unimplemented),
-                    ("quadraticCurveTo", Unimplemented),
+                    ("clip", Clip),
+                    ("createLinearGradient", CreateLinearGradient),
+                    ("createRadialGradient", CreateRadialGradient),
+                    ("createPattern", CreatePattern),
+                    ("bezierCurveTo", BezierCurveTo),
+                    ("quadraticCurveTo", QuadraticCurveTo),
+                    ("putImageData", PutImageData),
+                    ("getImageData", GetImageData),
+                    ("createImageData", CreateImageData),
                 ] {
                     m.insert(name.to_string(), Value::Native(Native::Canvas(meth)));
                 }
