@@ -21,6 +21,27 @@ fn is_mutating_arr_op(op: ArrOp) -> bool {
     )
 }
 
+// wasm 인자 헬퍼: n번째 인자를 수로 (없으면 0)
+fn num_arg(args: &[Value], i: usize) -> f64 {
+    args.get(i).map(to_num).unwrap_or(0.0)
+}
+
+// 바이트 배열 값 → Vec<u8>. 프렐류드의 __kWasmBytes 가 항상 평범한 숫자 배열로 정규화해
+// 넘겨 주므로 여기서 프록시/뷰를 다시 풀 필요가 없다.
+fn bytes_of(v: Option<&Value>) -> Vec<u8> {
+    match v {
+        Some(Value::Arr(a)) => a
+            .borrow()
+            .iter()
+            .map(|x| match x {
+                Value::Num(n) => *n as i64 as u8,
+                _ => 0,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 // 저장 키("\u{0}@@…")에서 Symbol 값을 복원한다 — getOwnPropertySymbols 용.
 // 일반 심볼 키는 "\0@@sym:<n>:<desc>", 레지스트리는 "\0@@for:<k>", 그 외는 잘 알려진 심볼.
 fn symbol_from_key(key: &str) -> Value {
@@ -1394,6 +1415,202 @@ impl Interp {
 
     // 네이티브 호출의 유일한 관문. DOM 을 바꾼 호출이면 여기서 MutationObserver
     // 배달을 한 번 예약한다 (호출부마다 예약하면 반드시 빠뜨린다).
+    // 바이트열 → 진짜 ArrayBuffer (프렐류드의 __kArrayBuffer 로 만들어 프로토타입까지 맞춘다).
+    pub(super) fn make_array_buffer(&mut self, bytes: &[u8]) -> Result<Value, String> {
+        let ctor = env_get(&self.global, "__kArrayBuffer")
+            .ok_or("__kArrayBuffer 가 프렐류드에 없다")?;
+        let buf = self.construct(ctor, vec![Value::Num(bytes.len() as f64)])?;
+        if let Value::Obj(o) = &buf {
+            let arr = o.borrow().get("_b").cloned();
+            if let Some(Value::Arr(a)) = arr {
+                let mut items = a.borrow_mut();
+                for (i, b) in bytes.iter().enumerate() {
+                    items[i] = Value::Num(*b as f64);
+                }
+            }
+        }
+        Ok(buf)
+    }
+
+    // wasm 안에서 memory.grow 가 일어나면 선형 메모리는 **새 배열**로 바뀐다.
+    // JS 쪽 Memory 객체의 buffer 는 그대로 옛 배열을 가리키므로, 다시 묶지 않으면
+    // 그 뒤로 wasm 이 쓴 값이 JS 에 아예 보이지 않는다 (조용히 틀린다).
+    // JS 가 메모리를 볼 수 있는 경계 — 호출이 돌아올 때, 임포트로 JS 를 부르기 직전 — 마다 부른다.
+    pub(super) fn sync_wasm_memories(&mut self) {
+        for i in 0..self.wasm_memories.len() {
+            let (mem, obj) = self.wasm_memories[i].clone();
+            let cur = mem.borrow().clone();
+            let Value::Obj(o) = &obj else { continue };
+            let buf = o.borrow().get("buffer").cloned();
+            if let Some(Value::Obj(b)) = &buf {
+                let same = matches!(
+                    b.borrow().get("_b"),
+                    Some(Value::Arr(a)) if Rc::ptr_eq(a, &cur)
+                );
+                if same {
+                    continue;
+                }
+                // 표준: 커진 메모리의 옛 ArrayBuffer 는 분리된다 (byteLength → 0).
+                let mut bm = b.borrow_mut();
+                bm.insert("_b".to_string(), Value::Arr(ArrayObj::new(Vec::new())));
+                bm.insert("byteLength".to_string(), Value::Num(0.0));
+            }
+            // 새 배열을 감싼 ArrayBuffer 로 갈아끼운다 (배열은 공유 — 사본이 아니다)
+            let len = cur.borrow().len();
+            let Some(ctor) = env_get(&self.global, "__kArrayBuffer") else { continue };
+            let Ok(nb) = self.construct(ctor, vec![Value::Num(0.0)]) else { continue };
+            if let Value::Obj(n) = &nb {
+                let mut nm = n.borrow_mut();
+                nm.insert("_b".to_string(), Value::Arr(cur));
+                nm.insert("byteLength".to_string(), Value::Num(len as f64));
+            }
+            if let Value::Obj(o) = &obj {
+                o.borrow_mut().insert("buffer".to_string(), nb);
+            }
+        }
+    }
+
+    // 모듈 + 임포트 → 인스턴스, 그리고 exports 객체.
+    // mem_idx >= 0 이면 JS 가 미리 만든 WebAssembly.Memory 를 모듈 자신의 메모리로 쓴다.
+    fn wasm_instantiate(
+        &mut self,
+        mi: usize,
+        imports: Value,
+        mem_idx: f64,
+    ) -> Result<Value, String> {
+        use crate::wasm::{Extern, Export as WExport, ImportKind};
+        let module = self
+            .wasm_modules
+            .get(mi)
+            .cloned()
+            .ok_or("wasm: 모듈 없음")?;
+
+        // imports[모듈][이름] 조회
+        let lookup = |me: &mut Self, m: &str, n: &str| -> Result<Value, String> {
+            let ns = me.member_get(&imports, m)?;
+            me.member_get(&ns, n)
+        };
+
+        let mut externs: Vec<Extern> = Vec::new();
+        let mut import_fns: Vec<Value> = Vec::new();
+        // 내보내진 memory 가 가리킬 JS Memory 객체 (임포트된 것이면 그것, 아니면 우리가 만든 것)
+        let mut mem_obj = Value::Undefined;
+
+        for imp in module.imports.clone() {
+            let v = lookup(self, &imp.module, &imp.name).unwrap_or(Value::Undefined);
+            match imp.kind {
+                ImportKind::Func(_) => {
+                    if matches!(v, Value::Undefined | Value::Null) {
+                        return Err(format!(
+                            "WebAssembly.LinkError: 임포트 {}.{} 가 없다",
+                            imp.module, imp.name
+                        ));
+                    }
+                    import_fns.push(v);
+                    externs.push(Extern::Func);
+                }
+                ImportKind::Memory(min) => {
+                    let idx = self.member_get(&v, "__mem")?;
+                    let idx = match idx {
+                        Value::Num(n) => n as usize,
+                        _ => {
+                            return Err(format!(
+                                "WebAssembly.LinkError: 임포트 {}.{} 가 Memory 가 아니다",
+                                imp.module, imp.name
+                            ))
+                        }
+                    };
+                    let (m, obj) = self
+                        .wasm_memories
+                        .get(idx)
+                        .ok_or("wasm: 메모리 없음")?
+                        .clone();
+                    // 표준: 준 메모리가 모듈이 요구하는 최소 페이지보다 작으면 LinkError.
+                    // 그냥 받으면 모듈이 없는 주소에 써서 조용히 죽는다.
+                    let pages = m.borrow().borrow().len() / crate::wasm::PAGE;
+                    if pages < min as usize {
+                        return Err(format!(
+                            "WebAssembly.LinkError: 임포트 {}.{} 메모리가 작다 ({} < {} 페이지)",
+                            imp.module, imp.name, pages, min
+                        ));
+                    }
+                    mem_obj = obj;
+                    externs.push(Extern::Memory(m));
+                }
+                ImportKind::Global(t) => {
+                    // 숫자로 오기도 하고 WebAssembly.Global 객체로 오기도 한다
+                    let raw = match &v {
+                        Value::Obj(_) => self.member_get(&v, "value")?,
+                        other => other.clone(),
+                    };
+                    externs.push(Extern::Global(super::js_to_wasm_typed(&raw, t)));
+                }
+                ImportKind::Table => {
+                    // 조용히 빈 테이블로 두면 call_indirect 가 엉뚱한 곳을 부른다.
+                    return Err(
+                        "WebAssembly.LinkError: 테이블 임포트는 아직 지원하지 않는다".to_string()
+                    );
+                }
+            }
+        }
+
+        // 모듈 자신의 메모리 — JS 가 만든 버퍼를 그대로 쓴다 (살아있는 뷰)
+        let own_mem = if mem_idx >= 0.0 {
+            let (m, obj) = self
+                .wasm_memories
+                .get(mem_idx as usize)
+                .ok_or("wasm: 메모리 없음")?
+                .clone();
+            mem_obj = obj;
+            Some(m)
+        } else {
+            None
+        };
+
+        let inst = {
+            let mut host = super::WasmHost {
+                interp: self,
+                imports: import_fns.clone(),
+                module: module.clone(),
+            };
+            crate::wasm::instantiate(module.clone(), externs, own_mem, &mut host)?
+        };
+        let table_len = inst.table.borrow().len();
+        self.sync_wasm_memories();
+        self.wasm_instances
+            .push(Rc::new(super::WasmInstance { inst, imports: import_fns }));
+        let ii = (self.wasm_instances.len() - 1) as u32;
+
+        // exports 객체
+        let mut m = ObjMap::new();
+        for (name, e) in &module.exports {
+            let v = match e {
+                WExport::Func(f) => Value::Native(Native::WasmCall(ii, *f)),
+                WExport::Memory => mem_obj.clone(),
+                // 내보내진 전역은 WebAssembly.Global 객체다 — .value 로 읽고 쓴다
+                WExport::Global(g) => {
+                    let mut go = ObjMap::new();
+                    go.insert(
+                        "value".to_string(),
+                        Value::Accessor(Rc::new(AccessorPair {
+                            get: Some(Value::Native(Native::WasmGlobalGet(ii, *g))),
+                            set: Some(Value::Native(Native::WasmGlobalSet(ii, *g))),
+                        })),
+                    );
+                    Value::Obj(Rc::new(RefCell::new(go)))
+                }
+                WExport::Table => {
+                    let mut to = ObjMap::new();
+                    to.insert("get".to_string(), Value::Native(Native::WasmTableGet(ii)));
+                    to.insert("length".to_string(), Value::Num(table_len as f64));
+                    Value::Obj(Rc::new(RefCell::new(to)))
+                }
+            };
+            m.insert(name.clone(), v);
+        }
+        Ok(Value::Obj(Rc::new(RefCell::new(m))))
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -4751,6 +4968,17 @@ impl Interp {
                         m.insert("\u{0}body".to_string(), Value::Str(body));
                         m.insert("text".to_string(), Value::Native(Native::ResponseText));
                         m.insert("json".to_string(), Value::Native(Native::ResponseJson));
+                        // 원본 바이트를 따로 붙든다 — 위의 body 는 lossy UTF-8 이라
+                        // 바이너리(wasm/이미지)를 그걸로 되돌리면 조용히 망가진다.
+                        self.fetch_bodies.push(Rc::new(r.body.clone()));
+                        m.insert(
+                            "\u{0}raw".to_string(),
+                            Value::Num((self.fetch_bodies.len() - 1) as f64),
+                        );
+                        m.insert(
+                            "arrayBuffer".to_string(),
+                            Value::Native(Native::ResponseArrayBuffer),
+                        );
                         // Response 는 headers/url/statusText/type/redirected 를 갖는다 (Fetch 표준).
                         // 없으면 r.headers.get('content-type') 같은 흔한 코드가 즉사한다.
                         m.insert("url".to_string(), Value::Str(url.clone()));
@@ -4819,6 +5047,167 @@ impl Interp {
                 self.resolve_promise(&p, val);
                 Ok(p)
             }
+            // Response.arrayBuffer() — 받은 바이트 그대로 ArrayBuffer 로.
+            Native::ResponseArrayBuffer => {
+                let idx = match &recv {
+                    Some(Value::Obj(o)) => match o.borrow().get("\u{0}raw") {
+                        Some(Value::Num(i)) => *i as usize,
+                        _ => usize::MAX,
+                    },
+                    _ => usize::MAX,
+                };
+                let bytes = self
+                    .fetch_bodies
+                    .get(idx)
+                    .cloned()
+                    .ok_or("arrayBuffer: 원본 바이트가 없다")?;
+                let buf = self.make_array_buffer(&bytes)?;
+                let p = self.new_promise();
+                self.resolve_promise(&p, buf);
+                Ok(p)
+            }
+
+            Native::ZeroBytes => {
+                let n = num_arg(&args, 0).max(0.0) as usize;
+                if n > 512 * 1024 * 1024 {
+                    return Err("ArrayBuffer 가 너무 크다".to_string());
+                }
+                Ok(Value::Arr(ArrayObj::new(vec![Value::Num(0.0); n])))
+            }
+
+            // ── WebAssembly ────────────────────────────────────────────────
+            Native::WasmValidate => {
+                let bytes = bytes_of(args.first());
+                Ok(Value::Bool(crate::wasm::parse(&bytes).is_ok()))
+            }
+            Native::WasmCompile => {
+                let bytes = bytes_of(args.first());
+                let m = crate::wasm::parse(&bytes)
+                    .map_err(|e| format!("WebAssembly.CompileError: {}", e))?;
+                self.wasm_modules.push(Rc::new(m));
+                Ok(Value::Num((self.wasm_modules.len() - 1) as f64))
+            }
+            // 모듈이 스스로 정의한 메모리의 최소 페이지 수 (없거나 임포트면 -1)
+            Native::WasmMemPages => {
+                let i = num_arg(&args, 0) as usize;
+                let m = self.wasm_modules.get(i).ok_or("wasm: 모듈 없음")?;
+                Ok(Value::Num(match m.mem_pages {
+                    Some(p) => p as f64,
+                    None => -1.0,
+                }))
+            }
+            // JS 가 만든 ArrayBuffer 의 바이트 배열을 wasm 선형 메모리로 등록한다.
+            // (배열을 **공유**한다 — 복사가 아니다)
+            Native::WasmRegisterMemory => {
+                let arr = match args.first() {
+                    Some(Value::Arr(a)) => a.clone(),
+                    _ => return Err("wasm: 메모리 등록에 바이트 배열이 필요하다".to_string()),
+                };
+                let obj = args.get(1).cloned().unwrap_or(Value::Undefined);
+                self.wasm_memories
+                    .push((Rc::new(RefCell::new(arr)), obj));
+                Ok(Value::Num((self.wasm_memories.len() - 1) as f64))
+            }
+            // memory.grow — 이전 페이지 수 (실패하면 -1). JS 쪽 buffer 재바인딩까지 여기서.
+            Native::WasmGrow => {
+                let i = num_arg(&args, 0) as usize;
+                let pages = num_arg(&args, 1) as u32;
+                let (mem, _) = self.wasm_memories.get(i).ok_or("wasm: 메모리 없음")?;
+                let mem = mem.clone();
+                let old = crate::wasm::grow_mem(&mem, pages);
+                if old < 0 {
+                    return Ok(Value::Num(-1.0));
+                }
+                self.sync_wasm_memories();
+                Ok(Value::Num(old as f64))
+            }
+            Native::WasmInstantiate => {
+                let mi = num_arg(&args, 0) as usize;
+                let imports = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let mem_idx = num_arg(&args, 2);
+                self.wasm_instantiate(mi, imports, mem_idx)
+            }
+            Native::WasmCall(inst, func) => {
+                let wi = self
+                    .wasm_instances
+                    .get(inst as usize)
+                    .cloned()
+                    .ok_or("wasm: 인스턴스 없음")?;
+                let ft = wi
+                    .inst
+                    .func_type(func)
+                    .cloned()
+                    .ok_or("wasm: 함수 타입 없음")?;
+                let vals: Vec<crate::wasm::Val> = ft
+                    .params
+                    .iter()
+                    .enumerate()
+                    .map(|(k, t)| {
+                        super::js_to_wasm_typed(args.get(k).unwrap_or(&Value::Undefined), *t)
+                    })
+                    .collect();
+                let module = wi.inst.module.clone();
+                let mut host = super::WasmHost {
+                    interp: self,
+                    imports: wi.imports.clone(),
+                    module,
+                };
+                let out = wi
+                    .inst
+                    .call(&mut host, func, &vals)
+                    .map_err(|e| format!("WebAssembly.RuntimeError: {}", e));
+                // 호출 중 memory.grow 가 있었으면 JS 의 memory.buffer 를 새 배열로 다시 묶는다
+                self.sync_wasm_memories();
+                let out = out?;
+                Ok(match out.len() {
+                    0 => Value::Undefined,
+                    1 => super::wasm_val_to_js(&out[0]),
+                    _ => Value::Arr(ArrayObj::new(
+                        out.iter().map(super::wasm_val_to_js).collect(),
+                    )),
+                })
+            }
+            Native::WasmGlobalGet(inst, g) => {
+                let wi = self
+                    .wasm_instances
+                    .get(inst as usize)
+                    .cloned()
+                    .ok_or("wasm: 인스턴스 없음")?;
+                let v = *wi
+                    .inst
+                    .globals
+                    .borrow()
+                    .get(g as usize)
+                    .ok_or("wasm: 전역 없음")?;
+                Ok(super::wasm_val_to_js(&v))
+            }
+            Native::WasmGlobalSet(inst, g) => {
+                let wi = self
+                    .wasm_instances
+                    .get(inst as usize)
+                    .cloned()
+                    .ok_or("wasm: 인스턴스 없음")?;
+                let t = wi.inst.module.global_type(g as usize);
+                let v = super::js_to_wasm_typed(args.first().unwrap_or(&Value::Undefined), t);
+                let mut gs = wi.inst.globals.borrow_mut();
+                *gs.get_mut(g as usize).ok_or("wasm: 전역 없음")? = v;
+                Ok(Value::Undefined)
+            }
+            // 내보내진 테이블의 table.get(i) — 함수 참조를 호출 가능한 값으로 돌려준다
+            Native::WasmTableGet(inst) => {
+                let wi = self
+                    .wasm_instances
+                    .get(inst as usize)
+                    .cloned()
+                    .ok_or("wasm: 인스턴스 없음")?;
+                let i = num_arg(&args, 0) as usize;
+                let f = wi.inst.table.borrow().get(i).copied().flatten();
+                Ok(match f {
+                    Some(fi) => Value::Native(Native::WasmCall(inst, fi)),
+                    None => Value::Null,
+                })
+            }
+
             Native::GetAttribute => match recv {
                 Some(Value::Dom(id)) => {
                     let name = args.first().map(to_display).unwrap_or_default();

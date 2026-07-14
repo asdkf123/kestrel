@@ -544,6 +544,25 @@ pub enum Native {
     Fetch,
     ResponseText,
     ResponseJson,
+    // Response.arrayBuffer() — 원본 바이트 그대로 (텍스트로 거치면 바이너리가 망가진다)
+    ResponseArrayBuffer,
+    // ArrayBuffer 의 0 채우기. JS 루프로 채우면 1MB 버퍼가 100만 번 반복이라
+    // 사실상 못 쓴다 (wasm 메모리는 최소 1MB 로 시작하는 게 보통).
+    ZeroBytes,
+    // WebAssembly. 프렐류드의 얇은 JS 껍데기가 이 네이티브들을 부른다.
+    WasmValidate,
+    WasmCompile,
+    WasmMemPages,
+    WasmRegisterMemory,
+    WasmGrow,
+    WasmInstantiate,
+    // 내보내진 wasm 함수 (인스턴스 인덱스, 함수 인덱스)
+    WasmCall(u32, u32),
+    // 내보내진 전역 (인스턴스, 전역 인덱스) — get/set 접근자
+    WasmGlobalGet(u32, u32),
+    WasmGlobalSet(u32, u32),
+    // 내보내진 테이블 (인스턴스) — table.get(i) / table.length
+    WasmTableGet(u32),
     RemoveAttribute,
     HasAttribute,
     RemoveChild,
@@ -1135,7 +1154,132 @@ pub struct Interp {
     // 오탐을 막는다(강한 참조 → 주소 안정).
     // 비트: 1=preventExtensions, 2=sealed, 4=frozen
     integrity: HashMap<usize, (Value, u8)>,
+    // WebAssembly: 컴파일된 모듈 / 선형 메모리 / 인스턴스. JS 는 인덱스로 참조한다.
+    wasm_modules: Vec<Rc<crate::wasm::Module>>,
+    // (바이트 배열, 그 메모리를 감싼 JS 의 WebAssembly.Memory 객체)
+    wasm_memories: Vec<(crate::wasm::MemRef, Value)>,
+    wasm_instances: Vec<Rc<WasmInstance>>,
+    // fetch 응답의 원본 바이트 (Response.arrayBuffer 용). 텍스트로 바꾸면 바이너리가
+    // 조용히 망가진다 (from_utf8_lossy 가 U+FFFD 로 덮어쓴다) — wasm 은 그러면 못 읽는다.
+    fetch_bodies: Vec<Rc<Vec<u8>>>,
 }
+
+// 인스턴스 + 그 임포트 함수들(JS 값). 임포트 호출은 이 순서로 색인한다.
+pub struct WasmInstance {
+    pub inst: crate::wasm::Instance,
+    pub imports: Vec<Value>,
+}
+
+// wasm → JS 호출을 이어 주는 다리. 인스턴스는 Rc 로 잡고 있으므로
+// 인터프리터를 &mut 로 빌려도 안전하다.
+struct WasmHost<'a> {
+    interp: &'a mut Interp,
+    imports: Vec<Value>,
+    module: Rc<crate::wasm::Module>,
+}
+
+impl crate::wasm::Host for WasmHost<'_> {
+    fn call_import(
+        &mut self,
+        idx: usize,
+        args: &[crate::wasm::Val],
+    ) -> Result<Vec<crate::wasm::Val>, String> {
+        let f = self
+            .imports
+            .get(idx)
+            .cloned()
+            .ok_or_else(|| format!("wasm: 임포트 {} 가 연결되지 않았다", idx))?;
+        if !matches!(f, Value::Fn(_) | Value::Native(_) | Value::Bound(_) | Value::Class(_)) {
+            return Err(format!("wasm: 임포트 {} 가 함수가 아니다", idx));
+        }
+        let js_args: Vec<Value> = args.iter().map(wasm_val_to_js).collect();
+        // JS 로 나가기 전에 메모리를 다시 묶는다 — 임포트 콜백은 memory.buffer 를 읽는다
+        // (wasm-bindgen 의 문자열 전달이 정확히 이 경로다). 안 하면 옛 배열을 본다.
+        self.interp.sync_wasm_memories();
+        let r = self.interp.call_value(f, None, js_args)?;
+        // 결과 타입은 모듈에 적혀 있다 — 값의 모양으로 추측하면 조용히 틀린다.
+        let results = self
+            .module
+            .import_func_type(idx)
+            .map(|t| t.results.clone())
+            .unwrap_or_default();
+        Ok(match results.len() {
+            0 => vec![],
+            1 => vec![js_to_wasm_typed(&r, results[0])],
+            n => {
+                // 다중 값: JS 는 배열로 돌려준다 (JS-API §ToWebAssemblyValue, iterable)
+                let items: Vec<Value> = match &r {
+                    Value::Arr(a) => a.borrow().clone(),
+                    _ => return Err("wasm: 다중 값 임포트는 배열을 돌려줘야 한다".to_string()),
+                };
+                (0..n)
+                    .map(|k| {
+                        js_to_wasm_typed(
+                            items.get(k).unwrap_or(&Value::Undefined),
+                            results[k],
+                        )
+                    })
+                    .collect()
+            }
+        })
+    }
+}
+
+pub(super) fn wasm_val_to_js(v: &crate::wasm::Val) -> Value {
+    use crate::wasm::Val;
+    match v {
+        Val::I32(n) => Value::Num(*n as f64),
+        Val::F32(n) => Value::Num(*n as f64),
+        Val::F64(n) => Value::Num(*n),
+        // i64 는 반드시 BigInt 다 (JS-API §ToJSValue). Number 로 주면 2^53 위에서 조용히 틀린다.
+        Val::I64(n) => Value::BigInt(Rc::new(crate::js::bigint::BigInt::from_i64(*n))),
+    }
+}
+
+// ToInt32 (표준 §7.1.6): NaN/Inf → 0, 나머지는 2^32 로 감싸 부호 있는 32비트로.
+// `n as i32` 는 범위 밖에서 포화(saturate)한다 — 표준은 감싸야 한다.
+pub(super) fn to_int32(n: f64) -> i32 {
+    if !n.is_finite() {
+        return 0;
+    }
+    let t = n.trunc();
+    let m = t.rem_euclid(4294967296.0);
+    if m >= 2147483648.0 {
+        (m - 4294967296.0) as i32
+    } else {
+        m as i32
+    }
+}
+
+// JS 값 → wasm 값. 대상 타입을 알면 그 타입으로 (표준의 ToWebAssemblyValue).
+pub(super) fn js_to_wasm_typed(v: &Value, t: u8) -> crate::wasm::Val {
+    use crate::wasm::Val;
+    let num = |v: &Value| -> f64 {
+        match v {
+            Value::Num(n) => *n,
+            Value::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Value::Str(s) => s.trim().parse::<f64>().unwrap_or(f64::NAN),
+            Value::BigInt(b) => b.to_f64(),
+            _ => f64::NAN,
+        }
+    };
+    match t {
+        0x7f => Val::I32(to_int32(num(v))),
+        0x7e => Val::I64(match v {
+            Value::BigInt(b) => b.to_i64(),
+            other => num(other) as i64,
+        }),
+        0x7d => Val::F32(num(v) as f32),
+        _ => Val::F64(num(v)),
+    }
+}
+
 
 // 무결성 상태를 걸 수 있는 값의 신원(Rc 포인터). 원시값은 None.
 pub(super) fn integrity_ptr(v: &Value) -> Option<usize> {
@@ -1606,6 +1750,24 @@ impl Interp {
         env_declare(&global, "Promise", Value::Native(Native::PromiseCtor));
         // fetch(url) — 동기 HTTP 후 resolved Promise(Response) 반환
         env_declare(&global, "fetch", Value::Native(Native::Fetch));
+        // WebAssembly 의 밑바닥 훅. 표면(WebAssembly.Module/Instance/Memory…)은 프렐류드가
+        // JS 로 만든다 — 그래야 Memory.buffer 가 진짜 ArrayBuffer(프로토타입 포함)가 되고
+        // new Uint8Array(memory.buffer) 가 **살아있는 뷰**가 된다.
+        env_declare(&global, "__kZeroBytes", Value::Native(Native::ZeroBytes));
+        env_declare(&global, "__kWasmValidate", Value::Native(Native::WasmValidate));
+        env_declare(&global, "__kWasmCompile", Value::Native(Native::WasmCompile));
+        env_declare(&global, "__kWasmMemPages", Value::Native(Native::WasmMemPages));
+        env_declare(
+            &global,
+            "__kWasmRegisterMemory",
+            Value::Native(Native::WasmRegisterMemory),
+        );
+        env_declare(&global, "__kWasmGrow", Value::Native(Native::WasmGrow));
+        env_declare(
+            &global,
+            "__kWasmInstantiate",
+            Value::Native(Native::WasmInstantiate),
+        );
         // Function.prototype (call/apply/bind) — 폴리필이 Function.prototype.call.apply
         // 등으로 광범위하게 참조. 정체성 보존 위해 필드로 보관.
         let mut fn_proto = ObjMap::new();
@@ -1781,6 +1943,10 @@ impl Interp {
             window_obj,
             native_props: HashMap::new(),
             integrity: HashMap::new(),
+            wasm_modules: Vec::new(),
+            wasm_memories: Vec::new(),
+            wasm_instances: Vec::new(),
+            fetch_bodies: Vec::new(),
         }
     }
 
@@ -5715,6 +5881,166 @@ mod tests {
             Value::Bool(b) => b,
             other => panic!("expected bool, got {:?}", other),
         }
+    }
+
+    // ── WebAssembly (JS API) ───────────────────────────────────────────────
+    // 바이트는 테스트 안에서 기계적으로 만든다. 손으로 센 오프셋은 반드시 틀린다.
+    // 모듈: memory 1페이지, add(i32,i32)->i32, poke(i32) [메모리 0번지에 store8],
+    //       grow() -> memory.grow(1), 데이터 세그먼트로 0x10 에 'OK'.
+    fn wasm_test_bytes() -> String {
+        fn leb(mut n: u32) -> Vec<u8> {
+            let mut o = Vec::new();
+            loop {
+                let b = (n & 0x7f) as u8;
+                n >>= 7;
+                if n == 0 {
+                    o.push(b);
+                    return o;
+                }
+                o.push(b | 0x80);
+            }
+        }
+        fn sec(id: u8, body: Vec<u8>) -> Vec<u8> {
+            let mut o = vec![id];
+            o.extend(leb(body.len() as u32));
+            o.extend(body);
+            o
+        }
+        fn vecs(items: Vec<Vec<u8>>) -> Vec<u8> {
+            let mut o = leb(items.len() as u32);
+            for i in items {
+                o.extend(i);
+            }
+            o
+        }
+        fn nm(s: &str) -> Vec<u8> {
+            let mut o = leb(s.len() as u32);
+            o.extend_from_slice(s.as_bytes());
+            o
+        }
+        fn body(code: Vec<u8>) -> Vec<u8> {
+            let mut b = leb(0); // 로컬 없음
+            b.extend(code);
+            b.push(0x0b);
+            let mut o = leb(b.len() as u32);
+            o.extend(b);
+            o
+        }
+        let i32t = 0x7fu8;
+        let types = vec![
+            vec![0x60, 0x02, i32t, i32t, 0x01, i32t], // (i32,i32)->i32
+            vec![0x60, 0x01, i32t, 0x00],             // (i32)->()
+            vec![0x60, 0x00, 0x01, i32t],             // ()->i32
+        ];
+        let mut data = vec![0x00, 0x41, 0x10, 0x0b]; // active, offset=16
+        data.extend(leb(2));
+        data.extend_from_slice(b"OK");
+
+        let mut m = Vec::new();
+        m.extend_from_slice(b"\0asm");
+        m.extend_from_slice(&1u32.to_le_bytes());
+        m.extend(sec(1, vecs(types)));
+        m.extend(sec(3, vecs(vec![leb(0), leb(1), leb(2)])));
+        m.extend(sec(5, vecs(vec![vec![0x00, 0x01]])));
+        m.extend(sec(
+            7,
+            vecs(vec![
+                {
+                    let mut v = nm("add");
+                    v.push(0x00);
+                    v.extend(leb(0));
+                    v
+                },
+                {
+                    let mut v = nm("poke");
+                    v.push(0x00);
+                    v.extend(leb(1));
+                    v
+                },
+                {
+                    let mut v = nm("grow");
+                    v.push(0x00);
+                    v.extend(leb(2));
+                    v
+                },
+                {
+                    let mut v = nm("memory");
+                    v.push(0x02);
+                    v.extend(leb(0));
+                    v
+                },
+            ]),
+        ));
+        m.extend(sec(
+            10,
+            vecs(vec![
+                body(vec![0x20, 0x00, 0x20, 0x01, 0x6a]), // add
+                body(vec![0x41, 0x00, 0x20, 0x00, 0x3a, 0x00, 0x00]), // mem[0] = x
+                body(vec![0x41, 0x01, 0x40, 0x00]),       // memory.grow(1)
+            ]),
+        ));
+        m.extend(sec(11, vecs(vec![data])));
+
+        let items: Vec<String> = m.iter().map(|b| b.to_string()).collect();
+        format!("new Uint8Array([{}])", items.join(","))
+    }
+
+    #[test]
+    fn wasm_js_api_roundtrip() {
+        let b = wasm_test_bytes();
+        assert!(
+            prelude_bool(&format!("WebAssembly.validate({})", b)),
+            "유효한 모듈"
+        );
+        assert!(
+            !prelude_bool("WebAssembly.validate(new Uint8Array([1,2,3,4]))"),
+            "쓰레기 바이트는 거부"
+        );
+        // 동기 경로(new Module/new Instance)로 내보낸 함수를 부른다
+        assert_eq!(
+            prelude_num(&format!(
+                "var m = new WebAssembly.Module({}); \
+                 var i = new WebAssembly.Instance(m, {{}}); i.exports.add(20, 22)",
+                b
+            )),
+            42.0
+        );
+    }
+
+    // 메모리가 **살아있는 뷰**인가 — 사본이면 여기서 걸린다.
+    #[test]
+    fn wasm_memory_is_a_live_view() {
+        let b = wasm_test_bytes();
+        assert_eq!(
+            prelude_str(&format!(
+                "var i = new WebAssembly.Instance(new WebAssembly.Module({}), {{}}); \
+                 var u8 = new Uint8Array(i.exports.memory.buffer); \
+                 var before = u8[0]; \
+                 i.exports.poke(200); \
+                 [before, u8[0], u8[16], u8[17]].join(',')",
+                b
+            )),
+            // 데이터 세그먼트('OK' = 79,75)도 실려 있어야 한다
+            "0,200,79,75"
+        );
+    }
+
+    // memory.grow 후에도 JS 가 새 버퍼를 본다. 옛 버퍼는 분리(length 0).
+    #[test]
+    fn wasm_grow_rebinds_buffer_and_detaches_old() {
+        let b = wasm_test_bytes();
+        assert_eq!(
+            prelude_str(&format!(
+                "var i = new WebAssembly.Instance(new WebAssembly.Module({}), {{}}); \
+                 var old = new Uint8Array(i.exports.memory.buffer); \
+                 var prev = i.exports.grow(); \
+                 var now = new Uint8Array(i.exports.memory.buffer); \
+                 [prev, old.length, now.length, now[16]].join(',')",
+                b
+            )),
+            // 이전 페이지 수 1, 옛 뷰는 분리되어 0, 새 뷰는 2페이지, 데이터는 살아 있다
+            "1,0,131072,79"
+        );
     }
 
     #[test]

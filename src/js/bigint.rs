@@ -69,6 +69,20 @@ impl BigInt {
         }
     }
 
+    // 하위 64비트를 2의 보수로 잘라 i64 로 (BigInt.asIntN(64, x) 와 같은 의미).
+    // wasm 의 i64 인자/반환은 정확히 이 규칙으로 BigInt 와 오간다 (JS-API §ToWebAssemblyValue).
+    pub fn to_i64(&self) -> i64 {
+        let mut u: u64 = 0;
+        for (k, limb) in self.mag.iter().take(2).enumerate() {
+            u |= (*limb as u64) << (32 * k);
+        }
+        if self.neg {
+            (u as i64).wrapping_neg()
+        } else {
+            u as i64
+        }
+    }
+
     // "123", "0x1f", "0b101", "0o17", "  42  ", "" (=0). 실패하면 None (SyntaxError).
     pub fn parse(s: &str) -> Option<Self> {
         let t = s.trim();

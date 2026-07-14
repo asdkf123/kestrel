@@ -911,8 +911,8 @@ var AbortController = window.AbortController;
 // 숫자 배열로 흉내내면 이 규칙들이 전부 조용히 틀린다.
 function __kArrayBuffer(len) {
   this.byteLength = len | 0;
-  this._b = [];
-  for (var i = 0; i < this.byteLength; i++) this._b.push(0);
+  // 0 채우기는 네이티브로 — JS 루프면 1MB 버퍼가 100만 반복이라 사실상 못 쓴다.
+  this._b = __kZeroBytes(this.byteLength);
 }
 __kArrayBuffer.prototype.slice = function(a, b){
   a = a || 0; b = (b === undefined) ? this.byteLength : b;
@@ -1014,23 +1014,31 @@ function __kMakeTypedArray(name) {
     var self = this;
     this.buffer = buf;
     this.byteOffset = off;
-    this.length = len;
-    this.byteLength = len * spec.size;
+    this._len = len;
     this.BYTES_PER_ELEMENT = spec.size;
     this._spec = spec;
+    // length/byteLength 는 버퍼에서 파생한다 — 버퍼가 분리(detach)되면 0 이 돼야 한다.
+    // (WebAssembly.Memory.grow 는 옛 버퍼를 분리한다. 길이를 박아 두면 죽은 뷰가
+    //  살아있는 척하며 조용히 틀린 값을 읽는다 — wasm-bindgen 은 정확히 이걸로 판별한다)
+    var vlen = function(t){
+      var avail = Math.floor((t.buffer.byteLength - t.byteOffset) / spec.size);
+      return Math.max(0, Math.min(t._len, avail));
+    };
     var view = new Proxy(this, {
       get: function(t, k){
         var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
         if (n >= 0) {
-          if (n >= t.length) return undefined;
+          if (n >= vlen(t)) return undefined;
           return spec.get(t.buffer._b, t.byteOffset + n * spec.size);
         }
+        if (k === 'length') return vlen(t);
+        if (k === 'byteLength') return vlen(t) * spec.size;
         return t[k];
       },
       set: function(t, k, v){
         var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
         if (n >= 0) {
-          if (n < t.length) spec.set(t.buffer._b, t.byteOffset + n * spec.size, v);
+          if (n < vlen(t)) spec.set(t.buffer._b, t.byteOffset + n * spec.size, v);
           return true;
         }
         t[k] = v;
@@ -1510,6 +1518,88 @@ if (!Reflect) {
   Reflect.construct = function(fn, args){ return new (Function.prototype.bind.apply(fn, [null].concat(args || [])))(); };
   window.Reflect = Reflect;
 }
+
+// ── WebAssembly ────────────────────────────────────────────────────────────
+// 표면은 여기(JS), 알맹이는 네이티브(src/wasm.rs). 이렇게 두는 이유:
+// Memory.buffer 가 **진짜 ArrayBuffer** 여야 new Uint8Array(memory.buffer) 가
+// 살아있는 뷰가 된다. 네이티브가 흉내낸 객체를 주면 조용히 틀린 사본이 된다.
+function __kWasmBytes(src) {
+  if (src instanceof __kArrayBuffer) return src._b;
+  if (src && src.buffer instanceof __kArrayBuffer) {
+    // 타입 배열 뷰 — 자기 구간만 떼어낸다
+    var b = src.buffer._b, o = src.byteOffset | 0, n = src.byteLength | 0, out = [];
+    for (var i = 0; i < n; i++) out.push(b[o + i]);
+    return out;
+  }
+  if (src && typeof src.length === 'number') return src;
+  throw new TypeError('WebAssembly: 바이트열이 아니다');
+}
+
+var WebAssembly = {};
+class __kWasmCompileError extends Error {}
+class __kWasmLinkError extends Error {}
+class __kWasmRuntimeError extends Error {}
+WebAssembly.CompileError = __kWasmCompileError;
+WebAssembly.LinkError = __kWasmLinkError;
+WebAssembly.RuntimeError = __kWasmRuntimeError;
+
+WebAssembly.Module = function(bytes) {
+  this.__idx = __kWasmCompile(__kWasmBytes(bytes));
+};
+
+WebAssembly.Memory = function(desc) {
+  desc = desc || {};
+  var pages = desc.initial || 0;
+  this.buffer = new __kArrayBuffer(pages * 65536);
+  this.__mem = __kWasmRegisterMemory(this.buffer._b, this);
+};
+// 커지면 이전 ArrayBuffer 는 분리되고 buffer 가 새 것으로 바뀐다 (네이티브가 갈아끼운다).
+// 옛 뷰의 length 가 0 이 되어야 캐시된 뷰를 쓰는 코드(wasm-bindgen)가 뷰를 다시 만든다.
+WebAssembly.Memory.prototype.grow = function(n) {
+  var old = __kWasmGrow(this.__mem, n);
+  if (old < 0) throw new RangeError('WebAssembly.Memory.grow: 한도 초과');
+  return old;
+};
+
+WebAssembly.Global = function(desc, v) {
+  this.value = (v === undefined) ? 0 : v;
+};
+WebAssembly.Global.prototype.valueOf = function(){ return this.value; };
+
+WebAssembly.Instance = function(mod, imports) {
+  var pages = __kWasmMemPages(mod.__idx);
+  var mem = (pages >= 0) ? new WebAssembly.Memory({initial: pages}) : null;
+  this.exports = __kWasmInstantiate(mod.__idx, imports || {}, mem ? mem.__mem : -1);
+};
+
+WebAssembly.validate = function(bytes) { return __kWasmValidate(__kWasmBytes(bytes)); };
+WebAssembly.compile = function(bytes) {
+  return new Promise(function(resolve, reject){
+    try { resolve(new WebAssembly.Module(bytes)); } catch (e) { reject(e); }
+  });
+};
+WebAssembly.instantiate = function(src, imports) {
+  return new Promise(function(resolve, reject){
+    try {
+      if (src instanceof WebAssembly.Module) {
+        resolve(new WebAssembly.Instance(src, imports));
+      } else {
+        var m = new WebAssembly.Module(src);
+        resolve({module: m, instance: new WebAssembly.Instance(m, imports)});
+      }
+    } catch (e) { reject(e); }
+  });
+};
+// …Streaming: Response(또는 그 Promise)에서 바이트를 뽑아 같은 길로 보낸다
+WebAssembly.compileStreaming = function(src, imports) {
+  return Promise.resolve(src).then(function(r){ return r.arrayBuffer(); })
+    .then(function(buf){ return new WebAssembly.Module(buf); });
+};
+WebAssembly.instantiateStreaming = function(src, imports) {
+  return Promise.resolve(src).then(function(r){ return r.arrayBuffer(); })
+    .then(function(buf){ return WebAssembly.instantiate(buf, imports); });
+};
+window.WebAssembly = WebAssembly;
 "#;
 
 

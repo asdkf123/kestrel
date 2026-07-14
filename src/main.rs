@@ -24,6 +24,7 @@ mod url;
 mod vp8_tables;
 mod vp8l;
 mod vp8l_tables;
+mod wasm;
 mod webp;
 mod woff2;
 mod window;
