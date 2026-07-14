@@ -1742,6 +1742,75 @@ mod tests {
         );
     }
 
+    // DOM 노드도 평범한 객체다: 스크립트가 붙인 프로퍼티(expando)가 저장돼야 한다.
+    // 예전엔 el.foo = 1 이 **조용히 버려졌다**. 그래서 커스텀 엘리먼트의
+    // this._v = ... 가 통째로 사라졌고, 업그레이드된 요소는 클래스 프로토타입과
+    // 연결도 없어서 this.anyMethod() 가 전부 undefined 였다.
+    #[test]
+    fn dom_nodes_hold_expandos_and_custom_element_prototypes() {
+        let dom = run_with_layout(
+            r#"<my-el id="x"></my-el><div id="d"></div><div id="out"></div>
+               <script>
+                 var log = [];
+                 var d = document.getElementById('d');
+                 d.myProp = 42;
+                 log.push(String(d.myProp));
+                 // 읽기 전용 IDL 속성에 대입하면 아무 일도 없다 (expando 가 되면 안 된다)
+                 d.classList = 'a b';   // [PutForwards=value] → class 속성
+                 log.push(d.getAttribute('class') + ',' + String(d.classList.length));
+                 // 커스텀 엘리먼트: 프로토타입 체인이 연결된다 (상속 포함)
+                 class Base extends HTMLElement { helper(){ return 'H'; } }
+                 class MyEl extends Base {
+                   constructor(){ super(); this._v = this.helper(); }
+                   connectedCallback(){ this.textContent = this._v + ':' + this.tag(); }
+                   tag(){ return this.tagName; }
+                 }
+                 customElements.define('my-el', MyEl);
+                 log.push(document.getElementById('x').textContent);
+                 document.getElementById('out').textContent = log.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(dom.text_content(out), "42|a b,2|H:MY-EL");
+    }
+
+    // 이벤트 핸들러 콘텐츠 속성 (HTML §8.1.5.2) 과 활성화 동작.
+    // 예전엔 인라인 핸들러(onclick="...")가 **통째로 무시**됐고, 체크박스/라디오를
+    // 클릭해도 input/change 이벤트가 안 나갔으며, 라디오 그룹 배타성도 없었다.
+    #[test]
+    fn inline_handlers_and_activation_behavior() {
+        let dom = run_with_layout(
+            r#"<button id="b" onclick="log('inline')"></button>
+               <input type="checkbox" id="cb" oninput="log('input')" onchange="log('change')">
+               <input type="radio" name="g" id="r1" checked>
+               <input type="radio" name="g" id="r2">
+               <form id="f" onsubmit="log('submit'); return false"><input type="submit" id="sb"></form>
+               <details id="dt" ontoggle="log('toggle')"><summary id="sm">s</summary></details>
+               <div id="out"></div>
+               <script>
+                 var out = [];
+                 function log(s){ out.push(s); }
+                 document.getElementById('b').click();
+                 document.getElementById('cb').click();
+                 document.getElementById('r2').click();
+                 document.getElementById('sb').click();
+                 document.getElementById('sm').click();
+                 out.push('cb=' + document.getElementById('cb').checked);
+                 out.push('r1=' + document.getElementById('r1').checked);
+                 out.push('r2=' + document.getElementById('r2').checked);
+                 out.push('open=' + document.getElementById('dt').hasAttribute('open'));
+                 document.getElementById('out').textContent = out.join('|');
+               </script>"#,
+            "",
+        );
+        let out = dom.find_by_attr_id("out").unwrap();
+        assert_eq!(
+            dom.text_content(out),
+            "inline|input|change|submit|toggle|cb=true|r1=false|r2=true|open=true"
+        );
+    }
+
     // 네임스페이스 조회 (DOM §4.4)와 getElementsByTagName 의 대소문자 규칙 (§4.5).
     // lookupNamespaceURI 계열은 아예 없었고(그걸 쓰는 코드는 그 줄에서 죽었다),
     // getElementsByTagName 은 무조건 대소문자를 무시해서 SVG 의 <ABC> 와 <abc> 를

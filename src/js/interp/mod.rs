@@ -199,6 +199,16 @@ pub struct Interp {
     // 함수를 만들 때 이 값을 그 함수에 새기고(렉시컬), 호출할 때 복원한다.
     priv_id: u64,
     priv_counter: u64,
+    // DOM 노드에 스크립트가 붙인 임의 프로퍼티 (expando). 표준의 플랫폼 객체는
+    // 평범한 객체이기도 하다 — el.foo = 1 이 실제로 저장돼야 한다.
+    // 예전엔 조용히 버려서, 커스텀 엘리먼트의 this._v = ... 가 통째로 사라졌다.
+    dom_props: HashMap<(crate::dom::NodeId, String), Value>,
+    // 업그레이드된 커스텀 엘리먼트의 생성자 (프로토타입 체인 연결용).
+    // 예전엔 연결이 없어서 this.anyMethod() 가 전부 undefined 였다.
+    element_classes: HashMap<crate::dom::NodeId, Value>,
+    // 인라인 이벤트 핸들러 속성의 소스 (중복 등록 방지) 와 그 함수
+    inline_handlers: HashMap<(crate::dom::NodeId, String), String>,
+    inline_fns: HashMap<(crate::dom::NodeId, String), Value>,
     // CSSOM 변경(insertRule/deleteRule/disabled) 세대. 반영된 세대와 다르면 재구성.
     pub css_epoch: u64,
     pub css_applied_epoch: u64,
@@ -833,6 +843,7 @@ impl Interp {
         env_declare(&global, "Function", Value::Native(Native::FunctionCtor));
         env_declare(&global, "eval", Value::Native(Native::Eval));
         env_declare(&global, "__kBrand", Value::Native(Native::Brand));
+        env_declare(&global, "__kBindElementClass", Value::Native(Native::BindElementClass));
         // Map / Set / WeakMap / WeakSet (약한 참조는 일반 Map/Set 으로 근사)
         env_declare(&global, "Map", Value::Native(Native::MapCtor));
         env_declare(&global, "WeakMap", Value::Native(Native::MapCtor));
@@ -1172,6 +1183,10 @@ impl Interp {
             layout_ctx: None,
             priv_id: 0,
             priv_counter: 0,
+            dom_props: HashMap::new(),
+            element_classes: HashMap::new(),
+            inline_handlers: HashMap::new(),
+            inline_fns: HashMap::new(),
             css_epoch: 0,
             css_applied_epoch: 0,
             layout_version: None,
@@ -1834,6 +1849,44 @@ impl Interp {
 
     // 주어진 이벤트 객체로 target 에서 버블링하며 핸들러 실행. fire_handlers 와
     // dispatchEvent 가 공유. 하나라도 실행됐으면 true.
+    // on<type> 콘텐츠 속성이 있으면 그 소스를 컴파일해 리스너로 등록한다 (HTML §8.1.5.2).
+    // 이미 등록돼 있으면(속성 내용이 그대로면) 다시 만들지 않는다.
+    fn ensure_inline_handler(&mut self, id: crate::dom::NodeId, event: &str) {
+        let attr = format!("on{}", event);
+        let src = {
+            let Ok(dom) = self.dom_arena() else { return };
+            match &dom.get(id).node_type {
+                crate::dom::NodeType::Element(e) => e.attributes.get(&attr).cloned(),
+                _ => None,
+            }
+        };
+        let Some(src) = src else { return };
+        // 같은 소스로 이미 등록했으면 건너뛴다
+        if self.inline_handlers.get(&(id, attr.clone())).map(|s| s == &src).unwrap_or(false) {
+            return;
+        }
+        // 핸들러 본문은 함수 본문이다. this = 요소, event/arguments[0] = 이벤트.
+        // 반환값이 false 면 preventDefault (레거시지만 표준이다).
+        let body = format!(
+            "(function(event){{ var __r = (function(){{ {} }}).call(this, event);              if (__r === false && event && event.preventDefault) event.preventDefault(); }})",
+            src
+        );
+        let f = match self.run(&body) {
+            Ok(v) if is_callable(&v) => v,
+            _ => return,
+        };
+        // 예전 소스로 등록된 리스너가 있으면 뺀다 (속성이 바뀐 경우)
+        if let Some(old) = self.inline_handlers.get(&(id, attr.clone())).cloned() {
+            let _ = old;
+            self.handlers.retain(|(hid, t, _, cap, _)| {
+                !(*hid == id && t == event && !*cap && self.inline_fns.contains_key(&(id, t.clone())))
+            });
+        }
+        self.inline_fns.insert((id, event.to_string()), f.clone());
+        self.inline_handlers.insert((id, attr), src);
+        self.handlers.push((id, event.to_string(), f, false, false));
+    }
+
     pub fn dispatch_event_value(
         &mut self,
         target: crate::dom::NodeId,
@@ -1868,6 +1921,12 @@ impl Interp {
                 && !matches!(evt_obj.borrow().get("bubbles"), Some(Value::Bool(true)) | None)
             {
                 break;
+            }
+            // 이벤트 핸들러 **콘텐츠 속성** (HTML §8.1.5.2): onclick="..." 등.
+            // 예전엔 통째로 무시했다 — 인라인 핸들러가 영영 안 돌았다.
+            // 버블 단계 리스너로 취급한다 (표준). 처음 마주칠 때 컴파일해 등록한다.
+            if want_capture != Some(true) {
+                self.ensure_inline_handler(id, event);
             }
             let to_run: Vec<Value> = self
                 .handlers
@@ -4324,7 +4383,25 @@ impl Interp {
                 if let Some(n) = native {
                     return Ok(Value::Native(n));
                 }
-                self.dom_get(*id, key)
+                // 스크립트가 붙인 프로퍼티가 우선 (표준 프로퍼티를 가리지는 않는다)
+                if let Some(v) = self.dom_props.get(&(*id, key.to_string())) {
+                    return Ok(v.clone());
+                }
+                let v = self.dom_get(*id, key)?;
+                if !matches!(v, Value::Undefined) {
+                    return Ok(v);
+                }
+                // 업그레이드된 커스텀 엘리먼트: 그 클래스의 프로토타입 체인을 본다.
+                if let Some(ctor) = self.element_classes.get(id).cloned() {
+                    let proto = self.member_get(&ctor, "prototype")?;
+                    if !matches!(proto, Value::Undefined) {
+                        let m = self.member_get(&proto, key)?;
+                        if !matches!(m, Value::Undefined) {
+                            return Ok(m);
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
             }
             Value::Instance(inst) => {
                 // 필드 우선, 그다음 get 접근자(호출해 값 산출), 그다음 메서드 체인.

@@ -619,16 +619,42 @@ impl Interp {
 
 
     // 체크박스/라디오면 checked 를 뒤집는다. 뒤집었으면 true.
+    // 라디오는 **같은 그룹의 다른 라디오를 해제**해야 한다 (HTML §4.10.5.1.12) —
+    // 예전엔 그냥 자기만 켜서 두 개가 동시에 켜져 있었다.
     fn pre_click_toggle(&mut self, id: crate::dom::NodeId) -> bool {
-        let Ok(dom) = self.dom_arena() else { return false };
+        let (ty, name) = {
+            let Ok(dom) = self.dom_arena() else { return false };
+            let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else { return false };
+            if e.tag_name != "input" {
+                return false;
+            }
+            let ty = e.attributes.get("type").map(|t| t.to_ascii_lowercase()).unwrap_or_default();
+            if ty != "checkbox" && ty != "radio" {
+                return false;
+            }
+            (ty, e.attributes.get("name").cloned().unwrap_or_default())
+        };
+        if ty == "radio" {
+            // 같은 폼(없으면 문서) 안의 같은 이름 라디오를 모두 해제
+            let scope = self.owner_form(id);
+            let dom = self.dom_arena().ok().map(|d| d as *mut crate::dom::Dom);
+            if let Some(dp) = dom {
+                let dom = unsafe { &mut *dp };
+                let root = scope.unwrap_or(dom.root);
+                let mut peers = Vec::new();
+                collect_radio_peers(dom, root, &name, &mut peers);
+                for p in peers {
+                    if p != id {
+                        dom.remove_attr(p, "checked");
+                    }
+                }
+            }
+        }
+        let dom = match self.dom_arena() {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
         let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else { return false };
-        if e.tag_name != "input" {
-            return false;
-        }
-        let ty = e.attributes.get("type").map(|t| t.to_ascii_lowercase()).unwrap_or_default();
-        if ty != "checkbox" && ty != "radio" {
-            return false;
-        }
         let was = e.attributes.contains_key("checked");
         if was && ty == "checkbox" {
             dom.remove_attr(id, "checked");
@@ -664,12 +690,53 @@ impl Interp {
                     }
                 }
             }
-            // 제출 버튼: 폼에 submit 이벤트를 쏜다 (취소되면 아무 일도 없다)
-            "button" | "input" if ty == "submit" || (tag == "button" && ty.is_empty()) => {
-                let form = self.owner_form(id);
-                if let Some(f) = form {
+            // 체크박스/라디오: 토글 후 input 과 change 를 쏜다 (둘 다 버블링).
+            // 예전엔 아무 이벤트도 안 쏴서 oninput/onchange 핸들러가 영영 안 돌았다.
+            "input" if ty == "checkbox" || ty == "radio" => {
+                for kind in ["input", "change"] {
+                    let evt = self.make_event(kind, id);
+                    self.dispatch_event_value(id, kind, evt);
+                }
+            }
+            // 리셋 버튼: 폼에 reset 이벤트 (HTML §4.10.21.2)
+            "button" | "input" if ty == "reset" => {
+                if let Some(f) = self.owner_form(id) {
+                    let evt = self.make_event("reset", f);
+                    self.dispatch_event_value(f, "reset", evt);
+                }
+            }
+            // 제출 버튼 (type=image 도 제출한다 — 표준)
+            "button" | "input"
+                if ty == "submit" || ty == "image" || (tag == "button" && ty.is_empty()) =>
+            {
+                if let Some(f) = self.owner_form(id) {
                     let evt = self.make_event("submit", f);
                     self.dispatch_event_value(f, "submit", evt);
+                }
+            }
+            // <summary>: 부모 <details> 의 open 을 뒤집고 toggle 을 쏜다
+            "summary" => {
+                let parent = {
+                    let Ok(dom) = self.dom_arena() else { return };
+                    dom.get(id).parent.filter(|&p| {
+                        matches!(&dom.get(p).node_type,
+                            crate::dom::NodeType::Element(e) if e.tag_name == "details")
+                    })
+                };
+                if let Some(d) = parent {
+                    let dom = match self.dom_arena() {
+                        Ok(x) => x,
+                        Err(_) => return,
+                    };
+                    let open = matches!(&dom.get(d).node_type,
+                        crate::dom::NodeType::Element(e) if e.attributes.contains_key("open"));
+                    if open {
+                        dom.remove_attr(d, "open");
+                    } else {
+                        dom.set_attr(d, "open", String::new());
+                    }
+                    let evt = self.make_event("toggle", d);
+                    self.dispatch_event_value(d, "toggle", evt);
                 }
             }
             _ => {}
@@ -2260,6 +2327,12 @@ impl Interp {
                     dom.insert_before(parent, new_id, next);
                 }
                 Ok(Value::Dom(new_id))
+            }
+            Native::BindElementClass => {
+                if let (Some(Value::Dom(id)), Some(ctor)) = (args.first(), args.get(1)) {
+                    self.element_classes.insert(*id, ctor.clone());
+                }
+                Ok(Value::Undefined)
             }
             // 네임스페이스 조회 (DOM §4.4 "locate a namespace" / "locate a namespace prefix").
             // 요소에서 시작해 조상으로 올라가며 xmlns / xmlns:prefix 선언을 찾는다.
@@ -5161,5 +5234,25 @@ impl Interp {
                 )),
             },
         }
+    }
+}
+
+// 같은 이름의 라디오 버튼을 모은다 (라디오 그룹).
+fn collect_radio_peers(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    name: &str,
+    out: &mut Vec<crate::dom::NodeId>,
+) {
+    if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+        if e.tag_name == "input"
+            && e.attributes.get("type").map(|t| t.eq_ignore_ascii_case("radio")).unwrap_or(false)
+            && e.attributes.get("name").map(|n| n == name).unwrap_or(name.is_empty())
+        {
+            out.push(id);
+        }
+    }
+    for &c in &dom.get(id).children {
+        collect_radio_peers(dom, c, name, out);
     }
 }

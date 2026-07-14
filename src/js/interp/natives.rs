@@ -107,6 +107,8 @@ pub enum Native {
     // Attr 노드 접근 (§4.9.2)
     GetAttributeNode,
     // 네임스페이스 조회 (DOM §4.4)
+    // 업그레이드된 커스텀 엘리먼트에 그 클래스를 연결한다 (프로토타입 체인용)
+    BindElementClass,
     LookupNamespaceURI,
     LookupPrefix,
     IsDefaultNamespace,

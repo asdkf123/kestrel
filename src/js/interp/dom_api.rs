@@ -1088,8 +1088,27 @@ impl Interp {
             }
             // IDL 반영 표 (HTML §2.6). 예전엔 표에 있는 속성도 조용히 무시했다 —
             // img.width = 100 이 아무 일도 안 했다.
+            // classList / style 대입은 [PutForwards] 다 (표준):
+            // el.classList = "a b" 는 class 속성을, el.style = "..." 는 style 속성을 쓴다.
+            "classList" => {
+                let dom = self.dom_arena()?;
+                dom.set_attr(id, "class", text);
+                Ok(())
+            }
             _ => {
-                self.reflect_set(id, key, &value)?;
+                if self.reflect_set(id, key, &value)? {
+                    return Ok(());
+                }
+                // 이미 존재하는 IDL 속성(읽기 전용)에 대입하면 **아무 일도 없다** (표준의
+                // sloppy 모드). expando 로 저장하면 진짜 프로퍼티를 가려 버린다 —
+                // 실제로 el.classList = "x" 가 DOMTokenList 를 문자열로 덮어썼다.
+                if !matches!(self.dom_get(id, key)?, Value::Undefined) {
+                    return Ok(());
+                }
+                // 그 외에는 스크립트가 붙인 임의 프로퍼티(expando)로 보관한다.
+                // 플랫폼 객체도 평범한 객체다 — el.foo = 1 이 실제로 저장돼야 한다.
+                // 예전엔 조용히 버려서, 커스텀 엘리먼트의 this._v = ... 가 사라졌다.
+                self.dom_props.insert((id, key.to_string()), value);
                 Ok(())
             }
         }

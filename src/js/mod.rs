@@ -1962,6 +1962,10 @@ var __kCEDone = [];  // 이미 업그레이드한 요소들
 function __kUpgrade(el, ctor) {
   if (!el || __kCEDone.indexOf(el) >= 0) return;
   __kCEDone.push(el);
+  // 업그레이드된 요소는 그 클래스의 프로토타입 체인을 갖는다 (표준).
+  // 예전엔 연결이 없어서 this.anyMethod() 가 전부 undefined 였다 —
+  // Lit/Stencil 같은 웹 컴포넌트 라이브러리가 생성자 첫 줄에서 죽었다.
+  __kBindElementClass(el, ctor);
   var prev = __kUpgrading;
   __kUpgrading = el;
   try { new ctor(); } catch (e) { console.error('커스텀 엘리먼트 생성자 오류: ' + e); }
