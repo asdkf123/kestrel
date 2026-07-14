@@ -1364,6 +1364,134 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
+    // new WebSocket(url [, protocols]) — 진짜로 연결한다 (RFC 6455 핸드셰이크).
+    // 실패하면 error/close 이벤트를 쏜다 (표준: 생성자는 throw 하지 않는다 —
+    // 연결 실패는 비동기 이벤트다. 여기서 throw 하면 스크립트가 통째로 죽는다).
+    fn make_websocket(&mut self, args: Vec<Value>) -> Value {
+        let raw = args.first().map(to_display).unwrap_or_default();
+        let url = self.absolute_url(&raw);
+        // http(s) 기준 URL 로 절대화됐으면 ws(s) 로 되돌린다
+        let url = if raw.starts_with("ws://") || raw.starts_with("wss://") {
+            raw.clone()
+        } else if let Some(rest) = url.strip_prefix("https://") {
+            format!("wss://{}", rest)
+        } else if let Some(rest) = url.strip_prefix("http://") {
+            format!("ws://{}", rest)
+        } else {
+            url
+        };
+
+        let mut m = ObjMap::new();
+        m.insert("url".to_string(), Value::Str(url.clone()));
+        m.insert("readyState".to_string(), Value::Num(0.0)); // CONNECTING
+        m.insert("bufferedAmount".to_string(), Value::Num(0.0));
+        m.insert("protocol".to_string(), Value::Str(String::new()));
+        m.insert("binaryType".to_string(), Value::Str("blob".to_string()));
+        m.insert("send".to_string(), Value::Native(Native::WsSend));
+        m.insert("close".to_string(), Value::Native(Native::WsClose));
+        m.insert("addEventListener".to_string(), Value::Native(Native::AddEventListener));
+        m.insert("removeEventListener".to_string(), Value::Native(Native::RemoveEventListener));
+        m.insert("dispatchEvent".to_string(), Value::Native(Native::DispatchEvent));
+        // 표준 상수
+        m.insert("CONNECTING".to_string(), Value::Num(0.0));
+        m.insert("OPEN".to_string(), Value::Num(1.0));
+        m.insert("CLOSING".to_string(), Value::Num(2.0));
+        m.insert("CLOSED".to_string(), Value::Num(3.0));
+        let obj = Rc::new(RefCell::new(m));
+        let val = Value::Obj(obj.clone());
+
+        match crate::websocket::WebSocket::connect(&url) {
+            Ok(ws) => {
+                obj.borrow_mut().insert("readyState".to_string(), Value::Num(1.0));
+                obj.borrow_mut()
+                    .insert("protocol".to_string(), Value::Str(ws.protocol.clone()));
+                obj.borrow_mut()
+                    .insert("\u{0}sock".to_string(), Value::Num(self.sockets.len() as f64));
+                self.sockets.push((ws, val.clone()));
+                // open 이벤트는 마이크로태스크 뒤(핸들러 등록 후)에 와야 한다 —
+                // 지금 부르면 onopen 을 붙이기도 전이라 아무도 못 듣는다.
+                self.pending_ws_open.push(val.clone());
+            }
+            Err(e) => {
+                self.console.push(format!("WebSocket 연결 실패: {}", e));
+                obj.borrow_mut().insert("readyState".to_string(), Value::Num(3.0));
+                self.pending_ws_error.push(val.clone());
+            }
+        }
+        val
+    }
+
+    // 소켓 이벤트 배달: 스크립트/타이머 드레인 구간에서 호출된다.
+    // (연결 직후 등록된 onopen/onmessage 가 실제로 불리도록)
+    pub fn pump_websockets(&mut self) {
+        for v in std::mem::take(&mut self.pending_ws_open) {
+            if let Value::Obj(o) = &v {
+                self.ws_fire(o, "open", Vec::new());
+            }
+        }
+        for v in std::mem::take(&mut self.pending_ws_error) {
+            if let Value::Obj(o) = &v {
+                self.ws_fire(o, "error", Vec::new());
+                self.ws_fire(o, "close", Vec::new());
+            }
+        }
+        for i in 0..self.sockets.len() {
+            let events = self.sockets[i].0.poll();
+            if events.is_empty() {
+                continue;
+            }
+            let obj = match &self.sockets[i].1 {
+                Value::Obj(o) => o.clone(),
+                _ => continue,
+            };
+            for ev in events {
+                match ev {
+                    crate::websocket::Event::Message(s) => {
+                        let mut em = ObjMap::new();
+                        em.insert("data".to_string(), Value::Str(s));
+                        em.insert("type".to_string(), Value::Str("message".to_string()));
+                        let evt = Value::Obj(Rc::new(RefCell::new(em)));
+                        self.ws_fire(&obj, "message", vec![evt]);
+                    }
+                    crate::websocket::Event::Binary(b) => {
+                        let buf = self.make_array_buffer(&b).unwrap_or(Value::Undefined);
+                        let mut em = ObjMap::new();
+                        em.insert("data".to_string(), buf);
+                        em.insert("type".to_string(), Value::Str("message".to_string()));
+                        let evt = Value::Obj(Rc::new(RefCell::new(em)));
+                        self.ws_fire(&obj, "message", vec![evt]);
+                    }
+                    crate::websocket::Event::Close(code, reason) => {
+                        obj.borrow_mut().insert("readyState".to_string(), Value::Num(3.0));
+                        let mut em = ObjMap::new();
+                        em.insert("code".to_string(), Value::Num(code as f64));
+                        em.insert("reason".to_string(), Value::Str(reason));
+                        em.insert("wasClean".to_string(), Value::Bool(code == 1000));
+                        let evt = Value::Obj(Rc::new(RefCell::new(em)));
+                        self.ws_fire(&obj, "close", vec![evt]);
+                    }
+                }
+            }
+        }
+    }
+
+    fn ws_fire(&mut self, obj: &Rc<RefCell<ObjMap>>, event: &str, args: Vec<Value>) {
+        let on = format!("on{}", event);
+        let handler = obj.borrow().get(&on).cloned();
+        if let Some(h) = handler {
+            if is_callable(&h) {
+                let _ = self.call_value(h, Some(Value::Obj(obj.clone())), args.clone());
+            }
+        }
+        let listeners: Vec<Value> = match obj.borrow().get(&obj_listener_key(event)) {
+            Some(Value::Arr(a)) => a.borrow().clone(),
+            _ => Vec::new(),
+        };
+        for l in listeners {
+            let _ = self.call_value(l, Some(Value::Obj(obj.clone())), args.clone());
+        }
+    }
+
     // XHR 발화: on<event> 프로퍼티 + addEventListener 로 등록된 리스너.
     // 예전엔 on<event> 만 불렀다 — addEventListener 로 붙인 load 핸들러가 영영 안 왔다.
     fn xhr_fire(&mut self, obj: &Rc<RefCell<ObjMap>>, event: &str) {
@@ -2910,6 +3038,48 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Native::XhrCtor => Ok(self.make_xhr()),
+            Native::WebSocketCtor => Ok(self.make_websocket(args)),
+            Native::WsSend => {
+                let idx = match &recv {
+                    Some(Value::Obj(o)) => match o.borrow().get("\u{0}sock") {
+                        Some(Value::Num(n)) => *n as usize,
+                        _ => usize::MAX,
+                    },
+                    _ => usize::MAX,
+                };
+                let Some((ws, _)) = self.sockets.get_mut(idx) else {
+                    return Err("WebSocket 이 연결돼 있지 않다".to_string());
+                };
+                let data = args.first().cloned().unwrap_or(Value::Undefined);
+                let r = match &data {
+                    Value::Arr(a) => {
+                        let bytes: Vec<u8> = a
+                            .borrow()
+                            .iter()
+                            .map(|v| match v {
+                                Value::Num(n) => *n as i64 as u8,
+                                _ => 0,
+                            })
+                            .collect();
+                        ws.send_binary(&bytes)
+                    }
+                    other => ws.send_text(&to_display(other)),
+                };
+                r.map(|_| Value::Undefined)
+            }
+            Native::WsClose => {
+                if let Some(Value::Obj(o)) = &recv {
+                    let idx = match o.borrow().get("\u{0}sock") {
+                        Some(Value::Num(n)) => *n as usize,
+                        _ => usize::MAX,
+                    };
+                    if let Some((ws, _)) = self.sockets.get_mut(idx) {
+                        ws.close();
+                    }
+                    o.borrow_mut().insert("readyState".to_string(), Value::Num(3.0));
+                }
+                Ok(Value::Undefined)
+            }
             // XHR: open(method, url) → __method/__url 저장, readyState=1
             Native::XhrOpen => {
                 if let Some(Value::Obj(o)) = &recv {

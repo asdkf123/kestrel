@@ -77,6 +77,8 @@ pub fn run_scripts_with_base(
             );
         }
         it.drain_microtasks();
+        // WebSocket: 열린 소켓의 open/message 를 배달한다 (핸들러 등록 후, 스크립트 사이).
+        it.pump_websockets();
         // document.write 로 새로 생긴 스크립트를 문서 순서대로 실행한다 (동기 의미론).
         run_written_scripts(&mut it, base.as_ref(), 0);
         for line in it.console.drain(..) {
@@ -122,8 +124,12 @@ pub fn run_scripts_with_base(
     }
     it.set_ready_state("interactive");
     it.fire_global("DOMContentLoaded");
+    it.pump_websockets();
     it.set_ready_state("complete");
     it.fire_global("load");
+    // 마지막으로 한 번 더: load 핸들러가 방금 연 소켓의 첫 메시지도 받는다.
+    it.pump_websockets();
+    it.drain_microtasks();
     for line in it.console.drain(..) {
         println!("[console] {}", line);
     }

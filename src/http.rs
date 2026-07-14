@@ -219,6 +219,11 @@ fn request(url: &Url) -> Result<Vec<u8>, HttpError> {
     Ok(buf)
 }
 
+// WebSocket 도 같은 TLS 층을 쓴다 (wss://) — 두 벌 만들 이유가 없다.
+pub fn tls_stream(tcp: TcpStream, host: &str) -> Result<impl Read + Write, HttpError> {
+    tls_wrap(tcp, host)
+}
+
 fn tls_wrap(tcp: TcpStream, host: &str) -> Result<impl Read + Write, HttpError> {
     use rustls::pki_types::ServerName;
     use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};

@@ -26,6 +26,7 @@ mod vp8l;
 mod vp8l_tables;
 mod wasm;
 mod webp;
+mod websocket;
 mod woff2;
 mod window;
 

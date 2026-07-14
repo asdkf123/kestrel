@@ -546,6 +546,10 @@ pub enum Native {
     ResponseJson,
     // Response.arrayBuffer() — 원본 바이트 그대로 (텍스트로 거치면 바이너리가 망가진다)
     ResponseArrayBuffer,
+    // WebSocket (RFC 6455) — 진짜 소켓이다. 스텁이면 "연결됐다" 는 거짓말이 된다.
+    WebSocketCtor,
+    WsSend,
+    WsClose,
     // ArrayBuffer 의 0 채우기. JS 루프로 채우면 1MB 버퍼가 100만 번 반복이라
     // 사실상 못 쓴다 (wasm 메모리는 최소 1MB 로 시작하는 게 보통).
     ZeroBytes,
@@ -1158,6 +1162,11 @@ pub struct Interp {
     // 오탐을 막는다(강한 참조 → 주소 안정).
     // 비트: 1=preventExtensions, 2=sealed, 4=frozen
     integrity: HashMap<usize, (Value, u8)>,
+    // 열린 WebSocket 들. JS 객체는 인덱스로 참조하고, 드레인 구간에서 폴링해 이벤트를 배달한다.
+    pub sockets: Vec<(crate::websocket::WebSocket, Value)>,
+    // 아직 배달하지 않은 open/error (핸들러가 등록되기 전에 쏘면 아무도 못 듣는다)
+    pending_ws_open: Vec<Value>,
+    pending_ws_error: Vec<Value>,
     // WebAssembly: 컴파일된 모듈 / 선형 메모리 / 인스턴스. JS 는 인덱스로 참조한다.
     wasm_modules: Vec<Rc<crate::wasm::Module>>,
     // (바이트 배열, 그 메모리를 감싼 JS 의 WebAssembly.Memory 객체)
@@ -1767,6 +1776,7 @@ impl Interp {
         // WebAssembly 의 밑바닥 훅. 표면(WebAssembly.Module/Instance/Memory…)은 프렐류드가
         // JS 로 만든다 — 그래야 Memory.buffer 가 진짜 ArrayBuffer(프로토타입 포함)가 되고
         // new Uint8Array(memory.buffer) 가 **살아있는 뷰**가 된다.
+        env_declare(&global, "WebSocket", Value::Native(Native::WebSocketCtor));
         env_declare(&global, "__kZeroBytes", Value::Native(Native::ZeroBytes));
         env_declare(&global, "__kWasmValidate", Value::Native(Native::WasmValidate));
         env_declare(&global, "__kWasmCompile", Value::Native(Native::WasmCompile));
@@ -1958,6 +1968,9 @@ impl Interp {
             native_props: HashMap::new(),
             integrity: HashMap::new(),
             layout_metrics: std::collections::HashMap::new(),
+            sockets: Vec::new(),
+            pending_ws_open: Vec::new(),
+            pending_ws_error: Vec::new(),
             wasm_modules: Vec::new(),
             wasm_memories: Vec::new(),
             wasm_instances: Vec::new(),
@@ -5116,6 +5129,11 @@ impl Interp {
             }
             Value::Native(Native::UrlCtor) => return self.make_url(args),
             Value::Native(Native::XhrCtor) => return Ok(self.make_xhr()),
+            // new WebSocket(url) — 진짜로 연결한다. 등록을 빼먹으면 폴백이 엉뚱한 빈
+            // 객체를 만들어 readyState/send 가 통째로 undefined 가 된다.
+            Value::Native(Native::WebSocketCtor) => {
+                return self.call_native(Native::WebSocketCtor, None, args)
+            }
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {
                 let (target, _this, partial) = (*b).clone();
