@@ -488,6 +488,14 @@ pub enum SetOp {
     Clear,
     ForEach,
     Values,
+    // ES2024 집합 연산 (§24.2.4). set-like 인자를 받아 새 Set 또는 불리언을 돌려준다.
+    Union,
+    Intersection,
+    Difference,
+    SymmetricDifference,
+    IsSubsetOf,
+    IsSupersetOf,
+    IsDisjointFrom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -684,6 +692,41 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         ErrorStackSet => ("set stack", 1),
         MapSize => ("get size", 0),
         SetSize => ("get size", 0),
+        // Set/Map 프로토타입 메서드 이름·길이 (§24). 예전엔 Set(op)/Map(op) arm 이 없어
+        // Set.prototype.add.name 이 "" 였다.
+        Set(op) => {
+            let name = match op {
+                SetOp::Add => "add",
+                SetOp::Has => "has",
+                SetOp::Delete => "delete",
+                SetOp::Clear => "clear",
+                SetOp::ForEach => "forEach",
+                SetOp::Values => "values",
+                SetOp::Union => "union",
+                SetOp::Intersection => "intersection",
+                SetOp::Difference => "difference",
+                SetOp::SymmetricDifference => "symmetricDifference",
+                SetOp::IsSubsetOf => "isSubsetOf",
+                SetOp::IsSupersetOf => "isSupersetOf",
+                SetOp::IsDisjointFrom => "isDisjointFrom",
+            };
+            let len = if matches!(op, SetOp::Clear | SetOp::Values) { 0 } else { 1 };
+            return Some((name, len));
+        }
+        Map(op) => {
+            let (name, len): (&str, u32) = match op {
+                MapOp::Get => ("get", 1),
+                MapOp::Set => ("set", 2),
+                MapOp::Has => ("has", 1),
+                MapOp::Delete => ("delete", 1),
+                MapOp::Clear => ("clear", 0),
+                MapOp::ForEach => ("forEach", 1),
+                MapOp::Keys => ("keys", 0),
+                MapOp::Values => ("values", 0),
+                MapOp::Entries => ("entries", 0),
+            };
+            return Some((name, len));
+        }
         // ── Array.* 정적 ──
         ArrayIsArray => ("isArray", 1),
         ArrayFrom => ("from", 1),

@@ -1119,6 +1119,14 @@ impl Interp {
             ("keys", Native::Set(SetOp::Values)),
             ("values", Native::Set(SetOp::Values)),
             ("\u{0}@@iterator", Native::Set(SetOp::Values)),
+            // ES2024 집합 연산 (§24.2.4)
+            ("union", Native::Set(SetOp::Union)),
+            ("intersection", Native::Set(SetOp::Intersection)),
+            ("difference", Native::Set(SetOp::Difference)),
+            ("symmetricDifference", Native::Set(SetOp::SymmetricDifference)),
+            ("isSubsetOf", Native::Set(SetOp::IsSubsetOf)),
+            ("isSupersetOf", Native::Set(SetOp::IsSupersetOf)),
+            ("isDisjointFrom", Native::Set(SetOp::IsDisjointFrom)),
         ]);
         let date_proto = mk_proto(vec![
             ("getTime", Native::DateMethod(DateField::Time)),
@@ -2198,9 +2206,23 @@ impl Interp {
         })
     }
 
-    fn set_method(&mut self, s: Rc<RefCell<Vec<Value>>>, op: SetOp, args: Vec<Value>) -> Value {
+    fn set_method(&mut self, s: Rc<RefCell<Vec<Value>>>, op: SetOp, args: Vec<Value>) -> Result<Value, String> {
+        // ES2024 집합 연산(union/…)은 set-like 인자 검증(GetSetRecord)과 이터레이션이
+        // 필요해 별도 경로로 뺀다.
+        if matches!(
+            op,
+            SetOp::Union
+                | SetOp::Intersection
+                | SetOp::Difference
+                | SetOp::SymmetricDifference
+                | SetOp::IsSubsetOf
+                | SetOp::IsSupersetOf
+                | SetOp::IsDisjointFrom
+        ) {
+            return self.set_binary_op(s, op, args.first().cloned().unwrap_or(Value::Undefined));
+        }
         let val = args.first().cloned().unwrap_or(Value::Undefined);
-        match op {
+        Ok(match op {
             SetOp::Add => {
                 if !s.borrow().iter().any(|e| same_value_zero(e, &val)) {
                     s.borrow_mut().push(val);
@@ -2220,7 +2242,7 @@ impl Interp {
             SetOp::ForEach => {
                 let f = match args.first() {
                     Some(f) => f.clone(),
-                    None => return Value::Undefined,
+                    None => return Ok(Value::Undefined),
                 };
                 let snapshot: Vec<Value> = s.borrow().clone();
                 for v in snapshot {
@@ -2233,6 +2255,162 @@ impl Interp {
                 let items = s.borrow().clone();
                 self.make_iter_from_vec(items)
             }
+            _ => unreachable!("ES2024 집합 연산은 위에서 early-return"),
+        })
+    }
+
+    // GetSetRecord (§24.2.1.2): 인자가 set-like 인지 검증하고 (size, has, keys) 를 뽑는다.
+    // 객체가 아니면 TypeError, size 가 NaN 이면 TypeError, 음수면 RangeError,
+    // has/keys 가 호출 불가면 TypeError.
+    fn get_set_record(&mut self, obj: &Value) -> Result<(f64, Value, Value), String> {
+        if !is_object(obj) {
+            return Err(self.throw_error("TypeError", "Set operation argument is not an object"));
+        }
+        let raw_size = self.member_get(obj, "size")?;
+        let num = to_num(&raw_size);
+        if num.is_nan() {
+            return Err(self.throw_error("TypeError", "Set-like 'size' is not a number"));
+        }
+        let int_size = if num.is_infinite() { num } else { num.trunc() };
+        if int_size < 0.0 {
+            return Err(self.throw_error("RangeError", "Set-like 'size' is negative"));
+        }
+        let has = self.member_get(obj, "has")?;
+        if !is_callable(&has) {
+            return Err(self.throw_error("TypeError", "Set-like 'has' is not callable"));
+        }
+        let keys = self.member_get(obj, "keys")?;
+        if !is_callable(&keys) {
+            return Err(self.throw_error("TypeError", "Set-like 'keys' is not callable"));
+        }
+        Ok((int_size, has, keys))
+    }
+
+    // otherRec.[[Keys]] 를 호출해 얻은 이터레이터를 원소 Vec 으로 드레인한다.
+    fn set_keys_vec(&mut self, obj: &Value, keys_fn: &Value) -> Result<Vec<Value>, String> {
+        let iter = self.call_value(keys_fn.clone(), Some(obj.clone()), vec![])?;
+        self.iterate_to_vec(&iter)
+    }
+
+    // ES2024 집합 연산 (§24.2.4). this 는 실제 Set, other 는 set-like. union/intersection/
+    // difference/symmetricDifference 는 새 Set 을, is*Of 는 불리언을 돌려준다. size 비교로
+    // this 순회(has 호출) vs other 순회(keys)를 고르는 것도 표준대로.
+    fn set_binary_op(
+        &mut self,
+        s: Rc<RefCell<Vec<Value>>>,
+        op: SetOp,
+        other: Value,
+    ) -> Result<Value, String> {
+        let (other_size, has, keys) = self.get_set_record(&other)?;
+        let this_data: Vec<Value> = s.borrow().clone();
+        let this_size = this_data.len() as f64;
+        fn contains(data: &[Value], v: &Value) -> bool {
+            data.iter().any(|e| same_value_zero(e, v))
+        }
+        let new_set = |v: Vec<Value>| Value::SetVal(Rc::new(RefCell::new(v)));
+        match op {
+            SetOp::Union => {
+                let mut result = this_data.clone();
+                for k in self.set_keys_vec(&other, &keys)? {
+                    if !contains(&result, &k) {
+                        result.push(k);
+                    }
+                }
+                Ok(new_set(result))
+            }
+            SetOp::Intersection => {
+                let mut result: Vec<Value> = Vec::new();
+                if this_size <= other_size {
+                    for e in &this_data {
+                        let r = self.call_value(has.clone(), Some(other.clone()), vec![e.clone()])?;
+                        if to_bool(&r) && !contains(&result, e) {
+                            result.push(e.clone());
+                        }
+                    }
+                } else {
+                    for k in self.set_keys_vec(&other, &keys)? {
+                        if contains(&this_data, &k) && !contains(&result, &k) {
+                            result.push(k);
+                        }
+                    }
+                }
+                Ok(new_set(result))
+            }
+            SetOp::Difference => {
+                let mut result = this_data.clone();
+                if this_size <= other_size {
+                    let mut kept = Vec::new();
+                    for e in &this_data {
+                        let r = self.call_value(has.clone(), Some(other.clone()), vec![e.clone()])?;
+                        if !to_bool(&r) {
+                            kept.push(e.clone());
+                        }
+                    }
+                    result = kept;
+                } else {
+                    for k in self.set_keys_vec(&other, &keys)? {
+                        result.retain(|e| !same_value_zero(e, &k));
+                    }
+                }
+                Ok(new_set(result))
+            }
+            SetOp::SymmetricDifference => {
+                let mut result = this_data.clone();
+                let mut seen: Vec<Value> = Vec::new();
+                for k in self.set_keys_vec(&other, &keys)? {
+                    if contains(&seen, &k) {
+                        continue;
+                    }
+                    seen.push(k.clone());
+                    if contains(&this_data, &k) {
+                        result.retain(|e| !same_value_zero(e, &k));
+                    } else if !contains(&result, &k) {
+                        result.push(k);
+                    }
+                }
+                Ok(new_set(result))
+            }
+            SetOp::IsSubsetOf => {
+                if this_size > other_size {
+                    return Ok(Value::Bool(false));
+                }
+                for e in &this_data {
+                    let r = self.call_value(has.clone(), Some(other.clone()), vec![e.clone()])?;
+                    if !to_bool(&r) {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+                Ok(Value::Bool(true))
+            }
+            SetOp::IsSupersetOf => {
+                if this_size < other_size {
+                    return Ok(Value::Bool(false));
+                }
+                for k in self.set_keys_vec(&other, &keys)? {
+                    if !contains(&this_data, &k) {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+                Ok(Value::Bool(true))
+            }
+            SetOp::IsDisjointFrom => {
+                if this_size <= other_size {
+                    for e in &this_data {
+                        let r = self.call_value(has.clone(), Some(other.clone()), vec![e.clone()])?;
+                        if to_bool(&r) {
+                            return Ok(Value::Bool(false));
+                        }
+                    }
+                } else {
+                    for k in self.set_keys_vec(&other, &keys)? {
+                        if contains(&this_data, &k) {
+                            return Ok(Value::Bool(false));
+                        }
+                    }
+                }
+                Ok(Value::Bool(true))
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -4629,6 +4807,13 @@ impl Interp {
                     "clear" => Some(SetOp::Clear),
                     "forEach" => Some(SetOp::ForEach),
                     "values" | "keys" => Some(SetOp::Values),
+                    "union" => Some(SetOp::Union),
+                    "intersection" => Some(SetOp::Intersection),
+                    "difference" => Some(SetOp::Difference),
+                    "symmetricDifference" => Some(SetOp::SymmetricDifference),
+                    "isSubsetOf" => Some(SetOp::IsSubsetOf),
+                    "isSupersetOf" => Some(SetOp::IsSupersetOf),
+                    "isDisjointFrom" => Some(SetOp::IsDisjointFrom),
                     _ => None,
                 };
                 Ok(op.map(|o| Value::Native(Native::Set(o))).unwrap_or(Value::Undefined))

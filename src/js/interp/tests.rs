@@ -4772,3 +4772,36 @@ fn set_map_brand_check_and_size_accessor() {
          var t=false; try{ g.call({}) }catch(e){ t=e instanceof TypeError } t"
     ));
 }
+
+// ES2024 집합 연산 (§24.2.4): union/intersection/difference/symmetricDifference +
+// isSubsetOf/isSupersetOf/isDisjointFrom. set-like 인자(GetSetRecord)도 받는다.
+#[test]
+fn set_es2024_methods() {
+    let arr = |src: &str| run_str(&format!("Array.from({}).join(',')", src));
+    assert_eq!(arr("new Set([1,2]).union(new Set([2,3]))"), "1,2,3");
+    assert_eq!(arr("new Set([1,2,3]).intersection(new Set([2,3,4]))"), "2,3");
+    assert_eq!(arr("new Set([1,2,3]).difference(new Set([2,3]))"), "1");
+    assert_eq!(arr("new Set([1,2,3]).symmetricDifference(new Set([2,3,4]))"), "1,4");
+    assert!(run_bool("new Set([1,2]).isSubsetOf(new Set([1,2,3]))"));
+    assert!(!run_bool("new Set([1,2,4]).isSubsetOf(new Set([1,2,3]))"));
+    assert!(run_bool("new Set([1,2,3]).isSupersetOf(new Set([1,2]))"));
+    assert!(!run_bool("new Set([1,2]).isSupersetOf(new Set([1,2,3]))"));
+    assert!(run_bool("new Set([1,2]).isDisjointFrom(new Set([3,4]))"));
+    assert!(!run_bool("new Set([1,2]).isDisjointFrom(new Set([2,3]))"));
+    // set-like 인자 (size/has/keys) — union 은 other 의 keys 를 순회한다
+    assert_eq!(
+        arr("new Set([1,2]).union({size:1, has:function(){return false;}, keys:function(){return [3][Symbol.iterator]();}})"),
+        "1,2,3"
+    );
+    // 원본 불변
+    assert!(run_bool("var s=new Set([1,2]); s.union(new Set([3])); s.size===2"));
+    // name/length
+    assert_eq!(run_str("Set.prototype.union.name"), "union");
+    assert_eq!(run_num("Set.prototype.intersection.length"), 1.0);
+    // GetSetRecord 오류: 비객체 TypeError, size NaN TypeError, size 음수 RangeError
+    assert!(run_bool("var t=false; try{ new Set().union(null) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ new Set().union({}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool(
+        "var t=false; try{ new Set().union({size:-1,has:function(){},keys:function(){}}) }catch(e){ t=e instanceof RangeError } t"
+    ));
+}

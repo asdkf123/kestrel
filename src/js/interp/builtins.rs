@@ -2532,7 +2532,7 @@ impl Interp {
                         "Set.prototype method called on incompatible receiver",
                     ));
                 };
-                Ok(self.set_method(s, op, args))
+                self.set_method(s, op, args)
             }
             // get Map.prototype.size / Set.prototype.size — brand 체크 후 원소 수.
             Native::MapSize => match recv {
