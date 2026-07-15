@@ -3843,8 +3843,34 @@ impl Interp {
                 }))
             }
             Native::Str(op) => {
-                let Some(Value::Str(s)) = recv else {
-                    return Err("문자열 메서드".to_string());
+                // String.prototype 메서드는 generic 하다 (§22.1.3): this 를
+                // ToString(RequireObjectCoercible(this)) 로 강제한다. null/undefined 는
+                // TypeError. 예전엔 진짜 문자열이 아니면 일반 Error 를 던져서
+                // "".trim.call(42) 이 죽고, null 에 대해 TypeError 가 아니라 Error 였다.
+                let s = match recv {
+                    None | Some(Value::Undefined) | Some(Value::Null) => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "String.prototype method called on null or undefined",
+                        ));
+                    }
+                    Some(Value::Str(s)) => s,
+                    Some(Value::Symbol(_)) => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Cannot convert a Symbol value to a string",
+                        ));
+                    }
+                    Some(other) => {
+                        let prim = self.to_primitive(other, true);
+                        if let Value::Symbol(_) = prim {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "Cannot convert a Symbol value to a string",
+                            ));
+                        }
+                        to_display(&prim)
+                    }
                 };
                 let chars: Vec<char> = s.chars().collect();
                 // JS 문자열은 UTF-16 코드 유닛 열 — 길이/인덱스는 코드 유닛 기준.

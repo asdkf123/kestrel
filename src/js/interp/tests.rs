@@ -4071,3 +4071,25 @@ fn array_methods_are_generic() {
     assert_eq!(run_str("JSON.stringify([1,[2,[3]]].flat(Infinity))"), "[1,2,3]");
     assert_eq!(run_str("JSON.stringify([1,[2,[3]]].flat())"), "[1,2,[3]]");
 }
+
+// String.prototype 메서드는 generic 하다 (§22.1.3): this 를 ToString 으로 강제한다.
+// null/undefined 는 TypeError. 예전엔 진짜 문자열이 아니면 일반 Error 를 던졌다.
+#[test]
+fn string_methods_are_generic() {
+    assert_eq!(run_str("String.prototype.trim.call(42)"), "42");
+    assert_eq!(run_str("String.prototype.slice.call(12345,1,3)"), "23");
+    assert_eq!(run_str("String.prototype.toUpperCase.call('ab')"), "AB");
+    // 불리언/객체도 ToString
+    assert_eq!(run_str("String.prototype.charAt.call(true,0)"), "t");
+    // null/undefined → TypeError
+    assert!(run_bool(
+        "try{ String.prototype.trim.call(null); false }catch(e){ e instanceof TypeError }"
+    ));
+    assert!(run_bool(
+        "try{ String.prototype.trim.call(undefined); false }catch(e){ e instanceof TypeError }"
+    ));
+    // Symbol → TypeError (문자열로 변환 불가)
+    assert!(run_bool(
+        "try{ String.prototype.trim.call(Symbol('x')); false }catch(e){ e instanceof TypeError }"
+    ));
+}
