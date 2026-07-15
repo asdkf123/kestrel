@@ -4148,7 +4148,9 @@ impl Interp {
                         ));
                     }
                     Some(other) => {
-                        let prim = self.to_primitive(other, true);
+                        // ToString(this): poisoned toString/valueOf 는 그대로 전파해야 한다
+                        // (§22.1.3 의 this-value-tostring-throws 검사). Symbol 은 TypeError.
+                        let prim = self.to_primitive_or_throw(other, true)?;
                         if let Value::Symbol(_) = prim {
                             return Err(self.throw_error(
                                 "TypeError",
@@ -4191,9 +4193,35 @@ impl Interp {
                         let ndl: Vec<u16> = arg_str(0).encode_utf16().collect();
                         Value::Num(utf16_last_index_of(&units, &ndl).map(|i| i as f64).unwrap_or(-1.0))
                     }
-                    StrOp::Includes => Value::Bool(s.contains(&arg_str(0))),
-                    StrOp::StartsWith => Value::Bool(s.starts_with(&arg_str(0))),
-                    StrOp::EndsWith => Value::Bool(s.ends_with(&arg_str(0))),
+                    // includes/startsWith/endsWith 는 정규식 인자를 거부한다 (§22.1.3.7/.8/.23:
+                    // IsRegExp(searchString) 이면 TypeError). 예전엔 정규식을 문자열화해 통과시켰다.
+                    StrOp::Includes => {
+                        if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "First argument to String.prototype.includes must not be a regular expression",
+                            ));
+                        }
+                        Value::Bool(s.contains(&arg_str(0)))
+                    }
+                    StrOp::StartsWith => {
+                        if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "First argument to String.prototype.startsWith must not be a regular expression",
+                            ));
+                        }
+                        Value::Bool(s.starts_with(&arg_str(0)))
+                    }
+                    StrOp::EndsWith => {
+                        if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "First argument to String.prototype.endsWith must not be a regular expression",
+                            ));
+                        }
+                        Value::Bool(s.ends_with(&arg_str(0)))
+                    }
                     StrOp::Replace => {
                         let pat = args.first().cloned().unwrap_or(Value::Undefined);
                         let repl = args.get(1).cloned().unwrap_or(Value::Undefined);

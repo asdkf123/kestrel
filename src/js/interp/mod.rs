@@ -5849,6 +5849,64 @@ impl Interp {
         v
     }
 
+    // ToPrimitive (§7.1.1) 의 예외 전파판. to_primitive 는 관대 모드라 toString/valueOf 가
+    // 던진 예외를 삼키지만, 표준 강제변환(String()/String.prototype method 의 this 등)은
+    // poisoned toString/valueOf 를 그대로 전파해야 한다. 원시값을 못 얻으면 TypeError.
+    pub(super) fn to_primitive_or_throw(
+        &mut self,
+        v: Value,
+        prefer_string: bool,
+    ) -> Result<Value, String> {
+        if !matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+            return Ok(v);
+        }
+        if let Some(p) = wrapper_primitive(&v) {
+            return Ok(p);
+        }
+        let prim = |res: &Value| !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_));
+        // Symbol.toPrimitive 가 있으면 우선 (예외/비원시 결과 모두 표준대로 처리).
+        if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
+            if is_callable(&f) {
+                let hint =
+                    Value::Str(if prefer_string { "string" } else { "number" }.to_string());
+                let res = self.call_value(f, Some(v.clone()), vec![hint])?;
+                if prim(&res) {
+                    return Ok(res);
+                }
+                return Err(
+                    self.throw_error("TypeError", "Cannot convert object to primitive value")
+                );
+            }
+        }
+        let order: [&str; 2] =
+            if prefer_string { ["toString", "valueOf"] } else { ["valueOf", "toString"] };
+        for m in order {
+            let f = self.member_get(&v, m)?;
+            if is_callable(&f) {
+                let res = self.call_value(f, Some(v.clone()), vec![])?; // 예외 전파
+                if prim(&res) {
+                    return Ok(res);
+                }
+            }
+        }
+        Err(self.throw_error("TypeError", "Cannot convert object to primitive value"))
+    }
+
+    // IsRegExp (§7.2.8): Symbol.match 가 있으면 그 truthiness, 없으면 [[RegExpMatcher]]
+    // 슬롯(우리 표현: __isRegex) 유무. startsWith/includes/endsWith 가 정규식 인자를
+    // 거부(§22.1.3.7 등)하는 데 쓴다.
+    pub(super) fn is_regexp(&mut self, v: &Value) -> bool {
+        if !matches!(v, Value::Obj(_)) {
+            return false;
+        }
+        if let Ok(m) = self.member_get(v, "\u{0}@@match") {
+            if !matches!(m, Value::Undefined) {
+                return to_bool(&m);
+            }
+        }
+        regex_src_flags(v).is_some()
+    }
+
     // BigInt 연산 (표준 §6.1.6.2). 두 피연산자가 모두 BigInt 여야 산술이 된다 —
     // Number 와 섞으면 TypeError (조용히 f64 로 떨어뜨리면 값이 틀린다).
     // 비교(<,>,<=,>=,==)와 문자열 결합은 섞어도 된다.

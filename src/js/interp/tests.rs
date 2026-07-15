@@ -4642,3 +4642,39 @@ fn array_change_by_copy_with_tospliced() {
     // 생성자 아님 (commit db6d6c8 과 일관)
     assert!(run_bool("var t=false; try{ new ([].with)() }catch(e){ t=e instanceof TypeError } t"));
 }
+
+// String.prototype 의 this 강제변환(ToString)은 poisoned toString/valueOf 예외를 전파하고
+// (§22.1.3), includes/startsWith/endsWith 는 정규식 인자를 거부한다(IsRegExp, §7.2.8).
+#[test]
+fn string_this_coercion_and_isregexp() {
+    // this 의 toString 이 던지면 그대로 전파 (예전엔 삼켜서 [object Object] 반환)
+    assert!(run_bool(
+        "var t=false; try{ ''.toUpperCase.call({toString:function(){throw new TypeError('p');}, valueOf:function(){throw new TypeError('p');}}); }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // @@toPrimitive 가 던져도 전파
+    assert!(run_bool(
+        "var o={}; o[Symbol.toPrimitive]=function(){ throw new RangeError('p'); }; \
+         var t=false; try{ ''.slice.call(o); }catch(e){ t=e instanceof RangeError } t"
+    ));
+    // 정상 객체 this 는 toString 결과로 동작
+    assert_eq!(run_str("''.toUpperCase.call({toString:function(){return 'ab';}})"), "AB");
+    // null/undefined this → TypeError (RequireObjectCoercible)
+    assert!(run_bool("var t=false; try{ ''.slice.call(null) }catch(e){ t=e instanceof TypeError } t"));
+    // IsRegExp: 정규식 인자면 TypeError
+    assert!(run_bool("var t=false; try{ 'abc'.startsWith(/a/) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ 'abc'.includes(/b/) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ 'abc'.endsWith(/c/) }catch(e){ t=e instanceof TypeError } t"));
+    // @@match 가 truthy 인 가짜 객체도 정규식으로 취급
+    assert!(run_bool(
+        "var o={}; o[Symbol.match]=true; var t=false; try{ 'abc'.includes(o) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 문자열 인자는 정상 동작
+    assert!(run_bool("'abcdef'.startsWith('abc')"));
+    assert!(run_bool("'abcdef'.includes('cd')"));
+    assert!(run_bool("'abcdef'.endsWith('def')"));
+    // @@match 가 falsy 인 객체는 정규식 아님 → TypeError 를 던지지 않는다
+    assert!(run_bool(
+        "var o={}; o[Symbol.match]=null; \
+         (function(){ try{ 'axb'.includes(o); return true; }catch(e){ return false; } })()"
+    ));
+}
