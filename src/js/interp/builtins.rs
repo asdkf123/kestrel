@@ -5120,9 +5120,16 @@ impl Interp {
                         "Cannot convert undefined or null to object",
                     ));
                 }
+                // §20.1.2.1: 각 소스의 열거 가능한 own 프로퍼티를 Set(Throw=true)로
+                // 대상에 복사. 실패(read-only/non-extensible/getter-only)면 TypeError.
                 for src in &args[1..] {
                     for (k, v) in own_enumerable_entries(src) {
-                        self.set_own_property(&target, k, v);
+                        if !self.set_own_property(&target, k.clone(), v) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                format!("Cannot assign to read only property '{}' of object", k),
+                            ));
+                        }
                     }
                 }
                 Ok(target)

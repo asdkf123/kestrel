@@ -3481,42 +3481,54 @@ impl Interp {
 
     // 대상에 own 프로퍼티 설정 (Object.assign 의 대상 쓰기, super() 의 this 채우기).
     // 무결성(freeze/seal)을 존중하고, 접근자(setter)가 있으면 setter 를 호출한다.
-    pub(super) fn set_own_property(&mut self, target: &Value, k: String, v: Value) {
+    // 프로퍼티를 설정한다. 성공 여부를 돌려준다(§10.1.9 [[Set]]) — Object.assign 등이
+    // Throw=true 로 쓰므로 실패 시 호출부가 TypeError 를 던진다. 실패 조건: frozen,
+    // non-writable 데이터 프로퍼티, getter 만 있는 접근자, non-extensible 에 새 키.
+    pub(super) fn set_own_property(&mut self, target: &Value, k: String, v: Value) -> bool {
         if self.is_frozen_val(target) {
-            return;
+            return false;
         }
         match target {
             Value::Obj(m) => {
-                // setter 가 있으면 호출 (own → 프로토타입)
+                // setter 가 있으면 호출 (own → 프로토타입). getter 만 있으면 실패.
                 if let Some(acc) = self.find_accessor(m, &k) {
                     if let Some(st) = acc.set.clone() {
                         let _ = self.call_value(st, Some(target.clone()), vec![v]);
+                        return true;
                     }
-                    return;
+                    return false; // 접근자에 setter 없음 → 설정 불가
                 }
-                if !m.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
-                    return;
+                if m.borrow().contains_key(&k) {
+                    // 기존 데이터 프로퍼티가 non-writable 이면 실패
+                    if prop_attrs(&m.borrow(), &k) & ATTR_WRITABLE == 0 {
+                        return false;
+                    }
+                } else if self.is_nonextensible_val(target) {
+                    return false;
                 }
                 m.borrow_mut().insert(k, v);
+                true
             }
             Value::Arr(a) => {
                 if let Ok(i) = k.parse::<usize>() {
                     if i >= a.borrow().len() && self.is_nonextensible_val(target) {
-                        return;
+                        return false;
                     }
                     if i >= MAX_DENSE_ARRAY {
-                        return; // 방어: 초거대 인덱스는 무시 (희박 배열 미구현)
+                        return false; // 방어: 초거대 인덱스는 무시 (희박 배열 미구현)
                     }
                     let mut items = a.borrow_mut();
                     if i >= items.len() {
                         items.resize(i + 1, Value::Undefined);
                     }
                     items[i] = v;
+                    true
                 } else {
                     if a.get_prop(&k).is_none() && self.is_nonextensible_val(target) {
-                        return;
+                        return false;
                     }
                     a.set_prop(k, v);
+                    true
                 }
             }
             Value::Instance(inst) => {
@@ -3524,24 +3536,27 @@ impl Interp {
                 // 대입이 그냥 필드에 꽂혔고, 검증/변환 로직이 통째로 우회됐다.
                 if let Some(setter) = inst.class.find_setter(&k) {
                     let _ = self.call_value(Value::Fn(setter), Some(target.clone()), vec![v]);
-                    return;
+                    return true;
                 }
                 let k = field_key(&k, self.priv_id);
                 if !inst.fields.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
-                    return;
+                    return false;
                 }
                 inst.fields.borrow_mut().insert(k, v);
+                true
             }
             Value::Fn(f) => {
                 if !f.props.borrow().contains_key(&k) && self.is_nonextensible_val(target) {
-                    return;
+                    return false;
                 }
                 f.props.borrow_mut().insert(k, v);
+                true
             }
             Value::Class(c) => {
                 c.statics.borrow_mut().insert(k, v);
+                true
             }
-            _ => {}
+            _ => false,
         }
     }
 

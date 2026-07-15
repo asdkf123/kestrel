@@ -4372,3 +4372,24 @@ fn get_own_property_names_includes_non_enumerable() {
     // 내장 생성자(Native)도 객체 — defineProperty 가 non-object 로 던지지 않음
     assert!(run_bool("try{Object.defineProperty(Array,'zzz',{value:1,configurable:true});true}catch(e){false}"));
 }
+
+// Object.assign 은 Set(Throw=true) 로 복사한다 (§20.1.2.1) — read-only/non-extensible/
+// getter-only 대상이면 TypeError. 예전엔 조용히 무시했다.
+#[test]
+fn object_assign_throws_on_readonly() {
+    assert!(run_bool(
+        "try{Object.assign(Object.freeze({a:1}),{a:2});false}catch(e){e instanceof TypeError}"
+    ));
+    assert!(run_bool(
+        "try{var o={};Object.defineProperty(o,'x',{value:1,writable:false});\
+         Object.assign(o,{x:2});false}catch(e){e instanceof TypeError}"
+    ));
+    assert!(run_bool(
+        "try{Object.assign(Object.preventExtensions({}),{n:1});false}catch(e){e instanceof TypeError}"
+    ));
+    assert!(run_bool(
+        "try{Object.assign({get g(){return 1}},{g:2});false}catch(e){e instanceof TypeError}"
+    ));
+    // 정상 assign 은 그대로
+    assert_eq!(run_str("JSON.stringify(Object.assign({a:1},{b:2},{c:3}))"), r#"{"a":1,"b":2,"c":3}"#);
+}
