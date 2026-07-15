@@ -40,6 +40,13 @@ use std::fs;
 static GLOBAL: bench::CountingAllocator = bench::CountingAllocator;
 
 fn main() {
+    // 메모리 상한: 러너가 KESTREL_MEM_MB 로 건다 (일반 사용은 무제한).
+    // macOS 의 rlimit 은 mmap 할당을 못 막으므로, 상한은 프로세스 안(bench 할당기)에서 센다.
+    if let Ok(mb) = std::env::var("KESTREL_MEM_MB") {
+        if let Ok(mb) = mb.parse::<usize>() {
+            bench::set_mem_cap(mb << 20);
+        }
+    }
     // 네트워크 fetch 모드: kestrel --fetch <url>
     let args: Vec<String> = std::env::args().collect();
 

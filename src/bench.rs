@@ -13,23 +13,54 @@ use crate::layout::{Dimensions, ImageMap, Rect};
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
+// 프로세스 메모리 상한 (0 = 무제한). 초과 할당은 null 을 돌려주고, 러스트 런타임이
+// handle_alloc_error 로 이 프로세스만 즉시 중단한다.
+//
+// 왜 필요한가: macOS 에서는 RLIMIT_AS/RLIMIT_DATA 가 mmap 기반 할당(러스트 malloc)을
+// **막지 못한다** (실측: 2GiB 상한을 걸어도 3GiB 할당이 통과, 설정 자체가 실패하기도 함).
+// 그 허수아비 상한을 믿고 test262 전량을 돌리다 "x".repeat(2^31) 류의 거대 할당 테스트
+// 여러 개가 동시에 수십 GB 를 잡아 머신이 두 번 다운됐다 (2026-07-15).
+// OS 가 못 세우는 상한은 프로세스가 스스로 세운다.
+static CAP: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_mem_cap(bytes: usize) {
+    CAP.store(bytes, Ordering::Relaxed);
+}
+
+#[inline]
+fn over_cap(now: usize) -> bool {
+    let cap = CAP.load(Ordering::Relaxed);
+    cap != 0 && now > cap
+}
 
 pub struct CountingAllocator;
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let now = CURRENT.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+        if over_cap(now) {
+            CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
+            return core::ptr::null_mut();
+        }
         let ptr = System.alloc(layout);
-        if !ptr.is_null() {
-            let now = CURRENT.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+        if ptr.is_null() {
+            CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
+        } else {
             PEAK.fetch_max(now, Ordering::Relaxed);
         }
         ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let now = CURRENT.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+        if over_cap(now) {
+            CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
+            return core::ptr::null_mut();
+        }
         let ptr = System.alloc_zeroed(layout);
-        if !ptr.is_null() {
-            let now = CURRENT.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+        if ptr.is_null() {
+            CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
+        } else {
             PEAK.fetch_max(now, Ordering::Relaxed);
         }
         ptr
@@ -41,11 +72,25 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // 커지는 방향이면 먼저 상한을 본다 (줄어드는 realloc 은 항상 허용).
+        if new_size > layout.size() {
+            let extra = new_size - layout.size();
+            let now = CURRENT.fetch_add(extra, Ordering::Relaxed) + extra;
+            if over_cap(now) {
+                CURRENT.fetch_sub(extra, Ordering::Relaxed);
+                return core::ptr::null_mut();
+            }
+            let new_ptr = System.realloc(ptr, layout, new_size);
+            if new_ptr.is_null() {
+                CURRENT.fetch_sub(extra, Ordering::Relaxed);
+            } else {
+                PEAK.fetch_max(now, Ordering::Relaxed);
+            }
+            return new_ptr;
+        }
         let new_ptr = System.realloc(ptr, layout, new_size);
         if !new_ptr.is_null() {
-            CURRENT.fetch_sub(layout.size(), Ordering::Relaxed);
-            let now = CURRENT.fetch_add(new_size, Ordering::Relaxed) + new_size;
-            PEAK.fetch_max(now, Ordering::Relaxed);
+            CURRENT.fetch_sub(layout.size() - new_size, Ordering::Relaxed);
         }
         new_ptr
     }
