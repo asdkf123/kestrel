@@ -4137,3 +4137,33 @@ fn builtin_errors_have_correct_type() {
     assert!(run_bool("try{5n/0n;false}catch(e){e instanceof RangeError}"));
     assert!(run_bool("try{2n**-1n;false}catch(e){e instanceof RangeError}"));
 }
+
+// RegExp.prototype 의 flags/source/각 플래그는 접근자(getter)다 (§22.2.6) —
+// 인스턴스 own 데이터가 아니다. 예전엔 sticky/unicode/dotAll 이 undefined 였고
+// getOwnPropertyDescriptor(RegExp.prototype,'flags').get 이 없었다.
+#[test]
+fn regexp_flag_accessors() {
+    // 인스턴스 접근: 모든 플래그가 boolean
+    assert!(run_bool("/x/gi.global===true && /x/gi.ignoreCase===true"));
+    assert!(run_bool("/x/.sticky===false && /x/.unicode===false && /x/.dotAll===false"));
+    assert!(run_bool("/x/y.sticky===true && /x/s.dotAll===true && /x/u.unicode===true"));
+    assert!(run_bool("/x/d.hasIndices===true"));
+    // flags 는 표준 순서로 정렬 (d,g,i,m,s,u,y)
+    assert_eq!(run_str("/x/yig.flags"), "giy");
+    assert_eq!(run_str("/ab+c/.source"), "ab+c");
+    // 빈 패턴 source 는 "(?:)"
+    assert_eq!(run_str("new RegExp('').source"), "(?:)");
+    // RegExp.prototype 의 접근자 서술자
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(RegExp.prototype,'flags'); typeof d.get==='function'"
+    ));
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(RegExp.prototype,'source'); typeof d.get==='function'"
+    ));
+    // getter 를 인스턴스에 호출하면 계산됨
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(RegExp.prototype,'global').get.call(/x/g)===true"
+    ));
+    // 인스턴스는 플래그 own 데이터를 갖지 않는다 (상속 접근자)
+    assert!(run_bool("/x/g.hasOwnProperty('global')===false"));
+}

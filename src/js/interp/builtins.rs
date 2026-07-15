@@ -3280,6 +3280,37 @@ impl Interp {
                 Ok(make_regex_obj(&src, &flags))
             }
             // regex.test(str) → bool
+            // RegExp.prototype 의 접근자 getter (§22.2.6): flags/source/각 플래그를
+            // this 정규식에서 계산한다. RegExp.prototype 자신(정규식 아님)엔 스펙 기본값.
+            Native::RegexGet(kind) => {
+                use crate::js::interp::natives::RegexAccessor as RA;
+                let this = recv.unwrap_or(Value::Undefined);
+                let sf = regex_src_flags(&this);
+                Ok(match kind {
+                    RA::Source => Value::Str(match &sf {
+                        Some((s, _)) if !s.is_empty() => s.clone(),
+                        // 빈 패턴/프로토타입 → "(?:)" (§22.2.6.13)
+                        _ => "(?:)".to_string(),
+                    }),
+                    RA::Flags => Value::Str(match &sf {
+                        // 표준 순서 d,g,i,m,s,u,v,y 로 정렬 (§22.2.6.4)
+                        Some((_, f)) => "dgimsuvy".chars().filter(|c| f.contains(*c)).collect(),
+                        None => String::new(),
+                    }),
+                    // 개별 플래그: this 가 정규식이면 flags 포함 여부, 프로토타입/비정규식이면 undefined
+                    _ => match &sf {
+                        Some((_, f)) => {
+                            let ch = RA::table()
+                                .iter()
+                                .find(|(_, k, _)| *k == kind)
+                                .and_then(|(_, _, c)| *c)
+                                .unwrap();
+                            Value::Bool(f.contains(ch))
+                        }
+                        None => Value::Undefined,
+                    },
+                })
+            }
             Native::RegexTest => {
                 let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("test 대상이 정규식 아님")?;
                 let text = args.first().map(to_display).unwrap_or_default();

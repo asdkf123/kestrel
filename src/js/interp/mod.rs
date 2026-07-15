@@ -1050,6 +1050,18 @@ impl Interp {
             ("test", Native::RegexTest),
             ("toString", Native::ValueToStr),
         ]);
+        // flags/source/global/… 는 RegExp.prototype 의 접근자다 (§22.2.6) — 인스턴스의
+        // own 데이터가 아니다. getOwnPropertyDescriptor(RegExp.prototype,'flags').get 이
+        // 함수여야 하는 test262 검사가 다수. 각 getter 는 this 정규식에서 계산한다.
+        if let Value::Obj(m) = &regexp_proto {
+            let mut b = m.borrow_mut();
+            for (name, kind, _) in natives::RegexAccessor::table() {
+                b.insert(
+                    name.to_string(),
+                    Value::Accessor(AccessorPair::getter(Value::Native(Native::RegexGet(*kind)))),
+                );
+            }
+        }
         // Map/Set/Date/Symbol.prototype — 인스턴스 멤버 해석과 같은 Native 를 얹는다.
         // 번들/core-js 의 Map.prototype.get, uncurryThis(Set.prototype.has) 등이 참조.
         let map_proto = mk_proto(vec![
@@ -4166,6 +4178,37 @@ impl Interp {
                         "propertyIsEnumerable" => Ok(Value::Native(Native::HasOwnProperty)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
+                        // flags/source/global/ignoreCase/… 는 인스턴스 own 데이터가 아니라
+                        // RegExp.prototype 의 접근자로 계산된다 (§22.2.6). 정규식 객체엔
+                        // __proto__ 링크가 없으므로 여기서 직접 계산한다. flags 는 표준
+                        // 순서(d,g,i,m,s,u,v,y)로 정렬한다.
+                        _ if is_regex_obj(map)
+                            && natives::RegexAccessor::table().iter().any(|(n, _, _)| *n == key) =>
+                        {
+                            let (src, flags) = {
+                                let b = map.borrow();
+                                let g = |k: &str| match b.get(k) {
+                                    Some(Value::Str(s)) => s.clone(),
+                                    _ => String::new(),
+                                };
+                                (g("\u{0}source"), g("\u{0}flags"))
+                            };
+                            let entry = natives::RegexAccessor::table()
+                                .iter()
+                                .find(|(n, _, _)| *n == key)
+                                .unwrap();
+                            Ok(match entry.2 {
+                                // 개별 플래그: 포함 여부
+                                Some(ch) => Value::Bool(flags.contains(ch)),
+                                // source/flags: 계산값
+                                None if key == "source" => {
+                                    Value::Str(if src.is_empty() { "(?:)".to_string() } else { src })
+                                }
+                                None => Value::Str(
+                                    "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect(),
+                                ),
+                            })
+                        }
                         // promise 메서드는 프로토타입 격(비열거) — own 프로퍼티 아님.
                         "then" if is_promise(recv) => Ok(Value::Native(Native::PromiseThen)),
                         "catch" if is_promise(recv) => Ok(Value::Native(Native::PromiseCatch)),

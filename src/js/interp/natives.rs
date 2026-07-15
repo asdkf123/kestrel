@@ -150,6 +150,7 @@ pub enum Native {
     RegExpCtor,
     RegexTest,
     RegexExec,
+    RegexGet(RegexAccessor),
     StringCtor,
     NumberCtor,
     BooleanCtor,
@@ -681,6 +682,40 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         PromiseFinally => ("finally", 1),
         _ => return None,
     })
+}
+
+// RegExp.prototype 의 접근자 프로퍼티 (§22.2.6). 표준상 flags/source/각 플래그는
+// RegExp.prototype 의 getter 다 — 인스턴스의 own 데이터 프로퍼티가 아니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RegexAccessor {
+    Source,
+    Flags,
+    Global,
+    IgnoreCase,
+    Multiline,
+    DotAll,
+    Unicode,
+    Sticky,
+    HasIndices,
+    UnicodeSets,
+}
+
+impl RegexAccessor {
+    // 접근자 이름 → 종류, 그리고 flags 문자열에서의 플래그 문자.
+    pub fn table() -> &'static [(&'static str, RegexAccessor, Option<char>)] {
+        &[
+            ("source", RegexAccessor::Source, None),
+            ("flags", RegexAccessor::Flags, None),
+            ("global", RegexAccessor::Global, Some('g')),
+            ("ignoreCase", RegexAccessor::IgnoreCase, Some('i')),
+            ("multiline", RegexAccessor::Multiline, Some('m')),
+            ("dotAll", RegexAccessor::DotAll, Some('s')),
+            ("unicode", RegexAccessor::Unicode, Some('u')),
+            ("sticky", RegexAccessor::Sticky, Some('y')),
+            ("hasIndices", RegexAccessor::HasIndices, Some('d')),
+            ("unicodeSets", RegexAccessor::UnicodeSets, Some('v')),
+        ]
+    }
 }
 
 // CharacterData 의 문자 데이터 연산 (§4.9). 오프셋/길이는 UTF-16 코드 단위 기준.

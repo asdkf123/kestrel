@@ -569,12 +569,16 @@ pub(super) fn date_string(millis: f64) -> String {
 // 정규식 리터럴/RegExp → {source, flags, __isRegex, global, lastIndex} 객체
 pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
     let mut map = ObjMap::new();
-    map.insert("source".to_string(), Value::Str(source.to_string()));
-    map.insert("flags".to_string(), Value::Str(flags.to_string()));
+    // source/flags 는 내부 매칭(regex_src_flags)이 읽는다. global/ignoreCase/multiline
+    // 등 플래그 파생값은 own 데이터로 두지 않는다 — 표준상 RegExp.prototype 의
+    // 접근자이며, 인스턴스 접근은 member_get 이 flags 에서 계산한다. lastIndex 는
+    // 표준상 쓰기 가능한 데이터 프로퍼티다 (§22.2.6.12).
+    // 원시 source/flags 는 내부 키에 둔다 — 공개 source/flags 접근은 member_get 이
+    // 접근자로 계산한다(표준: RegExp.prototype 의 getter). 내부 키라 own 열거/조회에
+    // 안 잡힌다.
+    map.insert("\u{0}source".to_string(), Value::Str(source.to_string()));
+    map.insert("\u{0}flags".to_string(), Value::Str(flags.to_string()));
     map.insert("\u{0}isRegex".to_string(), Value::Bool(true));
-    map.insert("global".to_string(), Value::Bool(flags.contains('g')));
-    map.insert("ignoreCase".to_string(), Value::Bool(flags.contains('i')));
-    map.insert("multiline".to_string(), Value::Bool(flags.contains('m')));
     map.insert("lastIndex".to_string(), Value::Num(0.0));
     Value::Obj(Rc::new(RefCell::new(map)))
 }
@@ -589,11 +593,11 @@ pub(super) fn regex_src_flags(v: &Value) -> Option<(String, String)> {
     if let Value::Obj(m) = v {
         if is_regex_obj(m) {
             let b = m.borrow();
-            let s = match b.get("source") {
+            let s = match b.get("\u{0}source") {
                 Some(Value::Str(s)) => s.clone(),
                 _ => return None,
             };
-            let f = match b.get("flags") {
+            let f = match b.get("\u{0}flags") {
                 Some(Value::Str(f)) => f.clone(),
                 _ => String::new(),
             };
