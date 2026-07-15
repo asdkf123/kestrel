@@ -152,6 +152,9 @@ pub enum Native {
     RegexTest,
     RegexExec,
     RegexGet(RegexAccessor),
+    // RegExp.prototype[Symbol.match/replace/split/search/matchAll] (§22.2.6.x).
+    // this=정규식, args=[문자열, ...]. StrOp 로 위임한다.
+    RegexSym(StrOp),
     StringCtor,
     NumberCtor,
     BooleanCtor,

@@ -3343,6 +3343,16 @@ impl Interp {
                     },
                 })
             }
+            // RegExp.prototype[Symbol.match/replace/split/search/matchAll]: this=정규식,
+            // args=[문자열, ...]. 기존 String 측 구현으로 위임한다(수신자/인자 교환).
+            Native::RegexSym(op) => {
+                let re = recv.unwrap_or(Value::Undefined);
+                let s = args.first().map(to_display).unwrap_or_default();
+                // str.<op>(re, ...rest): String 수신자 + 정규식 인자 + 나머지(치환/limit)
+                let mut fwd = vec![re];
+                fwd.extend(args.into_iter().skip(1));
+                self.call_native(Native::Str(op), Some(Value::Str(s)), fwd)
+            }
             Native::RegexTest => {
                 let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("test 대상이 정규식 아님")?;
                 let text = args.first().map(to_display).unwrap_or_default();

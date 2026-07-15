@@ -4209,3 +4209,24 @@ fn regexp_escape_static() {
     assert_eq!(run_str("RegExp.escape.name"), "escape");
     assert_eq!(run_num("RegExp.escape.length"), 1.0);
 }
+
+// RegExp.prototype[Symbol.match/replace/split/search/matchAll] (§22.2.6). 예전엔
+// 이 심볼들이 정의되지도, RegExp.prototype 에 메서드가 얹히지도 않았다.
+#[test]
+fn regexp_symbol_methods() {
+    // 심볼 자체가 정의됨
+    assert!(run_bool("typeof Symbol.match==='symbol' && typeof Symbol.replace==='symbol'"));
+    // RegExp.prototype 에 메서드 존재
+    assert!(run_bool("typeof RegExp.prototype[Symbol.match]==='function'"));
+    assert!(run_bool("typeof RegExp.prototype[Symbol.replace]==='function'"));
+    assert!(run_bool("typeof RegExp.prototype[Symbol.split]==='function'"));
+    assert!(run_bool("typeof RegExp.prototype[Symbol.search]==='function'"));
+    assert!(run_bool("typeof RegExp.prototype[Symbol.matchAll]==='function'"));
+    // 인스턴스에서 직접 호출 동작
+    assert_eq!(run_str("JSON.stringify(/\\d+/g[Symbol.match]('a12b3'))"), r#"["12","3"]"#);
+    assert_eq!(run_str("/\\d+/g[Symbol.replace]('a12b3','#')"), "a#b#");
+    assert_eq!(run_str("JSON.stringify(/,/[Symbol.split]('a,b,c'))"), r#"["a","b","c"]"#);
+    assert_eq!(run_num("/b/[Symbol.search]('abc')"), 1.0);
+    // 기존 String 연산 무회귀
+    assert_eq!(run_str("JSON.stringify('a1b2'.match(/\\d/g))"), r#"["1","2"]"#);
+}

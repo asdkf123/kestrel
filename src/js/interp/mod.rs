@@ -1061,6 +1061,17 @@ impl Interp {
                     Value::Accessor(AccessorPair::getter(Value::Native(Native::RegexGet(*kind)))),
                 );
             }
+            // Symbol.match/replace/split/search/matchAll 메서드 (§22.2.6). str.match(re)
+            // 등이 표준상 위임하는 대상. 내부 심볼 키 \0@@match 등으로 얹는다.
+            for (sym, op) in [
+                ("\u{0}@@match", StrOp::Match),
+                ("\u{0}@@matchAll", StrOp::MatchAll),
+                ("\u{0}@@replace", StrOp::Replace),
+                ("\u{0}@@search", StrOp::Search),
+                ("\u{0}@@split", StrOp::Split),
+            ] {
+                b.insert(sym.to_string(), Value::Native(Native::RegexSym(op)));
+            }
         }
         // Map/Set/Date/Symbol.prototype — 인스턴스 멤버 해석과 같은 Native 를 얹는다.
         // 번들/core-js 의 Map.prototype.get, uncurryThis(Set.prototype.has) 등이 참조.
@@ -4178,6 +4189,22 @@ impl Interp {
                         "propertyIsEnumerable" => Ok(Value::Native(Native::HasOwnProperty)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
+                        // Symbol.match/replace/split/search/matchAll — 정규식 인스턴스엔
+                        // __proto__ 링크가 없으므로 프로토타입 메서드를 여기서 직접 준다.
+                        _ if is_regex_obj(map) && key.starts_with("\u{0}@@") => {
+                            let op = match key {
+                                "\u{0}@@match" => Some(natives::StrOp::Match),
+                                "\u{0}@@matchAll" => Some(natives::StrOp::MatchAll),
+                                "\u{0}@@replace" => Some(natives::StrOp::Replace),
+                                "\u{0}@@search" => Some(natives::StrOp::Search),
+                                "\u{0}@@split" => Some(natives::StrOp::Split),
+                                _ => None,
+                            };
+                            match op {
+                                Some(op) => Ok(Value::Native(Native::RegexSym(op))),
+                                None => Ok(Value::Undefined),
+                            }
+                        }
                         // flags/source/global/ignoreCase/… 는 인스턴스 own 데이터가 아니라
                         // RegExp.prototype 의 접근자로 계산된다 (§22.2.6). 정규식 객체엔
                         // __proto__ 링크가 없으므로 여기서 직접 계산한다. flags 는 표준
@@ -4733,6 +4760,12 @@ impl Interp {
                 "toStringTag" => Self::well_known_symbol("\u{0}@@toStringTag", "Symbol.toStringTag"),
                 "hasInstance" => Self::well_known_symbol("\u{0}@@hasInstance", "Symbol.hasInstance"),
                 "toPrimitive" => Self::well_known_symbol("\u{0}@@toPrimitive", "Symbol.toPrimitive"),
+                // 정규식 위임 심볼 (§22.2.6): str.match/replace/split/search/matchAll 이 사용.
+                "match" => Self::well_known_symbol("\u{0}@@match", "Symbol.match"),
+                "matchAll" => Self::well_known_symbol("\u{0}@@matchAll", "Symbol.matchAll"),
+                "replace" => Self::well_known_symbol("\u{0}@@replace", "Symbol.replace"),
+                "search" => Self::well_known_symbol("\u{0}@@search", "Symbol.search"),
+                "split" => Self::well_known_symbol("\u{0}@@split", "Symbol.split"),
                 "for" => Value::Native(Native::SymbolFor),
                 "keyFor" => Value::Native(Native::SymbolKeyFor),
                 "prototype" => self.symbol_proto.clone(),
