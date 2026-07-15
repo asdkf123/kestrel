@@ -3394,6 +3394,48 @@ impl Interp {
                 // 원시 래퍼(new Number 등)의 valueOf 는 내부 슬롯을 돌려준다.
                 Ok(wrapper_primitive(&this).unwrap_or(this))
             }
+            // 원시 래퍼 프로토타입의 brand-checked valueOf (thisBooleanValue 등, §20.3.3.3).
+            Native::PrimValueOf(brand) => {
+                let this = recv.unwrap_or(Value::Undefined);
+                self.this_prim_value(&this, brand)
+            }
+            // 원시 래퍼 프로토타입의 brand-checked toString (§20.3.3.2/§21.1.3.6/§22.1.3.28).
+            Native::PrimToString(brand) => {
+                let this = recv.unwrap_or(Value::Undefined);
+                let prim = self.this_prim_value(&this, brand)?;
+                match brand {
+                    PrimBrand::Boolean => Ok(Value::Str(
+                        if matches!(prim, Value::Bool(true)) { "true" } else { "false" }.to_string(),
+                    )),
+                    PrimBrand::String => Ok(Value::Str(match prim {
+                        Value::Str(s) => s,
+                        _ => String::new(),
+                    })),
+                    PrimBrand::Number => {
+                        let n = match prim {
+                            Value::Num(n) => n,
+                            _ => f64::NAN,
+                        };
+                        // radix 인자 (§21.1.3.6): 2..=36, 아니면 RangeError.
+                        if let Some(rv) = args.first() {
+                            if !matches!(rv, Value::Undefined) {
+                                let radix = to_num(rv);
+                                let radix = if radix.is_nan() { 10 } else { radix as i64 };
+                                if !(2..=36).contains(&radix) {
+                                    return Err(self.throw_error(
+                                        "RangeError",
+                                        "toString() radix must be between 2 and 36",
+                                    ));
+                                }
+                                if radix != 10 {
+                                    return Ok(Value::Str(num_to_radix(n, radix as u32)));
+                                }
+                            }
+                        }
+                        Ok(Value::Str(to_display(&Value::Num(n))))
+                    }
+                }
+            }
             // n.toFixed(digits) — recv 가 숫자
             Native::NumToFixed => {
                 let n = match recv {

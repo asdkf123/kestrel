@@ -1034,11 +1034,17 @@ impl Interp {
         ] {
             string_proto.insert(name.to_string(), Value::Native(Native::Str(op)));
         }
-        // String.prototype.toString/valueOf — 원시 문자열/래퍼 공통으로 원시값을
-        // 돌려준다(§22.1.3). 없으면 래퍼가 Object.prototype.valueOf 로 폴백해 자기
-        // 자신(객체)을 반환했다.
-        string_proto.insert("toString".to_string(), Value::Native(Native::ValueToStr));
-        string_proto.insert("valueOf".to_string(), Value::Native(Native::ValueOfSelf));
+        // String.prototype.toString/valueOf — thisStringValue (§22.1.3.28/.29). 원시
+        // 문자열/String 래퍼면 그 문자열, 아니면 TypeError. String.prototype 자신은
+        // [[StringData]]="" 인 원시 래퍼라 String.prototype.toString() === "".
+        string_proto.insert("toString".to_string(), Value::Native(Native::PrimToString(PrimBrand::String)));
+        string_proto.insert("valueOf".to_string(), Value::Native(Native::PrimValueOf(PrimBrand::String)));
+        // String.prototype.constructor === String (§22.1.3.1), 비열거.
+        string_proto.insert("constructor".to_string(), Value::Native(Native::StringCtor));
+        for k in ["constructor", "toString", "valueOf"] {
+            string_proto.insert(nonenum_marker(k), Value::Bool(true));
+        }
+        string_proto.insert(WRAPPER_SLOT.to_string(), Value::Str(String::new()));
         let string_proto = Value::Obj(Rc::new(RefCell::new(string_proto)));
         // Number/Boolean/RegExp.prototype — 원시값 메서드 네이티브를 재사용.
         let mk_proto = |pairs: Vec<(&str, Native)>| {
@@ -1052,15 +1058,15 @@ impl Interp {
             Value::Obj(Rc::new(RefCell::new(m)))
         };
         let number_proto = mk_proto(vec![
-            ("toString", Native::ValueToStr),
-            ("toLocaleString", Native::ValueToStr),
+            ("toString", Native::PrimToString(PrimBrand::Number)),
+            ("toLocaleString", Native::PrimToString(PrimBrand::Number)),
             ("toFixed", Native::NumToFixed),
             ("toPrecision", Native::NumToFixed),
-            ("valueOf", Native::ValueOfSelf),
+            ("valueOf", Native::PrimValueOf(PrimBrand::Number)),
         ]);
         let boolean_proto = mk_proto(vec![
-            ("toString", Native::ValueToStr),
-            ("valueOf", Native::ValueOfSelf),
+            ("toString", Native::PrimToString(PrimBrand::Boolean)),
+            ("valueOf", Native::PrimValueOf(PrimBrand::Boolean)),
         ]);
         let regexp_proto = mk_proto(vec![
             ("exec", Native::RegexExec),
@@ -1142,6 +1148,30 @@ impl Interp {
             ("toString", Native::ValueToStr),
             ("valueOf", Native::ValueOfSelf),
         ]);
+        // X.prototype.constructor === X (§19.x/§20~22), 전부 비열거 (§17). 예전엔
+        // 원시 래퍼/빌트인 프로토타입에 constructor 링크가 없어 대량으로 깨졌다.
+        let link_ctor = |proto: &Value, ctor: Native| {
+            if let Value::Obj(m) = proto {
+                let mut b = m.borrow_mut();
+                b.insert("constructor".to_string(), Value::Native(ctor));
+                b.insert(nonenum_marker("constructor"), Value::Bool(true));
+            }
+        };
+        link_ctor(&number_proto, Native::NumberCtor);
+        link_ctor(&boolean_proto, Native::BooleanCtor);
+        link_ctor(&symbol_proto, Native::SymbolCtor);
+        link_ctor(&regexp_proto, Native::RegExpCtor);
+        link_ctor(&map_proto, Native::MapCtor);
+        link_ctor(&set_proto, Native::SetCtor);
+        link_ctor(&date_proto, Native::DateCtor);
+        // Number.prototype/Boolean.prototype 자신이 [[PrimitiveValue]] 슬롯을 가진
+        // 원시 래퍼다 (§21.1.3/§20.3.3) — thisNumberValue(Number.prototype)=+0 등.
+        if let Value::Obj(m) = &number_proto {
+            m.borrow_mut().insert(WRAPPER_SLOT.to_string(), Value::Num(0.0));
+        }
+        if let Value::Obj(m) = &boolean_proto {
+            m.borrow_mut().insert(WRAPPER_SLOT.to_string(), Value::Bool(false));
+        }
         // Error.prototype 및 서브타입 prototype (ECMA-262 §20.5.3, §20.5.6.3).
         // NativeError.prototype 의 [[Prototype]] 은 Error.prototype 이고,
         // 각자 자기 name 과 constructor 를 갖는다. 프로퍼티는 전부 비열거.
@@ -4014,6 +4044,41 @@ impl Interp {
             "valueOf" => Value::Native(Native::ValueOfSelf),
             _ => return None,
         })
+    }
+
+    // thisBooleanValue/thisNumberValue/thisStringValue (§20.3.3.3/§21.1.3.7/§22.1.3.32).
+    // 수신자가 해당 종류의 원시값이거나 그 종류의 원시 래퍼 객체면 원시값을 돌려주고,
+    // 아니면 TypeError. valueOf/toString 이 "not generic" 인 이유가 이 brand 검사다.
+    pub(super) fn this_prim_value(
+        &mut self,
+        this: &Value,
+        brand: PrimBrand,
+    ) -> Result<Value, String> {
+        fn brand_of(brand: PrimBrand, v: &Value) -> bool {
+            matches!(
+                (brand, v),
+                (PrimBrand::Boolean, Value::Bool(_))
+                    | (PrimBrand::Number, Value::Num(_))
+                    | (PrimBrand::String, Value::Str(_))
+            )
+        }
+        if brand_of(brand, this) {
+            return Ok(this.clone());
+        }
+        if let Some(prim) = wrapper_primitive(this) {
+            if brand_of(brand, &prim) {
+                return Ok(prim);
+            }
+        }
+        let tn = match brand {
+            PrimBrand::Boolean => "Boolean",
+            PrimBrand::Number => "Number",
+            PrimBrand::String => "String",
+        };
+        Err(self.throw_error(
+            "TypeError",
+            format!("{}.prototype method is not generic (incompatible receiver)", tn),
+        ))
     }
 
     // 내장/바운드 함수의 name (§10.2.9 SetFunctionName, §17). Bound 는 "bound " 접두.

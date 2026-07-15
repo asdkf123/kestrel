@@ -166,6 +166,12 @@ pub enum Native {
     NumToFixed,
     ValueToStr, // recv.toString([radix]) → 문자열
     ValueOfSelf, // recv.valueOf() → recv
+    // 원시 래퍼 프로토타입의 brand-checked valueOf/toString (§20.3.3/§21.1.3/§22.1.3).
+    // thisBooleanValue/thisNumberValue/thisStringValue 를 강제한다 — 잘못된 종류의
+    // 수신자에 전달하면 TypeError. generic ValueToStr/ValueOfSelf 는 이 검사가 없어
+    // X.prototype.toString() 이 [object Object] 였고 다른 종류 수신자도 조용히 통과했다.
+    PrimValueOf(PrimBrand),
+    PrimToString(PrimBrand),
     DateNow,
     DateParse, // Date.parse(str) → millis
     DateUTC,   // Date.UTC(y,m,d,...) → millis
@@ -357,6 +363,14 @@ pub struct Timer {
     pub callback: Value,
     pub delay_ms: f64,
     pub repeat: bool,
+}
+
+// 원시 래퍼의 종류 (thisBooleanValue/thisNumberValue/thisStringValue 의 brand).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PrimBrand {
+    Boolean,
+    Number,
+    String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -689,6 +703,10 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         PromiseThen => ("then", 2),
         PromiseCatch => ("catch", 1),
         PromiseFinally => ("finally", 1),
+        // ── 원시 래퍼 프로토타입 valueOf/toString ──
+        // Number.prototype.toString 만 radix 인자로 length 1, 나머지는 0 (§21.1.3.6).
+        PrimValueOf(_) => ("valueOf", 0),
+        PrimToString(b) => ("toString", if matches!(b, PrimBrand::Number) { 1 } else { 0 }),
         _ => return None,
     })
 }

@@ -4489,3 +4489,54 @@ fn native_name_length_mutation_semantics() {
     // 폴리필이 얹는 다른 프로퍼티는 정상 저장
     assert_eq!(run_num("Array.prototype.customX=42; [].customX"), 42.0);
 }
+
+// 원시 래퍼 프로토타입(Boolean/Number/String.prototype)은 그 자신이 [[PrimitiveValue]]
+// 슬롯을 가진 원시 래퍼 객체다 (§20.3.3/§21.1.3/§22.1.3). 그리고 valueOf/toString 은
+// brand-checked — 잘못된 종류의 수신자에 전달하면 TypeError 다 (§20.3.3.2 thisBooleanValue 등).
+// 예전엔 generic ValueOfSelf/ValueToStr 라 X.prototype.toString() 이 [object Object] 였고
+// 다른 종류 수신자에도 조용히 통과했다. constructor 링크도 없었다.
+#[test]
+fn primitive_wrapper_prototypes_are_exotic() {
+    // X.prototype.constructor === X
+    assert!(run_bool("Boolean.prototype.constructor === Boolean"));
+    assert!(run_bool("Number.prototype.constructor === Number"));
+    assert!(run_bool("String.prototype.constructor === String"));
+    // X.prototype 자신이 원시 래퍼 → thisXValue(X.prototype) = 기본값
+    assert_eq!(run_str("Boolean.prototype.toString()"), "false");
+    assert_eq!(run_str("Number.prototype.toString()"), "0");
+    assert_eq!(run_str("String.prototype.toString()"), "");
+    assert!(run_bool("Boolean.prototype.valueOf() === false"));
+    assert!(run_bool("Number.prototype.valueOf() === 0"));
+    assert!(run_bool("String.prototype.valueOf() === ''"));
+    // 래퍼 객체 언박싱
+    assert!(run_bool("new Boolean(true).valueOf() === true"));
+    assert_eq!(run_str("(new Boolean(0)).toString()"), "false");
+    assert_eq!(run_str("(new Number(7)).toString()"), "7");
+    assert_eq!(run_str("(new String('hi')).valueOf()"), "hi");
+    // brand 체크: 잘못된 수신자면 TypeError
+    assert!(run_bool(
+        "var t=false; try{ Boolean.prototype.valueOf.call('x') }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ Number.prototype.valueOf.call(true) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ String.prototype.toString.call(5) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // A2_T1 형태: 다른 래퍼로 전달해도 brand 불일치 → TypeError
+    assert!(run_bool(
+        "var t=false; var s=new String(); s.vo=Boolean.prototype.valueOf; \
+         try{ s.vo() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // radix 유지 + 검증
+    assert_eq!(run_str("(255).toString(16)"), "ff");
+    assert!(run_bool("var t=false; try{ (5).toString(1) }catch(e){ t=e instanceof RangeError } t"));
+    // 다른 빌트인 프로토타입도 constructor 링크
+    assert!(run_bool("RegExp.prototype.constructor === RegExp"));
+    assert!(run_bool("Map.prototype.constructor === Map"));
+    assert!(run_bool("Set.prototype.constructor === Set"));
+    assert!(run_bool("Date.prototype.constructor === Date"));
+    assert!(run_bool("Symbol.prototype.constructor === Symbol"));
+    // constructor 는 비열거 (§17)
+    assert!(run_bool("Object.keys(Boolean.prototype).indexOf('constructor') === -1"));
+}
