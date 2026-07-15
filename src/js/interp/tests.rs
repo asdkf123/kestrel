@@ -4794,6 +4794,35 @@ fn date_math_method_name_length() {
     ));
 }
 
+// Reflect 나머지 (§28.1): getOwnPropertyDescriptor/setPrototypeOf/isExtensible/
+// preventExtensions 미구현이었고, ownKeys→열거키만, defineProperty→객체 반환이던 편법.
+#[test]
+fn reflect_completeness() {
+    // 존재 + 이름
+    assert_eq!(run_str("Reflect.setPrototypeOf.name"), "setPrototypeOf");
+    assert_eq!(run_str("Reflect.getOwnPropertyDescriptor.name"), "getOwnPropertyDescriptor");
+    assert_eq!(run_str("Reflect.ownKeys.name"), "ownKeys");
+    // ownKeys 는 비열거 키도 포함 (예전엔 열거만)
+    assert!(run_bool(
+        "var o={}; Object.defineProperty(o,'x',{value:1,enumerable:false}); \
+         Reflect.ownKeys(o).indexOf('x')>=0"
+    ));
+    // getOwnPropertyDescriptor
+    assert_eq!(run_num("Reflect.getOwnPropertyDescriptor({a:5},'a').value"), 5.0);
+    assert!(run_bool("Reflect.getOwnPropertyDescriptor({},'z')===undefined"));
+    // defineProperty 는 불리언 반환
+    assert!(run_bool("Reflect.defineProperty({}, 'a', {value:1})===true"));
+    // isExtensible / preventExtensions
+    assert!(run_bool("Reflect.isExtensible({})===true"));
+    assert!(run_bool("var o={}; Reflect.preventExtensions(o)===true && Reflect.isExtensible(o)===false"));
+    // setPrototypeOf 는 불리언, 실제로 프로토타입을 바꾼다
+    assert!(run_bool("var o={}; var p={pm:1}; Reflect.setPrototypeOf(o,p)===true && o.pm===1"));
+    // 대상이 객체 아니면 TypeError
+    assert!(run_bool("var t=false; try{ Reflect.ownKeys(1) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Reflect.getOwnPropertyDescriptor(null,'x') }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Reflect.isExtensible('s') }catch(e){ t=e instanceof TypeError } t"));
+}
+
 // ES2024 집합 연산 (§24.2.4): union/intersection/difference/symmetricDifference +
 // isSubsetOf/isSupersetOf/isDisjointFrom. set-like 인자(GetSetRecord)도 받는다.
 #[test]

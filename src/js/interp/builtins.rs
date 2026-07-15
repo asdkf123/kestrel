@@ -5192,6 +5192,61 @@ impl Interp {
                 }
                 self.construct(f, arg_list)
             }
+            // Reflect 나머지 (§28.1). 대상이 객체가 아니면 TypeError. 변형 계열은 불리언 반환.
+            Native::ReflectSetPrototypeOf => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.setPrototypeOf called on non-object"));
+                }
+                self.call_native(Native::ObjectSetPrototypeOf, None, args)?;
+                Ok(Value::Bool(true))
+            }
+            Native::ReflectPreventExtensions => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.preventExtensions called on non-object"));
+                }
+                self.call_native(Native::ObjectPreventExt, None, args)?;
+                Ok(Value::Bool(true))
+            }
+            Native::ReflectIsExtensible => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.isExtensible called on non-object"));
+                }
+                self.call_native(Native::ObjectIsExtensible, None, args)
+            }
+            Native::ReflectOwnKeys => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.ownKeys called on non-object"));
+                }
+                // 모든 own 문자열 키(비열거 포함). 심볼 키는 아직 별도(gap).
+                self.call_native(Native::ObjectGetOwnPropertyNames, None, args)
+            }
+            Native::ReflectGetOwnPropertyDescriptor => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.getOwnPropertyDescriptor called on non-object"));
+                }
+                self.call_native(Native::ObjectGetOwnPropertyDescriptor, None, args)
+            }
+            Native::ReflectDefineProperty => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.defineProperty called on non-object"));
+                }
+                // 성공하면 true. 재정의 불가 등으로 거부되면 false(throw 아님). 우리
+                // ObjectDefineProperty 는 거부를 "Cannot redefine property" TypeError 로 내므로
+                // 그것만 false 로 흡수하고, 서술자 강제변환 오류 등은 전파한다.
+                match self.call_native(Native::ObjectDefineProperty, None, args) {
+                    Ok(_) => Ok(Value::Bool(true)),
+                    Err(e) => {
+                        let redefine = matches!(&self.thrown, Some(Value::Obj(m))
+                            if matches!(m.borrow().get("message"), Some(Value::Str(s)) if s.contains("redefine")));
+                        if redefine {
+                            self.thrown = None;
+                            Ok(Value::Bool(false))
+                        } else {
+                            Err(e) // 서술자 강제변환 오류 등은 그대로 전파
+                        }
+                    }
+                }
+            }
             Native::LsGetItem => {
                 let k = args.first().map(to_display).unwrap_or_default();
                 Ok(self
