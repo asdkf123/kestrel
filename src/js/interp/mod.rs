@@ -4025,6 +4025,85 @@ impl Interp {
         false
     }
 
+    // 내장 생성자의 own 문자열 프로퍼티 키(정적 메서드/상수 + prototype). name/length 는
+    // 모든 함수 공통이라 호출부에서 따로 더한다. 값의 단일 소스는 member_get 이다 —
+    // 이 목록이 member_get 과 어긋나면 self-test(native_ctor_reflection)가 잡는다.
+    // Object/Array 는 실제 네임스페이스 Obj(object_ns/array_ns)에 위임해 드리프트가 없다.
+    fn native_ctor_own_keys(&self, n: &Native) -> Option<Vec<String>> {
+        use Native::*;
+        let statics: &[&str] = match n {
+            ObjectCtor => return Some(self.ns_own_keys(&self.object_ns)),
+            ArrayCtor => return Some(self.ns_own_keys(&self.array_ns)),
+            NumberCtor => &[
+                "isInteger", "isSafeInteger", "isFinite", "isNaN", "parseInt", "parseFloat",
+                "MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER", "MAX_VALUE", "MIN_VALUE", "EPSILON",
+                "POSITIVE_INFINITY", "NEGATIVE_INFINITY", "NaN", "prototype",
+            ],
+            BooleanCtor => &["prototype"],
+            StringCtor => &["fromCharCode", "fromCodePoint", "raw", "prototype"],
+            DateCtor => &["now", "parse", "UTC", "prototype"],
+            RegExpCtor => &["escape", "prototype"],
+            MapCtor => &["prototype"],
+            SetCtor => &["prototype"],
+            PromiseCtor => &["resolve", "reject", "all", "race", "allSettled", "prototype"],
+            SymbolCtor => &[
+                "iterator", "asyncIterator", "toStringTag", "hasInstance", "toPrimitive", "match",
+                "matchAll", "replace", "search", "split", "for", "keyFor", "prototype",
+            ],
+            ErrorCtor(_) => &["prototype"],
+            FunctionCtor => &["prototype"],
+            _ => return None,
+        };
+        Some(statics.iter().map(|s| s.to_string()).collect())
+    }
+
+    // 네임스페이스 Obj 의 non-internal own 문자열 키.
+    fn ns_own_keys(&self, ns: &Value) -> Vec<String> {
+        if let Value::Obj(m) = ns {
+            m.borrow().keys().filter(|k| !is_internal_key(k)).cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    // 내장 생성자의 own 프로퍼티 서술자 (§17). 정적 메서드는 {w:true,e:false,c:true},
+    // 상수(Number.MAX_VALUE 등)는 전부 false, prototype 은 {w:false,e:false,c:false}.
+    // own 이 아니면 None. name/length 는 호출부가 따로 처리한다.
+    pub(super) fn native_own_descriptor(
+        &mut self,
+        recv: &Value,
+        key: &str,
+    ) -> Result<Option<Value>, String> {
+        let n = match recv {
+            Value::Native(n) => *n,
+            _ => return Ok(None),
+        };
+        let Some(keys) = self.native_ctor_own_keys(&n) else {
+            return Ok(None);
+        };
+        if !keys.iter().any(|k| k == key) {
+            return Ok(None);
+        }
+        let val = self.member_get(recv, key)?;
+        if matches!(val, Value::Undefined) {
+            return Ok(None);
+        }
+        let (writable, configurable) = if key == "prototype" {
+            (false, false)
+        } else if matches!(val, Value::Native(_) | Value::Fn(_) | Value::Bound(_) | Value::Class(_))
+        {
+            (true, true) // 정적 메서드
+        } else {
+            (false, false) // 상수 값
+        };
+        let mut d = ObjMap::new();
+        d.insert("value".to_string(), val);
+        d.insert("writable".to_string(), Value::Bool(writable));
+        d.insert("enumerable".to_string(), Value::Bool(false));
+        d.insert("configurable".to_string(), Value::Bool(configurable));
+        Ok(Some(Value::Obj(Rc::new(RefCell::new(d)))))
+    }
+
     fn native_fn_member(&self, recv: &Value, key: &str) -> Option<Value> {
         // delete 된 name/length 는 없는 것으로 (configurable:true).
         if matches!(key, "name" | "length") && self.native_prop_deleted(recv, key) {
@@ -4175,7 +4254,16 @@ impl Interp {
                     || a.get_prop(key).is_some()
                     || key == "length"
             }
-            Value::Native(_) | Value::Bound(_) => matches!(key, "name" | "length"),
+            // HasProperty (§7.3.11): own(name/length/정적/prototype) + 상속 함수 메서드.
+            Value::Native(n) => {
+                matches!(key, "name" | "length")
+                    || self
+                        .native_ctor_own_keys(n)
+                        .map(|ks| ks.iter().any(|k| k.as_str() == key))
+                        .unwrap_or(false)
+                    || self.native_fn_member(obj, key).is_some()
+            }
+            Value::Bound(_) => matches!(key, "name" | "length"),
             _ => false,
         }
     }
@@ -4861,7 +4949,9 @@ impl Interp {
                 "parse" => Value::Native(Native::DateParse),
                 "UTC" => Value::Native(Native::DateUTC),
                 "prototype" => self.date_proto.clone(),
-                _ => Value::Undefined,
+                // 함수 공통 멤버(call/apply/bind/hasOwnProperty/…) 상속 — Number 등과
+                // 일관되게. 예전엔 Date.hasOwnProperty 가 undefined 라 "함수 아님" 크래시.
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // Object/Array 전역은 Native 생성자(typeof === "function"). 정적 멤버·prototype 은
             // 보관된 네임스페이스 맵에 위임한다.
@@ -4887,10 +4977,7 @@ impl Interp {
             Value::Native(Native::EventCtor(n)) => Ok(match key {
                 "prototype" => self.event_proto(n).unwrap_or(Value::Undefined),
                 "name" => Value::Str(n.to_string()),
-                "call" => Value::Native(Native::FnCall),
-                "apply" => Value::Native(Native::FnApply),
-                "bind" => Value::Native(Native::FnBind),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             Value::Native(Native::ErrorCtor(n)) => Ok(match key {
                 // 종류별 prototype (TypeError.prototype !== Error.prototype)
@@ -4901,10 +4988,7 @@ impl Interp {
                     .map(|(_, p)| p.clone())
                     .unwrap_or_else(|| self.error_proto.clone()),
                 "name" => Value::Str(n.to_string()),
-                "call" => Value::Native(Native::FnCall),
-                "apply" => Value::Native(Native::FnApply),
-                "bind" => Value::Native(Native::FnBind),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // String.fromCharCode/prototype
             Value::Native(Native::StringCtor) => Ok(match key {
@@ -4983,7 +5067,7 @@ impl Interp {
                     m.insert("finally".to_string(), Value::Native(Native::PromiseFinally));
                     Value::Obj(Rc::new(RefCell::new(m)))
                 }
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // 네이티브/바운드 함수: 함수 공통 멤버(name/length/call/apply/bind + 상속 메서드)
             Value::Native(_) | Value::Bound(_) => {
@@ -5903,7 +5987,8 @@ impl Interp {
                             || a.get_prop(&key).is_some()
                             || self.proto_method("Array", &key).is_some(),
                     ),
-                    _ => Value::Bool(false),
+                    // 함수/내장 생성자 등: HasProperty 로 위임 (name/length/정적/prototype + 상속).
+                    other => Value::Bool(self.has_property(other, &key)),
                 }
             }
             BinOp::Instanceof => {

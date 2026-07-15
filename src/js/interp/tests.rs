@@ -4540,3 +4540,46 @@ fn primitive_wrapper_prototypes_are_exotic() {
     // constructor 는 비열거 (§17)
     assert!(run_bool("Object.keys(Boolean.prototype).indexOf('constructor') === -1"));
 }
+
+// 내장 생성자는 정적 메서드/상수/prototype 을 own 프로퍼티로 노출한다 (§17). 예전엔
+// getOwnPropertyNames(Date)=[], getOwnPropertyDescriptor(Date,'parse')=undefined,
+// Date.hasOwnProperty 조차 undefined(크래시) 였다 — 리플렉션이 내장 생성자에 안 통했다.
+#[test]
+fn native_ctor_reflection() {
+    // 정적 메서드: {value, writable:true, enumerable:false, configurable:true} (§17)
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Date,'parse'); \
+         d.value===Date.parse && d.writable===true && d.enumerable===false && d.configurable===true"
+    ));
+    assert!(run_bool("Date.hasOwnProperty('parse')"));
+    assert!(run_bool("Number.hasOwnProperty('MAX_SAFE_INTEGER')"));
+    // 상수 값(Number.MAX_VALUE 등)은 전부 non-writable/non-configurable
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Number,'MAX_VALUE'); \
+         d.writable===false && d.enumerable===false && d.configurable===false"
+    ));
+    // 생성자의 prototype 은 non-writable/non-configurable/non-enumerable
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Boolean,'prototype'); \
+         d.value===Boolean.prototype && d.writable===false && d.configurable===false && d.enumerable===false"
+    ));
+    assert!(run_bool("Boolean.hasOwnProperty('prototype')"));
+    // getOwnPropertyNames 가 정적들과 prototype 을 나열
+    assert!(run_bool("Object.getOwnPropertyNames(Date).indexOf('parse')>=0"));
+    assert!(run_bool("Object.getOwnPropertyNames(Number).indexOf('isInteger')>=0"));
+    assert!(run_bool("Object.getOwnPropertyNames(Object).indexOf('keys')>=0"));
+    assert!(run_bool("Object.getOwnPropertyNames(Number).indexOf('prototype')>=0"));
+    // 상속 메서드는 함수로 남아 있어야 한다 (크래시 회귀 방지)
+    assert!(run_bool("typeof Date.hasOwnProperty==='function'"));
+    assert!(run_bool("typeof Promise.hasOwnProperty==='function'"));
+    assert!(run_bool("typeof Error.hasOwnProperty==='function'"));
+    // in 연산자: own + 상속
+    assert!(run_bool("'parse' in Date"));
+    assert!(run_bool("'hasOwnProperty' in Date"));
+    // 드리프트 가드: own 키 목록의 모든 키가 실제로 member_get 으로 resolve 된다.
+    assert!(run_bool(
+        "[Number,Boolean,String,Date,RegExp,Map,Set,Promise,Symbol,Object,Array].every(function(C){ \
+           return Object.getOwnPropertyNames(C).every(function(k){ return typeof C[k]!=='undefined'; }); \
+         })"
+    ));
+}

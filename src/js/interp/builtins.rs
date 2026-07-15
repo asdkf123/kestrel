@@ -1400,6 +1400,11 @@ impl Interp {
                         d.insert("configurable".to_string(), Value::Bool(true));
                         return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                     }
+                    // 내장 생성자의 정적 메서드/상수/prototype 도 own 프로퍼티 (§17/§20~22).
+                    Value::Native(_) => match self.native_own_descriptor(&target, &key)? {
+                        Some(desc) => return Ok(desc),
+                        None => false,
+                    }
                     _ => false,
                 };
                 if !found {
@@ -1723,10 +1728,17 @@ impl Interp {
                             || matches!(key.as_str(), "prototype" | "name" | "length")
                     }
                     // 내장/바운드 함수도 name/length 를 own 프로퍼티로 가진다 (§17).
-                    // delete 로 지워졌으면 더는 own 이 아니다.
+                    // 내장 생성자는 정적 메서드/상수/prototype 도 own. delete 된 name/length 는 제외.
                     Some(v @ (Value::Native(_) | Value::Bound(_))) => {
-                        matches!(key.as_str(), "name" | "length")
-                            && !self.native_prop_deleted(v, &key)
+                        if matches!(key.as_str(), "name" | "length") {
+                            !self.native_prop_deleted(v, &key)
+                        } else if let Value::Native(n) = v {
+                            self.native_ctor_own_keys(n)
+                                .map(|ks| ks.iter().any(|k| *k == key))
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 };
@@ -5150,6 +5162,21 @@ impl Interp {
                         .into_iter()
                         .map(|(k, _)| Value::Str(k))
                         .collect(),
+                    // 내장 함수/생성자: length·name(삭제 안 됐으면) + 정적/상수/prototype (§17).
+                    Some(v @ Value::Native(_)) => {
+                        let mut out: Vec<Value> = Vec::new();
+                        for k in ["length", "name"] {
+                            if !self.native_prop_deleted(v, k) {
+                                out.push(Value::Str(k.to_string()));
+                            }
+                        }
+                        if let Value::Native(n) = v {
+                            if let Some(keys) = self.native_ctor_own_keys(n) {
+                                out.extend(keys.into_iter().map(Value::Str));
+                            }
+                        }
+                        out
+                    }
                     _ => Vec::new(),
                 };
                 Ok(Value::Arr(ArrayObj::new(names)))
