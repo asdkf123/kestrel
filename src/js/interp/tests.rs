@@ -4794,6 +4794,30 @@ fn date_math_method_name_length() {
     ));
 }
 
+// JSON.parse 는 잘못된 입력에 SyntaxError 를 던지고(예전엔 일반 Error), reviver 를
+// 후위 순회로 적용한다 (§25.5.1).
+#[test]
+fn json_parse_syntaxerror_and_reviver() {
+    // 잘못된 JSON → SyntaxError
+    assert!(run_bool("var t=false; try{ JSON.parse('{bad}') }catch(e){ t=e instanceof SyntaxError } t"));
+    assert!(run_bool("var t=false; try{ JSON.parse('[1,2') }catch(e){ t=e instanceof SyntaxError } t"));
+    assert!(run_bool("var t=false; try{ JSON.parse('') }catch(e){ t=e instanceof SyntaxError } t"));
+    // 정상 파싱
+    assert_eq!(run_num("JSON.parse('{\"a\":5}').a"), 5.0);
+    // reviver: 값 변환
+    assert_eq!(run_num("JSON.parse('{\"a\":2}', function(k,v){ return typeof v==='number' ? v*10 : v; }).a"), 20.0);
+    // reviver: undefined 반환 시 키 삭제
+    assert!(run_bool(
+        "var o=JSON.parse('{\"a\":1,\"b\":2}', function(k,v){ return k==='b'?undefined:v; }); \
+         o.a===1 && !('b' in o)"
+    ));
+    // reviver 는 배열도 순회
+    assert_eq!(
+        run_str("JSON.parse('[1,2,3]', function(k,v){ return typeof v==='number'?v+1:v; }).join(',')"),
+        "2,3,4"
+    );
+}
+
 // Reflect 나머지 (§28.1): getOwnPropertyDescriptor/setPrototypeOf/isExtensible/
 // preventExtensions 미구현이었고, ownKeys→열거키만, defineProperty→객체 반환이던 편법.
 #[test]
