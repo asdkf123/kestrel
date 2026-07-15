@@ -187,9 +187,11 @@ pub enum Pseudo {
     NthOfType(i32, i32),     // 같은 타입 중 an+b (앞에서)
     NthLastOfType(i32, i32), // 같은 타입 중 an+b (뒤에서)
     OnlyOfType,              // 같은 타입 형제가 자기 하나뿐
-    Not(Vec<SimpleSelector>),
-    Is(Vec<SimpleSelector>),    // :is()/:matches() — 인자 중 하나라도 매칭 (특이도=인자 최대)
-    Where(Vec<SimpleSelector>), // :where() — 매칭은 :is 와 같되 특이도 0
+    // 인자는 **전체 복합 선택자**(결합자 포함)의 콤마 목록이다 — :is(.a .b, #c > d) 처럼.
+    // 예전엔 Vec<SimpleSelector> 라 첫 compound 만 보고 결합자를 버렸다(편법).
+    Not(Vec<Selector>),
+    Is(Vec<Selector>),    // :is()/:matches() — 인자 중 하나라도 매칭 (특이도=인자 최대)
+    Where(Vec<Selector>), // :where() — 매칭은 :is 와 같되 특이도 0
     Root,
     Empty,
     // 폼 상태 (요소 속성으로 정적 판별)
@@ -410,9 +412,9 @@ fn simple_specificity(s: &SimpleSelector) -> Specificity {
 fn pseudo_specificity(p: &Pseudo) -> Specificity {
     match p {
         Pseudo::Where(_) => (0, 0, 0), // :where() 는 특이도에 기여 안 함
-        // :is()/:not() 는 인자 중 가장 특이한 것의 특이도
+        // :is()/:not() 는 인자 중 가장 특이한 것의 특이도 (전체 복합 선택자 기준)
         Pseudo::Is(args) | Pseudo::Not(args) => {
-            args.iter().map(simple_specificity).max().unwrap_or((0, 0, 0))
+            args.iter().map(|s| s.specificity()).max().unwrap_or((0, 0, 0))
         }
         // :has() 도 인자 중 가장 특이한 것 (표준 §17)
         Pseudo::Has(rels) => rels
@@ -1235,29 +1237,6 @@ impl Parser {
             .collect()
     }
 
-    fn parse_selector_arg_list(arg: &str) -> Vec<SimpleSelector> {
-        arg.split(',')
-            .filter_map(|part| {
-                let p = part.trim();
-                if p.is_empty() {
-                    return None;
-                }
-                let mut inner = Parser {
-                    pos: 0,
-                    input: p.to_string(),
-                    viewport_width: 0.0,
-                    font_faces: Vec::new(),
-                    keyframes: std::collections::HashMap::new(),
-                    layers: Vec::new(),
-                    cur_container: None,
-                    cur_layer: None,
-                    anon_count: 0,
-                };
-                inner.parse_simple_selector()
-            })
-            .collect()
-    }
-
     fn parse_pseudo(&mut self) -> Option<Pseudo> {
         let name = self.parse_identifier().to_ascii_lowercase();
         // 함수형: 괄호 안 인자
@@ -1302,8 +1281,9 @@ impl Parser {
                     Some(Pseudo::NthLastOfType(a, b))
                 }
                 "not" => {
-                    // :not(a, b, ...) — 콤마 목록 중 하나라도 매칭되면 제외
-                    let sels = Self::parse_selector_arg_list(&arg);
+                    // :not(a, b, ...) — 콤마 목록 중 하나라도 매칭되면 제외. 각 항목은
+                    // 전체 복합 선택자(결합자 포함)다.
+                    let sels = parse_selector_list(&arg).unwrap_or_default();
                     if sels.is_empty() {
                         Some(Pseudo::Dynamic)
                     } else {
@@ -1312,7 +1292,7 @@ impl Parser {
                 }
                 "is" | "matches" | "where" => {
                     // :is/:where(a, b, ...) — 인자 중 하나라도 매칭. :where 는 특이도 0.
-                    let sels = Self::parse_selector_arg_list(&arg);
+                    let sels = parse_selector_list(&arg).unwrap_or_default();
                     if sels.is_empty() {
                         Some(Pseudo::Dynamic)
                     } else if name == "where" {

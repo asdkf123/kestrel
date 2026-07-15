@@ -84,7 +84,10 @@
 - [x] CSS **@supports 과다보고** — 2단계로 해소: 프로퍼티 이름 검증(535f98d 이전) +
   값 검증(31bfe54). 열거형 미구현 값(position:sticky, display:table-cell/flow-root)과
   미구현 값 함수(color-mix/oklch/env/transform:rotate)를 이제 거짓으로 보고한다.
-- [ ] CSS **:not/:is 첫 심플셀렉터만**. (css/mod.rs:796)
+- [x] CSS **:not/:is/:where 가 첫 compound 만 보고 결합자를 버림** — 이제 인자를 전체
+  복합 선택자(Vec<Selector>)로 파싱하고, 앵커(DOM 위치)로 조상/형제까지 정확히 매칭
+  (element_matches 재사용). :is(.a .b)/:where(.x > .y)/:not(.p .q) 동작. 특이도도 전체
+  선택자 기준.
 - [x] CSS **속성선택자 i/s 플래그 + 기본 대소문자 구분**. (4a38252)
 - [x] CSS **상속 화이트리스트에 word-break/overflow-wrap/word-wrap 추가**(소비되나 미상속이던 것). (6885dd8)
 - [x] JS **instanceof** — function 생성자/Object.create 체인/내장/원시값 모두 정확(프로토타입 링크로 해소, 1899093). 확인 완료.

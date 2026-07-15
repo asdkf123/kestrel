@@ -389,14 +389,31 @@ fn matches_has(rels: &[(crate::css::Combinator, crate::css::Selector)], sib: Opt
     })
 }
 
+// :is()/:not()/:where() 인자(전체 복합 선택자)를 요소에 매칭한다. 앵커(DOM 위치)가
+// 있으면 결합자를 따라 조상/형제까지 정확히 평가하고(element_matches 재사용), 없으면
+// (조상 근사 문맥) 대상 compound 만 근사한다. 예전엔 결합자를 버리고 첫 compound 만
+// 봤다 — :is(.a .b) 가 .b 아무 곳에나 매칭됐다(편법).
+fn matches_functional_arg(elem: &ElementData, sel: &Selector, sib: Option<&SiblingCtx>) -> bool {
+    if let Some((dom, id)) = sib.and_then(|s| s.anchor) {
+        return element_matches(dom, id, std::slice::from_ref(sel));
+    }
+    match sel {
+        Selector::Simple(c) => matches_compound(elem, c, sib),
+        Selector::Complex(parts) => match parts.last() {
+            Some((_, subject)) => matches_compound(elem, subject, sib),
+            None => false,
+        },
+    }
+}
+
 fn matches_pseudo(elem: &ElementData, p: &crate::css::Pseudo, sib: Option<&SiblingCtx>) -> bool {
     use crate::css::Pseudo;
     match p {
         Pseudo::Has(rels) => matches_has(rels, sib),
         Pseudo::Dynamic => false, // hover/focus/active/visited 등 정적 렌더에선 비매칭
-        Pseudo::Not(inner) => !inner.iter().any(|s| matches_compound(elem, s, sib)),
+        Pseudo::Not(inner) => !inner.iter().any(|s| matches_functional_arg(elem, s, sib)),
         Pseudo::Is(inner) | Pseudo::Where(inner) => {
-            inner.iter().any(|s| matches_compound(elem, s, sib))
+            inner.iter().any(|s| matches_functional_arg(elem, s, sib))
         }
         // 구조적: 대상(sib=Some)만 정확 평가, 비대상은 통과(근사)
         Pseudo::FirstChild => sib.map(|s| s.index == 1).unwrap_or(true),
@@ -1717,6 +1734,44 @@ mod tests {
         assert_eq!(col("s"), "rgb(4, 4, 4)", ":has(+ .next) 인접 형제");
         // 중첩 괄호: 예전 파서는 첫 ')' 에서 끊어 ":has(.kid" 로 잘랐다 → 규칙이 죽었다
         assert_eq!(col("t"), "rgb(5, 5, 5)", ":not(:has(.kid))");
+    }
+
+    // :is()/:not()/:where() 인자의 **결합자**(자손/자식)를 존중한다. 예전엔 첫 compound 만
+    // 보고 결합자를 버려 :is(.wrap .target) 이 .target 아무 곳에나 매칭됐다(편법).
+    #[test]
+    fn is_not_where_complex_selectors() {
+        let dom = crate::html::parse_dom_fragment(
+            "<div class=wrap><p id=a class=target>x</p></div>\
+             <p id=b class=target>y</p>\
+             <div class=box><span id=c class=leaf></span></div>\
+             <div><span id=d class=leaf></span></div>"
+                .to_string(),
+        );
+        let ss = crate::css::parse(
+            ":is(.wrap .target) { color: rgb(1, 1, 1) } \
+             :where(.box > .leaf) { color: rgb(2, 2, 2) } \
+             p:not(.wrap .target) { color: rgb(3, 3, 3) }"
+                .to_string(),
+        );
+        let styled = style_tree(&dom, &ss);
+        fn find<'a, 'b>(n: &'b StyledNode<'a>, id: &str) -> Option<&'b StyledNode<'a>> {
+            if let NodeType::Element(e) = &n.node.node_type {
+                if e.attributes.get("id").map(|s| s.as_str()) == Some(id) {
+                    return Some(n);
+                }
+            }
+            n.children.iter().find_map(|c| find(c, id))
+        }
+        let col = |id: &str| {
+            find(&styled, id)
+                .and_then(|n| n.specified_values.get("color").cloned())
+                .map(|v| computed_value_string(&v))
+                .unwrap_or_default()
+        };
+        assert_eq!(col("a"), "rgb(1, 1, 1)", ":is(.wrap .target) 자손 결합자 — a 는 .wrap 안");
+        assert_eq!(col("b"), "rgb(3, 3, 3)", ":not(.wrap .target) — b 는 .wrap 밖이라 not 매칭");
+        assert_eq!(col("c"), "rgb(2, 2, 2)", ":where(.box > .leaf) 자식 결합자");
+        assert_eq!(col("d"), "", ":where(.box > .leaf) — d 부모는 .box 아님");
     }
 
     // @layer — Tailwind v4 는 **모든 것**을 @layer 로 감싼다. 모르면 스타일이 통째로 날아간다.
