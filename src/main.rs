@@ -73,6 +73,11 @@ fn main() {
             std::process::exit(2);
         }
         let r = it.run(&src);
+        // 이벤트 루프: async 테스트의 $DONE 이 마이크로태스크/타이머에서 불릴 수 있다.
+        // 스크립트가 동기 오류로 죽지 않았을 때만 돈다.
+        if r.is_ok() {
+            it.run_event_loop();
+        }
         for line in it.console.drain(..) {
             println!("{}", line);
         }

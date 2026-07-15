@@ -873,6 +873,12 @@ impl Interp {
                 self.console.push(line);
                 Ok(Value::Undefined)
             }
+            // print(x): 셸 print. 인자 하나를 그대로 캡처 버퍼로 (async 하네스 통로).
+            Native::Print => {
+                let line = args.iter().map(to_display).collect::<Vec<_>>().join(" ");
+                self.console.push(line);
+                Ok(Value::Undefined)
+            }
             Native::ArrayPush => match recv {
                 Some(Value::Arr(a)) => {
                     // 얼었거나 봉인/확장금지면 새 항목을 추가하지 않는다(표준).

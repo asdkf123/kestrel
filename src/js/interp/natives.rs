@@ -45,6 +45,8 @@ pub enum CanvasMethod {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Native {
     ConsoleLog,
+    // print(x) — 셸 print. test262 async 하네스가 $DONE 결과를 이걸로 낸다.
+    Print,
     ArrayPush,
     GetElementById,
     AddEventListener,

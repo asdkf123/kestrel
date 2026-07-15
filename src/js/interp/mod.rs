@@ -850,6 +850,9 @@ impl Interp {
         env_declare(&global, "Function", Value::Native(Native::FunctionCtor));
         env_declare(&global, "eval", Value::Native(Native::Eval));
         env_declare(&global, "__kBrand", Value::Native(Native::Brand));
+        // print: test262 의 async 하네스($DONE)가 결과를 알리는 통로다 (SpiderMonkey/V8
+        // 셸의 print). console.log 와 같은 캡처 버퍼로 간다.
+        env_declare(&global, "print", Value::Native(Native::Print));
         env_declare(&global, "__kBindElementClass", Value::Native(Native::BindElementClass));
         // Map / Set / WeakMap / WeakSet (약한 참조는 일반 Map/Set 으로 근사)
         env_declare(&global, "Map", Value::Native(Native::MapCtor));
@@ -2180,6 +2183,43 @@ impl Interp {
         self.drain_microtasks();
         for line in std::mem::take(&mut self.console) {
             println!("[console] {}", line);
+        }
+    }
+
+    // 표준 이벤트 루프 (HTML §8.1.6): 마이크로태스크 큐를 비우고 → 만기 타이머 하나를
+    // 실행 → 다시 마이크로태스크, 둘 다 빌 때까지. --js 모드(test262)에서 스크립트가
+    // 끝난 뒤 이걸 돌린다 — 안 그러면 async 테스트의 $DONE 이 마이크로태스크/타이머에서
+    // 불려도 관측되지 않고 프로세스가 그냥 끝난다.
+    // DOM 이 없는 순수 JS 실행용 (window 의 타이머 루프와 별개).
+    pub fn run_event_loop(&mut self) {
+        self.drain_microtasks();
+        // 타이머: 지연 오름차순으로 하나씩. 각 타이머 사이에 마이크로태스크를 흘린다.
+        // interval 은 무한이라 한 번만 (근사), 총 라운드는 상한을 둔다.
+        for _round in 0..100_000 {
+            if self.timers.is_empty() {
+                break;
+            }
+            if self.budget_exhausted() {
+                break;
+            }
+            // 지연이 가장 짧은 타이머를 꺼낸다 (동률이면 등록 순서)
+            let mut best = 0usize;
+            for i in 1..self.timers.len() {
+                if self.timers[i].delay_ms < self.timers[best].delay_ms {
+                    best = i;
+                }
+            }
+            let timer = self.timers.remove(best);
+            if self.cleared.contains(&timer.id) {
+                continue;
+            }
+            self.begin_unit();
+            if let Err(e) = self.call_value(timer.callback, None, Vec::new()) {
+                if !e.starts_with(STEP_LIMIT_MSG) {
+                    println!("[js error] {}", e);
+                }
+            }
+            self.drain_microtasks();
         }
     }
 
