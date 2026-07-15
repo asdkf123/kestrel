@@ -4189,3 +4189,23 @@ fn regexp_construction_validates() {
     assert!(run_bool("var r=new RegExp('a+','gi'); r.test('aaa')===true"));
     assert!(run_bool("/(?<y>\\d+)/.test('42')===true")); // named group
 }
+
+// RegExp.escape(S) (§22.2.5.2, ES2025): 문자열을 정규식 리터럴로 이스케이프.
+#[test]
+fn regexp_escape_static() {
+    // 첫 문자가 영숫자면 \xHH
+    assert_eq!(run_str("RegExp.escape('a.b')"), "\\x61\\.b");
+    assert_eq!(run_str("RegExp.escape('1+1')"), "\\x31\\+1");
+    // 구문 문자는 백슬래시
+    assert_eq!(run_str("RegExp.escape('(x)')"), "\\(x\\)");
+    // 공백 → \x20
+    assert_eq!(run_str("RegExp.escape('a b')"), "\\x61\\x20b");
+    // 왕복: escape 결과로 만든 정규식은 원본을 매칭
+    assert!(run_bool("var s='a.b*c?'; new RegExp(RegExp.escape(s)).test(s)===true"));
+    assert!(run_bool("new RegExp(RegExp.escape('a.b')).test('axb')===false"));
+    // 비문자열 → TypeError
+    assert!(run_bool("try{RegExp.escape(42);false}catch(e){e instanceof TypeError}"));
+    // 메타데이터
+    assert_eq!(run_str("RegExp.escape.name"), "escape");
+    assert_eq!(run_num("RegExp.escape.length"), 1.0);
+}

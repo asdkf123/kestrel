@@ -3298,6 +3298,20 @@ impl Interp {
                 Ok(make_regex_obj(&src, &flags))
             }
             // regex.test(str) → bool
+            // RegExp.escape(S) (§22.2.5.2, ES2025): 문자열 S 를 정규식 안에서 리터럴로
+            // 매칭되도록 이스케이프한다. 인자가 문자열이 아니면 TypeError.
+            Native::RegExpEscape => {
+                let s = match args.first() {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "RegExp.escape argument must be a string",
+                        ))
+                    }
+                };
+                Ok(Value::Str(regexp_escape(&s)))
+            }
             // RegExp.prototype 의 접근자 getter (§22.2.6): flags/source/각 플래그를
             // this 정규식에서 계산한다. RegExp.prototype 자신(정규식 아님)엔 스펙 기본값.
             Native::RegexGet(kind) => {

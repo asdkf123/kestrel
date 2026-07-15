@@ -4771,6 +4771,7 @@ impl Interp {
             }),
             Value::Native(Native::RegExpCtor) => Ok(match key {
                 "prototype" => self.regexp_proto.clone(),
+                "escape" => Value::Native(Native::RegExpEscape),
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // Promise 정적 메서드 + prototype (기능 탐지 'finally' in Promise.prototype)

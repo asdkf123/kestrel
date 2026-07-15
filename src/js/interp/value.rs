@@ -583,6 +583,56 @@ pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
     Value::Obj(Rc::new(RefCell::new(map)))
 }
 
+// RegExp.escape(S) 의 이스케이프 (§22.2.5.2, ES2025). 결과 문자열은 정규식 안에서
+// 원본 S 를 리터럴로 매칭한다.
+pub(super) fn regexp_escape(s: &str) -> String {
+    // 구문 문자(§22.2.1 SyntaxCharacter) + '/'
+    const SYNTAX: &str = "^$\\.*+?()[]{}|/";
+    // 그 외 이스케이프해야 하는 구두점 + 공백
+    const OTHER_PUNCT: &str = ",-=<>#&!%:;@~'`\" ";
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        // 첫 코드포인트가 영숫자면 \xHH 로 (앞 토큰과 결합 방지)
+        if i == 0 && (c.is_ascii_alphanumeric()) {
+            out.push_str(&format!("\\x{:02x}", c as u32));
+            continue;
+        }
+        if SYNTAX.contains(c) {
+            out.push('\\');
+            out.push(c);
+        } else if let Some(esc) = match c {
+            '\t' => Some("\\t"),
+            '\n' => Some("\\n"),
+            '\u{0b}' => Some("\\v"),
+            '\u{0c}' => Some("\\f"),
+            '\r' => Some("\\r"),
+            _ => None,
+        } {
+            out.push_str(esc);
+        } else if OTHER_PUNCT.contains(c) || c.is_whitespace() || is_line_terminator(c) {
+            let n = c as u32;
+            if n <= 0xFF {
+                out.push_str(&format!("\\x{:02x}", n));
+            } else if n <= 0xFFFF {
+                out.push_str(&format!("\\u{:04x}", n));
+            } else {
+                // 아스트랄: UTF-16 서로게이트 쌍으로
+                let mut buf = [0u16; 2];
+                for unit in c.encode_utf16(&mut buf) {
+                    out.push_str(&format!("\\u{:04x}", unit));
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn is_line_terminator(c: char) -> bool {
+    matches!(c, '\u{0a}' | '\u{0d}' | '\u{2028}' | '\u{2029}')
+}
+
 // 정규식 플래그 검증 (§22.2.3.1). 유효 플래그는 d,g,i,m,s,u,v,y. 중복 금지,
 // u 와 v 동시 금지. 위반 시 문제 플래그(또는 조합)를 Some 으로 돌린다.
 pub(super) fn invalid_regex_flags(flags: &str) -> Option<String> {
