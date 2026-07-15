@@ -107,6 +107,59 @@ fn is_array_like(o: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(lookup_length(o), Some(n) if n.is_finite() && n >= 0.0)
 }
 
+// Number.prototype.toString(radix) 의 진법 변환 (§21.1.3.6). 정수부와 소수부를
+// 모두 변환한다. 예전엔 정수만 변환하고 소수는 base-10 으로 흘려 (10.5).toString(2)
+// 가 "10.5" 였다.
+fn num_to_radix(n: f64, radix: u32) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string();
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let neg = n < 0.0;
+    let x = n.abs();
+    let mut int_part = x.trunc();
+    let mut frac = x - int_part;
+    // 정수부
+    let mut int_buf = Vec::new();
+    if int_part == 0.0 {
+        int_buf.push(b'0');
+    } else {
+        while int_part > 0.0 {
+            let d = (int_part % radix as f64) as usize;
+            int_buf.push(DIGITS[d]);
+            int_part = (int_part / radix as f64).trunc();
+        }
+        int_buf.reverse();
+    }
+    let mut out = String::new();
+    if neg {
+        out.push('-');
+    }
+    out.push_str(&String::from_utf8_lossy(&int_buf));
+    // 소수부: radix 를 곱해가며 자릿수 추출. f64 정밀도(약 1100비트까지 가능하나
+    // 실용상 제한)까지, 0 이 되면 종료.
+    if frac > 0.0 {
+        out.push('.');
+        let mut count = 0;
+        // f64 유효 정밀도에 맞춰 최대 자릿수 제한 (repeating 소수 무한루프 방지)
+        let max_digits = (1100.0 / (radix as f64).log2()).min(1100.0) as usize;
+        while frac > 0.0 && count < max_digits {
+            frac *= radix as f64;
+            let d = frac.trunc() as usize;
+            out.push(DIGITS[d.min(35)] as char);
+            frac -= d as f64;
+            count += 1;
+        }
+    }
+    out
+}
+
 // array-like 의 length 를 실제 길이로. 배열 최대 길이(2^32-1)를 넘으면 RangeError 다
 // (표준 §10.4.2.2 ArrayCreate). 예전엔 상한이 없어서 core-js 의 기능 탐지
 // (Array.from({length: 2**32}))가 40억 개 할당을 시도해 프로세스가 통째로 죽었다.
@@ -3233,25 +3286,21 @@ impl Interp {
             // recv.toString([radix]) / valueOf()
             Native::ValueToStr => {
                 let v = recv.unwrap_or(Value::Undefined);
-                // 숫자 + radix(2..36)면 진법 변환
-                if let (Value::Num(n), Some(r)) = (&v, args.first().map(to_num)) {
-                    let radix = r as u32;
-                    if (2..=36).contains(&radix) && n.fract() == 0.0 && n.is_finite() {
-                        let mut x = n.abs() as u64;
-                        if x == 0 {
-                            return Ok(Value::Str("0".to_string()));
+                // 숫자 + radix 면 진법 변환 (§21.1.3.6). radix 는 2..=36, 아니면 RangeError.
+                if let (Value::Num(n), Some(rv)) = (&v, args.first()) {
+                    // radix 인자가 undefined 면 10 (기본)
+                    if !matches!(rv, Value::Undefined) {
+                        let radix = to_num(rv);
+                        let radix = if radix.is_nan() { 10 } else { radix as i64 };
+                        if !(2..=36).contains(&radix) {
+                            return Err(self.throw_error(
+                                "RangeError",
+                                "toString() radix must be between 2 and 36",
+                            ));
                         }
-                        let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
-                        let mut buf = Vec::new();
-                        while x > 0 {
-                            buf.push(digits[(x % radix as u64) as usize]);
-                            x /= radix as u64;
+                        if radix != 10 {
+                            return Ok(Value::Str(num_to_radix(*n, radix as u32)));
                         }
-                        if *n < 0.0 {
-                            buf.push(b'-');
-                        }
-                        buf.reverse();
-                        return Ok(Value::Str(String::from_utf8_lossy(&buf).to_string()));
                     }
                 }
                 Ok(Value::Str(to_display(&v)))

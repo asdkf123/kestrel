@@ -83,16 +83,41 @@ pub(super) fn to_num(v: &Value) -> f64 {
         }
         Value::Num(n) => *n,
         Value::BigInt(b) => b.to_f64(),
-        Value::Str(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                0.0
-            } else {
-                t.parse::<f64>().unwrap_or(f64::NAN)
-            }
-        }
+        Value::Str(s) => str_to_num(s),
         _ => f64::NAN,
     }
+}
+
+// 표준 StringToNumber (§7.1.4.1). Rust 의 f64 파서와 달리:
+//  - 0x/0b/0o 진법 접두를 받는다(부호 불가)
+//  - "Infinity" 만 무한대 (Rust 는 "inf"/"nan" 도 받지만 JS 는 NaN)
+//  - 빈/공백 문자열은 0
+pub(super) fn str_to_num(s: &str) -> f64 {
+    let t = s.trim();
+    if t.is_empty() {
+        return 0.0;
+    }
+    // 진법 접두 (부호 없이만)
+    if let Some(rest) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        return u128::from_str_radix(rest, 16).map(|v| v as f64).unwrap_or(f64::NAN);
+    }
+    if let Some(rest) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
+        return u128::from_str_radix(rest, 8).map(|v| v as f64).unwrap_or(f64::NAN);
+    }
+    if let Some(rest) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+        return u128::from_str_radix(rest, 2).map(|v| v as f64).unwrap_or(f64::NAN);
+    }
+    // Infinity (정확한 표기만)
+    match t {
+        "Infinity" | "+Infinity" => return f64::INFINITY,
+        "-Infinity" => return f64::NEG_INFINITY,
+        _ => {}
+    }
+    // 십진수: 허용 문자만(Rust 의 "inf"/"nan"/"infinity" 오탐 차단)
+    if !t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'E' | b'+' | b'-')) {
+        return f64::NAN;
+    }
+    t.parse::<f64>().unwrap_or(f64::NAN)
 }
 
 // 진단용: 멤버 접근 대상 식을 짧은 소스 문자열로 (에러 메시지에 사용)

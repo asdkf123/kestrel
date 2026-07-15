@@ -4230,3 +4230,37 @@ fn regexp_symbol_methods() {
     // 기존 String 연산 무회귀
     assert_eq!(run_str("JSON.stringify('a1b2'.match(/\\d/g))"), r#"["1","2"]"#);
 }
+
+// Number.prototype.toString(radix) 는 소수부도 변환한다 (§21.1.3.6). 범위 밖 radix 는
+// RangeError. 예전엔 정수만 변환하고 소수는 base-10 으로 흘렸다.
+#[test]
+fn number_tostring_radix() {
+    assert_eq!(run_str("(255).toString(16)"), "ff");
+    assert_eq!(run_str("(255).toString(2)"), "11111111");
+    assert_eq!(run_str("(10.5).toString(2)"), "1010.1");
+    assert_eq!(run_str("(-255).toString(16)"), "-ff");
+    assert_eq!(run_str("(0).toString(16)"), "0");
+    // 범위 밖 radix → RangeError
+    assert!(run_bool("try{(1).toString(1);false}catch(e){e instanceof RangeError}"));
+    assert!(run_bool("try{(1).toString(37);false}catch(e){e instanceof RangeError}"));
+}
+
+// StringToNumber (§7.1.4.1): 0x/0b/0o 진법 접두, "Infinity" 만 무한대,
+// "inf"/"nan" 은 NaN. 예전엔 Rust 파서라 0x* 는 NaN, "inf" 는 무한대였다.
+#[test]
+fn string_to_number_grammar() {
+    assert_eq!(run_num("Number('0x10')"), 16.0);
+    assert_eq!(run_num("Number('0b101')"), 5.0);
+    assert_eq!(run_num("Number('0o17')"), 15.0);
+    assert_eq!(run_num("Number('  12  ')"), 12.0);
+    assert_eq!(run_num("Number('1e3')"), 1000.0);
+    assert_eq!(run_num("+'0x10'"), 16.0);
+    assert_eq!(run_num("Number('')"), 0.0);
+    // Rust 오탐 차단
+    assert!(run_bool("isNaN(Number('inf'))"));
+    assert!(run_bool("isNaN(Number('nan'))"));
+    assert!(run_bool("isNaN(Number('0xG'))"));
+    // Infinity 는 정확한 표기만
+    assert_eq!(run_num("Number('Infinity')"), f64::INFINITY);
+    assert_eq!(run_num("Number('-Infinity')"), f64::NEG_INFINITY);
+}
