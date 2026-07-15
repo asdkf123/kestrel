@@ -6177,6 +6177,22 @@ impl Interp {
         // 비교는 섞어도 된다 (수치 비교). == 는 값 비교(1n == 1 은 true),
         // === 는 타입이 달라 false (strict_eq 가 처리).
         if matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge | BinOp::EqEq | BinOp::NotEq) {
+            // 둘 다 BigInt 면 정확히 비교한다. f64 변환은 2^53 초과에서 정밀도를 잃어
+            // (2^63-1) >= 2^63 이 참이 되는 등 큰 값에서 틀렸다 — 편법이었다.
+            if let (Value::BigInt(a), Value::BigInt(b)) = (l, r) {
+                use std::cmp::Ordering;
+                let ord = a.cmp_to(b);
+                let res = match op {
+                    BinOp::Lt => ord == Ordering::Less,
+                    BinOp::Gt => ord == Ordering::Greater,
+                    BinOp::Le => ord != Ordering::Greater,
+                    BinOp::Ge => ord != Ordering::Less,
+                    BinOp::EqEq => ord == Ordering::Equal,
+                    _ => ord != Ordering::Equal,
+                };
+                return Some(Ok(Value::Bool(res)));
+            }
+            // 혼합(BigInt/Number)은 수치 비교 (Number 가 작으면 정밀 손실 없음).
             let (x, y) = (to_num(l), to_num(r));
             let res = match op {
                 BinOp::Lt => x < y,

@@ -1778,8 +1778,20 @@ var __kTA = {
   Float32Array: {size: 4, get: function(b,o){return __kB2F([b[o],b[o+1],b[o+2],b[o+3]], 23, 8);},
                  set: function(b,o,v){ var e=__kF2B(+v,4,23,8); for(var i=0;i<4;i++) b[o+i]=e[i]; }},
   Float64Array: {size: 8, get: function(b,o){return __kB2F([b[o],b[o+1],b[o+2],b[o+3],b[o+4],b[o+5],b[o+6],b[o+7]], 52, 11);},
-                 set: function(b,o,v){ var e=__kF2B(+v,8,52,11); for(var i=0;i<8;i++) b[o+i]=e[i]; }}
+                 set: function(b,o,v){ var e=__kF2B(+v,8,52,11); for(var i=0;i<8;i++) b[o+i]=e[i]; }},
+  // __kBI64/__kBI63 는 아래에 정의(var 호이스팅 + 런타임 호출이라 값 확정 후 쓰임).
+  // (__kB64 는 btoa 의 base64 알파벳이라 이름 충돌 금지 — __kBI* 로 둔다.)
+  // BigInt64Array / BigUint64Array (ES2020). 원소는 BigInt — 리틀엔디언 8바이트로 왕복.
+  // 저장 시 하위 64비트만(모듈러), 부호형은 읽을 때 2^63 이상이면 2^64 를 뺀다.
+  // 바이트 인코딩은 산술(*,/,%)로 — BigInt 비트연산(<<,|)은 큰 값에서 부정확하다.
+  BigInt64Array:  {size: 8, big: true,
+                 get: function(b,o){ var r=0n; for(var i=7;i>=0;i--) r=r*256n+BigInt(b[o+i]); if(r>=__kBI63) r-=__kBI64; return r; },
+                 set: function(b,o,v){ if(typeof v!=='bigint') v=BigInt(v); var u=((v%__kBI64)+__kBI64)%__kBI64; for(var i=0;i<8;i++){ b[o+i]=Number(u%256n); u=u/256n; } }},
+  BigUint64Array: {size: 8, big: true,
+                 get: function(b,o){ var r=0n; for(var i=7;i>=0;i--) r=r*256n+BigInt(b[o+i]); return r; },
+                 set: function(b,o,v){ if(typeof v!=='bigint') v=BigInt(v); var u=((v%__kBI64)+__kBI64)%__kBI64; for(var i=0;i<8;i++){ b[o+i]=Number(u%256n); u=u/256n; } }}
 };
+var __kBI64 = 2n ** 64n, __kBI63 = 2n ** 63n;
 
 function __kMakeTypedArray(name) {
   var spec = __kTA[name];
@@ -1899,6 +1911,7 @@ var Uint8ClampedArray = window.Uint8ClampedArray;
 var Uint16Array = window.Uint16Array, Int16Array = window.Int16Array;
 var Uint32Array = window.Uint32Array, Int32Array = window.Int32Array;
 var Float32Array = window.Float32Array, Float64Array = window.Float64Array;
+var BigInt64Array = window.BigInt64Array, BigUint64Array = window.BigUint64Array;
 
 // TextEncoder / TextDecoder — 실제 UTF-8 인코딩/디코딩.
 if (!window.TextEncoder) {

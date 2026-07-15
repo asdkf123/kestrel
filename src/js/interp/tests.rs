@@ -4794,6 +4794,28 @@ fn date_math_method_name_length() {
     ));
 }
 
+// BigInt64Array / BigUint64Array (ES2020) — 원소가 BigInt 인 typed array. 예전엔
+// 미정의라 test262 의 testWithBigIntTypedArrayConstructors 하네스가 통째로 죽었다.
+#[test]
+fn bigint64_typed_arrays() {
+    assert!(prelude_bool(
+        "typeof BigInt64Array === 'function' && typeof BigUint64Array === 'function'"
+    ));
+    assert!(prelude_bool("var a=new BigInt64Array(3); a.length===3 && a[0]===0n"));
+    assert!(prelude_bool("var a=new BigInt64Array([1n,2n,3n]); a[0]===1n && a[2]===3n"));
+    assert!(prelude_bool("new BigInt64Array(2).BYTES_PER_ELEMENT===8"));
+    // 부호형 왕복: -1n
+    assert!(prelude_bool("var a=new BigInt64Array(1); a[0]=-1n; a[0]===-1n"));
+    // 무부호는 2의 보수로 랩: -1n → 2^64-1
+    assert!(prelude_bool("var a=new BigUint64Array(1); a[0]=-1n; a[0]===18446744073709551615n"));
+    // int64 최대값 왕복
+    assert!(prelude_bool(
+        "var a=new BigInt64Array(1); a[0]=9223372036854775807n; a[0]===9223372036854775807n"
+    ));
+    // 프로토타입 메서드도 BigInt 로 동작
+    assert!(prelude_bool("var a=new BigInt64Array([5n]); a.map(function(x){return x*2n;})[0]===10n"));
+}
+
 // ES2024 정적 메서드: Object.groupBy / Map.groupBy / Promise.withResolvers.
 #[test]
 fn es2024_static_methods() {

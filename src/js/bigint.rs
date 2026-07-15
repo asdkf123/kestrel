@@ -157,6 +157,18 @@ impl BigInt {
         BigInt { neg: !self.neg, mag: self.mag.clone() }
     }
 
+    // 부호까지 본 정확한 비교. f64 변환 비교는 2^53 초과에서 정밀도를 잃어
+    // 2^63-1 >= 2^63 이 참이 되는 등 틀린다 — 그래서 BigInt 끼리는 이걸 쓴다.
+    pub fn cmp_to(&self, other: &BigInt) -> Ordering {
+        match (self.neg, other.neg) {
+            (false, true) => Ordering::Greater,
+            (true, false) => Ordering::Less,
+            (false, false) => Self::cmp_mag(&self.mag, &other.mag),
+            // 둘 다 음수면 크기가 큰 쪽이 더 작다
+            (true, true) => Self::cmp_mag(&other.mag, &self.mag),
+        }
+    }
+
     // 크기 비교 (부호 무시)
     fn cmp_mag(a: &[u32], b: &[u32]) -> Ordering {
         if a.len() != b.len() {
