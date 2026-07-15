@@ -6081,7 +6081,21 @@ impl Interp {
                             }
                             arr[i] = value;
                         } else if key == "length" {
-                            let n = to_num(&value).max(0.0) as usize;
+                            // §10.4.2.4 ArraySetLength: ToUint32(v) 와 ToNumber(v) 가
+                            // 다르면(음수/소수/2^32 이상) RangeError. 예전엔 검증 없이
+                            // 잘라서 [].length=-1 이 조용히 통과했다.
+                            let num = to_num(&value);
+                            let u = if num.is_finite() {
+                                num.trunc().rem_euclid(4294967296.0)
+                            } else {
+                                0.0
+                            };
+                            if u != num {
+                                return Err(
+                                    self.throw_error("RangeError", "Invalid array length")
+                                );
+                            }
+                            let n = u as usize;
                             if n > MAX_DENSE_ARRAY {
                                 // length 만 크게: 밀집 확보 대신 기록만 (근사 희박)
                                 a.set_prop("\u{0}sparse_len".to_string(), value.clone());

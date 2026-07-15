@@ -4451,3 +4451,19 @@ fn string_raw_and_tostring_tags() {
         "[object Custom]"
     );
 }
+
+// 배열 length 대입은 ToUint32(v)!==ToNumber(v) 면 RangeError (§10.4.2.4) —
+// 음수/소수/2^32 이상. 예전엔 검증 없이 잘라서 조용히 통과했다.
+#[test]
+fn array_length_assignment_validates() {
+    // 정상 truncate/extend
+    assert_eq!(run_str("var a=[1,2,3,4,5]; a.length=3; JSON.stringify(a)"), "[1,2,3]");
+    assert_eq!(run_num("var a=[1,2,3]; a.length=5; a.length"), 5.0);
+    // 음수/소수/범위초과 → RangeError
+    assert!(run_bool("try{[].length=-1;false}catch(e){e instanceof RangeError}"));
+    assert!(run_bool("try{[].length=1.5;false}catch(e){e instanceof RangeError}"));
+    assert!(run_bool("try{[].length=4294967296;false}catch(e){e instanceof RangeError}"));
+    assert!(run_bool("try{[].length=NaN;false}catch(e){e instanceof RangeError}"));
+    // 경계: 2^32-1 은 유효
+    assert_eq!(run_num("var a=[]; a.length=4294967295; a.length"), 4294967295.0);
+}
