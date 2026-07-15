@@ -1427,6 +1427,25 @@ impl Interp {
 
     // 종류가 지정되지 않은 내부 오류를 잡을 때 쓰는 Error 객체.
     pub(super) fn error_from_msg(&self, msg: &str) -> Value {
+        // "TypeError: ..." / "RangeError: ..." 처럼 알려진 에러 타입 접두가 있으면
+        // 그 타입으로 만든다. 예전엔 무조건 일반 Error 라, throw_error 를 안 거치고
+        // Err("RangeError: ...") 로 반환한 곳들이 전부 catch 에서 Error 로 잡혀
+        // "Expected RangeError but got Error" 로 깨졌다.
+        const KINDS: &[&str] = &[
+            "TypeError",
+            "RangeError",
+            "SyntaxError",
+            "ReferenceError",
+            "EvalError",
+            "URIError",
+        ];
+        if let Some((prefix, rest)) = msg.split_once(": ") {
+            if KINDS.contains(&prefix) {
+                // 접두가 정확히 알려진 종류일 때만 (임의 문자열 오탐 방지)
+                let kind = KINDS.iter().find(|k| **k == prefix).unwrap();
+                return self.make_error(kind, Some(rest.to_string()));
+            }
+        }
         self.make_error("Error", Some(msg.to_string()))
     }
 
@@ -3401,7 +3420,8 @@ impl Interp {
                 self.js_stack.push(callee_label(callee));
                 if self.js_stack.len() > 400 {
                     self.js_stack.pop();
-                    return Err("호출 스택 초과".to_string());
+                    // 표준: 스택 초과는 RangeError "Maximum call stack size exceeded".
+                    return Err(self.throw_error("RangeError", "Maximum call stack size exceeded"));
                 }
                 let r = self.eval_call(callee, args, env);
                 if r.is_err() && self.err_stack.is_none() {

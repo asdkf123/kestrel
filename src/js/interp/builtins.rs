@@ -388,7 +388,8 @@ impl Interp {
             )
         };
         if let Value::BigInt(_) = v {
-            return Err("BigInt 는 JSON 으로 직렬화할 수 없음".to_string());
+            // §25.5.2: BigInt 직렬화는 TypeError.
+            return Err(self.throw_error("TypeError", "Do not know how to serialize a BigInt"));
         }
         Ok(match v {
             Value::Undefined
@@ -1843,7 +1844,10 @@ impl Interp {
             Native::QueueMicrotask => {
                 let f = args.into_iter().next().unwrap_or(Value::Undefined);
                 if !is_callable(&f) {
-                    return Err("queueMicrotask 인자는 함수여야 함".to_string());
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "queueMicrotask requires a callable argument",
+                    ));
                 }
                 self.microtasks.push_back((f, Value::Undefined, Value::Undefined, false));
                 Ok(Value::Undefined)
@@ -4291,7 +4295,11 @@ impl Interp {
                             Some(init) => init.clone(),
                             None => match iter.next() {
                                 Some((_, v)) => v,
-                                None => return Err("빈 배열 reduce (초기값 없음)".to_string()),
+                                // 표준 §23.1.3.24: 초기값 없는 빈 배열 reduce 는 TypeError.
+                                None => return Err(self.throw_error(
+                                    "TypeError",
+                                    "Reduce of empty array with no initial value",
+                                )),
                             },
                         };
                         for (i, item) in iter {
@@ -4312,7 +4320,10 @@ impl Interp {
                             Some(init) => init.clone(),
                             None => {
                                 if idx == 0 {
-                                    return Err("빈 배열 reduceRight (초기값 없음)".to_string());
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Reduce of empty array with no initial value",
+                                    ));
                                 }
                                 idx -= 1;
                                 snapshot[idx].clone()
@@ -4920,7 +4931,11 @@ impl Interp {
             Native::ObjectAssign => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
                 if matches!(target, Value::Undefined | Value::Null) {
-                    return Err("Object.assign 대상이 null/undefined".to_string());
+                    // §20.1.2.1: ToObject(target) 가 null/undefined 면 TypeError.
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot convert undefined or null to object",
+                    ));
                 }
                 for src in &args[1..] {
                     for (k, v) in own_enumerable_entries(src) {
@@ -5271,7 +5286,7 @@ impl Interp {
             Native::ZeroBytes => {
                 let n = num_arg(&args, 0).max(0.0) as usize;
                 if n > 512 * 1024 * 1024 {
-                    return Err("ArrayBuffer 가 너무 크다".to_string());
+                    return Err(self.throw_error("RangeError", "Invalid array buffer length"));
                 }
                 Ok(Value::Arr(ArrayObj::new(vec![Value::Num(0.0); n])))
             }

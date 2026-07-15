@@ -4121,3 +4121,19 @@ fn native_function_name_and_length() {
     assert_eq!(run_str("(function foo(a,b,c){}).bind(null,1).name"), "bound foo");
     assert_eq!(run_num("(function foo(a,b,c){}).bind(null,1).length"), 2.0);
 }
+
+// 표준 위반 편법: 내장 연산이 일반 Error(한국어 문자열)를 던져서 catch 에서
+// TypeError/RangeError 로 잡히지 않았다. throw_error 로 타입을 세우고,
+// error_from_msg 가 "RangeError: ..." 접두를 그 타입으로 승격한다.
+#[test]
+fn builtin_errors_have_correct_type() {
+    assert!(run_bool("try{[].reduce(function(a,b){return a});false}catch(e){e instanceof TypeError}"));
+    assert!(run_bool("try{[].reduceRight(function(a,b){return a});false}catch(e){e instanceof TypeError}"));
+    assert!(run_bool("try{Object.assign(null,{});false}catch(e){e instanceof TypeError}"));
+    assert!(run_bool("try{JSON.stringify(10n);false}catch(e){e instanceof TypeError}"));
+    // 스택 초과 → RangeError
+    assert!(run_bool("try{(function r(){return r()})();false}catch(e){e instanceof RangeError}"));
+    // BigInt 0 나눗셈/음수 지수 → RangeError (접두 파싱 경로)
+    assert!(run_bool("try{5n/0n;false}catch(e){e instanceof RangeError}"));
+    assert!(run_bool("try{2n**-1n;false}catch(e){e instanceof RangeError}"));
+}
