@@ -771,36 +771,13 @@ impl Interp {
         array_ns.insert("from".to_string(), Value::Native(Native::ArrayFrom));
         array_ns.insert("of".to_string(), Value::Native(Native::ArrayOf));
         let mut array_proto = ObjMap::new();
-        for (name, op) in [
-            ("forEach", ArrOp::ForEach),
-            ("map", ArrOp::Map),
-            ("filter", ArrOp::Filter),
-            ("slice", ArrOp::Slice),
-            ("join", ArrOp::Join),
-            ("indexOf", ArrOp::IndexOf),
-            ("pop", ArrOp::Pop),
-            ("some", ArrOp::Some),
-            ("every", ArrOp::Every),
-            ("reduce", ArrOp::Reduce),
-            ("find", ArrOp::Find),
-            ("findIndex", ArrOp::FindIndex),
-            ("concat", ArrOp::Concat),
-            ("includes", ArrOp::Includes),
-            ("splice", ArrOp::Splice),
-            ("shift", ArrOp::Shift),
-            ("unshift", ArrOp::Unshift),
-            ("reverse", ArrOp::Reverse),
-            ("keys", ArrOp::Keys),
-            ("values", ArrOp::Values),
-            ("entries", ArrOp::Entries),
-        ] {
-            array_proto.insert(name.to_string(), Value::Native(Native::Arr(op)));
+        // 단일 소스에서 — member_get 의 인스턴스 조회와 정확히 같은 목록.
+        for (name, op) in natives::ARRAY_PROTO_OPS {
+            array_proto.insert(name.to_string(), Value::Native(Native::Arr(*op)));
         }
         array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
-        // Array.prototype[Symbol.iterator]/toString — core-js uncurryThis 참조
+        // Array.prototype[Symbol.iterator] — core-js uncurryThis 참조
         array_proto.insert("\u{0}@@iterator".to_string(), Value::Native(Native::MakeIter));
-        array_proto.insert("toString".to_string(), Value::Native(Native::Arr(ArrOp::Join)));
-        array_proto.insert("sort".to_string(), Value::Native(Native::Arr(ArrOp::Sort)));
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         let array_ns = Value::Obj(Rc::new(RefCell::new(array_ns)));
         env_declare(&global, "Array", Value::Native(Native::ArrayCtor));
@@ -4169,39 +4146,8 @@ impl Interp {
                 if key == "push" {
                     return Ok(Value::Native(Native::ArrayPush));
                 }
-                let op = match key {
-                    "join" => Some(ArrOp::Join),
-                    "pop" => Some(ArrOp::Pop),
-                    "indexOf" => Some(ArrOp::IndexOf),
-                    "slice" => Some(ArrOp::Slice),
-                    "forEach" => Some(ArrOp::ForEach),
-                    "map" => Some(ArrOp::Map),
-                    "filter" => Some(ArrOp::Filter),
-                    "some" => Some(ArrOp::Some),
-                    "every" => Some(ArrOp::Every),
-                    "reduce" => Some(ArrOp::Reduce),
-                    "find" => Some(ArrOp::Find),
-                    "findIndex" => Some(ArrOp::FindIndex),
-                    "concat" => Some(ArrOp::Concat),
-                    "includes" => Some(ArrOp::Includes),
-                    "splice" => Some(ArrOp::Splice),
-                    "shift" => Some(ArrOp::Shift),
-                    "unshift" => Some(ArrOp::Unshift),
-                    "reverse" => Some(ArrOp::Reverse),
-                    "keys" => Some(ArrOp::Keys),
-                    "values" => Some(ArrOp::Values),
-                    "entries" => Some(ArrOp::Entries),
-                    "sort" => Some(ArrOp::Sort),
-                    "flat" => Some(ArrOp::Flat),
-                    "flatMap" => Some(ArrOp::FlatMap),
-                    "at" => Some(ArrOp::At),
-                    "findLast" => Some(ArrOp::FindLast),
-                    "findLastIndex" => Some(ArrOp::FindLastIndex),
-                    "fill" => Some(ArrOp::Fill),
-                    "reduceRight" => Some(ArrOp::ReduceRight),
-                    _ => None,
-                };
-                if let Some(op) = op {
+                // 단일 소스(natives::ARRAY_PROTO_OPS)에서 조회 — Array.prototype 구성과 공유.
+                if let Some(op) = natives::array_op_for(key) {
                     return Ok(Value::Native(Native::Arr(op)));
                 }
                 if key == "hasOwnProperty" {

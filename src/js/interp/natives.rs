@@ -492,6 +492,47 @@ pub enum ArrOp {
     ReduceRight,
 }
 
+// Array.prototype 메서드의 단일 소스 (이름 → 연산). member_get 의 인스턴스 조회와
+// array_proto(=Array.prototype 객체) 구성이 **둘 다** 이걸 쓴다. 예전엔 두 곳에
+// 목록을 따로 관리해서 어긋났다 — flat/flatMap/at/findLast/fill 등이 인스턴스에서는
+// 되는데 Array.prototype.flat.call(...) 로는 undefined 였다.
+pub static ARRAY_PROTO_OPS: &[(&str, ArrOp)] = &[
+    ("join", ArrOp::Join),
+    ("pop", ArrOp::Pop),
+    ("indexOf", ArrOp::IndexOf),
+    ("slice", ArrOp::Slice),
+    ("forEach", ArrOp::ForEach),
+    ("map", ArrOp::Map),
+    ("filter", ArrOp::Filter),
+    ("some", ArrOp::Some),
+    ("every", ArrOp::Every),
+    ("reduce", ArrOp::Reduce),
+    ("find", ArrOp::Find),
+    ("findIndex", ArrOp::FindIndex),
+    ("concat", ArrOp::Concat),
+    ("includes", ArrOp::Includes),
+    ("splice", ArrOp::Splice),
+    ("shift", ArrOp::Shift),
+    ("unshift", ArrOp::Unshift),
+    ("reverse", ArrOp::Reverse),
+    ("keys", ArrOp::Keys),
+    ("values", ArrOp::Values),
+    ("entries", ArrOp::Entries),
+    ("sort", ArrOp::Sort),
+    ("flat", ArrOp::Flat),
+    ("flatMap", ArrOp::FlatMap),
+    ("at", ArrOp::At),
+    ("findLast", ArrOp::FindLast),
+    ("findLastIndex", ArrOp::FindLastIndex),
+    ("fill", ArrOp::Fill),
+    ("reduceRight", ArrOp::ReduceRight),
+    ("toString", ArrOp::Join),
+];
+
+pub fn array_op_for(name: &str) -> Option<ArrOp> {
+    ARRAY_PROTO_OPS.iter().find(|(n, _)| *n == name).map(|(_, op)| *op)
+}
+
 // CharacterData 의 문자 데이터 연산 (§4.9). 오프셋/길이는 UTF-16 코드 단위 기준.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CharDataOp {

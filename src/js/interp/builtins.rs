@@ -4110,7 +4110,23 @@ impl Interp {
                         ArrayObj::new(array_like_to_vec(o)?),
                         if is_mutating_arr_op(op) { Some(o.clone()) } else { None },
                     ),
-                    _ => return Err("배열 메서드".to_string()),
+                    // 배열 메서드는 generic 하다 (§23.1.3): this 를 ToObject 로 강제한다.
+                    // null/undefined 는 TypeError (§7.1.18). 예전엔 일반 Error 를 던져서
+                    // "TypeError 를 기대" 하는 코드가 조용히 어긋났다.
+                    None | Some(Value::Undefined) | Some(Value::Null) => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Array.prototype method called on null or undefined",
+                        ));
+                    }
+                    // 문자열: 각 코드유닛을 원소로 (length 있는 array-like)
+                    Some(Value::Str(s)) => {
+                        let items: Vec<Value> =
+                            s.chars().map(|c| Value::Str(c.to_string())).collect();
+                        (ArrayObj::new(items), None)
+                    }
+                    // 그 외 원시값/객체(length 없음): ToObject 후 length 0 → 빈 배열로 근사
+                    _ => (ArrayObj::new(Vec::new()), None),
                 };
                 let out = match op {
                     ArrOp::Join => {
@@ -4413,14 +4429,33 @@ impl Interp {
                         Value::Arr(a.clone())
                     }
                     ArrOp::Flat => {
-                        // 기본 깊이 1: 한 단계 배열만 펼친다.
-                        let mut out = Vec::new();
-                        for v in a.borrow().iter() {
-                            match v {
-                                Value::Arr(inner) => out.extend(inner.borrow().iter().cloned()),
-                                other => out.push(other.clone()),
+                        // depth 인자만큼 재귀적으로 펼친다 (§23.1.3.11). 기본 1.
+                        // Infinity 면 완전 평탄화. 예전엔 인자를 무시하고 항상 1단계였다.
+                        let depth = match args.first() {
+                            None | Some(Value::Undefined) => 1i32,
+                            Some(v) => {
+                                let n = to_num(v);
+                                if n.is_nan() || n <= 0.0 {
+                                    0
+                                } else if n > i32::MAX as f64 {
+                                    i32::MAX
+                                } else {
+                                    n as i32
+                                }
+                            }
+                        };
+                        fn flatten(items: &[Value], depth: i32, out: &mut Vec<Value>) {
+                            for v in items {
+                                match v {
+                                    Value::Arr(inner) if depth > 0 => {
+                                        flatten(&inner.borrow(), depth - 1, out)
+                                    }
+                                    other => out.push(other.clone()),
+                                }
                             }
                         }
+                        let mut out = Vec::new();
+                        flatten(&a.borrow(), depth, &mut out);
                         Value::Arr(ArrayObj::new(out))
                     }
                     ArrOp::At => {

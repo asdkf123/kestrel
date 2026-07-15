@@ -4038,3 +4038,36 @@ fn property_descriptors_are_enforced() {
          catch(e){ e instanceof TypeError }"
     ));
 }
+
+// 배열 메서드는 generic 하다 (§23.1.3): array-like 에도 적용되고, null/undefined 는
+// TypeError. 예전엔 진짜 배열 아니면 일반 Error 를 던졌고, 두 곳에 메서드 목록을
+// 따로 관리해 flat/at/fill 등이 Array.prototype 경로에서 undefined 였다.
+#[test]
+fn array_methods_are_generic() {
+    // array-like 에 적용
+    assert_eq!(
+        run_str("var al={0:'a',1:'b',2:'c',length:3}; \
+                 JSON.stringify(Array.prototype.map.call(al,function(x){return x+x}))"),
+        r#"["aa","bb","cc"]"#
+    );
+    assert_eq!(run_num("Array.prototype.indexOf.call({0:'a',1:'b',length:2},'b')"), 1.0);
+    // 문자열에 적용 (array-like)
+    assert_eq!(run_str("Array.prototype.join.call('xyz','-')"), "x-y-z");
+    // null/undefined 는 TypeError (§7.1.18)
+    assert!(run_bool(
+        "try{ Array.prototype.forEach.call(null,function(){}); false }\
+         catch(e){ e instanceof TypeError }"
+    ));
+    // Array.prototype.flat/at/fill 등이 인스턴스와 프로토타입 양쪽에서 동작
+    assert!(run_bool("typeof Array.prototype.flat==='function'"));
+    assert!(run_bool("typeof Array.prototype.at==='function'"));
+    assert!(run_bool("typeof Array.prototype.fill==='function'"));
+    assert_eq!(
+        run_str("JSON.stringify(Array.prototype.flat.call({0:1,1:[2,3],length:2}))"),
+        "[1,2,3]"
+    );
+    // flat 은 depth 를 존중한다 (§23.1.3.11)
+    assert_eq!(run_str("JSON.stringify([1,[2,[3,[4]]]].flat(2))"), "[1,2,3,[4]]");
+    assert_eq!(run_str("JSON.stringify([1,[2,[3]]].flat(Infinity))"), "[1,2,3]");
+    assert_eq!(run_str("JSON.stringify([1,[2,[3]]].flat())"), "[1,2,[3]]");
+}
