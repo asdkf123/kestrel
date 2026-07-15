@@ -4794,6 +4794,34 @@ fn date_math_method_name_length() {
     ));
 }
 
+// ES2024 정적 메서드: Object.groupBy / Map.groupBy / Promise.withResolvers.
+#[test]
+fn es2024_static_methods() {
+    // Object.groupBy — 문자열 키로 그룹화
+    assert_eq!(
+        run_str("var g=Object.groupBy([1,2,3,4],function(x){return x%2?'odd':'even';}); g.odd.join(',')+'|'+g.even.join(',')"),
+        "1,3|2,4"
+    );
+    assert_eq!(run_str("Object.groupBy.name"), "groupBy");
+    assert_eq!(run_num("Object.groupBy.length"), 2.0);
+    assert!(run_bool("Object.getOwnPropertyNames(Object).indexOf('groupBy')>=0"));
+    // Map.groupBy — 임의 키(SameValueZero), Map 반환
+    assert!(run_bool("var g=Map.groupBy([1,2,3,4],function(x){return x%2;}); (g instanceof Map) && g.get(1).join(',')==='1,3' && g.get(0).join(',')==='2,4'"));
+    // 콜백 비함수 → TypeError
+    assert!(run_bool("var t=false; try{ Object.groupBy([1],1) }catch(e){ t=e instanceof TypeError } t"));
+    // Promise.withResolvers — {promise, resolve, reject}
+    assert!(run_bool(
+        "var d=Promise.withResolvers(); \
+         (d.promise instanceof Promise) && typeof d.resolve==='function' && typeof d.reject==='function'"
+    ));
+    assert_eq!(run_str("Promise.withResolvers.name"), "withResolvers");
+    // withResolvers 의 resolve 로 이행
+    assert!(run_bool(
+        "var d=Promise.withResolvers(); var got; d.promise.then(function(v){got=v;}); d.resolve(42); \
+         /* 마이크로태스크 드레인은 헤드리스에서 */ true"
+    ));
+}
+
 // Symbol.prototype.description 은 프로토타입 accessor 다 (§20.4.3.2). 예전엔 심볼
 // 원시값 member_get 으로만 돼서 getOwnPropertyDescriptor(Symbol.prototype,'description')
 // 이 undefined 였다.

@@ -755,6 +755,7 @@ impl Interp {
             "getPrototypeOf".to_string(),
             Value::Native(Native::ObjectGetPrototypeOf),
         );
+        object_ns.insert("groupBy".to_string(), Value::Native(Native::ObjectGroupBy));
         object_ns
             .insert("setPrototypeOf".to_string(), Value::Native(Native::ObjectSetPrototypeOf));
         object_ns.insert(
@@ -1345,7 +1346,7 @@ impl Interp {
     }
 
     // 새 pending Promise (Obj 표현: 상태·값·대기콜백을 맵에 저장, then/catch 는 Native)
-    fn new_promise(&self) -> Value {
+    pub(super) fn new_promise(&self) -> Value {
         let mut m = ObjMap::new();
         m.insert("\u{0}isPromise".to_string(), Value::Bool(true));
         m.insert("\u{0}state".to_string(), Value::Str("pending".to_string()));
@@ -4259,9 +4260,11 @@ impl Interp {
             StringCtor => &["fromCharCode", "fromCodePoint", "raw", "prototype"],
             DateCtor => &["now", "parse", "UTC", "prototype"],
             RegExpCtor => &["escape", "prototype"],
-            MapCtor => &["prototype"],
+            MapCtor => &["groupBy", "prototype"],
             SetCtor => &["prototype"],
-            PromiseCtor => &["resolve", "reject", "all", "race", "allSettled", "prototype"],
+            PromiseCtor => {
+                &["resolve", "reject", "all", "race", "allSettled", "withResolvers", "prototype"]
+            }
             SymbolCtor => &[
                 "iterator", "asyncIterator", "toStringTag", "hasInstance", "toPrimitive", "match",
                 "matchAll", "replace", "search", "split", "for", "keyFor", "prototype",
@@ -5196,6 +5199,7 @@ impl Interp {
             }
             // Map/Set(=WeakMap/WeakSet).prototype — 번들의 Map.prototype.get 등.
             Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
+            Value::Native(Native::MapCtor) if key == "groupBy" => Ok(Value::Native(Native::MapGroupBy)),
             Value::Native(Native::SetCtor) if key == "prototype" => Ok(self.set_proto.clone()),
             // Error/TypeError/… 의 prototype 과 name (class X extends Error, 기능 탐지).
             Value::Native(Native::EventCtor(n)) => Ok(match key {
@@ -5287,6 +5291,7 @@ impl Interp {
                 "all" => Value::Native(Native::PromiseAll),
                 "race" => Value::Native(Native::PromiseRace),
                 "allSettled" => Value::Native(Native::PromiseAllSettled),
+                "withResolvers" => Value::Native(Native::PromiseWithResolvers),
                 "prototype" => {
                     let mut m = ObjMap::new();
                     m.insert("then".to_string(), Value::Native(Native::PromiseThen));

@@ -317,6 +317,11 @@ pub enum Native {
     ReflectDefineProperty,
     ReflectGetOwnPropertyDescriptor,
     ObjectKeys,
+    // Object.groupBy / Map.groupBy (ES2024) — iterable 을 콜백 키로 그룹화.
+    ObjectGroupBy,
+    MapGroupBy,
+    // Promise.withResolvers (ES2024) — {promise, resolve, reject} 반환.
+    PromiseWithResolvers,
     ObjectGetOwnPropertyNames,
     ObjectValues,
     ObjectEntries,
@@ -704,6 +709,9 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         MapSize => ("get size", 0),
         SetSize => ("get size", 0),
         SymbolDescGet => ("get description", 0),
+        ObjectGroupBy => ("groupBy", 2),
+        MapGroupBy => ("groupBy", 2),
+        PromiseWithResolvers => ("withResolvers", 0),
         // Set/Map 프로토타입 메서드 이름·길이 (§24). 예전엔 Set(op)/Map(op) arm 이 없어
         // Set.prototype.add.name 이 "" 였다.
         Set(op) => {

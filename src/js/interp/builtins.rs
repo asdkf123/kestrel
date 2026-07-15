@@ -5380,6 +5380,79 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Native::Noop => Ok(Value::Undefined),
+            // Object.groupBy(items, cb) (§20.1.2.13): 콜백 키(문자열)로 그룹화, null-proto 객체.
+            Native::ObjectGroupBy => {
+                let items = args.first().cloned().unwrap_or(Value::Undefined);
+                let cb = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&cb) {
+                    return Err(self.throw_error("TypeError", "Object.groupBy callback is not callable"));
+                }
+                let vec = self.iterate_to_vec(&items)?;
+                let mut map = ObjMap::new();
+                for (i, item) in vec.into_iter().enumerate() {
+                    let k = self.call_value(cb.clone(), None, vec![item.clone(), Value::Num(i as f64)])?;
+                    let key = self.to_property_key(k)?;
+                    let existing = match map.get(&key) {
+                        Some(Value::Arr(a)) => Some(a.clone()),
+                        _ => None,
+                    };
+                    match existing {
+                        Some(a) => a.borrow_mut().push(item),
+                        None => {
+                            map.insert(key, Value::Arr(ArrayObj::new(vec![item])));
+                        }
+                    }
+                }
+                Ok(Value::Obj(Rc::new(RefCell::new(map))))
+            }
+            // Map.groupBy(items, cb) (§24.1.2.1): 키는 임의 값(SameValueZero), Map 반환.
+            Native::MapGroupBy => {
+                let items = args.first().cloned().unwrap_or(Value::Undefined);
+                let cb = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&cb) {
+                    return Err(self.throw_error("TypeError", "Map.groupBy callback is not callable"));
+                }
+                let vec = self.iterate_to_vec(&items)?;
+                let mut data: Vec<(Value, Value)> = Vec::new();
+                for (i, item) in vec.into_iter().enumerate() {
+                    let key = self.call_value(cb.clone(), None, vec![item.clone(), Value::Num(i as f64)])?;
+                    let existing = data
+                        .iter()
+                        .find(|(k, _)| same_value_zero(k, &key))
+                        .and_then(|(_, v)| if let Value::Arr(a) = v { Some(a.clone()) } else { None });
+                    match existing {
+                        Some(a) => a.borrow_mut().push(item),
+                        None => data.push((key, Value::Arr(ArrayObj::new(vec![item])))),
+                    }
+                }
+                Ok(Value::MapVal(Rc::new(RefCell::new(data))))
+            }
+            // Promise.withResolvers() (§27.2.4.8): {promise, resolve, reject}.
+            // step 1: NewPromiseCapability(this) — this 가 생성자가 아니면 TypeError.
+            Native::PromiseWithResolvers => {
+                if !self.is_constructor(&recv.clone().unwrap_or(Value::Undefined)) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Promise.withResolvers called on non-constructor",
+                    ));
+                }
+                let p = self.new_promise();
+                let resolve = Value::Bound(Rc::new((
+                    Value::Native(Native::PromiseSettleResolve),
+                    p.clone(),
+                    vec![],
+                )));
+                let reject = Value::Bound(Rc::new((
+                    Value::Native(Native::PromiseSettleReject),
+                    p.clone(),
+                    vec![],
+                )));
+                let mut m = ObjMap::new();
+                m.insert("promise".to_string(), p);
+                m.insert("resolve".to_string(), resolve);
+                m.insert("reject".to_string(), reject);
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
             Native::ObjectKeys => match args.first() {
                 // Proxy: ownKeys 트랩 (없으면 타깃 위임). Object.keys(proxy) 가 빈 배열을
                 // 돌려주던 문제 — 반응성 프록시의 키 열거가 통째로 안 됐다.
