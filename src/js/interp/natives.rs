@@ -77,6 +77,12 @@ pub enum Native {
     ObjToString,
     // Error.prototype.toString (§20.5.3.4): name + ": " + message (빈 쪽은 생략)
     ErrorToString,
+    // Error.isError(v) (ES2025): v 가 [[ErrorData]] 를 가진 객체인가.
+    ErrorIsError,
+    // Error.prototype.stack 접근자 (Error Stacks 제안, 이제 스펙). 인스턴스 데이터가
+    // 아니라 프로토타입 accessor 다. get 은 캡처된 스택 문자열, set 은 own 데이터 설치.
+    ErrorStackGet,
+    ErrorStackSet,
     ReturnTrue,
     ReturnThis, // valueOf 등 — 수신자(this) 반환
     FnToString, // Function.prototype.toString
@@ -668,6 +674,10 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         HasOwnProperty => ("hasOwnProperty", 1),
         ObjToString => ("toString", 0),
         ErrorToString => ("toString", 0),
+        ErrorIsError => ("isError", 1),
+        // 접근자 함수의 표준 이름/길이 (§ get/set 접두). prop-desc 검사가 확인한다.
+        ErrorStackGet => ("get stack", 0),
+        ErrorStackSet => ("set stack", 1),
         // ── Array.* 정적 ──
         ArrayIsArray => ("isArray", 1),
         ArrayFrom => ("from", 1),

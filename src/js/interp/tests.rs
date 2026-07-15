@@ -4707,3 +4707,39 @@ fn reflection_key_topropertykey_coercion() {
         "var t=false; try{ Object.getOwnPropertyDescriptor({}, {toString:function(){throw new TypeError('p');}, valueOf:function(){throw new TypeError('p');}}); }catch(e){ t=e instanceof TypeError } t"
     ));
 }
+
+// Error.isError(ES2025) + Error.prototype.stack 를 표준(프로토타입 accessor)으로. 예전엔
+// stack 이 인스턴스 own 데이터 프로퍼티라 Error.prototype 서술자 검사가 전부 깨졌고
+// isError 는 아예 없었다.
+#[test]
+fn error_iserror_and_stack_accessor() {
+    // Error.isError
+    assert!(run_bool("Error.isError(new Error())"));
+    assert!(run_bool("Error.isError(new TypeError())"));
+    assert!(run_bool("Error.isError(new RangeError('x'))"));
+    assert!(!run_bool("Error.isError({})"));
+    assert!(!run_bool("Error.isError(null)"));
+    assert!(!run_bool("Error.isError('e')"));
+    assert!(!run_bool("Error.isError(Error)")); // 생성자 자체는 에러 인스턴스 아님
+    assert_eq!(run_str("Error.isError.name"), "isError");
+    assert_eq!(run_num("Error.isError.length"), 1.0);
+    assert!(run_bool("Error.hasOwnProperty('isError')"));
+    // isError 는 생성자 아님
+    assert!(run_bool("var t=false; try{ new Error.isError({}) }catch(e){ t=e instanceof TypeError } t"));
+
+    // stack 은 Error.prototype 의 accessor (인스턴스 own 아님)
+    assert!(run_bool("Error.prototype.hasOwnProperty('stack')"));
+    assert!(run_bool("!(new Error()).hasOwnProperty('stack')"));
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Error.prototype,'stack'); \
+         typeof d.get==='function' && typeof d.set==='function' && d.enumerable===false && d.configurable===true"
+    ));
+    assert_eq!(run_str("Object.getOwnPropertyDescriptor(Error.prototype,'stack').get.name"), "get stack");
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor(Error.prototype,'stack').get.length"), 0.0);
+    assert_eq!(run_str("Object.getOwnPropertyDescriptor(Error.prototype,'stack').set.name"), "set stack");
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor(Error.prototype,'stack').set.length"), 1.0);
+    // getter 로 인스턴스 스택(문자열) 접근
+    assert_eq!(run_str("typeof (new Error('m')).stack"), "string");
+    // setter 는 own 데이터로 accessor 를 가린다
+    assert!(run_bool("var e=new Error(); e.stack='XYZ'; e.stack==='XYZ' && e.hasOwnProperty('stack')"));
+}

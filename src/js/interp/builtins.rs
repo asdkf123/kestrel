@@ -1777,6 +1777,38 @@ impl Interp {
                     format!("{}: {}", name, msg)
                 }))
             }
+            // Error.isError(v) (ES2025 §20.5.2.1): v 가 [[ErrorData]] 를 가진 객체인가.
+            Native::ErrorIsError => {
+                let is = matches!(
+                    args.first(),
+                    Some(Value::Obj(m))
+                        if matches!(m.borrow().get("\u{0}errdata"), Some(Value::Bool(true)))
+                );
+                Ok(Value::Bool(is))
+            }
+            // get Error.prototype.stack — 인스턴스의 내부 슬롯에서 캡처된 스택을 읽는다.
+            // [[ErrorData]] 가 없으면(에러 아님) undefined.
+            Native::ErrorStackGet => {
+                let this = recv.unwrap_or(Value::Undefined);
+                let s = match &this {
+                    Value::Obj(m) => match m.borrow().get("\u{0}errstack") {
+                        Some(Value::Str(s)) => Some(Value::Str(s.clone())),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                Ok(s.unwrap_or(Value::Undefined))
+            }
+            // set Error.prototype.stack — CreateDataProperty(this, "stack", v): own 데이터로
+            // accessor 를 가린다(이후 this.stack 은 이 own 값을 읽는다). §Error Stacks.
+            Native::ErrorStackSet => {
+                let this = recv.unwrap_or(Value::Undefined);
+                let val = args.first().cloned().unwrap_or(Value::Undefined);
+                if let Value::Obj(m) = &this {
+                    m.borrow_mut().insert("stack".to_string(), val);
+                }
+                Ok(Value::Undefined)
+            }
             Native::ObjToString => {
                 // §20.1.3.6: 빌트인 태그를 정한 뒤 Symbol.toStringTag(문자열)로 덮어쓴다.
                 let tag: String = match &recv {

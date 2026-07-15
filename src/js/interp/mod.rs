@@ -1176,6 +1176,20 @@ impl Interp {
         // NativeError.prototype 의 [[Prototype]] 은 Error.prototype 이고,
         // 각자 자기 name 과 constructor 를 갖는다. 프로퍼티는 전부 비열거.
         let error_proto = mk_proto(vec![("toString", Native::ErrorToString)]);
+        // Error.prototype.stack — 프로토타입 accessor(get/set), 비열거·configurable.
+        // 인스턴스는 [[ErrorData]]/캡처스택을 내부 슬롯에 들고, getter 가 그걸 읽는다.
+        // 서브타입 prototype 은 error_proto 를 상속하므로 여기 한 번만 둔다.
+        if let Value::Obj(m) = &error_proto {
+            let mut b = m.borrow_mut();
+            b.insert(
+                "stack".to_string(),
+                Value::Accessor(Rc::new(AccessorPair {
+                    get: Some(Value::Native(Native::ErrorStackGet)),
+                    set: Some(Value::Native(Native::ErrorStackSet)),
+                })),
+            );
+            b.insert(nonenum_marker("stack"), Value::Bool(true));
+        }
         let mut error_protos: Vec<(&'static str, Value)> = Vec::new();
         for kind in ERROR_KINDS {
             let proto = if kind == "Error" {
@@ -1410,12 +1424,14 @@ impl Interp {
             map.insert("message".to_string(), Value::Str(msg));
             map.insert(nonenum_marker("message"), Value::Bool(true));
         }
-        // stack: 표준은 아니지만 모든 엔진이 준다. 비열거로 둔다.
+        // [[ErrorData]] 내부 슬롯 — Error.isError 판별과 stack getter 의 brand 체크용.
+        map.insert("\u{0}errdata".to_string(), Value::Bool(true));
+        // 캡처된 스택은 내부 슬롯에 둔다. Error.prototype.stack 은 인스턴스 own 데이터가
+        // 아니라 프로토타입 **accessor** 다 (Error Stacks). getter 가 이 슬롯을 읽는다.
         map.insert(
-            "stack".to_string(),
+            "\u{0}errstack".to_string(),
             Value::Str(self.err_stack.clone().unwrap_or_default().join("\n")),
         );
-        map.insert(nonenum_marker("stack"), Value::Bool(true));
         let proto = self
             .error_protos
             .iter()
@@ -4050,6 +4066,7 @@ impl Interp {
                 "iterator", "asyncIterator", "toStringTag", "hasInstance", "toPrimitive", "match",
                 "matchAll", "replace", "search", "split", "for", "keyFor", "prototype",
             ],
+            ErrorCtor("Error") => return Some(vec!["prototype".to_string(), "isError".to_string()]),
             ErrorCtor(_) => &["prototype"],
             FunctionCtor => &["prototype"],
             _ => return None,
@@ -4988,6 +5005,9 @@ impl Interp {
                     .map(|(_, p)| p.clone())
                     .unwrap_or_else(|| self.error_proto.clone()),
                 "name" => Value::Str(n.to_string()),
+                // Error.isError (ES2025) 는 %Error% 의 정적 메서드다. 서브타입도
+                // 생성자 프로토타입 체인으로 상속하지만 own 은 %Error% 뿐.
+                "isError" if *n == "Error" => Value::Native(Native::ErrorIsError),
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // String.fromCharCode/prototype
