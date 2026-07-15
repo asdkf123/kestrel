@@ -4773,6 +4773,27 @@ fn set_map_brand_check_and_size_accessor() {
     ));
 }
 
+// 내장 메서드의 name/length 메타(§17). 예전엔 native_meta 에 Date/Math arm 이 없어
+// Date.prototype.getTime.name 이 "" 였다(Set/Map 과 같은 편법이었음).
+#[test]
+fn date_math_method_name_length() {
+    assert_eq!(run_str("Date.prototype.getTime.name"), "getTime");
+    assert_eq!(run_str("Date.prototype.setHours.name"), "setHours");
+    assert_eq!(run_num("Date.prototype.setHours.length"), 4.0);
+    assert_eq!(run_num("Date.prototype.setFullYear.length"), 3.0);
+    assert_eq!(run_str("Date.now.name"), "now");
+    assert_eq!(run_str("Math.floor.name"), "floor");
+    assert_eq!(run_num("Math.floor.length"), 1.0);
+    assert_eq!(run_str("Math.max.name"), "max");
+    assert_eq!(run_num("Math.max.length"), 2.0);
+    assert_eq!(run_num("Math.random.length"), 0.0);
+    // 서술자도 표준: writable:false, enumerable:false, configurable:true
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Math.floor,'name'); \
+         d.value==='floor' && d.writable===false && d.enumerable===false && d.configurable===true"
+    ));
+}
+
 // ES2024 집합 연산 (§24.2.4): union/intersection/difference/symmetricDifference +
 // isSubsetOf/isSupersetOf/isDisjointFrom. set-like 인자(GetSetRecord)도 받는다.
 #[test]

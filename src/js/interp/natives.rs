@@ -727,6 +727,72 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
             };
             return Some((name, len));
         }
+        // ── Date.prototype / Date.* 정적 (§21.4) ──
+        // getTime/valueOf, toISOString/toJSON 은 같은 네이티브로 접혀 있어 대표 이름을 준다.
+        DateNow => ("now", 0),
+        DateParse => ("parse", 1),
+        DateUTC => ("UTC", 7),
+        DateMethod(f) => {
+            let (name, len): (&str, u32) = match f {
+                DateField::Time => ("getTime", 0),
+                DateField::FullYear => ("getFullYear", 0),
+                DateField::Month => ("getMonth", 0),
+                DateField::Date => ("getDate", 0),
+                DateField::Day => ("getDay", 0),
+                DateField::Hours => ("getHours", 0),
+                DateField::Minutes => ("getMinutes", 0),
+                DateField::Seconds => ("getSeconds", 0),
+                DateField::Ms => ("getMilliseconds", 0),
+                DateField::TimezoneOffset => ("getTimezoneOffset", 0),
+                DateField::SetTime => ("setTime", 1),
+                DateField::SetFullYear => ("setFullYear", 3),
+                DateField::SetMonth => ("setMonth", 2),
+                DateField::SetDate => ("setDate", 1),
+                DateField::SetHours => ("setHours", 4),
+                DateField::SetMinutes => ("setMinutes", 3),
+                DateField::SetSeconds => ("setSeconds", 2),
+                DateField::SetMs => ("setMilliseconds", 1),
+                DateField::ToIso => ("toISOString", 0),
+                DateField::ToStr => ("toString", 0),
+                DateField::ToDateStr => ("toDateString", 0),
+            };
+            return Some((name, len));
+        }
+        // ── Math.* (§21.3). max/min/hypot/pow/atan2 는 length 2, random 0, 나머지 1. ──
+        Math(op) => {
+            let name = match op {
+                MathOp::Floor => "floor",
+                MathOp::Ceil => "ceil",
+                MathOp::Round => "round",
+                MathOp::Abs => "abs",
+                MathOp::Min => "min",
+                MathOp::Max => "max",
+                MathOp::Sqrt => "sqrt",
+                MathOp::Pow => "pow",
+                MathOp::Random => "random",
+                MathOp::Trunc => "trunc",
+                MathOp::Sign => "sign",
+                MathOp::Cbrt => "cbrt",
+                MathOp::Log => "log",
+                MathOp::Log2 => "log2",
+                MathOp::Log10 => "log10",
+                MathOp::Exp => "exp",
+                MathOp::Sin => "sin",
+                MathOp::Cos => "cos",
+                MathOp::Tan => "tan",
+                MathOp::Asin => "asin",
+                MathOp::Acos => "acos",
+                MathOp::Atan => "atan",
+                MathOp::Atan2 => "atan2",
+                MathOp::Hypot => "hypot",
+            };
+            let len = match op {
+                MathOp::Random => 0,
+                MathOp::Max | MathOp::Min | MathOp::Hypot | MathOp::Pow | MathOp::Atan2 => 2,
+                _ => 1,
+            };
+            return Some((name, len));
+        }
         // ── Array.* 정적 ──
         ArrayIsArray => ("isArray", 1),
         ArrayFrom => ("from", 1),
