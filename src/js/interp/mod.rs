@@ -5892,6 +5892,21 @@ impl Interp {
         Err(self.throw_error("TypeError", "Cannot convert object to primitive value"))
     }
 
+    // ToPropertyKey (§7.1.19): 값을 프로퍼티 키 문자열로. Symbol 은 내부 키 표현으로,
+    // 그 외는 ToPrimitive(hint string) 후 ToString. 객체 키의 toString 을 실제로 부르고
+    // 예외도 전파한다 — 예전엔 to_display 라 {toString(){return 'k'}} 가 "[object Object]"
+    // 로 뭉개졌다.
+    pub(super) fn to_property_key(&mut self, v: Value) -> Result<String, String> {
+        if let Value::Symbol(s) = &v {
+            return Ok(s.key.clone());
+        }
+        let prim = self.to_primitive_or_throw(v, true)?;
+        if let Value::Symbol(s) = &prim {
+            return Ok(s.key.clone());
+        }
+        Ok(key_of(&prim))
+    }
+
     // IsRegExp (§7.2.8): Symbol.match 가 있으면 그 truthiness, 없으면 [[RegExpMatcher]]
     // 슬롯(우리 표현: __isRegex) 유무. startsWith/includes/endsWith 가 정규식 인자를
     // 거부(§22.1.3.7 등)하는 데 쓴다.

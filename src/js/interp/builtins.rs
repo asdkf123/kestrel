@@ -1241,7 +1241,10 @@ impl Interp {
             // 라이브러리가 d.get / d.enumerable 을 보고 분기하므로 조용히 틀린 길로 간다.
             Native::ObjectGetOwnPropertyDescriptor => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
-                let key = args.get(1).map(to_display).unwrap_or_default();
+                let key = match args.get(1).cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 let mut d = ObjMap::new();
                 let found = match &target {
                     Value::Obj(m) => {
@@ -1442,7 +1445,10 @@ impl Interp {
                         "Object.defineProperty called on non-object",
                     ));
                 }
-                let key = args.get(1).map(to_display).unwrap_or_default();
+                let key = match args.get(1).cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 let Some(desc) = args.get(2).cloned() else {
                     return Err(self.throw_error("TypeError", "Property description must be an object"));
                 };
@@ -1700,7 +1706,10 @@ impl Interp {
             }
             // Object.prototype.hasOwnProperty.call(obj, key) / obj.hasOwnProperty(key)
             Native::HasOwnProperty => {
-                let key = args.first().map(to_display).unwrap_or_default();
+                let key = match args.first().cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 let has = match &recv {
                     // __proto__ 는 own 프로퍼티 아님(상속 accessor)
                     Some(Value::Obj(m)) => {

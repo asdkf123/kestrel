@@ -4678,3 +4678,32 @@ fn string_this_coercion_and_isregexp() {
          (function(){ try{ 'axb'.includes(o); return true; }catch(e){ return false; } })()"
     ));
 }
+
+// 리플렉션 API 의 키 인자는 ToPropertyKey (§7.1.19) 로 강제변환 — 객체 키의 toString 을
+// 실제로 부른다. 예전엔 to_display 라 {toString(){return 'k'}} 가 "[object Object]" 였다.
+#[test]
+fn reflection_key_topropertykey_coercion() {
+    // getOwnPropertyDescriptor(o, objKey)
+    assert!(run_bool(
+        "var o={abc:1}; var k={toString:function(){return 'abc';}}; \
+         Object.getOwnPropertyDescriptor(o,k).value===1"
+    ));
+    // defineProperty(o, objKey, desc)
+    assert!(run_bool(
+        "var o={}; var k={toString:function(){return 'foo';}}; \
+         Object.defineProperty(o,k,{value:42,enumerable:true,configurable:true,writable:true}); o.foo===42"
+    ));
+    // hasOwnProperty(objKey)
+    assert!(run_bool(
+        "var o={abc:1}; var k={toString:function(){return 'abc';}}; o.hasOwnProperty(k)===true"
+    ));
+    assert!(run_bool(
+        "var o={abc:1}; var k={toString:function(){return 'xyz';}}; o.hasOwnProperty(k)===false"
+    ));
+    // 숫자 키도 문자열화 (getOwnPropertyDescriptor(arr-like, 1))
+    assert!(run_bool("Object.getOwnPropertyDescriptor({'1':9}, 1).value===9"));
+    // 키의 toString 이 던지면 전파
+    assert!(run_bool(
+        "var t=false; try{ Object.getOwnPropertyDescriptor({}, {toString:function(){throw new TypeError('p');}, valueOf:function(){throw new TypeError('p');}}); }catch(e){ t=e instanceof TypeError } t"
+    ));
+}
