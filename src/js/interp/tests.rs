@@ -4467,3 +4467,25 @@ fn array_length_assignment_validates() {
     // 경계: 2^32-1 은 유효
     assert_eq!(run_num("var a=[]; a.length=4294967295; a.length"), 4294967295.0);
 }
+
+// 내장 함수 name/length 의 mutation 의미론 (§17): writable:false(재대입 무시),
+// configurable:true(delete 성공). verifyProperty 가 전 서브셋에서 이걸 검사한다.
+// 예전엔 재대입이 name 을 바꾸고 delete 는 no-op 라 대량 실패했다.
+#[test]
+fn native_name_length_mutation_semantics() {
+    // 재대입은 무시 (non-writable)
+    assert_eq!(run_str("var f=[].map; f.name='X'; f.name"), "map");
+    assert_eq!(run_num("var f=[].slice; f.length=99; f.length"), 2.0);
+    // delete 는 성공 (configurable)
+    assert!(run_bool("var f=[].filter; delete f.name; f.name===undefined && !f.hasOwnProperty('name')"));
+    assert!(run_bool("var f=[].concat; delete f.length; !f.hasOwnProperty('length')"));
+    // delete 후 getOwnPropertyDescriptor 는 undefined
+    assert!(run_bool("var f=[].every; delete f.name; Object.getOwnPropertyDescriptor(f,'name')===undefined"));
+    // 삭제 전 서술자는 표준대로
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor([].some,'name'); \
+         d.writable===false && d.enumerable===false && d.configurable===true"
+    ));
+    // 폴리필이 얹는 다른 프로퍼티는 정상 저장
+    assert_eq!(run_num("Array.prototype.customX=42; [].customX"), 42.0);
+}

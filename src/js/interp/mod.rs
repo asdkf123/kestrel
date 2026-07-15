@@ -3196,6 +3196,17 @@ impl Interp {
                                     }
                                 }
                             }
+                            // 내장 함수의 name/length 는 configurable → delete 성공.
+                            // native_props 에서 지우고 삭제 마커를 남긴다(native_meta 기본값
+                            // 도 안 보이게). 예전엔 delete 가 no-op 라 verifyProperty 의
+                            // configurable 검사가 깨졌다.
+                            Value::Native(n) => {
+                                let ov = self.native_props.entry(*n).or_default();
+                                ov.remove(&key);
+                                if matches!(key.as_str(), "name" | "length") {
+                                    ov.insert(format!("\u{0}del:{}", key), Value::Bool(true));
+                                }
+                            }
                             _ => {}
                         }
                         return Ok(Value::Bool(true));
@@ -3972,7 +3983,23 @@ impl Interp {
     // Object.prototype/Function.prototype 상속 메서드(hasOwnProperty/toString 등)를
     // 한곳에서 제공한다. 각 생성자별 member_get 분기의 fallback 도 이걸 쓴다 —
     // 예전엔 분기마다 _ => Undefined 라 Array.name/String.length 등이 사라졌다.
+    // 내장 함수의 name/length 가 delete 로 지워졌는지 (verifyProperty 의 configurable 검사).
+    pub(super) fn native_prop_deleted(&self, recv: &Value, key: &str) -> bool {
+        if let Value::Native(n) = recv {
+            return self
+                .native_props
+                .get(n)
+                .map(|m| m.contains_key(&format!("\u{0}del:{}", key)))
+                .unwrap_or(false);
+        }
+        false
+    }
+
     fn native_fn_member(&self, recv: &Value, key: &str) -> Option<Value> {
+        // delete 된 name/length 는 없는 것으로 (configurable:true).
+        if matches!(key, "name" | "length") && self.native_prop_deleted(recv, key) {
+            return None;
+        }
         Some(match key {
             "name" => Value::Str(self.native_fn_name(recv)),
             "length" => Value::Num(self.native_fn_length(recv)),
@@ -6208,7 +6235,12 @@ impl Interp {
                     // 내장(네이티브)에 프로퍼티 얹기 — 폴리필의
                     // `if (!Promise.allSettled) Promise.allSettled = fn` 패턴.
                     Value::Native(n) => {
-                        self.native_props.entry(n).or_default().insert(key, value);
+                        // name/length 는 내장 함수의 non-writable own 프로퍼티 (§17).
+                        // 재대입은 조용히 무시 (writable:false). 나머지(폴리필이 얹는
+                        // 메서드 등)는 native_props 에 저장.
+                        if !matches!(key.as_str(), "name" | "length") {
+                            self.native_props.entry(n).or_default().insert(key, value);
+                        }
                         Ok(())
                     }
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),

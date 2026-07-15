@@ -1384,7 +1384,11 @@ impl Interp {
                     }
                     // 내장/바운드 함수의 name/length 는 own 프로퍼티다 (§17):
                     // { writable:false, enumerable:false, configurable:true }.
-                    Value::Native(_) | Value::Bound(_) if matches!(key.as_str(), "name" | "length") => {
+                    // delete 로 지워졌으면 서술자 없음(undefined).
+                    Value::Native(_) | Value::Bound(_)
+                        if matches!(key.as_str(), "name" | "length")
+                            && !self.native_prop_deleted(&target, &key) =>
+                    {
                         let val = if key == "name" {
                             Value::Str(self.native_fn_name(&target))
                         } else {
@@ -1719,8 +1723,10 @@ impl Interp {
                             || matches!(key.as_str(), "prototype" | "name" | "length")
                     }
                     // 내장/바운드 함수도 name/length 를 own 프로퍼티로 가진다 (§17).
-                    Some(Value::Native(_)) | Some(Value::Bound(_)) => {
+                    // delete 로 지워졌으면 더는 own 이 아니다.
+                    Some(v @ (Value::Native(_) | Value::Bound(_))) => {
                         matches!(key.as_str(), "name" | "length")
+                            && !self.native_prop_deleted(v, &key)
                     }
                     _ => false,
                 };
