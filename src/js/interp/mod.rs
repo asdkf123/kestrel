@@ -727,7 +727,10 @@ impl Interp {
         object_ns.insert("values".to_string(), Value::Native(Native::ObjectValues));
         object_ns.insert("entries".to_string(), Value::Native(Native::ObjectEntries));
         object_ns.insert("fromEntries".to_string(), Value::Native(Native::ObjectFromEntries));
-        object_ns.insert("getOwnPropertyNames".to_string(), Value::Native(Native::ObjectKeys));
+        object_ns.insert(
+            "getOwnPropertyNames".to_string(),
+            Value::Native(Native::ObjectGetOwnPropertyNames),
+        );
         object_ns.insert("assign".to_string(), Value::Native(Native::ObjectAssign));
         object_ns.insert("defineProperty".to_string(), Value::Native(Native::ObjectDefineProperty));
         object_ns.insert(

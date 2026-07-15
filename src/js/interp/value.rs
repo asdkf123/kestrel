@@ -203,6 +203,9 @@ pub(super) fn is_object(v: &Value) -> bool {
             | Value::Class(_)
             | Value::Bound(_)
             | Value::Gen(_)
+            // 내장 함수/생성자(Array/String/…)도 JS 에서는 객체다. 빠뜨리면
+            // Object.defineProperty(Array, …) 같은 호출이 "non-object" 로 잘못 던진다.
+            | Value::Native(_)
             // DOM 요소도 JS 에서는 객체다. 빠뜨리면 생성자가 요소를 반환할 때
             // 조용히 버려진다 — 커스텀 엘리먼트의 this 가 진짜 DOM 노드가 되지 못한다.
             | Value::Dom(_)

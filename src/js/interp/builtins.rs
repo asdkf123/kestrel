@@ -5025,6 +5025,36 @@ impl Interp {
                 }
                 _ => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
             },
+            // Object.getOwnPropertyNames(o) — 열거 여부 무관 모든 own 문자열 키 (§20.1.2.10).
+            // 예전엔 Object.keys 별칭이라 non-enumerable(내장 메서드 등)을 빠뜨렸다.
+            Native::ObjectGetOwnPropertyNames => {
+                let names: Vec<Value> = match args.first() {
+                    Some(Value::Obj(m)) => {
+                        let b = m.borrow();
+                        b.keys()
+                            // 내부 키(\0…, __proto__)와 심볼(\0@@)/마커 제외. 실제
+                            // 문자열 프로퍼티만. 마커/심볼은 is_internal_key 로 걸러진다.
+                            .filter(|k| !is_internal_key(k))
+                            .cloned()
+                            .map(Value::Str)
+                            .collect()
+                    }
+                    Some(Value::Arr(a)) => {
+                        let n = a.borrow().len();
+                        let mut v: Vec<Value> =
+                            (0..n).map(|i| Value::Str(i.to_string())).collect();
+                        // 배열은 own "length" 를 가진다.
+                        v.push(Value::Str("length".to_string()));
+                        v
+                    }
+                    Some(v @ (Value::Instance(_) | Value::Class(_))) => own_enumerable_entries(v)
+                        .into_iter()
+                        .map(|(k, _)| Value::Str(k))
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                Ok(Value::Arr(ArrayObj::new(names)))
+            }
             Native::ObjectValues => {
                 let vals: Vec<Value> = match args.first() {
                     Some(Value::Obj(m)) => {

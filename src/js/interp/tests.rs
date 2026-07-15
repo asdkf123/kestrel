@@ -4357,3 +4357,18 @@ fn object_ops_reject_non_objects() {
         "Object.getOwnPropertyDescriptor(Object.create(null,{a:{value:1,enumerable:true}}),'a').enumerable===true"
     ));
 }
+
+// Object.getOwnPropertyNames 는 열거 여부 무관 모든 own 문자열 키를 돌려준다
+// (§20.1.2.10). 예전엔 Object.keys 별칭이라 non-enumerable(내장 메서드)을 빠뜨렸다.
+#[test]
+fn get_own_property_names_includes_non_enumerable() {
+    // 내장 메서드(non-enumerable)도 포함
+    assert!(run_bool("Object.getOwnPropertyNames(Math).indexOf('atan2')>=0"));
+    assert!(run_num("Object.getOwnPropertyNames(Math).length") > 20.0);
+    // 배열은 length 포함
+    assert_eq!(run_str("JSON.stringify(Object.getOwnPropertyNames([1,2]))"), r#"["0","1","length"]"#);
+    // Object.keys 는 여전히 열거 가능한 것만
+    assert_eq!(run_str("JSON.stringify(Object.keys(Math))"), "[]");
+    // 내장 생성자(Native)도 객체 — defineProperty 가 non-object 로 던지지 않음
+    assert!(run_bool("try{Object.defineProperty(Array,'zzz',{value:1,configurable:true});true}catch(e){false}"));
+}
