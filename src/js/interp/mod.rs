@@ -1164,6 +1164,20 @@ impl Interp {
         link_ctor(&map_proto, Native::MapCtor);
         link_ctor(&set_proto, Native::SetCtor);
         link_ctor(&date_proto, Native::DateCtor);
+        // Map/Set.prototype.size 는 프로토타입 accessor(getter) 다 — 인스턴스 own 아님.
+        // getOwnPropertyDescriptor(Set.prototype,'size').get 검사가 이걸 본다. 비열거.
+        let add_getter = |proto: &Value, name: &str, g: Native| {
+            if let Value::Obj(m) = proto {
+                let mut b = m.borrow_mut();
+                b.insert(
+                    name.to_string(),
+                    Value::Accessor(AccessorPair::getter(Value::Native(g))),
+                );
+                b.insert(nonenum_marker(name), Value::Bool(true));
+            }
+        };
+        add_getter(&map_proto, "size", Native::MapSize);
+        add_getter(&set_proto, "size", Native::SetSize);
         // Number.prototype/Boolean.prototype 자신이 [[PrimitiveValue]] 슬롯을 가진
         // 원시 래퍼다 (§21.1.3/§20.3.3) — thisNumberValue(Number.prototype)=+0 등.
         if let Value::Obj(m) = &number_proto {

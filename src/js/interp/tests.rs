@@ -884,10 +884,11 @@ fn map_set_date_symbol_prototypes() {
         1.0,
     );
     assert!(run_bool("var s=new Set([1,2]); Set.prototype.has.call(s, 2)"));
-    assert_eq!(
-        run_num("var m=new Map([['x',7]]); Map.prototype.size !== undefined ? 0 : Map.prototype.get.call(m,'x')"),
-        7.0,
-    );
+    assert_eq!(run_num("var m=new Map([['x',7]]); Map.prototype.get.call(m,'x')"), 7.0);
+    // Map.prototype.size 는 accessor 라 non-Map(prototype 자신)에 접근하면 TypeError.
+    assert!(run_bool(
+        "var t=false; try{ Map.prototype.size }catch(e){ t=e instanceof TypeError } t"
+    ));
     // Date.prototype.getTime.call
     assert!(run_bool("var d=new Date(0); Date.prototype.getTime.call(d) === 0"));
     // Array.prototype.sort (유일하게 빠져 있던 것)
@@ -4742,4 +4743,32 @@ fn error_iserror_and_stack_accessor() {
     assert_eq!(run_str("typeof (new Error('m')).stack"), "string");
     // setter 는 own 데이터로 accessor 를 가린다
     assert!(run_bool("var e=new Error(); e.stack='XYZ'; e.stack==='XYZ' && e.hasOwnProperty('stack')"));
+}
+
+// Set/Map 의 prototype 메서드는 brand 체크로 TypeError(예전엔 일반 Error)를 던지고,
+// size 는 인스턴스 own 데이터가 아니라 prototype accessor 다 (§24.1.3.10/§24.2.3.9).
+#[test]
+fn set_map_brand_check_and_size_accessor() {
+    // brand 체크 → TypeError
+    assert!(run_bool("var t=false; try{ Set.prototype.add.call({},1) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Map.prototype.get.call([],1) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Set.prototype.has.call(new Map(),1) }catch(e){ t=e instanceof TypeError } t"));
+    // size 는 prototype accessor (인스턴스 own 아님)
+    assert!(run_bool("Object.prototype.hasOwnProperty.call(Set.prototype,'size')"));
+    assert!(run_bool("Object.prototype.hasOwnProperty.call(Map.prototype,'size')"));
+    assert!(run_bool("!Object.prototype.hasOwnProperty.call(new Set(),'size')"));
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Set.prototype,'size'); \
+         typeof d.get==='function' && d.set===undefined && d.enumerable===false && d.configurable===true"
+    ));
+    assert_eq!(run_str("Object.getOwnPropertyDescriptor(Set.prototype,'size').get.name"), "get size");
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor(Map.prototype,'size').get.length"), 0.0);
+    // 값은 그대로 동작
+    assert_eq!(run_num("new Set([1,2,3,3]).size"), 3.0);
+    assert_eq!(run_num("new Map([[1,2],[3,4]]).size"), 2.0);
+    // size getter 도 brand 체크
+    assert!(run_bool(
+        "var g=Object.getOwnPropertyDescriptor(Set.prototype,'size').get; \
+         var t=false; try{ g.call({}) }catch(e){ t=e instanceof TypeError } t"
+    ));
 }

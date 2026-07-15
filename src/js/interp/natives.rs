@@ -205,6 +205,10 @@ pub enum Native {
     SetCtor,
     Map(MapOp),
     Set(SetOp),
+    // Map.prototype.size / Set.prototype.size 접근자(getter). 인스턴스 own 이 아니라
+    // 프로토타입 accessor 다 (§24.1.3.10 / §24.2.3.9). brand 체크 후 원소 수를 돌려준다.
+    MapSize,
+    SetSize,
     ErrorCtor(&'static str),
     CreateElement,
     AppendChild,
@@ -678,6 +682,8 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         // 접근자 함수의 표준 이름/길이 (§ get/set 접두). prop-desc 검사가 확인한다.
         ErrorStackGet => ("get stack", 0),
         ErrorStackSet => ("set stack", 1),
+        MapSize => ("get size", 0),
+        SetSize => ("get size", 0),
         // ── Array.* 정적 ──
         ArrayIsArray => ("isArray", 1),
         ArrayFrom => ("from", 1),

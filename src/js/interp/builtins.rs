@@ -2515,17 +2515,40 @@ impl Interp {
                 Ok(self.make_error(name, msg))
             }
             Native::Map(op) => {
+                // brand 체크: Map 이 아니면 TypeError (§24.1.3, RequireInternalSlot).
+                // 예전엔 일반 Err(String)→Error 라 "TypeError 기대" 검사가 깨졌다.
                 let Some(Value::MapVal(m)) = recv else {
-                    return Err("Map 메서드".to_string());
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Map.prototype method called on incompatible receiver",
+                    ));
                 };
                 self.map_method(m, op, args)
             }
             Native::Set(op) => {
                 let Some(Value::SetVal(s)) = recv else {
-                    return Err("Set 메서드".to_string());
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Set.prototype method called on incompatible receiver",
+                    ));
                 };
                 Ok(self.set_method(s, op, args))
             }
+            // get Map.prototype.size / Set.prototype.size — brand 체크 후 원소 수.
+            Native::MapSize => match recv {
+                Some(Value::MapVal(m)) => Ok(Value::Num(m.borrow().len() as f64)),
+                _ => Err(self.throw_error(
+                    "TypeError",
+                    "get Map.prototype.size called on incompatible receiver",
+                )),
+            },
+            Native::SetSize => match recv {
+                Some(Value::SetVal(s)) => Ok(Value::Num(s.borrow().len() as f64)),
+                _ => Err(self.throw_error(
+                    "TypeError",
+                    "get Set.prototype.size called on incompatible receiver",
+                )),
+            },
             // createElementNS(ns, name): 우리 DOM 은 네임스페이스를 따로 두지 않는다.
             // 태그 이름으로 만들고 (svg/rect 등) 그대로 렌더 파이프라인을 태운다.
             // createElementNS(namespace, qualifiedName) — DOM §4.5.
