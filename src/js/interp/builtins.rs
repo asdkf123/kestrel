@@ -3274,9 +3274,27 @@ impl Interp {
                         let f = args.get(1).map(to_display).unwrap_or(f);
                         (s, f)
                     }
+                    // undefined 패턴은 빈 문자열로 (§22.2.3.1)
+                    Some(Value::Undefined) | None => {
+                        (String::new(), args.get(1).map(to_display).unwrap_or_default())
+                    }
                     Some(v) => (to_display(v), args.get(1).map(to_display).unwrap_or_default()),
-                    None => (String::new(), String::new()),
                 };
+                // 표준 §22.2.3.1 RegExpInitialize: 플래그와 패턴을 생성 시점에 검증하고
+                // 잘못됐으면 SyntaxError. 예전엔 검증 없이 객체만 만들어, new RegExp("(")
+                // 같은 잘못된 패턴이 조용히 통과했다.
+                if let Some(bad) = invalid_regex_flags(&flags) {
+                    return Err(self.throw_error(
+                        "SyntaxError",
+                        format!("Invalid regular expression flags: {}", bad),
+                    ));
+                }
+                if let Err(e) = crate::js::regex::Regex::compile_pattern(&src, &flags) {
+                    return Err(self.throw_error(
+                        "SyntaxError",
+                        format!("Invalid regular expression: /{}/: {}", src, e),
+                    ));
+                }
                 Ok(make_regex_obj(&src, &flags))
             }
             // regex.test(str) → bool
@@ -3315,7 +3333,7 @@ impl Interp {
                 let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("test 대상이 정규식 아님")?;
                 let text = args.first().map(to_display).unwrap_or_default();
                 let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                    .map_err(|e| format!("정규식 컴파일 실패: {}", e))?;
+                    .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
                 let chars: Vec<char> = text.chars().collect();
                 Ok(Value::Bool(re.find(&chars, 0).is_some()))
             }
@@ -3325,7 +3343,7 @@ impl Interp {
                 let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("exec 대상이 정규식 아님")?;
                 let text = args.first().map(to_display).unwrap_or_default();
                 let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                    .map_err(|e| format!("정규식 컴파일 실패: {}", e))?;
+                    .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
                 let chars: Vec<char> = text.chars().collect();
                 let from = if re.global {
                     match &recv_obj {

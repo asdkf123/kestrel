@@ -583,6 +583,24 @@ pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
     Value::Obj(Rc::new(RefCell::new(map)))
 }
 
+// 정규식 플래그 검증 (§22.2.3.1). 유효 플래그는 d,g,i,m,s,u,v,y. 중복 금지,
+// u 와 v 동시 금지. 위반 시 문제 플래그(또는 조합)를 Some 으로 돌린다.
+pub(super) fn invalid_regex_flags(flags: &str) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    for c in flags.chars() {
+        if !matches!(c, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') {
+            return Some(c.to_string());
+        }
+        if !seen.insert(c) {
+            return Some(c.to_string()); // 중복
+        }
+    }
+    if seen.contains(&'u') && seen.contains(&'v') {
+        return Some("uv".to_string()); // u 와 v 는 상호 배타
+    }
+    None
+}
+
 // 객체가 정규식인지 (__isRegex == true)
 pub(super) fn is_regex_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(map.borrow().get("\u{0}isRegex"), Some(Value::Bool(true)))

@@ -4167,3 +4167,25 @@ fn regexp_flag_accessors() {
     // 인스턴스는 플래그 own 데이터를 갖지 않는다 (상속 접근자)
     assert!(run_bool("/x/g.hasOwnProperty('global')===false"));
 }
+
+// 표준 §22.2.3.1: RegExp 생성자는 생성 시점에 패턴/플래그를 검증하고 잘못됐으면
+// SyntaxError. 예전엔 검증 없이 객체만 만들어 new RegExp("(") 가 조용히 통과했다.
+#[test]
+fn regexp_construction_validates() {
+    let bad = |p: &str| {
+        run_bool(&format!(
+            "try{{new RegExp('{}');false}}catch(e){{e instanceof SyntaxError}}",
+            p
+        ))
+    };
+    assert!(bad("("));
+    assert!(bad("a)"));
+    assert!(bad("["));
+    // 플래그 검증
+    assert!(run_bool("try{new RegExp('x','gg');false}catch(e){e instanceof SyntaxError}")); // 중복
+    assert!(run_bool("try{new RegExp('x','z');false}catch(e){e instanceof SyntaxError}"));  // 무효
+    assert!(run_bool("try{new RegExp('x','uv');false}catch(e){e instanceof SyntaxError}")); // u+v
+    // 유효 패턴은 던지지 않는다
+    assert!(run_bool("var r=new RegExp('a+','gi'); r.test('aaa')===true"));
+    assert!(run_bool("/(?<y>\\d+)/.test('42')===true")); // named group
+}
