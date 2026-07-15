@@ -5410,6 +5410,19 @@ impl Interp {
     }
 
     // new Class(args) / 클래스 호출: 인스턴스 생성 → 생성자 체인 실행 → 인스턴스 반환.
+    // 이 값이 [[Construct]] 를 가진 생성자인가 (§7.2.4 IsConstructor). 내장 메서드/일반
+    // 네이티브 함수, 화살표/async/generator 함수, Symbol/BigInt 는 생성자가 아니다.
+    pub(super) fn is_constructor(&self, v: &Value) -> bool {
+        match v {
+            Value::Class(_) => true,
+            Value::Fn(f) => !f.is_arrow && !f.is_async && !f.is_generator,
+            Value::Native(n) => natives::native_is_constructor(n),
+            Value::Bound(b) => self.is_constructor(&b.0),
+            Value::Proxy(p) => self.is_constructor(&p.0),
+            _ => false,
+        }
+    }
+
     fn construct(&mut self, class: Value, args: Vec<Value>) -> Result<Value, String> {
         // new Array(n) / new Object(x) — 네임스페이스 객체를 생성자로 호출(표준).
         if let Some(v) = self.coerce_object_call(&class, &args) {
@@ -5540,6 +5553,14 @@ impl Interp {
                 // 표준: 생성자가 객체를 반환하면 그게 결과, 원시값이면 this.
                 return Ok(if is_object(&ret) { ret } else { this });
             }
+            // 생성자가 아닌 내장(메서드/전역함수/Symbol/BigInt) 을 new 하면 TypeError
+            // (§ IsConstructor). 예전엔 아래 폴백이 {message} 스텁 객체를 만들어 조용히
+            // 통과시켰다 — not-a-constructor 검사가 전 서브셋에서 대량 실패했다.
+            Value::Native(n) if !natives::native_is_constructor(&n) => {
+                let name = self.native_fn_name(&Value::Native(n));
+                let label = if name.is_empty() { "value".to_string() } else { name };
+                return Err(self.throw_error("TypeError", format!("{} is not a constructor", label)));
+            }
             Value::Obj(_) | Value::Native(_) => {
                 let mut map = ObjMap::new();
                 if let Some(a0) = args.first() {
@@ -5547,7 +5568,11 @@ impl Interp {
                 }
                 return Ok(Value::Obj(Rc::new(RefCell::new(map))));
             }
-            other => return Err(format!("{} 은(는) 생성자가 아님", to_display(&other))),
+            other => {
+                return Err(
+                    self.throw_error("TypeError", format!("{} is not a constructor", to_display(&other)))
+                );
+            }
         };
         let inst = Value::Instance(Rc::new(Instance {
             class: cls.clone(),

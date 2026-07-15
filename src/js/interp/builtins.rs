@@ -5034,12 +5034,30 @@ impl Interp {
                 self.call_value(f, this, arg_list)
             }
             Native::ReflectConstruct => {
-                // Reflect.construct(fn, argsList)
+                // Reflect.construct(target, argumentsList[, newTarget]) (§26.1.2).
                 let f = args.first().cloned().unwrap_or(Value::Undefined);
+                // step 1: target 이 생성자가 아니면 TypeError.
+                if !self.is_constructor(&f) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Reflect.construct target is not a constructor",
+                    ));
+                }
                 let arg_list = match args.get(1) {
                     Some(Value::Arr(a)) => a.borrow().clone(),
                     _ => Vec::new(),
                 };
+                // step 3: newTarget(주어졌으면)도 생성자여야 한다. isConstructor 하네스가
+                // 이 검사에 의존한다 — Reflect.construct(function(){}, [], method) 가 던져야
+                // isConstructor(method)===false 가 된다.
+                if let Some(nt) = args.get(2) {
+                    if !self.is_constructor(nt) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Reflect.construct newTarget is not a constructor",
+                        ));
+                    }
+                }
                 self.construct(f, arg_list)
             }
             Native::LsGetItem => {

@@ -4583,3 +4583,39 @@ fn native_ctor_reflection() {
          })"
     ));
 }
+
+// 내장 메서드/전역함수/Symbol/BigInt 는 [[Construct]] 가 없다 (§17). new 하면 TypeError 고,
+// Reflect.construct 의 target/newTarget 검증도 이를 따른다(isConstructor 하네스가 의존).
+// 예전엔 construct 폴백이 {message} 스텁을 만들어 조용히 통과시켰다.
+#[test]
+fn builtin_methods_are_not_constructors() {
+    // 내장 메서드: new 하면 TypeError
+    assert!(run_bool(
+        "var t=false; try{ new (Array.prototype.map)(function(){}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ new (String.prototype.slice)() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ new (Object.keys)({}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool("var t=false; try{ new parseInt('1') }catch(e){ t=e instanceof TypeError } t"));
+    // Symbol/BigInt 는 호출은 되지만 생성자 아님
+    assert!(run_bool("var t=false; try{ new Symbol() }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ new BigInt(1) }catch(e){ t=e instanceof TypeError } t"));
+    // 진짜 생성자는 여전히 new 가능
+    assert!(run_bool("(new Array(3)).length===3"));
+    assert!(run_bool("(new Map()) instanceof Map"));
+    assert!(run_bool("typeof (new Date())==='object'"));
+    assert!(run_bool("(new RegExp('a')).test('a')"));
+    // isConstructor 하네스 패턴: Reflect.construct 의 newTarget 검증
+    let ic = "function ic(f){ try{ Reflect.construct(function(){}, [], f); }catch(e){ return false; } return true; } ";
+    assert!(run_bool(&format!("{} ic(Array.prototype.map)===false", ic)));
+    assert!(run_bool(&format!("{} ic(parseInt)===false", ic)));
+    assert!(run_bool(&format!("{} ic(Array)===true", ic)));
+    assert!(run_bool(&format!("{} ic(Map)===true", ic)));
+    // Reflect.construct target 이 비생성자면 TypeError
+    assert!(run_bool(
+        "var t=false; try{ Reflect.construct(parseInt, []) }catch(e){ t=e instanceof TypeError } t"
+    ));
+}

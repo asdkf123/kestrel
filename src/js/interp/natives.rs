@@ -711,6 +711,34 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
     })
 }
 
+// 이 내장 함수가 [[Construct]] 를 가진 생성자인가 (§17). Symbol/BigInt 는 호출은
+// 되지만 생성자가 아니다(new Symbol() → TypeError). 나머지 정적/프로토타입 메서드,
+// 전역 함수(parseInt 등)도 전부 생성자가 아니다.
+pub fn native_is_constructor(n: &Native) -> bool {
+    use Native::*;
+    matches!(
+        n,
+        ObjectCtor
+            | ArrayCtor
+            | StringCtor
+            | NumberCtor
+            | BooleanCtor
+            | RegExpCtor
+            | MapCtor
+            | SetCtor
+            | DateCtor
+            | PromiseCtor
+            | FunctionCtor
+            | ProxyCtor
+            | ErrorCtor(_)
+            | EventCtor(_)
+            | UrlCtor
+            | XhrCtor
+            | DomParserCtor
+            | WebSocketCtor
+    )
+}
+
 // RegExp.prototype 의 접근자 프로퍼티 (§22.2.6). 표준상 flags/source/각 플래그는
 // RegExp.prototype 의 getter 다 — 인스턴스의 own 데이터 프로퍼티가 아니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
