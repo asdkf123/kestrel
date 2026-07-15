@@ -2583,6 +2583,25 @@ impl Interp {
                     "get Set.prototype.size called on incompatible receiver",
                 )),
             },
+            // get Symbol.prototype.description — thisSymbolValue(§20.4.3.2). 심볼 원시값이나
+            // 심볼 래퍼면 [[Description]](없으면 undefined), 아니면 TypeError.
+            Native::SymbolDescGet => {
+                let this = recv.unwrap_or(Value::Undefined);
+                let sym = match &this {
+                    Value::Symbol(s) => Some(s.clone()),
+                    _ => match wrapper_primitive(&this) {
+                        Some(Value::Symbol(s)) => Some(s),
+                        _ => None,
+                    },
+                };
+                match sym {
+                    Some(s) => Ok(s.desc.clone().map(Value::Str).unwrap_or(Value::Undefined)),
+                    None => Err(self.throw_error(
+                        "TypeError",
+                        "get Symbol.prototype.description called on incompatible receiver",
+                    )),
+                }
+            }
             // createElementNS(ns, name): 우리 DOM 은 네임스페이스를 따로 두지 않는다.
             // 태그 이름으로 만들고 (svg/rect 등) 그대로 렌더 파이프라인을 태운다.
             // createElementNS(namespace, qualifiedName) — DOM §4.5.

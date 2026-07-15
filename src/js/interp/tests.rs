@@ -4794,6 +4794,28 @@ fn date_math_method_name_length() {
     ));
 }
 
+// Symbol.prototype.description 은 프로토타입 accessor 다 (§20.4.3.2). 예전엔 심볼
+// 원시값 member_get 으로만 돼서 getOwnPropertyDescriptor(Symbol.prototype,'description')
+// 이 undefined 였다.
+#[test]
+fn symbol_description_accessor() {
+    assert_eq!(run_str("Symbol('hi').description"), "hi");
+    assert!(run_bool("Symbol().description === undefined"));
+    // 프로토타입 accessor
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Symbol.prototype,'description'); \
+         typeof d.get==='function' && d.set===undefined && d.enumerable===false && d.configurable===true"
+    ));
+    assert_eq!(run_str("Object.getOwnPropertyDescriptor(Symbol.prototype,'description').get.name"), "get description");
+    // getter 를 잘못된 수신자에 부르면 TypeError
+    assert!(run_bool(
+        "var g=Object.getOwnPropertyDescriptor(Symbol.prototype,'description').get; \
+         var t=false; try{ g.call({}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // description 은 인스턴스 own 아님
+    assert!(run_bool("!Object.prototype.hasOwnProperty.call(Symbol('x'),'description')"));
+}
+
 // JSON.parse 는 잘못된 입력에 SyntaxError 를 던지고(예전엔 일반 Error), reviver 를
 // 후위 순회로 적용한다 (§25.5.1).
 #[test]

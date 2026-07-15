@@ -1192,6 +1192,8 @@ impl Interp {
         };
         add_getter(&map_proto, "size", Native::MapSize);
         add_getter(&set_proto, "size", Native::SetSize);
+        // Symbol.prototype.description 도 프로토타입 accessor(getter) 다 (§20.4.3.2).
+        add_getter(&symbol_proto, "description", Native::SymbolDescGet);
         // Number.prototype/Boolean.prototype 자신이 [[PrimitiveValue]] 슬롯을 가진
         // 원시 래퍼다 (§21.1.3/§20.3.3) — thisNumberValue(Number.prototype)=+0 등.
         if let Value::Obj(m) = &number_proto {

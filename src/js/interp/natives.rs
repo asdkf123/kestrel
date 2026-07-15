@@ -209,6 +209,9 @@ pub enum Native {
     // 프로토타입 accessor 다 (§24.1.3.10 / §24.2.3.9). brand 체크 후 원소 수를 돌려준다.
     MapSize,
     SetSize,
+    // get Symbol.prototype.description (§20.4.3.2) — 프로토타입 accessor. brand 체크 후
+    // 심볼의 [[Description]] 을 돌려준다(없으면 undefined).
+    SymbolDescGet,
     ErrorCtor(&'static str),
     CreateElement,
     AppendChild,
@@ -700,6 +703,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         ErrorStackSet => ("set stack", 1),
         MapSize => ("get size", 0),
         SetSize => ("get size", 0),
+        SymbolDescGet => ("get description", 0),
         // Set/Map 프로토타입 메서드 이름·길이 (§24). 예전엔 Set(op)/Map(op) arm 이 없어
         // Set.prototype.add.name 이 "" 였다.
         Set(op) => {
