@@ -913,20 +913,31 @@ impl Interp {
         key: &str,
         desc: &Value,
     ) -> Result<(), String> {
-        let Value::Obj(d) = desc else {
+        // ToPropertyDescriptor (§10.2.4): 서술자는 임의의 객체다(함수/배열/인스턴스
+        // 포함). 필드는 HasProperty + Get 으로 읽어 상속·getter 도 반영한다. 예전엔
+        // Value::Obj 만 받아 함수 서술자를 거부하고 상속 필드를 무시했다.
+        if !is_object(desc) {
             return Err(self.throw_error("TypeError", "Property description must be an object"));
+        }
+        // 필드별 (존재 여부, 값). 존재는 HasProperty, 값은 member_get(getter 호출).
+        let field = |me: &mut Self, k: &str| -> Result<(bool, Value), String> {
+            if me.has_property(desc, k) {
+                Ok((true, me.member_get(desc, k)?))
+            } else {
+                Ok((false, Value::Undefined))
+            }
         };
-        let (has_value, new_value, has_get, get, has_set, set, has_w, w, has_e, e, has_c, c) = {
-            let d = d.borrow();
-            (
-                d.contains_key("value"), d.get("value").cloned().unwrap_or(Value::Undefined),
-                d.contains_key("get"), d.get("get").cloned(),
-                d.contains_key("set"), d.get("set").cloned(),
-                d.contains_key("writable"), d.get("writable").map(to_bool).unwrap_or(false),
-                d.contains_key("enumerable"), d.get("enumerable").map(to_bool).unwrap_or(false),
-                d.contains_key("configurable"), d.get("configurable").map(to_bool).unwrap_or(false),
-            )
-        };
+        let (has_value, new_value) = field(self, "value")?;
+        let (has_get, gv) = field(self, "get")?;
+        let get = if has_get { Some(gv) } else { None };
+        let (has_set, sv) = field(self, "set")?;
+        let set = if has_set { Some(sv) } else { None };
+        let (has_w, wv) = field(self, "writable")?;
+        let w = to_bool(&wv);
+        let (has_e, ev) = field(self, "enumerable")?;
+        let e = to_bool(&ev);
+        let (has_c, cv) = field(self, "configurable")?;
+        let c = to_bool(&cv);
         let is_accessor_desc = has_get || has_set;
         let is_data_desc = has_value || has_w;
         if is_accessor_desc && is_data_desc {

@@ -4264,3 +4264,33 @@ fn string_to_number_grammar() {
     assert_eq!(run_num("Number('Infinity')"), f64::INFINITY);
     assert_eq!(run_num("Number('-Infinity')"), f64::NEG_INFINITY);
 }
+
+// ToPropertyDescriptor (§10.2.4): 서술자는 임의의 객체(함수/배열/인스턴스 포함)이고
+// 필드는 HasProperty+Get(상속·getter 반영)으로 읽는다. 예전엔 Value::Obj 만 받고
+// 상속 필드를 무시했다.
+#[test]
+fn define_property_descriptor_coercion() {
+    // 함수를 서술자로 (own value 프로퍼티)
+    assert_eq!(
+        run_num("var o={}; var d=function(){}; d.value=42; Object.defineProperty(o,'y',d); o.y"),
+        42.0
+    );
+    // 상속된 서술자 필드 (Object.create(proto))
+    assert_eq!(
+        run_num(
+            "var o={}; var proto={value:7,enumerable:true,configurable:true,writable:true}; \
+             Object.defineProperty(o,'z',Object.create(proto)); o.z"
+        ),
+        7.0
+    );
+    // getter 로 노출된 서술자 필드
+    assert_eq!(
+        run_num(
+            "var o={}; var d={get value(){return 99;},configurable:true}; \
+             Object.defineProperty(o,'w',d); o.w"
+        ),
+        99.0
+    );
+    // 비객체 서술자 → TypeError
+    assert!(run_bool("try{Object.defineProperty({},'x',5);false}catch(e){e instanceof TypeError}"));
+}

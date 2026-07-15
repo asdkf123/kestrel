@@ -4019,6 +4019,43 @@ impl Interp {
     }
 
     // __proto__ 링크를 따라 프로퍼티를 찾는다. getter 면 this=원 객체로 호출. 순환 방지.
+    // HasProperty (§7.3.11): own + 프로토타입 체인. ToPropertyDescriptor 등이
+    // 필드 존재 판정에 쓴다({value: undefined} 처럼 명시 undefined 와 부재를 구분).
+    pub(super) fn has_property(&self, obj: &Value, key: &str) -> bool {
+        match obj {
+            Value::Obj(m) => {
+                if !is_internal_key(key) && m.borrow().contains_key(key) {
+                    return true;
+                }
+                let mut proto = m.borrow().get("__proto__").cloned();
+                let mut depth = 0;
+                while let Some(Value::Obj(p)) = proto {
+                    depth += 1;
+                    if depth > 100 {
+                        break;
+                    }
+                    if p.borrow().contains_key(key) {
+                        return true;
+                    }
+                    proto = p.borrow().get("__proto__").cloned();
+                }
+                false
+            }
+            Value::Instance(i) => i.fields.borrow().contains_key(key),
+            Value::Fn(f) => {
+                f.props.borrow().contains_key(key)
+                    || matches!(key, "name" | "length" | "prototype")
+            }
+            Value::Arr(a) => {
+                key.parse::<usize>().map(|n| n < a.borrow().len()).unwrap_or(false)
+                    || a.get_prop(key).is_some()
+                    || key == "length"
+            }
+            Value::Native(_) | Value::Bound(_) => matches!(key, "name" | "length"),
+            _ => false,
+        }
+    }
+
     fn proto_chain_lookup(
         &mut self,
         map: &Rc<RefCell<ObjMap>>,
