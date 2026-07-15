@@ -84,6 +84,8 @@ pub(super) fn to_num(v: &Value) -> f64 {
         Value::Num(n) => *n,
         Value::BigInt(b) => b.to_f64(),
         Value::Str(s) => str_to_num(s),
+        // 원시 래퍼(new Number 등)는 내부 슬롯을 강제 변환
+        Value::Obj(_) => wrapper_primitive(v).map(|p| to_num(&p)).unwrap_or(f64::NAN),
         _ => f64::NAN,
     }
 }
@@ -690,6 +692,16 @@ pub(super) fn invalid_regex_flags(flags: &str) -> Option<String> {
     None
 }
 
+// 원시 래퍼 객체(new String/Number/Boolean)의 내부 [[PrimitiveValue]] 슬롯을 읽는다.
+// 래퍼가 아니면 None. 강제 변환(to_num/to_display/valueOf)이 이걸 참조한다.
+pub(super) const WRAPPER_SLOT: &str = "\u{0}primitive";
+pub(super) fn wrapper_primitive(v: &Value) -> Option<Value> {
+    if let Value::Obj(m) = v {
+        return m.borrow().get(WRAPPER_SLOT).cloned();
+    }
+    None
+}
+
 // 객체가 정규식인지 (__isRegex == true)
 pub(super) fn is_regex_obj(map: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(map.borrow().get("\u{0}isRegex"), Some(Value::Bool(true)))
@@ -731,7 +743,10 @@ pub(super) fn to_display(v: &Value) -> String {
         // String(1n) === "1" (n 접미 없음)
         Value::BigInt(b) => b.to_string(),
         Value::Str(s) => s.clone(),
-        Value::Obj(_) => "[object Object]".to_string(),
+        // 원시 래퍼(new String/Number/Boolean)는 내부 슬롯 문자열화
+        Value::Obj(_) => wrapper_primitive(v)
+            .map(|p| to_display(&p))
+            .unwrap_or_else(|| "[object Object]".to_string()),
         Value::Arr(a) => {
             a.borrow().iter().map(to_display).collect::<Vec<_>>().join(",")
         }

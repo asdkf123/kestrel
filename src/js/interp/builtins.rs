@@ -3316,7 +3316,9 @@ impl Interp {
             }
             // recv.toString([radix]) / valueOf()
             Native::ValueToStr => {
-                let v = recv.unwrap_or(Value::Undefined);
+                let v0 = recv.unwrap_or(Value::Undefined);
+                // 원시 래퍼는 내부 슬롯을 문자열화 대상으로
+                let v = wrapper_primitive(&v0).unwrap_or(v0);
                 // 숫자 + radix 면 진법 변환 (§21.1.3.6). radix 는 2..=36, 아니면 RangeError.
                 if let (Value::Num(n), Some(rv)) = (&v, args.first()) {
                     // radix 인자가 undefined 면 10 (기본)
@@ -3336,7 +3338,11 @@ impl Interp {
                 }
                 Ok(Value::Str(to_display(&v)))
             }
-            Native::ValueOfSelf => Ok(recv.unwrap_or(Value::Undefined)),
+            Native::ValueOfSelf => {
+                let this = recv.unwrap_or(Value::Undefined);
+                // 원시 래퍼(new Number 등)의 valueOf 는 내부 슬롯을 돌려준다.
+                Ok(wrapper_primitive(&this).unwrap_or(this))
+            }
             // n.toFixed(digits) — recv 가 숫자
             Native::NumToFixed => {
                 let n = match recv {

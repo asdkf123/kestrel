@@ -1406,11 +1406,11 @@ fn object_assign_to_object_types() {
         run_str("try { Object.assign(null, {}); 'no-throw' } catch(e) { 'threw' }"),
         "threw",
     );
-    // frozen 대상은 변경 안 됨
-    assert_eq!(
-        run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"),
-        1.0,
-    );
+    // frozen 대상에 대입은 TypeError (§20.1.2.1, Set with Throw=true). 원래 값 유지.
+    assert!(run_bool(
+        "var t=Object.freeze({a:1}); \
+         try{ Object.assign(t,{a:99,b:2}); false }catch(e){ e instanceof TypeError && t.a===1 }"
+    ));
 }
 
 #[test]
@@ -1468,8 +1468,11 @@ fn integrity_is_uniform_across_object_kinds() {
     );
     // 얼린 뒤 isFrozen 은 true
     assert!(run_bool("var m=new Map(); Object.freeze(m); Object.isFrozen(m)"));
-    // Object.assign 도 무결성을 존중
-    assert_eq!(run_num("var t=Object.freeze({a:1}); Object.assign(t,{a:99,b:2}); t.a"), 1.0);
+    // Object.assign 도 무결성을 존중 — frozen 대상엔 TypeError (§20.1.2.1). 값 유지.
+    assert!(run_bool(
+        "var t=Object.freeze({a:1}); \
+         try{ Object.assign(t,{a:99,b:2}); false }catch(e){ e instanceof TypeError && t.a===1 }"
+    ));
     // 원시값은 표준대로 frozen/sealed=true, extensible=false
     assert!(run_bool("Object.isFrozen(5) && Object.isSealed('x') && !Object.isExtensible(3)"));
 }
@@ -4392,4 +4395,35 @@ fn object_assign_throws_on_readonly() {
     ));
     // 정상 assign 은 그대로
     assert_eq!(run_str("JSON.stringify(Object.assign({a:1},{b:2},{c:3}))"), r#"{"a":1,"b":2,"c":3}"#);
+}
+
+// new String/Number/Boolean 은 원시 래퍼 객체다 (§20/21/22) — typeof "object",
+// valueOf 는 원시값, 프로퍼티 대입 가능. 예전엔 원시값을 그대로 돌려줘서
+// (new Boolean).x = 1 이 "false 에 대입 불가" 로 죽었다.
+#[test]
+fn primitive_wrapper_objects() {
+    assert_eq!(run_str("typeof new Boolean(false)"), "object");
+    assert_eq!(run_str("typeof new Number(42)"), "object");
+    assert_eq!(run_str("typeof new String('hi')"), "object");
+    // valueOf 는 원시값
+    assert!(run_bool("new Boolean(false).valueOf()===false"));
+    assert_eq!(run_num("new Number(42).valueOf()"), 42.0);
+    assert_eq!(run_str("new String('hi').valueOf()"), "hi");
+    // 프로퍼티 대입 가능 (객체이므로)
+    assert_eq!(run_num("var b=new Boolean(false); b.foo=7; b.foo"), 7.0);
+    // String 래퍼: 인덱스 + length
+    assert_eq!(run_num("new String('abc').length"), 3.0);
+    assert_eq!(run_str("new String('abc')[1]"), "b");
+    // 강제 변환은 내부 슬롯 사용
+    assert_eq!(run_num("+new Number(5)"), 5.0);
+    assert_eq!(run_str("''+new String('x')"), "x");
+    assert!(run_bool("!!new Boolean(false)===true")); // 객체는 truthy(래퍼도)
+    // String.prototype 메서드를 Boolean 래퍼에 적용 → ToString
+    assert_eq!(
+        run_str("var i=new Boolean(false); i.charAt=String.prototype.charAt; i.charAt(0)"),
+        "f"
+    );
+    // 생성자 아닌 호출은 원시값
+    assert_eq!(run_str("typeof Boolean(1)"), "boolean");
+    assert_eq!(run_str("typeof Number('5')"), "number");
 }

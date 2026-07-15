@@ -1034,6 +1034,11 @@ impl Interp {
         ] {
             string_proto.insert(name.to_string(), Value::Native(Native::Str(op)));
         }
+        // String.prototype.toString/valueOf — 원시 문자열/래퍼 공통으로 원시값을
+        // 돌려준다(§22.1.3). 없으면 래퍼가 Object.prototype.valueOf 로 폴백해 자기
+        // 자신(객체)을 반환했다.
+        string_proto.insert("toString".to_string(), Value::Native(Native::ValueToStr));
+        string_proto.insert("valueOf".to_string(), Value::Native(Native::ValueOfSelf));
         let string_proto = Value::Obj(Rc::new(RefCell::new(string_proto)));
         // Number/Boolean/RegExp.prototype — 원시값 메서드 네이티브를 재사용.
         let mk_proto = |pairs: Vec<(&str, Native)>| {
@@ -5251,8 +5256,32 @@ impl Interp {
                 return self.call_native(Native::RegExpCtor, None, args)
             }
             // new String/Number/Boolean → 원시값 근사 (박싱 미구현)
+            // new String/Number/Boolean → 원시 래퍼 객체 (§20/21/22). 원시값을
+            // 내부 슬롯에 박고 프로토타입 연결. 예전엔 원시값을 그대로 돌려줘서
+            // (new Boolean).foo = 1 이 "false 에 대입 불가" 로 죽었다.
             Value::Native(n @ (Native::StringCtor | Native::NumberCtor | Native::BooleanCtor)) => {
-                return self.call_native(n, None, args)
+                let prim = self.call_native(n, None, args)?;
+                let (proto, tag) = match n {
+                    Native::StringCtor => (self.string_proto.clone(), "String"),
+                    Native::NumberCtor => (self.number_proto.clone(), "Number"),
+                    _ => (self.boolean_proto.clone(), "Boolean"),
+                };
+                let mut m = ObjMap::new();
+                m.insert(WRAPPER_SLOT.to_string(), prim.clone());
+                m.insert("__proto__".to_string(), proto);
+                m.insert("\u{0}class".to_string(), Value::Str(tag.to_string()));
+                // String 래퍼: 인덱스 char + length 를 own 프로퍼티로 (§22.1.4).
+                if let (Native::StringCtor, Value::Str(s)) = (n, &prim) {
+                    for (i, c) in s.chars().enumerate() {
+                        m.insert(i.to_string(), Value::Str(c.to_string()));
+                        // 인덱스는 non-writable/non-configurable, 열거 가능
+                        m.insert(attr_marker(&i.to_string()), Value::Num(ATTR_ENUMERABLE as f64));
+                    }
+                    let len = s.chars().count();
+                    m.insert("length".to_string(), Value::Num(len as f64));
+                    m.insert(nonenum_marker("length"), Value::Bool(true));
+                }
+                return Ok(Value::Obj(Rc::new(RefCell::new(m))));
             }
             Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
             Value::Native(Native::DomParserCtor) => {
@@ -5585,6 +5614,11 @@ impl Interp {
     fn to_primitive(&mut self, v: Value, prefer_string: bool) -> Value {
         if !matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
             return v;
+        }
+        // 원시 래퍼(new String/Number/Boolean)는 내부 [[PrimitiveValue]] 로 즉시 변환.
+        // (valueOf/toString 도 결국 이 값을 돌려주므로 동치이고, 프로토타입 해석을 탄다.)
+        if let Some(p) = wrapper_primitive(&v) {
+            return p;
         }
         // Symbol.toPrimitive 가 있으면 그것이 우선한다 (표준 §7.1.1).
         if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
