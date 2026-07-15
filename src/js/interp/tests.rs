@@ -4323,3 +4323,37 @@ fn define_properties_reads_via_get() {
         14.0
     );
 }
+
+// Object.defineProperty/defineProperties/create 는 대상이 객체가 아니면 TypeError
+// (§20.1.2.4/.5/.2). 예전엔 조용히 무시했다. create 의 서술자는 defineProperties 에
+// 위임해 getter/속성을 전부 반영한다.
+#[test]
+fn object_ops_reject_non_objects() {
+    for expr in [
+        "Object.defineProperty(5,'x',{value:1})",
+        "Object.defineProperty('s','x',{value:1})",
+        "Object.defineProperty(true,'x',{value:1})",
+        "Object.defineProperties(5,{x:{value:1}})",
+        "Object.create(5)",
+        "Object.create('s')",
+    ] {
+        assert!(
+            run_bool(&format!("try{{{};false}}catch(e){{e instanceof TypeError}}", expr)),
+            "expected TypeError from: {}",
+            expr
+        );
+    }
+    // create(null) 은 유효
+    assert!(run_bool("var o=Object.create(null); typeof o==='object'"));
+    // create 의 서술자는 완전 반영 (value + getter + enumerable)
+    assert_eq!(
+        run_num(
+            "var o=Object.create(null,{a:{value:1,enumerable:true},\
+             b:{get:function(){return 2},enumerable:true}}); o.a+o.b"
+        ),
+        3.0
+    );
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(Object.create(null,{a:{value:1,enumerable:true}}),'a').enumerable===true"
+    ));
+}

@@ -1426,6 +1426,13 @@ impl Interp {
             // Object.defineProperty(target, key, {get|value}) — 접근자/값 정의
             Native::ObjectDefineProperty => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
+                // §20.1.2.4: 대상이 객체가 아니면 TypeError. 예전엔 조용히 무시했다.
+                if !is_object(&target) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Object.defineProperty called on non-object",
+                    ));
+                }
                 let key = args.get(1).map(to_display).unwrap_or_default();
                 let Some(desc) = args.get(2).cloned() else {
                     return Err(self.throw_error("TypeError", "Property description must be an object"));
@@ -1484,22 +1491,28 @@ impl Interp {
             }
             // Object.create(proto) — proto 의 얕은 복사 기반 새 객체 (관용)
             Native::ObjectCreate => {
+                // §20.1.2.2: proto 는 Object 또는 null 이어야 한다, 아니면 TypeError.
+                let proto = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_object(&proto) && !matches!(proto, Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Object prototype may only be an Object or null",
+                    ));
+                }
                 // proto 를 __proto__ 로 링크(스냅샷 복사 아님). Object.create(null) 은 링크 없음.
                 let mut map = ObjMap::new();
-                if let Some(p @ Value::Obj(_)) = args.first() {
-                    map.insert("__proto__".to_string(), p.clone());
+                if let Value::Obj(_) = &proto {
+                    map.insert("__proto__".to_string(), proto.clone());
                 }
                 let obj = Value::Obj(Rc::new(RefCell::new(map)));
-                // 2번째 인자(프로퍼티 서술자): {k: {value: v}} 를 얕게 반영(get/set 은 근사).
-                if let Some(Value::Obj(descs)) = args.get(1) {
-                    if let Value::Obj(m) = &obj {
-                        for (k, d) in descs.borrow().iter() {
-                            if let Value::Obj(dm) = d {
-                                if let Some(v) = dm.borrow().get("value") {
-                                    m.borrow_mut().insert(k.clone(), v.clone());
-                                }
-                            }
-                        }
+                // 2번째 인자(프로퍼티 서술자): defineProperties 에 위임 → get/set/속성 전부 반영.
+                if let Some(props) = args.get(1) {
+                    if !matches!(props, Value::Undefined) {
+                        self.call_native(
+                            Native::ObjectDefineProperties,
+                            None,
+                            vec![obj.clone(), props.clone()],
+                        )?;
                     }
                 }
                 Ok(obj)
@@ -1526,6 +1539,13 @@ impl Interp {
             // 시그니처가 달라 아무것도 정의되지 않았다.
             Native::ObjectDefineProperties => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
+                // §20.1.2.5: 대상이 객체가 아니면 TypeError.
+                if !is_object(&target) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Object.defineProperties called on non-object",
+                    ));
+                }
                 let props = args.get(1).cloned().unwrap_or(Value::Undefined);
                 // §20.1.2.3.1: Properties 의 열거 가능한 own 키를 돌며, 각 서술자는
                 // Get(Properties, key)(getter 호출)으로 읽는다. 예전엔 own 값을 raw 로
