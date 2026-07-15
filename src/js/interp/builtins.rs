@@ -4808,6 +4808,46 @@ impl Interp {
                         }
                         Value::Arr(a.clone())
                     }
+                    // arr.with(index, value) (§23.1.3.39): 원본 불변, 새 배열 반환.
+                    // 범위 밖 인덱스면 RangeError.
+                    ArrOp::With => {
+                        let mut items = a.borrow().clone();
+                        let len = items.len() as isize;
+                        let n = args.first().map(to_num).unwrap_or(0.0);
+                        let k = if n.is_nan() { 0 } else { n.trunc() as isize };
+                        let idx = if k < 0 { len + k } else { k };
+                        if idx < 0 || idx >= len {
+                            return Err(self.throw_error("RangeError", "Invalid index"));
+                        }
+                        items[idx as usize] = args.get(1).cloned().unwrap_or(Value::Undefined);
+                        Value::Arr(ArrayObj::new(items))
+                    }
+                    // arr.toSpliced(start, skipCount, ...items) (§23.1.3.35): splice 비변형판.
+                    ArrOp::ToSpliced => {
+                        let src = a.borrow().clone();
+                        let len = src.len() as isize;
+                        let start = {
+                            let n = args.first().map(to_num).unwrap_or(0.0);
+                            let k = if n.is_nan() { 0 } else { n.trunc() as isize };
+                            (if k < 0 { len + k } else { k }).clamp(0, len) as usize
+                        };
+                        let skip = if args.is_empty() {
+                            0
+                        } else if args.len() == 1 {
+                            src.len() - start
+                        } else {
+                            let n = args.get(1).map(to_num).unwrap_or(0.0);
+                            let k = if n.is_nan() { 0.0 } else { n.trunc() };
+                            (k.max(0.0) as usize).min(src.len() - start)
+                        };
+                        let mut out: Vec<Value> = Vec::with_capacity(src.len());
+                        out.extend_from_slice(&src[..start]);
+                        if args.len() > 2 {
+                            out.extend(args[2..].iter().cloned());
+                        }
+                        out.extend_from_slice(&src[start + skip..]);
+                        Value::Arr(ArrayObj::new(out))
+                    }
                 };
                 // 제자리 변형(push/pop/splice/sort/reverse/fill 등)을 array-like 로 되쓴다.
                 if let Some(o) = write_back {

@@ -4619,3 +4619,26 @@ fn builtin_methods_are_not_constructors() {
         "var t=false; try{ Reflect.construct(parseInt, []) }catch(e){ t=e instanceof TypeError } t"
     ));
 }
+
+// change-array-by-copy (ES2023): Array.prototype.with / toSpliced — 원본 불변, 새 배열.
+#[test]
+fn array_change_by_copy_with_tospliced() {
+    // with
+    assert_eq!(run_str("[1,2,3].with(1,9).join(',')"), "1,9,3");
+    assert_eq!(run_str("[1,2,3].with(-1,9).join(',')"), "1,2,9");
+    assert!(run_bool("var a=[1,2,3]; a.with(0,9); a.join(',')==='1,2,3'")); // 원본 불변
+    assert!(run_bool("var t=false; try{ [1,2,3].with(5,9) }catch(e){ t=e instanceof RangeError } t"));
+    assert!(run_bool("var t=false; try{ [1,2,3].with(-9,9) }catch(e){ t=e instanceof RangeError } t"));
+    assert_eq!(run_str("[].with.name"), "with");
+    assert_eq!(run_num("[].with.length"), 2.0);
+    // toSpliced
+    assert_eq!(run_str("[1,2,3,4].toSpliced(1,2,'a','b').join(',')"), "1,a,b,4");
+    assert_eq!(run_str("[1,2,3].toSpliced(1).join(',')"), "1"); // deleteCount 생략 → 끝까지
+    assert_eq!(run_str("[1,2,3].toSpliced(1,0,'x').join(',')"), "1,x,2,3");
+    assert_eq!(run_str("[1,2,3].toSpliced(-1,1,'z').join(',')"), "1,2,z");
+    assert!(run_bool("var a=[1,2,3]; a.toSpliced(0,1); a.join(',')==='1,2,3'")); // 원본 불변
+    assert_eq!(run_str("[].toSpliced.name"), "toSpliced");
+    assert_eq!(run_num("[].toSpliced.length"), 2.0);
+    // 생성자 아님 (commit db6d6c8 과 일관)
+    assert!(run_bool("var t=false; try{ new ([].with)() }catch(e){ t=e instanceof TypeError } t"));
+}

@@ -511,6 +511,9 @@ pub enum ArrOp {
     FindLastIndex,
     Fill,
     ReduceRight,
+    // change-array-by-copy (ES2023): 원본을 건드리지 않고 새 배열을 돌려준다.
+    With,
+    ToSpliced,
 }
 
 // Array.prototype 메서드의 단일 소스 (이름 → 연산). member_get 의 인스턴스 조회와
@@ -547,6 +550,8 @@ pub static ARRAY_PROTO_OPS: &[(&str, ArrOp)] = &[
     ("findLastIndex", ArrOp::FindLastIndex),
     ("fill", ArrOp::Fill),
     ("reduceRight", ArrOp::ReduceRight),
+    ("with", ArrOp::With),
+    ("toSpliced", ArrOp::ToSpliced),
     ("toString", ArrOp::Join),
 ];
 
@@ -566,7 +571,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         Arr(op) => {
             let name = ARRAY_PROTO_OPS.iter().find(|(_, o)| o == op).map(|(nm, _)| *nm)?;
             let len = match op {
-                ArrOp::Slice | ArrOp::Splice => 2,
+                ArrOp::Slice | ArrOp::Splice | ArrOp::With | ArrOp::ToSpliced => 2,
                 ArrOp::Pop | ArrOp::Shift | ArrOp::Reverse | ArrOp::Keys
                 | ArrOp::Values | ArrOp::Entries | ArrOp::Flat => 0,
                 _ => 1,
