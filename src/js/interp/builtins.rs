@@ -1751,20 +1751,40 @@ impl Interp {
                 }))
             }
             Native::ObjToString => {
-                let tag = match &recv {
-                    Some(Value::Arr(_)) => "Array",
-                    None | Some(Value::Undefined) => "Undefined",
-                    Some(Value::Null) => "Null",
-                    Some(Value::Str(_)) => "String",
-                    Some(Value::Num(_)) => "Number",
-                    Some(Value::Bool(_)) => "Boolean",
+                // §20.1.3.6: 빌트인 태그를 정한 뒤 Symbol.toStringTag(문자열)로 덮어쓴다.
+                let tag: String = match &recv {
+                    Some(Value::Arr(_)) => "Array".into(),
+                    None | Some(Value::Undefined) => "Undefined".into(),
+                    Some(Value::Null) => "Null".into(),
+                    Some(Value::Str(_)) => "String".into(),
+                    Some(Value::Num(_)) => "Number".into(),
+                    Some(Value::Bool(_)) => "Boolean".into(),
                     Some(Value::Fn(_))
                     | Some(Value::Native(_))
                     | Some(Value::Bound(_))
-                    | Some(Value::Class(_)) => "Function",
-                    Some(Value::MapVal(_)) => "Map",
-                    Some(Value::SetVal(_)) => "Set",
-                    _ => "Object",
+                    | Some(Value::Class(_)) => "Function".into(),
+                    Some(Value::MapVal(_)) => "Map".into(),
+                    Some(Value::SetVal(_)) => "Set".into(),
+                    Some(Value::Obj(o)) => {
+                        let b = o.borrow();
+                        // Symbol.toStringTag 우선 (문자열이면)
+                        if let Some(Value::Str(t)) = b.get("\u{0}@@toStringTag") {
+                            t.clone()
+                        } else if let Some(Value::Str(t)) = b.get("\u{0}class") {
+                            // 원시 래퍼(new String/Number/Boolean)
+                            t.clone()
+                        } else if is_regex_obj(o) {
+                            "RegExp".into()
+                        } else if b.contains_key("\u{0}isDate") {
+                            "Date".into()
+                        } else if b.contains_key("\u{0}items") || b.contains_key("next") {
+                            // 반복자류는 그대로 Object (Arguments 등은 미구분)
+                            "Object".into()
+                        } else {
+                            "Object".into()
+                        }
+                    }
+                    _ => "Object".into(),
                 };
                 Ok(Value::Str(format!("[object {}]", tag)))
             }
@@ -3301,6 +3321,31 @@ impl Interp {
                     .filter_map(|a| char::from_u32(to_num(a) as u32))
                     .collect();
                 Ok(Value::Str(s))
+            }
+            // String.raw(template, ...subs) (§22.1.2.4): template.raw 의 각 세그먼트를
+            // 치환값과 번갈아 잇는다. 태그된 템플릿의 원시 문자열용.
+            Native::StrRaw => {
+                let template = args.first().cloned().unwrap_or(Value::Undefined);
+                let raw = self.member_get(&template, "raw")?;
+                // raw.length
+                let len = match self.member_get(&raw, "length") {
+                    Ok(v) => to_num(&v),
+                    Err(_) => f64::NAN,
+                };
+                let len = if len.is_finite() && len > 0.0 { len as usize } else { 0 };
+                let subs = &args[1.min(args.len())..];
+                let mut out = String::new();
+                for i in 0..len {
+                    let seg = self.member_get(&raw, &i.to_string())?;
+                    out.push_str(&to_display(&seg));
+                    if i + 1 == len {
+                        break;
+                    }
+                    if let Some(s) = subs.get(i) {
+                        out.push_str(&to_display(s));
+                    }
+                }
+                Ok(Value::Str(out))
             }
             Native::NumIsInteger => {
                 let ok = matches!(args.first(), Some(Value::Num(n)) if n.fract() == 0.0 && n.is_finite());

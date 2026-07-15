@@ -4427,3 +4427,27 @@ fn primitive_wrapper_objects() {
     assert_eq!(run_str("typeof Boolean(1)"), "boolean");
     assert_eq!(run_str("typeof Number('5')"), "number");
 }
+
+// String.raw (§22.1.2.4) + Object.prototype.toString 의 빌트인 태그.
+#[test]
+fn string_raw_and_tostring_tags() {
+    // String.raw: 세그먼트와 치환값을 번갈아
+    assert_eq!(run_str("String.raw({raw:['a','b','c']}, 1, 2)"), "a1b2c");
+    assert_eq!(run_str("String.raw({raw:['x']})"), "x");
+    assert_eq!(run_str("String.raw({raw:[]})"), "");
+    // 태그된 템플릿: 원시 이스케이프 보존
+    assert_eq!(run_str("String.raw`a\\nb${1+1}c`"), "a\\nb2c");
+    assert_eq!(run_str("String.raw.name"), "raw");
+    // Object.prototype.toString 태그
+    assert_eq!(run_str("Object.prototype.toString.call(new Number(1))"), "[object Number]");
+    assert_eq!(run_str("Object.prototype.toString.call(new String('x'))"), "[object String]");
+    assert_eq!(run_str("Object.prototype.toString.call(new Boolean(true))"), "[object Boolean]");
+    assert_eq!(run_str("Object.prototype.toString.call(/x/)"), "[object RegExp]");
+    assert_eq!(run_str("Object.prototype.toString.call(null)"), "[object Null]");
+    assert_eq!(run_str("Object.prototype.toString.call([])"), "[object Array]");
+    // Symbol.toStringTag 우선
+    assert_eq!(
+        run_str("var o={}; o[Symbol.toStringTag]='Custom'; Object.prototype.toString.call(o)"),
+        "[object Custom]"
+    );
+}

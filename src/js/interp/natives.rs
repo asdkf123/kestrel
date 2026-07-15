@@ -159,6 +159,7 @@ pub enum Native {
     NumberCtor,
     BooleanCtor,
     StrFromCharCode,
+    StrRaw,
     NumIsInteger,
     NumIsFinite,
     NumIsNaN,
@@ -654,6 +655,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         ArrayOf => ("of", 0),
         // ── String.* 정적 ──
         StrFromCharCode => ("fromCharCode", 1),
+        StrRaw => ("raw", 1),
         // ── Number.* 정적 ──
         NumIsInteger => ("isInteger", 1),
         NumIsFinite => ("isFinite", 1),
