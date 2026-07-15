@@ -3120,7 +3120,19 @@ impl Interp {
                         };
                         match &target {
                             Value::Obj(m) => {
-                                m.borrow_mut().remove(&key);
+                                // configurable:false 프로퍼티는 삭제되지 않고 false 를 낸다
+                                // (§10.1.10). 예전엔 서술자를 무시하고 무조건 지웠다.
+                                let exists = m.borrow().contains_key(&key);
+                                if exists {
+                                    let attrs = prop_attrs(&m.borrow(), &key);
+                                    if attrs & ATTR_CONFIGURABLE == 0 {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    let mut mm = m.borrow_mut();
+                                    mm.remove(&key);
+                                    mm.remove(&attr_marker(&key));
+                                    mm.remove(&nonenum_marker(&key));
+                                }
                             }
                             // Proxy: deleteProperty 트랩 (없으면 타깃에 위임).
                             // 반응성 라이브러리(Vue 등)가 delete 를 이 트랩으로 잡는다.
@@ -5835,6 +5847,14 @@ impl Interp {
                         let is_new = !map.borrow().contains_key(&key);
                         if is_new && self.is_nonextensible_val(&this_obj) {
                             return Ok(());
+                        }
+                        // writable:false 데이터 프로퍼티에는 대입이 무시된다 (sloppy 모드 §10.1.9).
+                        // 예전엔 서술자를 무시하고 그냥 덮어써서 writable:false 가 허수아비였다.
+                        if !is_new {
+                            let attrs = prop_attrs(&map.borrow(), &key);
+                            if attrs & ATTR_WRITABLE == 0 {
+                                return Ok(());
+                            }
                         }
                         map.borrow_mut().insert(key.clone(), value.clone());
                         if is_window {

@@ -3992,3 +3992,49 @@ fn global_number_functions() {
     assert!(run_bool("isNaN('x' * 2)"));
     assert!(run_bool("!isNaN(5)"));
 }
+
+// 프로퍼티 서술자 (§10.1.6): writable/configurable 이 실제로 강제되는가.
+// 예전엔 서술자가 이름만 있고 강제되지 않았다 — writable:false 여도 재대입이
+// 통과하고, configurable:false 여도 재정의/삭제가 됐고, getOwnPropertyDescriptor 는
+// 항상 writable:true/configurable:true 를 거짓말했다.
+#[test]
+fn property_descriptors_are_enforced() {
+    // writable:false → 재대입 무시 (sloppy)
+    assert_eq!(
+        run_num("var o={}; Object.defineProperty(o,'x',{value:1,writable:false}); o.x=99; o.x"),
+        1.0
+    );
+    // configurable:false → 재정의 TypeError
+    assert!(run_bool(
+        "var o={}; Object.defineProperty(o,'x',{value:1,configurable:false}); \
+         try{ Object.defineProperty(o,'x',{value:2}); false }catch(e){ e instanceof TypeError }"
+    ));
+    // configurable:false → 삭제 거부, delete 는 false
+    assert!(run_bool(
+        "var o={}; Object.defineProperty(o,'x',{value:1,configurable:false}); \
+         (delete o.x)===false && o.x===1"
+    ));
+    // getOwnPropertyDescriptor 가 실제 속성을 보고
+    assert!(run_bool(
+        "var o={}; Object.defineProperty(o,'x',{value:1}); \
+         var d=Object.getOwnPropertyDescriptor(o,'x'); \
+         d.writable===false && d.enumerable===false && d.configurable===false && d.value===1"
+    ));
+    // 접근자 서술자
+    assert!(run_bool(
+        "var o={}; Object.defineProperty(o,'y',{get:function(){return 7},enumerable:true}); \
+         var d=Object.getOwnPropertyDescriptor(o,'y'); \
+         typeof d.get==='function' && d.set===undefined && d.enumerable===true && o.y===7"
+    ));
+    // writable:false 는 configurable:true 면 defineProperty 로 값 변경 가능
+    assert_eq!(
+        run_num("var o={}; Object.defineProperty(o,'x',{value:1,writable:false,configurable:true}); \
+                 Object.defineProperty(o,'x',{value:2}); o.x"),
+        2.0
+    );
+    // 접근자와 value 를 동시 지정하면 TypeError
+    assert!(run_bool(
+        "try{ Object.defineProperty({},'x',{value:1,get:function(){}}); false }\
+         catch(e){ e instanceof TypeError }"
+    ));
+}

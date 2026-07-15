@@ -469,6 +469,49 @@ pub(super) fn nonenum_marker(k: &str) -> String {
     format!("\u{0}ne:{}", k)
 }
 
+// 프로퍼티 속성 비트 (§6.1.7.1). 데이터 프로퍼티의 writable/enumerable/configurable.
+// 기본값(전부 true)이면 마커를 두지 않는다 — 하위 호환이고 흔한 경우라 저장 비용 0.
+pub(super) const ATTR_WRITABLE: u8 = 1;
+pub(super) const ATTR_ENUMERABLE: u8 = 2;
+pub(super) const ATTR_CONFIGURABLE: u8 = 4;
+pub(super) const ATTR_DEFAULT: u8 = ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE;
+
+// 속성 비트를 저장하는 내부 키. Value::Num 으로 비트를 담는다.
+pub(super) fn attr_marker(k: &str) -> String {
+    format!("\u{0}attr:{}", k)
+}
+
+// 이 키의 속성 비트를 읽는다. 마커가 없으면 기본값(전부 true).
+// nonenum_marker 도 함께 존중한다 (기존 코드가 심은 비열거 표식과 호환).
+pub(super) fn prop_attrs(m: &ObjMap, k: &str) -> u8 {
+    if let Some(Value::Num(n)) = m.get(&attr_marker(k)) {
+        return *n as u8;
+    }
+    let mut a = ATTR_DEFAULT;
+    if m.contains_key(&nonenum_marker(k)) {
+        a &= !ATTR_ENUMERABLE;
+    }
+    a
+}
+
+// 속성 비트를 저장한다. 기본값이면 마커를 지운다 (군더더기 없음).
+pub(super) fn set_prop_attrs(m: &mut ObjMap, k: &str, attrs: u8) {
+    let am = attr_marker(k);
+    let ne = nonenum_marker(k);
+    if attrs == ATTR_DEFAULT {
+        m.remove(&am);
+        m.remove(&ne);
+    } else {
+        m.insert(am, Value::Num(attrs as f64));
+        // 비열거면 기존 nonenum 마커와도 일관되게
+        if attrs & ATTR_ENUMERABLE == 0 {
+            m.insert(ne, Value::Bool(true));
+        } else {
+            m.remove(&ne);
+        }
+    }
+}
+
 pub(super) fn enumerable_keys(m: &Rc<RefCell<ObjMap>>) -> Vec<String> {
     let b = m.borrow();
     b.keys()
@@ -698,6 +741,20 @@ pub(super) fn same_value_zero(a: &Value, b: &Value) -> bool {
     if let (Value::Num(x), Value::Num(y)) = (a, b) {
         if x.is_nan() && y.is_nan() {
             return true;
+        }
+    }
+    strict_eq(a, b)
+}
+
+// SameValue (§7.2.11): NaN 은 자기 자신과 같고, +0 과 -0 은 **다르다**.
+// defineProperty 의 값 비교(비writable 프로퍼티 재정의 판정)에 쓴다.
+pub(super) fn same_value(a: &Value, b: &Value) -> bool {
+    if let (Value::Num(x), Value::Num(y)) = (a, b) {
+        if x.is_nan() && y.is_nan() {
+            return true;
+        }
+        if *x == 0.0 && *y == 0.0 {
+            return x.is_sign_negative() == y.is_sign_negative();
         }
     }
     strict_eq(a, b)

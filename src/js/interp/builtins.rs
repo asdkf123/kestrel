@@ -848,6 +848,129 @@ impl Interp {
 
 
 
+    // OrdinaryDefineOwnProperty (§10.1.6): 서술자를 검증하고 적용한다.
+    // configurable:false 프로퍼티는 재정의를 거부하고(configurable/enumerable 변경 불가,
+    // writable:false 로만 강등 가능, 값은 writable 일 때만), 없던 프로퍼티는 새로 만든다.
+    // 예전엔 writable/configurable 을 통째로 무시하고 값만 덮었다 — 서술자가 이름만 있고
+    // 강제되지 않는 편법이었다.
+    pub(super) fn ordinary_define(
+        &mut self,
+        map: &Rc<RefCell<ObjMap>>,
+        key: &str,
+        desc: &Value,
+    ) -> Result<(), String> {
+        let Value::Obj(d) = desc else {
+            return Err(self.throw_error("TypeError", "Property description must be an object"));
+        };
+        let (has_value, new_value, has_get, get, has_set, set, has_w, w, has_e, e, has_c, c) = {
+            let d = d.borrow();
+            (
+                d.contains_key("value"), d.get("value").cloned().unwrap_or(Value::Undefined),
+                d.contains_key("get"), d.get("get").cloned(),
+                d.contains_key("set"), d.get("set").cloned(),
+                d.contains_key("writable"), d.get("writable").map(to_bool).unwrap_or(false),
+                d.contains_key("enumerable"), d.get("enumerable").map(to_bool).unwrap_or(false),
+                d.contains_key("configurable"), d.get("configurable").map(to_bool).unwrap_or(false),
+            )
+        };
+        let is_accessor_desc = has_get || has_set;
+        let is_data_desc = has_value || has_w;
+        if is_accessor_desc && is_data_desc {
+            return Err(self.throw_error(
+                "TypeError",
+                "Invalid property descriptor. Cannot both specify accessors and a value or writable",
+            ));
+        }
+        if let Some(g) = &get {
+            if !matches!(g, Value::Undefined) && !is_callable(g) {
+                return Err(self.throw_error("TypeError", "Getter must be a function"));
+            }
+        }
+        if let Some(s) = &set {
+            if !matches!(s, Value::Undefined) && !is_callable(s) {
+                return Err(self.throw_error("TypeError", "Setter must be a function"));
+            }
+        }
+
+        let existing = map.borrow().get(key).cloned();
+        let cur_attrs = existing.as_ref().map(|_| prop_attrs(&map.borrow(), key));
+
+        if let (Some(cur_val), Some(cur)) = (&existing, cur_attrs) {
+            let configurable = cur & ATTR_CONFIGURABLE != 0;
+            let cur_is_accessor = matches!(cur_val, Value::Accessor(_));
+            if !configurable {
+                if has_c && c {
+                    return Err(self.redefine_err());
+                }
+                if has_e && (e != (cur & ATTR_ENUMERABLE != 0)) {
+                    return Err(self.redefine_err());
+                }
+                if is_accessor_desc && !cur_is_accessor {
+                    return Err(self.redefine_err());
+                }
+                if is_data_desc && cur_is_accessor {
+                    return Err(self.redefine_err());
+                }
+                if !cur_is_accessor {
+                    let cur_w = cur & ATTR_WRITABLE != 0;
+                    if !cur_w && has_w && w {
+                        return Err(self.redefine_err());
+                    }
+                    if !cur_w && has_value && !same_value(cur_val, &new_value) {
+                        return Err(self.redefine_err());
+                    }
+                } else if let Value::Accessor(acc) = cur_val {
+                    if has_get
+                        && !same_value(&get.clone().unwrap_or(Value::Undefined),
+                                       &acc.get.clone().unwrap_or(Value::Undefined))
+                    {
+                        return Err(self.redefine_err());
+                    }
+                    if has_set
+                        && !same_value(&set.clone().unwrap_or(Value::Undefined),
+                                       &acc.set.clone().unwrap_or(Value::Undefined))
+                    {
+                        return Err(self.redefine_err());
+                    }
+                }
+            }
+        }
+
+        let mut attrs = cur_attrs.unwrap_or(0);
+        if has_w { if w { attrs |= ATTR_WRITABLE } else { attrs &= !ATTR_WRITABLE } }
+        if has_e { if e { attrs |= ATTR_ENUMERABLE } else { attrs &= !ATTR_ENUMERABLE } }
+        if has_c { if c { attrs |= ATTR_CONFIGURABLE } else { attrs &= !ATTR_CONFIGURABLE } }
+
+        let final_val = if is_accessor_desc {
+            let g = get.filter(is_callable);
+            let s = set.filter(is_callable);
+            let (og, os) = match &existing {
+                Some(Value::Accessor(a)) => (a.get.clone(), a.set.clone()),
+                _ => (None, None),
+            };
+            Value::Accessor(Rc::new(super::AccessorPair {
+                get: if has_get { g } else { og },
+                set: if has_set { s } else { os },
+            }))
+        } else if has_value {
+            new_value
+        } else {
+            match &existing {
+                Some(v) if !matches!(v, Value::Accessor(_)) => v.clone(),
+                _ => Value::Undefined,
+            }
+        };
+
+        let mut m = map.borrow_mut();
+        m.insert(key.to_string(), final_val);
+        set_prop_attrs(&mut m, key, attrs);
+        Ok(())
+    }
+
+    fn redefine_err(&mut self) -> String {
+        self.throw_error("TypeError", "Cannot redefine property")
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -1057,23 +1180,27 @@ impl Interp {
                 let mut d = ObjMap::new();
                 let found = match &target {
                     Value::Obj(m) => {
+                        // 실제 저장된 속성 비트를 읽어 정확히 보고한다 (§10.1.5.1).
+                        // 예전엔 writable 을 항상 true 로, configurable 도 무조건 true 로
+                        // 거짓말했다.
                         let b = m.borrow();
                         match b.get(&key) {
+                            Some(_) if is_internal_key(&key) => false,
                             Some(Value::Accessor(acc)) => {
-                                d.insert(
-                                    "get".to_string(),
-                                    acc.get.clone().unwrap_or(Value::Undefined),
-                                );
-                                d.insert(
-                                    "set".to_string(),
-                                    acc.set.clone().unwrap_or(Value::Undefined),
-                                );
-                                true
+                                let attrs = prop_attrs(&b, &key);
+                                d.insert("get".to_string(), acc.get.clone().unwrap_or(Value::Undefined));
+                                d.insert("set".to_string(), acc.set.clone().unwrap_or(Value::Undefined));
+                                d.insert("enumerable".to_string(), Value::Bool(attrs & ATTR_ENUMERABLE != 0));
+                                d.insert("configurable".to_string(), Value::Bool(attrs & ATTR_CONFIGURABLE != 0));
+                                return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                             }
                             Some(v) => {
+                                let attrs = prop_attrs(&b, &key);
                                 d.insert("value".to_string(), v.clone());
-                                d.insert("writable".to_string(), Value::Bool(true));
-                                true
+                                d.insert("writable".to_string(), Value::Bool(attrs & ATTR_WRITABLE != 0));
+                                d.insert("enumerable".to_string(), Value::Bool(attrs & ATTR_ENUMERABLE != 0));
+                                d.insert("configurable".to_string(), Value::Bool(attrs & ATTR_CONFIGURABLE != 0));
+                                return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                             }
                             None => false,
                         }
@@ -1221,44 +1348,33 @@ impl Interp {
             Native::ObjectDefineProperty => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
                 let key = args.get(1).map(to_display).unwrap_or_default();
-                let entry = if let Some(Value::Obj(d)) = args.get(2) {
-                    let d = d.borrow();
-                    let g = d.get("get").cloned().filter(is_callable);
-                    let st = d.get("set").cloned().filter(is_callable);
-                    if g.is_some() || st.is_some() {
-                        // 접근자 프로퍼티 (get/set 둘 다, 또는 한쪽만)
-                        Some(Value::Accessor(Rc::new(super::AccessorPair { get: g, set: st })))
-                    } else {
-                        d.get("value").cloned()
-                    }
+                let Some(desc) = args.get(2).cloned() else {
+                    return Err(self.throw_error("TypeError", "Property description must be an object"));
+                };
+                // Value::Obj 는 표준 OrdinaryDefineOwnProperty (§10.1.6) 로 처리한다.
+                // 그 외 대상(Fn/Instance/Arr/Class)은 속성 강제 없이 값만 넣는 근사 유지.
+                if let Value::Obj(map) = &target {
+                    self.ordinary_define(map, &key, &desc)?;
+                    return Ok(target);
+                }
+                // ── 근사 경로 (표준 강제 없음) ──
+                let d = if let Value::Obj(d) = &desc { d.borrow() } else {
+                    return Ok(target);
+                };
+                let g = d.get("get").cloned().filter(is_callable);
+                let st = d.get("set").cloned().filter(is_callable);
+                let entry = if g.is_some() || st.is_some() {
+                    Some(Value::Accessor(Rc::new(super::AccessorPair { get: g, set: st })))
                 } else {
-                    None
+                    d.get("value").cloned()
                 };
-                // enumerable: false 면 표식을 남긴다 (기본값은 false — 표준).
-                // 예전엔 이 플래그를 통째로 무시해서 숨겨야 할 프로퍼티가 Object.keys /
-                // for-in / JSON 에 그대로 새어 나왔다.
-                let enumerable = match args.get(2) {
-                    Some(Value::Obj(dd)) => matches!(dd.borrow().get("enumerable"), Some(v) if to_bool(v)),
-                    _ => false,
-                };
+                let enumerable = matches!(d.get("enumerable"), Some(v) if to_bool(v));
+                drop(d);
                 if let Some(val) = entry {
                     match &target {
-                        Value::Obj(map) => {
-                            let marker = nonenum_marker(&key);
-                            map.borrow_mut().insert(key, val);
-                            if enumerable {
-                                map.borrow_mut().remove(&marker);
-                            } else {
-                                map.borrow_mut().insert(marker, Value::Bool(true));
-                            }
-                        }
-                        // require.n 은 함수에 접근자를 정의 (getter.a = ...)
                         Value::Fn(func) => {
                             func.props.borrow_mut().insert(key, val);
                         }
-                        // 클래스 인스턴스. 예전엔 여기서 조용히 아무 일도 안 했다 —
-                        // 생성자 안의 Object.defineProperty(this, ...) 가 통째로 사라져서
-                        // 그 프로퍼티를 읽으면 프로토타입 값이 나왔다 (조용히 틀린 값).
                         Value::Instance(inst) => {
                             let marker = nonenum_marker(&key);
                             inst.fields.borrow_mut().insert(key, val);
@@ -1269,7 +1385,6 @@ impl Interp {
                             }
                         }
                         Value::Arr(a) => {
-                            // 인덱스 키면 요소, 아니면 own 프로퍼티
                             if let Ok(i) = key.parse::<usize>() {
                                 let mut items = a.borrow_mut();
                                 while items.len() <= i {
