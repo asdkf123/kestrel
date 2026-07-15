@@ -3893,6 +3893,65 @@ impl Interp {
 
     // 전역 생성자(ctor)의 prototype 에서 메서드를 찾는다 (폴리필 조회용).
     // 예: proto_method("Array", "flatMap") → Array.prototype.flatMap.
+    // 내장/바운드 함수의 함수 공통 멤버. name/length 는 own(§17), call/apply/bind 와
+    // Object.prototype/Function.prototype 상속 메서드(hasOwnProperty/toString 등)를
+    // 한곳에서 제공한다. 각 생성자별 member_get 분기의 fallback 도 이걸 쓴다 —
+    // 예전엔 분기마다 _ => Undefined 라 Array.name/String.length 등이 사라졌다.
+    fn native_fn_member(&self, recv: &Value, key: &str) -> Option<Value> {
+        Some(match key {
+            "name" => Value::Str(self.native_fn_name(recv)),
+            "length" => Value::Num(self.native_fn_length(recv)),
+            "call" => Value::Native(Native::FnCall),
+            "apply" => Value::Native(Native::FnApply),
+            "bind" => Value::Native(Native::FnBind),
+            // 내장 함수도 toString 을 가진다 — jQuery 서두가 fnToString.call(Object) 사용.
+            "toString" => Value::Native(Native::FnToString),
+            // Object.prototype 상속 메서드 — 함수도 객체이므로 상속한다.
+            "hasOwnProperty" => Value::Native(Native::HasOwnProperty),
+            "isPrototypeOf" => Value::Native(Native::ObjectIsPrototypeOf),
+            "valueOf" => Value::Native(Native::ValueOfSelf),
+            _ => return None,
+        })
+    }
+
+    // 내장/바운드 함수의 name (§10.2.9 SetFunctionName, §17). Bound 는 "bound " 접두.
+    fn native_fn_name(&self, v: &Value) -> String {
+        match v {
+            Value::Native(n) => natives::native_meta(n).map(|(nm, _)| nm.to_string()).unwrap_or_default(),
+            Value::Bound(b) => format!("bound {}", self.fn_name_of(&b.0)),
+            _ => String::new(),
+        }
+    }
+    // 내장/바운드 함수의 length. Bound 는 max(0, target.length - 바운드된 인자 수) (§10.4.1.3).
+    fn native_fn_length(&self, v: &Value) -> f64 {
+        match v {
+            Value::Native(n) => natives::native_meta(n).map(|(_, l)| l as f64).unwrap_or(0.0),
+            Value::Bound(b) => {
+                let target_len = self.fn_length_of(&b.0);
+                (target_len - b.2.len() as f64).max(0.0)
+            }
+            _ => 0.0,
+        }
+    }
+    // 임의 함수값의 name (Fn/Class/Native/Bound 공통).
+    fn fn_name_of(&self, v: &Value) -> String {
+        match v {
+            Value::Fn(f) => f.name.borrow().clone(),
+            Value::Class(c) => c.name.borrow().clone(),
+            Value::Native(_) | Value::Bound(_) => self.native_fn_name(v),
+            _ => String::new(),
+        }
+    }
+    // 임의 함수값의 length (형식 매개변수 수).
+    fn fn_length_of(&self, v: &Value) -> f64 {
+        match v {
+            // getOwnPropertyDescriptor(Fn,"length") 와 같은 셈법 유지.
+            Value::Fn(f) => f.params.len() as f64,
+            Value::Native(_) | Value::Bound(_) => self.native_fn_length(v),
+            _ => 0.0,
+        }
+    }
+
     fn proto_method(&self, ctor: &str, key: &str) -> Option<Value> {
         let ns = env_get(&self.global, ctor)?;
         let proto = match &ns {
@@ -4557,11 +4616,18 @@ impl Interp {
             // 보관된 네임스페이스 맵에 위임한다.
             Value::Native(Native::ObjectCtor) => {
                 let ns = self.object_ns.clone();
-                self.member_get(&ns, key)
+                match self.member_get(&ns, key)? {
+                    // ns 에 없으면 함수 공통 멤버(name/length/call/…)로 폴백
+                    Value::Undefined => Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined)),
+                    v => Ok(v),
+                }
             }
             Value::Native(Native::ArrayCtor) => {
                 let ns = self.array_ns.clone();
-                self.member_get(&ns, key)
+                match self.member_get(&ns, key)? {
+                    Value::Undefined => Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined)),
+                    v => Ok(v),
+                }
             }
             // Map/Set(=WeakMap/WeakSet).prototype — 번들의 Map.prototype.get 등.
             Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
@@ -4593,7 +4659,7 @@ impl Interp {
             Value::Native(Native::StringCtor) => Ok(match key {
                 "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
                 "prototype" => self.string_proto.clone(),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // Symbol.iterator 등 잘 알려진 심볼 + Symbol.for/keyFor
             Value::Native(Native::SymbolCtor) => Ok(match key {
@@ -4607,7 +4673,7 @@ impl Interp {
                 "for" => Value::Native(Native::SymbolFor),
                 "keyFor" => Value::Native(Native::SymbolKeyFor),
                 "prototype" => self.symbol_proto.clone(),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // 심볼 원시값: .description / .toString()
             Value::Symbol(s) => Ok(match key {
@@ -4634,15 +4700,15 @@ impl Interp {
                 "NEGATIVE_INFINITY" => Value::Num(f64::NEG_INFINITY),
                 "NaN" => Value::Num(f64::NAN),
                 "prototype" => self.number_proto.clone(),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             Value::Native(Native::BooleanCtor) => Ok(match key {
                 "prototype" => self.boolean_proto.clone(),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             Value::Native(Native::RegExpCtor) => Ok(match key {
                 "prototype" => self.regexp_proto.clone(),
-                _ => Value::Undefined,
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // Promise 정적 메서드 + prototype (기능 탐지 'finally' in Promise.prototype)
             Value::Native(Native::PromiseCtor) => Ok(match key {
@@ -4660,19 +4726,10 @@ impl Interp {
                 }
                 _ => Value::Undefined,
             }),
-            // 네이티브/바운드 함수도 호출 어댑터 제공
-            Value::Native(_) | Value::Bound(_) => match key {
-                "call" => Ok(Value::Native(Native::FnCall)),
-                "apply" => Ok(Value::Native(Native::FnApply)),
-                "bind" => Ok(Value::Native(Native::FnBind)),
-                "name" => Ok(Value::Str(String::new())),
-                "length" => Ok(Value::Num(0.0)),
-                // 내장 함수도 toString 을 가진다. jQuery 서두가
-                // `fnToString = hasOwn.toString; fnToString.call(Object)` 로 이걸 쓴다 —
-                // 없으면 undefined.call(...) 로 jQuery 전체가 즉사했다.
-                "toString" => Ok(Value::Native(Native::FnToString)),
-                _ => Ok(Value::Undefined),
-            },
+            // 네이티브/바운드 함수: 함수 공통 멤버(name/length/call/apply/bind + 상속 메서드)
+            Value::Native(_) | Value::Bound(_) => {
+                Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined))
+            }
             // BigInt 메서드: toString(radix) / toLocaleString / valueOf
             Value::BigInt(_) => Ok(match key {
                 "toString" | "toLocaleString" => Value::Native(Native::BigIntToString),

@@ -4093,3 +4093,31 @@ fn string_methods_are_generic() {
         "try{ String.prototype.trim.call(Symbol('x')); false }catch(e){ e instanceof TypeError }"
     ));
 }
+
+// 내장 함수는 스펙상 name/length own 프로퍼티를 가진다 (§17). 예전엔 항상 ""/0.
+// 읽기 경로(값, getOwnPropertyDescriptor, hasOwnProperty)를 표준대로 보고한다.
+#[test]
+fn native_function_name_and_length() {
+    // 메서드 계열
+    assert_eq!(run_str("[].map.name"), "map");
+    assert_eq!(run_num("[].map.length"), 1.0);
+    assert_eq!(run_str("''.trim.name"), "trim");
+    assert_eq!(run_num("''.slice.length"), 2.0);
+    // 생성자
+    assert_eq!(run_str("Array.name"), "Array");
+    assert_eq!(run_num("Array.length"), 1.0);
+    assert_eq!(run_str("String.name"), "String");
+    // 전역 함수
+    assert_eq!(run_str("parseInt.name"), "parseInt");
+    assert_eq!(run_num("parseInt.length"), 2.0);
+    // getOwnPropertyDescriptor: name 은 { writable:false, enumerable:false, configurable:true }
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor([].map,'name'); \
+         d.value==='map' && d.writable===false && d.enumerable===false && d.configurable===true"
+    ));
+    // hasOwnProperty
+    assert!(run_bool("[].map.hasOwnProperty('name') && [].map.hasOwnProperty('length')"));
+    // 바운드 함수: 'bound ' 접두 + length = target.length - 바운드 인자 수
+    assert_eq!(run_str("(function foo(a,b,c){}).bind(null,1).name"), "bound foo");
+    assert_eq!(run_num("(function foo(a,b,c){}).bind(null,1).length"), 2.0);
+}

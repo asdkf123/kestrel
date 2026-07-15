@@ -533,6 +533,156 @@ pub fn array_op_for(name: &str) -> Option<ArrOp> {
     ARRAY_PROTO_OPS.iter().find(|(n, _)| *n == name).map(|(_, op)| *op)
 }
 
+// 내장 함수의 (name, length). 표준(§17 ECMAScript Standard Built-in Objects):
+// 모든 내장 함수는 name 프로퍼티(메서드 이름)와 length 프로퍼티(형식 매개변수 수)를
+// 가진다 — { writable:false, enumerable:false, configurable:true }.
+// 예전엔 네이티브 함수의 name 이 항상 ""이고 length 가 0이라 verifyProperty 가
+// 전 서브셋에서 깨졌다. DOM/내부 전용 네이티브는 None (test262 대상 아님).
+pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
+    use Native::*;
+    Some(match n {
+        // ── 배열 메서드 (Array.prototype) ──
+        Arr(op) => {
+            let name = ARRAY_PROTO_OPS.iter().find(|(_, o)| o == op).map(|(nm, _)| *nm)?;
+            let len = match op {
+                ArrOp::Slice | ArrOp::Splice => 2,
+                ArrOp::Pop | ArrOp::Shift | ArrOp::Reverse | ArrOp::Keys
+                | ArrOp::Values | ArrOp::Entries | ArrOp::Flat => 0,
+                _ => 1,
+            };
+            return Some((name, len));
+        }
+        ArrayPush => ("push", 1),
+        // ── 문자열 메서드 (String.prototype) ──
+        Str(op) => {
+            let (name, len): (&'static str, u32) = match op {
+                StrOp::IndexOf => ("indexOf", 1),
+                StrOp::LastIndexOf => ("lastIndexOf", 1),
+                StrOp::Slice => ("slice", 2),
+                StrOp::Split => ("split", 2),
+                StrOp::Upper => ("toUpperCase", 0),
+                StrOp::Lower => ("toLowerCase", 0),
+                StrOp::Trim => ("trim", 0),
+                StrOp::Replace => ("replace", 2),
+                StrOp::ReplaceAll => ("replaceAll", 2),
+                StrOp::CharAt => ("charAt", 1),
+                StrOp::Includes => ("includes", 1),
+                StrOp::StartsWith => ("startsWith", 1),
+                StrOp::EndsWith => ("endsWith", 1),
+                StrOp::Match => ("match", 1),
+                StrOp::MatchAll => ("matchAll", 1),
+                StrOp::Search => ("search", 1),
+                StrOp::PadStart => ("padStart", 1),
+                StrOp::PadEnd => ("padEnd", 1),
+                StrOp::Repeat => ("repeat", 1),
+                StrOp::TrimStart => ("trimStart", 0),
+                StrOp::TrimEnd => ("trimEnd", 0),
+                StrOp::CharCodeAt => ("charCodeAt", 1),
+                StrOp::CodePointAt => ("codePointAt", 1),
+                StrOp::Concat => ("concat", 1),
+                StrOp::At => ("at", 1),
+                StrOp::LocaleCompare => ("localeCompare", 1),
+            };
+            return Some((name, len));
+        }
+        // ── 생성자 ──
+        ArrayCtor => ("Array", 1),
+        StringCtor => ("String", 1),
+        NumberCtor => ("Number", 1),
+        BooleanCtor => ("Boolean", 1),
+        ObjectCtor => ("Object", 1),
+        SymbolCtor => ("Symbol", 0),
+        RegExpCtor => ("RegExp", 2),
+        MapCtor => ("Map", 0),
+        SetCtor => ("Set", 0),
+        DateCtor => ("Date", 7),
+        PromiseCtor => ("Promise", 1),
+        BigIntCtor => ("BigInt", 1),
+        ProxyCtor => ("Proxy", 2),
+        FunctionCtor => ("Function", 1),
+        // ── 전역 함수 ──
+        ParseInt => ("parseInt", 2),
+        ParseFloat => ("parseFloat", 1),
+        IsNaN => ("isNaN", 1),
+        EncodeUri => ("encodeURI", 1),
+        EncodeUriComponent => ("encodeURIComponent", 1),
+        DecodeUri => ("decodeURI", 1),
+        DecodeUriComponent => ("decodeURIComponent", 1),
+        Escape => ("escape", 1),
+        Unescape => ("unescape", 1),
+        Eval => ("eval", 1),
+        // ── Function.prototype ──
+        FnCall => ("call", 1),
+        FnApply => ("apply", 2),
+        FnBind => ("bind", 1),
+        FnToString => ("toString", 0),
+        // ── Object.* 정적 ──
+        ObjectKeys => ("keys", 1),
+        ObjectValues => ("values", 1),
+        ObjectEntries => ("entries", 1),
+        ObjectAssign => ("assign", 2),
+        ObjectFreeze => ("freeze", 1),
+        ObjectCreate => ("create", 2),
+        ObjectDefineProperty => ("defineProperty", 3),
+        ObjectDefineProperties => ("defineProperties", 2),
+        ObjectGetOwnPropertyDescriptor => ("getOwnPropertyDescriptor", 2),
+        ObjectGetPrototypeOf => ("getPrototypeOf", 1),
+        ObjectSetPrototypeOf => ("setPrototypeOf", 2),
+        ObjectFromEntries => ("fromEntries", 1),
+        ObjectIsFrozen => ("isFrozen", 1),
+        ObjectIsSealed => ("isSealed", 1),
+        ObjectSeal => ("seal", 1),
+        ObjectPreventExt => ("preventExtensions", 1),
+        ObjectIsExtensible => ("isExtensible", 1),
+        ObjectGetOwnPropertySymbols => ("getOwnPropertySymbols", 1),
+        ObjectIsPrototypeOf => ("isPrototypeOf", 1),
+        // ── Object.prototype ──
+        HasOwnProperty => ("hasOwnProperty", 1),
+        ObjToString => ("toString", 0),
+        ErrorToString => ("toString", 0),
+        // ── Array.* 정적 ──
+        ArrayIsArray => ("isArray", 1),
+        ArrayFrom => ("from", 1),
+        ArrayOf => ("of", 0),
+        // ── String.* 정적 ──
+        StrFromCharCode => ("fromCharCode", 1),
+        // ── Number.* 정적 ──
+        NumIsInteger => ("isInteger", 1),
+        NumIsFinite => ("isFinite", 1),
+        NumIsNaN => ("isNaN", 1),
+        NumToFixed => ("toFixed", 1),
+        // ── Reflect.* ──
+        ReflectGet => ("get", 2),
+        ReflectSet => ("set", 3),
+        ReflectHas => ("has", 2),
+        ReflectDeleteProperty => ("deleteProperty", 2),
+        ReflectApply => ("apply", 3),
+        ReflectConstruct => ("construct", 2),
+        // ── JSON.* ──
+        JsonParse => ("parse", 2),
+        JsonStringify => ("stringify", 3),
+        // ── Symbol.* ──
+        SymbolFor => ("for", 1),
+        SymbolKeyFor => ("keyFor", 1),
+        // ── 타이머/기타 전역 ──
+        SetTimeout => ("setTimeout", 2),
+        SetInterval => ("setInterval", 2),
+        ClearTimer => ("clearTimeout", 1),
+        QueueMicrotask => ("queueMicrotask", 1),
+        StructuredClone => ("structuredClone", 1),
+        // ── Promise 정적 ──
+        PromiseResolve => ("resolve", 1),
+        PromiseReject => ("reject", 1),
+        PromiseAll => ("all", 1),
+        PromiseRace => ("race", 1),
+        PromiseAllSettled => ("allSettled", 1),
+        PromiseThen => ("then", 2),
+        PromiseCatch => ("catch", 1),
+        PromiseFinally => ("finally", 1),
+        _ => return None,
+    })
+}
+
 // CharacterData 의 문자 데이터 연산 (§4.9). 오프셋/길이는 UTF-16 코드 단위 기준.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CharDataOp {

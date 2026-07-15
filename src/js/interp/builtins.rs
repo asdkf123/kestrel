@@ -1317,6 +1317,20 @@ impl Interp {
                             }
                         }
                     }
+                    // 내장/바운드 함수의 name/length 는 own 프로퍼티다 (§17):
+                    // { writable:false, enumerable:false, configurable:true }.
+                    Value::Native(_) | Value::Bound(_) if matches!(key.as_str(), "name" | "length") => {
+                        let val = if key == "name" {
+                            Value::Str(self.native_fn_name(&target))
+                        } else {
+                            Value::Num(self.native_fn_length(&target))
+                        };
+                        d.insert("value".to_string(), val);
+                        d.insert("writable".to_string(), Value::Bool(false));
+                        d.insert("enumerable".to_string(), Value::Bool(false));
+                        d.insert("configurable".to_string(), Value::Bool(true));
+                        return Ok(Value::Obj(Rc::new(RefCell::new(d))));
+                    }
                     _ => false,
                 };
                 if !found {
@@ -1618,6 +1632,10 @@ impl Interp {
                     Some(Value::Fn(f)) => {
                         f.props.borrow().contains_key(&key)
                             || matches!(key.as_str(), "prototype" | "name" | "length")
+                    }
+                    // 내장/바운드 함수도 name/length 를 own 프로퍼티로 가진다 (§17).
+                    Some(Value::Native(_)) | Some(Value::Bound(_)) => {
+                        matches!(key.as_str(), "name" | "length")
                     }
                     _ => false,
                 };
