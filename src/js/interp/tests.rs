@@ -4294,3 +4294,32 @@ fn define_property_descriptor_coercion() {
     // 비객체 서술자 → TypeError
     assert!(run_bool("try{Object.defineProperty({},'x',5);false}catch(e){e instanceof TypeError}"));
 }
+
+// 내장 프로퍼티는 non-enumerable, writable, configurable (§17). 예전엔 표식이 없어
+// getOwnPropertyDescriptor 가 enumerable:true 로 보고하고 Object.keys(Math) 가
+// 메서드를 나열했다.
+#[test]
+fn builtin_properties_non_enumerable() {
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Math,'atan2').enumerable===false"));
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Math,'atan2').writable===true"));
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Math,'atan2').configurable===true"));
+    assert_eq!(run_str("JSON.stringify(Object.keys(Math))"), "[]");
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Array.prototype,'map').enumerable===false"));
+    assert!(run_bool("Object.getOwnPropertyDescriptor(JSON,'stringify').enumerable===false"));
+    // 사용자 프로퍼티는 여전히 열거된다 (대입한 Native 값 포함)
+    assert_eq!(run_str("var o={}; o.f=[].map; JSON.stringify(Object.keys(o))"), r#"["f"]"#);
+    assert_eq!(run_str("JSON.stringify(Object.keys({a:1,b:2}))"), r#"["a","b"]"#);
+}
+
+// Object.defineProperties: Properties 의 열거 가능한 own 키를 돌며 각 서술자를
+// Get(getter 호출)으로 읽는다. 예전엔 getter 서술자를 Accessor 그대로 넘겨 거부됐다.
+#[test]
+fn define_properties_reads_via_get() {
+    assert_eq!(
+        run_num(
+            "var o={}; Object.defineProperties(o,{a:{value:5,enumerable:true},\
+             b:{get:function(){return 9},enumerable:true}}); o.a+o.b"
+        ),
+        14.0
+    );
+}

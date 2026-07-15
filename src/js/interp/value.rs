@@ -494,6 +494,17 @@ pub(super) fn nonenum_marker(k: &str) -> String {
     format!("\u{0}ne:{}", k)
 }
 
+// 내장 객체(Math/JSON/네임스페이스/프로토타입)의 현재 non-internal 프로퍼티를 전부
+// non-enumerable 로 표식한다 (§17: 내장 프로퍼티는 열거되지 않는다). 생성 직후,
+// 사용자 코드 실행 전에 부른다.
+pub(super) fn mark_nonenum_all(m: &mut ObjMap) {
+    let keys: Vec<String> =
+        m.keys().filter(|k| !is_internal_key(k)).cloned().collect();
+    for k in keys {
+        m.insert(nonenum_marker(&k), Value::Bool(true));
+    }
+}
+
 // 프로퍼티 속성 비트 (§6.1.7.1). 데이터 프로퍼티의 writable/enumerable/configurable.
 // 기본값(전부 true)이면 마커를 두지 않는다 — 하위 호환이고 흔한 경우라 저장 비용 0.
 pub(super) const ATTR_WRITABLE: u8 = 1;

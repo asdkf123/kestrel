@@ -653,11 +653,13 @@ impl Interp {
         math.insert("SQRT2".to_string(), Value::Num(std::f64::consts::SQRT_2));
         math.insert("LN2".to_string(), Value::Num(std::f64::consts::LN_2));
         math.insert("LN10".to_string(), Value::Num(std::f64::consts::LN_10));
+        mark_nonenum_all(&mut math); // 내장 프로퍼티는 비열거 (§17)
         env_declare(&global, "Math", Value::Obj(Rc::new(RefCell::new(math))));
         // JSON
         let mut json = ObjMap::new();
         json.insert("parse".to_string(), Value::Native(Native::JsonParse));
         json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
+        mark_nonenum_all(&mut json);
         env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
         // 전역 함수
         env_declare(&global, "BigInt", Value::Native(Native::BigIntCtor));
@@ -762,7 +764,9 @@ impl Interp {
         object_proto.insert("isPrototypeOf".to_string(), Value::Native(Native::ObjectIsPrototypeOf));
         object_proto
             .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
+        mark_nonenum_all(&mut object_proto); // 내장 메서드는 비열거 (§17)
         object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
+        mark_nonenum_all(&mut object_ns);
         let object_ns = Value::Obj(Rc::new(RefCell::new(object_ns)));
         env_declare(&global, "Object", Value::Native(Native::ObjectCtor));
         // Array.prototype: 모든 배열 메서드를 담아 Array.prototype.slice.call(x) 지원
@@ -778,7 +782,9 @@ impl Interp {
         array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
         // Array.prototype[Symbol.iterator] — core-js uncurryThis 참조
         array_proto.insert("\u{0}@@iterator".to_string(), Value::Native(Native::MakeIter));
+        mark_nonenum_all(&mut array_proto); // 내장 메서드는 비열거 (§17)
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
+        mark_nonenum_all(&mut array_ns);
         let array_ns = Value::Obj(Rc::new(RefCell::new(array_ns)));
         env_declare(&global, "Array", Value::Native(Native::ArrayCtor));
         env_declare(&global, "RegExp", Value::Native(Native::RegExpCtor));
@@ -1031,6 +1037,9 @@ impl Interp {
             let mut m = ObjMap::new();
             for (k, n) in pairs {
                 m.insert(k.to_string(), Value::Native(n));
+                // 내장 메서드는 non-enumerable, writable, configurable (§17). 예전엔
+                // 표식이 없어 getOwnPropertyDescriptor 가 enumerable:true 로 보고했다.
+                m.insert(nonenum_marker(k), Value::Bool(true));
             }
             Value::Obj(Rc::new(RefCell::new(m)))
         };

@@ -1526,16 +1526,16 @@ impl Interp {
             // 시그니처가 달라 아무것도 정의되지 않았다.
             Native::ObjectDefineProperties => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
-                let descs: Vec<(String, Value)> = match args.get(1) {
-                    Some(Value::Obj(d)) => d
-                        .borrow()
-                        .iter()
-                        .filter(|(k, _)| !is_internal_key(k))
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
+                let props = args.get(1).cloned().unwrap_or(Value::Undefined);
+                // §20.1.2.3.1: Properties 의 열거 가능한 own 키를 돌며, 각 서술자는
+                // Get(Properties, key)(getter 호출)으로 읽는다. 예전엔 own 값을 raw 로
+                // 순회해 getter 서술자를 Accessor 그대로 넘겨 거부됐다.
+                let keys: Vec<String> = match &props {
+                    Value::Obj(d) => enumerable_keys(d),
                     _ => Vec::new(),
                 };
-                for (k, desc) in descs {
+                for k in keys {
+                    let desc = self.member_get(&props, &k)?;
                     self.call_native(
                         Native::ObjectDefineProperty,
                         None,
