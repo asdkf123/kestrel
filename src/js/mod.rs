@@ -1956,6 +1956,15 @@ function __kMakeTypedArray(name) {
     } else if (typeof arg === 'number') {
       len = arg | 0;
       buf = new __kArrayBuffer(len * spec.size);
+    } else if (arg && typeof arg === 'object' && typeof arg[Symbol.iterator] === 'function' && typeof arg.length !== 'number') {
+      // 순수 iterable(@@iterator 있고 length 없음) → 값을 모아 리스트로
+      // (§23.2.5.1 InitializeTypedArrayFromList). Set/제너레이터/사용자 iterable 지원.
+      // 예전엔 length 없는 iterable 이 빈 배열로 떨어져 통째로 비었다.
+      var vals = [], it = arg[Symbol.iterator](), step;
+      while (!(step = it.next()).done) vals.push(step.value);
+      arg = vals;
+      len = vals.length;
+      buf = new __kArrayBuffer(len * spec.size);
     } else if (arg && typeof arg.length === 'number') {
       len = arg.length;
       buf = new __kArrayBuffer(len * spec.size);

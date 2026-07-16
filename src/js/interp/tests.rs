@@ -4953,6 +4953,28 @@ fn typed_array_species() {
     assert!(prelude_bool("new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}) instanceof Uint8Array"));
 }
 
+// TypedArray 생성자의 iterable 인자 (§23.2.5.1 InitializeTypedArrayFromList): @@iterator
+// 가 있고 length 가 없는 순수 iterable 은 이터레이터로 값을 수집한다. 예전엔 length
+// 없는 iterable 이 빈 배열로 떨어졌다(Set/제너레이터/사용자 iterable 통째로 비었음).
+#[test]
+fn typed_array_from_iterable() {
+    // 사용자 iterable
+    assert_eq!(prelude_str(
+        "var it={}; it[Symbol.iterator]=function(){ var a=[10,20,30],i=0; return { next:function(){ return i<a.length?{value:a[i++],done:false}:{value:undefined,done:true}; } }; }; \
+         new Uint8Array(it).join(',')"), "10,20,30");
+    // Set / 제너레이터 / Map.keys
+    assert_eq!(prelude_str("new Uint8Array(new Set([7,8,9])).join(',')"), "7,8,9");
+    assert_eq!(prelude_str("new Int16Array(function*(){yield 1;yield 2;yield 3;}()).join(',')"), "1,2,3");
+    assert_eq!(prelude_str("new Uint8Array(new Map([[1,'a'],[2,'b']]).keys()).join(',')"), "1,2");
+    // BigInt iterable
+    assert_eq!(prelude_str("new BigInt64Array(new Set([1n,2n,3n])).join(',')"), "1,2,3");
+    // 무회귀: 배열/array-like/typed array/숫자 인자는 그대로
+    assert_eq!(prelude_str("new Uint8Array([1,2,3,4]).join(',')"), "1,2,3,4");
+    assert_eq!(prelude_str("new Uint8Array({length:3,0:5,1:6,2:7}).join(',')"), "5,6,7");
+    assert_eq!(prelude_str("new Int8Array(new Uint8Array([9,8,7])).join(',')"), "9,8,7");
+    assert_eq!(prelude_num("new Uint8Array(3).length"), 3.0);
+}
+
 // DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
 #[test]
 fn data_view_get_set_endian() {
