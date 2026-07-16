@@ -1872,7 +1872,32 @@ function __kTASpeciesCreate(exemplar, args){
   return result;
 }
 var __kTAProto = {
-  set: function(src, off){ off = off || 0; for (var i = 0; i < src.length; i++) this[off + i] = src[i]; },
+  // §23.2.3.24 %TypedArray%.prototype.set(source [, offset]) — length 1(offset=arguments[1]).
+  // 브랜드 검사(TypeError) → offset ToInteger(음수 RangeError) → 분리(TypeError) →
+  // 범위(RangeError) → typed array 소스면 요소복사(오버랩은 임시배열), 아니면 array-like
+  // (ToObject/ToLength/각 값 ToNumber). BigInt 컨텐트 타입 불일치는 TypeError.
+  set: function(src){
+    var target = this;
+    if (!target || !target._spec) throw new TypeError('TypedArray.prototype.set called on incompatible receiver');
+    var to = +arguments[1]; if (to !== to) to = 0; to = Math.trunc(to);
+    if (to < 0) throw new RangeError('offset is out of bounds');
+    if (target._buffer && target._buffer._detached) throw new TypeError('target ArrayBuffer is detached');
+    var tlen = target.length;
+    if (src && src._spec) {
+      if (!!src._spec.big !== !!target._spec.big) throw new TypeError('cannot set a BigInt TypedArray from a non-BigInt one (or vice versa)');
+      var sl = src.length;
+      if (sl + to > tlen) throw new RangeError('source array is too long for the target offset');
+      var tmp = []; for (var i = 0; i < sl; i++) tmp.push(src[i]);
+      for (var i = 0; i < sl; i++) target[to + i] = tmp[i];
+    } else {
+      var so = Object(src);
+      var n = Number(so.length);
+      var sl = (n !== n || n <= 0) ? 0 : Math.min(Math.trunc(n), 9007199254740991);
+      if (sl + to > tlen) throw new RangeError('source array is too long for the target offset');
+      for (var i = 0; i < sl; i++) target[to + i] = so[i];
+    }
+    return undefined;
+  },
   fill: function(v, a, b){ __kTAValidate(this); a = a || 0; b = (b === undefined) ? this.length : b; for (var i = a; i < b; i++) this[i] = v; return this; },
   subarray: function(a, b){ var len=this.length; a = a || 0; b = (b === undefined) ? len : b; var beginByteOffset = this.byteOffset + a * this.BYTES_PER_ELEMENT; return __kTASpeciesCreate(this, [this.buffer, beginByteOffset, Math.max(0, b - a)]); },
   slice: function(a, b){ __kTAValidate(this); var len=this.length; a = (a === undefined) ? 0 : (a|0); b = (b === undefined) ? len : (b|0); if (a<0) a+=len; if (b<0) b+=len; var count = Math.max(0, Math.min(b, len) - a); var A = __kTASpeciesCreate(this, [count]); for (var i = 0; i < count; i++) A[i] = this[a + i]; return A; },

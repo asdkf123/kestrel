@@ -4975,6 +4975,43 @@ fn typed_array_from_iterable() {
     assert_eq!(prelude_num("new Uint8Array(3).length"), 3.0);
 }
 
+// %TypedArray%.prototype.set (§23.2.3.24): array-like/typed-array 소스, offset ToInteger
+// (음수 RangeError), 범위 RangeError, 브랜드/분리 TypeError, BigInt 타입 불일치 TypeError.
+// 예전엔 검사 없이 length 루프만 돌아 대부분 조용히 통과/오동작했다.
+#[test]
+fn typed_array_set() {
+    // length 는 1 (§)
+    assert_eq!(prelude_num("Uint8Array.prototype.set.length"), 1.0);
+    // array-like / typed array 소스
+    assert_eq!(prelude_str("var t=new Uint8Array([1,2,3,4]); t.set([10,20],1); t.join(',')"), "1,10,20,4");
+    assert_eq!(prelude_str("var t=new Uint8Array([1,2,3,4]); t.set(new Uint8Array([7,8]),2); t.join(',')"), "1,2,7,8");
+    // 같은 버퍼 오버랩(임시배열로 안전)
+    assert_eq!(prelude_str("var v=new Uint8Array(8); v.set([1,2,3,4,5,6,7,8]); v.set(v.subarray(0,4),2); v.join(',')"), "1,2,1,2,3,4,7,8");
+    // 음수 offset → RangeError
+    for off in ["-1", "-1.5", "-Infinity"] {
+        assert!(prelude_bool(&format!(
+            "var t=false; try{{ new Uint8Array(4).set([1],{}) }}catch(e){{ t=e instanceof RangeError }} t", off)));
+    }
+    // 범위 초과 → RangeError (array-like + typed array)
+    assert!(prelude_bool("var t=false; try{ new Uint8Array(2).set([1,2,3]) }catch(e){ t=e instanceof RangeError } t"));
+    assert!(prelude_bool("var t=false; try{ new Uint8Array(2).set(new Uint8Array([1,2,3])) }catch(e){ t=e instanceof RangeError } t"));
+    // 브랜드 아님 → TypeError
+    for recv in ["{}", "[]", "new ArrayBuffer(8)"] {
+        assert!(prelude_bool(&format!(
+            "var t=false; try{{ Uint8Array.prototype.set.call({}, []) }}catch(e){{ t=e instanceof TypeError }} t", recv)));
+    }
+    // 분리된 타깃 → TypeError
+    assert!(prelude_bool(
+        "var a=new Uint8Array(new ArrayBuffer(4)); $262.detachArrayBuffer(a.buffer); \
+         var t=false; try{ a.set([1]) }catch(e){ t=e instanceof TypeError } t"));
+    // BigInt 컨텐트 타입 불일치 → TypeError
+    assert!(prelude_bool("var t=false; try{ new Uint8Array(2).set(new BigInt64Array([1n])) }catch(e){ t=e instanceof TypeError } t"));
+    // offset 은 ToInteger (valueOf 관측)
+    assert!(prelude_bool(
+        "var seen=false; var t=new Uint8Array(4); t.set([9],{valueOf:function(){seen=true;return 1;}}); \
+         seen && t.join(',')==='0,9,0,0'"));
+}
+
 // DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
 #[test]
 fn data_view_get_set_endian() {
