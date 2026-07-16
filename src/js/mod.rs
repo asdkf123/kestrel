@@ -1882,6 +1882,16 @@ Object.defineProperty(__kTAProto, 'byteLength', { get: function(){
   var avail = Math.floor((this.buffer.byteLength - this.byteOffset) / this.BYTES_PER_ELEMENT);
   return Math.max(0, Math.min(this._len, avail)) * this.BYTES_PER_ELEMENT;
 }, configurable: true });
+// buffer/byteOffset 도 %TypedArray%.prototype accessor (§23.2.3.1/.3). 인스턴스는 내부
+// 슬롯 _buffer/_byteOffset 에 든다(own 데이터 아님 — hasOwnProperty 검사 통과).
+Object.defineProperty(__kTAProto, 'buffer', { get: function(){
+  if (!this || !this._spec) throw new TypeError('get %TypedArray%.prototype.buffer called on incompatible receiver');
+  return this._buffer;
+}, configurable: true });
+Object.defineProperty(__kTAProto, 'byteOffset', { get: function(){
+  if (!this || !this._spec) throw new TypeError('get %TypedArray%.prototype.byteOffset called on incompatible receiver');
+  return this._byteOffset;
+}, configurable: true });
 
 // %TypedArray% intrinsic 생성자 (§23.2.1) — 추상. 하네스가 Object.getPrototypeOf(Int8Array)
 // 로 이걸 얻는다. 직접 호출/생성은 TypeError. 각 typed array 생성자의 [[Prototype]] 이 이것.
@@ -1912,8 +1922,8 @@ function __kMakeTypedArray(name) {
       buf = new __kArrayBuffer(0);
     }
     var self = this;
-    this.buffer = buf;
-    this.byteOffset = off;
+    this._buffer = buf;
+    this._byteOffset = off;
     this._len = len;
     this.BYTES_PER_ELEMENT = spec.size;
     this._spec = spec;
@@ -1926,7 +1936,7 @@ function __kMakeTypedArray(name) {
     // (WebAssembly.Memory.grow 는 옛 버퍼를 분리한다. 길이를 박아 두면 죽은 뷰가
     //  살아있는 척하며 조용히 틀린 값을 읽는다 — wasm-bindgen 은 정확히 이걸로 판별한다)
     var vlen = function(t){
-      var avail = Math.floor((t.buffer.byteLength - t.byteOffset) / spec.size);
+      var avail = Math.floor((t._buffer.byteLength - t._byteOffset) / spec.size);
       return Math.max(0, Math.min(t._len, avail));
     };
     var view = new Proxy(this, {
@@ -1934,7 +1944,7 @@ function __kMakeTypedArray(name) {
         var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
         if (n >= 0) {
           if (n >= vlen(t)) return undefined;
-          return spec.get(t.buffer._b, t.byteOffset + n * spec.size);
+          return spec.get(t._buffer._b, t._byteOffset + n * spec.size);
         }
         if (k === 'length') return vlen(t);
         if (k === 'byteLength') return vlen(t) * spec.size;
@@ -1943,7 +1953,7 @@ function __kMakeTypedArray(name) {
       set: function(t, k, v){
         var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
         if (n >= 0) {
-          if (n < vlen(t)) spec.set(t.buffer._b, t.byteOffset + n * spec.size, v);
+          if (n < vlen(t)) spec.set(t._buffer._b, t._byteOffset + n * spec.size, v);
           return true;
         }
         t[k] = v;
