@@ -5038,6 +5038,36 @@ fn data_view_get_set_endian() {
     assert!(prelude_bool("var t=false; try{ new DataView([]) }catch(e){ t=e instanceof TypeError } t"));
 }
 
+// DataView get/set 검사 순서 (§25.3.1): 브랜드(TypeError) → ToIndex(offset)(RangeError,
+// Infinity/음수, valueOf 관측) → 분리(TypeError) → 범위(RangeError). 예전엔 offset|0 만 해
+// Infinity 가 0 이 됐고, 브랜드/분리 검사가 없었다.
+#[test]
+fn data_view_index_and_brand_checks() {
+    let thr = |body: &str, ty: &str| {
+        prelude_bool(&format!("var t=false; try{{ {} }}catch(e){{ t=e instanceof {} }} t", body, ty))
+    };
+    // Infinity/-Infinity/음수 offset → RangeError
+    assert!(thr("new DataView(new ArrayBuffer(8)).getUint8(Infinity)", "RangeError"));
+    assert!(thr("new DataView(new ArrayBuffer(8)).getUint8(-Infinity)", "RangeError"));
+    assert!(thr("new DataView(new ArrayBuffer(8)).getUint8(-1)", "RangeError"));
+    // 범위 초과 → RangeError
+    assert!(thr("new DataView(new ArrayBuffer(8)).getUint32(6)", "RangeError"));
+    // 브랜드 아님 → TypeError ({} / typed array / 프로토 직접)
+    assert!(thr("DataView.prototype.getUint8.call({}, 0)", "TypeError"));
+    assert!(thr("DataView.prototype.getUint8.call(new Uint8Array(8), 0)", "TypeError"));
+    // 분리된 버퍼 read/byteLength → TypeError
+    assert!(thr("var b=new ArrayBuffer(8); var v=new DataView(b); $262.detachArrayBuffer(b); v.getUint8(0)", "TypeError"));
+    assert!(thr("var b=new ArrayBuffer(8); var v=new DataView(b); $262.detachArrayBuffer(b); v.byteLength", "TypeError"));
+    // 생성자: 분리 버퍼 TypeError, Infinity offset RangeError
+    assert!(thr("var b=new ArrayBuffer(8); $262.detachArrayBuffer(b); new DataView(b)", "TypeError"));
+    assert!(thr("new DataView(new ArrayBuffer(8), Infinity)", "RangeError"));
+    // offset 의 valueOf 관측(ToIndex)
+    assert!(prelude_bool(
+        "var seen=false; new DataView(new ArrayBuffer(8)).getUint8({valueOf:function(){seen=true;return 0;}}); seen"));
+    // 정상 왕복 무회귀
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(8)); d.setFloat64(0,3.5,true); d.getFloat64(0,true)===3.5"));
+}
+
 // ArrayBuffer 표준화 (§25.1): byteLength/maxByteLength/resizable/detached 는 prototype
 // accessor, isView/transfer/transferToFixedLength/resize, 생성자 검증.
 #[test]

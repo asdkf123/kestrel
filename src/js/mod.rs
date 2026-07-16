@@ -2089,35 +2089,61 @@ if (!window.$262) {
 }
 var $262 = window.$262;
 
+// ToIndex (§7.1.22): ToIntegerOrInfinity 후 [0, 2^53-1] 밖이면 RangeError. undefined→0.
+// Infinity/음수/과대는 RangeError, 객체는 valueOf 관측. DataView/ArrayBuffer 오프셋에 쓴다.
+function __kToIndex(v){
+  if (v === undefined) return 0;
+  var n = +v;                     // ToNumber(단항 +, valueOf 관측). NaN→0.
+  n = (n !== n) ? 0 : Math.trunc(n);
+  if (n < 0 || n > 9007199254740991) throw new RangeError('Invalid index: out of range');
+  return n;
+}
 // DataView (§25.3) — ArrayBuffer 위의 뷰. 임의 바이트 오프셋에서 타입별로 읽고/쓰며
 // 엔디언(little/big)을 지원한다. 바이트는 버퍼의 _b 를 직접 만진다.
 function __kDataView(buffer, byteOffset, byteLength) {
   if (!(buffer && typeof buffer === 'object' && buffer._b)) throw new TypeError('First argument to DataView constructor must be an ArrayBuffer');
-  byteOffset = (byteOffset === undefined) ? 0 : (byteOffset | 0);
-  if (byteOffset < 0 || byteOffset > buffer.byteLength) throw new RangeError('Start offset is outside the bounds of the buffer');
+  var off = __kToIndex(byteOffset);   // ToIndex (Infinity/음수 RangeError, valueOf 관측)
+  if (buffer._detached) throw new TypeError('Cannot construct DataView on a detached ArrayBuffer');
+  if (off > buffer.byteLength) throw new RangeError('Start offset is outside the bounds of the buffer');
+  var len = (byteLength === undefined) ? (buffer.byteLength - off) : __kToIndex(byteLength);
+  if (off + len > buffer.byteLength) throw new RangeError('Invalid DataView length');
+  this.__isDataView = true;
   this._buffer = buffer;
-  this._byteOffset = byteOffset;
-  this._byteLength = (byteLength === undefined) ? (buffer.byteLength - byteOffset) : (byteLength | 0);
-  if (this._byteLength < 0 || byteOffset + this._byteLength > buffer.byteLength) throw new RangeError('Invalid DataView length');
+  this._byteOffset = off;
+  this._byteLength = len;
 }
-Object.defineProperty(__kDataView.prototype, 'buffer', { get: function(){ return this._buffer; }, configurable: true });
-Object.defineProperty(__kDataView.prototype, 'byteLength', { get: function(){ return this._byteLength; }, configurable: true });
-Object.defineProperty(__kDataView.prototype, 'byteOffset', { get: function(){ return this._byteOffset; }, configurable: true });
+Object.defineProperty(__kDataView.prototype, 'buffer', { get: function(){
+  if (!this || this.__isDataView !== true) throw new TypeError('get DataView.prototype.buffer called on incompatible receiver');
+  return this._buffer; }, configurable: true });
+Object.defineProperty(__kDataView.prototype, 'byteLength', { get: function(){
+  if (!this || this.__isDataView !== true) throw new TypeError('get DataView.prototype.byteLength called on incompatible receiver');
+  if (this._buffer._detached) throw new TypeError('Cannot get byteLength of a DataView with a detached buffer');
+  return this._byteLength; }, configurable: true });
+Object.defineProperty(__kDataView.prototype, 'byteOffset', { get: function(){
+  if (!this || this.__isDataView !== true) throw new TypeError('get DataView.prototype.byteOffset called on incompatible receiver');
+  if (this._buffer._detached) throw new TypeError('Cannot get byteOffset of a DataView with a detached buffer');
+  return this._byteOffset; }, configurable: true });
 __kDataView.prototype[Symbol.toStringTag] = 'DataView';
-// size 바이트를 오프셋에서 읽어 **리틀엔디언 순서** 배열로. le=false 면 뒤집는다.
+// GetViewValue (§25.3.1.1) 순서: 브랜드(TypeError) → ToIndex(offset)(RangeError) →
+// 분리(TypeError) → 범위(RangeError). size 바이트를 리틀엔디언 순서 배열로 반환.
 __kDataView.prototype._rd = function(offset, size, le){
-  offset = offset | 0;
-  if (offset < 0 || offset + size > this._byteLength) throw new RangeError('Offset is outside the bounds of the DataView');
-  var b = this._buffer._b, base = this._byteOffset + offset, out = [];
+  if (!this || this.__isDataView !== true) throw new TypeError('DataView method called on incompatible receiver');
+  var idx = __kToIndex(offset);
+  if (this._buffer._detached) throw new TypeError('Cannot operate on a detached ArrayBuffer');
+  if (idx + size > this._byteLength) throw new RangeError('Offset is outside the bounds of the DataView');
+  var b = this._buffer._b, base = this._byteOffset + idx, out = [];
   for (var i = 0; i < size; i++) out.push(b[base + i]);
   if (!le) out.reverse();
   return out;
 };
-// 리틀엔디언 바이트 배열을 오프셋에 쓴다(le=false 면 뒤집어서).
+// SetViewValue (§25.3.1.2): 값은 호출 메서드에서 이미 ToNumber/ToBigInt 됨. 여기선
+// 브랜드 → ToIndex(offset) → 분리 → 범위 확인 후 리틀엔디언 바이트를 쓴다.
 __kDataView.prototype._wr = function(offset, size, le, bytesLE){
-  offset = offset | 0;
-  if (offset < 0 || offset + size > this._byteLength) throw new RangeError('Offset is outside the bounds of the DataView');
-  var b = this._buffer._b, base = this._byteOffset + offset;
+  if (!this || this.__isDataView !== true) throw new TypeError('DataView method called on incompatible receiver');
+  var idx = __kToIndex(offset);
+  if (this._buffer._detached) throw new TypeError('Cannot operate on a detached ArrayBuffer');
+  if (idx + size > this._byteLength) throw new RangeError('Offset is outside the bounds of the DataView');
+  var b = this._buffer._b, base = this._byteOffset + idx;
   var bytes = le ? bytesLE : bytesLE.slice().reverse();
   for (var i = 0; i < size; i++) b[base + i] = bytes[i];
 };
