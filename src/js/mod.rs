@@ -1845,20 +1845,46 @@ function __kTAValidate(o){
   if (o._buffer && o._buffer._detached) throw new TypeError('TypedArray has a detached ArrayBuffer');
   return o;
 }
+// SpeciesConstructor (§7.3.22): O.constructor[Symbol.species] 로 파생 생성자를 고른다.
+// undefined/null 이면 기본 생성자. 생성자 아님이면 TypeError.
+function __kSpeciesCtor(O, defaultCtor){
+  var C = O.constructor;
+  if (C === undefined) return defaultCtor;
+  if (C === null || (typeof C !== 'object' && typeof C !== 'function'))
+    throw new TypeError('constructor property is not an object');
+  var S = C[Symbol.species];
+  if (S === undefined || S === null) return defaultCtor;
+  if (typeof S === 'function') return S;
+  throw new TypeError('Symbol.species is not a constructor');
+}
+// TypedArraySpeciesCreate (§23.2.4.1): filter/map/slice/subarray 의 반환 종을 만든다.
+// 정확히 args.length 개의 인자로 Construct 해야 한다(커스텀 species 가 arguments.length
+// 를 관측). 결과를 ValidateTypedArray 하고, 단일 길이 인자보다 짧으면 TypeError.
+function __kTASpeciesCreate(exemplar, args){
+  var C = __kSpeciesCtor(exemplar, exemplar._ctor);
+  var result;
+  if (args.length <= 1) result = new C(args[0]);
+  else if (args.length === 2) result = new C(args[0], args[1]);
+  else result = new C(args[0], args[1], args[2]);
+  __kTAValidate(result);
+  if (args.length === 1 && typeof args[0] === 'number' && result.length < args[0])
+    throw new TypeError('derived TypedArray is smaller than requested length');
+  return result;
+}
 var __kTAProto = {
   set: function(src, off){ off = off || 0; for (var i = 0; i < src.length; i++) this[off + i] = src[i]; },
   fill: function(v, a, b){ __kTAValidate(this); a = a || 0; b = (b === undefined) ? this.length : b; for (var i = a; i < b; i++) this[i] = v; return this; },
-  subarray: function(a, b){ a = a || 0; b = (b === undefined) ? this.length : b; return new this._ctor(this.buffer, this.byteOffset + a * this.BYTES_PER_ELEMENT, Math.max(0, b - a)); },
-  slice: function(a, b){ __kTAValidate(this); a = a || 0; b = (b === undefined) ? this.length : b; var out = new this._ctor(Math.max(0, b - a)); for (var i = 0; i < out.length; i++) out[i] = this[a + i]; return out; },
-  forEach: function(fn){ __kTAValidate(this); for (var i = 0; i < this.length; i++) fn(this[i], i, this); },
-  map: function(fn){ __kTAValidate(this); var out = new this._ctor(this.length); for (var i = 0; i < this.length; i++) out[i] = fn(this[i], i, this); return out; },
+  subarray: function(a, b){ var len=this.length; a = a || 0; b = (b === undefined) ? len : b; var beginByteOffset = this.byteOffset + a * this.BYTES_PER_ELEMENT; return __kTASpeciesCreate(this, [this.buffer, beginByteOffset, Math.max(0, b - a)]); },
+  slice: function(a, b){ __kTAValidate(this); var len=this.length; a = (a === undefined) ? 0 : (a|0); b = (b === undefined) ? len : (b|0); if (a<0) a+=len; if (b<0) b+=len; var count = Math.max(0, Math.min(b, len) - a); var A = __kTASpeciesCreate(this, [count]); for (var i = 0; i < count; i++) A[i] = this[a + i]; return A; },
+  forEach: function(fn){ __kTAValidate(this); var t=arguments[1]; for (var i = 0; i < this.length; i++) fn.call(t, this[i], i, this); },
+  map: function(fn){ __kTAValidate(this); var t=arguments[1]; var len = this.length; var A = __kTASpeciesCreate(this, [len]); for (var i = 0; i < len; i++) A[i] = fn.call(t, this[i], i, this); return A; },
   indexOf: function(v){ __kTAValidate(this); for (var i = 0; i < this.length; i++) if (this[i] === v) return i; return -1; },
   includes: function(v){ __kTAValidate(this); for (var i = 0; i < this.length; i++) if (this[i] === v) return true; return false; },
   join: function(sep){ __kTAValidate(this); var a = []; for (var i = 0; i < this.length; i++) a.push(this[i]); return a.join(sep === undefined ? ',' : sep); },
   reduce: function(fn, init){ __kTAValidate(this); var acc = init, i = 0; if (arguments.length < 2) acc = this[i++]; for (; i < this.length; i++) acc = fn(acc, this[i], i, this); return acc; },
   every: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(!fn.call(t,this[i],i,this)) return false; return true; },
   some: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return true; return false; },
-  filter: function(fn, t){ __kTAValidate(this); var out=[]; for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) out.push(this[i]); return new this._ctor(out); },
+  filter: function(fn){ __kTAValidate(this); var t=arguments[1]; var out=[]; for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) out.push(this[i]); var A=__kTASpeciesCreate(this,[out.length]); for (var j=0;j<out.length;j++) A[j]=out[j]; return A; },
   find: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
   findIndex: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return i; return -1; },
   findLast: function(fn, t){ __kTAValidate(this); for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },

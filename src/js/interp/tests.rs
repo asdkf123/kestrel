@@ -4911,6 +4911,48 @@ fn typed_array_detach_and_262_hook() {
     assert_eq!(prelude_str("Array.from(new Uint8Array([5,6]).keys()).join(',')"), "0,1");
 }
 
+// TypedArraySpeciesCreate (§23.2.4.1) + Proxy .constructor get: filter/map/slice/subarray
+// 는 O.constructor[Symbol.species] 로 파생 종을 만든다. typed array 는 Proxy 라
+// .constructor 재대입이 get 트랩을 거쳐 읽혀야 SpeciesConstructor 가 동작한다.
+#[test]
+fn typed_array_species() {
+    // Proxy .constructor 재대입이 읽힌다(예전엔 constructor 특수해석이 트랩을 가로챔)
+    assert!(prelude_bool("var s=new Uint8Array([1]); s.constructor={}; typeof s.constructor==='object'"));
+    assert!(prelude_bool("var s=new Uint8Array([1]); s.constructor===Uint8Array"));
+    // filter: species 를 정확히 1개 인자(kept 길이)로 Construct, this=새 인스턴스
+    assert!(prelude_bool(
+        "var s=new Uint8Array([40,42,42]); var r,ct; s.constructor={}; \
+         s.constructor[Symbol.species]=function(c){ r=arguments; ct=this; return new Uint8Array(c); }; \
+         s.filter(function(v){return v===42;}); \
+         r.length===1 && r[0]===2 && ct instanceof s.constructor[Symbol.species]"
+    ));
+    // map: species count === 원소 수
+    assert!(prelude_bool(
+        "var s=new Int16Array([1,2,3]); var n; s.constructor={}; \
+         s.constructor[Symbol.species]=function(c){ n=c; return new Int16Array(c); }; \
+         s.map(function(x){return x*10;}).join(',')==='10,20,30' && n===3"
+    ));
+    // slice: species count === 잘린 길이
+    assert!(prelude_bool(
+        "var s=new Uint8Array([5,6,7,8]); var n; s.constructor={}; \
+         s.constructor[Symbol.species]=function(c){ n=c; return new Uint8Array(c); }; \
+         s.slice(1,3); n===2"
+    ));
+    // species 가 undefined/null 이면 기본 생성자로 폴백
+    assert_eq!(prelude_str(
+        "var s=new Uint8Array([1,2,3]); s.constructor={}; s.constructor[Symbol.species]=null; \
+         s.map(function(x){return x;}).join(',')"), "1,2,3");
+    // species 가 생성자 아니면 TypeError
+    assert!(prelude_bool(
+        "var s=new Uint8Array([1,2]); s.constructor={}; s.constructor[Symbol.species]=42; \
+         var t=false; try{ s.map(function(x){return x;}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // filter/map/forEach 의 length 는 1 (§23.2.3, thisArg 는 세지 않음)
+    assert!(prelude_bool("Uint8Array.prototype.filter.length===1 && Uint8Array.prototype.map.length===1 && Uint8Array.prototype.forEach.length===1"));
+    // 무회귀: species 미지정이면 같은 종
+    assert!(prelude_bool("new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}) instanceof Uint8Array"));
+}
+
 // DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
 #[test]
 fn data_view_get_set_endian() {

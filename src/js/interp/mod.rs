@@ -4578,7 +4578,10 @@ impl Interp {
         }
         // .constructor — 값 타입의 전역 생성자 (core-js/프레임워크의 타입판별·종/species 에 필수).
         // 객체/인스턴스가 자체 constructor 프로퍼티를 가지면 그것 우선.
-        if key == "constructor" {
+        // Proxy 는 제외 — [[Get]] 은 항상 get 트랩(없으면 타깃)을 거쳐야 한다. typed array
+        // 는 Proxy 라, 여기서 가로채면 ta.constructor 재대입이 무시돼 SpeciesConstructor 가
+        // 깨진다(sample.constructor[Symbol.species] 가 undefined 로 읽힘).
+        if key == "constructor" && !matches!(recv, Value::Proxy(_)) {
             // 플랫폼 객체의 constructor 는 그 인터페이스 객체다 (WebIDL).
             // el.constructor.name === "HTMLDivElement". 예전엔 undefined 라,
             // 노드 종류를 constructor 로 판별하는 코드가 그 자리에서 죽었다.
