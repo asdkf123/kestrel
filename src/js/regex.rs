@@ -27,11 +27,17 @@ struct ClassData {
     kinds: Vec<ClassKind>, // \d \w \s (+ 부정형)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum ClassKind {
     Digit(bool),
     Word(bool),
     Space(bool),
+    // \p{Name} / \p{Name=Value} (§ Unicode property escapes). 파스 시점에 UCD 범위
+    // 슬라이스로 확정(문자당은 이진 탐색만). neg=\P.
+    UProp {
+        ranges: &'static [(u32, u32)],
+        neg: bool,
+    },
 }
 
 impl ClassData {
@@ -50,6 +56,10 @@ impl ClassKind {
             ClassKind::Digit(neg) => c.is_ascii_digit() != *neg,
             ClassKind::Word(neg) => (c.is_ascii_alphanumeric() || c == '_') != *neg,
             ClassKind::Space(neg) => c.is_whitespace() != *neg,
+            // 유니코드 속성: 파스 시점에 확정된 범위에 이진 탐색 (핫패스).
+            ClassKind::UProp { ranges, neg } => {
+                super::unicode_props::in_ranges(ranges, c as u32) != *neg
+            }
         }
     }
 }
@@ -98,6 +108,8 @@ struct Parser {
     i: usize,
     ngroups: usize,
     group_names: Vec<(String, usize)>,
+    // u/v 플래그. \p{...} 유니코드 속성 이스케이프는 이 모드에서만 유효(§).
+    unicode: bool,
 }
 
 impl Parser {
@@ -317,8 +329,39 @@ impl Parser {
             }
             'u' => Ast::Char(self.parse_unicode().unwrap_or('u')),
             'x' => Ast::Char(self.parse_hex2().unwrap_or('x')),
+            // \p{...} / \P{...} — u/v 모드에서만 유니코드 속성 이스케이프.
+            'p' | 'P' if self.unicode => {
+                Ast::Class(kind_class(self.parse_prop_escape(ch == 'P')?))
+            }
             other => Ast::Char(other), // \. \\ \/ 등 리터럴
         })
+    }
+
+    /// \p{Name} 또는 \p{Name=Value} 를 파싱한다(§ CharacterClassEscape). 인식 못 하는
+    /// 속성/값이면 파스 에러(SyntaxError)를 낸다.
+    fn parse_prop_escape(&mut self, neg: bool) -> Result<ClassKind, String> {
+        if !self.eat('{') {
+            return Err("정규식 \\p 뒤에 { 가 필요".to_string());
+        }
+        let mut buf = String::new();
+        while let Some(c) = self.peek() {
+            if c == '}' {
+                break;
+            }
+            buf.push(c);
+            self.i += 1;
+        }
+        if !self.eat('}') {
+            return Err("정규식 \\p{ 에 대응하는 } 가 없음".to_string());
+        }
+        let (name, value) = match buf.split_once('=') {
+            Some((n, v)) => (n.to_string(), Some(v.to_string())),
+            None => (buf.clone(), None),
+        };
+        // 파스 시점에 범위 슬라이스로 확정 (§ UnicodeMatchProperty). 인식 못 하면 SyntaxError.
+        let ranges = super::unicode_props::resolve_property(&name, value.as_deref())
+            .ok_or_else(|| format!("알 수 없는 유니코드 속성 이스케이프 \\p{{{}}}", buf))?;
+        Ok(ClassKind::UProp { ranges, neg })
     }
 
     fn parse_unicode(&mut self) -> Option<char> {
@@ -422,6 +465,11 @@ impl Parser {
                 '0' => Some('\0'),
                 'u' => self.parse_unicode(),
                 'x' => self.parse_hex2(),
+                // 문자 클래스 안의 \p{...}/\P{...} (u/v 모드).
+                'p' | 'P' if self.unicode => {
+                    kinds.push(self.parse_prop_escape(e == 'P')?);
+                    None
+                }
                 other => Some(other),
             });
         }
@@ -537,11 +585,20 @@ fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
     }
 }
 
-const REGEX_STEP_LIMIT: usize = 2_000_000;
+// 정규식 백트래킹 스텝 상한 — 파국적 백트래킹(지수 폭발) 방어. 큰 입력의 **선형**
+// 매치(예: \p{L}+ 를 수백만 문자에)는 정상이므로 넉넉히 둔다. 진짜 벽시계 예산
+// (SCRIPT_BUDGET_MS)이 최종 방어선이다. 예전 2M 은 ~70만 문자 선형 매치에서 잘렸다.
+const REGEX_STEP_LIMIT: usize = 20_000_000;
 
 impl Regex {
     pub fn compile_pattern(source: &str, flags: &str) -> Result<Regex, String> {
-        let mut p = Parser { c: source.chars().collect(), i: 0, ngroups: 0, group_names: Vec::new() };
+        let mut p = Parser {
+            c: source.chars().collect(),
+            i: 0,
+            ngroups: 0,
+            group_names: Vec::new(),
+            unicode: flags.contains('u') || flags.contains('v'),
+        };
         let ast = p.parse_alt()?;
         if p.i != p.c.len() {
             return Err(format!("정규식 파싱 실패 (위치 {})", p.i));

@@ -60,34 +60,46 @@ fn main() {
     // 두들기는 대신 표준 자체를 기준으로 검증한다.
     // 표준 출력에 console 출력을, 표준 에러에 던져진 오류를 찍고, 실패면 종료코드 1.
     if args.len() >= 3 && args[1] == "--js" {
-        let src = match std::fs::read_to_string(&args[2]) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("파일을 읽을 수 없다: {}", e);
-                std::process::exit(2);
-            }
-        };
-        let mut it = js::interp::Interp::new();
-        if let Err(e) = it.run(js::JS_PRELUDE) {
-            eprintln!("프렐류드 실패: {}", e);
-            std::process::exit(2);
-        }
-        let r = it.run(&src);
-        // 이벤트 루프: async 테스트의 $DONE 이 마이크로태스크/타이머에서 불릴 수 있다.
-        // 스크립트가 동기 오류로 죽지 않았을 때만 돈다.
-        if r.is_ok() {
-            it.run_event_loop();
-        }
-        for line in it.console.drain(..) {
-            println!("{}", line);
-        }
-        match r {
-            Ok(_) => std::process::exit(0),
-            Err(e) => {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-        }
+        let path = args[2].clone();
+        // 트리워킹 인터프리터와 재귀 백트래킹 정규식 VM 은 입력 깊이/길이에 비례해
+        // 재귀한다. property-escapes 테스트는 수십만~백만 코드포인트 문자열에
+        // ^\p{X}+$ 를 매치하므로 기본 8MB 스택으로는 overflow 한다. 실제 엔진처럼
+        // JS 실행을 **큰 스택**(512MB) 스레드에서 돌린다.
+        let code = std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn(move || -> i32 {
+                let src = match std::fs::read_to_string(&path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("파일을 읽을 수 없다: {}", e);
+                        return 2;
+                    }
+                };
+                let mut it = js::interp::Interp::new();
+                if let Err(e) = it.run(js::JS_PRELUDE) {
+                    eprintln!("프렐류드 실패: {}", e);
+                    return 2;
+                }
+                let r = it.run(&src);
+                // 이벤트 루프: async 테스트의 $DONE 이 마이크로태스크/타이머에서 불릴 수 있다.
+                if r.is_ok() {
+                    it.run_event_loop();
+                }
+                for line in it.console.drain(..) {
+                    println!("{}", line);
+                }
+                match r {
+                    Ok(_) => 0,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        1
+                    }
+                }
+            })
+            .expect("JS 스레드 생성 실패")
+            .join()
+            .unwrap_or(70);
+        std::process::exit(code);
     }
     if args.len() >= 3 && args[1] == "--fetch" {
         match http::fetch(&args[2]) {

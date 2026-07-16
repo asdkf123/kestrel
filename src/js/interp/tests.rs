@@ -2449,6 +2449,34 @@ fn array_string_at_and_flatmap() {
     assert_eq!(run_num("[1,2].flatMap(function(x){return x;}).length"), 2.0);
 }
 
+// RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
+#[test]
+fn regex_unicode_property_escapes() {
+    // General_Category (짧은/긴 이름, 파생 그룹)
+    assert!(run_bool(r"/\p{L}/u.test('a') && /\p{L}/u.test('가') && !/\p{L}/u.test('5')"));
+    assert!(run_bool(r"/\p{Lu}/u.test('A') && !/\p{Lu}/u.test('a')"));
+    assert!(run_bool(r"/\p{N}/u.test('5') && /\p{Nd}/u.test('5') && !/\p{N}/u.test('a')"));
+    assert!(run_bool(r"/\p{General_Category=Letter}/u.test('x')"));
+    // Script / Script_Extensions (짧은/긴)
+    assert!(run_bool(r"/\p{Script=Latin}/u.test('a') && !/\p{Script=Latin}/u.test('가')"));
+    assert!(run_bool(r"/\p{Script=Hangul}/u.test('가') && /\p{sc=Grek}/u.test('α')"));
+    assert!(run_bool(r"/\p{scx=Latin}/u.test('a')"));
+    // 이진 속성
+    assert!(run_bool(r"/\p{Alphabetic}/u.test('a') && /\p{White_Space}/u.test(' ') && /\p{Uppercase}/u.test('A')"));
+    // 아스트랄(supplementary) 코드포인트
+    assert!(run_bool(r"/\p{Lu}/u.test('\u{10400}') && /\p{Emoji}/u.test('\u{1F600}')"));
+    // 부정 \P, 문자 클래스 안
+    assert!(run_bool(r"/\P{L}/u.test('5') && !/\P{L}/u.test('a')"));
+    assert!(run_bool(r"/[\p{L}\d]/u.test('a') && /[\p{L}\d]/u.test('5') && !/[\p{L}\d]/u.test('!')"));
+    // 인식 못 하는 속성/값 또는 대소문자 불일치 → SyntaxError
+    assert!(run_bool(r"var t=false; try{ new RegExp('\\p{Foobar}','u') }catch(e){ t=e instanceof SyntaxError } t"));
+    assert!(run_bool(r"var t=false; try{ new RegExp('\\p{lu}','u') }catch(e){ t=e instanceof SyntaxError } t"));
+    // u 플래그 없으면 리터럴 p
+    assert!(run_bool(r"/\p{L}/.test('p{L}')"));
+    // 중간 규모 선형 매치(테스트 스레드 스택 한계 내). 대규모(수백만)는 --js 큰 스택에서.
+    assert!(run_bool("var s=''; for(var i=0;i<3000;i++) s+='a'; /^\\p{L}+$/u.test(s)"));
+}
+
 #[test]
 fn regex_named_groups() {
     // (?<name>...) 이름 있는 그룹: 번호 접근 + .groups 이름 접근 + 번호 치환.

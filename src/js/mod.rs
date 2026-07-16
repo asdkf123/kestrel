@@ -7,6 +7,8 @@ pub mod interp;
 pub mod lexer;
 pub mod parser;
 pub mod regex;
+// UCD 에서 생성한 유니코드 속성 범위 테이블 (RegExp \p{...}).
+pub mod unicode_props;
 
 // 인라인 <script> 를 문서 순서로 실행한다 (렌더 전, DOM 변형 가능).
 // 실제 브라우저처럼 전역 환경은 페이지의 모든 스크립트가 공유한다.
