@@ -514,6 +514,36 @@ if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(t, s, e){
 if (!String.prototype.localeCompare) String.prototype.localeCompare = function(o){ o = String(o); return this < o ? -1 : (this > o ? 1 : 0); };
 if (!String.prototype.normalize) String.prototype.normalize = function(){ return String(this); };
 if (!Object.hasOwn) Object.hasOwn = function(o, k){ return Object.prototype.hasOwnProperty.call(o, k); };
+// Annex B 레거시 접근자 (§B.2.2): __defineGetter__/__defineSetter__/__lookupGetter__/
+// __lookupSetter__. defineProperty/gOPD 위에 얹는다. 비열거·구성가능 데이터 프로퍼티.
+if (!Object.prototype.__defineGetter__) {
+  Object.defineProperty(Object.prototype, '__defineGetter__', { value: function(k, fn){
+    if (typeof fn !== 'function') throw new TypeError('Object.prototype.__defineGetter__: Expecting function');
+    Object.defineProperty(Object(this), k, { get: fn, enumerable: true, configurable: true });
+  }, writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(Object.prototype, '__defineSetter__', { value: function(k, fn){
+    if (typeof fn !== 'function') throw new TypeError('Object.prototype.__defineSetter__: Expecting function');
+    Object.defineProperty(Object(this), k, { set: fn, enumerable: true, configurable: true });
+  }, writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(Object.prototype, '__lookupGetter__', { value: function(k){
+    var o = Object(this);
+    while (o !== null && o !== undefined) {
+      var d = Object.getOwnPropertyDescriptor(o, k);
+      if (d !== undefined) return d.get;   // 접근자면 get, 데이터면 undefined
+      o = Object.getPrototypeOf(o);
+    }
+    return undefined;
+  }, writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(Object.prototype, '__lookupSetter__', { value: function(k){
+    var o = Object(this);
+    while (o !== null && o !== undefined) {
+      var d = Object.getOwnPropertyDescriptor(o, k);
+      if (d !== undefined) return d.set;
+      o = Object.getPrototypeOf(o);
+    }
+    return undefined;
+  }, writable: true, enumerable: false, configurable: true });
+}
 if (!Object.is) Object.is = function(a, b){ if (a === b) return a !== 0 || 1 / a === 1 / b; return a !== a && b !== b; };
 if (!Object.getOwnPropertyDescriptors) Object.getOwnPropertyDescriptors = function(o){ var r = {}, k = Object.keys(o || {}); for (var i = 0; i < k.length; i++) r[k[i]] = Object.getOwnPropertyDescriptor(o, k[i]); return r; };
 if (!Number.prototype.toExponential) Number.prototype.toExponential = function(){ return String(this); };

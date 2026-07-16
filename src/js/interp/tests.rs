@@ -4836,6 +4836,28 @@ fn to_property_descriptor_reads_inherited() {
     assert!(run_bool("('push' in []) && ('at' in []) && ('call' in function(){})"));
 }
 
+// Annex B 레거시 접근자 (§B.2.2): __defineGetter__/__defineSetter__/__lookupGetter__/
+// __lookupSetter__. 예전엔 전부 미구현(undefined)이었다.
+#[test]
+fn annexb_legacy_accessors() {
+    assert!(prelude_bool("typeof Object.prototype.__defineGetter__==='function' && \
+                      typeof Object.prototype.__lookupSetter__==='function'"));
+    assert_eq!(prelude_num("var o={}; o.__defineGetter__('x',function(){return 42;}); o.x"), 42.0);
+    assert!(prelude_bool("var o={}; o.__defineGetter__('x',function(){return 42;}); o.__lookupGetter__('x')()===42"));
+    assert_eq!(prelude_num("var o={}; o.__defineSetter__('y',function(v){this._y=v*2;}); o.y=5; o._y"), 10.0);
+    assert!(prelude_bool("var o={}; o.__defineSetter__('y',function(){}); typeof o.__lookupSetter__('y')==='function'"));
+    // 데이터 프로퍼티 → get/set 조회는 undefined; 없는 키도 undefined
+    assert!(prelude_bool("var o={a:1}; o.__lookupGetter__('a')===undefined && o.__lookupGetter__('none')===undefined"));
+    // 정의된 접근자는 enumerable, 메서드 자체는 non-enumerable
+    assert!(prelude_bool("var o={}; o.__defineGetter__('x',function(){}); Object.getOwnPropertyDescriptor(o,'x').enumerable===true"));
+    assert!(prelude_bool("Object.keys(Object.prototype).indexOf('__defineGetter__')===-1"));
+    // 비함수 인자 → TypeError
+    assert!(prelude_bool("var t=false; try{ ({}).__defineGetter__('z',5) }catch(e){ t=e instanceof TypeError } t"));
+    // 프로토타입 체인 관통 조회
+    assert!(prelude_bool("var p={}; p.__defineGetter__('inh',function(){return 1;}); \
+                      var c=Object.create(p); typeof c.__lookupGetter__('inh')==='function'"));
+}
+
 // 함수 정적 상속 (§10.1.8 OrdinaryGet): 함수도 ordinary object 이므로 own·내장 멤버에
 // 없는 정적 프로퍼티는 [[Prototype]] 체인에서 상속한다. 예전엔 member_get 의 Fn arm 이
 // 곧장 Undefined 라 setPrototypeOf 해도 정적 상속이 안 됐다.
