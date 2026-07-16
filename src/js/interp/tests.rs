@@ -2471,6 +2471,28 @@ fn tostringtag_and_callback_array_arg() {
     assert_eq!(run_num("[10,20,30].findLast(function(v,i){ return i>=0; })"), 30.0);
 }
 
+// Array.prototype.sort/toSorted (§23.1.3.30): undefined 는 비교자 유무와 무관하게
+// 항상 끝으로 가고 비교자에 넘기지 않는다. 예전엔 비교자에 undefined 를 넘겨(NaN)
+// 정렬이 깨졌다.
+#[test]
+fn array_sort_undefined_to_end() {
+    // 비교자 있어도 undefined 는 끝으로
+    assert_eq!(run_str("[undefined,1].sort(function(a,b){return a-b;}).join(',')"), "1,");
+    assert_eq!(run_str("[2,undefined,1].sort(function(a,b){return a-b;}).join(',')"), "1,2,");
+    // 비교자는 undefined 로 호출되지 않는다
+    assert_eq!(run_num("var n=0; [2,undefined,1].sort(function(a,b){n++;return a-b;}); n"), 1.0);
+    // 기본(ToString) 정렬도 undefined 끝
+    assert_eq!(run_str("[3,undefined,1].sort().join(',')"), "1,3,");
+    // 희소 배열: 홀은 끝, 길이 보존
+    assert!(run_bool("var x=new Array(2); x[1]=1; x.sort(); x[0]===1 && x[1]===undefined && x.length===2"));
+    // toSorted(복사본, 프렐류드 폴리필)도 동일 + 원본 불변
+    assert_eq!(prelude_str("var a=[3,undefined,1]; a.toSorted(function(x,y){return x-y;}).join(',')"), "1,3,");
+    assert_eq!(prelude_str("var a=[3,undefined,1]; a.toSorted(); a.join(',')"), "3,,1");
+    // 정상 숫자 정렬 무회귀
+    assert_eq!(run_str("[3,1,2,10].sort(function(a,b){return a-b;}).join(',')"), "1,2,3,10");
+    assert_eq!(run_str("[10,9,1,20].sort().join(',')"), "1,10,20,9");
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {

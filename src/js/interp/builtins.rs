@@ -4777,9 +4777,21 @@ impl Interp {
                 let cb_arr = recv.clone().unwrap_or(Value::Undefined);
                 let out = match op {
                     ArrOp::Join => {
-                        let sep = args.first().map(to_display).unwrap_or(",".to_string());
+                        // §23.1.3.18: 구분자 undefined 는 ",". 원소 null/undefined 는 빈
+                        // 문자열(예전엔 "undefined"/"null" 로 찍혔다).
+                        let sep = match args.first() {
+                            None | Some(Value::Undefined) => ",".to_string(),
+                            Some(v) => to_display(v),
+                        };
                         Value::Str(
-                            a.borrow().iter().map(to_display).collect::<Vec<_>>().join(&sep),
+                            a.borrow()
+                                .iter()
+                                .map(|v| match v {
+                                    Value::Undefined | Value::Null => String::new(),
+                                    other => to_display(other),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(&sep),
                         )
                     }
                     ArrOp::Pop => a.borrow_mut().pop().unwrap_or(Value::Undefined),
@@ -5050,24 +5062,40 @@ impl Interp {
                         for i in 1..n {
                             let mut j = i;
                             while j > 0 {
-                                let ord = match &cmp {
-                                    Some(f) => {
-                                        let r = self.call_value(
-                                            f.clone(),
-                                            None,
-                                            vec![items[j - 1].clone(), items[j].clone()],
-                                        )?;
-                                        to_num(&r)
+                                // CompareArrayElements (§23.1.3.30.2): undefined 는 항상
+                                // 뒤로 가고 비교자에 넘기지 않는다. (홀은 dense 모델상 undefined.)
+                                let (xu, yu) = (
+                                    matches!(items[j - 1], Value::Undefined),
+                                    matches!(items[j], Value::Undefined),
+                                );
+                                let ord = if xu || yu {
+                                    if xu && yu {
+                                        0.0
+                                    } else if xu {
+                                        1.0
+                                    } else {
+                                        -1.0
                                     }
-                                    None => {
-                                        let x = to_display(&items[j - 1]);
-                                        let y = to_display(&items[j]);
-                                        if x < y {
-                                            -1.0
-                                        } else if x > y {
-                                            1.0
-                                        } else {
-                                            0.0
+                                } else {
+                                    match &cmp {
+                                        Some(f) => {
+                                            let r = self.call_value(
+                                                f.clone(),
+                                                None,
+                                                vec![items[j - 1].clone(), items[j].clone()],
+                                            )?;
+                                            to_num(&r)
+                                        }
+                                        None => {
+                                            let x = to_display(&items[j - 1]);
+                                            let y = to_display(&items[j]);
+                                            if x < y {
+                                                -1.0
+                                            } else if x > y {
+                                                1.0
+                                            } else {
+                                                0.0
+                                            }
                                         }
                                     }
                                 };
