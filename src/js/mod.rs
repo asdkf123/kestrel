@@ -509,7 +509,18 @@ if (!Array.prototype.reduceRight) Array.prototype.reduceRight = function(fn){ va
 if (!Array.prototype.lastIndexOf) Array.prototype.lastIndexOf = function(x){ for (var i = this.length - 1; i >= 0; i--) if (this[i] === x) return i; return -1; };
 if (!Array.prototype.toReversed) Array.prototype.toReversed = function(){ return this.slice().reverse(); };
 if (!Array.prototype.toSorted) Array.prototype.toSorted = function(fn){ return this.slice().sort(fn); };
-if (!Array.prototype.toLocaleString) Array.prototype.toLocaleString = function(){ return this.join(','); };
+// Array.prototype.toLocaleString (§23.1.3.32): 각 원소의 toLocaleString() 을 호출해
+// 로케일 구분자(구현 정의, ',')로 잇는다. null/undefined 는 빈 문자열. 예전 폴리필은
+// join(',') 라 원소 toLocaleString 을 안 불렀다.
+Array.prototype.toLocaleString = function(){
+  var len = this.length >>> 0, r = '';
+  for (var i = 0; i < len; i++) {
+    if (i > 0) r += ',';
+    var e = this[i];
+    if (e !== null && e !== undefined) r += String(e.toLocaleString());
+  }
+  return r;
+};
 if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(t, s, e){ var len = this.length; t = t < 0 ? len + t : t; s = s === undefined ? 0 : (s < 0 ? len + s : s); e = e === undefined ? len : (e < 0 ? len + e : e); var tmp = this.slice(s, e); for (var i = 0; i < tmp.length && t + i < len; i++) this[t + i] = tmp[i]; return this; };
 if (!String.prototype.localeCompare) String.prototype.localeCompare = function(o){ o = String(o); return this < o ? -1 : (this > o ? 1 : 0); };
 if (!String.prototype.normalize) String.prototype.normalize = function(){ return String(this); };

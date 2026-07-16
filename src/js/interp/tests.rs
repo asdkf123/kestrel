@@ -4146,6 +4146,17 @@ fn string_to_locale_case() {
     assert!(prelude_bool("String.prototype.toLocaleLowerCase.length===0"));
 }
 
+// Array.prototype.toLocaleString (§23.1.3.32): 각 원소의 toLocaleString() 을 호출해
+// ','로 잇는다. null/undefined 는 빈 문자열. 예전 폴리필은 원소 toLocaleString 미호출.
+#[test]
+fn array_to_locale_string() {
+    assert_eq!(prelude_str("[1,2,3].toLocaleString()"), "1,2,3");
+    assert_eq!(prelude_str("[1,null,3,undefined].toLocaleString()"), "1,,3,");
+    assert_eq!(prelude_str("[].toLocaleString()"), "");
+    // 원소의 toLocaleString 이 실제 호출됨
+    assert_eq!(prelude_str("var o={toLocaleString:function(){return 'X';}}; [o,o].toLocaleString()"), "X,X");
+}
+
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
 // 위임하고 map/filter/take/drop/flatMap/reduce/toArray/forEach/some/every/find 를 지연
 // 제너레이터로 구현. 예전엔 전부 미구현(undefined)이었다.
