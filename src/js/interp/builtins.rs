@@ -2083,11 +2083,9 @@ impl Interp {
                         .collect(),
                     _ => Vec::new(),
                 };
-                let mut it = ObjMap::new();
-                it.insert("\u{0}items".to_string(), Value::Arr(ArrayObj::new(items)));
-                it.insert("\u{0}i".to_string(), Value::Num(0.0));
-                it.insert("next".to_string(), Value::Native(Native::IterNext));
-                Ok(Value::Obj(Rc::new(RefCell::new(it))))
+                // make_iter_from_vec 로 통일 — @@iterator(스스로 이터러블) +
+                // __proto__=%IteratorPrototype%(Iterator 헬퍼 상속)를 함께 단다.
+                Ok(self.make_iter_from_vec(items))
             }
             // 반복자.next() → { value, done }
             Native::IterNext => {
