@@ -4809,6 +4809,15 @@ fn function_prototype_chain() {
     assert!(run_bool("function C(){} var o={m:1}; C.__proto__=o; Object.getPrototypeOf(C)===o"));
     // 일반 함수 대량 확인: 서로 다른 함수의 기본 프로토는 같은 Function.prototype
     assert!(run_bool("function X(){} function Y(){} Object.getPrototypeOf(X)===Object.getPrototypeOf(Y)"));
+    // Function.prototype.[[Prototype]] === Object.prototype (§20.2.3): 함수도 Object.prototype
+    // 메서드를 상속한다.
+    assert!(run_bool("Object.getPrototypeOf(Function.prototype)===Object.prototype"));
+    assert!(run_bool("function F(){} F.hasOwnProperty('name')===true && F.hasOwnProperty('call')===false"));
+    assert!(run_bool("function F(){} F.valueOf()===F"));
+    assert!(run_bool("function F(){} typeof F.isPrototypeOf==='function' && typeof F.toLocaleString==='function'"));
+    assert!(run_bool("('hasOwnProperty' in function(){}) && ('valueOf' in function(){})"));
+    // Function.prototype.toString 은 여전히 Object.prototype.toString 을 가린다
+    assert!(run_bool("typeof (function(){}).toString==='function'"));
 }
 
 // ToPropertyDescriptor (§10.2.4): 서술자는 임의의 객체이며 필드는 HasProperty+Get 으로

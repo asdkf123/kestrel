@@ -1017,6 +1017,15 @@ impl Interp {
         // Function.prototype.toString — core-js 등이 uncurryThis 로 참조
         fn_proto.insert("toString".to_string(), Value::Native(Native::FnToString));
         let fn_proto = Value::Obj(Rc::new(RefCell::new(fn_proto)));
+        // Function.prototype.[[Prototype]] === Object.prototype (§20.2.3): 함수도 ordinary
+        // object 라 Object.prototype 메서드(hasOwnProperty/valueOf/isPrototypeOf/
+        // propertyIsEnumerable/toLocaleString)를 상속한다. member_get 의 fn_static_lookup 이
+        // fn → Function.prototype → Object.prototype 체인을 걸어 이를 해석한다.
+        if let (Value::Obj(fp), Value::Obj(ons)) = (&fn_proto, &object_ns) {
+            if let Some(op) = ons.borrow().get("prototype").cloned() {
+                fp.borrow_mut().insert("__proto__".to_string(), op);
+            }
+        }
         // String.prototype: 문자열 메서드 (String.prototype.slice.call(x) 지원)
         let mut string_proto = ObjMap::new();
         for (name, op) in [
