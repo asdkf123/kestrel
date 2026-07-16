@@ -1870,6 +1870,16 @@ var __kTAProto = {
 __kTAProto[Symbol.iterator] = function*(){ for (var i = 0; i < this.length; i++) yield this[i]; };
 __kTAProto.values = __kTAProto[Symbol.iterator];
 
+// %TypedArray% intrinsic 생성자 (§23.2.1) — 추상. 하네스가 Object.getPrototypeOf(Int8Array)
+// 로 이걸 얻는다. 직접 호출/생성은 TypeError. 각 typed array 생성자의 [[Prototype]] 이 이것.
+function __kTypedArrayCtor(){ throw new TypeError('Abstract class TypedArray not directly constructable'); }
+__kTypedArrayCtor.prototype = __kTAProto;
+__kTAProto.constructor = __kTypedArrayCtor;
+// %TypedArray%.from / of / [Symbol.species] (§23.2.2) — 서브클래스가 상속(정적 접근).
+__kTypedArrayCtor.from = function(x, fn){ var a = Array.from(x, fn); return new this(a); };
+__kTypedArrayCtor.of = function(){ return new this(Array.prototype.slice.call(arguments)); };
+Object.defineProperty(__kTypedArrayCtor, Symbol.species, { get: function(){ return this; }, configurable: true });
+
 function __kMakeTypedArray(name) {
   var spec = __kTA[name];
   function Ctor(arg, byteOffset, length) {
@@ -1937,6 +1947,9 @@ function __kMakeTypedArray(name) {
   Ctor.prototype = Object.create(__kTAProto);
   Ctor.prototype.constructor = Ctor;
   Ctor.prototype.BYTES_PER_ELEMENT = spec.size;
+  // 각 typed array 생성자의 [[Prototype]] 은 %TypedArray% 다 (§23.2). 하네스가
+  // Object.getPrototypeOf(Int8Array) 로 %TypedArray% 를 얻는다.
+  Object.setPrototypeOf(Ctor, __kTypedArrayCtor);
   Ctor.from = function(x, fn){
     var arr = Array.from(x, fn);
     return new Ctor(arr);
