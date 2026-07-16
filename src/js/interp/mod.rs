@@ -4576,9 +4576,12 @@ impl Interp {
             }
             Value::Instance(i) => i.fields.borrow().contains_key(key),
             Value::Fn(f) => {
-                if f.props.borrow().contains_key(key) || matches!(key, "name" | "length" | "prototype")
-                {
+                if f.props.borrow().contains_key(key) || key == "prototype" {
                     return true;
+                }
+                // name/length 는 계산 own 프로퍼티지만 delete 됐으면(툼스톤) 없는 것.
+                if matches!(key, "name" | "length") {
+                    return !f.props.borrow().contains_key(&format!("\u{0}fndel:{}", key));
                 }
                 // 함수도 ordinary object — [[Prototype]] 체인(정적 상속)도 본다.
                 // member_get(fn_static_lookup)과 일관돼야 ToPropertyDescriptor 가 상속

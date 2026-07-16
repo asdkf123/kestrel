@@ -1950,7 +1950,11 @@ impl Interp {
                     }
                     Some(Value::Fn(f)) => {
                         f.props.borrow().contains_key(&key)
-                            || matches!(key.as_str(), "prototype" | "name" | "length")
+                            || key == "prototype"
+                            || (matches!(key.as_str(), "name" | "length")
+                                && !f.props
+                                    .borrow()
+                                    .contains_key(&format!("\u{0}fndel:{}", key)))
                     }
                     // 내장/바운드 함수도 name/length 를 own 프로퍼티로 가진다 (§17).
                     // 내장 생성자는 정적 메서드/상수/prototype 도 own. delete 된 name/length 는 제외.

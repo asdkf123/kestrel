@@ -4880,6 +4880,18 @@ fn function_property_attributes() {
     assert!(run_bool("function F(){} var d=Object.getOwnPropertyDescriptor(F,'name'); \
                       d.value==='F' && d.writable===false && d.configurable===true"));
     assert!(run_bool("function F(){} typeof F.prototype==='object'"));
+    // name/length 는 non-writable 대입 무시
+    assert!(run_bool("function F(){} F.name='x'; F.length=9; F.name==='F' && F.length===0"));
+    // name/length 는 configurable:true → delete 로 삭제 후 undefined + gOPD 없음
+    assert!(run_bool("function F(a,b){} (delete F.name)===true && F.name===undefined && \
+                      Object.getOwnPropertyDescriptor(F,'name')===undefined && !('name' in F)"));
+    // delete 후 defineProperty 로 복원
+    assert!(run_bool("function F(){} delete F.name; \
+                      Object.defineProperty(F,'name',{value:'F',writable:false,enumerable:false,configurable:true}); \
+                      F.name==='F' && Object.getOwnPropertyDescriptor(F,'name').configurable===true"));
+    // length 재정의(다른 값·속성) 후 gOPD 반영
+    assert!(run_bool("function G(x,y,z){} Object.defineProperty(G,'length',{value:10}); \
+                      G.length===10 && Object.getOwnPropertyDescriptor(G,'length').value===10"));
 }
 
 // ToPropertyDescriptor (§10.2.4): 서술자는 임의의 객체이며 필드는 HasProperty+Get 으로
