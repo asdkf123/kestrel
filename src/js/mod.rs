@@ -1869,6 +1869,19 @@ var __kTAProto = {
 };
 __kTAProto[Symbol.iterator] = function*(){ for (var i = 0; i < this.length; i++) yield this[i]; };
 __kTAProto.values = __kTAProto[Symbol.iterator];
+// length/byteLength 는 %TypedArray%.prototype 의 **accessor** 다 (§23.2.3.18/.2). 인스턴스
+// own 이 아니다(Proxy 트랩이 값을 계산) — getOwnPropertyDescriptor(...).get 검사가 이걸 본다.
+// 트랩이 ta.length/byteLength 를 가로채므로 이 accessor 는 gOPD/.get.call 에서만 쓰인다.
+Object.defineProperty(__kTAProto, 'length', { get: function(){
+  if (!this || !this._spec) throw new TypeError('get %TypedArray%.prototype.length called on incompatible receiver');
+  var avail = Math.floor((this.buffer.byteLength - this.byteOffset) / this.BYTES_PER_ELEMENT);
+  return Math.max(0, Math.min(this._len, avail));
+}, configurable: true });
+Object.defineProperty(__kTAProto, 'byteLength', { get: function(){
+  if (!this || !this._spec) throw new TypeError('get %TypedArray%.prototype.byteLength called on incompatible receiver');
+  var avail = Math.floor((this.buffer.byteLength - this.byteOffset) / this.BYTES_PER_ELEMENT);
+  return Math.max(0, Math.min(this._len, avail)) * this.BYTES_PER_ELEMENT;
+}, configurable: true });
 
 // %TypedArray% intrinsic 생성자 (§23.2.1) — 추상. 하네스가 Object.getPrototypeOf(Int8Array)
 // 로 이걸 얻는다. 직접 호출/생성은 TypeError. 각 typed array 생성자의 [[Prototype]] 이 이것.
