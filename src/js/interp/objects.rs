@@ -205,8 +205,10 @@ pub struct JsFn {
     // 이 함수가 클래스 메서드면 그 클래스의 부모 생성자 (super.x 해석용).
     // 클래스일 수도, 일반 생성자(Error/함수)일 수도 있어 Value 로 둔다.
     pub super_class: Option<Value>,
-    // 함수도 객체: F.prototype / F.staticProp 등 (Rc 공유 → 변경 반영)
-    pub props: RefCell<HashMap<String, Value>>,
+    // 함수도 객체: F.prototype / F.staticProp 등 (Rc 공유 → 변경 반영). ObjMap 이라
+    // 프로퍼티 속성(writable/enumerable/configurable)을 추적한다 — 함수 대상
+    // defineProperty 가 표준 속성 강제(§10.2.4)를 받는다.
+    pub props: RefCell<ObjMap>,
 }
 
 pub struct JsClass {

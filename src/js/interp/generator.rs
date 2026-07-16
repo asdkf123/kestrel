@@ -306,7 +306,7 @@ impl Interp {
                         is_async: *is_async,
                         this: None,
                         super_class: None,
-                        props: RefCell::new(std::collections::HashMap::new()),
+                        props: RefCell::new(super::objects::ObjMap::new()),
                     }));
                     env_declare(scope, name, f);
                 }

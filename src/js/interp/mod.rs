@@ -2136,7 +2136,7 @@ impl Interp {
             is_async: false,
             this: None,
             super_class: None,
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(ObjMap::new()),
         })))
     }
 
@@ -2818,7 +2818,7 @@ impl Interp {
                     is_async: *is_async,
                     this: None,
                     super_class: None,
-                    props: RefCell::new(HashMap::new()),
+                    props: RefCell::new(ObjMap::new()),
                 }));
                 env_declare(env, name, f);
             }
@@ -3317,7 +3317,7 @@ impl Interp {
                     is_async: *is_async,
                     this,
                     super_class: None,
-                    props: RefCell::new(HashMap::new()),
+                    props: RefCell::new(ObjMap::new()),
                 });
                 if let Some(n) = name {
                     env_declare(&fn_env, n, Value::Fn(f.clone()));
@@ -4022,7 +4022,7 @@ impl Interp {
                     is_async: *is_async,
                     this: None,
                     super_class: None,
-                    props: RefCell::new(HashMap::new()),
+                    props: RefCell::new(ObjMap::new()),
                 }));
                 env_declare(&env, name, f);
             }
@@ -4061,7 +4061,7 @@ impl Interp {
                 is_async: false,
                 this: None,
                 super_class: None,
-                props: RefCell::new(HashMap::new()),
+                props: RefCell::new(ObjMap::new()),
             }));
             ns_map
                 .borrow_mut()
@@ -6124,7 +6124,7 @@ impl Interp {
                     .clone()
                     .map(Value::Class)
                     .or_else(|| parent_ctor.clone()),
-                props: RefCell::new(HashMap::new()),
+                props: RefCell::new(ObjMap::new()),
             })
         };
         // 메서드/접근자도 이름을 갖는다 (§15.4): 접근자는 "get x" / "set x" (§10.2.9)

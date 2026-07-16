@@ -943,7 +943,7 @@ impl Interp {
     // 강제되지 않는 편법이었다.
     pub(super) fn ordinary_define(
         &mut self,
-        map: &Rc<RefCell<ObjMap>>,
+        map: &RefCell<ObjMap>,
         key: &str,
         desc: &Value,
     ) -> Result<(), String> {
@@ -1558,10 +1558,18 @@ impl Interp {
                     );
                 }
                 // Value::Obj 는 표준 OrdinaryDefineOwnProperty (§10.1.6) 로 처리한다.
-                // 그 외 대상(Fn/Instance/Arr/Class)은 속성 강제 없이 값만 넣는 근사 유지.
+                // 그 외 대상(Instance/Arr/Class)은 속성 강제 없이 값만 넣는 근사 유지.
                 if let Value::Obj(map) = &target {
-                    self.ordinary_define(map, &key, &desc)?;
+                    self.ordinary_define(&**map, &key, &desc)?;
                     return Ok(target);
+                }
+                // 함수도 ordinary object 다 (§10.2) — props(ObjMap)에 표준 속성 강제로
+                // 정의한다. name/length/prototype 은 계산 프로퍼티라 근사 경로로 둔다.
+                if let Value::Fn(func) = &target {
+                    if !matches!(key.as_str(), "name" | "length" | "prototype") {
+                        self.ordinary_define(&func.props, &key, &desc)?;
+                        return Ok(target);
+                    }
                 }
                 // ── 근사 경로 (표준 강제 없음) ──
                 let d = if let Value::Obj(d) = &desc { d.borrow() } else {
