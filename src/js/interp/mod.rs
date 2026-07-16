@@ -5455,6 +5455,11 @@ impl Interp {
                 // Symbol.species (§20.4.2.10): 종파생 생성자 선택. Array/TypedArray/
                 // ArrayBuffer/Promise 의 map/filter/slice 등이 반환 종을 이걸로 고른다.
                 "species" => Self::well_known_symbol("\u{0}@@species", "Symbol.species"),
+                // Explicit Resource Management (§ using / DisposableStack).
+                "dispose" => Self::well_known_symbol("\u{0}@@dispose", "Symbol.dispose"),
+                "asyncDispose" => {
+                    Self::well_known_symbol("\u{0}@@asyncDispose", "Symbol.asyncDispose")
+                }
                 // 정규식 위임 심볼 (§22.2.6): str.match/replace/split/search/matchAll 이 사용.
                 "match" => Self::well_known_symbol("\u{0}@@match", "Symbol.match"),
                 "matchAll" => Self::well_known_symbol("\u{0}@@matchAll", "Symbol.matchAll"),

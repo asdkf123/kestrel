@@ -2254,6 +2254,77 @@ __kDataView.prototype.setBigUint64 = function(o, v, le){ this.setBigInt64(o, v, 
 if (!window.DataView) window.DataView = __kDataView;
 var DataView = window.DataView;
 
+// Explicit Resource Management (§ using / DisposableStack) — SuppressedError +
+// DisposableStack. Symbol.dispose 는 엔진이 제공. Async* 는 별도(진짜 async 필요).
+if (!window.SuppressedError) {
+  class SuppressedError extends Error {
+    constructor(error, suppressed, message) {
+      super(message);
+      Object.defineProperty(this, 'error', { value: error, writable: true, enumerable: false, configurable: true });
+      Object.defineProperty(this, 'suppressed', { value: suppressed, writable: true, enumerable: false, configurable: true });
+    }
+  }
+  Object.defineProperty(SuppressedError.prototype, 'name', { value: 'SuppressedError', writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(SuppressedError.prototype, 'message', { value: '', writable: true, enumerable: false, configurable: true });
+  window.SuppressedError = SuppressedError;
+}
+var SuppressedError = window.SuppressedError;
+
+if (!window.DisposableStack) {
+  class DisposableStack {
+    #disposed = false;
+    #stack = [];
+    get disposed() { return this.#disposed; }
+    dispose() {
+      if (this.#disposed) return undefined;
+      this.#disposed = true;
+      var stack = this.#stack; this.#stack = [];
+      var hasError = false, error;
+      for (var i = stack.length - 1; i >= 0; i--) {
+        try { stack[i](); }
+        catch (e) {
+          if (hasError) error = new SuppressedError(e, error);
+          else { hasError = true; error = e; }
+        }
+      }
+      if (hasError) throw error;
+      return undefined;
+    }
+    use(value) {
+      if (this.#disposed) throw new ReferenceError('DisposableStack already disposed');
+      if (value !== null && value !== undefined) {
+        var method = value[Symbol.dispose];
+        if (typeof method !== 'function') throw new TypeError('value is not disposable (no [Symbol.dispose] method)');
+        this.#stack.push(function(){ method.call(value); });
+      }
+      return value;
+    }
+    adopt(value, onDispose) {
+      if (this.#disposed) throw new ReferenceError('DisposableStack already disposed');
+      if (typeof onDispose !== 'function') throw new TypeError('onDispose is not a function');
+      this.#stack.push(function(){ onDispose.call(undefined, value); });
+      return value;
+    }
+    defer(onDispose) {
+      if (this.#disposed) throw new ReferenceError('DisposableStack already disposed');
+      if (typeof onDispose !== 'function') throw new TypeError('onDispose is not a function');
+      this.#stack.push(function(){ onDispose(); });
+      return undefined;
+    }
+    move() {
+      if (this.#disposed) throw new ReferenceError('DisposableStack already disposed');
+      var next = new DisposableStack();
+      next.#stack = this.#stack;
+      this.#stack = [];
+      this.#disposed = true;
+      return next;
+    }
+    [Symbol.dispose]() { return this.dispose(); }
+  }
+  window.DisposableStack = DisposableStack;
+}
+var DisposableStack = window.DisposableStack;
+
 // TextEncoder / TextDecoder — 실제 UTF-8 인코딩/디코딩.
 if (!window.TextEncoder) {
   window.TextEncoder = function(){};

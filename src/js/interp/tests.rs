@@ -4146,6 +4146,47 @@ fn string_to_locale_case() {
     assert!(prelude_bool("String.prototype.toLocaleLowerCase.length===0"));
 }
 
+// Explicit Resource Management (§): Symbol.dispose + DisposableStack + SuppressedError.
+// 예전엔 전부 미구현이었다.
+#[test]
+fn disposable_stack() {
+    assert!(prelude_bool("typeof Symbol.dispose==='symbol' && typeof DisposableStack==='function'"));
+    assert!(prelude_bool("new DisposableStack().disposed===false"));
+    // use/adopt/defer 후 dispose 는 역순으로 정리자 실행
+    assert_eq!(prelude_str(
+        "var s=new DisposableStack(); var o=[]; \
+         s.use({[Symbol.dispose](){o.push('u1');}}); \
+         s.use({[Symbol.dispose](){o.push('u2');}}); \
+         s.defer(function(){o.push('d');}); \
+         s.adopt('X',function(v){o.push('a:'+v);}); \
+         s.dispose(); o.join(',')"), "a:X,d,u2,u1");
+    // use 는 값 반환, 처리 후 disposed
+    assert!(prelude_bool("var s=new DisposableStack(); var r={[Symbol.dispose](){}}; s.use(r)===r && (s.dispose(), s.disposed===true)"));
+    // dispose 멱등
+    assert!(prelude_bool("var s=new DisposableStack(); s.dispose(); s.dispose()===undefined"));
+    // dispose 후 use → ReferenceError; 비-disposable → TypeError; null → no-op
+    assert!(prelude_bool("var s=new DisposableStack(); s.dispose(); \
+                          var t=false; try{ s.use({}) }catch(e){ t=e instanceof ReferenceError } t"));
+    assert!(prelude_bool("var t=false; try{ new DisposableStack().use({}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("new DisposableStack().use(null)===null"));
+    // defer/adopt 비함수 인자 → TypeError
+    assert!(prelude_bool("var t=false; try{ new DisposableStack().defer(5) }catch(e){ t=e instanceof TypeError } t"));
+    // move: 원본은 disposed, 새 스택이 정리자 소유
+    assert!(prelude_bool("var a=new DisposableStack(); var ran=false; a.defer(function(){ran=true;}); \
+                          var b=a.move(); a.disposed===true && b.disposed===false && (b.dispose(), ran===true)"));
+    // [Symbol.dispose]() === dispose
+    assert!(prelude_bool("var s=new DisposableStack(); var x=false; s.defer(function(){x=true;}); s[Symbol.dispose](); x===true"));
+    // SuppressedError: 정리 중 두 오류가 겹치면 집계
+    assert!(prelude_bool(
+        "var s=new DisposableStack(); s.defer(function(){throw new Error('first');}); \
+         s.defer(function(){throw new Error('second');}); \
+         var ok=false; try{ s.dispose() }catch(e){ \
+           ok = e instanceof SuppressedError && e.error.message==='first' && e.suppressed.message==='second'; } ok"));
+    // SuppressedError 는 Error 하위, prototype.name 정확
+    assert!(prelude_bool("new SuppressedError(1,2,'m') instanceof Error && SuppressedError.prototype.name==='SuppressedError'"));
+    assert!(prelude_bool("var e=new SuppressedError('x','y','m'); e.error==='x' && e.suppressed==='y' && e.message==='m'"));
+}
+
 // 내장 함수는 스펙상 name/length own 프로퍼티를 가진다 (§17). 예전엔 항상 ""/0.
 // 읽기 경로(값, getOwnPropertyDescriptor, hasOwnProperty)를 표준대로 보고한다.
 #[test]
