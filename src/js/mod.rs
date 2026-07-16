@@ -1836,39 +1836,51 @@ var __kBI64 = 2n ** 64n, __kBI63 = 2n ** 63n;
 // %TypedArray%.prototype (§23.2.3) — 공유 프로토타입. 각 생성자의 prototype 이 이걸
 // 상속하므로 메서드는 own 이 아니라 **상속**된다(inherited.js 검사가 이걸 본다).
 // this[i] 는 Proxy 트랩을 타므로 명시 루프로 접근하고, 새 typed array 는 this.constructor 로.
+// ValidateTypedArray (§23.2.4.4): 수신자가 유효한 typed array(브랜드)이고 그 버퍼가
+// 분리(detach)되지 않았는지 확인. 대부분의 프로토타입 메서드는 시작 시 이걸 부른다 —
+// 브랜드 불일치·분리 버퍼면 TypeError. (getter length/byteLength/buffer/byteOffset 은
+// throw 하지 않고 0/버퍼를 돌려주므로 여기 대상이 아니다.)
+function __kTAValidate(o){
+  if (!o || !o._spec) throw new TypeError('method called on incompatible receiver (not a TypedArray)');
+  if (o._buffer && o._buffer._detached) throw new TypeError('TypedArray has a detached ArrayBuffer');
+  return o;
+}
 var __kTAProto = {
   set: function(src, off){ off = off || 0; for (var i = 0; i < src.length; i++) this[off + i] = src[i]; },
-  fill: function(v, a, b){ a = a || 0; b = (b === undefined) ? this.length : b; for (var i = a; i < b; i++) this[i] = v; return this; },
+  fill: function(v, a, b){ __kTAValidate(this); a = a || 0; b = (b === undefined) ? this.length : b; for (var i = a; i < b; i++) this[i] = v; return this; },
   subarray: function(a, b){ a = a || 0; b = (b === undefined) ? this.length : b; return new this._ctor(this.buffer, this.byteOffset + a * this.BYTES_PER_ELEMENT, Math.max(0, b - a)); },
-  slice: function(a, b){ a = a || 0; b = (b === undefined) ? this.length : b; var out = new this._ctor(Math.max(0, b - a)); for (var i = 0; i < out.length; i++) out[i] = this[a + i]; return out; },
-  forEach: function(fn){ for (var i = 0; i < this.length; i++) fn(this[i], i, this); },
-  map: function(fn){ var out = new this._ctor(this.length); for (var i = 0; i < this.length; i++) out[i] = fn(this[i], i, this); return out; },
-  indexOf: function(v){ for (var i = 0; i < this.length; i++) if (this[i] === v) return i; return -1; },
-  includes: function(v){ return this.indexOf(v) >= 0; },
-  join: function(sep){ var a = []; for (var i = 0; i < this.length; i++) a.push(this[i]); return a.join(sep === undefined ? ',' : sep); },
-  reduce: function(fn, init){ var acc = init, i = 0; if (arguments.length < 2) acc = this[i++]; for (; i < this.length; i++) acc = fn(acc, this[i], i, this); return acc; },
-  every: function(fn, t){ for (var i=0;i<this.length;i++) if(!fn.call(t,this[i],i,this)) return false; return true; },
-  some: function(fn, t){ for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return true; return false; },
-  filter: function(fn, t){ var out=[]; for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) out.push(this[i]); return new this._ctor(out); },
-  find: function(fn, t){ for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
-  findIndex: function(fn, t){ for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return i; return -1; },
-  findLast: function(fn, t){ for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
-  findLastIndex: function(fn, t){ for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return i; return -1; },
-  reduceRight: function(fn){ var i=this.length-1, acc; if (arguments.length>1) acc=arguments[1]; else acc=this[i--]; for (; i>=0; i--) acc=fn(acc,this[i],i,this); return acc; },
-  lastIndexOf: function(v, from){ var i = (from===undefined) ? this.length-1 : (from|0); if (i<0) i+=this.length; for (; i>=0; i--) if (this[i]===v) return i; return -1; },
-  at: function(i){ i = Math.trunc(+i) || 0; if (i < 0) i += this.length; return (i >= 0 && i < this.length) ? this[i] : undefined; },
-  reverse: function(){ var n = this.length; for (var i = 0; i < (n >> 1); i++){ var t = this[i]; this[i] = this[n-1-i]; this[n-1-i] = t; } return this; },
-  toReversed: function(){ var n = this.length, out = new this._ctor(n); for (var i = 0; i < n; i++) out[i] = this[n-1-i]; return out; },
-  sort: function(cmp){ var a = []; for (var i=0;i<this.length;i++) a.push(this[i]); a.sort(cmp || function(x, y){ return x < y ? -1 : (x > y ? 1 : 0); }); for (var i = 0; i < a.length; i++) this[i] = a[i]; return this; },
-  toSorted: function(cmp){ return new this._ctor(this).sort(cmp); },
-  copyWithin: function(target, start, end){ var n=this.length; target=target|0; start=start|0; end=(end===undefined)?n:(end|0); if(target<0)target+=n; if(start<0)start+=n; if(end<0)end+=n; var tmp=[]; for(var i=start;i<end&&i<n;i++) tmp.push(this[i]); for(var i=0;i<tmp.length&&target+i<n;i++) this[target+i]=tmp[i]; return this; },
-  with: function(i, v){ i = i | 0; if (i < 0) i += this.length; var out = new this._ctor(this); out[i] = v; return out; },
-  keys: function*(){ for (var i=0;i<this.length;i++) yield i; },
-  entries: function*(){ for (var i=0;i<this.length;i++) yield [i, this[i]]; },
-  toLocaleString: function(){ return this.join(','); }
+  slice: function(a, b){ __kTAValidate(this); a = a || 0; b = (b === undefined) ? this.length : b; var out = new this._ctor(Math.max(0, b - a)); for (var i = 0; i < out.length; i++) out[i] = this[a + i]; return out; },
+  forEach: function(fn){ __kTAValidate(this); for (var i = 0; i < this.length; i++) fn(this[i], i, this); },
+  map: function(fn){ __kTAValidate(this); var out = new this._ctor(this.length); for (var i = 0; i < this.length; i++) out[i] = fn(this[i], i, this); return out; },
+  indexOf: function(v){ __kTAValidate(this); for (var i = 0; i < this.length; i++) if (this[i] === v) return i; return -1; },
+  includes: function(v){ __kTAValidate(this); for (var i = 0; i < this.length; i++) if (this[i] === v) return true; return false; },
+  join: function(sep){ __kTAValidate(this); var a = []; for (var i = 0; i < this.length; i++) a.push(this[i]); return a.join(sep === undefined ? ',' : sep); },
+  reduce: function(fn, init){ __kTAValidate(this); var acc = init, i = 0; if (arguments.length < 2) acc = this[i++]; for (; i < this.length; i++) acc = fn(acc, this[i], i, this); return acc; },
+  every: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(!fn.call(t,this[i],i,this)) return false; return true; },
+  some: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return true; return false; },
+  filter: function(fn, t){ __kTAValidate(this); var out=[]; for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) out.push(this[i]); return new this._ctor(out); },
+  find: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
+  findIndex: function(fn, t){ __kTAValidate(this); for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return i; return -1; },
+  findLast: function(fn, t){ __kTAValidate(this); for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
+  findLastIndex: function(fn, t){ __kTAValidate(this); for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return i; return -1; },
+  reduceRight: function(fn){ __kTAValidate(this); var i=this.length-1, acc; if (arguments.length>1) acc=arguments[1]; else acc=this[i--]; for (; i>=0; i--) acc=fn(acc,this[i],i,this); return acc; },
+  lastIndexOf: function(v, from){ __kTAValidate(this); var i = (from===undefined) ? this.length-1 : (from|0); if (i<0) i+=this.length; for (; i>=0; i--) if (this[i]===v) return i; return -1; },
+  at: function(i){ __kTAValidate(this); i = Math.trunc(+i) || 0; if (i < 0) i += this.length; return (i >= 0 && i < this.length) ? this[i] : undefined; },
+  reverse: function(){ __kTAValidate(this); var n = this.length; for (var i = 0; i < (n >> 1); i++){ var t = this[i]; this[i] = this[n-1-i]; this[n-1-i] = t; } return this; },
+  toReversed: function(){ __kTAValidate(this); var n = this.length, out = new this._ctor(n); for (var i = 0; i < n; i++) out[i] = this[n-1-i]; return out; },
+  sort: function(cmp){ __kTAValidate(this); var a = []; for (var i=0;i<this.length;i++) a.push(this[i]); a.sort(cmp || function(x, y){ return x < y ? -1 : (x > y ? 1 : 0); }); for (var i = 0; i < a.length; i++) this[i] = a[i]; return this; },
+  toSorted: function(cmp){ __kTAValidate(this); return new this._ctor(this).sort(cmp); },
+  copyWithin: function(target, start, end){ __kTAValidate(this); var n=this.length; target=target|0; start=start|0; end=(end===undefined)?n:(end|0); if(target<0)target+=n; if(start<0)start+=n; if(end<0)end+=n; var tmp=[]; for(var i=start;i<end&&i<n;i++) tmp.push(this[i]); for(var i=0;i<tmp.length&&target+i<n;i++) this[target+i]=tmp[i]; return this; },
+  with: function(i, v){ __kTAValidate(this); i = i | 0; if (i < 0) i += this.length; var out = new this._ctor(this); out[i] = v; return out; },
+  // keys/entries/values 는 반복자를 반환하는데, 검증은 **호출 시점에 즉시**(반복자 본문
+  // 지연 실행이 아니라)여야 한다 (§23.2.3.x → ValidateTypedArray 먼저). 그래서 일반 함수로
+  // 감싸 먼저 검증하고 제너레이터를 만들어 돌려준다.
+  keys: function(){ __kTAValidate(this); var s=this; return (function*(){ for (var i=0;i<s.length;i++) yield i; })(); },
+  entries: function(){ __kTAValidate(this); var s=this; return (function*(){ for (var i=0;i<s.length;i++) yield [i, s[i]]; })(); },
+  values: function(){ __kTAValidate(this); var s=this; return (function*(){ for (var i=0;i<s.length;i++) yield s[i]; })(); },
+  toLocaleString: function(){ __kTAValidate(this); return this.join(','); }
 };
-__kTAProto[Symbol.iterator] = function*(){ for (var i = 0; i < this.length; i++) yield this[i]; };
-__kTAProto.values = __kTAProto[Symbol.iterator];
+__kTAProto[Symbol.iterator] = __kTAProto.values;
 // length/byteLength 는 %TypedArray%.prototype 의 **accessor** 다 (§23.2.3.18/.2). 인스턴스
 // own 이 아니다(Proxy 트랩이 값을 계산) — getOwnPropertyDescriptor(...).get 검사가 이걸 본다.
 // 트랩이 ta.length/byteLength 를 가로채므로 이 accessor 는 gOPD/.get.call 에서만 쓰인다.
@@ -1890,7 +1902,8 @@ Object.defineProperty(__kTAProto, 'buffer', { get: function(){
 }, configurable: true });
 Object.defineProperty(__kTAProto, 'byteOffset', { get: function(){
   if (!this || !this._spec) throw new TypeError('get %TypedArray%.prototype.byteOffset called on incompatible receiver');
-  return this._byteOffset;
+  // 분리(detach)된 버퍼면 0 (§23.2.3.3) — throw 하지 않는다.
+  return (this._buffer && this._buffer._detached) ? 0 : this._byteOffset;
 }, configurable: true });
 
 // %TypedArray% intrinsic 생성자 (§23.2.1) — 추상. 하네스가 Object.getPrototypeOf(Int8Array)
@@ -1910,6 +1923,9 @@ function __kMakeTypedArray(name) {
     if (arg instanceof __kArrayBuffer) {
       buf = arg;
       off = byteOffset || 0;
+      // 분리된 버퍼 위에는 뷰를 만들 수 없다 (§23.2.5.1 step 11). offset/length 는
+      // subarray 등에서 이미 계산·강제변환됐고, 여기서 TypeError.
+      if (buf._detached) throw new TypeError('Cannot construct a TypedArray on a detached ArrayBuffer');
       len = (length === undefined) ? Math.floor((buf.byteLength - off) / spec.size) : length;
     } else if (typeof arg === 'number') {
       len = arg | 0;
@@ -1991,6 +2007,27 @@ var Uint16Array = window.Uint16Array, Int16Array = window.Int16Array;
 var Uint32Array = window.Uint32Array, Int32Array = window.Int32Array;
 var Float32Array = window.Float32Array, Float64Array = window.Float64Array;
 var BigInt64Array = window.BigInt64Array, BigUint64Array = window.BigUint64Array;
+
+// test262 호스트 훅 $262 (§host-defined). 다수 TypedArray/ArrayBuffer 테스트가
+// $262.detachArrayBuffer 로 **표준 분리(detach)** 동작을 관측한다(detachArrayBuffer.js
+// 하네스의 $DETACHBUFFER 가 이걸 부른다). detach 는 우리 ArrayBuffer 표현
+// (_detached/_b/_byteLength)을 transfer 와 같은 방식으로 비운다.
+if (!window.$262) {
+  window.$262 = {
+    global: (typeof globalThis !== 'undefined' ? globalThis : window),
+    gc: function(){},
+    detachArrayBuffer: function(buffer){
+      if (buffer instanceof __kArrayBuffer) {
+        buffer._detached = true;
+        buffer._b = __kZeroBytes(0);
+        buffer._byteLength = 0;
+      }
+      return null;
+    },
+    evalScript: function(src){ return eval(src); }
+  };
+}
+var $262 = window.$262;
 
 // DataView (§25.3) — ArrayBuffer 위의 뷰. 임의 바이트 오프셋에서 타입별로 읽고/쓰며
 // 엔디언(little/big)을 지원한다. 바이트는 버퍼의 _b 를 직접 만진다.

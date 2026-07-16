@@ -4864,6 +4864,53 @@ fn typed_array_static_inheritance() {
     assert!(prelude_bool("Uint8Array[Symbol.species]===Uint8Array"));
 }
 
+// $262.detachArrayBuffer 호스트 훅 + ValidateTypedArray (§23.2.4.4): 분리된 버퍼의
+// typed array 는 length/byteLength/byteOffset 이 0 이고, 대부분의 프로토타입 메서드는
+// TypeError 를 던진다. 브랜드 불일치 수신자도 TypeError. 예전엔 $262 미정의로
+// $DETACHBUFFER 하네스가 통째로 죽었고(ReferenceError), 메서드는 조용히 빈 결과였다.
+#[test]
+fn typed_array_detach_and_262_hook() {
+    assert!(prelude_bool("typeof $262==='object' && typeof $262.detachArrayBuffer==='function'"));
+    // 분리 후 getter 는 0 (throw 아님)
+    assert!(prelude_bool(
+        "var a=new Int8Array(new ArrayBuffer(8),0,4); $262.detachArrayBuffer(a.buffer); \
+         a.length===0 && a.byteLength===0 && a.byteOffset===0"
+    ));
+    // 분리 후 메서드는 TypeError
+    let thr = |body: &str| {
+        format!("var a=new Int8Array(new ArrayBuffer(8),0,4); $262.detachArrayBuffer(a.buffer); \
+                 var t=false; try{{ {} }}catch(e){{ t=e instanceof TypeError }} t", body)
+    };
+    for m in ["a.fill(1)", "a.map(function(x){return x;})", "a.forEach(function(){})",
+              "a.join()", "a.keys()", "a.values()", "a.entries()", "a.slice()",
+              "a.indexOf(1)", "a.sort()", "a.reverse()", "a.reduce(function(x){return x;})"] {
+        assert!(prelude_bool(&thr(m)), "detached {} 는 TypeError 여야", m);
+    }
+    // subarray: begin/end 강제변환을 관측한 뒤 throw (생성자가 분리 버퍼 거부)
+    assert!(prelude_bool(
+        "var a=new Int8Array(new ArrayBuffer(8),0,2); $262.detachArrayBuffer(a.buffer); \
+         var begin=false,end=false; var o1={valueOf:function(){begin=true;return 0;}}, \
+         o2={valueOf:function(){end=true;return 2;}}; var t=false; \
+         try{ a.subarray(o1,o2) }catch(e){ t=e instanceof TypeError } t && begin && end"
+    ));
+    // 브랜드 검사: typed array 아닌 수신자 → TypeError
+    assert!(prelude_bool(
+        "var t=false; try{ Int8Array.prototype.fill.call({},1) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(prelude_bool(
+        "var t=false; try{ Int8Array.prototype.map.call([1,2],function(x){return x;}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 분리된 버퍼 위 생성자 → TypeError
+    assert!(prelude_bool(
+        "var buf=new ArrayBuffer(8); $262.detachArrayBuffer(buf); \
+         var t=false; try{ new Int8Array(buf) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 정상(분리 안 됨)은 무회귀
+    assert_eq!(prelude_str("new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}).join(',')"), "1,3");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3]).values()).join(',')"), "1,2,3");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([5,6]).keys()).join(',')"), "0,1");
+}
+
 // DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
 #[test]
 fn data_view_get_set_endian() {
