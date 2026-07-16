@@ -5680,6 +5680,10 @@ impl Interp {
                             // 예외는 커스텀 엘리먼트다: HTMLElement 가 진짜 DOM 노드를 돌려주고,
                             // 표준도 그 노드가 this 가 되도록 정의한다. 그때만 갈아끼운다.
                             other => {
+                                // super() 는 부모를 **현재 new.target**(파생 클래스)로 호출한다
+                                // (§10.2.2). 부모가 new.target 을 검사하는 함수/네이티브
+                                // (예: Iterator 추상 생성자)면 undefined 로 보여 잘못 throw 했다.
+                                self.new_target = env_get(env, "\u{0}newtarget");
                                 let produced =
                                     self.call_value(other.clone(), Some(this.clone()), arg_vals)?;
                                 match produced {
@@ -6178,6 +6182,9 @@ impl Interp {
                 // 돈다. 예전엔 이 경로가 없어서 class F extends Error {} 의 message 가
                 // 통째로 사라졌다 (new F('x').message === undefined).
                 if let Some(pc) = &cls.parent_ctor {
+                    // 암묵 super(...args) 도 부모를 현재 클래스를 new.target 으로 호출한다
+                    // (§10.2.2). 부모가 new.target 검사 함수(Iterator 등)면 필수.
+                    self.new_target = Some(Value::Class(cls.clone()));
                     let produced =
                         self.call_value(pc.clone(), Some(inst.clone()), args)?;
                     match produced {

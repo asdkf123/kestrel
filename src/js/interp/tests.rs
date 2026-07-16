@@ -2493,6 +2493,27 @@ fn array_sort_undefined_to_end() {
     assert_eq!(run_str("[10,9,1,20].sort().join(',')"), "1,10,20,9");
 }
 
+// super() 는 부모(함수/네이티브)를 **현재 new.target**(파생 클래스)로 호출한다 (§10.2.2).
+// 명시·암묵(기본 파생) 생성자 둘 다. 예전엔 부모의 new.target 이 undefined 라
+// new.target 을 검사하는 추상 생성자(Iterator 등) 확장이 깨졌다.
+#[test]
+fn super_call_propagates_new_target() {
+    // 부모 함수가 new.target 을 본다: 파생 클래스여야 (undefined 아님)
+    assert!(run_bool("var seen; function B(){ seen=new.target; } \
+        class C extends B { constructor(){ super(); } } new C(); seen!==undefined"));
+    // 기본(암묵) 파생 생성자도 전파
+    assert!(run_bool("var seen; function B(){ seen=new.target; } class C extends B {} new C(); seen!==undefined"));
+    assert!(run_bool("var seen; function B(){ seen=new.target; } class C extends B { m(){} } new C(); seen!==undefined"));
+    // 추상 생성자 패턴: new.target===자기면 throw, 서브클래스면 OK
+    assert!(run_bool("function A(){ if(new.target===A||new.target===undefined) throw new TypeError('abstract'); } \
+        var t=false; try{ new A() }catch(e){ t=e instanceof TypeError } \
+        class S extends A {} var ok = typeof new S()==='object'; t && ok"));
+    // Iterator(프렐류드 추상)도: 직접 new 는 throw, 확장은 OK
+    assert!(prelude_bool("var t=false; try{ new Iterator() }catch(e){ t=e instanceof TypeError } \
+        class S extends Iterator { get next(){ return function(){return {done:true,value:undefined};}; } } \
+        t && typeof new S()==='object'"));
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {
