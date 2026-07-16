@@ -1581,6 +1581,16 @@ impl Interp {
                             m.borrow_mut().remove("__proto__");
                         }
                     }
+                } else if let Value::Fn(f) = &target {
+                    // 함수의 [[Prototype]] 도 설정 가능해야 한다 (§20.2.3). 객체/함수/null 은
+                    // 명시 저장(null 은 그대로 null 로 남아야 — 기본값 Function.prototype 과 구분).
+                    match proto {
+                        Value::Obj(_) | Value::Fn(_) | Value::Native(_) | Value::Bound(_)
+                        | Value::Null => {
+                            f.props.borrow_mut().insert("__proto__".to_string(), proto);
+                        }
+                        _ => {}
+                    }
                 }
                 Ok(target)
             }
@@ -1722,9 +1732,15 @@ impl Interp {
                     Some(Value::Native(Native::ErrorCtor(n))) if *n != "Error" => {
                         env_get(&self.global, "Error").unwrap_or_else(|| self.fn_proto.clone())
                     }
-                    Some(Value::Fn(_)) | Some(Value::Native(_)) | Some(Value::Bound(_)) => {
-                        self.fn_proto.clone()
-                    }
+                    // 함수의 [[Prototype]]: setPrototypeOf 로 설정됐으면 그것, 아니면
+                    // Function.prototype (§20.2.3). class B extends A / %TypedArray% 상속의 토대.
+                    Some(Value::Fn(f)) => f
+                        .props
+                        .borrow()
+                        .get("__proto__")
+                        .cloned()
+                        .unwrap_or_else(|| self.fn_proto.clone()),
+                    Some(Value::Native(_)) | Some(Value::Bound(_)) => self.fn_proto.clone(),
                     Some(Value::Str(_)) => self.string_proto.clone(),
                     Some(Value::Num(_)) => self.number_proto.clone(),
                     Some(Value::Bool(_)) => self.boolean_proto.clone(),

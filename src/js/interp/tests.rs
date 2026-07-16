@@ -4794,6 +4794,23 @@ fn date_math_method_name_length() {
     ));
 }
 
+// 함수의 [[Prototype]] (§20.2.3): Object.getPrototypeOf/setPrototypeOf 가 함수에도
+// 동작해야 한다(정적 상속·%TypedArray%의 토대). 예전엔 함수는 항상 Function.prototype
+// 이었고 setPrototypeOf 는 무시됐다.
+#[test]
+fn function_prototype_chain() {
+    // 기본값은 Function.prototype
+    assert!(run_bool("function F(){} Object.getPrototypeOf(F) === Function.prototype"));
+    // setPrototypeOf 가 반영된다
+    assert!(run_bool("function A(){} function B(){} Object.setPrototypeOf(A,B); Object.getPrototypeOf(A)===B"));
+    // null 로 설정하면 null 로 남는다(기본값으로 안 돌아감)
+    assert!(run_bool("function G(){} Object.setPrototypeOf(G,null); Object.getPrototypeOf(G)===null"));
+    // __proto__ 대입도 동작
+    assert!(run_bool("function C(){} var o={m:1}; C.__proto__=o; Object.getPrototypeOf(C)===o"));
+    // 일반 함수 대량 확인: 서로 다른 함수의 기본 프로토는 같은 Function.prototype
+    assert!(run_bool("function X(){} function Y(){} Object.getPrototypeOf(X)===Object.getPrototypeOf(Y)"));
+}
+
 // DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
 #[test]
 fn data_view_get_set_endian() {
