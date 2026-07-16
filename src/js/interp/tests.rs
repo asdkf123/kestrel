@@ -4811,6 +4811,31 @@ fn function_prototype_chain() {
     assert!(run_bool("function X(){} function Y(){} Object.getPrototypeOf(X)===Object.getPrototypeOf(Y)"));
 }
 
+// ToPropertyDescriptor (§10.2.4): 서술자는 임의의 객체이며 필드는 HasProperty+Get 으로
+// 읽어 **상속·getter 도 반영**한다. 함수/배열 서술자의 상속 필드가 특히 문제였다 —
+// has_property 가 Fn/Arr 의 [[Prototype]] 체인을 안 걸어 상속 value 를 놓쳤다.
+#[test]
+fn to_property_descriptor_reads_inherited() {
+    // 함수 서술자: 상속된 value(Function.prototype 에 얹음)를 읽는다
+    assert_eq!(run_str(
+        "Function.prototype.value='F'; var o={}; Object.defineProperty(o,'p',function(){}); o.p"), "F");
+    // 배열 서술자: 상속된 value(Array.prototype 에 얹음)
+    assert_eq!(run_str(
+        "Array.prototype.value='A'; var o={}; Object.defineProperty(o,'p',[]); o.p"), "A");
+    // 인스턴스 서술자: 클래스 프로토타입의 value
+    assert_eq!(run_str(
+        "function C(){} C.prototype.value='I'; var o={}; Object.defineProperty(o,'p',new C()); o.p"), "I");
+    // getter 서술자 필드: get 을 호출해 값 산출
+    assert_eq!(run_num(
+        "var o={}; var d={get value(){return 7;}, get enumerable(){return true;}}; \
+         Object.defineProperty(o,'p',d); o.p"), 7.0);
+    // 무회귀: 평범한 서술자에 상속 필드가 잘못 끼지 않는다
+    assert!(run_bool("var o={}; Object.defineProperty(o,'a',{value:5}); \
+                      Object.getOwnPropertyDescriptor(o,'a').enumerable===false && o.a===5"));
+    // has_property 무회귀: 상속 메서드/멤버가 in 으로 잡힘
+    assert!(run_bool("('push' in []) && ('at' in []) && ('call' in function(){})"));
+}
+
 // 함수 정적 상속 (§10.1.8 OrdinaryGet): 함수도 ordinary object 이므로 own·내장 멤버에
 // 없는 정적 프로퍼티는 [[Prototype]] 체인에서 상속한다. 예전엔 member_get 의 Fn arm 이
 // 곧장 Undefined 라 setPrototypeOf 해도 정적 상속이 안 됐다.

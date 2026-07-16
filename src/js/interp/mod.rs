@@ -4444,6 +4444,42 @@ impl Interp {
     // __proto__ 링크를 따라 프로퍼티를 찾는다. getter 면 this=원 객체로 호출. 순환 방지.
     // HasProperty (§7.3.11): own + 프로토타입 체인. ToPropertyDescriptor 등이
     // 필드 존재 판정에 쓴다({value: undefined} 처럼 명시 undefined 와 부재를 구분).
+    /// [[Prototype]] 체인(Obj/Fn 노드)에 key 가 있는지. HasProperty 의 상속 부분에 쓴다.
+    /// 값이 아니라 존재만 보므로 getter 를 부르지 않아 &self 로 충분하다.
+    fn value_chain_has(&self, start: &Value, key: &str) -> bool {
+        let mut proto = start.clone();
+        let mut depth = 0;
+        loop {
+            depth += 1;
+            if depth > 100 {
+                return false;
+            }
+            match proto {
+                Value::Obj(p) => {
+                    if !is_internal_key(key) && p.borrow().contains_key(key) {
+                        return true;
+                    }
+                    match p.borrow().get("__proto__").cloned() {
+                        Some(n) => proto = n,
+                        None => return false,
+                    }
+                }
+                Value::Fn(f) => {
+                    if f.props.borrow().contains_key(key) {
+                        return true;
+                    }
+                    proto = f
+                        .props
+                        .borrow()
+                        .get("__proto__")
+                        .cloned()
+                        .unwrap_or_else(|| self.fn_proto.clone());
+                }
+                _ => return false,
+            }
+        }
+    }
+
     pub(super) fn has_property(&self, obj: &Value, key: &str) -> bool {
         match obj {
             Value::Obj(m) => {
@@ -4466,13 +4502,38 @@ impl Interp {
             }
             Value::Instance(i) => i.fields.borrow().contains_key(key),
             Value::Fn(f) => {
-                f.props.borrow().contains_key(key)
-                    || matches!(key, "name" | "length" | "prototype")
+                if f.props.borrow().contains_key(key) || matches!(key, "name" | "length" | "prototype")
+                {
+                    return true;
+                }
+                // 함수도 ordinary object — [[Prototype]] 체인(정적 상속)도 본다.
+                // member_get(fn_static_lookup)과 일관돼야 ToPropertyDescriptor 가 상속
+                // 서술자 필드(예: Function.prototype 에 얹은 value)를 읽는다.
+                let start = f
+                    .props
+                    .borrow()
+                    .get("__proto__")
+                    .cloned()
+                    .unwrap_or_else(|| self.fn_proto.clone());
+                self.value_chain_has(&start, key)
             }
             Value::Arr(a) => {
-                key.parse::<usize>().map(|n| n < a.borrow().len()).unwrap_or(false)
+                if key.parse::<usize>().map(|n| n < a.borrow().len()).unwrap_or(false)
                     || a.get_prop(key).is_some()
                     || key == "length"
+                    || key == "push"
+                    || key == "\u{0}@@iterator"
+                    || natives::array_op_for(key).is_some()
+                {
+                    return true;
+                }
+                // Array.prototype 체인의 상속 프로퍼티(사용자가 얹은 것 포함).
+                if let Value::Obj(ns) = &self.array_ns {
+                    if let Some(proto) = ns.borrow().get("prototype").cloned() {
+                        return self.value_chain_has(&proto, key);
+                    }
+                }
+                false
             }
             // HasProperty (§7.3.11): own(name/length/정적/prototype) + 상속 함수 메서드.
             Value::Native(n) => {
