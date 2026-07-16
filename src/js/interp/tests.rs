@@ -4128,6 +4128,24 @@ fn string_methods_are_generic() {
     ));
 }
 
+// String.prototype.toLocaleLowerCase/toLocaleUpperCase (§22.1.3.24/.25): Intl 없으면
+// 로케일 독립 대소문자 매핑(=toLowerCase/toUpperCase). 예전엔 미구현(undefined)이었다.
+#[test]
+fn string_to_locale_case() {
+    assert!(prelude_bool("typeof ''.toLocaleLowerCase==='function' && typeof ''.toLocaleUpperCase==='function'"));
+    assert_eq!(prelude_str("'ABC'.toLocaleLowerCase()"), "abc");
+    assert_eq!(prelude_str("'abc'.toLocaleUpperCase()"), "ABC");
+    // 수신자 ToString(§RequireObjectCoercible 후)
+    assert_eq!(prelude_str("String.prototype.toLocaleUpperCase.call(456)"), "456");
+    // null/undefined → TypeError
+    assert!(prelude_bool("try{ String.prototype.toLocaleLowerCase.call(null); false }catch(e){ e instanceof TypeError }"));
+    assert!(prelude_bool("try{ String.prototype.toLocaleUpperCase.call(undefined); false }catch(e){ e instanceof TypeError }"));
+    // name/length 서술자 (§10.2): name===메서드명, length===0, writable:false, configurable:true
+    assert!(prelude_bool("var d=Object.getOwnPropertyDescriptor(String.prototype.toLocaleLowerCase,'name'); \
+                          d.value==='toLocaleLowerCase' && d.writable===false && d.configurable===true"));
+    assert!(prelude_bool("String.prototype.toLocaleLowerCase.length===0"));
+}
+
 // 내장 함수는 스펙상 name/length own 프로퍼티를 가진다 (§17). 예전엔 항상 ""/0.
 // 읽기 경로(값, getOwnPropertyDescriptor, hasOwnProperty)를 표준대로 보고한다.
 #[test]
