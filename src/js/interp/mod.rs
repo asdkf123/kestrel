@@ -3070,6 +3070,15 @@ impl Interp {
                     Value::Obj(m) => enumerable_keys(m),
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
+                    // 함수도 ordinary object — 열거 가능한 own 프로퍼티를 순회
+                    // (상속된 Function/Object.prototype 멤버는 전부 비열거).
+                    Value::Fn(f) => {
+                        let b = f.props.borrow();
+                        b.keys()
+                            .filter(|k| !is_internal_key(k) && !b.contains_key(&nonenum_marker(k)))
+                            .cloned()
+                            .collect()
+                    }
                     _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
                 };
                 for k in keys {
@@ -3426,6 +3435,24 @@ impl Interp {
                                         return Ok(Value::Bool(false));
                                     }
                                     let mut mm = m.borrow_mut();
+                                    mm.remove(&key);
+                                    mm.remove(&attr_marker(&key));
+                                    mm.remove(&nonenum_marker(&key));
+                                }
+                            }
+                            // 함수 프로퍼티도 configurable 을 존중해 삭제한다 (§10.2 —
+                            // 함수는 ordinary object). name/length/prototype 은 계산
+                            // 프로퍼티라 대상 밖(관대하게 true).
+                            Value::Fn(func) => {
+                                if !matches!(key.as_str(), "name" | "length" | "prototype")
+                                    && func.props.borrow().contains_key(&key)
+                                {
+                                    if prop_attrs(&func.props.borrow(), &key) & ATTR_CONFIGURABLE
+                                        == 0
+                                    {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    let mut mm = func.props.borrow_mut();
                                     mm.remove(&key);
                                     mm.remove(&attr_marker(&key));
                                     mm.remove(&nonenum_marker(&key));
@@ -6917,19 +6944,38 @@ impl Interp {
                         c.statics.borrow_mut().insert(key, value);
                         Ok(())
                     }
-                    // 함수 프로퍼티 (F.prototype, F.staticProp = ...)
+                    // 함수 프로퍼티 (F.prototype, F.staticProp = ...) — 함수도 ordinary
+                    // object 라 접근자면 setter 호출, 데이터면 writable 을 존중한다.
                     Value::Fn(func) => {
                         let fv = Value::Fn(func.clone());
                         if self.is_frozen_val(&fv) {
                             return Ok(());
                         }
-                        if !func.props.borrow().contains_key(&key)
-                            && self.is_nonextensible_val(&fv)
-                        {
-                            return Ok(());
+                        let existing = func.props.borrow().get(&key).cloned();
+                        match existing {
+                            Some(Value::Accessor(acc)) => {
+                                if let Some(s) = &acc.set {
+                                    self.call_value(s.clone(), Some(fv), vec![value])?;
+                                }
+                                // setter 없는 접근자에 대입은 조용히 무시
+                                Ok(())
+                            }
+                            Some(_) => {
+                                // 기존 데이터 프로퍼티: writable:false 면 무시(속성 비트 보존)
+                                if prop_attrs(&func.props.borrow(), &key) & ATTR_WRITABLE == 0 {
+                                    return Ok(());
+                                }
+                                func.props.borrow_mut().insert(key, value);
+                                Ok(())
+                            }
+                            None => {
+                                if self.is_nonextensible_val(&fv) {
+                                    return Ok(());
+                                }
+                                func.props.borrow_mut().insert(key, value);
+                                Ok(())
+                            }
                         }
-                        func.props.borrow_mut().insert(key, value);
-                        Ok(())
                     }
                     // 내장(네이티브)에 프로퍼티 얹기 — 폴리필의
                     // `if (!Promise.allSettled) Promise.allSettled = fn` 패턴.

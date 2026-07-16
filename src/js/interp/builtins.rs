@@ -1396,6 +1396,40 @@ impl Interp {
                             }
                         }
                         match v {
+                            // 사용자 프로퍼티(prototype 이 아닌)는 props(ObjMap)의 실제
+                            // 속성 비트로 정확히 보고한다 (§10.2.4). prototype 은 계산
+                            // 프로퍼티라 아래 근사 경로(tail 이 비열거 처리)로 둔다.
+                            Some(sv) if key != "prototype" => {
+                                let attrs = prop_attrs(&f.props.borrow(), &key);
+                                match &sv {
+                                    Value::Accessor(acc) => {
+                                        d.insert(
+                                            "get".to_string(),
+                                            acc.get.clone().unwrap_or(Value::Undefined),
+                                        );
+                                        d.insert(
+                                            "set".to_string(),
+                                            acc.set.clone().unwrap_or(Value::Undefined),
+                                        );
+                                    }
+                                    _ => {
+                                        d.insert("value".to_string(), sv.clone());
+                                        d.insert(
+                                            "writable".to_string(),
+                                            Value::Bool(attrs & ATTR_WRITABLE != 0),
+                                        );
+                                    }
+                                }
+                                d.insert(
+                                    "enumerable".to_string(),
+                                    Value::Bool(attrs & ATTR_ENUMERABLE != 0),
+                                );
+                                d.insert(
+                                    "configurable".to_string(),
+                                    Value::Bool(attrs & ATTR_CONFIGURABLE != 0),
+                                );
+                                return Ok(Value::Obj(Rc::new(RefCell::new(d))));
+                            }
                             Some(Value::Accessor(acc)) => {
                                 d.insert(
                                     "get".to_string(),
@@ -5601,6 +5635,19 @@ impl Interp {
                     let keys: Vec<Value> = own_enumerable_entries(v)
                         .into_iter()
                         .map(|(k, _)| Value::Str(k))
+                        .collect();
+                    Ok(Value::Arr(ArrayObj::new(keys)))
+                }
+                // 함수도 ordinary object — 열거 가능한 own 프로퍼티(사용자가 얹은 것)를
+                // 센다. name/length/prototype 은 props 밖(계산)이자 비열거라 제외된다.
+                Some(Value::Fn(f)) => {
+                    let b = f.props.borrow();
+                    let keys: Vec<Value> = b
+                        .keys()
+                        .filter(|k| {
+                            !is_internal_key(k) && !b.contains_key(&nonenum_marker(k))
+                        })
+                        .map(|k| Value::Str(k.clone()))
                         .collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
