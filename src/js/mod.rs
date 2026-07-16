@@ -1637,6 +1637,15 @@ if (!Promise.any) Promise.any = function(list){
   });
 };
 
+// Promise.try(fn, ...args) (§27.2.4.6, ES2025): fn 을 동기 호출해 결과/예외를 프로미스로
+// 감싼다. this(생성자)로 new 하고 executor 에서 resolve(fn(...args)) — fn 이 throw 하면
+// executor 예외로 reject 된다.
+if (!Promise.try) Promise.try = function(fn){
+  var args = Array.prototype.slice.call(arguments, 1);
+  var C = this;
+  return new C(function(resolve){ resolve(fn.apply(undefined, args)); });
+};
+
 // crypto — getRandomValues/randomUUID.
 // 주의: 엔진의 Math.random(xorshift) 기반이라 암호학적으로 안전하지 않다.
 // 렌더링 목적의 식별자 생성엔 충분하지만, 보안 용도로 신뢰하면 안 된다.

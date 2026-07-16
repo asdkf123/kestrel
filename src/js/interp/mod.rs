@@ -1487,6 +1487,29 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(map)))
     }
 
+    /// InstallErrorCause (§20.5.8.1, ES2022): options 가 객체이고 "cause" 를 가지면
+    /// error 에 비열거 own "cause" 를 심는다. AggregateError 는 (errors, message,
+    /// options) 라 options 가 args[2], 나머지 Error 계열은 args[1].
+    pub(super) fn install_error_cause(
+        &mut self,
+        err: &Value,
+        args: &[Value],
+        name: &str,
+    ) -> Result<(), String> {
+        let opt_idx = if name == "AggregateError" { 2 } else { 1 };
+        if let Some(opts) = args.get(opt_idx) {
+            if self.has_property(opts, "cause") {
+                let cause = self.member_get(opts, "cause")?;
+                if let Value::Obj(m) = err {
+                    let mut b = m.borrow_mut();
+                    b.insert("cause".to_string(), cause);
+                    b.insert(nonenum_marker("cause"), Value::Bool(true));
+                }
+            }
+        }
+        Ok(())
+    }
+
     // eval (§19.2.1 / §19.2.1.1 PerformEval).
     // - 인자가 문자열이 아니면 그대로 돌려준다 (표준).
     // - 파싱 실패는 SyntaxError 객체를 던진다 (문자열이 아니라).
@@ -6020,7 +6043,9 @@ impl Interp {
                     None | Some(Value::Undefined) => None,
                     Some(v) => Some(to_display(v)),
                 };
-                return Ok(self.make_error(name, msg));
+                let err = self.make_error(name, msg);
+                self.install_error_cause(&err, &args, name)?;
+                return Ok(err);
             }
             // 네이티브 생성자 스텁: new Error('m') / new Object() 등 → 객체
             // new f() — 일반 함수를 생성자로 (ES6 이전 패턴, 미니파이 코드 다수).

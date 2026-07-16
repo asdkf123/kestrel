@@ -2730,7 +2730,9 @@ impl Interp {
                     None | Some(Value::Undefined) => None,
                     Some(v) => Some(to_display(v)),
                 };
-                Ok(self.make_error(name, msg))
+                let err = self.make_error(name, msg);
+                self.install_error_cause(&err, &args, name)?;
+                Ok(err)
             }
             Native::Map(op) => {
                 // brand 체크: Map 이 아니면 TypeError (§24.1.3, RequireInternalSlot).

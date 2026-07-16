@@ -4146,6 +4146,25 @@ fn string_to_locale_case() {
     assert!(prelude_bool("String.prototype.toLocaleLowerCase.length===0"));
 }
 
+// Error cause 옵션 (§20.5.1.1, ES2022) + Promise.try (§27.2.4.6, ES2025).
+#[test]
+fn error_cause_and_promise_try() {
+    // cause: options 객체의 cause 를 비열거 own 으로
+    assert_eq!(run_num("new Error('m',{cause:42}).cause"), 42.0);
+    assert_eq!(run_str("new TypeError('t',{cause:'x'}).cause"), "x");
+    assert!(run_bool("var e=new Error('m',{cause:1}); Object.keys(e).indexOf('cause')<0 && Object.prototype.hasOwnProperty.call(e,'cause')"));
+    // options 없거나 cause 없으면 cause 프로퍼티 없음
+    assert!(run_bool("!('cause' in new Error('m')) && !('cause' in new Error('m',{}))"));
+    // cause: undefined 도 프로퍼티는 존재(HasProperty 기준)
+    assert!(run_bool("var e=new Error('m',{cause:undefined}); Object.prototype.hasOwnProperty.call(e,'cause') && e.cause===undefined"));
+    // AggregateError 는 options 가 세 번째 인자
+    assert_eq!(run_num("new AggregateError([],'m',{cause:99}).cause"), 99.0);
+    // Promise.try(프렐류드): 구조(length 1, thenable). fn 은 동기 호출(부수효과로 관측).
+    assert!(prelude_bool("typeof Promise.try==='function' && Promise.try.length===1"));
+    assert!(prelude_bool("var called=false; var p=Promise.try(function(){called=true;}); called===true && typeof p.then==='function'"));
+    assert!(prelude_bool("var got; Promise.try(function(a,b){got=a+b;},2,3); got===5"));  // 인자 전달(동기)
+}
+
 // Array.prototype.toLocaleString (§23.1.3.32): 각 원소의 toLocaleString() 을 호출해
 // ','로 잇는다. null/undefined 는 빈 문자열. 예전 폴리필은 원소 toLocaleString 미호출.
 #[test]
