@@ -2388,6 +2388,51 @@ if (!window.AsyncDisposableStack) {
 }
 var AsyncDisposableStack = window.AsyncDisposableStack;
 
+// Iterator 헬퍼 (§27.1) — %IteratorPrototype%(__kIterProto) + Iterator 생성자.
+// 제너레이터의 member 해석은 엔진이 __kIterProto 로 위임한다. 헬퍼는 this.next() 로
+// 지연 소비하는 제너레이터를 반환하며, 그 제너레이터도 __kIterProto 를 상속해 체이닝된다.
+if (!window.Iterator) {
+  var __kIterProto = {};
+  var __kIterFn = function(v){ if (typeof v !== 'function') throw new TypeError('argument is not a function'); };
+  var __kIterRecv = function(o){ if (o === null || (typeof o !== 'object' && typeof o !== 'function')) throw new TypeError('Iterator method called on incompatible receiver'); };
+  var __kIterClose = function(it){ try { if (it && typeof it['return'] === 'function') it['return'](); } catch(e){} };
+  __kIterProto.map = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; return (function*(){ while(true){ var r=it.next(); if(r.done) return; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } yield m; } })(); };
+  __kIterProto.filter = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; return (function*(){ while(true){ var r=it.next(); if(r.done) return; var k; try{ k=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(k) yield r.value; } })(); };
+  __kIterProto.take = function(n){ __kIterRecv(this); var lim=Math.trunc(+n); if(!(lim>=0)) throw new RangeError('take limit must be a non-negative number'); var it=this; return (function*(){ var c=0; if(c>=lim){ __kIterClose(it); return; } while(true){ var r=it.next(); if(r.done) return; yield r.value; c++; if(c>=lim){ __kIterClose(it); return; } } })(); };
+  __kIterProto.drop = function(n){ __kIterRecv(this); var lim=Math.trunc(+n); if(!(lim>=0)) throw new RangeError('drop limit must be a non-negative number'); var it=this; return (function*(){ var c=0; while(c<lim){ var r=it.next(); if(r.done) return; c++; } while(true){ var r2=it.next(); if(r2.done) return; yield r2.value; } })(); };
+  __kIterProto.flatMap = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; return (function*(){ while(true){ var r=it.next(); if(r.done) return; var inner; try{ inner=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } var iit=(inner!=null && inner[Symbol.iterator])?inner[Symbol.iterator]():inner; while(true){ var ir=iit.next(); if(ir.done) break; yield ir.value; } } })(); };
+  __kIterProto.reduce = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0,acc,has=arguments.length>1; if(has) acc=arguments[1]; while(true){ var r=it.next(); if(r.done) break; if(!has){ acc=r.value; has=true; continue; } acc=fn(acc,r.value,i); i++; } if(!has) throw new TypeError('Reduce of empty iterator with no initial value'); return acc; };
+  __kIterProto.toArray = function(){ __kIterRecv(this); var it=this,out=[]; while(true){ var r=it.next(); if(r.done) break; out.push(r.value); } return out; };
+  __kIterProto.forEach = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; while(true){ var r=it.next(); if(r.done) break; fn(r.value,i++); } return undefined; };
+  __kIterProto.some = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; while(true){ var r=it.next(); if(r.done) return false; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(m){ __kIterClose(it); return true; } } };
+  __kIterProto.every = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; while(true){ var r=it.next(); if(r.done) return true; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(!m){ __kIterClose(it); return false; } } };
+  __kIterProto.find = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,i=0; while(true){ var r=it.next(); if(r.done) return undefined; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(m){ __kIterClose(it); return r.value; } } };
+  __kIterProto[Symbol.iterator] = function(){ return this; };
+  __kIterProto[Symbol.toStringTag] = 'Iterator';
+  // 헬퍼 이름 명시 (프로퍼티 대입은 NamedEvaluation 안 됨).
+  ['map','filter','take','drop','flatMap','reduce','toArray','forEach','some','every','find'].forEach(function(n){
+    Object.defineProperty(__kIterProto[n], 'name', { value: n, configurable: true });
+  });
+  function Iterator(){ if (new.target === undefined || new.target === Iterator) throw new TypeError('Abstract class Iterator not directly constructable'); }
+  Iterator.prototype = __kIterProto;
+  Object.defineProperty(__kIterProto, 'constructor', { value: Iterator, writable: true, enumerable: false, configurable: true });
+  // Iterator.from(§27.1.2.1): iterable 이면 @@iterator 로, 이미 iterator 면 그 next 로.
+  // 밑 iterator 를 제너레이터로 감싸 __kIterProto 헬퍼를 부여한다(WrapForValidIterator 근사).
+  Iterator.from = function(O){
+    var it;
+    if (typeof O === 'string' || (O !== null && (typeof O === 'object' || typeof O === 'function'))) {
+      var m = O[Symbol.iterator];
+      if (typeof m === 'function') { it = m.call(O); __kIterRecv(it); }
+      else if (typeof O.next === 'function') { it = O; }
+      else throw new TypeError('Iterator.from called on non-iterable');
+    } else throw new TypeError('Iterator.from called on non-iterable');
+    return (function*(){ while(true){ var r=it.next(); if(r.done) return r.value; yield r.value; } })();
+  };
+  window.Iterator = Iterator;
+  window.__kIterProto = __kIterProto;
+}
+var Iterator = window.Iterator;
+
 // TextEncoder / TextDecoder — 실제 UTF-8 인코딩/디코딩.
 if (!window.TextEncoder) {
   window.TextEncoder = function(){};

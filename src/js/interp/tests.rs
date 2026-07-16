@@ -4146,6 +4146,37 @@ fn string_to_locale_case() {
     assert!(prelude_bool("String.prototype.toLocaleLowerCase.length===0"));
 }
 
+// Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
+// 위임하고 map/filter/take/drop/flatMap/reduce/toArray/forEach/some/every/find 를 지연
+// 제너레이터로 구현. 예전엔 전부 미구현(undefined)이었다.
+#[test]
+fn iterator_helpers() {
+    assert!(prelude_bool("typeof Iterator==='function' && typeof Iterator.prototype.map==='function'"));
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;yield 3;yield 4;} g().map(function(x){return x*10;}).toArray().join(',')"), "10,20,30,40");
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;yield 3;yield 4;} g().filter(function(x){return x%2;}).toArray().join(',')"), "1,3");
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;yield 3;yield 4;} g().take(2).toArray().join(',')"), "1,2");
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;yield 3;yield 4;} g().drop(2).toArray().join(',')"), "3,4");
+    // 체이닝 (반환 제너레이터도 헬퍼 상속)
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;yield 3;yield 4;} g().map(function(x){return x*2;}).filter(function(x){return x>2;}).take(2).toArray().join(',')"), "4,6");
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;yield 3;} g().flatMap(function(x){return [x,x];}).toArray().join(',')"), "1,1,2,2,3,3");
+    assert_eq!(prelude_num("function* g(){yield 1;yield 2;yield 3;} g().reduce(function(a,b){return a+b;},0)"), 6.0);
+    assert_eq!(prelude_num("function* g(){yield 1;yield 2;yield 3;} g().reduce(function(a,b){return a+b;})"), 6.0);
+    assert!(prelude_bool("function* g(){yield 1;yield 2;yield 3;} g().some(function(x){return x===2;})===true && g().every(function(x){return x<10;})===true"));
+    assert_eq!(prelude_num("function* g(){yield 1;yield 2;yield 3;} g().find(function(x){return x>1;})"), 2.0);
+    // Iterator.prototype.map.call
+    assert_eq!(prelude_str("function* g(){yield 5;yield 6;} Iterator.prototype.map.call(g(),function(x){return x;}).toArray().join(',')"), "5,6");
+    // 인자/수신자 검증
+    assert!(prelude_bool("function* g(){yield 1;} var t=false; try{ g().map(5) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("function* g(){yield 1;} var t=false; try{ g().take(-1).toArray() }catch(e){ t=e instanceof RangeError } t"));
+    assert!(prelude_bool("var t=false; try{ (function*(){})().reduce(function(a,b){return a;}) }catch(e){ t=e instanceof TypeError } t"));
+    // Iterator.from + 추상 생성자 + Symbol.iterator
+    assert_eq!(prelude_str("Iterator.from([7,8,9]).toArray().join(',')"), "7,8,9");
+    assert!(prelude_bool("var t=false; try{ new Iterator() }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("function* g(){yield 1;} var it=g(); it[Symbol.iterator]()===it"));
+    // 헬퍼 이름
+    assert!(prelude_bool("Iterator.prototype.map.name==='map' && Iterator.prototype.filter.name==='filter'"));
+}
+
 // Explicit Resource Management (§): Symbol.dispose + DisposableStack + SuppressedError.
 // 예전엔 전부 미구현이었다.
 #[test]

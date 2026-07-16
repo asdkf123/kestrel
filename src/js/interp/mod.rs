@@ -4799,13 +4799,22 @@ impl Interp {
                     _ => Value::Undefined,
                 })
             }
-            Value::Gen(_) => Ok(match key {
-                "next" => Value::Native(Native::GenNext),
-                "return" => Value::Native(Native::GenReturn),
-                "throw" => Value::Native(Native::GenThrow),
-                "\u{0}@@iterator" => Value::Native(Native::ReturnThis),
-                _ => Value::Undefined,
-            }),
+            Value::Gen(_) => match key {
+                "next" => Ok(Value::Native(Native::GenNext)),
+                "return" => Ok(Value::Native(Native::GenReturn)),
+                "throw" => Ok(Value::Native(Native::GenThrow)),
+                "\u{0}@@iterator" => Ok(Value::Native(Native::ReturnThis)),
+                // Iterator 헬퍼(map/filter/take/drop/flatMap/reduce/toArray/…)는
+                // %IteratorPrototype%(프렐류드 __kIterProto)에서 상속한다 (§27.1.4).
+                // 제너레이터의 member 해석이 하드코딩이라 프로토 체인을 안 걸으므로 여기서 위임.
+                _ => {
+                    if let Some(ip) = env_get(&self.global, "__kIterProto") {
+                        self.member_get(&ip, key)
+                    } else {
+                        Ok(Value::Undefined)
+                    }
+                }
+            },
             // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
             Value::Proxy(p) => {
                 self.proxy_revoked_guard(p)?;
