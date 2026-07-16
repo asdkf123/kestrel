@@ -1697,17 +1697,57 @@ var AbortController = window.AbortController;
 // 타입에 맞게 인코딩/디코딩한다 — 그래서 Uint8Array 에 256 을 넣으면 0 이 되고,
 // Float32Array 는 32비트 정밀도로 실제로 반올림된다(IEEE754 인코딩을 거치므로).
 // 숫자 배열로 흉내내면 이 규칙들이 전부 조용히 틀린다.
-function __kArrayBuffer(len) {
-  this.byteLength = len | 0;
+function __kArrayBuffer(len, opts) {
+  len = (len === undefined) ? 0 : (len | 0);
+  if (len < 0) throw new RangeError('Invalid ArrayBuffer length');
+  this._byteLength = len;
+  this._maxByteLength = (opts && typeof opts === 'object' && typeof opts.maxByteLength === 'number')
+    ? (opts.maxByteLength | 0) : -1;
+  this._detached = false;
   // 0 채우기는 네이티브로 — JS 루프면 1MB 버퍼가 100만 반복이라 사실상 못 쓴다.
-  this._b = __kZeroBytes(this.byteLength);
+  this._b = __kZeroBytes(len);
 }
+// byteLength/maxByteLength/resizable/detached 는 ArrayBuffer.prototype 의 **accessor** 다
+// (§25.1.6). 인스턴스 own 데이터가 아니다 — getOwnPropertyDescriptor(...).get 검사가 이걸 본다.
+Object.defineProperty(__kArrayBuffer.prototype, 'byteLength', {
+  get: function(){ return this._detached ? 0 : this._byteLength; }, configurable: true });
+Object.defineProperty(__kArrayBuffer.prototype, 'maxByteLength', {
+  get: function(){ return this._detached ? 0 : (this._maxByteLength >= 0 ? this._maxByteLength : this._byteLength); }, configurable: true });
+Object.defineProperty(__kArrayBuffer.prototype, 'resizable', {
+  get: function(){ return this._maxByteLength >= 0; }, configurable: true });
+Object.defineProperty(__kArrayBuffer.prototype, 'detached', {
+  get: function(){ return this._detached; }, configurable: true });
+__kArrayBuffer.prototype[Symbol.toStringTag] = 'ArrayBuffer';
 __kArrayBuffer.prototype.slice = function(a, b){
-  a = a || 0; b = (b === undefined) ? this.byteLength : b;
+  var n = this.byteLength;
+  a = (a === undefined) ? 0 : (a | 0); b = (b === undefined) ? n : (b | 0);
+  if (a < 0) a += n; if (b < 0) b += n;
+  a = Math.max(0, Math.min(a, n)); b = Math.max(0, Math.min(b, n));
   var out = new __kArrayBuffer(Math.max(0, b - a));
   for (var i = 0; i < out.byteLength; i++) out._b[i] = this._b[a + i];
   return out;
 };
+// resize (§25.1.6.x) — resizable 일 때만. transfer 는 버퍼를 분리(detach)한다.
+__kArrayBuffer.prototype.resize = function(newLen){
+  if (this._maxByteLength < 0) throw new TypeError('ArrayBuffer is not resizable');
+  newLen = newLen | 0;
+  if (newLen < 0 || newLen > this._maxByteLength) throw new RangeError('Invalid resize length');
+  var nb = __kZeroBytes(newLen);
+  for (var i = 0; i < Math.min(newLen, this._byteLength); i++) nb[i] = this._b[i];
+  this._b = nb; this._byteLength = newLen;
+};
+__kArrayBuffer.prototype.transfer = function(newLen){
+  if (this._detached) throw new TypeError('ArrayBuffer is detached');
+  newLen = (newLen === undefined) ? this._byteLength : (newLen | 0);
+  if (newLen < 0) throw new RangeError('Invalid length');
+  var out = new __kArrayBuffer(newLen);
+  for (var i = 0; i < Math.min(newLen, this._byteLength); i++) out._b[i] = this._b[i];
+  this._detached = true; this._b = __kZeroBytes(0); this._byteLength = 0;
+  return out;
+};
+__kArrayBuffer.prototype.transferToFixedLength = function(newLen){ return this.transfer(newLen); };
+// ArrayBuffer.isView(x) (§25.1.5.1): x 가 typed array/DataView 뷰인가. 우리 뷰는 _spec 을 든다.
+__kArrayBuffer.isView = function(x){ return !!(x && typeof x === 'object' && x._spec); };
 
 // IEEE754 인코딩/디코딩 (Float32/Float64) — 실제 비트로 왕복한다.
 function __kF2B(v, bytes, mBits, eBits) {

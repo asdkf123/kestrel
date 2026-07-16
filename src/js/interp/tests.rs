@@ -4794,6 +4794,36 @@ fn date_math_method_name_length() {
     ));
 }
 
+// ArrayBuffer 표준화 (§25.1): byteLength/maxByteLength/resizable/detached 는 prototype
+// accessor, isView/transfer/transferToFixedLength/resize, 생성자 검증.
+#[test]
+fn array_buffer_standardization() {
+    assert_eq!(prelude_num("new ArrayBuffer(8).byteLength"), 8.0);
+    // byteLength 는 accessor (인스턴스 own 데이터 아님)
+    assert!(prelude_bool(
+        "typeof Object.getOwnPropertyDescriptor(ArrayBuffer.prototype,'byteLength').get==='function'"
+    ));
+    assert!(prelude_bool("!Object.prototype.hasOwnProperty.call(new ArrayBuffer(4),'byteLength')"));
+    // isView
+    assert!(prelude_bool("ArrayBuffer.isView(new Uint8Array(2))===true"));
+    assert!(prelude_bool("ArrayBuffer.isView(new ArrayBuffer(2))===false"));
+    assert!(prelude_bool("ArrayBuffer.isView([])===false"));
+    // transfer → 원본 detach
+    assert!(prelude_bool(
+        "var x=new ArrayBuffer(4); var y=x.transfer(); x.detached===true && y.byteLength===4 && x.byteLength===0"
+    ));
+    // resizable / maxByteLength
+    assert!(prelude_bool("new ArrayBuffer(4).resizable===false"));
+    assert!(prelude_bool("var b=new ArrayBuffer(4,{maxByteLength:8}); b.resizable===true && b.maxByteLength===8"));
+    assert!(prelude_bool("var b=new ArrayBuffer(4,{maxByteLength:8}); b.resize(6); b.byteLength===6"));
+    // 생성자 검증: 음수 length → RangeError
+    assert!(prelude_bool("var t=false; try{ new ArrayBuffer(-1) }catch(e){ t=e instanceof RangeError } t"));
+    // slice
+    assert_eq!(prelude_num("new ArrayBuffer(8).slice(2,6).byteLength"), 4.0);
+    // typed array 가 버퍼 byteLength(accessor) 를 정확히 읽는다
+    assert_eq!(prelude_num("new Uint8Array(new ArrayBuffer(12)).length"), 12.0);
+}
+
 // TypedArray.prototype 메서드 (§23.2.3): 예전엔 filter/every/some/find/sort/reverse/
 // copyWithin/at/toSorted/toReversed/with/keys/entries 등이 undefined 였다.
 #[test]
