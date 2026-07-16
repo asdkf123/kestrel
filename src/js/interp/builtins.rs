@@ -1712,6 +1712,29 @@ impl Interp {
                     Native::ObjectSeal => super::INTEG_SEALED,
                     _ => super::INTEG_NONEXT,
                 };
+                // SetIntegrityLevel (§7.3.15): non-extensible 뿐 아니라 각 own 프로퍼티의
+                // 속성도 조인다 — seal → [[Configurable]]=false; freeze → 추가로 데이터
+                // 프로퍼티 [[Writable]]=false(접근자는 configurable 만). 예전엔 무결성
+                // 비트만 남겨 gOPD 가 여전히 configurable:true 라 verifyProperty 가 깨졌다.
+                if bit != super::INTEG_NONEXT {
+                    if let Value::Obj(m) = &arg {
+                        let keys: Vec<String> = {
+                            let b = m.borrow();
+                            b.keys().filter(|k| !is_internal_key(k)).cloned().collect()
+                        };
+                        for k in keys {
+                            let (is_acc, mut a) = {
+                                let b = m.borrow();
+                                (matches!(b.get(&k), Some(Value::Accessor(_))), prop_attrs(&b, &k))
+                            };
+                            a &= !ATTR_CONFIGURABLE;
+                            if bit == super::INTEG_FROZEN && !is_acc {
+                                a &= !ATTR_WRITABLE;
+                            }
+                            set_prop_attrs(&mut m.borrow_mut(), &k, a);
+                        }
+                    }
+                }
                 self.set_integrity(&arg, bit);
                 Ok(arg)
             }

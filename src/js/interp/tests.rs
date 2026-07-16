@@ -4858,6 +4858,31 @@ fn annexb_legacy_accessors() {
                       var c=Object.create(p); typeof c.__lookupGetter__('inh')==='function'"));
 }
 
+// SetIntegrityLevel (§7.3.15/.16): seal/freeze 는 non-extensible 뿐 아니라 각 own
+// 프로퍼티의 속성을 조인다. 예전엔 무결성 비트만 남겨 gOPD 가 여전히 configurable:true
+// 였고 verifyProperty 가 깨졌다.
+#[test]
+fn seal_freeze_clamp_property_attributes() {
+    // seal: configurable=false, writable 유지
+    assert!(run_bool("var o={foo:1}; Object.seal(o); var d=Object.getOwnPropertyDescriptor(o,'foo'); \
+                      d.configurable===false && d.writable===true"));
+    assert!(run_bool("var o={foo:1}; Object.seal(o); (delete o.foo)===false && o.foo===1"));
+    assert!(run_bool("var o={foo:1}; Object.seal(o); o.foo=9; o.foo===9"));  // sealed 는 값 변경 허용
+    assert!(run_bool("var o={foo:1}; Object.seal(o); Object.isSealed(o)===true"));
+    // freeze: configurable=false + 데이터 프로퍼티 writable=false
+    assert!(run_bool("var o={a:1}; Object.freeze(o); var d=Object.getOwnPropertyDescriptor(o,'a'); \
+                      d.configurable===false && d.writable===false"));
+    assert!(run_bool("var o={a:1}; Object.freeze(o); o.a=9; o.a===1"));  // 쓰기 차단
+    assert!(run_bool("var o={a:1}; Object.freeze(o); Object.isFrozen(o)===true"));
+    // 접근자는 configurable 만 조이고 get 은 유지(writable 없음)
+    assert!(run_bool("var o={}; Object.defineProperty(o,'x',{get:function(){return 5;},configurable:true,enumerable:true}); \
+                      Object.freeze(o); var d=Object.getOwnPropertyDescriptor(o,'x'); \
+                      d.configurable===false && typeof d.get==='function'"));
+    // frozen 프로퍼티를 다른 값으로 재정의 → TypeError (같은 값은 no-op 허용)
+    assert!(run_bool("var o={a:1}; Object.freeze(o); var t=false; \
+                      try{ Object.defineProperty(o,'a',{value:99}) }catch(e){ t=e instanceof TypeError } t"));
+}
+
 // 함수 정적 상속 (§10.1.8 OrdinaryGet): 함수도 ordinary object 이므로 own·내장 멤버에
 // 없는 정적 프로퍼티는 [[Prototype]] 체인에서 상속한다. 예전엔 member_get 의 Fn arm 이
 // 곧장 Undefined 라 setPrototypeOf 해도 정적 상속이 안 됐다.
