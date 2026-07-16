@@ -275,6 +275,9 @@ pub enum Native {
     DomContains,
     CreateDocumentFragment,
     ProxyCtor,
+    // Proxy.revocable(§28.2.1) 과 그것이 돌려주는 revoke 함수.
+    ProxyRevocable,
+    ProxyRevoke,
     CanvasGetContext,
     Canvas(CanvasMethod),
     RemoveElement,
@@ -660,6 +663,8 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         PromiseCtor => ("Promise", 1),
         BigIntCtor => ("BigInt", 1),
         ProxyCtor => ("Proxy", 2),
+        ProxyRevocable => ("revocable", 2),
+        ProxyRevoke => ("", 0),
         FunctionCtor => ("Function", 1),
         // ── 전역 함수 ──
         ParseInt => ("parseInt", 2),

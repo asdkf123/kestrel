@@ -316,6 +316,10 @@ pub struct Interp {
     // 오탐을 막는다(강한 참조 → 주소 안정).
     // 비트: 1=preventExtensions, 2=sealed, 4=frozen
     integrity: HashMap<usize, (Value, u8)>,
+    // 취소된(revoked) Proxy 들 — Proxy.revocable 의 revoke() 가 여기에 포인터를 남긴다.
+    // 취소되면 모든 내부 메서드(get/set/has/delete/ownKeys/…)가 TypeError (§10.5, §28.2).
+    // 강한 참조가 integrity 에 있어(주소 안정) 포인터 키가 안전하다.
+    revoked_proxies: std::collections::HashSet<usize>,
     // 열린 WebSocket 들. JS 객체는 인덱스로 참조하고, 드레인 구간에서 폴링해 이벤트를 배달한다.
     pub sockets: Vec<(crate::websocket::WebSocket, Value)>,
     // 아직 배달하지 않은 open/error (핸들러가 등록되기 전에 쏘면 아무도 못 듣는다)
@@ -1343,6 +1347,7 @@ impl Interp {
             window_obj,
             native_props: HashMap::new(),
             integrity: HashMap::new(),
+            revoked_proxies: std::collections::HashSet::new(),
             layout_metrics: std::collections::HashMap::new(),
             sockets: Vec::new(),
             pending_ws_open: Vec::new(),
@@ -3429,6 +3434,7 @@ impl Interp {
                             // Proxy: deleteProperty 트랩 (없으면 타깃에 위임).
                             // 반응성 라이브러리(Vue 등)가 delete 를 이 트랩으로 잡는다.
                             Value::Proxy(p) => {
+                                self.proxy_revoked_guard(p)?;
                                 let (t, h) = (p.0.clone(), p.1.clone());
                                 let trap = self.member_get(&h, "deleteProperty")?;
                                 if is_callable(&trap) {
@@ -3845,6 +3851,18 @@ impl Interp {
             let e = self.integrity.entry(p).or_insert((v.clone(), 0));
             e.1 |= bit;
         }
+    }
+
+    /// Proxy 가 취소(revoke)됐으면 TypeError. 모든 프록시 내부 메서드 시작에서 부른다
+    /// (§10.5.* 의 "If handler is null, throw a TypeError"). Ok(()) 면 계속 진행.
+    pub(super) fn proxy_revoked_guard(&mut self, p: &Rc<(Value, Value)>) -> Result<(), String> {
+        if self.revoked_proxies.contains(&(Rc::as_ptr(p) as *const () as usize)) {
+            return Err(self.throw_error(
+                "TypeError",
+                "Cannot perform 'get/set/...' on a proxy that has been revoked",
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn is_frozen_val(&self, v: &Value) -> bool {
@@ -4740,6 +4758,7 @@ impl Interp {
             }),
             // Proxy: get 트랩 있으면 handler.get(target, key, receiver), 없으면 target 위임
             Value::Proxy(p) => {
+                self.proxy_revoked_guard(p)?;
                 let (target, handler) = (&p.0, &p.1);
                 let trap = self.member_get(handler, "get")?;
                 if !matches!(trap, Value::Undefined) {
@@ -5364,6 +5383,11 @@ impl Interp {
                 "prototype" => self.string_proto.clone(),
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
+            // Proxy.revocable (§28.2.1) — 정적 메서드.
+            Value::Native(Native::ProxyCtor) => Ok(match key {
+                "revocable" => Value::Native(Native::ProxyRevocable),
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
+            }),
             // Symbol.iterator 등 잘 알려진 심볼 + Symbol.for/keyFor
             Value::Native(Native::SymbolCtor) => Ok(match key {
                 "iterator" => Self::well_known_symbol("\u{0}@@iterator", "Symbol.iterator"),
@@ -5811,6 +5835,13 @@ impl Interp {
             Value::Native(Native::ProxyCtor) => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
                 let handler = args.get(1).cloned().unwrap_or(Value::Undefined);
+                // §28.2.1: target·handler 는 반드시 객체여야 한다.
+                if !is_object(&target) || !is_object(&handler) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot create proxy with a non-object as target or handler",
+                    ));
+                }
                 return Ok(Value::Proxy(Rc::new((target, handler))));
             }
             Value::Native(Native::RegExpCtor) => {
@@ -6425,6 +6456,7 @@ impl Interp {
                 let key = to_display(&l);
                 match &r {
                     Value::Proxy(p) => {
+                        self.proxy_revoked_guard(p)?;
                         let (target, handler) = (p.0.clone(), p.1.clone());
                         let trap = self.member_get(&handler, "has")?;
                         if is_callable(&trap) {
@@ -6685,6 +6717,7 @@ impl Interp {
                 match recv {
                     // Proxy: set 트랩 있으면 handler.set(target, key, value, receiver), 없으면 target 에 위임
                     Value::Proxy(p) => {
+                        self.proxy_revoked_guard(&p)?;
                         let (target, handler) = (p.0.clone(), p.1.clone());
                         let trap = self.member_get(&handler, "set")?;
                         if !matches!(trap, Value::Undefined) {

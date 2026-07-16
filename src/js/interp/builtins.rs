@@ -1090,6 +1090,36 @@ impl Interp {
         match n {
             // Proxy 는 new 로만 생성 (construct 에서 처리). 함수 호출은 무의미.
             Native::ProxyCtor => Err("Proxy 는 new 로 생성해야 함".to_string()),
+            // Proxy.revocable(target, handler) (§28.2.1): { proxy, revoke } 를 만든다.
+            // revoke() 는 proxy 를 취소해 이후 모든 내부 메서드가 TypeError 가 되게 한다.
+            Native::ProxyRevocable => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let handler = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_object(&target) || !is_object(&handler) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot create proxy with a non-object as target or handler",
+                    ));
+                }
+                let proxy = Value::Proxy(Rc::new((target, handler)));
+                // revoke: Bound(ProxyRevoke, this=proxy, []) — 호출 시 this 가 그 proxy.
+                let revoke = Value::Bound(Rc::new((
+                    Value::Native(Native::ProxyRevoke),
+                    proxy.clone(),
+                    vec![],
+                )));
+                let mut m = ObjMap::new();
+                m.insert("proxy".to_string(), proxy);
+                m.insert("revoke".to_string(), revoke);
+                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
+            // revoke 함수 본체: bound this 인 proxy 의 포인터를 취소 집합에 넣는다.
+            Native::ProxyRevoke => {
+                if let Some(Value::Proxy(p)) = &recv {
+                    self.revoked_proxies.insert(Rc::as_ptr(p) as *const () as usize);
+                }
+                Ok(Value::Undefined)
+            }
             Native::ConsoleLog => {
                 let line = args.iter().map(to_display).collect::<Vec<_>>().join(" ");
                 self.console.push(line);
@@ -1284,6 +1314,7 @@ impl Interp {
                     // Proxy: [[GetOwnProperty]] → getOwnPropertyDescriptor 트랩(없으면 타깃).
                     // typed array 의 정수 인덱스 서술자가 이 경로로 나온다.
                     Value::Proxy(p) => {
+                        self.proxy_revoked_guard(p)?;
                         let (t, h) = (p.0.clone(), p.1.clone());
                         let trap = self.member_get(&h, "getOwnPropertyDescriptor")?;
                         if is_callable(&trap) {
@@ -1503,6 +1534,7 @@ impl Interp {
                 // Proxy: [[DefineOwnProperty]] → defineProperty 트랩(없으면 타깃). typed array
                 // 의 정수 인덱스 exotic define 이 이 경로. 트랩이 falsish 면 TypeError.
                 if let Value::Proxy(p) = &target {
+                    self.proxy_revoked_guard(p)?;
                     let (t, h) = (p.0.clone(), p.1.clone());
                     let trap = self.member_get(&h, "defineProperty")?;
                     if is_callable(&trap) {
@@ -5538,6 +5570,7 @@ impl Interp {
                 // Proxy: ownKeys 트랩 (없으면 타깃 위임). Object.keys(proxy) 가 빈 배열을
                 // 돌려주던 문제 — 반응성 프록시의 키 열거가 통째로 안 됐다.
                 Some(Value::Proxy(p)) => {
+                    self.proxy_revoked_guard(p)?;
                     let (t, h) = (p.0.clone(), p.1.clone());
                     let trap = self.member_get(&h, "ownKeys")?;
                     if is_callable(&trap) {

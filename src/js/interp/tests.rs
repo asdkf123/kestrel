@@ -1263,6 +1263,36 @@ fn proxy_get_set_traps() {
     );
 }
 
+// Proxy.revocable (§28.2.1): { proxy, revoke }. revoke() 후 모든 내부 메서드가 TypeError.
+// new Proxy/Proxy.revocable 는 target·handler 가 비객체면 TypeError.
+#[test]
+fn proxy_revocable() {
+    assert!(run_bool("var r=Proxy.revocable({a:1},{}); typeof r.proxy==='object' && typeof r.revoke==='function'"));
+    // revoke 전에는 정상
+    assert_eq!(run_num("var r=Proxy.revocable({a:1},{}); r.proxy.a"), 1.0);
+    // revoke() 는 undefined 반환, 멱등
+    assert!(run_bool("var r=Proxy.revocable({},{}); r.revoke()===undefined && r.revoke()===undefined"));
+    // revoke 후 get/set/has/delete/keys/gOPD/defineProperty 는 전부 TypeError
+    for op in [
+        "r.proxy.a", "r.proxy.a=5", "'a' in r.proxy", "delete r.proxy.a",
+        "Object.keys(r.proxy)", "Object.getOwnPropertyDescriptor(r.proxy,'a')",
+        "Object.defineProperty(r.proxy,'x',{value:1})",
+    ] {
+        assert!(run_bool(&format!(
+            "var r=Proxy.revocable({{a:1}},{{}}); r.revoke(); \
+             var t=false; try{{ {} }}catch(e){{ t=e instanceof TypeError }} t", op)),
+            "revoked {} 는 TypeError 여야", op);
+    }
+    // 트랩 있는 프록시도 revoke 후 트랩 호출 전에 TypeError
+    assert!(run_bool("var r=Proxy.revocable({},{get:function(){return 9;}}); r.proxy.x; r.revoke(); \
+                      var t=false; try{ r.proxy.x }catch(e){ t=e instanceof TypeError } t"));
+    // target/handler 가 비객체면 TypeError (new Proxy / revocable 양쪽)
+    assert!(run_bool("var t=false; try{ new Proxy(1,{}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Proxy.revocable(1,{}) }catch(e){ t=e instanceof TypeError } t"));
+    // 취소 안 된 프록시는 무회귀
+    assert_eq!(run_num("var p=new Proxy({z:7},{}); p.z"), 7.0);
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
