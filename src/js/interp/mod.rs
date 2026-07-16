@@ -5277,9 +5277,20 @@ impl Interp {
                 }
             }
             Value::Class(c) => {
-                // 클래스도 함수다: C.name / C.length (§10.2.9, §15.7)
-                if key == "name" && c.statics.borrow().get("name").is_none() {
+                // 클래스도 함수다: C.name / C.length (§10.2.9, §15.7). length 는 생성자
+                // 파라미터 수(기본 0). 정적 오버라이드(데이터 또는 getter)가 있으면 그게 우선.
+                if key == "name"
+                    && c.statics.borrow().get("name").is_none()
+                    && c.find_static_getter("name").is_none()
+                {
                     return Ok(Value::Str(c.name.borrow().clone()));
+                }
+                if key == "length"
+                    && c.statics.borrow().get("length").is_none()
+                    && c.find_static_getter("length").is_none()
+                {
+                    let n = c.ctor.as_ref().map(|f| f.params.len()).unwrap_or(0);
+                    return Ok(Value::Num(n as f64));
                 }
                 // C.prototype — 클래스 메서드를 담은 객체 (상속 체인 포함).
                 // 예전엔 undefined 라, 프로토타입에서 메서드를 꺼내 특정 this 로 호출하는
@@ -5849,7 +5860,19 @@ impl Interp {
                 }
             }
             Value::Native(n) => self.call_native(n, recv, args),
-            Value::Class(_) => self.construct(f, args), // 클래스를 함수처럼 호출 = new (관용)
+            // 클래스 생성자는 new 없이 호출하면 TypeError (§15.7.10). new C()·Reflect.construct
+            // 는 construct 로 직접 가므로, 이 경로는 new 없는 호출(C()/C.call()/apply)뿐이다.
+            Value::Class(c) => {
+                let nm = c.name.borrow().clone();
+                Err(self.throw_error(
+                    "TypeError",
+                    &if nm.is_empty() {
+                        "Class constructor cannot be invoked without 'new'".to_string()
+                    } else {
+                        format!("Class constructor {} cannot be invoked without 'new'", nm)
+                    },
+                ))
+            }
             // 바운드 함수: 캡처한 this + 선행 인자 앞에 붙여 대상 호출
             Value::Bound(b) => {
                 let (target, this_val, partial) = (*b).clone();

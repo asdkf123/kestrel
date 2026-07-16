@@ -4187,6 +4187,23 @@ fn disposable_stack() {
     assert!(prelude_bool("var e=new SuppressedError('x','y','m'); e.error==='x' && e.suppressed==='y' && e.message==='m'"));
 }
 
+// 클래스도 함수다 (§10.2/§15.7): C.length===생성자 파라미터 수, new 없이 호출하면
+// TypeError (§15.7.10). 예전엔 length 가 undefined 였고 C() 가 조용히 생성했다.
+#[test]
+fn class_length_and_new_required() {
+    assert_eq!(run_num("class C{ constructor(a,b,c){} } C.length"), 3.0);
+    assert_eq!(run_num("class D{} D.length"), 0.0);
+    assert_eq!(run_num("class E extends Array{ constructor(a,b){ super(); } } E.length"), 2.0);
+    assert_eq!(run_str("class C{} C.name"), "C");
+    // new 없이 호출 → TypeError (C() / C.call() / Reflect.apply)
+    assert!(run_bool("class C{} var t=false; try{ C() }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("class C{} var t=false; try{ C.call(null) }catch(e){ t=e instanceof TypeError } t"));
+    // new 는 정상
+    assert!(run_bool("class C{ constructor(){ this.x=1; } } new C().x===1"));
+    // static length 오버라이드가 우선
+    assert_eq!(run_num("class C{ constructor(a,b){} static get length(){ return 99; } } C.length"), 99.0);
+}
+
 // 내장 함수는 스펙상 name/length own 프로퍼티를 가진다 (§17). 예전엔 항상 ""/0.
 // 읽기 경로(값, getOwnPropertyDescriptor, hasOwnProperty)를 표준대로 보고한다.
 #[test]
