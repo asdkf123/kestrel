@@ -1793,6 +1793,43 @@ var __kTA = {
 };
 var __kBI64 = 2n ** 64n, __kBI63 = 2n ** 63n;
 
+// %TypedArray%.prototype (§23.2.3) — 공유 프로토타입. 각 생성자의 prototype 이 이걸
+// 상속하므로 메서드는 own 이 아니라 **상속**된다(inherited.js 검사가 이걸 본다).
+// this[i] 는 Proxy 트랩을 타므로 명시 루프로 접근하고, 새 typed array 는 this.constructor 로.
+var __kTAProto = {
+  set: function(src, off){ off = off || 0; for (var i = 0; i < src.length; i++) this[off + i] = src[i]; },
+  fill: function(v, a, b){ a = a || 0; b = (b === undefined) ? this.length : b; for (var i = a; i < b; i++) this[i] = v; return this; },
+  subarray: function(a, b){ a = a || 0; b = (b === undefined) ? this.length : b; return new this._ctor(this.buffer, this.byteOffset + a * this.BYTES_PER_ELEMENT, Math.max(0, b - a)); },
+  slice: function(a, b){ a = a || 0; b = (b === undefined) ? this.length : b; var out = new this._ctor(Math.max(0, b - a)); for (var i = 0; i < out.length; i++) out[i] = this[a + i]; return out; },
+  forEach: function(fn){ for (var i = 0; i < this.length; i++) fn(this[i], i, this); },
+  map: function(fn){ var out = new this._ctor(this.length); for (var i = 0; i < this.length; i++) out[i] = fn(this[i], i, this); return out; },
+  indexOf: function(v){ for (var i = 0; i < this.length; i++) if (this[i] === v) return i; return -1; },
+  includes: function(v){ return this.indexOf(v) >= 0; },
+  join: function(sep){ var a = []; for (var i = 0; i < this.length; i++) a.push(this[i]); return a.join(sep === undefined ? ',' : sep); },
+  reduce: function(fn, init){ var acc = init, i = 0; if (arguments.length < 2) acc = this[i++]; for (; i < this.length; i++) acc = fn(acc, this[i], i, this); return acc; },
+  every: function(fn, t){ for (var i=0;i<this.length;i++) if(!fn.call(t,this[i],i,this)) return false; return true; },
+  some: function(fn, t){ for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return true; return false; },
+  filter: function(fn, t){ var out=[]; for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) out.push(this[i]); return new this._ctor(out); },
+  find: function(fn, t){ for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
+  findIndex: function(fn, t){ for (var i=0;i<this.length;i++) if(fn.call(t,this[i],i,this)) return i; return -1; },
+  findLast: function(fn, t){ for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return this[i]; return undefined; },
+  findLastIndex: function(fn, t){ for (var i=this.length-1;i>=0;i--) if(fn.call(t,this[i],i,this)) return i; return -1; },
+  reduceRight: function(fn){ var i=this.length-1, acc; if (arguments.length>1) acc=arguments[1]; else acc=this[i--]; for (; i>=0; i--) acc=fn(acc,this[i],i,this); return acc; },
+  lastIndexOf: function(v, from){ var i = (from===undefined) ? this.length-1 : (from|0); if (i<0) i+=this.length; for (; i>=0; i--) if (this[i]===v) return i; return -1; },
+  at: function(i){ i = Math.trunc(+i) || 0; if (i < 0) i += this.length; return (i >= 0 && i < this.length) ? this[i] : undefined; },
+  reverse: function(){ var n = this.length; for (var i = 0; i < (n >> 1); i++){ var t = this[i]; this[i] = this[n-1-i]; this[n-1-i] = t; } return this; },
+  toReversed: function(){ var n = this.length, out = new this._ctor(n); for (var i = 0; i < n; i++) out[i] = this[n-1-i]; return out; },
+  sort: function(cmp){ var a = []; for (var i=0;i<this.length;i++) a.push(this[i]); a.sort(cmp || function(x, y){ return x < y ? -1 : (x > y ? 1 : 0); }); for (var i = 0; i < a.length; i++) this[i] = a[i]; return this; },
+  toSorted: function(cmp){ return new this._ctor(this).sort(cmp); },
+  copyWithin: function(target, start, end){ var n=this.length; target=target|0; start=start|0; end=(end===undefined)?n:(end|0); if(target<0)target+=n; if(start<0)start+=n; if(end<0)end+=n; var tmp=[]; for(var i=start;i<end&&i<n;i++) tmp.push(this[i]); for(var i=0;i<tmp.length&&target+i<n;i++) this[target+i]=tmp[i]; return this; },
+  with: function(i, v){ i = i | 0; if (i < 0) i += this.length; var out = new this._ctor(this); out[i] = v; return out; },
+  keys: function*(){ for (var i=0;i<this.length;i++) yield i; },
+  entries: function*(){ for (var i=0;i<this.length;i++) yield [i, this[i]]; },
+  toLocaleString: function(){ return this.join(','); }
+};
+__kTAProto[Symbol.iterator] = function*(){ for (var i = 0; i < this.length; i++) yield this[i]; };
+__kTAProto.values = __kTAProto[Symbol.iterator];
+
 function __kMakeTypedArray(name) {
   var spec = __kTA[name];
   function Ctor(arg, byteOffset, length) {
@@ -1817,6 +1854,11 @@ function __kMakeTypedArray(name) {
     this._len = len;
     this.BYTES_PER_ELEMENT = spec.size;
     this._spec = spec;
+    // 인스턴스 own constructor — 우리 엔진의 new(일반함수)는 prototype 을 스냅샷 복사라
+    // this.constructor 가 프로토타입 체인으로 안 잡힌다. 메서드의 new this.constructor 와
+    // ta.constructor===Ctor 검사가 이걸 쓴다.
+    this.constructor = Ctor;
+    this._ctor = Ctor;
     // length/byteLength 는 버퍼에서 파생한다 — 버퍼가 분리(detach)되면 0 이 돼야 한다.
     // (WebAssembly.Memory.grow 는 옛 버퍼를 분리한다. 길이를 박아 두면 죽은 뷰가
     //  살아있는 척하며 조용히 틀린 값을 읽는다 — wasm-bindgen 은 정확히 이걸로 판별한다)
@@ -1850,49 +1892,11 @@ function __kMakeTypedArray(name) {
     }
     return view;
   }
-  Ctor.prototype.set = function(src, off){
-    off = off || 0;
-    for (var i = 0; i < src.length; i++) this[off + i] = src[i];
-  };
-  Ctor.prototype.fill = function(v, a, b){
-    a = a || 0; b = (b === undefined) ? this.length : b;
-    for (var i = a; i < b; i++) this[i] = v;
-    return this;
-  };
-  Ctor.prototype.subarray = function(a, b){
-    a = a || 0; b = (b === undefined) ? this.length : b;
-    return new Ctor(this.buffer, this.byteOffset + a * spec.size, Math.max(0, b - a));
-  };
-  Ctor.prototype.slice = function(a, b){
-    a = a || 0; b = (b === undefined) ? this.length : b;
-    var out = new Ctor(Math.max(0, b - a));
-    for (var i = 0; i < out.length; i++) out[i] = this[a + i];
-    return out;
-  };
-  Ctor.prototype.forEach = function(fn){ for (var i = 0; i < this.length; i++) fn(this[i], i, this); };
-  Ctor.prototype.map = function(fn){
-    var out = new Ctor(this.length);
-    for (var i = 0; i < this.length; i++) out[i] = fn(this[i], i, this);
-    return out;
-  };
-  Ctor.prototype.indexOf = function(v){
-    for (var i = 0; i < this.length; i++) if (this[i] === v) return i;
-    return -1;
-  };
-  Ctor.prototype.includes = function(v){ return this.indexOf(v) >= 0; };
-  Ctor.prototype.join = function(sep){
-    var a = [];
-    for (var i = 0; i < this.length; i++) a.push(this[i]);
-    return a.join(sep === undefined ? ',' : sep);
-  };
-  Ctor.prototype.reduce = function(fn, init){
-    var acc = init;
-    for (var i = 0; i < this.length; i++) acc = fn(acc, this[i], i, this);
-    return acc;
-  };
-  Ctor.prototype[Symbol.iterator] = function*(){
-    for (var i = 0; i < this.length; i++) yield this[i];
-  };
+  // 각 typed array 생성자의 prototype 은 공유 %TypedArray%.prototype 을 상속한다
+  // → 메서드는 own 이 아니라 inherited (§23.2.3, inherited.js).
+  Ctor.prototype = Object.create(__kTAProto);
+  Ctor.prototype.constructor = Ctor;
+  Ctor.prototype.BYTES_PER_ELEMENT = spec.size;
   Ctor.from = function(x, fn){
     var arr = Array.from(x, fn);
     return new Ctor(arr);

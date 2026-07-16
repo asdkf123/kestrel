@@ -4794,6 +4794,33 @@ fn date_math_method_name_length() {
     ));
 }
 
+// TypedArray.prototype 메서드 (§23.2.3): 예전엔 filter/every/some/find/sort/reverse/
+// copyWithin/at/toSorted/toReversed/with/keys/entries 등이 undefined 였다.
+#[test]
+fn typed_array_prototype_methods() {
+    // sort 는 수치 오름차순 기본(문자열 아님)
+    assert_eq!(prelude_str("new Int32Array([30,1,2]).sort().join(',')"), "1,2,30");
+    // filter 는 같은 타입 typed array 반환 (instanceof 은 Proxy 한계로 별도 — BYTES 로 확인)
+    assert!(prelude_bool(
+        "var r=new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}); \
+         r.BYTES_PER_ELEMENT===1 && r.length===2"
+    ));
+    assert_eq!(prelude_str("new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}).join(',')"), "1,3");
+    assert!(prelude_bool("new Int8Array([1,2,3]).every(function(x){return x>0;})"));
+    assert!(prelude_bool("new Int8Array([1,2,3]).some(function(x){return x>2;})"));
+    assert_eq!(prelude_num("new Int8Array([5,6,7]).find(function(x){return x>5;})"), 6.0);
+    assert_eq!(prelude_str("new Int16Array([1,2,3]).reverse().join(',')"), "3,2,1");
+    assert_eq!(prelude_num("new Uint8Array([10,20,30]).at(-1)"), 30.0);
+    assert_eq!(prelude_str("new Int32Array([1,2,3]).toReversed().join(',')"), "3,2,1");
+    // toSorted 는 원본 불변 + 새 typed array
+    assert!(prelude_bool("var a=new Int32Array([3,1,2]); var b=a.toSorted(); b.join(',')==='1,2,3' && a.join(',')==='3,1,2'"));
+    assert_eq!(prelude_str("new Uint8Array([1,2,3]).with(1,9).join(',')"), "1,9,3");
+    assert_eq!(prelude_str("Array.from(new Int8Array([5,6]).keys()).join(',')"), "0,1");
+    assert_eq!(prelude_str("new Int32Array([1,2,3,4,5]).copyWithin(0,3).join(',')"), "4,5,3,4,5");
+    // BigInt 배열 sort (BigInt 비교가 정확해야 함)
+    assert_eq!(prelude_str("new BigInt64Array([3n,1n,2n]).sort().join(',')"), "1,2,3");
+}
+
 // BigInt64Array / BigUint64Array (ES2020) — 원소가 BigInt 인 typed array. 예전엔
 // 미정의라 test262 의 testWithBigIntTypedArrayConstructors 하네스가 통째로 죽었다.
 #[test]
