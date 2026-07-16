@@ -3071,11 +3071,15 @@ impl Interp {
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                     // 함수도 ordinary object — 열거 가능한 own 프로퍼티를 순회
-                    // (상속된 Function/Object.prototype 멤버는 전부 비열거).
+                    // (name/length/prototype 및 상속된 Function/Object.prototype 멤버는 비열거).
                     Value::Fn(f) => {
                         let b = f.props.borrow();
                         b.keys()
-                            .filter(|k| !is_internal_key(k) && !b.contains_key(&nonenum_marker(k)))
+                            .filter(|k| {
+                                !is_internal_key(k)
+                                    && !matches!(k.as_str(), "prototype" | "name" | "length")
+                                    && !b.contains_key(&nonenum_marker(k))
+                            })
                             .cloned()
                             .collect()
                     }
@@ -3441,10 +3445,26 @@ impl Interp {
                                 }
                             }
                             // 함수 프로퍼티도 configurable 을 존중해 삭제한다 (§10.2 —
-                            // 함수는 ordinary object). name/length/prototype 은 계산
-                            // 프로퍼티라 대상 밖(관대하게 true).
+                            // 함수는 ordinary object). name/length 는 configurable:true 라
+                            // 삭제 가능 — 계산 프로퍼티라 삭제 툼스톤을 남겨 이후 member_get/
+                            // gOPD 가 없는 것으로 본다. prototype 은 대상 밖(관대하게 true).
                             Value::Fn(func) => {
-                                if !matches!(key.as_str(), "name" | "length" | "prototype")
+                                if matches!(key.as_str(), "name" | "length") {
+                                    // props 오버라이드가 있으면 그 configurable 을 따르고,
+                                    // 없으면 계산 프로퍼티(configurable:true)라 삭제 가능.
+                                    if func.props.borrow().contains_key(&key)
+                                        && prop_attrs(&func.props.borrow(), &key)
+                                            & ATTR_CONFIGURABLE
+                                            == 0
+                                    {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    let mut mm = func.props.borrow_mut();
+                                    mm.remove(&key);
+                                    mm.remove(&attr_marker(&key));
+                                    mm.remove(&nonenum_marker(&key));
+                                    mm.insert(format!("\u{0}fndel:{}", key), Value::Bool(true));
+                                } else if key != "prototype"
                                     && func.props.borrow().contains_key(&key)
                                 {
                                     if prop_attrs(&func.props.borrow(), &key) & ATTR_CONFIGURABLE
@@ -5326,8 +5346,13 @@ impl Interp {
                     "call" => Ok(Value::Native(Native::FnCall)),
                     "apply" => Ok(Value::Native(Native::FnApply)),
                     "bind" => Ok(Value::Native(Native::FnBind)),
-                    "name" => Ok(Value::Str(func.name.borrow().clone())),
-                    "length" => Ok(Value::Num(func.params.len() as f64)),
+                    // name/length 는 계산 프로퍼티지만 delete 로 삭제됐으면(툼스톤) 없는 것.
+                    "name" if !func.props.borrow().contains_key("\u{0}fndel:name") => {
+                        Ok(Value::Str(func.name.borrow().clone()))
+                    }
+                    "length" if !func.props.borrow().contains_key("\u{0}fndel:length") => {
+                        Ok(Value::Num(func.params.len() as f64))
+                    }
                     // 함수도 toString 을 가진다 (번들이 fn.toString() 으로 소스 검사)
                     "toString" => Ok(Value::Native(Native::FnToString)),
                     // F.prototype 지연 생성: 접근 시 빈 객체를 만들어 저장
@@ -6969,6 +6994,12 @@ impl Interp {
                                 Ok(())
                             }
                             None => {
+                                // name/length 는 계산된 non-writable own 프로퍼티다
+                                // (§10.2.8/.9): 대입은 조용히 무시(props 오버라이드가
+                                // 없을 때). prototype 은 writable 이라 계속 저장.
+                                if matches!(key.as_str(), "name" | "length") {
+                                    return Ok(());
+                                }
                                 if self.is_nonextensible_val(&fv) {
                                     return Ok(());
                                 }

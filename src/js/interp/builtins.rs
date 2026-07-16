@@ -1378,15 +1378,26 @@ impl Interp {
                         }
                     }
                     Value::Fn(f) => {
-                        // 함수의 name/length/prototype 은 own 프로퍼티다 (§10.2.4~10.2.9)
+                        // name/length 가 delete 됐으면(툼스톤) 서술자 없음.
+                        if matches!(key.as_str(), "name" | "length")
+                            && f.props.borrow().contains_key(&format!("\u{0}fndel:{}", key))
+                        {
+                            return Ok(Value::Undefined);
+                        }
+                        // 함수의 name/length/prototype 은 own 프로퍼티다 (§10.2.4~10.2.9).
+                        // props 에 실체화(materialize)/재정의됐으면 그 값·속성을 쓰고,
+                        // 아니면 계산값 { w:false, e:false, c:true }.
+                        let materialized = f.props.borrow().contains_key(&key);
                         let v = match key.as_str() {
                             "prototype" => Some(self.member_get(&target, "prototype")?),
-                            "name" => Some(Value::Str(f.name.borrow().clone())),
-                            "length" => Some(Value::Num(f.params.len() as f64)),
+                            "name" if !materialized => Some(Value::Str(f.name.borrow().clone())),
+                            "length" if !materialized => {
+                                Some(Value::Num(f.params.len() as f64))
+                            }
                             _ => f.props.borrow().get(&key).cloned(),
                         };
-                        // name/length 는 읽기 전용이다 (§10.2.4)
-                        if matches!(key.as_str(), "name" | "length") {
+                        // 계산 name/length(props 미실체화)는 고정 속성으로 보고.
+                        if matches!(key.as_str(), "name" | "length") && !materialized {
                             if let Some(val) = v {
                                 d.insert("value".to_string(), val);
                                 d.insert("writable".to_string(), Value::Bool(false));
@@ -1598,9 +1609,28 @@ impl Interp {
                     return Ok(target);
                 }
                 // 함수도 ordinary object 다 (§10.2) — props(ObjMap)에 표준 속성 강제로
-                // 정의한다. name/length/prototype 은 계산 프로퍼티라 근사 경로로 둔다.
+                // 정의한다. prototype 은 지연생성 근사 경로로 둔다.
                 if let Value::Fn(func) = &target {
-                    if !matches!(key.as_str(), "name" | "length" | "prototype") {
+                    if key != "prototype" {
+                        // name/length 는 계산 프로퍼티 { w:false, e:false, c:true }.
+                        // 재정의 전에 현재 값을 props 에 실체화(materialize)해 ordinary_define
+                        // 이 기존 프로퍼티로 보고 표준 검증을 하게 한다. 재정의 시 삭제
+                        // 툼스톤은 해제한다.
+                        if matches!(key.as_str(), "name" | "length") {
+                            let tomb = format!("\u{0}fndel:{}", key);
+                            let missing = !func.props.borrow().contains_key(&key);
+                            if missing && !func.props.borrow().contains_key(&tomb) {
+                                let cur = if key == "name" {
+                                    Value::Str(func.name.borrow().clone())
+                                } else {
+                                    Value::Num(func.params.len() as f64)
+                                };
+                                let mut mm = func.props.borrow_mut();
+                                mm.insert(key.clone(), cur);
+                                set_prop_attrs(&mut mm, &key, ATTR_CONFIGURABLE);
+                            }
+                            func.props.borrow_mut().remove(&tomb);
+                        }
                         self.ordinary_define(&func.props, &key, &desc)?;
                         return Ok(target);
                     }
@@ -5639,13 +5669,16 @@ impl Interp {
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
                 // 함수도 ordinary object — 열거 가능한 own 프로퍼티(사용자가 얹은 것)를
-                // 센다. name/length/prototype 은 props 밖(계산)이자 비열거라 제외된다.
+                // 센다. name/length/prototype 은 비열거다(prototype 은 지연 생성돼 props 에
+                // 들어갈 수 있으므로 명시 제외).
                 Some(Value::Fn(f)) => {
                     let b = f.props.borrow();
                     let keys: Vec<Value> = b
                         .keys()
                         .filter(|k| {
-                            !is_internal_key(k) && !b.contains_key(&nonenum_marker(k))
+                            !is_internal_key(k)
+                                && !matches!(k.as_str(), "prototype" | "name" | "length")
+                                && !b.contains_key(&nonenum_marker(k))
                         })
                         .map(|k| Value::Str(k.clone()))
                         .collect();

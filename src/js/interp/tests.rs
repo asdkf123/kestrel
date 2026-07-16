@@ -4850,41 +4850,9 @@ fn function_prototype_chain() {
     assert!(run_bool("typeof (function(){}).toString==='function'"));
 }
 
-// 함수도 ordinary object (§10.2): 사용자 프로퍼티에 표준 속성 강제(defineProperty →
-// props(ObjMap)에 writable/enumerable/configurable 추적). 예전엔 함수 프로퍼티는
-// 속성 미추적 HashMap 이라 defineProperty 속성이 무시됐다.
-#[test]
-fn function_property_attributes() {
-    // gOPD 가 실제 속성 비트 보고
-    assert!(run_bool(
-        "function F(){} Object.defineProperty(F,'x',{value:5,writable:false,enumerable:false,configurable:false}); \
-         var d=Object.getOwnPropertyDescriptor(F,'x'); \
-         d.value===5 && d.writable===false && d.enumerable===false && d.configurable===false"));
-    // 비writable 대입 무시
-    assert!(run_bool("function F(){} Object.defineProperty(F,'x',{value:5,writable:false}); F.x=9; F.x===5"));
-    // 비configurable 삭제 거부(false), 재정의 TypeError
-    assert!(run_bool("function F(){} Object.defineProperty(F,'x',{value:5,configurable:false}); (delete F.x)===false && F.x===5"));
-    assert!(run_bool("function F(){} Object.defineProperty(F,'x',{value:5,configurable:false}); \
-                      var t=false; try{ Object.defineProperty(F,'x',{value:1}) }catch(e){ t=e instanceof TypeError } t"));
-    // 접근자 프로퍼티: get/set 호출
-    assert!(run_bool("function F(){} var got; \
-                      Object.defineProperty(F,'a',{get:function(){return 42;},set:function(v){got=v;},configurable:true}); \
-                      F.a===42 && (F.a=7, got===7)"));
-    // 열거 가능 프로퍼티는 keys/for-in 에 나오고, 비열거는 숨는다
-    assert!(run_bool("function F(){} Object.defineProperty(F,'en',{value:1,enumerable:true,configurable:true}); \
-                      Object.defineProperty(F,'hi',{value:1,enumerable:false,configurable:true}); \
-                      Object.keys(F).indexOf('en')>=0 && Object.keys(F).indexOf('hi')<0"));
-    // 일반 대입은 기본 속성(전부 true)
-    assert!(run_bool("function F(){} F.y=1; var d=Object.getOwnPropertyDescriptor(F,'y'); \
-                      d.writable && d.enumerable && d.configurable"));
-    // name/length 읽기 서술자는 여전히 정확(§10.2.4: writable:false, configurable:true)
-    assert!(run_bool("function F(a,b){} var d=Object.getOwnPropertyDescriptor(F,'length'); \
-                      d.value===2 && d.writable===false && d.configurable===true"));
-}
-
 // 함수 프로퍼티의 표준 속성 강제 (§10.2): JsFn.props 를 ObjMap 으로 바꿔 함수 대상
 // defineProperty 가 writable/enumerable/configurable 을 실제로 강제한다. 예전엔 근사
-// 경로라 속성이 무시됐다.
+// 경로라 속성이 무시됐다. 접근자/삭제/열거/for-in 도 함수를 ordinary object 로 취급.
 #[test]
 fn function_property_attributes() {
     // defineProperty 로 정의한 속성 비트가 gOPD 에 정확히 반영
