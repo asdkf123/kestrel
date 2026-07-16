@@ -5068,6 +5068,36 @@ fn data_view_index_and_brand_checks() {
     assert!(prelude_bool("var d=new DataView(new ArrayBuffer(8)); d.setFloat64(0,3.5,true); d.getFloat64(0,true)===3.5"));
 }
 
+// Integer-Indexed Exotic Object (§10.4.5): typed array 의 정수 인덱스는 defineProperty/
+// getOwnPropertyDescriptor/has/delete 에서 특별 취급된다. Proxy 트랩을 gOPD/defineProperty
+// 로 라우팅하고 typed array Proxy 에 트랩을 달았다. 예전엔 인덱스 define 이 조용히 무시됐다.
+#[test]
+fn typed_array_integer_indexed_exotic() {
+    // gOPD: 유효 인덱스는 {value, w:t, e:t, c:t}, 범위 밖은 undefined
+    assert!(prelude_bool(
+        "var d=Object.getOwnPropertyDescriptor(new Uint8Array([1,2,3]),'1'); \
+         d.value===2 && d.writable===true && d.enumerable===true && d.configurable===true"));
+    assert!(prelude_bool("Object.getOwnPropertyDescriptor(new Uint8Array([1,2,3]),'5')===undefined"));
+    // defineProperty: 인덱스에 값 기록
+    assert_eq!(prelude_num("var t=new Uint8Array([1,2,3]); Object.defineProperty(t,'0',{value:9}); t[0]"), 9.0);
+    // 범위 밖 인덱스 defineProperty → Object.defineProperty TypeError, Reflect 는 false
+    assert!(prelude_bool("var t=false; try{ Object.defineProperty(new Uint8Array(3),'5',{value:1}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("Reflect.defineProperty(new Uint8Array(3),'9',{value:1})===false"));
+    // 서술자가 configurable/enumerable/writable false 또는 접근자면 거부
+    assert!(prelude_bool("Reflect.defineProperty(new Uint8Array(3),'0',{value:1,writable:false})===false"));
+    assert!(prelude_bool("Reflect.defineProperty(new Uint8Array(3),'0',{value:1,configurable:false})===false"));
+    assert!(prelude_bool("Reflect.defineProperty(new Uint8Array(3),'0',{get:function(){return 1;}})===false"));
+    // has: 유효 인덱스만 존재, 비인덱스는 보통
+    assert!(prelude_bool("'0' in new Uint8Array([1,2,3])"));
+    assert!(prelude_bool("!('5' in new Uint8Array([1,2,3]))"));
+    // delete: 유효 인덱스는 삭제 불가(false), 값 유지
+    assert!(prelude_bool("var t=new Uint8Array([1,2,3]); (delete t[0])===false && t[0]===1"));
+    // 비인덱스 define 은 보통(무회귀)
+    assert!(prelude_bool("var t=new Uint8Array([1,2,3]); Object.defineProperty(t,'foo',{value:7}); t.foo===7"));
+    // 무회귀: 읽기/쓰기/메서드
+    assert_eq!(prelude_str("new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}).join(',')"), "1,3");
+}
+
 // ArrayBuffer 표준화 (§25.1): byteLength/maxByteLength/resizable/detached 는 prototype
 // accessor, isView/transfer/transferToFixedLength/resize, 생성자 검증.
 #[test]

@@ -1281,6 +1281,20 @@ impl Interp {
                 };
                 let mut d = ObjMap::new();
                 let found = match &target {
+                    // Proxy: [[GetOwnProperty]] → getOwnPropertyDescriptor 트랩(없으면 타깃).
+                    // typed array 의 정수 인덱스 서술자가 이 경로로 나온다.
+                    Value::Proxy(p) => {
+                        let (t, h) = (p.0.clone(), p.1.clone());
+                        let trap = self.member_get(&h, "getOwnPropertyDescriptor")?;
+                        if is_callable(&trap) {
+                            return self.call_value(trap, Some(h), vec![t, Value::Str(key)]);
+                        }
+                        return self.call_native(
+                            Native::ObjectGetOwnPropertyDescriptor,
+                            None,
+                            vec![t, Value::Str(key)],
+                        );
+                    }
                     Value::Obj(m) => {
                         // 실제 저장된 속성 비트를 읽어 정확히 보고한다 (§10.1.5.1).
                         // 예전엔 writable 을 항상 true 로, configurable 도 무조건 true 로
@@ -1486,6 +1500,31 @@ impl Interp {
                 let Some(desc) = args.get(2).cloned() else {
                     return Err(self.throw_error("TypeError", "Property description must be an object"));
                 };
+                // Proxy: [[DefineOwnProperty]] → defineProperty 트랩(없으면 타깃). typed array
+                // 의 정수 인덱스 exotic define 이 이 경로. 트랩이 falsish 면 TypeError.
+                if let Value::Proxy(p) = &target {
+                    let (t, h) = (p.0.clone(), p.1.clone());
+                    let trap = self.member_get(&h, "defineProperty")?;
+                    if is_callable(&trap) {
+                        let ok = self.call_value(
+                            trap,
+                            Some(h),
+                            vec![t, Value::Str(key), desc],
+                        )?;
+                        if !to_bool(&ok) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "'defineProperty' on proxy: trap returned falsish for property",
+                            ));
+                        }
+                        return Ok(target);
+                    }
+                    return self.call_native(
+                        Native::ObjectDefineProperty,
+                        None,
+                        vec![t, Value::Str(key), desc],
+                    );
+                }
                 // Value::Obj 는 표준 OrdinaryDefineOwnProperty (§10.1.6) 로 처리한다.
                 // 그 외 대상(Fn/Instance/Arr/Class)은 속성 강제 없이 값만 넣는 근사 유지.
                 if let Value::Obj(map) = &target {
@@ -5322,8 +5361,11 @@ impl Interp {
                 match self.call_native(Native::ObjectDefineProperty, None, args) {
                     Ok(_) => Ok(Value::Bool(true)),
                     Err(e) => {
+                        // 거부 신호(재정의 불가 / Proxy defineProperty 트랩 falsish)는 false 로
+                        // 흡수. 서술자 강제변환 오류 등은 전파.
                         let redefine = matches!(&self.thrown, Some(Value::Obj(m))
-                            if matches!(m.borrow().get("message"), Some(Value::Str(s)) if s.contains("redefine")));
+                            if matches!(m.borrow().get("message"), Some(Value::Str(s))
+                                if s.contains("redefine") || s.contains("falsish")));
                         if redefine {
                             self.thrown = None;
                             Ok(Value::Bool(false))

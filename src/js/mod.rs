@@ -2034,6 +2034,47 @@ function __kMakeTypedArray(name) {
         }
         t[k] = v;
         return true;
+      },
+      // Integer-Indexed Exotic Object (§10.4.5): 정수 인덱스는 특별 취급.
+      has: function(t, k){
+        var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
+        if (n >= 0) return Math.floor(n) === n && n < vlen(t);   // 유효 인덱스만 존재
+        return k in t;
+      },
+      // [[GetOwnProperty]] (§10.4.5.1): 유효 인덱스면 {value, w:t, e:t, c:t}, 아니면 undefined.
+      getOwnPropertyDescriptor: function(t, k){
+        var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
+        if (n >= 0) {
+          if (!(Math.floor(n) === n && n < vlen(t))) return undefined;
+          return { value: spec.get(t._buffer._b, t._byteOffset + n * spec.size),
+                   writable: true, enumerable: true, configurable: true };
+        }
+        return Object.getOwnPropertyDescriptor(t, k);
+      },
+      // [[DefineOwnProperty]] (§10.4.5.3): 정수 인덱스는 유효할 때만, 서술자가 configurable/
+      // enumerable/writable false 이거나 접근자면 false. value 있으면 요소에 쓴다.
+      defineProperty: function(t, k, desc){
+        var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
+        if (n >= 0) {
+          if (!(Math.floor(n) === n && n < vlen(t))) return false;
+          if (desc){
+            if (desc.configurable === false) return false;
+            if (desc.enumerable === false) return false;
+            if (('get' in desc) || ('set' in desc)) return false;
+            if (desc.writable === false) return false;
+            if ('value' in desc) spec.set(t._buffer._b, t._byteOffset + n * spec.size, desc.value);
+          }
+          return true;
+        }
+        Object.defineProperty(t, k, desc);
+        return true;
+      },
+      // [[Delete]] (§10.4.5.4): 유효 인덱스는 삭제 불가(false), 그 밖은 보통 삭제.
+      deleteProperty: function(t, k){
+        var n = (typeof k === 'string' && k !== '' && String(+k) === k) ? +k : -1;
+        if (n >= 0) return !(Math.floor(n) === n && n < vlen(t));
+        delete t[k];
+        return true;
       }
     });
     if (arg && typeof arg !== 'number' && !(arg instanceof __kArrayBuffer) && typeof arg.length === 'number') {
