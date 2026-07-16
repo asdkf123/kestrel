@@ -4794,6 +4794,32 @@ fn date_math_method_name_length() {
     ));
 }
 
+// DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
+#[test]
+fn data_view_get_set_endian() {
+    assert!(prelude_bool("typeof DataView==='function'"));
+    // Uint8/Int8
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setUint8(0,200); d.getUint8(0)===200 && d.getInt8(0)===-56"));
+    // Uint16 엔디언
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setUint16(0,0x1234,true); d.getUint8(0)===0x34 && d.getUint8(1)===0x12"));
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setUint16(0,0x1234,false); d.getUint8(0)===0x12 && d.getUint8(1)===0x34"));
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setUint16(0,0x1234,true); d.getUint16(0,true)===0x1234"));
+    // Int32 왕복 + 엔디언 교차
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setInt32(0,-100,true); d.getInt32(0,true)===-100"));
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setUint32(0,0x01020304,false); d.getUint8(0)===1 && d.getUint8(3)===4"));
+    // Float32/64 왕복
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(8)); d.setFloat64(0,3.14159,true); Math.abs(d.getFloat64(0,true)-3.14159)<1e-12"));
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(4)); d.setFloat32(0,1.5,true); d.getFloat32(0,true)===1.5"));
+    // BigInt64 왕복 (부호형/무부호)
+    assert!(prelude_bool("var d=new DataView(new ArrayBuffer(8)); d.setBigInt64(0,-1n,true); d.getBigInt64(0,true)===-1n && d.getBigUint64(0,true)===18446744073709551615n"));
+    // byteOffset / byteLength
+    assert!(prelude_bool("var b=new ArrayBuffer(16); var d=new DataView(b,4,8); d.byteOffset===4 && d.byteLength===8 && d.buffer===b"));
+    // 범위 밖 → RangeError
+    assert!(prelude_bool("var t=false; try{ new DataView(new ArrayBuffer(4)).getUint32(2) }catch(e){ t=e instanceof RangeError } t"));
+    // 비-ArrayBuffer → TypeError
+    assert!(prelude_bool("var t=false; try{ new DataView([]) }catch(e){ t=e instanceof TypeError } t"));
+}
+
 // ArrayBuffer 표준화 (§25.1): byteLength/maxByteLength/resizable/detached 는 prototype
 // accessor, isView/transfer/transferToFixedLength/resize, 생성자 검증.
 #[test]

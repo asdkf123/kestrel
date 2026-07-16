@@ -1957,6 +1957,61 @@ var Uint32Array = window.Uint32Array, Int32Array = window.Int32Array;
 var Float32Array = window.Float32Array, Float64Array = window.Float64Array;
 var BigInt64Array = window.BigInt64Array, BigUint64Array = window.BigUint64Array;
 
+// DataView (§25.3) — ArrayBuffer 위의 뷰. 임의 바이트 오프셋에서 타입별로 읽고/쓰며
+// 엔디언(little/big)을 지원한다. 바이트는 버퍼의 _b 를 직접 만진다.
+function __kDataView(buffer, byteOffset, byteLength) {
+  if (!(buffer && typeof buffer === 'object' && buffer._b)) throw new TypeError('First argument to DataView constructor must be an ArrayBuffer');
+  byteOffset = (byteOffset === undefined) ? 0 : (byteOffset | 0);
+  if (byteOffset < 0 || byteOffset > buffer.byteLength) throw new RangeError('Start offset is outside the bounds of the buffer');
+  this._buffer = buffer;
+  this._byteOffset = byteOffset;
+  this._byteLength = (byteLength === undefined) ? (buffer.byteLength - byteOffset) : (byteLength | 0);
+  if (this._byteLength < 0 || byteOffset + this._byteLength > buffer.byteLength) throw new RangeError('Invalid DataView length');
+}
+Object.defineProperty(__kDataView.prototype, 'buffer', { get: function(){ return this._buffer; }, configurable: true });
+Object.defineProperty(__kDataView.prototype, 'byteLength', { get: function(){ return this._byteLength; }, configurable: true });
+Object.defineProperty(__kDataView.prototype, 'byteOffset', { get: function(){ return this._byteOffset; }, configurable: true });
+__kDataView.prototype[Symbol.toStringTag] = 'DataView';
+// size 바이트를 오프셋에서 읽어 **리틀엔디언 순서** 배열로. le=false 면 뒤집는다.
+__kDataView.prototype._rd = function(offset, size, le){
+  offset = offset | 0;
+  if (offset < 0 || offset + size > this._byteLength) throw new RangeError('Offset is outside the bounds of the DataView');
+  var b = this._buffer._b, base = this._byteOffset + offset, out = [];
+  for (var i = 0; i < size; i++) out.push(b[base + i]);
+  if (!le) out.reverse();
+  return out;
+};
+// 리틀엔디언 바이트 배열을 오프셋에 쓴다(le=false 면 뒤집어서).
+__kDataView.prototype._wr = function(offset, size, le, bytesLE){
+  offset = offset | 0;
+  if (offset < 0 || offset + size > this._byteLength) throw new RangeError('Offset is outside the bounds of the DataView');
+  var b = this._buffer._b, base = this._byteOffset + offset;
+  var bytes = le ? bytesLE : bytesLE.slice().reverse();
+  for (var i = 0; i < size; i++) b[base + i] = bytes[i];
+};
+__kDataView.prototype.getUint8 = function(o){ return this._rd(o, 1, true)[0]; };
+__kDataView.prototype.getInt8 = function(o){ var v = this._rd(o, 1, true)[0]; return v > 127 ? v - 256 : v; };
+__kDataView.prototype.getUint16 = function(o, le){ var b = this._rd(o, 2, le); return b[0] | (b[1] << 8); };
+__kDataView.prototype.getInt16 = function(o, le){ var v = this.getUint16(o, le); return v > 32767 ? v - 65536 : v; };
+__kDataView.prototype.getUint32 = function(o, le){ var b = this._rd(o, 4, le); var v = (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)); return v < 0 ? v + 4294967296 : v; };
+__kDataView.prototype.getInt32 = function(o, le){ var b = this._rd(o, 4, le); return (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)); };
+__kDataView.prototype.getFloat32 = function(o, le){ return __kB2F(this._rd(o, 4, le), 23, 8); };
+__kDataView.prototype.getFloat64 = function(o, le){ return __kB2F(this._rd(o, 8, le), 52, 11); };
+__kDataView.prototype.getBigInt64 = function(o, le){ var b = this._rd(o, 8, le), r = 0n; for (var i = 7; i >= 0; i--) r = r * 256n + BigInt(b[i]); if (r >= __kBI63) r -= __kBI64; return r; };
+__kDataView.prototype.getBigUint64 = function(o, le){ var b = this._rd(o, 8, le), r = 0n; for (var i = 7; i >= 0; i--) r = r * 256n + BigInt(b[i]); return r; };
+__kDataView.prototype.setUint8 = function(o, v){ this._wr(o, 1, true, [((v | 0) % 256 + 256) % 256]); };
+__kDataView.prototype.setInt8 = function(o, v){ this._wr(o, 1, true, [((v | 0) % 256 + 256) % 256]); };
+__kDataView.prototype.setUint16 = function(o, v, le){ v = ((v | 0) % 65536 + 65536) % 65536; this._wr(o, 2, le, [v & 255, (v >> 8) & 255]); };
+__kDataView.prototype.setInt16 = function(o, v, le){ this.setUint16(o, v, le); };
+__kDataView.prototype.setUint32 = function(o, v, le){ v = v >>> 0; this._wr(o, 4, le, [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]); };
+__kDataView.prototype.setInt32 = function(o, v, le){ this.setUint32(o, v, le); };
+__kDataView.prototype.setFloat32 = function(o, v, le){ this._wr(o, 4, le, __kF2B(+v, 4, 23, 8)); };
+__kDataView.prototype.setFloat64 = function(o, v, le){ this._wr(o, 8, le, __kF2B(+v, 8, 52, 11)); };
+__kDataView.prototype.setBigInt64 = function(o, v, le){ if (typeof v !== 'bigint') v = BigInt(v); var u = ((v % __kBI64) + __kBI64) % __kBI64, by = []; for (var i = 0; i < 8; i++){ by.push(Number(u % 256n)); u = u / 256n; } this._wr(o, 8, le, by); };
+__kDataView.prototype.setBigUint64 = function(o, v, le){ this.setBigInt64(o, v, le); };
+if (!window.DataView) window.DataView = __kDataView;
+var DataView = window.DataView;
+
 // TextEncoder / TextDecoder — 실제 UTF-8 인코딩/디코딩.
 if (!window.TextEncoder) {
   window.TextEncoder = function(){};
