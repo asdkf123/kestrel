@@ -1973,11 +1973,10 @@ function __kMakeTypedArray(name) {
   // 각 typed array 생성자의 [[Prototype]] 은 %TypedArray% 다 (§23.2). 하네스가
   // Object.getPrototypeOf(Int8Array) 로 %TypedArray% 를 얻는다.
   Object.setPrototypeOf(Ctor, __kTypedArrayCtor);
-  Ctor.from = function(x, fn){
-    var arr = Array.from(x, fn);
-    return new Ctor(arr);
-  };
-  Ctor.of = function(){ return new Ctor(Array.prototype.slice.call(arguments)); };
+  // from/of/[Symbol.species] 은 own 이 아니라 %TypedArray% 에서 정적 상속한다
+  // (§23.2.2). Int8Array.from === %TypedArray%.from 이어야 하고, own 으로 두면
+  // inherited.js 계열 테스트가 깨진다. %TypedArray%.from 은 new this(...) 라
+  // this=Int8Array(수신자)로 올바른 종을 만든다.
   Ctor.BYTES_PER_ELEMENT = spec.size;
   return Ctor;
 }

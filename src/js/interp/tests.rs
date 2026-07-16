@@ -4811,6 +4811,59 @@ fn function_prototype_chain() {
     assert!(run_bool("function X(){} function Y(){} Object.getPrototypeOf(X)===Object.getPrototypeOf(Y)"));
 }
 
+// 함수 정적 상속 (§10.1.8 OrdinaryGet): 함수도 ordinary object 이므로 own·내장 멤버에
+// 없는 정적 프로퍼티는 [[Prototype]] 체인에서 상속한다. 예전엔 member_get 의 Fn arm 이
+// 곧장 Undefined 라 setPrototypeOf 해도 정적 상속이 안 됐다.
+#[test]
+fn function_static_inheritance() {
+    // 일반 함수: setPrototypeOf 로 정적 메서드 상속
+    assert_eq!(
+        run_num("function A(){} function B(){} B.sm=function(){return 42;}; \
+                 Object.setPrototypeOf(A,B); A.sm()"),
+        42.0
+    );
+    // 데이터 프로퍼티도 상속
+    assert!(run_bool(
+        "function A(){} function B(){} B.tag='x'; Object.setPrototypeOf(A,B); A.tag==='x'"
+    ));
+    // 접근자는 원 수신자(this=A)로 호출된다
+    assert!(run_bool(
+        "function A(){} function B(){} Object.defineProperty(B,'me',{get:function(){return this;}}); \
+         Object.setPrototypeOf(A,B); A.me===A"
+    ));
+    // own 이 상속보다 우선
+    assert!(run_bool(
+        "function A(){} function B(){} B.k=1; A.k=2; Object.setPrototypeOf(A,B); A.k===2"
+    ));
+    // 없는 키는 여전히 undefined
+    assert!(run_bool(
+        "function A(){} function B(){} Object.setPrototypeOf(A,B); A.nope===undefined"
+    ));
+}
+
+// %TypedArray% 정적 상속 (§23.2.2): Int8Array.from/of/[Symbol.species] 는 own 이 아니라
+// 공유 %TypedArray% 생성자에서 상속한다. 예전엔 각 생성자가 own from/of 를 가져
+// Int8Array.from !== %TypedArray%.from 이었다.
+#[test]
+fn typed_array_static_inheritance() {
+    // from/of 가 %TypedArray% 에서 상속(동일 함수 정체성)
+    assert!(prelude_bool("var TA=Object.getPrototypeOf(Int8Array); Int8Array.from===TA.from"));
+    assert!(prelude_bool("var TA=Object.getPrototypeOf(Uint8Array); Uint8Array.of===TA.of"));
+    // Int8Array.from === Uint8Array.from (둘 다 %TypedArray%.from)
+    assert!(prelude_bool("Int8Array.from===Uint8Array.from"));
+    // 상속됐지만 기능은 유지 — 올바른 종을 만든다 (new this(...), this=수신자)
+    assert_eq!(prelude_str("Int8Array.from([1,2,3]).join(',')"), "1,2,3");
+    assert!(prelude_bool("Int8Array.from([1,2,3]) instanceof Int8Array"));
+    assert_eq!(prelude_str("Uint8Array.of(4,5,6).join(',')"), "4,5,6");
+    assert!(prelude_bool("Uint8Array.of(4,5,6) instanceof Uint8Array"));
+    // from 에 map 함수
+    assert_eq!(prelude_str("Int8Array.from([1,2,3],function(x){return x*2;}).join(',')"), "2,4,6");
+    // Symbol.species 는 %TypedArray% 의 접근자를 상속, this=수신자라 각 생성자 자신
+    assert!(prelude_bool("typeof Symbol.species==='symbol'"));
+    assert!(prelude_bool("Int8Array[Symbol.species]===Int8Array"));
+    assert!(prelude_bool("Uint8Array[Symbol.species]===Uint8Array"));
+}
+
 // DataView (§25.3): ArrayBuffer 위 뷰. 타입별 get/set + 엔디언. 예전엔 완전 미구현.
 #[test]
 fn data_view_get_set_endian() {

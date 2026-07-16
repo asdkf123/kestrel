@@ -4516,6 +4516,59 @@ impl Interp {
         Ok(None)
     }
 
+    /// 함수 객체의 [[Prototype]] 체인에서 정적 프로퍼티를 조회한다 (§10.1.8.1 OrdinaryGet).
+    /// 함수도 ordinary object 이므로, own 프로퍼티와 내장 멤버(call/apply/bind/name/
+    /// length/prototype — 호출부에서 이미 처리)에 없으면 [[Prototype]] 체인을 걷는다.
+    /// `Int8Array.from === %TypedArray%.from` 같은 정적 상속과 `class B extends A` 의
+    /// 정적 메서드 상속의 토대. 접근자는 원 수신자(this=recv)로 호출해야
+    /// `Int8Array[Symbol.species] === Int8Array` 가 성립한다(수신자가 %TypedArray% 가 아님).
+    fn fn_static_lookup(
+        &mut self,
+        start: Value,
+        key: &str,
+        recv: &Value,
+    ) -> Result<Option<Value>, String> {
+        let mut proto = start;
+        let mut depth = 0;
+        loop {
+            depth += 1;
+            if depth > 100 {
+                break; // 순환/과도한 체인 방어
+            }
+            let (found, next) = match &proto {
+                Value::Obj(p) => {
+                    let b = p.borrow();
+                    (b.get(key).cloned(), b.get("__proto__").cloned())
+                }
+                Value::Fn(f) => {
+                    let b = f.props.borrow();
+                    // 함수 프로토의 기본 [[Prototype]] 은 Function.prototype
+                    let next = b
+                        .get("__proto__")
+                        .cloned()
+                        .or_else(|| Some(self.fn_proto.clone()));
+                    (b.get(key).cloned(), next)
+                }
+                // Native/그 밖의 프로토 노드: 정적 상속 대상 아님(내장 생성자는 별도 arm).
+                _ => break,
+            };
+            match found {
+                Some(Value::Accessor(acc)) => {
+                    return Ok(Some(match &acc.get {
+                        Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![])?,
+                        None => Value::Undefined,
+                    }));
+                }
+                Some(v) => return Ok(Some(v)),
+                None => match next {
+                    Some(p) => proto = p,
+                    None => break,
+                },
+            }
+        }
+        Ok(None)
+    }
+
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         // 내장에 얹힌 프로퍼티가 최우선 (폴리필이 Promise.allSettled 등을 덮어쓴 경우).
         if let Value::Native(n) = recv {
@@ -5165,7 +5218,17 @@ impl Interp {
                         func.props.borrow_mut().insert("prototype".to_string(), proto.clone());
                         Ok(proto)
                     }
-                    _ => Ok(Value::Undefined),
+                    // own·내장 멤버에 없으면 함수의 [[Prototype]] 체인(정적 상속)을 따른다.
+                    // 기본 [[Prototype]] 은 Function.prototype; setPrototypeOf 로 바뀌었으면 그것.
+                    _ => {
+                        let start = func
+                            .props
+                            .borrow()
+                            .get("__proto__")
+                            .cloned()
+                            .unwrap_or_else(|| self.fn_proto.clone());
+                        Ok(self.fn_static_lookup(start, key, recv)?.unwrap_or(Value::Undefined))
+                    }
                 }
             }
             // Function.prototype (정체성 보존된 객체)
@@ -5237,6 +5300,9 @@ impl Interp {
                 "toStringTag" => Self::well_known_symbol("\u{0}@@toStringTag", "Symbol.toStringTag"),
                 "hasInstance" => Self::well_known_symbol("\u{0}@@hasInstance", "Symbol.hasInstance"),
                 "toPrimitive" => Self::well_known_symbol("\u{0}@@toPrimitive", "Symbol.toPrimitive"),
+                // Symbol.species (§20.4.2.10): 종파생 생성자 선택. Array/TypedArray/
+                // ArrayBuffer/Promise 의 map/filter/slice 등이 반환 종을 이걸로 고른다.
+                "species" => Self::well_known_symbol("\u{0}@@species", "Symbol.species"),
                 // 정규식 위임 심볼 (§22.2.6): str.match/replace/split/search/matchAll 이 사용.
                 "match" => Self::well_known_symbol("\u{0}@@match", "Symbol.match"),
                 "matchAll" => Self::well_known_symbol("\u{0}@@matchAll", "Symbol.matchAll"),
