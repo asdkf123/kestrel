@@ -2325,6 +2325,69 @@ if (!window.DisposableStack) {
 }
 var DisposableStack = window.DisposableStack;
 
+if (!window.AsyncDisposableStack) {
+  class AsyncDisposableStack {
+    #disposed = false;
+    #stack = [];
+    get disposed() { return this.#disposed; }
+    async disposeAsync() {
+      if (this.#disposed) return undefined;
+      this.#disposed = true;
+      var stack = this.#stack; this.#stack = [];
+      var hasError = false, error;
+      for (var i = stack.length - 1; i >= 0; i--) {
+        try { await stack[i](); }
+        catch (e) {
+          if (hasError) error = new SuppressedError(e, error);
+          else { hasError = true; error = e; }
+        }
+      }
+      if (hasError) throw error;
+      return undefined;
+    }
+    use(value) {
+      if (this.#disposed) throw new ReferenceError('AsyncDisposableStack already disposed');
+      if (value !== null && value !== undefined) {
+        // async-dispose hint: @@asyncDispose 우선, 없으면 @@dispose 를 감싼다.
+        var method = value[Symbol.asyncDispose];
+        if (method === undefined || method === null) {
+          var sync = value[Symbol.dispose];
+          if (typeof sync !== 'function') throw new TypeError('value is not async-disposable');
+          method = function(){ return sync.call(value); };
+        } else if (typeof method !== 'function') {
+          throw new TypeError('value is not async-disposable ([Symbol.asyncDispose] not callable)');
+        }
+        var m = method;
+        this.#stack.push(function(){ return m.call(value); });
+      }
+      return value;
+    }
+    adopt(value, onDisposeAsync) {
+      if (this.#disposed) throw new ReferenceError('AsyncDisposableStack already disposed');
+      if (typeof onDisposeAsync !== 'function') throw new TypeError('onDisposeAsync is not a function');
+      this.#stack.push(function(){ return onDisposeAsync.call(undefined, value); });
+      return value;
+    }
+    defer(onDisposeAsync) {
+      if (this.#disposed) throw new ReferenceError('AsyncDisposableStack already disposed');
+      if (typeof onDisposeAsync !== 'function') throw new TypeError('onDisposeAsync is not a function');
+      this.#stack.push(function(){ return onDisposeAsync(); });
+      return undefined;
+    }
+    move() {
+      if (this.#disposed) throw new ReferenceError('AsyncDisposableStack already disposed');
+      var next = new AsyncDisposableStack();
+      next.#stack = this.#stack;
+      this.#stack = [];
+      this.#disposed = true;
+      return next;
+    }
+    [Symbol.asyncDispose]() { return this.disposeAsync(); }
+  }
+  window.AsyncDisposableStack = AsyncDisposableStack;
+}
+var AsyncDisposableStack = window.AsyncDisposableStack;
+
 // TextEncoder / TextDecoder — 실제 UTF-8 인코딩/디코딩.
 if (!window.TextEncoder) {
   window.TextEncoder = function(){};

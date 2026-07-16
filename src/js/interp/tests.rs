@@ -4185,6 +4185,15 @@ fn disposable_stack() {
     // SuppressedError 는 Error 하위, prototype.name 정확
     assert!(prelude_bool("new SuppressedError(1,2,'m') instanceof Error && SuppressedError.prototype.name==='SuppressedError'"));
     assert!(prelude_bool("var e=new SuppressedError('x','y','m'); e.error==='x' && e.suppressed==='y' && e.message==='m'"));
+    // AsyncDisposableStack — 동기 관측 부분(구조/가드/move) + async 정리 결과
+    assert!(prelude_bool("typeof AsyncDisposableStack==='function' && typeof Symbol.asyncDispose==='symbol'"));
+    assert!(prelude_bool("new AsyncDisposableStack().disposed===false"));
+    assert!(prelude_bool("var s=new AsyncDisposableStack(); var r={[Symbol.asyncDispose](){}}; s.use(r)===r"));
+    assert!(prelude_bool("var t=false; try{ new AsyncDisposableStack().use({}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("new AsyncDisposableStack().use(null)===null"));
+    assert!(prelude_bool("var a=new AsyncDisposableStack(); a.defer(function(){}); var b=a.move(); a.disposed===true && b.disposed===false"));
+    // disposeAsync 는 Promise 반환. dispose 후 disposed 플래그는 동기적으로 즉시 true.
+    assert!(prelude_bool("var s=new AsyncDisposableStack(); var p=s.disposeAsync(); typeof p.then==='function' && s.disposed===true"));
 }
 
 // 클래스도 함수다 (§10.2/§15.7): C.length===생성자 파라미터 수, new 없이 호출하면
