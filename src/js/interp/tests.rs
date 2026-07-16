@@ -2449,6 +2449,28 @@ fn array_string_at_and_flatmap() {
     assert_eq!(run_num("[1,2].flatMap(function(x){return x;}).length"), 2.0);
 }
 
+// (1) Math/JSON 의 Symbol.toStringTag (§21.3.1.9/§25.5.1) → Object.prototype.toString.
+// (2) Array 반복 메서드의 콜백 "배열" 인자는 원래 수신자(ToObject)여야 한다 (§23.1.3) —
+// 예전엔 임시 복사본을 넘겨 array-like(Math 등) 대상에서 [object Array] 로 어긋났다.
+#[test]
+fn tostringtag_and_callback_array_arg() {
+    assert_eq!(run_str("Object.prototype.toString.call(Math)"), "[object Math]");
+    assert_eq!(run_str("Object.prototype.toString.call(JSON)"), "[object JSON]");
+    assert_eq!(run_str("Math[Symbol.toStringTag]"), "Math");
+    assert!(run_bool("Object.keys(Math).indexOf('Symbol(Symbol.toStringTag)')<0")); // 비열거
+    // 콜백의 배열 인자가 원래 수신자
+    assert!(run_bool("Math.length=1; Math[0]=1; \
+        Array.prototype.reduce.call(Math, function(a,b,i,o){ return Object.prototype.toString.call(o)==='[object Math]'; }, 1)"));
+    assert!(run_bool("var al={0:'x',length:1}; var seen; \
+        Array.prototype.forEach.call(al, function(v,i,o){ seen=o; }); seen===al"));
+    assert!(run_bool("var al={0:1,1:2,length:2}; \
+        Array.prototype.map.call(al, function(v,i,o){ return o===al; }).every(function(x){return x;})"));
+    // findLast 콜백은 (값,인덱스,배열) 3인자 + thisArg
+    assert!(run_bool("var al={0:1,1:2,length:2}; var got; \
+        Array.prototype.findLast.call(al, function(v,i,o){ got=o; return true; }); got===al"));
+    assert_eq!(run_num("[10,20,30].findLast(function(v,i){ return i>=0; })"), 30.0);
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {

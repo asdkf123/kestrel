@@ -4771,6 +4771,10 @@ impl Interp {
                     // 그 외 원시값/객체(length 없음): ToObject 후 length 0 → 빈 배열로 근사
                     _ => (ArrayObj::new(Vec::new()), None),
                 };
+                // 콜백의 "배열" 인자(§23.1.3: 3번째 인자)는 **원래 수신자**(ToObject(this))다 —
+                // 임시 복사 a 가 아니다. 예전엔 a 를 넘겨 array-like(Math/Date 등) 대상에서
+                // Object.prototype.toString.call(그 인자) 가 "[object Array]" 로 어긋났다.
+                let cb_arr = recv.clone().unwrap_or(Value::Undefined);
                 let out = match op {
                     ArrOp::Join => {
                         let sep = args.first().map(to_display).unwrap_or(",".to_string());
@@ -4803,7 +4807,7 @@ impl Interp {
                         // 예전엔 (값, 인덱스) 만 넘겨서 a[i-1] 같은 관용 코드가 죽었다
                         // (IntersectionObserver 폴리필이 정확히 그 모양이다).
                         let this_arg = args.get(1).cloned();
-                        let arr_val = Value::Arr(a.clone());
+                        let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut out = Vec::new();
                         for (i, item) in snapshot.into_iter().enumerate() {
@@ -4835,7 +4839,7 @@ impl Interp {
                     ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
                         let this_arg = args.get(1).cloned();
-                        let arr_val = Value::Arr(a.clone());
+                        let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut result = Value::Undefined;
                         let mut found = false;
@@ -4883,7 +4887,7 @@ impl Interp {
                     }
                     ArrOp::Reduce => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
-                        let arr_val = Value::Arr(a.clone()); // 콜백 4번째 인자 (표준)
+                        let arr_val = cb_arr.clone(); // 콜백 4번째 인자 (표준)
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut iter = snapshot.into_iter().enumerate();
                         let mut acc = match args.get(1) {
@@ -4908,7 +4912,7 @@ impl Interp {
                     }
                     ArrOp::ReduceRight => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
-                        let arr_val = Value::Arr(a.clone());
+                        let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut idx = snapshot.len();
                         let mut acc = match args.get(1) {
@@ -4950,8 +4954,8 @@ impl Interp {
                         for i in (0..snapshot.len()).rev() {
                             let r = self.call_value(
                                 f.clone(),
-                                None,
-                                vec![snapshot[i].clone(), Value::Num(i as f64)],
+                                args.get(1).cloned(), // thisArg
+                                vec![snapshot[i].clone(), Value::Num(i as f64), cb_arr.clone()],
                             )?;
                             if to_bool(&r) {
                                 result = if matches!(op, ArrOp::FindLastIndex) {

@@ -657,12 +657,17 @@ impl Interp {
         math.insert("SQRT2".to_string(), Value::Num(std::f64::consts::SQRT_2));
         math.insert("LN2".to_string(), Value::Num(std::f64::consts::LN_2));
         math.insert("LN10".to_string(), Value::Num(std::f64::consts::LN_10));
+        // Math[Symbol.toStringTag] === "Math" (§21.3.1.9) — Object.prototype.toString.call(Math)
+        // 이 "[object Math]" 가 되게 한다. mark_nonenum_all 전에 넣어 비열거로.
+        math.insert("\u{0}@@toStringTag".to_string(), Value::Str("Math".to_string()));
         mark_nonenum_all(&mut math); // 내장 프로퍼티는 비열거 (§17)
         env_declare(&global, "Math", Value::Obj(Rc::new(RefCell::new(math))));
         // JSON
         let mut json = ObjMap::new();
         json.insert("parse".to_string(), Value::Native(Native::JsonParse));
         json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
+        // JSON[Symbol.toStringTag] === "JSON" (§25.5.1) → "[object JSON]".
+        json.insert("\u{0}@@toStringTag".to_string(), Value::Str("JSON".to_string()));
         mark_nonenum_all(&mut json);
         env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
         // 전역 함수
