@@ -4819,6 +4819,11 @@ fn typed_array_prototype_methods() {
     assert_eq!(prelude_str("new Int32Array([1,2,3,4,5]).copyWithin(0,3).join(',')"), "4,5,3,4,5");
     // BigInt 배열 sort (BigInt 비교가 정확해야 함)
     assert_eq!(prelude_str("new BigInt64Array([3n,1n,2n]).sort().join(',')"), "1,2,3");
+    // Proxy instanceof (typed array 는 Proxy) — 타깃 프로토타입 체인으로 판정
+    assert!(prelude_bool("new Uint8Array([1,2,3]) instanceof Uint8Array"));
+    assert!(prelude_bool("new Int32Array(3) instanceof Int32Array"));
+    assert!(prelude_bool("new Uint8Array([1,2,3,4]).filter(function(x){return x%2;}) instanceof Uint8Array"));
+    assert!(!prelude_bool("new Uint8Array(2) instanceof Int8Array")); // 다른 생성자
 }
 
 // BigInt64Array / BigUint64Array (ES2020) — 원소가 BigInt 인 typed array. 예전엔

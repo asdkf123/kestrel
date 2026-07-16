@@ -6371,6 +6371,37 @@ impl Interp {
                         cur = c.parent.clone();
                     }
                 }
+                // Proxy 인스턴스: [[GetPrototypeOf]] (§10.5.1) 를 따른다. getPrototypeOf 트랩이
+                // 있으면 그걸로 첫 프로토타입을 얻고, 없으면 타깃의 프로토타입. 이후 체인은
+                // __proto__ 로 올라간다. typed array 가 Proxy 라 instanceof 가 여기 걸린다.
+                if let (Value::Proxy(pp), Value::Fn(func)) = (&l, &r) {
+                    let fp = match func.props.borrow().get("prototype").cloned() {
+                        Some(Value::Obj(fp)) => fp,
+                        _ => return Ok(Value::Bool(false)),
+                    };
+                    let (target, handler) = (pp.0.clone(), pp.1.clone());
+                    let trap = self.member_get(&handler, "getPrototypeOf").unwrap_or(Value::Undefined);
+                    let mut proto = if is_callable(&trap) {
+                        self.call_value(trap, Some(handler), vec![target])?
+                    } else if let Value::Obj(tm) = &target {
+                        tm.borrow().get("__proto__").cloned().unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    };
+                    let mut depth = 0;
+                    while let Value::Obj(p) = &proto {
+                        if Rc::ptr_eq(p, &fp) {
+                            return Ok(Value::Bool(true));
+                        }
+                        depth += 1;
+                        if depth > 100 {
+                            break;
+                        }
+                        let next = p.borrow().get("__proto__").cloned().unwrap_or(Value::Null);
+                        proto = next;
+                    }
+                    return Ok(Value::Bool(false));
+                }
                 // function 생성자: l 의 __proto__ 체인에 F.prototype 이 있으면 인스턴스.
                 if let (Value::Obj(lm), Value::Fn(func)) = (&l, &r) {
                     let fp = func.props.borrow().get("prototype").cloned();
