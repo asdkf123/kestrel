@@ -6159,3 +6159,22 @@ fn reflect_target_must_be_object() {
     // key 는 ToPropertyKey (Symbol/toString 관측)
     assert_eq!(run_num("var o={}; o[Symbol.for('k')]=7; Reflect.get(o, Symbol.for('k'))"), 7.0);
 }
+
+#[test]
+fn json_raw_json() {
+    assert!(run_bool("JSON.isRawJSON(JSON.rawJSON('1.5'))"));
+    assert!(!run_bool("JSON.isRawJSON(1)"));
+    assert!(!run_bool("JSON.isRawJSON({})"));
+    assert_eq!(run_str("JSON.stringify({a: JSON.rawJSON('12345678901234567890')})"),
+               "{\"a\":12345678901234567890}");
+    assert_eq!(run_str("JSON.stringify(JSON.rawJSON('1.0'))"), "1.0");
+    assert!(run_bool("Object.isFrozen(JSON.rawJSON('true'))"));
+    // 검증 오류
+    for bad in ["''", "' 1'", "'1 '", "'{}'", "'[]'", "'nope'", "'1,2'"] {
+        assert!(run_bool(&format!("var t=false; try{{ JSON.rawJSON({}); }}catch(e){{ t=e instanceof SyntaxError; }} t", bad)),
+                "expected SyntaxError from JSON.rawJSON({})", bad);
+    }
+    // name/length
+    assert_eq!(run_str("JSON.rawJSON.name"), "rawJSON");
+    assert_eq!(run_num("JSON.isRawJSON.length"), 1.0);
+}

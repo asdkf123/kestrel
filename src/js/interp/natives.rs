@@ -294,6 +294,8 @@ pub enum Native {
     Arr(ArrOp),
     JsonParse,
     JsonStringify,
+    JsonRawJson,   // JSON.rawJSON (ES2024)
+    JsonIsRawJson, // JSON.isRawJSON (ES2024)
     ParseInt,
     ParseFloat,
     EncodeUri,
@@ -937,6 +939,8 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         // ── JSON.* ──
         JsonParse => ("parse", 2),
         JsonStringify => ("stringify", 3),
+        JsonRawJson => ("rawJSON", 1),
+        JsonIsRawJson => ("isRawJSON", 1),
         // ── Symbol.* ──
         SymbolFor => ("for", 1),
         SymbolKeyFor => ("keyFor", 1),

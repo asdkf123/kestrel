@@ -679,6 +679,8 @@ impl Interp {
         let mut json = ObjMap::new();
         json.insert("parse".to_string(), Value::Native(Native::JsonParse));
         json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
+        json.insert("rawJSON".to_string(), Value::Native(Native::JsonRawJson));
+        json.insert("isRawJSON".to_string(), Value::Native(Native::JsonIsRawJson));
         // JSON[Symbol.toStringTag] === "JSON" (§25.5.1) → "[object JSON]".
         json.insert("\u{0}@@toStringTag".to_string(), Value::Str("JSON".to_string()));
         // §25.5.1: { writable:false, enumerable:false, configurable:true }.

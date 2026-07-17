@@ -498,6 +498,23 @@ impl Interp {
             // §25.5.2: BigInt 직렬화는 TypeError.
             return Err(self.throw_error("TypeError", "Do not know how to serialize a BigInt"));
         }
+        // rawJSON 객체(ES2024 §25.5.1)는 저장된 원본 텍스트를 그대로 낸다.
+        if let Value::Obj(m) = v {
+            let raw = {
+                let b = m.borrow();
+                if b.contains_key("\u{0}isRawJSON") {
+                    match b.get("rawJSON") {
+                        Some(Value::Str(s)) => Some(s.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(raw) = raw {
+                return Ok(Some(raw));
+            }
+        }
         Ok(match v {
             Value::Undefined
             | Value::Fn(_)
@@ -5862,6 +5879,45 @@ impl Interp {
             // 순환 구조면 TypeError 를 던진다(표준). 조용히 폭발/무한재귀하지 않는다.
             // replacer(배열/함수)와 space(들여쓰기)도 표준대로 처리한다 — 예전엔 둘 다
             // 조용히 무시해서 JSON.stringify(o, null, 2) 가 한 줄로 나왔다.
+            // JSON.rawJSON(text) (ES2024 §25.5.1): 유효한 원시 JSON 텍스트를 담은 얼린
+            // 객체를 만든다. JSON.stringify 가 이 텍스트를 그대로(따옴표 없이) 낸다.
+            Native::JsonRawJson => {
+                let text = match args.first().cloned() {
+                    Some(v) => {
+                        let p = self.to_primitive_or_throw(v, true)?;
+                        to_display(&p)
+                    }
+                    None => "undefined".to_string(),
+                };
+                let is_ws = |c: char| matches!(c, '\t' | '\n' | '\r' | ' ');
+                if text.is_empty()
+                    || text.chars().next().map(is_ws).unwrap_or(false)
+                    || text.chars().last().map(is_ws).unwrap_or(false)
+                {
+                    return Err(self.throw_error("SyntaxError", "JSON.rawJSON: invalid text"));
+                }
+                // 유효 JSON 검증(JSON.parse). 결과가 객체/배열이면 원시 아님 → SyntaxError.
+                let parsed =
+                    self.call_native(Native::JsonParse, None, vec![Value::Str(text.clone())])?;
+                if matches!(parsed, Value::Obj(_) | Value::Arr(_)) {
+                    return Err(
+                        self.throw_error("SyntaxError", "JSON.rawJSON: value must be primitive")
+                    );
+                }
+                let mut m = ObjMap::new();
+                m.insert("rawJSON".to_string(), Value::Str(text));
+                set_prop_attrs(&mut m, "rawJSON", ATTR_ENUMERABLE); // {w:f,e:t,c:f} (얼린 뒤)
+                m.insert("\u{0}isRawJSON".to_string(), Value::Bool(true));
+                m.insert("__proto__".to_string(), Value::Null);
+                let obj = Value::Obj(Rc::new(RefCell::new(m)));
+                self.set_integrity(&obj, super::INTEG_FROZEN);
+                Ok(obj)
+            }
+            // JSON.isRawJSON(v) (ES2024): v 가 rawJSON 객체인가.
+            Native::JsonIsRawJson => Ok(Value::Bool(matches!(
+                args.first(),
+                Some(Value::Obj(m)) if m.borrow().contains_key("\u{0}isRawJSON")
+            ))),
             Native::JsonStringify => {
                 let v = args.first().cloned().unwrap_or(Value::Undefined);
                 let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
