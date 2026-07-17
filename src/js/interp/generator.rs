@@ -40,6 +40,8 @@ pub struct GenState {
     started: bool,
     done: bool,
     resume: Vec<GStep>,  // 저장된 재개 경로(뿌리→잎). 비어 있으면 최상단에서 시작.
+    // async 제너레이터(async function*): next/return/throw 가 Promise 를 돌려준다(§27.6).
+    is_async: bool,
 }
 
 // next()/return()/throw() 가 재개 지점에 무엇을 주입할지.
@@ -203,7 +205,12 @@ impl Interp {
             started: false,
             done: false,
             resume: Vec::new(),
+            is_async: func.is_async,
         })))
+    }
+
+    pub(super) fn gen_is_async(gs: &Rc<RefCell<GenState>>) -> bool {
+        gs.borrow().is_async
     }
 
     // { value, done } 결과 객체.

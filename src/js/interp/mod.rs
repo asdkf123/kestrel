@@ -1416,9 +1416,22 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
+    // async 제너레이터 결과 {value,done} 의 value 가 thenable 이면 await 로 풀어
+    // 넣는다 (§27.6.3.8 AsyncGeneratorYield 는 yield 값을 Await 한다).
+    pub(super) fn await_iter_result_value(&mut self, res: Value) -> Result<Value, String> {
+        if let Value::Obj(o) = &res {
+            let val = o.borrow().get("value").cloned().unwrap_or(Value::Undefined);
+            if is_promise(&val) {
+                let awaited = self.await_value(val)?;
+                o.borrow_mut().insert("value".to_string(), awaited);
+            }
+        }
+        Ok(res)
+    }
+
     // promise 를 값으로 이행. 값이 또 promise 면 그것이 이행될 때 이어서 이행(체이닝).
     // promise 를 이행(fulfilled)으로 정착. 값이 thenable 이면 그 상태를 채택.
-    fn resolve_promise(&mut self, p: &Value, v: Value) {
+    pub(super) fn resolve_promise(&mut self, p: &Value, v: Value) {
         if is_promise(&v) {
             // p 는 v 의 상태를 채택: v 이행 → Identity 로 p 이행, v 거부 → 전파로 p 거부
             self.promise_then(&v, Value::Native(Native::Identity), Value::Undefined, p.clone());
@@ -1428,7 +1441,7 @@ impl Interp {
     }
 
     // promise 를 거부(rejected)로 정착.
-    fn reject_promise(&mut self, p: &Value, reason: Value) {
+    pub(super) fn reject_promise(&mut self, p: &Value, reason: Value) {
         self.settle(p, false, reason);
     }
 

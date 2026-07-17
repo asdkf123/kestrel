@@ -2124,6 +2124,23 @@ impl Interp {
                         _ => super::generator::ResumeMode::Next,
                     };
                     let gs = gs.clone();
+                    // async 제너레이터(§27.6): next/return/throw 는 Promise 를 돌려준다.
+                    // 결과 {value,done} 는 이행 promise 로, 던짐은 거부 promise 로 감싼다.
+                    // yield 된 value 가 thenable 이면 표준상 await 되므로 먼저 풀어준다.
+                    if Self::gen_is_async(&gs) {
+                        let p = self.new_promise();
+                        match self.gen_resume(&gs, arg, mode) {
+                            Ok(res) => {
+                                let res = self.await_iter_result_value(res)?;
+                                self.resolve_promise(&p, res);
+                            }
+                            Err(e) => {
+                                let reason = self.thrown.take().unwrap_or(Value::Str(e));
+                                self.reject_promise(&p, reason);
+                            }
+                        }
+                        return Ok(p);
+                    }
                     self.gen_resume(&gs, arg, mode)
                 } else {
                     Ok(Value::Undefined)

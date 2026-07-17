@@ -5869,3 +5869,35 @@ fn class_instance_fields_enumeration_delete_order() {
         "a,b"
     );
 }
+
+#[test]
+fn async_generator_next_returns_promise() {
+    // async function* 의 next()/return()/throw() 는 Promise 를 돌려준다 (§27.6).
+    assert!(run_bool("async function* ag(){ yield 1; } typeof ag().next().then === 'function'"));
+    // 결과 promise 는 {value,done} 로 이행
+    assert_eq!(
+        run_str("async function* ag(){ yield 5; } await ag().next().then(function(r){return r.value+':'+r.done;})"),
+        "5:false"
+    );
+    // for await 로 소비 (await 된 yield 값 포함)
+    assert_eq!(
+        run_str("async function* ag(){ yield 1; yield await Promise.resolve(2); yield 3; } \
+                 var out=[]; for await (var x of ag()) out.push(x); out.join(',')"),
+        "1,2,3"
+    );
+    // return() 은 이행 promise {value, done:true}
+    assert_eq!(
+        run_str("async function* ag(){ yield 1; } await ag().return(9).then(function(r){return r.value+':'+r.done;})"),
+        "9:true"
+    );
+    // throw() 는 본문 catch 로 잡혀 yield 가능
+    assert_eq!(
+        run_str("async function* ag(){ try{ yield 1; }catch(e){ yield 'c'+e; } } \
+                 var it=ag(); await it.next(); await it.throw('X').then(function(r){return r.value;})"),
+        "cX"
+    );
+    // 클래스 async 제너레이터 메서드
+    assert!(run_bool(
+        "class C{ async *m(){ yield 1; } } typeof new C().m().next().then === 'function'"
+    ));
+}
