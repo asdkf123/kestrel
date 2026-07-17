@@ -288,7 +288,10 @@ impl JsClass {
 
 pub struct Instance {
     pub class: Rc<JsClass>,
-    pub fields: RefCell<HashMap<String, Value>>,
+    // ObjMap: 삽입 순서 보존(§OrdinaryOwnPropertyKeys) + 프로퍼티 속성 추적
+    // (enumerable/writable/configurable). 예전엔 HashMap 이라 필드 순서가
+    // 비결정적이고 for-in/delete/서술자 속성이 어긋났다.
+    pub fields: RefCell<ObjMap>,
 }
 
 

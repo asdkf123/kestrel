@@ -5838,3 +5838,34 @@ fn function_prototype_constructor_backlink() {
     // 사용자가 constructor 를 덮어쓸 수 있다 (writable)
     assert!(run_bool("function F(){}; F.prototype.constructor=42; F.prototype.constructor===42"));
 }
+
+#[test]
+fn class_instance_fields_enumeration_delete_order() {
+    // 클래스 필드는 삽입 순서로 own 열거 프로퍼티 (ObjMap)
+    assert_eq!(
+        run_str("class C{ a; b=42; c; } var o=new C(); Object.keys(o).join(',')"),
+        "a,b,c"
+    );
+    // for-in 이 인스턴스 필드를 순회 (메서드는 비열거)
+    assert_eq!(
+        run_str("class C{ m(){} x=1; y=2; } var o=new C(); var s=[]; for(var k in o)s.push(k); s.join(',')"),
+        "x,y"
+    );
+    // 필드는 {w:true,e:true,c:true}
+    assert!(run_bool(
+        "class C{ a=1; } var o=new C(); var d=Object.getOwnPropertyDescriptor(o,'a'); \
+         d.value===1 && d.writable && d.enumerable && d.configurable"
+    ));
+    // delete 가 실제로 인스턴스 필드를 제거
+    assert!(run_bool("class C{ a=1; } var o=new C(); delete o.a; !o.hasOwnProperty('a')"));
+    assert_eq!(run_str("class C{ a=1; b=2; } var o=new C(); delete o.a; Object.keys(o).join(',')"), "b");
+    // 메서드는 프로토타입 own(비열거), 인스턴스 own 아님
+    assert!(run_bool("class C{ m(){} } var o=new C(); !o.hasOwnProperty('m') && C.prototype.hasOwnProperty('m')"));
+    // 프로토타입 메서드 삭제 (configurable)
+    assert!(run_bool("class C{ m(){} } delete C.prototype.m; C.prototype.m===undefined"));
+    // Object.assign 이 인스턴스 열거 필드를 순서대로 복사
+    assert_eq!(
+        run_str("class C{ a=1; b=2; } var t=Object.assign({}, new C()); Object.keys(t).join(',')"),
+        "a,b"
+    );
+}

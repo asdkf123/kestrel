@@ -547,8 +547,9 @@ impl Interp {
                             continue;
                         }
                     }
+                    let Some(mv) = m.get(k) else { continue };
                     if let Some(s) =
-                        self.json_ser(&m[k], k, v, fnrep, keys, indent, depth + 1, path)?
+                        self.json_ser(&mv.clone(), k, v, fnrep, keys, indent, depth + 1, path)?
                     {
                         parts.push(format!("{}{}{}", json_quote_pub(k), colon, s));
                     }

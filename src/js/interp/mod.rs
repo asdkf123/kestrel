@@ -3138,6 +3138,17 @@ impl Interp {
                 let keys: Vec<String> = match &target {
                     // __proto__ 링크는 열거 대상 아님(JS 에서 non-enumerable accessor)
                     Value::Obj(m) => enumerable_keys(m),
+                    // 클래스 인스턴스: own 열거 가능 필드(내부/private/비열거 제외).
+                    // 프로토타입 메서드는 비열거라 안 나온다(표준).
+                    Value::Instance(i) => {
+                        let f = i.fields.borrow();
+                        f.keys()
+                            .filter(|k| {
+                                !is_internal_key(k) && !f.contains_key(&nonenum_marker(k))
+                            })
+                            .cloned()
+                            .collect()
+                    }
                     Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                     // 함수도 ordinary object — 열거 가능한 own 프로퍼티를 순회
@@ -3509,6 +3520,20 @@ impl Interp {
                                         return Ok(Value::Bool(false));
                                     }
                                     let mut mm = m.borrow_mut();
+                                    mm.remove(&key);
+                                    mm.remove(&attr_marker(&key));
+                                    mm.remove(&nonenum_marker(&key));
+                                }
+                            }
+                            // 클래스 인스턴스 필드도 own 프로퍼티다 — configurable 존중 삭제.
+                            Value::Instance(inst) => {
+                                let exists = inst.fields.borrow().contains_key(&key);
+                                if exists {
+                                    let attrs = prop_attrs(&inst.fields.borrow(), &key);
+                                    if attrs & ATTR_CONFIGURABLE == 0 {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    let mut mm = inst.fields.borrow_mut();
                                     mm.remove(&key);
                                     mm.remove(&attr_marker(&key));
                                     mm.remove(&nonenum_marker(&key));
@@ -6155,7 +6180,7 @@ impl Interp {
         };
         let inst = Value::Instance(Rc::new(Instance {
             class: cls.clone(),
-            fields: RefCell::new(HashMap::new()),
+            fields: RefCell::new(ObjMap::new()),
         }));
         // 클래스 필드 초기화(조상 → 자신 순) 후 생성자 실행
         self.init_fields(&cls, &inst)?;
