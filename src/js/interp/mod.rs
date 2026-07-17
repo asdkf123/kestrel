@@ -2220,6 +2220,7 @@ impl Interp {
             this: None,
             super_class: None,
             props: RefCell::new(ObjMap::new()),
+            source: None,
         })))
     }
 
@@ -2889,7 +2890,7 @@ impl Interp {
     // 함수 선언 호이스팅: 블록 실행 전에 FuncDecl 을 먼저 바인딩
     fn exec_block(&mut self, stmts: &[Stmt], env: &EnvRef) -> Result<Flow, String> {
         for s in stmts {
-            if let Stmt::FuncDecl { name, params, body, is_generator, is_async } = s {
+            if let Stmt::FuncDecl { name, params, body, is_generator, is_async, source } = s {
                 let f = Value::Fn(Rc::new(JsFn {
                     priv_id: std::cell::Cell::new(0),
                     name: RefCell::new(name.clone()),
@@ -2902,6 +2903,7 @@ impl Interp {
                     this: None,
                     super_class: None,
                     props: RefCell::new(ObjMap::new()),
+                    source: source.clone(),
                 }));
                 env_declare(env, name, f);
             }
@@ -3402,7 +3404,7 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
-            Expr::Func { name, params, body, is_arrow, is_generator, is_async } => {
+            Expr::Func { name, params, body, is_arrow, is_generator, is_async, source } => {
                 // 화살표는 정의 시점 this 를 캡처 (렉시컬)
                 let this = if *is_arrow { env_get(env, "this").map(Box::new) } else { None };
                 // 명명 함수식: 자기 이름을 감싸는 스코프에 바인딩(재귀용). 외부엔 미노출.
@@ -3425,6 +3427,7 @@ impl Interp {
                     this,
                     super_class: None,
                     props: RefCell::new(ObjMap::new()),
+                    source: source.clone(),
                 });
                 if let Some(n) = name {
                     env_declare(&fn_env, n, Value::Fn(f.clone()));
@@ -4174,7 +4177,7 @@ impl Interp {
                 }
                 _ => None,
             };
-            if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async }) = decl {
+            if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async, source }) = decl {
                 let f = Value::Fn(Rc::new(JsFn {
                     priv_id: std::cell::Cell::new(0),
                     name: RefCell::new(name.clone()),
@@ -4187,6 +4190,7 @@ impl Interp {
                     this: None,
                     super_class: None,
                     props: RefCell::new(ObjMap::new()),
+                    source: source.clone(),
                 }));
                 env_declare(&env, name, f);
             }
@@ -4226,6 +4230,7 @@ impl Interp {
                 this: None,
                 super_class: None,
                 props: RefCell::new(ObjMap::new()),
+                source: None,
             }));
             ns_map
                 .borrow_mut()
@@ -6352,6 +6357,7 @@ impl Interp {
                     .map(Value::Class)
                     .or_else(|| parent_ctor.clone()),
                 props: RefCell::new(ObjMap::new()),
+                source: None, // 클래스 메서드 소스는 별도 경로(미보관) — toString 근사
             })
         };
         // 메서드/접근자도 이름을 갖는다 (§15.4): 접근자는 "get x" / "set x" (§10.2.9)
@@ -6443,7 +6449,19 @@ impl Interp {
     // ToPrimitive: 객체를 원시값으로 (valueOf/toString 호출). prefer_string 이면 toString 먼저.
     // 원시값은 그대로. 사용자 정의 toString/valueOf(BigNumber/moment/커스텀 값형)를 존중.
     fn to_primitive(&mut self, v: Value, prefer_string: bool) -> Value {
-        if !matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+        // 함수도 객체다 — ToPrimitive(fn) 은 toString 을 타 소스 텍스트를 낸다
+        // (`"" + fn`/`String(fn)`/`${fn}`). 예전엔 Fn 을 원시로 봐 to_display 가
+        // "function" 을 냈다.
+        if !matches!(
+            v,
+            Value::Obj(_)
+                | Value::Instance(_)
+                | Value::Arr(_)
+                | Value::Fn(_)
+                | Value::Native(_)
+                | Value::Class(_)
+                | Value::Bound(_)
+        ) {
             return v;
         }
         // 원시 래퍼(new String/Number/Boolean)는 내부 [[PrimitiveValue]] 로 즉시 변환.
@@ -6456,7 +6474,8 @@ impl Interp {
             if is_callable(&f) {
                 let hint = Value::Str(if prefer_string { "string" } else { "number" }.to_string());
                 if let Ok(res) = self.call_value(f, Some(v.clone()), vec![hint]) {
-                    if !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                    // 원시값(비객체)이면 채택. 함수(Fn/Native/…)도 객체라 원시 아님.
+                    if !is_object(&res) {
                         return res;
                     }
                 }
@@ -6468,7 +6487,7 @@ impl Interp {
             if let Ok(f) = self.member_get(&v, m) {
                 if is_callable(&f) {
                     if let Ok(res) = self.call_value(f, Some(v.clone()), vec![]) {
-                        if !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                        if !is_object(&res) {
                             return res; // 원시값이면 채택
                         }
                     }
@@ -6486,13 +6505,22 @@ impl Interp {
         v: Value,
         prefer_string: bool,
     ) -> Result<Value, String> {
-        if !matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+        if !matches!(
+            v,
+            Value::Obj(_)
+                | Value::Instance(_)
+                | Value::Arr(_)
+                | Value::Fn(_)
+                | Value::Native(_)
+                | Value::Class(_)
+                | Value::Bound(_)
+        ) {
             return Ok(v);
         }
         if let Some(p) = wrapper_primitive(&v) {
             return Ok(p);
         }
-        let prim = |res: &Value| !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_));
+        let prim = |res: &Value| !is_object(res);
         // Symbol.toPrimitive 가 있으면 우선 (예외/비원시 결과 모두 표준대로 처리).
         if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
             if is_callable(&f) {

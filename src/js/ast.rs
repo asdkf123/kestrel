@@ -15,7 +15,8 @@ pub enum Expr {
     // is_arrow: 화살표는 this 를 렉시컬로 캡처 (호출 시 재바인딩 안 함)
     // is_generator: function* — 호출 시 본문을 즉시 실행해 yield 값을 모아 반복자 반환(eager)
     // name: 명명 함수식 이름 (재귀용 자기 참조). 익명/화살표는 None.
-    Func { name: Option<String>, params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool },
+    // source: 원본 소스 텍스트 (Function.prototype.toString §20.2.3.5). 없으면 None.
+    Func { name: Option<String>, params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool, source: Option<std::rc::Rc<str>> },
     // BigInt 리터럴 (소스 그대로 — 평가 시 정확히 파싱)
     BigInt(String),
     // yield [*] expr — 제너레이터 본문에서 값을 산출. star 면 iterable 을 위임 전개.
@@ -202,7 +203,7 @@ pub enum Pattern {
 pub enum Stmt {
     // 다중 선언자 지원: var a = 1, b = 2; / 구조분해 const {a} = o
     VarDecl { kind: DeclKind, decls: Vec<(Pattern, Option<Expr>)> },
-    FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt>, is_generator: bool, is_async: bool },
+    FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt>, is_generator: bool, is_async: bool, source: Option<std::rc::Rc<str>> },
     If { cond: Expr, then: Vec<Stmt>, other: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },
     DoWhile { body: Vec<Stmt>, cond: Expr },

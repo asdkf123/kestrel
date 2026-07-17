@@ -5946,3 +5946,28 @@ fn array_generic_arraylike_and_from_index() {
     // 실제 배열 무회귀
     assert_eq!(run_str("[1,2,3].map(function(x){return x*2;}).join(',')"), "2,4,6");
 }
+
+#[test]
+fn function_tostring_source_text() {
+    // §20.2.3.5: 사용자 함수는 원본 소스 텍스트 그대로.
+    assert_eq!(run_str("function foo(a, b) { return a + b; } foo.toString()"),
+               "function foo(a, b) { return a + b; }");
+    assert_eq!(run_str("var f = (x) => x * 2; f.toString()"), "(x) => x * 2");
+    assert_eq!(run_str("function* g(a){ yield a; } g.toString()"), "function* g(a){ yield a; }");
+    assert_eq!(run_str("async function af(x){ return x; } af.toString()"), "async function af(x){ return x; }");
+    // 주석/공백 보존
+    assert_eq!(run_str("var f = function /*c*/ n (x) { return x; }; f.toString()"),
+               "function /*c*/ n (x) { return x; }");
+    // 객체 메서드/접근자
+    assert_eq!(run_str("var o={ m(a){ return a; } }; Object.getOwnPropertyDescriptor(o,'m').value.toString()"),
+               "m(a){ return a; }");
+    assert_eq!(run_str("var o={ get x(){ return 1; } }; Object.getOwnPropertyDescriptor(o,'x').get.toString()"),
+               "get x(){ return 1; }");
+    // 내장 함수: NativeFunction 문법 + 이름
+    assert_eq!(run_str("Math.max.toString()"), "function max() { [native code] }");
+    assert_eq!(run_str("parseInt.toString()"), "function parseInt() { [native code] }");
+    // 바운드 함수: native code (이름 없이)
+    assert_eq!(run_str("(function f(){}).bind(null).toString()"), "function () { [native code] }");
+    // toString 결과가 다시 파싱 가능(대략) — 최소한 'function' 포함
+    assert!(run_bool("/function|=>/.test((function abc(){}).toString())"));
+}

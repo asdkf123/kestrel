@@ -209,6 +209,8 @@ pub struct JsFn {
     // 프로퍼티 속성(writable/enumerable/configurable)을 추적한다 — 함수 대상
     // defineProperty 가 표준 속성 강제(§10.2.4)를 받는다.
     pub props: RefCell<ObjMap>,
+    // 원본 소스 텍스트 (Function.prototype.toString §20.2.3.5). 없으면 None(합성/내장).
+    pub source: Option<std::rc::Rc<str>>,
 }
 
 pub struct JsClass {

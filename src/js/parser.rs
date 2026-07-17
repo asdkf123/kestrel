@@ -145,8 +145,9 @@ fn expr_to_pattern(e: Expr) -> Option<Pattern> {
 
 // 템플릿 보간 ${...} 소스를 독립적으로 식 파싱
 fn parse_expr_source(src: &str) -> Result<Expr, String> {
-    let (toks, nl_before) = tokenize(src)?;
-    let mut p = Parser { toks, nl_before, pos: 0, pending_async: false };
+    let (toks, nl_before, spans) = tokenize(src)?;
+    let src_chars: std::rc::Rc<[char]> = src.chars().collect::<Vec<_>>().into();
+    let mut p = Parser { toks, nl_before, spans, src_chars, pos: 0, pending_async: false };
     let e = p.expr()?;
     if !p.eof() {
         return Err("템플릿 보간 식 뒤에 잉여 토큰".to_string());
@@ -155,8 +156,9 @@ fn parse_expr_source(src: &str) -> Result<Expr, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let (toks, nl_before) = tokenize(src)?;
-    let mut p = Parser { toks, nl_before, pos: 0, pending_async: false };
+    let (toks, nl_before, spans) = tokenize(src)?;
+    let src_chars: std::rc::Rc<[char]> = src.chars().collect::<Vec<_>>().into();
+    let mut p = Parser { toks, nl_before, spans, src_chars, pos: 0, pending_async: false };
     let mut stmts = Vec::new();
     while !p.eof() {
         stmts.push(p.stmt()?);
@@ -167,6 +169,8 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 struct Parser {
     toks: Vec<Tok>,
     nl_before: Vec<bool>, // 각 토큰 직전 개행 여부 (ASI 판정)
+    spans: Vec<(u32, u32)>, // 각 토큰의 (시작,끝) char 인덱스 (소스 슬라이스용)
+    src_chars: std::rc::Rc<[char]>, // 원본 소스(char 벡터) — 함수 소스 텍스트 추출용
     pos: usize,
     pending_async: bool,
 }
@@ -174,6 +178,20 @@ struct Parser {
 impl Parser {
     fn eof(&self) -> bool {
         self.pos >= self.toks.len()
+    }
+
+    // 토큰 [start_tok, end_tok) 를 원본 소스에서 그대로 슬라이스 (함수 소스 텍스트).
+    // 함수/화살표/메서드 파싱 전후의 self.pos 로 범위를 잡는다.
+    fn src_between(&self, start_tok: usize, end_tok: usize) -> Option<std::rc::Rc<str>> {
+        if end_tok == 0 || start_tok >= end_tok || end_tok > self.spans.len() {
+            return None;
+        }
+        let s = self.spans[start_tok].0 as usize;
+        let e = self.spans[end_tok - 1].1 as usize;
+        if s > e || e > self.src_chars.len() {
+            return None;
+        }
+        Some(self.src_chars[s..e].iter().collect::<String>().into())
     }
 
     // 현재 토큰 직전에 개행이 있었나 (ASI 판정용). EOF 도 종료로 본다.
@@ -684,13 +702,16 @@ impl Parser {
     }
 
     fn func_decl(&mut self) -> Result<Stmt, String> {
+        // 소스 시작: async 접두가 이미 소비됐으면 그 토큰부터(pending_async 참).
+        let start = self.pos.saturating_sub(if self.pending_async { 1 } else { 0 });
         self.expect(&Tok::Function)?;
         let is_generator = self.eat(&Tok::Star); // function* 제너레이터
         let name = self.ident()?;
         let is_async = std::mem::take(&mut self.pending_async);
         let (params, mut body) = self.param_list()?;
         body.extend(self.block()?); // 프롤로그(기본값) 뒤에 실제 본문
-        Ok(Stmt::FuncDecl { name, params, body, is_generator, is_async })
+        let source = self.src_between(start, self.pos);
+        Ok(Stmt::FuncDecl { name, params, body, is_generator, is_async, source })
     }
 
     // 파라미터 목록 → (이름들, 본문 프롤로그).
@@ -1092,13 +1113,16 @@ impl Parser {
         };
         self.expect(&Tok::Arrow)?;
         let is_async = std::mem::take(&mut self.pending_async); // 본문 파싱 전에 캡처
+        // 소스 시작: 화살표 params 시작(save). async 접두가 있었으면 그 앞 토큰부터.
+        let start = if is_async { save.saturating_sub(1) } else { save };
         let mut body = prologue;
         if self.peek() == Some(&Tok::LBrace) {
             body.extend(self.block()?);
         } else {
             body.push(Stmt::Return(Some(self.assignment()?))); // 식 본문 → return desugar
         }
-        Ok(Some(Expr::Func { name: None, params, body, is_arrow: true, is_generator: false, is_async }))
+        let source = self.src_between(start, self.pos);
+        Ok(Some(Expr::Func { name: None, params, body, is_arrow: true, is_generator: false, is_async, source }))
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
@@ -1506,6 +1530,7 @@ impl Parser {
                     is_arrow: true, // this 를 렉시컬 캡처 → 정적 초기화 스코프의 this = 클래스
                     is_generator: false,
                     is_async: false,
+                    source: None, // 합성(static 블록) — toString 대상 아님
                 };
                 static_fields.push((
                     format!("\u{0}staticblock:{}", static_fields.len()),
@@ -1697,6 +1722,7 @@ impl Parser {
                         let comp_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
                             && self.toks.get(self.pos + 1) == Some(&Tok::LBracket);
                         if comp_gen || comp_async || self.peek() == Some(&Tok::LBracket) {
+                            let ms = self.pos;
                             let is_gen = self.eat(&Tok::Star);
                             let is_async = comp_async && {
                                 self.pos += 1;
@@ -1711,6 +1737,7 @@ impl Parser {
                                 // 계산 메서드 단축 { [k]() {} }
                                 let (params, mut body) = self.param_list()?;
                                 body.extend(self.block()?);
+                                let source = self.src_between(ms, self.pos);
                                 Expr::Func {
                                     name: None,
                                     params,
@@ -1718,6 +1745,7 @@ impl Parser {
                                     is_arrow: false,
                                     is_generator: is_gen,
                                     is_async,
+                                    source,
                                 }
                             };
                             props.push((PropKey::Computed(Box::new(key_expr)), value));
@@ -1753,6 +1781,7 @@ impl Parser {
                                 .matching_bracket(self.pos + 1)
                                 .map_or(false, |c| self.toks.get(c + 1) == Some(&Tok::LParen));
                         if acc_named || acc_keyword || acc_computed {
+                            let ms = self.pos;
                             let is_get = matches!(self.peek(), Some(Tok::Ident(w)) if w == "get");
                             self.pos += 1; // get/set
                             // 계산 키는 런타임 평가를 위해 식 자체를 보존한다.
@@ -1770,6 +1799,7 @@ impl Parser {
                             };
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
+                            let source = self.src_between(ms, self.pos);
                             let f = Expr::Func {
                                 name: None,
                                 params,
@@ -1777,6 +1807,7 @@ impl Parser {
                                 is_arrow: false,
                                 is_generator: false,
                                 is_async: false,
+                                source,
                             };
                             // get/set 둘 다 보존한다. 예전엔 setter 를 버려서 대입이
                             // 조용히 setter 를 우회했다(부작용이 안 일어남).
@@ -1809,6 +1840,7 @@ impl Parser {
                                     | Some(Tok::LParen) | Some(Tok::Assign)
                             );
                         if obj_gen || obj_async {
+                            let ms = self.pos;
                             let is_async = obj_async && {
                                 self.pos += 1;
                                 true
@@ -1817,6 +1849,7 @@ impl Parser {
                             let key = self.member_name()?;
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
+                            let source = self.src_between(ms, self.pos);
                             let f = Expr::Func {
                                 name: None,
                                 params,
@@ -1824,6 +1857,7 @@ impl Parser {
                                 is_arrow: false,
                                 is_generator: is_gen,
                                 is_async,
+                                source,
                             };
                             props.push((PropKey::Static(key), f));
                             if self.eat(&Tok::Comma) {
@@ -1835,6 +1869,7 @@ impl Parser {
                             self.expect(&Tok::RBrace)?;
                             break;
                         }
+                        let key_start = self.pos;
                         let key = match self.next()? {
                             Tok::Ident(s) => s,
                             Tok::Str(s) => s,
@@ -1853,7 +1888,8 @@ impl Parser {
                             // 메서드 단축 { foo(a) { ... } }
                             let (params, mut body) = self.param_list()?;
                             body.extend(self.block()?);
-                            Expr::Func { name: None, params, body, is_arrow: false, is_generator: false, is_async: false }
+                            let source = self.src_between(key_start, self.pos);
+                            Expr::Func { name: None, params, body, is_arrow: false, is_generator: false, is_async: false, source }
                         } else if self.peek() == Some(&Tok::Assign) {
                             // CoverInitializedName: { a = 1 } — 객체 리터럴로는 문법 오류지만
                             // **구조분해 대입 대상**으로는 유효하다: ({a = 1} = o).
@@ -1883,6 +1919,8 @@ impl Parser {
             }
             Tok::Function => {
                 // 함수 식. function* 는 제너레이터. 이름 있으면 재귀용 자기 참조로 보존.
+                // 소스 시작: 이미 소비된 `function`(pos-1), async 접두 있으면 그 앞.
+                let start = self.pos.saturating_sub(1 + if self.pending_async { 1 } else { 0 });
                 let is_async = std::mem::take(&mut self.pending_async);
                 let is_generator = self.eat(&Tok::Star);
                 let name = if let Some(Tok::Ident(n)) = self.peek() {
@@ -1894,7 +1932,8 @@ impl Parser {
                 };
                 let (params, mut body) = self.param_list()?;
                 body.extend(self.block()?);
-                Ok(Expr::Func { name, params, body, is_arrow: false, is_generator, is_async })
+                let source = self.src_between(start, self.pos);
+                Ok(Expr::Func { name, params, body, is_arrow: false, is_generator, is_async, source })
             }
             Tok::This => Ok(Expr::This),
             Tok::Super => Ok(Expr::Super),

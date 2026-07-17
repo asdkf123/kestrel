@@ -281,7 +281,7 @@ fn regex_can_start(prev: Option<&Tok>) -> bool {
 }
 
 // (토큰, 각 토큰 직전에 개행(LineTerminator)이 있었는지) — 자동 세미콜론 삽입(ASI)용.
-pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
+pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>, Vec<(u32, u32)>), String> {
     let b: Vec<char> = src.chars().collect();
     let mut i = 0usize;
     let mut out = Vec::new();
@@ -289,6 +289,10 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
     // 이후 개행 누적. 토큰이 생기는 반복 시작 시 소비.
     let mut nl_before: Vec<bool> = Vec::new();
     let mut pending_nl = false;
+    // spans[k] = 토큰 k 의 (시작, 끝) char 인덱스. Function.prototype.toString 소스
+    // 보존용(§20.2.3.5). tok_start 는 현재 토큰 생성이 시작된 위치.
+    let mut spans: Vec<(u32, u32)> = Vec::new();
+    let mut tok_start = 0usize;
     // 괄호 문맥: 각 '(' 가 제어문 헤더(if/while/for/switch/catch/with)인지 스택.
     // 헤더를 닫는 ')' 뒤에는 정규식이 올 수 있다 (if(x) /re/.test(y)). 그 외 ')'는 나눗셈.
     let mut paren_headers: Vec<bool> = Vec::new();
@@ -301,6 +305,12 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                 nl_before.push(false);
             }
             pending_nl = false;
+        }
+        // 직전 반복 토큰(들)의 span 확정: 시작=tok_start, 끝=현재 i(이 반복의 공백
+        // 스킵 전이라 직전 토큰의 끝). 한 반복이 여러 토큰을 내면 같은 span 을 공유
+        // (함수 소스 슬라이스는 첫/끝 토큰만 보므로 무방).
+        while spans.len() < out.len() {
+            spans.push((tok_start as u32, i as u32));
         }
         let c = b[i];
         // 공백 (개행이면 pending_nl)
@@ -334,6 +344,8 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
                 continue;
             }
         }
+        // 여기부터 토큰 생성(공백/주석은 위에서 continue). 이 토큰의 시작 위치 기록.
+        tok_start = i;
         // 정규식 리터럴 vs 나눗셈: 직전 토큰이 식을 끝낼 수 있으면 나눗셈.
         // 단 ')' 는 제어문 헤더를 닫는 경우엔 정규식 허용(if(x) /re/).
         let regex_allowed = match out.last() {
@@ -733,7 +745,11 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>), String> {
             nl_before.push(false);
         }
     }
-    Ok((out, nl_before))
+    // 마지막 토큰(들)의 span 확정: 끝 = i(소스 끝).
+    while spans.len() < out.len() {
+        spans.push((tok_start as u32, i as u32));
+    }
+    Ok((out, nl_before, spans))
 }
 
 #[cfg(test)]

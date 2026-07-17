@@ -301,7 +301,7 @@ impl Interp {
         } else {
             // 신규 진입: 함수 선언 호이스팅(이 목록 범위). 재개 시엔 이미 선언돼 있음.
             for s in stmts {
-                if let Stmt::FuncDecl { name, params, body, is_generator, is_async } = s {
+                if let Stmt::FuncDecl { name, params, body, is_generator, is_async, source } = s {
                     let f = Value::Fn(Rc::new(JsFn {
                         priv_id: std::cell::Cell::new(0),
                         name: RefCell::new(name.clone()),
@@ -314,6 +314,7 @@ impl Interp {
                         this: None,
                         super_class: None,
                         props: RefCell::new(super::objects::ObjMap::new()),
+                        source: source.clone(),
                     }));
                     env_declare(scope, name, f);
                 }

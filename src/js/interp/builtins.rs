@@ -2116,7 +2116,56 @@ impl Interp {
             }
             Native::ReturnTrue => Ok(Value::Bool(true)),
             Native::ReturnThis => Ok(recv.unwrap_or(Value::Undefined)),
-            Native::FnToString => Ok(Value::Str("function () { [native code] }".to_string())),
+            Native::FnToString => {
+                // §20.2.3.5. [[SourceText]] 가 있으면 원본 소스, 없으면(내장/바운드/합성)
+                // NativeFunction 문법: function <name>() { [native code] }.
+                let f = recv.clone().unwrap_or(Value::Undefined);
+                let s = match &f {
+                    Value::Fn(fnc) => match &fnc.source {
+                        Some(src) => src.to_string(),
+                        None => {
+                            // 소스 미보관(클래스 메서드/Function 생성자/합성). name/params
+                            // 로 근사 재구성. 화살표는 prototype 없음 등 구분 불필요.
+                            let name = fnc.name.borrow().clone();
+                            let kw = if fnc.is_async { "async function" } else { "function" };
+                            let star = if fnc.is_generator { "*" } else { "" };
+                            format!(
+                                "{}{} {}({}) {{ }}",
+                                kw,
+                                star,
+                                name,
+                                fnc.params.join(", ")
+                            )
+                        }
+                    },
+                    Value::Class(c) => {
+                        // 클래스도 소스 미보관 — 근사.
+                        let name = c.name.borrow().clone();
+                        if name.is_empty() {
+                            "class { }".to_string()
+                        } else {
+                            format!("class {} {{ }}", name)
+                        }
+                    }
+                    // 내장/바운드: NativeFunction 문법. 이름이 유효 식별자면 포함.
+                    Value::Native(_) | Value::Bound(_) => {
+                        let name = self.fn_name_of(&f);
+                        let ident_ok = !name.is_empty()
+                            && matches!(f, Value::Native(_))
+                            && name
+                                .chars()
+                                .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                            && !name.chars().next().unwrap().is_ascii_digit();
+                        if ident_ok {
+                            format!("function {}() {{ [native code] }}", name)
+                        } else {
+                            "function () { [native code] }".to_string()
+                        }
+                    }
+                    _ => "function () { [native code] }".to_string(),
+                };
+                Ok(Value::Str(s))
+            }
             // obj[Symbol.iterator]() → 반복자 객체 { next(), value/done }
             Native::MakeIter => {
                 let items: Vec<Value> = match &recv {
