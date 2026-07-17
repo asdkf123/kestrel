@@ -2347,10 +2347,16 @@ impl Interp {
                     if Self::gen_is_async(&gs) {
                         let p = self.new_promise();
                         match self.gen_resume(&gs, arg, mode) {
-                            Ok(res) => {
-                                let res = self.await_iter_result_value(res)?;
-                                self.resolve_promise(&p, res);
-                            }
+                            // yield 된 value 를 await 하다 거부되면 promise 를 거부해야 한다.
+                            // 예전엔 `?` 로 Err 를 함수 밖으로 흘려 next() 가 동기적으로 throw 했다
+                            // (거부 promise 를 못 돌려줌 → for await/.catch 가 깨짐).
+                            Ok(res) => match self.await_iter_result_value(res) {
+                                Ok(res) => self.resolve_promise(&p, res),
+                                Err(e) => {
+                                    let reason = self.thrown.take().unwrap_or(Value::Str(e));
+                                    self.reject_promise(&p, reason);
+                                }
+                            },
                             Err(e) => {
                                 let reason = self.thrown.take().unwrap_or(Value::Str(e));
                                 self.reject_promise(&p, reason);
@@ -2960,12 +2966,19 @@ impl Interp {
                 })
             }
             // Map()/Set() 를 new 없이 부르면 NewTarget 이 undefined → TypeError
-            // (§24.1.1.1 / §24.2.1.1 step 1). new 경로는 construct() 가 처리.
+            // (§24.1.1.1 / §24.2.1.1 step 1). 단 파생 클래스의 super() 호출은 NewTarget 이
+            // 정의돼 있으므로(§10.2.2) 통과시켜야 한다 — 그땐 construct 처럼 초기화한다.
             Native::MapCtor => {
-                Err(self.throw_error("TypeError", "Constructor Map requires 'new'"))
+                if matches!(self.new_target, None | Some(Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Constructor Map requires 'new'"));
+                }
+                self.make_map(args)
             }
             Native::SetCtor => {
-                Err(self.throw_error("TypeError", "Constructor Set requires 'new'"))
+                if matches!(self.new_target, None | Some(Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Constructor Set requires 'new'"));
+                }
+                self.make_set(args)
             }
             Native::ErrorCtor(name) => {
                 // Error('m') 은 new Error('m') 과 같다 (§20.5.1.1). message 는 인자가
@@ -4149,11 +4162,15 @@ impl Interp {
             }
             // n.toFixed(digits) — recv 가 숫자
             Native::NumToFixed => {
-                // §21.1.3.3: thisNumberValue, digits 0..100(RangeError), NaN→"NaN",
-                // |x|>=1e21 는 ToString(x).
+                // §21.1.3.3: thisNumberValue, f = ToIntegerOrInfinity(digits) 로 0..100 검사,
+                // NaN→"NaN", |x|>=1e21 는 ToString(x).
                 let n = number_this(&recv);
-                let f = args.first().map(to_num).unwrap_or(0.0);
-                if !f.is_finite() || f < 0.0 || f > 100.0 {
+                // f 는 ToIntegerOrInfinity: NaN/문자열→0, Symbol/BigInt→TypeError, ±∞ 유지.
+                // 예전엔 to_num 뒤 !is_finite 를 RangeError 로 처리해 toFixed(NaN)/toFixed("x")
+                // 가 잘못 던졌다(표준은 0 으로 취급).
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let f = self.to_integer_or_infinity(&arg)?;
+                if f < 0.0 || f > 100.0 {
                     return Err(self.throw_error(
                         "RangeError",
                         "toFixed() digits argument must be between 0 and 100",
@@ -4168,6 +4185,10 @@ impl Interp {
                 if n.abs() >= 1e21 {
                     return Ok(Value::Str(num_to_str(n)));
                 }
+                // §21.1.3.3 step: 부호는 x<0 일 때만 붙는다. -0 은 x<0 이 거짓이라 부호 없음
+                // ("0.00"). Rust 포매터는 -0.0 의 부호비트를 보존하므로 여기서 정규화한다.
+                // (-0.001 등은 x<0 이 참이라 정상적으로 "-0.00" — 건드리지 않는다.)
+                let n = if n == 0.0 { 0.0 } else { n };
                 Ok(Value::Str(format!("{:.*}", f as usize, n)))
             }
             // Number.prototype.toExponential (§21.1.3.2)

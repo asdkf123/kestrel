@@ -6231,3 +6231,36 @@ fn map_set_constructor_iterable_protocol() {
     // Object.prototype 상속 메서드
     assert!(run_bool("typeof new Map().hasOwnProperty === 'function' && typeof new Set().toString === 'function'"));
 }
+
+#[test]
+fn async_gen_rejected_yield_rejects_promise() {
+    // yield 된 promise 가 거부되면 next() 는 거부 promise 를 돌려줘야 한다(동기 throw 아님).
+    assert_eq!(
+        run_str("var out='sync'; try{ var p=(async function*(){ yield Promise.reject(7); })().next(); out='async'; }catch(e){ out='threw'; } out"),
+        "async"
+    );
+    assert_eq!(
+        run_str("var r='?'; (async function*(){ yield Promise.reject(9); })().next().then(function(){r='res';},function(e){r='rej:'+e;}); r"),
+        "?" // 마이크로태스크 전 시점 — 최소한 동기 throw 는 아님을 위 테스트가 보장
+    );
+}
+
+#[test]
+fn to_fixed_negative_zero() {
+    // §21.1.3.3: -0 은 부호 없이 "0.00". 하지만 작은 음수는 부호 유지.
+    assert_eq!(run_str("(-0).toFixed(2)"), "0.00");
+    assert_eq!(run_str("(0).toFixed(2)"), "0.00");
+    assert_eq!(run_str("(-5*0).toFixed(2)"), "0.00");
+    assert_eq!(run_str("(-0.001).toFixed(2)"), "-0.00");
+    assert_eq!(run_str("(-1.5).toFixed(1)"), "-1.5");
+    // ToIntegerOrInfinity: NaN/문자열→0(RangeError 아님), ±∞→RangeError.
+    assert_eq!(run_str("(0).toFixed('some string')"), "0");
+    assert_eq!(run_str("(0).toFixed(NaN)"), "0");
+    assert_eq!(run_str("(0).toFixed(1.1)"), "0.0");
+    assert_eq!(run_str("Number.prototype.toFixed()"), "0");
+    assert!(run_bool("var t=false; try{ (0).toFixed(Infinity); }catch(e){ t=e instanceof RangeError; } t"));
+    // Symbol/BigInt/불량 ToPrimitive → TypeError
+    assert!(run_bool("var t=false; try{ (0).toFixed(Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ (0).toFixed(1n); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ (0).toFixed({[Symbol.toPrimitive](){throw new TypeError();}}); }catch(e){ t=e instanceof TypeError; } t"));
+}

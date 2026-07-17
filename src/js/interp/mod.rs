@@ -6776,6 +6776,42 @@ impl Interp {
         Err(self.throw_error("TypeError", "Cannot convert object to primitive value"))
     }
 
+    // §7.1.4 ToNumber(argument). Symbol/BigInt 은 TypeError, 객체는 ToPrimitive(number) 후
+    // 재귀(사용자 valueOf/toString/@@toPrimitive 호출 및 예외 전파). 원시는 to_num.
+    pub(super) fn to_number_value(&mut self, v: &Value) -> Result<f64, String> {
+        match v {
+            Value::Symbol(_) => {
+                Err(self.throw_error("TypeError", "Cannot convert a Symbol value to a number"))
+            }
+            Value::BigInt(_) => {
+                Err(self.throw_error("TypeError", "Cannot convert a BigInt value to a number"))
+            }
+            Value::Obj(_)
+            | Value::Instance(_)
+            | Value::Arr(_)
+            | Value::Fn(_)
+            | Value::Native(_)
+            | Value::Class(_)
+            | Value::Bound(_) => {
+                let p = self.to_primitive_or_throw(v.clone(), false)?;
+                self.to_number_value(&p)
+            }
+            _ => Ok(to_num(v)),
+        }
+    }
+
+    // §7.1.5 ToIntegerOrInfinity(argument). NaN→0, ±∞ 유지, 그 밖은 0 방향 절단.
+    pub(super) fn to_integer_or_infinity(&mut self, v: &Value) -> Result<f64, String> {
+        let n = self.to_number_value(v)?;
+        Ok(if n.is_nan() {
+            0.0
+        } else if n.is_infinite() {
+            n
+        } else {
+            n.trunc()
+        })
+    }
+
     // ToPropertyKey (§7.1.19): 값을 프로퍼티 키 문자열로. Symbol 은 내부 키 표현으로,
     // 그 외는 ToPrimitive(hint string) 후 ToString. 객체 키의 toString 을 실제로 부르고
     // 예외도 전파한다 — 예전엔 to_display 라 {toString(){return 'k'}} 가 "[object Object]"
