@@ -6662,3 +6662,14 @@ fn bitwise_and_number_tonumber_coercion() {
     assert!(run_bool("var t=false; try{ 10n|0; }catch(e){ t=e instanceof TypeError; } t"));
     assert_eq!(run_str("(5n & 3n).toString()"), "1");
 }
+
+#[test]
+fn object_assign_symbols_and_getters() {
+    // §20.1.2.1: 심볼 키 복사 + getter 호출(값 복사).
+    assert_eq!(run_num("var s=Symbol('s'); var src={}; src[s]=9; Object.assign({},src)[s]"), 9.0);
+    assert_eq!(run_str("var log=0; var src={get x(){log++;return 5;}}; var d=Object.assign({},src); log+':'+d.x"), "1:5");
+    assert_eq!(run_num("var log; var d={set x(v){log=v;}}; Object.assign(d,{x:7}); log"), 7.0);
+    // null/undefined source 는 스킵, 비열거는 제외
+    assert_eq!(run_str("JSON.stringify(Object.assign({a:1},null,undefined,{b:2}))"), "{\"a\":1,\"b\":2}");
+    assert_eq!(run_str("var src={}; Object.defineProperty(src,'x',{value:1,enumerable:false}); JSON.stringify(Object.assign({},src))"), "{}");
+}

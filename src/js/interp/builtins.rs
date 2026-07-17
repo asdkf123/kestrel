@@ -6847,10 +6847,32 @@ impl Interp {
                         "Cannot convert undefined or null to object",
                     ));
                 }
-                // §20.1.2.1: 각 소스의 열거 가능한 own 프로퍼티를 Set(Throw=true)로
-                // 대상에 복사. 실패(read-only/non-extensible/getter-only)면 TypeError.
-                for src in &args[1..] {
-                    for (k, v) in own_enumerable_entries(src) {
+                // §20.1.2.1: 각 소스의 열거 가능한 own 키(문자열+심볼)를 Get(getter 호출)해서
+                // Set(Throw=true)로 대상에 복사. 실패(read-only/non-extensible/getter-only)면 TypeError.
+                for src in args[1..].to_vec() {
+                    if matches!(src, Value::Undefined | Value::Null) {
+                        continue;
+                    }
+                    // 열거 가능한 own 키 — 심볼 키("\0@@…")도 포함(그 밖 내부 마커는 제외).
+                    let keys: Vec<String> = match &src {
+                        Value::Obj(m) => {
+                            let b = m.borrow();
+                            b.keys()
+                                .filter(|k| {
+                                    (!is_internal_key(k) || is_symbol_key(k))
+                                        && !b.contains_key(&nonenum_marker(k))
+                                })
+                                .cloned()
+                                .collect()
+                        }
+                        _ => own_enumerable_entries(&src)
+                            .into_iter()
+                            .map(|(k, _)| k)
+                            .collect(),
+                    };
+                    for k in keys {
+                        // Get: 접근자면 getter 호출(값을 복사, 서술자 아님).
+                        let v = self.member_get(&src, &k)?;
                         if !self.set_own_property(&target, k.clone(), v) {
                             return Err(self.throw_error(
                                 "TypeError",
