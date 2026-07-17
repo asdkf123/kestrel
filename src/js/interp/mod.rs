@@ -782,11 +782,11 @@ impl Interp {
         object_proto.insert("toString".to_string(), Value::Native(Native::ObjToString));
         object_proto.insert("toLocaleString".to_string(), Value::Native(Native::ObjToString));
         object_proto.insert("valueOf".to_string(), Value::Native(Native::ReturnThis));
-        object_proto
-            .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
+        object_proto.insert(
+            "propertyIsEnumerable".to_string(),
+            Value::Native(Native::PropertyIsEnumerable),
+        );
         object_proto.insert("isPrototypeOf".to_string(), Value::Native(Native::ObjectIsPrototypeOf));
-        object_proto
-            .insert("propertyIsEnumerable".to_string(), Value::Native(Native::HasOwnProperty));
         mark_nonenum_all(&mut object_proto); // 내장 메서드는 비열거 (§17)
         object_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(object_proto))));
         mark_nonenum_all(&mut object_ns);
@@ -1048,22 +1048,38 @@ impl Interp {
         }
         // String.prototype: 문자열 메서드 (String.prototype.slice.call(x) 지원)
         let mut string_proto = ObjMap::new();
+        // 문자열 프로토타입 메서드 전량 — member_get 의 인스턴스 조회와 같은 목록이어야
+        // String.prototype.X 가 own 프로퍼티로 존재한다(hasOwnProperty/name/length/
+        // not-a-constructor 검사). trimLeft/trimRight 는 trimStart/trimEnd 의 별칭이라
+        // 같은 함수(=같은 name)를 가리킨다.
         for (name, op) in [
             ("charAt", StrOp::CharAt),
             ("charCodeAt", StrOp::CharCodeAt),
+            ("codePointAt", StrOp::CodePointAt),
             ("indexOf", StrOp::IndexOf),
             ("lastIndexOf", StrOp::LastIndexOf),
             ("slice", StrOp::Slice),
-            ("substring", StrOp::Slice),
+            ("substring", StrOp::Substring),
+            ("substr", StrOp::Substr),
             ("split", StrOp::Split),
             ("toUpperCase", StrOp::Upper),
             ("toLowerCase", StrOp::Lower),
             ("trim", StrOp::Trim),
+            ("trimStart", StrOp::TrimStart),
+            ("trimEnd", StrOp::TrimEnd),
+            ("trimLeft", StrOp::TrimStart),
+            ("trimRight", StrOp::TrimEnd),
             ("replace", StrOp::Replace),
+            ("replaceAll", StrOp::ReplaceAll),
             ("includes", StrOp::Includes),
             ("startsWith", StrOp::StartsWith),
             ("endsWith", StrOp::EndsWith),
             ("match", StrOp::Match),
+            ("matchAll", StrOp::MatchAll),
+            ("search", StrOp::Search),
+            ("concat", StrOp::Concat),
+            ("at", StrOp::At),
+            ("localeCompare", StrOp::LocaleCompare),
             ("padStart", StrOp::PadStart),
             ("padEnd", StrOp::PadEnd),
             ("repeat", StrOp::Repeat),
@@ -1077,9 +1093,9 @@ impl Interp {
         string_proto.insert("valueOf".to_string(), Value::Native(Native::PrimValueOf(PrimBrand::String)));
         // String.prototype.constructor === String (§22.1.3.1), 비열거.
         string_proto.insert("constructor".to_string(), Value::Native(Native::StringCtor));
-        for k in ["constructor", "toString", "valueOf"] {
-            string_proto.insert(nonenum_marker(k), Value::Bool(true));
-        }
+        // 모든 내장 메서드는 비열거 (§17) — 예전엔 constructor/toString/valueOf 만 표식해
+        // trim/charAt/… 이 열거 가능이었다(Object.keys(String.prototype) 누출).
+        mark_nonenum_all(&mut string_proto);
         string_proto.insert(WRAPPER_SLOT.to_string(), Value::Str(String::new()));
         let string_proto = Value::Obj(Rc::new(RefCell::new(string_proto)));
         // Number/Boolean/RegExp.prototype — 원시값 메서드 네이티브를 재사용.
@@ -5017,7 +5033,7 @@ impl Interp {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
                         // propertyIsEnumerable: own 프로퍼티면 열거가능(단순 모델) → hasOwnProperty 로 근사.
                         // core-js 등이 {}.propertyIsEnumerable.call(...) 로 기능탐지 → 없으면 크래시.
-                        "propertyIsEnumerable" => Ok(Value::Native(Native::HasOwnProperty)),
+                        "propertyIsEnumerable" => Ok(Value::Native(Native::PropertyIsEnumerable)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
                         // Symbol.match/replace/split/search/matchAll — 정규식 인스턴스엔
@@ -5130,6 +5146,9 @@ impl Interp {
                 }
                 if key == "hasOwnProperty" {
                     return Ok(Value::Native(Native::HasOwnProperty));
+                }
+                if key == "propertyIsEnumerable" {
+                    return Ok(Value::Native(Native::PropertyIsEnumerable));
                 }
                 if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
@@ -5307,7 +5326,8 @@ impl Interp {
                 let op = match key {
                     "indexOf" => Some(StrOp::IndexOf),
                     "lastIndexOf" => Some(StrOp::LastIndexOf),
-                    "slice" | "substring" => Some(StrOp::Slice),
+                    "slice" => Some(StrOp::Slice),
+                    "substring" => Some(StrOp::Substring),
                     "split" => Some(StrOp::Split),
                     "toUpperCase" => Some(StrOp::Upper),
                     "toLowerCase" => Some(StrOp::Lower),
@@ -5334,7 +5354,7 @@ impl Interp {
                     "toString" | "valueOf" | "toLocaleString" => {
                         return Ok(Value::Native(Native::ValueToStr))
                     }
-                    "substr" => Some(StrOp::Slice),
+                    "substr" => Some(StrOp::Substr),
                     _ => None,
                 };
                 if let Some(op) = op {
@@ -5465,9 +5485,8 @@ impl Interp {
                 }
                 // Object.prototype 폴백 — 인스턴스도 hasOwnProperty/toString/valueOf 등.
                 match key {
-                    "hasOwnProperty" | "propertyIsEnumerable" => {
-                        Ok(Value::Native(Native::HasOwnProperty))
-                    }
+                    "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
+                    "propertyIsEnumerable" => Ok(Value::Native(Native::PropertyIsEnumerable)),
                     _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),
                 }
             }

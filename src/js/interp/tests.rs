@@ -6036,3 +6036,31 @@ fn sparse_array_holes() {
     // 변형은 구멍 실체화(desync 방지)
     assert!(run_bool("var a=new Array(2); a[1]=1; a.sort(); a[0]===1 && a[1]===undefined && a.length===2"));
 }
+
+#[test]
+fn string_proto_methods_own_and_property_is_enumerable() {
+    // 문자열 메서드가 String.prototype 의 own 프로퍼티(정확한 name/length, 비생성자).
+    assert!(run_bool("String.prototype.hasOwnProperty('trimStart')"));
+    assert!(run_bool("String.prototype.hasOwnProperty('replaceAll')"));
+    assert_eq!(run_str("String.prototype.trimStart.name"), "trimStart");
+    assert_eq!(run_str("String.prototype.at.name"), "at");
+    assert_eq!(run_num("String.prototype.replaceAll.length"), 2.0);
+    assert!(run_bool("var t=false; try{ new String.prototype.trim(); }catch(e){ t=e instanceof TypeError; } t"));
+    // trimLeft/trimRight 는 trimStart/trimEnd 의 별칭(같은 name)
+    assert_eq!(run_str("String.prototype.trimLeft.name"), "trimStart");
+    // 메서드는 비열거
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor(String.prototype,'trim').enumerable ? 1 : 0"), 0.0);
+    // substring/substr 정확한 의미론(slice 와 다름)
+    assert_eq!(run_str("'hello'.substring(-1)"), "hello");
+    assert_eq!(run_str("'hello'.substring(3,1)"), "el");
+    assert_eq!(run_str("'hello'.substr(-2)"), "lo");
+    assert_eq!(run_str("'hello'.substr(1,2)"), "el");
+    assert_eq!(run_str("'hello'.slice(-2)"), "lo");
+    // propertyIsEnumerable: own + enumerable
+    assert!(run_bool("({a:1}).propertyIsEnumerable('a')"));
+    assert!(!run_bool("String.prototype.propertyIsEnumerable('trim')")); // 비열거
+    assert!(!run_bool("({}).propertyIsEnumerable('toString')")); // 상속(own 아님)
+    assert!(run_bool("[1,2,3].propertyIsEnumerable(0)"));
+    assert!(!run_bool("[1,2,3].propertyIsEnumerable('length')"));
+    assert!(run_bool("var o={}; Object.defineProperty(o,'x',{value:1,enumerable:false}); !o.propertyIsEnumerable('x')"));
+}

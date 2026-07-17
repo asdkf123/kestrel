@@ -2078,6 +2078,20 @@ impl Interp {
                 };
                 Ok(Value::Bool(has))
             }
+            // Object.prototype.propertyIsEnumerable(P) (§20.1.3.4): own 프로퍼티이면서
+            // enumerable 인가. 예전엔 hasOwnProperty 로 근사해 비열거 메서드도 true 였다.
+            Native::PropertyIsEnumerable => {
+                let key = match args.first().cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
+                let recvv = recv.unwrap_or(Value::Undefined);
+                // 열거 가능한 own 프로퍼티 목록에 있으면 true (심볼 키는 별도지만 대부분
+                // 문자열 키 검사). 내부/비열거 키는 own_enumerable_entries 가 이미 거른다.
+                let enumerable =
+                    own_enumerable_entries(&recvv).iter().any(|(k, _)| *k == key);
+                Ok(Value::Bool(enumerable))
+            }
             // Object.prototype.toString.call(x) → "[object Array]" 등 (타입 판별 관용)
             // Error.prototype.toString (§20.5.3.4): name 과 message 를 ": " 로 잇되,
             // 한쪽이 비면 다른 쪽만. 둘 다 프로토타입 체인에서 읽는다.
@@ -4935,6 +4949,58 @@ impl Interp {
                         let start = clampi(args.first().map(to_num).unwrap_or(0.0));
                         let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
                         Value::Str(String::from_utf16_lossy(&units[start..end.max(start)]))
+                    }
+                    // substring (§22.1.3.24): 음수/NaN 은 0 으로, start>end 면 교환.
+                    StrOp::Substring => {
+                        let len = units.len() as isize;
+                        let toint = |v: f64| -> isize {
+                            if v.is_nan() {
+                                0
+                            } else {
+                                (v.trunc() as isize).clamp(0, len)
+                            }
+                        };
+                        let s = toint(args.first().map(to_num).unwrap_or(0.0));
+                        let e = match args.get(1) {
+                            None | Some(Value::Undefined) => len,
+                            Some(v) => toint(to_num(v)),
+                        };
+                        let (from, to) = if s <= e { (s, e) } else { (e, s) };
+                        Value::Str(String::from_utf16_lossy(&units[from as usize..to as usize]))
+                    }
+                    // substr (Annex B §B.2.3.1): substr(start, length). 음수 start 는 len+start.
+                    StrOp::Substr => {
+                        let size = units.len() as isize;
+                        let mut start = {
+                            let v = args.first().map(to_num).unwrap_or(0.0);
+                            if v.is_nan() {
+                                0
+                            } else {
+                                v.trunc() as isize
+                            }
+                        };
+                        if start < 0 {
+                            start = (size + start).max(0);
+                        }
+                        let length = match args.get(1) {
+                            None | Some(Value::Undefined) => size,
+                            Some(v) => {
+                                let x = to_num(v);
+                                if x.is_nan() {
+                                    0
+                                } else {
+                                    x.trunc() as isize
+                                }
+                            }
+                        };
+                        if start >= size || length <= 0 {
+                            Value::Str(String::new())
+                        } else {
+                            let result_len = length.min(size - start);
+                            Value::Str(String::from_utf16_lossy(
+                                &units[start as usize..(start + result_len) as usize],
+                            ))
+                        }
                     }
                     StrOp::Split => {
                         // 정규식 구분자 지원

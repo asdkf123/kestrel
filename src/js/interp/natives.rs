@@ -74,6 +74,8 @@ pub enum Native {
     ObjectGetOwnPropertySymbols,
     ObjectIsPrototypeOf,
     HasOwnProperty,
+    // Object.prototype.propertyIsEnumerable (§20.1.3.4): own + enumerable.
+    PropertyIsEnumerable,
     ObjToString,
     // Error.prototype.toString (§20.5.3.4): name + ": " + message (빈 쪽은 생략)
     ErrorToString,
@@ -458,6 +460,10 @@ pub enum StrOp {
     Concat,
     At,
     LocaleCompare,
+    // substring(§22.1.3.24): slice 와 달리 음수는 0 으로 클램프, start>end 면 교환.
+    Substring,
+    // substr(Annex B §B.2.3.1): substr(start, length) — 음수 start 는 len+start.
+    Substr,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -675,6 +681,8 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
                 StrOp::Concat => ("concat", 1),
                 StrOp::At => ("at", 1),
                 StrOp::LocaleCompare => ("localeCompare", 1),
+                StrOp::Substring => ("substring", 2),
+                StrOp::Substr => ("substr", 2),
             };
             return Some((name, len));
         }
@@ -735,6 +743,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         ObjectIsPrototypeOf => ("isPrototypeOf", 1),
         // ── Object.prototype ──
         HasOwnProperty => ("hasOwnProperty", 1),
+        PropertyIsEnumerable => ("propertyIsEnumerable", 1),
         ObjToString => ("toString", 0),
         ErrorToString => ("toString", 0),
         ErrorIsError => ("isError", 1),
