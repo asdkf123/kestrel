@@ -50,6 +50,62 @@ pub(super) fn num_to_str(n: f64) -> String {
     }
 }
 
+// Number.prototype.toExponential (§21.1.3.2). digits=None 이면 최소 유효숫자.
+// Rust 의 "d.ddde±X" 를 JS 의 "d.ddde+X"(부호 명시)로 변환한다.
+pub(super) fn num_to_exponential(n: f64, digits: Option<usize>) -> String {
+    if n == 0.0 {
+        return match digits {
+            Some(d) if d > 0 => format!("0.{}e+0", "0".repeat(d)),
+            _ => "0e+0".to_string(),
+        };
+    }
+    let neg = n < 0.0;
+    let ax = n.abs();
+    let s = match digits {
+        Some(d) => format!("{:.*e}", d, ax),
+        None => format!("{:e}", ax),
+    };
+    let (mant, exp) = s.split_once('e').unwrap_or((s.as_str(), "0"));
+    let exp_i: i64 = exp.parse().unwrap_or(0);
+    let sign = if exp_i >= 0 { "+" } else { "-" };
+    format!("{}{}e{}{}", if neg { "-" } else { "" }, mant, sign, exp_i.abs())
+}
+
+// Number.prototype.toPrecision (§21.1.3.5). p 개의 유효숫자.
+pub(super) fn num_to_precision(n: f64, p: usize) -> String {
+    if n == 0.0 {
+        return if p == 1 {
+            "0".to_string()
+        } else {
+            format!("0.{}", "0".repeat(p - 1))
+        };
+    }
+    let neg = n < 0.0;
+    let ax = n.abs();
+    // 지수 e 를 Rust 지수표기로 신뢰성 있게 구한다 (반올림 반영).
+    let e: i64 = format!("{:.*e}", p - 1, ax)
+        .split_once('e')
+        .and_then(|(_, x)| x.parse().ok())
+        .unwrap_or(0);
+    let body = if e < -6 || e >= p as i64 {
+        // 지수 표기, 유효숫자 p (소수부 p-1)
+        let s = format!("{:.*e}", p - 1, ax);
+        let (mant, exp) = s.split_once('e').unwrap_or((s.as_str(), "0"));
+        let exp_i: i64 = exp.parse().unwrap_or(0);
+        let sign = if exp_i >= 0 { "+" } else { "-" };
+        format!("{}e{}{}", mant, sign, exp_i.abs())
+    } else {
+        // 고정 표기, 소수부 = p-1-e (음수면 0)
+        let frac = (p as i64 - 1 - e).max(0) as usize;
+        format!("{:.*}", frac, ax)
+    };
+    if neg {
+        format!("-{}", body)
+    } else {
+        body
+    }
+}
+
 pub(super) fn to_bool(v: &Value) -> bool {
     match v {
         Value::Undefined | Value::Null => false,

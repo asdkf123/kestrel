@@ -1113,7 +1113,8 @@ impl Interp {
             ("toString", Native::PrimToString(PrimBrand::Number)),
             ("toLocaleString", Native::PrimToString(PrimBrand::Number)),
             ("toFixed", Native::NumToFixed),
-            ("toPrecision", Native::NumToFixed),
+            ("toPrecision", Native::NumToPrecision),
+            ("toExponential", Native::NumToExponential),
             ("valueOf", Native::PrimValueOf(PrimBrand::Number)),
         ]);
         let boolean_proto = mk_proto(vec![
@@ -5805,7 +5806,9 @@ impl Interp {
                     return Ok(over);
                 }
                 Ok(match key {
-                    "toFixed" | "toPrecision" => Value::Native(Native::NumToFixed),
+                    "toFixed" => Value::Native(Native::NumToFixed),
+                    "toExponential" => Value::Native(Native::NumToExponential),
+                    "toPrecision" => Value::Native(Native::NumToPrecision),
                     "toString" | "toLocaleString" => Value::Native(Native::ValueToStr),
                     "valueOf" => Value::Native(Native::ValueOfSelf),
                     _ => Value::Undefined,

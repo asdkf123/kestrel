@@ -6064,3 +6064,26 @@ fn string_proto_methods_own_and_property_is_enumerable() {
     assert!(!run_bool("[1,2,3].propertyIsEnumerable('length')"));
     assert!(run_bool("var o={}; Object.defineProperty(o,'x',{value:1,enumerable:false}); !o.propertyIsEnumerable('x')"));
 }
+
+#[test]
+fn number_to_exponential_precision_fixed() {
+    // toExponential (§21.1.3.2)
+    assert_eq!(run_str("(12345).toExponential(2)"), "1.23e+4");
+    assert_eq!(run_str("(12345).toExponential()"), "1.2345e+4");
+    assert_eq!(run_str("(0.00012).toExponential(2)"), "1.20e-4");
+    assert_eq!(run_str("(0).toExponential(2)"), "0.00e+0");
+    // toPrecision (§21.1.3.5)
+    assert_eq!(run_str("(12345).toPrecision(2)"), "1.2e+4");
+    assert_eq!(run_str("(123.456).toPrecision(5)"), "123.46");
+    assert_eq!(run_str("(123.456).toPrecision()"), "123.456");
+    assert_eq!(run_str("(0.001234).toPrecision(4)"), "0.001234");
+    // toFixed (§21.1.3.3): RangeError + NaN/Inf
+    assert_eq!(run_str("(3.14159).toFixed(2)"), "3.14");
+    assert!(run_bool("var t=false; try{(5).toFixed(101);}catch(e){t=e instanceof RangeError;} t"));
+    assert!(run_bool("var t=false; try{(5).toExponential(-1);}catch(e){t=e instanceof RangeError;} t"));
+    assert_eq!(run_str("(NaN).toExponential()"), "NaN");
+    assert_eq!(run_str("(Infinity).toPrecision(3)"), "Infinity");
+    // name/length
+    assert_eq!(run_str("Number.prototype.toExponential.name"), "toExponential");
+    assert_eq!(run_num("Number.prototype.toPrecision.length"), 1.0);
+}

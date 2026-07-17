@@ -172,6 +172,8 @@ pub enum Native {
     NumIsFinite,
     NumIsNaN,
     NumToFixed,
+    NumToExponential, // Number.prototype.toExponential (§21.1.3.2)
+    NumToPrecision,   // Number.prototype.toPrecision (§21.1.3.5)
     ValueToStr, // recv.toString([radix]) → 문자열
     ValueOfSelf, // recv.valueOf() → recv
     // 원시 래퍼 프로토타입의 brand-checked valueOf/toString (§20.3.3/§21.1.3/§22.1.3).
@@ -893,6 +895,8 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         NumIsFinite => ("isFinite", 1),
         NumIsNaN => ("isNaN", 1),
         NumToFixed => ("toFixed", 1),
+        NumToExponential => ("toExponential", 1),
+        NumToPrecision => ("toPrecision", 1),
         // ── Reflect.* ──
         ReflectGet => ("get", 2),
         ReflectSet => ("set", 3),

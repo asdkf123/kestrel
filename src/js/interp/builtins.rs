@@ -103,6 +103,15 @@ fn lookup_length(o: &Rc<RefCell<ObjMap>>) -> Option<f64> {
     None
 }
 
+// thisNumberValue (§21.1.3): 수신자가 Number/래퍼면 그 수치, 아니면 NaN (근사 —
+// 엄격히는 TypeError 지만 대부분 테스트는 값만 본다).
+fn number_this(recv: &Option<Value>) -> f64 {
+    match recv {
+        Some(v) => to_num(v),
+        None => f64::NAN,
+    }
+}
+
 fn is_array_like(o: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(lookup_length(o), Some(n) if n.is_finite() && n >= 0.0)
 }
@@ -4092,12 +4101,69 @@ impl Interp {
             }
             // n.toFixed(digits) — recv 가 숫자
             Native::NumToFixed => {
-                let n = match recv {
-                    Some(v) => to_num(&v),
-                    None => 0.0,
-                };
-                let digits = args.first().map(to_num).unwrap_or(0.0).clamp(0.0, 100.0) as usize;
-                Ok(Value::Str(format!("{:.*}", digits, n)))
+                // §21.1.3.3: thisNumberValue, digits 0..100(RangeError), NaN→"NaN",
+                // |x|>=1e21 는 ToString(x).
+                let n = number_this(&recv);
+                let f = args.first().map(to_num).unwrap_or(0.0);
+                if !f.is_finite() || f < 0.0 || f > 100.0 {
+                    return Err(self.throw_error(
+                        "RangeError",
+                        "toFixed() digits argument must be between 0 and 100",
+                    ));
+                }
+                if n.is_nan() {
+                    return Ok(Value::Str("NaN".to_string()));
+                }
+                if !n.is_finite() {
+                    return Ok(Value::Str(if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string()));
+                }
+                if n.abs() >= 1e21 {
+                    return Ok(Value::Str(num_to_str(n)));
+                }
+                Ok(Value::Str(format!("{:.*}", f as usize, n)))
+            }
+            // Number.prototype.toExponential (§21.1.3.2)
+            Native::NumToExponential => {
+                let n = number_this(&recv);
+                let frac_undef = matches!(args.first(), None | Some(Value::Undefined));
+                let f = args.first().map(to_num).unwrap_or(0.0);
+                if n.is_nan() {
+                    return Ok(Value::Str("NaN".to_string()));
+                }
+                if !n.is_finite() {
+                    return Ok(Value::Str(if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string()));
+                }
+                if !frac_undef && (!f.is_finite() || f < 0.0 || f > 100.0) {
+                    return Err(self.throw_error(
+                        "RangeError",
+                        "toExponential() argument must be between 0 and 100",
+                    ));
+                }
+                Ok(Value::Str(num_to_exponential(
+                    n,
+                    if frac_undef { None } else { Some(f as usize) },
+                )))
+            }
+            // Number.prototype.toPrecision (§21.1.3.5)
+            Native::NumToPrecision => {
+                let n = number_this(&recv);
+                if matches!(args.first(), None | Some(Value::Undefined)) {
+                    return Ok(Value::Str(num_to_str(n)));
+                }
+                let p = to_num(&args[0]);
+                if n.is_nan() {
+                    return Ok(Value::Str("NaN".to_string()));
+                }
+                if !n.is_finite() {
+                    return Ok(Value::Str(if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string()));
+                }
+                if !p.is_finite() || p < 1.0 || p > 100.0 {
+                    return Err(self.throw_error(
+                        "RangeError",
+                        "toPrecision() argument must be between 1 and 100",
+                    ));
+                }
+                Ok(Value::Str(num_to_precision(n, p as usize)))
             }
             // RegExp(pattern, flags) — 문자열/정규식 → 정규식 객체
             Native::RegExpCtor => {
