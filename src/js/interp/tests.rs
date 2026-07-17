@@ -6264,3 +6264,27 @@ fn to_fixed_negative_zero() {
     assert!(run_bool("var t=false; try{ (0).toFixed(1n); }catch(e){ t=e instanceof TypeError; } t"));
     assert!(run_bool("var t=false; try{ (0).toFixed({[Symbol.toPrimitive](){throw new TypeError();}}); }catch(e){ t=e instanceof TypeError; } t"));
 }
+
+#[test]
+fn to_exponential_precision_arg_coercion() {
+    // toExponential: ToIntegerOrInfinity(fractionDigits) — NaN/문자열→0, Symbol/BigInt→TypeError.
+    assert_eq!(run_str("(1.5).toExponential(NaN)"), "2e+0");
+    assert_eq!(run_str("(123.456).toExponential('2')"), "1.23e+2");
+    assert!(run_bool("var t=false; try{ (1).toExponential(Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ (1).toExponential(1n); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ (1).toExponential(Infinity); }catch(e){ t=e instanceof RangeError; } t"));
+    // toPrecision: undefined→ToString, NaN→0(→RangeError, 1..100), Symbol/BigInt→TypeError.
+    assert_eq!(run_str("(123.456).toPrecision(undefined)"), "123.456");
+    assert_eq!(run_str("(5.12).toPrecision('3')"), "5.12");
+    assert!(run_bool("var t=false; try{ (123.456).toPrecision(NaN); }catch(e){ t=e instanceof RangeError; } t"));
+    assert!(run_bool("var t=false; try{ (1).toPrecision(Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ (1).toPrecision(0); }catch(e){ t=e instanceof RangeError; } t"));
+    // thisNumberValue 브랜드 검사: 숫자/Number 래퍼 아니면 TypeError.
+    for m in ["toFixed", "toExponential", "toPrecision"] {
+        assert!(run_bool(&format!("var t=false; try{{ Number.prototype.{}.call({{}}, 3); }}catch(e){{ t=e instanceof TypeError; }} t", m)),
+                "expected TypeError from {}.call({{}})", m);
+        assert!(run_bool(&format!("var t=false; try{{ Number.prototype.{}.call('x', 3); }}catch(e){{ t=e instanceof TypeError; }} t", m)));
+    }
+    // Number 래퍼 객체는 통과.
+    assert_eq!(run_str("new Number(5).toFixed(2)"), "5.00");
+}

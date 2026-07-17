@@ -4164,7 +4164,12 @@ impl Interp {
             Native::NumToFixed => {
                 // §21.1.3.3: thisNumberValue, f = ToIntegerOrInfinity(digits) 로 0..100 검사,
                 // NaN→"NaN", |x|>=1e21 는 ToString(x).
-                let n = number_this(&recv);
+                // §21.1.3.x step 1: thisNumberValue — 숫자/Number 래퍼가 아니면 TypeError.
+                let this = recv.clone().unwrap_or(Value::Undefined);
+                let n = match self.this_prim_value(&this, PrimBrand::Number)? {
+                    Value::Num(n) => n,
+                    _ => f64::NAN,
+                };
                 // f 는 ToIntegerOrInfinity: NaN/문자열→0, Symbol/BigInt→TypeError, ±∞ 유지.
                 // 예전엔 to_num 뒤 !is_finite 를 RangeError 로 처리해 toFixed(NaN)/toFixed("x")
                 // 가 잘못 던졌다(표준은 0 으로 취급).
@@ -4193,16 +4198,27 @@ impl Interp {
             }
             // Number.prototype.toExponential (§21.1.3.2)
             Native::NumToExponential => {
-                let n = number_this(&recv);
+                // §21.1.3.x step 1: thisNumberValue — 숫자/Number 래퍼가 아니면 TypeError.
+                let this = recv.clone().unwrap_or(Value::Undefined);
+                let n = match self.this_prim_value(&this, PrimBrand::Number)? {
+                    Value::Num(n) => n,
+                    _ => f64::NAN,
+                };
                 let frac_undef = matches!(args.first(), None | Some(Value::Undefined));
-                let f = args.first().map(to_num).unwrap_or(0.0);
+                // §21.1.3.2 step 2: f = ToIntegerOrInfinity(fractionDigits) — undefined 여도
+                // 수행(Symbol/BigInt→TypeError, NaN/문자열→0). undefined 면 f=0 이자 최소자릿수.
+                // 예전엔 to_num 뒤 !is_finite 를 RangeError 로 처리해 toExponential(NaN) 가 잘못
+                // 던지고 Symbol/BigInt 도 RangeError/성공으로 흘렀다.
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let f = self.to_integer_or_infinity(&arg)?;
                 if n.is_nan() {
                     return Ok(Value::Str("NaN".to_string()));
                 }
                 if !n.is_finite() {
                     return Ok(Value::Str(if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string()));
                 }
-                if !frac_undef && (!f.is_finite() || f < 0.0 || f > 100.0) {
+                // f=0(undefined 포함)은 통과, ±∞ 는 RangeError.
+                if f < 0.0 || f > 100.0 {
                     return Err(self.throw_error(
                         "RangeError",
                         "toExponential() argument must be between 0 and 100",
@@ -4215,18 +4231,25 @@ impl Interp {
             }
             // Number.prototype.toPrecision (§21.1.3.5)
             Native::NumToPrecision => {
-                let n = number_this(&recv);
+                // §21.1.3.x step 1: thisNumberValue — 숫자/Number 래퍼가 아니면 TypeError.
+                let this = recv.clone().unwrap_or(Value::Undefined);
+                let n = match self.this_prim_value(&this, PrimBrand::Number)? {
+                    Value::Num(n) => n,
+                    _ => f64::NAN,
+                };
+                // step 2: precision 이 undefined 면 강제변환 전에 ToString.
                 if matches!(args.first(), None | Some(Value::Undefined)) {
                     return Ok(Value::Str(num_to_str(n)));
                 }
-                let p = to_num(&args[0]);
+                // step 3: p = ToIntegerOrInfinity(precision) (Symbol/BigInt→TypeError, NaN→0).
+                let p = self.to_integer_or_infinity(&args[0])?;
                 if n.is_nan() {
                     return Ok(Value::Str("NaN".to_string()));
                 }
                 if !n.is_finite() {
                     return Ok(Value::Str(if n < 0.0 { "-Infinity" } else { "Infinity" }.to_string()));
                 }
-                if !p.is_finite() || p < 1.0 || p > 100.0 {
+                if p < 1.0 || p > 100.0 {
                     return Err(self.throw_error(
                         "RangeError",
                         "toPrecision() argument must be between 1 and 100",
