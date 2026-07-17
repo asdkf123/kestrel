@@ -2959,8 +2959,14 @@ impl Interp {
                     _ => Value::Str(String::new()),
                 })
             }
-            Native::MapCtor => self.make_map(args),
-            Native::SetCtor => self.make_set(args),
+            // Map()/Set() 를 new 없이 부르면 NewTarget 이 undefined → TypeError
+            // (§24.1.1.1 / §24.2.1.1 step 1). new 경로는 construct() 가 처리.
+            Native::MapCtor => {
+                Err(self.throw_error("TypeError", "Constructor Map requires 'new'"))
+            }
+            Native::SetCtor => {
+                Err(self.throw_error("TypeError", "Constructor Set requires 'new'"))
+            }
             Native::ErrorCtor(name) => {
                 // Error('m') 은 new Error('m') 과 같다 (§20.5.1.1). message 는 인자가
                 // 있을 때만 own 프로퍼티이고 비열거 — 객체 생성은 make_error 한 곳에서만.

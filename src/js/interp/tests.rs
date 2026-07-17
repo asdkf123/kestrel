@@ -6199,3 +6199,35 @@ fn set_map_foreach_callback_semantics() {
         "var t=false; try{ new Set([1]).forEach(function(){ throw new RangeError('x'); }); }catch(e){ t=e instanceof RangeError; } t"
     ));
 }
+
+#[test]
+fn map_set_constructor_iterable_protocol() {
+    // new 없이 호출하면 TypeError (§24.1.1.1/§24.2.1.1 step 1)
+    assert!(run_bool("var t=false; try{ Map(); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ Set(); }catch(e){ t=e instanceof TypeError; } t"));
+    // 비이터러블 → TypeError
+    assert!(run_bool("var t=false; try{ new Map(5); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ new Set(3); }catch(e){ t=e instanceof TypeError; } t"));
+    // undefined/null 이면 빈 컬렉션
+    assert_eq!(run_num("new Map(null).size + new Set(undefined).size"), 0.0);
+    // 항목이 객체가 아니면 TypeError (Map)
+    assert!(run_bool("var t=false; try{ new Map([1,2]); }catch(e){ t=e instanceof TypeError; } t"));
+    // 정상 초기화
+    assert_eq!(run_num("new Map([[1,2],[3,4]]).size"), 2.0);
+    assert_eq!(run_num("new Set([1,1,2,3]).size"), 3.0);
+    // 사용자 오버라이드 set 관측 (adder = Get(target,'set'))
+    assert_eq!(
+        run_num("var o=Map.prototype.set,c=0; Map.prototype.set=function(k,v){c++;return o.call(this,k,v);}; new Map([[0,0],[1,1]]); Map.prototype.set=o; c"),
+        2.0
+    );
+    // set 이 callable 아니면 TypeError (비어있지 않은 iterable)
+    assert!(run_bool(
+        "var o=Map.prototype.set; Map.prototype.set=undefined; var t=false; try{ new Map([[1,2]]); }catch(e){ t=e instanceof TypeError; } Map.prototype.set=o; t"
+    ));
+    // 비정상 완료 시 IteratorClose(return 호출)
+    assert!(run_bool(
+        "var closed=false; var it={ [Symbol.iterator](){return this;}, i:0, next(){ return this.i++<2?{value:[1,1],done:false}:{done:true}; }, return(){ closed=true; return {}; } }; var o=Map.prototype.set; Map.prototype.set=function(){ throw new Error('x'); }; try{ new Map(it); }catch(e){} Map.prototype.set=o; closed"
+    ));
+    // Object.prototype 상속 메서드
+    assert!(run_bool("typeof new Map().hasOwnProperty === 'function' && typeof new Set().toString === 'function'"));
+}

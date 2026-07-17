@@ -2256,34 +2256,103 @@ impl Interp {
         })))
     }
 
-    // new Map(iterable): [[k,v],...] 로 초기화
+    // new Map(iterable) — §24.1.1.1. iterable 이 있으면 AddEntriesFromIterable 로
+    // 이터레이터 프로토콜을 따라 채운다(사용자가 오버라이드한 set 을 관측).
     fn make_map(&mut self, args: Vec<Value>) -> Result<Value, String> {
-        let store: Vec<(Value, Value)> = Vec::new();
-        let map = Rc::new(RefCell::new(store));
-        if let Some(Value::Arr(a)) = args.first() {
-            for entry in a.borrow().iter() {
-                if let Value::Arr(pair) = entry {
-                    let p = pair.borrow();
-                    let k = p.first().cloned().unwrap_or(Value::Undefined);
-                    let v = p.get(1).cloned().unwrap_or(Value::Undefined);
-                    map.borrow_mut().push((k, v));
-                }
-            }
+        let target = Value::MapVal(Rc::new(RefCell::new(Vec::new())));
+        let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+        // step 4: iterable 이 undefined/null 이면 빈 Map (adder 검사 전에 조기 반환).
+        if matches!(iterable, Value::Undefined | Value::Null) {
+            return Ok(target);
         }
-        Ok(Value::MapVal(map))
+        // step 5-6: adder = ? Get(target, "set"); IsCallable 아니면 TypeError.
+        let adder = self.member_get(&target, "set")?;
+        if !is_callable(&adder) {
+            return Err(self.throw_error("TypeError", "Map: 'set' is not a function"));
+        }
+        self.add_entries_from_iterable(&target, &iterable, &adder)?;
+        Ok(target)
     }
 
-    // new Set(iterable): 배열로 초기화 (중복 제거)
+    // new Set(iterable) — §24.2.1.1. adder = ? Get(target, "add"); 각 값을
+    // Call(adder, target, «value») (Set 항목엔 객체 제약 없음). 비정상 완료 시 IteratorClose.
     fn make_set(&mut self, args: Vec<Value>) -> Result<Value, String> {
-        let set = Rc::new(RefCell::new(Vec::<Value>::new()));
-        if let Some(Value::Arr(a)) = args.first() {
-            for v in a.borrow().iter() {
-                if !set.borrow().iter().any(|e| same_value_zero(e, v)) {
-                    set.borrow_mut().push(v.clone());
-                }
+        let target = Value::SetVal(Rc::new(RefCell::new(Vec::new())));
+        let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+        if matches!(iterable, Value::Undefined | Value::Null) {
+            return Ok(target);
+        }
+        let adder = self.member_get(&target, "add")?;
+        if !is_callable(&adder) {
+            return Err(self.throw_error("TypeError", "Set: 'add' is not a function"));
+        }
+        let it = match self.try_get_iterator(&iterable)? {
+            Some(it) => it,
+            None => return Err(self.throw_error("TypeError", "값이 이터러블이 아닙니다")),
+        };
+        loop {
+            let (item, done) = self.gen_iter_next(&it, Value::Undefined)?;
+            if done {
+                break;
+            }
+            if let Err(e) = self.call_value(adder.clone(), Some(target.clone()), vec![item]) {
+                return Err(self.iterator_close_throw(&it, e));
+            }
+            self.tick()?;
+        }
+        Ok(target)
+    }
+
+    // §7.4.11 IteratorClose (throw 완료 전용): iterator.return() 을 호출하되 그 결과와
+    // 예외는 무시하고 원래 throw 완료(err)를 그대로 돌려준다. throw 완료가 return 실패보다
+    // 우선한다(§7.4.11 step 5).
+    fn iterator_close_throw(&mut self, it: &Value, err: String) -> String {
+        if let Ok(ret) = self.member_get(it, "return") {
+            if is_callable(&ret) {
+                let _ = self.call_value(ret, Some(it.clone()), vec![]);
             }
         }
-        Ok(Value::SetVal(set))
+        err
+    }
+
+    // §24.1.1.2 AddEntriesFromIterable(target, iterable, adder). 이터레이터 프로토콜로
+    // 각 항목을 순회하며 [0]·[1] 을 뽑아 adder(target, k, v) 로 채운다. 각 항목은 객체여야
+    // 하고, 어느 단계든 비정상 완료면 IteratorClose 후 그 완료를 전파한다.
+    fn add_entries_from_iterable(
+        &mut self,
+        target: &Value,
+        iterable: &Value,
+        adder: &Value,
+    ) -> Result<(), String> {
+        let it = match self.try_get_iterator(iterable)? {
+            Some(it) => it,
+            None => return Err(self.throw_error("TypeError", "값이 이터러블이 아닙니다")),
+        };
+        loop {
+            // IteratorStep 의 비정상 완료는 close 없이 그대로 전파(§ step: `? IteratorStep`).
+            let (item, done) = self.gen_iter_next(&it, Value::Undefined)?;
+            if done {
+                break;
+            }
+            // 각 항목은 객체여야 한다. 아니면 TypeError 로 IteratorClose.
+            if !is_object(&item) {
+                let e = self.throw_error("TypeError", "이터레이터 항목이 객체가 아닙니다");
+                return Err(self.iterator_close_throw(&it, e));
+            }
+            let k = match self.member_get(&item, "0") {
+                Ok(k) => k,
+                Err(e) => return Err(self.iterator_close_throw(&it, e)),
+            };
+            let v = match self.member_get(&item, "1") {
+                Ok(v) => v,
+                Err(e) => return Err(self.iterator_close_throw(&it, e)),
+            };
+            if let Err(e) = self.call_value(adder.clone(), Some(target.clone()), vec![k, v]) {
+                return Err(self.iterator_close_throw(&it, e));
+            }
+            self.tick()?;
+        }
+        Ok(())
     }
 
     fn map_method(
@@ -4915,6 +4984,31 @@ impl Interp {
         Ok(None)
     }
 
+    // 내장 exotic 값(Map/Set 등)의 인스턴스 프로퍼티 Get. [[Prototype]] 체인이 명시적으로
+    // 연결돼 있지 않으므로(Date 등 다른 내장과 동일 관례), 먼저 해당 prototype 을 걷고,
+    // 없으면 Object.prototype 상속분(hasOwnProperty/toString/valueOf/…)을 본다. 접근자는
+    // this=recv 로 호출한다. 이로써 사용자 오버라이드(Map.prototype.set = …)도 관측된다.
+    fn exotic_proto_get(
+        &mut self,
+        proto: Value,
+        key: &str,
+        recv: &Value,
+    ) -> Result<Value, String> {
+        if let Some(v) = self.fn_static_lookup(proto, key, recv)? {
+            return Ok(v);
+        }
+        let objp = match &self.object_ns {
+            Value::Obj(m) => m.borrow().get("prototype").cloned(),
+            _ => None,
+        };
+        if let Some(objp) = objp {
+            if let Some(v) = self.fn_static_lookup(objp, key, recv)? {
+                return Ok(v);
+            }
+        }
+        Ok(Value::Undefined)
+    }
+
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         // 내장에 얹힌 프로퍼티가 최우선 (폴리필이 Promise.allSettled 등을 덮어쓴 경우).
         if let Value::Native(n) = recv {
@@ -5227,25 +5321,17 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Value::MapVal(m) => {
-                if key == "\u{0}@@iterator" {
-                    return Ok(Value::Native(Native::MakeIter));
-                }
+                // size 는 exotic 접근자(수신자별). @@iterator 는 entries 반복자.
                 if key == "size" {
                     return Ok(Value::Num(m.borrow().len() as f64));
                 }
-                let op = match key {
-                    "get" => Some(MapOp::Get),
-                    "set" => Some(MapOp::Set),
-                    "has" => Some(MapOp::Has),
-                    "delete" => Some(MapOp::Delete),
-                    "clear" => Some(MapOp::Clear),
-                    "forEach" => Some(MapOp::ForEach),
-                    "keys" => Some(MapOp::Keys),
-                    "values" => Some(MapOp::Values),
-                    "entries" => Some(MapOp::Entries),
-                    _ => None,
-                };
-                Ok(op.map(|o| Value::Native(Native::Map(o))).unwrap_or(Value::Undefined))
+                if key == "\u{0}@@iterator" {
+                    return Ok(Value::Native(Native::MakeIter));
+                }
+                // 그 외 모든 키는 Map.prototype 체인에서 Get (set/get 등 내장 메서드,
+                // Object.prototype 상속분(hasOwnProperty/toString), 사용자 오버라이드 포함).
+                let proto = self.map_proto.clone();
+                self.exotic_proto_get(proto, key, recv)
             }
             Value::SetVal(s) => {
                 if key == "size" {
@@ -5254,23 +5340,8 @@ impl Interp {
                 if key == "\u{0}@@iterator" {
                     return Ok(Value::Native(Native::MakeIter));
                 }
-                let op = match key {
-                    "add" => Some(SetOp::Add),
-                    "has" => Some(SetOp::Has),
-                    "delete" => Some(SetOp::Delete),
-                    "clear" => Some(SetOp::Clear),
-                    "forEach" => Some(SetOp::ForEach),
-                    "values" | "keys" => Some(SetOp::Values),
-                    "union" => Some(SetOp::Union),
-                    "intersection" => Some(SetOp::Intersection),
-                    "difference" => Some(SetOp::Difference),
-                    "symmetricDifference" => Some(SetOp::SymmetricDifference),
-                    "isSubsetOf" => Some(SetOp::IsSubsetOf),
-                    "isSupersetOf" => Some(SetOp::IsSupersetOf),
-                    "isDisjointFrom" => Some(SetOp::IsDisjointFrom),
-                    _ => None,
-                };
-                Ok(op.map(|o| Value::Native(Native::Set(o))).unwrap_or(Value::Undefined))
+                let proto = self.set_proto.clone();
+                self.exotic_proto_get(proto, key, recv)
             }
             // CSSOM: 시트/규칙/규칙스타일
             Value::Sheet(_) | Value::CssRule(_, _) | Value::RuleStyle(_, _) => {
