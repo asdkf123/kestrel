@@ -6213,17 +6213,27 @@ impl Interp {
                 Ok(Value::Bool(self.delete_own(&target, &key)?))
             }
             Native::ReflectApply => {
-                // Reflect.apply(fn, thisArg, argsList)
+                // Reflect.apply(target, thisArg, argumentsList) (§28.1.1).
                 let f = args.first().cloned().unwrap_or(Value::Undefined);
+                // step 1: target 이 callable 아니면 TypeError.
+                if !is_callable(&f) {
+                    return Err(self.throw_error("TypeError", "Reflect.apply target is not callable"));
+                }
                 let this = args.get(1).cloned();
-                let arg_list = match args.get(2) {
-                    Some(Value::Arr(a)) => a.borrow().clone(),
-                    _ => Vec::new(),
-                };
+                // step 2: args = ? CreateListFromArrayLike(argumentsList) — 비객체 TypeError,
+                // length 게터/원소 게터 예외 전파.
+                let list_val = args.get(2).cloned().unwrap_or(Value::Undefined);
+                if !is_object(&list_val) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "CreateListFromArrayLike called on non-object",
+                    ));
+                }
+                let arg_list = self.generic_array_read(&list_val)?;
                 self.call_value(f, this, arg_list)
             }
             Native::ReflectConstruct => {
-                // Reflect.construct(target, argumentsList[, newTarget]) (§26.1.2).
+                // Reflect.construct(target, argumentsList[, newTarget]) (§28.1.2).
                 let f = args.first().cloned().unwrap_or(Value::Undefined);
                 // step 1: target 이 생성자가 아니면 TypeError.
                 if !self.is_constructor(&f) {
@@ -6232,13 +6242,9 @@ impl Interp {
                         "Reflect.construct target is not a constructor",
                     ));
                 }
-                let arg_list = match args.get(1) {
-                    Some(Value::Arr(a)) => a.borrow().clone(),
-                    _ => Vec::new(),
-                };
-                // step 3: newTarget(주어졌으면)도 생성자여야 한다. isConstructor 하네스가
-                // 이 검사에 의존한다 — Reflect.construct(function(){}, [], method) 가 던져야
-                // isConstructor(method)===false 가 된다.
+                // step 3: newTarget(주어졌으면)도 생성자여야 한다(argumentsList 읽기 전에 검사).
+                // isConstructor 하네스가 이 검사에 의존 — Reflect.construct(function(){}, [], method)
+                // 가 던져야 isConstructor(method)===false 가 된다.
                 if let Some(nt) = args.get(2) {
                     if !self.is_constructor(nt) {
                         return Err(self.throw_error(
@@ -6247,6 +6253,15 @@ impl Interp {
                         ));
                     }
                 }
+                // step 4: args = ? CreateListFromArrayLike(argumentsList).
+                let list_val = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_object(&list_val) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "CreateListFromArrayLike called on non-object",
+                    ));
+                }
+                let arg_list = self.generic_array_read(&list_val)?;
                 self.construct(f, arg_list)
             }
             // Reflect 나머지 (§28.1). 대상이 객체가 아니면 TypeError. 변형 계열은 불리언 반환.

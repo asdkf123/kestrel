@@ -6530,3 +6530,20 @@ fn dom_pre_insertion_validity() {
 }
 
 
+
+#[test]
+fn reflect_apply_construct_arraylike() {
+    // §28.1.1/§28.1.2 + §7.3.18 CreateListFromArrayLike.
+    assert_eq!(run_str("var fn=function(){return Array.prototype.slice.call(arguments);}; JSON.stringify(Reflect.apply(fn,null,{length:2,0:'a',1:'b'}))"), "[\"a\",\"b\"]");
+    // 누락 인덱스 → undefined
+    assert!(run_bool("var fn=function(){return arguments.length===1 && arguments[0]===undefined;}; Reflect.apply(fn,null,{length:1})"));
+    // length 게터 예외 전파
+    assert!(run_bool("var fn=function(){}; var t=false; try{ Reflect.apply(fn,null,{get length(){throw new TypeError('L');}}); }catch(e){ t=e instanceof TypeError; } t"));
+    // argumentsList 비객체 → TypeError
+    assert!(run_bool("var fn=function(){}; var t=false; try{ Reflect.apply(fn,null,undefined); }catch(e){ t=e instanceof TypeError; } t"));
+    // 비callable target → TypeError
+    assert!(run_bool("var t=false; try{ Reflect.apply({},null,[]); }catch(e){ t=e instanceof TypeError; } t"));
+    // construct array-like
+    assert_eq!(run_num("function C(a,b){this.sum=a+b;} Reflect.construct(C,{length:2,0:3,1:4}).sum"), 7.0);
+    assert!(run_bool("function C(){} var t=false; try{ Reflect.construct(C,null); }catch(e){ t=e instanceof TypeError; } t"));
+}
