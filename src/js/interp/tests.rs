@@ -6376,3 +6376,15 @@ fn constructor_symbol_species() {
     // species 없는 생성자는 undefined
     assert!(run_bool("Object[Symbol.species] === undefined"));
 }
+
+#[test]
+fn set_ops_iterator_close_on_early_exit() {
+    // §24.2.4: is*Of 가 조기탈출 시 other.keys() 이터레이터를 IteratorClose(return 호출),
+    // 소진 시엔 호출 안 함.
+    let harness = "function mk(v){var it={a:v,n:0,r:0,next(){var d=this.n>=this.a.length,x=this.a[this.n];this.n++;return {done:d,value:x};},return(){this.r++;return this;}};return {sl:{size:v.length,has(x){return v.indexOf(x)>=0;},keys(){return it;}},it:it};}";
+    // 소진(무close)
+    assert!(run_bool(&format!("{} var m=mk([4,5,6]); var r=new Set([4,5,6,7]).isSupersetOf(m.sl); r===true && m.it.n===4 && m.it.r===0", harness)));
+    // 조기탈출(close 1회)
+    assert!(run_bool(&format!("{} var m=mk([4,5,6]); var r=new Set([0,1,2,3]).isSupersetOf(m.sl); r===false && m.it.n===1 && m.it.r===1", harness)));
+    assert!(run_bool(&format!("{} var m=mk([1,2,3]); var r=new Set([3,4,5,6]).isDisjointFrom(m.sl); r===false && m.it.n===3 && m.it.r===1", harness)));
+}

@@ -2547,6 +2547,44 @@ impl Interp {
         self.iterate_to_vec(&iter)
     }
 
+    // §7.4.11 IteratorClose (정상 완료용): iterator.return() 을 호출하고 그 예외는 전파,
+    // 결과가 객체가 아니면 TypeError. is*Of 의 조기탈출(IteratorClose)에 쓴다.
+    fn iterator_close_ok(&mut self, it: &Value) -> Result<(), String> {
+        let ret = self.member_get(it, "return")?;
+        if is_callable(&ret) {
+            let r = self.call_value(ret, Some(it.clone()), vec![])?;
+            if !is_object(&r) {
+                return Err(
+                    self.throw_error("TypeError", "iterator return() did not return an object")
+                );
+            }
+        }
+        Ok(())
+    }
+
+    // other.keys() 이터레이터를 **지연** 순회하며 pred(k) 가 true 인 첫 키에서 멈춘다.
+    // 조기 종료 시 IteratorClose(return 호출). 소진하면 false. §24.2.4 is*Of 의 조기탈출용
+    // (예전엔 set_keys_vec 로 전량 드레인해 return 이 절대 안 불렸다).
+    fn set_keys_any(
+        &mut self,
+        other: &Value,
+        keys_fn: &Value,
+        mut pred: impl FnMut(&Value) -> bool,
+    ) -> Result<bool, String> {
+        let iter = self.call_value(keys_fn.clone(), Some(other.clone()), vec![])?;
+        loop {
+            let (k, done) = self.gen_iter_next(&iter, Value::Undefined)?;
+            if done {
+                return Ok(false);
+            }
+            if pred(&k) {
+                self.iterator_close_ok(&iter)?;
+                return Ok(true);
+            }
+            self.tick()?;
+        }
+    }
+
     // ES2024 집합 연산 (§24.2.4). this 는 실제 Set, other 는 set-like. union/intersection/
     // difference/symmetricDifference 는 새 Set 을, is*Of 는 불리언을 돌려준다. size 비교로
     // this 순회(has 호출) vs other 순회(keys)를 고르는 것도 표준대로.
@@ -2641,12 +2679,10 @@ impl Interp {
                 if this_size < other_size {
                     return Ok(Value::Bool(false));
                 }
-                for k in self.set_keys_vec(&other, &keys)? {
-                    if !contains(&this_data, &k) {
-                        return Ok(Value::Bool(false));
-                    }
-                }
-                Ok(Value::Bool(true))
+                // other.keys() 지연 순회: this 에 없는 키가 나오면 조기탈출 + IteratorClose.
+                let found_missing =
+                    self.set_keys_any(&other, &keys, |k| !contains(&this_data, k))?;
+                Ok(Value::Bool(!found_missing))
             }
             SetOp::IsDisjointFrom => {
                 if this_size <= other_size {
@@ -2656,14 +2692,13 @@ impl Interp {
                             return Ok(Value::Bool(false));
                         }
                     }
+                    Ok(Value::Bool(true))
                 } else {
-                    for k in self.set_keys_vec(&other, &keys)? {
-                        if contains(&this_data, &k) {
-                            return Ok(Value::Bool(false));
-                        }
-                    }
+                    // other.keys() 지연 순회: this 에 있는 키가 나오면 조기탈출 + IteratorClose.
+                    let found_common =
+                        self.set_keys_any(&other, &keys, |k| contains(&this_data, k))?;
+                    Ok(Value::Bool(!found_common))
                 }
-                Ok(Value::Bool(true))
             }
             _ => unreachable!(),
         }
