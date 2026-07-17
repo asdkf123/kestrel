@@ -3913,7 +3913,10 @@ impl Interp {
                         let target = self.eval(obj, env)?;
                         let key = match (computed, prop.as_ref()) {
                             (false, Expr::Str(s)) => s.clone(),
-                            _ => to_display(&self.eval(prop, env)?),
+                            _ => {
+                                let kv = self.eval(prop, env)?;
+                                self.to_property_key(kv)? // 객체 키 toString / Symbol 내부키
+                            }
                         };
                         match &target {
                             Value::Obj(m) => {
@@ -4315,7 +4318,9 @@ impl Interp {
     fn member_key(&mut self, prop: &Expr, computed: bool, env: &EnvRef) -> Result<String, String> {
         if computed {
             let v = self.eval(prop, env)?;
-            Ok(key_of(&v))
+            // §13.3.3 ToPropertyKey: 객체 키는 toString/@@toPrimitive 호출, Symbol 은 내부키.
+            // 예전엔 key_of 라 o[{toString(){return 'x'}}] 가 toString 을 안 불렀다.
+            self.to_property_key(v)
         } else if let Expr::Str(s) = prop {
             Ok(s.clone())
         } else {
@@ -7274,7 +7279,8 @@ impl Interp {
             ),
             // in: 프로토타입 체인까지 본다 (표준 §13.10). Proxy 면 has 트랩.
             BinOp::In => {
-                let key = to_display(&l);
+                // §13.10.2: 키는 ToPropertyKey(객체 toString / Symbol 내부키).
+                let key = self.to_property_key(l.clone())?;
                 match &r {
                     Value::Proxy(p) => {
                         self.proxy_revoked_guard(p)?;

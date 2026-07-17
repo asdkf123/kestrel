@@ -6673,3 +6673,15 @@ fn object_assign_symbols_and_getters() {
     assert_eq!(run_str("JSON.stringify(Object.assign({a:1},null,undefined,{b:2}))"), "{\"a\":1,\"b\":2}");
     assert_eq!(run_str("var src={}; Object.defineProperty(src,'x',{value:1,enumerable:false}); JSON.stringify(Object.assign({},src))"), "{}");
 }
+
+#[test]
+fn computed_member_key_topropertykey() {
+    // §13.3.3: 계산된 멤버 키(접근/대입/in/delete)는 ToPropertyKey — 객체 toString 호출.
+    assert_eq!(run_num("var k={toString:function(){return 'foo';}}; var o={}; o[k]=1; o.foo"), 1.0);
+    assert!(run_bool("var k={toString:function(){return 'foo';}}; var o={foo:1}; k in o"));
+    assert!(run_bool("var k={toString:function(){return 'foo';}}; var o={foo:1}; delete o[k]; !('foo' in o)"));
+    assert_eq!(run_num("var o={}; o[1.5]=9; o['1.5']"), 9.0);
+    // Symbol 키
+    assert_eq!(run_num("var s=Symbol(); var o={}; o[s]=7; o[s]"), 7.0);
+    assert!(run_bool("var s=Symbol(); var o={}; o[s]=1; s in o"));
+}
