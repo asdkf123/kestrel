@@ -239,6 +239,8 @@ pub struct JsClass {
     // Object.getPrototypeOf(new C()) === C.prototype 이 거짓이 된다 —
     // regenerator/babel 런타임이 이 불변식 위에 이터레이터 체인을 세운다.
     pub proto_cache: RefCell<Option<Value>>,
+    // 원본 소스 텍스트 (Function.prototype.toString §20.2.3.5). 클래스도 함수다.
+    pub source: Option<std::rc::Rc<str>>,
 }
 
 impl JsClass {

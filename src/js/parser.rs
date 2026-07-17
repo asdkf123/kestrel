@@ -1485,6 +1485,8 @@ impl Parser {
     // class 몸통 파싱. `class` 키워드는 호출자가 이미 소비함.
     // is_decl 이면 이름 필수 (문), 아니면 선택 (식).
     fn class_def(&mut self, is_decl: bool) -> Result<ClassDef, String> {
+        // `class` 키워드는 호출자가 소비함 → 소스 시작은 그 앞 토큰.
+        let start = self.pos.saturating_sub(1);
         let name = if matches!(self.peek(), Some(Tok::Ident(_))) {
             Some(self.ident()?)
         } else if is_decl {
@@ -1599,6 +1601,7 @@ impl Parser {
             }
         }
         self.pos += 1; // '}'
+        let source = self.src_between(start, self.pos);
         Ok(ClassDef {
             name,
             parent,
@@ -1611,6 +1614,7 @@ impl Parser {
             static_setters,
             fields,
             static_fields,
+            source,
         })
     }
 

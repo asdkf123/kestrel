@@ -91,6 +91,8 @@ pub struct ClassDef {
     pub fields: Vec<(String, Option<Expr>)>,
     // static 필드: (이름, 초기화식) — 클래스에 설정
     pub static_fields: Vec<(String, Option<Expr>)>,
+    // 원본 소스 텍스트 (Function.prototype.toString §20.2.3.5). 클래스도 함수다.
+    pub source: Option<std::rc::Rc<str>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

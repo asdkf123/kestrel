@@ -5464,7 +5464,19 @@ impl Interp {
                     }
                     p = cls.parent.clone();
                 }
-                Ok(Value::Undefined)
+                // 클래스도 함수다 — Function.prototype 메서드 상속. 예전엔 C.toString/
+                // C.call/C.bind/C.hasOwnProperty 가 전부 undefined 였다.
+                match key {
+                    "call" => return Ok(Value::Native(Native::FnCall)),
+                    "apply" => return Ok(Value::Native(Native::FnApply)),
+                    "bind" => return Ok(Value::Native(Native::FnBind)),
+                    "toString" => return Ok(Value::Native(Native::FnToString)),
+                    _ => {}
+                }
+                // 나머지는 Function.prototype→Object.prototype 체인 (hasOwnProperty 등).
+                Ok(self
+                    .fn_static_lookup(self.fn_proto.clone(), key, recv)?
+                    .unwrap_or(Value::Undefined))
             }
             Value::Fn(func) => {
                 // 함수도 객체: 속성 백 우선, 그다음 call/apply/bind, prototype/name/length
@@ -6420,6 +6432,7 @@ impl Interp {
             setters,
             static_getters,
             static_setters,
+            source: def.source.clone(),
         });
         // 클래스 이름 바인딩을 본문 스코프에 심는다 (메서드가 이제 이걸 본다)
         if let Some(n) = &def.name {

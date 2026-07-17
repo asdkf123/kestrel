@@ -2138,15 +2138,17 @@ impl Interp {
                             )
                         }
                     },
-                    Value::Class(c) => {
-                        // 클래스도 소스 미보관 — 근사.
-                        let name = c.name.borrow().clone();
-                        if name.is_empty() {
-                            "class { }".to_string()
-                        } else {
-                            format!("class {} {{ }}", name)
+                    Value::Class(c) => match &c.source {
+                        Some(src) => src.to_string(),
+                        None => {
+                            let name = c.name.borrow().clone();
+                            if name.is_empty() {
+                                "class { }".to_string()
+                            } else {
+                                format!("class {} {{ }}", name)
+                            }
                         }
-                    }
+                    },
                     // 내장/바운드: NativeFunction 문법. 이름이 유효 식별자면 포함.
                     Value::Native(_) | Value::Bound(_) => {
                         let name = self.fn_name_of(&f);
