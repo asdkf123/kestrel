@@ -278,6 +278,7 @@ pub enum Native {
     Matches,
     Closest,
     DomContains,
+    DomGetRootNode,
     CreateDocumentFragment,
     ProxyCtor,
     // Proxy.revocable(§28.2.1) 과 그것이 돌려주는 revoke 함수.

@@ -821,6 +821,9 @@ impl Interp {
             }
             // 문서 순서 비교 (jQuery 의 sortOrder). 4=뒤따름, 2=앞섬, 0=동일.
             "compareDocumentPosition" => Ok(Value::Native(Native::CompareDocPosition)),
+            // getRootNode() — 노드가 속한 트리의 루트 (§4.4). 섀도우 DOM 없으므로 연결된
+            // 노드는 document, 분리된 서브트리는 최상위 조상.
+            "getRootNode" => Ok(Value::Native(Native::DomGetRootNode)),
             "nextElementSibling" | "previousElementSibling" => {
                 let next = key.starts_with("next");
                 let result = dom.get(id).parent.and_then(|p| {

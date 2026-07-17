@@ -4464,6 +4464,23 @@ impl Interp {
                     _ => Ok(Value::Bool(false)),
                 }
             }
+            // node.getRootNode() — 트리의 루트. 연결된 노드면 document, 아니면 최상위 조상.
+            Native::DomGetRootNode => match recv {
+                Some(Value::Dom(id)) => {
+                    let (root, doc_root) = {
+                        let dom = self.dom_arena()?;
+                        // ancestors 는 [부모..루트](자기 제외). 조상 없으면 자기 자신이 루트.
+                        let root = dom.ancestors(id).last().copied().unwrap_or(id);
+                        (root, dom.root)
+                    };
+                    if root == doc_root {
+                        Ok(env_get(&self.global, "document").unwrap_or(Value::Dom(root)))
+                    } else {
+                        Ok(Value::Dom(root))
+                    }
+                }
+                _ => Ok(Value::Undefined),
+            },
             Native::CanvasGetContext => {
                 // canvas.getContext('2d') → 상태 + 메서드를 담은 컨텍스트 객체
                 let canvas_id = match recv {

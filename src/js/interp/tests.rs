@@ -6463,3 +6463,32 @@ fn reflect_has_symbol_and_delete_configurable() {
     assert!(run_bool("var o={}; Object.defineProperty(o,'p',{value:1,configurable:false}); Reflect.deleteProperty(o,'p')===false && ('p' in o)"));
     assert!(run_bool("Reflect.deleteProperty({}, 'missing') === true"));
 }
+
+#[test]
+fn dom_get_root_node() {
+    let mut dom = crate::html::parse_dom(
+        "<div id=\"a\"><span id=\"b\">x</span></div>".to_string(),
+    );
+    let _ = dom.find_by_attr_id("b").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    // 연결된 노드의 getRootNode() === document
+    assert_eq!(
+        to_display(&interp.run("document.getElementById('b').getRootNode() === document").unwrap()),
+        "true",
+    );
+    assert_eq!(
+        to_display(&interp.run("typeof document.getElementById('b').getRootNode").unwrap()),
+        "function",
+    );
+    // 분리된 서브트리: 최상위 조상이 루트
+    assert_eq!(
+        to_display(&interp.run("var d=document.createElement('div'),s=document.createElement('span'); d.appendChild(s); s.getRootNode()===d").unwrap()),
+        "true",
+    );
+    // 옵션 인자는 무시(섀도우 DOM 없음)
+    assert_eq!(
+        to_display(&interp.run("document.getElementById('b').getRootNode({composed:true}) === document").unwrap()),
+        "true",
+    );
+}
