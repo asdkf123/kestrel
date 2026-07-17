@@ -16,6 +16,37 @@ pub use transform::*;
 // src → (이미지 인덱스, 너비, 높이)
 pub type ImageMap = HashMap<String, (usize, usize, usize)>;
 
+// 재귀 레이아웃 깊이 상한. 레이아웃은 DOM 중첩 깊이에 비례해 재귀하는데, HTML 파서와
+// 달리 명시적 깊이 상한이 없어 병적으로 깊은 페이지(수천~수백만 중첩)가 큰 스택마저
+// 넘길 수 있다. 실제 페이지는 수십 중첩이라 이 상한에 절대 닿지 않는다. 초과하면 그
+// 아래는 레이아웃을 생략(위치만 잡고 자식 스킵)해 크래시 대신 우아하게 클램프한다.
+// JS 인터프리터의 400프레임 가드(RangeError)와 같은 사상 — 재귀는 반드시 유한해야 한다.
+const MAX_LAYOUT_DEPTH: u32 = 1200;
+
+thread_local! {
+    static LAYOUT_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+// 진입 시 깊이 +1, 스코프 이탈 시 -1(RAII). 상한 초과면 enter 가 None 을 돌려준다.
+struct LayoutDepthGuard;
+impl LayoutDepthGuard {
+    fn enter() -> Option<Self> {
+        LAYOUT_DEPTH.with(|d| {
+            if d.get() >= MAX_LAYOUT_DEPTH {
+                None
+            } else {
+                d.set(d.get() + 1);
+                Some(LayoutDepthGuard)
+            }
+        })
+    }
+}
+impl Drop for LayoutDepthGuard {
+    fn drop(&mut self) {
+        LAYOUT_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub struct Rect {
     pub x: f32,
@@ -233,6 +264,15 @@ impl<'a> LayoutBox<'a> {
     }
 
     fn layout(&mut self, containing_block: Dimensions, fonts: &FontStack, images: &ImageMap) {
+        // 재귀 깊이 상한(스택 오버플로 방지). 초과하면 위치만 잡고 자식 레이아웃을 생략한다
+        // — 병적으로 깊은 페이지에서 크래시 대신 우아하게 클램프. RAII 로 이탈 시 자동 복원.
+        let _depth = match LayoutDepthGuard::enter() {
+            Some(g) => g,
+            None => {
+                self.calculate_position(containing_block);
+                return;
+            }
+        };
         // 이미지 대체 요소: 고유 크기 박스
         if let NodeType::Element(e) = &self.styled_node.node.node_type {
             if e.tag_name == "img" {
