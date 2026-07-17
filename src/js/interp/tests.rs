@@ -6359,3 +6359,20 @@ fn set_prototype_entries() {
     assert!(run_bool("new Set().entries().next().done"));
     assert!(run_bool("Set.prototype.hasOwnProperty('entries')"));
 }
+
+#[test]
+fn constructor_symbol_species() {
+    // §: C[Symbol.species] 접근자는 this 를 돌려준다 (파생 종 = 자신).
+    for c in ["Map", "Set", "Array", "Promise", "RegExp"] {
+        assert!(run_bool(&format!("{}[Symbol.species] === {}", c, c)), "{}[Symbol.species]", c);
+        // 접근자 서술자 {get, undefined, false, true}
+        assert!(run_bool(&format!(
+            "var d=Object.getOwnPropertyDescriptor({}, Symbol.species); typeof d.get==='function' && d.set===undefined && d.enumerable===false && d.configurable===true", c)));
+    }
+    // getter 는 this 반환, name/length 표준값
+    assert_eq!(run_str("Object.getOwnPropertyDescriptor(Set, Symbol.species).get.name"), "get [Symbol.species]");
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor(Set, Symbol.species).get.length"), 0.0);
+    assert_eq!(run_num("Object.getOwnPropertyDescriptor(Set, Symbol.species).get.call(42)"), 42.0);
+    // species 없는 생성자는 undefined
+    assert!(run_bool("Object[Symbol.species] === undefined"));
+}

@@ -499,6 +499,19 @@ pub(super) fn error_text(v: &Value) -> String {
     to_display(v)
 }
 
+// Symbol.species 접근자를 가지는 내장 생성자 (§): Array/Map/Set/RegExp/Promise.
+// getter 는 this 를 돌려준다(파생 종 = 자기 자신). TypedArray 는 별도 경로.
+pub(super) fn native_has_species(n: &Native) -> bool {
+    matches!(
+        n,
+        Native::ArrayCtor
+            | Native::MapCtor
+            | Native::SetCtor
+            | Native::RegExpCtor
+            | Native::PromiseCtor
+    )
+}
+
 pub(super) fn integrity_ptr(v: &Value) -> Option<usize> {
     Some(match v {
         Value::Obj(m) => Rc::as_ptr(m) as usize,
@@ -4663,6 +4676,15 @@ impl Interp {
             Value::Native(n) => *n,
             _ => return Ok(None),
         };
+        // @@species 는 접근자 서술자 {get, undefined, e:false, c:true} (§).
+        if key == "\u{0}@@species" && native_has_species(&n) {
+            let mut d = ObjMap::new();
+            d.insert("get".to_string(), Value::Native(Native::SpeciesGet));
+            d.insert("set".to_string(), Value::Undefined);
+            d.insert("enumerable".to_string(), Value::Bool(false));
+            d.insert("configurable".to_string(), Value::Bool(true));
+            return Ok(Some(Value::Obj(Rc::new(RefCell::new(d)))));
+        }
         let Some(keys) = self.native_ctor_own_keys(&n) else {
             return Ok(None);
         };
@@ -5028,6 +5050,11 @@ impl Interp {
         if let Value::Native(n) = recv {
             if let Some(v) = self.native_props.get(n).and_then(|m| m.get(key)) {
                 return Ok(v.clone());
+            }
+            // Symbol.species (§): get [Symbol.species] 접근자는 this 를 돌려준다 →
+            // C[Symbol.species] === C. 사용자 오버라이드(native_props)가 우선.
+            if key == "\u{0}@@species" && native_has_species(n) {
+                return Ok(recv.clone());
             }
         }
         // .constructor — 값 타입의 전역 생성자 (core-js/프레임워크의 타입판별·종/species 에 필수).
@@ -7550,9 +7577,12 @@ impl Interp {
                     // `if (!Promise.allSettled) Promise.allSettled = fn` 패턴.
                     Value::Native(n) => {
                         // name/length 는 내장 함수의 non-writable own 프로퍼티 (§17).
-                        // 재대입은 조용히 무시 (writable:false). 나머지(폴리필이 얹는
-                        // 메서드 등)는 native_props 에 저장.
-                        if !matches!(key.as_str(), "name" | "length") {
+                        // @@species 는 setter 없는 접근자라 = 재대입은 무시(writable:false).
+                        // 재대입은 조용히 무시. 나머지(폴리필이 얹는 메서드 등)는 native_props 에
+                        // 저장. defineProperty 는 별도 경로라 오버라이드 여전히 가능.
+                        let readonly_species =
+                            key == "\u{0}@@species" && native_has_species(&n);
+                        if !matches!(key.as_str(), "name" | "length") && !readonly_species {
                             self.native_props.entry(n).or_default().insert(key, value);
                         }
                         Ok(())

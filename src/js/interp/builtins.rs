@@ -2246,6 +2246,8 @@ impl Interp {
             }
             Native::ReturnTrue => Ok(Value::Bool(true)),
             Native::ReturnThis => Ok(recv.unwrap_or(Value::Undefined)),
+            // get [Symbol.species] — 접근자는 this 를 그대로 돌려준다(종파생 생성자 = 자신).
+            Native::SpeciesGet => Ok(recv.unwrap_or(Value::Undefined)),
             Native::FnToString => {
                 // §20.2.3.5. [[SourceText]] 가 있으면 원본 소스, 없으면(내장/바운드/합성)
                 // NativeFunction 문법: function <name>() { [native code] }.

@@ -87,6 +87,7 @@ pub enum Native {
     ErrorStackSet,
     ReturnTrue,
     ReturnThis, // valueOf 등 — 수신자(this) 반환
+    SpeciesGet, // get [Symbol.species] — 수신자(this) 반환 (§ 종파생 생성자 접근자)
     FnToString, // Function.prototype.toString
     MakeIter,
     IterNext,
@@ -737,6 +738,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         FnApply => ("apply", 2),
         FnBind => ("bind", 1),
         FnToString => ("toString", 0),
+        SpeciesGet => ("get [Symbol.species]", 0),
         // ── Object.* 정적 ──
         ObjectKeys => ("keys", 1),
         ObjectValues => ("values", 1),
