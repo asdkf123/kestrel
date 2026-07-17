@@ -5901,3 +5901,48 @@ fn async_generator_next_returns_promise() {
         "class C{ async *m(){ yield 1; } } typeof new C().m().next().then === 'function'"
     ));
 }
+
+#[test]
+fn array_generic_arraylike_and_from_index() {
+    // array-like: getter length + [[Get]] 원소 읽기 (§23.1.3 generic)
+    assert_eq!(
+        run_num("var o={1:true}; Object.defineProperty(o,'length',{get:function(){return 2;}}); \
+                 Array.prototype.indexOf.call(o, true)"),
+        1.0
+    );
+    // 문자열 length 강제 (ToLength(ToNumber))
+    assert_eq!(
+        run_num("Array.prototype.indexOf.call({0:9,length:'1'}, 9)"),
+        0.0
+    );
+    // 상속 원소(프로토타입 체인)
+    assert_eq!(
+        run_num("var b={0:'a'}; var c=Object.create(b); c.length=1; Array.prototype.indexOf.call(c,'a')"),
+        0.0
+    );
+    // 원시 래퍼 수신자 + 프로토타입 원소
+    assert_eq!(
+        run_num("Boolean.prototype[1]='Z'; Boolean.prototype.length=2; \
+                 var r=Array.prototype.indexOf.call(true,'Z'); delete Boolean.prototype[1]; delete Boolean.prototype.length; r"),
+        1.0
+    );
+    // map/reduce on array-like
+    assert_eq!(
+        run_str("var al={0:1,1:2,2:3,length:3}; Array.prototype.map.call(al,function(x){return x*10;}).join(',')"),
+        "10,20,30"
+    );
+    assert_eq!(run_num("Array.prototype.reduce.call({0:1,1:2,length:2},function(a,b){return a+b;},0)"), 3.0);
+    // indexOf fromIndex (문자열 강제)
+    assert_eq!(run_num("[1,2,1,2].indexOf(2,'2')"), 3.0);
+    assert_eq!(run_num("[1,2,3,2,1].indexOf(2,-2)"), 3.0);
+    // indexOf 는 strict eq (NaN 매칭 안 함), includes 는 SameValueZero (NaN 매칭)
+    assert_eq!(run_num("[NaN].indexOf(NaN)"), -1.0);
+    assert!(run_bool("[NaN].includes(NaN)"));
+    assert!(!run_bool("[1,2,3].includes(1,1)"));
+    // lastIndexOf fromIndex (프렐류드 폴리필 — prelude_num)
+    assert_eq!(prelude_num("[3,1,2,1].lastIndexOf(1,2)"), 1.0);
+    assert_eq!(prelude_num("[3,1,2,1].lastIndexOf(1,-1)"), 3.0);
+    assert_eq!(prelude_num("[1,2,3].lastIndexOf(2)"), 1.0);
+    // 실제 배열 무회귀
+    assert_eq!(run_str("[1,2,3].map(function(x){return x*2;}).join(',')"), "2,4,6");
+}

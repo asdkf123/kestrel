@@ -508,7 +508,18 @@ if (!Array.of) Array.of = function(...a){ return a; };
 if (!Array.prototype.fill) Array.prototype.fill = function(v, s, e){ s = s === undefined ? 0 : (s < 0 ? this.length + s : s); e = e === undefined ? this.length : (e < 0 ? this.length + e : e); for (var i = s; i < e; i++) this[i] = v; return this; };
 if (!Array.prototype.flatMap) Array.prototype.flatMap = function(fn){ return this.map(fn).flat(); };
 if (!Array.prototype.reduceRight) Array.prototype.reduceRight = function(fn){ var i = this.length - 1, acc; if (arguments.length > 1) { acc = arguments[1]; } else { acc = this[i--]; } for (; i >= 0; i--) acc = fn(acc, this[i], i, this); return acc; };
-if (!Array.prototype.lastIndexOf) Array.prototype.lastIndexOf = function(x){ for (var i = this.length - 1; i >= 0; i--) if (this[i] === x) return i; return -1; };
+if (!Array.prototype.lastIndexOf) Array.prototype.lastIndexOf = function(searchElement, fromIndex){
+  // §22.1.3.20. ToObject(this), ToLength(length), fromIndex 는 ToIntegerOrInfinity
+  // (기본 len-1). 음수면 len+n. 뒤에서 앞으로 검색, 존재하는 인덱스만(SameValueZero 아님, ===).
+  var o = Object(this), len = o.length >>> 0;
+  if (len === 0) return -1;
+  var n;
+  if (arguments.length > 1) { n = Number(fromIndex); n = (n !== n) ? 0 : (n < 0 ? Math.ceil(n) : Math.floor(n)); }
+  else { n = len - 1; }
+  var k = n >= 0 ? Math.min(n, len - 1) : len + n;
+  for (; k >= 0; k--) { if (k in o && o[k] === searchElement) return k; }
+  return -1;
+};
 if (!Array.prototype.toReversed) Array.prototype.toReversed = function(){ return this.slice().reverse(); };
 if (!Array.prototype.toSorted) Array.prototype.toSorted = function(fn){ return this.slice().sort(fn); };
 // Array.prototype.toLocaleString (§23.1.3.32): 각 원소의 toLocaleString() 을 호출해

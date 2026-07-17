@@ -165,6 +165,15 @@ fn num_to_radix(n: f64, radix: u32) -> String {
 // (Array.from({length: 2**32}))가 40억 개 할당을 시도해 프로세스가 통째로 죽었다.
 const MAX_ARRAY_LEN: f64 = 4_294_967_295.0; // 2^32 - 1
 
+// ToLength (§7.1.20): NaN/음수 → 0, 아니면 floor 후 2^53-1 로 클램프.
+fn to_length(n: f64) -> f64 {
+    if n.is_nan() || n <= 0.0 {
+        0.0
+    } else {
+        n.floor().min(9_007_199_254_740_991.0)
+    }
+}
+
 fn array_like_len(len: f64) -> Result<usize, String> {
     if !len.is_finite() || len <= 0.0 {
         return Ok(0);
@@ -1069,6 +1078,28 @@ impl Interp {
 
     fn redefine_err(&mut self) -> String {
         self.throw_error("TypeError", "Cannot redefine property")
+    }
+
+    // generic 배열 메서드(§23.1.3)를 위한 array-like 읽기: ToObject 후
+    // ToLength(Get(O,"length")) 만큼, 각 인덱스를 [[Get]] 으로(접근자/프로토타입
+    // 체인 존중) 읽어 임시 Vec 로 재료화한다. 예전 array_like_to_vec 는 own 데이터
+    // length·own 인덱스만 봐서 getter length / "Infinity" 문자열 / 상속 원소 /
+    // 원시 래퍼(Boolean.prototype[1]) 수신자를 전부 놓쳤다.
+    pub(super) fn generic_array_read(&mut self, recv: &Value) -> Result<Vec<Value>, String> {
+        let len_val = self.member_get(recv, "length")?;
+        let len = to_length(to_num(&len_val));
+        // 실제 배열 상한(2^32-1)을 넘는 length 는 재료화하지 않는다(수십억 할당 방지).
+        // ToLength 는 2^53-1 까지 허용하지만, 그런 거대 array-like 는 지연순회가
+        // 필요하고 실사용상 병적 케이스라 RangeError 로 막는다(프로세스 보호).
+        if len > MAX_ARRAY_LEN {
+            return Err(self.throw_error("RangeError", "Invalid array length"));
+        }
+        let n = len as usize;
+        let mut out = Vec::with_capacity(n.min(4096));
+        for i in 0..n {
+            out.push(self.member_get(recv, &i.to_string())?);
+        }
+        Ok(out)
     }
 
     pub(super) fn call_native(
@@ -4912,6 +4943,14 @@ impl Interp {
             Native::Arr(op) => {
                 // 배열이면 그대로. array-like(length 보유 객체)면 임시 배열로 옮겨 실행하고
                 // 결과를 되쓴다 → 표준의 generic 배열 메서드(jQuery 가 이걸 의존).
+                // 배열 메서드는 generic 하다 (§23.1.3): this 를 ToObject 로 강제한다.
+                // null/undefined 는 TypeError (§7.1.18).
+                if matches!(recv, None | Some(Value::Undefined) | Some(Value::Null)) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Array.prototype method called on null or undefined",
+                    ));
+                }
                 let (a, write_back) = match &recv {
                     // 얼린 배열은 제자리 변형을 무시한다(표준: 조용히 실패).
                     Some(Value::Arr(a))
@@ -4921,28 +4960,29 @@ impl Interp {
                         return Ok(Value::Arr(a.clone()))
                     }
                     Some(Value::Arr(a)) => (a.clone(), None),
-                    // 읽기 전용 연산은 array-like 대상을 변형하지 않는다(되쓰기 없음).
-                    Some(Value::Obj(o)) if is_array_like(o) => (
-                        ArrayObj::new(array_like_to_vec(o)?),
-                        if is_mutating_arr_op(op) { Some(o.clone()) } else { None },
-                    ),
-                    // 배열 메서드는 generic 하다 (§23.1.3): this 를 ToObject 로 강제한다.
-                    // null/undefined 는 TypeError (§7.1.18). 예전엔 일반 Error 를 던져서
-                    // "TypeError 를 기대" 하는 코드가 조용히 어긋났다.
-                    None | Some(Value::Undefined) | Some(Value::Null) => {
-                        return Err(self.throw_error(
-                            "TypeError",
-                            "Array.prototype method called on null or undefined",
-                        ));
-                    }
                     // 문자열: 각 코드유닛을 원소로 (length 있는 array-like)
                     Some(Value::Str(s)) => {
                         let items: Vec<Value> =
                             s.chars().map(|c| Value::Str(c.to_string())).collect();
                         (ArrayObj::new(items), None)
                     }
-                    // 그 외 원시값/객체(length 없음): ToObject 후 length 0 → 빈 배열로 근사
-                    _ => (ArrayObj::new(Vec::new()), None),
+                    // 그 외 객체/원시 래퍼: generic array-like 읽기(ToLength + [[Get]]).
+                    // getter length / 문자열 length / 상속 원소 / Boolean·Number 래퍼
+                    // 수신자를 표준대로 처리한다. 변형 연산은 원본 객체에 되쓴다.
+                    _ => {
+                        let rv = recv.clone().unwrap();
+                        let items = self.generic_array_read(&rv)?;
+                        let wb = if is_mutating_arr_op(op) {
+                            if let Value::Obj(o) = &rv {
+                                Some(o.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        (ArrayObj::new(items), wb)
+                    }
                 };
                 // 콜백의 "배열" 인자(§23.1.3: 3번째 인자)는 **원래 수신자**(ToObject(this))다 —
                 // 임시 복사 a 가 아니다. 예전엔 a 를 넘겨 array-like(Math/Date 등) 대상에서
@@ -4969,11 +5009,32 @@ impl Interp {
                     }
                     ArrOp::Pop => a.borrow_mut().pop().unwrap_or(Value::Undefined),
                     ArrOp::IndexOf => {
+                        // §22.1.3.14: indexOf(searchElement, fromIndex). fromIndex 는
+                        // ToIntegerOrInfinity, 음수면 len+n(하한 0)부터 앞으로 검색.
                         let needle = args.first().cloned().unwrap_or(Value::Undefined);
-                        match a.borrow().iter().position(|v| strict_eq(v, &needle)) {
-                            Some(i) => Value::Num(i as f64),
-                            None => Value::Num(-1.0),
+                        let items = a.borrow();
+                        let len = items.len() as f64;
+                        let n = match args.get(1) {
+                            None | Some(Value::Undefined) => 0.0,
+                            Some(v) => {
+                                let x = to_num(v);
+                                if x.is_nan() {
+                                    0.0
+                                } else {
+                                    x.trunc()
+                                }
+                            }
+                        };
+                        let start = if n >= 0.0 { n } else { (len + n).max(0.0) };
+                        let start = if start > len { len } else { start } as usize;
+                        let mut found = -1.0;
+                        for i in start..items.len() {
+                            if strict_eq(&items[i], &needle) {
+                                found = i as f64;
+                                break;
+                            }
                         }
+                        Value::Num(found)
                     }
                     ArrOp::Slice => {
                         let items = a.borrow();
@@ -5164,8 +5225,29 @@ impl Interp {
                         Value::Arr(ArrayObj::new(out))
                     }
                     ArrOp::Includes => {
+                        // §22.1.3.13: includes(searchElement, fromIndex). SameValueZero
+                        // (NaN 매칭), fromIndex 는 ToIntegerOrInfinity.
                         let needle = args.first().cloned().unwrap_or(Value::Undefined);
-                        Value::Bool(a.borrow().iter().any(|v| strict_eq(v, &needle)))
+                        let items = a.borrow();
+                        let len = items.len() as f64;
+                        let n = match args.get(1) {
+                            None | Some(Value::Undefined) => 0.0,
+                            Some(v) => {
+                                let x = to_num(v);
+                                if x.is_nan() {
+                                    0.0
+                                } else {
+                                    x.trunc()
+                                }
+                            }
+                        };
+                        let start = if n >= 0.0 { n } else { (len + n).max(0.0) };
+                        let start = if start > len { len } else { start } as usize;
+                        Value::Bool(
+                            items[start.min(items.len())..]
+                                .iter()
+                                .any(|v| same_value_zero(v, &needle)),
+                        )
                     }
                     ArrOp::Splice => {
                         // splice(start, deleteCount, ...items) → 제거분 배열 반환, 원본 변형
