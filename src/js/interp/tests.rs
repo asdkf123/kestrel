@@ -6388,3 +6388,18 @@ fn set_ops_iterator_close_on_early_exit() {
     assert!(run_bool(&format!("{} var m=mk([4,5,6]); var r=new Set([0,1,2,3]).isSupersetOf(m.sl); r===false && m.it.n===1 && m.it.r===1", harness)));
     assert!(run_bool(&format!("{} var m=mk([1,2,3]); var r=new Set([3,4,5,6]).isDisjointFrom(m.sl); r===false && m.it.n===3 && m.it.r===1", harness)));
 }
+
+#[test]
+fn reflect_nonenum_tostringtag_getprototypeof() {
+    // §17: Reflect 메서드는 비열거 own 프로퍼티.
+    assert_eq!(run_num("Object.keys(Reflect).length"), 0.0);
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Reflect,'get').enumerable === false"));
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Reflect,'get').writable === true"));
+    // §28.1.14: Reflect[Symbol.toStringTag] === "Reflect".
+    assert_eq!(run_str("Object.prototype.toString.call(Reflect)"), "[object Reflect]");
+    // §28.1.6: Reflect.getPrototypeOf 는 비객체 target 에 TypeError (Object 는 원시 강제변환).
+    assert!(run_bool("var t=false; try{ Reflect.getPrototypeOf(1); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ Reflect.getPrototypeOf(Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("Reflect.getPrototypeOf({}) === Object.prototype"));
+    assert!(run_bool("Object.getPrototypeOf(1) === Number.prototype")); // Object 는 강제변환
+}

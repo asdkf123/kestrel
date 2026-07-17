@@ -6265,6 +6265,13 @@ impl Interp {
                 }
                 self.call_native(Native::ObjectIsExtensible, None, args)
             }
+            // §28.1.6: Object.getPrototypeOf 와 달리 비객체 target 은 TypeError(원시 강제변환 안 함).
+            Native::ReflectGetPrototypeOf => {
+                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                    return Err(self.throw_error("TypeError", "Reflect.getPrototypeOf called on non-object"));
+                }
+                self.call_native(Native::ObjectGetPrototypeOf, None, args)
+            }
             Native::ReflectOwnKeys => {
                 if !is_object(args.first().unwrap_or(&Value::Undefined)) {
                     return Err(self.throw_error("TypeError", "Reflect.ownKeys called on non-object"));

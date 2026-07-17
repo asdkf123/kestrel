@@ -321,6 +321,7 @@ pub enum Native {
     // Reflect 의 나머지 (§28.1). Object.* 와 달리 대상이 객체가 아니면 TypeError 고,
     // 변형 계열은 성공 여부(불리언)를 돌려준다.
     ReflectSetPrototypeOf,
+    ReflectGetPrototypeOf,
     ReflectPreventExtensions,
     ReflectIsExtensible,
     ReflectOwnKeys,
@@ -935,6 +936,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         ReflectApply => ("apply", 3),
         ReflectConstruct => ("construct", 2),
         ReflectSetPrototypeOf => ("setPrototypeOf", 2),
+        ReflectGetPrototypeOf => ("getPrototypeOf", 1),
         ReflectPreventExtensions => ("preventExtensions", 1),
         ReflectIsExtensible => ("isExtensible", 1),
         ReflectOwnKeys => ("ownKeys", 1),

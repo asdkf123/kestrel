@@ -722,7 +722,7 @@ impl Interp {
         reflect_ns.insert("deleteProperty".to_string(), Value::Native(Native::ReflectDeleteProperty));
         // ownKeys 는 **모든** own 키(비열거 포함) — 예전엔 ObjectKeys(열거만)라 틀렸다.
         reflect_ns.insert("ownKeys".to_string(), Value::Native(Native::ReflectOwnKeys));
-        reflect_ns.insert("getPrototypeOf".to_string(), Value::Native(Native::ObjectGetPrototypeOf));
+        reflect_ns.insert("getPrototypeOf".to_string(), Value::Native(Native::ReflectGetPrototypeOf));
         reflect_ns.insert("apply".to_string(), Value::Native(Native::ReflectApply));
         reflect_ns.insert("construct".to_string(), Value::Native(Native::ReflectConstruct));
         // defineProperty 는 성공 여부(불리언) — Object.defineProperty(객체 반환)와 다르다.
@@ -731,6 +731,11 @@ impl Interp {
         reflect_ns.insert("setPrototypeOf".to_string(), Value::Native(Native::ReflectSetPrototypeOf));
         reflect_ns.insert("isExtensible".to_string(), Value::Native(Native::ReflectIsExtensible));
         reflect_ns.insert("preventExtensions".to_string(), Value::Native(Native::ReflectPreventExtensions));
+        // Reflect[Symbol.toStringTag] === "Reflect" (§28.1.14) → "[object Reflect]".
+        // { writable:false, enumerable:false, configurable:true }.
+        reflect_ns.insert("\u{0}@@toStringTag".to_string(), Value::Str("Reflect".to_string()));
+        set_prop_attrs(&mut reflect_ns, "\u{0}@@toStringTag", ATTR_CONFIGURABLE);
+        mark_nonenum_all(&mut reflect_ns); // 내장 메서드는 비열거 (§17)
         env_declare(&global, "Reflect", Value::Obj(Rc::new(RefCell::new(reflect_ns))));
         env_declare(&global, "NaN", Value::Num(f64::NAN));
         env_declare(&global, "Infinity", Value::Num(f64::INFINITY));
