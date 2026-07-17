@@ -7067,6 +7067,27 @@ impl Interp {
         }
     }
 
+    // §7.1.17 ToString(argument). Symbol 은 TypeError, 객체는 ToPrimitive(string) 후 재귀
+    // (사용자 toString/valueOf/@@toPrimitive 호출·예외 전파). 원시는 to_display.
+    pub(super) fn to_string_value(&mut self, v: &Value) -> Result<String, String> {
+        match v {
+            Value::Symbol(_) => {
+                Err(self.throw_error("TypeError", "Cannot convert a Symbol value to a string"))
+            }
+            Value::Obj(_)
+            | Value::Instance(_)
+            | Value::Arr(_)
+            | Value::Fn(_)
+            | Value::Native(_)
+            | Value::Class(_)
+            | Value::Bound(_) => {
+                let p = self.to_primitive_or_throw(v.clone(), true)?;
+                self.to_string_value(&p)
+            }
+            _ => Ok(to_display(v)),
+        }
+    }
+
     // §7.1.5 ToIntegerOrInfinity(argument). NaN→0, ±∞ 유지, 그 밖은 0 방향 절단.
     pub(super) fn to_integer_or_infinity(&mut self, v: &Value) -> Result<f64, String> {
         let n = self.to_number_value(v)?;

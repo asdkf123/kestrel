@@ -5081,14 +5081,14 @@ impl Interp {
                 let chars: Vec<char> = s.chars().collect();
                 // JS 문자열은 UTF-16 코드 유닛 열 — 길이/인덱스는 코드 유닛 기준.
                 let units: Vec<u16> = s.encode_utf16().collect();
-                let arg_str = |i: usize| args.get(i).map(to_display).unwrap_or_default();
                 Ok(match op {
                     StrOp::Upper => Value::Str(s.to_uppercase()),
                     StrOp::Lower => Value::Str(s.to_lowercase()),
                     StrOp::Trim => Value::Str(s.trim().to_string()),
                     StrOp::CharAt => {
-                        // UTF-16 코드 유닛 하나(범위 밖은 ""). 짝 없는 서로게이트는 U+FFFD.
-                        let i = args.first().map(to_num).unwrap_or(0.0);
+                        // UTF-16 코드 유닛 하나(범위 밖은 ""). pos=ToIntegerOrInfinity.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let i = self.to_integer_or_infinity(&arg)?;
                         let out = if i >= 0.0 && (i as usize) < units.len() {
                             String::from_utf16_lossy(&units[i as usize..i as usize + 1])
                         } else {
@@ -5097,18 +5097,19 @@ impl Interp {
                         Value::Str(out)
                     }
                     StrOp::IndexOf => {
-                        // UTF-16 코드 유닛 인덱스. fromIndex 2번째 인자.
-                        let ndl: Vec<u16> = arg_str(0).encode_utf16().collect();
-                        let from = args
-                            .get(1)
-                            .map(to_num)
-                            .filter(|n| !n.is_nan())
-                            .map(|n| n.max(0.0) as usize)
-                            .unwrap_or(0);
+                        // §22.1.3.9: searchString=ToString, fromIndex=ToIntegerOrInfinity.
+                        let ndl_s = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                        let from = match args.get(1) {
+                            None | Some(Value::Undefined) => 0.0,
+                            Some(v) => self.to_integer_or_infinity(v)?,
+                        };
+                        let ndl: Vec<u16> = ndl_s.encode_utf16().collect();
+                        let from = from.max(0.0).min(units.len() as f64) as usize;
                         Value::Num(utf16_index_of(&units, &ndl, from).map(|i| i as f64).unwrap_or(-1.0))
                     }
                     StrOp::LastIndexOf => {
-                        let ndl: Vec<u16> = arg_str(0).encode_utf16().collect();
+                        let ndl_s = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                        let ndl: Vec<u16> = ndl_s.encode_utf16().collect();
                         Value::Num(utf16_last_index_of(&units, &ndl).map(|i| i as f64).unwrap_or(-1.0))
                     }
                     // includes/startsWith/endsWith 는 정규식 인자를 거부한다 (§22.1.3.7/.8/.23:
@@ -5120,7 +5121,8 @@ impl Interp {
                                 "First argument to String.prototype.includes must not be a regular expression",
                             ));
                         }
-                        Value::Bool(s.contains(&arg_str(0)))
+                        let search = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                        Value::Bool(s.contains(&search))
                     }
                     StrOp::StartsWith => {
                         if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
@@ -5129,7 +5131,8 @@ impl Interp {
                                 "First argument to String.prototype.startsWith must not be a regular expression",
                             ));
                         }
-                        Value::Bool(s.starts_with(&arg_str(0)))
+                        let search = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                        Value::Bool(s.starts_with(&search))
                     }
                     StrOp::EndsWith => {
                         if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
@@ -5138,7 +5141,8 @@ impl Interp {
                                 "First argument to String.prototype.endsWith must not be a regular expression",
                             ));
                         }
-                        Value::Bool(s.ends_with(&arg_str(0)))
+                        let search = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                        Value::Bool(s.ends_with(&search))
                     }
                     StrOp::Replace => {
                         let pat = args.first().cloned().unwrap_or(Value::Undefined);
@@ -5151,10 +5155,14 @@ impl Interp {
                         Value::Str(self.str_replace(&s, &pat, &repl, true)?)
                     }
                     StrOp::Search => {
-                        let (src, flags) = args
-                            .first()
-                            .and_then(regex_src_flags)
-                            .unwrap_or_else(|| (regex_escape(&arg_str(0)), String::new()));
+                        let (src, flags) = match args.first().and_then(regex_src_flags) {
+                            Some(sf) => sf,
+                            None => {
+                                let s0 = self
+                                    .to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                                (regex_escape(&s0), String::new())
+                            }
+                        };
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                             .map_err(|e| format!("정규식: {}", e))?;
                         match re.find(&chars, 0) {
@@ -5168,10 +5176,14 @@ impl Interp {
                         }
                     }
                     StrOp::Match => {
-                        let (src, flags) = args
-                            .first()
-                            .and_then(regex_src_flags)
-                            .unwrap_or_else(|| (regex_escape(&arg_str(0)), String::new()));
+                        let (src, flags) = match args.first().and_then(regex_src_flags) {
+                            Some(sf) => sf,
+                            None => {
+                                let s0 = self
+                                    .to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                                (regex_escape(&s0), String::new())
+                            }
+                        };
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                             .map_err(|e| format!("정규식: {}", e))?;
                         if re.global {
@@ -5198,10 +5210,14 @@ impl Interp {
                         }
                     }
                     StrOp::MatchAll => {
-                        let (src, flags) = args
-                            .first()
-                            .and_then(regex_src_flags)
-                            .unwrap_or_else(|| (regex_escape(&arg_str(0)), String::new()));
+                        let (src, flags) = match args.first().and_then(regex_src_flags) {
+                            Some(sf) => sf,
+                            None => {
+                                let s0 = self
+                                    .to_string_value(args.first().unwrap_or(&Value::Undefined))?;
+                                (regex_escape(&s0), String::new())
+                            }
+                        };
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                             .map_err(|e| format!("정규식: {}", e))?;
                         let mut out = Vec::new();
@@ -5216,44 +5232,51 @@ impl Interp {
                         Value::Arr(ArrayObj::new(out))
                     }
                     StrOp::Slice => {
-                        // UTF-16 코드 유닛 기준 슬라이스(음수 인덱스는 끝에서).
-                        let len = units.len() as isize;
-                        let clampi = |v: f64| -> usize {
-                            let i = v as isize;
-                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        // §22.1.3.20: start/end=ToIntegerOrInfinity(음수는 끝에서, ±∞ 처리).
+                        let len = units.len() as f64;
+                        let start_f = match args.first() {
+                            Some(v) if !matches!(v, Value::Undefined) => {
+                                self.to_integer_or_infinity(v)?
+                            }
+                            _ => 0.0,
                         };
-                        let start = clampi(args.first().map(to_num).unwrap_or(0.0));
-                        let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
+                        let end_f = match args.get(1) {
+                            Some(v) if !matches!(v, Value::Undefined) => {
+                                self.to_integer_or_infinity(v)?
+                            }
+                            _ => len,
+                        };
+                        let rel = |v: f64| {
+                            (if v < 0.0 { (len + v).max(0.0) } else { v.min(len) }) as usize
+                        };
+                        let start = rel(start_f);
+                        let end = rel(end_f);
                         Value::Str(String::from_utf16_lossy(&units[start..end.max(start)]))
                     }
-                    // substring (§22.1.3.24): 음수/NaN 은 0 으로, start>end 면 교환.
+                    // substring (§22.1.3.24): ToIntegerOrInfinity → [0,len] 클램프, start>end 면 교환.
                     StrOp::Substring => {
-                        let len = units.len() as isize;
-                        let toint = |v: f64| -> isize {
-                            if v.is_nan() {
-                                0
-                            } else {
-                                (v.trunc() as isize).clamp(0, len)
-                            }
-                        };
-                        let s = toint(args.first().map(to_num).unwrap_or(0.0));
-                        let e = match args.get(1) {
+                        let len = units.len() as f64;
+                        let start_v = self
+                            .to_integer_or_infinity(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                        let end_v = match args.get(1) {
                             None | Some(Value::Undefined) => len,
-                            Some(v) => toint(to_num(v)),
+                            Some(v) => self.to_integer_or_infinity(v)?,
                         };
+                        let clamp = |v: f64| v.max(0.0).min(len) as usize;
+                        let s = clamp(start_v);
+                        let e = clamp(end_v);
                         let (from, to) = if s <= e { (s, e) } else { (e, s) };
-                        Value::Str(String::from_utf16_lossy(&units[from as usize..to as usize]))
+                        Value::Str(String::from_utf16_lossy(&units[from..to]))
                     }
                     // substr (Annex B §B.2.3.1): substr(start, length). 음수 start 는 len+start.
                     StrOp::Substr => {
                         let size = units.len() as isize;
-                        let mut start = {
-                            let v = args.first().map(to_num).unwrap_or(0.0);
-                            if v.is_nan() {
-                                0
-                            } else {
-                                v.trunc() as isize
-                            }
+                        let start_v = self
+                            .to_integer_or_infinity(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                        let mut start = if start_v.is_infinite() {
+                            if start_v < 0.0 { 0 } else { size }
+                        } else {
+                            start_v as isize
                         };
                         if start < 0 {
                             start = (size + start).max(0);
@@ -5261,11 +5284,11 @@ impl Interp {
                         let length = match args.get(1) {
                             None | Some(Value::Undefined) => size,
                             Some(v) => {
-                                let x = to_num(v);
-                                if x.is_nan() {
-                                    0
+                                let x = self.to_integer_or_infinity(v)?;
+                                if x.is_infinite() {
+                                    if x < 0.0 { 0 } else { size }
                                 } else {
-                                    x.trunc() as isize
+                                    x as isize
                                 }
                             }
                         };
@@ -5299,8 +5322,15 @@ impl Interp {
                             parts.push(Value::Str(chars[last..].iter().collect()));
                             Value::Arr(ArrayObj::new(parts))
                         } else {
-                            let sep = arg_str(0);
-                            let mut parts: Vec<Value> = if args.is_empty() {
+                            // separator 가 undefined/없음이면 [전체 문자열], 그 밖엔 ToString.
+                            let sep_undef =
+                                args.is_empty() || matches!(args.first(), Some(Value::Undefined));
+                            let sep = if sep_undef {
+                                String::new()
+                            } else {
+                                self.to_string_value(args.first().unwrap())?
+                            };
+                            let mut parts: Vec<Value> = if sep_undef {
                                 vec![Value::Str(s.clone())]
                             } else if sep.is_empty() {
                                 chars.iter().map(|c| Value::Str(c.to_string())).collect()
@@ -5317,12 +5347,22 @@ impl Interp {
                     StrOp::TrimStart => Value::Str(s.trim_start().to_string()),
                     StrOp::TrimEnd => Value::Str(s.trim_end().to_string()),
                     StrOp::Repeat => {
-                        let n = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
-                        Value::Str(s.repeat(n))
+                        // §22.1.3.18: count=ToIntegerOrInfinity, 음수/∞ 는 RangeError.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let n = self.to_integer_or_infinity(&arg)?;
+                        if n < 0.0 || n.is_infinite() {
+                            return Err(self.throw_error("RangeError", "Invalid count value"));
+                        }
+                        Value::Str(s.repeat(n as usize))
                     }
                     StrOp::PadStart | StrOp::PadEnd => {
-                        let target = args.first().map(to_num).unwrap_or(0.0) as usize;
-                        let pad = if args.len() > 1 { arg_str(1) } else { " ".to_string() };
+                        // targetLength=ToLength, fillString=ToString(undefined→" ").
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let target = to_length(self.to_integer_or_infinity(&arg)?) as usize;
+                        let pad = match args.get(1) {
+                            Some(v) if !matches!(v, Value::Undefined) => self.to_string_value(v)?,
+                            _ => " ".to_string(),
+                        };
                         let cur = chars.len();
                         if cur >= target || pad.is_empty() {
                             Value::Str(s.clone())
@@ -5339,9 +5379,10 @@ impl Interp {
                         }
                     }
                     StrOp::CharCodeAt => {
-                        // i번째 UTF-16 코드 유닛(u16). 범위 밖 NaN.
-                        let i = args.first().map(to_num).unwrap_or(0.0);
-                        if i < 0.0 {
+                        // i번째 UTF-16 코드 유닛(u16). pos=ToIntegerOrInfinity, 범위 밖 NaN.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let i = self.to_integer_or_infinity(&arg)?;
+                        if i < 0.0 || !i.is_finite() {
                             Value::Num(f64::NAN)
                         } else {
                             match units.get(i as usize) {
@@ -5351,9 +5392,10 @@ impl Interp {
                         }
                     }
                     StrOp::CodePointAt => {
-                        // i번째 UTF-16 위치에서 시작하는 코드 포인트(서로게이트쌍 결합). 범위 밖 undefined.
-                        let i = args.first().map(to_num).unwrap_or(0.0);
-                        if i < 0.0 {
+                        // i번째 UTF-16 위치의 코드 포인트(서로게이트쌍 결합). 범위 밖 undefined.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let i = self.to_integer_or_infinity(&arg)?;
+                        if i < 0.0 || !i.is_finite() {
                             Value::Undefined
                         } else {
                             let idx = i as usize;
@@ -5375,15 +5417,17 @@ impl Interp {
                         }
                     }
                     StrOp::Concat => {
+                        // §22.1.3.5: 각 인자를 ToString.
                         let mut out = s.clone();
-                        for a in &args {
-                            out.push_str(&to_display(a));
+                        for i in 0..args.len() {
+                            let piece = self.to_string_value(&args[i])?;
+                            out.push_str(&piece);
                         }
                         Value::Str(out)
                     }
                     StrOp::LocaleCompare => {
                         // 로케일 콜레이션 근사(코드포인트 순서). -1/0/1.
-                        let other = arg_str(0);
+                        let other = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
                         Value::Num(match s.as_str().cmp(other.as_str()) {
                             std::cmp::Ordering::Less => -1.0,
                             std::cmp::Ordering::Equal => 0.0,
@@ -5391,12 +5435,14 @@ impl Interp {
                         })
                     }
                     StrOp::At => {
-                        // str.at(i): UTF-16 유닛, 음수는 끝에서. 범위 밖 undefined.
-                        let len = units.len() as isize;
-                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
-                        let idx = if i < 0 { len + i } else { i };
-                        if idx >= 0 && idx < len {
-                            Value::Str(String::from_utf16_lossy(&units[idx as usize..idx as usize + 1]))
+                        // str.at(i): ToIntegerOrInfinity, 음수는 끝에서. 범위 밖 undefined.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let i = self.to_integer_or_infinity(&arg)?;
+                        let len = units.len() as f64;
+                        let idx = if i < 0.0 { len + i } else { i };
+                        if idx >= 0.0 && idx < len {
+                            let u = idx as usize;
+                            Value::Str(String::from_utf16_lossy(&units[u..u + 1]))
                         } else {
                             Value::Undefined
                         }

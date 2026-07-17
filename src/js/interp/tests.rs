@@ -6607,3 +6607,24 @@ fn array_integer_args_tointeger_coercion() {
                 "expected TypeError from {}", e);
     }
 }
+
+#[test]
+fn string_method_arg_coercion() {
+    // §22.1.3: 검색 문자열은 ToString(toString 호출), 정수 인자는 ToIntegerOrInfinity.
+    assert_eq!(run_num("'abc'.indexOf({toString:function(){return 'b';}})"), 1.0);
+    assert!(run_bool("'abc'.includes({toString:function(){return 'b';}})"));
+    assert!(run_bool("'abc'.startsWith({toString:function(){return 'a';}})"));
+    assert_eq!(run_str("'aXbXc'.split({toString:function(){return 'X';}}).join()"), "a,b,c");
+    assert_eq!(run_str("'a'.concat({toString:function(){return 'b';}}, 1, true)"), "ab1true");
+    assert_eq!(run_str("'x'.padStart(3, {toString:function(){return '-';}})"), "--x");
+    // 정수 인자 valueOf
+    assert_eq!(run_str("'abc'.charAt({valueOf:function(){return 1;}})"), "b");
+    assert_eq!(run_str("'abcd'.slice({valueOf:function(){return 1;}})"), "bcd");
+    assert_eq!(run_num("'abcabc'.indexOf('a', {valueOf:function(){return 1;}})"), 3.0);
+    assert_eq!(run_str("'ab'.repeat({valueOf:function(){return 2;}})"), "abab");
+    assert_eq!(run_str("'abc'.at({valueOf:function(){return 1;}})"), "b");
+    // Symbol → TypeError, repeat(-1) → RangeError, split(undefined) → [whole]
+    assert!(run_bool("var t=false; try{ 'abc'.indexOf(Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ 'ab'.repeat(-1); }catch(e){ t=e instanceof RangeError; } t"));
+    assert_eq!(run_str("'abc'.split(undefined).join('|')"), "abc");
+}
