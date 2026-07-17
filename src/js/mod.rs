@@ -2967,6 +2967,31 @@ WebAssembly.instantiateStreaming = function(src, imports) {
     .then(function(buf){ return WebAssembly.instantiate(buf, imports); });
 };
 window.WebAssembly = WebAssembly;
+
+// §17: 내장 프로토타입의 메서드/접근자는 전부 비열거다. 프렐류드가 폴리필을
+// `X.prototype.m = fn` 로 얹으면 열거 가능해져 Object.keys/for-in/propertyIsEnumerable
+// 이 어긋났다(Array 의 lastIndexOf/toSorted/…, RegExp 의 source/flags/… 등). 프렐류드
+// 끝에서 내장 프로토타입의 열거 가능 own 프로퍼티(constructor 제외)를 비열거로 정규화.
+(function(){
+  var ctors = [Object, Function, Array, String, Number, Boolean, Symbol, BigInt,
+               RegExp, Date, Error, Map, Set, WeakMap, WeakSet, Promise, ArrayBuffer,
+               DataView, Int8Array];
+  for (var i = 0; i < ctors.length; i++) {
+    var C = ctors[i];
+    if (!C || typeof C !== 'function' || !C.prototype) continue;
+    var proto = C.prototype;
+    var names = Object.getOwnPropertyNames(proto);
+    for (var j = 0; j < names.length; j++) {
+      var k = names[j];
+      if (k === 'constructor') continue;
+      var d = Object.getOwnPropertyDescriptor(proto, k);
+      if (d && d.enumerable) {
+        d.enumerable = false;
+        try { Object.defineProperty(proto, k, d); } catch (e) {}
+      }
+    }
+  }
+})();
 "#;
 
 
