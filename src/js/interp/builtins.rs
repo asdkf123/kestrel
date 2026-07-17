@@ -3719,9 +3719,25 @@ impl Interp {
                         )),
                         _ => f64::NAN,
                     };
-                    if let Some(Value::Obj(m)) = &recv {
-                        m.borrow_mut()
-                            .insert("\u{0}time".to_string(), Value::Num(new_millis));
+                    // t(강제 전에 읽은 thisTimeValue)가 NaN 인 성분 세터는 NaN 을 반환하되
+                    // [[DateValue]] 를 쓰지 않는다 — 인자 valueOf 안에서 setTime 등으로 바뀐
+                    // 값이 그대로 남아야 한다(date-value-read-before-tonumber 테스트).
+                    // SetTime/SetFullYear/SetYear 는 t 와 무관하게 항상 쓴다.
+                    let skip_write = t_nan
+                        && matches!(
+                            cfield,
+                            SetMonth
+                                | SetDate
+                                | SetHours
+                                | SetMinutes
+                                | SetSeconds
+                                | SetMs
+                        );
+                    if !skip_write {
+                        if let Some(Value::Obj(m)) = &recv {
+                            m.borrow_mut()
+                                .insert("\u{0}time".to_string(), Value::Num(new_millis));
+                        }
                     }
                     return Ok(Value::Num(new_millis));
                 }
