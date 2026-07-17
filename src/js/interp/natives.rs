@@ -559,6 +559,7 @@ pub enum SetOp {
     Clear,
     ForEach,
     Values,
+    Entries,
     // ES2024 집합 연산 (§24.2.4). set-like 인자를 받아 새 Set 또는 불리언을 돌려준다.
     Union,
     Intersection,
@@ -782,6 +783,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
                 SetOp::Clear => "clear",
                 SetOp::ForEach => "forEach",
                 SetOp::Values => "values",
+                SetOp::Entries => "entries",
                 SetOp::Union => "union",
                 SetOp::Intersection => "intersection",
                 SetOp::Difference => "difference",
@@ -790,7 +792,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
                 SetOp::IsSupersetOf => "isSupersetOf",
                 SetOp::IsDisjointFrom => "isDisjointFrom",
             };
-            let len = if matches!(op, SetOp::Clear | SetOp::Values) { 0 } else { 1 };
+            let len = if matches!(op, SetOp::Clear | SetOp::Values | SetOp::Entries) { 0 } else { 1 };
             return Some((name, len));
         }
         Map(op) => {

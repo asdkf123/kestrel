@@ -6348,3 +6348,14 @@ fn native_builtins_are_extensible() {
     assert!(run_bool("Object.isFrozen(Object.freeze({a:1})) && Object.isSealed(Object.seal({b:2}))"));
     assert!(run_bool("!Object.isExtensible(Object.preventExtensions({}))"));
 }
+
+#[test]
+fn set_prototype_entries() {
+    // §24.2.3.5: Set.prototype.entries → [value, value] 쌍 이터레이터.
+    assert_eq!(run_str("typeof Set.prototype.entries"), "function");
+    assert_eq!(run_str("Set.prototype.entries.name"), "entries");
+    assert_eq!(run_num("Set.prototype.entries.length"), 0.0);
+    assert_eq!(run_str("JSON.stringify([...new Set(['a','b']).entries()])"), "[[\"a\",\"a\"],[\"b\",\"b\"]]");
+    assert!(run_bool("new Set().entries().next().done"));
+    assert!(run_bool("Set.prototype.hasOwnProperty('entries')"));
+}

@@ -1184,6 +1184,7 @@ impl Interp {
             ("forEach", Native::Set(SetOp::ForEach)),
             ("keys", Native::Set(SetOp::Values)),
             ("values", Native::Set(SetOp::Values)),
+            ("entries", Native::Set(SetOp::Entries)),
             ("\u{0}@@iterator", Native::Set(SetOp::Values)),
             // ES2024 집합 연산 (§24.2.4)
             ("union", Native::Set(SetOp::Union)),
@@ -2481,6 +2482,15 @@ impl Interp {
             // values/keys 는 이터레이터다 (배열이 아니다 — 표준).
             SetOp::Values => {
                 let items = s.borrow().clone();
+                self.make_iter_from_vec(items)
+            }
+            // §24.2.3.5 entries: [value, value] 쌍 이터레이터 (Set 은 키=값).
+            SetOp::Entries => {
+                let items: Vec<Value> = s
+                    .borrow()
+                    .iter()
+                    .map(|v| Value::Arr(ArrayObj::new(vec![v.clone(), v.clone()])))
+                    .collect();
                 self.make_iter_from_vec(items)
             }
             _ => unreachable!("ES2024 집합 연산은 위에서 early-return"),
