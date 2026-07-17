@@ -5985,3 +5985,25 @@ fn class_method_tostring_source() {
     // 클래스 자체
     assert_eq!(run_str("class C extends Object { m(){} } C.toString()"), "class C extends Object { m(){} }");
 }
+
+#[test]
+fn class_accessor_get_set_merge() {
+    // 같은 이름의 get/set 은 하나의 접근자 프로퍼티로 병합 (§15.4).
+    assert!(run_bool(
+        "class C{ get x(){return this._x;} set x(v){this._x=v;} } \
+         var d=Object.getOwnPropertyDescriptor(C.prototype,'x'); \
+         typeof d.get==='function' && typeof d.set==='function'"
+    ));
+    // 대입/조회 왕복
+    assert_eq!(run_num("class C{ get x(){return this._x;} set x(v){this._x=v*2;} } var o=new C(); o.x=5; o.x"), 10.0);
+    // setter-only 도 서술자에 노출
+    assert!(run_bool(
+        "class D{ set y(v){this._y=v;} } var d=Object.getOwnPropertyDescriptor(D.prototype,'y'); \
+         d!==undefined && d.get===undefined && typeof d.set==='function'"
+    ));
+    // getter-only
+    assert!(run_bool(
+        "class E{ get z(){return 7;} } var d=Object.getOwnPropertyDescriptor(E.prototype,'z'); \
+         typeof d.get==='function' && d.set===undefined && new E().z===7"
+    ));
+}

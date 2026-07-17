@@ -5433,12 +5433,23 @@ impl Interp {
                             m.insert(k.clone(), Value::Fn(f.clone()));
                             m.insert(nonenum_marker(k), Value::Bool(true));
                         }
-                        for (k, g) in &cls.getters {
+                        // getter/setter 를 같은 이름이면 하나의 Accessor(get+set)로 병합한다
+                        // (§15.4). 예전엔 setter 를 통째로 빠뜨려 gOPD 가 set=undefined 였고
+                        // setter-only 프로퍼티는 서술자 자체가 없었다(대입은 별도 경로라 됐음).
+                        let mut names: Vec<String> = Vec::new();
+                        for k in cls.getters.keys().chain(cls.setters.keys()) {
+                            if !names.contains(k) {
+                                names.push(k.clone());
+                            }
+                        }
+                        for name in names {
+                            let get = cls.getters.get(&name).map(|g| Value::Fn(g.clone()));
+                            let set = cls.setters.get(&name).map(|s| Value::Fn(s.clone()));
                             m.insert(
-                                k.clone(),
-                                Value::Accessor(AccessorPair::getter(Value::Fn(g.clone()))),
+                                name.clone(),
+                                Value::Accessor(Rc::new(AccessorPair { get, set })),
                             );
-                            m.insert(nonenum_marker(k), Value::Bool(true));
+                            m.insert(nonenum_marker(&name), Value::Bool(true));
                         }
                     }
                     collect(c, &mut m);
