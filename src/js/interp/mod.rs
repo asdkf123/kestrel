@@ -660,6 +660,8 @@ impl Interp {
         // Math[Symbol.toStringTag] === "Math" (§21.3.1.9) — Object.prototype.toString.call(Math)
         // 이 "[object Math]" 가 되게 한다. mark_nonenum_all 전에 넣어 비열거로.
         math.insert("\u{0}@@toStringTag".to_string(), Value::Str("Math".to_string()));
+        // §21.3.1.9: { writable:false, enumerable:false, configurable:true }.
+        set_prop_attrs(&mut math, "\u{0}@@toStringTag", ATTR_CONFIGURABLE);
         mark_nonenum_all(&mut math); // 내장 프로퍼티는 비열거 (§17)
         env_declare(&global, "Math", Value::Obj(Rc::new(RefCell::new(math))));
         // JSON
@@ -668,6 +670,8 @@ impl Interp {
         json.insert("stringify".to_string(), Value::Native(Native::JsonStringify));
         // JSON[Symbol.toStringTag] === "JSON" (§25.5.1) → "[object JSON]".
         json.insert("\u{0}@@toStringTag".to_string(), Value::Str("JSON".to_string()));
+        // §25.5.1: { writable:false, enumerable:false, configurable:true }.
+        set_prop_attrs(&mut json, "\u{0}@@toStringTag", ATTR_CONFIGURABLE);
         mark_nonenum_all(&mut json);
         env_declare(&global, "JSON", Value::Obj(Rc::new(RefCell::new(json))));
         // 전역 함수
@@ -801,6 +805,13 @@ impl Interp {
         array_proto.insert("push".to_string(), Value::Native(Native::ArrayPush));
         // Array.prototype[Symbol.iterator] — core-js uncurryThis 참조
         array_proto.insert("\u{0}@@iterator".to_string(), Value::Native(Native::MakeIter));
+        // Array.prototype[Symbol.iterator]: { writable:true, enumerable:false,
+        // configurable:true } (§23.1.3.x). mark_nonenum_all 은 심볼 키를 건너뛰므로 직접.
+        set_prop_attrs(
+            &mut array_proto,
+            "\u{0}@@iterator",
+            ATTR_WRITABLE | ATTR_CONFIGURABLE,
+        );
         mark_nonenum_all(&mut array_proto); // 내장 메서드는 비열거 (§17)
         array_ns.insert("prototype".to_string(), Value::Obj(Rc::new(RefCell::new(array_proto))));
         mark_nonenum_all(&mut array_ns);
@@ -1174,8 +1185,33 @@ impl Interp {
             ("setSeconds", Native::DateMethod(DateField::SetSeconds)),
             ("setMilliseconds", Native::DateMethod(DateField::SetMs)),
             ("toISOString", Native::DateMethod(DateField::ToIso)),
-            ("toJSON", Native::DateMethod(DateField::ToIso)),
+            ("toJSON", Native::DateMethod(DateField::ToJson)),
             ("toString", Native::DateMethod(DateField::ToStr)),
+            ("toDateString", Native::DateMethod(DateField::ToDateStr)),
+            ("toTimeString", Native::DateMethod(DateField::ToTimeStr)),
+            ("toUTCString", Native::DateMethod(DateField::ToUtcStr)),
+            ("toGMTString", Native::DateMethod(DateField::ToUtcStr)),
+            ("toLocaleString", Native::DateMethod(DateField::ToLocaleStr)),
+            ("toLocaleDateString", Native::DateMethod(DateField::ToLocaleDateStr)),
+            ("toLocaleTimeString", Native::DateMethod(DateField::ToLocaleTimeStr)),
+            ("getUTCFullYear", Native::DateMethod(DateField::UtcFullYear)),
+            ("getUTCMonth", Native::DateMethod(DateField::UtcMonth)),
+            ("getUTCDate", Native::DateMethod(DateField::UtcDate)),
+            ("getUTCDay", Native::DateMethod(DateField::UtcDay)),
+            ("getUTCHours", Native::DateMethod(DateField::UtcHours)),
+            ("getUTCMinutes", Native::DateMethod(DateField::UtcMinutes)),
+            ("getUTCSeconds", Native::DateMethod(DateField::UtcSeconds)),
+            ("getUTCMilliseconds", Native::DateMethod(DateField::UtcMs)),
+            ("setUTCFullYear", Native::DateMethod(DateField::SetUtcFullYear)),
+            ("setUTCMonth", Native::DateMethod(DateField::SetUtcMonth)),
+            ("setUTCDate", Native::DateMethod(DateField::SetUtcDate)),
+            ("setUTCHours", Native::DateMethod(DateField::SetUtcHours)),
+            ("setUTCMinutes", Native::DateMethod(DateField::SetUtcMinutes)),
+            ("setUTCSeconds", Native::DateMethod(DateField::SetUtcSeconds)),
+            ("setUTCMilliseconds", Native::DateMethod(DateField::SetUtcMs)),
+            ("getYear", Native::DateMethod(DateField::GetYear)),
+            ("setYear", Native::DateMethod(DateField::SetYear)),
+            ("\u{0}@@toPrimitive", Native::DateMethod(DateField::ToPrimitive)),
         ]);
         let symbol_proto = mk_proto(vec![
             ("toString", Native::ValueToStr),
@@ -1197,6 +1233,11 @@ impl Interp {
         link_ctor(&map_proto, Native::MapCtor);
         link_ctor(&set_proto, Native::SetCtor);
         link_ctor(&date_proto, Native::DateCtor);
+        // Date.prototype[Symbol.toPrimitive] 는 { writable:false, enumerable:false,
+        // configurable:true } (§21.4.4.45). mk_proto 기본(writable:true)과 달라 보정.
+        if let Value::Obj(m) = &date_proto {
+            set_prop_attrs(&mut m.borrow_mut(), "\u{0}@@toPrimitive", ATTR_CONFIGURABLE);
+        }
         // Map/Set.prototype.size 는 프로토타입 accessor(getter) 다 — 인스턴스 own 아님.
         // getOwnPropertyDescriptor(Set.prototype,'size').get 검사가 이걸 본다. 비열거.
         let add_getter = |proto: &Value, name: &str, g: Native| {
@@ -1938,6 +1979,7 @@ impl Interp {
         it.insert("next".to_string(), Value::Native(Native::IterNext));
         // 이터레이터는 스스로 이터러블이다 (표준): it[Symbol.iterator]() === it
         it.insert("\u{0}@@iterator".to_string(), Value::Native(Native::ReturnThis));
+        set_prop_attrs(&mut it, "\u{0}@@iterator", ATTR_WRITABLE | ATTR_CONFIGURABLE);
         // Iterator Helpers (ES2025: map/filter/find/take/drop/toArray…).
         // 프렐류드가 정의한 프로토타입을 달아 준다 — 사이트가 실제로 쓴다
         // (astro.build 가 el.querySelectorAll().values().find(…) 를 쓴다).
@@ -4942,36 +4984,27 @@ impl Interp {
                         "catch" if is_promise(recv) => Ok(Value::Native(Native::PromiseCatch)),
                         "finally" if is_promise(recv) => Ok(Value::Native(Native::PromiseFinally)),
                         _ if is_date_obj(map) => {
-                            let field = match key {
-                                "getTime" | "valueOf" => Some(DateField::Time),
-                                "getFullYear" | "getUTCFullYear" => Some(DateField::FullYear),
-                                "getMonth" | "getUTCMonth" => Some(DateField::Month),
-                                "getDate" | "getUTCDate" => Some(DateField::Date),
-                                "getDay" | "getUTCDay" => Some(DateField::Day),
-                                "getHours" | "getUTCHours" => Some(DateField::Hours),
-                                "getMinutes" | "getUTCMinutes" => Some(DateField::Minutes),
-                                "getSeconds" | "getUTCSeconds" => Some(DateField::Seconds),
-                                "getMilliseconds" => Some(DateField::Ms),
-                                "getTimezoneOffset" => Some(DateField::TimezoneOffset),
-                                "toISOString" | "toJSON" => Some(DateField::ToIso),
-                                "toString" | "toUTCString" | "toGMTString" => Some(DateField::ToStr),
-                                "toDateString" | "toLocaleDateString" | "toLocaleString"
-                                | "toLocaleTimeString" => Some(DateField::ToDateStr),
-                                // Date 는 가변 객체다 (표준). setter 가 없으면
-                                // date.setTime(...) 같은 흔한 코드가 "함수 아님" 으로 죽는다.
-                                "setTime" => Some(DateField::SetTime),
-                                "setFullYear" | "setUTCFullYear" => Some(DateField::SetFullYear),
-                                "setMonth" | "setUTCMonth" => Some(DateField::SetMonth),
-                                "setDate" | "setUTCDate" => Some(DateField::SetDate),
-                                "setHours" | "setUTCHours" => Some(DateField::SetHours),
-                                "setMinutes" | "setUTCMinutes" => Some(DateField::SetMinutes),
-                                "setSeconds" | "setUTCSeconds" => Some(DateField::SetSeconds),
-                                "setMilliseconds" | "setUTCMilliseconds" => Some(DateField::SetMs),
-                                _ => None,
-                            };
-                            Ok(field
-                                .map(|f| Value::Native(Native::DateMethod(f)))
-                                .unwrap_or(Value::Undefined))
+                            // Date 인스턴스 메서드는 Date.prototype 상속분이다. 하드코딩
+                            // 맵 대신 실제 프로토타입(date_proto)에서 찾아 단일 진실 공급원을
+                            // 유지한다 — 이래야 getUTC*/setUTC*/toUTCString/Symbol.toPrimitive
+                            // 등이 정확한 name/동작으로 나오고 프로토타입과 어긋나지 않는다.
+                            // (Symbol.toPrimitive 는 "\0@@toPrimitive" 키로 온다.)
+                            if let Value::Obj(pm) = &self.date_proto {
+                                let v = pm.borrow().get(key).cloned();
+                                if let Some(v) = v {
+                                    return match v {
+                                        Value::Accessor(acc) => match &acc.get {
+                                            Some(g) => {
+                                                self.call_value(g.clone(), Some(recv.clone()), vec![])
+                                            }
+                                            None => Ok(Value::Undefined),
+                                        },
+                                        other => Ok(other),
+                                    };
+                                }
+                            }
+                            // Date.prototype 에 없으면 Object.prototype 폴백 (hasOwnProperty 등).
+                            Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined))
                         }
                         // Object.prototype 폴백 — 인스턴스 객체도 valueOf/toString/hasOwnProperty 등
                         _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),

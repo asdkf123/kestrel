@@ -484,6 +484,36 @@ pub enum DateField {
     ToIso,
     ToStr,
     ToDateStr,
+    // UTC 계열 (§21.4.4). 이 엔진은 로컬 == UTC(오프셋 0)라 계산은 로컬과
+    // 동일하지만, .name 프로퍼티가 "getUTCHours" 등으로 정확히 나와야 해서
+    // 별도 변형으로 둔다(핸들러에서 로컬 변형으로 정규화).
+    UtcFullYear,
+    UtcMonth,
+    UtcDate,
+    UtcDay,
+    UtcHours,
+    UtcMinutes,
+    UtcSeconds,
+    UtcMs,
+    SetUtcFullYear,
+    SetUtcMonth,
+    SetUtcDate,
+    SetUtcHours,
+    SetUtcMinutes,
+    SetUtcSeconds,
+    SetUtcMs,
+    ToTimeStr,
+    ToUtcStr,
+    ToLocaleStr,
+    ToLocaleDateStr,
+    ToLocaleTimeStr,
+    // Annex B (§B.2.4)
+    GetYear,
+    SetYear,
+    // toJSON (§21.4.4.37) — toISOString 과 달리 유효하지 않으면 null, 제네릭.
+    ToJson,
+    // Date.prototype[Symbol.toPrimitive] (§21.4.4.45)
+    ToPrimitive,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -780,6 +810,30 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
                 DateField::ToIso => ("toISOString", 0),
                 DateField::ToStr => ("toString", 0),
                 DateField::ToDateStr => ("toDateString", 0),
+                DateField::UtcFullYear => ("getUTCFullYear", 0),
+                DateField::UtcMonth => ("getUTCMonth", 0),
+                DateField::UtcDate => ("getUTCDate", 0),
+                DateField::UtcDay => ("getUTCDay", 0),
+                DateField::UtcHours => ("getUTCHours", 0),
+                DateField::UtcMinutes => ("getUTCMinutes", 0),
+                DateField::UtcSeconds => ("getUTCSeconds", 0),
+                DateField::UtcMs => ("getUTCMilliseconds", 0),
+                DateField::SetUtcFullYear => ("setUTCFullYear", 3),
+                DateField::SetUtcMonth => ("setUTCMonth", 2),
+                DateField::SetUtcDate => ("setUTCDate", 1),
+                DateField::SetUtcHours => ("setUTCHours", 4),
+                DateField::SetUtcMinutes => ("setUTCMinutes", 3),
+                DateField::SetUtcSeconds => ("setUTCSeconds", 2),
+                DateField::SetUtcMs => ("setUTCMilliseconds", 1),
+                DateField::ToTimeStr => ("toTimeString", 0),
+                DateField::ToUtcStr => ("toUTCString", 0),
+                DateField::ToLocaleStr => ("toLocaleString", 0),
+                DateField::ToLocaleDateStr => ("toLocaleDateString", 0),
+                DateField::ToLocaleTimeStr => ("toLocaleTimeString", 0),
+                DateField::GetYear => ("getYear", 0),
+                DateField::SetYear => ("setYear", 1),
+                DateField::ToJson => ("toJSON", 1),
+                DateField::ToPrimitive => ("[Symbol.toPrimitive]", 1),
             };
             return Some((name, len));
         }

@@ -492,6 +492,14 @@ pub(super) fn is_internal_key(k: &str) -> bool {
     k.starts_with('\u{0}') || k == "__proto__"
 }
 
+// 심볼 키(well-known/등록 심볼 프로퍼티)는 "\0@@…" 로 산다. 내부 마커(\0time 등)와
+// 달리 실제 own 프로퍼티다 — getOwnPropertySymbols / hasOwnProperty(sym) /
+// getOwnPropertyDescriptor(obj, sym) / obj[sym] 에 노출돼야 한다. 단 문자열 키
+// 열거(Object.keys/for-in/JSON/스프레드)에는 여전히 안 잡힌다(심볼이라서).
+pub(super) fn is_symbol_key(k: &str) -> bool {
+    k.starts_with("\u{0}@@")
+}
+
 // 비열거(enumerable: false) 프로퍼티 표식. 내부 키라서 스스로는 열거되지 않는다.
 // 예전엔 defineProperty 의 enumerable 을 통째로 무시해서, 숨겨야 할 프로퍼티가
 // Object.keys / for-in / JSON 에 그대로 새어 나왔다 (조용히 틀린 출력).
@@ -573,12 +581,46 @@ fn two(n: u32) -> String {
     format!("{:02}", n)
 }
 
-// Date → ISO 8601 문자열
+const DATE_DOW: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DATE_MON: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// toString 계열 연도 표기: 0..9999 는 4자리, 그 외는 부호 포함 그대로.
+fn fmt_year(y: i64) -> String {
+    if (0..=9999).contains(&y) {
+        format!("{:04}", y)
+    } else {
+        format!("{}", y)
+    }
+}
+
+// TimeClip (§21.4.1.31): ±8.64e15 초과/비유한 → NaN, 아니면 정수로 절단(-0 → +0).
+pub(super) fn time_clip(t: f64) -> f64 {
+    if !t.is_finite() || t.abs() > 8.64e15 {
+        return f64::NAN;
+    }
+    let r = t.trunc();
+    if r == 0.0 {
+        0.0
+    } else {
+        r
+    }
+}
+
+// Date → ISO 8601 문자열 (§21.4.4.36). 확장 연도(±YYYYYY) 표기 포함.
 pub(super) fn date_iso(millis: f64) -> String {
     let (y, mo, d, h, mi, s, ms, _) = date_parts(millis);
+    let year = if (0..=9999).contains(&y) {
+        format!("{:04}", y)
+    } else if y < 0 {
+        format!("-{:06}", -y)
+    } else {
+        format!("+{:06}", y)
+    };
     format!(
-        "{:04}-{}-{}T{}:{}:{}.{:03}Z",
-        y,
+        "{}-{}-{}T{}:{}:{}.{:03}Z",
+        year,
         two(mo),
         two(d),
         two(h),
@@ -588,19 +630,59 @@ pub(super) fn date_iso(millis: f64) -> String {
     )
 }
 
-// Date → 사람이 읽는 문자열 (간이 UTC)
-pub(super) fn date_string(millis: f64) -> String {
-    const DOW: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const MON: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
+// Date.prototype.toString (§21.4.4.41): "Thu Jan 01 1970 00:00:00 GMT+0000 (...)"
+pub(super) fn date_tostring(millis: f64) -> String {
+    if millis.is_nan() {
+        return "Invalid Date".to_string();
+    }
+    format!("{} {}", date_datestring(millis), date_timestring_body(millis))
+}
+
+// Date.prototype.toDateString (§21.4.4.35): "Thu Jan 01 1970"
+pub(super) fn date_datestring(millis: f64) -> String {
+    if millis.is_nan() {
+        return "Invalid Date".to_string();
+    }
+    let (y, mo, d, _, _, _, _, wd) = date_parts(millis);
+    format!(
+        "{} {} {:02} {}",
+        DATE_DOW[wd as usize % 7],
+        DATE_MON[(mo as usize - 1) % 12],
+        d,
+        fmt_year(y)
+    )
+}
+
+// Date.prototype.toTimeString (§21.4.4.42): "00:00:00 GMT+0000 (...)"
+pub(super) fn date_timestring(millis: f64) -> String {
+    if millis.is_nan() {
+        return "Invalid Date".to_string();
+    }
+    date_timestring_body(millis)
+}
+
+fn date_timestring_body(millis: f64) -> String {
+    let (_, _, _, h, mi, s, _, _) = date_parts(millis);
+    format!(
+        "{}:{}:{} GMT+0000 (Coordinated Universal Time)",
+        two(h),
+        two(mi),
+        two(s)
+    )
+}
+
+// Date.prototype.toUTCString (§21.4.4.43): "Thu, 01 Jan 1970 00:00:00 GMT"
+pub(super) fn date_utcstring(millis: f64) -> String {
+    if millis.is_nan() {
+        return "Invalid Date".to_string();
+    }
     let (y, mo, d, h, mi, s, _, wd) = date_parts(millis);
     format!(
-        "{} {} {:02} {} {}:{}:{} GMT+0000",
-        DOW[wd as usize % 7],
-        MON[(mo as usize - 1) % 12],
+        "{}, {:02} {} {} {}:{}:{} GMT",
+        DATE_DOW[wd as usize % 7],
         d,
-        y,
+        DATE_MON[(mo as usize - 1) % 12],
+        fmt_year(y),
         two(h),
         two(mi),
         two(s)

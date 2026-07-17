@@ -1332,7 +1332,8 @@ impl Interp {
                         // 거짓말했다.
                         let b = m.borrow();
                         match b.get(&key) {
-                            Some(_) if is_internal_key(&key) => false,
+                            // 내부 마커는 숨기지만 심볼 키("\0@@…")는 실제 프로퍼티다.
+                            Some(_) if is_internal_key(&key) && !is_symbol_key(&key) => false,
                             Some(Value::Accessor(acc)) => {
                                 let attrs = prop_attrs(&b, &key);
                                 d.insert("get".to_string(), acc.get.clone().unwrap_or(Value::Undefined));
@@ -1927,9 +1928,11 @@ impl Interp {
                     None => String::new(),
                 };
                 let has = match &recv {
-                    // __proto__ 는 own 프로퍼티 아님(상속 accessor)
+                    // __proto__ 는 own 프로퍼티 아님(상속 accessor). 심볼 키("\0@@…")는
+                    // 내부 마커와 달리 실제 own 프로퍼티다 — 예외로 허용.
                     Some(Value::Obj(m)) => {
-                        (!is_internal_key(&key) && m.borrow().contains_key(&key))
+                        ((!is_internal_key(&key) || is_symbol_key(&key))
+                            && m.borrow().contains_key(&key))
                             || self.global_has(m, &key)
                     }
                     // 인스턴스는 own 필드만 own 프로퍼티(메서드는 프로토타입 격)
@@ -3500,40 +3503,167 @@ impl Interp {
             Native::DateCtor => Ok(self.make_date_from_args(&args)),
             // date.getFullYear() 등 — recv 가 Date 객체
             Native::DateMethod(field) => {
+                use DateField::*;
+                // ── Date.prototype[Symbol.toPrimitive](hint) (§21.4.4.45) ──
+                // 제네릭(임의 객체)이며 OrdinaryToPrimitive 를 쓴다.
+                if matches!(field, ToPrimitive) {
+                    let recvv = recv.clone().unwrap_or(Value::Undefined);
+                    if !matches!(recvv, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Date.prototype[Symbol.toPrimitive] called on non-object",
+                        ));
+                    }
+                    let hint = args.first().cloned().unwrap_or(Value::Undefined);
+                    let prefer_string = match &hint {
+                        Value::Str(s) if s == "string" || s == "default" => true,
+                        Value::Str(s) if s == "number" => false,
+                        _ => {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "invalid hint for Date.prototype[Symbol.toPrimitive]",
+                            ))
+                        }
+                    };
+                    // OrdinaryToPrimitive: @@toPrimitive 를 다시 타지 않고 toString/valueOf 직접.
+                    let order: [&str; 2] = if prefer_string {
+                        ["toString", "valueOf"]
+                    } else {
+                        ["valueOf", "toString"]
+                    };
+                    for name in order {
+                        let f = self.member_get(&recvv, name)?;
+                        if is_callable(&f) {
+                            let res = self.call_value(f, Some(recvv.clone()), vec![])?;
+                            if !matches!(res, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                                return Ok(res);
+                            }
+                        }
+                    }
+                    return Err(
+                        self.throw_error("TypeError", "Cannot convert Date to primitive value")
+                    );
+                }
+                // ── toJSON(key) (§21.4.4.37) ──
+                // 제네릭: ToPrimitive(number)가 유한하지 않으면 null, 아니면 this.toISOString() 호출.
+                if matches!(field, ToJson) {
+                    let recvv = recv.clone().unwrap_or(Value::Undefined);
+                    if matches!(recvv, Value::Undefined | Value::Null) {
+                        return Err(
+                            self.throw_error("TypeError", "Date.prototype.toJSON called on null/undefined")
+                        );
+                    }
+                    let tv = self.to_primitive_or_throw(recvv.clone(), false)?;
+                    let n = to_num(&tv);
+                    if !n.is_finite() {
+                        return Ok(Value::Null);
+                    }
+                    let f = self.member_get(&recvv, "toISOString")?;
+                    if !is_callable(&f) {
+                        return Err(self.throw_error("TypeError", "toISOString is not callable"));
+                    }
+                    return self.call_value(f, Some(recvv), vec![]);
+                }
+                // ── 그 외 메서드: this 가 [[DateValue]] 를 가진 Date 여야 한다 (§21.4.4) ──
                 let millis = match &recv {
-                    Some(Value::Obj(m)) => match m.borrow().get("\u{0}time") {
+                    Some(Value::Obj(m)) if is_date_obj(m) => match m.borrow().get("\u{0}time") {
                         Some(Value::Num(n)) => *n,
                         _ => f64::NAN,
                     },
-                    _ => f64::NAN,
+                    _ => {
+                        return Err(
+                            self.throw_error("TypeError", "this is not a Date object")
+                        )
+                    }
                 };
-                let (y, mo, d, h, mi, s, ms, wd) = date_parts(millis);
-                // setter: 현재 값을 구성요소로 풀고 해당 필드만 바꿔 다시 조립한다.
-                // 반환값은 새 타임스탬프 (표준), 객체 자신은 제자리에서 바뀐다.
-                if matches!(
-                    field,
-                    DateField::SetTime
-                        | DateField::SetFullYear
-                        | DateField::SetMonth
-                        | DateField::SetDate
-                        | DateField::SetHours
-                        | DateField::SetMinutes
-                        | DateField::SetSeconds
-                        | DateField::SetMs
-                ) {
-                    let a = |i: usize| args.get(i).map(to_num);
-                    let new_millis = match field {
-                        DateField::SetTime => a(0).unwrap_or(f64::NAN),
-                        DateField::SetFullYear => date_to_millis(
-                            a(0).unwrap_or(y as f64) as i64,
+                // UTC 변형 → 로컬 변형으로 정규화(이 엔진은 오프셋 0).
+                let cfield = match field {
+                    UtcFullYear => FullYear,
+                    UtcMonth => Month,
+                    UtcDate => Date,
+                    UtcDay => Day,
+                    UtcHours => Hours,
+                    UtcMinutes => Minutes,
+                    UtcSeconds => Seconds,
+                    UtcMs => Ms,
+                    SetUtcFullYear => SetFullYear,
+                    SetUtcMonth => SetMonth,
+                    SetUtcDate => SetDate,
+                    SetUtcHours => SetHours,
+                    SetUtcMinutes => SetMinutes,
+                    SetUtcSeconds => SetSeconds,
+                    SetUtcMs => SetMs,
+                    other => other,
+                };
+                // ── setter 계열 ──
+                // 표준상 참조하는 인자를 순서대로 ToNumber(valueOf 관찰) 한 뒤 조립한다.
+                // 첫 인자는 항상, 나머지는 present(위치 전달)일 때만. NaN 처리는 §21.4.4.
+                let param_count = match cfield {
+                    SetTime => 1,
+                    SetFullYear => 3,
+                    SetMonth => 2,
+                    SetDate => 1,
+                    SetHours => 4,
+                    SetMinutes => 3,
+                    SetSeconds => 2,
+                    SetMs => 1,
+                    SetYear => 1,
+                    _ => 0,
+                };
+                if param_count > 0 {
+                    let argc = args.len();
+                    let count = param_count.min(argc.max(1));
+                    let mut nums: Vec<f64> = Vec::with_capacity(count);
+                    for i in 0..count {
+                        let v = args.get(i).cloned().unwrap_or(Value::Undefined);
+                        let p = self.to_primitive_or_throw(v, false)?;
+                        nums.push(to_num(&p));
+                    }
+                    let a = |i: usize| -> Option<f64> {
+                        if i == 0 {
+                            nums.first().copied()
+                        } else if i < argc {
+                            nums.get(i).copied()
+                        } else {
+                            None
+                        }
+                    };
+                    let t_nan = millis.is_nan();
+                    // SetFullYear/SetYear 는 t 가 NaN 이면 시간 성분을 +0 기준으로 잡는다.
+                    let base = if matches!(cfield, SetFullYear | SetYear) && t_nan {
+                        0.0
+                    } else {
+                        millis
+                    };
+                    let (y, mo, d, h, mi, s, ms, _) = date_parts(base);
+                    let new_millis = match cfield {
+                        SetTime => time_clip(a(0).unwrap_or(f64::NAN)),
+                        SetFullYear => time_clip(date_to_millis(
+                            a(0).unwrap_or(f64::NAN) as i64,
                             a(1).map(|v| v as i64 + 1).unwrap_or(mo as i64),
                             a(2).map(|v| v as i64).unwrap_or(d as i64),
                             h as i64,
                             mi as i64,
                             s as i64,
                             ms as i64,
-                        ),
-                        DateField::SetMonth => date_to_millis(
+                        )),
+                        SetYear => {
+                            // Annex B §B.2.4.2: 0..99 → 1900+y. NaN → NaN.
+                            let yv = a(0).unwrap_or(f64::NAN);
+                            if yv.is_nan() {
+                                f64::NAN
+                            } else {
+                                let yi = yv.trunc() as i64;
+                                let full = if (0..=99).contains(&yi) { 1900 + yi } else { yi };
+                                time_clip(date_to_millis(
+                                    full, mo as i64, d as i64, h as i64, mi as i64, s as i64,
+                                    ms as i64,
+                                ))
+                            }
+                        }
+                        // 나머지 setter 는 t 가 NaN 이면(인자 강제 후) NaN 반환.
+                        _ if t_nan => f64::NAN,
+                        SetMonth => time_clip(date_to_millis(
                             y,
                             a(0).unwrap_or((mo - 1) as f64) as i64 + 1,
                             a(1).map(|v| v as i64).unwrap_or(d as i64),
@@ -3541,8 +3671,8 @@ impl Interp {
                             mi as i64,
                             s as i64,
                             ms as i64,
-                        ),
-                        DateField::SetDate => date_to_millis(
+                        )),
+                        SetDate => time_clip(date_to_millis(
                             y,
                             mo as i64,
                             a(0).unwrap_or(d as f64) as i64,
@@ -3550,8 +3680,8 @@ impl Interp {
                             mi as i64,
                             s as i64,
                             ms as i64,
-                        ),
-                        DateField::SetHours => date_to_millis(
+                        )),
+                        SetHours => time_clip(date_to_millis(
                             y,
                             mo as i64,
                             d as i64,
@@ -3559,8 +3689,8 @@ impl Interp {
                             a(1).map(|v| v as i64).unwrap_or(mi as i64),
                             a(2).map(|v| v as i64).unwrap_or(s as i64),
                             a(3).map(|v| v as i64).unwrap_or(ms as i64),
-                        ),
-                        DateField::SetMinutes => date_to_millis(
+                        )),
+                        SetMinutes => time_clip(date_to_millis(
                             y,
                             mo as i64,
                             d as i64,
@@ -3568,8 +3698,8 @@ impl Interp {
                             a(0).unwrap_or(mi as f64) as i64,
                             a(1).map(|v| v as i64).unwrap_or(s as i64),
                             a(2).map(|v| v as i64).unwrap_or(ms as i64),
-                        ),
-                        DateField::SetSeconds => date_to_millis(
+                        )),
+                        SetSeconds => time_clip(date_to_millis(
                             y,
                             mo as i64,
                             d as i64,
@@ -3577,8 +3707,8 @@ impl Interp {
                             mi as i64,
                             a(0).unwrap_or(s as f64) as i64,
                             a(1).map(|v| v as i64).unwrap_or(ms as i64),
-                        ),
-                        _ => date_to_millis(
+                        )),
+                        SetMs => time_clip(date_to_millis(
                             y,
                             mo as i64,
                             d as i64,
@@ -3586,7 +3716,8 @@ impl Interp {
                             mi as i64,
                             s as i64,
                             a(0).unwrap_or(ms as f64) as i64,
-                        ),
+                        )),
+                        _ => f64::NAN,
                     };
                     if let Some(Value::Obj(m)) = &recv {
                         m.borrow_mut()
@@ -3594,29 +3725,37 @@ impl Interp {
                     }
                     return Ok(Value::Num(new_millis));
                 }
-                Ok(match field {
-                    // setter 는 위에서 이미 처리하고 반환했다
-                    DateField::SetTime
-                    | DateField::SetFullYear
-                    | DateField::SetMonth
-                    | DateField::SetDate
-                    | DateField::SetHours
-                    | DateField::SetMinutes
-                    | DateField::SetSeconds
-                    | DateField::SetMs => Value::Undefined,
-                    DateField::Time => Value::Num(millis),
-                    DateField::FullYear => Value::Num(y as f64),
-                    DateField::Month => Value::Num((mo - 1) as f64), // JS 는 0 기준
-                    DateField::Date => Value::Num(d as f64),
-                    DateField::Day => Value::Num(wd as f64),
-                    DateField::Hours => Value::Num(h as f64),
-                    DateField::Minutes => Value::Num(mi as f64),
-                    DateField::Seconds => Value::Num(s as f64),
-                    DateField::Ms => Value::Num(ms as f64),
-                    DateField::TimezoneOffset => Value::Num(0.0),
-                    DateField::ToIso => Value::Str(date_iso(millis)),
-                    DateField::ToStr => Value::Str(date_string(millis)),
-                    DateField::ToDateStr => Value::Str(date_string(millis)),
+                // ── getter / 문자열 / annexB getYear ──
+                let (y, mo, d, h, mi, s, ms, wd) = date_parts(millis);
+                let nan = millis.is_nan();
+                let num = |v: f64| if nan { Value::Num(f64::NAN) } else { Value::Num(v) };
+                Ok(match cfield {
+                    Time => Value::Num(millis),
+                    FullYear => num(y as f64),
+                    Month => num((mo - 1) as f64), // JS 는 0 기준
+                    Date => num(d as f64),
+                    Day => num(wd as f64),
+                    Hours => num(h as f64),
+                    Minutes => num(mi as f64),
+                    Seconds => num(s as f64),
+                    Ms => num(ms as f64),
+                    TimezoneOffset => num(0.0),
+                    GetYear => num((y - 1900) as f64), // Annex B §B.2.4.1
+                    ToIso => {
+                        if !millis.is_finite() {
+                            return Err(self.throw_error("RangeError", "Invalid time value"));
+                        }
+                        Value::Str(date_iso(millis))
+                    }
+                    ToStr => Value::Str(date_tostring(millis)),
+                    ToDateStr => Value::Str(date_datestring(millis)),
+                    ToTimeStr => Value::Str(date_timestring(millis)),
+                    ToUtcStr => Value::Str(date_utcstring(millis)),
+                    // Intl 미탑재 — impl-defined 로 toString 계열과 동일하게 낸다.
+                    ToLocaleStr => Value::Str(date_tostring(millis)),
+                    ToLocaleDateStr => Value::Str(date_datestring(millis)),
+                    ToLocaleTimeStr => Value::Str(date_timestring(millis)),
+                    _ => Value::Undefined,
                 })
             }
             // String(x)/Number(x)/Boolean(x) 변환 생성자

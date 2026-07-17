@@ -5711,3 +5711,101 @@ fn set_es2024_methods() {
         "var t=false; try{ new Set().union({size:-1,has:function(){},keys:function(){}}) }catch(e){ t=e instanceof RangeError } t"
     ));
 }
+
+#[test]
+fn date_utc_methods_and_string_forms() {
+    // UTC 게터는 로컬(오프셋 0)과 동일 + 정확한 name/length
+    assert_eq!(run_num("new Date(Date.UTC(2020,5,15,13,45,30,123)).getUTCHours()"), 13.0);
+    assert_eq!(run_num("new Date(Date.UTC(2020,5,15,13,45,30,123)).getUTCMonth()"), 5.0);
+    assert_eq!(run_num("new Date(Date.UTC(2020,5,15,13,45,30,123)).getUTCDay()"), 1.0);
+    assert_eq!(run_num("new Date(Date.UTC(2020,5,15,13,45,30,123)).getUTCMilliseconds()"), 123.0);
+    assert_eq!(run_str("Date.prototype.getUTCHours.name"), "getUTCHours");
+    assert_eq!(run_str("Date.prototype.setUTCFullYear.name"), "setUTCFullYear");
+    assert_eq!(run_num("Date.prototype.setUTCHours.length"), 4.0);
+    // 문자열 형식
+    assert_eq!(
+        run_str("new Date(Date.UTC(2020,5,15,13,45,30,123)).toUTCString()"),
+        "Mon, 15 Jun 2020 13:45:30 GMT"
+    );
+    assert_eq!(
+        run_str("new Date(Date.UTC(2020,5,15,13,45,30,123)).toDateString()"),
+        "Mon Jun 15 2020"
+    );
+    assert_eq!(
+        run_str("new Date(Date.UTC(2020,5,15,13,45,30,123)).toTimeString()"),
+        "13:45:30 GMT+0000 (Coordinated Universal Time)"
+    );
+    assert_eq!(
+        run_str("new Date(Date.UTC(2020,5,15,13,45,30,123)).toString()"),
+        "Mon Jun 15 2020 13:45:30 GMT+0000 (Coordinated Universal Time)"
+    );
+    // toGMTString === toUTCString
+    assert!(run_bool("var d=new Date(0); d.toGMTString()===d.toUTCString()"));
+    // Date.prototype 이 47개 own 메서드 (전량 노출)
+    assert!(run_bool("Object.getOwnPropertyNames(Date.prototype).length>=44"));
+}
+
+#[test]
+fn date_setter_coercion_and_nan() {
+    // setHours 는 인자를 정확히 한 번 ToNumber (valueOf 관찰)
+    assert!(run_bool(
+        "var c=0; var d=new Date(0); d.setHours({valueOf:function(){c++;return 5;}}); c===1 && d.getHours()===5"
+    ));
+    // 인자 여러 개 순서대로 한 번씩
+    assert!(run_bool(
+        "var log=[]; var mk=function(n){return {valueOf:function(){log.push(n);return n;}};}; \
+         var d=new Date(0); d.setHours(mk(1),mk(2),mk(3),mk(4)); log.join(',')==='1,2,3,4'"
+    ));
+    // Invalid Date + setHours: 인자 강제(valueOf 관찰) 후 결과 NaN
+    assert!(run_bool(
+        "var c=0; var d=new Date(NaN); var r=d.setHours({valueOf:function(){c++;return 3;}}); c===1 && isNaN(r) && isNaN(d.getTime())"
+    ));
+    // setFullYear 는 Invalid Date 여도 t=+0 기준으로 유효 날짜 생성
+    assert_eq!(run_num("new Date(NaN).setFullYear(2000)"), 946684800000.0);
+    // TimeClip: 범위 초과는 NaN
+    assert!(run_bool("isNaN(new Date(0).setTime(1e21))"));
+    // getter 는 Invalid Date 에 NaN
+    assert!(run_bool("isNaN(new Date(NaN).getFullYear()) && isNaN(new Date(NaN).getMonth())"));
+}
+
+#[test]
+fn date_tojson_toprimitive_and_receiver_check() {
+    // toJSON: 유효하면 toISOString, Invalid 이면 null (throw 아님)
+    assert_eq!(
+        run_str("new Date(Date.UTC(2020,0,1)).toJSON()"),
+        "2020-01-01T00:00:00.000Z"
+    );
+    assert!(run_bool("new Date(NaN).toJSON()===null"));
+    // toISOString 은 Invalid 에 RangeError
+    assert!(run_bool("var t=false; try{ new Date(NaN).toISOString(); }catch(e){ t=e instanceof RangeError; } t"));
+    // Symbol.toPrimitive: 힌트별 동작 + 잘못된 힌트 TypeError
+    assert!(run_bool("typeof new Date(0)[Symbol.toPrimitive]('string')==='string'"));
+    assert_eq!(run_num("new Date(0)[Symbol.toPrimitive]('number')"), 0.0);
+    assert!(run_bool("var t=false; try{ new Date(0)[Symbol.toPrimitive]('bad'); }catch(e){ t=e instanceof TypeError; } t"));
+    // Symbol.toPrimitive 서술자
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Date.prototype,Symbol.toPrimitive); \
+         d.writable===false && d.enumerable===false && d.configurable===true && typeof d.value==='function'"
+    ));
+    assert_eq!(run_str("Date.prototype[Symbol.toPrimitive].name"), "[Symbol.toPrimitive]");
+    // 비 Date 수신자면 게터가 TypeError
+    assert!(run_bool("var t=false; try{ Date.prototype.getHours.call({}); }catch(e){ t=e instanceof TypeError; } t"));
+    // hasOwnProperty(Symbol) 와 getOwnPropertyDescriptor(obj, Symbol)
+    assert!(run_bool("Date.prototype.hasOwnProperty(Symbol.toPrimitive)"));
+    assert!(run_bool("Array.prototype.hasOwnProperty(Symbol.iterator)"));
+    // 심볼 서술자 attrs 정확
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Array.prototype,Symbol.iterator); \
+         d.writable===true && d.enumerable===false && d.configurable===true"
+    ));
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Math,Symbol.toStringTag); \
+         d.writable===false && d.enumerable===false && d.configurable===true && d.value==='Math'"
+    ));
+    // 문자열 열거는 여전히 심볼 제외
+    assert!(run_bool("Object.keys(Date.prototype).indexOf('toString')<0"));
+    // annexB getYear/setYear
+    assert_eq!(run_num("new Date(Date.UTC(1970,0,1)).getYear()"), 70.0);
+    assert!(run_bool("var d=new Date(0); d.setYear(99); d.getFullYear()===1999"));
+    assert!(run_bool("var d=new Date(0); d.setYear(2005); d.getFullYear()===2005"));
+}
