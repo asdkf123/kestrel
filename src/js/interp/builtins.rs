@@ -956,6 +956,7 @@ impl Interp {
         map: &RefCell<ObjMap>,
         key: &str,
         desc: &Value,
+        extensible: bool,
     ) -> Result<(), String> {
         // ToPropertyDescriptor (§10.2.4): 서술자는 임의의 객체다(함수/배열/인스턴스
         // 포함). 필드는 HasProperty + Get 으로 읽어 상속·getter 도 반영한다. 예전엔
@@ -1002,6 +1003,15 @@ impl Interp {
         }
 
         let existing = map.borrow().get(key).cloned();
+        // §10.1.6.3 step 2.a: 존재하지 않는 프로퍼티인데 대상이 non-extensible 이면
+        // 정의할 수 없다 → TypeError (defineProperty). 예전엔 이 검사가 없어 얼린/
+        // preventExtensions 객체에도 새 프로퍼티가 조용히 추가됐다.
+        if existing.is_none() && !extensible {
+            return Err(self.throw_error(
+                "TypeError",
+                "Cannot define property: object is not extensible",
+            ));
+        }
         let cur_attrs = existing.as_ref().map(|_| prop_attrs(&map.borrow(), key));
 
         if let (Some(cur_val), Some(cur)) = (&existing, cur_attrs) {
@@ -1638,7 +1648,8 @@ impl Interp {
                 // Value::Obj 는 표준 OrdinaryDefineOwnProperty (§10.1.6) 로 처리한다.
                 // 그 외 대상(Instance/Arr/Class)은 속성 강제 없이 값만 넣는 근사 유지.
                 if let Value::Obj(map) = &target {
-                    self.ordinary_define(&**map, &key, &desc)?;
+                    let ext = !self.is_nonextensible_val(&target);
+                    self.ordinary_define(&**map, &key, &desc, ext)?;
                     return Ok(target);
                 }
                 // 함수도 ordinary object 다 (§10.2) — props(ObjMap)에 표준 속성 강제로
@@ -1664,7 +1675,8 @@ impl Interp {
                             }
                             func.props.borrow_mut().remove(&tomb);
                         }
-                        self.ordinary_define(&func.props, &key, &desc)?;
+                        let ext = !self.is_nonextensible_val(&target);
+                        self.ordinary_define(&func.props, &key, &desc, ext)?;
                         return Ok(target);
                     }
                 }
