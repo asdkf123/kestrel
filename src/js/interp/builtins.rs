@@ -6720,8 +6720,20 @@ impl Interp {
                 m.insert("reject".to_string(), reject);
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
             }
-            // ToObject: keys/values/entries/getOwnPropertyNames/gOPD 는 문자열 원시값을 래퍼로
-            // 박싱해 인덱스 프로퍼티를 노출한다 (§20.1.2: Object.keys('ab') → ['0','1']).
+            // ToObject: null/undefined 는 TypeError (§7.1.18).
+            Native::ObjectKeys
+            | Native::ObjectValues
+            | Native::ObjectEntries
+            | Native::ObjectGetOwnPropertyNames
+                if matches!(args.first(), None | Some(Value::Undefined) | Some(Value::Null)) =>
+            {
+                Err(self.throw_error(
+                    "TypeError",
+                    "Cannot convert undefined or null to object",
+                ))
+            }
+            // keys/values/entries/getOwnPropertyNames 는 문자열 원시값을 래퍼로 박싱해
+            // 인덱스 프로퍼티를 노출한다 (§20.1.2: Object.keys('ab') → ['0','1']).
             n2 @ (Native::ObjectKeys
             | Native::ObjectValues
             | Native::ObjectEntries

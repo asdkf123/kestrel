@@ -6716,4 +6716,10 @@ fn object_methods_toobject_string_primitive() {
     assert_eq!(run_str("var d=Object.getOwnPropertyDescriptor('ab',0); [d.value,d.writable,d.enumerable,d.configurable].join()"), "a,false,true,false");
     // 숫자/불리언은 열거 own 키 없음
     assert_eq!(run_num("Object.keys(5).length"), 0.0);
+    // null/undefined 는 TypeError
+    for e in ["Object.keys(null)", "Object.values(undefined)", "Object.entries(null)",
+              "Object.getOwnPropertyNames(undefined)"] {
+        assert!(run_bool(&format!("var t=false; try{{ {}; }}catch(x){{ t=x instanceof TypeError; }} t", e)),
+                "expected TypeError from {}", e);
+    }
 }
