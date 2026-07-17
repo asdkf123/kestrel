@@ -6564,3 +6564,26 @@ fn uri_decode_multibyte_no_panic() {
                 "expected URIError from {}", e);
     }
 }
+
+#[test]
+fn generic_array_length_tonumber_coercion() {
+    // §22.1.3: generic 배열 메서드의 length 는 ToLength(ToNumber(len)) — valueOf 호출.
+    assert_eq!(
+        run_str("Array.prototype.reduceRight.call({0:'x',length:{valueOf:function(){return 1;}}}, function(a,b){return b;}, 'i')"),
+        "x"
+    );
+    // 문자열 length → 숫자
+    assert_eq!(
+        run_num("Array.prototype.reduce.call({0:1,1:2,2:3,length:'3'}, function(a,b){return a+b;}, 0)"),
+        6.0
+    );
+    // boolean/toString 강제변환
+    assert_eq!(
+        run_num("Array.prototype.map.call({0:9,length:true}, function(v){return v;}).length"),
+        1.0
+    );
+    // Symbol length → TypeError
+    assert!(run_bool(
+        "var t=false; try{ Array.prototype.forEach.call({length:Symbol()}, function(){}); }catch(e){ t=e instanceof TypeError; } t"
+    ));
+}

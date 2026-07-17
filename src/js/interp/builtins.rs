@@ -1216,7 +1216,10 @@ impl Interp {
 
     pub(super) fn generic_array_read(&mut self, recv: &Value) -> Result<Vec<Value>, String> {
         let len_val = self.member_get(recv, "length")?;
-        let len = to_length(to_num(&len_val));
+        // ToLength(? ToNumber(len)) — 객체 length 의 valueOf/toString 을 호출하고
+        // Symbol/BigInt 는 TypeError. 예전엔 to_num 이라 valueOf 미호출·비강제였다
+        // (Array.prototype.reduce.call({length:{valueOf(){…}}}) 등이 length 0 으로 오독).
+        let len = to_length(self.to_number_value(&len_val)?);
         // 실제 배열 상한(2^32-1)을 넘는 length 는 재료화하지 않는다(수십억 할당 방지).
         // ToLength 는 2^53-1 까지 허용하지만, 그런 거대 array-like 는 지연순회가
         // 필요하고 실사용상 병적 케이스라 RangeError 로 막는다(프로세스 보호).
