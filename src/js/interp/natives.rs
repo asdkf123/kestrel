@@ -432,6 +432,18 @@ pub enum MathOp {
     Atan,
     Atan2,
     Hypot,
+    // ES2015 추가 (§21.3.2)
+    Clz32,
+    Expm1,
+    Log1p,
+    Sinh,
+    Cosh,
+    Tanh,
+    Asinh,
+    Acosh,
+    Atanh,
+    Fround,
+    Imul,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -875,10 +887,22 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
                 MathOp::Atan => "atan",
                 MathOp::Atan2 => "atan2",
                 MathOp::Hypot => "hypot",
+                MathOp::Clz32 => "clz32",
+                MathOp::Expm1 => "expm1",
+                MathOp::Log1p => "log1p",
+                MathOp::Sinh => "sinh",
+                MathOp::Cosh => "cosh",
+                MathOp::Tanh => "tanh",
+                MathOp::Asinh => "asinh",
+                MathOp::Acosh => "acosh",
+                MathOp::Atanh => "atanh",
+                MathOp::Fround => "fround",
+                MathOp::Imul => "imul",
             };
             let len = match op {
                 MathOp::Random => 0,
-                MathOp::Max | MathOp::Min | MathOp::Hypot | MathOp::Pow | MathOp::Atan2 => 2,
+                MathOp::Max | MathOp::Min | MathOp::Hypot | MathOp::Pow | MathOp::Atan2
+                | MathOp::Imul => 2,
                 _ => 1,
             };
             return Some((name, len));

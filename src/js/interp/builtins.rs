@@ -4852,6 +4852,23 @@ impl Interp {
                     MathOp::Atan => a.atan(),
                     MathOp::Atan2 => a.atan2(args.get(1).map(to_num).unwrap_or(f64::NAN)),
                     MathOp::Hypot => args.iter().map(to_num).fold(0.0f64, |acc, x| acc.hypot(x)),
+                    // ES2015 (§21.3.2)
+                    MathOp::Clz32 => (to_i32(args.first().unwrap_or(&Value::Undefined)) as u32)
+                        .leading_zeros() as f64,
+                    MathOp::Expm1 => a.exp_m1(),
+                    MathOp::Log1p => a.ln_1p(),
+                    MathOp::Sinh => a.sinh(),
+                    MathOp::Cosh => a.cosh(),
+                    MathOp::Tanh => a.tanh(),
+                    MathOp::Asinh => a.asinh(),
+                    MathOp::Acosh => a.acosh(),
+                    MathOp::Atanh => a.atanh(),
+                    MathOp::Fround => a as f32 as f64,
+                    MathOp::Imul => {
+                        let x = to_i32(args.first().unwrap_or(&Value::Undefined));
+                        let y = to_i32(args.get(1).unwrap_or(&Value::Undefined));
+                        x.wrapping_mul(y) as f64
+                    }
                     MathOp::Random => {
                         // xorshift64*
                         self.rng ^= self.rng << 13;

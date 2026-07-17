@@ -649,6 +649,17 @@ impl Interp {
             ("atan", MathOp::Atan),
             ("atan2", MathOp::Atan2),
             ("hypot", MathOp::Hypot),
+            ("clz32", MathOp::Clz32),
+            ("expm1", MathOp::Expm1),
+            ("log1p", MathOp::Log1p),
+            ("sinh", MathOp::Sinh),
+            ("cosh", MathOp::Cosh),
+            ("tanh", MathOp::Tanh),
+            ("asinh", MathOp::Asinh),
+            ("acosh", MathOp::Acosh),
+            ("atanh", MathOp::Atanh),
+            ("fround", MathOp::Fround),
+            ("imul", MathOp::Imul),
         ] {
             math.insert(name.to_string(), Value::Native(Native::Math(op)));
         }

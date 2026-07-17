@@ -6113,3 +6113,24 @@ fn wrapper_instanceof_and_generic_this_toobject() {
          var t=false; try{ Array.prototype.filter.call(obj, undefined); }catch(e){ t=e instanceof E; } t"
     ));
 }
+
+#[test]
+fn math_es2015_methods() {
+    assert_eq!(run_num("Math.clz32(1)"), 31.0);
+    assert_eq!(run_num("Math.clz32(0)"), 32.0);
+    assert_eq!(run_num("Math.clz32(-1)"), 0.0);
+    assert_eq!(run_num("Math.expm1(0)"), 0.0);
+    assert_eq!(run_num("Math.log1p(0)"), 0.0);
+    assert_eq!(run_num("Math.cosh(0)"), 1.0);
+    assert_eq!(run_num("Math.sinh(0)"), 0.0);
+    assert_eq!(run_num("Math.tanh(0)"), 0.0);
+    assert_eq!(run_num("Math.asinh(0)"), 0.0);
+    assert_eq!(run_num("Math.imul(3,4)"), 12.0);
+    assert_eq!(run_num("Math.imul(0xffffffff,5)"), -5.0);
+    assert_eq!(run_num("Math.fround(1.1)"), 1.100000023841858);
+    // name/length + 비생성자
+    assert_eq!(run_str("Math.clz32.name"), "clz32");
+    assert_eq!(run_num("Math.imul.length"), 2.0);
+    assert_eq!(run_num("Math.expm1.length"), 1.0);
+    assert!(run_bool("var t=false; try{ new Math.clz32(); }catch(e){ t=e instanceof TypeError; } t"));
+}
