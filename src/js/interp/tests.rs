@@ -6178,3 +6178,24 @@ fn json_raw_json() {
     assert_eq!(run_str("JSON.rawJSON.name"), "rawJSON");
     assert_eq!(run_num("JSON.isRawJSON.length"), 1.0);
 }
+
+#[test]
+fn set_map_foreach_callback_semantics() {
+    // callable 아니면 TypeError (§24.1.3.5/§24.2.3.6)
+    for e in ["new Set([1]).forEach(null)", "new Set([1]).forEach(5)",
+              "new Map([[1,2]]).forEach(undefined)", "new Set([1]).forEach('x')"] {
+        assert!(run_bool(&format!("var t=false; try{{ {}; }}catch(e){{ t=e instanceof TypeError; }} t", e)),
+                "expected TypeError from {}", e);
+    }
+    // 콜백 (값, 키, 컬렉션) + thisArg
+    assert!(run_bool(
+        "var s=new Set([1]); var ok; s.forEach(function(v,k,set){ ok=(v===1&&k===1&&set===s&&this.x===9); }, {x:9}); ok"
+    ));
+    assert!(run_bool(
+        "var m=new Map([['a',1]]); var ok; m.forEach(function(v,k,map){ ok=(v===1&&k==='a'&&map===m); }); ok"
+    ));
+    // 콜백 예외 전파(예전엔 Set 이 삼켰다)
+    assert!(run_bool(
+        "var t=false; try{ new Set([1]).forEach(function(){ throw new RangeError('x'); }); }catch(e){ t=e instanceof RangeError; } t"
+    ));
+}

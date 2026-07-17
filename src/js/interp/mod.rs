@@ -2320,10 +2320,19 @@ impl Interp {
                 Value::Undefined
             }
             MapOp::ForEach => {
-                let f = args.first().cloned().ok_or("콜백 필요")?;
+                // §24.1.3.5: callable 검사 + 콜백 (값,키,map) + thisArg.
+                let f = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&f) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Map.prototype.forEach callback is not a function",
+                    ));
+                }
+                let this_arg = args.get(1).cloned();
+                let map_val = Value::MapVal(m.clone());
                 let snapshot: Vec<(Value, Value)> = m.borrow().clone();
                 for (k, v) in snapshot {
-                    self.call_value(f.clone(), None, vec![v, k])?;
+                    self.call_value(f.clone(), this_arg.clone(), vec![v, k, map_val.clone()])?;
                 }
                 Value::Undefined
             }
@@ -2379,13 +2388,24 @@ impl Interp {
                 Value::Undefined
             }
             SetOp::ForEach => {
-                let f = match args.first() {
-                    Some(f) => f.clone(),
-                    None => return Ok(Value::Undefined),
-                };
+                // §24.2.3.6: 콜백이 callable 아니면 TypeError. 콜백은 (값,값,set)+thisArg.
+                // 콜백 예외는 전파한다(예전엔 삼켰다).
+                let f = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&f) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Set.prototype.forEach callback is not a function",
+                    ));
+                }
+                let this_arg = args.get(1).cloned();
+                let set_val = Value::SetVal(s.clone());
                 let snapshot: Vec<Value> = s.borrow().clone();
                 for v in snapshot {
-                    let _ = self.call_value(f.clone(), None, vec![v.clone(), v]);
+                    self.call_value(
+                        f.clone(),
+                        this_arg.clone(),
+                        vec![v.clone(), v, set_val.clone()],
+                    )?;
                 }
                 Value::Undefined
             }
