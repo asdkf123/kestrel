@@ -4876,7 +4876,8 @@ impl Interp {
             }
             SymbolCtor => &[
                 "iterator", "asyncIterator", "toStringTag", "hasInstance", "toPrimitive", "match",
-                "matchAll", "replace", "search", "split", "for", "keyFor", "prototype",
+                "matchAll", "replace", "search", "split", "species", "isConcatSpreadable", "for",
+                "keyFor", "prototype",
             ],
             ErrorCtor("Error") => return Some(vec!["prototype".to_string(), "isError".to_string()]),
             ErrorCtor(_) => &["prototype"],
@@ -5096,6 +5097,19 @@ impl Interp {
                 _ => return false,
             }
         }
+    }
+
+    // §23.1.3.1.1 IsConcatSpreadable(O): @@isConcatSpreadable 가 있으면 ToBoolean, 없으면
+    // IsArray. Array.prototype.concat 이 인자를 펼칠지 결정한다.
+    pub(super) fn is_concat_spreadable(&mut self, v: &Value) -> Result<bool, String> {
+        if !is_object(v) {
+            return Ok(false);
+        }
+        let flag = self.member_get(v, "\u{0}@@isConcatSpreadable")?;
+        if !matches!(flag, Value::Undefined) {
+            return Ok(to_bool(&flag));
+        }
+        Ok(matches!(v, Value::Arr(_)))
     }
 
     pub(super) fn has_property(&self, obj: &Value, key: &str) -> bool {
@@ -6093,6 +6107,11 @@ impl Interp {
                 // Symbol.species (§20.4.2.10): 종파생 생성자 선택. Array/TypedArray/
                 // ArrayBuffer/Promise 의 map/filter/slice 등이 반환 종을 이걸로 고른다.
                 "species" => Self::well_known_symbol("\u{0}@@species", "Symbol.species"),
+                // Symbol.isConcatSpreadable (§23.1.3.1.1): concat 이 인자를 펼칠지 결정.
+                "isConcatSpreadable" => Self::well_known_symbol(
+                    "\u{0}@@isConcatSpreadable",
+                    "Symbol.isConcatSpreadable",
+                ),
                 // Explicit Resource Management (§ using / DisposableStack).
                 "dispose" => Self::well_known_symbol("\u{0}@@dispose", "Symbol.dispose"),
                 "asyncDispose" => {

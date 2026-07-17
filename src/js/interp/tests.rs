@@ -6685,3 +6685,18 @@ fn computed_member_key_topropertykey() {
     assert_eq!(run_num("var s=Symbol(); var o={}; o[s]=7; o[s]"), 7.0);
     assert!(run_bool("var s=Symbol(); var o={}; o[s]=1; s in o"));
 }
+
+#[test]
+fn array_concat_is_concat_spreadable() {
+    // §23.1.3.1: @@isConcatSpreadable 로 펼침 여부 결정.
+    assert_eq!(run_str("JSON.stringify([1].concat([2,3],4))"), "[1,2,3,4]");
+    // 배열이 아니어도 @@isConcatSpreadable=true 면 펼침(length+Get)
+    assert_eq!(run_str("var o={length:2,0:'a',1:'b'}; o[Symbol.isConcatSpreadable]=true; JSON.stringify([1].concat(o))"), "[1,\"a\",\"b\"]");
+    // 배열이어도 @@isConcatSpreadable=false 면 안 펼침
+    assert_eq!(run_str("var a=[2,3]; a[Symbol.isConcatSpreadable]=false; JSON.stringify([1].concat(a))"), "[1,[2,3]]");
+    // 수신자도 IsConcatSpreadable 대상
+    assert_eq!(run_str("var a=[1,2]; a[Symbol.isConcatSpreadable]=false; JSON.stringify(a.concat(3))"), "[[1,2],3]");
+    // 평범한 객체는 안 펼침, Symbol.isConcatSpreadable 은 잘 알려진 심볼
+    assert_eq!(run_str("JSON.stringify([1].concat({x:1}))"), "[1,{\"x\":1}]");
+    assert_eq!(run_str("typeof Symbol.isConcatSpreadable"), "symbol");
+}

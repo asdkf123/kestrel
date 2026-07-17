@@ -5851,11 +5851,32 @@ impl Interp {
                         result
                     }
                     ArrOp::Concat => {
-                        let mut out: Vec<Value> = a.borrow().clone();
-                        for arg in &args {
-                            match arg {
-                                Value::Arr(b) => out.extend(b.borrow().iter().cloned()),
-                                other => out.push(other.clone()),
+                        // §23.1.3.1: 수신자 + 각 인자를 순서대로, IsConcatSpreadable 이면 펼친다
+                        // (@@isConcatSpreadable 우선, 없으면 IsArray). array-like 는 length+Get.
+                        let mut all: Vec<Value> = Vec::with_capacity(1 + args.len());
+                        all.push(Value::Arr(a.clone()));
+                        all.extend(args.iter().cloned());
+                        let mut out: Vec<Value> = Vec::new();
+                        for item in all {
+                            if self.is_concat_spreadable(&item)? {
+                                match &item {
+                                    Value::Arr(b) => out.extend(b.borrow().iter().cloned()),
+                                    _ => {
+                                        let lv = self.member_get(&item, "length")?;
+                                        let len =
+                                            to_length(self.to_number_value(&lv)?) as usize;
+                                        for k in 0..len {
+                                            let key = k.to_string();
+                                            if self.has_property(&item, &key) {
+                                                out.push(self.member_get(&item, &key)?);
+                                            } else {
+                                                out.push(Value::Undefined);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                out.push(item);
                             }
                         }
                         Value::Arr(ArrayObj::new(out))
