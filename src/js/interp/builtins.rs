@@ -1863,27 +1863,29 @@ impl Interp {
             // freeze 는 그대로 반환(불변성 미구현)
             // Object.setPrototypeOf(o, proto) — 예전엔 no-op 로 객체만 돌려줬다(거짓말).
             Native::ObjectSetPrototypeOf => {
+                // §20.1.2.21: target 은 RequireObjectCoercible(undefined/null → TypeError),
+                // proto 는 Object|Null 아니면 TypeError. [[SetPrototypeOf]] 가 false 면 TypeError.
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
-                let proto = args.get(1).cloned().unwrap_or(Value::Null);
-                if let Value::Obj(m) = &target {
-                    match proto {
-                        Value::Obj(_) => {
-                            m.borrow_mut().insert("__proto__".to_string(), proto);
-                        }
-                        // null → 프로토타입 없음
-                        _ => {
-                            m.borrow_mut().remove("__proto__");
-                        }
-                    }
-                } else if let Value::Fn(f) = &target {
-                    // 함수의 [[Prototype]] 도 설정 가능해야 한다 (§20.2.3). 객체/함수/null 은
-                    // 명시 저장(null 은 그대로 null 로 남아야 — 기본값 Function.prototype 과 구분).
-                    match proto {
-                        Value::Obj(_) | Value::Fn(_) | Value::Native(_) | Value::Bound(_)
-                        | Value::Null => {
-                            f.props.borrow_mut().insert("__proto__".to_string(), proto);
-                        }
-                        _ => {}
+                let proto = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if matches!(target, Value::Undefined | Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Object.setPrototypeOf called on null or undefined",
+                    ));
+                }
+                if !is_object(&proto) && !matches!(proto, Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Object prototype may only be an Object or null",
+                    ));
+                }
+                // 원시값 target 은 [[SetPrototypeOf]] 없이 그대로 반환(§ step 4).
+                if matches!(target, Value::Obj(_) | Value::Fn(_)) {
+                    if !self.ordinary_set_prototype_of(&target, proto)? {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Cannot set prototype of this object",
+                        ));
                     }
                 }
                 Ok(target)
@@ -6246,11 +6248,20 @@ impl Interp {
             }
             // Reflect 나머지 (§28.1). 대상이 객체가 아니면 TypeError. 변형 계열은 불리언 반환.
             Native::ReflectSetPrototypeOf => {
-                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                // §28.1.13: target 은 객체(TypeError), proto 는 Object|Null(TypeError).
+                // [[SetPrototypeOf]] 의 불리언을 그대로 돌려준다(Object 처럼 throw 하지 않음).
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_object(&target) {
                     return Err(self.throw_error("TypeError", "Reflect.setPrototypeOf called on non-object"));
                 }
-                self.call_native(Native::ObjectSetPrototypeOf, None, args)?;
-                Ok(Value::Bool(true))
+                let proto = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_object(&proto) && !matches!(proto, Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Reflect.setPrototypeOf proto must be an Object or null",
+                    ));
+                }
+                Ok(Value::Bool(self.ordinary_set_prototype_of(&target, proto)?))
             }
             Native::ReflectPreventExtensions => {
                 if !is_object(args.first().unwrap_or(&Value::Undefined)) {

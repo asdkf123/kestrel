@@ -2552,6 +2552,55 @@ impl Interp {
         self.iterate_to_vec(&iter)
     }
 
+    // §10.1.2 OrdinarySetPrototypeOf(O, V). target 은 Obj/Fn(설정 가능), proto 는 Object|Null
+    // (호출부가 검증). SameValue(V,current)→true(무변경), non-extensible & 다름→false, 순환→false,
+    // 그 밖엔 [[Prototype]] 설정 후 true. Object.setPrototypeOf 는 false 면 TypeError,
+    // Reflect.setPrototypeOf 는 그 불리언을 그대로 돌려준다.
+    pub(super) fn ordinary_set_prototype_of(
+        &mut self,
+        target: &Value,
+        proto: Value,
+    ) -> Result<bool, String> {
+        // step 1-2: 현재 [[Prototype]] 과 SameValue 면 무변경 성공.
+        let current = self.call_native(Native::ObjectGetPrototypeOf, None, vec![target.clone()])?;
+        if same_value(&current, &proto) {
+            return Ok(true);
+        }
+        // step 3-4: 확장 불가면 실패.
+        if self.is_nonextensible_val(target) {
+            return Ok(false);
+        }
+        // step 5: 순환 검사 — proto 의 [[Prototype]] 체인이 target 에 닿으면 실패.
+        // exotic(Proxy 등)의 GetPrototypeOf 는 ordinary 가 아니므로 체인 걷기를 멈춘다.
+        let mut p = proto.clone();
+        let mut depth = 0;
+        loop {
+            depth += 1;
+            if depth > 100_000 {
+                break;
+            }
+            match &p {
+                Value::Null => break,
+                _ if same_value(&p, target) => return Ok(false),
+                Value::Obj(_) | Value::Fn(_) => {
+                    p = self.call_native(Native::ObjectGetPrototypeOf, None, vec![p.clone()])?;
+                }
+                _ => break,
+            }
+        }
+        // step 6: 설정. null 은 명시적으로 Null 저장(부재=기본프로토와 구분).
+        match target {
+            Value::Obj(m) => {
+                m.borrow_mut().insert("__proto__".to_string(), proto);
+            }
+            Value::Fn(f) => {
+                f.props.borrow_mut().insert("__proto__".to_string(), proto);
+            }
+            _ => {}
+        }
+        Ok(true)
+    }
+
     // §7.4.11 IteratorClose (정상 완료용): iterator.return() 을 호출하고 그 예외는 전파,
     // 결과가 객체가 아니면 TypeError. is*Of 의 조기탈출(IteratorClose)에 쓴다.
     fn iterator_close_ok(&mut self, it: &Value) -> Result<(), String> {

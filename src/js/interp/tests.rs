@@ -6403,3 +6403,21 @@ fn reflect_nonenum_tostringtag_getprototypeof() {
     assert!(run_bool("Reflect.getPrototypeOf({}) === Object.prototype"));
     assert!(run_bool("Object.getPrototypeOf(1) === Number.prototype")); // Object 는 강제변환
 }
+
+#[test]
+fn ordinary_set_prototype_of_semantics() {
+    // §10.1.2/§28.1.13: Reflect.setPrototypeOf 는 불리언 반환.
+    assert!(run_bool("var o={}; Reflect.setPrototypeOf(o, Object.getPrototypeOf(o)) === true")); // same
+    assert!(run_bool("var o={}; Reflect.setPrototypeOf(o, o) === false")); // self-cycle
+    assert!(run_bool("var t={}; var p=Object.create(t); Reflect.setPrototypeOf(t, p) === false")); // cyclic
+    assert!(run_bool("var o={}; Object.preventExtensions(o); Reflect.setPrototypeOf(o, {}) === false")); // non-ext
+    assert!(run_bool("var o={},p={x:1}; Reflect.setPrototypeOf(o, p) === true && Object.getPrototypeOf(o) === p")); // success
+    assert!(run_bool("var o={}; Reflect.setPrototypeOf(o, null) === true && Object.getPrototypeOf(o) === null"));
+    // proto 검증: Object|Null 아니면 TypeError
+    assert!(run_bool("var t=false; try{ Reflect.setPrototypeOf({}, Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ Reflect.setPrototypeOf({}, 5); }catch(e){ t=e instanceof TypeError; } t"));
+    // Object.setPrototypeOf 는 false 케이스에 TypeError
+    assert!(run_bool("var o={}; Object.preventExtensions(o); var t=false; try{ Object.setPrototypeOf(o, {x:1}); }catch(e){ t=e instanceof TypeError; } t"));
+    // null/undefined target → TypeError
+    assert!(run_bool("var t=false; try{ Object.setPrototypeOf(null, {}); }catch(e){ t=e instanceof TypeError; } t"));
+}
