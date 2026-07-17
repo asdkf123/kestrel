@@ -6645,3 +6645,20 @@ fn string_fromcharcode_codepoint_trim() {
     assert_eq!(run_str("'\\uFEFFx\\uFEFF'.trim()"), "x");
     assert_eq!(run_str("'\\u000B\\u000Cx'.trimStart()"), "x");
 }
+
+#[test]
+fn bitwise_and_number_tonumber_coercion() {
+    // §7.1.6 ToInt32(ToNumber): 비트 연산이 객체 valueOf 를 호출한다.
+    assert_eq!(run_num("({valueOf:function(){return 5;}})|0"), 5.0);
+    assert_eq!(run_num("({valueOf:function(){return 5;}})&0xFF"), 5.0);
+    assert_eq!(run_num("({valueOf:function(){return 5;}})<<2"), 20.0);
+    assert_eq!(run_num("~({valueOf:function(){return 5;}})"), -6.0);
+    // Number(): valueOf, BigInt→수치, Symbol→TypeError.
+    assert_eq!(run_num("Number({valueOf:function(){return 5;}})"), 5.0);
+    assert_eq!(run_num("Number(10n)"), 10.0);
+    assert!(run_bool("var t=false; try{ Number(Symbol()); }catch(e){ t=e instanceof TypeError; } t"));
+    // Symbol/혼합 BigInt 비트 연산 → TypeError. BigInt|BigInt 은 유지.
+    assert!(run_bool("var t=false; try{ Symbol()|0; }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ 10n|0; }catch(e){ t=e instanceof TypeError; } t"));
+    assert_eq!(run_str("(5n & 3n).toString()"), "1");
+}

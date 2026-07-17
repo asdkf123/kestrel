@@ -4068,7 +4068,7 @@ impl Interp {
                     }
                     UnOp::Not => Value::Bool(!to_bool(&v)),
                     UnOp::Typeof => Value::Str(type_of(&v).to_string()),
-                    UnOp::BitNot => Value::Num(!to_i32(&v) as f64),
+                    UnOp::BitNot => Value::Num(!self.to_int32(&v)? as f64),
                     // void: 피연산자 평가 후 undefined. delete: 근사(항상 true)
                     UnOp::Void => Value::Undefined,
                     UnOp::Delete => Value::Bool(true),
@@ -7089,6 +7089,12 @@ impl Interp {
         }
     }
 
+    // §7.1.6 ToInt32(argument) = to_i32(ToNumber). ToNumber 가 객체 valueOf 를 호출하고
+    // Symbol/BigInt 은 TypeError. 비트 연산(|/&/^/<</>>/~)이 이걸 써야 valueOf 관측·표준 오류.
+    pub(super) fn to_int32(&mut self, v: &Value) -> Result<i32, String> {
+        Ok(to_i32_from_num(self.to_number_value(v)?))
+    }
+
     // §7.1.5 ToIntegerOrInfinity(argument). NaN→0, ±∞ 유지, 그 밖은 0 방향 절단.
     pub(super) fn to_integer_or_infinity(&mut self, v: &Value) -> Result<f64, String> {
         let n = self.to_number_value(v)?;
@@ -7252,12 +7258,20 @@ impl Interp {
             BinOp::Div => Value::Num(to_num(&l) / to_num(&r)),
             BinOp::Mod => Value::Num(to_num(&l) % to_num(&r)),
             BinOp::Pow => Value::Num(to_num(&l).powf(to_num(&r))),
-            BinOp::BitAnd => Value::Num((to_i32(&l) & to_i32(&r)) as f64),
-            BinOp::BitOr => Value::Num((to_i32(&l) | to_i32(&r)) as f64),
-            BinOp::BitXor => Value::Num((to_i32(&l) ^ to_i32(&r)) as f64),
-            BinOp::Shl => Value::Num((to_i32(&l) << (to_i32(&r) & 31)) as f64),
-            BinOp::Shr => Value::Num((to_i32(&l) >> (to_i32(&r) & 31)) as f64),
-            BinOp::UShr => Value::Num(((to_i32(&l) as u32) >> (to_i32(&r) & 31)) as f64),
+            // 비트 연산은 ToInt32(ToNumber) — 객체 valueOf 관측, Symbol→TypeError.
+            // BigInt 는 위 bigint_binary 에서 이미 처리됨.
+            BinOp::BitAnd => Value::Num((self.to_int32(&l)? & self.to_int32(&r)?) as f64),
+            BinOp::BitOr => Value::Num((self.to_int32(&l)? | self.to_int32(&r)?) as f64),
+            BinOp::BitXor => Value::Num((self.to_int32(&l)? ^ self.to_int32(&r)?) as f64),
+            BinOp::Shl => {
+                Value::Num((self.to_int32(&l)? << (self.to_int32(&r)? & 31)) as f64)
+            }
+            BinOp::Shr => {
+                Value::Num((self.to_int32(&l)? >> (self.to_int32(&r)? & 31)) as f64)
+            }
+            BinOp::UShr => Value::Num(
+                ((self.to_int32(&l)? as u32) >> (self.to_int32(&r)? & 31)) as f64,
+            ),
             // in: 프로토타입 체인까지 본다 (표준 §13.10). Proxy 면 has 트랩.
             BinOp::In => {
                 let key = to_display(&l);

@@ -4140,8 +4140,11 @@ impl Interp {
                 };
                 Ok(Value::Str(s))
             }
+            // §21.1.1.1 Number(value): ToNumeric — BigInt 는 수치로 변환, Symbol 은 TypeError,
+            // 객체는 valueOf 관측. 예전엔 to_num 이라 valueOf 미호출·Symbol NaN 이었다.
             Native::NumberCtor => Ok(Value::Num(match args.first() {
-                Some(v) => to_num(v),
+                Some(Value::BigInt(b)) => b.to_f64(),
+                Some(v) => self.to_number_value(v)?,
                 None => 0.0,
             })),
             Native::BooleanCtor => Ok(Value::Bool(args.first().map(to_bool).unwrap_or(false))),

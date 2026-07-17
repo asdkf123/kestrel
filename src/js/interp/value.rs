@@ -118,12 +118,14 @@ pub(super) fn to_bool(v: &Value) -> bool {
 }
 
 // JS ToInt32: 2^32 모듈로 후 부호 있는 32비트로 (비트 연산 의미론)
-pub(super) fn to_i32(v: &Value) -> i32 {
-    let n = to_num(v);
+pub(super) fn to_i32_from_num(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
     }
     (n.trunc().rem_euclid(4294967296.0)) as u32 as i32
+}
+pub(super) fn to_i32(v: &Value) -> i32 {
+    to_i32_from_num(to_num(v))
 }
 
 pub(super) fn to_num(v: &Value) -> f64 {
