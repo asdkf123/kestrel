@@ -2552,6 +2552,38 @@ impl Interp {
         self.iterate_to_vec(&iter)
     }
 
+    // §10.1.10 [[Delete]]: configurable:false 인 own 프로퍼티는 삭제되지 않고 false.
+    // 삭제 성공/부재는 true. delete 연산자와 Reflect.deleteProperty 가 공유하는 의미론.
+    pub(super) fn delete_own(&mut self, target: &Value, key: &str) -> Result<bool, String> {
+        match target {
+            Value::Obj(m) => {
+                if m.borrow().contains_key(key) {
+                    if prop_attrs(&m.borrow(), key) & ATTR_CONFIGURABLE == 0 {
+                        return Ok(false);
+                    }
+                    let mut mm = m.borrow_mut();
+                    mm.remove(key);
+                    mm.remove(&attr_marker(key));
+                    mm.remove(&nonenum_marker(key));
+                }
+                Ok(true)
+            }
+            Value::Instance(inst) => {
+                if inst.fields.borrow().contains_key(key) {
+                    if prop_attrs(&inst.fields.borrow(), key) & ATTR_CONFIGURABLE == 0 {
+                        return Ok(false);
+                    }
+                    let mut mm = inst.fields.borrow_mut();
+                    mm.remove(key);
+                    mm.remove(&attr_marker(key));
+                    mm.remove(&nonenum_marker(key));
+                }
+                Ok(true)
+            }
+            _ => Ok(true),
+        }
+    }
+
     // 디스크립터 Obj 에서 (is_accessor, writable, setter) 를 뽑는다. own 없으면 None.
     fn own_desc_fields(
         &mut self,

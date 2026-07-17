@@ -6452,3 +6452,14 @@ fn reflect_ownkeys_includes_symbols() {
     // 심볼만 있는 객체
     assert!(run_bool("var a=Symbol('a'),b=Symbol('b'); var o={}; o[a]=1; o[b]=2; var k=Reflect.ownKeys(o); k.length===2 && k[0]===a && k[1]===b"));
 }
+
+#[test]
+fn reflect_has_symbol_and_delete_configurable() {
+    // §28.1.9: Reflect.has 는 심볼 own 키도 본다.
+    assert!(run_bool("var s=Symbol('s'); var o={}; o[s]=1; Reflect.has(o, s)"));
+    assert!(run_bool("var s=Symbol('s'); var o={}; o[s]=1; Reflect.has(o, Symbol('other')) === false"));
+    // §28.1.4/§10.1.10: deleteProperty 는 configurable 을 존중, 불리언 반환.
+    assert!(run_bool("var o={p:1}; Reflect.deleteProperty(o,'p')===true && !('p' in o)"));
+    assert!(run_bool("var o={}; Object.defineProperty(o,'p',{value:1,configurable:false}); Reflect.deleteProperty(o,'p')===false && ('p' in o)"));
+    assert!(run_bool("Reflect.deleteProperty({}, 'missing') === true"));
+}

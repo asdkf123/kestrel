@@ -6172,7 +6172,8 @@ impl Interp {
                 };
                 let has = match args.first() {
                     Some(Value::Obj(m)) => {
-                        !is_internal_key(&key)
+                        // 심볼 own 키("\0@@…")도 HasProperty 대상 — 내부마커만 제외.
+                        (!is_internal_key(&key) || is_symbol_key(&key))
                             && (m.borrow().contains_key(&key)
                                 || self
                                     .proto_chain_lookup(m, &key, args.first().unwrap())
@@ -6195,10 +6196,8 @@ impl Interp {
                     Some(k) => self.to_property_key(k)?,
                     None => String::new(),
                 };
-                if let Some(Value::Obj(o)) = args.first() {
-                    o.borrow_mut().remove(&key);
-                }
-                Ok(Value::Bool(true))
+                // §28.1.4 = target.[[Delete]](P): configurable:false 면 false(삭제 안 함).
+                Ok(Value::Bool(self.delete_own(&target, &key)?))
             }
             Native::ReflectApply => {
                 // Reflect.apply(fn, thisArg, argsList)
