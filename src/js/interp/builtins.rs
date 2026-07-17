@@ -167,6 +167,26 @@ fn num_to_radix(n: f64, radix: u32) -> String {
 const MAX_ARRAY_LEN: f64 = 4_294_967_295.0; // 2^32 - 1
 
 // ToLength (§7.1.20): NaN/음수 → 0, 아니면 floor 후 2^53-1 로 클램프.
+// §7.1.6 ToUint16: NaN/±0/±∞→0, 그 밖은 trunc 후 2^16 모듈로.
+fn to_uint16(n: f64) -> u16 {
+    if !n.is_finite() {
+        return 0;
+    }
+    n.trunc().rem_euclid(65536.0) as u16
+}
+
+// §22.1.3.29 WhiteSpace + LineTerminator: JS 문자열 trim 대상. Rust 의 char::is_whitespace
+// 와 달리 U+FEFF(ZWNBSP/BOM)를 포함하고, U+200B(zero-width space)는 제외한다.
+fn is_js_ws(c: char) -> bool {
+    matches!(c,
+        '\u{0009}' | '\u{000A}' | '\u{000B}' | '\u{000C}' | '\u{000D}'
+        | '\u{0020}' | '\u{00A0}' | '\u{1680}'
+        | '\u{2000}'..='\u{200A}'
+        | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}'
+        | '\u{FEFF}'
+    )
+}
+
 fn to_length(n: f64) -> f64 {
     if n.is_nan() || n <= 0.0 {
         0.0
@@ -4126,10 +4146,31 @@ impl Interp {
             })),
             Native::BooleanCtor => Ok(Value::Bool(args.first().map(to_bool).unwrap_or(false))),
             Native::StrFromCharCode => {
-                let s: String = args
-                    .iter()
-                    .filter_map(|a| char::from_u32(to_num(a) as u32))
-                    .collect();
+                // §22.1.2.1: 각 인자 ToUint16 → UTF-16 코드 유닛(16비트 마스크). 로운
+                // 서로게이트는 lossy(우리 문자열은 UTF-8). 예전엔 to_num→code point 라
+                // fromCharCode(65601) 이 65 이 아니라 서로게이트가 됐다.
+                let mut units: Vec<u16> = Vec::with_capacity(args.len());
+                for a in &args {
+                    let n = self.to_number_value(a)?;
+                    units.push(to_uint16(n));
+                }
+                Ok(Value::Str(String::from_utf16_lossy(&units)))
+            }
+            Native::StrFromCodePoint => {
+                // §22.1.2.2: 각 인자 ToNumber 후 정수 & [0, 0x10FFFF] 아니면 RangeError.
+                let mut s = String::new();
+                for a in &args {
+                    let n = self.to_number_value(a)?;
+                    if !n.is_finite() || n.trunc() != n || n < 0.0 || n > 0x10FFFF as f64 {
+                        return Err(self.throw_error("RangeError", "Invalid code point"));
+                    }
+                    let cp = n as u32;
+                    if cp <= 0xFFFF {
+                        s.push_str(&String::from_utf16_lossy(&[cp as u16]));
+                    } else {
+                        s.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+                    }
+                }
                 Ok(Value::Str(s))
             }
             // String.raw(template, ...subs) (§22.1.2.4): template.raw 의 각 세그먼트를
@@ -5084,7 +5125,9 @@ impl Interp {
                 Ok(match op {
                     StrOp::Upper => Value::Str(s.to_uppercase()),
                     StrOp::Lower => Value::Str(s.to_lowercase()),
-                    StrOp::Trim => Value::Str(s.trim().to_string()),
+                    StrOp::Trim => {
+                        Value::Str(s.trim_matches(is_js_ws).to_string())
+                    }
                     StrOp::CharAt => {
                         // UTF-16 코드 유닛 하나(범위 밖은 ""). pos=ToIntegerOrInfinity.
                         let arg = args.first().cloned().unwrap_or(Value::Undefined);
@@ -5344,8 +5387,12 @@ impl Interp {
                             Value::Arr(ArrayObj::new(parts))
                         }
                     }
-                    StrOp::TrimStart => Value::Str(s.trim_start().to_string()),
-                    StrOp::TrimEnd => Value::Str(s.trim_end().to_string()),
+                    StrOp::TrimStart => {
+                        Value::Str(s.trim_start_matches(is_js_ws).to_string())
+                    }
+                    StrOp::TrimEnd => {
+                        Value::Str(s.trim_end_matches(is_js_ws).to_string())
+                    }
                     StrOp::Repeat => {
                         // §22.1.3.18: count=ToIntegerOrInfinity, 음수/∞ 는 RangeError.
                         let arg = args.first().cloned().unwrap_or(Value::Undefined);

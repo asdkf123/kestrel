@@ -6065,7 +6065,8 @@ impl Interp {
             }),
             // String.fromCharCode/prototype
             Value::Native(Native::StringCtor) => Ok(match key {
-                "fromCharCode" | "fromCodePoint" => Value::Native(Native::StrFromCharCode),
+                "fromCharCode" => Value::Native(Native::StrFromCharCode),
+                "fromCodePoint" => Value::Native(Native::StrFromCodePoint),
                 "raw" => Value::Native(Native::StrRaw),
                 "prototype" => self.string_proto.clone(),
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),

@@ -6628,3 +6628,20 @@ fn string_method_arg_coercion() {
     assert!(run_bool("var t=false; try{ 'ab'.repeat(-1); }catch(e){ t=e instanceof RangeError; } t"));
     assert_eq!(run_str("'abc'.split(undefined).join('|')"), "abc");
 }
+
+#[test]
+fn string_fromcharcode_codepoint_trim() {
+    // fromCharCode: ToUint16(16비트 마스크), valueOf 호출.
+    assert_eq!(run_str("String.fromCharCode({valueOf:function(){return 65;}})"), "A");
+    assert_eq!(run_num("String.fromCharCode(65601).charCodeAt(0)"), 65.0);
+    // fromCodePoint: valueOf, 범위/정수 검증 → RangeError.
+    assert_eq!(run_str("String.fromCodePoint({valueOf:function(){return 65;}})"), "A");
+    assert_eq!(run_num("String.fromCodePoint(0x1F600).length"), 2.0);
+    for e in ["String.fromCodePoint(-1)", "String.fromCodePoint(1.5)", "String.fromCodePoint(0x110000)"] {
+        assert!(run_bool(&format!("var t=false; try{{ {}; }}catch(x){{ t=x instanceof RangeError; }} t", e)),
+                "expected RangeError from {}", e);
+    }
+    // trim 은 U+FEFF(ZWNBSP)도 제거 (§22.1.3.29 WhiteSpace).
+    assert_eq!(run_str("'\\uFEFFx\\uFEFF'.trim()"), "x");
+    assert_eq!(run_str("'\\u000B\\u000Cx'.trimStart()"), "x");
+}
