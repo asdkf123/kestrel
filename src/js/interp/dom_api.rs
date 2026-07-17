@@ -11,6 +11,39 @@ impl Interp {
         }
     }
 
+    // §4.2.3 pre-insertion validity 핵심 검사. 위반이면 DOMException 을 던진다.
+    //  - node 가 parent 의 inclusive ancestor(자기 자신 포함)면 순환 → HierarchyRequestError.
+    //  - reference(있으면)의 부모가 parent 가 아니면 → NotFoundError.
+    // insertBefore/appendChild 가 공유. (문서 자식 제약 등 나머지는 후속.)
+    pub(super) fn ensure_pre_insert_valid(
+        &mut self,
+        parent: crate::dom::NodeId,
+        node: crate::dom::NodeId,
+        reference: Option<crate::dom::NodeId>,
+    ) -> Result<(), String> {
+        let bad: Option<(&'static str, &'static str)> = {
+            let dom = self.dom_arena()?;
+            if node == parent || dom.ancestors(parent).contains(&node) {
+                Some(("HierarchyRequestError", "The new child is an ancestor of the parent"))
+            } else if let Some(r) = reference {
+                if dom.get(r).parent != Some(parent) {
+                    Some((
+                        "NotFoundError",
+                        "The node before which the new node is to be inserted is not a child of this node",
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some((name, msg)) = bad {
+            return Err(self.throw_dom(name, msg));
+        }
+        Ok(())
+    }
+
     pub(super) fn dom_get_element_by_id(&mut self, args: Vec<Value>) -> Result<Value, String> {
         let id = args.first().map(to_display).unwrap_or_default();
         let dom = self.dom_arena()?;

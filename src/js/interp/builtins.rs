@@ -4403,11 +4403,13 @@ impl Interp {
             // parent.insertBefore(newNode, referenceNode)
             Native::InsertBefore => match (recv, args.first()) {
                 (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
-                    let child = *child;
+                    let (parent, child) = (parent, *child);
                     let reference = match args.get(1) {
                         Some(Value::Dom(r)) => Some(*r),
                         _ => None,
                     };
+                    // §4.2.3: 순환/잘못된 reference 는 DOMException.
+                    self.ensure_pre_insert_valid(parent, child, reference)?;
                     let dom = self.dom_arena()?;
                     dom.insert_before(parent, child, reference);
                     Ok(Value::Dom(child))
@@ -4684,7 +4686,9 @@ impl Interp {
             }
             Native::AppendChild => match (recv, args.first()) {
                 (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
-                    let child = *child;
+                    let (parent, child) = (parent, *child);
+                    // §4.2.3: node 가 parent 의 조상(자기 포함)이면 순환 → HierarchyRequestError.
+                    self.ensure_pre_insert_valid(parent, child, None)?;
                     let dom = self.dom_arena()?;
                     // DocumentFragment 는 자신이 아니라 자식들을 옮긴다
                     if is_fragment(dom, child) {

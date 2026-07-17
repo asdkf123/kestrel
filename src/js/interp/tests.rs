@@ -6492,3 +6492,41 @@ fn dom_get_root_node() {
         "true",
     );
 }
+
+#[test]
+fn dom_pre_insertion_validity() {
+    let mut dom = crate::html::parse_dom(
+        "<div id=\"p\"><span id=\"c\">x</span></div><div id=\"o\">y</div>".to_string(),
+    );
+    let _ = dom.find_by_attr_id("p").unwrap();
+    let mut interp = Interp::new();
+    interp.dom = Some(&mut dom as *mut _);
+    interp.run(crate::js::JS_PRELUDE).expect("프렐류드"); // DOMException 은 프렐류드 클래스
+    // 자기 자신을 appendChild → HierarchyRequestError
+    assert_eq!(
+        to_display(&interp.run("var p=document.getElementById('p'); var e; try{ p.appendChild(p); }catch(x){ e=x.name; } e").unwrap()),
+        "HierarchyRequestError",
+    );
+    // 조상을 자손에 삽입 → HierarchyRequestError
+    assert_eq!(
+        to_display(&interp.run("var p=document.getElementById('p'), c=document.getElementById('c'); var e; try{ c.appendChild(p); }catch(x){ e=x.name; } e").unwrap()),
+        "HierarchyRequestError",
+    );
+    // reference 가 자식이 아니면 → NotFoundError
+    assert_eq!(
+        to_display(&interp.run("var p=document.getElementById('p'), o=document.getElementById('o'), n=document.createElement('b'); var e; try{ p.insertBefore(n, o); }catch(x){ e=x.name; } e").unwrap()),
+        "NotFoundError",
+    );
+    // 던진 값은 DOMException(=Error 하위)
+    assert_eq!(
+        to_display(&interp.run("var p=document.getElementById('p'); var t; try{ p.appendChild(p); }catch(x){ t=(x instanceof Error)+','+(x.name==='HierarchyRequestError'); } t").unwrap()),
+        "true,true",
+    );
+    // 정상 삽입은 그대로 동작
+    assert_eq!(
+        to_display(&interp.run("var p=document.getElementById('p'), n=document.createElement('b'); p.appendChild(n); p.lastChild===n").unwrap()),
+        "true",
+    );
+}
+
+
