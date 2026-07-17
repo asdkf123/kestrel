@@ -6310,3 +6310,27 @@ fn set_get_set_record_size_coercion() {
         "1,2,9"
     );
 }
+
+#[test]
+fn iterator_result_accessor_done_value() {
+    // §7.4.8/§7.4.9: 반복자 결과의 done/value 가 접근자면 호출해야 한다(raw get 금지).
+    // done 접근자 무시로 무한 루프(OOM)가 났던 회귀 방지.
+    assert_eq!(
+        run_str("var v=['a','b','c'],i=0; var it={[Symbol.iterator](){return this;}, next(){return {get done(){return i>=v.length;}, get value(){return v[i++];}};}}; [...it].join()"),
+        "a,b,c"
+    );
+    // value getter 예외 전파
+    assert!(run_bool(
+        "var it={[Symbol.iterator](){return this;}, next(){return {done:false, get value(){throw new TypeError('v');}};}}; var t=false; try{ [...it]; }catch(e){ t=e instanceof TypeError; } t"
+    ));
+    // done 은 ToBoolean 강제변환 (Bool 만이 아님)
+    assert_eq!(
+        run_str("var i=0; var it={[Symbol.iterator](){return this;}, next(){return {value:i, done: i++>=2?'y':''};}}; [...it].join()"),
+        "0,1"
+    );
+    // Set 연산이 접근자 기반 set-like keys 이터레이터로도 크래시 없이 동작
+    assert_eq!(
+        run_str("var sl={size:3,has(){return false;},keys(){var v=[7,8,9],i=0;return {next(){return {get done(){return i>=v.length;}, get value(){return v[i++];}};}};}}; [...new Set([1]).union(sl)].join()"),
+        "1,7,8,9"
+    );
+}

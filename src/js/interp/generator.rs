@@ -1101,12 +1101,15 @@ impl Interp {
         let r = self.call_value(next, Some(iter.clone()), vec![sent])?;
         let r = if await_result { self.await_value(r)? } else { r };
         match &r {
-            Value::Obj(o) => {
-                let b = o.borrow();
-                Ok((
-                    b.get("value").cloned().unwrap_or(Value::Undefined),
-                    matches!(b.get("done"), Some(Value::Bool(true))),
-                ))
+            Value::Obj(_) => {
+                // §7.4.8 IteratorComplete: done = ToBoolean(? Get(result, "done")).
+                // §7.4.9 IteratorValue: value = ? Get(result, "value"). done/value 는 접근자일
+                // 수 있으므로 raw get 이 아니라 member_get 으로 호출한다 — 예전엔 raw 라 done
+                // 접근자가 무시돼 무한 루프(OOM)나 value getter 예외 누락이 났다. value 는 done
+                // 이어도 읽는다(yield* 의 완료값 = 위임한 반복자의 return 값에 필요).
+                let done = to_bool(&self.member_get(&r, "done")?);
+                let value = self.member_get(&r, "value")?;
+                Ok((value, done))
             }
             _ => Ok((Value::Undefined, true)),
         }
