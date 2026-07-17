@@ -6723,3 +6723,16 @@ fn object_methods_toobject_string_primitive() {
                 "expected TypeError from {}", e);
     }
 }
+
+#[test]
+fn object_create_null_prototype() {
+    // §20.1.2.2: Object.create(null) 은 [[Prototype]] 이 null — getPrototypeOf null,
+    // 상속 메서드 없음.
+    assert!(matches!(run("Object.getPrototypeOf(Object.create(null))"), Value::Null));
+    assert_eq!(run_str("typeof Object.create(null).hasOwnProperty"), "undefined");
+    assert_eq!(run_str("typeof Object.create(null).toString"), "undefined");
+    assert_eq!(run_num("var o=Object.create(null); o.a=5; o.a"), 5.0);
+    // 일반 create 는 프로토타입 상속
+    assert_eq!(run_num("Object.create({x:1}).x"), 1.0);
+    assert!(matches!(run("var o={}; Object.setPrototypeOf(o,null); Object.getPrototypeOf(o)"), Value::Null));
+}

@@ -5446,6 +5446,11 @@ impl Interp {
                                 return Ok(v);
                             }
                         }
+                        // __proto__ 가 명시적 Null(Object.create(null))이면 Object.prototype
+                        // 상속분(hasOwnProperty/toString 등)을 주지 않는다 — 부재(기본 프로토)와 구분.
+                        if matches!(map.borrow().get("__proto__"), Some(Value::Null)) {
+                            return Ok(Value::Undefined);
+                        }
                         match key {
                         "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
                         // propertyIsEnumerable: own 프로퍼티면 열거가능(단순 모델) → hasOwnProperty 로 근사.

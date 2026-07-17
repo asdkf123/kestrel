@@ -1937,10 +1937,18 @@ impl Interp {
                         "Object prototype may only be an Object or null",
                     ));
                 }
-                // proto 를 __proto__ 로 링크(스냅샷 복사 아님). Object.create(null) 은 링크 없음.
+                // proto 를 __proto__ 로 링크. Object.create(null) 은 __proto__ 를 **명시적
+                // Null** 로 저장한다(부재=기본 Object.prototype 과 구분) → getPrototypeOf 가 null,
+                // 상속 메서드 없음.
                 let mut map = ObjMap::new();
-                if let Value::Obj(_) = &proto {
-                    map.insert("__proto__".to_string(), proto.clone());
+                match &proto {
+                    Value::Obj(_) => {
+                        map.insert("__proto__".to_string(), proto.clone());
+                    }
+                    Value::Null => {
+                        map.insert("__proto__".to_string(), Value::Null);
+                    }
+                    _ => {}
                 }
                 let obj = Value::Obj(Rc::new(RefCell::new(map)));
                 // 2번째 인자(프로퍼티 서술자): defineProperties 에 위임 → get/set/속성 전부 반영.
