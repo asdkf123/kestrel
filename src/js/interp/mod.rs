@@ -3538,6 +3538,15 @@ impl Interp {
                                     mm.remove(&nonenum_marker(&key));
                                 }
                             }
+                            // 클래스 정적 멤버는 클래스 객체의 own 프로퍼티 — 정적 메서드/
+                            // 필드는 configurable:true 라 삭제 가능 (§ ClassDefinitionEvaluation).
+                            // prototype/name/length 는 non-configurable → false.
+                            Value::Class(cls) => {
+                                if matches!(key.as_str(), "prototype" | "name" | "length") {
+                                    return Ok(Value::Bool(false));
+                                }
+                                cls.statics.borrow_mut().remove(&key);
+                            }
                             // 클래스 인스턴스 필드도 own 프로퍼티다 — configurable 존중 삭제.
                             Value::Instance(inst) => {
                                 let exists = inst.fields.borrow().contains_key(&key);
