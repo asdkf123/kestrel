@@ -5809,3 +5809,32 @@ fn date_tojson_toprimitive_and_receiver_check() {
     assert!(run_bool("var d=new Date(0); d.setYear(99); d.getFullYear()===1999"));
     assert!(run_bool("var d=new Date(0); d.setYear(2005); d.getFullYear()===2005"));
 }
+
+#[test]
+fn function_prototype_constructor_backlink() {
+    // §20.1.1: F.prototype.constructor === F (writable, non-enum, configurable).
+    assert!(run_bool("function F(){}; F.prototype.constructor===F"));
+    assert!(run_bool("function F(){}; F.prototype.hasOwnProperty('constructor')"));
+    // 인스턴스는 프로토타입 체인으로 constructor 를 상속
+    assert!(run_bool("function F(){}; new F().constructor===F"));
+    assert_eq!(run_str("function Foo(){}; new Foo().constructor.name"), "Foo");
+    // 생성으로 프로토타입이 먼저 실체화돼도 constructor 존재 (member_get 없이)
+    assert!(run_bool("function E(){}; var e=new E(); e.constructor===E"));
+    // 사용자 정의 에러 클래스(함수형)의 throw → constructor 판별
+    assert!(run_bool(
+        "function MyErr(){}; var caught; \
+         try{ (function(){throw new MyErr();})(); }catch(e){ caught=e; } \
+         caught.constructor===MyErr"
+    ));
+    // constructor 속성: writable, non-enumerable, configurable
+    assert!(run_bool(
+        "function F(){}; var d=Object.getOwnPropertyDescriptor(F.prototype,'constructor'); \
+         d.writable===true && d.enumerable===false && d.configurable===true && d.value===F"
+    ));
+    // constructor 는 열거되지 않는다
+    assert!(run_bool("function F(){}; Object.keys(F.prototype).indexOf('constructor')<0"));
+    // 화살표 함수는 prototype 이 없다
+    assert!(run_bool("(function(){var a=()=>{}; return a.prototype===undefined;})()"));
+    // 사용자가 constructor 를 덮어쓸 수 있다 (writable)
+    assert!(run_bool("function F(){}; F.prototype.constructor=42; F.prototype.constructor===42"));
+}

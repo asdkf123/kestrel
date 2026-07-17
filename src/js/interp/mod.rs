@@ -5439,10 +5439,22 @@ impl Interp {
                     }
                     // 함수도 toString 을 가진다 (번들이 fn.toString() 으로 소스 검사)
                     "toString" => Ok(Value::Native(Native::FnToString)),
-                    // F.prototype 지연 생성: 접근 시 빈 객체를 만들어 저장
-                    // (F.prototype.method = ... 패턴 지원)
+                    // 화살표 함수는 prototype 이 없다 (§ 화살표엔 [[Construct]] 없음).
+                    "prototype" if func.is_arrow => Ok(Value::Undefined),
+                    // F.prototype 지연 생성: 접근 시 { constructor: F } 객체를 만들어 저장.
+                    // §20.1.1: F.prototype.constructor === F (writable, non-enum,
+                    // configurable). 예전엔 빈 객체라 new F().constructor 가 Object 로
+                    // 떨어졌다 — 사용자 정의 에러 클래스(함수형)의 assert.throws 가 통째로
+                    // 깨졌다(thrown.constructor !== 기대 생성자).
                     "prototype" => {
-                        let proto = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
+                        let mut pm = ObjMap::new();
+                        pm.insert("constructor".to_string(), recv.clone());
+                        set_prop_attrs(
+                            &mut pm,
+                            "constructor",
+                            ATTR_WRITABLE | ATTR_CONFIGURABLE,
+                        );
+                        let proto = Value::Obj(Rc::new(RefCell::new(pm)));
                         func.props.borrow_mut().insert("prototype".to_string(), proto.clone());
                         Ok(proto)
                     }
@@ -6101,7 +6113,13 @@ impl Interp {
                 let proto = match existing {
                     Some(p @ Value::Obj(_)) => p,
                     _ => {
-                        let p = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
+                        // §20.1.1: F.prototype = { constructor: F } (w:true,e:false,c:true).
+                        // member_get 의 지연 생성과 동일 — 여기서만 빈 객체를 만들면
+                        // new F().constructor 가 Object 로 떨어진다.
+                        let mut pm = ObjMap::new();
+                        pm.insert("constructor".to_string(), Value::Fn(func.clone()));
+                        set_prop_attrs(&mut pm, "constructor", ATTR_WRITABLE | ATTR_CONFIGURABLE);
+                        let p = Value::Obj(Rc::new(RefCell::new(pm)));
                         func.props.borrow_mut().insert("prototype".to_string(), p.clone());
                         p
                     }
