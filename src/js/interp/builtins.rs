@@ -297,15 +297,19 @@ pub(super) fn uri_encode(s: &str, extra_safe: &str) -> String {
     out
 }
 
-// URI 디코딩: %XX 를 바이트로 모아 UTF-8 해석. 유효하지 않은 %는 그대로 통과.
-pub(super) fn uri_decode(s: &str) -> String {
+// WHATWG 퍼센트 디코딩(관대): %XX 는 hex 면 바이트로, 아니면 그대로 통과. UTF-8 은 lossy.
+// URLSearchParams 등 폼 파싱용 — decodeURI 처럼 URIError 를 던지지 않는다. 바이트 파싱이라
+// 멀티바이트 문자에서도 안전(문자열 슬라이스 금지).
+pub(super) fn percent_decode_lossy(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(b);
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
                 i += 3;
                 continue;
             }
@@ -314,6 +318,76 @@ pub(super) fn uri_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+// decodeURI 가 디코드하지 않고 %XX 로 남기는 예약 문자 (uriReserved + '#', §19.2.6.1).
+fn is_uri_reserved(c: char) -> bool {
+    matches!(c, ';' | '/' | '?' | ':' | '@' | '&' | '=' | '+' | '$' | ',' | '#')
+}
+
+// §19.2.6.1 Decode(string, preserveEscapeSet). %XX 시퀀스를 바이트로 모아 UTF-8 로 해석.
+// preserve_reserved=true(decodeURI)면 예약 ASCII 문자는 %XX 로 남긴다. 잘못된 % 시퀀스나
+// 유효하지 않은 UTF-8 은 URIError(Err). 예전엔 관대 통과 + 문자열 슬라이스로 멀티바이트에서
+// 패닉했다.
+pub(super) fn uri_decode(s: &str, preserve_reserved: bool) -> Result<String, ()> {
+    let bytes = s.as_bytes();
+    let hexval = |b: u8| -> Option<u8> { (b as char).to_digit(16).map(|d| d as u8) };
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            // % 아닌 원본 바이트(멀티바이트 문자 포함)는 그대로 복사 — s 가 valid UTF-8 이라 안전.
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        // %XX — 두 자리는 반드시 hex.
+        if i + 2 >= bytes.len() {
+            return Err(());
+        }
+        let (Some(h), Some(l)) = (hexval(bytes[i + 1]), hexval(bytes[i + 2])) else {
+            return Err(());
+        };
+        let b0 = h * 16 + l;
+        let start = i;
+        i += 3;
+        if b0 & 0x80 == 0 {
+            // ASCII: 예약 문자는 %XX 로 보존(decodeURI), 아니면 디코드.
+            let c = b0 as char;
+            if preserve_reserved && is_uri_reserved(c) {
+                out.extend_from_slice(&bytes[start..i]);
+            } else {
+                out.push(b0);
+            }
+        } else {
+            // 멀티바이트 UTF-8 선두. 선행 1비트 수 = 시퀀스 길이(2..4).
+            let n = b0.leading_ones() as usize;
+            if !(2..=4).contains(&n) {
+                return Err(());
+            }
+            let mut octets = vec![b0];
+            for _ in 1..n {
+                if i + 2 >= bytes.len() || bytes[i] != b'%' {
+                    return Err(());
+                }
+                let (Some(hh), Some(ll)) = (hexval(bytes[i + 1]), hexval(bytes[i + 2])) else {
+                    return Err(());
+                };
+                let cb = hh * 16 + ll;
+                if cb & 0xC0 != 0x80 {
+                    return Err(()); // continuation 바이트는 10xxxxxx 여야 한다.
+                }
+                octets.push(cb);
+                i += 3;
+            }
+            // UTF-8 유효성(overlong/서로게이트 거부는 std 가 처리) 확인 후 디코드.
+            match std::str::from_utf8(&octets) {
+                Ok(dec) => out.extend_from_slice(dec.as_bytes()),
+                Err(_) => return Err(()),
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| ())
 }
 
 // 수신자 객체의 문자열 프로퍼티 (URL/URLSearchParams 네이티브 메서드용).
@@ -6083,7 +6157,14 @@ impl Interp {
                 Ok(Value::Str(uri_encode(&args.first().map(to_display).unwrap_or_default(), "")))
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
-                Ok(Value::Str(uri_decode(&args.first().map(to_display).unwrap_or_default())))
+                // decodeURI 는 예약 문자를 %XX 로 보존, decodeURIComponent 는 전부 디코드.
+                // 잘못된 % 시퀀스/비UTF-8 은 URIError.
+                let s = args.first().map(to_display).unwrap_or_default();
+                let preserve = matches!(n, Native::DecodeUri);
+                match uri_decode(&s, preserve) {
+                    Ok(r) => Ok(Value::Str(r)),
+                    Err(()) => Err(self.throw_error("URIError", "URI malformed")),
+                }
             }
             Native::UrlCtor => self.make_url(args), // URL(x) (new 없이) — 관대하게 생성
             Native::UrlToString => Ok(Value::Str(recv_prop_str(&recv, "href"))),

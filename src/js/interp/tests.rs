@@ -6547,3 +6547,20 @@ fn reflect_apply_construct_arraylike() {
     assert_eq!(run_num("function C(a,b){this.sum=a+b;} Reflect.construct(C,{length:2,0:3,1:4}).sum"), 7.0);
     assert!(run_bool("function C(){} var t=false; try{ Reflect.construct(C,null); }catch(e){ t=e instanceof TypeError; } t"));
 }
+
+#[test]
+fn uri_decode_multibyte_no_panic() {
+    // decodeURI("%ࠀ") 처럼 % 뒤 멀티바이트에서 바이트 경계 밖 슬라이스로 패닉하던 회귀 방지.
+    // 이제 잘못된 % 는 URIError(§19.2.6). 예약 문자는 decodeURI 가 %XX 로 보존.
+    assert_eq!(run_str("decodeURIComponent('%2F')"), "/");
+    assert_eq!(run_str("decodeURI('%2F')"), "%2F"); // reserved 보존
+    assert_eq!(run_str("decodeURI('%E0%A0%80')"), "ࠀ"); // U+0800 UTF-8 왕복
+    assert_eq!(run_str("decodeURIComponent('%20abc')"), " abc");
+    assert_eq!(run_str("decodeURI(encodeURI('héllo ࠀ'))"), "héllo ࠀ");
+    // 잘못된 시퀀스/overlong/surrogate → URIError (크래시 아님)
+    for e in ["decodeURI('%ࠀ')", "decodeURI('%ZZ')", "decodeURI('%')", "decodeURI('%E0')",
+              "decodeURI('%C0%80')", "decodeURI('%ED%A0%80')"] {
+        assert!(run_bool(&format!("var t=false; try{{ {}; }}catch(x){{ t=x instanceof URIError; }} t", e)),
+                "expected URIError from {}", e);
+    }
+}

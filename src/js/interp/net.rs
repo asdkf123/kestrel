@@ -1,6 +1,6 @@
 // 네트워크 바인딩: XMLHttpRequest / WebSocket / URL 질의 문자열.
 use super::*;
-use super::builtins::{uri_decode, uri_encode};
+use super::builtins::{percent_decode_lossy, uri_encode};
 
 // (키,값) 쌍을 x-www-form-urlencoded 쿼리 문자열로 (각 성분 encodeURIComponent).
 pub(super) fn build_query(pairs: &[(String, String)]) -> String {
@@ -17,7 +17,11 @@ pub(super) fn parse_query(q: &str) -> Vec<(String, String)> {
         .filter(|s| !s.is_empty())
         .map(|pair| {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            (uri_decode(&k.replace('+', " ")), uri_decode(&v.replace('+', " ")))
+            // 폼 파싱은 관대 디코드(URIError 없음).
+            (
+                percent_decode_lossy(&k.replace('+', " ")),
+                percent_decode_lossy(&v.replace('+', " ")),
+            )
         })
         .collect()
 }
