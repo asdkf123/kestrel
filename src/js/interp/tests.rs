@@ -6087,3 +6087,29 @@ fn number_to_exponential_precision_fixed() {
     assert_eq!(run_str("Number.prototype.toExponential.name"), "toExponential");
     assert_eq!(run_num("Number.prototype.toPrecision.length"), 1.0);
 }
+
+#[test]
+fn wrapper_instanceof_and_generic_this_toobject() {
+    // 원시 래퍼 instanceof (§20/21/22) — 예전엔 new Boolean() instanceof Boolean 조차 false.
+    assert!(run_bool("(new Boolean(false)) instanceof Boolean"));
+    assert!(run_bool("(new Number(5)) instanceof Number"));
+    assert!(run_bool("(new String('x')) instanceof String"));
+    assert!(run_bool("(new Number(5)) instanceof Object"));
+    assert!(!run_bool("(new Boolean(false)) instanceof Number"));
+    // generic 배열 메서드의 콜백 3번째 인자 = ToObject(this) (원시는 래퍼).
+    assert!(run_bool(
+        "Boolean.prototype[0]=1; Boolean.prototype.length=1; \
+         var r=Array.prototype.every.call(false, function(v,i,o){ return o instanceof Boolean; }); \
+         delete Boolean.prototype[0]; delete Boolean.prototype.length; r"
+    ));
+    assert!(run_bool(
+        "Number.prototype[0]=9; Number.prototype.length=1; var o; \
+         Array.prototype.map.call(3.5, function(v,i,obj){ o=obj; return 0; }); \
+         delete Number.prototype[0]; delete Number.prototype.length; o instanceof Number"
+    ));
+    // length getter 가 IsCallable 보다 먼저 (예외 전파)
+    assert!(run_bool(
+        "function E(){} var obj={0:1}; Object.defineProperty(obj,'length',{get:function(){throw new E();}}); \
+         var t=false; try{ Array.prototype.filter.call(obj, undefined); }catch(e){ t=e instanceof E; } t"
+    ));
+}

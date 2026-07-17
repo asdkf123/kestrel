@@ -7059,6 +7059,41 @@ impl Interp {
                             | Value::SetVal(_)
                             | Value::Instance(_)
                     ),
+                    // 원시 래퍼 생성자(Boolean/Number/String): 래퍼의 __proto__ 체인에
+                    // 해당 prototype 이 있는가. 예전엔 new Boolean() instanceof Boolean 조차
+                    // false 였다(§20/21/22 프로토타입이 체크 대상이 아니었다).
+                    Value::Native(
+                        Native::BooleanCtor | Native::NumberCtor | Native::StringCtor,
+                    ) => {
+                        let target = match &r {
+                            Value::Native(Native::BooleanCtor) => self.boolean_proto.clone(),
+                            Value::Native(Native::NumberCtor) => self.number_proto.clone(),
+                            _ => self.string_proto.clone(),
+                        };
+                        match (&l, &target) {
+                            (Value::Obj(lm), Value::Obj(tp)) => {
+                                let mut cur = Some(lm.clone());
+                                let mut hit = false;
+                                let mut depth = 0;
+                                while let Some(m) = cur {
+                                    if Rc::ptr_eq(&m, tp) {
+                                        hit = true;
+                                        break;
+                                    }
+                                    depth += 1;
+                                    if depth > 100 {
+                                        break;
+                                    }
+                                    cur = match m.borrow().get("__proto__") {
+                                        Some(Value::Obj(p)) => Some(p.clone()),
+                                        _ => None,
+                                    };
+                                }
+                                hit
+                            }
+                            _ => false,
+                        }
+                    }
                     _ => false,
                 };
                 Value::Bool(hit)

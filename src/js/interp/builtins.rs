@@ -1106,6 +1106,31 @@ impl Interp {
     // 체인 존중) 읽어 임시 Vec 로 재료화한다. 예전 array_like_to_vec 는 own 데이터
     // length·own 인덱스만 봐서 getter length / "Infinity" 문자열 / 상속 원소 /
     // 원시 래퍼(Boolean.prototype[1]) 수신자를 전부 놓쳤다.
+    // ToObject (§7.1.18): 원시값(Bool/Num/Str)을 래퍼 객체로 박는다. 이미 객체면 그대로.
+    // generic 배열/문자열 메서드의 콜백 3번째 인자(=ToObject(this))에 쓴다 — 예전엔
+    // 원시값을 그대로 넘겨 `obj instanceof Boolean` 등이 어긋났다.
+    pub(super) fn to_object_value(&self, v: Value) -> Value {
+        let (proto, tag) = match &v {
+            Value::Str(_) => (self.string_proto.clone(), "String"),
+            Value::Num(_) => (self.number_proto.clone(), "Number"),
+            Value::Bool(_) => (self.boolean_proto.clone(), "Boolean"),
+            _ => return v, // 이미 객체(또는 null/undefined — 호출부에서 이미 처리)
+        };
+        let mut m = ObjMap::new();
+        m.insert(WRAPPER_SLOT.to_string(), v.clone());
+        m.insert("__proto__".to_string(), proto);
+        m.insert("\u{0}class".to_string(), Value::Str(tag.to_string()));
+        if let Value::Str(s) = &v {
+            for (i, c) in s.chars().enumerate() {
+                m.insert(i.to_string(), Value::Str(c.to_string()));
+                m.insert(attr_marker(&i.to_string()), Value::Num(ATTR_ENUMERABLE as f64));
+            }
+            m.insert("length".to_string(), Value::Num(s.chars().count() as f64));
+            set_prop_attrs(&mut m, "length", 0); // {w:f,e:f,c:f}
+        }
+        Value::Obj(Rc::new(RefCell::new(m)))
+    }
+
     pub(super) fn generic_array_read(&mut self, recv: &Value) -> Result<Vec<Value>, String> {
         let len_val = self.member_get(recv, "length")?;
         let len = to_length(to_num(&len_val));
@@ -5243,10 +5268,9 @@ impl Interp {
                 if is_mutating_arr_op(op) && a.has_holes() {
                     a.materialize_holes();
                 }
-                // 콜백의 "배열" 인자(§23.1.3: 3번째 인자)는 **원래 수신자**(ToObject(this))다 —
-                // 임시 복사 a 가 아니다. 예전엔 a 를 넘겨 array-like(Math/Date 등) 대상에서
-                // Object.prototype.toString.call(그 인자) 가 "[object Array]" 로 어긋났다.
-                let cb_arr = recv.clone().unwrap_or(Value::Undefined);
+                // 콜백의 "배열" 인자(§23.1.3: 3번째 인자)는 **ToObject(원래 수신자)**다 —
+                // 임시 복사 a 가 아니다. 원시 수신자는 래퍼로 박는다(obj instanceof Boolean).
+                let cb_arr = self.to_object_value(recv.clone().unwrap_or(Value::Undefined));
                 let out = match op {
                     ArrOp::Join => {
                         // §23.1.3.18: 구분자 undefined 는 ",". 원소 null/undefined 는 빈
