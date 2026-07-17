@@ -2495,10 +2495,14 @@ impl Interp {
             return Err(self.throw_error("TypeError", "Set operation argument is not an object"));
         }
         let raw_size = self.member_get(obj, "size")?;
-        let num = to_num(&raw_size);
+        // step 3: numSize = ? ToNumber(rawSize) — 사용자 valueOf/@@toPrimitive 호출,
+        // Symbol/BigInt 은 TypeError. 예전엔 to_num 이라 valueOf 미호출·BigInt 통과였다.
+        let num = self.to_number_value(&raw_size)?;
+        // step 4: NaN 이면 TypeError (ToIntegerOrInfinity 전에 검사 — NaN→0 로 뭉개지 않는다).
         if num.is_nan() {
             return Err(self.throw_error("TypeError", "Set-like 'size' is not a number"));
         }
+        // step 5: intSize = ToIntegerOrInfinity(numSize).
         let int_size = if num.is_infinite() { num } else { num.trunc() };
         if int_size < 0.0 {
             return Err(self.throw_error("RangeError", "Set-like 'size' is negative"));

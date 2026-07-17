@@ -6288,3 +6288,25 @@ fn to_exponential_precision_arg_coercion() {
     // Number 래퍼 객체는 통과.
     assert_eq!(run_str("new Number(5).toFixed(2)"), "5.00");
 }
+
+#[test]
+fn set_get_set_record_size_coercion() {
+    // §24.2.1.2 step 3-5: size 는 ToNumber (valueOf 관측), NaN→TypeError, BigInt→TypeError.
+    assert!(run_bool(
+        "var c=0; var sl={size:{valueOf(){c++;return NaN;}},has(){},keys:function*(){}}; var t=false; try{ new Set([1]).union(sl); }catch(e){ t=e instanceof TypeError; } t && c===1"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ new Set([1]).union({size:0n,has(){},keys:function*(){}}); }catch(e){ t=e instanceof TypeError; } t"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ new Set([1]).union({size:'x',has(){},keys:function*(){}}); }catch(e){ t=e instanceof TypeError; } t"
+    ));
+    assert!(run_bool(
+        "var t=false; try{ new Set([1]).union({size:undefined,has(){},keys:function*(){}}); }catch(e){ t=e instanceof TypeError; } t"
+    ));
+    // 정상 set-like: size 를 valueOf 로 강제변환해 union 성공.
+    assert_eq!(
+        run_str("[...new Set([1,2]).union({size:{valueOf(){return 1;}},has(){return false;},keys:function*(){yield 9;}})].join()"),
+        "1,2,9"
+    );
+}
