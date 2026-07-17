@@ -6278,8 +6278,20 @@ impl Interp {
                 if !is_object(args.first().unwrap_or(&Value::Undefined)) {
                     return Err(self.throw_error("TypeError", "Reflect.ownKeys called on non-object"));
                 }
-                // 모든 own 문자열 키(비열거 포함). 심볼 키는 아직 별도(gap).
-                self.call_native(Native::ObjectGetOwnPropertyNames, None, args)
+                // §28.1.10 = target.[[OwnPropertyKeys]](): 정수 인덱스 오름차순 + 문자열
+                // 삽입순 + **심볼 삽입순**. getOwnPropertyNames(문자열)에 심볼 키를 이어붙인다.
+                let names =
+                    self.call_native(Native::ObjectGetOwnPropertyNames, None, args.clone())?;
+                let syms =
+                    self.call_native(Native::ObjectGetOwnPropertySymbols, None, args)?;
+                let mut keys: Vec<Value> = match names {
+                    Value::Arr(a) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                if let Value::Arr(a) = syms {
+                    keys.extend(a.borrow().iter().cloned());
+                }
+                Ok(Value::Arr(ArrayObj::new(keys)))
             }
             Native::ReflectGetOwnPropertyDescriptor => {
                 if !is_object(args.first().unwrap_or(&Value::Undefined)) {

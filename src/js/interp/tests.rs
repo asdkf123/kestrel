@@ -6441,3 +6441,14 @@ fn reflect_set_receiver_semantics() {
     // 상속 데이터 → receiver(=target)에 own 생성
     assert!(run_bool("var o=Object.create({p:1}); Reflect.set(o,'p',5)===true && o.hasOwnProperty('p') && o.p===5"));
 }
+
+#[test]
+fn reflect_ownkeys_includes_symbols() {
+    // §28.1.10: 정수 인덱스 오름차순 + 문자열 삽입순 + 심볼 삽입순.
+    assert_eq!(run_str("var o={}; o.b=1; o[2]=2; o.a=3; o[0]=4; JSON.stringify(Reflect.ownKeys(o))"),
+               "[\"0\",\"2\",\"b\",\"a\"]");
+    // 심볼 키가 문자열 뒤에 포함
+    assert!(run_bool("var s=Symbol('s'); var o={x:1}; o[s]=2; var k=Reflect.ownKeys(o); k.length===2 && k[0]==='x' && k[1]===s"));
+    // 심볼만 있는 객체
+    assert!(run_bool("var a=Symbol('a'),b=Symbol('b'); var o={}; o[a]=1; o[b]=2; var k=Reflect.ownKeys(o); k.length===2 && k[0]===a && k[1]===b"));
+}
