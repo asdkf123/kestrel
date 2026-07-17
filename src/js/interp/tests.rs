@@ -6134,3 +6134,28 @@ fn math_es2015_methods() {
     assert_eq!(run_num("Math.expm1.length"), 1.0);
     assert!(run_bool("var t=false; try{ new Math.clz32(); }catch(e){ t=e instanceof TypeError; } t"));
 }
+
+#[test]
+fn reflect_target_must_be_object() {
+    // §28.1: get/set/has/deleteProperty 는 target 이 객체가 아니면 TypeError.
+    for expr in [
+        "Reflect.get(1,'x')",
+        "Reflect.set(1,'x',1)",
+        "Reflect.has(1,'x')",
+        "Reflect.deleteProperty(1,'x')",
+        "Reflect.get(null,'x')",
+        "Reflect.has('str','x')",
+    ] {
+        assert!(
+            run_bool(&format!("var t=false; try{{ {}; }}catch(e){{ t=e instanceof TypeError; }} t", expr)),
+            "expected TypeError from {}",
+            expr
+        );
+    }
+    // 객체 대상은 정상 동작
+    assert_eq!(run_num("Reflect.get({x:5}, 'x')"), 5.0);
+    assert!(run_bool("var o={}; Reflect.set(o,'y',9); o.y===9"));
+    assert!(run_bool("Reflect.has({a:1}, 'a')"));
+    // key 는 ToPropertyKey (Symbol/toString 관측)
+    assert_eq!(run_num("var o={}; o[Symbol.for('k')]=7; Reflect.get(o, Symbol.for('k'))"), 7.0);
+}

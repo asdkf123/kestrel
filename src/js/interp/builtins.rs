@@ -6018,12 +6018,26 @@ impl Interp {
                 Ok(deep_clone(args.first().unwrap_or(&Value::Undefined), 0))
             }
             Native::ReflectGet => {
+                // §28.1.6: target 이 객체가 아니면 TypeError. key 는 ToPropertyKey.
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
-                let key = args.get(1).map(to_display).unwrap_or_default();
+                if !is_object(&target) {
+                    return Err(self.throw_error("TypeError", "Reflect.get called on non-object"));
+                }
+                let key = match args.get(1).cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 self.member_get(&target, &key)
             }
             Native::ReflectSet => {
-                let key = args.get(1).map(to_display).unwrap_or_default();
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_object(&target) {
+                    return Err(self.throw_error("TypeError", "Reflect.set called on non-object"));
+                }
+                let key = match args.get(1).cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 let val = args.get(2).cloned().unwrap_or(Value::Undefined);
                 let mut ok = false;
                 match args.first() {
@@ -6040,7 +6054,14 @@ impl Interp {
                 Ok(Value::Bool(ok))
             }
             Native::ReflectHas => {
-                let key = args.get(1).map(to_display).unwrap_or_default();
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_object(&target) {
+                    return Err(self.throw_error("TypeError", "Reflect.has called on non-object"));
+                }
+                let key = match args.get(1).cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 let has = match args.first() {
                     Some(Value::Obj(m)) => {
                         !is_internal_key(&key)
@@ -6056,7 +6077,16 @@ impl Interp {
                 Ok(Value::Bool(has))
             }
             Native::ReflectDeleteProperty => {
-                let key = args.get(1).map(to_display).unwrap_or_default();
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_object(&target) {
+                    return Err(
+                        self.throw_error("TypeError", "Reflect.deleteProperty called on non-object")
+                    );
+                }
+                let key = match args.get(1).cloned() {
+                    Some(k) => self.to_property_key(k)?,
+                    None => String::new(),
+                };
                 if let Some(Value::Obj(o)) = args.first() {
                     o.borrow_mut().remove(&key);
                 }
