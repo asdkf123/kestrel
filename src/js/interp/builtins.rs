@@ -6147,6 +6147,8 @@ impl Interp {
                 self.member_get(&target, &key)
             }
             Native::ReflectSet => {
+                // §28.1.11: [[Set]](P, V, Receiver) 의 불리언. Receiver 기본값 = target.
+                // 예전엔 target 에 무조건 insert(접근자/writable/receiver 무시)라 표준과 달랐다.
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
                 if !is_object(&target) {
                     return Err(self.throw_error("TypeError", "Reflect.set called on non-object"));
@@ -6156,19 +6158,8 @@ impl Interp {
                     None => String::new(),
                 };
                 let val = args.get(2).cloned().unwrap_or(Value::Undefined);
-                let mut ok = false;
-                match args.first() {
-                    Some(Value::Obj(o)) => {
-                        o.borrow_mut().insert(key, val);
-                        ok = true;
-                    }
-                    Some(Value::Instance(i)) => {
-                        i.fields.borrow_mut().insert(key, val);
-                        ok = true;
-                    }
-                    _ => {}
-                }
-                Ok(Value::Bool(ok))
+                let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
+                Ok(Value::Bool(self.ordinary_set(&target, &key, val, &receiver)?))
             }
             Native::ReflectHas => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);

@@ -2552,6 +2552,111 @@ impl Interp {
         self.iterate_to_vec(&iter)
     }
 
+    // 디스크립터 Obj 에서 (is_accessor, writable, setter) 를 뽑는다. own 없으면 None.
+    fn own_desc_fields(
+        &mut self,
+        obj: &Value,
+        key: &str,
+    ) -> Result<Option<(bool, bool, Value)>, String> {
+        let d = self.call_native(
+            Native::ObjectGetOwnPropertyDescriptor,
+            None,
+            vec![obj.clone(), Value::Str(key.to_string())],
+        )?;
+        let Value::Obj(m) = &d else {
+            return Ok(None);
+        };
+        let b = m.borrow();
+        let is_accessor = b.contains_key("get") || b.contains_key("set");
+        let writable = matches!(b.get("writable"), Some(Value::Bool(true)));
+        let setter = b.get("set").cloned().unwrap_or(Value::Undefined);
+        Ok(Some((is_accessor, writable, setter)))
+    }
+
+    // §10.1.9 OrdinarySet(O, P, V, Receiver) → 성공 여부. Reflect.set / [[Set]] 의 핵심.
+    // ownDesc 를 O 의 프로토타입 체인에서 찾고, 데이터면 Receiver 에 설정(있으면 갱신,
+    // 없으면 생성), 접근자면 setter 를 Receiver=this 로 호출. non-writable/비객체 Receiver/
+    // accessor-vs-data 불일치는 false.
+    pub(super) fn ordinary_set(
+        &mut self,
+        o: &Value,
+        key: &str,
+        v: Value,
+        receiver: &Value,
+    ) -> Result<bool, String> {
+        // ownDesc = O.[[GetOwnProperty]](P).
+        match self.own_desc_fields(o, key)? {
+            None => {
+                // 프로토타입 체인 위임 (§10.1.9.1 step 2).
+                let parent = self.call_native(Native::ObjectGetPrototypeOf, None, vec![o.clone()])?;
+                if is_object(&parent) {
+                    return self.ordinary_set(&parent, key, v, receiver);
+                }
+                // parent null → ownDesc = 기본 data(writable). Receiver 에 생성/설정.
+                self.set_data_on_receiver(receiver, key, v)
+            }
+            Some((is_accessor, writable, setter)) => {
+                if is_accessor {
+                    // §10.1.9.2 step 3: setter 없으면 false, 있으면 Receiver=this 로 호출.
+                    if is_callable(&setter) {
+                        self.call_value(setter, Some(receiver.clone()), vec![v])?;
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                } else {
+                    // 데이터: non-writable 이면 false, 아니면 Receiver 에 설정.
+                    if !writable {
+                        return Ok(false);
+                    }
+                    self.set_data_on_receiver(receiver, key, v)
+                }
+            }
+        }
+    }
+
+    // §10.1.9.2 step 2.b-e: 데이터 값을 Receiver 에 설정. Receiver 가 비객체면 false.
+    // Receiver 에 own 이 있으면 accessor/non-writable 은 false, 아니면 값 갱신.
+    // 없으면 CreateDataProperty. defineProperty 거부(비확장/비설정가능)는 false 로 흡수.
+    fn set_data_on_receiver(
+        &mut self,
+        receiver: &Value,
+        key: &str,
+        v: Value,
+    ) -> Result<bool, String> {
+        if !is_object(receiver) {
+            return Ok(false);
+        }
+        let exists = match self.own_desc_fields(receiver, key)? {
+            Some((is_accessor, writable, _)) => {
+                if is_accessor || !writable {
+                    return Ok(false);
+                }
+                true
+            }
+            None => false,
+        };
+        let mut desc = ObjMap::new();
+        desc.insert("value".to_string(), v);
+        if !exists {
+            desc.insert("writable".to_string(), Value::Bool(true));
+            desc.insert("enumerable".to_string(), Value::Bool(true));
+            desc.insert("configurable".to_string(), Value::Bool(true));
+        }
+        let desc = Value::Obj(Rc::new(RefCell::new(desc)));
+        match self.call_native(
+            Native::ObjectDefineProperty,
+            None,
+            vec![receiver.clone(), Value::Str(key.to_string()), desc],
+        ) {
+            Ok(_) => Ok(true),
+            Err(_) => {
+                self.thrown = None; // 정의 거부(비확장 등)는 예외가 아니라 false.
+                Ok(false)
+            }
+        }
+    }
+
     // §10.1.2 OrdinarySetPrototypeOf(O, V). target 은 Obj/Fn(설정 가능), proto 는 Object|Null
     // (호출부가 검증). SameValue(V,current)→true(무변경), non-extensible & 다름→false, 순환→false,
     // 그 밖엔 [[Prototype]] 설정 후 true. Object.setPrototypeOf 는 false 면 TypeError,

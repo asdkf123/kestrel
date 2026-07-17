@@ -6421,3 +6421,23 @@ fn ordinary_set_prototype_of_semantics() {
     // null/undefined target → TypeError
     assert!(run_bool("var t=false; try{ Object.setPrototypeOf(null, {}); }catch(e){ t=e instanceof TypeError; } t"));
 }
+
+#[test]
+fn reflect_set_receiver_semantics() {
+    // §10.1.9/§28.1.11: Reflect.set(target, key, value, receiver).
+    assert!(run_bool("var o={p:43}; Reflect.set(o,'p',42)===true && o.p===42")); // 기본
+    // receiver 가 다르면 데이터는 receiver 에 설정, target 은 불변.
+    assert!(run_bool("var o={p:43},r={p:44}; Reflect.set(o,'p',42,r)===true && o.p===43 && r.p===42"));
+    // receiver own 이 non-writable → false
+    assert!(run_bool("var o={},r={}; Object.defineProperty(r,'p',{writable:false,value:42}); Reflect.set(o,'p',43,r)===false"));
+    // target ownDesc non-writable data → false
+    assert!(run_bool("var o={}; Object.defineProperty(o,'p',{writable:false,value:1}); Reflect.set(o,'p',2)===false && o.p===1"));
+    // receiver 가 비객체 → false
+    assert!(run_bool("var o={p:42}; Reflect.set(o,'p',43,'str')===false"));
+    // 접근자 setter 는 receiver=this 로 호출
+    assert!(run_bool("var log; var o={set p(v){log=this.tag+':'+v;}}; Reflect.set(o,'p',9,{tag:'R'})===true && log==='R:9'"));
+    // setter 없는 접근자 → false
+    assert!(run_bool("var o={get p(){return 1;}}; Reflect.set(o,'p',9)===false"));
+    // 상속 데이터 → receiver(=target)에 own 생성
+    assert!(run_bool("var o=Object.create({p:1}); Reflect.set(o,'p',5)===true && o.hasOwnProperty('p') && o.p===5"));
+}
