@@ -6704,3 +6704,16 @@ fn array_concat_is_concat_spreadable() {
     assert_eq!(run_str("JSON.stringify([1].concat({x:1}))"), "[1,{\"x\":1}]");
     assert_eq!(run_str("typeof Symbol.isConcatSpreadable"), "symbol");
 }
+
+#[test]
+fn object_methods_toobject_string_primitive() {
+    // §20.1.2: Object.keys/values/entries/gOPN/gOPD 는 문자열 원시값을 ToObject(래퍼)해
+    // 인덱스 프로퍼티를 노출한다.
+    assert_eq!(run_str("Object.keys('ab').join()"), "0,1");
+    assert_eq!(run_str("Object.values('ab').join()"), "a,b");
+    assert_eq!(run_str("JSON.stringify(Object.entries('ab'))"), "[[\"0\",\"a\"],[\"1\",\"b\"]]");
+    assert_eq!(run_str("Object.getOwnPropertyNames('ab').join()"), "0,1,length");
+    assert_eq!(run_str("var d=Object.getOwnPropertyDescriptor('ab',0); [d.value,d.writable,d.enumerable,d.configurable].join()"), "a,false,true,false");
+    // 숫자/불리언은 열거 own 키 없음
+    assert_eq!(run_num("Object.keys(5).length"), 0.0);
+}

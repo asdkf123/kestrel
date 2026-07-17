@@ -1517,7 +1517,13 @@ impl Interp {
             //   3) 배열 length / 함수 prototype 이 undefined.
             // 라이브러리가 d.get / d.enumerable 을 보고 분기하므로 조용히 틀린 길로 간다.
             Native::ObjectGetOwnPropertyDescriptor => {
-                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                let target0 = args.first().cloned().unwrap_or(Value::Undefined);
+                // ToObject: 문자열 원시값은 래퍼로 박싱해 인덱스 서술자를 노출(§20.1.2.8).
+                let target = if matches!(target0, Value::Str(_)) {
+                    self.to_object_value(target0)
+                } else {
+                    target0
+                };
                 let key = match args.get(1).cloned() {
                     Some(k) => self.to_property_key(k)?,
                     None => String::new(),
@@ -6713,6 +6719,19 @@ impl Interp {
                 m.insert("resolve".to_string(), resolve);
                 m.insert("reject".to_string(), reject);
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
+            }
+            // ToObject: keys/values/entries/getOwnPropertyNames/gOPD 는 문자열 원시값을 래퍼로
+            // 박싱해 인덱스 프로퍼티를 노출한다 (§20.1.2: Object.keys('ab') → ['0','1']).
+            n2 @ (Native::ObjectKeys
+            | Native::ObjectValues
+            | Native::ObjectEntries
+            | Native::ObjectGetOwnPropertyNames)
+                if matches!(args.first(), Some(Value::Str(_))) =>
+            {
+                let boxed = self.to_object_value(args[0].clone());
+                let mut new_args = args.clone();
+                new_args[0] = boxed;
+                self.call_native(n2, None, new_args)
             }
             Native::ObjectKeys => match args.first() {
                 // Proxy: ownKeys 트랩 (없으면 타깃 위임). Object.keys(proxy) 가 빈 배열을
