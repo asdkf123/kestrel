@@ -807,6 +807,29 @@ fn named_color(name: &str) -> Option<Color> {
         "whitesmoke" => (245, 245, 245),
         "yellow" => (255, 255, 0),
         "yellowgreen" => (154, 205, 50),
+        // CSS <system-color> (CSS Color 4 §7 + CSS2 비권장분). 값은 구현 정의라 밝은
+        // 스킴 기본값을 쓴다. (color-scheme 인지 해석은 후속 — 여기선 키워드 인식이 핵심.)
+        "canvas" | "field" | "window" | "buttonhighlight" | "threedhighlight" => {
+            (255, 255, 255)
+        }
+        "canvastext" | "fieldtext" | "windowtext" | "buttontext" | "marktext" | "infotext"
+        | "menutext" | "captiontext" => (0, 0, 0),
+        "linktext" => (0, 0, 238),
+        "visitedtext" => (85, 26, 139),
+        "activetext" => (255, 0, 0),
+        "buttonface" | "threedface" | "menu" | "buttonshadow" | "threedlightshadow" => {
+            (240, 240, 240)
+        }
+        "buttonborder" | "threedshadow" | "graytext" | "threeddarkshadow" | "windowframe"
+        | "inactivecaptiontext" => (128, 128, 128),
+        "highlight" | "selecteditem" | "activecaption" | "activeborder" | "accentcolor" => {
+            (0, 120, 215)
+        }
+        "highlighttext" | "selecteditemtext" | "accentcolortext" => (255, 255, 255),
+        "mark" | "infobackground" => (255, 255, 0),
+        "scrollbar" | "background" | "inactiveborder" | "inactivecaption" | "appworkspace" => {
+            (212, 208, 200)
+        }
         _ => return None,
     };
     Some(Color { r: rgb.0, g: rgb.1, b: rgb.2, a: 255 })
