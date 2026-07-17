@@ -6334,3 +6334,17 @@ fn iterator_result_accessor_done_value() {
         "1,7,8,9"
     );
 }
+
+#[test]
+fn native_builtins_are_extensible() {
+    // 내장 함수/메서드는 확장 가능한 객체다(§17): isExtensible=true, isFrozen/isSealed=false.
+    for e in ["Object.keys", "Array.prototype.map", "Set.prototype.union", "Math.max"] {
+        assert!(run_bool(&format!("Object.isExtensible({})", e)), "isExtensible({}) should be true", e);
+        assert!(run_bool(&format!("!Object.isFrozen({})", e)), "isFrozen({}) should be false", e);
+        assert!(run_bool(&format!("!Object.isSealed({})", e)), "isSealed({}) should be false", e);
+    }
+    // 원시값/실객체 무결성은 그대로.
+    assert!(run_bool("Object.isFrozen(42) && !Object.isExtensible(42)"));
+    assert!(run_bool("Object.isFrozen(Object.freeze({a:1})) && Object.isSealed(Object.seal({b:2}))"));
+    assert!(run_bool("!Object.isExtensible(Object.preventExtensions({}))"));
+}

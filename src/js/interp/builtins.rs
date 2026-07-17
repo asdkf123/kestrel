@@ -1998,9 +1998,10 @@ impl Interp {
             // 예전엔 인스턴스/함수/Map 도 "비객체" 취급해 안 얼렸는데 true 를 반환했다(거짓말).
             Native::ObjectIsFrozen | Native::ObjectIsSealed | Native::ObjectIsExtensible => {
                 let arg = args.first().cloned().unwrap_or(Value::Undefined);
-                let r = if super::integrity_ptr(&arg).is_none() {
-                    !matches!(n, Native::ObjectIsExtensible) // 원시값
-                } else {
+                let r = if !is_object(&arg) {
+                    // 비객체(원시값): isFrozen/isSealed=true, isExtensible=false.
+                    !matches!(n, Native::ObjectIsExtensible)
+                } else if super::integrity_ptr(&arg).is_some() {
                     let b = self.integrity_bits(&arg);
                     let frozen = b & super::INTEG_FROZEN != 0;
                     let sealed = frozen || b & super::INTEG_SEALED != 0;
@@ -2010,6 +2011,12 @@ impl Interp {
                         Native::ObjectIsSealed => sealed,
                         _ => !nonext,
                     }
+                } else {
+                    // 무결성 추적 대상이 아닌 객체(내장 함수 Native/Bound/DOM 등): 얼리거나
+                    // 봉인된 적이 없다 → isExtensible=true, isFrozen/isSealed=false. 예전엔
+                    // integrity_ptr 이 None 이라 원시값으로 오판해 내장 메서드가 non-extensible
+                    // 로 보고됐다("Built-in objects must be extensible" 위반).
+                    matches!(n, Native::ObjectIsExtensible)
                 };
                 Ok(Value::Bool(r))
             }
