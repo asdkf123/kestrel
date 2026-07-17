@@ -5480,19 +5480,13 @@ impl Interp {
                         // §22.1.3.14: indexOf(searchElement, fromIndex). fromIndex 는
                         // ToIntegerOrInfinity, 음수면 len+n(하한 0)부터 앞으로 검색.
                         let needle = args.first().cloned().unwrap_or(Value::Undefined);
-                        let snapshot: Vec<Value> = a.borrow().clone();
-                        let len = snapshot.len() as f64;
+                        // fromIndex 는 ToIntegerOrInfinity(valueOf 관측, Symbol/BigInt→TypeError).
                         let n = match args.get(1) {
                             None | Some(Value::Undefined) => 0.0,
-                            Some(v) => {
-                                let x = to_num(v);
-                                if x.is_nan() {
-                                    0.0
-                                } else {
-                                    x.trunc()
-                                }
-                            }
+                            Some(v) => self.to_integer_or_infinity(v)?,
                         };
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let len = snapshot.len() as f64;
                         let start = if n >= 0.0 { n } else { (len + n).max(0.0) };
                         let start = if start > len { len } else { start } as usize;
                         let has_holes = a.has_holes();
@@ -5513,14 +5507,28 @@ impl Interp {
                         Value::Num(found)
                     }
                     ArrOp::Slice => {
-                        let items = a.borrow();
-                        let len = items.len() as isize;
-                        let clampi = |v: f64| -> usize {
-                            let i = v as isize;
-                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        // §23.1.3.25: start/end 는 배열 읽기 전에 ToIntegerOrInfinity 로 강제변환
+                        // (객체 valueOf 관측, Symbol/BigInt→TypeError, ±∞ 처리). 예전엔 to_num.
+                        let len0 = a.borrow().len() as f64;
+                        let start_f = match args.first() {
+                            Some(v) if !matches!(v, Value::Undefined) => {
+                                self.to_integer_or_infinity(v)?
+                            }
+                            _ => 0.0,
                         };
-                        let start = clampi(args.first().map(to_num).unwrap_or(0.0));
-                        let end = clampi(args.get(1).map(to_num).unwrap_or(len as f64));
+                        let end_f = match args.get(1) {
+                            Some(v) if !matches!(v, Value::Undefined) => {
+                                self.to_integer_or_infinity(v)?
+                            }
+                            _ => len0,
+                        };
+                        let items = a.borrow();
+                        let len = items.len() as f64; // valueOf 가 배열을 줄였을 수 있어 재확인
+                        let rel = |v: f64| -> usize {
+                            (if v < 0.0 { (len + v).max(0.0) } else { v.min(len) }) as usize
+                        };
+                        let start = rel(start_f);
+                        let end = rel(end_f);
                         Value::Arr(ArrayObj::new(items[start..end.max(start)].to_vec()))
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
@@ -5760,19 +5768,13 @@ impl Interp {
                         // §22.1.3.13: includes(searchElement, fromIndex). SameValueZero
                         // (NaN 매칭), fromIndex 는 ToIntegerOrInfinity.
                         let needle = args.first().cloned().unwrap_or(Value::Undefined);
-                        let items = a.borrow();
-                        let len = items.len() as f64;
+                        // fromIndex 는 ToIntegerOrInfinity(valueOf 관측, Symbol→TypeError).
                         let n = match args.get(1) {
                             None | Some(Value::Undefined) => 0.0,
-                            Some(v) => {
-                                let x = to_num(v);
-                                if x.is_nan() {
-                                    0.0
-                                } else {
-                                    x.trunc()
-                                }
-                            }
+                            Some(v) => self.to_integer_or_infinity(v)?,
                         };
+                        let items = a.borrow();
+                        let len = items.len() as f64;
                         let start = if n >= 0.0 { n } else { (len + n).max(0.0) };
                         let start = if start > len { len } else { start } as usize;
                         Value::Bool(
@@ -5782,21 +5784,30 @@ impl Interp {
                         )
                     }
                     ArrOp::Splice => {
-                        // splice(start, deleteCount, ...items) → 제거분 배열 반환, 원본 변형
+                        // §23.1.3.29: start/deleteCount 는 ToIntegerOrInfinity(변형 전 강제변환).
+                        // argCount==0 → 삭제 0, ==1 → len-start, else → clamp(ToInteger(dc)).
+                        let len0 = a.borrow().len() as f64;
+                        let start_f = match args.first() {
+                            Some(v) => self.to_integer_or_infinity(v)?,
+                            None => 0.0,
+                        };
+                        let start = if start_f < 0.0 {
+                            (len0 + start_f).max(0.0)
+                        } else {
+                            start_f.min(len0)
+                        };
+                        let del_f = if args.is_empty() {
+                            0.0
+                        } else if args.len() == 1 {
+                            len0 - start
+                        } else {
+                            self.to_integer_or_infinity(&args[1])?.max(0.0).min(len0 - start)
+                        };
                         let mut arr = a.borrow_mut();
-                        let len = arr.len() as isize;
-                        let start = {
-                            let s = args.first().map(to_num).unwrap_or(0.0) as isize;
-                            (if s < 0 { len + s } else { s }).clamp(0, len) as usize
-                        };
-                        let del = match args.get(1) {
-                            Some(v) => (to_num(v) as isize).clamp(0, len - start as isize) as usize,
-                            None => arr.len() - start,
-                        };
-                        let removed: Vec<Value> = arr.splice(
-                            start..start + del,
-                            args.iter().skip(2).cloned(),
-                        ).collect();
+                        let start = (start as usize).min(arr.len());
+                        let del = (del_f as usize).min(arr.len() - start);
+                        let removed: Vec<Value> =
+                            arr.splice(start..start + del, args.iter().skip(2).cloned()).collect();
                         Value::Arr(ArrayObj::new(removed))
                     }
                     ArrOp::Shift => {
@@ -5928,26 +5939,40 @@ impl Interp {
                         Value::Arr(ArrayObj::new(out))
                     }
                     ArrOp::At => {
-                        // arr.at(i): 음수는 끝에서. 범위 밖 undefined.
-                        let len = a.borrow().len() as isize;
-                        let i = args.first().map(to_num).unwrap_or(0.0) as isize;
-                        let idx = if i < 0 { len + i } else { i };
-                        if idx >= 0 && idx < len {
-                            a.borrow().get(idx as usize).cloned().unwrap_or(Value::Undefined)
+                        // arr.at(i): ToIntegerOrInfinity, 음수는 끝에서. 범위 밖 undefined.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let i = self.to_integer_or_infinity(&arg)?;
+                        let items = a.borrow();
+                        let len = items.len() as f64;
+                        let idx = if i < 0.0 { len + i } else { i };
+                        if idx >= 0.0 && idx < len {
+                            items.get(idx as usize).cloned().unwrap_or(Value::Undefined)
                         } else {
                             Value::Undefined
                         }
                     }
                     ArrOp::Fill => {
-                        // arr.fill(value, start?, end?): 제자리 채우고 배열 반환.
+                        // arr.fill(value, start?, end?): start/end 는 ToIntegerOrInfinity(배열 읽기 전).
                         let val = args.first().cloned().unwrap_or(Value::Undefined);
-                        let len = a.borrow().len() as isize;
-                        let clampi = |v: f64| -> usize {
-                            let i = v as isize;
-                            (if i < 0 { len + i } else { i }).clamp(0, len) as usize
+                        let len0 = a.borrow().len() as f64;
+                        let start_f = match args.get(1) {
+                            Some(v) if !matches!(v, Value::Undefined) => {
+                                self.to_integer_or_infinity(v)?
+                            }
+                            _ => 0.0,
                         };
-                        let start = clampi(args.get(1).map(to_num).unwrap_or(0.0));
-                        let end = clampi(args.get(2).map(to_num).unwrap_or(len as f64));
+                        let end_f = match args.get(2) {
+                            Some(v) if !matches!(v, Value::Undefined) => {
+                                self.to_integer_or_infinity(v)?
+                            }
+                            _ => len0,
+                        };
+                        let len = a.borrow().len() as f64;
+                        let clampi = |v: f64| -> usize {
+                            (if v < 0.0 { (len + v).max(0.0) } else { v.min(len) }) as usize
+                        };
+                        let start = clampi(start_f);
+                        let end = clampi(end_f);
                         {
                             let mut b = a.borrow_mut();
                             for i in start..end {
@@ -5961,14 +5986,16 @@ impl Interp {
                     // arr.with(index, value) (§23.1.3.39): 원본 불변, 새 배열 반환.
                     // 범위 밖 인덱스면 RangeError.
                     ArrOp::With => {
-                        let mut items = a.borrow().clone();
-                        let len = items.len() as isize;
-                        let n = args.first().map(to_num).unwrap_or(0.0);
-                        let k = if n.is_nan() { 0 } else { n.trunc() as isize };
-                        let idx = if k < 0 { len + k } else { k };
-                        if idx < 0 || idx >= len {
+                        // index 는 ToIntegerOrInfinity (배열 복제 전).
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let n = self.to_integer_or_infinity(&arg)?;
+                        let items = a.borrow().clone();
+                        let len = items.len() as f64;
+                        let idx = if n < 0.0 { len + n } else { n };
+                        if idx < 0.0 || idx >= len {
                             return Err(self.throw_error("RangeError", "Invalid index"));
                         }
+                        let mut items = items;
                         items[idx as usize] = args.get(1).cloned().unwrap_or(Value::Undefined);
                         Value::Arr(ArrayObj::new(items))
                     }

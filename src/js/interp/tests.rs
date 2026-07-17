@@ -6587,3 +6587,23 @@ fn generic_array_length_tonumber_coercion() {
         "var t=false; try{ Array.prototype.forEach.call({length:Symbol()}, function(){}); }catch(e){ t=e instanceof TypeError; } t"
     ));
 }
+
+#[test]
+fn array_integer_args_tointeger_coercion() {
+    // §23.1.3: slice/splice/fill/indexOf/includes/at/with 의 정수 인자는
+    // ToIntegerOrInfinity — 객체 valueOf 호출, Symbol/BigInt→TypeError, ±∞ 처리.
+    assert_eq!(run_str("JSON.stringify([1,2,3].slice({valueOf:function(){return 1;}}))"), "[2,3]");
+    assert_eq!(run_num("[1,2,1].indexOf(1, {valueOf:function(){return 1;}})"), 2.0);
+    assert_eq!(run_str("var a=[1,2,3,4]; a.splice({valueOf:function(){return 1;}}, {valueOf:function(){return 2;}}); JSON.stringify(a)"), "[1,4]");
+    assert_eq!(run_str("JSON.stringify([1,2,3,4].fill(9, {valueOf:function(){return 1;}}, {valueOf:function(){return 3;}}))"), "[1,9,9,4]");
+    assert_eq!(run_num("[10,20,30].at({valueOf:function(){return 1;}})"), 20.0);
+    assert_eq!(run_str("JSON.stringify([1,2,3].with({valueOf:function(){return 1;}}, 99))"), "[1,99,3]");
+    // ±Infinity
+    assert_eq!(run_str("JSON.stringify([1,2,3].slice(Infinity))"), "[]");
+    assert_eq!(run_str("JSON.stringify([1,2,3].slice(-Infinity))"), "[1,2,3]");
+    // Symbol → TypeError
+    for e in ["[1,2,3].slice(Symbol())", "[1,2,3].at(Symbol())", "[1,2,3].indexOf(1,Symbol())"] {
+        assert!(run_bool(&format!("var t=false; try{{ {}; }}catch(x){{ t=x instanceof TypeError; }} t", e)),
+                "expected TypeError from {}", e);
+    }
+}
