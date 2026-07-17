@@ -1540,6 +1540,9 @@ impl Parser {
                 ));
                 continue;
             }
+            // 메서드 소스 시작(§20.2.3.5): static 소비 뒤(메서드 toString 은 static 제외),
+            // async/*/get/set 접두 포함.
+            let method_start = self.pos;
             // async 메서드: async 뒤가 메서드 이름/`*` 이면 비동기 표시.
             let is_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
                 && matches!(
@@ -1578,26 +1581,27 @@ impl Parser {
             }
             let (params, mut body) = self.param_list()?;
             body.extend(self.block()?);
+            let msrc = self.src_between(method_start, self.pos);
             if !is_static && mname == "constructor" {
                 ctor = Some((params, body));
             } else if accessor.as_deref() == Some("get") {
                 if is_static {
-                    static_getters.push((mname, params, body));
+                    static_getters.push((mname, params, body, msrc));
                 } else {
-                    getters.push((mname, params, body));
+                    getters.push((mname, params, body, msrc));
                 }
             } else if accessor.as_deref() == Some("set") {
                 // setter 는 실제로 등록한다. 예전엔 조용히 버려서 obj.x = v 가
                 // 아무 일도 안 했다 (검증 로직/프록시 패턴이 통째로 무력화).
                 if is_static {
-                    static_setters.push((mname, params, body));
+                    static_setters.push((mname, params, body, msrc));
                 } else {
-                    setters.push((mname, params, body));
+                    setters.push((mname, params, body, msrc));
                 }
             } else if is_static {
-                statics.push((mname, params, body, is_generator, is_async));
+                statics.push((mname, params, body, is_generator, is_async, msrc));
             } else {
-                methods.push((mname, params, body, is_generator, is_async));
+                methods.push((mname, params, body, is_generator, is_async, msrc));
             }
         }
         self.pos += 1; // '}'

@@ -5971,3 +5971,17 @@ fn function_tostring_source_text() {
     // toString 결과가 다시 파싱 가능(대략) — 최소한 'function' 포함
     assert!(run_bool("/function|=>/.test((function abc(){}).toString())"));
 }
+
+#[test]
+fn class_method_tostring_source() {
+    // 클래스 메서드/정적/getter/제너레이터/async 의 toString 은 소스 텍스트 (static 제외).
+    assert_eq!(run_str("class C{ method(a){ return a; } } C.prototype.method.toString()"),
+               "method(a){ return a; }");
+    assert_eq!(run_str("class C{ static sm(x){ return x; } } C.sm.toString()"), "sm(x){ return x; }");
+    assert_eq!(run_str("class C{ get p(){ return 1; } } Object.getOwnPropertyDescriptor(C.prototype,'p').get.toString()"),
+               "get p(){ return 1; }");
+    assert_eq!(run_str("class C{ *gen(){ yield 1; } } C.prototype.gen.toString()"), "*gen(){ yield 1; }");
+    assert_eq!(run_str("class C{ async am(){ return 2; } } C.prototype.am.toString()"), "async am(){ return 2; }");
+    // 클래스 자체
+    assert_eq!(run_str("class C extends Object { m(){} } C.toString()"), "class C extends Object { m(){} }");
+}

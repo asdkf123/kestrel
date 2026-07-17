@@ -6351,7 +6351,11 @@ impl Interp {
         // 메서드가 자기 클래스를 이름으로 참조할 수 있어야 한다 (클래스 표현식 포함).
         // 예전엔 static 필드 초기화에만 있어서, 메서드 안의 E.#s 가 ReferenceError 였다.
         let class_env = Env::new(Some(env.clone()));
-        let mk = |params: &Vec<String>, body: &Vec<Stmt>, is_generator: bool, is_async: bool| {
+        let mk = |params: &Vec<String>,
+                  body: &Vec<Stmt>,
+                  is_generator: bool,
+                  is_async: bool,
+                  source: Option<std::rc::Rc<str>>| {
             Rc::new(JsFn {
                 // 클래스 본문의 함수들은 이 클래스의 private 스코프 안에 있다
                 priv_id: std::cell::Cell::new(priv_id),
@@ -6369,7 +6373,7 @@ impl Interp {
                     .map(Value::Class)
                     .or_else(|| parent_ctor.clone()),
                 props: RefCell::new(ObjMap::new()),
-                source: None, // 클래스 메서드 소스는 별도 경로(미보관) — toString 근사
+                source, // 메서드별 소스 텍스트 (§20.2.3.5)
             })
         };
         // 메서드/접근자도 이름을 갖는다 (§15.4): 접근자는 "get x" / "set x" (§10.2.9)
@@ -6377,41 +6381,41 @@ impl Interp {
             *f.name.borrow_mut() = n.to_string();
             f
         };
-        let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false), def.name.as_deref().unwrap_or("")));
+        let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false, None), def.name.as_deref().unwrap_or("")));
         let mut methods = HashMap::new();
-        for (name, p, b, gen, asy) in &def.methods {
-            methods.insert(name.clone(), named(mk(p, b, *gen, *asy), name));
+        for (name, p, b, gen, asy, src) in &def.methods {
+            methods.insert(name.clone(), named(mk(p, b, *gen, *asy, src.clone()), name));
         }
         let mut getters = HashMap::new();
         let mut setters = HashMap::new();
-        for (name, p, b) in &def.setters {
-            setters.insert(name.clone(), named(mk(p, b, false, false), &format!("set {}", name)));
+        for (name, p, b, src) in &def.setters {
+            setters.insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("set {}", name)));
         }
         let mut static_getters = HashMap::new();
-        for (name, p, b) in &def.static_getters {
+        for (name, p, b, src) in &def.static_getters {
             static_getters
-                .insert(name.clone(), named(mk(p, b, false, false), &format!("get {}", name)));
+                .insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("get {}", name)));
         }
         let mut static_setters = HashMap::new();
-        for (name, p, b) in &def.static_setters {
+        for (name, p, b, src) in &def.static_setters {
             static_setters
-                .insert(name.clone(), named(mk(p, b, false, false), &format!("set {}", name)));
+                .insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("set {}", name)));
         }
-        for (name, p, b) in &def.getters {
-            getters.insert(name.clone(), named(mk(p, b, false, false), &format!("get {}", name)));
+        for (name, p, b, src) in &def.getters {
+            getters.insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("get {}", name)));
         }
         // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출
         let mut fields = Vec::new();
         for (name, init) in &def.fields {
             let f = init
                 .as_ref()
-                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))], false, false));
+                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))], false, false, None));
             fields.push((name.clone(), f));
         }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
-        for (name, p, b, gen, asy) in &def.statics {
-            let f = named(mk(p, b, *gen, *asy), name);
+        for (name, p, b, gen, asy, src) in &def.statics {
+            let f = named(mk(p, b, *gen, *asy, src.clone()), name);
             statics.insert(name.clone(), Value::Fn(f));
             // static **메서드**는 비열거다 (§15.7.14). static **필드**는 열거 가능하다 —
             // 그래서 구분해서 표시한다. 예전엔 둘 다 같은 맵에 섞여 구분이 없었다.

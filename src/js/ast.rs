@@ -76,17 +76,17 @@ pub struct ClassDef {
     pub name: Option<String>,
     pub parent: Option<Box<Expr>>,
     pub ctor: Option<(Vec<String>, Vec<Stmt>)>,
-    // (이름, 파라미터, 몸통, is_generator, is_async)
-    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool)>,
-    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool)>,
-    // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스)
-    pub getters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    // (이름, 파라미터, 몸통, is_generator, is_async, 소스텍스트)
+    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>)>,
+    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>)>,
+    // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스). (이름,파라미터,몸통,소스)
+    pub getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
     // set 접근자: 대입 시 호출 (this=인스턴스). 예전엔 파싱만 하고 버렸다 —
     // 그러면 obj.x = v 가 조용히 아무 일도 안 한다.
-    pub setters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    pub setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
     // static get/set 접근자 (this=클래스). static get observedAttributes 가 대표.
-    pub static_getters: Vec<(String, Vec<String>, Vec<Stmt>)>,
-    pub static_setters: Vec<(String, Vec<String>, Vec<Stmt>)>,
+    pub static_getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
+    pub static_setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
     // 인스턴스 필드: (이름, 초기화식) — 생성 시 this 에 설정
     pub fields: Vec<(String, Option<Expr>)>,
     // static 필드: (이름, 초기화식) — 클래스에 설정
