@@ -103,14 +103,6 @@ fn lookup_length(o: &Rc<RefCell<ObjMap>>) -> Option<f64> {
     None
 }
 
-// thisNumberValue (§21.1.3): 수신자가 Number/래퍼면 그 수치, 아니면 NaN (근사 —
-// 엄격히는 TypeError 지만 대부분 테스트는 값만 본다).
-fn number_this(recv: &Option<Value>) -> f64 {
-    match recv {
-        Some(v) => to_num(v),
-        None => f64::NAN,
-    }
-}
 
 fn is_array_like(o: &Rc<RefCell<ObjMap>>) -> bool {
     matches!(lookup_length(o), Some(n) if n.is_finite() && n >= 0.0)

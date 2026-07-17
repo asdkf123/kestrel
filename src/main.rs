@@ -133,6 +133,9 @@ fn main() {
     }
 
     // URL 렌더 모드: kestrel <url>
+    // 렌더는 winit EventLoop 를 메인 스레드에서 만들어야 하므로(macOS 제약) 큰 스택
+    // 스레드로 옮길 수 없다. 대신 메인 스레드 스택 자체를 링커 플래그(-stack_size,
+    // .cargo/config.toml)로 키워 깊은 DOM/CSS/JS 재귀의 stack overflow 를 막는다.
     if args.len() >= 2 && (args[1].starts_with("http://") || args[1].starts_with("https://")) {
         render_url(&args[1]);
         return;
