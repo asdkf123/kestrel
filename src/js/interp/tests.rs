@@ -2918,7 +2918,11 @@ fn object_callable_coercion() {
     // Object(x) — 함수로 호출 시 객체 강제변환 (core-js 의 Object(this) 등)
     assert_eq!(run_num("var o={n:9}; Object(o).n"), 9.0); // 객체는 그대로
     assert_eq!(run_str("typeof Object(null)"), "object"); // null → 새 {}
-    assert_eq!(run_num("var A=Object; A(7)"), 7.0); // 별칭 + 원시값 근사
+    // 원시값은 래퍼 객체로 박싱 (ToObject §7.1.18): typeof "object", valueOf 로 원값.
+    assert_eq!(run_num("var A=Object; A(7).valueOf()"), 7.0);
+    assert_eq!(run_str("typeof Object(7)"), "object");
+    assert!(matches!(run("Object(7) instanceof Number"), Value::Bool(true)));
+    assert_eq!(run_num("Object('ab').length"), 2.0);
 }
 
 #[test]

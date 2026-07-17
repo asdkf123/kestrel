@@ -1780,7 +1780,10 @@ impl Interp {
                     Value::Null | Value::Undefined => {
                         Value::Obj(Rc::new(RefCell::new(ObjMap::new())))
                     }
-                    other => other, // ToObject 근사 (원시값 박싱 미구현)
+                    // ToObject(§7.1.18): 이미 객체면 그대로, 원시값(문자열/숫자/불리언)은
+                    // 래퍼 객체로 박싱한다. 예전엔 원시값을 그대로 돌려줬다(typeof Object(5)="number").
+                    other if is_object(&other) => other,
+                    other => self.to_object_value(other),
                 })
             }
             _ => None,
