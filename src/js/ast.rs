@@ -7,6 +7,9 @@ pub enum Expr {
     Bool(bool),
     Null,
     Undefined,
+    // 배열 리터럴의 엘리전(구멍) [1,,3]. 명시적 undefined 와 구별된다 —
+    // 홀은 HasProperty 가 false 라 forEach/map/… 가 건너뛴다 (§희소 배열).
+    Hole,
     Ident(String),
     Array(Vec<Expr>),
     // 프로퍼티: 정적 키(식별자/문자열/숫자) 또는 계산된 키 [expr]

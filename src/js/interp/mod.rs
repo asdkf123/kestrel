@@ -1718,7 +1718,9 @@ impl Interp {
                         a.set_prop("\u{0}sparse_len".to_string(), Value::Num(*n));
                         Value::Arr(a)
                     } else {
-                        Value::Arr(ArrayObj::new(vec![Value::Undefined; len]))
+                        // new Array(n) 은 n 개의 구멍(§23.1.1.1) — 채워진 undefined 아님.
+                        let holes: std::collections::HashSet<usize> = (0..len).collect();
+                        Value::Arr(ArrayObj::with_holes(vec![Value::Undefined; len], holes))
                     }
                 }
                 items => Value::Arr(ArrayObj::new(items.to_vec())),
@@ -3164,7 +3166,8 @@ impl Interp {
                             .cloned()
                             .collect()
                     }
-                    Value::Arr(a) => (0..a.borrow().len()).map(|i| i.to_string()).collect(),
+                    // 희소 배열의 구멍은 for-in 이 건너뛴다 (§enumerate: 존재 인덱스만).
+                    Value::Arr(a) => a.present_indices().iter().map(|i| i.to_string()).collect(),
                     Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                     // 함수도 ordinary object — 열거 가능한 own 프로퍼티를 순회
                     // (name/length/prototype 및 상속된 Function/Object.prototype 멤버는 비열거).
@@ -3288,6 +3291,8 @@ impl Interp {
         self.tick()?;
         match expr {
             Expr::Num(n) => Ok(Value::Num(*n)),
+            // 홀은 배열 리터럴 안에서만 의미가 있다 (Expr::Array 가 처리). 단독 평가는 undefined.
+            Expr::Hole => Ok(Value::Undefined),
             Expr::BigInt(d) => crate::js::bigint::BigInt::parse(d)
                 .map(|b| Value::BigInt(Rc::new(b)))
                 .ok_or_else(|| format!("잘못된 BigInt 리터럴: {}", d)),
@@ -3320,22 +3325,35 @@ impl Interp {
             },
             Expr::Array(items) => {
                 let mut v = Vec::new();
+                let mut holes = std::collections::HashSet::new();
                 for item in items {
-                    if let Expr::Spread(inner) = item {
-                        let val = self.eval(inner, env)?;
-                        // null/undefined 전개는 TypeError (표준). 조용히 빈 배열로 넘기면
-                        // 진짜 버그가 숨는다.
-                        if matches!(val, Value::Undefined | Value::Null) {
-                            let d = to_display(&val);
-                            return Err(self
-                                .throw_error("TypeError", format!("{} 은(는) 이터러블이 아님", d)));
+                    match item {
+                        // 엘리전 [1,,3] → 구멍 (명시 undefined 와 구별)
+                        Expr::Hole => {
+                            holes.insert(v.len());
+                            v.push(Value::Undefined);
                         }
-                        v.extend(self.iterate_to_vec(&val)?);
-                    } else {
-                        v.push(self.eval(item, env)?);
+                        Expr::Spread(inner) => {
+                            let val = self.eval(inner, env)?;
+                            // null/undefined 전개는 TypeError (표준). 조용히 빈 배열로 넘기면
+                            // 진짜 버그가 숨는다.
+                            if matches!(val, Value::Undefined | Value::Null) {
+                                let d = to_display(&val);
+                                return Err(self.throw_error(
+                                    "TypeError",
+                                    format!("{} 은(는) 이터러블이 아님", d),
+                                ));
+                            }
+                            v.extend(self.iterate_to_vec(&val)?);
+                        }
+                        _ => v.push(self.eval(item, env)?),
                     }
                 }
-                Ok(Value::Arr(ArrayObj::new(v)))
+                Ok(Value::Arr(if holes.is_empty() {
+                    ArrayObj::new(v)
+                } else {
+                    ArrayObj::with_holes(v, holes)
+                }))
             }
             // 스프레드가 배열/호출 밖에 홀로 나오면 값 그대로 (관용)
             Expr::Spread(inner) => self.eval(inner, env),
@@ -3617,11 +3635,20 @@ impl Interp {
                                 }
                             }
                             Value::Arr(a) => {
-                                // 배열 요소 삭제는 구멍(undefined)을 남긴다 (길이 불변)
+                                // 배열 요소 삭제는 진짜 구멍(hole)을 남긴다 (길이 불변) —
+                                // delete arr[i] 후 i 는 hasOwnProperty/in/for-in 에서 사라진다.
                                 if let Ok(i) = key.parse::<usize>() {
-                                    let mut b = a.borrow_mut();
-                                    if i < b.len() {
-                                        b[i] = Value::Undefined;
+                                    let in_range = {
+                                        let mut b = a.borrow_mut();
+                                        if i < b.len() {
+                                            b[i] = Value::Undefined;
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    };
+                                    if in_range {
+                                        a.mark_hole(i);
                                     }
                                 }
                             }
@@ -3962,11 +3989,20 @@ impl Interp {
                     if i >= MAX_DENSE_ARRAY {
                         return false; // 방어: 초거대 인덱스는 무시 (희박 배열 미구현)
                     }
-                    let mut items = a.borrow_mut();
-                    if i >= items.len() {
-                        items.resize(i + 1, Value::Undefined);
+                    let old_len = a.borrow().len();
+                    {
+                        let mut items = a.borrow_mut();
+                        if i >= items.len() {
+                            items.resize(i + 1, Value::Undefined);
+                        }
+                        items[i] = v;
                     }
-                    items[i] = v;
+                    if i > old_len {
+                        for h in old_len..i {
+                            a.mark_hole(h);
+                        }
+                    }
+                    a.fill_hole(i);
                     true
                 } else {
                     if a.get_prop(&k).is_none() && self.is_nonextensible_val(target) {
@@ -5065,8 +5101,15 @@ impl Interp {
                 }
             }
             Value::Arr(a) => {
-                // 재정의된 own-property 가 내장 메서드를 가린다 (arr.push = fn 등)
+                // 재정의된 own-property 가 내장 메서드를 가린다 (arr.push = fn 등).
+                // 접근자면 호출한다 (defineProperty 로 심긴 getter).
                 if let Some(v) = a.get_prop(key) {
+                    if let Value::Accessor(acc) = &v {
+                        return match &acc.get {
+                            Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                            None => Ok(Value::Undefined),
+                        };
+                    }
                     return Ok(v);
                 }
                 if key == "length" {
@@ -5092,7 +5135,37 @@ impl Interp {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
-                    return Ok(a.borrow().get(i).cloned().unwrap_or(Value::Undefined));
+                    // 구멍/범위 밖은 own 이 아니다 — 프로토타입 체인으로(§10.4.2 [[Get]]).
+                    let hit = {
+                        let b = a.borrow();
+                        if i < b.len() && !a.is_hole(i) {
+                            Some(b[i].clone())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(v) = hit {
+                        // 인덱스에 심긴 접근자면 호출 (defineProperty getter).
+                        if let Value::Accessor(acc) = &v {
+                            return match &acc.get {
+                                Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                                None => Ok(Value::Undefined),
+                            };
+                        }
+                        return Ok(v);
+                    }
+                    // 구멍이면 상속 인덱스(Array.prototype[i])를 본다 — 보통 undefined.
+                    // 상속된 접근자면 this=배열로 호출한다.
+                    if let Some(m) = self.proto_method("Array", key) {
+                        if let Value::Accessor(acc) = &m {
+                            return match &acc.get {
+                                Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                                None => Ok(Value::Undefined),
+                            };
+                        }
+                        return Ok(m);
+                    }
+                    return Ok(Value::Undefined);
                 }
                 // Array.prototype 폴리필 메서드 (at/flatMap/findLast 등) 조회
                 if let Some(m) = self.proto_method("Array", key) {
@@ -6782,7 +6855,9 @@ impl Interp {
                     // 값이 배열인지 확인하는 코드(testharness 의 assert_array_equals 가
                     // 정확히 이렇게 한다)가 우리 컬렉션을 배열이 아니라고 판정했다.
                     Value::Arr(a) => Value::Bool(
-                        key.parse::<usize>().map_or(false, |i| i < a.borrow().len())
+                        // 구멍 인덱스는 own 이 아니다 (상속은 proto_method 로 별도 확인).
+                        key.parse::<usize>()
+                            .map_or(false, |i| i < a.borrow().len() && !a.is_hole(i))
                             || key == "length"
                             || a.get_prop(&key).is_some()
                             || self.proto_method("Array", &key).is_some(),
@@ -7077,18 +7152,28 @@ impl Interp {
                             return Ok(());
                         }
                         if let Ok(i) = key.parse::<usize>() {
-                            let is_new = i >= a.borrow().len();
+                            let old_len = a.borrow().len();
+                            let is_new = i >= old_len;
                             if is_new && self.is_nonextensible_val(&av) {
                                 return Ok(());
                             }
                             if i >= MAX_DENSE_ARRAY {
                                 return Ok(()); // 방어: 초거대 인덱스 (희박 배열 미구현)
                             }
-                            let mut arr = a.borrow_mut();
-                            if i >= arr.len() {
-                                arr.resize(i + 1, Value::Undefined);
+                            {
+                                let mut arr = a.borrow_mut();
+                                if i >= arr.len() {
+                                    arr.resize(i + 1, Value::Undefined);
+                                }
+                                arr[i] = value;
                             }
-                            arr[i] = value;
+                            // arr[i]=x 로 len 을 건너뛰면 그 사이(old_len..i)는 구멍이 된다.
+                            if i > old_len {
+                                for h in old_len..i {
+                                    a.mark_hole(h);
+                                }
+                            }
+                            a.fill_hole(i); // i 는 이제 값이 있음
                         } else if key == "length" {
                             // §10.4.2.4 ArraySetLength: ToUint32(v) 와 ToNumber(v) 가
                             // 다르면(음수/소수/2^32 이상) RangeError. 예전엔 검증 없이
@@ -7109,7 +7194,18 @@ impl Interp {
                                 // length 만 크게: 밀집 확보 대신 기록만 (근사 희박)
                                 a.set_prop("\u{0}sparse_len".to_string(), value.clone());
                             } else {
+                                let old_len = a.borrow().len();
                                 a.borrow_mut().resize(n, Value::Undefined);
+                                // 확장분(old_len..n)은 구멍. 축소면 잘려나간 구멍 표시 정리.
+                                if n > old_len {
+                                    for h in old_len..n {
+                                        a.mark_hole(h);
+                                    }
+                                } else if n < old_len && a.has_holes() {
+                                    for h in n..old_len {
+                                        a.fill_hole(h);
+                                    }
+                                }
                             }
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장

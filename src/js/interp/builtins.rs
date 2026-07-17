@@ -228,12 +228,14 @@ pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
         Value::Obj(m) => enumerable_entries(m),
         // 배열: 인덱스 + own-property (push 재정의 등)
         Value::Arr(a) => {
+            // 구멍 인덱스는 열거 대상이 아니다 (희소 배열).
+            let b = a.borrow();
             let mut out: Vec<(String, Value)> = a
-                .borrow()
-                .iter()
-                .enumerate()
-                .map(|(i, val)| (i.to_string(), val.clone()))
+                .present_indices()
+                .into_iter()
+                .map(|i| (i.to_string(), b[i].clone()))
                 .collect();
+            drop(b);
             out.extend(a.own_props());
             out
         }
@@ -1112,6 +1114,35 @@ impl Interp {
         Ok(out)
     }
 
+    // 배열 반복 메서드용 원소 해석 (§23.1.3: HasProperty + Get).
+    // 반환 None = 인덱스가 존재하지 않음(진짜 구멍) → HasProperty 계열은 건너뛴다.
+    // 구멍이라도 own-prop(defineProperty)/상속이면 Get 으로 값을 읽는다. 값이 접근자면
+    // 호출한다. 덴스+비접근자(흔한 경우)는 snapshot 값을 그대로 써 빠르다.
+    pub(super) fn arr_elem(
+        &mut self,
+        a: &std::rc::Rc<ArrayObj>,
+        arr_val: &Value,
+        snapshot: &[Value],
+        i: usize,
+        has_holes: bool,
+    ) -> Result<Option<Value>, String> {
+        if has_holes && a.is_hole(i) {
+            let key = i.to_string();
+            if a.get_prop(&key).is_some() || self.proto_method("Array", &key).is_some() {
+                Ok(Some(self.member_get(arr_val, &key)?))
+            } else {
+                Ok(None) // 진짜 구멍
+            }
+        } else {
+            match snapshot.get(i) {
+                // defineProperty 로 인덱스에 심긴 접근자는 호출해 값을 낸다.
+                Some(Value::Accessor(_)) => Ok(Some(self.member_get(arr_val, &i.to_string())?)),
+                Some(v) => Ok(Some(v.clone())),
+                None => Ok(Some(Value::Undefined)),
+            }
+        }
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -1404,16 +1435,30 @@ impl Interp {
                             d.insert("configurable".to_string(), Value::Bool(false));
                             return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                         }
-                        match key.parse::<usize>().ok().and_then(|i| a.borrow().get(i).cloned()) {
+                        // 구멍 인덱스는 own 프로퍼티가 없다 → 서술자 undefined.
+                        let idx_val = key.parse::<usize>().ok().and_then(|i| {
+                            let b = a.borrow();
+                            if i < b.len() && !a.is_hole(i) {
+                                Some(b[i].clone())
+                            } else {
+                                None
+                            }
+                        });
+                        match idx_val {
                             Some(v) => {
+                                // 배열 인덱스 프로퍼티는 { w:true, e:true, c:true } (§10.4.2).
                                 d.insert("value".to_string(), v);
                                 d.insert("writable".to_string(), Value::Bool(true));
+                                d.insert("enumerable".to_string(), Value::Bool(true));
+                                d.insert("configurable".to_string(), Value::Bool(true));
                                 true
                             }
                             None => match a.get_prop(&key) {
                                 Some(v) => {
                                     d.insert("value".to_string(), v);
                                     d.insert("writable".to_string(), Value::Bool(true));
+                                    d.insert("enumerable".to_string(), Value::Bool(true));
+                                    d.insert("configurable".to_string(), Value::Bool(true));
                                     true
                                 }
                                 None => false,
@@ -1709,11 +1754,21 @@ impl Interp {
                         }
                         Value::Arr(a) => {
                             if let Ok(i) = key.parse::<usize>() {
-                                let mut items = a.borrow_mut();
-                                while items.len() <= i {
-                                    items.push(Value::Undefined);
+                                let old_len = a.borrow().len();
+                                {
+                                    let mut items = a.borrow_mut();
+                                    while items.len() <= i {
+                                        items.push(Value::Undefined);
+                                    }
+                                    items[i] = val;
                                 }
-                                items[i] = val;
+                                // 인덱스 i 를 정의하면 존재 — 건너뛴 자리(old_len..i)는 구멍.
+                                if i > old_len {
+                                    for h in old_len..i {
+                                        a.mark_hole(h);
+                                    }
+                                }
+                                a.fill_hole(i);
                             } else {
                                 a.set_prop(key, val);
                             }
@@ -1982,7 +2037,10 @@ impl Interp {
                     // 인스턴스는 own 필드만 own 프로퍼티(메서드는 프로토타입 격)
                     Some(Value::Instance(i)) => i.fields.borrow().contains_key(&key),
                     Some(Value::Arr(a)) => {
-                        key.parse::<usize>().map(|i| i < a.borrow().len()).unwrap_or(false)
+                        // 구멍 인덱스는 own 프로퍼티가 아니다 (희소 배열).
+                        key.parse::<usize>()
+                            .map(|i| i < a.borrow().len() && !a.is_hole(i))
+                            .unwrap_or(false)
                             || a.get_prop(&key).is_some()
                             || key == "length"
                     }
@@ -5047,6 +5105,12 @@ impl Interp {
                         (ArrayObj::new(items), wb)
                     }
                 };
+                // 변형 연산은 items 를 재배치/축소하므로 구멍 집합과 어긋난다 →
+                // 사전에 구멍을 실체화(undefined)해 동기화 문제를 없앤다. (sort/splice/
+                // reverse/copyWithin/fill/shift/unshift/push/pop 등)
+                if is_mutating_arr_op(op) && a.has_holes() {
+                    a.materialize_holes();
+                }
                 // 콜백의 "배열" 인자(§23.1.3: 3번째 인자)는 **원래 수신자**(ToObject(this))다 —
                 // 임시 복사 a 가 아니다. 예전엔 a 를 넘겨 array-like(Math/Date 등) 대상에서
                 // Object.prototype.toString.call(그 인자) 가 "[object Array]" 로 어긋났다.
@@ -5075,8 +5139,8 @@ impl Interp {
                         // §22.1.3.14: indexOf(searchElement, fromIndex). fromIndex 는
                         // ToIntegerOrInfinity, 음수면 len+n(하한 0)부터 앞으로 검색.
                         let needle = args.first().cloned().unwrap_or(Value::Undefined);
-                        let items = a.borrow();
-                        let len = items.len() as f64;
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let len = snapshot.len() as f64;
                         let n = match args.get(1) {
                             None | Some(Value::Undefined) => 0.0,
                             Some(v) => {
@@ -5090,9 +5154,17 @@ impl Interp {
                         };
                         let start = if n >= 0.0 { n } else { (len + n).max(0.0) };
                         let start = if start > len { len } else { start } as usize;
+                        let has_holes = a.has_holes();
+                        let arr_val = cb_arr.clone();
                         let mut found = -1.0;
-                        for i in start..items.len() {
-                            if strict_eq(&items[i], &needle) {
+                        for i in start..snapshot.len() {
+                            // 구멍(HasProperty false)은 건너뛴다 (§23.1.3.14). own-prop/상속이면
+                            // 그 값과 strict 비교.
+                            let v = match self.arr_elem(&a, &arr_val, &snapshot, i, has_holes)? {
+                                Some(v) => v,
+                                None => continue,
+                            };
+                            if strict_eq(&v, &needle) {
                                 found = i as f64;
                                 break;
                             }
@@ -5112,14 +5184,34 @@ impl Interp {
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        // §23.1.3: 콜백은 순회 전에 IsCallable 검사 — 비호출이면 TypeError
+                        // (빈/전부-구멍 배열이라 콜백이 안 불려도 던져야 한다).
+                        if !is_callable(&f) {
+                            return Err(self.throw_error("TypeError", "callback is not a function"));
+                        }
                         // 표준: 콜백은 (값, 인덱스, **배열**) 로 부르고, 2번째 인자는 thisArg 다.
                         // 예전엔 (값, 인덱스) 만 넘겨서 a[i-1] 같은 관용 코드가 죽었다
                         // (IntersectionObserver 폴리필이 정확히 그 모양이다).
                         let this_arg = args.get(1).cloned();
                         let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
+                        let has_holes = a.has_holes();
+                        let len = snapshot.len();
                         let mut out = Vec::new();
-                        for (i, item) in snapshot.into_iter().enumerate() {
+                        let mut out_holes = std::collections::HashSet::new();
+                        for i in 0..len {
+                            // §23.1.3: HasProperty 가 false(진짜 구멍)면 콜백 미호출. map 은
+                            // 출력의 같은 자리에 구멍을 보존한다.
+                            let item = match self.arr_elem(&a, &arr_val, &snapshot, i, has_holes)? {
+                                Some(v) => v,
+                                None => {
+                                    if matches!(op, ArrOp::Map) {
+                                        out_holes.insert(out.len());
+                                        out.push(Value::Undefined);
+                                    }
+                                    continue;
+                                }
+                            };
                             let r = self.call_value(
                                 f.clone(),
                                 this_arg.clone(),
@@ -5142,17 +5234,37 @@ impl Interp {
                         }
                         match op {
                             ArrOp::ForEach => Value::Undefined,
-                            _ => Value::Arr(ArrayObj::new(out)),
+                            _ => Value::Arr(if out_holes.is_empty() {
+                                ArrayObj::new(out)
+                            } else {
+                                ArrayObj::with_holes(out, out_holes)
+                            }),
                         }
                     }
                     ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        if !is_callable(&f) {
+                            return Err(self.throw_error("TypeError", "callback is not a function"));
+                        }
                         let this_arg = args.get(1).cloned();
                         let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
+                        let has_holes = a.has_holes();
+                        let len = snapshot.len();
                         let mut result = Value::Undefined;
                         let mut found = false;
-                        for (i, item) in snapshot.into_iter().enumerate() {
+                        for i in 0..len {
+                            // some/every 는 HasProperty(진짜 구멍)면 콜백 미호출(§23.1.3).
+                            // find/findIndex 는 Get 을 써 구멍도 undefined 로 방문한다.
+                            let item = match self.arr_elem(&a, &arr_val, &snapshot, i, has_holes)? {
+                                Some(v) => v,
+                                None => {
+                                    if matches!(op, ArrOp::Some | ArrOp::Every) {
+                                        continue;
+                                    }
+                                    Value::Undefined // find/findIndex 는 방문
+                                }
+                            };
                             let r = self.call_value(
                                 f.clone(),
                                 this_arg.clone(),
@@ -5196,12 +5308,24 @@ impl Interp {
                     }
                     ArrOp::Reduce => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        if !is_callable(&f) {
+                            return Err(self.throw_error("TypeError", "callback is not a function"));
+                        }
                         let arr_val = cb_arr.clone(); // 콜백 4번째 인자 (표준)
                         let snapshot: Vec<Value> = a.borrow().clone();
-                        let mut iter = snapshot.into_iter().enumerate();
+                        // 구멍은 건너뛴다 (§23.1.3.24 HasProperty) — 초기값 선택과 순회 모두.
+                        // 존재 원소를 (인덱스, 값)으로 — arr_elem 이 접근자/상속을 해석.
+                        let has_holes = a.has_holes();
+                        let mut present: Vec<(usize, Value)> = Vec::new();
+                        for i in 0..snapshot.len() {
+                            if let Some(v) = self.arr_elem(&a, &arr_val, &snapshot, i, has_holes)? {
+                                present.push((i, v));
+                            }
+                        }
+                        let mut pit = present.into_iter();
                         let mut acc = match args.get(1) {
                             Some(init) => init.clone(),
-                            None => match iter.next() {
+                            None => match pit.next() {
                                 Some((_, v)) => v,
                                 // 표준 §23.1.3.24: 초기값 없는 빈 배열 reduce 는 TypeError.
                                 None => return Err(self.throw_error(
@@ -5210,44 +5334,48 @@ impl Interp {
                                 )),
                             },
                         };
-                        for (i, item) in iter {
+                        for (i, v) in pit {
                             acc = self.call_value(
                                 f.clone(),
                                 None,
-                                vec![acc, item, Value::Num(i as f64), arr_val.clone()],
+                                vec![acc, v, Value::Num(i as f64), arr_val.clone()],
                             )?;
                         }
                         acc
                     }
                     ArrOp::ReduceRight => {
                         let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        if !is_callable(&f) {
+                            return Err(self.throw_error("TypeError", "callback is not a function"));
+                        }
                         let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
-                        let mut idx = snapshot.len();
+                        let has_holes = a.has_holes();
+                        // 존재 원소를 역순 (인덱스, 값)으로.
+                        let mut present: Vec<(usize, Value)> = Vec::new();
+                        for i in (0..snapshot.len()).rev() {
+                            if let Some(v) = self.arr_elem(&a, &arr_val, &snapshot, i, has_holes)? {
+                                present.push((i, v));
+                            }
+                        }
+                        let mut pit = present.into_iter();
                         let mut acc = match args.get(1) {
                             Some(init) => init.clone(),
-                            None => {
-                                if idx == 0 {
+                            None => match pit.next() {
+                                Some((_, v)) => v,
+                                None => {
                                     return Err(self.throw_error(
                                         "TypeError",
                                         "Reduce of empty array with no initial value",
-                                    ));
+                                    ))
                                 }
-                                idx -= 1;
-                                snapshot[idx].clone()
-                            }
+                            },
                         };
-                        while idx > 0 {
-                            idx -= 1;
+                        for (idx, v) in pit {
                             acc = self.call_value(
                                 f.clone(),
                                 None,
-                                vec![
-                                    acc,
-                                    snapshot[idx].clone(),
-                                    Value::Num(idx as f64),
-                                    arr_val.clone(),
-                                ],
+                                vec![acc, v, Value::Num(idx as f64), arr_val.clone()],
                             )?;
                         }
                         acc
@@ -6010,12 +6138,8 @@ impl Interp {
                         enumerable_keys(m).into_iter().map(Value::Str).collect();
                     Ok(Value::Arr(ArrayObj::new(keys)))
                 }
-                Some(Value::Arr(a)) => {
-                    let keys: Vec<Value> =
-                        (0..a.borrow().len()).map(|i| Value::Str(i.to_string())).collect();
-                    Ok(Value::Arr(ArrayObj::new(keys)))
-                }
-                Some(v @ (Value::Instance(_) | Value::Class(_))) => {
+                Some(v @ (Value::Arr(_) | Value::Instance(_) | Value::Class(_))) => {
+                    // 배열은 구멍을 건너뛴 존재 인덱스 + own 열거 프로퍼티.
                     let keys: Vec<Value> = own_enumerable_entries(v)
                         .into_iter()
                         .map(|(k, _)| Value::Str(k))

@@ -6007,3 +6007,32 @@ fn class_accessor_get_set_merge() {
          typeof d.get==='function' && d.set===undefined && new E().z===7"
     ));
 }
+
+#[test]
+fn sparse_array_holes() {
+    // 엘리전은 구멍 — 명시 undefined 와 구별.
+    assert!(run_bool("var a=[1,,3]; !a.hasOwnProperty(1) && a.hasOwnProperty(0) && a.length===3"));
+    assert!(run_bool("var a=[1,undefined,3]; a.hasOwnProperty(1)")); // 명시 undefined 는 존재
+    assert!(run_bool("!(1 in [1,,3])"));
+    // for-in / Object.keys 는 구멍 제외
+    assert_eq!(run_str("var s=[];for(var k in [1,,3])s.push(k);s.join(',')"), "0,2");
+    assert_eq!(run_str("Object.keys([1,,3]).join(',')"), "0,2");
+    // 생성 경로
+    assert!(run_bool("var a=[1,2,3];delete a[1]; !a.hasOwnProperty(1) && a.length===3"));
+    assert!(run_bool("var a=new Array(3); !a.hasOwnProperty(0) && a.length===3 && Object.keys(a).length===0"));
+    assert!(run_bool("var a=[1];a[3]=4; !a.hasOwnProperty(1) && !a.hasOwnProperty(2) && a.hasOwnProperty(3)"));
+    assert!(run_bool("var a=[1,2];a.length=4; !a.hasOwnProperty(2) && !a.hasOwnProperty(3)"));
+    // 반복 메서드는 구멍을 건너뛴다
+    assert_eq!(run_str("var s=[];[1,,3].forEach(function(v,i){s.push(i);});s.join(',')"), "0,2");
+    assert_eq!(run_num("[1,,3].reduce(function(a,b){return a+b;})"), 4.0);
+    assert!(!run_bool("[,,,].some(function(){return true;})"));
+    assert!(run_bool("[,,,].every(function(){return false;})")); // 구멍만 → vacuously true
+    assert_eq!(run_str("[1,,3].filter(function(){return true;}).join(',')"), "1,3");
+    assert_eq!(run_num("[1,,3].indexOf(undefined)"), -1.0); // indexOf 는 구멍 스킵
+    // map 은 구멍 보존
+    assert!(run_bool("var m=[1,,3].map(function(x){return x*2;}); !m.hasOwnProperty(1) && m[0]===2 && m[2]===6 && m.length===3"));
+    // 구멍 채우면 존재
+    assert!(run_bool("var a=[1,,3]; a[1]=2; a.hasOwnProperty(1)"));
+    // 변형은 구멍 실체화(desync 방지)
+    assert!(run_bool("var a=new Array(2); a[1]=1; a.sort(); a[0]===1 && a[1]===undefined && a.length===2"));
+}

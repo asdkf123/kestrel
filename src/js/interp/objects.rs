@@ -156,11 +156,58 @@ pub struct SymbolData {
 pub struct ArrayObj {
     items: RefCell<Vec<Value>>,
     props: RefCell<HashMap<String, Value>>,
+    // 희소 배열의 구멍(엘리전) 인덱스. 빈 집합 = 덴스(모든 인덱스 존재) — 흔한 경우라
+    // 오버헤드 0. 구멍은 HasProperty 가 false 라 forEach/map/reduce/… 가 건너뛴다.
+    // items[i] 는 구멍 자리에 Undefined 를 채워 두고, 이 집합이 "존재 여부"를 판별한다.
+    holes: RefCell<std::collections::HashSet<usize>>,
 }
 
 impl ArrayObj {
     pub fn new(items: Vec<Value>) -> Rc<ArrayObj> {
-        Rc::new(ArrayObj { items: RefCell::new(items), props: RefCell::new(HashMap::new()) })
+        Rc::new(ArrayObj {
+            items: RefCell::new(items),
+            props: RefCell::new(HashMap::new()),
+            holes: RefCell::new(std::collections::HashSet::new()),
+        })
+    }
+    // 구멍이 있는 배열 (배열 리터럴 엘리전/new Array(n) 등).
+    pub fn with_holes(items: Vec<Value>, holes: std::collections::HashSet<usize>) -> Rc<ArrayObj> {
+        Rc::new(ArrayObj {
+            items: RefCell::new(items),
+            props: RefCell::new(HashMap::new()),
+            holes: RefCell::new(holes),
+        })
+    }
+    // 인덱스 i 가 구멍(존재하지 않는 인덱스)인가.
+    pub fn is_hole(&self, i: usize) -> bool {
+        !self.holes.borrow().is_empty() && self.holes.borrow().contains(&i)
+    }
+    pub fn has_holes(&self) -> bool {
+        !self.holes.borrow().is_empty()
+    }
+    // i 를 구멍으로 표시 (items 는 별도로 Undefined 를 채워야 한다).
+    pub fn mark_hole(&self, i: usize) {
+        self.holes.borrow_mut().insert(i);
+    }
+    // i 가 이제 값이 있음 — 구멍 표시 해제.
+    pub fn fill_hole(&self, i: usize) {
+        if !self.holes.borrow().is_empty() {
+            self.holes.borrow_mut().remove(&i);
+        }
+    }
+    // 모든 구멍을 실체화(Undefined 로) — 구멍 동기화가 어려운 변형 연산 전에 부른다.
+    pub fn materialize_holes(&self) {
+        self.holes.borrow_mut().clear();
+    }
+    // 존재하는(구멍 아닌) 인덱스 목록 (오름차순).
+    pub fn present_indices(&self) -> Vec<usize> {
+        let len = self.items.borrow().len();
+        if self.holes.borrow().is_empty() {
+            (0..len).collect()
+        } else {
+            let h = self.holes.borrow();
+            (0..len).filter(|i| !h.contains(i)).collect()
+        }
     }
     pub fn borrow(&self) -> std::cell::Ref<'_, Vec<Value>> {
         self.items.borrow()

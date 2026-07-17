@@ -1680,9 +1680,9 @@ impl Parser {
                 let mut items = Vec::new();
                 if !self.eat(&Tok::RBracket) {
                     loop {
-                        // 배열 구멍 [1,,2] → undefined
+                        // 배열 구멍(엘리전) [1,,2] → Hole (명시 undefined 와 구별)
                         if self.peek() == Some(&Tok::Comma) {
-                            items.push(Expr::Undefined);
+                            items.push(Expr::Hole);
                             self.pos += 1;
                             if self.eat(&Tok::RBracket) {
                                 break;
