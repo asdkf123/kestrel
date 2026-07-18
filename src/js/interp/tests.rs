@@ -8045,3 +8045,11 @@ fn proxy_has_invariant() {
     // 일반 has 무회귀.
     assert!(run_bool("var p=new Proxy({x:1},{has:function(t,k){return k in t}}); ('x' in p) && !('y' in p)"));
 }
+
+#[test]
+fn proxy_delete_invariant() {
+    // §10.5.10: non-configurable 프로퍼티는 delete 트랩이 true 보고해도 TypeError.
+    assert_eq!(run_str("var t={}; Object.defineProperty(t,'a',{value:1,configurable:false}); var p=new Proxy(t,{deleteProperty:function(){return true}}); try{ delete p.a; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // configurable 프로퍼티 delete 자유.
+    assert!(run_bool("var p=new Proxy({b:1},{deleteProperty:function(t,k){delete t[k];return true}}); delete p.b"));
+}

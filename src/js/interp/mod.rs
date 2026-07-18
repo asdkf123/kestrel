@@ -4049,8 +4049,23 @@ impl Interp {
                                     let res = self.call_value(
                                         trap,
                                         Some(h),
-                                        vec![t, Value::Str(key.clone())],
+                                        vec![t.clone(), Value::Str(key.clone())],
                                     )?;
+                                    if to_bool(&res) {
+                                        // §10.5.10 invariant: non-configurable 프로퍼티는
+                                        // 삭제 성공을 보고할 수 없다 → TypeError.
+                                        let td = self.call_native(
+                                            Native::ObjectGetOwnPropertyDescriptor,
+                                            None,
+                                            vec![t.clone(), Value::Str(key.clone())],
+                                        )?;
+                                        if let Value::Obj(d) = &td {
+                                            if !matches!(d.borrow().get("configurable"), Some(v) if to_bool(v))
+                                            {
+                                                return Err(self.throw_error("TypeError", "'deleteProperty' on proxy: non-configurable property cannot be reported as deleted"));
+                                            }
+                                        }
+                                    }
                                     return Ok(Value::Bool(to_bool(&res)));
                                 }
                                 if let Value::Obj(m) = &t {
