@@ -5818,6 +5818,34 @@ impl Interp {
     }
 
     fn member_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
+        // private 멤버(#x) 접근은 그 private 을 선언한 클래스의 인스턴스(또는 static 은
+        // 클래스 자신)에서만 유효하다 — 아니면 TypeError(§ PrivateElementFind).
+        // 예전엔 undefined 를 돌려줘 o.#x(o 가 미보유) 가 조용히 통과했다.
+        if is_private_name(key) {
+            let ok = match recv {
+                Value::Instance(i) => {
+                    i.fields.borrow().contains_key(&field_key(key, self.priv_id))
+                        || i.class.find_method(key).is_some()
+                        || i.class.find_getter(key).is_some()
+                        || i.class.find_setter(key).is_some()
+                }
+                Value::Class(c) => {
+                    c.statics.borrow().contains_key(key)
+                        || c.find_static_getter(key).is_some()
+                        || c.find_static_setter(key).is_some()
+                }
+                _ => false,
+            };
+            if !ok {
+                return Err(self.throw_error(
+                    "TypeError",
+                    format!(
+                        "Cannot read private member {} from an object whose class did not declare it",
+                        key
+                    ),
+                ));
+            }
+        }
         // 내장에 얹힌 프로퍼티가 최우선 (폴리필이 Promise.allSettled 등을 덮어쓴 경우).
         if let Value::Native(n) = recv {
             if let Some(v) = self.native_props.get(n).and_then(|m| m.get(key)) {
@@ -8486,6 +8514,30 @@ impl Interp {
     // 표준 §13.15.2 는 왼쪽 참조를 **먼저** 평가하고 그 다음 오른쪽을 평가하라고 한다.
     // 그래서 참조 평가와 값 대입을 분리한다.
     fn member_assign(&mut self, recv: Value, key: String, value: Value) -> Result<(), String> {
+                // private 필드 대입도 그 private 을 선언한 인스턴스에서만 유효(brand check).
+                // 없으면 TypeError. 예전엔 o.#x=v(o 미보유)가 조용히 통과했다.
+                if is_private_name(&key) {
+                    let ok = match &recv {
+                        Value::Instance(i) => {
+                            i.fields.borrow().contains_key(&field_key(&key, self.priv_id))
+                                || i.class.find_method(&key).is_some()
+                                || i.class.find_setter(&key).is_some()
+                                || i.class.find_getter(&key).is_some()
+                        }
+                        Value::Class(c) => {
+                            c.statics.borrow().contains_key(&key)
+                                || c.find_static_setter(&key).is_some()
+                                || c.find_static_getter(&key).is_some()
+                        }
+                        _ => false,
+                    };
+                    if !ok {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            format!("Cannot write private member {} to an object whose class did not declare it", key),
+                        ));
+                    }
+                }
                 match recv {
                     // Proxy: set 트랩 있으면 handler.set(target, key, value, receiver), 없으면 target 에 위임
                     Value::Proxy(p) => {

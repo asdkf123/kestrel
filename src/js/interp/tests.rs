@@ -5012,6 +5012,22 @@ fn private_methods_not_public_on_prototype() {
     );
     // 일반 메서드 무회귀
     assert_eq!(run_str("class C { pub(){} } String('pub' in C.prototype)"), "true");
+    // private 필드를 미보유 객체에 get/set 하면 TypeError (brand check, §PrivateElementFind)
+    assert!(run_bool(
+        "class C { #x=1; g(o){return o.#x;} } var c=new C(); \
+         var t=false; try{ c.g({}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "class C { #x=1; s(o){o.#x=5;} } var c=new C(); \
+         var t=false; try{ c.s({}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 다른 클래스 인스턴스도 TypeError
+    assert!(run_bool(
+        "class C { #x=1; g(o){return o.#x;} } class D { #y=2; } \
+         var t=false; try{ new C().g(new D()) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 자기 인스턴스는 정상
+    assert_eq!(run_num("class C { #x=7; g(){return this.#x;} } new C().g()"), 7.0);
 }
 
 // computed 필드/static 필드 키([x]=v, [expr]=v)는 클래스 정의 시 평가된다 (§15.7.14).
