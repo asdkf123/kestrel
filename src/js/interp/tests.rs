@@ -7959,3 +7959,13 @@ fn array_index_nonenumerable_excluded() {
     assert_eq!(run_str("Object.keys([5,6,7]).join(',')"), "0,1,2");
     assert_eq!(run_str("Object.values([5,6,7]).join(',')"), "5,6,7");
 }
+
+#[test]
+fn array_set_length_stops_at_nonconfigurable() {
+    // §10.4.2.4: 축소 시 non-configurable 요소는 삭제 불가 — 그 위로만 줄인다.
+    assert!(run_bool("var a=[1,2,3,4,5]; Object.defineProperty(a,'2',{value:99,configurable:false}); a.length=1; a.length===3 && a[2]===99"));
+    // defineProperty length 경로도 동일.
+    assert!(run_bool("var c=[1,2,3,4]; Object.defineProperty(c,'1',{value:8,configurable:false}); Object.defineProperty(c,'length',{value:0}); c.length===2"));
+    // 정상 축소 무회귀.
+    assert_eq!(run_str("var b=[1,2,3,4,5]; b.length=2; b.join(',')"), "1,2");
+}

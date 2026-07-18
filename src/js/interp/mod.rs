@@ -4415,11 +4415,21 @@ impl Interp {
         if u != num {
             return Err(self.throw_error("RangeError", "Invalid array length"));
         }
-        let n = u as usize;
+        let mut n = u as usize;
         if n > MAX_DENSE_ARRAY {
             a.set_prop("\u{0}sparse_len".to_string(), Value::Num(num));
         } else {
             let old_len = a.borrow().len();
+            // §10.4.2.4: 축소 시 삭제될 인덱스 중 non-configurable 이 있으면 그 위로만
+            // 줄인다(그 요소는 삭제 불가라 유지). index_attrs 빈 배열은 영향 없음.
+            if n < old_len && a.has_index_attrs() {
+                for i in (n..old_len).rev() {
+                    if matches!(a.index_attr(i), Some(at) if at & ATTR_CONFIGURABLE == 0) {
+                        n = i + 1;
+                        break;
+                    }
+                }
+            }
             a.borrow_mut().resize(n, Value::Undefined);
             if n > old_len {
                 for h in old_len..n {

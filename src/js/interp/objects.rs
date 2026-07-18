@@ -195,6 +195,9 @@ impl ArrayObj {
     pub fn set_length_writable(&self, w: bool) {
         self.length_writable.set(w);
     }
+    pub fn has_index_attrs(&self) -> bool {
+        !self.index_attrs.borrow().is_empty()
+    }
     pub fn index_attr(&self, i: usize) -> Option<u8> {
         if self.index_attrs.borrow().is_empty() {
             return None;
