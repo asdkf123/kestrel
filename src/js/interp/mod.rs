@@ -5506,6 +5506,18 @@ impl Interp {
         }
     }
     // 내장/바운드 함수의 length. Bound 는 max(0, target.length - 바운드된 인자 수) (§10.4.1.3).
+    // extends 대상이 명백히 [[Construct]] 를 갖지 않는가 — arrow/제너레이터/async/메서드
+    // 함수와 그런 것을 감싼 bound/proxy. Class/일반함수/Native/Obj 는 보수적으로 생성자로 본다
+    // (Error/Array/Promise 등 확장을 깨지 않기 위해).
+    fn is_non_constructor(v: &Value) -> bool {
+        match v {
+            Value::Fn(f) => f.is_arrow || f.is_generator || f.is_async || f.is_method,
+            Value::Bound(b) => Self::is_non_constructor(&b.0),
+            Value::Proxy(p) => Self::is_non_constructor(&p.0),
+            _ => false,
+        }
+    }
+
     // ExpectedArgumentCount(§ FunctionDeclarationInstantiation): 첫 기본값/rest 파라미터
     // 앞까지의 형식 매개변수 수. 기본값은 프롤로그의 `if (p === undefined)` 로, rest 는
     // "...p" 로, 구조분해는 "__patN__" 로 desugar 되므로 params 와 프롤로그를 함께 본다.
@@ -7709,16 +7721,27 @@ impl Interp {
         // 부모는 클래스일 수도, 일반 생성자(함수/네이티브/Array 같은 네임스페이스 객체)일
         // 수도 있다 — 표준은 아무 생성자나 확장 가능(class E extends Error 가 대표).
         let (parent, parent_ctor): (Option<Rc<JsClass>>, Option<Value>) = match &def.parent {
-            Some(e) => match self.eval(e, env)? {
-                Value::Class(c) => (Some(c), None),
-                v @ (Value::Fn(_) | Value::Native(_) | Value::Obj(_) | Value::Bound(_)) => {
-                    (None, Some(v))
+            Some(e) => {
+                let v = self.eval(e, env)?;
+                // extends 값은 생성자 또는 null 이어야 한다(§15.7.14). arrow/제너레이터/async/
+                // 메서드 함수 및 그런 것을 감싼 bound/proxy 는 [[Construct]] 가 없어 TypeError.
+                if Self::is_non_constructor(&v) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Class extends value is not a constructor or null".to_string(),
+                    ));
                 }
-                // class X extends null: 유효(§15.7.14) — protoParent=null,
-                // constructorParent=%FunctionPrototype%. parent_ctor=Null 로 표현한다.
-                Value::Null => (None, Some(Value::Null)),
-                other => return Err(format!("{} 은(는) 확장할 클래스가 아님", to_display(&other))),
-            },
+                match v {
+                    Value::Class(c) => (Some(c), None),
+                    v @ (Value::Fn(_) | Value::Native(_) | Value::Obj(_) | Value::Bound(_)) => {
+                        (None, Some(v))
+                    }
+                    // class X extends null: 유효(§15.7.14) — protoParent=null,
+                    // constructorParent=%FunctionPrototype%. parent_ctor=Null 로 표현한다.
+                    Value::Null => (None, Some(Value::Null)),
+                    other => return Err(format!("{} 은(는) 확장할 클래스가 아님", to_display(&other))),
+                }
+            }
             None => (None, None),
         };
         // 클래스 본문 전용 스코프: 클래스 이름의 내부 바인딩이 여기 산다 (§15.7.14).

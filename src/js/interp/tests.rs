@@ -866,6 +866,21 @@ fn class_extends_non_class_constructor() {
         ),
         "d+base",
     );
+    // 비생성자(arrow/제너레이터/async/메서드) 확장은 TypeError (§15.7.14): [[Construct]] 없음
+    let non_ctor = |src: &str| {
+        run_bool(&format!(
+            "var t=false; try {{ {} }} catch(e) {{ t = e instanceof TypeError; }} t",
+            src
+        ))
+    };
+    assert!(non_ctor("class C extends (()=>{}) {}"));
+    assert!(non_ctor("class C extends (function*(){}) {}"));
+    assert!(non_ctor("var f=async function(){}; class C extends f {}"));
+    assert!(non_ctor("var b=(async function(){}).bind(); class C extends b {}")); // bound
+    assert!(non_ctor("var p=new Proxy(async function(){}, {}); class C extends p {}")); // proxy
+    // 무회귀: 일반 함수·그 bound·Error·Array 확장은 여전히 허용
+    assert!(run_bool("var nb=(function(){}).bind(); class C extends nb {} true"));
+    assert!(run_bool("class E extends Error {} true"));
 }
 
 #[test]
