@@ -7758,3 +7758,15 @@ fn update_ops_use_tonumeric() {
     assert_eq!(run_num("var n=3; n++; n"), 4.0);
     assert_eq!(run_num("var s='5'; s++; s"), 6.0);
 }
+
+#[test]
+fn template_substitution_uses_tostring() {
+    // §13.2.8.6: ${expr} 는 ToString — Symbol→TypeError, 객체는 toString, abrupt 전파.
+    assert_eq!(run_str("try{ `${Symbol()}`; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("`${({toString:function(){return 'hi'}})}`"), "hi");
+    assert_eq!(run_str("try{ `${({toString:function(){throw new RangeError('x')}})}`; 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    // 정상 케이스 회귀 방지.
+    assert_eq!(run_str("`v=${42} s=${'a'}`"), "v=42 s=a");
+    assert_eq!(run_str("`${[1,2,3]}`"), "1,2,3");
+    assert_eq!(run_str("`${null}/${undefined}/${true}`"), "null/undefined/true");
+}

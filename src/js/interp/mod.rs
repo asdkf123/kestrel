@@ -3928,10 +3928,11 @@ impl Interp {
                     match part {
                         TemplatePart::Lit(t) => s.push_str(t),
                         TemplatePart::Expr(e) => {
-                            // ${obj} 는 문자열 힌트로 ToPrimitive (toString 우선)
+                            // ${expr} 는 ToString (§13.2.8.6): Symbol→TypeError, 객체는
+                            // toString/valueOf 호출, abrupt 전파. 예전엔 관대한 to_primitive
+                            // +to_display 라 `${Symbol()}` 이 안 던지고 abrupt 도 삼켰다.
                             let v = self.eval(e, env)?;
-                            let p = self.to_primitive(v, true);
-                            s.push_str(&to_display(&p));
+                            s.push_str(&self.to_string_value(&v)?);
                         }
                     }
                 }
