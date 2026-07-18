@@ -2187,7 +2187,7 @@ function __kTypedArrayCtor(){ throw new TypeError('Abstract class TypedArray not
 __kTypedArrayCtor.prototype = __kTAProto;
 __kTAProto.constructor = __kTypedArrayCtor;
 // %TypedArray%.from / of / [Symbol.species] (§23.2.2) — 서브클래스가 상속(정적 접근).
-__kTypedArrayCtor.from = function(x, fn){ var a = Array.from(x, fn); return new this(a); };
+__kTypedArrayCtor.from = function(source, mapfn){ var a = Array.from(source, mapfn, arguments[2]); return new this(a); };
 __kTypedArrayCtor.of = function(){ return new this(Array.prototype.slice.call(arguments)); };
 Object.defineProperty(__kTypedArrayCtor.from, 'name', { value: 'from', configurable: true });
 Object.defineProperty(__kTypedArrayCtor.from, 'length', { value: 1, configurable: true });

@@ -7832,3 +7832,12 @@ fn array_from_thisarg_and_null() {
     assert_eq!(run_str("Array.from([1,2,3], x=>x*10).join(',')"), "10,20,30");
     assert_eq!(run_str("try{ Array.from([1], 5); 'no' }catch(e){ e.constructor.name }"), "TypeError");
 }
+
+#[test]
+fn typedarray_from_thisarg() {
+    // §23.2.2.1: %TypedArray%.from 이 mapfn thisArg 존중(Array.from 경유).
+    assert_eq!(prelude_str("Int8Array.from([1,2],function(x){return x+this.n},{n:10}).join(',')"), "11,12");
+    assert_eq!(prelude_str("Int8Array.from([1,2,3],x=>x*2).join(',')"), "2,4,6");
+    assert_eq!(prelude_str("Uint8Array.from(new Set([5,6,7])).join(',')"), "5,6,7");
+    assert_eq!(prelude_str("Int8Array.of(1,2,3).join(',')"), "1,2,3");
+}
