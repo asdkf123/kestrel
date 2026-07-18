@@ -7140,3 +7140,16 @@ fn instance_with_array_prototype_inherits() {
     // 원시값 prototype → 인스턴스는 Object.prototype 상속(hasOwnProperty 등).
     assert!(run_bool("function g(){} g.prototype = 5; typeof new g().hasOwnProperty === 'function'"));
 }
+
+#[test]
+fn array_generic_holes_and_has_property_chain() {
+    // §23.1.3: array-like 의 존재하지 않는 인덱스는 구멍 → filter/map/forEach/reduce 가 건너뛴다.
+    assert_eq!(run_num("Array.prototype.filter.call({1:11,2:9,length:'2'},function(){return true}).length"), 1.0);
+    assert_eq!(run_num("Array.prototype.filter.call({1:11,2:9,length:'2'},function(){return true})[0]"), 11.0);
+    assert_eq!(run_str("JSON.stringify(Array.prototype.map.call({0:'a',2:'c',length:3},function(x){return x+x}))"), "[\"aa\",null,\"cc\"]");
+    assert_eq!(run_num("Array.prototype.reduce.call({0:1,2:3,length:3},function(a,b){return a+b})"), 4.0);
+    // 원시 래퍼 프로토타입의 상속 인덱스도 존재로 본다(구멍 아님).
+    assert_eq!(run_num("Boolean.prototype[1]='Z'; Boolean.prototype.length=2; var r=Array.prototype.indexOf.call(true,'Z'); delete Boolean.prototype[1]; delete Boolean.prototype.length; r"), 1.0);
+    // 실제 배열/구멍 보존.
+    assert_eq!(run_str("JSON.stringify([1,,3].map(function(x){return x*2}))"), "[2,null,6]");
+}

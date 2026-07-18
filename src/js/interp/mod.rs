@@ -5134,6 +5134,8 @@ impl Interp {
                         .cloned()
                         .unwrap_or_else(|| self.fn_proto.clone());
                 }
+                // 체인 속 배열: 인덱스/length/Array.prototype 상속을 has_property(Arr)가 해석.
+                Value::Arr(_) => return self.has_property(&proto, key),
                 _ => return false,
             }
         }
@@ -5158,19 +5160,12 @@ impl Interp {
                 if !is_internal_key(key) && m.borrow().contains_key(key) {
                     return true;
                 }
-                let mut proto = m.borrow().get("__proto__").cloned();
-                let mut depth = 0;
-                while let Some(Value::Obj(p)) = proto {
-                    depth += 1;
-                    if depth > 100 {
-                        break;
-                    }
-                    if p.borrow().contains_key(key) {
-                        return true;
-                    }
-                    proto = p.borrow().get("__proto__").cloned();
+                // 프로토타입 체인(배열/함수 프로토 포함)을 value_chain_has 로 걷는다 —
+                // 예전엔 Value::Obj 만 걸어 배열 프로토타입의 상속 인덱스를 놓쳤다.
+                match m.borrow().get("__proto__").cloned() {
+                    Some(p) => self.value_chain_has(&p, key),
+                    None => false,
                 }
-                false
             }
             Value::Instance(i) => i.fields.borrow().contains_key(key),
             Value::Fn(f) => {
@@ -5220,6 +5215,15 @@ impl Interp {
                     || self.native_fn_member(obj, key).is_some()
             }
             Value::Bound(_) => matches!(key, "name" | "length"),
+            // 원시값 수신자: 래퍼 프로토타입 체인의 상속 프로퍼티도 HasProperty 다
+            // (Array.prototype.X.call(원시값) 의 상속 인덱스/length 등, §23.1.3 generic).
+            Value::Str(s) => {
+                key.parse::<usize>().map(|n| n < s.chars().count()).unwrap_or(false)
+                    || key == "length"
+                    || self.value_chain_has(&self.string_proto.clone(), key)
+            }
+            Value::Num(_) => self.value_chain_has(&self.number_proto.clone(), key),
+            Value::Bool(_) => self.value_chain_has(&self.boolean_proto.clone(), key),
             _ => false,
         }
     }

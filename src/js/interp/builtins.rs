@@ -1419,6 +1419,33 @@ impl Interp {
         Ok(out)
     }
 
+    // generic_array_read 의 구멍 보존판: HasProperty(§7.3.11)가 false 인 인덱스는 구멍으로
+    // 남긴다. filter/map/forEach/reduce 등이 구멍을 건너뛰어야(§23.1.3) 정확하다 —
+    // 예전엔 dense Vec 라 obj={1:11,length:2} 의 인덱스 0 이 undefined 원소로 세어졌다.
+    pub(super) fn generic_array_read_sparse(
+        &mut self,
+        recv: &Value,
+    ) -> Result<std::rc::Rc<ArrayObj>, String> {
+        let len_val = self.member_get(recv, "length")?;
+        let len = to_length(self.to_number_value(&len_val)?);
+        if len > MAX_ARRAY_LEN {
+            return Err(self.throw_error("RangeError", "Invalid array length"));
+        }
+        let n = len as usize;
+        let mut out = Vec::with_capacity(n.min(4096));
+        let mut holes = std::collections::HashSet::new();
+        for i in 0..n {
+            let key = i.to_string();
+            if self.has_property(recv, &key) {
+                out.push(self.member_get(recv, &key)?);
+            } else {
+                out.push(Value::Undefined);
+                holes.insert(i);
+            }
+        }
+        Ok(ArrayObj::with_holes(out, holes))
+    }
+
     // 배열 반복 메서드용 원소 해석 (§23.1.3: HasProperty + Get).
     // 반환 None = 인덱스가 존재하지 않음(진짜 구멍) → HasProperty 계열은 건너뛴다.
     // 구멍이라도 own-prop(defineProperty)/상속이면 Get 으로 값을 읽는다. 값이 접근자면
@@ -5780,7 +5807,9 @@ impl Interp {
                     // 수신자를 표준대로 처리한다. 변형 연산은 원본 객체에 되쓴다.
                     _ => {
                         let rv = recv.clone().unwrap();
-                        let items = self.generic_array_read(&rv)?;
+                        // 구멍 보존 재료화 — filter/map/forEach/reduce 가 HasProperty 로
+                        // 존재하지 않는 인덱스를 건너뛰게 한다.
+                        let arr = self.generic_array_read_sparse(&rv)?;
                         let wb = if is_mutating_arr_op(op) {
                             if let Value::Obj(o) = &rv {
                                 Some(o.clone())
@@ -5790,7 +5819,7 @@ impl Interp {
                         } else {
                             None
                         };
-                        (ArrayObj::new(items), wb)
+                        (arr, wb)
                     }
                 };
                 // 변형 연산은 items 를 재배치/축소하므로 구멍 집합과 어긋난다 →
