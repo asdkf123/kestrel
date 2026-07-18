@@ -6905,3 +6905,29 @@ fn date_tojson_generic() {
     // null/undefined this → TypeError
     assert!(run_bool("var t=false; try{ Date.prototype.toJSON.call(undefined) }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn date_call_as_function_and_year_format() {
+    // §21.4.2.2: Date() (new 없이) → 현재 시각 문자열, typeof "string".
+    assert_eq!(run_str("typeof Date()"), "string");
+    // 음수/작은 연도는 최소 4자리(부호 포함) — DateString/UTCString.
+    assert_eq!(
+        run_str("new Date('-000001-07-01T00:00Z').toDateString().split(' ')[3]"),
+        "-0001"
+    );
+    assert_eq!(
+        run_str("new Date('-000012-07-01T00:00Z').toUTCString().split(' ')[3]"),
+        "-0012"
+    );
+    assert_eq!(
+        run_str("new Date(Date.UTC(999,0,1)).toDateString().split(' ')[3]"),
+        "0999"
+    );
+    // 확장 연도 파싱 왕복.
+    assert_eq!(
+        run_str("new Date('-123456-07-01T00:00:00Z').toISOString()"),
+        "-123456-07-01T00:00:00.000Z"
+    );
+    // new Date(...) 는 여전히 인스턴스.
+    assert!(run_bool("new Date(0) instanceof Date"));
+}

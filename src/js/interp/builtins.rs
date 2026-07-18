@@ -3933,7 +3933,14 @@ impl Interp {
                 }
                 Ok(Value::Num(build_date_full(y, mo, d, h, mi, s, ms)))
             }
-            Native::DateCtor => self.make_date_from_args(&args),
+            Native::DateCtor => {
+                // §21.4.2.2: new 없이 Date(...) 를 부르면 인자를 무시하고 현재 시각의
+                // toString 문자열을 낸다 (typeof 는 "string").
+                if matches!(self.new_target, None | Some(Value::Undefined)) {
+                    return Ok(Value::Str(date_tostring(now_millis())));
+                }
+                self.make_date_from_args(&args)
+            }
             // date.getFullYear() 등 — recv 가 Date 객체
             Native::DateMethod(field) => {
                 use DateField::*;

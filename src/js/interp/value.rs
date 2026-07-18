@@ -567,8 +567,13 @@ pub(super) fn parse_date_string(s: &str) -> Option<f64> {
         Some((d, t)) => (d, Some(t)),
         None => (s, None),
     };
-    let mut dp = date.split('-');
-    let y: i64 = dp.next()?.parse().ok()?;
+    // 확장 연도(ISO 8601): 앞의 +/-YYYYYY. '-' 로 split 하기 전에 부호를 떼어낸다.
+    let (ysign, dbody) = match date.strip_prefix('-') {
+        Some(r) => (-1i64, r),
+        None => (1i64, date.strip_prefix('+').unwrap_or(date)),
+    };
+    let mut dp = dbody.split('-');
+    let y: i64 = ysign * dp.next()?.parse::<i64>().ok()?;
     let mo: i64 = dp.next().and_then(|x| x.parse().ok()).unwrap_or(1);
     let d: i64 = dp.next().and_then(|x| x.parse().ok()).unwrap_or(1);
     let (mut h, mut mi, mut sec, mut ms) = (0i64, 0i64, 0i64, 0i64);
@@ -709,10 +714,12 @@ const DATE_MON: [&str; 12] = [
 
 // toString 계열 연도 표기: 0..9999 는 4자리, 그 외는 부호 포함 그대로.
 fn fmt_year(y: i64) -> String {
-    if (0..=9999).contains(&y) {
-        format!("{:04}", y)
+    // DateString/UTCString 의 연도는 최소 4자리(부호 포함): -1 → "-0001", 999 → "0999",
+    // 12345 → "12345" (양수엔 + 안 붙임 — +는 ISO 확장연도 전용).
+    if y < 0 {
+        format!("-{:04}", -y)
     } else {
-        format!("{}", y)
+        format!("{:04}", y)
     }
 }
 

@@ -6618,7 +6618,14 @@ impl Interp {
                 }
                 return Ok(Value::Obj(Rc::new(RefCell::new(m))));
             }
-            Value::Native(Native::DateCtor) => return self.call_native(Native::DateCtor, None, args),
+            Value::Native(Native::DateCtor) => {
+                // new Date(...) 는 NewTarget 이 정의됨 → 인스턴스 생성. Date(...)(new 없이)는
+                // call_native 경로에서 new_target 이 None 이라 문자열을 낸다 (§21.4.2.1/.2).
+                self.new_target = Some(Value::Native(Native::DateCtor));
+                let r = self.call_native(Native::DateCtor, None, args);
+                self.new_target = None;
+                return r;
+            }
             Value::Native(Native::DomParserCtor) => {
                 return self.call_native(Native::DomParserCtor, None, args)
             }
