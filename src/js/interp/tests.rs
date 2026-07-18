@@ -7231,3 +7231,16 @@ fn sloppy_this_primitive_boxing() {
     // apply(원시) 에 프로퍼티 할당이 터지지 않는다.
     assert_eq!(run_str("(function(){ Function('this.x=1').apply(1); return 'ok'; })()"), "ok");
 }
+
+#[test]
+fn function_bind_noncallable_typeerror() {
+    // §20.2.3.2: bind 대상이 callable 이 아니면 TypeError.
+    for bad in ["{}", "5", "undefined", "null", "'x'", "[]"] {
+        assert!(run_bool(&format!(
+            "var t=false; try{{ Function.prototype.bind.call({}) }}catch(e){{ t=e instanceof TypeError }} t", bad
+        )), "{}", bad);
+    }
+    // 정상 bind 보존.
+    assert_eq!(run_num("(function(a,b){return a+b}).bind(null,1)(2)"), 3.0);
+    assert_eq!(run_num("(function(){return this.x}).bind({x:9})()"), 9.0);
+}

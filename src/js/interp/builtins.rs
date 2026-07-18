@@ -1689,7 +1689,14 @@ impl Interp {
             }
             // fn.bind(thisArg, ...partial) → 바운드 함수
             Native::FnBind => {
-                let target = recv.ok_or("bind 대상 함수 없음")?;
+                // §20.2.3.2: Target 이 callable 이 아니면 TypeError.
+                let target = recv.unwrap_or(Value::Undefined);
+                if !is_callable(&target) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Function.prototype.bind called on non-callable",
+                    ));
+                }
                 let mut it = args.into_iter();
                 let this_arg = it.next().unwrap_or(Value::Undefined);
                 let partial: Vec<Value> = it.collect();
