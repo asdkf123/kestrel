@@ -3073,6 +3073,28 @@ fn class_extends_null_and_class_proto() {
     assert!(run_bool("class E extends Error {} Object.getPrototypeOf(E)===Error"));
 }
 
+// 파생 생성자는 super() 로 this 를 초기화해야 한다 (§10.2.2/§15.7.14).
+// super() 없이 반환하면(객체 반환 제외) this 미초기화 → ReferenceError.
+#[test]
+fn derived_constructor_must_call_super() {
+    assert!(run_bool(
+        "class A extends Array { constructor(){} } \
+         var t=false; try{ new A() }catch(e){ t=e instanceof ReferenceError } t"
+    ));
+    assert!(run_bool("class A extends Array { constructor(){ super(); } } new A() instanceof A"));
+    // 객체 반환은 super 없이도 허용(factory)
+    assert!(run_bool("class A extends Array { constructor(){ return {x:9}; } } new A().x===9"));
+    // 기저 클래스는 super 불필요
+    assert!(run_bool("class B { constructor(){ this.y=5; } } new B().y===5"));
+    // extends Error 도 동일
+    assert!(run_bool(
+        "class E extends Error { constructor(){} } \
+         var t=false; try{ new E() }catch(e){ t=e instanceof ReferenceError } t"
+    ));
+    // 암묵(기본) 파생 생성자는 자동으로 super 호출 → OK
+    assert!(run_bool("class A extends Array {} (new A()) instanceof A"));
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {

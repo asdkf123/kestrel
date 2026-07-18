@@ -6880,6 +6880,8 @@ impl Interp {
                         else {
                             return Err("super() 는 파생 클래스 생성자에서만".to_string());
                         };
+                        // super() 호출을 기록(파생 생성자 this 초기화 검사용).
+                        env_set(env, "\u{0}super_called", Value::Bool(true));
                         match sc {
                             Value::Class(parent) => {
                                 if let Some(obj) = self.run_constructor(&parent, &this, arg_vals)? {
@@ -7490,6 +7492,12 @@ impl Interp {
                 } else if let Some(pc) = &cls.parent_ctor {
                     env_declare(&scope, "\u{0}superclass__", pc.clone());
                 }
+                // 파생 클래스면 super() 호출 여부를 추적한다(§15.7.14: 파생 생성자는
+                // super() 로 this 를 초기화해야 하고, 안 하고 반환하면 this 미초기화다).
+                let is_derived = cls.parent.is_some() || cls.parent_ctor.is_some();
+                if is_derived {
+                    env_declare(&scope, "\u{0}super_called", Value::Bool(false));
+                }
                 for (i, p) in ctor.params.iter().enumerate() {
                     env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
                 }
@@ -7499,6 +7507,16 @@ impl Interp {
                     if is_object(&v) {
                         return Ok(Some(v));
                     }
+                }
+                // 파생 생성자인데 super() 를 안 불렀고 객체도 안 돌려줬으면 this 가
+                // 미초기화 상태 → ReferenceError (§10.2.2 [[Construct]] step 13).
+                if is_derived
+                    && !matches!(env_get(&scope, "\u{0}super_called"), Some(Value::Bool(true)))
+                {
+                    return Err(self.throw_error(
+                        "ReferenceError",
+                        "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+                    ));
                 }
                 if let Some(t) = env_get(&scope, "this") {
                     if is_object(&t) && !matches!((&t, inst), (Value::Instance(a), Value::Instance(b)) if Rc::ptr_eq(a, b))
