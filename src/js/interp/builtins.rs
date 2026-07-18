@@ -576,7 +576,11 @@ impl Interp {
         };
         if let Some(id) = ident {
             if path.contains(&id) {
-                return Err(JSON_CYCLE_MSG.to_string());
+                // §25.5.2: 순환 구조는 TypeError. throw_error 로 실제 TypeError 를 던진다
+                // (예전엔 dispatch 가 문자열을 TypeError 로 재래핑했으나 이제 직접 전파).
+                return Err(
+                    self.throw_error("TypeError", "Converting circular structure to JSON")
+                );
             }
             path.push(id);
         }
@@ -680,12 +684,14 @@ impl Interp {
             Value::Num(n) => Some(json_num(*n)),
             Value::Str(s) => Some(json_quote_pub(s)),
             Value::Arr(a) => {
-                let items = a.borrow().clone();
-                let mut parts = Vec::with_capacity(items.len());
-                for (i, item) in items.iter().enumerate() {
+                let len = a.borrow().len();
+                let mut parts = Vec::with_capacity(len);
+                for i in 0..len {
+                    // Get(array, ToString(i)) — getter 호출/예외 전파(예전엔 저장값 그대로).
+                    let item = self.member_get(v, &i.to_string())?;
                     let s = self
-                        .json_ser(item, &i.to_string(), v, fnrep, keys, indent, depth + 1, path)?
-                        .unwrap_or_else(|| "null".to_string()); // 배열의 직렬화 불가 항목은 null
+                        .json_ser(&item, &i.to_string(), v, fnrep, keys, indent, depth + 1, path)?
+                        .unwrap_or_else(|| "null".to_string()); // 직렬화 불가 항목은 null
                     parts.push(s);
                 }
                 Some(wrap(parts, '[', ']'))
@@ -695,15 +701,17 @@ impl Interp {
                 json_date_iso(map).map(|s| json_quote_pub(&s)).unwrap_or_else(|| "null".to_string()),
             ),
             Value::Obj(map) => {
-                let entries: Vec<(String, Value)> = enumerable_entries(map);
+                // 키 순회: replacer 배열이 있으면 그 순서(§25.5.2.1), 없으면 열거 own 키.
+                // 값은 Get(value, key) 로 읽어 getter 를 호출하고 예외를 전파한다 — 예전엔
+                // enumerable_entries 로 저장값(Accessor)을 그대로 봐 getter 가 실행 안 됐다.
+                let key_list: Vec<String> = match keys {
+                    Some(ks) => ks.clone(),
+                    None => enumerable_keys(map),
+                };
                 let mut parts = Vec::new();
-                for (k, val) in &entries {
-                    if let Some(ks) = keys {
-                        if !ks.contains(k) {
-                            continue; // replacer 배열에 없는 키는 제외
-                        }
-                    }
-                    if let Some(s) = self.json_ser(val, k, v, fnrep, keys, indent, depth + 1, path)? {
+                for k in &key_list {
+                    let val = self.member_get(v, k)?;
+                    if let Some(s) = self.json_ser(&val, k, v, fnrep, keys, indent, depth + 1, path)? {
                         parts.push(format!("{}{}{}", json_quote_pub(k), colon, s));
                     }
                 }
@@ -6476,9 +6484,34 @@ impl Interp {
                     Value::Str(s) => s.chars().take(10).collect(),
                     _ => String::new(),
                 };
-                let keys: Option<Vec<String>> = match &replacer {
-                    Value::Arr(a) => Some(a.borrow().iter().map(to_display).collect()),
-                    _ => None,
+                // replacer 배열 → PropertyList (§25.5.2.1 step 5): 문자열/수/String·Number 래퍼만
+                // 채택(래퍼는 ToString), 중복 제거, 그 밖(undefined/불리언/일반객체 등)은 제외.
+                let keys: Option<Vec<String>> = if let Value::Arr(a) = &replacer {
+                    let items = a.borrow().clone();
+                    let mut list: Vec<String> = Vec::new();
+                    for el in &items {
+                        let item: Option<String> = match el {
+                            Value::Str(s) => Some(s.clone()),
+                            Value::Num(n) => Some(num_to_str(*n)),
+                            Value::Obj(m) if m.borrow().contains_key(WRAPPER_SLOT) => {
+                                match wrapper_primitive(el) {
+                                    Some(Value::Str(_)) | Some(Value::Num(_)) => {
+                                        Some(self.to_string_value(el)?)
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        };
+                        if let Some(it) = item {
+                            if !list.contains(&it) {
+                                list.push(it);
+                            }
+                        }
+                    }
+                    Some(list)
+                } else {
+                    None
                 };
                 let fnrep = if matches!(replacer, Value::Fn(_) | Value::Native(_) | Value::Bound(_)) {
                     Some(replacer.clone())
@@ -6487,10 +6520,11 @@ impl Interp {
                 };
                 let mut path = Vec::new();
                 let holder = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
-                match self.json_ser(&v, "", &holder, &fnrep, &keys, &indent, 0, &mut path) {
-                    Ok(s) => Ok(s.map(Value::Str).unwrap_or(Value::Undefined)),
-                    Err(msg) => Err(self.throw_error("TypeError", msg)),
-                }
+                // json_ser 의 Err 는 이미 throw 된 것(순환/BigInt 는 내부 throw_error, 사용자
+                // getter/toJSON/replacer 는 전파) — 재래핑하면 원래 던진 값이 TypeError 로
+                // 뭉개진다. 그대로 전파한다.
+                let s = self.json_ser(&v, "", &holder, &fnrep, &keys, &indent, 0, &mut path)?;
+                Ok(s.map(Value::Str).unwrap_or(Value::Undefined))
             }
             Native::ParseInt => {
                 let s = args.first().map(to_display).unwrap_or_default();

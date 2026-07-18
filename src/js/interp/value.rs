@@ -1357,9 +1357,6 @@ pub(super) fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
     }
 }
 
-// 직렬화 불가(함수/undefined 등)는 Ok(None). 객체 키는 삽입 순서(ObjMap) 유지.
-// 순환 구조는 Err → 호출측이 TypeError 로 던진다(표준).
-pub(super) const JSON_CYCLE_MSG: &str = "순환 구조는 JSON 으로 직렬화할 수 없음";
 
 // 아래 헬퍼는 인터프리터를 아는 직렬화기(builtins::json_ser)가 쓴다.
 // 예전 자유함수 경로(json_stringify/_d/_body)는 replacer·indent·toJSON 을 못 해서

@@ -7086,3 +7086,18 @@ fn to_primitive_noncallable_symbol_throws() {
     assert_eq!(run_num("1 + {valueOf:function(){return 2}}"), 3.0);
     assert_eq!(run_str("String({[Symbol.toPrimitive]:function(){return 'X'}})"), "X");
 }
+
+#[test]
+fn json_stringify_replacer_array_getter_circular() {
+    // §25.5.2.1: replacer 배열 = PropertyList(순서/중복제거/undefined 제외).
+    assert_eq!(run_str("JSON.stringify({a:2,b:1,c:3}, ['c','b','a'])"), "{\"c\":3,\"b\":1,\"a\":2}");
+    assert_eq!(run_str("JSON.stringify({key:true}, ['key','key'])"), "{\"key\":true}");
+    assert_eq!(run_str("JSON.stringify({undefined:1}, [undefined])"), "{}");
+    assert_eq!(run_str("JSON.stringify({'10':1,'20':2}, [10])"), "{\"10\":1}");
+    // getter 호출 + 값 직렬화.
+    assert_eq!(run_str("JSON.stringify({get a(){return 5}})"), "{\"a\":5}");
+    // getter/toJSON abrupt 는 원래 예외 그대로 전파(TypeError 재래핑 아님).
+    assert!(run_bool("var t=false; try{ JSON.stringify({get a(){throw new RangeError('x')}}) }catch(e){ t=e instanceof RangeError } t"));
+    // 순환 → TypeError.
+    assert!(run_bool("var o={}; o.self=o; var t=false; try{ JSON.stringify(o) }catch(e){ t=e instanceof TypeError } t"));
+}
