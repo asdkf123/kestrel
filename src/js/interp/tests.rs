@@ -6749,3 +6749,13 @@ fn array_from_and_object_fromentries_coercion() {
     assert!(run_bool("var t=false; try{ Object.fromEntries([5]); }catch(e){ t=e instanceof TypeError; } t"));
     assert_eq!(run_str("JSON.stringify(Object.fromEntries(new Map([['a',1],['b',2]])))"), "{\"a\":1,\"b\":2}");
 }
+
+#[test]
+fn typedarray_fill_relative_indices() {
+    // TypedArray fill(value, start, end): start/end 는 ToIntegerOrInfinity(음수 상대, valueOf).
+    // TypedArray 는 프렐류드 폴리필이라 prelude_str 로.
+    assert_eq!(prelude_str("var a=new Uint8Array([1,2,3,4]); a.fill(9,{valueOf:function(){return 1;}}); Array.from(a).join()"), "1,9,9,9");
+    assert_eq!(prelude_str("var a=new Uint8Array([1,2,3,4]); a.fill(9,1,3); Array.from(a).join()"), "1,9,9,4");
+    assert_eq!(prelude_str("var a=new Uint8Array([1,2,3,4]); a.fill(9,-2); Array.from(a).join()"), "1,2,9,9");
+    assert_eq!(prelude_str("var a=new Uint8Array(3); a.fill(9); Array.from(a).join()"), "9,9,9");
+}

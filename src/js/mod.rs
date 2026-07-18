@@ -1973,7 +1973,7 @@ var __kTAProto = {
     }
     return undefined;
   },
-  fill: function(v, a, b){ __kTAValidate(this); a = a || 0; b = (b === undefined) ? this.length : b; for (var i = a; i < b; i++) this[i] = v; return this; },
+  fill: function(v, start, end){ __kTAValidate(this); var n = this.length; var k = (start === undefined) ? 0 : Math.trunc(+start); if(k<0){k+=n;} if(k<0){k=0;} if(k>n){k=n;} var e = (end === undefined) ? n : Math.trunc(+end); if(e<0){e+=n;} if(e<0){e=0;} if(e>n){e=n;} for (var i = k; i < e; i++){ this[i] = v; } return this; },
   subarray: function(a, b){ var len=this.length; a = a || 0; b = (b === undefined) ? len : b; var beginByteOffset = this.byteOffset + a * this.BYTES_PER_ELEMENT; return __kTASpeciesCreate(this, [this.buffer, beginByteOffset, Math.max(0, b - a)]); },
   slice: function(a, b){ __kTAValidate(this); var len=this.length; a = (a === undefined) ? 0 : (a|0); b = (b === undefined) ? len : (b|0); if (a<0) a+=len; if (b<0) b+=len; var count = Math.max(0, Math.min(b, len) - a); var A = __kTASpeciesCreate(this, [count]); for (var i = 0; i < count; i++) A[i] = this[a + i]; return A; },
   forEach: function(fn){ __kTAValidate(this); var t=arguments[1]; for (var i = 0; i < this.length; i++) fn.call(t, this[i], i, this); },
