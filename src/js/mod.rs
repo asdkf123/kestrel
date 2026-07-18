@@ -2122,7 +2122,7 @@ var __kTAProto = {
     }
     return undefined;
   },
-  fill: function(v, start, end){ __kTAValidate(this); var n = this.length; var k = (start === undefined) ? 0 : Math.trunc(+start); if(k<0){k+=n;} if(k<0){k=0;} if(k>n){k=n;} var e = (end === undefined) ? n : Math.trunc(+end); if(e<0){e+=n;} if(e<0){e=0;} if(e>n){e=n;} for (var i = k; i < e; i++){ this[i] = v; } return this; },
+  fill: function(v, start, end){ __kTAValidate(this); var n = this.length; v = this._spec.big ? (typeof v === 'bigint' ? v : BigInt(v)) : +v; var k = (start === undefined) ? 0 : Math.trunc(+start); if(k<0){k+=n;} if(k<0){k=0;} if(k>n){k=n;} var e = (end === undefined) ? n : Math.trunc(+end); if(e<0){e+=n;} if(e<0){e=0;} if(e>n){e=n;} for (var i = k; i < e; i++){ this[i] = v; } return this; },
   subarray: function(begin, end){ var len=this.length; var b = (begin===undefined)?0:Math.trunc(+begin); if(b<0){b+=len;} b=Math.max(0,Math.min(b,len)); var e = (end===undefined)?len:Math.trunc(+end); if(e<0){e+=len;} e=Math.max(0,Math.min(e,len)); var beginByteOffset = this.byteOffset + b * this.BYTES_PER_ELEMENT; return __kTASpeciesCreate(this, [this.buffer, beginByteOffset, Math.max(0, e - b)]); },
   slice: function(a, b){ __kTAValidate(this); var len=this.length; a = (a === undefined) ? 0 : (a|0); b = (b === undefined) ? len : (b|0); if (a<0) a+=len; if (b<0) b+=len; var count = Math.max(0, Math.min(b, len) - a); var A = __kTASpeciesCreate(this, [count]); for (var i = 0; i < count; i++) A[i] = this[a + i]; return A; },
   forEach: function(fn){ __kTAValidate(this); var t=arguments[1]; for (var i = 0; i < this.length; i++) fn.call(t, this[i], i, this); },

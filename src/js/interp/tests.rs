@@ -7770,3 +7770,12 @@ fn template_substitution_uses_tostring() {
     assert_eq!(run_str("`${[1,2,3]}`"), "1,2,3");
     assert_eq!(run_str("`${null}/${undefined}/${true}`"), "null/undefined/true");
 }
+
+#[test]
+fn typedarray_fill_coerces_value_once() {
+    // §23.2.3.9: fill 은 값을 한 번만 강제변환(예전엔 요소마다 Proxy set 으로 N번).
+    assert_eq!(prelude_str("var c=0; new Int8Array(4).fill({valueOf:function(){c++;return 7}}); String(c)"), "1");
+    assert_eq!(prelude_str("new Uint8Array(4).fill(9,1,3).join(',')"), "0,9,9,0");
+    assert_eq!(prelude_str("var b=new BigInt64Array(2); b.fill(5n); b.join(',')"), "5,5");
+    assert_eq!(prelude_str("try{ new Int8Array(2).fill(Symbol()); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+}
