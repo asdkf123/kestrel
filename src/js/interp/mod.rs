@@ -3584,7 +3584,13 @@ impl Interp {
                             .collect()
                     }
                     // 희소 배열의 구멍은 for-in 이 건너뛴다 (§enumerate: 존재 인덱스만).
-                    Value::Arr(a) => a.present_indices().iter().map(|i| i.to_string()).collect(),
+                    // defineProperty 로 non-enumerable 이 된 인덱스도 제외 (§10.4.2).
+                    Value::Arr(a) => a
+                        .present_indices()
+                        .iter()
+                        .filter(|&&i| !matches!(a.index_attr(i), Some(at) if at & ATTR_ENUMERABLE == 0))
+                        .map(|i| i.to_string())
+                        .collect(),
                     Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
                     // 함수도 ordinary object — 열거 가능한 own 프로퍼티를 순회
                     // (name/length/prototype 및 상속된 Function/Object.prototype 멤버는 비열거).

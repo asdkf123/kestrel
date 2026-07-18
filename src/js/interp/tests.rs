@@ -7946,3 +7946,16 @@ fn array_index_attrs_only_redefine() {
     // 값 유지.
     assert_eq!(run_num("var a=[5,6,7]; Object.defineProperty(a,'1',{configurable:false}); a[1]"), 6.0);
 }
+
+#[test]
+fn array_index_nonenumerable_excluded() {
+    // §10.4.2: non-enumerable 배열 인덱스는 keys/values/entries/for-in 에서 제외.
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'1',{enumerable:false}); Object.keys(a).join(',')"), "0,2");
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'1',{enumerable:false}); Object.values(a).join(',')"), "1,3");
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'1',{enumerable:false}); var f=[]; for(var k in a) f.push(k); f.join(',')"), "0,2");
+    // getOwnPropertyNames 는 non-enumerable 포함.
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'1',{enumerable:false}); Object.getOwnPropertyNames(a).indexOf('1') >= 0"));
+    // 일반 배열 무회귀.
+    assert_eq!(run_str("Object.keys([5,6,7]).join(',')"), "0,1,2");
+    assert_eq!(run_str("Object.values([5,6,7]).join(',')"), "5,6,7");
+}

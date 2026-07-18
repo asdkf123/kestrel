@@ -264,11 +264,13 @@ pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
         Value::Obj(m) => enumerable_entries(m),
         // 배열: 인덱스 + own-property (push 재정의 등)
         Value::Arr(a) => {
-            // 구멍 인덱스는 열거 대상이 아니다 (희소 배열).
+            // 구멍 인덱스는 열거 대상이 아니다 (희소 배열). defineProperty 로
+            // non-enumerable 이 된 인덱스도 제외한다 (§10.4.2, index_attrs 빈 배열은 무영향).
             let b = a.borrow();
             let mut out: Vec<(String, Value)> = a
                 .present_indices()
                 .into_iter()
+                .filter(|&i| !matches!(a.index_attr(i), Some(at) if at & ATTR_ENUMERABLE == 0))
                 .map(|i| (i.to_string(), b[i].clone()))
                 .collect();
             drop(b);
@@ -7868,8 +7870,8 @@ impl Interp {
                     Some(Value::Obj(m)) => {
                         enumerable_entries(m).into_iter().map(|(_, v)| v).collect()
                     }
-                    Some(Value::Arr(a)) => a.borrow().clone(),
-                    Some(v @ Value::Instance(_)) => {
+                    Some(v @ (Value::Arr(_) | Value::Instance(_))) => {
+                        // own_enumerable_entries: 구멍·non-enumerable 인덱스 제외 (§10.4.2).
                         own_enumerable_entries(v).into_iter().map(|(_, v)| v).collect()
                     }
                     _ => Vec::new(),
@@ -7884,12 +7886,13 @@ impl Interp {
                     Some(Value::Obj(m)) => {
                         enumerable_entries(m).iter().map(|(k, v)| pair(k, v)).collect()
                     }
-                    Some(Value::Arr(a)) => a
-                        .borrow()
-                        .iter()
-                        .enumerate()
-                        .map(|(i, v)| pair(&i.to_string(), v))
-                        .collect(),
+                    Some(v @ Value::Arr(_)) => {
+                        // 구멍·non-enumerable 인덱스 제외 (§10.4.2).
+                        own_enumerable_entries(v)
+                            .iter()
+                            .map(|(k, val)| pair(k, val))
+                            .collect()
+                    }
                     Some(v @ Value::Instance(_)) => {
                         own_enumerable_entries(v).iter().map(|(k, v)| pair(k, v)).collect()
                     }
