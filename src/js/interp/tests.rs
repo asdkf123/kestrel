@@ -7387,3 +7387,19 @@ fn regex_symbol_search_protocol() {
     assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.search].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
     assert!(run_bool("var t=false; try{ /a/[Symbol.search]({toString:function(){throw new RangeError('s')}}) }catch(e){ t=e instanceof RangeError } t"));
 }
+
+#[test]
+fn regex_symbol_match_protocol() {
+    // §22.2.6.8: 비전역 단일 결과, 전역 전체 수집, 빈 매치 전진, lastIndex>len → null.
+    assert_eq!(run_str("JSON.stringify(/(a)(b)/[Symbol.match]('xabz'))"), "[\"ab\",\"a\",\"b\"]");
+    assert_eq!(run_str("JSON.stringify(/\\d/g[Symbol.match]('a1b2c3'))"), "[\"1\",\"2\",\"3\"]");
+    assert!(run_bool("/x/g[Symbol.match]('abc')===null"));
+    assert!(run_bool("/x/[Symbol.match]('abc')===null"));
+    assert_eq!(run_str("JSON.stringify(/(?:)/g[Symbol.match]('ab'))"), "[\"\",\"\",\"\"]");
+    // exec: lastIndex>len(전역) → null, lastIndex 0.
+    assert!(run_bool("var re=/a/g; re.lastIndex=100; var r=re.exec('abc'); r===null && re.lastIndex===0"));
+    // custom exec.
+    assert_eq!(run_str("var c=0; var o={exec:function(){c++;return c<=2?{0:'m'+c,index:0}:null},lastIndex:0,flags:'g',global:true}; Object.setPrototypeOf(o,RegExp.prototype); JSON.stringify(o[Symbol.match]('x'))"), "[\"m1\",\"m2\"]");
+    // brand.
+    assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.match].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
+}

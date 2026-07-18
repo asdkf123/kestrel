@@ -4850,7 +4850,48 @@ impl Interp {
                         self.member_get(&result, "index")
                     };
                 }
-                // 나머지(@@match/@@replace/@@split/@@matchAll)는 아직 String 측에 위임.
+                if let natives::StrOp::Match = op {
+                    // §22.2.6.8 RegExp.prototype[@@match](string).
+                    if !is_object(&re) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "RegExp.prototype[Symbol.match] called on non-object",
+                        ));
+                    }
+                    let s = self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                    let flags_val = self.member_get(&re, "flags")?;
+                    let flags = self.to_string_value(&flags_val)?;
+                    if !flags.contains('g') {
+                        // 비전역: 단일 RegExpExec 결과.
+                        return self.regexp_exec(&re, &s);
+                    }
+                    // 전역: lastIndex=0 후 모든 매치의 match[0] 수집(빈 매치는 lastIndex 전진).
+                    self.set_throw(&re, "lastIndex", Value::Num(0.0))?;
+                    let mut out: Vec<Value> = Vec::new();
+                    let slen = s.chars().count();
+                    let cap = slen.saturating_mul(2) + 1000; // 무한루프/OOM 방지 안전 상한
+                    for _ in 0..cap {
+                        let result = self.regexp_exec(&re, &s)?;
+                        if matches!(result, Value::Null) {
+                            break;
+                        }
+                        let m0 = self.member_get(&result, "0")?;
+                        let match_str = self.to_string_value(&m0)?;
+                        let empty = match_str.is_empty();
+                        out.push(Value::Str(match_str));
+                        if empty {
+                            // AdvanceStringIndex(근사): lastIndex + 1.
+                            let li = to_num(&self.member_get(&re, "lastIndex")?);
+                            self.set_throw(&re, "lastIndex", Value::Num(li + 1.0))?;
+                        }
+                    }
+                    return if out.is_empty() {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(Value::Arr(ArrayObj::new(out)))
+                    };
+                }
+                // 나머지(@@replace/@@split/@@matchAll)는 아직 String 측에 위임.
                 let s = args.first().map(to_display).unwrap_or_default();
                 let mut fwd = vec![re];
                 fwd.extend(args.into_iter().skip(1));
@@ -4895,7 +4936,7 @@ impl Interp {
                 let from = if re.global {
                     match &recv_obj {
                         Some(Value::Obj(m)) => match m.borrow().get("lastIndex") {
-                            Some(Value::Num(n)) => *n as usize,
+                            Some(Value::Num(n)) => to_length(*n) as usize,
                             _ => 0,
                         },
                         _ => 0,
@@ -4903,7 +4944,15 @@ impl Interp {
                 } else {
                     0
                 };
-                match re.find(&chars, from.min(chars.len())) {
+                // §22.2.7.2: lastIndex > length 면(전역) 매치 실패 → lastIndex 0, null.
+                // 예전엔 from 을 len 으로 clamp 해 문자열 끝에서 빈 매치를 무한히 냈다.
+                if re.global && from > chars.len() {
+                    if let Some(Value::Obj(m)) = &recv_obj {
+                        m.borrow_mut().insert("lastIndex".to_string(), Value::Num(0.0));
+                    }
+                    return Ok(Value::Null);
+                }
+                match re.find(&chars, from) {
                     Some(mt) => {
                         if re.global {
                             if let Some(Value::Obj(m)) = &recv_obj {
