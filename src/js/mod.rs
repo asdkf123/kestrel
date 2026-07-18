@@ -2751,6 +2751,151 @@ if (!window.Iterator) {
     },
     writable: true, enumerable: false, configurable: true
   });
+  // ── Iterator.zip / Iterator.zipKeyed (Joint Iteration 제안) ──
+  // GetIteratorFlattenable(obj, reject-primitives): 객체면 @@iterator(없으면 obj
+  // 자신을 iterator 로), 원시값이면 TypeError.
+  var __kGetIterFlat = function(obj) {
+    if (obj === null || (typeof obj !== 'object' && typeof obj !== 'function')) {
+      throw new TypeError('Iterator.zip: an iterable is not an object');
+    }
+    var method = obj[Symbol.iterator];
+    var iter;
+    if (method === undefined || method === null) { iter = obj; }
+    else {
+      if (typeof method !== 'function') throw new TypeError('Iterator.zip: @@iterator is not callable');
+      iter = method.call(obj);
+    }
+    if (iter === null || typeof iter !== 'object') throw new TypeError('Iterator.zip: iterator is not an object');
+    return iter;
+  };
+  // open 배열의 [start..] 중 살아있는(비 null) iterator 들의 return 을 호출(IteratorClose).
+  var __kZipCloseFrom = function(open, start) {
+    for (var k = start; k < open.length; k++) {
+      var it = open[k];
+      if (it && typeof it['return'] === 'function') { try { it['return'](); } catch (_) {} }
+    }
+  };
+  // options 를 GetOptionsObject → mode/padding 해석. iters 목록·padding 목록을 만든 뒤
+  // finishResults(keys) 로 결과를 배열/객체로 조립하는 zip 제너레이터를 돌려준다.
+  var __kZipCore = function(iters, mode, padding, finish) {
+    var iterCount = iters.length;
+    var open = iters.slice();
+    var doneCount = 0;
+    return (function*(){
+      if (iterCount === 0) return;
+      while (true) {
+        if (doneCount === iterCount) return;
+        var results = new Array(iterCount);
+        for (var i = 0; i < iterCount; i++) {
+          if (open[i] === null) { results[i] = padding[i]; continue; }
+          var r = open[i].next();
+          if (r === null || typeof r !== 'object') {
+            __kZipCloseFrom(open, i + 1);
+            throw new TypeError('Iterator.zip: iterator result is not an object');
+          }
+          if (r.done) {
+            if (mode === 'shortest') { __kZipCloseFrom(open, i + 1); return; }
+            if (mode === 'strict') {
+              if (i !== 0) { __kZipCloseFrom(open, i + 1); throw new TypeError('Iterator.zip: strict mode requires equal-length iterators'); }
+              for (var k = 1; k < iterCount; k++) {
+                var rk = open[k].next();
+                if (rk === null || typeof rk !== 'object') { __kZipCloseFrom(open, k + 1); throw new TypeError('Iterator.zip: iterator result is not an object'); }
+                if (!rk.done) { __kZipCloseFrom(open, k + 1); throw new TypeError('Iterator.zip: strict mode requires equal-length iterators'); }
+              }
+              return;
+            }
+            // longest: 이 iterator 는 소진 → padding 으로 대체하고 계속.
+            open[i] = null; doneCount++; results[i] = padding[i];
+            continue;
+          }
+          results[i] = r.value;
+        }
+        if (doneCount === iterCount) return; // 이번 라운드에 전부 소진(전부 padding) → yield 안 함
+        yield finish(results);
+      }
+    })();
+  };
+  // 공통 옵션 해석 + iters/padding 준비. keyed=false 면 배열 입력, true 면 객체 입력.
+  var __kZipPrepare = function(input, options, keyed) {
+    if (input === null || (typeof input !== 'object' && typeof input !== 'function')) {
+      throw new TypeError(keyed ? 'Iterator.zipKeyed: iterables is not an object' : 'Iterator.zip: iterables is not an object');
+    }
+    if (options === undefined) options = Object.create(null);
+    else if (options === null || (typeof options !== 'object' && typeof options !== 'function')) {
+      throw new TypeError('Iterator.zip: options is not an object');
+    }
+    var mode = options.mode;
+    if (mode === undefined) mode = 'shortest';
+    if (mode !== 'shortest' && mode !== 'longest' && mode !== 'strict') {
+      throw new RangeError("Iterator.zip: mode must be 'shortest', 'longest', or 'strict'");
+    }
+    var paddingOption;
+    if (mode === 'longest') {
+      paddingOption = options.padding;
+      if (paddingOption !== undefined && (paddingOption === null || (typeof paddingOption !== 'object' && typeof paddingOption !== 'function'))) {
+        throw new TypeError('Iterator.zip: padding is not an object');
+      }
+    }
+    var iters = [];
+    var keys = null;
+    if (keyed) {
+      keys = [];
+      var allKeys = Reflect.ownKeys(input);
+      for (var ki = 0; ki < allKeys.length; ki++) {
+        var key = allKeys[ki];
+        var desc = Object.getOwnPropertyDescriptor(input, key);
+        if (desc && desc.enumerable) {
+          var val = input[key];
+          try { iters.push(__kGetIterFlat(val)); }
+          catch (e) { __kZipCloseFrom(iters, 0); throw e; }
+          keys.push(key);
+        }
+      }
+    } else {
+      var inputMethod = input[Symbol.iterator];
+      if (typeof inputMethod !== 'function') throw new TypeError('Iterator.zip: iterables is not iterable');
+      var inputIter = inputMethod.call(input);
+      while (true) {
+        var step = inputIter.next();
+        if (step === null || typeof step !== 'object') { __kZipCloseFrom(iters, 0); throw new TypeError('Iterator.zip: iterator result is not an object'); }
+        if (step.done) break;
+        try { iters.push(__kGetIterFlat(step.value)); }
+        catch (e) {
+          __kZipCloseFrom(iters, 0);
+          if (inputIter && typeof inputIter['return'] === 'function') { try { inputIter['return'](); } catch (_) {} }
+          throw e;
+        }
+      }
+    }
+    var iterCount = iters.length;
+    var padding = new Array(iterCount);
+    if (mode === 'longest' && paddingOption !== undefined) {
+      var pMethod = paddingOption[Symbol.iterator];
+      if (typeof pMethod !== 'function') { __kZipCloseFrom(iters, 0); throw new TypeError('Iterator.zip: padding is not iterable'); }
+      var pIter = pMethod.call(paddingOption);
+      for (var pi = 0; pi < iterCount; pi++) {
+        var pr = pIter.next();
+        padding[pi] = (pr && typeof pr === 'object' && !pr.done) ? pr.value : undefined;
+      }
+      if (pIter && typeof pIter['return'] === 'function') { try { pIter['return'](); } catch (_) {} }
+    } else {
+      for (var pi2 = 0; pi2 < iterCount; pi2++) padding[pi2] = undefined;
+    }
+    var finish = keyed
+      ? function(results){ var o = {}; for (var i = 0; i < keys.length; i++) o[keys[i]] = results[i]; return o; }
+      : function(results){ return results.slice(); };
+    return __kZipCore(iters, mode, padding, finish);
+  };
+  // length 1 (options 는 선택적 — 스펙이 length 를 1 로 명시). arguments 로 options 를 받아
+  // formal param 1개로 맞춘다.
+  Object.defineProperty(Iterator, 'zip', {
+    value: function zip(iterables) { return __kZipPrepare(iterables, arguments[1], false); },
+    writable: true, enumerable: false, configurable: true
+  });
+  Object.defineProperty(Iterator, 'zipKeyed', {
+    value: function zipKeyed(iterables) { return __kZipPrepare(iterables, arguments[1], true); },
+    writable: true, enumerable: false, configurable: true
+  });
   window.Iterator = Iterator;
   window.__kIterProto = __kIterProto;
 }

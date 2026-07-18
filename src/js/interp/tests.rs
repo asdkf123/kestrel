@@ -4865,6 +4865,28 @@ fn iterator_helpers() {
         "var opened=false; var g={}; g[Symbol.iterator]=function(){opened=true;return [1][Symbol.iterator]();}; \
          try{ Iterator.concat(g,5) }catch(e){} opened===false"
     ));
+    // Iterator.zip (Joint Iteration): shortest/longest/strict + zipKeyed
+    assert_eq!(
+        prelude_str("Iterator.zip([[1,2,3],[10,20]]).toArray().map(function(a){return a.join(':');}).join(',')"),
+        "1:10,2:20"
+    );
+    assert_eq!(
+        prelude_str("Iterator.zip([[1,2,3],[10]],{mode:'longest',padding:[0,99]}).toArray().map(function(a){return a.join(':');}).join(',')"),
+        "1:10,2:99,3:99"
+    );
+    assert!(prelude_bool(
+        "var t=false; try{ Iterator.zip([[1,2],[10]],{mode:'strict'}).toArray() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(prelude_bool(
+        "var t=false; try{ Iterator.zip([[1]],{mode:'bad'}) }catch(e){ t=e instanceof RangeError } t"
+    ));
+    assert!(prelude_bool("var t=false; try{ Iterator.zip(5) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("Iterator.zip.length===1 && Iterator.zip.name==='zip' && Iterator.zipKeyed.name==='zipKeyed'"));
+    // zipKeyed: 객체 입력 → 객체 출력
+    assert!(prelude_bool(
+        "var a=Iterator.zipKeyed({a:[1,2],b:[10,20]}).toArray(); \
+         a.length===2 && a[0].a===1 && a[0].b===10 && a[1].a===2 && a[1].b===20"
+    ));
 }
 
 // Explicit Resource Management (§): Symbol.dispose + DisposableStack + SuppressedError.
