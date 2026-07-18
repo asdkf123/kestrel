@@ -6047,22 +6047,41 @@ impl Interp {
                 if let Some(v) = c.statics.borrow().get(key).cloned() {
                     return Ok(v);
                 }
-                // 상속된 정적 멤버
+                // 상속된 정적 멤버 (JsClass 부모 체인). 네이티브를 extends 한 지점의
+                // parent_ctor 를 기억해 둔다.
+                let mut native_parent = c.parent_ctor.clone();
                 let mut p = c.parent.clone();
                 while let Some(cls) = p {
                     if let Some(v) = cls.statics.borrow().get(key).cloned() {
                         return Ok(v);
                     }
+                    if cls.parent_ctor.is_some() {
+                        native_parent = cls.parent_ctor.clone();
+                    }
                     p = cls.parent.clone();
                 }
-                // 클래스도 함수다 — Function.prototype 메서드 상속. 예전엔 C.toString/
-                // C.call/C.bind/C.hasOwnProperty 가 전부 undefined 였다.
+                // 클래스도 함수다 — 클래스 자신의 함수 공통 멤버가 상속보다 우선.
+                // (특히 toString 은 클래스 소스를 돌려줘야 하므로 부모 toString 에 가려지면
+                //  안 된다.) 예전엔 C.toString/C.call/C.bind 가 전부 undefined 였다.
                 match key {
                     "call" => return Ok(Value::Native(Native::FnCall)),
                     "apply" => return Ok(Value::Native(Native::FnApply)),
                     "bind" => return Ok(Value::Native(Native::FnBind)),
                     "toString" => return Ok(Value::Native(Native::FnToString)),
                     _ => {}
+                }
+                // 네이티브 생성자를 extends 하면 그 정적 메서드도 상속한다 (§10.2: 파생
+                // 클래스의 [[Prototype]] 은 부모 생성자). class MyP extends Promise →
+                // MyP.resolve === Promise.resolve, class A extends Array → A.from 등.
+                // 예전엔 parent_ctor(네이티브)를 안 봐서 전부 undefined 였다. 함수 공통
+                // 멤버 뒤에 둔다(클래스 자신의 name/length/toString 우선).
+                if let Some(np) = &native_parent {
+                    if matches!(np, Value::Native(_) | Value::Fn(_) | Value::Bound(_)) {
+                        let v = self.member_get(np, key)?;
+                        if !matches!(v, Value::Undefined) {
+                            return Ok(v);
+                        }
+                    }
                 }
                 // 나머지는 Function.prototype→Object.prototype 체인 (hasOwnProperty 등).
                 Ok(self

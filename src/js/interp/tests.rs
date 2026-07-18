@@ -7696,3 +7696,16 @@ fn promise_combinators_spec() {
     // Promise.resolve 동일성.
     assert!(prelude_bool("var p=Promise.resolve(1); Promise.resolve(p)===p"));
 }
+
+#[test]
+fn class_extends_native_inherits_statics() {
+    // §10.2: 네이티브 생성자를 extends 하면 정적 메서드도 상속(파생 클래스 [[Prototype]]).
+    assert!(run_bool("class MyP extends Promise {} typeof MyP.resolve === 'function' && MyP.resolve === Promise.resolve"));
+    assert!(run_bool("class MyP extends Promise {} typeof MyP.all === 'function'"));
+    assert!(run_bool("class A extends Array {} typeof A.from === 'function' && typeof A.isArray === 'function'"));
+    assert!(run_bool("class E extends Error {} A: { break A; } typeof E.name === 'string'"));
+    // 사용자 클래스 상속은 그대로.
+    assert_eq!(run_num("class B { static f(){ return 7; } } class D extends B {} D.f()"), 7.0);
+    // 네이티브에 없는 키는 undefined(회귀 없음).
+    assert!(run_bool("class MyP extends Promise {} MyP.nonexistent === undefined"));
+}
