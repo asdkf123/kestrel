@@ -8740,74 +8740,13 @@ impl Interp {
                 match recv {
                     // Proxy: set 트랩 있으면 handler.set(target, key, value, receiver), 없으면 target 에 위임
                     Value::Proxy(p) => {
-                        self.proxy_revoked_guard(&p)?;
-                        let (target, handler) = (p.0.clone(), p.1.clone());
-                        let trap = self.member_get(&handler, "set")?;
-                        if !matches!(trap, Value::Undefined) {
-                            let receiver = Value::Proxy(p.clone());
-                            let btr = self.call_value(
-                                trap,
-                                Some(handler),
-                                vec![
-                                    target.clone(),
-                                    self.trap_key(&key),
-                                    value.clone(),
-                                    receiver,
-                                ],
-                            )?;
-                            // 트랩이 falsy 면 설정 실패(sloppy 무시).
-                            if !to_bool(&btr) {
-                                return Ok(());
-                            }
-                            // §10.5.9 [[Set]] invariant: target 의 non-configurable
-                            // non-writable 데이터는 value 가 SameValue 여야, setter 없는
-                            // non-configurable accessor 는 TypeError.
-                            let td = self.call_native(
-                                Native::ObjectGetOwnPropertyDescriptor,
-                                None,
-                                vec![target.clone(), Value::Str(key.clone())],
-                            )?;
-                            if let Value::Obj(d) = &td {
-                                let b = d.borrow();
-                                let configurable =
-                                    matches!(b.get("configurable"), Some(v) if to_bool(v));
-                                if !configurable {
-                                    if b.contains_key("value") {
-                                        let writable =
-                                            matches!(b.get("writable"), Some(v) if to_bool(v));
-                                        let val =
-                                            b.get("value").cloned().unwrap_or(Value::Undefined);
-                                        if !writable && !same_value(&value, &val) {
-                                            return Err(self.throw_error("TypeError", "'set' on proxy: non-configurable, non-writable data property but trap set a different value"));
-                                        }
-                                    } else if matches!(
-                                        b.get("set").cloned().unwrap_or(Value::Undefined),
-                                        Value::Undefined
-                                    ) {
-                                        return Err(self.throw_error("TypeError", "'set' on proxy: non-configurable accessor without setter"));
-                                    }
-                                }
-                            }
-                            return Ok(());
-                        }
-                        // 트랩 없음 → target(Obj/Arr)에 직접 저장
-                        match &target {
-                            Value::Obj(map) => {
-                                map.borrow_mut().insert(key, value);
-                            }
-                            Value::Arr(a) => {
-                                if let Ok(i) = key.parse::<usize>() {
-                                    let mut arr = a.borrow_mut();
-                                    if i >= arr.len() {
-                                        arr.resize(i + 1, Value::Undefined);
-                                    }
-                                    arr[i] = value;
-                                } else {
-                                    a.set_prop(key, value);
-                                }
-                            }
-                            _ => {}
-                        }
+                        // [[Set]](§10.5.9)는 ordinary_set 이 proxy_set 으로 라우팅한다 —
+                        // set 트랩 호출/불변식/타깃 위임(트랩 없거나 null 이면 target 에
+                        // OrdinarySet: setter 를 receiver=proxy 로 호출)을 한곳에서 처리한다.
+                        // 예전 인라인 처리는 set:null 을 함수로 호출하고(GetMethod 위반),
+                        // 트랩 없을 때 target 의 setter 를 무시하고 raw 저장했다.
+                        let pv = Value::Proxy(p.clone());
+                        self.ordinary_set(&pv, &key, value, &pv)?;
                         Ok(())
                     }
                     Value::Obj(map) => {

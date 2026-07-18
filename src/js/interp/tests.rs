@@ -1757,6 +1757,15 @@ fn proxy_set_trap_reflect() {
         "var hit=false; var p=new Proxy({},{set:function(t,k,v){hit=true;t[k]=v;return true;}}); \
          p.z=5; hit && p.z===5"
     ));
+    // set 트랩이 null/undefined 면 GetMethod 로 타깃에 위임(§10.5.9) — 트랩을 호출하지
+    // 않는다. target 의 setter 는 receiver(프록시)를 this 로 받아야 한다.
+    assert!(run_bool(
+        "var ctx; var t={set attr(v){ ctx=this; }}; var p=new Proxy(t,{set:null}); \
+         p.attr=1; ctx===p"
+    ));
+    assert!(run_bool(
+        "var t={}; var p=new Proxy(t,{set:undefined}); p.w=9; t.w===9"
+    ));
 }
 
 // Proxy has 트랩 (§10.5.7) invariant 보강 + Reflect.has 배선.
