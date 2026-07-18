@@ -91,10 +91,11 @@ pub struct ClassDef {
     // static get/set 접근자 (this=클래스). static get observedAttributes 가 대표.
     pub static_getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
     pub static_setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
-    // 인스턴스 필드: (이름, 초기화식) — 생성 시 this 에 설정
-    pub fields: Vec<(String, Option<Expr>)>,
-    // static 필드: (이름, 초기화식) — 클래스에 설정
-    pub static_fields: Vec<(String, Option<Expr>)>,
+    // 인스턴스 필드: (이름, 초기화식, computed키식) — 생성 시 this 에 설정.
+    // computed키식이 Some 이면 클래스 정의 시 평가해 실제 키로 쓴다([x]=v 등).
+    pub fields: Vec<(String, Option<Expr>, Option<Expr>)>,
+    // static 필드: (이름, 초기화식, computed키식) — 클래스에 설정
+    pub static_fields: Vec<(String, Option<Expr>, Option<Expr>)>,
     // 원본 소스 텍스트 (Function.prototype.toString §20.2.3.5). 클래스도 함수다.
     pub source: Option<std::rc::Rc<str>>,
 }

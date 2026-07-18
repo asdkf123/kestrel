@@ -147,7 +147,7 @@ fn expr_to_pattern(e: Expr) -> Option<Pattern> {
 fn parse_expr_source(src: &str) -> Result<Expr, String> {
     let (toks, nl_before, spans) = tokenize(src)?;
     let src_chars: std::rc::Rc<[char]> = src.chars().collect::<Vec<_>>().into();
-    let mut p = Parser { toks, nl_before, spans, src_chars, pos: 0, pending_async: false };
+    let mut p = Parser { toks, nl_before, spans, src_chars, pos: 0, pending_async: false, pending_computed: None };
     let e = p.expr()?;
     if !p.eof() {
         return Err("템플릿 보간 식 뒤에 잉여 토큰".to_string());
@@ -158,7 +158,7 @@ fn parse_expr_source(src: &str) -> Result<Expr, String> {
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
     let (toks, nl_before, spans) = tokenize(src)?;
     let src_chars: std::rc::Rc<[char]> = src.chars().collect::<Vec<_>>().into();
-    let mut p = Parser { toks, nl_before, spans, src_chars, pos: 0, pending_async: false };
+    let mut p = Parser { toks, nl_before, spans, src_chars, pos: 0, pending_async: false, pending_computed: None };
     let mut stmts = Vec::new();
     while !p.eof() {
         stmts.push(p.stmt()?);
@@ -173,6 +173,8 @@ struct Parser {
     src_chars: std::rc::Rc<[char]>, // 원본 소스(char 벡터) — 함수 소스 텍스트 추출용
     pos: usize,
     pending_async: bool,
+    // member_name 이 파싱한 런타임 computed 키 [expr](정적 매핑 실패분). 필드 파싱이 소비.
+    pending_computed: Option<Expr>,
 }
 
 impl Parser {
@@ -1541,6 +1543,7 @@ impl Parser {
                 static_fields.push((
                     format!("\u{0}staticblock:{}", static_fields.len()),
                     Some(Expr::Call { callee: Box::new(f), args: Vec::new() }),
+                    None,
                 ));
                 continue;
             }
@@ -1572,14 +1575,16 @@ impl Parser {
                 }
             }
             let mname = self.member_name()?;
+            // 필드의 computed 키식은 init 파싱(member_name 재호출 가능) 전에 캡처한다.
+            let field_computed = self.pending_computed.take();
             // 클래스 필드: 이름 뒤가 '(' 가 아니면 메서드가 아니라 필드 (x = 5; / x;)
             if self.peek() != Some(&Tok::LParen) {
                 let init = if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
                 self.eat(&Tok::Semi);
                 if is_static {
-                    static_fields.push((mname, init));
+                    static_fields.push((mname, init, field_computed));
                 } else {
-                    fields.push((mname, init));
+                    fields.push((mname, init, field_computed));
                 }
                 continue;
             }
@@ -1629,12 +1634,21 @@ impl Parser {
 
     // 메서드/프로퍼티 이름: 식별자 또는 문자열/키워드
     fn member_name(&mut self) -> Result<String, String> {
-        // 계산된 메서드 키 [expr] — 잘 알려진 심볼/리터럴을 정적으로 키에 매핑.
-        // 예: [Symbol.iterator]() {} → "\u{0}@@iterator". 사용자 정의 이터러블 클래스 지원.
+        self.pending_computed = None;
+        // 계산된 메서드 키 [expr] — 잘 알려진 심볼/리터럴은 정적으로 키에 매핑.
+        // 예: [Symbol.iterator]() {} → "\u{0}@@iterator". 정적 매핑이 안 되는 런타임
+        // 표현식([x], [a+b])은 키 식을 pending_computed 에 보관해 필드 파싱이 클래스
+        // 정의 시 평가하도록 넘긴다(§ClassDefinitionEvaluation, 키는 정의 시 1회 평가).
         if self.eat(&Tok::LBracket) {
             let e = self.assignment()?;
             self.expect(&Tok::RBracket)?;
-            return Ok(computed_key_string(&e).unwrap_or_else(|| format!("\u{0}@@computed:{}", self.pos)));
+            match computed_key_string(&e) {
+                Some(k) => return Ok(k),
+                None => {
+                    self.pending_computed = Some(e);
+                    return Ok(format!("\u{0}@@computed:{}", self.pos));
+                }
+            }
         }
         match self.next()? {
             Tok::Ident(s) => Ok(s),

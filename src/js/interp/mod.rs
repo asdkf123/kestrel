@@ -7725,13 +7725,18 @@ impl Interp {
         for (name, p, b, src) in &def.getters {
             getters.insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", name)));
         }
-        // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출
+        // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출.
+        // computed 키([x]=v)는 클래스 정의 시 1회 평가해 실제 키로 쓴다(§15.7.14).
         let mut fields = Vec::new();
-        for (name, init) in &def.fields {
+        for (name, init, computed) in &def.fields {
+            let key = match computed {
+                Some(e) => key_of(&self.eval(e, &class_env)?),
+                None => name.clone(),
+            };
             let f = init
                 .as_ref()
                 .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))], false, false, None, 0));
-            fields.push((name.clone(), f));
+            fields.push((key, f));
         }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
@@ -7763,8 +7768,13 @@ impl Interp {
         if let Some(n) = &def.name {
             env_declare(&class_env, n, Value::Class(cls.clone()));
         }
-        // static 필드: 클래스 완성 후 this=클래스로 평가해 statics 에 설정
-        for (name, init) in &def.static_fields {
+        // static 필드: 클래스 완성 후 this=클래스로 평가해 statics 에 설정.
+        // computed 키는 클래스 정의 시 평가(§15.7.14).
+        for (name, init, computed) in &def.static_fields {
+            let key = match computed {
+                Some(e) => key_of(&self.eval(e, &class_env)?),
+                None => name.clone(),
+            };
             let v = match init {
                 Some(e) => {
                     let scope = Env::new(Some(env.clone()));
@@ -7778,7 +7788,7 @@ impl Interp {
                 }
                 None => Value::Undefined,
             };
-            cls.statics.borrow_mut().insert(name.clone(), v);
+            cls.statics.borrow_mut().insert(key, v);
         }
         Ok(Value::Class(cls))
     }

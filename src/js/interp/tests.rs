@@ -5014,6 +5014,23 @@ fn private_methods_not_public_on_prototype() {
     assert_eq!(run_str("class C { pub(){} } String('pub' in C.prototype)"), "true");
 }
 
+// computed 필드/static 필드 키([x]=v, [expr]=v)는 클래스 정의 시 평가된다 (§15.7.14).
+// 예전엔 member_name 이 런타임 키식을 버려 필드가 통째로 드롭됐다.
+#[test]
+fn computed_class_field_names() {
+    assert_eq!(run_num("var x='b'; class C { [x] = 42; } new C().b"), 42.0);
+    assert_eq!(run_num("var k='dyn'; class C { static [k] = 99; } C.dyn"), 99.0);
+    assert_eq!(run_num("var a='p'; class C { [a+'2'] = 5; } new C().p2"), 5.0);
+    // 초기화 없는 computed 필드도 own 프로퍼티(undefined)
+    assert!(run_bool("var n='q'; class C { [n]; } new C().hasOwnProperty('q')"));
+    // well-known 심볼/숫자 리터럴 키 무회귀
+    assert_eq!(run_str("class C { [10]='ten'; } new C()['10']"), "ten");
+    assert!(run_bool(
+        "class C { [Symbol.iterator](){return {next:function(){return{done:true,value:0};}};} } \
+         typeof (new C())[Symbol.iterator]==='function'"
+    ));
+}
+
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
 // 위임하고 map/filter/take/drop/flatMap/reduce/toArray/forEach/some/every/find 를 지연
 // 제너레이터로 구현. 예전엔 전부 미구현(undefined)이었다.
