@@ -3430,6 +3430,30 @@ fn json_roundtrip() {
     assert!(Interp::new().run("JSON.parse('{oops')").is_err());
 }
 
+// 원시 래퍼 값은 ToNumber/ToString 을 타 오버라이드된 valueOf/toString 을 관측한다
+// (§25.5.2.2 step 4). 예전엔 내부 슬롯을 읽어 오버라이드를 무시했다.
+#[test]
+fn json_stringify_wrapper_coercion() {
+    assert_eq!(
+        run_str("var n=new Number(42); n.valueOf=function(){return 2;}; JSON.stringify([n])"),
+        "[2]"
+    );
+    assert_eq!(
+        run_str("var s=new String('x'); s.toString=function(){return 'yy';}; JSON.stringify([s])"),
+        "[\"yy\"]"
+    );
+    // 스톡 래퍼 무회귀
+    assert_eq!(run_str("JSON.stringify([new Number(7), new String('s'), new Boolean(true)])"), "[7,\"s\",true]");
+    // ToPrimitive 일반: 오버라이드된 valueOf 가 + 연산에서도 관측된다
+    assert_eq!(run_num("var n=new Number(42); n.valueOf=function(){return 2;}; n + 1"), 3.0);
+    // abrupt: toJSON 이 던진 래퍼의 valueOf 예외는 전파된다
+    assert!(run_bool(
+        "var thrown=false; try { JSON.stringify({key:{toJSON:function(){ \
+         var n=new Number(1); n.valueOf=function(){ throw new Error('x'); }; return n; }}}); } \
+         catch(e){ thrown=true; } thrown"
+    ));
+}
+
 #[test]
 fn for_of_destructuring() {
     // for-of 루프 변수 구조분해 (배열/entries 순회의 핵심 패턴)

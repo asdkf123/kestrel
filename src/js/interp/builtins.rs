@@ -650,11 +650,19 @@ impl Interp {
                 return Ok(Some(raw));
             }
         }
-        // 원시 래퍼(new Number/String/Boolean)는 원시값으로 직렬화 (§25.5.2.2 step 4).
+        // 원시 래퍼(new Number/String/Boolean/BigInt)는 원시값으로 직렬화 (§25.5.2.2 step 4):
+        // Number 는 ToNumber(오버라이드된 valueOf 관측), String 은 ToString(toString 관측),
+        // Boolean/BigInt 는 내부 슬롯 그대로. 예전엔 전부 슬롯을 읽어 valueOf/toString
+        // 오버라이드를 무시했다(new Number(42) 를 valueOf 로 2 로 바꿔도 42 로 직렬화).
         let unwrapped;
         let v = match v {
             Value::Obj(m) if m.borrow().contains_key(WRAPPER_SLOT) => {
-                unwrapped = wrapper_primitive(v).unwrap_or(Value::Null);
+                let prim = wrapper_primitive(v).unwrap_or(Value::Null);
+                unwrapped = match prim {
+                    Value::Num(_) => Value::Num(self.to_number_value(v)?),
+                    Value::Str(_) => Value::Str(self.to_string_value(v)?),
+                    other => other, // Boolean/BigInt: 슬롯 그대로(강제변환 없음)
+                };
                 &unwrapped
             }
             _ => v,

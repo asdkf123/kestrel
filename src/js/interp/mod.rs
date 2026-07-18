@@ -7912,11 +7912,9 @@ impl Interp {
         ) {
             return v;
         }
-        // 원시 래퍼(new String/Number/Boolean)는 내부 [[PrimitiveValue]] 로 즉시 변환.
-        // (valueOf/toString 도 결국 이 값을 돌려주므로 동치이고, 프로토타입 해석을 탄다.)
-        if let Some(p) = wrapper_primitive(&v) {
-            return p;
-        }
+        // 원시 래퍼(new String/Number/Boolean)도 OrdinaryToPrimitive 를 탄다 — 예전엔
+        // 내부 슬롯으로 즉시 단락했지만, valueOf/toString 이 오버라이드되면 슬롯과 달라진다
+        // (new Number(42) 의 valueOf 를 2 로 바꾸면 + 연산/JSON 이 2 를 봐야 한다).
         // Symbol.toPrimitive 가 있으면 그것이 우선한다 (표준 §7.1.1).
         if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
             if is_callable(&f) {
@@ -7971,9 +7969,8 @@ impl Interp {
         ) {
             return Ok(v);
         }
-        if let Some(p) = wrapper_primitive(&v) {
-            return Ok(p);
-        }
+        // 원시 래퍼도 OrdinaryToPrimitive 를 탄다(오버라이드된 valueOf/toString 관측).
+        // 예전엔 슬롯으로 단락해 오버라이드를 무시했다.
         let prim = |res: &Value| !is_object(res);
         // GetMethod(@@toPrimitive) (§7.3.11): 접근자 abrupt 전파(? 연산) + undefined/null 이
         // 아닌데 callable 이 아니면 TypeError. 예전엔 if-let Ok 로 삼키거나 non-callable 을
