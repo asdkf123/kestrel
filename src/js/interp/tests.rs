@@ -4999,6 +4999,21 @@ fn destructuring_default_named_evaluation() {
     assert_eq!(run_str("var g = (0, function(){}); g.name"), "");
 }
 
+// private 메서드/접근자(#x)는 클래스 prototype 의 public 프로퍼티가 아니다
+// (§15.7.14). this.#x() 호출은 되지만 리플렉션엔 안 보인다.
+#[test]
+fn private_methods_not_public_on_prototype() {
+    assert_eq!(run_num("class C { #x(){return 42;} run(){return this.#x();} } new C().run()"), 42.0);
+    assert_eq!(run_num("class C { get #g(){return 7;} getg(){return this.#g;} } new C().getg()"), 7.0);
+    assert_eq!(run_str("class C { #x(){} } String('#x' in C.prototype)"), "false");
+    assert_eq!(
+        run_str("class C { m(){} #x(){} } JSON.stringify(Object.getOwnPropertyNames(C.prototype))"),
+        "[\"m\",\"constructor\"]"
+    );
+    // 일반 메서드 무회귀
+    assert_eq!(run_str("class C { pub(){} } String('pub' in C.prototype)"), "true");
+}
+
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
 // 위임하고 map/filter/take/drop/flatMap/reduce/toArray/forEach/some/every/find 를 지연
 // 제너레이터로 구현. 예전엔 전부 미구현(undefined)이었다.

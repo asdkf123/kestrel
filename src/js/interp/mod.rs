@@ -6522,15 +6522,21 @@ impl Interp {
                             collect(p, m);
                         }
                         for (k, f) in &cls.methods {
+                            // private 메서드(#x)는 prototype 의 public 프로퍼티가 아니다
+                            // (§15.7.14). this.#x() 호출은 find_method 로 별도 해석된다.
+                            if is_private_name(k) {
+                                continue;
+                            }
                             m.insert(k.clone(), Value::Fn(f.clone()));
                             m.insert(nonenum_marker(k), Value::Bool(true));
                         }
                         // getter/setter 를 같은 이름이면 하나의 Accessor(get+set)로 병합한다
                         // (§15.4). 예전엔 setter 를 통째로 빠뜨려 gOPD 가 set=undefined 였고
                         // setter-only 프로퍼티는 서술자 자체가 없었다(대입은 별도 경로라 됐음).
+                        // private 접근자(#x)도 public 프로퍼티 아님.
                         let mut names: Vec<String> = Vec::new();
                         for k in cls.getters.keys().chain(cls.setters.keys()) {
-                            if !names.contains(k) {
+                            if !names.contains(k) && !is_private_name(k) {
                                 names.push(k.clone());
                             }
                         }
