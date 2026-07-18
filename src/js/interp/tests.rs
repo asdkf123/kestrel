@@ -7969,3 +7969,14 @@ fn array_set_length_stops_at_nonconfigurable() {
     // 정상 축소 무회귀.
     assert_eq!(run_str("var b=[1,2,3,4,5]; b.length=2; b.join(',')"), "1,2");
 }
+
+#[test]
+fn freeze_seal_array_index_attrs() {
+    // §7.3.15: freeze/seal 배열 — 각 인덱스의 속성도 조인다(gOPD 반영).
+    assert!(run_bool("var a=[1,2,3]; Object.freeze(a); var d=Object.getOwnPropertyDescriptor(a,'0'); !d.writable && d.enumerable && !d.configurable"));
+    assert!(run_bool("var b=[1,2,3]; Object.seal(b); var d=Object.getOwnPropertyDescriptor(b,'0'); d.writable && d.enumerable && !d.configurable"));
+    // frozen 배열 요소 대입 차단.
+    assert_eq!(run_num("var a=[1,2,3]; Object.freeze(a); a[0]=99; a[0]"), 1.0);
+    // 일반 배열 무회귀.
+    assert!(run_bool("var d=Object.getOwnPropertyDescriptor([5,6],'0'); d.writable && d.enumerable && d.configurable"));
+}

@@ -2638,6 +2638,20 @@ impl Interp {
                             set_prop_attrs(&mut m.borrow_mut(), &k, a);
                         }
                     }
+                    // 배열: 각 존재 인덱스의 속성도 조인다(§7.3.15) — seal→configurable
+                    // 제거, freeze→writable 도 제거. gOPD 가 index_attrs 를 반영한다.
+                    if let Value::Arr(a) = &arg {
+                        for i in a.present_indices() {
+                            let cur = a.index_attr(i).unwrap_or(
+                                ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                            );
+                            let mut na = cur & !ATTR_CONFIGURABLE;
+                            if bit == super::INTEG_FROZEN {
+                                na &= !ATTR_WRITABLE;
+                            }
+                            a.set_index_attr(i, na);
+                        }
+                    }
                 }
                 self.set_integrity(&arg, bit);
                 Ok(arg)
