@@ -2598,8 +2598,46 @@ impl Interp {
 
     // §10.1.10 [[Delete]]: configurable:false 인 own 프로퍼티는 삭제되지 않고 false.
     // 삭제 성공/부재는 true. delete 연산자와 Reflect.deleteProperty 가 공유하는 의미론.
+    // §10.5.10 [[Delete]](P) — Proxy 의 deleteProperty 트랩. 트랩 없으면 타깃에 위임,
+    // 트랩이 falsy 면 false, 성공을 보고했으나 타깃의 non-configurable/non-extensible
+    // 프로퍼티면 TypeError. delete 연산자와 Reflect.deleteProperty(delete_own)가 공유.
+    fn proxy_delete(&mut self, p: &Rc<(Value, Value)>, key: &str) -> Result<bool, String> {
+        self.proxy_revoked_guard(p)?;
+        let (t, h) = (p.0.clone(), p.1.clone());
+        let trap = self.member_get(&h, "deleteProperty")?;
+        if matches!(trap, Value::Undefined | Value::Null) {
+            return self.delete_own(&t, key);
+        }
+        if !is_callable(&trap) {
+            return Err(self.throw_error("TypeError", "'deleteProperty' trap is not callable"));
+        }
+        let res = self.call_value(trap, Some(h), vec![t.clone(), Value::Str(key.to_string())])?;
+        if !to_bool(&res) {
+            return Ok(false);
+        }
+        let td = self.call_native(
+            Native::ObjectGetOwnPropertyDescriptor,
+            None,
+            vec![t.clone(), Value::Str(key.to_string())],
+        )?;
+        if let Value::Obj(d) = &td {
+            let configurable = matches!(d.borrow().get("configurable"), Some(v) if to_bool(v));
+            if !configurable {
+                return Err(self.throw_error("TypeError", "'deleteProperty' on proxy: a non-configurable property cannot be reported as deleted"));
+            }
+            if !self.value_is_extensible(&t)? {
+                return Err(self.throw_error("TypeError", "'deleteProperty' on proxy: a property of a non-extensible target cannot be reported as deleted"));
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn delete_own(&mut self, target: &Value, key: &str) -> Result<bool, String> {
         match target {
+            Value::Proxy(p) => {
+                let p = p.clone();
+                self.proxy_delete(&p, key)
+            }
             Value::Obj(m) => {
                 if m.borrow().contains_key(key) {
                     if prop_attrs(&m.borrow(), key) & ATTR_CONFIGURABLE == 0 {
@@ -4327,38 +4365,13 @@ impl Interp {
                                     mm.remove(&nonenum_marker(&key));
                                 }
                             }
-                            // Proxy: deleteProperty 트랩 (없으면 타깃에 위임).
+                            // Proxy: deleteProperty 트랩 (§10.5.10, 없으면 타깃 위임).
                             // 반응성 라이브러리(Vue 등)가 delete 를 이 트랩으로 잡는다.
+                            // proxy_delete 로 통일 — GetMethod·non-extensible invariant·
+                            // 위임(중첩 프록시/non-configurable 존중)까지 한 경로.
                             Value::Proxy(p) => {
-                                self.proxy_revoked_guard(p)?;
-                                let (t, h) = (p.0.clone(), p.1.clone());
-                                let trap = self.member_get(&h, "deleteProperty")?;
-                                if is_callable(&trap) {
-                                    let res = self.call_value(
-                                        trap,
-                                        Some(h),
-                                        vec![t.clone(), Value::Str(key.clone())],
-                                    )?;
-                                    if to_bool(&res) {
-                                        // §10.5.10 invariant: non-configurable 프로퍼티는
-                                        // 삭제 성공을 보고할 수 없다 → TypeError.
-                                        let td = self.call_native(
-                                            Native::ObjectGetOwnPropertyDescriptor,
-                                            None,
-                                            vec![t.clone(), Value::Str(key.clone())],
-                                        )?;
-                                        if let Value::Obj(d) = &td {
-                                            if !matches!(d.borrow().get("configurable"), Some(v) if to_bool(v))
-                                            {
-                                                return Err(self.throw_error("TypeError", "'deleteProperty' on proxy: non-configurable property cannot be reported as deleted"));
-                                            }
-                                        }
-                                    }
-                                    return Ok(Value::Bool(to_bool(&res)));
-                                }
-                                if let Value::Obj(m) = &t {
-                                    m.borrow_mut().remove(&key);
-                                }
+                                let p = p.clone();
+                                return Ok(Value::Bool(self.proxy_delete(&p, &key)?));
                             }
                             Value::Arr(a) => {
                                 // 배열 요소 삭제는 진짜 구멍(hole)을 남긴다 (길이 불변) —

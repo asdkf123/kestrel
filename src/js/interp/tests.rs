@@ -1723,6 +1723,46 @@ fn construct_new_target_threading() {
     ));
 }
 
+// Proxy deleteProperty 트랩 (§10.5.10) 완성 + Reflect.deleteProperty 배선.
+#[test]
+fn proxy_delete_property_trap() {
+    // 트랩 false → delete/Reflect.deleteProperty false
+    assert!(run_bool(
+        "var p=new Proxy({},{deleteProperty:function(){return false;}}); \
+         (delete p.x)===false && Reflect.deleteProperty(p,'x')===false"
+    ));
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{deleteProperty:5}); \
+         var t=false; try{ delete p.x }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-configurable 프로퍼티 삭제 성공 보고 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,configurable:false}); \
+         var p=new Proxy(t,{deleteProperty:function(){return true;}}); \
+         var f=false; try{ delete p.x }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-extensible 타깃의 프로퍼티 삭제 성공 보고 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,configurable:true}); Object.preventExtensions(t); \
+         var p=new Proxy(t,{deleteProperty:function(){return true;}}); \
+         var f=false; try{ delete p.x }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // 트랩 없으면 위임: non-configurable → false, configurable → true(삭제)
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,configurable:false}); \
+         (delete new Proxy(t,{}).x)===false"
+    ));
+    assert!(run_bool(
+        "var t={a:1}; var p=new Proxy(t,{}); (delete p.a)===true && !('a' in t)"
+    ));
+    // Reflect.deleteProperty 가 트랩 경유
+    assert!(run_bool(
+        "var hit=false; var p=new Proxy({z:1},{deleteProperty:function(t,k){hit=true;delete t[k];return true;}}); \
+         Reflect.deleteProperty(p,'z')===true && hit"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
