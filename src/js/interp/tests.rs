@@ -7274,3 +7274,15 @@ fn function_prototype_has_instance() {
     assert!(run_bool("[] instanceof Array && (function F(){}); var f=new (function F(){}); true"));
     assert!(run_bool("function C(){}; C[Symbol.hasInstance]=function(){return true}; 5 instanceof C"));
 }
+
+#[test]
+fn array_copywithin_coercion_and_overlap() {
+    // §23.1.3.4: 인자 ToIntegerOrInfinity + 상대인덱스 + 겹침 방향.
+    // copyWithin 은 프렐류드 폴리필이라 prelude_* 로 실행.
+    assert_eq!(prelude_str("JSON.stringify([0,1,2,3].copyWithin(1,0,'-2'))"), "[0,0,1,3]");
+    assert_eq!(prelude_str("JSON.stringify([0,1,2,3].copyWithin(undefined,1))"), "[1,2,3,3]");
+    assert_eq!(prelude_str("JSON.stringify([1,2,3,4,5].copyWithin(0,3))"), "[4,5,3,4,5]");
+    assert_eq!(prelude_str("JSON.stringify([1,2,3,4,5].copyWithin(2,0))"), "[1,2,1,2,3]");
+    // 원시값 수신자에서 crash 안 함.
+    assert!(prelude_bool("var ok=false; try{ Array.prototype.copyWithin.call(true); ok=true; }catch(e){} ok"));
+}

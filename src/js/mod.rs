@@ -534,7 +534,24 @@ Array.prototype.toLocaleString = function(){
   }
   return r;
 };
-if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(t, s, e){ var len = this.length; t = t < 0 ? len + t : t; s = s === undefined ? 0 : (s < 0 ? len + s : s); e = e === undefined ? len : (e < 0 ? len + e : e); var tmp = this.slice(s, e); for (var i = 0; i < tmp.length && t + i < len; i++) this[t + i] = tmp[i]; return this; };
+if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(target, start, end){
+  // §23.1.3.4: target/start/end 를 ToIntegerOrInfinity 로 강제하고(Math.trunc(+x)),
+  // 상대 인덱스+클램프. 배열-유사 수신자도 Get/Set/HasProperty·구멍(delete) 처리.
+  var O = Object(this);
+  var len = O.length; len = (len > 0) ? Math.min(Math.floor(len) || 0, 9007199254740991) : 0;
+  var toI = function(x){ x = Math.trunc(+x); return (x !== x) ? 0 : x; };
+  var rt = toI(target); var to = rt < 0 ? Math.max(len + rt, 0) : Math.min(rt, len);
+  var rs = (start === undefined) ? 0 : toI(start); var from = rs < 0 ? Math.max(len + rs, 0) : Math.min(rs, len);
+  var re = (end === undefined) ? len : toI(end); var fin = re < 0 ? Math.max(len + re, 0) : Math.min(re, len);
+  var count = Math.min(fin - from, len - to);
+  var dir = 1;
+  if (from < to && to < from + count) { dir = -1; from = from + count - 1; to = to + count - 1; }
+  while (count > 0) {
+    if (from in O) { O[to] = O[from]; } else { delete O[to]; }
+    from += dir; to += dir; count--;
+  }
+  return O;
+};
 if (!String.prototype.localeCompare) String.prototype.localeCompare = function(o){ o = String(o); return this < o ? -1 : (this > o ? 1 : 0); };
 if (!String.prototype.normalize) String.prototype.normalize = function(){ return String(this); };
 // toLocaleLowerCase/toLocaleUpperCase 는 이제 네이티브 메서드다(StrOp::LocaleLower/Upper) —
