@@ -7937,11 +7937,49 @@ impl Interp {
                         let trap = self.member_get(&handler, "set")?;
                         if !matches!(trap, Value::Undefined) {
                             let receiver = Value::Proxy(p.clone());
-                            self.call_value(
+                            let btr = self.call_value(
                                 trap,
                                 Some(handler),
-                                vec![target, Value::Str(key), value, receiver],
+                                vec![
+                                    target.clone(),
+                                    Value::Str(key.clone()),
+                                    value.clone(),
+                                    receiver,
+                                ],
                             )?;
+                            // 트랩이 falsy 면 설정 실패(sloppy 무시).
+                            if !to_bool(&btr) {
+                                return Ok(());
+                            }
+                            // §10.5.9 [[Set]] invariant: target 의 non-configurable
+                            // non-writable 데이터는 value 가 SameValue 여야, setter 없는
+                            // non-configurable accessor 는 TypeError.
+                            let td = self.call_native(
+                                Native::ObjectGetOwnPropertyDescriptor,
+                                None,
+                                vec![target.clone(), Value::Str(key.clone())],
+                            )?;
+                            if let Value::Obj(d) = &td {
+                                let b = d.borrow();
+                                let configurable =
+                                    matches!(b.get("configurable"), Some(v) if to_bool(v));
+                                if !configurable {
+                                    if b.contains_key("value") {
+                                        let writable =
+                                            matches!(b.get("writable"), Some(v) if to_bool(v));
+                                        let val =
+                                            b.get("value").cloned().unwrap_or(Value::Undefined);
+                                        if !writable && !same_value(&value, &val) {
+                                            return Err(self.throw_error("TypeError", "'set' on proxy: non-configurable, non-writable data property but trap set a different value"));
+                                        }
+                                    } else if matches!(
+                                        b.get("set").cloned().unwrap_or(Value::Undefined),
+                                        Value::Undefined
+                                    ) {
+                                        return Err(self.throw_error("TypeError", "'set' on proxy: non-configurable accessor without setter"));
+                                    }
+                                }
+                            }
                             return Ok(());
                         }
                         // 트랩 없음 → target(Obj/Arr)에 직접 저장

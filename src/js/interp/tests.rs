@@ -8027,3 +8027,11 @@ fn proxy_get_invariant() {
     // 일반 Proxy get 무회귀.
     assert_eq!(run_num("var p=new Proxy({x:1},{get:function(t,k){return t[k]*10}}); p.x"), 10.0);
 }
+
+#[test]
+fn proxy_set_invariant() {
+    // §10.5.9: non-configurable non-writable 데이터에 트랩이 다른 값 set 하면 TypeError.
+    assert_eq!(run_str("var t={}; Object.defineProperty(t,'a',{value:10,writable:false,configurable:false}); var p=new Proxy(t,{set:function(){return true}}); try{ p.a=99; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // 일반 Proxy set 무회귀.
+    assert_eq!(run_num("var p=new Proxy({},{set:function(t,k,v){t[k]=v;return true}}); p.x=5; p.x"), 5.0);
+}
