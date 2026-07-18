@@ -7745,3 +7745,16 @@ fn binary_arithmetic_uses_tonumeric() {
     // Date + 1 은 default 힌트 → 문자열.
     assert!(run_bool("typeof (new Date(0)+1) === 'string'"));
 }
+
+#[test]
+fn update_ops_use_tonumeric() {
+    // §13.4: ++/-- 는 ToNumeric — BigInt 는 타입 유지, Symbol TypeError, 객체는 valueOf.
+    assert!(run_bool("var b=5n; b++; b===6n && typeof b==='bigint'"));
+    assert!(run_bool("var b=5n; --b; b===4n"));
+    assert_eq!(run_str("var s=Symbol(); try{ s++; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_num("var o={valueOf:function(){return 10}}; o++"), 10.0); // postfix 는 옛값
+    assert_eq!(run_num("var o={valueOf:function(){return 10}}; ++o"), 11.0); // prefix 는 새값
+    // 숫자/문자열 회귀 방지.
+    assert_eq!(run_num("var n=3; n++; n"), 4.0);
+    assert_eq!(run_num("var s='5'; s++; s"), 6.0);
+}

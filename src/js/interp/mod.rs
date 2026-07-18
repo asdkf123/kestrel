@@ -4118,7 +4118,21 @@ impl Interp {
                 })
             }
             Expr::Update { op, prefix, target } => {
-                let old = to_num(&self.eval(target, env)?);
+                let cur = self.eval(target, env)?;
+                // ToNumeric (§7.1.4): BigInt 는 BigInt 로 증감(타입 유지), 그 외는 ToNumber
+                // (Symbol→TypeError, 객체는 valueOf/toString). 예전 to_num 은 BigInt 를
+                // Number 로 바꾸고 Symbol 을 NaN 으로 삼키고 valueOf abrupt 도 삼켰다.
+                if let Value::BigInt(b) = &cur {
+                    let one = crate::js::bigint::BigInt::from_i64(1);
+                    let new_bi = match op {
+                        UpdOp::Inc => b.add(&one),
+                        UpdOp::Dec => b.sub(&one),
+                    };
+                    let new_val = Value::BigInt(Rc::new(new_bi));
+                    self.assign_to(target, new_val.clone(), env)?;
+                    return Ok(if *prefix { new_val } else { cur });
+                }
+                let old = self.to_number_value(&cur)?;
                 let new = match op {
                     UpdOp::Inc => old + 1.0,
                     UpdOp::Dec => old - 1.0,
