@@ -7128,3 +7128,15 @@ fn array_iteration_callback_typeerror() {
     assert_eq!(run_num("[1,2,3].reduce(function(a,b){return a+b})"), 6.0);
     assert_eq!(run_str("JSON.stringify([1,2,3].filter(function(x){return x>1}))"), "[2,3]");
 }
+
+#[test]
+fn instance_with_array_prototype_inherits() {
+    // §10.1.13: F.prototype 이 배열이면 인스턴스가 그 인덱스/length/Array 메서드를 상속.
+    let setup = "function foo(){} foo.prototype = new Array(1,2,3); var f = new foo(); f.length = 1;";
+    assert_eq!(run_str(&format!("{} typeof f.filter", setup)), "function");
+    assert_eq!(run_num(&format!("{} f[0]", setup)), 1.0);
+    assert!(run_bool(&format!("{} var a=f.filter(function(){{return true}}); Array.isArray(a) && a.length===1", setup)));
+    assert_eq!(run_str(&format!("{} JSON.stringify(f.map(function(x){{return x*10}}))", setup)), "[10]");
+    // 원시값 prototype → 인스턴스는 Object.prototype 상속(hasOwnProperty 등).
+    assert!(run_bool("function g(){} g.prototype = 5; typeof new g().hasOwnProperty === 'function'"));
+}

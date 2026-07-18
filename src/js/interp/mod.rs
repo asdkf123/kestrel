@@ -5232,21 +5232,33 @@ impl Interp {
     ) -> Result<Option<Value>, String> {
         let mut proto = map.borrow().get("__proto__").cloned();
         let mut depth = 0;
-        while let Some(Value::Obj(p)) = proto {
+        loop {
             depth += 1;
             if depth > 100 {
                 break; // 순환/과도한 체인 방어
             }
-            let found = p.borrow().get(key).cloned();
-            match found {
-                Some(Value::Accessor(acc)) => {
-                    return Ok(Some(match &acc.get {
-                        Some(g) => self.call_value(g.clone(), Some(this.clone()), vec![])?,
-                        None => Value::Undefined,
-                    }))
+            match proto {
+                Some(Value::Obj(p)) => {
+                    let found = p.borrow().get(key).cloned();
+                    match found {
+                        Some(Value::Accessor(acc)) => {
+                            return Ok(Some(match &acc.get {
+                                Some(g) => self.call_value(g.clone(), Some(this.clone()), vec![])?,
+                                None => Value::Undefined,
+                            }))
+                        }
+                        Some(v) => return Ok(Some(v)),
+                        None => proto = p.borrow().get("__proto__").cloned(),
+                    }
                 }
-                Some(v) => return Ok(Some(v)),
-                None => proto = p.borrow().get("__proto__").cloned(),
+                // 프로토타입이 배열이면 그 배열의 인덱스/length/Array.prototype 메서드를 상속한다
+                // (`function foo(){}; foo.prototype = [1,2,3]; new foo().filter` 등). member_get 이
+                // Array own + Array.prototype 을 전부 해석하므로 그 결과를 그대로 쓴다.
+                Some(Value::Arr(a)) => {
+                    let v = self.member_get(&Value::Arr(a), key)?;
+                    return Ok(if matches!(v, Value::Undefined) { None } else { Some(v) });
+                }
+                _ => break,
             }
         }
         Ok(None)
@@ -6734,8 +6746,13 @@ impl Interp {
                 // f.prototype 지연 생성(없으면) 후 링크. borrow 를 먼저 끊고 match.
                 let existing = func.props.borrow().get("prototype").cloned();
                 let proto = match existing {
-                    Some(p @ Value::Obj(_)) => p,
-                    _ => {
+                    // §10.1.13 OrdinaryCreateFromConstructor: F.prototype 이 '객체'면(배열/
+                    // 인스턴스/함수 포함) 그것을 인스턴스 [[Prototype]] 으로. 예전엔 Value::Obj
+                    // 만 받아 foo.prototype = [1,2,3] 같은 배열 프로토타입을 무시했다.
+                    Some(p) if is_object(&p) => p,
+                    // F.prototype 이 원시값이면 인스턴스 [[Prototype]] 은 %Object.prototype%.
+                    Some(_) => self.member_get(&self.object_ns.clone(), "prototype")?,
+                    None => {
                         // §20.1.1: F.prototype = { constructor: F } (w:true,e:false,c:true).
                         // member_get 의 지연 생성과 동일 — 여기서만 빈 객체를 만들면
                         // new F().constructor 가 Object 로 떨어진다.
