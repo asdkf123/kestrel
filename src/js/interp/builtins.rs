@@ -2811,6 +2811,15 @@ impl Interp {
                         .filter(|k| k.starts_with("\u{0}@@"))
                         .cloned()
                         .collect(),
+                    // 클래스 인스턴스의 심볼 키 필드([sym]=v). 예전엔 Instance arm 이 없어
+                    // getOwnPropertySymbols 가 빈 배열이었다.
+                    Some(Value::Instance(i)) => i
+                        .fields
+                        .borrow()
+                        .keys()
+                        .filter(|k| k.starts_with("\u{0}@@"))
+                        .cloned()
+                        .collect(),
                     _ => Vec::new(),
                 };
                 let syms: Vec<Value> = keys.into_iter().map(|k| symbol_from_key(&k)).collect();

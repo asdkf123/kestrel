@@ -5029,6 +5029,15 @@ fn computed_class_field_names() {
         "class C { [Symbol.iterator](){return {next:function(){return{done:true,value:0};}};} } \
          typeof (new C())[Symbol.iterator]==='function'"
     ));
+    // 심볼 키 필드는 getOwnPropertySymbols 에 나타나고 서술자가 정확하다
+    assert!(run_bool(
+        "var s=Symbol(); class C { [s]=42; } var c=new C(); \
+         c[s]===42 && Object.getOwnPropertySymbols(c).length===1 && Object.getOwnPropertySymbols(c)[0]===s"
+    ));
+    assert!(run_bool(
+        "var s=Symbol(); class C { [s]=1; } \
+         var d=Object.getOwnPropertyDescriptor(new C(), s); d.enumerable && d.writable && d.configurable"
+    ));
 }
 
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
