@@ -7075,3 +7075,14 @@ fn string_raw_coercion() {
     // length valueOf 예외 전파.
     assert!(run_bool("var t=false; try{ String.raw({raw:{length:{valueOf:function(){throw 1}}}}) }catch(e){ t=true } t"));
 }
+
+#[test]
+fn to_primitive_noncallable_symbol_throws() {
+    // GetMethod(@@toPrimitive) (§7.3.11): undefined/null 아닌데 callable 아니면 TypeError
+    // (엄격 강제변환 경로 — indexOf 의 search/position 강제변환 등).
+    assert!(run_bool("var o={}; o[Symbol.toPrimitive]=5; var t=false; try{ 'abc'.indexOf(o) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var o={}; o[Symbol.toPrimitive]={}; var t=false; try{ 'a'.startsWith('a', o) }catch(e){ t=e instanceof TypeError } t"));
+    // 정상 @@toPrimitive/valueOf 는 그대로.
+    assert_eq!(run_num("1 + {valueOf:function(){return 2}}"), 3.0);
+    assert_eq!(run_str("String({[Symbol.toPrimitive]:function(){return 'X'}})"), "X");
+}

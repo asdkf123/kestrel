@@ -7099,10 +7099,14 @@ impl Interp {
             return Ok(p);
         }
         let prim = |res: &Value| !is_object(res);
-        // GetMethod(@@toPrimitive) — 접근자가 던지면 그대로 전파(? 연산). 예전엔 if-let Ok
-        // 로 삼켜서 abrupt getter 가 조용히 valueOf 로 넘어갔다.
+        // GetMethod(@@toPrimitive) (§7.3.11): 접근자 abrupt 전파(? 연산) + undefined/null 이
+        // 아닌데 callable 이 아니면 TypeError. 예전엔 if-let Ok 로 삼키거나 non-callable 을
+        // 조용히 valueOf 로 넘겼다.
         let exotic = self.member_get(&v, "\u{0}@@toPrimitive")?;
-        if is_callable(&exotic) {
+        if !matches!(exotic, Value::Undefined | Value::Null) {
+            if !is_callable(&exotic) {
+                return Err(self.throw_error("TypeError", "@@toPrimitive value is not callable"));
+            }
             let res = self.call_value(exotic, Some(v.clone()), vec![Value::Str(hint.to_string())])?;
             if prim(&res) {
                 return Ok(res);
