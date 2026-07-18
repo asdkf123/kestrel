@@ -175,6 +175,21 @@ fn to_uint16(n: f64) -> u16 {
     n.trunc().rem_euclid(65536.0) as u16
 }
 
+// Number::exponentiate (§6.1.6.1.3): Math.pow/** 의 표준 특수 케이스. Rust powf 는 IEEE
+// pow 라 pow(1,NaN)=1, pow(-1,±∞)=1 을 내지만 JS 는 NaN 이어야 한다.
+fn math_pow(base: f64, exp: f64) -> f64 {
+    if exp == 0.0 {
+        return 1.0; // ±0 지수 → 1 (base 가 NaN 이어도)
+    }
+    if exp.is_nan() || base.is_nan() {
+        return f64::NAN;
+    }
+    if base.abs() == 1.0 && exp.is_infinite() {
+        return f64::NAN; // ±1 ** ±∞ → NaN
+    }
+    base.powf(exp)
+}
+
 // §22.1.3.29 WhiteSpace + LineTerminator: JS 문자열 trim 대상. Rust 의 char::is_whitespace
 // 와 달리 U+FEFF(ZWNBSP/BOM)를 포함하고, U+200B(zero-width space)는 제외한다.
 fn is_js_ws(c: char) -> bool {
@@ -1292,6 +1307,14 @@ impl Interp {
             set_prop_attrs(&mut m, "length", 0); // {w:f,e:f,c:f}
         }
         Value::Obj(Rc::new(RefCell::new(m)))
+    }
+
+    // Math 인자 강제변환: args[i] 를 ToNumber (없으면 NaN). valueOf/@@toPrimitive 관찰 + 예외 전파.
+    fn math_arg(&mut self, args: &[Value], i: usize) -> Result<f64, String> {
+        match args.get(i) {
+            Some(v) => self.to_number_value(v),
+            None => Ok(f64::NAN),
+        }
     }
 
     // [[GetPrototypeOf]] (§20.1.2.12 등) — 모든 Value 종류의 프로토타입을 돌려준다.
@@ -5090,34 +5113,50 @@ impl Interp {
                 self.dom_query(scope, &sel, all)
             }
             Native::Math(op) => {
-                let a = args.first().map(to_num).unwrap_or(f64::NAN);
+                // 가변 인자(min/max/hypot)는 모든 인자를, 이항(pow/atan2)은 앞 둘을, 단항은 첫
+                // 인자를 순서대로 ToNumber 한다 (valueOf/@@toPrimitive 관찰 + 예외 전파).
+                // 단항 op 에 남는 인자는 강제변환하지 않는다(표준).
+                if matches!(op, MathOp::Min | MathOp::Max | MathOp::Hypot) {
+                    let mut ns = Vec::with_capacity(args.len());
+                    for x in &args {
+                        ns.push(self.to_number_value(x)?);
+                    }
+                    return Ok(Value::Num(match op {
+                        MathOp::Min => ns.iter().fold(f64::INFINITY, |acc, &x| {
+                            if acc.is_nan() || x.is_nan() { f64::NAN } else { acc.min(x) }
+                        }),
+                        MathOp::Max => ns.iter().fold(f64::NEG_INFINITY, |acc, &x| {
+                            if acc.is_nan() || x.is_nan() { f64::NAN } else { acc.max(x) }
+                        }),
+                        _ => ns.iter().fold(0.0f64, |acc, &x| acc.hypot(x)),
+                    }));
+                }
+                let a = self.math_arg(&args, 0)?;
+                if matches!(op, MathOp::Pow | MathOp::Atan2) {
+                    let b = self.math_arg(&args, 1)?;
+                    return Ok(Value::Num(match op {
+                        MathOp::Pow => math_pow(a, b),
+                        _ => a.atan2(b),
+                    }));
+                }
                 Ok(Value::Num(match op {
                     MathOp::Floor => a.floor(),
                     MathOp::Ceil => a.ceil(),
-                    // JS Math.round: floor(x+0.5) — 반올림이 +∞ 방향 (round(-2.5)=-2, not -3)
+                    // JS Math.round: +∞ 방향 반올림. [-0.5,0) 과 -0 은 -0 을 유지한다.
                     MathOp::Round => {
-                        if a.is_nan() || a.is_infinite() {
+                        if !a.is_finite() || a == 0.0 {
                             a
+                        } else if a >= -0.5 && a < 0.5 {
+                            if a.is_sign_negative() { -0.0 } else { 0.0 }
                         } else {
                             (a + 0.5).floor()
                         }
                     }
                     MathOp::Abs => a.abs(),
                     MathOp::Sqrt => a.sqrt(),
-                    MathOp::Pow => a.powf(args.get(1).map(to_num).unwrap_or(f64::NAN)),
-                    // JS min/max: 인자에 NaN 있으면 NaN (Rust min/max 는 NaN 무시하므로 직접)
-                    MathOp::Min => {
-                        let vs = args.iter().map(to_num);
-                        vs.fold(f64::INFINITY, |acc, x| {
-                            if acc.is_nan() || x.is_nan() { f64::NAN } else { acc.min(x) }
-                        })
-                    }
-                    MathOp::Max => {
-                        let vs = args.iter().map(to_num);
-                        vs.fold(f64::NEG_INFINITY, |acc, x| {
-                            if acc.is_nan() || x.is_nan() { f64::NAN } else { acc.max(x) }
-                        })
-                    }
+                    MathOp::Pow => unreachable!(),
+                    MathOp::Min => unreachable!(),
+                    MathOp::Max => unreachable!(),
                     MathOp::Trunc => a.trunc(),
                     MathOp::Sign => {
                         if a.is_nan() {

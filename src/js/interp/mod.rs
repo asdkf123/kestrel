@@ -681,6 +681,14 @@ impl Interp {
         math.insert("SQRT2".to_string(), Value::Num(std::f64::consts::SQRT_2));
         math.insert("LN2".to_string(), Value::Num(std::f64::consts::LN_2));
         math.insert("LN10".to_string(), Value::Num(std::f64::consts::LN_10));
+        // 예전엔 빠져 있던 상수 (§21.3.1).
+        math.insert("LOG2E".to_string(), Value::Num(std::f64::consts::LOG2_E));
+        math.insert("LOG10E".to_string(), Value::Num(std::f64::consts::LOG10_E));
+        math.insert("SQRT1_2".to_string(), Value::Num(std::f64::consts::FRAC_1_SQRT_2));
+        // 모든 Math 상수는 { writable:false, enumerable:false, configurable:false } (§21.3.1).
+        for c in ["PI", "E", "SQRT2", "LN2", "LN10", "LOG2E", "LOG10E", "SQRT1_2"] {
+            set_prop_attrs(&mut math, c, 0);
+        }
         // Math[Symbol.toStringTag] === "Math" (§21.3.1.9) — Object.prototype.toString.call(Math)
         // 이 "[object Math]" 가 되게 한다. mark_nonenum_all 전에 넣어 비열거로.
         math.insert("\u{0}@@toStringTag".to_string(), Value::Str("Math".to_string()));

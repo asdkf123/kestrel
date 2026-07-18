@@ -6975,3 +6975,23 @@ fn is_prototype_of_and_getprototypeof_all_kinds() {
     assert!(run_bool("Object.getPrototypeOf(Number)===Function.prototype"));
     assert!(run_bool("Object.getPrototypeOf(Object.prototype)===null"));
 }
+
+#[test]
+fn math_constants_pow_round_coercion() {
+    // 누락됐던 상수 (§21.3.1) + read-only.
+    assert!(run_bool("Math.LOG2E > 1.44 && Math.LOG2E < 1.45"));
+    assert!(run_bool("Math.LOG10E > 0.43 && Math.LOG10E < 0.44"));
+    assert!(run_bool("Math.SQRT1_2 > 0.70 && Math.SQRT1_2 < 0.71"));
+    assert!(run_bool("Math.PI = 3; Math.PI > 3.14"));
+    assert!(run_bool("Object.getOwnPropertyDescriptor(Math,'SQRT2').writable===false"));
+    // pow 특수 케이스 (§6.1.6.1.3).
+    assert!(run_bool("Number.isNaN(Math.pow(1, NaN))"));
+    assert!(run_bool("Number.isNaN(Math.pow(-1, Infinity))"));
+    assert_eq!(run_num("Math.pow(NaN, 0)"), 1.0);
+    // round 는 [-0.5,0) 에서 -0.
+    assert!(run_bool("1/Math.round(-0.5) === -Infinity"));
+    assert_eq!(run_num("Math.round(-2.5)"), -2.0);
+    // min/max/hypot 는 ToNumber(valueOf 관찰, 예외 전파).
+    assert_eq!(run_num("Math.max({valueOf:function(){return 5}}, 3)"), 5.0);
+    assert!(run_bool("var t=false; try{ Math.hypot({valueOf:function(){throw 1}}) }catch(e){ t=true } t"));
+}
