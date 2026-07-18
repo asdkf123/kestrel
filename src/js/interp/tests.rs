@@ -7980,3 +7980,12 @@ fn freeze_seal_array_index_attrs() {
     // 일반 배열 무회귀.
     assert!(run_bool("var d=Object.getOwnPropertyDescriptor([5,6],'0'); d.writable && d.enumerable && d.configurable"));
 }
+
+#[test]
+fn array_spread_excludes_hole_and_nonenumerable() {
+    // §7.3.25 CopyDataProperties: {...arr} 은 own enumerable 만 — 구멍·non-enumerable 제외.
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'1',{enumerable:false}); JSON.stringify({...a})"), "{\"0\":1,\"2\":3}");
+    assert_eq!(run_str("JSON.stringify({...[1,,3]})"), "{\"0\":1,\"2\":3}");
+    // 정상 배열 무회귀.
+    assert_eq!(run_str("JSON.stringify({...[1,2,3]})"), "{\"0\":1,\"1\":2,\"2\":3}");
+}

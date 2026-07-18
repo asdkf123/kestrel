@@ -3793,14 +3793,11 @@ impl Interp {
                                     }
                                 }
                             }
-                            v @ Value::Instance(_) => {
+                            v @ (Value::Instance(_) | Value::Arr(_)) => {
+                                // own enumerable — 구멍·non-enumerable 인덱스 제외 (§7.3.25
+                                // CopyDataProperties). 예전 배열은 raw iter 라 둘 다 포함했다.
                                 for (k, val) in builtins::own_enumerable_entries(&v) {
                                     map.insert(k, val);
-                                }
-                            }
-                            Value::Arr(a) => {
-                                for (i, v) in a.borrow().iter().enumerate() {
-                                    map.insert(i.to_string(), v.clone());
                                 }
                             }
                             _ => {}
