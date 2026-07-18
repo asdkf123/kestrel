@@ -3037,15 +3037,18 @@ impl Interp {
             // Object.prototype.propertyIsEnumerable(P) (§20.1.3.4): own 프로퍼티이면서
             // enumerable 인가. 예전엔 hasOwnProperty 로 근사해 비열거 메서드도 true 였다.
             Native::PropertyIsEnumerable => {
-                let key = match args.first().cloned() {
-                    Some(k) => self.to_property_key(k)?,
-                    None => String::new(),
-                };
+                // §20.1.3.4: desc = O.[[GetOwnProperty]](P); undefined 면 false, 아니면
+                // desc.[[Enumerable]]. gOPD 로 통일 — 예전엔 own_enumerable_entries(문자열
+                // 키만)라 심볼 키 필드([sym]=v)가 gOPD(enumerable:true)와 어긋났다.
+                let keyv = args.first().cloned().unwrap_or(Value::Undefined);
                 let recvv = recv.unwrap_or(Value::Undefined);
-                // 열거 가능한 own 프로퍼티 목록에 있으면 true (심볼 키는 별도지만 대부분
-                // 문자열 키 검사). 내부/비열거 키는 own_enumerable_entries 가 이미 거른다.
-                let enumerable =
-                    own_enumerable_entries(&recvv).iter().any(|(k, _)| *k == key);
+                let desc = self.call_native(
+                    Native::ObjectGetOwnPropertyDescriptor,
+                    None,
+                    vec![recvv, keyv],
+                )?;
+                let enumerable = matches!(&desc, Value::Obj(m)
+                    if matches!(m.borrow().get("enumerable"), Some(v) if to_bool(v)));
                 Ok(Value::Bool(enumerable))
             }
             // Object.prototype.toString.call(x) → "[object Array]" 등 (타입 판별 관용)
