@@ -4724,12 +4724,26 @@ impl Interp {
                 use crate::js::interp::natives::RegexAccessor as RA;
                 let this = recv.unwrap_or(Value::Undefined);
                 let sf = regex_src_flags(&this);
+                // RegExp.prototype 자신은 정규식이 아니지만 스펙상 기본값(source "(?:)",
+                // 개별 플래그 undefined)을 낸다. 그 외 비정규식 객체/원시값은 TypeError.
+                let is_proto = matches!(
+                    (&this, &self.regexp_proto),
+                    (Value::Obj(a), Value::Obj(b)) if std::rc::Rc::ptr_eq(a, b)
+                );
                 Ok(match kind {
-                    RA::Source => Value::Str(match &sf {
-                        Some((s, _)) if !s.is_empty() => s.clone(),
-                        // 빈 패턴/프로토타입 → "(?:)" (§22.2.6.13)
-                        _ => "(?:)".to_string(),
-                    }),
+                    RA::Source => {
+                        // §22.2.6.13: this 가 정규식도 RegExp.prototype 도 아니면 TypeError.
+                        if sf.is_none() && !is_proto {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "RegExp.prototype.source getter called on non-RegExp",
+                            ));
+                        }
+                        Value::Str(match &sf {
+                            Some((s, _)) if !s.is_empty() => s.clone(),
+                            _ => "(?:)".to_string(),
+                        })
+                    }
                     RA::Flags => {
                         // §22.2.6.4: this 가 객체가 아니면 TypeError. 각 플래그 프로퍼티를
                         // [[Get]]+ToBoolean 으로 읽어(예외 전파) d,g,i,m,s,u,v,y 순으로 조립한다.
@@ -4757,7 +4771,8 @@ impl Interp {
                         }
                         Value::Str(out)
                     }
-                    // 개별 플래그: this 가 정규식이면 flags 포함 여부, 프로토타입/비정규식이면 undefined
+                    // 개별 플래그(§22.2.6.x): 정규식이면 포함 여부(bool), RegExp.prototype 이면
+                    // undefined, 그 외 비정규식은 TypeError.
                     _ => match &sf {
                         Some((_, f)) => {
                             let ch = RA::table()
@@ -4767,7 +4782,13 @@ impl Interp {
                                 .unwrap();
                             Value::Bool(f.contains(ch))
                         }
-                        None => Value::Undefined,
+                        None if is_proto => Value::Undefined,
+                        None => {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "RegExp flag getter called on non-RegExp",
+                            ))
+                        }
                     },
                 })
             }

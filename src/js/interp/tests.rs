@@ -7343,3 +7343,18 @@ fn regex_flags_generic_accessor() {
     // RegExp.prototype.flags === "".
     assert_eq!(run_str("RegExp.prototype.flags"), "");
 }
+
+#[test]
+fn regex_source_and_flag_getter_brand() {
+    // §22.2.6.x: source/개별 플래그 getter 는 비정규식·비프로토타입 this 에 TypeError.
+    assert_eq!(run_str("/abc/.source"), "abc");
+    assert_eq!(run_str("new RegExp('').source"), "(?:)");
+    assert_eq!(run_str("RegExp.prototype.source"), "(?:)");
+    assert!(run_bool("RegExp.prototype.global===undefined"));
+    assert!(run_bool("/a/g.global===true"));
+    let gs = "var gs=Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get; ";
+    assert!(run_bool(&format!("{}var t=false; try{{ gs.call(5) }}catch(e){{ t=e instanceof TypeError }} t", gs)));
+    assert!(run_bool(&format!("{}var t=false; try{{ gs.call({{}}) }}catch(e){{ t=e instanceof TypeError }} t", gs)));
+    let gg = "var gg=Object.getOwnPropertyDescriptor(RegExp.prototype,'global').get; ";
+    assert!(run_bool(&format!("{}var t=false; try{{ gg.call({{}}) }}catch(e){{ t=e instanceof TypeError }} t", gg)));
+}
