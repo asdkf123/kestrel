@@ -1182,6 +1182,21 @@ fn equality_semantics() {
     assert!(run_bool("'b' > 'a'"));
     assert!(run_bool("typeof null === 'object'"));
     assert!(run_bool("typeof (x => x) === 'function'"));
+    // 추상 동등(§7.2.14): 객체 피연산자는 ToPrimitive, Boolean 은 ToNumber 후 비교.
+    // 예전엔 순수 loose_eq 라 객체가 참조 동등으로 떨어져 전부 false 였다.
+    assert!(run_bool("new Number(5) == 5"));
+    assert!(run_bool("new String('a') == 'a'"));
+    assert!(run_bool("new Boolean(true) == 1"));
+    assert!(run_bool("({valueOf: function(){return 1}}) == true"));
+    assert!(run_bool("0n == {valueOf: function(){return 0n;}}"));
+    assert!(run_bool("Symbol.iterator == Object(Symbol.iterator)"));
+    // valueOf 는 정확히 한 번 호출된다
+    assert!(run_bool("var c=0; var o={valueOf:function(){c++;return 5;}}; (o==5); c===1"));
+    // 무회귀: 객체끼리는 참조 동등, null 은 강제변환 안 함, strict 는 불변
+    assert!(!run_bool("({}) == ({})"));
+    assert!(!run_bool("null == 0"));
+    assert!(!run_bool("new Number(5) === 5"));
+    assert!(run_bool("0n == 0"));
 }
 
 #[test]

@@ -8180,6 +8180,36 @@ impl Interp {
         })
     }
 
+    // §7.2.14 IsLooselyEqual(x, y) — 추상 동등(==). 순수 loose_eq 로는 객체 피연산자를
+    // ToPrimitive 할 수 없어(&mut self 필요) new Number(5)==5 나 {valueOf}==5 가 전부
+    // 참조 동등으로 떨어져 false 였다. Boolean 은 ToNumber, 객체(원시 상대)는 ToPrimitive
+    // 후 재귀하고, 나머지 원시 비교는 bigint_binary/loose_eq 에 위임한다.
+    fn abstract_eq(&mut self, x: &Value, y: &Value) -> Result<bool, String> {
+        // Boolean → ToNumber 후 재귀 (step 8/9)
+        if matches!(x, Value::Bool(_)) {
+            let n = to_num(x);
+            return self.abstract_eq(&Value::Num(n), y);
+        }
+        if matches!(y, Value::Bool(_)) {
+            let n = to_num(y);
+            return self.abstract_eq(x, &Value::Num(n));
+        }
+        // 객체 vs 원시(null/undefined 아님) → ToPrimitive(객체) 후 재귀 (step 11/12)
+        if is_object(x) && !is_object(y) && !matches!(y, Value::Undefined | Value::Null) {
+            let p = self.to_primitive_hint(x.clone(), "default")?;
+            return self.abstract_eq(&p, y);
+        }
+        if is_object(y) && !is_object(x) && !matches!(x, Value::Undefined | Value::Null) {
+            let p = self.to_primitive_hint(y.clone(), "default")?;
+            return self.abstract_eq(x, &p);
+        }
+        // 둘 다 원시(또는 둘 다 객체, 또는 한쪽 null/undefined). BigInt 가 끼면 수치 비교.
+        if let Some(Ok(Value::Bool(b))) = self.bigint_binary(BinOp::EqEq, x, y) {
+            return Ok(b);
+        }
+        Ok(loose_eq(x, y))
+    }
+
     fn binary(&mut self, op: BinOp, l: Value, r: Value) -> Result<Value, String> {
         // 산술/비교 연산: 객체 피연산자를 원시값으로 강제변환 (ToPrimitive). in/instanceof 제외.
         // abrupt(valueOf/toString 예외)을 전파해야 한다(예전 to_primitive 는 삼켰다).
@@ -8203,9 +8233,13 @@ impl Interp {
             ),
             _ => (l, r),
         };
-        // BigInt 가 끼면 별도 의미론 (혼합 산술은 TypeError)
-        if let Some(res) = self.bigint_binary(op, &l, &r) {
-            return res;
+        // BigInt 가 끼면 별도 의미론 (혼합 산술은 TypeError). ==/!= 는 abstract_eq 가
+        // 객체를 먼저 ToPrimitive 한 뒤 내부에서 bigint_binary 를 부르므로 여기선 건너뛴다
+        // (안 그러면 0n=={valueOf:()=>0n} 을 객체 강제변환 없이 오판한다).
+        if !matches!(op, BinOp::EqEq | BinOp::NotEq) {
+            if let Some(res) = self.bigint_binary(op, &l, &r) {
+                return res;
+            }
         }
         Ok(match op {
             // + : 한쪽이라도 String 이면 ToString 둘 다(Symbol→TypeError), 아니면 ToNumber
@@ -8550,8 +8584,8 @@ impl Interp {
                 };
                 Value::Bool(hit)
             }
-            BinOp::EqEq => Value::Bool(loose_eq(&l, &r)),
-            BinOp::NotEq => Value::Bool(!loose_eq(&l, &r)),
+            BinOp::EqEq => Value::Bool(self.abstract_eq(&l, &r)?),
+            BinOp::NotEq => Value::Bool(!self.abstract_eq(&l, &r)?),
             BinOp::EqEqEq => Value::Bool(strict_eq(&l, &r)),
             BinOp::NotEqEq => Value::Bool(!strict_eq(&l, &r)),
             BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
