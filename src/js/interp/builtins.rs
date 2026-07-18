@@ -7885,6 +7885,15 @@ impl Interp {
                         ))
                     }
                 };
+                // mapFn 의 thisArg (3번째 인자). 예전엔 무시했다.
+                let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+                // null/undefined 는 GetMethod(items,@@iterator)에서 TypeError (§7.3.11).
+                if matches!(src, Value::Undefined | Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Array.from: items is undefined or null",
+                    ));
+                }
                 // 이터러블(배열/문자열/Set/Map/제너레이터/반복자/사용자 [Symbol.iterator])이면
                 // 프로토콜로, 아니면 array-like(ToLength(ToNumber(length)) + 인덱스).
                 let items: Vec<Value> = match &src {
@@ -7908,7 +7917,11 @@ impl Interp {
                     Some(f) => {
                         let mut r = Vec::with_capacity(items.len());
                         for (i, v) in items.into_iter().enumerate() {
-                            r.push(self.call_value(f.clone(), None, vec![v, Value::Num(i as f64)])?);
+                            r.push(self.call_value(
+                                f.clone(),
+                                Some(this_arg.clone()),
+                                vec![v, Value::Num(i as f64)],
+                            )?);
                         }
                         r
                     }

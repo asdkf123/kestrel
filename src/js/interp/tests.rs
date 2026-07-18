@@ -7818,3 +7818,17 @@ fn typedarray_constructor_metadata_and_tostringtag() {
     assert_eq!(run_str("Object.prototype.toString.call([])"), "[object Array]");
     assert_eq!(run_str("Object.prototype.toString.call(null)"), "[object Null]");
 }
+
+#[test]
+fn array_from_thisarg_and_null() {
+    // §23.1.2.1: mapFn 의 thisArg(3번째) 존중, null/undefined 는 TypeError.
+    assert_eq!(run_str("Array.from([1,2], function(x){ return x+this.n; }, {n:100}).join(',')"), "101,102");
+    assert_eq!(run_str("Array.from({length:2,0:5,1:6}, function(x){ return x+this.n; }, {n:100}).join(',')"), "105,106");
+    assert_eq!(run_str("try{ Array.from(null); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ Array.from(undefined); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // 회귀 방지: iterable/array-like/mapfn/문자열.
+    assert_eq!(run_str("Array.from(new Set([1,2,3])).join(',')"), "1,2,3");
+    assert_eq!(run_str("Array.from('abc').join(',')"), "a,b,c");
+    assert_eq!(run_str("Array.from([1,2,3], x=>x*10).join(',')"), "10,20,30");
+    assert_eq!(run_str("try{ Array.from([1], 5); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+}
