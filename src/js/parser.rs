@@ -709,9 +709,10 @@ impl Parser {
         let name = self.ident()?;
         let is_async = std::mem::take(&mut self.pending_async);
         let (params, mut body) = self.param_list()?;
+        let prologue_len = body.len();
         body.extend(self.block()?); // 프롤로그(기본값) 뒤에 실제 본문
         let source = self.src_between(start, self.pos);
-        Ok(Stmt::FuncDecl { name, params, body, is_generator, is_async, source })
+        Ok(Stmt::FuncDecl { name, params, body, is_generator, is_async, source, prologue_len })
     }
 
     // 파라미터 목록 → (이름들, 본문 프롤로그).
@@ -1117,13 +1118,14 @@ impl Parser {
         // 소스 시작: 화살표 params 시작(save). async 접두가 있었으면 그 앞 토큰부터.
         let start = if is_async { save.saturating_sub(1) } else { save };
         let mut body = prologue;
+        let prologue_len = body.len();
         if self.peek() == Some(&Tok::LBrace) {
             body.extend(self.block()?);
         } else {
             body.push(Stmt::Return(Some(self.assignment()?))); // 식 본문 → return desugar
         }
         let source = self.src_between(start, self.pos);
-        Ok(Some(Expr::Func { name: None, params, body, is_arrow: true, is_generator: false, is_async, source }))
+        Ok(Some(Expr::Func { name: None, params, body, is_arrow: true, is_generator: false, is_async, source, prologue_len }))
     }
 
     fn ternary(&mut self) -> Result<Expr, String> {
@@ -1534,6 +1536,7 @@ impl Parser {
                     is_generator: false,
                     is_async: false,
                     source: None, // 합성(static 블록) — toString 대상 아님
+                    prologue_len: 0,
                 };
                 static_fields.push((
                     format!("\u{0}staticblock:{}", static_fields.len()),
@@ -1581,6 +1584,7 @@ impl Parser {
                 continue;
             }
             let (params, mut body) = self.param_list()?;
+            let prologue_len = body.len();
             body.extend(self.block()?);
             let msrc = self.src_between(method_start, self.pos);
             if !is_static && mname == "constructor" {
@@ -1600,9 +1604,9 @@ impl Parser {
                     setters.push((mname, params, body, msrc));
                 }
             } else if is_static {
-                statics.push((mname, params, body, is_generator, is_async, msrc));
+                statics.push((mname, params, body, is_generator, is_async, msrc, prologue_len));
             } else {
-                methods.push((mname, params, body, is_generator, is_async, msrc));
+                methods.push((mname, params, body, is_generator, is_async, msrc, prologue_len));
             }
         }
         self.pos += 1; // '}'
@@ -1748,6 +1752,7 @@ impl Parser {
                             } else {
                                 // 계산 메서드 단축 { [k]() {} }
                                 let (params, mut body) = self.param_list()?;
+                                let prologue_len = body.len();
                                 body.extend(self.block()?);
                                 let source = self.src_between(ms, self.pos);
                                 Expr::Func {
@@ -1758,6 +1763,7 @@ impl Parser {
                                     is_generator: is_gen,
                                     is_async,
                                     source,
+                                    prologue_len,
                                 }
                             };
                             props.push((PropKey::Computed(Box::new(key_expr)), value));
@@ -1810,6 +1816,7 @@ impl Parser {
                                 None => self.member_name()?,
                             };
                             let (params, mut body) = self.param_list()?;
+                            let prologue_len = body.len();
                             body.extend(self.block()?);
                             let source = self.src_between(ms, self.pos);
                             let f = Expr::Func {
@@ -1820,6 +1827,7 @@ impl Parser {
                                 is_generator: false,
                                 is_async: false,
                                 source,
+                                prologue_len,
                             };
                             // get/set 둘 다 보존한다. 예전엔 setter 를 버려서 대입이
                             // 조용히 setter 를 우회했다(부작용이 안 일어남).
@@ -1860,6 +1868,7 @@ impl Parser {
                             let is_gen = self.eat(&Tok::Star); // async *name / *name
                             let key = self.member_name()?;
                             let (params, mut body) = self.param_list()?;
+                            let prologue_len = body.len();
                             body.extend(self.block()?);
                             let source = self.src_between(ms, self.pos);
                             let f = Expr::Func {
@@ -1870,6 +1879,7 @@ impl Parser {
                                 is_generator: is_gen,
                                 is_async,
                                 source,
+                                prologue_len,
                             };
                             props.push((PropKey::Static(key), f));
                             if self.eat(&Tok::Comma) {
@@ -1899,9 +1909,10 @@ impl Parser {
                         } else if self.peek() == Some(&Tok::LParen) {
                             // 메서드 단축 { foo(a) { ... } }
                             let (params, mut body) = self.param_list()?;
+                            let prologue_len = body.len();
                             body.extend(self.block()?);
                             let source = self.src_between(key_start, self.pos);
-                            Expr::Func { name: None, params, body, is_arrow: false, is_generator: false, is_async: false, source }
+                            Expr::Func { name: None, params, body, is_arrow: false, is_generator: false, is_async: false, source, prologue_len }
                         } else if self.peek() == Some(&Tok::Assign) {
                             // CoverInitializedName: { a = 1 } — 객체 리터럴로는 문법 오류지만
                             // **구조분해 대입 대상**으로는 유효하다: ({a = 1} = o).
@@ -1943,9 +1954,10 @@ impl Parser {
                     None
                 };
                 let (params, mut body) = self.param_list()?;
+                let prologue_len = body.len();
                 body.extend(self.block()?);
                 let source = self.src_between(start, self.pos);
-                Ok(Expr::Func { name, params, body, is_arrow: false, is_generator, is_async, source })
+                Ok(Expr::Func { name, params, body, is_arrow: false, is_generator, is_async, source, prologue_len })
             }
             Tok::This => Ok(Expr::This),
             Tok::Super => Ok(Expr::Super),

@@ -19,7 +19,7 @@ pub enum Expr {
     // is_generator: function* — 호출 시 본문을 즉시 실행해 yield 값을 모아 반복자 반환(eager)
     // name: 명명 함수식 이름 (재귀용 자기 참조). 익명/화살표는 None.
     // source: 원본 소스 텍스트 (Function.prototype.toString §20.2.3.5). 없으면 None.
-    Func { name: Option<String>, params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool, source: Option<std::rc::Rc<str>> },
+    Func { name: Option<String>, params: Vec<String>, body: Vec<Stmt>, is_arrow: bool, is_generator: bool, is_async: bool, source: Option<std::rc::Rc<str>>, prologue_len: usize },
     // BigInt 리터럴 (소스 그대로 — 평가 시 정확히 파싱)
     BigInt(String),
     // yield [*] expr — 제너레이터 본문에서 값을 산출. star 면 iterable 을 위임 전개.
@@ -79,9 +79,10 @@ pub struct ClassDef {
     pub name: Option<String>,
     pub parent: Option<Box<Expr>>,
     pub ctor: Option<(Vec<String>, Vec<Stmt>)>,
-    // (이름, 파라미터, 몸통, is_generator, is_async, 소스텍스트)
-    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>)>,
-    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>)>,
+    // (이름, 파라미터, 몸통, is_generator, is_async, 소스텍스트, prologue_len)
+    // prologue_len: 몸통 앞 파라미터 구조분해/기본값 문장 수(제너레이터 메서드 호출 시 실행).
+    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize)>,
+    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize)>,
     // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스). (이름,파라미터,몸통,소스)
     pub getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
     // set 접근자: 대입 시 호출 (this=인스턴스). 예전엔 파싱만 하고 버렸다 —
@@ -208,7 +209,7 @@ pub enum Pattern {
 pub enum Stmt {
     // 다중 선언자 지원: var a = 1, b = 2; / 구조분해 const {a} = o
     VarDecl { kind: DeclKind, decls: Vec<(Pattern, Option<Expr>)> },
-    FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt>, is_generator: bool, is_async: bool, source: Option<std::rc::Rc<str>> },
+    FuncDecl { name: String, params: Vec<String>, body: Vec<Stmt>, is_generator: bool, is_async: bool, source: Option<std::rc::Rc<str>>, prologue_len: usize },
     If { cond: Expr, then: Vec<Stmt>, other: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },
     DoWhile { body: Vec<Stmt>, cond: Expr },

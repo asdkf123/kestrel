@@ -277,6 +277,10 @@ pub struct JsFn {
     pub name: RefCell<String>,
     pub params: Vec<String>,
     pub body: Vec<Stmt>,
+    // body 앞쪽 prologue_len 개 문장은 파라미터 구조분해/기본값(디슈가). 제너레이터/
+    // async-generator 는 이 프롤로그를 **호출 시**(FunctionDeclarationInstantiation)
+    // 실행해 파라미터를 바인딩·검증하고, 지연 본문은 프롤로그를 건너뛴다.
+    pub param_prologue_len: usize,
     pub env: EnvRef, // 클로저가 캡처한 렉시컬 환경
     pub is_arrow: bool,
     pub is_generator: bool, // function* — 호출 시 yield 값을 모아 반복자 반환(eager)

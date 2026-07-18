@@ -197,9 +197,11 @@ const UNSUPPORTED_YIELD: &str =
 impl Interp {
     // function* 호출 → 지연 제너레이터 객체 생성(본문은 아직 실행 안 함).
     // 본문을 디슈가해 식 내부 yield(`a+(yield b)`, `f(yield x)`)를 문장 위치로 정규화한다.
-    pub(super) fn make_generator(&mut self, func: Rc<JsFn>, scope: EnvRef) -> Value {
+    pub(super) fn make_generator(&mut self, func: Rc<JsFn>, scope: EnvRef, skip_prologue: usize) -> Value {
         let mut ctr = 0usize;
-        let body = Rc::new(desugar_stmts(&func.body, &mut ctr));
+        // 파라미터 프롤로그(구조분해/기본값)는 호출 시 이미 실행됐으므로 지연 본문에서 건너뛴다.
+        let src = func.body.get(skip_prologue..).unwrap_or(&[]);
+        let body = Rc::new(desugar_stmts(src, &mut ctr));
         Value::Gen(Rc::new(RefCell::new(GenState {
             body,
             scope,
@@ -302,12 +304,13 @@ impl Interp {
         } else {
             // 신규 진입: 함수 선언 호이스팅(이 목록 범위). 재개 시엔 이미 선언돼 있음.
             for s in stmts {
-                if let Stmt::FuncDecl { name, params, body, is_generator, is_async, source } = s {
+                if let Stmt::FuncDecl { name, params, body, is_generator, is_async, source, prologue_len } = s {
                     let f = Value::Fn(Rc::new(JsFn {
                         priv_id: std::cell::Cell::new(0),
                         name: RefCell::new(name.clone()),
                         params: params.clone(),
                         body: body.clone(),
+                        param_prologue_len: *prologue_len,
                         env: scope.clone(),
                         is_arrow: false,
                         is_generator: *is_generator,

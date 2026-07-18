@@ -3138,6 +3138,34 @@ fn derived_constructor_must_call_super() {
     assert!(run_bool("class C {} var c=new C(); c.y=1; c.y=2; c.y===2"));
 }
 
+// 제너레이터/async-generator 는 파라미터 구조분해/기본값을 **호출 시** 실행한다
+// (§FunctionDeclarationInstantiation) — 지연 본문이 아니라. *gen([{x}]) 를 [null]
+// 로 부르면 즉시 TypeError. 기본값 부작용은 한 번만.
+#[test]
+fn generator_param_destructuring_at_call_time() {
+    // 제너레이터 메서드/함수/static/async-gen 전부 호출 시 파괴 할당 검증
+    assert!(run_bool(
+        "class C { *m([{x}]){} } var t=false; try{ new C().m([null]) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "function* g([{y}]){ yield y; } var t=false; try{ g([null]) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "class E { static *s([{z}]){} } var t=false; try{ E.s([undefined]) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "class F { async *a([{w}]){} } var t=false; try{ new F().a([null]) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 정상 값이면 순회
+    assert_eq!(run_num("class D { *m([{x}]){ yield x; } } new D().m([{x:42}]).next().value"), 42.0);
+    // 기본값 부작용은 정확히 한 번(중복 실행 아님)
+    assert!(run_bool(
+        "var cnt=0; function* g(a=(cnt++,5)){ yield a; } var it=g(); it.next(); it.next(); cnt===1"
+    ));
+    // 일반 제너레이터 무회귀
+    assert_eq!(run_num("function* p(a,b){ yield a+b; } p(1,2).next().value"), 3.0);
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {

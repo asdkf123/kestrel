@@ -2326,6 +2326,7 @@ impl Interp {
             name: RefCell::new("anonymous".to_string()),
             params,
             body,
+            param_prologue_len: 0,
             env: self.global.clone(),
             is_arrow: false,
             is_generator: false,
@@ -3657,12 +3658,13 @@ impl Interp {
     // 함수 선언 호이스팅: 블록 실행 전에 FuncDecl 을 먼저 바인딩
     fn exec_block(&mut self, stmts: &[Stmt], env: &EnvRef) -> Result<Flow, String> {
         for s in stmts {
-            if let Stmt::FuncDecl { name, params, body, is_generator, is_async, source } = s {
+            if let Stmt::FuncDecl { name, params, body, is_generator, is_async, source, prologue_len } = s {
                 let f = Value::Fn(Rc::new(JsFn {
                     priv_id: std::cell::Cell::new(0),
                     name: RefCell::new(name.clone()),
                     params: params.clone(),
                     body: body.clone(),
+                    param_prologue_len: *prologue_len,
                     env: env.clone(),
                     is_arrow: false,
                     is_generator: *is_generator,
@@ -4191,7 +4193,7 @@ impl Interp {
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
-            Expr::Func { name, params, body, is_arrow, is_generator, is_async, source } => {
+            Expr::Func { name, params, body, is_arrow, is_generator, is_async, source, prologue_len } => {
                 // 화살표는 정의 시점 this 를 캡처 (렉시컬)
                 let this = if *is_arrow { env_get(env, "this").map(Box::new) } else { None };
                 // 명명 함수식: 자기 이름을 감싸는 스코프에 바인딩(재귀용). 외부엔 미노출.
@@ -4207,6 +4209,7 @@ impl Interp {
                     name: RefCell::new(name.clone().unwrap_or_default()),
                     params: params.clone(),
                     body: body.clone(),
+                    param_prologue_len: *prologue_len,
                     env: fn_env.clone(),
                     is_arrow: *is_arrow,
                     is_generator: *is_generator,
@@ -5048,12 +5051,13 @@ impl Interp {
                 }
                 _ => None,
             };
-            if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async, source }) = decl {
+            if let Some(Stmt::FuncDecl { name, params, body: fb, is_generator, is_async, source, prologue_len }) = decl {
                 let f = Value::Fn(Rc::new(JsFn {
                     priv_id: std::cell::Cell::new(0),
                     name: RefCell::new(name.clone()),
                     params: params.clone(),
                     body: fb.clone(),
+                    param_prologue_len: *prologue_len,
                     env: env.clone(),
                     is_arrow: false,
                     is_generator: *is_generator,
@@ -5094,6 +5098,7 @@ impl Interp {
                 name: RefCell::new(format!("get {}", exported_name)),
                 params: vec![],
                 body: vec![Stmt::Return(Some(Expr::Ident(local.clone())))],
+                param_prologue_len: 0,
                 env: env.clone(),
                 is_arrow: false,
                 is_generator: false,
@@ -7140,7 +7145,14 @@ impl Interp {
                 // 지연 제너레이터: 본문을 즉시 실행하지 않고 재개가능 제너레이터 객체를 반환.
                 // next() 마다 다음 yield 까지 실행(무한 제너레이터/양방향 next(v) 지원).
                 if func.is_generator {
-                    return Ok(self.make_generator(func.clone(), scope));
+                    // 파라미터 프롤로그(구조분해/기본값)는 **호출 시** 실행한다 — 제너레이터도
+                    // 파라미터는 즉시 바인딩·검증된다(§FunctionDeclarationInstantiation). 그래서
+                    // *gen([{x}]) 를 [null] 로 부르면 여기서 즉시 TypeError. 지연 본문은
+                    // make_generator 가 프롤로그를 건너뛴다(중복 실행 방지).
+                    for stmt in &func.body[..func.param_prologue_len] {
+                        self.exec_stmt(stmt, &scope)?;
+                    }
+                    return Ok(self.make_generator(func.clone(), scope, func.param_prologue_len));
                 }
                 // async: 반환값/에러를 Promise 로 감싼다(본문 throw → 거부된 promise).
                 if func.is_async {
@@ -7628,13 +7640,15 @@ impl Interp {
                   body: &Vec<Stmt>,
                   is_generator: bool,
                   is_async: bool,
-                  source: Option<std::rc::Rc<str>>| {
+                  source: Option<std::rc::Rc<str>>,
+                  prologue_len: usize| {
             Rc::new(JsFn {
                 // 클래스 본문의 함수들은 이 클래스의 private 스코프 안에 있다
                 priv_id: std::cell::Cell::new(priv_id),
                 name: RefCell::new(String::new()),
                 params: params.clone(),
                 body: body.clone(),
+                param_prologue_len: prologue_len,
                 env: class_env.clone(),
                 is_arrow: false,
                 is_generator,
@@ -7654,41 +7668,41 @@ impl Interp {
             *f.name.borrow_mut() = n.to_string();
             f
         };
-        let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false, None), def.name.as_deref().unwrap_or("")));
+        let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false, None, 0), def.name.as_deref().unwrap_or("")));
         let mut methods = HashMap::new();
-        for (name, p, b, gen, asy, src) in &def.methods {
-            methods.insert(name.clone(), named(mk(p, b, *gen, *asy, src.clone()), name));
+        for (name, p, b, gen, asy, src, plen) in &def.methods {
+            methods.insert(name.clone(), named(mk(p, b, *gen, *asy, src.clone(), *plen), name));
         }
         let mut getters = HashMap::new();
         let mut setters = HashMap::new();
         for (name, p, b, src) in &def.setters {
-            setters.insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("set {}", name)));
+            setters.insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("set {}", name)));
         }
         let mut static_getters = HashMap::new();
         for (name, p, b, src) in &def.static_getters {
             static_getters
-                .insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("get {}", name)));
+                .insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", name)));
         }
         let mut static_setters = HashMap::new();
         for (name, p, b, src) in &def.static_setters {
             static_setters
-                .insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("set {}", name)));
+                .insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("set {}", name)));
         }
         for (name, p, b, src) in &def.getters {
-            getters.insert(name.clone(), named(mk(p, b, false, false, src.clone()), &format!("get {}", name)));
+            getters.insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", name)));
         }
         // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출
         let mut fields = Vec::new();
         for (name, init) in &def.fields {
             let f = init
                 .as_ref()
-                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))], false, false, None));
+                .map(|e| mk(&Vec::new(), &vec![Stmt::Return(Some(e.clone()))], false, false, None, 0));
             fields.push((name.clone(), f));
         }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
-        for (name, p, b, gen, asy, src) in &def.statics {
-            let f = named(mk(p, b, *gen, *asy, src.clone()), name);
+        for (name, p, b, gen, asy, src, plen) in &def.statics {
+            let f = named(mk(p, b, *gen, *asy, src.clone(), *plen), name);
             statics.insert(name.clone(), Value::Fn(f));
             // static **메서드**는 비열거다 (§15.7.14). static **필드**는 열거 가능하다 —
             // 그래서 구분해서 표시한다. 예전엔 둘 다 같은 맵에 섞여 구분이 없었다.
