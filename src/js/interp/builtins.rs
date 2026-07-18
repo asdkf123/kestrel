@@ -4307,24 +4307,38 @@ impl Interp {
             // String.raw(template, ...subs) (§22.1.2.4): template.raw 의 각 세그먼트를
             // 치환값과 번갈아 잇는다. 태그된 템플릿의 원시 문자열용.
             Native::StrRaw => {
+                // §22.1.2.4: cooked=ToObject(template); raw=ToObject(Get(cooked,"raw"));
+                // literalSegments=ToLength(Get(raw,"length")); 각 세그먼트/치환 ToString(예외 전파).
                 let template = args.first().cloned().unwrap_or(Value::Undefined);
-                let raw = self.member_get(&template, "raw")?;
-                // raw.length
-                let len = match self.member_get(&raw, "length") {
-                    Ok(v) => to_num(&v),
-                    Err(_) => f64::NAN,
-                };
-                let len = if len.is_finite() && len > 0.0 { len as usize } else { 0 };
-                let subs = &args[1.min(args.len())..];
+                if matches!(template, Value::Undefined | Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot convert undefined or null to object",
+                    ));
+                }
+                let raw_val = self.member_get(&template, "raw")?;
+                if matches!(raw_val, Value::Undefined | Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot convert undefined or null to object",
+                    ));
+                }
+                let raw = self.to_object_value(raw_val);
+                let len_val = self.member_get(&raw, "length")?;
+                let len = to_length(self.to_integer_or_infinity(&len_val)?) as usize;
+                if len == 0 {
+                    return Ok(Value::Str(String::new()));
+                }
+                let subs: &[Value] = if args.len() > 1 { &args[1..] } else { &[] };
                 let mut out = String::new();
                 for i in 0..len {
                     let seg = self.member_get(&raw, &i.to_string())?;
-                    out.push_str(&to_display(&seg));
+                    out.push_str(&self.to_string_value(&seg)?);
                     if i + 1 == len {
                         break;
                     }
-                    if let Some(s) = subs.get(i) {
-                        out.push_str(&to_display(s));
+                    if let Some(sub) = subs.get(i) {
+                        out.push_str(&self.to_string_value(sub)?);
                     }
                 }
                 Ok(Value::Str(out))

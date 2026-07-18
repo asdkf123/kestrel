@@ -7060,3 +7060,18 @@ fn string_match_search_regexp_create() {
     // matchAll.
     assert_eq!(run_str("JSON.stringify([...'a1b2'.matchAll(/\\d/g)].map(function(m){return m[0]}))"), "[\"1\",\"2\"]");
 }
+
+#[test]
+fn string_raw_coercion() {
+    // §22.1.2.4: 기본 동작 + ToObject/ToLength/ToString 강제변환·예외 전파.
+    assert_eq!(run_str("String.raw({raw:['a','b','c']}, 1, 2)"), "a1b2c");
+    assert_eq!(run_str("String.raw({raw:{length:'2', 0:'x', 1:'y'}}, '-')"), "x-y");
+    // raw/template 이 null/undefined → TypeError.
+    assert!(run_bool("var t=false; try{ String.raw(null) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ String.raw({raw:undefined}) }catch(e){ t=e instanceof TypeError } t"));
+    // Symbol 세그먼트/치환 → ToString TypeError.
+    assert!(run_bool("var t=false; try{ String.raw({raw:{length:1,0:Symbol()}}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ String.raw({raw:['a','b']}, Symbol()) }catch(e){ t=e instanceof TypeError } t"));
+    // length valueOf 예외 전파.
+    assert!(run_bool("var t=false; try{ String.raw({raw:{length:{valueOf:function(){throw 1}}}}) }catch(e){ t=true } t"));
+}
