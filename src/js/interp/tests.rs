@@ -7467,3 +7467,13 @@ fn string_matchall_returns_iterator() {
     assert_eq!(run_str("JSON.stringify([...'a1b2'.matchAll(/\\d/g)].map(function(m){return m[0]}))"), "[\"1\",\"2\"]");
     assert!(run_bool("var t=false; try{ 'abc'.matchAll(/a/) }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn string_match_routes_through_symbol_match() {
+    // §22.1.3.11: str.match 이 @@match 로 라우팅 — 전역/비전역/groups/문자열인자.
+    assert_eq!(run_str("JSON.stringify('a1b2c3'.match(/\\d/g))"), "[\"1\",\"2\",\"3\"]");
+    assert_eq!(run_str("JSON.stringify('xabz'.match(/(a)(b)/))"), "[\"ab\",\"a\",\"b\"]");
+    assert!(run_bool("'abc'.match(/x/)===null"));
+    assert_eq!(run_str("JSON.stringify('axc'.match('a.c'))"), "[\"axc\"]");
+    assert_eq!(run_str("'x1'.match(/(?<d>\\d)/).groups.d"), "1");
+}

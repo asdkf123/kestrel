@@ -6025,42 +6025,23 @@ impl Interp {
                         }
                     }
                     StrOp::Match => {
-                        let (src, flags) = match args.first().and_then(regex_src_flags) {
-                            Some(sf) => sf,
-                            None => {
-                                // RegExpCreate(§22.2.3.1): 인자를 정규식 '패턴'으로 컴파일한다
-                                // (이스케이프 안 함). undefined → 빈 패턴("").
-                                let pat = match args.first() {
-                                    None | Some(Value::Undefined) => String::new(),
-                                    Some(v) => self.to_string_value(v)?,
-                                };
-                                (pat, String::new())
-                            }
-                        };
-                        let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                            .map_err(|e| format!("정규식: {}", e))?;
-                        if re.global {
-                            // 전역: 매치 문자열들의 배열
-                            let mut out = Vec::new();
-                            let mut pos = 0;
-                            while let Some(mt) = re.find(&chars, pos) {
-                                out.push(Value::Str(chars[mt.start..mt.end].iter().collect()));
-                                pos = if mt.end > mt.start { mt.end } else { mt.end + 1 };
-                                if pos > chars.len() {
-                                    break;
-                                }
-                            }
-                            if out.is_empty() {
-                                Value::Null
-                            } else {
-                                Value::Arr(ArrayObj::new(out))
-                            }
+                        // §22.1.3.11: 정규식이면 그 @@match 로, 아니면 RegExpCreate(arg) 후
+                        // @@match → custom @@match/exec, 전역 수집 모두 표준대로.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let rx = if regex_src_flags(&arg).is_some() {
+                            arg
                         } else {
-                            match re.find(&chars, 0) {
-                                Some(mt) => self.regex_match_array(&chars, &mt, &re.group_names),
-                                None => Value::Null,
-                            }
-                        }
+                            let pat = match args.first() {
+                                None | Some(Value::Undefined) => String::new(),
+                                Some(v) => self.to_string_value(v)?,
+                            };
+                            make_regex_obj(&pat, "")
+                        };
+                        return self.call_native(
+                            Native::RegexSym(natives::StrOp::Match),
+                            Some(rx),
+                            vec![Value::Str(s.clone())],
+                        );
                     }
                     StrOp::MatchAll => {
                         // §22.1.3.14: 정규식이고 비전역이면 TypeError. 정규식이면 그 @@matchAll
