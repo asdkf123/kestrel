@@ -7447,3 +7447,15 @@ fn regex_symbol_split_protocol() {
     // brand.
     assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.split].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn regex_symbol_matchall_protocol() {
+    // §22.2.6.9: 실제 이터레이터(next/@@iterator), 전역 전체/비전역 단일, groups/index.
+    assert_eq!(run_str("typeof /\\d/g[Symbol.matchAll]('a1').next"), "function");
+    assert_eq!(run_str("JSON.stringify([.../\\w/g[Symbol.matchAll]('ab')].map(function(m){return m[0]}))"), "[\"a\",\"b\"]");
+    assert_eq!(run_str("JSON.stringify([.../(?<d>\\d)/g[Symbol.matchAll]('x1y2')].map(function(m){return m.groups.d}))"), "[\"1\",\"2\"]");
+    assert_eq!(run_str("JSON.stringify([.../\\d/[Symbol.matchAll]('a1b2')].map(function(m){return m[0]}))"), "[\"1\"]");
+    assert_eq!(run_str("[.../\\d/g[Symbol.matchAll]('a1b2')].map(function(m){return m.index}).join(',')"), "1,3");
+    // brand.
+    assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.matchAll].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
+}

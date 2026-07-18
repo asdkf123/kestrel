@@ -5144,7 +5144,47 @@ impl Interp {
                     out.push(Value::Str(schars[p..].iter().collect()));
                     return Ok(Value::Arr(ArrayObj::new(out)));
                 }
-                // 나머지(@@matchAll)는 아직 String 측에 위임.
+                if let natives::StrOp::MatchAll = op {
+                    // §22.2.6.9 RegExp.prototype[@@matchAll](string). 지연 iterator 대신
+                    // 매치를 모아 실제 이터레이터로 감싼다(전체순회/.next() 지원).
+                    if !is_object(&re) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "RegExp.prototype[Symbol.matchAll] called on non-object",
+                        ));
+                    }
+                    let s = self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                    let flags_val = self.member_get(&re, "flags")?;
+                    let flags = self.to_string_value(&flags_val)?;
+                    let global = flags.contains('g');
+                    let matcher = self.construct(
+                        Value::Native(Native::RegExpCtor),
+                        vec![re.clone(), Value::Str(flags)],
+                    )?;
+                    let li_val = self.member_get(&re, "lastIndex")?;
+                    let li = to_length(to_num(&li_val));
+                    self.set_throw(&matcher, "lastIndex", Value::Num(li))?;
+                    let mut out: Vec<Value> = Vec::new();
+                    let cap = s.chars().count().saturating_mul(2) + 1000;
+                    for _ in 0..cap {
+                        let result = self.regexp_exec(&matcher, &s)?;
+                        if matches!(result, Value::Null) {
+                            break;
+                        }
+                        out.push(result.clone());
+                        if !global {
+                            break;
+                        }
+                        let m0v = self.member_get(&result, "0")?;
+                        let m0 = self.to_string_value(&m0v)?;
+                        if m0.is_empty() {
+                            let liv = self.member_get(&matcher, "lastIndex")?;
+                            self.set_throw(&matcher, "lastIndex", Value::Num(to_num(&liv) + 1.0))?;
+                        }
+                    }
+                    return Ok(self.make_iter_from_vec(out));
+                }
+                // 모든 @@메서드 처리됨 — 여기 도달하면 String 측 위임(안전망).
                 let s = args.first().map(to_display).unwrap_or_default();
                 let mut fwd = vec![re];
                 fwd.extend(args.into_iter().skip(1));
