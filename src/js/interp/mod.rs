@@ -7550,6 +7550,27 @@ impl Interp {
                     }
                     return Ok(Value::Bool(false));
                 }
+                // 제너레이터: OrdinaryHasInstance — [[Prototype]] 체인(proto_of 로 시작,
+                // 이제 __kIterProto)에 생성자의 .prototype 이 있으면 인스턴스.
+                // (`gen instanceof Iterator`, map 등 헬퍼 결과의 Iterator 판정.)
+                if matches!(l, Value::Gen(_)) && is_callable(&r) {
+                    if let Value::Obj(fpm) = self.member_get(&r, "prototype")? {
+                        let mut proto = self.proto_of(&l)?;
+                        let mut depth = 0;
+                        while let Value::Obj(p) = &proto {
+                            if Rc::ptr_eq(p, &fpm) {
+                                return Ok(Value::Bool(true));
+                            }
+                            depth += 1;
+                            if depth > 100 {
+                                break;
+                            }
+                            let next = p.borrow().get("__proto__").cloned().unwrap_or(Value::Null);
+                            proto = next;
+                        }
+                    }
+                    return Ok(Value::Bool(false));
+                }
                 // 내장 생성자별 값 타입 판정 (feature-detection/에러 처리에 흔함)
                 let obj_has = |key: &str| -> bool {
                     matches!(&l, Value::Obj(m) if m.borrow().contains_key(key))

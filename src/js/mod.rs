@@ -2449,11 +2449,18 @@ if (!window.Iterator) {
   __kIterProto.every = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; while(true){ var r=__kIterStep(nx,it); if(r.done) return true; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(!m){ __kIterClose(it); return false; } } };
   __kIterProto.find = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; while(true){ var r=__kIterStep(nx,it); if(r.done) return undefined; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(m){ __kIterClose(it); return r.value; } } };
   __kIterProto[Symbol.iterator] = function(){ return this; };
+  Object.defineProperty(__kIterProto[Symbol.iterator], 'name', { value: '[Symbol.iterator]', configurable: true });
   __kIterProto[Symbol.toStringTag] = 'Iterator';
-  // 헬퍼 이름 명시 (프로퍼티 대입은 NamedEvaluation 안 됨).
+  // 내장 메서드는 non-enumerable (§17: writable:true, enumerable:false, configurable:true).
+  // 헬퍼 이름도 명시 (프로퍼티 대입은 NamedEvaluation 안 됨).
   ['map','filter','take','drop','flatMap','reduce','toArray','forEach','some','every','find'].forEach(function(n){
-    Object.defineProperty(__kIterProto[n], 'name', { value: n, configurable: true });
+    var f = __kIterProto[n];
+    Object.defineProperty(f, 'name', { value: n, configurable: true });
+    Object.defineProperty(__kIterProto, n, { value: f, writable: true, enumerable: false, configurable: true });
   });
+  // @@iterator / @@toStringTag 도 non-enumerable.
+  Object.defineProperty(__kIterProto, Symbol.iterator, { value: __kIterProto[Symbol.iterator], writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(__kIterProto, Symbol.toStringTag, { value: 'Iterator', writable: false, enumerable: false, configurable: true });
   function Iterator(){ if (new.target === undefined || new.target === Iterator) throw new TypeError('Abstract class Iterator not directly constructable'); }
   Iterator.prototype = __kIterProto;
   Object.defineProperty(__kIterProto, 'constructor', { value: Iterator, writable: true, enumerable: false, configurable: true });

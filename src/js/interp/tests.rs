@@ -7569,3 +7569,18 @@ fn template_interpolation_skips_regex_and_comments() {
     // 중첩 템플릿 안의 정규식.
     assert_eq!(run_str("`a${`b${'z'.replace(/z/,'Z')}c`}d`"), "abZcd");
 }
+
+#[test]
+fn iterator_helpers_prototype_and_enumerability() {
+    // §27.1: 제너레이터/헬퍼 결과가 Iterator 인스턴스로 판정된다.
+    assert!(prelude_bool("function* g(){yield 1;} g() instanceof Iterator"));
+    assert!(prelude_bool("function* g(){yield 1;} g().map(x=>x) instanceof Iterator"));
+    assert!(prelude_bool("function* g(){yield 1;} g().filter(x=>true) instanceof Iterator"));
+    assert!(prelude_bool("function* g(){yield 1;} g().take(1) instanceof Iterator"));
+    // 헬퍼 메서드는 non-enumerable (§17).
+    assert!(prelude_bool("!Object.getOwnPropertyDescriptor(Iterator.prototype,'map').enumerable"));
+    assert!(prelude_bool("!Object.getOwnPropertyDescriptor(Iterator.prototype,'filter').enumerable"));
+    assert!(prelude_bool("Object.getOwnPropertyDescriptor(Iterator.prototype,'map').configurable && Object.getOwnPropertyDescriptor(Iterator.prototype,'map').writable"));
+    // for-in 으로 헬퍼가 열거되지 않아야 한다.
+    assert_eq!(prelude_str("function* g(){} var it=g(); var ks=[]; for(var k in it) ks.push(k); ks.join(',')"), "");
+}

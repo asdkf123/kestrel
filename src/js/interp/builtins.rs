@@ -1557,7 +1557,12 @@ impl Interp {
             Value::Bool(_) => self.boolean_proto.clone(),
             Value::MapVal(_) => self.map_proto.clone(),
             Value::SetVal(_) => self.set_proto.clone(),
-            Value::Gen(_) | Value::Class(_) | Value::Proxy(_) => obj_proto,
+            // 제너레이터의 [[Prototype]] 은 %IteratorPrototype%(프렐류드 __kIterProto)로
+            // 이어져 `gen instanceof Iterator` 및 헬퍼 결과의 Iterator 판정이 성립한다
+            // (§27.5 GeneratorPrototype → §27.1.2 %IteratorPrototype%). 근사이지만
+            // Object.prototype 로 두는 것보다 정확하다.
+            Value::Gen(_) => env_get(&self.global, "__kIterProto").unwrap_or(obj_proto),
+            Value::Class(_) | Value::Proxy(_) => obj_proto,
             _ => Value::Null,
         })
     }
