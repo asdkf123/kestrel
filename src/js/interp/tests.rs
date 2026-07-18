@@ -7989,3 +7989,12 @@ fn array_spread_excludes_hole_and_nonenumerable() {
     // 정상 배열 무회귀.
     assert_eq!(run_str("JSON.stringify({...[1,2,3]})"), "{\"0\":1,\"1\":2,\"2\":3}");
 }
+
+#[test]
+fn object_spread_excludes_nonenumerable() {
+    // §7.3.25: {...obj} 은 own enumerable 만 — non-enumerable 제외.
+    assert_eq!(run_str("var o={a:1}; Object.defineProperty(o,'b',{value:2,enumerable:false}); JSON.stringify({...o})"), "{\"a\":1}");
+    // 흔한 spread 무회귀.
+    assert_eq!(run_str("JSON.stringify({...{a:1,b:2},c:3})"), "{\"a\":1,\"b\":2,\"c\":3}");
+    assert_eq!(run_str("JSON.stringify({...{x:1},...{y:2}})"), "{\"x\":1,\"y\":2}");
+}

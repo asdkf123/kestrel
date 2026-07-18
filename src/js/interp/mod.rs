@@ -3786,16 +3786,10 @@ impl Interp {
                     if matches!(k, PropKey::Spread) {
                         // {...obj} — obj/배열/인스턴스의 own 프로퍼티 병합
                         match self.eval(e, env)? {
-                            Value::Obj(o) => {
-                                for (k, v) in o.borrow().iter() {
-                                    if !is_internal_key(k.as_str()) {
-                                        map.insert(k.clone(), v.clone());
-                                    }
-                                }
-                            }
-                            v @ (Value::Instance(_) | Value::Arr(_)) => {
-                                // own enumerable — 구멍·non-enumerable 인덱스 제외 (§7.3.25
-                                // CopyDataProperties). 예전 배열은 raw iter 라 둘 다 포함했다.
+                            v @ (Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) => {
+                                // §7.3.25 CopyDataProperties: own enumerable 만 복사 —
+                                // non-enumerable 프로퍼티·배열 구멍은 제외. 예전엔 Obj 는
+                                // raw iter(non-enumerable 포함), 배열은 구멍/non-enum 포함.
                                 for (k, val) in builtins::own_enumerable_entries(&v) {
                                     map.insert(k, val);
                                 }
