@@ -1782,6 +1782,7 @@ impl Interp {
                     Value::Native(Native::ProxyRevoke),
                     proxy.clone(),
                     vec![],
+                    RefCell::new(ObjMap::new()),
                 )));
                 let mut m = ObjMap::new();
                 m.insert("proxy".to_string(), proxy);
@@ -1992,7 +1993,7 @@ impl Interp {
                 let mut it = args.into_iter();
                 let this_arg = it.next().unwrap_or(Value::Undefined);
                 let partial: Vec<Value> = it.collect();
-                Ok(Value::Bound(Rc::new((target, this_arg, partial))))
+                Ok(Value::Bound(Rc::new((target, this_arg, partial, RefCell::new(ObjMap::new())))))
             }
             // Function.prototype[@@hasInstance](V) = OrdinaryHasInstance (§20.2.3.6).
             // instanceof 연산자의 기본 경로에 위임한다(그쪽이 FnHasInstance 를 우회하므로
@@ -3065,6 +3066,8 @@ impl Interp {
                             self.native_ctor_own_keys(n)
                                 .map(|ks| ks.iter().any(|k| *k == key))
                                 .unwrap_or(false)
+                        } else if let Value::Bound(b) = v {
+                            b.3.borrow().contains_key(&key)
                         } else {
                             false
                         }
@@ -8093,11 +8096,13 @@ impl Interp {
                     Value::Native(Native::PromiseSettleResolve),
                     p.clone(),
                     vec![],
+                    RefCell::new(ObjMap::new()),
                 )));
                 let reject = Value::Bound(Rc::new((
                     Value::Native(Native::PromiseSettleReject),
                     p.clone(),
                     vec![],
+                    RefCell::new(ObjMap::new()),
                 )));
                 let mut m = ObjMap::new();
                 m.insert("promise".to_string(), p);

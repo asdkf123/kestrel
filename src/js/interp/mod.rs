@@ -6979,7 +6979,11 @@ impl Interp {
             // 바운드 함수: name/length/call/apply/bind 우선, 없으면 Function.prototype
             // 체인 상속(§10.4.1: [[Prototype]]=%Function.prototype%). 예전엔 상속을 안 걸어
             // boundFn 이 Function.prototype 에 추가된 프로퍼티를 못 봤다.
-            Value::Bound(_) => {
+            Value::Bound(b) => {
+                // 사용자가 얹은 프로퍼티(fn.foo=1)가 먼저 — own 데이터 프로퍼티.
+                if let Some(v) = b.3.borrow().get(key) {
+                    return Ok(v.clone());
+                }
                 if let Some(v) = self.native_fn_member(recv, key) {
                     return Ok(v);
                 }
@@ -7384,7 +7388,7 @@ impl Interp {
             }
             // 바운드 함수: 캡처한 this + 선행 인자 앞에 붙여 대상 호출
             Value::Bound(b) => {
-                let (target, this_val, partial) = (*b).clone();
+                let (target, this_val, partial, _) = (*b).clone();
                 let mut all = partial;
                 all.extend(args);
                 self.call_value(target, Some(this_val), all)
@@ -7515,11 +7519,13 @@ impl Interp {
                     Value::Native(Native::PromiseSettleResolve),
                     p.clone(),
                     vec![],
+                    RefCell::new(ObjMap::new()),
                 )));
                 let reject = Value::Bound(Rc::new((
                     Value::Native(Native::PromiseSettleReject),
                     p.clone(),
                     vec![],
+                    RefCell::new(ObjMap::new()),
                 )));
                 let executor = args.into_iter().next().unwrap_or(Value::Undefined);
                 if let Err(e) = self.call_value(executor, None, vec![resolve, reject.clone()]) {
@@ -7545,7 +7551,7 @@ impl Interp {
             }
             // new (boundFn)() — Reflect.construct 의 bind 트릭 지원
             Value::Bound(b) => {
-                let (target, _this, partial) = (*b).clone();
+                let (target, _this, partial, _) = (*b).clone();
                 let mut all = partial;
                 all.extend(args);
                 return self.construct(target, all);
@@ -8985,6 +8991,14 @@ impl Interp {
                             || self.native_static_readonly(&Value::Native(n), &key);
                         if !readonly {
                             self.native_props.entry(n).or_default().insert(key, value);
+                        }
+                        Ok(())
+                    }
+                    // 바운드 함수도 객체 — 임의 프로퍼티를 얹을 수 있다(fn.foo=1). name/length 는
+                    // 계산 프로퍼티(non-writable, §20.2.4)라 재대입 무시(sloppy). 나머지는 props 맵.
+                    Value::Bound(b) => {
+                        if !matches!(key.as_str(), "name" | "length") {
+                            b.3.borrow_mut().insert(key, value);
                         }
                         Ok(())
                     }

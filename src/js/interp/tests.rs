@@ -1121,6 +1121,12 @@ fn functions_are_objects() {
     assert_eq!(run_num("function f(){return this.x} f.call({x:7})"), 7.0);
     // bind 로 this 고정
     assert_eq!(run_num("function f(){return this.x} let g=f.bind({x:3}); g()"), 3.0);
+    // 바운드 함수도 객체 — 임의 프로퍼티를 얹고 읽는다(예전엔 "할당할 수 없음" throw)
+    assert_eq!(run_num("var b=(function(){}).bind(null); b.foo=42; b.foo"), 42.0);
+    assert!(run_bool("var b=(function(){}).bind(null); b.foo=1; b.hasOwnProperty('foo')"));
+    // name/length 는 non-writable 계산 프로퍼티 — 재대입 무시(sloppy)
+    assert_eq!(run_str("var b=(function target(){}).bind(null); b.name='x'; b.name"), "bound target");
+    assert_eq!(run_num("var b=(function(a,b){}).bind(null,1); b.length=99; b.length"), 1.0);
 }
 
 #[test]

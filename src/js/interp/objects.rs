@@ -94,8 +94,10 @@ pub enum Value {
     Dom(crate::dom::NodeId),
     Class(Rc<JsClass>),
     Instance(Rc<Instance>),
-    // bind 로 만든 바운드 함수: (대상, this, 선행 인자)
-    Bound(Rc<(Value, Value, Vec<Value>)>),
+    // bind 로 만든 바운드 함수: (대상, this, 선행 인자, 사용자 프로퍼티 맵).
+    // 바운드 함수도 객체라 임의 프로퍼티를 얹을 수 있다(fn.foo=1). name/length 는
+    // 계산 프로퍼티(비열거)이고 나머지는 이 맵에 저장한다.
+    Bound(Rc<(Value, Value, Vec<Value>, RefCell<ObjMap>)>),
     // 접근자 프로퍼티(get/set). 객체 맵에만 저장된다. 읽기는 get 을 호출하고,
     // 대입은 set 을 호출한다(없으면 각각 undefined / 무시). 다른 경로엔 노출되지 않음.
     Accessor(Rc<AccessorPair>),
