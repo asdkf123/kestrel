@@ -45,7 +45,7 @@ fn bytes_of(v: Option<&Value>) -> Vec<u8> {
 
 // 저장 키("\u{0}@@…")에서 Symbol 값을 복원한다 — getOwnPropertySymbols 용.
 // 일반 심볼 키는 "\0@@sym:<n>:<desc>", 레지스트리는 "\0@@for:<k>", 그 외는 잘 알려진 심볼.
-fn symbol_from_key(key: &str) -> Value {
+pub(super) fn symbol_from_key(key: &str) -> Value {
     let body = key.strip_prefix("\u{0}@@").unwrap_or(key);
     let desc = if let Some(rest) = body.strip_prefix("sym:") {
         // "<n>:<desc>" — 설명은 비어 있을 수 있다(Symbol())
@@ -1999,10 +1999,11 @@ impl Interp {
                                 "'getOwnPropertyDescriptor' trap is not callable",
                             ));
                         }
+                        let tkey = self.trap_key(&key);
                         let trap_result = self.call_value(
                             trap,
                             Some(h),
-                            vec![t.clone(), Value::Str(key.clone())],
+                            vec![t.clone(), tkey],
                         )?;
                         // 결과는 Object 또는 undefined 여야 한다(step 8).
                         if !is_object(&trap_result) && !matches!(trap_result, Value::Undefined) {
@@ -2355,10 +2356,11 @@ impl Interp {
                             "'defineProperty' trap is not callable",
                         ));
                     }
+                    let tkey = self.trap_key(&key);
                     let ok = self.call_value(
                         trap,
                         Some(h),
-                        vec![t.clone(), Value::Str(key.clone()), desc.clone()],
+                        vec![t.clone(), tkey, desc.clone()],
                     )?;
                     if !to_bool(&ok) {
                         return Err(self.throw_error(

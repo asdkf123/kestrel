@@ -2598,6 +2598,17 @@ impl Interp {
 
     // §10.1.10 [[Delete]]: configurable:false 인 own 프로퍼티는 삭제되지 않고 false.
     // 삭제 성공/부재는 true. delete 연산자와 Reflect.deleteProperty 가 공유하는 의미론.
+    // 내부 프로퍼티 키 문자열을 트랩에 넘길 Value 로 — 심볼 키("\0@@…")는 실제
+    // Symbol 값으로 되돌린다. 예전엔 트랩이 모든 키를 Value::Str 로 받아 `case sym:`
+    // 같은 심볼 비교가 어긋났다(get/set/has/delete/define/gOPD 트랩 공통).
+    pub(super) fn trap_key(&self, key: &str) -> Value {
+        if is_symbol_key(key) {
+            builtins::symbol_from_key(key)
+        } else {
+            Value::Str(key.to_string())
+        }
+    }
+
     // §10.5.10 [[Delete]](P) — Proxy 의 deleteProperty 트랩. 트랩 없으면 타깃에 위임,
     // 트랩이 falsy 면 false, 성공을 보고했으나 타깃의 non-configurable/non-extensible
     // 프로퍼티면 TypeError. delete 연산자와 Reflect.deleteProperty(delete_own)가 공유.
@@ -2611,7 +2622,7 @@ impl Interp {
         if !is_callable(&trap) {
             return Err(self.throw_error("TypeError", "'deleteProperty' trap is not callable"));
         }
-        let res = self.call_value(trap, Some(h), vec![t.clone(), Value::Str(key.to_string())])?;
+        let res = self.call_value(trap, Some(h), vec![t.clone(), self.trap_key(key)])?;
         if !to_bool(&res) {
             return Ok(false);
         }
@@ -2756,12 +2767,7 @@ impl Interp {
         let btr = self.call_value(
             trap,
             Some(h),
-            vec![
-                t.clone(),
-                Value::Str(key.to_string()),
-                v.clone(),
-                receiver.clone(),
-            ],
+            vec![t.clone(), self.trap_key(key), v.clone(), receiver.clone()],
         )?;
         if !to_bool(&btr) {
             return Ok(false);
@@ -5887,13 +5893,22 @@ impl Interp {
                 self.proxy_revoked_guard(p)?;
                 let (target, handler) = (&p.0, &p.1);
                 let trap = self.member_get(handler, "get")?;
-                if !matches!(trap, Value::Undefined) {
+                // GetMethod: undefined/null → 타깃 위임, non-callable → TypeError.
+                // 예전엔 !undefined 만 봐서 null 트랩을 호출하려다 죽었다.
+                if matches!(trap, Value::Undefined | Value::Null) {
+                    let target = target.clone();
+                    return self.member_get(&target, key);
+                }
+                if !is_callable(&trap) {
+                    return Err(self.throw_error("TypeError", "'get' trap is not callable"));
+                }
+                {
                     let target = target.clone();
                     let handler = handler.clone();
                     let tr = self.call_value(
                         trap,
                         Some(handler),
-                        vec![target.clone(), Value::Str(key.to_string()), recv.clone()],
+                        vec![target.clone(), self.trap_key(key), recv.clone()],
                     )?;
                     // §10.5.8 [[Get]] invariant: target 의 non-configurable 프로퍼티와
                     // 어긋나면 TypeError — non-writable 데이터는 값 SameValue, getter 없는
@@ -5923,10 +5938,8 @@ impl Interp {
                             }
                         }
                     }
-                    return Ok(tr);
+                    Ok(tr)
                 }
-                let target = target.clone();
-                self.member_get(&target, key)
             }
             Value::Obj(map) => {
                 let v = map.borrow().get(key).cloned();
@@ -7994,7 +8007,7 @@ impl Interp {
                         let res = self.call_value(
                             trap,
                             Some(handler),
-                            vec![target.clone(), Value::Str(key.clone())],
+                            vec![target.clone(), self.trap_key(&key)],
                         )?;
                         let has = to_bool(&res);
                         // §10.5.7 [[HasProperty]] invariant: 트랩이 false 인데 target 에
@@ -8332,7 +8345,7 @@ impl Interp {
                                 Some(handler),
                                 vec![
                                     target.clone(),
-                                    Value::Str(key.clone()),
+                                    self.trap_key(&key),
                                     value.clone(),
                                     receiver,
                                 ],

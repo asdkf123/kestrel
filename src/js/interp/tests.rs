@@ -1763,6 +1763,63 @@ fn proxy_delete_property_trap() {
     ));
 }
 
+// Proxy get 트랩 GetMethod 보강: null 트랩은 위임(호출 아님), non-callable 은
+// TypeError, 트랩 없으면 중첩 프록시 타깃의 get 트랩까지 위임 (§10.5.8).
+#[test]
+fn proxy_get_trap_getmethod() {
+    assert_eq!(run_num("(new Proxy({x:5},{get:null})).x"), 5.0);
+    assert!(run_bool(
+        "var p=new Proxy({},{get:5}); \
+         var t=false; try{ p.x }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 중첩 프록시: 바깥 트랩 없음 → 안쪽 get 트랩 경유
+    assert_eq!(
+        run_num("var inner=new Proxy({},{get:function(t,k){return k==='foo'?42:0;}}); \
+                 var outer=new Proxy(inner,{}); outer.foo"),
+        42.0
+    );
+    assert_eq!(run_num("(new Proxy({y:9},{get:undefined})).y"), 9.0);
+}
+
+// 프록시 트랩은 심볼 키를 실제 Symbol 값으로 받아야 한다(§10.5.* 공통).
+// 예전엔 내부 키 문자열("\0@@…")로 넘겨 트랩 안 `case sym:` 비교가 어긋났다.
+#[test]
+fn proxy_traps_receive_symbol_keys() {
+    // get
+    assert!(run_bool(
+        "var s=Symbol(); var p=new Proxy({},{get:function(t,k){return k===s;}}); p[s]===true"
+    ));
+    // has
+    assert!(run_bool(
+        "var s=Symbol(); var p=new Proxy({},{has:function(t,k){return k===s;}}); (s in p)===true"
+    ));
+    // set
+    assert!(run_bool(
+        "var s=Symbol(); var seen=null; var p=new Proxy({},{set:function(t,k,v){seen=k;return true;}}); \
+         p[s]=1; seen===s"
+    ));
+    // deleteProperty
+    assert!(run_bool(
+        "var s=Symbol(); var dk=null; var p=new Proxy({},{deleteProperty:function(t,k){dk=k;return true;}}); \
+         delete p[s]; dk===s"
+    ));
+    // defineProperty / getOwnPropertyDescriptor
+    assert!(run_bool(
+        "var s=Symbol(); var pk=null; var p=new Proxy({},{defineProperty:function(t,k,d){pk=k;return true;}}); \
+         Object.defineProperty(p,s,{value:1}); pk===s"
+    ));
+    assert!(run_bool(
+        "var s=Symbol(); var gk=null; var p=new Proxy({},{getOwnPropertyDescriptor:function(t,k){gk=k;return undefined;}}); \
+         Object.getOwnPropertyDescriptor(p,s); gk===s"
+    ));
+    // 중첩 프록시(바깥 get:null 위임) + 심볼 키
+    assert_eq!(
+        run_num("var s=Symbol(); var target=new Proxy({},{get:function(t,k){return k===s?1:0;}}); \
+                 var proxy=new Proxy(target,{get:null}); proxy[s]"),
+        1.0
+    );
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
