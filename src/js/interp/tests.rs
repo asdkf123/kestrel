@@ -5054,6 +5054,24 @@ fn computed_class_field_names() {
         "var s=Symbol(); class C { [s]=1; } \
          var d=Object.getOwnPropertyDescriptor(new C(), s); d.enumerable && d.writable && d.configurable"
     ));
+    // 계산된 메서드/접근자 이름 (필드뿐 아니라 method/get/set/static 도): 런타임 키 평가
+    assert_eq!(
+        run_str(
+            "var g='gg',s='ss',m='mm'; \
+             class C { get [g](){return 'got';} set [s](v){this._s=v;} [m](){return 'meth';} \
+                       static get [g](){return 'sgot';} static [m](){return 'smeth';} } \
+             var c=new C(); c.ss=1; c.gg+'|'+c.mm()+'|'+C.gg+'|'+C.mm()+'|'+c._s"
+        ),
+        "got|meth|sgot|smeth|1"
+    );
+    // 계산된 접근자 이름은 "get <key>"/"set <key>" (§10.2.9)
+    assert_eq!(
+        run_str(
+            "var g='k'; class C { get [g](){return 0;} } \
+             Object.getOwnPropertyDescriptor(C.prototype,'k').get.name"
+        ),
+        "get k"
+    );
 }
 
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로

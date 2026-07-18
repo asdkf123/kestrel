@@ -1576,15 +1576,15 @@ impl Parser {
             }
             let mname = self.member_name()?;
             // 필드의 computed 키식은 init 파싱(member_name 재호출 가능) 전에 캡처한다.
-            let field_computed = self.pending_computed.take();
+            let member_computed = self.pending_computed.take();
             // 클래스 필드: 이름 뒤가 '(' 가 아니면 메서드가 아니라 필드 (x = 5; / x;)
             if self.peek() != Some(&Tok::LParen) {
                 let init = if self.eat(&Tok::Assign) { Some(self.assignment()?) } else { None };
                 self.eat(&Tok::Semi);
                 if is_static {
-                    static_fields.push((mname, init, field_computed));
+                    static_fields.push((mname, init, member_computed));
                 } else {
-                    fields.push((mname, init, field_computed));
+                    fields.push((mname, init, member_computed));
                 }
                 continue;
             }
@@ -1596,22 +1596,22 @@ impl Parser {
                 ctor = Some((params, body));
             } else if accessor.as_deref() == Some("get") {
                 if is_static {
-                    static_getters.push((mname, params, body, msrc));
+                    static_getters.push((mname, params, body, msrc, member_computed));
                 } else {
-                    getters.push((mname, params, body, msrc));
+                    getters.push((mname, params, body, msrc, member_computed));
                 }
             } else if accessor.as_deref() == Some("set") {
                 // setter 는 실제로 등록한다. 예전엔 조용히 버려서 obj.x = v 가
                 // 아무 일도 안 했다 (검증 로직/프록시 패턴이 통째로 무력화).
                 if is_static {
-                    static_setters.push((mname, params, body, msrc));
+                    static_setters.push((mname, params, body, msrc, member_computed));
                 } else {
-                    setters.push((mname, params, body, msrc));
+                    setters.push((mname, params, body, msrc, member_computed));
                 }
             } else if is_static {
-                statics.push((mname, params, body, is_generator, is_async, msrc, prologue_len));
+                statics.push((mname, params, body, is_generator, is_async, msrc, prologue_len, member_computed));
             } else {
-                methods.push((mname, params, body, is_generator, is_async, msrc, prologue_len));
+                methods.push((mname, params, body, is_generator, is_async, msrc, prologue_len, member_computed));
             }
         }
         self.pos += 1; // '}'

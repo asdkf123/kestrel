@@ -81,16 +81,16 @@ pub struct ClassDef {
     pub ctor: Option<(Vec<String>, Vec<Stmt>)>,
     // (이름, 파라미터, 몸통, is_generator, is_async, 소스텍스트, prologue_len)
     // prologue_len: 몸통 앞 파라미터 구조분해/기본값 문장 수(제너레이터 메서드 호출 시 실행).
-    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize)>,
-    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize)>,
+    pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize, Option<Expr>)>,
+    pub statics: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize, Option<Expr>)>,
     // get 접근자: 프로퍼티 접근 시 호출돼 값을 산출 (this=인스턴스). (이름,파라미터,몸통,소스)
-    pub getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
+    pub getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>, Option<Expr>)>,
     // set 접근자: 대입 시 호출 (this=인스턴스). 예전엔 파싱만 하고 버렸다 —
     // 그러면 obj.x = v 가 조용히 아무 일도 안 한다.
-    pub setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
+    pub setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>, Option<Expr>)>,
     // static get/set 접근자 (this=클래스). static get observedAttributes 가 대표.
-    pub static_getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
-    pub static_setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>)>,
+    pub static_getters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>, Option<Expr>)>,
+    pub static_setters: Vec<(String, Vec<String>, Vec<Stmt>, Option<std::rc::Rc<str>>, Option<Expr>)>,
     // 인스턴스 필드: (이름, 초기화식, computed키식) — 생성 시 this 에 설정.
     // computed키식이 Some 이면 클래스 정의 시 평가해 실제 키로 쓴다([x]=v 등).
     pub fields: Vec<(String, Option<Expr>, Option<Expr>)>,

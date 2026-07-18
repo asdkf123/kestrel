@@ -7731,27 +7731,34 @@ impl Interp {
             f
         };
         let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false, None, 0), def.name.as_deref().unwrap_or("")));
+        // 계산된 멤버 키([x](){}, get [k](){})는 클래스 정의 시 1회 평가해 실제 키로 쓴다.
+        // computed 가 Some 이면 그 식을 평가한 값이 키, None 이면 정적 이름을 그대로 쓴다.
         let mut methods = HashMap::new();
-        for (name, p, b, gen, asy, src, plen) in &def.methods {
-            methods.insert(name.clone(), named(mk(p, b, *gen, *asy, src.clone(), *plen), name));
+        for (name, p, b, gen, asy, src, plen, computed) in &def.methods {
+            let key = match computed { Some(e) => key_of(&self.eval(e, &class_env)?), None => name.clone() };
+            methods.insert(key.clone(), named(mk(p, b, *gen, *asy, src.clone(), *plen), &key));
         }
         let mut getters = HashMap::new();
         let mut setters = HashMap::new();
-        for (name, p, b, src) in &def.setters {
-            setters.insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("set {}", name)));
+        for (name, p, b, src, computed) in &def.setters {
+            let key = match computed { Some(e) => key_of(&self.eval(e, &class_env)?), None => name.clone() };
+            setters.insert(key.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("set {}", key)));
         }
         let mut static_getters = HashMap::new();
-        for (name, p, b, src) in &def.static_getters {
+        for (name, p, b, src, computed) in &def.static_getters {
+            let key = match computed { Some(e) => key_of(&self.eval(e, &class_env)?), None => name.clone() };
             static_getters
-                .insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", name)));
+                .insert(key.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", key)));
         }
         let mut static_setters = HashMap::new();
-        for (name, p, b, src) in &def.static_setters {
+        for (name, p, b, src, computed) in &def.static_setters {
+            let key = match computed { Some(e) => key_of(&self.eval(e, &class_env)?), None => name.clone() };
             static_setters
-                .insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("set {}", name)));
+                .insert(key.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("set {}", key)));
         }
-        for (name, p, b, src) in &def.getters {
-            getters.insert(name.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", name)));
+        for (name, p, b, src, computed) in &def.getters {
+            let key = match computed { Some(e) => key_of(&self.eval(e, &class_env)?), None => name.clone() };
+            getters.insert(key.clone(), named(mk(p, b, false, false, src.clone(), 0), &format!("get {}", key)));
         }
         // 인스턴스 필드: 초기화식을 무인자 함수로 감싸(this 바인딩+env) 생성 시 호출.
         // computed 키([x]=v)는 클래스 정의 시 1회 평가해 실제 키로 쓴다(§15.7.14).
@@ -7768,12 +7775,13 @@ impl Interp {
         }
         // 정적 멤버는 parent 가 cls 로 이동하기 전에 만든다 (mk 가 parent 참조)
         let mut statics = HashMap::new();
-        for (name, p, b, gen, asy, src, plen) in &def.statics {
-            let f = named(mk(p, b, *gen, *asy, src.clone(), *plen), name);
-            statics.insert(name.clone(), Value::Fn(f));
+        for (name, p, b, gen, asy, src, plen, computed) in &def.statics {
+            let key = match computed { Some(e) => key_of(&self.eval(e, &class_env)?), None => name.clone() };
+            let f = named(mk(p, b, *gen, *asy, src.clone(), *plen), &key);
+            statics.insert(key.clone(), Value::Fn(f));
             // static **메서드**는 비열거다 (§15.7.14). static **필드**는 열거 가능하다 —
             // 그래서 구분해서 표시한다. 예전엔 둘 다 같은 맵에 섞여 구분이 없었다.
-            statics.insert(nonenum_marker(name), Value::Bool(true));
+            statics.insert(nonenum_marker(&key), Value::Bool(true));
         }
         let cls = Rc::new(JsClass {
             priv_id,
