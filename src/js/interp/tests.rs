@@ -6891,3 +6891,17 @@ fn date_instance_prototype_chain() {
     // __proto__ 는 열거되지 않는다.
     assert_eq!(run_num("Object.keys(new Date()).length"), 0.0);
 }
+
+#[test]
+fn date_tojson_generic() {
+    // §21.4.4.37: ToObject → ToPrimitive(number) → (Number 이고 비유한이면 null) → Invoke(O,toISOString).
+    assert_eq!(run_str("var j=Date.prototype.toJSON; Number.prototype.toISOString=function(){return 'str'}; j.call(10)"), "str");
+    // tv 가 문자열이어도 null 이 아니라 toISOString 을 호출
+    assert_eq!(run_str("Date.prototype.toJSON.call({toISOString:function(){return 'X'}})"), "X");
+    // 무효 날짜는 null
+    assert!(run_bool("new Date(NaN).toJSON()===null"));
+    // 유효 날짜는 ISO
+    assert_eq!(run_str("new Date(0).toJSON()"), "1970-01-01T00:00:00.000Z");
+    // null/undefined this → TypeError
+    assert!(run_bool("var t=false; try{ Date.prototype.toJSON.call(undefined) }catch(e){ t=e instanceof TypeError } t"));
+}

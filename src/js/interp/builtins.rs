@@ -3977,8 +3977,9 @@ impl Interp {
                         self.throw_error("TypeError", "Cannot convert Date to primitive value")
                     );
                 }
-                // ── toJSON(key) (§21.4.4.37) ──
-                // 제네릭: ToPrimitive(number)가 유한하지 않으면 null, 아니면 this.toISOString() 호출.
+                // ── toJSON(key) (§21.4.4.37) ── 제네릭:
+                // 1. O = ToObject(this)  2. tv = ToPrimitive(O, number)
+                // 3. tv 가 Number 이고 유한하지 않으면 null  4. Invoke(O,"toISOString") 반환.
                 if matches!(field, ToJson) {
                     let recvv = recv.clone().unwrap_or(Value::Undefined);
                     if matches!(recvv, Value::Undefined | Value::Null) {
@@ -3986,16 +3987,20 @@ impl Interp {
                             self.throw_error("TypeError", "Date.prototype.toJSON called on null/undefined")
                         );
                     }
-                    let tv = self.to_primitive_or_throw(recvv.clone(), false)?;
-                    let n = to_num(&tv);
-                    if !n.is_finite() {
-                        return Ok(Value::Null);
+                    // ToObject: 원시값은 래퍼로 박싱(toISOString 은 O 에서 찾는다).
+                    let o = self.to_object_value(recvv);
+                    let tv = self.to_primitive_or_throw(o.clone(), false)?;
+                    // null 은 tv 가 "Number 이면서 비유한"일 때만 (문자열/심볼 tv 는 통과).
+                    if let Value::Num(n) = &tv {
+                        if !n.is_finite() {
+                            return Ok(Value::Null);
+                        }
                     }
-                    let f = self.member_get(&recvv, "toISOString")?;
+                    let f = self.member_get(&o, "toISOString")?;
                     if !is_callable(&f) {
                         return Err(self.throw_error("TypeError", "toISOString is not callable"));
                     }
-                    return self.call_value(f, Some(recvv), vec![]);
+                    return self.call_value(f, Some(o), vec![]);
                 }
                 // ── 그 외 메서드: this 가 [[DateValue]] 를 가진 Date 여야 한다 (§21.4.4) ──
                 let millis = match &recv {
