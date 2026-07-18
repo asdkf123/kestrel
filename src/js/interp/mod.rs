@@ -276,6 +276,7 @@ pub struct Interp {
     // Number/Boolean/RegExp.prototype — core-js uncurryThis(Constructor.prototype.method) 용.
     number_proto: Value,
     boolean_proto: Value,
+    bigint_proto: Value,
     regexp_proto: Value,
     // Map/Set/Date/Symbol.prototype — 번들이 Map.prototype.get 등으로 참조(정체성 보존).
     map_proto: Value,
@@ -1183,6 +1184,19 @@ impl Interp {
             ("toString", Native::PrimToString(PrimBrand::Boolean)),
             ("valueOf", Native::PrimValueOf(PrimBrand::Boolean)),
         ]);
+        // BigInt.prototype (§21.2.3) — toString/toLocaleString/valueOf + @@toStringTag.
+        // 예전엔 BigInt.prototype 자체가 없어 BigInt.prototype.x=… 가 "undefined 에 할당"
+        // 으로 죽었다(Intl 폴리필/toLocaleString 재정의가 통째로 불가).
+        let bigint_proto = mk_proto(vec![
+            ("toString", Native::BigIntToString),
+            ("toLocaleString", Native::BigIntToString),
+            ("valueOf", Native::ValueOfSelf),
+        ]);
+        if let Value::Obj(m) = &bigint_proto {
+            let mut b = m.borrow_mut();
+            b.insert("\u{0}@@toStringTag".to_string(), Value::Str("BigInt".to_string()));
+            b.insert(nonenum_marker("\u{0}@@toStringTag"), Value::Bool(true));
+        }
         let regexp_proto = mk_proto(vec![
             ("exec", Native::RegexExec),
             ("test", Native::RegexTest),
@@ -1308,6 +1322,7 @@ impl Interp {
         };
         link_ctor(&number_proto, Native::NumberCtor);
         link_ctor(&boolean_proto, Native::BooleanCtor);
+        link_ctor(&bigint_proto, Native::BigIntCtor);
         link_ctor(&symbol_proto, Native::SymbolCtor);
         link_ctor(&regexp_proto, Native::RegExpCtor);
         link_ctor(&map_proto, Native::MapCtor);
@@ -1456,6 +1471,7 @@ impl Interp {
             string_proto,
             number_proto,
             boolean_proto,
+            bigint_proto,
             regexp_proto,
             base_url: None,
             module_sources: HashMap::new(),
@@ -1772,6 +1788,8 @@ impl Interp {
             Value::Str(_) => "String",
             Value::Num(_) => "Number",
             Value::Bool(_) => "Boolean",
+            Value::BigInt(_) => "BigInt",
+            Value::Symbol(_) => "Symbol",
             Value::Fn(_) | Value::Native(_) | Value::Bound(_) => "Function",
             Value::MapVal(_) => "Map",
             Value::SetVal(_) => "Set",
@@ -6718,6 +6736,10 @@ impl Interp {
                 "prototype" => self.boolean_proto.clone(),
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
+            Value::Native(Native::BigIntCtor) => Ok(match key {
+                "prototype" => self.bigint_proto.clone(),
+                _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
+            }),
             Value::Native(Native::RegExpCtor) => Ok(match key {
                 "prototype" => self.regexp_proto.clone(),
                 "escape" => Value::Native(Native::RegExpEscape),
@@ -6758,12 +6780,21 @@ impl Interp {
                 self.member_get(&proto, key)
             }
             // BigInt 메서드: toString(radix) / toLocaleString / valueOf
-            Value::BigInt(_) => Ok(match key {
-                "toString" | "toLocaleString" => Value::Native(Native::BigIntToString),
-                "valueOf" => Value::Native(Native::ValueOfSelf),
-                "constructor" => Value::Native(Native::BigIntCtor),
-                _ => Value::Undefined,
-            }),
+            Value::BigInt(_) => {
+                // BigInt.prototype 에 얹힌 것(사용자 재정의 toLocaleString 등)이 먼저다.
+                // 예전엔 네이티브 하드코딩만 봐서 BigInt.prototype.toLocaleString 재정의가
+                // 무시됐다(Intl 폴리필 무력화).
+                let over = proto_prop(&self.bigint_proto, key);
+                if !matches!(over, Value::Undefined) {
+                    return Ok(over);
+                }
+                Ok(match key {
+                    "toString" | "toLocaleString" => Value::Native(Native::BigIntToString),
+                    "valueOf" => Value::Native(Native::ValueOfSelf),
+                    "constructor" => Value::Native(Native::BigIntCtor),
+                    _ => Value::Undefined,
+                })
+            }
             // 숫자 메서드: (5).toFixed(2), n.toString(radix). 나머지는 Number.prototype 폴백.
             // 프로토타입에 얹힌 것이 먼저다 (표준: 메서드는 프로토타입에서 찾는다).
             // 예전엔 네이티브를 먼저 봐서, 페이지가 Number.prototype.toLocaleString 을

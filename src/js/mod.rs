@@ -2153,7 +2153,11 @@ var __kTAProto = {
   keys: function(){ __kTAValidate(this); var s=this; return (function*(){ for (var i=0;i<s.length;i++) yield i; })(); },
   entries: function(){ __kTAValidate(this); var s=this; return (function*(){ for (var i=0;i<s.length;i++) yield [i, s[i]]; })(); },
   values: function(){ __kTAValidate(this); var s=this; return (function*(){ for (var i=0;i<s.length;i++) yield s[i]; })(); },
-  toLocaleString: function(){ __kTAValidate(this); return this.join(','); }
+  toLocaleString: function(){ __kTAValidate(this); var len=this.length, out='';
+    // §23.2.3.32: 각 원소의 toLocaleString 을 호출해 join(','). 예전엔 join(toString)라
+    // 사용자 재정의 toLocaleString(및 BigInt.prototype.toLocaleString)을 무시했다.
+    for (var i=0;i<len;i++){ if(i>0) out+=','; var e=this[i]; if(e!==undefined&&e!==null) out+=e.toLocaleString(); }
+    return out; }
 };
 __kTAProto[Symbol.iterator] = __kTAProto.values;
 // length/byteLength 는 %TypedArray%.prototype 의 **accessor** 다 (§23.2.3.18/.2). 인스턴스

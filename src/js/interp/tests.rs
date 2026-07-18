@@ -3563,6 +3563,20 @@ fn bigint_is_exact_and_typed() {
     // 문자열 결합은 허용
     assert_eq!(run_str("'x' + 1n"), "x1");
     assert_eq!(run_str("try { 1n / 0n } catch (e) { 'RangeError' }"), "RangeError");
+    // BigInt.prototype 존재 + 재정의 가능(§21.2.3). 예전엔 undefined 라 대입이 죽었다.
+    assert_eq!(run_str("typeof BigInt.prototype"), "object");
+    assert_eq!(run_str("typeof BigInt.prototype.toString"), "function");
+    assert_eq!(run_str("Object.prototype.toString.call(5n)"), "[object BigInt]");
+    assert_eq!(run_str("String((5n).constructor === BigInt)"), "true");
+    assert_eq!(run_str("String((Symbol()).constructor === Symbol)"), "true");
+    // BigInt.prototype.toLocaleString 재정의가 반영된다 + TypedArray.toLocaleString 이
+    // 각 원소의 toLocaleString 을 부른다(§23.2.3.32). BigInt64Array 는 프렐류드 제공이라
+    // prelude_str 로 실행.
+    assert_eq!(
+        prelude_str("BigInt.prototype.toLocaleString=function(){return 'L'+this.toString();}; \
+                 new BigInt64Array([42n,7n]).toLocaleString()"),
+        "L42,L7"
+    );
 }
 
 // 태그드 템플릿의 strings.raw — styled-components / lit-html / graphql-tag 가
