@@ -7372,3 +7372,18 @@ fn regex_symbol_method_metadata() {
     assert_eq!(run_num("'hello'.search(/l/)"), 2.0);
     assert_eq!(run_str("JSON.stringify('a1b2'.match(/\\d/g))"), "[\"1\",\"2\"]");
 }
+
+#[test]
+fn regex_symbol_search_protocol() {
+    // §22.2.6.14: brand + ToString + lastIndex 저장/복원 + RegExpExec + result.index.
+    assert_eq!(run_num("/world/[Symbol.search]('hello world')"), 6.0);
+    assert_eq!(run_num("/xyz/[Symbol.search]('hello')"), -1.0);
+    // lastIndex 복원.
+    assert!(run_bool("var re=/o/g; re.lastIndex=5; var r=re[Symbol.search]('hello world'); r===4 && re.lastIndex===5"));
+    // custom exec.
+    assert_eq!(run_num("var o={exec:function(){return {index:42}},lastIndex:0}; Object.setPrototypeOf(o,RegExp.prototype); o[Symbol.search]('x')"), 42.0);
+    assert_eq!(run_num("var o={exec:function(){return null},lastIndex:0}; Object.setPrototypeOf(o,RegExp.prototype); o[Symbol.search]('x')"), -1.0);
+    // brand + 예외 전파.
+    assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.search].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ /a/[Symbol.search]({toString:function(){throw new RangeError('s')}}) }catch(e){ t=e instanceof RangeError } t"));
+}

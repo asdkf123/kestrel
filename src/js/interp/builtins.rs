@@ -1403,6 +1403,35 @@ impl Interp {
         Ok(Value::Num(-1.0))
     }
 
+    // RegExpExec (§22.2.7.1): exec = Get(R,"exec"); IsCallable 이면 Call(exec, R, [S]) 후
+    // 결과가 Object/null 아니면 TypeError. 아니면 내장 exec(정규식 필요).
+    pub(super) fn regexp_exec(&mut self, r: &Value, s: &str) -> Result<Value, String> {
+        let exec = self.member_get(r, "exec")?;
+        if is_callable(&exec) {
+            let result =
+                self.call_value(exec, Some(r.clone()), vec![Value::Str(s.to_string())])?;
+            if !is_object(&result) && !matches!(result, Value::Null) {
+                return Err(self.throw_error(
+                    "TypeError",
+                    "RegExp exec method returned something other than an Object or null",
+                ));
+            }
+            return Ok(result);
+        }
+        if regex_src_flags(r).is_none() {
+            return Err(self.throw_error("TypeError", "RegExpExec called on non-RegExp"));
+        }
+        self.call_native(Native::RegexExec, Some(r.clone()), vec![Value::Str(s.to_string())])
+    }
+
+    // Set(O, P, V, Throw=true) (§7.3.4): 실패하면 TypeError. 접근자 setter 예외는 전파.
+    pub(super) fn set_throw(&mut self, o: &Value, key: &str, v: Value) -> Result<(), String> {
+        if !self.ordinary_set(o, key, v, o)? {
+            return Err(self.throw_error("TypeError", format!("Cannot assign to property '{}'", key)));
+        }
+        Ok(())
+    }
+
     // Math 인자 강제변환: args[i] 를 ToNumber (없으면 NaN). valueOf/@@toPrimitive 관찰 + 예외 전파.
     fn math_arg(&mut self, args: &[Value], i: usize) -> Result<f64, String> {
         match args.get(i) {
@@ -4796,8 +4825,33 @@ impl Interp {
             // args=[문자열, ...]. 기존 String 측 구현으로 위임한다(수신자/인자 교환).
             Native::RegexSym(op) => {
                 let re = recv.unwrap_or(Value::Undefined);
+                if let natives::StrOp::Search = op {
+                    // §22.2.6.14 RegExp.prototype[@@search](string): brand + ToString +
+                    // lastIndex 저장/복원 + RegExpExec + result.index.
+                    if !is_object(&re) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "RegExp.prototype[Symbol.search] called on non-object",
+                        ));
+                    }
+                    let s = self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                    let prev = self.member_get(&re, "lastIndex")?;
+                    if !same_value(&prev, &Value::Num(0.0)) {
+                        self.set_throw(&re, "lastIndex", Value::Num(0.0))?;
+                    }
+                    let result = self.regexp_exec(&re, &s)?;
+                    let cur = self.member_get(&re, "lastIndex")?;
+                    if !same_value(&cur, &prev) {
+                        self.set_throw(&re, "lastIndex", prev)?;
+                    }
+                    return if matches!(result, Value::Null) {
+                        Ok(Value::Num(-1.0))
+                    } else {
+                        self.member_get(&result, "index")
+                    };
+                }
+                // 나머지(@@match/@@replace/@@split/@@matchAll)는 아직 String 측에 위임.
                 let s = args.first().map(to_display).unwrap_or_default();
-                // str.<op>(re, ...rest): String 수신자 + 정규식 인자 + 나머지(치환/limit)
                 let mut fwd = vec![re];
                 fwd.extend(args.into_iter().skip(1));
                 self.call_native(Native::Str(op), Some(Value::Str(s)), fwd)
