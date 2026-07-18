@@ -5115,7 +5115,8 @@ impl Interp {
             }
             match proto {
                 Value::Obj(p) => {
-                    if !is_internal_key(key) && p.borrow().contains_key(key) {
+                    // 심볼 키("\0@@…")는 내부 마커와 달리 실제 own 프로퍼티다(예외 허용).
+                    if (!is_internal_key(key) || is_symbol_key(key)) && p.borrow().contains_key(key) {
                         return true;
                     }
                     match p.borrow().get("__proto__").cloned() {
@@ -5157,7 +5158,8 @@ impl Interp {
     pub(super) fn has_property(&self, obj: &Value, key: &str) -> bool {
         match obj {
             Value::Obj(m) => {
-                if !is_internal_key(key) && m.borrow().contains_key(key) {
+                // 심볼 키("\0@@…")는 내부 마커와 달리 실제 own 프로퍼티다(예외 허용).
+                if (!is_internal_key(key) || is_symbol_key(key)) && m.borrow().contains_key(key) {
                     return true;
                 }
                 // 프로토타입 체인(배열/함수 프로토 포함)을 value_chain_has 로 걷는다 —
@@ -7401,16 +7403,11 @@ impl Interp {
                         return self.binary(BinOp::In, l, target);
                     }
                     Value::Obj(m) => {
-                        let mut cur = Some(m.clone());
-                        while let Some(o) = cur {
-                            let b = o.borrow();
-                            if b.contains_key(&key) {
-                                return Ok(Value::Bool(true));
-                            }
-                            cur = match b.get("__proto__") {
-                                Some(Value::Obj(p)) => Some(p.clone()),
-                                _ => None,
-                            };
+                        // HasProperty(§7.3.11): own + 프로토타입 체인(배열/함수 프로토 포함).
+                        // has_property 로 통일 — 예전엔 Value::Obj 체인만 걸어 배열 프로토타입의
+                        // 상속 인덱스('0' in (proto 가 배열인 객체))를 놓쳤다.
+                        if self.has_property(&r, &key) {
+                            return Ok(Value::Bool(true));
                         }
                         // 전역 객체면 전역 환경의 바인딩도 프로퍼티다
                         Value::Bool(self.global_has(m, &key))

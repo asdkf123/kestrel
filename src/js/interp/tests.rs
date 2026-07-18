@@ -7153,3 +7153,18 @@ fn array_generic_holes_and_has_property_chain() {
     // 실제 배열/구멍 보존.
     assert_eq!(run_str("JSON.stringify([1,,3].map(function(x){return x*2}))"), "[2,null,6]");
 }
+
+#[test]
+fn in_operator_prototype_chain_and_symbol() {
+    // `in` = HasProperty(§13.10): 배열 프로토타입 상속 인덱스/메서드.
+    let s = "function foo(){} foo.prototype=[1,2,3]; var f=new foo();";
+    assert!(run_bool(&format!("{} '0' in f", s)));
+    assert!(run_bool(&format!("{} 'length' in f", s)));
+    assert!(run_bool(&format!("{} 'filter' in f", s)));
+    assert!(!run_bool(&format!("{} '99' in f", s)));
+    // 심볼 키 in (내부 마커로 걸러지면 안 됨).
+    assert!(run_bool("var k=Symbol(); var o={}; o[k]=1; k in o"));
+    // 기존 동작 보존.
+    assert!(run_bool("'a' in {a:1} && 'push' in [] && (0 in [1,2])"));
+    assert!(!run_bool("'z' in {a:1}"));
+}
