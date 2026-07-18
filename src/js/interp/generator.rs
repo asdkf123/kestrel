@@ -1063,8 +1063,13 @@ impl Interp {
     // for await 용: @@asyncIterator 를 **먼저** 찾는다 (없으면 동기 이터레이터로 폴백 — 표준).
     // 이걸 안 하면 진짜 비동기 이터러블(스트림 리더 등)에서 "반복 가능하지 않음" 이 된다.
     pub(super) fn try_get_async_iterator(&mut self, v: &Value) -> Result<Option<Value>, String> {
+        // GetMethod(V, @@asyncIterator): undefined/null 이면 @@iterator 로 폴백(async-from-sync),
+        // 있으나 호출 불가면 TypeError(§7.3.10). 예전엔 non-callable 도 폴백해 통과시켰다.
         let itf = self.member_get(v, "\u{0}@@asyncIterator")?;
-        if is_callable(&itf) {
+        if !matches!(itf, Value::Undefined | Value::Null) {
+            if !is_callable(&itf) {
+                return Err(self.throw_error("TypeError", "@@asyncIterator is not a function"));
+            }
             return Ok(Some(self.call_value(itf, Some(v.clone()), vec![])?));
         }
         self.try_get_iterator(v)
