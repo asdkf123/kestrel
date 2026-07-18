@@ -7998,3 +7998,11 @@ fn object_spread_excludes_nonenumerable() {
     assert_eq!(run_str("JSON.stringify({...{a:1,b:2},c:3})"), "{\"a\":1,\"b\":2,\"c\":3}");
     assert_eq!(run_str("JSON.stringify({...{x:1},...{y:2}})"), "{\"x\":1,\"y\":2}");
 }
+
+#[test]
+fn spread_getter_copies_data_value() {
+    // §7.3.25 CopyDataProperties: {...obj} 은 접근자를 Get(호출)한 값을 데이터로 복사.
+    assert!(run_bool("var o={get x(){return 42},y:1}; var s={...o}; s.x===42 && Object.getOwnPropertyDescriptor(s,'x').value===42 && !Object.getOwnPropertyDescriptor(s,'x').get"));
+    // 무회귀.
+    assert_eq!(run_str("JSON.stringify({...{a:1,b:2},c:3})"), "{\"a\":1,\"b\":2,\"c\":3}");
+}

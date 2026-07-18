@@ -3791,7 +3791,13 @@ impl Interp {
                                 // non-enumerable 프로퍼티·배열 구멍은 제외. 예전엔 Obj 는
                                 // raw iter(non-enumerable 포함), 배열은 구멍/non-enum 포함.
                                 for (k, val) in builtins::own_enumerable_entries(&v) {
-                                    map.insert(k, val);
+                                    // 접근자는 Get(getter 호출)한 값을 데이터 프로퍼티로 복사.
+                                    let dv = if matches!(val, Value::Accessor(_)) {
+                                        self.member_get(&v, &k)?
+                                    } else {
+                                        val
+                                    };
+                                    map.insert(k, dv);
                                 }
                             }
                             _ => {}
