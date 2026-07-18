@@ -7168,3 +7168,17 @@ fn in_operator_prototype_chain_and_symbol() {
     assert!(run_bool("'a' in {a:1} && 'push' in [] && (0 in [1,2])"));
     assert!(!run_bool("'z' in {a:1}"));
 }
+
+#[test]
+fn array_sort_comparefn_typeerror() {
+    // §23.1.3.30: comparefn 이 undefined 도 함수도 아니면 TypeError.
+    for bad in ["null", "5", "'x'", "true", "{}"] {
+        assert!(run_bool(&format!(
+            "var t=false; try{{ [3,1,2].sort({}); }}catch(e){{ t=e instanceof TypeError }} t", bad
+        )), "{}", bad);
+    }
+    // undefined/함수는 정상.
+    assert_eq!(run_str("JSON.stringify([3,1,2].sort())"), "[1,2,3]");
+    assert_eq!(run_str("JSON.stringify([3,1,2].sort(undefined))"), "[1,2,3]");
+    assert_eq!(run_str("JSON.stringify([3,1,2].sort(function(a,b){return b-a}))"), "[3,2,1]");
+}

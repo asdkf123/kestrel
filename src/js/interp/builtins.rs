@@ -6254,6 +6254,14 @@ impl Interp {
                     ArrOp::Sort => {
                         // 제자리 정렬 후 같은 배열 반환. 비교자 있으면 부호, 없으면 문자열 비교.
                         // 비교자가 Result 를 반환하므로 삽입정렬로 에러를 전파한다.
+                        // §23.1.3.30: comparefn 이 undefined 도 함수도 아니면 TypeError.
+                        let cmp_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        if !matches!(cmp_arg, Value::Undefined) && !is_callable(&cmp_arg) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "The comparison function must be either a function or undefined",
+                            ));
+                        }
                         let cmp = args.first().cloned().filter(|v| !matches!(v, Value::Undefined));
                         let mut items: Vec<Value> = a.borrow().clone();
                         let n = items.len();
