@@ -7047,3 +7047,16 @@ fn string_split_limit_regex_capture() {
     // 정규식 + limit.
     assert_eq!(run_str("JSON.stringify('a1b2c3d'.split(/\\d/, 2))"), "[\"a\",\"b\"]");
 }
+
+#[test]
+fn string_match_search_regexp_create() {
+    // §22.2.3.1 RegExpCreate: 문자열/undefined 인자를 '패턴'으로 컴파일(이스케이프 X, undefined→"").
+    assert_eq!(run_str("JSON.stringify('undefined'.match(undefined))"), "[\"\"]");
+    assert_eq!(run_str("JSON.stringify('abc'.match(''))"), "[\"\"]");
+    // '.' 는 와일드카드 (리터럴 아님).
+    assert_eq!(run_str("JSON.stringify('axc'.match('a.c'))"), "[\"axc\"]");
+    assert_eq!(run_num("'abc'.search('.')"), 0.0);
+    assert_eq!(run_num("'hello world'.search('o')"), 4.0);
+    // matchAll.
+    assert_eq!(run_str("JSON.stringify([...'a1b2'.matchAll(/\\d/g)].map(function(m){return m[0]}))"), "[\"1\",\"2\"]");
+}

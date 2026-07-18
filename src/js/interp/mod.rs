@@ -7205,18 +7205,6 @@ impl Interp {
     // IsRegExp (§7.2.8): Symbol.match 가 있으면 그 truthiness, 없으면 [[RegExpMatcher]]
     // 슬롯(우리 표현: __isRegex) 유무. startsWith/includes/endsWith 가 정규식 인자를
     // 거부(§22.1.3.7 등)하는 데 쓴다.
-    pub(super) fn is_regexp(&mut self, v: &Value) -> bool {
-        if !matches!(v, Value::Obj(_)) {
-            return false;
-        }
-        if let Ok(m) = self.member_get(v, "\u{0}@@match") {
-            if !matches!(m, Value::Undefined) {
-                return to_bool(&m);
-            }
-        }
-        regex_src_flags(v).is_some()
-    }
-
     // IsRegExp (§22.1.4.1) 의 예외 전파판: @@match 접근자가 던지면 그대로 전파한다.
     pub(super) fn is_regexp_p(&mut self, v: &Value) -> Result<bool, String> {
         if !matches!(v, Value::Obj(_)) {

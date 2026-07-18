@@ -5378,9 +5378,13 @@ impl Interp {
                         let (src, flags) = match args.first().and_then(regex_src_flags) {
                             Some(sf) => sf,
                             None => {
-                                let s0 = self
-                                    .to_string_value(args.first().unwrap_or(&Value::Undefined))?;
-                                (regex_escape(&s0), String::new())
+                                // RegExpCreate(§22.2.3.1): 인자를 정규식 '패턴'으로 컴파일한다
+                                // (이스케이프 안 함). undefined → 빈 패턴("").
+                                let pat = match args.first() {
+                                    None | Some(Value::Undefined) => String::new(),
+                                    Some(v) => self.to_string_value(v)?,
+                                };
+                                (pat, String::new())
                             }
                         };
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
@@ -5399,9 +5403,13 @@ impl Interp {
                         let (src, flags) = match args.first().and_then(regex_src_flags) {
                             Some(sf) => sf,
                             None => {
-                                let s0 = self
-                                    .to_string_value(args.first().unwrap_or(&Value::Undefined))?;
-                                (regex_escape(&s0), String::new())
+                                // RegExpCreate(§22.2.3.1): 인자를 정규식 '패턴'으로 컴파일한다
+                                // (이스케이프 안 함). undefined → 빈 패턴("").
+                                let pat = match args.first() {
+                                    None | Some(Value::Undefined) => String::new(),
+                                    Some(v) => self.to_string_value(v)?,
+                                };
+                                (pat, String::new())
                             }
                         };
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
@@ -5433,9 +5441,13 @@ impl Interp {
                         let (src, flags) = match args.first().and_then(regex_src_flags) {
                             Some(sf) => sf,
                             None => {
-                                let s0 = self
-                                    .to_string_value(args.first().unwrap_or(&Value::Undefined))?;
-                                (regex_escape(&s0), String::new())
+                                // RegExpCreate(§22.2.3.1): 인자를 정규식 '패턴'으로 컴파일한다
+                                // (이스케이프 안 함). undefined → 빈 패턴("").
+                                let pat = match args.first() {
+                                    None | Some(Value::Undefined) => String::new(),
+                                    Some(v) => self.to_string_value(v)?,
+                                };
+                                (pat, String::new())
                             }
                         };
                         let re = crate::js::regex::Regex::compile_pattern(&src, &flags)

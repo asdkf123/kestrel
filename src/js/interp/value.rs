@@ -400,18 +400,6 @@ pub(super) fn expand_replacement(
     out
 }
 
-// 문자열을 정규식 리터럴로 이스케이프 (str.match('a.b') 처럼 문자열 인자용)
-pub(super) fn regex_escape(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if "\\^$.|?*+()[]{}".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
-
 // getElementsByClassName/TagName: id 서브트리에서 매칭 요소 수집.
 // skip_self=true 면 스코프 요소 자신은 제외(자손만).
 pub(super) fn collect_elements(
