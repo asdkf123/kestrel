@@ -7061,17 +7061,15 @@ impl Interp {
             return Ok(p);
         }
         let prim = |res: &Value| !is_object(res);
-        // Symbol.toPrimitive 가 있으면 우선 (예외/비원시 결과 모두 표준대로 처리).
-        if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
-            if is_callable(&f) {
-                let res = self.call_value(f, Some(v.clone()), vec![Value::Str(hint.to_string())])?;
-                if prim(&res) {
-                    return Ok(res);
-                }
-                return Err(
-                    self.throw_error("TypeError", "Cannot convert object to primitive value")
-                );
+        // GetMethod(@@toPrimitive) — 접근자가 던지면 그대로 전파(? 연산). 예전엔 if-let Ok
+        // 로 삼켜서 abrupt getter 가 조용히 valueOf 로 넘어갔다.
+        let exotic = self.member_get(&v, "\u{0}@@toPrimitive")?;
+        if is_callable(&exotic) {
+            let res = self.call_value(exotic, Some(v.clone()), vec![Value::Str(hint.to_string())])?;
+            if prim(&res) {
+                return Ok(res);
             }
+            return Err(self.throw_error("TypeError", "Cannot convert object to primitive value"));
         }
         // OrdinaryToPrimitive: "string" 힌트만 toString 우선, 나머지("default"/"number")는 valueOf 우선.
         let order: [&str; 2] =

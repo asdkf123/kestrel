@@ -6931,3 +6931,14 @@ fn date_call_as_function_and_year_format() {
     // new Date(...) 는 여전히 인스턴스.
     assert!(run_bool("new Date(0) instanceof Date"));
 }
+
+#[test]
+fn to_primitive_abrupt_symbol_getter_propagates() {
+    // GetMethod(@@toPrimitive) 의 접근자가 던지면 그대로 전파(§7.1.1). 예전엔 삼켰다.
+    assert!(run_bool(
+        "var o={}; Object.defineProperty(o,Symbol.toPrimitive,{get:function(){throw new TypeError('x')}}); \
+         var t=false; try{ new Date(o); }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // @@toPrimitive 없으면 valueOf/toString 정상 경로.
+    assert_eq!(run_num("1 + {valueOf:function(){return 2}}"), 3.0);
+}
