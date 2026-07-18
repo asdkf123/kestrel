@@ -7327,3 +7327,19 @@ fn regex_exec_test_brand_and_coercion() {
     assert_eq!(run_str("JSON.stringify(/(a)(b)/.exec('xabz'))"), "[\"ab\",\"a\",\"b\"]");
     assert!(run_bool("/a/.test('bab') && !/z/.test('bab')"));
 }
+
+#[test]
+fn regex_flags_generic_accessor() {
+    // §22.2.6.4: get flags 는 각 플래그를 [[Get]]+ToBoolean 으로 읽어 dgimsuvy 순 조립.
+    assert_eq!(run_str("/a/gi.flags"), "gi");
+    assert_eq!(run_str("/a/dgimsuy.flags"), "dgimsuy");
+    let g = "var g=Object.getOwnPropertyDescriptor(RegExp.prototype,'flags').get; ";
+    // 제네릭: 정규식 아닌 객체도 플래그 프로퍼티로 동작.
+    assert_eq!(run_str(&format!("{}g.call({{global:true,ignoreCase:'x',dotAll:1}})", g)), "gis");
+    assert_eq!(run_str(&format!("{}g.call({{}})", g)), "");
+    // 비객체 → TypeError, getter 예외 전파.
+    assert!(run_bool(&format!("{}var t=false; try{{ g.call(5) }}catch(e){{ t=e instanceof TypeError }} t", g)));
+    assert!(run_bool(&format!("{}var t=false; try{{ g.call({{get global(){{throw new RangeError('x')}}}}) }}catch(e){{ t=e instanceof RangeError }} t", g)));
+    // RegExp.prototype.flags === "".
+    assert_eq!(run_str("RegExp.prototype.flags"), "");
+}

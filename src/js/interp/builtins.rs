@@ -4730,11 +4730,33 @@ impl Interp {
                         // 빈 패턴/프로토타입 → "(?:)" (§22.2.6.13)
                         _ => "(?:)".to_string(),
                     }),
-                    RA::Flags => Value::Str(match &sf {
-                        // 표준 순서 d,g,i,m,s,u,v,y 로 정렬 (§22.2.6.4)
-                        Some((_, f)) => "dgimsuvy".chars().filter(|c| f.contains(*c)).collect(),
-                        None => String::new(),
-                    }),
+                    RA::Flags => {
+                        // §22.2.6.4: this 가 객체가 아니면 TypeError. 각 플래그 프로퍼티를
+                        // [[Get]]+ToBoolean 으로 읽어(예외 전파) d,g,i,m,s,u,v,y 순으로 조립한다.
+                        // 제네릭이라 정규식 아닌 객체(플래그 프로퍼티만 가진)도 동작한다.
+                        if !is_object(&this) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "RegExp.prototype.flags getter called on non-object",
+                            ));
+                        }
+                        let mut out = String::new();
+                        for (prop, ch) in [
+                            ("hasIndices", 'd'),
+                            ("global", 'g'),
+                            ("ignoreCase", 'i'),
+                            ("multiline", 'm'),
+                            ("dotAll", 's'),
+                            ("unicode", 'u'),
+                            ("unicodeSets", 'v'),
+                            ("sticky", 'y'),
+                        ] {
+                            if to_bool(&self.member_get(&this, prop)?) {
+                                out.push(ch);
+                            }
+                        }
+                        Value::Str(out)
+                    }
                     // 개별 플래그: this 가 정규식이면 flags 포함 여부, 프로토타입/비정규식이면 undefined
                     _ => match &sf {
                         Some((_, f)) => {
