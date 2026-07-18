@@ -1490,6 +1490,49 @@ fn proxy_apply_construct_traps() {
     ));
 }
 
+// Proxy getOwnPropertyDescriptor 트랩 (§10.5.5): 결과는 Object|undefined,
+// non-configurable/non-extensible 타깃 프로퍼티에 대한 거짓 보고는 TypeError.
+#[test]
+fn proxy_gopd_trap_invariants() {
+    // 결과가 object/undefined 가 아니면 TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{getOwnPropertyDescriptor:function(){return 42;}}); \
+         var t=false; try{ Object.getOwnPropertyDescriptor(p,'x') }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{getOwnPropertyDescriptor:5}); \
+         var t=false; try{ Object.getOwnPropertyDescriptor(p,'x') }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-extensible 타깃에 없는 프로퍼티 보고 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.preventExtensions(t); \
+         var p=new Proxy(t,{getOwnPropertyDescriptor:function(){return {value:1,configurable:true};}}); \
+         var f=false; try{ Object.getOwnPropertyDescriptor(p,'bar') }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-configurable 타깃 프로퍼티를 undefined 로 보고 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,configurable:false}); \
+         var p=new Proxy(t,{getOwnPropertyDescriptor:function(){return undefined;}}); \
+         var f=false; try{ Object.getOwnPropertyDescriptor(p,'x') }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-configurable 보고인데 타깃은 configurable → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,configurable:true}); \
+         var p=new Proxy(t,{getOwnPropertyDescriptor:function(){return {value:1,configurable:false};}}); \
+         var f=false; try{ Object.getOwnPropertyDescriptor(p,'x') }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // 정상: 유효한 서술자 반환 / 트랩 없으면 타깃 위임
+    assert_eq!(
+        run_num("var p=new Proxy({},{getOwnPropertyDescriptor:function(){return {value:9,configurable:true};}}); Object.getOwnPropertyDescriptor(p,'x').value"),
+        9.0
+    );
+    assert_eq!(
+        run_num("Object.getOwnPropertyDescriptor(new Proxy({attr:5},{}),'attr').value"),
+        5.0
+    );
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

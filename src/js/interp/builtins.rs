@@ -1980,19 +1980,85 @@ impl Interp {
                 let mut d = ObjMap::new();
                 let found = match &target {
                     // Proxy: [[GetOwnProperty]] → getOwnPropertyDescriptor 트랩(없으면 타깃).
-                    // typed array 의 정수 인덱스 서술자가 이 경로로 나온다.
+                    // typed array 의 정수 인덱스 서술자가 이 경로로 나온다(§10.5.5).
                     Value::Proxy(p) => {
                         self.proxy_revoked_guard(p)?;
                         let (t, h) = (p.0.clone(), p.1.clone());
                         let trap = self.member_get(&h, "getOwnPropertyDescriptor")?;
-                        if is_callable(&trap) {
-                            return self.call_value(trap, Some(h), vec![t, Value::Str(key)]);
+                        // GetMethod: undefined/null → 타깃 위임, non-callable → TypeError.
+                        if matches!(trap, Value::Undefined | Value::Null) {
+                            return self.call_native(
+                                Native::ObjectGetOwnPropertyDescriptor,
+                                None,
+                                vec![t, Value::Str(key)],
+                            );
                         }
-                        return self.call_native(
+                        if !is_callable(&trap) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "'getOwnPropertyDescriptor' trap is not callable",
+                            ));
+                        }
+                        let trap_result = self.call_value(
+                            trap,
+                            Some(h),
+                            vec![t.clone(), Value::Str(key.clone())],
+                        )?;
+                        // 결과는 Object 또는 undefined 여야 한다(step 8).
+                        if !is_object(&trap_result) && !matches!(trap_result, Value::Undefined) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "proxy 'getOwnPropertyDescriptor' must return an object or undefined",
+                            ));
+                        }
+                        // targetDesc = target.[[GetOwnProperty]](key).
+                        let target_desc = self.call_native(
                             Native::ObjectGetOwnPropertyDescriptor,
                             None,
-                            vec![t, Value::Str(key)],
-                        );
+                            vec![t.clone(), Value::Str(key.clone())],
+                        )?;
+                        let td_undefined = matches!(target_desc, Value::Undefined);
+                        let td_conf = matches!(&target_desc, Value::Obj(m)
+                            if matches!(m.borrow().get("configurable"), Some(v) if to_bool(v)));
+                        let td_writable = matches!(&target_desc, Value::Obj(m)
+                            if matches!(m.borrow().get("writable"), Some(v) if to_bool(v)));
+                        if matches!(trap_result, Value::Undefined) {
+                            // 트랩이 undefined 를 보고(프로퍼티 없음).
+                            if td_undefined {
+                                return Ok(Value::Undefined);
+                            }
+                            if !td_conf {
+                                return Err(self.throw_error("TypeError", "proxy 'getOwnPropertyDescriptor': non-configurable property cannot be reported as non-existent"));
+                            }
+                            if !self.value_is_extensible(&t)? {
+                                return Err(self.throw_error("TypeError", "proxy 'getOwnPropertyDescriptor': existing property of non-extensible target cannot be reported as non-existent"));
+                            }
+                            return Ok(Value::Undefined);
+                        }
+                        // 트랩 결과가 Object — 완결 서술자의 configurable/writable 판정
+                        // (CompletePropertyDescriptor: 없으면 false).
+                        let extensible = self.value_is_extensible(&t)?;
+                        // IsCompatiblePropertyDescriptor 핵심 관측: 타깃에 없는 프로퍼티를
+                        // non-extensible 타깃에 대해 보고하면 무효.
+                        if td_undefined && !extensible {
+                            return Err(self.throw_error("TypeError", "proxy 'getOwnPropertyDescriptor': cannot report a new property on a non-extensible target"));
+                        }
+                        let res_conf = self.has_property(&trap_result, "configurable")
+                            && to_bool(&self.member_get(&trap_result, "configurable")?);
+                        if !res_conf {
+                            // non-configurable 로 보고: 타깃이 없거나 configurable 이면 무효.
+                            if td_undefined || td_conf {
+                                return Err(self.throw_error("TypeError", "proxy 'getOwnPropertyDescriptor': cannot report non-configurable for a configurable or absent target property"));
+                            }
+                            // non-writable 로 보고하는데 타깃은 writable 이면 무효.
+                            let res_has_w = self.has_property(&trap_result, "writable");
+                            let res_w = res_has_w
+                                && to_bool(&self.member_get(&trap_result, "writable")?);
+                            if res_has_w && !res_w && td_writable {
+                                return Err(self.throw_error("TypeError", "proxy 'getOwnPropertyDescriptor': cannot report non-writable for a writable target property"));
+                            }
+                        }
+                        return Ok(trap_result);
                     }
                     Value::Obj(m) => {
                         // 실제 저장된 속성 비트를 읽어 정확히 보고한다 (§10.1.5.1).
