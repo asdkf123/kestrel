@@ -1107,7 +1107,14 @@ impl Interp {
                 build_date_full(y, mo, d, h, mi, s, ms)
             }
         };
-        Ok(make_date(millis))
+        // 인스턴스를 실제 Date.prototype 에 링크한다 — getPrototypeOf/isPrototypeOf/
+        // .constructor 가 하드코딩 특수처리 없이 프로토타입 체인으로 해석되게. 메서드
+        // 디스패치는 is_date_obj 특수 arm 이 그대로 처리한다(중복이지만 무해).
+        let v = make_date(millis);
+        if let Value::Obj(m) = &v {
+            m.borrow_mut().insert("__proto__".to_string(), self.date_proto.clone());
+        }
+        Ok(v)
     }
 
 

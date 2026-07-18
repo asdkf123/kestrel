@@ -6880,3 +6880,14 @@ fn date_coercion_and_makeday_makestime() {
         "abc"
     );
 }
+
+#[test]
+fn date_instance_prototype_chain() {
+    // Date 인스턴스는 실제로 Date.prototype 에 링크된다 (§21.4.2/§21.4.3).
+    assert!(run_bool("Object.getPrototypeOf(new Date())===Date.prototype"));
+    assert!(run_bool("Date.prototype.isPrototypeOf(new Date())"));
+    assert!(run_bool("new Date().constructor===Date"));
+    assert!(run_bool("new Date() instanceof Date"));
+    // __proto__ 는 열거되지 않는다.
+    assert_eq!(run_num("Object.keys(new Date()).length"), 0.0);
+}
