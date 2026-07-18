@@ -8006,3 +8006,12 @@ fn spread_getter_copies_data_value() {
     // 무회귀.
     assert_eq!(run_str("JSON.stringify({...{a:1,b:2},c:3})"), "{\"a\":1,\"b\":2,\"c\":3}");
 }
+
+#[test]
+fn object_rest_copydataproperties() {
+    // §14.3.3.1: {a,...rest} 은 CopyDataProperties — non-enumerable·분해된 키 제외, getter 값.
+    assert_eq!(run_str("var o={a:1,b:2,c:3}; Object.defineProperty(o,'b',{enumerable:false}); var {a,...r}=o; JSON.stringify(r)"), "{\"c\":3}");
+    assert!(run_bool("var g={a:1,get x(){return 9}}; var {a,...r}=g; r.x===9 && Object.getOwnPropertyDescriptor(r,'x').value===9 && !Object.getOwnPropertyDescriptor(r,'x').get"));
+    // 무회귀.
+    assert_eq!(run_str("var {a,...r}={a:1,b:2,c:3}; JSON.stringify(r)"), "{\"b\":2,\"c\":3}");
+}

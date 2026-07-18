@@ -3119,22 +3119,21 @@ impl Interp {
                     let consumed: std::collections::HashSet<&str> =
                         keys.iter().map(|k| k.as_str()).collect();
                     let mut map = ObjMap::new();
-                    match &value {
-                        Value::Obj(o) => {
-                            for (k, v) in o.borrow().iter() {
-                                if !consumed.contains(k.as_str()) && !is_internal_key(k.as_str()) {
-                                    map.insert(k.clone(), v.clone());
-                                }
+                    // §14.3.3.1 RestBindingInitialization = CopyDataProperties: own
+                    // enumerable 만(non-enumerable·구멍 제외), 이미 분해된 키(consumed)
+                    // 제외, 접근자는 Get(호출)한 값을 데이터로. Obj/Instance/Arr 통일.
+                    if matches!(value, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+                        for (k, val) in builtins::own_enumerable_entries(&value) {
+                            if consumed.contains(k.as_str()) {
+                                continue;
                             }
+                            let dv = if matches!(val, Value::Accessor(_)) {
+                                self.member_get(&value, &k)?
+                            } else {
+                                val
+                            };
+                            map.insert(k, dv);
                         }
-                        v @ Value::Instance(_) => {
-                            for (k, val) in builtins::own_enumerable_entries(v) {
-                                if !consumed.contains(k.as_str()) {
-                                    map.insert(k, val);
-                                }
-                            }
-                        }
-                        _ => {}
                     }
                     self.bind_pattern(
                         rest_pat,
