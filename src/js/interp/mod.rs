@@ -5618,7 +5618,12 @@ impl Interp {
     // 임의 함수값의 name (Fn/Class/Native/Bound 공통).
     fn fn_name_of(&self, v: &Value) -> String {
         match v {
-            Value::Fn(f) => f.name.borrow().clone(),
+            // defineProperty 로 덮은 name(props 저장)을 우선한다 — bind 의 name 은
+            // Get(Target,"name")(§ 12단계)이라 오버라이드를 봐야 "bound target" 이 된다.
+            Value::Fn(f) => match f.props.borrow().get("name") {
+                Some(Value::Str(s)) => s.clone(),
+                _ => f.name.borrow().clone(),
+            },
             Value::Class(c) => c.name.borrow().clone(),
             Value::Native(_) | Value::Bound(_) => self.native_fn_name(v),
             _ => String::new(),
