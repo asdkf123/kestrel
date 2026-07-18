@@ -2290,7 +2290,20 @@ impl Interp {
                     d.get("value").cloned()
                 };
                 let enumerable = matches!(d.get("enumerable"), Some(v) if to_bool(v));
+                let configurable = matches!(d.get("configurable"), Some(v) if to_bool(v));
                 drop(d);
+                // 배열 length 는 exotic (§10.4.2.1): {enumerable:false, configurable:false}
+                // 데이터 프로퍼티. accessor·configurable:true·enumerable:true 로 재정의하면
+                // TypeError. (value 로 길이 변경 + writable:false 고정은 배열 표현 확장이
+                // 필요해 별도 — 여기선 서술자 속성 위반만 막는다.)
+                if let (Value::Arr(_), "length") = (&target, key.as_str()) {
+                    if matches!(entry, Some(Value::Accessor(_))) || configurable || enumerable {
+                        return Err(self.redefine_err());
+                    }
+                    // value 로 길이 변경 + writable:false(고정)는 배열 표현 확장(per-element
+                    // 속성/length_writable)이 필요해 별도 — 여기선 서술자 속성 위반만 막고
+                    // 나머지는 기존 근사 경로로 흘려보낸다(무회귀).
+                }
                 if let Some(val) = entry {
                     match &target {
                         Value::Fn(func) => {

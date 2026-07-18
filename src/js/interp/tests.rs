@@ -7856,3 +7856,17 @@ fn typedarray_constructor_validation() {
     assert_eq!(prelude_str("new Uint8Array(new Set([4,5])).join(',')"), "4,5");
     assert_eq!(prelude_str("String(new Float64Array(new ArrayBuffer(16)).length)"), "2");
 }
+
+#[test]
+fn array_length_descriptor_is_exotic() {
+    // §10.4.2.1: 배열 length 는 {enumerable:false, configurable:false} 데이터 프로퍼티.
+    // accessor·configurable:true·enumerable:true 로 재정의하면 TypeError.
+    assert_eq!(run_str("try{ Object.defineProperty([1,2,3],'length',{configurable:true}); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ Object.defineProperty([1,2,3],'length',{enumerable:true}); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ Object.defineProperty([1,2,3],'length',{get:function(){}}); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // length 서술자.
+    assert!(run_bool("var d=Object.getOwnPropertyDescriptor([1,2],'length'); !d.enumerable && !d.configurable && d.writable"));
+    // 회귀: 일반 객체/배열 index defineProperty.
+    assert_eq!(run_num("var o={}; Object.defineProperty(o,'x',{value:5}); o.x"), 5.0);
+    assert_eq!(run_num("var b=[1,2,3]; Object.defineProperty(b,'5',{value:9}); b.length"), 6.0);
+}
