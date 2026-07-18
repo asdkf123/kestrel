@@ -1996,7 +1996,7 @@ var __kTAProto = {
   toReversed: function(){ __kTAValidate(this); var n = this.length, out = new this._ctor(n); for (var i = 0; i < n; i++) out[i] = this[n-1-i]; return out; },
   sort: function(cmp){ __kTAValidate(this); var a = []; for (var i=0;i<this.length;i++) a.push(this[i]); a.sort(cmp || function(x, y){ return x < y ? -1 : (x > y ? 1 : 0); }); for (var i = 0; i < a.length; i++) this[i] = a[i]; return this; },
   toSorted: function(cmp){ __kTAValidate(this); return new this._ctor(this).sort(cmp); },
-  copyWithin: function(target, start, end){ __kTAValidate(this); var n=this.length; target=target|0; start=start|0; end=(end===undefined)?n:(end|0); if(target<0)target+=n; if(start<0)start+=n; if(end<0)end+=n; var tmp=[]; for(var i=start;i<end&&i<n;i++) tmp.push(this[i]); for(var i=0;i<tmp.length&&target+i<n;i++) this[target+i]=tmp[i]; return this; },
+  copyWithin: function(target, start, end){ __kTAValidate(this); var n=this.length; var to=(target===undefined)?0:Math.trunc(+target); if(to<0){to+=n;} to=Math.max(0,Math.min(to,n)); var from=(start===undefined)?0:Math.trunc(+start); if(from<0){from+=n;} from=Math.max(0,Math.min(from,n)); var fin=(end===undefined)?n:Math.trunc(+end); if(fin<0){fin+=n;} fin=Math.max(0,Math.min(fin,n)); var count=Math.min(fin-from, n-to); var tmp=[]; for(var i=0;i<count;i++){ tmp.push(this[from+i]); } for(var i=0;i<count;i++){ this[to+i]=tmp[i]; } return this; },
   with: function(i, v){ __kTAValidate(this); i = i | 0; if (i < 0) i += this.length; var out = new this._ctor(this); out[i] = v; return out; },
   // keys/entries/values 는 반복자를 반환하는데, 검증은 **호출 시점에 즉시**(반복자 본문
   // 지연 실행이 아니라)여야 한다 (§23.2.3.x → ValidateTypedArray 먼저). 그래서 일반 함수로

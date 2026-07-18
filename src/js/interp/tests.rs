@@ -6780,3 +6780,13 @@ fn typedarray_includes_lastindexof() {
     assert_eq!(prelude_num("new Uint8Array([5,6,5]).lastIndexOf(5,1)"), 0.0);
     assert_eq!(prelude_num("new Uint8Array([5,6,5]).lastIndexOf(6,{valueOf:function(){return 2;}})"), 1.0);
 }
+
+#[test]
+fn typedarray_copywithin_clamp() {
+    // copyWithin(target, start, end): ToInteger 상대 인덱스, [0,len] 클램프, count=min(fin-from,len-to).
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin(0,3)).join()"), "4,5,3,4,5");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin(1,3)).join()"), "1,4,5,4,5");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin(0,3,4)).join()"), "4,2,3,4,5");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin(-2)).join()"), "1,2,3,1,2");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin({valueOf:function(){return 0;}},3)).join()"), "4,5,3,4,5");
+}
