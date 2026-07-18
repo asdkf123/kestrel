@@ -2637,11 +2637,13 @@ impl Interp {
             }
             // Symbol(desc) — 고유 심볼 원시값 생성.
             Native::SymbolCtor => {
-                self.sym_counter += 1;
+                // §20.4.1.1: description = (undefined ? undefined : ToString(desc)).
+                // ToString 이라 valueOf/toString 을 호출하고 Symbol 인자는 TypeError.
                 let desc = match args.first() {
                     Some(Value::Undefined) | None => None,
-                    Some(v) => Some(to_display(v)),
+                    Some(v) => Some(self.to_string_value(v)?),
                 };
+                self.sym_counter += 1;
                 Ok(Value::Symbol(Rc::new(super::SymbolData {
                     // desc 를 키에 담아 둔다 — getOwnPropertySymbols 가 심볼을 복원할 때
                     // 설명까지 되살릴 수 있어야 한다. 고유성은 카운터가 보장.
@@ -2651,7 +2653,11 @@ impl Interp {
             }
             // Symbol.for(k) — 전역 레지스트리에서 공유 심볼.
             Native::SymbolFor => {
-                let k = args.first().map(to_display).unwrap_or_else(|| "undefined".to_string());
+                // §20.4.2.2: stringKey = ToString(key) (valueOf/toString 호출, Symbol TypeError).
+                let k = match args.first() {
+                    Some(v) => self.to_string_value(v)?,
+                    None => "undefined".to_string(),
+                };
                 if let Some(sym) = self.sym_registry.get(&k) {
                     return Ok(sym.clone());
                 }
@@ -2663,14 +2669,15 @@ impl Interp {
                 Ok(sym)
             }
             // Symbol.keyFor(sym) — 레지스트리 심볼이면 키, 아니면 undefined.
-            Native::SymbolKeyFor => Ok(match args.first() {
-                Some(Value::Symbol(s)) => s
+            // §20.4.2.7: 인자가 심볼이 아니면 TypeError.
+            Native::SymbolKeyFor => match args.first() {
+                Some(Value::Symbol(s)) => Ok(s
                     .key
                     .strip_prefix("\u{0}@@for:")
                     .map(|k| Value::Str(k.to_string()))
-                    .unwrap_or(Value::Undefined),
-                _ => Value::Undefined,
-            }),
+                    .unwrap_or(Value::Undefined)),
+                _ => Err(self.throw_error("TypeError", "Symbol.keyFor requires a symbol argument")),
+            },
             // a.compareDocumentPosition(b) — 문서(preorder) 순서 비트마스크.
             // 4 = b 가 a 뒤(FOLLOWING), 2 = b 가 a 앞(PRECEDING), 0 = 동일.
             // jQuery 의 sortOrder 가 결과 집합 정렬에 쓴다.

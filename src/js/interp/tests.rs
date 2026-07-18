@@ -7182,3 +7182,17 @@ fn array_sort_comparefn_typeerror() {
     assert_eq!(run_str("JSON.stringify([3,1,2].sort(undefined))"), "[1,2,3]");
     assert_eq!(run_str("JSON.stringify([3,1,2].sort(function(a,b){return b-a}))"), "[3,2,1]");
 }
+
+#[test]
+fn symbol_description_and_keyfor_coercion() {
+    // §20.4.1.1/.2.2/.2.7: Symbol()/Symbol.for 인자 ToString(valueOf 호출/Symbol TypeError),
+    // keyFor 비심볼 TypeError.
+    assert_eq!(run_str("Symbol({toString:function(){return 'T'}}).description"), "T");
+    assert_eq!(run_str("Symbol(66).description"), "66");
+    assert!(run_bool("var t=false; try{ Symbol(Symbol()) }catch(e){ t=e instanceof TypeError } t"));
+    assert_eq!(run_str("Symbol.for({toString:function(){return 'k'}}).description"), "k");
+    assert!(run_bool("var t=false; try{ Symbol.for({toString:function(){throw new RangeError('x')}}) }catch(e){ t=e instanceof RangeError } t"));
+    assert!(run_bool("var t=false; try{ Symbol.keyFor(null) }catch(e){ t=e instanceof TypeError } t"));
+    assert_eq!(run_str("Symbol.keyFor(Symbol.for('reg'))"), "reg");
+    assert!(run_bool("Symbol.keyFor(Symbol())===undefined"));
+}
