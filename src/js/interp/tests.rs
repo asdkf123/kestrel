@@ -4984,6 +4984,21 @@ fn async_generator_has_async_iterator() {
     assert_eq!(run_str("function* a(){ yield 1; } function* b(){ yield* a(); yield 2; } [...b()].join(',')"), "1,2");
 }
 
+// 구조분해 기본값의 NamedEvaluation 은 기본값이 **직접** 익명 함수/클래스일 때만
+// (§14.3.3.1). 콤마식 등은 아니다 — `{ x = (0, function(){}) }` 의 함수는 이름 없음.
+#[test]
+fn destructuring_default_named_evaluation() {
+    // 직접 익명 함수 → 대상 이름
+    assert_eq!(run_str("var {a = function(){}} = {}; a.name"), "a");
+    assert_eq!(run_str("var [b = function(){}] = []; b.name"), "b");
+    // 콤마식(cover) → 이름 없음
+    assert_eq!(run_str("var {x = (0, function(){})} = {}; x.name"), "");
+    assert_eq!(run_str("var [y = (0, function(){})] = []; y.name"), "");
+    // 일반 대입 무회귀
+    assert_eq!(run_str("var f = function(){}; f.name"), "f");
+    assert_eq!(run_str("var g = (0, function(){}); g.name"), "");
+}
+
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
 // 위임하고 map/filter/take/drop/flatMap/reduce/toArray/forEach/some/every/find 를 지연
 // 제너레이터로 구현. 예전엔 전부 미구현(undefined)이었다.

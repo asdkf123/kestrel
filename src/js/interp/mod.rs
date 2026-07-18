@@ -3460,7 +3460,8 @@ impl Interp {
                             // 기본값이 익명 함수면 대상 이름을 갖는다 (NamedEvaluation).
                             //   var { a = function(){} } = {};  a.name === "a"
                             if let Pattern::Name(n) = sub {
-                                Self::set_fn_name(&v, n);
+                                // 콤마식 등 직접 익명 함수가 아니면 NamedEvaluation 안 한다
+                                if is_anonymous_fn_expr(d) { Self::set_fn_name(&v, n); }
                             }
                         }
                     }
@@ -3518,7 +3519,8 @@ impl Interp {
                                 if let Some(d) = default {
                                     v = self.eval(d, env)?;
                                     if let Pattern::Name(n) = sub {
-                                        Self::set_fn_name(&v, n);
+                                        // 콤마식 등 직접 익명 함수가 아니면 NamedEvaluation 안 한다
+                                        if is_anonymous_fn_expr(d) { Self::set_fn_name(&v, n); }
                                     }
                                 }
                             }
@@ -3562,7 +3564,8 @@ impl Interp {
                             if let Some(d) = default {
                                 v = self.eval(d, env)?;
                                 if let Pattern::Name(n) = sub {
-                                    Self::set_fn_name(&v, n);
+                                    // 콤마식 등 직접 익명 함수가 아니면 NamedEvaluation 안 한다
+                                    if is_anonymous_fn_expr(d) { Self::set_fn_name(&v, n); }
                                 }
                             }
                         }
