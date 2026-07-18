@@ -7522,3 +7522,15 @@ fn string_search_routes_through_symbol_search() {
     assert_eq!(run_num("'hello'.search('o')"), 4.0);
     assert!(run_bool("var re=/o/g; re.lastIndex=5; var r='hello world'.search(re); r===4 && re.lastIndex===5"));
 }
+
+#[test]
+fn regex_species_constructor() {
+    // §7.3.22: @@split/@@matchAll 이 SpeciesConstructor 로 splitter/matcher 생성.
+    assert_eq!(run_str("JSON.stringify('a,b,c'.split(/,/))"), "[\"a\",\"b\",\"c\"]");
+    // species=undefined → 기본 %RegExp%.
+    assert_eq!(run_str("var r=/x/g; r.constructor={[Symbol.species]:undefined}; JSON.stringify([...r[Symbol.matchAll]('xax')].map(function(m){return m[0]}))"), "[\"x\",\"x\"]");
+    // species 가 생성자 아니면 TypeError.
+    assert!(run_bool("var r=/x/; r.constructor={[Symbol.species]:5}; var t=false; try{ r[Symbol.split]('x') }catch(e){ t=e instanceof TypeError } t"));
+    // constructor 가 객체 아니면 TypeError.
+    assert!(run_bool("var r=/x/; r.constructor=5; var t=false; try{ r[Symbol.split]('x') }catch(e){ t=e instanceof TypeError } t"));
+}

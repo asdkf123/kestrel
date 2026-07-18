@@ -1479,6 +1479,31 @@ impl Interp {
         Ok(out)
     }
 
+    // SpeciesConstructor(O, defaultConstructor) (§7.3.22): C=Get(O,"constructor"); undefined 면
+    // default. 객체 아니면 TypeError. S=Get(C,@@species); undefined/null 이면 default.
+    // IsConstructor(S) 면 S, 아니면 TypeError. 예외는 그대로 전파.
+    pub(super) fn species_constructor(
+        &mut self,
+        o: &Value,
+        default: Value,
+    ) -> Result<Value, String> {
+        let c = self.member_get(o, "constructor")?;
+        if matches!(c, Value::Undefined) {
+            return Ok(default);
+        }
+        if !is_object(&c) {
+            return Err(self.throw_error("TypeError", "constructor property is not an object"));
+        }
+        let s = self.member_get(&c, "\u{0}@@species")?;
+        if matches!(s, Value::Undefined | Value::Null) {
+            return Ok(default);
+        }
+        if self.is_constructor(&s) {
+            return Ok(s);
+        }
+        Err(self.throw_error("TypeError", "@@species is not a constructor"))
+    }
+
     // Set(O, P, V, Throw=true) (§7.3.4): 실패하면 TypeError. 접근자 setter 예외는 전파.
     pub(super) fn set_throw(&mut self, o: &Value, key: &str, v: Value) -> Result<(), String> {
         if !self.ordinary_set(o, key, v, o)? {
@@ -5050,11 +5075,10 @@ impl Interp {
                     let flags_val = self.member_get(&re, "flags")?;
                     let flags = self.to_string_value(&flags_val)?;
                     let new_flags = if flags.contains('y') { flags } else { format!("{}y", flags) };
-                    // splitter = Construct(%RegExp%, [rx, newFlags]) — sticky 로 앵커 분할.
-                    let splitter = self.construct(
-                        Value::Native(Native::RegExpCtor),
-                        vec![re.clone(), Value::Str(new_flags)],
-                    )?;
+                    // splitter = Construct(SpeciesConstructor(rx,%RegExp%), [rx, newFlags]).
+                    let ctor =
+                        self.species_constructor(&re, Value::Native(Native::RegExpCtor))?;
+                    let splitter = self.construct(ctor, vec![re.clone(), Value::Str(new_flags)])?;
                     let lim = match args.get(1) {
                         None | Some(Value::Undefined) => u32::MAX as usize,
                         Some(v) => self.to_int32(v)? as u32 as usize,
@@ -5125,10 +5149,10 @@ impl Interp {
                     let flags_val = self.member_get(&re, "flags")?;
                     let flags = self.to_string_value(&flags_val)?;
                     let global = flags.contains('g');
-                    let matcher = self.construct(
-                        Value::Native(Native::RegExpCtor),
-                        vec![re.clone(), Value::Str(flags)],
-                    )?;
+                    // matcher = Construct(SpeciesConstructor(rx,%RegExp%), [rx, flags]).
+                    let ctor =
+                        self.species_constructor(&re, Value::Native(Native::RegExpCtor))?;
+                    let matcher = self.construct(ctor, vec![re.clone(), Value::Str(flags)])?;
                     let li_val = self.member_get(&re, "lastIndex")?;
                     let li = to_length(to_num(&li_val));
                     self.set_throw(&matcher, "lastIndex", Value::Num(li))?;
