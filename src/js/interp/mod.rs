@@ -6522,9 +6522,16 @@ impl Interp {
                         env_declare(&scope, "this", (**t).clone());
                     }
                 } else {
-                    // 수신자 없는 일반 호출: sloppy 모드처럼 this = window (undefined 아님)
-                    let this = recv
-                        .unwrap_or_else(|| env_get(&self.global, "window").unwrap_or(Value::Undefined));
+                    // 일반 함수 this 바인딩 (§10.2.1.2 OrdinaryCallBindThis, sloppy 모드):
+                    // undefined/null(수신자 없음 또는 apply(undefined)/call(null))은 globalThis.
+                    // 예전엔 None 만 window 로 대체하고 명시적 undefined/null 은 그대로 둬서
+                    // Function("this.x=1").apply() 가 "undefined 에 할당" 으로 터졌다.
+                    let this = match recv {
+                        None | Some(Value::Undefined) | Some(Value::Null) => {
+                            env_get(&self.global, "window").unwrap_or(Value::Undefined)
+                        }
+                        Some(v) => v,
+                    };
                     env_declare(&scope, "this", this);
                 }
                 // 메서드 안 super.x 해석용

@@ -7208,3 +7208,15 @@ fn function_constructor_params_and_syntaxerror() {
     assert!(run_bool("var t=false; try{ new Function('return {') }catch(e){ t=e instanceof SyntaxError } t"));
     assert!(run_bool("var t=false; try{ new Function('if(') }catch(e){ t=e instanceof SyntaxError } t"));
 }
+
+#[test]
+fn sloppy_this_binding_undefined_null_to_global() {
+    // §10.2.1.2: sloppy 함수의 this 가 undefined/null 이면 globalThis (apply()/call(null) 포함).
+    assert!(run_bool("Function(\"this.__t1='a'\").apply(); this.__t1==='a'"));
+    assert!(run_bool("Function(\"this.__t2='b'\").call(null); this.__t2==='b'"));
+    assert!(run_bool("Function(\"this.__t3='c'\").call(undefined); this.__t3==='c'"));
+    // 명시적 객체 this 는 보존.
+    assert!(run_bool("var o={}; Function('this.z=1').call(o); o.z===1"));
+    // 일반 무인자 호출 this 는 객체(window).
+    assert_eq!(run_str("(function(){ return typeof this; })()"), "object");
+}
