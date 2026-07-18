@@ -7497,3 +7497,18 @@ fn regex_exec_lastindex_get_set() {
     assert_eq!(run_num("var re=/a/; re.lastIndex=5; re.exec('aaa'); re.lastIndex"), 5.0); // 비전역 무접근
     assert!(run_bool("var re=/a/y; Object.defineProperty(re,'lastIndex',{value:5,writable:false}); var t=false; try{ re.exec('xxx') }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn string_replace_routes_through_symbol_replace() {
+    // §22.1.3.17/.18: str.replace/replaceAll 이 정규식이면 @@replace 로 — named groups 인자,
+    // $ 치환, replaceAll 비전역 TypeError.
+    assert_eq!(run_str("'ab'.replace(/(?<fst>a)/, function(m,p1,pos,str,groups){ return '['+groups.fst+']'; })"), "[a]b");
+    assert_eq!(run_str("'a1b2'.replace(/(\\d)/g, function(m,p1){ return '<'+p1+'>'; })"), "a<1>b<2>");
+    assert_eq!(run_str("'xabz'.replace(/(a)(b)/, '[$1-$2]')"), "x[a-b]z");
+    assert_eq!(run_str("'abc'.replace(/(?<x>b)/, '[$<x>]')"), "a[b]c");
+    assert!(run_bool("var t=false; try{ 'aaa'.replaceAll(/a/, 'x') }catch(e){ t=e instanceof TypeError } t"));
+    assert_eq!(run_str("'a.b.c'.replaceAll(/\\./g, '-')"), "a-b-c");
+    // 문자열 패턴 경로 보존.
+    assert_eq!(run_str("'hello'.replace('l','L')"), "heLlo");
+    assert_eq!(run_str("'a.b.c'.replaceAll('.','-')"), "a-b-c");
+}

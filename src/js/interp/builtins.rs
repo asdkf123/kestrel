@@ -791,57 +791,25 @@ impl Interp {
         repl: &Value,
         all: bool,
     ) -> Result<String, String> {
-        let chars: Vec<char> = s.chars().collect();
-        if let Some((src, flags)) = regex_src_flags(pat) {
-            let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                .map_err(|e| format!("정규식: {}", e))?;
-            let global = all || re.global;
-            let mut out = String::new();
-            let mut pos = 0usize;
-            loop {
-                match re.find(&chars, pos) {
-                    Some(mt) => {
-                        out.extend(&chars[pos..mt.start]);
-                        let rep = if is_callable(repl) {
-                            let mut cargs =
-                                vec![Value::Str(chars[mt.start..mt.end].iter().collect())];
-                            for g in mt.groups.iter().skip(1) {
-                                cargs.push(match g {
-                                    Some((a, b)) => Value::Str(chars[*a..*b].iter().collect()),
-                                    None => Value::Undefined,
-                                });
-                            }
-                            cargs.push(Value::Num(mt.start as f64));
-                            cargs.push(Value::Str(s.to_string()));
-                            to_display(&self.call_value(repl.clone(), None, cargs)?)
-                        } else {
-                            expand_replacement(&to_display(repl), &chars, &mt)
-                        };
-                        out.push_str(&rep);
-                        // 빈 매치는 한 글자 진행(무한 루프 방지)
-                        if mt.end > mt.start {
-                            pos = mt.end;
-                        } else {
-                            if mt.end < chars.len() {
-                                out.push(chars[mt.end]);
-                            }
-                            pos = mt.end + 1;
-                        }
-                        if !global {
-                            out.extend(chars.get(pos.min(chars.len())..).unwrap_or(&[]));
-                            break;
-                        }
-                        if pos > chars.len() {
-                            break;
-                        }
-                    }
-                    None => {
-                        out.extend(chars.get(pos.min(chars.len())..).unwrap_or(&[]));
-                        break;
-                    }
+        if regex_src_flags(pat).is_some() {
+            // §22.1.3.17/.18: 정규식 검색값은 그 @@replace 로 위임한다 — custom exec/named
+            // groups(functional replacer 의 마지막 groups 인자)/GetSubstitution/전역 모두
+            // 표준 프로토콜로. replaceAll 은 비전역 정규식이면 TypeError.
+            if all {
+                let g = to_bool(&self.member_get(pat, "global")?);
+                if !g {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "replaceAll must be called with a global RegExp",
+                    ));
                 }
             }
-            Ok(out)
+            let r = self.call_native(
+                Native::RegexSym(natives::StrOp::Replace),
+                Some(pat.clone()),
+                vec![Value::Str(s.to_string()), repl.clone()],
+            )?;
+            Ok(to_display(&r))
         } else {
             // 문자열 패턴 (§22.1.3.19/.20): ToString(pat), 함수가 아니면 ToString(repl),
             // $ 치환은 GetSubstitution($$/$&/$`/$'). 문자 인덱스로 순회한다.
