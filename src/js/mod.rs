@@ -513,11 +513,12 @@ if (!Array.fromAsync) {
     var C = this;
     if (mapfn !== undefined && typeof mapfn !== 'function') throw new TypeError('Array.fromAsync: mapfn is not a function');
     var mapping = mapfn !== undefined;
-    var nil = (asyncItems === null || asyncItems === undefined);
-    var usingAsync = nil ? undefined : asyncItems[Symbol.asyncIterator];
+    // GetMethod(asyncItems, @@asyncIterator): null/undefined 면 프로퍼티 접근 자체가
+    // TypeError → Promise reject (배열류 폴백으로 새지 않는다).
+    var usingAsync = asyncItems[Symbol.asyncIterator];
     var usingSync;
     if (usingAsync === undefined || usingAsync === null) {
-      usingSync = nil ? undefined : asyncItems[Symbol.iterator];
+      usingSync = asyncItems[Symbol.iterator];
     } else if (typeof usingAsync !== 'function') {
       throw new TypeError('Array.fromAsync: @@asyncIterator is not a function');
     }

@@ -2474,7 +2474,18 @@ impl Interp {
                 Ok(Value::Bool(false))
             }
             // Object(x) / Array(a,b,…) — 전역이 Native 생성자라 호출이 여기로 온다.
-            Native::ObjectCtor | Native::ArrayCtor => {
+            Native::ArrayCtor => {
+                // §23.1.1.1: 단일 Number 인자는 유효한 uint32(0..2^32-1)여야 한다.
+                // SameValueZero(len, ToUint32(len)) 이 false 면(정수 아님/음수/2^32 이상)
+                // RangeError. 예전엔 조용히 1원소 배열([2^32])로 만들었다.
+                if let [Value::Num(len)] = args.as_slice() {
+                    if !(len.fract() == 0.0 && *len >= 0.0 && *len < 4294967296.0) {
+                        return Err(self.throw_error("RangeError", "Invalid array length"));
+                    }
+                }
+                Ok(self.coerce_object_call(&Value::Native(n), &args).unwrap_or(Value::Undefined))
+            }
+            Native::ObjectCtor => {
                 Ok(self.coerce_object_call(&Value::Native(n), &args).unwrap_or(Value::Undefined))
             }
             // freeze/seal/preventExtensions — 모든 객체 종류(Obj/Arr/Fn/Instance/Class/Map/Set)에

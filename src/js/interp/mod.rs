@@ -6470,6 +6470,15 @@ impl Interp {
                             let scope = Env::new(Some(env.clone()));
                             return self.do_eval(a, env, &scope);
                         }
+                        // Array(len): 단일 Number 인자가 유효 uint32(0..2^32-1) 아니면
+                        // RangeError (§23.1.1.1). coerce_object_call 은 throw 못하므로 여기서.
+                        if let (Value::Native(Native::ArrayCtor), [Value::Num(len)]) =
+                            (&f, arg_vals.as_slice())
+                        {
+                            if !(len.fract() == 0.0 && *len >= 0.0 && *len < 4294967296.0) {
+                                return Err(self.throw_error("RangeError", "Invalid array length"));
+                            }
+                        }
                         // Object(x) — 전역 Object 네임스페이스를 함수로 호출 = 객체 강제변환.
                         // core-js/프레임워크가 Object(this) 로 this 를 객체화하는 흔한 패턴.
                         if let Some(v) = self.coerce_object_call(&f, &arg_vals) {
@@ -6647,6 +6656,13 @@ impl Interp {
     }
 
     fn construct(&mut self, class: Value, args: Vec<Value>) -> Result<Value, String> {
+        // new Array(len): 단일 Number 인자가 유효 uint32(0..2^32-1) 아니면 RangeError
+        // (§23.1.1.1). coerce_object_call 은 throw 못하므로 여기서.
+        if let (Value::Native(Native::ArrayCtor), [Value::Num(len)]) = (&class, args.as_slice()) {
+            if !(len.fract() == 0.0 && *len >= 0.0 && *len < 4294967296.0) {
+                return Err(self.throw_error("RangeError", "Invalid array length"));
+            }
+        }
         // new Array(n) / new Object(x) — 네임스페이스 객체를 생성자로 호출(표준).
         if let Some(v) = self.coerce_object_call(&class, &args) {
             return Ok(v);

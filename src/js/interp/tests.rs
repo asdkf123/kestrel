@@ -7618,3 +7618,20 @@ fn array_from_async() {
     assert_eq!(prelude_str("var r; try{ await Array.fromAsync([1],5); r='no'; }catch(e){ r=(e instanceof TypeError)?'te':'x'; } r"), "te");
     assert!(prelude_bool("Array.fromAsync.length===1 && Array.fromAsync.name==='fromAsync'"));
 }
+
+#[test]
+fn array_ctor_invalid_length_rangeerror() {
+    // §23.1.1.1: 단일 Number 인자가 유효 uint32 아니면 RangeError.
+    assert_eq!(run_str("try{ new Array(4294967296); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(run_str("try{ new Array(-1); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(run_str("try{ new Array(1.5); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(run_str("try{ Array(NaN); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    // 유효 케이스는 그대로.
+    assert_eq!(run_num("new Array(5).length"), 5.0);
+    assert_eq!(run_num("new Array(1,2,3).length"), 3.0);
+    assert_eq!(run_num("Array(0).length"), 0.0);
+    assert_eq!(run_num("new Array().length"), 0.0);
+    // fromAsync: null/undefined 는 reject(TypeError), 과대 길이는 reject(RangeError).
+    assert_eq!(prelude_str("var r; try{ await Array.fromAsync(null); r='no' }catch(e){ r=e.constructor.name } r"), "TypeError");
+    assert_eq!(prelude_str("var r; try{ await Array.fromAsync.call({},{length:4294967296}); r='no' }catch(e){ r=e.constructor.name } r"), "RangeError");
+}
