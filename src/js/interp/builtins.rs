@@ -6063,30 +6063,32 @@ impl Interp {
                         }
                     }
                     StrOp::MatchAll => {
-                        let (src, flags) = match args.first().and_then(regex_src_flags) {
-                            Some(sf) => sf,
-                            None => {
-                                // RegExpCreate(§22.2.3.1): 인자를 정규식 '패턴'으로 컴파일한다
-                                // (이스케이프 안 함). undefined → 빈 패턴("").
-                                let pat = match args.first() {
-                                    None | Some(Value::Undefined) => String::new(),
-                                    Some(v) => self.to_string_value(v)?,
-                                };
-                                (pat, String::new())
+                        // §22.1.3.14: 정규식이고 비전역이면 TypeError. 정규식이면 그 @@matchAll
+                        // 로, 아니면 RegExpCreate(arg,"g") 후 @@matchAll → 실제 이터레이터.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        if let Some((_, flags)) = regex_src_flags(&arg) {
+                            if !flags.contains('g') {
+                                return Err(self.throw_error(
+                                    "TypeError",
+                                    "String.prototype.matchAll called with a non-global RegExp argument",
+                                ));
                             }
-                        };
-                        let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                            .map_err(|e| format!("정규식: {}", e))?;
-                        let mut out = Vec::new();
-                        let mut pos = 0;
-                        while let Some(mt) = re.find(&chars, pos) {
-                            out.push(self.regex_match_array(&chars, &mt, &re.group_names));
-                            pos = if mt.end > mt.start { mt.end } else { mt.end + 1 };
-                            if pos > chars.len() {
-                                break;
-                            }
+                            return self.call_native(
+                                Native::RegexSym(StrOp::MatchAll),
+                                Some(arg),
+                                vec![Value::Str(s.clone())],
+                            );
                         }
-                        Value::Arr(ArrayObj::new(out))
+                        let pat = match args.first() {
+                            None | Some(Value::Undefined) => String::new(),
+                            Some(v) => self.to_string_value(v)?,
+                        };
+                        let rx = make_regex_obj(&pat, "g");
+                        return self.call_native(
+                            Native::RegexSym(StrOp::MatchAll),
+                            Some(rx),
+                            vec![Value::Str(s.clone())],
+                        );
                     }
                     StrOp::Slice => {
                         // §22.1.3.20: start/end=ToIntegerOrInfinity(음수는 끝에서, ±∞ 처리).

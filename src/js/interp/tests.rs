@@ -7459,3 +7459,11 @@ fn regex_symbol_matchall_protocol() {
     // brand.
     assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.matchAll].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn string_matchall_returns_iterator() {
+    // §22.1.3.14: str.matchAll 은 이터레이터 반환, 비전역 정규식은 TypeError.
+    assert_eq!(run_str("typeof 'a1'.matchAll(/\\d/g).next"), "function");
+    assert_eq!(run_str("JSON.stringify([...'a1b2'.matchAll(/\\d/g)].map(function(m){return m[0]}))"), "[\"1\",\"2\"]");
+    assert!(run_bool("var t=false; try{ 'abc'.matchAll(/a/) }catch(e){ t=e instanceof TypeError } t"));
+}
