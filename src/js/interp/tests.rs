@@ -4969,6 +4969,17 @@ fn array_to_locale_string() {
     assert_eq!(prelude_str("var o={toLocaleString:function(){return 'X';}}; [o,o].toLocaleString()"), "X,X");
 }
 
+// async generator 는 @@asyncIterator(자기 자신), 동기 제너레이터는 @@iterator.
+// 서로의 것은 없다 (§27.5/§27.6). 예전엔 async gen 에 @@asyncIterator 가 없어
+// asyncGen()[Symbol.asyncIterator]() 가 크래시했다.
+#[test]
+fn async_generator_has_async_iterator() {
+    assert!(run_bool("async function* ag(){ yield 1; } var it=ag(); it[Symbol.asyncIterator]()===it"));
+    assert!(run_bool("async function* ag(){ yield 1; } ag()[Symbol.iterator]===undefined"));
+    assert!(run_bool("function* sg(){ yield 1; } var it=sg(); it[Symbol.iterator]()===it"));
+    assert!(run_bool("function* sg(){ yield 1; } sg()[Symbol.asyncIterator]===undefined"));
+}
+
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로
 // 위임하고 map/filter/take/drop/flatMap/reduce/toArray/forEach/some/every/find 를 지연
 // 제너레이터로 구현. 예전엔 전부 미구현(undefined)이었다.

@@ -5911,11 +5911,23 @@ impl Interp {
                     _ => Value::Undefined,
                 })
             }
-            Value::Gen(_) => match key {
+            Value::Gen(g) => match key {
                 "next" => Ok(Value::Native(Native::GenNext)),
                 "return" => Ok(Value::Native(Native::GenReturn)),
                 "throw" => Ok(Value::Native(Native::GenThrow)),
-                "\u{0}@@iterator" => Ok(Value::Native(Native::ReturnThis)),
+                // 동기 제너레이터는 @@iterator, async generator 는 @@asyncIterator 로 자기
+                // 자신을 반환한다(§27.5/§27.6). 예전엔 async gen 에 @@asyncIterator 가 없어
+                // for-await 밖에서 async 반복 프로토콜이 통째로 깨졌다.
+                "\u{0}@@iterator" => Ok(if Self::gen_is_async(g) {
+                    Value::Undefined
+                } else {
+                    Value::Native(Native::ReturnThis)
+                }),
+                "\u{0}@@asyncIterator" => Ok(if Self::gen_is_async(g) {
+                    Value::Native(Native::ReturnThis)
+                } else {
+                    Value::Undefined
+                }),
                 // Iterator 헬퍼(map/filter/take/drop/flatMap/reduce/toArray/…)는
                 // %IteratorPrototype%(프렐류드 __kIterProto)에서 상속한다 (§27.1.4).
                 // 제너레이터의 member 해석이 하드코딩이라 프로토 체인을 안 걸으므로 여기서 위임.
