@@ -7552,3 +7552,20 @@ fn destructuring_catch_binding() {
     assert_eq!(run_str("try{ throw new Error('x') }catch(e){ e.message }"), "x");
     assert_eq!(run_str("try{ throw 1 }catch{ 'nobind' }"), "nobind");
 }
+
+#[test]
+fn template_interpolation_skips_regex_and_comments() {
+    // 보간 식 안의 정규식/주석/나눗셈을 올바로 구분(중괄호 세기 desync 방지).
+    // 정규식 안의 따옴표에 속지 않음.
+    assert_eq!(run_str("var k=\"a'b\"; `[${k.replace(/'/g,'_')}]`"), "[a_b]");
+    // 정규식 문자클래스 안의 중괄호.
+    assert_eq!(run_str("`${'aXb'.replace(/[{}]/g,'_')}`"), "aXb");
+    // 나눗셈은 정규식이 아님.
+    assert_eq!(run_str("`${10 / 2}`"), "5");
+    // 줄 주석 안의 '}' 무시.
+    assert_eq!(run_str("`${ 1 + // }\n 2 }`"), "3");
+    // 블록 주석 안의 '}' 무시.
+    assert_eq!(run_str("`${ 3 /* } */ + 4 }`"), "7");
+    // 중첩 템플릿 안의 정규식.
+    assert_eq!(run_str("`a${`b${'z'.replace(/z/,'Z')}c`}d`"), "abZcd");
+}

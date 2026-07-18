@@ -280,6 +280,164 @@ fn regex_can_start(prev: Option<&Tok>) -> bool {
     )
 }
 
+// `${ ... }` 보간 식의 끝(짝 맞는 '}')을 찾는다.
+// start 는 '${' 바로 다음 인덱스, 반환값은 닫는 '}' 의 인덱스.
+// 문자열/중첩 템플릿/정규식/주석 안의 중괄호와 따옴표에 속지 않는다.
+// (예전엔 단순 중괄호 세기라 `${x.replace(/'/g,"")}` 처럼 정규식 안의 따옴표에
+//  어긋나 그 뒤 소스 전체가 죽었다 — test262 temporalHelpers 등 대량 실패.)
+fn scan_interp_expr(b: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    let mut depth = 1usize;
+    // 직전 의미 토큰이 피연산자면 '/' 는 나눗셈, 아니면 정규식.
+    let mut prev_operand = false;
+    while i < b.len() {
+        let c = b[i];
+        match c {
+            ' ' | '\t' | '\r' | '\n' | '\u{000B}' | '\u{000C}' | '\u{00A0}' | '\u{FEFF}'
+            | '\u{2028}' | '\u{2029}' => i += 1, // 공백은 prev 유지
+            '{' => {
+                depth += 1;
+                prev_operand = false;
+                i += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+                prev_operand = false;
+                i += 1;
+            }
+            ')' | ']' => {
+                prev_operand = true;
+                i += 1;
+            }
+            '(' | '[' | ',' | ';' | ':' | '?' | '=' | '+' | '-' | '*' | '%' | '&' | '|' | '^'
+            | '~' | '<' | '>' | '!' => {
+                prev_operand = false;
+                i += 1;
+            }
+            '\'' | '"' => {
+                let q = c;
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    if b[i] == '\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                i += 1; // 닫는 따옴표
+                prev_operand = true;
+            }
+            '`' => {
+                // 중첩 템플릿: 짝이 되는 백틱까지, 그 안의 ${…} 는 재귀로 처리.
+                i += 1;
+                loop {
+                    match b.get(i) {
+                        None => return None,
+                        Some('\\') => i += 2,
+                        Some('`') => {
+                            i += 1;
+                            break;
+                        }
+                        Some('$') if b.get(i + 1) == Some(&'{') => {
+                            let end = scan_interp_expr(b, i + 2)?;
+                            i = end + 1;
+                        }
+                        _ => i += 1,
+                    }
+                }
+                prev_operand = true;
+            }
+            '/' if b.get(i + 1) == Some(&'/') => {
+                // 줄 주석 (prev 유지)
+                i += 2;
+                while i < b.len() && !matches!(b[i], '\n' | '\r' | '\u{2028}' | '\u{2029}') {
+                    i += 1;
+                }
+            }
+            '/' if b.get(i + 1) == Some(&'*') => {
+                // 블록 주석 (prev 유지)
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 2;
+            }
+            '/' if !prev_operand => {
+                // 정규식 리터럴: [...] 안의 / 는 종료가 아님.
+                i += 1;
+                let mut in_class = false;
+                loop {
+                    match b.get(i) {
+                        None => return None,
+                        Some('\n') | Some('\r') => return None,
+                        Some('\\') => i += 2,
+                        Some('[') => {
+                            in_class = true;
+                            i += 1;
+                        }
+                        Some(']') => {
+                            in_class = false;
+                            i += 1;
+                        }
+                        Some('/') if !in_class => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+                while i < b.len() && (b[i].is_alphanumeric() || b[i] == '_' || b[i] == '$') {
+                    i += 1; // 플래그
+                }
+                prev_operand = true;
+            }
+            '/' => {
+                i += 1; // 나눗셈
+                prev_operand = false;
+            }
+            '.' => {
+                i += 1;
+                prev_operand = false;
+            }
+            _ => {
+                if c.is_alphanumeric() || c == '_' || c == '$' {
+                    let ws = i;
+                    while i < b.len()
+                        && (b[i].is_alphanumeric() || b[i] == '_' || b[i] == '$')
+                    {
+                        i += 1;
+                    }
+                    let word: String = b[ws..i].iter().collect();
+                    // 뒤에 정규식이 올 수 있는 키워드면 피연산자 아님.
+                    prev_operand = !matches!(
+                        word.as_str(),
+                        "return"
+                            | "typeof"
+                            | "instanceof"
+                            | "in"
+                            | "of"
+                            | "new"
+                            | "delete"
+                            | "void"
+                            | "do"
+                            | "else"
+                            | "yield"
+                            | "await"
+                            | "case"
+                            | "throw"
+                    );
+                } else {
+                    prev_operand = false;
+                    i += 1;
+                }
+            }
+        }
+    }
+    None
+}
+
 // (토큰, 각 토큰 직전에 개행(LineTerminator)이 있었는지) — 자동 세미콜론 삽입(ASI)용.
 pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>, Vec<(u32, u32)>), String> {
     let b: Vec<char> = src.chars().collect();
@@ -518,60 +676,15 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>, Vec<(u32, u32)>), Str
                         ));
                     }
                     i += 2;
-                    // ${...} 식 소스 추출: 중괄호 깊이 추적 + 내부 문자열/**중첩 템플릿** 스킵.
-                    //
-                    // 중첩 템플릿을 모르면 그 안의 아포스트로피(예: `Hi, I'm ${c}!`)를
-                    // 문자열 시작으로 오해해 **그 뒤 소스 전체가 어긋난다** — 실제로
-                    // 5MB 짜리 번들 하나가 통째로 죽었다 (bun.sh 의 inkeep 위젯).
+                    // ${...} 식 소스 추출: 문자열/중첩 템플릿/정규식/주석을 올바로 건너뛴다.
+                    // (scan_interp_expr 가 정규식 안의 따옴표·중괄호까지 처리한다.)
                     let start = i;
-                    let mut depth = 1usize;
-                    while i < b.len() {
-                        match b[i] {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                            '`' => {
-                                // 중첩 템플릿: 짝이 되는 백틱까지 건너뛴다
-                                // (그 안의 ${…} 는 다시 중첩될 수 있다 → 깊이로 센다)
-                                i += 1;
-                                let mut tdepth = 0usize;
-                                while i < b.len() {
-                                    match b[i] {
-                                        '\\' => i += 1, // 이스케이프 (\` 포함)
-                                        '$' if b.get(i + 1) == Some(&'{') => {
-                                            tdepth += 1;
-                                            i += 1;
-                                        }
-                                        '}' if tdepth > 0 => tdepth -= 1,
-                                        '`' if tdepth == 0 => break,
-                                        _ => {}
-                                    }
-                                    i += 1;
-                                }
-                            }
-                            '\'' | '"' => {
-                                let q = b[i];
-                                i += 1;
-                                while i < b.len() && b[i] != q {
-                                    if b[i] == '\\' {
-                                        i += 1;
-                                    }
-                                    i += 1;
-                                }
-                            }
-                            _ => {}
-                        }
-                        i += 1;
-                    }
-                    if depth != 0 {
-                        return Err("닫히지 않은 ${ } 보간".to_string());
-                    }
-                    parts.push(TplPart::Expr(b[start..i].iter().collect()));
-                    i += 1; // '}'
+                    let end = match scan_interp_expr(&b, start) {
+                        Some(e) => e,
+                        None => return Err("닫히지 않은 ${ } 보간".to_string()),
+                    };
+                    parts.push(TplPart::Expr(b[start..end].iter().collect()));
+                    i = end + 1; // '}' 다음으로
                     continue;
                 }
                 lit.push(ch);
