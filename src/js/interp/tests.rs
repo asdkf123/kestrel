@@ -7791,3 +7791,13 @@ fn dataview_float16_and_method_meta() {
     assert!(prelude_bool("DataView.prototype.setInt32.length===2 && DataView.prototype.getInt8.length===1"));
     assert!(prelude_bool("!Object.getOwnPropertyDescriptor(DataView.prototype,'getInt8').enumerable"));
 }
+
+#[test]
+fn typedarray_method_metadata() {
+    // §23.2.3: %TypedArray%.prototype 메서드는 정확한 length + non-enumerable.
+    assert!(prelude_bool("var P=Object.getPrototypeOf(Int8Array).prototype; P.fill.length===1 && P.indexOf.length===1 && P.copyWithin.length===2 && P.slice.length===2"));
+    assert!(prelude_bool("var P=Object.getPrototypeOf(Int8Array).prototype; !Object.getOwnPropertyDescriptor(P,'map').enumerable && !Object.getOwnPropertyDescriptor(P,'fill').enumerable"));
+    // 기능 회귀 방지.
+    assert_eq!(prelude_str("new Int8Array([1,2,3]).map(function(x){return x*2}).join(',')"), "2,4,6");
+    assert_eq!(prelude_str("[].concat.apply([], [...new Uint8Array([7,8,9])]).join(',')"), "7,8,9");
+}

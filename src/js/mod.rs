@@ -2190,6 +2190,25 @@ __kTAProto.constructor = __kTypedArrayCtor;
 __kTypedArrayCtor.from = function(x, fn){ var a = Array.from(x, fn); return new this(a); };
 __kTypedArrayCtor.of = function(){ return new this(Array.prototype.slice.call(arguments)); };
 Object.defineProperty(__kTypedArrayCtor, Symbol.species, { get: function(){ return this; }, configurable: true });
+// %TypedArray%.prototype 메서드 메타 (§23.2.3): 정확한 length + non-enumerable.
+// (이름은 객체 리터럴 메서드명으로 이미 맞음. length 는 optional 인자까지 세어
+//  틀린 게 있었고(fill/indexOf/reduce/copyWithin 등), 대입이라 전부 enumerable 이었다.)
+(function(){
+  var lens = { at:1, copyWithin:2, entries:0, every:1, fill:1, filter:1, find:1,
+    findIndex:1, findLast:1, findLastIndex:1, forEach:1, includes:1, indexOf:1,
+    join:1, keys:0, lastIndexOf:1, map:1, reduce:1, reduceRight:1, reverse:0,
+    set:1, slice:2, some:1, sort:1, subarray:2, toLocaleString:0, toReversed:0,
+    toSorted:1, values:0, 'with':2 };
+  Object.getOwnPropertyNames(__kTAProto).forEach(function(n){
+    var d = Object.getOwnPropertyDescriptor(__kTAProto, n);
+    if (!d || typeof d.value !== 'function') return; // accessor(length 등)는 별개
+    if (lens.hasOwnProperty(n)) Object.defineProperty(d.value, 'length', { value: lens[n], configurable: true });
+    Object.defineProperty(__kTAProto, n, { value: d.value, writable: true, enumerable: false, configurable: true });
+  });
+  Object.defineProperty(__kTAProto, 'constructor', { value: __kTypedArrayCtor, writable: true, enumerable: false, configurable: true });
+  if (typeof __kTAProto[Symbol.iterator] === 'function')
+    Object.defineProperty(__kTAProto, Symbol.iterator, { value: __kTAProto[Symbol.iterator], writable: true, enumerable: false, configurable: true });
+})();
 
 function __kMakeTypedArray(name) {
   var spec = __kTA[name];
