@@ -1698,6 +1698,31 @@ fn proxy_has_trap_invariants_and_reflect() {
     assert!(run_bool("Reflect.has(new Proxy({a:1},{}),'a')===true"));
 }
 
+// Reflect.construct/Proxy construct 의 newTarget 스레딩 (§10.5.13, §28.1.2).
+#[test]
+fn construct_new_target_threading() {
+    // Reflect.construct 3번째 인자가 construct 트랩에 newTarget 로 전달
+    assert!(run_bool(
+        "function NT(){} var seen=null; \
+         var p=new Proxy(function(){},{construct:function(t,a,nt){seen=nt;return {};}}); \
+         Reflect.construct(p,[],NT); seen===NT"
+    ));
+    // construct 트랩 없으면 위임하면서 new.target 이 프록시(new proxy())
+    assert!(run_bool(
+        "function T(){ this.nt=new.target; } var p=new Proxy(T,{}); (new p()).nt===p"
+    ));
+    // Reflect.construct 의 newTarget 프로토타입이 인스턴스 [[Prototype]] 에 반영
+    assert!(run_bool(
+        "function Base(){} function Other(){} Other.prototype={tag:'o'}; \
+         Object.getPrototypeOf(Reflect.construct(Base,[],Other))===Other.prototype"
+    ));
+    // 일반 new 무회귀
+    assert!(run_bool(
+        "function C(){ this.x=1; } var c=new C(); \
+         c.x===1 && (c instanceof C) && Object.getPrototypeOf(c)===C.prototype"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

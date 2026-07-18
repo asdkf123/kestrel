@@ -7765,6 +7765,11 @@ impl Interp {
                     ));
                 }
                 let arg_list = self.generic_array_read(&list_val)?;
+                // newTarget(3번째 인자, 기본=target)을 construct 에 넘긴다 —
+                // construct 초입이 self.new_target 을 캡처해 인스턴스 프로토타입과
+                // new.target·Proxy construct 트랩의 3번째 인자에 반영한다.
+                let new_target = args.get(2).cloned().unwrap_or_else(|| f.clone());
+                self.new_target = Some(new_target);
                 self.construct(f, arg_list)
             }
             // Reflect 나머지 (§28.1). 대상이 객체가 아니면 TypeError. 변형 계열은 불리언 반환.

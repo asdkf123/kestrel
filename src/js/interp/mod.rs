@@ -7139,6 +7139,10 @@ impl Interp {
     }
 
     fn construct(&mut self, class: Value, args: Vec<Value>) -> Result<Value, String> {
+        // Reflect.construct(target, args, newTarget) 나 Proxy construct 위임이
+        // self.new_target 로 넘긴 명시적 newTarget(없으면 대상 자신). Fn/Proxy arm 이
+        // 공유하므로 초입에서 캡처한다(내부 재진입 construct 는 영향 안 받게 take).
+        let pending_new_target = self.new_target.take();
         // new Array(len): 단일 Number 인자가 유효 uint32(0..2^32-1) 아니면 RangeError
         // (§23.1.1.1). coerce_object_call 은 throw 못하므로 여기서.
         if let (Value::Native(Native::ArrayCtor), [Value::Num(len)]) = (&class, args.as_slice()) {
@@ -7285,31 +7289,26 @@ impl Interp {
             // 함수가 객체를 반환하면 그것 우선(JS 규칙).
             Value::Fn(func) => {
                 let obj = Rc::new(RefCell::new(ObjMap::new()));
-                // f.prototype 지연 생성(없으면) 후 링크. borrow 를 먼저 끊고 match.
-                let existing = func.props.borrow().get("prototype").cloned();
-                let proto = match existing {
-                    // §10.1.13 OrdinaryCreateFromConstructor: F.prototype 이 '객체'면(배열/
-                    // 인스턴스/함수 포함) 그것을 인스턴스 [[Prototype]] 으로. 예전엔 Value::Obj
-                    // 만 받아 foo.prototype = [1,2,3] 같은 배열 프로토타입을 무시했다.
-                    Some(p) if is_object(&p) => p,
-                    // F.prototype 이 원시값이면 인스턴스 [[Prototype]] 은 %Object.prototype%.
-                    Some(_) => self.member_get(&self.object_ns.clone(), "prototype")?,
-                    None => {
-                        // §20.1.1: F.prototype = { constructor: F } (w:true,e:false,c:true).
-                        // member_get 의 지연 생성과 동일 — 여기서만 빈 객체를 만들면
-                        // new F().constructor 가 Object 로 떨어진다.
-                        let mut pm = ObjMap::new();
-                        pm.insert("constructor".to_string(), Value::Fn(func.clone()));
-                        set_prop_attrs(&mut pm, "constructor", ATTR_WRITABLE | ATTR_CONFIGURABLE);
-                        let p = Value::Obj(Rc::new(RefCell::new(pm)));
-                        func.props.borrow_mut().insert("prototype".to_string(), p.clone());
+                // new.target: 명시적(Reflect.construct 3번째 인자·Proxy 위임)이면 그것,
+                // 아니면 이 함수. §10.1.13 OrdinaryCreateFromConstructor 는 인스턴스
+                // [[Prototype]] 을 Get(newTarget,"prototype")에서 얻는다 — Reflect.construct
+                // 로 다른 newTarget 을 주면 그 프로토타입이 링크돼야 한다.
+                let new_target = pending_new_target.unwrap_or_else(|| Value::Fn(func.clone()));
+                // member_get 이 함수 prototype 을 지연 생성({constructor:F})하고 그 Rc 를
+                // 돌려준다(스냅샷 아님) → 이후 F.prototype.m 추가도 인스턴스에 반영된다.
+                // newTarget.prototype 이 원시값이면 %Object.prototype%.
+                let proto = {
+                    let p = self.member_get(&new_target, "prototype")?;
+                    if is_object(&p) {
                         p
+                    } else {
+                        self.member_get(&self.object_ns.clone(), "prototype")?
                     }
                 };
                 obj.borrow_mut().insert("__proto__".to_string(), proto);
                 let this = Value::Obj(obj);
-                // new.target = 이 함수 (call_value 가 스코프에 심는다).
-                self.new_target = Some(Value::Fn(func.clone()));
+                // new.target 을 심는다 (call_value 가 스코프에 넣고 take 한다).
+                self.new_target = Some(new_target);
                 let ret = self.call_value(Value::Fn(func), Some(this.clone()), args)?;
                 // 표준: 생성자가 객체를 반환하면 그게 결과, 원시값이면 this.
                 return Ok(if is_object(&ret) { ret } else { this });
@@ -7331,19 +7330,19 @@ impl Interp {
                         self.throw_error("TypeError", "proxy target is not a constructor")
                     );
                 }
+                // newTarget: 명시적(Reflect.construct 3번째 인자)이면 그것, 아니면
+                // new proxy() 처럼 프록시 자신.
+                let new_target =
+                    pending_new_target.unwrap_or_else(|| Value::Proxy(p.clone()));
                 let trap = self.member_get(&h, "construct")?;
                 if matches!(trap, Value::Undefined | Value::Null) {
+                    // 위임: target.[[Construct]](args, newTarget) — newTarget 을 넘긴다.
+                    self.new_target = Some(new_target);
                     return self.construct(t, args);
                 }
                 if !is_callable(&trap) {
                     return Err(self.throw_error("TypeError", "'construct' trap is not callable"));
                 }
-                // newTarget: new proxy() 면 프록시 자신. 트랩 호출 자체는 new.target 이
-                // undefined 인 일반 호출이므로 슬롯을 비운다.
-                let new_target = self
-                    .new_target
-                    .take()
-                    .unwrap_or_else(|| Value::Proxy(p.clone()));
                 let arg_array = Value::Arr(ArrayObj::new(args));
                 let new_obj =
                     self.call_value(trap, Some(h), vec![t, arg_array, new_target])?;
