@@ -1671,19 +1671,41 @@ impl Interp {
             }
             // fn.call(thisArg, a, b, ...) — recv 가 대상 함수
             Native::FnCall => {
-                let target = recv.ok_or("call 대상 함수 없음")?;
+                // §20.2.3.3: this(target)가 callable 이 아니면 TypeError.
+                let target = recv.unwrap_or(Value::Undefined);
+                if !is_callable(&target) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Function.prototype.call called on non-callable",
+                    ));
+                }
                 let mut it = args.into_iter();
                 let this_arg = it.next().unwrap_or(Value::Undefined);
                 self.call_value(target, Some(this_arg), it.collect())
             }
-            // fn.apply(thisArg, [args]) — 두 번째 인자는 배열 또는 유사배열(arguments)
+            // fn.apply(thisArg, argArray) — §20.2.3.1
             Native::FnApply => {
-                let target = recv.ok_or("apply 대상 함수 없음")?;
+                let target = recv.unwrap_or(Value::Undefined);
+                if !is_callable(&target) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Function.prototype.apply called on non-callable",
+                    ));
+                }
                 let mut it = args.into_iter();
                 let this_arg = it.next().unwrap_or(Value::Undefined);
+                // argArray: null/undefined → 빈 목록; 그 밖엔 CreateListFromArrayLike(§7.3.18 —
+                // 객체가 아니면 TypeError, ToLength(length)+[[Get]], getter 예외 전파).
                 let call_args = match it.next() {
+                    None | Some(Value::Undefined) | Some(Value::Null) => Vec::new(),
                     Some(Value::Arr(a)) => a.borrow().clone(),
-                    _ => Vec::new(),
+                    Some(v) if is_object(&v) => self.generic_array_read(&v)?,
+                    Some(_) => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "CreateListFromArrayLike called on non-object",
+                        ))
+                    }
                 };
                 self.call_value(target, Some(this_arg), call_args)
             }

@@ -7244,3 +7244,19 @@ fn function_bind_noncallable_typeerror() {
     assert_eq!(run_num("(function(a,b){return a+b}).bind(null,1)(2)"), 3.0);
     assert_eq!(run_num("(function(){return this.x}).bind({x:9})()"), 9.0);
 }
+
+#[test]
+fn function_apply_call_argarray() {
+    // §20.2.3.1: apply 의 argArray = CreateListFromArrayLike(array-like), null/undefined → 빈.
+    assert_eq!(run_num("(function(a,b){return a+b}).apply(null, {0:3,1:4,length:2})"), 7.0);
+    assert_eq!(run_num("(function(a,b,c){return a+b+c}).apply(null,[1,2,3])"), 6.0);
+    assert_eq!(run_num("(function(){return arguments.length}).apply(null, null)"), 0.0);
+    // argArray 가 객체가 아니면 TypeError.
+    assert!(run_bool("var t=false; try{ (function(){}).apply(null, 5) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ (function(){}).apply(null, 'ab') }catch(e){ t=e instanceof TypeError } t"));
+    // apply/call 대상 비callable → TypeError.
+    assert!(run_bool("var t=false; try{ Function.prototype.apply.call({}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Function.prototype.call.call(5) }catch(e){ t=e instanceof TypeError } t"));
+    // length getter 예외 전파.
+    assert!(run_bool("var t=false; try{ (function(){}).apply(null,{get length(){throw new RangeError('x')}}) }catch(e){ t=e instanceof RangeError } t"));
+}
