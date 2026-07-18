@@ -2725,6 +2725,19 @@ impl Interp {
                     }
                     _ => "Object".into(),
                 };
+                // §20.1.3.6: tag = Get(O, @@toStringTag) — 프로토타입 체인·getter·Proxy
+                // 트랩까지 조회한다. 문자열이면 builtin tag 를 덮어쓴다. 예전엔 Obj own 맵
+                // 직접조회라 상속 getter(typed array @@toStringTag)·Proxy 를 놓쳐 typed
+                // array 가 "[object Object]" 였다. Undefined/Null 은 조회하지 않는다.
+                let tag = match &recv {
+                    Some(v) if !matches!(v, Value::Undefined | Value::Null) => {
+                        match self.member_get(v, "\u{0}@@toStringTag")? {
+                            Value::Str(t) => t,
+                            _ => tag,
+                        }
+                    }
+                    _ => tag,
+                };
                 Ok(Value::Str(format!("[object {}]", tag)))
             }
             Native::ReturnTrue => Ok(Value::Bool(true)),

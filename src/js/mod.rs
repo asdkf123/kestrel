@@ -2189,7 +2189,16 @@ __kTAProto.constructor = __kTypedArrayCtor;
 // %TypedArray%.from / of / [Symbol.species] (§23.2.2) — 서브클래스가 상속(정적 접근).
 __kTypedArrayCtor.from = function(x, fn){ var a = Array.from(x, fn); return new this(a); };
 __kTypedArrayCtor.of = function(){ return new this(Array.prototype.slice.call(arguments)); };
+Object.defineProperty(__kTypedArrayCtor.from, 'name', { value: 'from', configurable: true });
+Object.defineProperty(__kTypedArrayCtor.from, 'length', { value: 1, configurable: true });
+Object.defineProperty(__kTypedArrayCtor.of, 'name', { value: 'of', configurable: true });
 Object.defineProperty(__kTypedArrayCtor, Symbol.species, { get: function(){ return this; }, configurable: true });
+// %TypedArray%.prototype[@@toStringTag] (§23.2.3.32): getter 가 [[TypedArrayName]]
+// 반환, 유효 typed array 아니면 undefined. Object.prototype.toString 이 이걸 읽어
+// "[object Int8Array]" 를 만든다(예전엔 "[object Object]").
+Object.defineProperty(__kTAProto, Symbol.toStringTag, { get: function(){
+  return (this && this._spec) ? this._spec.name : undefined;
+}, configurable: true });
 // %TypedArray%.prototype 메서드 메타 (§23.2.3): 정확한 length + non-enumerable.
 // (이름은 객체 리터럴 메서드명으로 이미 맞음. length 는 optional 인자까지 세어
 //  틀린 게 있었고(fill/indexOf/reduce/copyWithin 등), 대입이라 전부 enumerable 이었다.)
@@ -2212,6 +2221,7 @@ Object.defineProperty(__kTypedArrayCtor, Symbol.species, { get: function(){ retu
 
 function __kMakeTypedArray(name) {
   var spec = __kTA[name];
+  spec.name = name; // @@toStringTag / [[TypedArrayName]] 용
   function Ctor(arg, byteOffset, length) {
     var buf, off = 0, len = 0;
     if (arg instanceof __kArrayBuffer) {
@@ -2328,8 +2338,10 @@ function __kMakeTypedArray(name) {
   // 각 typed array 생성자의 prototype 은 공유 %TypedArray%.prototype 을 상속한다
   // → 메서드는 own 이 아니라 inherited (§23.2.3, inherited.js).
   Ctor.prototype = Object.create(__kTAProto);
-  Ctor.prototype.constructor = Ctor;
-  Ctor.prototype.BYTES_PER_ELEMENT = spec.size;
+  // constructor 는 non-enumerable, BYTES_PER_ELEMENT 는 {w:false,e:false,c:false}
+  // (§23.2.6.2 / §23.2.7.2). 예전엔 대입이라 전부 열거·쓰기·설정 가능이었다.
+  Object.defineProperty(Ctor.prototype, 'constructor', { value: Ctor, writable: true, enumerable: false, configurable: true });
+  Object.defineProperty(Ctor.prototype, 'BYTES_PER_ELEMENT', { value: spec.size, writable: false, enumerable: false, configurable: false });
   // 각 typed array 생성자의 [[Prototype]] 은 %TypedArray% 다 (§23.2). 하네스가
   // Object.getPrototypeOf(Int8Array) 로 %TypedArray% 를 얻는다.
   Object.setPrototypeOf(Ctor, __kTypedArrayCtor);
@@ -2337,7 +2349,9 @@ function __kMakeTypedArray(name) {
   // (§23.2.2). Int8Array.from === %TypedArray%.from 이어야 하고, own 으로 두면
   // inherited.js 계열 테스트가 깨진다. %TypedArray%.from 은 new this(...) 라
   // this=Int8Array(수신자)로 올바른 종을 만든다.
-  Ctor.BYTES_PER_ELEMENT = spec.size;
+  Object.defineProperty(Ctor, 'BYTES_PER_ELEMENT', { value: spec.size, writable: false, enumerable: false, configurable: false });
+  // 생성자 이름은 내부 함수명 "Ctor" 가 아니라 실제 형식명(§23.2.6).
+  Object.defineProperty(Ctor, 'name', { value: name, configurable: true });
   return Ctor;
 }
 if (!window.ArrayBuffer) {

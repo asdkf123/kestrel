@@ -7801,3 +7801,20 @@ fn typedarray_method_metadata() {
     assert_eq!(prelude_str("new Int8Array([1,2,3]).map(function(x){return x*2}).join(',')"), "2,4,6");
     assert_eq!(prelude_str("[].concat.apply([], [...new Uint8Array([7,8,9])]).join(',')"), "7,8,9");
 }
+
+#[test]
+fn typedarray_constructor_metadata_and_tostringtag() {
+    // §23.2.6/7: 생성자 name, BYTES_PER_ELEMENT 속성, @@toStringTag.
+    assert!(prelude_bool("Int8Array.name === 'Int8Array' && Float64Array.name === 'Float64Array'"));
+    assert!(prelude_bool("var d=Object.getOwnPropertyDescriptor(Int8Array,'BYTES_PER_ELEMENT'); d.value===1 && !d.writable && !d.enumerable && !d.configurable"));
+    assert!(prelude_bool("var d=Object.getOwnPropertyDescriptor(Int32Array.prototype,'BYTES_PER_ELEMENT'); d.value===4 && !d.writable && !d.enumerable && !d.configurable"));
+    // @@toStringTag: getter 로 [[TypedArrayName]] (§23.2.3.32) — toString 이 읽는다.
+    assert_eq!(prelude_str("Object.prototype.toString.call(new Int8Array(1))"), "[object Int8Array]");
+    assert_eq!(prelude_str("Object.prototype.toString.call(new Uint32Array(1))"), "[object Uint32Array]");
+    // %TypedArray%.from/of 메타.
+    assert!(prelude_bool("var TA=Object.getPrototypeOf(Int8Array); TA.from.name==='from' && TA.from.length===1 && TA.of.name==='of'"));
+    // 일반 @@toStringTag 도 상속/getter 로 조회(회귀 방지).
+    assert_eq!(run_str("Object.prototype.toString.call({[Symbol.toStringTag]:'X'})"), "[object X]");
+    assert_eq!(run_str("Object.prototype.toString.call([])"), "[object Array]");
+    assert_eq!(run_str("Object.prototype.toString.call(null)"), "[object Null]");
+}
