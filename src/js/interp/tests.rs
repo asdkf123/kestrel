@@ -4978,6 +4978,10 @@ fn async_generator_has_async_iterator() {
     assert!(run_bool("async function* ag(){ yield 1; } ag()[Symbol.iterator]===undefined"));
     assert!(run_bool("function* sg(){ yield 1; } var it=sg(); it[Symbol.iterator]()===it"));
     assert!(run_bool("function* sg(){ yield 1; } sg()[Symbol.asyncIterator]===undefined"));
+    // 동기 제너레이터 yield* 무회귀 (async yield* 의 @@asyncIterator/await 는 test262
+    // async-generator 로 검증 — +34).
+    assert_eq!(run_str("function* sg(){ yield* [1,2,3]; } [...sg()].join(',')"), "1,2,3");
+    assert_eq!(run_str("function* a(){ yield 1; } function* b(){ yield* a(); yield 2; } [...b()].join(',')"), "1,2");
 }
 
 // Iterator 헬퍼 (§27.1): 제너레이터의 member 해석을 %IteratorPrototype%(__kIterProto)로

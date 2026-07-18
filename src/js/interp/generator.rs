@@ -75,6 +75,7 @@ struct Drive {
     sent: Value,        // 재개 잎에 전달할 값
     saved: Vec<GStep>,  // 중단 시 쌓는 경로(잎→뿌리) — 끝에서 뒤집는다
     mode: ResumeMode,   // 재개 잎에서의 주입(Next/Return/Throw)
+    is_async: bool,     // async generator 면 yield* 가 @@asyncIterator 로 반복자를 얻는다
 }
 
 impl Drive {
@@ -260,12 +261,12 @@ impl Interp {
                 ResumeMode::Next => {}
             }
         }
-        let (body, scope, resume) = {
+        let (body, scope, resume, is_async) = {
             let mut b = gs.borrow_mut();
             b.started = true;
-            (b.body.clone(), b.scope.clone(), std::mem::take(&mut b.resume))
+            (b.body.clone(), b.scope.clone(), std::mem::take(&mut b.resume), b.is_async)
         };
-        let mut drive = Drive { resume, rpos: 0, sent: arg, saved: Vec::new(), mode };
+        let mut drive = Drive { resume, rpos: 0, sent: arg, saved: Vec::new(), mode, is_async };
         let flow = self.gen_list(&body, &scope, &mut drive);
         match flow {
             Ok(GenFlow::Yield(v)) => {
@@ -532,7 +533,19 @@ impl Interp {
                 Some(e) => self.eval(e, scope)?,
                 None => Value::Undefined,
             };
-            let iter = self.gen_get_iterator(src)?;
+            // async generator 의 yield* 는 GetIterator(src, async) — @@asyncIterator 를
+            // 먼저(없으면 @@iterator 폴백). 동기 제너레이터는 @@iterator.
+            let iter = if drive.is_async {
+                match self.try_get_async_iterator(&src)? {
+                    Some(it) => it,
+                    None => {
+                        let t = to_display(&src);
+                        return Err(self.throw_error("TypeError", format!("{} 은(는) 비동기 반복 가능하지 않음", t)));
+                    }
+                }
+            } else {
+                self.gen_get_iterator(src)?
+            };
             self.yield_star_step(iter, Value::Undefined, drive)
         } else {
             // 신규 yield — 산출값 평가 후 중단.
@@ -553,7 +566,9 @@ impl Interp {
         sent: Value,
         drive: &mut Drive,
     ) -> Result<YieldOut, String> {
-        let (val, done) = self.gen_iter_next(&iter, sent)?;
+        // async generator 의 yield* 는 내부 반복자 next() 의 promise 를 await 해서
+        // { value, done } 을 얻는다(§27.6.3.8). 동기면 그대로.
+        let (val, done) = self.gen_iter_next_maybe_async(&iter, sent, drive.is_async)?;
         if done {
             Ok(YieldOut::Resume(val))
         } else {
