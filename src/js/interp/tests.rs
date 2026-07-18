@@ -1533,6 +1533,58 @@ fn proxy_gopd_trap_invariants() {
     );
 }
 
+// Proxy ownKeys 트랩 (§10.5.11): Reflect.ownKeys/getOwnPropertyNames/
+// getOwnPropertySymbols/Object.keys 가 트랩을 경유하고 검증 invariant 를 지킨다.
+#[test]
+fn proxy_own_keys_trap() {
+    // 트랩 결과가 getOwnPropertyNames/Reflect.ownKeys 에 반영
+    assert_eq!(
+        run_str("Object.getOwnPropertyNames(new Proxy({},{ownKeys:function(){return ['foo','bar'];},getOwnPropertyDescriptor:function(){return {value:1,enumerable:true,configurable:true};}})).join(',')"),
+        "foo,bar"
+    );
+    // Object.keys 는 enumerable 문자열 키만
+    assert_eq!(
+        run_str("Object.keys(new Proxy({},{ownKeys:function(){return ['a','b'];},getOwnPropertyDescriptor:function(t,k){return {value:1,enumerable:(k==='a'),configurable:true};}})).join(',')"),
+        "a"
+    );
+    // 심볼/문자열 분리
+    assert!(run_bool(
+        "var s=Symbol('x'); var p=new Proxy({},{ownKeys:function(){return ['str',s];},getOwnPropertyDescriptor:function(){return {value:1,enumerable:true,configurable:true};}}); \
+         Object.getOwnPropertyNames(p).join(',')==='str' && Object.getOwnPropertySymbols(p).length===1 && Object.getOwnPropertySymbols(p)[0]===s"
+    ));
+    // 중복 키 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{ownKeys:function(){return ['x','x'];}}); \
+         var t=false; try{ Reflect.ownKeys(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 문자열/심볼 아닌 원소 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{ownKeys:function(){return [42];}}); \
+         var t=false; try{ Reflect.ownKeys(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-configurable 타깃 키 누락 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'nc',{value:1,configurable:false}); \
+         var p=new Proxy(t,{ownKeys:function(){return [];}}); \
+         var f=false; try{ Reflect.ownKeys(p) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-extensible 타깃에 여분 키 → TypeError
+    assert!(run_bool(
+        "var t={a:1}; Object.preventExtensions(t); \
+         var p=new Proxy(t,{ownKeys:function(){return ['a','extra'];}}); \
+         var f=false; try{ Reflect.ownKeys(p) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // 트랩 없으면 타깃 위임 / non-callable → TypeError
+    assert_eq!(
+        run_str("Reflect.ownKeys(new Proxy({m:1,n:2},{})).join(',')"),
+        "m,n"
+    );
+    assert!(run_bool(
+        "var p=new Proxy({},{ownKeys:5}); \
+         var t=false; try{ Reflect.ownKeys(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
@@ -3800,8 +3852,16 @@ fn proxy_has_delete_ownkeys_traps() {
         run_str("var hit=false; var p=new Proxy({a:1},{deleteProperty(t,k){hit=true; delete t[k]; return true}}); delete p.a; String(hit)"),
         "true"
     );
+    // Object.keys 는 EnumerableOwnPropertyNames — 각 키에 [[GetOwnProperty]] 하고
+    // enumerable 인 것만 센다. gOPD 트랩이 없으면 타깃에 위임하므로 타깃에 없는 'b'
+    // 는 undefined → 제외되어 'a' 만 남는다(§20.1.2.17, V8 동일). getOwnPropertyNames
+    // 는 열거성 무관이라 트랩 결과 전체(a,b)를 보여준다.
     assert_eq!(
         run_str("var p=new Proxy({a:1},{ownKeys:()=>['a','b']}); Object.keys(p).join()"),
+        "a"
+    );
+    assert_eq!(
+        run_str("var p=new Proxy({a:1},{ownKeys:()=>['a','b']}); Object.getOwnPropertyNames(p).join()"),
         "a,b"
     );
 }

@@ -2659,6 +2659,16 @@ impl Interp {
             // Object.getOwnPropertySymbols(o) — 예전엔 항상 [] 였다(거짓말).
             // 심볼 키는 "\0@@…" 로 저장되므로 그 키들에서 심볼을 복원한다.
             Native::ObjectGetOwnPropertySymbols => {
+                // Proxy: ownKeys 트랩 결과 중 심볼 키만 (§10.5.11 + 필터).
+                if let Some(Value::Proxy(p)) = args.first() {
+                    let p = p.clone();
+                    let syms: Vec<Value> = self
+                        .proxy_own_keys(&p)?
+                        .into_iter()
+                        .filter(|k| matches!(k, Value::Symbol(_)))
+                        .collect();
+                    return Ok(Value::Arr(ArrayObj::new(syms)));
+                }
                 let keys: Vec<String> = match args.first() {
                     Some(Value::Obj(m)) => m
                         .borrow()
@@ -7714,6 +7724,11 @@ impl Interp {
                 if !is_object(args.first().unwrap_or(&Value::Undefined)) {
                     return Err(self.throw_error("TypeError", "Reflect.ownKeys called on non-object"));
                 }
+                // Proxy: [[OwnPropertyKeys]] 트랩(검증 포함).
+                if let Some(Value::Proxy(p)) = args.first() {
+                    let p = p.clone();
+                    return Ok(Value::Arr(ArrayObj::new(self.proxy_own_keys(&p)?)));
+                }
                 // §28.1.10 = target.[[OwnPropertyKeys]](): 정수 인덱스 오름차순 + 문자열
                 // 삽입순 + **심볼 삽입순**. getOwnPropertyNames(문자열)에 심볼 키를 이어붙인다.
                 let names =
@@ -7921,17 +7936,28 @@ impl Interp {
                 self.call_native(n2, None, new_args)
             }
             Native::ObjectKeys => match args.first() {
-                // Proxy: ownKeys 트랩 (없으면 타깃 위임). Object.keys(proxy) 가 빈 배열을
-                // 돌려주던 문제 — 반응성 프록시의 키 열거가 통째로 안 됐다.
+                // Proxy: [[OwnPropertyKeys]] 트랩(검증 포함) 후 EnumerableOwnPropertyNames —
+                // 문자열 키 중 프록시의 gOPD 가 enumerable 인 것만(§20.1.2.17). 예전엔 트랩
+                // 결과를 열거성 필터·심볼 제외 없이 그대로 돌려줬다.
                 Some(Value::Proxy(p)) => {
-                    self.proxy_revoked_guard(p)?;
-                    let (t, h) = (p.0.clone(), p.1.clone());
-                    let trap = self.member_get(&h, "ownKeys")?;
-                    if is_callable(&trap) {
-                        let res = self.call_value(trap, Some(h), vec![t])?;
-                        return Ok(res);
+                    let p = p.clone();
+                    let all = self.proxy_own_keys(&p)?;
+                    let mut out: Vec<Value> = Vec::new();
+                    for k in all {
+                        if let Value::Str(s) = &k {
+                            let desc = self.call_native(
+                                Native::ObjectGetOwnPropertyDescriptor,
+                                None,
+                                vec![Value::Proxy(p.clone()), Value::Str(s.clone())],
+                            )?;
+                            let enumerable = matches!(&desc, Value::Obj(m)
+                                if matches!(m.borrow().get("enumerable"), Some(v) if to_bool(v)));
+                            if enumerable {
+                                out.push(k);
+                            }
+                        }
                     }
-                    self.call_native(Native::ObjectKeys, None, vec![t])
+                    Ok(Value::Arr(ArrayObj::new(out)))
                 }
                 Some(Value::Obj(m)) => {
                     let keys: Vec<Value> =
@@ -8004,6 +8030,14 @@ impl Interp {
                             }
                         }
                         out
+                    }
+                    // Proxy: ownKeys 트랩 결과 중 문자열 키만 (§10.5.11 + 필터).
+                    Some(Value::Proxy(p)) => {
+                        let p = p.clone();
+                        self.proxy_own_keys(&p)?
+                            .into_iter()
+                            .filter(|k| matches!(k, Value::Str(_)))
+                            .collect()
                     }
                     _ => Vec::new(),
                 };

@@ -2891,6 +2891,119 @@ impl Interp {
         Ok(res)
     }
 
+    // §10.5.11 [[OwnPropertyKeys]] — Proxy 의 ownKeys 트랩. 검증된 키 목록(Value::Str /
+    // Value::Symbol)을 돌려준다. 트랩 없으면 타깃의 own 키에 위임. Reflect.ownKeys/
+    // Object.getOwnPropertyNames/getOwnPropertySymbols/Object.keys 가 공유한다.
+    pub(super) fn proxy_own_keys(&mut self, p: &Rc<(Value, Value)>) -> Result<Vec<Value>, String> {
+        self.proxy_revoked_guard(p)?;
+        let (t, h) = (p.0.clone(), p.1.clone());
+        let trap = self.member_get(&h, "ownKeys")?;
+        // GetMethod: undefined/null → 타깃 위임, non-callable → TypeError.
+        if matches!(trap, Value::Undefined | Value::Null) {
+            let keys = self.call_native(Native::ReflectOwnKeys, None, vec![t])?;
+            return Ok(match keys {
+                Value::Arr(a) => a.borrow().clone(),
+                _ => Vec::new(),
+            });
+        }
+        if !is_callable(&trap) {
+            return Err(self.throw_error("TypeError", "'ownKeys' trap is not callable"));
+        }
+        let trap_res = self.call_value(trap, Some(h), vec![t.clone()])?;
+        // CreateListFromArrayLike(«String, Symbol»): 배열형이어야 하고 원소는 문자열/심볼.
+        if !is_object(&trap_res) {
+            return Err(self.throw_error(
+                "TypeError",
+                "proxy 'ownKeys' trap must return an array-like object",
+            ));
+        }
+        let list = self.generic_array_read(&trap_res)?;
+        for k in &list {
+            if !matches!(k, Value::Str(_) | Value::Symbol(_)) {
+                return Err(self.throw_error(
+                    "TypeError",
+                    "proxy 'ownKeys' trap result must contain only strings and symbols",
+                ));
+            }
+        }
+        // 중복 키 금지.
+        for i in 0..list.len() {
+            for j in (i + 1)..list.len() {
+                if same_value(&list[i], &list[j]) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "proxy 'ownKeys' trap result must not contain duplicate entries",
+                    ));
+                }
+            }
+        }
+        // §10.5.11 invariant: 타깃 키와 대조.
+        let extensible = self.value_is_extensible(&t)?;
+        let target_keys = match self.call_native(Native::ReflectOwnKeys, None, vec![t.clone()])? {
+            Value::Arr(a) => a.borrow().clone(),
+            _ => Vec::new(),
+        };
+        let mut target_nonconf: Vec<Value> = Vec::new();
+        let mut target_conf: Vec<Value> = Vec::new();
+        for key in &target_keys {
+            let desc = self.call_native(
+                Native::ObjectGetOwnPropertyDescriptor,
+                None,
+                vec![t.clone(), key.clone()],
+            )?;
+            let is_conf = matches!(&desc, Value::Obj(m)
+                if matches!(m.borrow().get("configurable"), Some(v) if to_bool(v)));
+            if !matches!(desc, Value::Undefined) && !is_conf {
+                target_nonconf.push(key.clone());
+            } else {
+                target_conf.push(key.clone());
+            }
+        }
+        // 확장 가능하고 non-configurable 키가 없으면 추가 검증 불필요.
+        if extensible && target_nonconf.is_empty() {
+            return Ok(list);
+        }
+        let mut unchecked: Vec<Value> = list.clone();
+        // non-configurable 키는 반드시 트랩 결과에 있어야 한다.
+        for key in &target_nonconf {
+            match unchecked.iter().position(|u| same_value(u, key)) {
+                Some(pos) => {
+                    unchecked.remove(pos);
+                }
+                None => {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "proxy 'ownKeys': non-configurable key of target missing from result",
+                    ))
+                }
+            }
+        }
+        if extensible {
+            return Ok(list);
+        }
+        // non-extensible: configurable 키도 전부 있어야 하고, 여분 키가 없어야 한다.
+        for key in &target_conf {
+            match unchecked.iter().position(|u| same_value(u, key)) {
+                Some(pos) => {
+                    unchecked.remove(pos);
+                }
+                None => {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "proxy 'ownKeys': key of non-extensible target missing from result",
+                    ))
+                }
+            }
+        }
+        if !unchecked.is_empty() {
+            return Err(self.throw_error(
+                "TypeError",
+                "proxy 'ownKeys': result contains keys absent on non-extensible target",
+            ));
+        }
+        Ok(list)
+    }
+
     // §7.4.11 IteratorClose (정상 완료용): iterator.return() 을 호출하고 그 예외는 전파,
     // 결과가 객체가 아니면 TypeError. is*Of 의 조기탈출(IteratorClose)에 쓴다.
     fn iterator_close_ok(&mut self, it: &Value) -> Result<(), String> {
