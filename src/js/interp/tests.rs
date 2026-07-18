@@ -7487,3 +7487,13 @@ fn parser_numeric_property_getter_setter_method() {
     // 정규식 결과 객체의 숫자 getter (@@replace 패턴).
     assert_eq!(run_str("var r={exec:function(){return {0:'X',get 1(){return 'cap'},index:0,length:2}},global:false,lastIndex:0}; Object.setPrototypeOf(r,RegExp.prototype); r[Symbol.replace]('abc','[$1]')"), "[cap]bc");
 }
+
+#[test]
+fn regex_exec_lastindex_get_set() {
+    // §22.2.7.2: lastIndex = ToLength(Get)(강제변환/예외), 갱신 Set(Throw)(setter/비쓰기 TypeError).
+    assert!(run_bool("var re=/a/g; re.lastIndex={valueOf:function(){throw new RangeError('x')}}; var t=false; try{ re.exec('aaa') }catch(e){ t=e instanceof RangeError } t"));
+    assert_eq!(run_num("var re=/a/g; re.lastIndex='1'; re.exec('aaa').index"), 1.0);
+    assert_eq!(run_num("var re=/a/g; re.exec('aXa'); re.lastIndex"), 1.0);
+    assert_eq!(run_num("var re=/a/; re.lastIndex=5; re.exec('aaa'); re.lastIndex"), 5.0); // 비전역 무접근
+    assert!(run_bool("var re=/a/y; Object.defineProperty(re,'lastIndex',{value:5,writable:false}); var t=false; try{ re.exec('xxx') }catch(e){ t=e instanceof TypeError } t"));
+}

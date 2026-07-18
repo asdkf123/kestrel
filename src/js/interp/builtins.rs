@@ -5226,27 +5226,21 @@ impl Interp {
                 let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                     .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
                 let chars: Vec<char> = text.chars().collect();
-                // sticky('y')/global 은 lastIndex 를 쓴다. sticky 는 lastIndex 에 '앵커'된
-                // 매치만 인정한다(그 위치에서 시작 안 하면 실패). §22.2.7.2.
+                // §22.2.7.2: sticky('y')/global 은 lastIndex 를 Get/Set 으로 다룬다 —
+                // lastIndex=ToLength(Get(R,"lastIndex")), 갱신은 Set(Throw=true)로 setter 관측/
+                // non-writable TypeError. 예전엔 맵 직접 접근이라 getter/setter/ToLength 를 우회했다.
                 let sticky = flags.contains('y');
                 let use_li = re.global || sticky;
+                let r = recv_obj.clone().unwrap_or(Value::Undefined);
                 let from = if use_li {
-                    match &recv_obj {
-                        Some(Value::Obj(m)) => match m.borrow().get("lastIndex") {
-                            Some(Value::Num(n)) => to_length(*n) as usize,
-                            _ => 0,
-                        },
-                        _ => 0,
-                    }
+                    let liv = self.member_get(&r, "lastIndex")?;
+                    to_length(self.to_number_value(&liv)?) as usize
                 } else {
                     0
                 };
-                // lastIndex > length 면 매치 실패 → lastIndex 0, null. 예전엔 from 을 len 으로
-                // clamp 해 문자열 끝에서 빈 매치를 무한히 냈다.
+                // lastIndex > length 면 매치 실패 → lastIndex 0, null.
                 if use_li && from > chars.len() {
-                    if let Some(Value::Obj(m)) = &recv_obj {
-                        m.borrow_mut().insert("lastIndex".to_string(), Value::Num(0.0));
-                    }
+                    self.set_throw(&r, "lastIndex", Value::Num(0.0))?;
                     return Ok(Value::Null);
                 }
                 // sticky 는 from 에서 시작하는 매치만 (엔진에 y 미지원 → 여기서 앵커 검사).
@@ -5254,18 +5248,13 @@ impl Interp {
                 match mat {
                     Some(mt) => {
                         if use_li {
-                            if let Some(Value::Obj(m)) = &recv_obj {
-                                m.borrow_mut()
-                                    .insert("lastIndex".to_string(), Value::Num(mt.end as f64));
-                            }
+                            self.set_throw(&r, "lastIndex", Value::Num(mt.end as f64))?;
                         }
                         Ok(self.regex_match_array(&chars, &mt, &re.group_names))
                     }
                     None => {
                         if use_li {
-                            if let Some(Value::Obj(m)) = &recv_obj {
-                                m.borrow_mut().insert("lastIndex".to_string(), Value::Num(0.0));
-                            }
+                            self.set_throw(&r, "lastIndex", Value::Num(0.0))?;
                         }
                         Ok(Value::Null)
                     }
