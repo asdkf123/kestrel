@@ -7032,6 +7032,12 @@ impl Interp {
         v: Value,
         prefer_string: bool,
     ) -> Result<Value, String> {
+        self.to_primitive_hint(v, if prefer_string { "string" } else { "number" })
+    }
+
+    // ToPrimitive (§7.1.1) — 힌트 문자열("default"/"number"/"string")을 그대로 @@toPrimitive
+    // 에 전달한다. Date 생성자의 1인자는 "default" 힌트를 요구하므로 bool 로는 부족했다.
+    pub(super) fn to_primitive_hint(&mut self, v: Value, hint: &str) -> Result<Value, String> {
         if !matches!(
             v,
             Value::Obj(_)
@@ -7051,9 +7057,7 @@ impl Interp {
         // Symbol.toPrimitive 가 있으면 우선 (예외/비원시 결과 모두 표준대로 처리).
         if let Ok(f) = self.member_get(&v, "\u{0}@@toPrimitive") {
             if is_callable(&f) {
-                let hint =
-                    Value::Str(if prefer_string { "string" } else { "number" }.to_string());
-                let res = self.call_value(f, Some(v.clone()), vec![hint])?;
+                let res = self.call_value(f, Some(v.clone()), vec![Value::Str(hint.to_string())])?;
                 if prim(&res) {
                     return Ok(res);
                 }
@@ -7062,8 +7066,9 @@ impl Interp {
                 );
             }
         }
+        // OrdinaryToPrimitive: "string" 힌트만 toString 우선, 나머지("default"/"number")는 valueOf 우선.
         let order: [&str; 2] =
-            if prefer_string { ["toString", "valueOf"] } else { ["valueOf", "toString"] };
+            if hint == "string" { ["toString", "valueOf"] } else { ["valueOf", "toString"] };
         for m in order {
             let f = self.member_get(&v, m)?;
             if is_callable(&f) {

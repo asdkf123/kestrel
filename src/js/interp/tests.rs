@@ -6851,3 +6851,32 @@ fn json_stringify_escapes_and_space() {
     // 소수 space 는 floor.
     assert_eq!(run_str("JSON.stringify([1], null, 3.9)"), "[\n   1\n]");
 }
+
+#[test]
+fn date_coercion_and_makeday_makestime() {
+    // §21.4.2.1: 생성자/UTC 인자는 순서대로 ToNumber(valueOf 관찰), poisoned 는 throw.
+    assert!(run_bool(
+        "var t=false; try{ new Date({valueOf:function(){throw 1}}); }catch(e){ t=true } t"
+    ));
+    // Symbol.toPrimitive 힌트는 'default'
+    assert_eq!(
+        run_str("var h; var y={}; y[Symbol.toPrimitive]=function(x){h=x;return 0}; new Date(y); h"),
+        "default"
+    );
+    // Infinity/NaN 성분 → 무효 날짜(NaN)
+    assert!(run_bool("Number.isNaN(new Date(2020, Infinity).getTime())"));
+    assert!(run_bool("Number.isNaN(Date.UTC(Infinity))"));
+    // 월 오버플로는 MakeDay 가 정규화
+    assert!(run_bool("Date.UTC(2000,144,1) === Date.UTC(2012,0,1)"));
+    // TimeClip 은 -0 을 +0 으로 (1/+0 === Infinity)
+    assert!(run_bool("var g=new Date(-0).getTime(); g===0 && 1/g===Infinity"));
+    // setter 도 Infinity → NaN
+    assert!(run_bool("var d=new Date(0); d.setHours(Infinity); Number.isNaN(d.getTime())"));
+    // 2자리 연도 0..99 → 1900+
+    assert_eq!(run_num("new Date(99,0,1).getUTCFullYear()"), 1999.0);
+    // UTC 강제변환은 좌→우 순서
+    assert_eq!(
+        run_str("var o=''; function s(n){return {valueOf:function(){o+=n;return 0}}}; Date.UTC(s('a'),s('b'),s('c')); o"),
+        "abc"
+    );
+}

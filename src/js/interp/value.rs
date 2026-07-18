@@ -476,17 +476,80 @@ pub(super) fn date_parts(millis: f64) -> (i64, u32, u32, u32, u32, u32, u32, u32
     (year, m, d, hours, min, sec, ms, weekday)
 }
 
-// (year, month[1-12], day, h, m, s, ms) → epoch millis (UTC)
-pub(super) fn date_to_millis(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64) -> f64 {
-    // days_from_civil
+// days_from_civil: (year, month[1-12], day) → 1970-01-01 기준 일수. (Howard Hinnant)
+pub(super) fn days_from_civil(y: i64, mo: i64, d: i64) -> i64 {
     let y = if mo <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as i64;
+    let yoe = y - era * 400;
     let mp = if mo > 2 { mo - 3 } else { mo + 9 };
     let doy = (153 * mp + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
+    era * 146_097 + doe - 719_468
+}
+
+// (year, month[1-12], day, h, m, s, ms) → epoch millis (UTC)
+pub(super) fn date_to_millis(y: i64, mo: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64) -> f64 {
+    let days = days_from_civil(y, mo, d);
     (days * 86_400_000 + h * 3_600_000 + mi * 60_000 + s * 1000 + ms) as f64
+}
+
+// §21.4.1.11 MakeTime — 하나라도 유한하지 않으면 NaN, 나머진 trunc 후 합산.
+pub(super) fn make_time(h: f64, m: f64, s: f64, ms: f64) -> f64 {
+    if !(h.is_finite() && m.is_finite() && s.is_finite() && ms.is_finite()) {
+        return f64::NAN;
+    }
+    h.trunc() * 3_600_000.0 + m.trunc() * 60_000.0 + s.trunc() * 1000.0 + ms.trunc()
+}
+
+// §21.4.1.12 MakeDay(year, month[0기준], date) → 1970-01-01 기준 일수(f64, NaN 가능).
+pub(super) fn make_day(year: f64, month: f64, date: f64) -> f64 {
+    if !(year.is_finite() && month.is_finite() && date.is_finite()) {
+        return f64::NAN;
+    }
+    let y = year.trunc();
+    let m = month.trunc();
+    let dt = date.trunc();
+    let ym = y + (m / 12.0).floor();
+    // 표현 가능한 날짜 범위(±약 27만년) 밖이면 어차피 TimeClip 에서 NaN → 조기 NaN.
+    if !ym.is_finite() || ym.abs() > 300_000.0 {
+        return f64::NAN;
+    }
+    let mn = m.rem_euclid(12.0); // 0..11
+    let days = days_from_civil(ym as i64, mn as i64 + 1, 1) as f64;
+    days + (dt - 1.0)
+}
+
+// §21.4.1.13 MakeDate(day, time) = day*86400000 + time (비유한이면 NaN).
+pub(super) fn make_date_ms(day: f64, time: f64) -> f64 {
+    if !day.is_finite() || !time.is_finite() {
+        return f64::NAN;
+    }
+    let tv = day * 86_400_000.0 + time;
+    if tv.is_finite() {
+        tv
+    } else {
+        f64::NAN
+    }
+}
+
+// MakeFullYear: 구조분해 생성자/UTC 의 연도 0..99 → 1900+ 보정 (§21.4.2.1 / §21.4.3.4).
+pub(super) fn make_full_year(y: f64) -> f64 {
+    if y.is_nan() {
+        return f64::NAN;
+    }
+    let yi = y.trunc();
+    if (0.0..=99.0).contains(&yi) {
+        1900.0 + yi
+    } else {
+        yi
+    }
+}
+
+// (year, month0, date, h, m, s, ms) 성분(이미 ToNumber 된 f64) → TimeClip 된 시간값.
+// MakeFullYear 적용판(생성자/Date.UTC).
+pub(super) fn build_date_full(y: f64, mo: f64, d: f64, h: f64, mi: f64, s: f64, ms: f64) -> f64 {
+    let day = make_day(make_full_year(y), mo, d);
+    time_clip(make_date_ms(day, make_time(h, mi, s, ms)))
 }
 
 // 현재 epoch millis

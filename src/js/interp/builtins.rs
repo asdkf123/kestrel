@@ -1065,33 +1065,49 @@ impl Interp {
 
 
     // new Date(...) / Date(...) 인자 처리
-    fn make_date_from_args(&self, args: &[Value]) -> Value {
+    // §21.4.2.1 Date(...args): 인자를 표준 순서로 강제변환하고(valueOf/@@toPrimitive 관찰,
+    // 예외 전파) MakeDay/MakeTime/MakeDate/TimeClip 로 조립한다. NaN/Infinity/오버플로는
+    // 유한성 검사로 NaN 이 되고, -0 은 TimeClip 이 +0 으로 만든다.
+    fn make_date_from_args(&mut self, args: &[Value]) -> Result<Value, String> {
         let millis = match args.len() {
             0 => now_millis(),
             1 => match &args[0] {
-                Value::Num(n) => *n,
-                Value::Str(s) => parse_date_string(s).unwrap_or(f64::NAN),
-                Value::Obj(m) if is_date_obj(m) => match m.borrow().get("\u{0}time") {
-                    Some(Value::Num(n)) => *n,
-                    _ => f64::NAN,
-                },
-                v => to_num(v),
+                // [[DateValue]] 를 가진 Date → 그 시간값을 그대로(단, TimeClip).
+                Value::Obj(m) if is_date_obj(m) => {
+                    let t = match m.borrow().get("\u{0}time") {
+                        Some(Value::Num(n)) => *n,
+                        _ => f64::NAN,
+                    };
+                    time_clip(t)
+                }
+                other => {
+                    // v = ToPrimitive(value) (힌트 default). String 이면 파싱, 아니면 ToNumber.
+                    let prim = self.to_primitive_hint(other.clone(), "default")?;
+                    match prim {
+                        Value::Str(s) => parse_date_string(&s).unwrap_or(f64::NAN),
+                        v => time_clip(self.to_number_value(&v)?),
+                    }
+                }
             },
             _ => {
-                let g = |i: usize, dflt: f64| args.get(i).map(to_num).unwrap_or(dflt);
-                // (year, month[0기준], day, h, m, s, ms)
-                date_to_millis(
-                    g(0, 1970.0) as i64,
-                    g(1, 0.0) as i64 + 1,
-                    g(2, 1.0) as i64,
-                    g(3, 0.0) as i64,
-                    g(4, 0.0) as i64,
-                    g(5, 0.0) as i64,
-                    g(6, 0.0) as i64,
-                )
+                // (year, month[0기준], date, h, m, s, ms) — 제공된 인자만 순서대로 ToNumber.
+                let num = |me: &mut Self, i: usize, dflt: f64| -> Result<f64, String> {
+                    match args.get(i) {
+                        Some(v) => me.to_number_value(v),
+                        None => Ok(dflt),
+                    }
+                };
+                let y = num(self, 0, f64::NAN)?;
+                let mo = num(self, 1, 0.0)?;
+                let d = num(self, 2, 1.0)?;
+                let h = num(self, 3, 0.0)?;
+                let mi = num(self, 4, 0.0)?;
+                let s = num(self, 5, 0.0)?;
+                let ms = num(self, 6, 0.0)?;
+                build_date_full(y, mo, d, h, mi, s, ms)
             }
         };
-        make_date(millis)
+        Ok(make_date(millis))
     }
 
 
@@ -3888,24 +3904,29 @@ impl Interp {
                 };
                 Ok(Value::Num(millis))
             }
-            // Date.UTC(year, month[0기준], day, h, m, s, ms) → 밀리초(UTC)
+            // Date.UTC(year, month[0기준], day, h, m, s, ms) → 밀리초(UTC). §21.4.3.4
+            // 인자를 순서대로 ToNumber(valueOf 관찰, 예외 전파), MakeFullYear/MakeDay/MakeTime.
             Native::DateUTC => {
-                let g = |i: usize, dflt: f64| args.get(i).map(to_num).unwrap_or(dflt);
+                let num = |me: &mut Self, i: usize, dflt: f64| -> Result<f64, String> {
+                    match args.get(i) {
+                        Some(v) => me.to_number_value(v),
+                        None => Ok(dflt),
+                    }
+                };
+                // 인자가 하나도 없으면 NaN. year 는 항상 강제변환된다(§21.4.3.4 step 1).
+                let y = num(self, 0, f64::NAN)?;
+                let mo = num(self, 1, 0.0)?;
+                let d = num(self, 2, 1.0)?;
+                let h = num(self, 3, 0.0)?;
+                let mi = num(self, 4, 0.0)?;
+                let s = num(self, 5, 0.0)?;
+                let ms = num(self, 6, 0.0)?;
                 if args.is_empty() {
                     return Ok(Value::Num(f64::NAN));
                 }
-                let millis = date_to_millis(
-                    g(0, 1970.0) as i64,
-                    g(1, 0.0) as i64 + 1,
-                    g(2, 1.0) as i64,
-                    g(3, 0.0) as i64,
-                    g(4, 0.0) as i64,
-                    g(5, 0.0) as i64,
-                    g(6, 0.0) as i64,
-                );
-                Ok(Value::Num(millis))
+                Ok(Value::Num(build_date_full(y, mo, d, h, mi, s, ms)))
             }
-            Native::DateCtor => Ok(self.make_date_from_args(&args)),
+            Native::DateCtor => self.make_date_from_args(&args),
             // date.getFullYear() 등 — recv 가 Date 객체
             Native::DateMethod(field) => {
                 use DateField::*;
@@ -4021,8 +4042,8 @@ impl Interp {
                     let mut nums: Vec<f64> = Vec::with_capacity(count);
                     for i in 0..count {
                         let v = args.get(i).cloned().unwrap_or(Value::Undefined);
-                        let p = self.to_primitive_or_throw(v, false)?;
-                        nums.push(to_num(&p));
+                        // ToNumber: valueOf/@@toPrimitive 관찰 + Symbol/BigInt 은 TypeError.
+                        nums.push(self.to_number_value(&v)?);
                     }
                     let a = |i: usize| -> Option<f64> {
                         if i == 0 {
@@ -4040,88 +4061,68 @@ impl Interp {
                     } else {
                         millis
                     };
-                    let (y, mo, d, h, mi, s, ms, _) = date_parts(base);
+                    // 현재 필드를 f64 로 (month 은 0기준). MakeDay/MakeTime 로 조립해 NaN/
+                    // Infinity/오버플로가 그대로 무효 날짜(NaN)로 전파되게 한다.
+                    let (yi, mo1, di, hi, mii, si, msi, _) = date_parts(base);
+                    let (cy, cmo0, cd, ch, cmi, cs, cms) = (
+                        yi as f64,
+                        mo1 as f64 - 1.0,
+                        di as f64,
+                        hi as f64,
+                        mii as f64,
+                        si as f64,
+                        msi as f64,
+                    );
+                    // setter 는 MakeFullYear(1900+) 를 적용하지 않는다(연도를 그대로 쓴다).
+                    let build = |yr: f64, mo0: f64, dd: f64, hh: f64, mm: f64, ss: f64, mss: f64| {
+                        time_clip(make_date_ms(make_day(yr, mo0, dd), make_time(hh, mm, ss, mss)))
+                    };
                     let new_millis = match cfield {
                         SetTime => time_clip(a(0).unwrap_or(f64::NAN)),
-                        SetFullYear => time_clip(date_to_millis(
-                            a(0).unwrap_or(f64::NAN) as i64,
-                            a(1).map(|v| v as i64 + 1).unwrap_or(mo as i64),
-                            a(2).map(|v| v as i64).unwrap_or(d as i64),
-                            h as i64,
-                            mi as i64,
-                            s as i64,
-                            ms as i64,
-                        )),
+                        SetFullYear => build(
+                            a(0).unwrap_or(f64::NAN),
+                            a(1).unwrap_or(cmo0),
+                            a(2).unwrap_or(cd),
+                            ch,
+                            cmi,
+                            cs,
+                            cms,
+                        ),
                         SetYear => {
                             // Annex B §B.2.4.2: 0..99 → 1900+y. NaN → NaN.
                             let yv = a(0).unwrap_or(f64::NAN);
                             if yv.is_nan() {
                                 f64::NAN
                             } else {
-                                let yi = yv.trunc() as i64;
-                                let full = if (0..=99).contains(&yi) { 1900 + yi } else { yi };
-                                time_clip(date_to_millis(
-                                    full, mo as i64, d as i64, h as i64, mi as i64, s as i64,
-                                    ms as i64,
-                                ))
+                                let yt = yv.trunc();
+                                let full = if (0.0..=99.0).contains(&yt) { 1900.0 + yt } else { yt };
+                                build(full, cmo0, cd, ch, cmi, cs, cms)
                             }
                         }
                         // 나머지 setter 는 t 가 NaN 이면(인자 강제 후) NaN 반환.
                         _ if t_nan => f64::NAN,
-                        SetMonth => time_clip(date_to_millis(
-                            y,
-                            a(0).unwrap_or((mo - 1) as f64) as i64 + 1,
-                            a(1).map(|v| v as i64).unwrap_or(d as i64),
-                            h as i64,
-                            mi as i64,
-                            s as i64,
-                            ms as i64,
-                        )),
-                        SetDate => time_clip(date_to_millis(
-                            y,
-                            mo as i64,
-                            a(0).unwrap_or(d as f64) as i64,
-                            h as i64,
-                            mi as i64,
-                            s as i64,
-                            ms as i64,
-                        )),
-                        SetHours => time_clip(date_to_millis(
-                            y,
-                            mo as i64,
-                            d as i64,
-                            a(0).unwrap_or(h as f64) as i64,
-                            a(1).map(|v| v as i64).unwrap_or(mi as i64),
-                            a(2).map(|v| v as i64).unwrap_or(s as i64),
-                            a(3).map(|v| v as i64).unwrap_or(ms as i64),
-                        )),
-                        SetMinutes => time_clip(date_to_millis(
-                            y,
-                            mo as i64,
-                            d as i64,
-                            h as i64,
-                            a(0).unwrap_or(mi as f64) as i64,
-                            a(1).map(|v| v as i64).unwrap_or(s as i64),
-                            a(2).map(|v| v as i64).unwrap_or(ms as i64),
-                        )),
-                        SetSeconds => time_clip(date_to_millis(
-                            y,
-                            mo as i64,
-                            d as i64,
-                            h as i64,
-                            mi as i64,
-                            a(0).unwrap_or(s as f64) as i64,
-                            a(1).map(|v| v as i64).unwrap_or(ms as i64),
-                        )),
-                        SetMs => time_clip(date_to_millis(
-                            y,
-                            mo as i64,
-                            d as i64,
-                            h as i64,
-                            mi as i64,
-                            s as i64,
-                            a(0).unwrap_or(ms as f64) as i64,
-                        )),
+                        SetMonth => build(cy, a(0).unwrap_or(cmo0), a(1).unwrap_or(cd), ch, cmi, cs, cms),
+                        SetDate => build(cy, cmo0, a(0).unwrap_or(cd), ch, cmi, cs, cms),
+                        SetHours => build(
+                            cy,
+                            cmo0,
+                            cd,
+                            a(0).unwrap_or(ch),
+                            a(1).unwrap_or(cmi),
+                            a(2).unwrap_or(cs),
+                            a(3).unwrap_or(cms),
+                        ),
+                        SetMinutes => build(
+                            cy,
+                            cmo0,
+                            cd,
+                            ch,
+                            a(0).unwrap_or(cmi),
+                            a(1).unwrap_or(cs),
+                            a(2).unwrap_or(cms),
+                        ),
+                        SetSeconds => build(cy, cmo0, cd, ch, cmi, a(0).unwrap_or(cs), a(1).unwrap_or(cms)),
+                        SetMs => build(cy, cmo0, cd, ch, cmi, cs, a(0).unwrap_or(cms)),
                         _ => f64::NAN,
                     };
                     // t(강제 전에 읽은 thisTimeValue)가 NaN 인 성분 세터는 NaN 을 반환하되
