@@ -601,6 +601,15 @@ impl Interp {
                 return Ok(Some(raw));
             }
         }
+        // 원시 래퍼(new Number/String/Boolean)는 원시값으로 직렬화 (§25.5.2.2 step 4).
+        let unwrapped;
+        let v = match v {
+            Value::Obj(m) if m.borrow().contains_key(WRAPPER_SLOT) => {
+                unwrapped = wrapper_primitive(v).unwrap_or(Value::Null);
+                &unwrapped
+            }
+            _ => v,
+        };
         Ok(match v {
             Value::Undefined
             | Value::Fn(_)

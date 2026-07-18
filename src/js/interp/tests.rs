@@ -6790,3 +6790,12 @@ fn typedarray_copywithin_clamp() {
     assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin(-2)).join()"), "1,2,3,1,2");
     assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4,5]).copyWithin({valueOf:function(){return 0;}},3)).join()"), "4,5,3,4,5");
 }
+
+#[test]
+fn json_stringify_primitive_wrappers() {
+    // §25.5.2.2: new Number/String/Boolean 은 원시값으로 직렬화.
+    assert_eq!(run_str("JSON.stringify({n:new Number(5),s:new String('hi'),b:new Boolean(true)})"),
+               "{\"n\":5,\"s\":\"hi\",\"b\":true}");
+    assert_eq!(run_str("JSON.stringify(new Number(42))"), "42");
+    assert_eq!(run_str("JSON.stringify(new String('x'))"), "\"x\"");
+}
