@@ -7709,3 +7709,19 @@ fn class_extends_native_inherits_statics() {
     // 네이티브에 없는 키는 undefined(회귀 없음).
     assert!(run_bool("class MyP extends Promise {} MyP.nonexistent === undefined"));
 }
+
+#[test]
+fn unary_plus_minus_use_tonumber() {
+    // §13.5.4/5: 단항 +/- 는 ToNumber — Symbol 은 TypeError(예전엔 NaN), 객체는
+    // ToPrimitive(number)+ToNumber, valueOf abrupt 전파. BigInt +는 TypeError.
+    assert_eq!(run_str("try{ +Symbol('x'); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ -Symbol('x'); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ +10n; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_num("+{valueOf:function(){return 5}}"), 5.0);
+    assert_eq!(run_num("+'42'"), 42.0);
+    assert_eq!(run_num("-'3'"), -3.0);
+    assert_eq!(run_num("+[]"), 0.0);
+    assert_eq!(run_str("try{ +{valueOf:function(){throw new RangeError('x')}}; 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    // -BigInt 는 BigInt 부호반전(여전히 동작).
+    assert!(run_bool("-5n === -5n && typeof(-5n) === 'bigint'"));
+}

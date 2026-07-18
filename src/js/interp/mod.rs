@@ -4104,16 +4104,11 @@ impl Interp {
                     };
                 }
                 Ok(match op {
-                    // 단항 +/- 도 객체를 원시값으로 변환해야 한다 (ToNumber → ToPrimitive).
-                    // 이항 연산만 변환하고 있어서 +obj 는 NaN 이었다.
-                    UnOp::Neg => {
-                        let p = self.to_primitive(v.clone(), false);
-                        Value::Num(-to_num(&p))
-                    }
-                    UnOp::Pos => {
-                        let p = self.to_primitive(v.clone(), false);
-                        Value::Num(to_num(&p))
-                    }
+                    // 단항 +/- 는 ToNumber (§13.5.4/13.5.5): 객체는 ToPrimitive(number)
+                    // 후 ToNumber, Symbol 은 TypeError(예전엔 to_num 이 관대해 NaN 이었다),
+                    // valueOf/toString 의 abrupt 도 전파. (BigInt 는 위에서 처리.)
+                    UnOp::Neg => Value::Num(-self.to_number_value(&v)?),
+                    UnOp::Pos => Value::Num(self.to_number_value(&v)?),
                     UnOp::Not => Value::Bool(!to_bool(&v)),
                     UnOp::Typeof => Value::Str(type_of(&v).to_string()),
                     UnOp::BitNot => Value::Num(!self.to_int32(&v)? as f64),
