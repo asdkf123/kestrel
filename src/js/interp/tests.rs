@@ -7512,3 +7512,13 @@ fn string_replace_routes_through_symbol_replace() {
     assert_eq!(run_str("'hello'.replace('l','L')"), "heLlo");
     assert_eq!(run_str("'a.b.c'.replaceAll('.','-')"), "a-b-c");
 }
+
+#[test]
+fn string_search_routes_through_symbol_search() {
+    // §22.1.3.11: str.search 이 @@search 로 — lastIndex 저장/복원, 문자열 패턴 인자.
+    assert_eq!(run_num("'hello world'.search(/world/)"), 6.0);
+    assert_eq!(run_num("'abc'.search(/x/)"), -1.0);
+    assert_eq!(run_num("'abc'.search('.')"), 0.0);
+    assert_eq!(run_num("'hello'.search('o')"), 4.0);
+    assert!(run_bool("var re=/o/g; re.lastIndex=5; var r='hello world'.search(re); r===4 && re.lastIndex===5"));
+}

@@ -5957,29 +5957,23 @@ impl Interp {
                         Value::Str(self.str_replace(&s, &pat, &repl, true)?)
                     }
                     StrOp::Search => {
-                        let (src, flags) = match args.first().and_then(regex_src_flags) {
-                            Some(sf) => sf,
-                            None => {
-                                // RegExpCreate(§22.2.3.1): 인자를 정규식 '패턴'으로 컴파일한다
-                                // (이스케이프 안 함). undefined → 빈 패턴("").
-                                let pat = match args.first() {
-                                    None | Some(Value::Undefined) => String::new(),
-                                    Some(v) => self.to_string_value(v)?,
-                                };
-                                (pat, String::new())
-                            }
+                        // §22.1.3.11: 정규식이면 그 @@search 로, 아니면 RegExpCreate(arg) 후
+                        // @@search → custom @@search/exec, lastIndex 저장/복원 모두 표준.
+                        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        let rx = if regex_src_flags(&arg).is_some() {
+                            arg
+                        } else {
+                            let pat = match args.first() {
+                                None | Some(Value::Undefined) => String::new(),
+                                Some(v) => self.to_string_value(v)?,
+                            };
+                            make_regex_obj(&pat, "")
                         };
-                        let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                            .map_err(|e| format!("정규식: {}", e))?;
-                        match re.find(&chars, 0) {
-                            // 정규식 엔진은 코드포인트 인덱스 → UTF-16 유닛 오프셋으로 변환
-                            Some(mt) => {
-                                let u16_start: usize =
-                                    chars[..mt.start].iter().map(|c| c.len_utf16()).sum();
-                                Value::Num(u16_start as f64)
-                            }
-                            None => Value::Num(-1.0),
-                        }
+                        return self.call_native(
+                            Native::RegexSym(natives::StrOp::Search),
+                            Some(rx),
+                            vec![Value::Str(s.clone())],
+                        );
                     }
                     StrOp::Match => {
                         // §22.1.3.11: 정규식이면 그 @@match 로, 아니면 RegExpCreate(arg) 후
