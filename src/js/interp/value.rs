@@ -1093,7 +1093,9 @@ pub(super) fn json_parse(src: &str) -> Result<Value, String> {
 }
 
 pub(super) fn json_ws(c: &[char], p: &mut usize) {
-    while *p < c.len() && c[*p].is_whitespace() {
+    // JSON 공백은 U+0020/U+0009/U+000A/U+000D 뿐 (§25.5.1). Rust is_whitespace 는
+    // U+00A0/U+1680 등 유니코드 공백까지 포함해 너무 관대했다.
+    while *p < c.len() && matches!(c[*p], ' ' | '\t' | '\n' | '\r') {
         *p += 1;
     }
 }
