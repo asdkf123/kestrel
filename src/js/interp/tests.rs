@@ -7635,3 +7635,19 @@ fn array_ctor_invalid_length_rangeerror() {
     assert_eq!(prelude_str("var r; try{ await Array.fromAsync(null); r='no' }catch(e){ r=e.constructor.name } r"), "TypeError");
     assert_eq!(prelude_str("var r; try{ await Array.fromAsync.call({},{length:4294967296}); r='no' }catch(e){ r=e.constructor.name } r"), "RangeError");
 }
+
+#[test]
+fn strict_this_binding_and_iterator_receiver() {
+    // §10.2.1.2: strict 함수는 this 를 강제변환하지 않는다(own 'use strict').
+    assert!(run_bool("function f(){ 'use strict'; return this; } f() === undefined"));
+    assert!(run_bool("function f(){ 'use strict'; return this; } f.call(null) === null"));
+    assert!(run_bool("function f(){ 'use strict'; return this; } f.call(5) === 5"));
+    // sloppy 는 그대로 강제변환(회귀 방지).
+    assert!(run_bool("function f(){ return this; } f.call(null) === globalThis"));
+    assert!(run_bool("function f(){ return this; } typeof f.call(5) === 'object'"));
+    // 내장(프렐류드) 메서드도 strict — 수신자 검증이 window 로 가려지지 않는다.
+    assert!(prelude_bool("var t=false; try{ Iterator.prototype.map.call(null, function(x){return x;}); }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("var t=false; try{ Iterator.prototype.filter.call(5, function(x){return x;}); }catch(e){ t=e instanceof TypeError } t"));
+    // 정상 사용은 그대로.
+    assert_eq!(prelude_str("function* g(){yield 1;yield 2;} g().map(x=>x*2).toArray().join(',')"), "2,4");
+}

@@ -85,6 +85,24 @@ fn is_anonymous_fn_expr(e: &Expr) -> bool {
     }
 }
 
+// 함수 본문이 'use strict' 지시어 프롤로그로 시작하는가 (§11.2.1 Directive Prologue).
+// 선행 문자열 리터럴 문장(디렉티브) 중 정확히 "use strict" 가 있으면 strict.
+// strict 함수는 this 를 강제변환하지 않는다(§10.2.1.2). 내장 메서드도 이 규칙을
+// 따르므로 프렐류드 빌트인에 'use strict' 를 붙여 raw this(null/원시)를 받게 한다.
+fn body_is_strict(body: &[Stmt]) -> bool {
+    for stmt in body {
+        if let Stmt::Expr(Expr::Str(s)) = stmt {
+            if s == "use strict" {
+                return true;
+            }
+            // 다른 문자열 디렉티브 — 프롤로그 계속.
+        } else {
+            return false; // 프롤로그 끝(문자열 아닌 첫 문장).
+        }
+    }
+    false
+}
+
 fn loop_action(f: Flow, my_label: &Option<String>) -> LoopAct {
     match f {
         Flow::Break(None) => LoopAct::Exit,
@@ -6535,19 +6553,27 @@ impl Interp {
                         env_declare(&scope, "this", (**t).clone());
                     }
                 } else {
-                    // 일반 함수 this 바인딩 (§10.2.1.2 OrdinaryCallBindThis, sloppy 모드):
-                    // undefined/null(수신자 없음 또는 apply(undefined)/call(null))은 globalThis.
-                    // 예전엔 None 만 window 로 대체하고 명시적 undefined/null 은 그대로 둬서
-                    // Function("this.x=1").apply() 가 "undefined 에 할당" 으로 터졌다.
-                    let this = match recv {
-                        None | Some(Value::Undefined) | Some(Value::Null) => {
-                            env_get(&self.global, "window").unwrap_or(Value::Undefined)
+                    // 일반 함수 this 바인딩 (§10.2.1.2 OrdinaryCallBindThis).
+                    // strict: 강제변환 없음 — 수신자 없으면 undefined, null/원시값 그대로.
+                    // sloppy: undefined/null(수신자 없음 또는 apply(undefined)/call(null))은
+                    // globalThis, 원시값은 ToObject 로 박싱(f.call(5) → this=Number(5)).
+                    // 예전엔 strict 여도 sloppy 처럼 강제변환해 내장 메서드의 수신자 검증
+                    // (map.call(null)→TypeError)이 window 로 가려졌다.
+                    let this = if body_is_strict(&func.body) {
+                        match recv {
+                            Some(v) => v,
+                            None => Value::Undefined,
                         }
-                        // 원시값 this 는 ToObject 로 박싱(sloppy 모드): f.call(5) → this=Number(5).
-                        Some(v @ (Value::Str(_) | Value::Num(_) | Value::Bool(_))) => {
-                            self.to_object_value(v)
+                    } else {
+                        match recv {
+                            None | Some(Value::Undefined) | Some(Value::Null) => {
+                                env_get(&self.global, "window").unwrap_or(Value::Undefined)
+                            }
+                            Some(v @ (Value::Str(_) | Value::Num(_) | Value::Bool(_))) => {
+                                self.to_object_value(v)
+                            }
+                            Some(v) => v,
                         }
-                        Some(v) => v,
                     };
                     env_declare(&scope, "this", this);
                 }
