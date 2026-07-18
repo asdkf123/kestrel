@@ -2708,6 +2708,49 @@ if (!window.Iterator) {
     } else throw new TypeError('Iterator.from called on non-iterable');
     return (function*(){ while(true){ var r=it.next(); if(r.done) return r.value; yield r.value; } })();
   };
+  // Iterator.concat(...items) — Iterator Sequencing 제안. 각 인자의 @@iterator 를
+  // 순서대로(GetMethod) 검증한 뒤, 각 이터러블을 지연 오픈하며 값을 이어붙이는
+  // 제너레이터를 돌려준다. 조기 return 은 현재 inner iterator 의 return 으로 전달.
+  Object.defineProperty(Iterator, 'concat', {
+    value: function concat() {
+      var records = [];
+      for (var i = 0; i < arguments.length; i++) {
+        var item = arguments[i];
+        if (item === null || (typeof item !== 'object' && typeof item !== 'function')) {
+          throw new TypeError('Iterator.concat: an argument is not an object');
+        }
+        var method = item[Symbol.iterator];
+        if (typeof method !== 'function') {
+          throw new TypeError('Iterator.concat: an argument is not iterable');
+        }
+        records.push({ iterable: item, open: method });
+      }
+      return (function*(){
+        for (var j = 0; j < records.length; j++) {
+          var rec = records[j];
+          var iter = rec.open.call(rec.iterable);
+          if (iter === null || typeof iter !== 'object') {
+            throw new TypeError('Iterator.concat: @@iterator returned a non-object');
+          }
+          var exhausted = false;
+          try {
+            while (true) {
+              var res = iter.next();
+              if (res === null || typeof res !== 'object') {
+                throw new TypeError('Iterator.concat: iterator result is not an object');
+              }
+              if (res.done) { exhausted = true; break; }
+              yield res.value;
+            }
+          } finally {
+            // 정상 소진이 아니라 조기 종료(gen.return)면 inner 의 return 을 전달한다.
+            if (!exhausted && typeof iter['return'] === 'function') iter['return']();
+          }
+        }
+      })();
+    },
+    writable: true, enumerable: false, configurable: true
+  });
   window.Iterator = Iterator;
   window.__kIterProto = __kIterProto;
 }

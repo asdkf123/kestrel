@@ -4854,6 +4854,17 @@ fn iterator_helpers() {
     assert!(prelude_bool("function* g(){yield 1;} var it=g(); it[Symbol.iterator]()===it"));
     // 헬퍼 이름
     assert!(prelude_bool("Iterator.prototype.map.name==='map' && Iterator.prototype.filter.name==='filter'"));
+    // Iterator.concat (Iterator Sequencing): 순서대로 이어붙이기 + 인자 검증
+    assert_eq!(prelude_str("Iterator.concat([1,2],[3],[4,5]).toArray().join(',')"), "1,2,3,4,5");
+    assert!(prelude_bool("Iterator.concat.length===0 && Iterator.concat.name==='concat'"));
+    assert!(prelude_bool("var t=false; try{ Iterator.concat(5) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("var t=false; try{ Iterator.concat({}) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(prelude_bool("Iterator.concat().next().done===true"));
+    // 인자 순서: 두 번째가 부적격이면 첫 번째 순회 전에 throw
+    assert!(prelude_bool(
+        "var opened=false; var g={}; g[Symbol.iterator]=function(){opened=true;return [1][Symbol.iterator]();}; \
+         try{ Iterator.concat(g,5) }catch(e){} opened===false"
+    ));
 }
 
 // Explicit Resource Management (§): Symbol.dispose + DisposableStack + SuppressedError.
