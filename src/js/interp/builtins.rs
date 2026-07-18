@@ -5292,6 +5292,9 @@ impl Interp {
                 Ok(match op {
                     StrOp::Upper => Value::Str(s.to_uppercase()),
                     StrOp::Lower => Value::Str(s.to_lowercase()),
+                    // Intl 없으면 로케일 독립(= toUpperCase/toLowerCase). §22.1.3.24/.25.
+                    StrOp::LocaleUpper => Value::Str(s.to_uppercase()),
+                    StrOp::LocaleLower => Value::Str(s.to_lowercase()),
                     StrOp::Trim => {
                         Value::Str(s.trim_matches(is_js_ws).to_string())
                     }

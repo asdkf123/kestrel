@@ -537,19 +537,8 @@ Array.prototype.toLocaleString = function(){
 if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(t, s, e){ var len = this.length; t = t < 0 ? len + t : t; s = s === undefined ? 0 : (s < 0 ? len + s : s); e = e === undefined ? len : (e < 0 ? len + e : e); var tmp = this.slice(s, e); for (var i = 0; i < tmp.length && t + i < len; i++) this[t + i] = tmp[i]; return this; };
 if (!String.prototype.localeCompare) String.prototype.localeCompare = function(o){ o = String(o); return this < o ? -1 : (this > o ? 1 : 0); };
 if (!String.prototype.normalize) String.prototype.normalize = function(){ return String(this); };
-// toLocaleLowerCase/toLocaleUpperCase (§22.1.3.24/.25): Intl 없으면 로케일 독립
-// 대소문자 매핑(= toLowerCase/toUpperCase). RequireObjectCoercible(this) 후 ToString.
-if (!String.prototype.toLocaleLowerCase) String.prototype.toLocaleLowerCase = function(){
-  if (this === null || this === undefined) throw new TypeError('String.prototype.toLocaleLowerCase called on null or undefined');
-  return String(this).toLowerCase();
-};
-if (!String.prototype.toLocaleUpperCase) String.prototype.toLocaleUpperCase = function(){
-  if (this === null || this === undefined) throw new TypeError('String.prototype.toLocaleUpperCase called on null or undefined');
-  return String(this).toUpperCase();
-};
-// 함수 name 은 표준상 메서드명 (§10.2.9). 프로퍼티 대입은 NamedEvaluation 이 안 되므로 명시.
-Object.defineProperty(String.prototype.toLocaleLowerCase, 'name', { value: 'toLocaleLowerCase', configurable: true });
-Object.defineProperty(String.prototype.toLocaleUpperCase, 'name', { value: 'toLocaleUpperCase', configurable: true });
+// toLocaleLowerCase/toLocaleUpperCase 는 이제 네이티브 메서드다(StrOp::LocaleLower/Upper) —
+// 프렐류드 폴리필(함수 .prototype 있고 생성자 취급되던 문제)을 제거했다.
 if (!Object.hasOwn) Object.hasOwn = function(o, k){ return Object.prototype.hasOwnProperty.call(o, k); };
 // Annex B 레거시 접근자 (§B.2.2): __defineGetter__/__defineSetter__/__lookupGetter__/
 // __lookupSetter__. defineProperty/gOPD 위에 얹는다. 비열거·구성가능 데이터 프로퍼티.
