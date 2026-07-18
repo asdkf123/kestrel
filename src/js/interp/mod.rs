@@ -7217,6 +7217,18 @@ impl Interp {
         regex_src_flags(v).is_some()
     }
 
+    // IsRegExp (§22.1.4.1) 의 예외 전파판: @@match 접근자가 던지면 그대로 전파한다.
+    pub(super) fn is_regexp_p(&mut self, v: &Value) -> Result<bool, String> {
+        if !matches!(v, Value::Obj(_)) {
+            return Ok(false);
+        }
+        let m = self.member_get(v, "\u{0}@@match")?;
+        if !matches!(m, Value::Undefined) {
+            return Ok(to_bool(&m));
+        }
+        Ok(regex_src_flags(v).is_some())
+    }
+
     // BigInt 연산 (표준 §6.1.6.2). 두 피연산자가 모두 BigInt 여야 산술이 된다 —
     // Number 와 섞으면 TypeError (조용히 f64 로 떨어뜨리면 값이 틀린다).
     // 비교(<,>,<=,>=,==)와 문자열 결합은 섞어도 된다.

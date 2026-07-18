@@ -5279,34 +5279,58 @@ impl Interp {
                     // includes/startsWith/endsWith 는 정규식 인자를 거부한다 (§22.1.3.7/.8/.23:
                     // IsRegExp(searchString) 이면 TypeError). 예전엔 정규식을 문자열화해 통과시켰다.
                     StrOp::Includes => {
-                        if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
+                        // §22.1.3.8: IsRegExp → ToString(search) → ToIntegerOrInfinity(position).
+                        let arg0 = args.first().cloned().unwrap_or(Value::Undefined);
+                        if self.is_regexp_p(&arg0)? {
                             return Err(self.throw_error(
                                 "TypeError",
                                 "First argument to String.prototype.includes must not be a regular expression",
                             ));
                         }
-                        let search = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
-                        Value::Bool(s.contains(&search))
+                        let search = self.to_string_value(&arg0)?;
+                        let pos = self.to_integer_or_infinity(
+                            args.get(1).unwrap_or(&Value::Undefined))?;
+                        let schars: Vec<char> = s.chars().collect();
+                        let start = (pos.max(0.0).min(schars.len() as f64)) as usize;
+                        let hay: String = schars[start..].iter().collect();
+                        Value::Bool(hay.contains(&search))
                     }
                     StrOp::StartsWith => {
-                        if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
+                        // §22.1.3.22: position 부터 시작하는지.
+                        let arg0 = args.first().cloned().unwrap_or(Value::Undefined);
+                        if self.is_regexp_p(&arg0)? {
                             return Err(self.throw_error(
                                 "TypeError",
                                 "First argument to String.prototype.startsWith must not be a regular expression",
                             ));
                         }
-                        let search = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
-                        Value::Bool(s.starts_with(&search))
+                        let search = self.to_string_value(&arg0)?;
+                        let pos = self.to_integer_or_infinity(
+                            args.get(1).unwrap_or(&Value::Undefined))?;
+                        let schars: Vec<char> = s.chars().collect();
+                        let start = (pos.max(0.0).min(schars.len() as f64)) as usize;
+                        let tail: String = schars[start..].iter().collect();
+                        Value::Bool(tail.starts_with(&search))
                     }
                     StrOp::EndsWith => {
-                        if self.is_regexp(args.first().unwrap_or(&Value::Undefined)) {
+                        // §22.1.3.7: endPosition(기본 길이)까지의 부분이 search 로 끝나는지.
+                        let arg0 = args.first().cloned().unwrap_or(Value::Undefined);
+                        if self.is_regexp_p(&arg0)? {
                             return Err(self.throw_error(
                                 "TypeError",
                                 "First argument to String.prototype.endsWith must not be a regular expression",
                             ));
                         }
-                        let search = self.to_string_value(args.first().unwrap_or(&Value::Undefined))?;
-                        Value::Bool(s.ends_with(&search))
+                        let search = self.to_string_value(&arg0)?;
+                        let schars: Vec<char> = s.chars().collect();
+                        let len = schars.len();
+                        let end_pos = match args.get(1) {
+                            None | Some(Value::Undefined) => len as f64,
+                            Some(v) => self.to_integer_or_infinity(v)?,
+                        };
+                        let end = (end_pos.max(0.0).min(len as f64)) as usize;
+                        let head: String = schars[..end].iter().collect();
+                        Value::Bool(head.ends_with(&search))
                     }
                     StrOp::Replace => {
                         let pat = args.first().cloned().unwrap_or(Value::Undefined);

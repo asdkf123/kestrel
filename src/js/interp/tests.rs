@@ -6995,3 +6995,22 @@ fn math_constants_pow_round_coercion() {
     assert_eq!(run_num("Math.max({valueOf:function(){return 5}}, 3)"), 5.0);
     assert!(run_bool("var t=false; try{ Math.hypot({valueOf:function(){throw 1}}) }catch(e){ t=true } t"));
 }
+
+#[test]
+fn string_includes_startswith_endswith_position() {
+    // §22.1.3.7/.8/.22: position/endPosition 을 ToIntegerOrInfinity 로 강제하고 반영.
+    assert!(run_bool("!'word'.endsWith('d', 3)"));
+    assert!(run_bool("'word'.endsWith('r', 3)"));
+    assert!(run_bool("!'word'.includes('w', 5)"));
+    assert!(run_bool("!'word'.includes('o', 3)"));
+    // position 강제변환.
+    assert!(run_bool("'abc'.startsWith('b', true)")); // true→1
+    assert!(run_bool("'0123456789X'.includes('X', 10.4)")); // 10.4→10
+    // 심볼/abrupt position → 전파.
+    assert!(run_bool("var t=false; try{ 'ab'.includes('a', Symbol()) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ 'ab'.includes('a',{valueOf:function(){throw 1}}) }catch(e){ t=true } t"));
+    // RegExp 인자 거부.
+    assert!(run_bool("var t=false; try{ 'ab'.includes(/a/) }catch(e){ t=e instanceof TypeError } t"));
+    // 기본 동작.
+    assert!(run_bool("'hello'.endsWith('lo') && 'hello'.startsWith('he') && 'hello'.includes('ell')"));
+}
