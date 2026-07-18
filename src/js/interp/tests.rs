@@ -7841,3 +7841,18 @@ fn typedarray_from_thisarg() {
     assert_eq!(prelude_str("Uint8Array.from(new Set([5,6,7])).join(',')"), "5,6,7");
     assert_eq!(prelude_str("Int8Array.of(1,2,3).join(',')"), "1,2,3");
 }
+
+#[test]
+fn typedarray_constructor_validation() {
+    // §23.2.5.1: byteOffset/length 검증 (ToIndex, 배수, 범위).
+    assert!(prelude_bool("new Int8Array(4).length===4 && new Int32Array(new ArrayBuffer(16),8).length===2"));
+    assert!(prelude_bool("new Int32Array(new ArrayBuffer(16),4,2).length===2"));
+    assert_eq!(prelude_str("try{ new Int8Array(-1); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(prelude_str("try{ new Int32Array(new ArrayBuffer(16),-4); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(prelude_str("try{ new Int32Array(new ArrayBuffer(16),2); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(prelude_str("try{ new Int32Array(new ArrayBuffer(16),8,4); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    // 배열/이터러블/버퍼 회귀 방지.
+    assert_eq!(prelude_str("new Uint8Array([1,2,3]).join(',')"), "1,2,3");
+    assert_eq!(prelude_str("new Uint8Array(new Set([4,5])).join(',')"), "4,5");
+    assert_eq!(prelude_str("String(new Float64Array(new ArrayBuffer(16)).length)"), "2");
+}

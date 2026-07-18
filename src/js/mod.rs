@@ -2225,14 +2225,28 @@ function __kMakeTypedArray(name) {
   function Ctor(arg, byteOffset, length) {
     var buf, off = 0, len = 0;
     if (arg instanceof __kArrayBuffer) {
+      // §23.2.5.1 InitializeTypedArrayFromArrayBuffer (순서 중요):
+      // offset=ToIndex(byteOffset) → offset%size 배수검사(RangeError) → length 있으면
+      // ToIndex → detach 검사(TypeError, ToIndex 의 valueOf 가 detach 할 수 있어 그 뒤)
+      // → 범위 검사(RangeError).
+      off = __kToIndex(byteOffset);
+      if (off % spec.size !== 0) throw new RangeError('start offset must be a multiple of element size ' + spec.size);
+      var nlen;
+      if (length !== undefined) nlen = __kToIndex(length);
+      if (arg._detached) throw new TypeError('Cannot construct a TypedArray on a detached ArrayBuffer');
+      var bufLen = arg.byteLength;
+      if (length === undefined) {
+        if (bufLen % spec.size !== 0) throw new RangeError('byte length of buffer must be a multiple of element size ' + spec.size);
+        if (off > bufLen) throw new RangeError('start offset is outside the bounds of the buffer');
+        len = (bufLen - off) / spec.size;
+      } else {
+        if (off + nlen * spec.size > bufLen) throw new RangeError('length is outside the bounds of the buffer');
+        len = nlen;
+      }
       buf = arg;
-      off = byteOffset || 0;
-      // 분리된 버퍼 위에는 뷰를 만들 수 없다 (§23.2.5.1 step 11). offset/length 는
-      // subarray 등에서 이미 계산·강제변환됐고, 여기서 TypeError.
-      if (buf._detached) throw new TypeError('Cannot construct a TypedArray on a detached ArrayBuffer');
-      len = (length === undefined) ? Math.floor((buf.byteLength - off) / spec.size) : length;
     } else if (typeof arg === 'number') {
-      len = arg | 0;
+      // new TA(length): length=ToIndex (음수/비정수 RangeError, valueOf 관측).
+      len = __kToIndex(arg);
       buf = new __kArrayBuffer(len * spec.size);
     } else if (arg && typeof arg === 'object' && typeof arg[Symbol.iterator] === 'function' && typeof arg.length !== 'number') {
       // 순수 iterable(@@iterator 있고 length 없음) → 값을 모아 리스트로
