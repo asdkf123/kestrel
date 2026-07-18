@@ -7937,3 +7937,12 @@ fn array_index_nonconfigurable_delete_blocked() {
     // 일반 배열 delete 무회귀.
     assert!(run_bool("var c=[1,2,3]; delete c[1]; !(1 in c)"));
 }
+
+#[test]
+fn array_index_attrs_only_redefine() {
+    // §10.1.6: value 없는 desc 로 배열 인덱스 재정의 — 값 유지, 속성만 병합.
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'1',{enumerable:false}); var d=Object.getOwnPropertyDescriptor(a,'1'); d.value===2 && d.writable && !d.enumerable && d.configurable"));
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'2',{writable:false}); var d=Object.getOwnPropertyDescriptor(a,'2'); d.value===3 && !d.writable && d.enumerable && d.configurable"));
+    // 값 유지.
+    assert_eq!(run_num("var a=[5,6,7]; Object.defineProperty(a,'1',{configurable:false}); a[1]"), 6.0);
+}

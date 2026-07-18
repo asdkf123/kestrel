@@ -2338,6 +2338,42 @@ impl Interp {
                     }
                     return Ok(target);
                 }
+                // value/accessor 없는 desc 로 배열 인덱스 재정의(속성만): 값은 그대로 두고
+                // attrs 만 병합 저장(§10.1.6). value 있는 경로는 아래 Arr index arm 에서.
+                if entry.is_none() {
+                    if let Value::Arr(a) = &target {
+                        if let Ok(i) = key.parse::<usize>() {
+                            if i < a.borrow().len() && !a.is_hole(i) {
+                                let cur = a.index_attr(i).unwrap_or(
+                                    ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                );
+                                let wbit = if has_writable {
+                                    if writable { ATTR_WRITABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_WRITABLE
+                                };
+                                let ebit = if has_enumerable {
+                                    if enumerable { ATTR_ENUMERABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_ENUMERABLE
+                                };
+                                let cbit = if has_configurable {
+                                    if configurable { ATTR_CONFIGURABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_CONFIGURABLE
+                                };
+                                let attrs = wbit | ebit | cbit;
+                                if attrs
+                                    != ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE
+                                {
+                                    a.set_index_attr(i, attrs);
+                                } else {
+                                    a.clear_index_attr(i);
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Some(val) = entry {
                     match &target {
                         Value::Fn(func) => {
