@@ -3980,6 +3980,11 @@ impl Interp {
                     )),
                 }
             }
+            // Symbol.prototype[Symbol.toPrimitive](hint) — hint 무시하고 thisSymbolValue.
+            Native::SymbolToPrimitive => {
+                let this = recv.unwrap_or(Value::Undefined);
+                self.this_prim_value(&this, PrimBrand::Symbol)
+            }
             // createElementNS(ns, name): 우리 DOM 은 네임스페이스를 따로 두지 않는다.
             // 태그 이름으로 만들고 (svg/rect 등) 그대로 렌더 파이프라인을 태운다.
             // createElementNS(namespace, qualifiedName) — DOM §4.5.
@@ -5134,6 +5139,9 @@ impl Interp {
                         }
                         Ok(Value::Str(to_display(&Value::Num(n))))
                     }
+                    // Symbol.prototype.toString (§20.4.3.3): "Symbol(desc)". 심볼은 암묵적
+                    // 문자열 변환이 TypeError 지만 명시적 toString 은 허용된다.
+                    PrimBrand::Symbol => Ok(Value::Str(to_display(&prim))),
                 }
             }
             // n.toFixed(digits) — recv 가 숫자

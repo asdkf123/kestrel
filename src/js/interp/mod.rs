@@ -1308,8 +1308,9 @@ impl Interp {
             ("\u{0}@@toPrimitive", Native::DateMethod(DateField::ToPrimitive)),
         ]);
         let symbol_proto = mk_proto(vec![
-            ("toString", Native::ValueToStr),
-            ("valueOf", Native::ValueOfSelf),
+            // brand 체크(thisSymbolValue)하는 toString/valueOf — 심볼/심볼래퍼가 아니면 TypeError.
+            ("toString", Native::PrimToString(PrimBrand::Symbol)),
+            ("valueOf", Native::PrimValueOf(PrimBrand::Symbol)),
         ]);
         // X.prototype.constructor === X (§19.x/§20~22), 전부 비열거 (§17). 예전엔
         // 원시 래퍼/빌트인 프로토타입에 constructor 링크가 없어 대량으로 깨졌다.
@@ -1349,6 +1350,19 @@ impl Interp {
         add_getter(&set_proto, "size", Native::SetSize);
         // Symbol.prototype.description 도 프로토타입 accessor(getter) 다 (§20.4.3.2).
         add_getter(&symbol_proto, "description", Native::SymbolDescGet);
+        // Symbol.prototype[Symbol.toPrimitive] (§20.4.3.5): { writable:false, enumerable:false,
+        // configurable:true }. Symbol.prototype[Symbol.toStringTag]="Symbol" (§20.4.3.6): 동일 속성.
+        if let Value::Obj(m) = &symbol_proto {
+            let mut b = m.borrow_mut();
+            b.insert("\u{0}@@toPrimitive".to_string(), Value::Native(Native::SymbolToPrimitive));
+            b.insert(nonenum_marker("\u{0}@@toPrimitive"), Value::Bool(true));
+            b.insert("\u{0}@@toStringTag".to_string(), Value::Str("Symbol".to_string()));
+            b.insert(nonenum_marker("\u{0}@@toStringTag"), Value::Bool(true));
+            drop(b);
+            // 기본 writable(true)과 다르게 둘 다 non-writable, configurable 로 보정.
+            set_prop_attrs(&mut m.borrow_mut(), "\u{0}@@toPrimitive", ATTR_CONFIGURABLE);
+            set_prop_attrs(&mut m.borrow_mut(), "\u{0}@@toStringTag", ATTR_CONFIGURABLE);
+        }
         // Number.prototype/Boolean.prototype 자신이 [[PrimitiveValue]] 슬롯을 가진
         // 원시 래퍼다 (§21.1.3/§20.3.3) — thisNumberValue(Number.prototype)=+0 등.
         if let Value::Obj(m) = &number_proto {
@@ -5476,6 +5490,7 @@ impl Interp {
                 (PrimBrand::Boolean, Value::Bool(_))
                     | (PrimBrand::Number, Value::Num(_))
                     | (PrimBrand::String, Value::Str(_))
+                    | (PrimBrand::Symbol, Value::Symbol(_))
             )
         }
         if brand_of(brand, this) {
@@ -5490,6 +5505,7 @@ impl Interp {
             PrimBrand::Boolean => "Boolean",
             PrimBrand::Number => "Number",
             PrimBrand::String => "String",
+            PrimBrand::Symbol => "Symbol",
         };
         Err(self.throw_error(
             "TypeError",
@@ -6838,14 +6854,11 @@ impl Interp {
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
             // 심볼 원시값: .description / .toString()
-            Value::Symbol(s) => Ok(match key {
-                "description" => {
-                    s.desc.clone().map(Value::Str).unwrap_or(Value::Undefined)
-                }
-                "toString" => Value::Native(Native::ValueToStr),
-                "constructor" => Value::Native(Native::SymbolCtor),
-                _ => Value::Undefined,
-            }),
+            // 심볼 원시값의 멤버 접근은 Symbol.prototype 체인(→ Object.prototype)으로 위임한다.
+            // valueOf/toString/description(getter)/[Symbol.toPrimitive]/constructor 및
+            // hasOwnProperty 등 상속분이 전부 여기서 해석된다. 예전엔 description/toString/
+            // constructor 만 하드코딩하고 나머지는 undefined 라 s.valueOf() 가 깨졌다.
+            Value::Symbol(_) => self.exotic_proto_get(self.symbol_proto.clone(), key, recv),
             // Number.isInteger/isNaN/isFinite/parseInt/parseFloat + 상수
             Value::Native(Native::NumberCtor) => Ok(match key {
                 "isInteger" => Value::Native(Native::NumIsInteger),

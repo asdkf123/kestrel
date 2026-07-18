@@ -220,6 +220,9 @@ pub enum Native {
     // get Symbol.prototype.description (§20.4.3.2) — 프로토타입 accessor. brand 체크 후
     // 심볼의 [[Description]] 을 돌려준다(없으면 undefined).
     SymbolDescGet,
+    // Symbol.prototype[Symbol.toPrimitive](hint) (§20.4.3.5) — brand 체크 후 thisSymbolValue.
+    // 이름 "[Symbol.toPrimitive]", length 1. (valueOf 와 동작은 같지만 이름/길이가 다르다)
+    SymbolToPrimitive,
     ErrorCtor(&'static str),
     CreateElement,
     AppendChild,
@@ -412,6 +415,7 @@ pub enum PrimBrand {
     Boolean,
     Number,
     String,
+    Symbol,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -793,6 +797,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         MapSize => ("get size", 0),
         SetSize => ("get size", 0),
         SymbolDescGet => ("get description", 0),
+        SymbolToPrimitive => ("[Symbol.toPrimitive]", 1),
         ObjectGroupBy => ("groupBy", 2),
         MapGroupBy => ("groupBy", 2),
         PromiseWithResolvers => ("withResolvers", 0),

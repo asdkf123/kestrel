@@ -346,6 +346,30 @@ fn symbol_primitive_type() {
     assert!(run_bool("Symbol.keyFor(Symbol('x')) === undefined"));
 }
 
+// 심볼 원시값은 Symbol.prototype 체인으로 위임한다 (§20.4.3). 예전엔 description/
+// toString/constructor 만 하드코딩하고 valueOf/[Symbol.toPrimitive]/상속분이 없었다.
+#[test]
+fn symbol_prototype_delegation() {
+    // valueOf/toString 은 thisSymbolValue brand 체크 (심볼/심볼래퍼만)
+    assert!(run_bool("typeof Symbol('x').valueOf() === 'symbol'"));
+    assert_eq!(run_str("Symbol('x').toString()"), "Symbol(x)");
+    assert!(run_bool("var t=false; try{ Symbol.prototype.valueOf.call(42) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Symbol.prototype.toString.call({}) }catch(e){ t=e instanceof TypeError } t"));
+    // [Symbol.toPrimitive]: thisSymbolValue, 이름/길이
+    assert!(run_bool("typeof Symbol.prototype[Symbol.toPrimitive] === 'function'"));
+    assert_eq!(run_str("Symbol.prototype[Symbol.toPrimitive].name"), "[Symbol.toPrimitive]");
+    assert_eq!(run_num("Symbol.prototype[Symbol.toPrimitive].length"), 1.0);
+    assert!(run_bool("var s=Symbol('a'); s[Symbol.toPrimitive]('default') === s"));
+    // [Symbol.toStringTag] === "Symbol"
+    assert_eq!(run_str("Symbol.prototype[Symbol.toStringTag]"), "Symbol");
+    // Object.prototype 상속분 (hasOwnProperty), description 은 인스턴스 own 아님
+    assert!(run_bool("typeof Symbol('x').hasOwnProperty === 'function'"));
+    assert!(run_bool("!Symbol('x').hasOwnProperty('description')"));
+    // 메서드 name/length 는 표준값
+    assert_eq!(run_str("Symbol.prototype.valueOf.name"), "valueOf");
+    assert_eq!(run_num("Symbol.prototype.valueOf.length"), 0.0);
+}
+
 #[test]
 fn user_defined_iterable() {
     // obj[Symbol.iterator] = function(){...} — 사용자 정의 이터러블
