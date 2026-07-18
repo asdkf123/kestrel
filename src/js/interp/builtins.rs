@@ -1564,7 +1564,21 @@ impl Interp {
             // (§27.5 GeneratorPrototype → §27.1.2 %IteratorPrototype%). 근사이지만
             // Object.prototype 로 두는 것보다 정확하다.
             Value::Gen(_) => env_get(&self.global, "__kIterProto").unwrap_or(obj_proto),
-            Value::Class(_) => obj_proto,
+            // 클래스도 함수 — [[Prototype]] 은 부모 생성자(파생 클래스)거나
+            // %Function.prototype%(기저 클래스·extends null 은 constructorParent=FnProto).
+            Value::Class(c) => {
+                if let Some(p) = &c.parent {
+                    Value::Class(p.clone())
+                } else if let Some(pc) = &c.parent_ctor {
+                    if matches!(pc, Value::Null) {
+                        self.fn_proto.clone()
+                    } else {
+                        pc.clone()
+                    }
+                } else {
+                    self.fn_proto.clone()
+                }
+            }
             // §10.5.1 [[GetPrototypeOf]]: getPrototypeOf 트랩(없으면 타깃에 위임).
             // 예전엔 Proxy 를 무조건 Object.prototype 으로 답해 트랩도, 타깃의
             // 실제 프로토타입도 무시했다(Object.getPrototypeOf/isPrototypeOf 가

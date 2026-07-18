@@ -3058,6 +3058,21 @@ fn super_call_propagates_new_target() {
         t && typeof new S()==='object'"));
 }
 
+// class X extends null (§15.7.14): protoParent=null, constructorParent=%FunctionPrototype%.
+// 예전엔 "확장할 클래스가 아님"으로 거부했다. 겸사겸사 proto_of(Class) 도
+// 부모 생성자/Function.prototype 을 답하게 교정.
+#[test]
+fn class_extends_null_and_class_proto() {
+    assert!(run_bool("class Foo extends null {} Object.getPrototypeOf(Foo.prototype)===null"));
+    assert!(run_bool("class Foo extends null {} Object.getPrototypeOf(Foo)===Function.prototype"));
+    assert!(run_bool("class Foo extends null {} Foo===Foo.prototype.constructor"));
+    // 파생 클래스: [[Prototype]] 은 부모 클래스, 기저 클래스: Function.prototype
+    assert!(run_bool("class A {} class B extends A {} Object.getPrototypeOf(B)===A"));
+    assert!(run_bool("class A {} Object.getPrototypeOf(A)===Function.prototype"));
+    // 네이티브 확장: [[Prototype]] 은 그 생성자
+    assert!(run_bool("class E extends Error {} Object.getPrototypeOf(E)===Error"));
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {

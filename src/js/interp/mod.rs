@@ -6493,6 +6493,10 @@ impl Interp {
                     collect(c, &mut m);
                     m.insert("constructor".to_string(), recv.clone());
                     m.insert(nonenum_marker("constructor"), Value::Bool(true));
+                    // class X extends null: prototype 의 [[Prototype]] 은 null (§15.7.14).
+                    if matches!(&c.parent_ctor, Some(Value::Null)) {
+                        m.insert("__proto__".to_string(), Value::Null);
+                    }
                     let proto = Value::Obj(Rc::new(RefCell::new(m)));
                     *c.proto_cache.borrow_mut() = Some(proto.clone());
                     return Ok(proto);
@@ -7558,6 +7562,9 @@ impl Interp {
                 v @ (Value::Fn(_) | Value::Native(_) | Value::Obj(_) | Value::Bound(_)) => {
                     (None, Some(v))
                 }
+                // class X extends null: 유효(§15.7.14) — protoParent=null,
+                // constructorParent=%FunctionPrototype%. parent_ctor=Null 로 표현한다.
+                Value::Null => (None, Some(Value::Null)),
                 other => return Err(format!("{} 은(는) 확장할 클래스가 아님", to_display(&other))),
             },
             None => (None, None),
