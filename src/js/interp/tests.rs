@@ -7870,3 +7870,18 @@ fn array_length_descriptor_is_exotic() {
     assert_eq!(run_num("var o={}; Object.defineProperty(o,'x',{value:5}); o.x"), 5.0);
     assert_eq!(run_num("var b=[1,2,3]; Object.defineProperty(b,'5',{value:9}); b.length"), 6.0);
 }
+
+#[test]
+fn array_set_length_via_define_and_assign() {
+    // §10.4.2.4: defineProperty(arr,"length",{value}) 가 검증 + 축소/확장.
+    assert_eq!(run_str("var a=[1,2,3,4,5]; Object.defineProperty(a,'length',{value:3}); a.join(',')"), "1,2,3");
+    assert!(run_bool("var b=[1,2,3]; Object.defineProperty(b,'length',{value:5}); b.length===5 && !(3 in b)"));
+    assert_eq!(run_str("try{ Object.defineProperty([1,2],'length',{value:-1}); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    assert_eq!(run_str("try{ Object.defineProperty([1,2],'length',{value:1.5}); 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    // value 는 ToNumber(valueOf 관측, Symbol TypeError).
+    assert_eq!(run_num("var c=0; Object.defineProperty([1,2,3],'length',{value:{valueOf:function(){c++;return 2}}}); c"), 1.0);
+    assert_eq!(run_str("try{ Object.defineProperty([1,2],'length',{value:Symbol()}); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // arr.length= 대입 회귀(함수 공유).
+    assert_eq!(run_str("var d=[1,2,3,4]; d.length=2; d.join(',')"), "1,2");
+    assert_eq!(run_str("try{ ([1,2]).length=-1; 'no' }catch(e){ e.constructor.name }"), "RangeError");
+}

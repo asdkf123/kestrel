@@ -4385,6 +4385,43 @@ impl Interp {
 
     // 대상에 own 프로퍼티 설정 (Object.assign 의 대상 쓰기, super() 의 this 채우기).
     // 무결성(freeze/seal)을 존중하고, 접근자(setter)가 있으면 setter 를 호출한다.
+    // §10.4.2.4 ArraySetLength (근사): value 를 ToNumber(valueOf/toString 관측,
+    // Symbol/BigInt TypeError) 후 ToUint32 와 다르면(음수/소수/2^32↑) RangeError,
+    // 같으면 items 를 resize(축소는 truncate + 구멍 정리, 확장은 구멍). arr.length=
+    // 대입과 defineProperty(arr,"length",{value}) 양쪽에서 재사용한다.
+    pub(super) fn array_set_length(
+        &mut self,
+        a: &Rc<ArrayObj>,
+        value: Value,
+    ) -> Result<(), String> {
+        let num = self.to_number_value(&value)?;
+        let u = if num.is_finite() {
+            num.trunc().rem_euclid(4294967296.0)
+        } else {
+            0.0
+        };
+        if u != num {
+            return Err(self.throw_error("RangeError", "Invalid array length"));
+        }
+        let n = u as usize;
+        if n > MAX_DENSE_ARRAY {
+            a.set_prop("\u{0}sparse_len".to_string(), Value::Num(num));
+        } else {
+            let old_len = a.borrow().len();
+            a.borrow_mut().resize(n, Value::Undefined);
+            if n > old_len {
+                for h in old_len..n {
+                    a.mark_hole(h);
+                }
+            } else if n < old_len && a.has_holes() {
+                for h in n..old_len {
+                    a.fill_hole(h);
+                }
+            }
+        }
+        Ok(())
+    }
+
     // 프로퍼티를 설정한다. 성공 여부를 돌려준다(§10.1.9 [[Set]]) — Object.assign 등이
     // Throw=true 로 쓰므로 실패 시 호출부가 TypeError 를 던진다. 실패 조건: frozen,
     // non-writable 데이터 프로퍼티, getter 만 있는 접근자, non-extensible 에 새 키.
@@ -7938,38 +7975,8 @@ impl Interp {
                             }
                             a.fill_hole(i); // i 는 이제 값이 있음
                         } else if key == "length" {
-                            // §10.4.2.4 ArraySetLength: ToUint32(v) 와 ToNumber(v) 가
-                            // 다르면(음수/소수/2^32 이상) RangeError. 예전엔 검증 없이
-                            // 잘라서 [].length=-1 이 조용히 통과했다.
-                            let num = to_num(&value);
-                            let u = if num.is_finite() {
-                                num.trunc().rem_euclid(4294967296.0)
-                            } else {
-                                0.0
-                            };
-                            if u != num {
-                                return Err(
-                                    self.throw_error("RangeError", "Invalid array length")
-                                );
-                            }
-                            let n = u as usize;
-                            if n > MAX_DENSE_ARRAY {
-                                // length 만 크게: 밀집 확보 대신 기록만 (근사 희박)
-                                a.set_prop("\u{0}sparse_len".to_string(), value.clone());
-                            } else {
-                                let old_len = a.borrow().len();
-                                a.borrow_mut().resize(n, Value::Undefined);
-                                // 확장분(old_len..n)은 구멍. 축소면 잘려나간 구멍 표시 정리.
-                                if n > old_len {
-                                    for h in old_len..n {
-                                        a.mark_hole(h);
-                                    }
-                                } else if n < old_len && a.has_holes() {
-                                    for h in n..old_len {
-                                        a.fill_hole(h);
-                                    }
-                                }
-                            }
+                            // §10.4.2.4 ArraySetLength (ToNumber/ToUint32 검증 + resize).
+                            self.array_set_length(&a, value.clone())?;
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
                             if a.get_prop(&key).is_none() && self.is_nonextensible_val(&av) {
