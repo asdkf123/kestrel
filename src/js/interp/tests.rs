@@ -7584,3 +7584,20 @@ fn iterator_helpers_prototype_and_enumerability() {
     // for-in 으로 헬퍼가 열거되지 않아야 한다.
     assert_eq!(prelude_str("function* g(){} var it=g(); var ks=[]; for(var k in it) ks.push(k); ks.join(',')"), "");
 }
+
+#[test]
+fn iterator_helper_return_forwards_to_underlying() {
+    // §27.1.4: 헬퍼의 .return() 은 (아직 안 끝났으면) 밑 iterator 를 닫는다.
+    // 시작 전(첫 next 전)에 return 해도 밑 iterator 가 닫혀야 한다.
+    assert_eq!(prelude_str(
+        "var c=0; class T extends Iterator{ next(){return{done:false,value:1};} return(){++c; return{};} }\
+         var h=new T().map(function(x){return x;}); h.return(); h.return(); String(c)"), "1");
+    // 정상 소진 후 return 은 전달되지 않는다.
+    assert_eq!(prelude_str(
+        "var c=0,i=0; class T extends Iterator{ next(){return i++<2?{done:false,value:i}:{done:true};} return(){++c; return{};} }\
+         var h=new T().map(function(x){return x;}); h.next(); h.next(); h.next(); h.return(); String(c)"), "0");
+    // 지연성: 첫 next 전엔 밑 iterator 의 next 를 호출하지 않는다.
+    assert_eq!(prelude_str(
+        "var n=0; class T extends Iterator{ next(){++n; return{done:true};} }\
+         var h=new T().map(function(x){return x;}); String(n)"), "0");
+}

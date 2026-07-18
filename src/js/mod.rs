@@ -2437,11 +2437,36 @@ if (!window.Iterator) {
   // GetIteratorDirect(§7.4.4): next 메서드는 헬퍼 호출 시점에 **한 번** 읽어 캐시한다
   // (반복마다 재조회하지 않음). IteratorNext(§7.4.2): next() 결과가 객체 아니면 TypeError.
   var __kIterStep = function(nx, it){ var r=nx.call(it); if(r===null||typeof r!=='object') throw new TypeError('iterator result is not an object'); return r; };
-  __kIterProto.map = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; return (function*(){ while(true){ var r=__kIterStep(nx,it); if(r.done) return; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } yield m; } })(); };
-  __kIterProto.filter = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; return (function*(){ while(true){ var r=__kIterStep(nx,it); if(r.done) return; var k; try{ k=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(k) yield r.value; } })(); };
-  __kIterProto.take = function(n){ __kIterRecv(this); var lim=Math.trunc(+n); if(!(lim>=0)) throw new RangeError('take limit must be a non-negative number'); var it=this,nx=it.next; return (function*(){ var c=0; if(c>=lim){ __kIterClose(it); return; } while(true){ var r=__kIterStep(nx,it); if(r.done) return; yield r.value; c++; if(c>=lim){ __kIterClose(it); return; } } })(); };
-  __kIterProto.drop = function(n){ __kIterRecv(this); var lim=Math.trunc(+n); if(!(lim>=0)) throw new RangeError('drop limit must be a non-negative number'); var it=this,nx=it.next; return (function*(){ var c=0; while(c<lim){ var r=__kIterStep(nx,it); if(r.done) return; c++; } while(true){ var r2=__kIterStep(nx,it); if(r2.done) return; yield r2.value; } })(); };
-  __kIterProto.flatMap = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; return (function*(){ while(true){ var r=__kIterStep(nx,it); if(r.done) return; var inner; try{ inner=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } var iit=(inner!=null && inner[Symbol.iterator])?inner[Symbol.iterator]():inner; while(true){ var ir=iit.next(); if(ir.done) break; yield ir.value; } } })(); };
+  // IteratorHelper(§27.1.4) 근사: 밑 iterator(src)와 그것을 구동하는 제너레이터를
+  // 감싼 객체. 제너레이터를 그대로 반환하면 .return() 이 시작 전(suspendedStart)에
+  // 오면 본문이 안 돌아 finally 로 밑 iterator 를 못 닫는다. 래퍼의 return 은
+  // 제너레이터 상태와 무관하게 밑 iterator 를 직접 닫는다(return-forward).
+  // makeGen 은 지연 생성 — 첫 next() 전까지 밑 iterator 를 건드리지 않는다.
+  var __kIterHelper = function(src, makeGen){
+    var o = Object.create(__kIterProto);
+    var gen = null, done = false;
+    Object.defineProperty(o, 'next', { value: function(){
+      if (done) return { value: undefined, done: true };
+      if (gen === null) gen = makeGen();
+      var r; try { r = gen.next(); } catch(e){ done = true; throw e; }
+      if (r.done) done = true;
+      return r;
+    }, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(o, 'return', { value: function(v){
+      if (!done) {
+        done = true;
+        if (gen !== null && typeof gen['return'] === 'function') { try { gen['return'](); } catch(e){} }
+        __kIterClose(src);
+      }
+      return { value: v, done: true };
+    }, writable: true, enumerable: false, configurable: true });
+    return o;
+  };
+  __kIterProto.map = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; return __kIterHelper(it, function(){ return (function*(){ while(true){ var r=__kIterStep(nx,it); if(r.done) return; var m; try{ m=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } yield m; } })(); }); };
+  __kIterProto.filter = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; return __kIterHelper(it, function(){ return (function*(){ while(true){ var r=__kIterStep(nx,it); if(r.done) return; var k; try{ k=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } if(k) yield r.value; } })(); }); };
+  __kIterProto.take = function(n){ __kIterRecv(this); var lim=Math.trunc(+n); if(!(lim>=0)) throw new RangeError('take limit must be a non-negative number'); var it=this,nx=it.next; return __kIterHelper(it, function(){ return (function*(){ var c=0; if(c>=lim){ __kIterClose(it); return; } while(true){ var r=__kIterStep(nx,it); if(r.done) return; yield r.value; c++; if(c>=lim){ __kIterClose(it); return; } } })(); }); };
+  __kIterProto.drop = function(n){ __kIterRecv(this); var lim=Math.trunc(+n); if(!(lim>=0)) throw new RangeError('drop limit must be a non-negative number'); var it=this,nx=it.next; return __kIterHelper(it, function(){ return (function*(){ var c=0; while(c<lim){ var r=__kIterStep(nx,it); if(r.done) return; c++; } while(true){ var r2=__kIterStep(nx,it); if(r2.done) return; yield r2.value; } })(); }); };
+  __kIterProto.flatMap = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; return __kIterHelper(it, function(){ return (function*(){ while(true){ var r=__kIterStep(nx,it); if(r.done) return; var inner; try{ inner=fn(r.value,i++); }catch(e){ __kIterClose(it); throw e; } var iit=(inner!=null && inner[Symbol.iterator])?inner[Symbol.iterator]():inner; while(true){ var ir=iit.next(); if(ir.done) break; yield ir.value; } } })(); }); };
   __kIterProto.reduce = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0,acc,has=arguments.length>1; if(has) acc=arguments[1]; while(true){ var r=__kIterStep(nx,it); if(r.done) break; if(!has){ acc=r.value; has=true; continue; } acc=fn(acc,r.value,i); i++; } if(!has) throw new TypeError('Reduce of empty iterator with no initial value'); return acc; };
   __kIterProto.toArray = function(){ __kIterRecv(this); var it=this,nx=it.next,out=[]; while(true){ var r=__kIterStep(nx,it); if(r.done) break; out.push(r.value); } return out; };
   __kIterProto.forEach = function(fn){ __kIterRecv(this); __kIterFn(fn); var it=this,nx=it.next,i=0; while(true){ var r=__kIterStep(nx,it); if(r.done) break; fn(r.value,i++); } return undefined; };
