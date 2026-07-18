@@ -2653,6 +2653,19 @@ impl Interp {
             // 통일된 무결성 테이블로 상태를 남긴다. 대입 경로가 이 상태를 보고 변경을 막는다.
             Native::ObjectFreeze | Native::ObjectSeal | Native::ObjectPreventExt => {
                 let arg = args.into_iter().next().unwrap_or(Value::Undefined);
+                // Proxy 의 preventExtensions 는 트랩을 탄다(§10.5.4). freeze/seal 은
+                // SetIntegrityLevel 이 ownKeys/defineProperty 트랩까지 조합하므로 여기선
+                // preventExtensions 트랩만 우선 처리. 트랩이 false 를 보고하면
+                // Object.preventExtensions 는 TypeError(§20.1.2.19).
+                if let (Value::Proxy(_), Native::ObjectPreventExt) = (&arg, n) {
+                    if !self.value_prevent_extensions(&arg)? {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Object.preventExtensions: proxy 'preventExtensions' trap returned falsish",
+                        ));
+                    }
+                    return Ok(arg);
+                }
                 let bit = match n {
                     Native::ObjectFreeze => super::INTEG_FROZEN,
                     Native::ObjectSeal => super::INTEG_SEALED,
@@ -2703,6 +2716,13 @@ impl Interp {
             // 예전엔 인스턴스/함수/Map 도 "비객체" 취급해 안 얼렸는데 true 를 반환했다(거짓말).
             Native::ObjectIsFrozen | Native::ObjectIsSealed | Native::ObjectIsExtensible => {
                 let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                // Proxy 의 isExtensible 은 트랩을 탄다(§10.5.3). isFrozen/isSealed 는
+                // TestIntegrityLevel 이 [[IsExtensible]]+[[OwnPropertyKeys]] 를 조합하는데
+                // 여기선 isExtensible 트랩만 우선 처리(freeze/seal 판정은 근사 유지).
+                if let (Value::Proxy(p), Native::ObjectIsExtensible) = (&arg, n) {
+                    let p = p.clone();
+                    return Ok(Value::Bool(self.proxy_is_extensible(&p)?));
+                }
                 let r = if !is_object(&arg) {
                     // 비객체(원시값): isFrozen/isSealed=true, isExtensible=false.
                     !matches!(n, Native::ObjectIsExtensible)
@@ -7603,11 +7623,13 @@ impl Interp {
                 Ok(Value::Bool(self.ordinary_set_prototype_of(&target, proto)?))
             }
             Native::ReflectPreventExtensions => {
-                if !is_object(args.first().unwrap_or(&Value::Undefined)) {
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_object(&arg) {
                     return Err(self.throw_error("TypeError", "Reflect.preventExtensions called on non-object"));
                 }
-                self.call_native(Native::ObjectPreventExt, None, args)?;
-                Ok(Value::Bool(true))
+                // [[PreventExtensions]] 의 불리언을 그대로 돌려준다(Object 와 달리 throw
+                // 안 함). Proxy 면 트랩 결과가 그대로 전파된다.
+                Ok(Value::Bool(self.value_prevent_extensions(&arg)?))
             }
             Native::ReflectIsExtensible => {
                 if !is_object(args.first().unwrap_or(&Value::Undefined)) {

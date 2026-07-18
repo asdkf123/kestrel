@@ -2824,6 +2824,73 @@ impl Interp {
         Ok(true)
     }
 
+    // [[IsExtensible]] of any value — Proxy 는 트랩을 타므로 call_native 로 위임한다
+    // (중첩 프록시도 한 겹씩 벗겨진다). ordinary 는 무결성 NONEXT 비트로 판정.
+    fn value_is_extensible(&mut self, v: &Value) -> Result<bool, String> {
+        Ok(to_bool(&self.call_native(
+            Native::ObjectIsExtensible,
+            None,
+            vec![v.clone()],
+        )?))
+    }
+
+    // §10.5.3 [[IsExtensible]] — Proxy 의 isExtensible 트랩.
+    fn proxy_is_extensible(&mut self, p: &Rc<(Value, Value)>) -> Result<bool, String> {
+        self.proxy_revoked_guard(p)?;
+        let (t, h) = (p.0.clone(), p.1.clone());
+        let trap = self.member_get(&h, "isExtensible")?;
+        if matches!(trap, Value::Undefined | Value::Null) {
+            return self.value_is_extensible(&t);
+        }
+        if !is_callable(&trap) {
+            return Err(self.throw_error("TypeError", "'isExtensible' trap is not callable"));
+        }
+        let res = to_bool(&self.call_value(trap, Some(h), vec![t.clone()])?);
+        // invariant: 트랩 결과가 타깃의 실제 extensibility 와 같아야 한다
+        // (프록시는 확장성에 대해 거짓말 못 함).
+        if res != self.value_is_extensible(&t)? {
+            return Err(self.throw_error(
+                "TypeError",
+                "'isExtensible' on proxy: trap result does not match target",
+            ));
+        }
+        Ok(res)
+    }
+
+    // [[PreventExtensions]] of any value — Proxy 는 트랩, ordinary 는 NONEXT 비트 설정.
+    // Object.preventExtensions/Reflect.preventExtensions 가 공유한다(전자는 false 면
+    // throw, 후자는 그 불리언을 그대로 반환).
+    pub(super) fn value_prevent_extensions(&mut self, v: &Value) -> Result<bool, String> {
+        if let Value::Proxy(p) = v {
+            let p = p.clone();
+            return self.proxy_prevent_extensions(&p);
+        }
+        self.set_integrity(v, INTEG_NONEXT);
+        Ok(true)
+    }
+
+    // §10.5.4 [[PreventExtensions]] — Proxy 의 preventExtensions 트랩.
+    fn proxy_prevent_extensions(&mut self, p: &Rc<(Value, Value)>) -> Result<bool, String> {
+        self.proxy_revoked_guard(p)?;
+        let (t, h) = (p.0.clone(), p.1.clone());
+        let trap = self.member_get(&h, "preventExtensions")?;
+        if matches!(trap, Value::Undefined | Value::Null) {
+            return self.value_prevent_extensions(&t);
+        }
+        if !is_callable(&trap) {
+            return Err(self.throw_error("TypeError", "'preventExtensions' trap is not callable"));
+        }
+        let res = to_bool(&self.call_value(trap, Some(h), vec![t.clone()])?);
+        // invariant: true 를 보고하려면 타깃이 실제로 non-extensible 이어야 한다.
+        if res && self.value_is_extensible(&t)? {
+            return Err(self.throw_error(
+                "TypeError",
+                "'preventExtensions' on proxy: cannot report true while target is extensible",
+            ));
+        }
+        Ok(res)
+    }
+
     // §7.4.11 IteratorClose (정상 완료용): iterator.return() 을 호출하고 그 예외는 전파,
     // 결과가 객체가 아니면 TypeError. is*Of 의 조기탈출(IteratorClose)에 쓴다.
     fn iterator_close_ok(&mut self, it: &Value) -> Result<(), String> {

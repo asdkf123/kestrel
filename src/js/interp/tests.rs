@@ -1395,6 +1395,53 @@ fn proxy_set_prototype_of_trap() {
     ));
 }
 
+// Proxy isExtensible/preventExtensions 트랩 (§10.5.3, §10.5.4). 트랩 결과는
+// 타깃의 실제 확장성과 일치해야 하고(거짓말 금지), Object.preventExtensions 는
+// 트랩 false 면 TypeError, Reflect.preventExtensions 는 불리언을 그대로 반환.
+#[test]
+fn proxy_extensibility_traps() {
+    // isExtensible 트랩 호출 + 타깃과 일치
+    assert!(run_bool(
+        "var p=new Proxy({},{isExtensible:function(t){return Reflect.isExtensible(t);}}); \
+         Object.isExtensible(p)===true"
+    ));
+    // isExtensible invariant: 타깃 extensible 인데 false 보고 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{isExtensible:function(){return false;}}); \
+         var t=false; try{ Object.isExtensible(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // preventExtensions 트랩: 타깃도 실제로 막아야 true 가능
+    assert!(run_bool(
+        "var p=new Proxy({},{preventExtensions:function(t){Object.preventExtensions(t);return true;}}); \
+         Object.preventExtensions(p); Object.isExtensible(p)===false"
+    ));
+    // preventExtensions invariant: true 보고하나 타깃 여전히 extensible → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{preventExtensions:function(){return true;}}); \
+         var t=false; try{ Object.preventExtensions(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // Reflect.preventExtensions: 트랩 false → false(throw 안 함)
+    assert!(run_bool(
+        "var p=new Proxy({},{preventExtensions:function(){return false;}}); \
+         Reflect.preventExtensions(p)===false"
+    ));
+    // Object.preventExtensions: 트랩 false → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{preventExtensions:function(){return false;}}); \
+         var t=false; try{ Object.preventExtensions(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{isExtensible:7}); \
+         var t=false; try{ Object.isExtensible(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 트랩 없으면 타깃에 위임(타깃을 막으면 프록시도 non-extensible)
+    assert!(run_bool(
+        "var t={}; var p=new Proxy(t,{}); var a=Object.isExtensible(p); \
+         Object.preventExtensions(t); a===true && Object.isExtensible(p)===false"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
