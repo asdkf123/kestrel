@@ -1349,6 +1349,60 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
+    // indexOf/lastIndexOf/includes 를 length 가 배열 상한 초과인 array-like 에서 재료화 없이
+    // 지연 검색한다({0:0,length:Infinity} 등). 존재하는 정수 own 키만 검사 → OOM/무한루프 없음.
+    fn generic_array_search_huge(
+        &mut self,
+        recv: &Value,
+        op: ArrOp,
+        args: &[Value],
+        len: f64,
+    ) -> Result<Value, String> {
+        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+        // fromIndex (ToIntegerOrInfinity). indexOf/includes 기본 0.
+        let n = match args.get(1) {
+            Some(v) if !matches!(v, Value::Undefined) => self.to_integer_or_infinity(v)?,
+            _ => 0.0,
+        };
+        let start = if n < 0.0 { (len + n).max(0.0) } else { n };
+        // 존재하는 정수 own 키(오름차순).
+        let mut keys: Vec<usize> = match recv {
+            Value::Obj(m) => m.borrow().keys().filter_map(|k| k.parse::<usize>().ok()).collect(),
+            _ => Vec::new(),
+        };
+        keys.sort_unstable();
+        keys.dedup();
+        if matches!(op, ArrOp::Includes) {
+            // huge sparse array-like 에는 구멍(=undefined)이 존재하므로 undefined 검색은 true.
+            if start < len && same_value_zero(&needle, &Value::Undefined) {
+                return Ok(Value::Bool(true));
+            }
+            for &k in &keys {
+                if (k as f64) < start || (k as f64) >= len {
+                    continue;
+                }
+                let v = self.member_get(recv, &k.to_string())?;
+                if same_value_zero(&v, &needle) {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            return Ok(Value::Bool(false));
+        }
+        // IndexOf
+        for &k in &keys {
+            if (k as f64) < start || (k as f64) >= len {
+                continue;
+            }
+            if self.has_property(recv, &k.to_string()) {
+                let v = self.member_get(recv, &k.to_string())?;
+                if strict_eq(&v, &needle) {
+                    return Ok(Value::Num(k as f64));
+                }
+            }
+        }
+        Ok(Value::Num(-1.0))
+    }
+
     // Math 인자 강제변환: args[i] 를 ToNumber (없으면 NaN). valueOf/@@toPrimitive 관찰 + 예외 전파.
     fn math_arg(&mut self, args: &[Value], i: usize) -> Result<f64, String> {
         match args.get(i) {
@@ -5833,6 +5887,18 @@ impl Interp {
                         "TypeError",
                         "Array.prototype method called on null or undefined",
                     ));
+                }
+                // indexOf/lastIndexOf/includes: length 가 배열 상한 초과인 array-like 객체는
+                // 재료화하면 RangeError/OOM 이므로 존재 인덱스만 지연 검색한다.
+                if matches!(op, ArrOp::IndexOf | ArrOp::Includes)
+                    && matches!(recv, Some(Value::Obj(_)) | Some(Value::Instance(_)))
+                {
+                    let rv = recv.clone().unwrap();
+                    let len_val = self.member_get(&rv, "length")?;
+                    let len = to_length(self.to_number_value(&len_val)?);
+                    if len > MAX_ARRAY_LEN {
+                        return self.generic_array_search_huge(&rv, op, &args, len);
+                    }
                 }
                 let (a, write_back) = match &recv {
                     // 얼린 배열은 제자리 변형을 무시한다(표준: 조용히 실패).

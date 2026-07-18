@@ -7286,3 +7286,16 @@ fn array_copywithin_coercion_and_overlap() {
     // 원시값 수신자에서 crash 안 함.
     assert!(prelude_bool("var ok=false; try{ Array.prototype.copyWithin.call(true); ok=true; }catch(e){} ok"));
 }
+
+#[test]
+fn array_indexof_includes_huge_arraylike() {
+    // §22.1.3.14/.16: length 가 배열 상한 초과인 array-like 도 재료화 없이 검색(OOM 없음).
+    assert_eq!(run_num("Array.prototype.indexOf.call({0:0, length:Infinity}, 0)"), 0.0);
+    assert_eq!(run_num("Array.prototype.indexOf.call({0:0, length:Infinity}, 99)"), -1.0);
+    assert_eq!(run_num("Array.prototype.indexOf.call({5:7, length:4294967300}, 7)"), 5.0);
+    assert!(run_bool("Array.prototype.includes.call({0:1, length:Infinity}, undefined)"));
+    // 일반 array-like/배열 보존.
+    assert_eq!(run_num("Array.prototype.indexOf.call({0:'a',1:'b',2:'c',length:3}, 'b')"), 1.0);
+    assert_eq!(run_num("[1,2,3,2].indexOf(2)"), 1.0);
+    assert!(run_bool("[1,2,3].includes(3) && ![1,2,3].includes(9)"));
+}
