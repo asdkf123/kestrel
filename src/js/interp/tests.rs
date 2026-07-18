@@ -7927,3 +7927,13 @@ fn array_index_property_attrs() {
     assert!(run_bool("var d=Object.getOwnPropertyDescriptor([5,6],'0'); d.value===5 && d.writable && d.enumerable && d.configurable"));
     assert_eq!(run_num("var a=[10,20]; a[0]=99; a[0]"), 99.0);
 }
+
+#[test]
+fn array_index_nonconfigurable_delete_blocked() {
+    // §10.4.2: non-configurable 로 정의된 배열 인덱스는 delete 불가.
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'0',{value:9,configurable:false}); var r=delete a[0]; !r && (0 in a) && a[0]===9"));
+    // configurable 인덱스는 삭제 가능.
+    assert!(run_bool("var b=[1,2,3]; Object.defineProperty(b,'1',{value:8,configurable:true}); var r=delete b[1]; r && !(1 in b)"));
+    // 일반 배열 delete 무회귀.
+    assert!(run_bool("var c=[1,2,3]; delete c[1]; !(1 in c)"));
+}

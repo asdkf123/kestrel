@@ -4059,6 +4059,11 @@ impl Interp {
                                 // 배열 요소 삭제는 진짜 구멍(hole)을 남긴다 (길이 불변) —
                                 // delete arr[i] 후 i 는 hasOwnProperty/in/for-in 에서 사라진다.
                                 if let Ok(i) = key.parse::<usize>() {
+                                    // non-configurable 로 정의된 인덱스는 삭제 불가 (§10.4.2).
+                                    if matches!(a.index_attr(i), Some(at) if at & ATTR_CONFIGURABLE == 0)
+                                    {
+                                        return Ok(Value::Bool(false));
+                                    }
                                     let in_range = {
                                         let mut b = a.borrow_mut();
                                         if i < b.len() {
@@ -4070,6 +4075,7 @@ impl Interp {
                                     };
                                     if in_range {
                                         a.mark_hole(i);
+                                        a.clear_index_attr(i);
                                     }
                                 }
                             }
