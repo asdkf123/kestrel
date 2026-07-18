@@ -7313,3 +7313,17 @@ fn array_slice_inherited_and_holes() {
     assert_eq!(run_num("Array.prototype[1]=1; var x=[0]; x.length=2; var r=x.indexOf(1); delete Array.prototype[1]; r"), 1.0);
     assert!(run_bool("var c=0; [1,,3].forEach(function(){c++}); c===2"));
 }
+
+#[test]
+fn regex_exec_test_brand_and_coercion() {
+    // §22.2.6.8/.16: 인자 ToString, 비정규식 this TypeError, length 1.
+    assert_eq!(run_str("/a/.exec({toString:function(){return 'xxax'}}).input"), "xxax");
+    assert!(run_bool("var t=false; try{ RegExp.prototype.exec.call({}, 'x') }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ RegExp.prototype.test.call(5, 'x') }catch(e){ t=e instanceof TypeError } t"));
+    assert_eq!(run_num("RegExp.prototype.exec.length"), 1.0);
+    assert_eq!(run_num("RegExp.prototype.test.length"), 1.0);
+    // 기본 동작 보존.
+    assert!(run_bool("/a/.exec('bab') instanceof Array"));
+    assert_eq!(run_str("JSON.stringify(/(a)(b)/.exec('xabz'))"), "[\"ab\",\"a\",\"b\"]");
+    assert!(run_bool("/a/.test('bab') && !/z/.test('bab')"));
+}

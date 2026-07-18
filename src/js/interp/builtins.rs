@@ -4760,8 +4760,18 @@ impl Interp {
                 self.call_native(Native::Str(op), Some(Value::Str(s)), fwd)
             }
             Native::RegexTest => {
-                let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("test 대상이 정규식 아님")?;
-                let text = args.first().map(to_display).unwrap_or_default();
+                // §22.2.6.16: this 가 정규식이 아니면 TypeError, 인자는 ToString.
+                let (src, flags) = match recv.as_ref().and_then(regex_src_flags) {
+                    Some(sf) => sf,
+                    None => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Method RegExp.prototype.test called on incompatible receiver",
+                        ))
+                    }
+                };
+                let text =
+                    self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
                 let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                     .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
                 let chars: Vec<char> = text.chars().collect();
@@ -4769,9 +4779,19 @@ impl Interp {
             }
             // regex.exec(str) → [full, g1, ...] with .index, or null. global 이면 lastIndex 갱신.
             Native::RegexExec => {
+                // §22.2.6.8: this 가 정규식이 아니면 TypeError, 인자는 ToString.
                 let recv_obj = recv.clone();
-                let (src, flags) = recv.as_ref().and_then(regex_src_flags).ok_or("exec 대상이 정규식 아님")?;
-                let text = args.first().map(to_display).unwrap_or_default();
+                let (src, flags) = match recv.as_ref().and_then(regex_src_flags) {
+                    Some(sf) => sf,
+                    None => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Method RegExp.prototype.exec called on incompatible receiver",
+                        ))
+                    }
+                };
+                let text =
+                    self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
                 let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                     .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
                 let chars: Vec<char> = text.chars().collect();
