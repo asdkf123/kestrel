@@ -7725,3 +7725,23 @@ fn unary_plus_minus_use_tonumber() {
     // -BigInt 는 BigInt 부호반전(여전히 동작).
     assert!(run_bool("-5n === -5n && typeof(-5n) === 'bigint'"));
 }
+
+#[test]
+fn binary_arithmetic_uses_tonumeric() {
+    // §13.15.3/§13.10.1: 산술/관계 이항은 ToNumeric — Symbol TypeError, valueOf abrupt 전파.
+    assert_eq!(run_str("try{ Symbol()*2; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ Symbol()-1; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ Symbol()<1; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ 'x'+Symbol(); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("try{ ({valueOf:function(){throw new RangeError('x')}})-1; 'no' }catch(e){ e.constructor.name }"), "RangeError");
+    // 정상 산술/문자열/관계 회귀 방지.
+    assert_eq!(run_num("2+3"), 5.0);
+    assert_eq!(run_str("'a'+'b'"), "ab");
+    assert_eq!(run_num("'5'*2"), 10.0);
+    assert_eq!(run_num("({valueOf:function(){return 10}})-1"), 9.0);
+    assert_eq!(run_str("[1]+[2]"), "12");
+    assert!(run_bool("1<2 && 'a'<'b' && !(3<2)"));
+    assert_eq!(run_num("null+1"), 1.0);
+    // Date + 1 은 default 힌트 → 문자열.
+    assert!(run_bool("typeof (new Date(0)+1) === 'string'"));
+}

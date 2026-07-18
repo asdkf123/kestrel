@@ -7442,39 +7442,48 @@ impl Interp {
 
     fn binary(&mut self, op: BinOp, l: Value, r: Value) -> Result<Value, String> {
         // 산술/비교 연산: 객체 피연산자를 원시값으로 강제변환 (ToPrimitive). in/instanceof 제외.
-        let (l, r) = if matches!(
-            op,
-            BinOp::Add
-                | BinOp::Sub
-                | BinOp::Mul
-                | BinOp::Div
-                | BinOp::Mod
-                | BinOp::Pow
-                | BinOp::Lt
-                | BinOp::Gt
-                | BinOp::Le
-                | BinOp::Ge
-        ) {
-            (self.to_primitive(l, false), self.to_primitive(r, false))
-        } else {
-            (l, r)
+        // abrupt(valueOf/toString 예외)을 전파해야 한다(예전 to_primitive 는 삼켰다).
+        // + 는 "default" 힌트, 나머지 산술/관계는 "number" 힌트 (§13.15.3/§13.10.1).
+        let (l, r) = match op {
+            BinOp::Add => (
+                self.to_primitive_hint(l, "default")?,
+                self.to_primitive_hint(r, "default")?,
+            ),
+            BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Mod
+            | BinOp::Pow
+            | BinOp::Lt
+            | BinOp::Gt
+            | BinOp::Le
+            | BinOp::Ge => (
+                self.to_primitive_hint(l, "number")?,
+                self.to_primitive_hint(r, "number")?,
+            ),
+            _ => (l, r),
         };
         // BigInt 가 끼면 별도 의미론 (혼합 산술은 TypeError)
         if let Some(res) = self.bigint_binary(op, &l, &r) {
             return res;
         }
         Ok(match op {
+            // + : 한쪽이라도 String 이면 ToString 둘 다(Symbol→TypeError), 아니면 ToNumber
+            //     둘 다 (§13.15.3). 예전엔 to_display/to_num 이라 "x"+Symbol()·Symbol()+1 이
+            //     안 던졌다.
             BinOp::Add => match (&l, &r) {
                 (Value::Str(_), _) | (_, Value::Str(_)) => {
-                    Value::Str(format!("{}{}", to_display(&l), to_display(&r)))
+                    Value::Str(format!("{}{}", self.to_string_value(&l)?, self.to_string_value(&r)?))
                 }
-                _ => Value::Num(to_num(&l) + to_num(&r)),
+                _ => Value::Num(self.to_number_value(&l)? + self.to_number_value(&r)?),
             },
-            BinOp::Sub => Value::Num(to_num(&l) - to_num(&r)),
-            BinOp::Mul => Value::Num(to_num(&l) * to_num(&r)),
-            BinOp::Div => Value::Num(to_num(&l) / to_num(&r)),
-            BinOp::Mod => Value::Num(to_num(&l) % to_num(&r)),
-            BinOp::Pow => Value::Num(to_num(&l).powf(to_num(&r))),
+            BinOp::Sub => Value::Num(self.to_number_value(&l)? - self.to_number_value(&r)?),
+            BinOp::Mul => Value::Num(self.to_number_value(&l)? * self.to_number_value(&r)?),
+            BinOp::Div => Value::Num(self.to_number_value(&l)? / self.to_number_value(&r)?),
+            BinOp::Mod => Value::Num(self.to_number_value(&l)? % self.to_number_value(&r)?),
+            BinOp::Pow => {
+                Value::Num(self.to_number_value(&l)?.powf(self.to_number_value(&r)?))
+            }
             // 비트 연산은 ToInt32(ToNumber) — 객체 valueOf 관측, Symbol→TypeError.
             // BigInt 는 위 bigint_binary 에서 이미 처리됨.
             BinOp::BitAnd => Value::Num((self.to_int32(&l)? & self.to_int32(&r)?) as f64),
@@ -7792,7 +7801,9 @@ impl Interp {
                         _ => a >= c,
                     }
                 } else {
-                    let (x, y) = (to_num(&l), to_num(&r));
+                    // 관계 비교의 수치 변환도 ToNumber (Symbol→TypeError, BigInt 는 위
+                    // bigint_binary 에서 이미 처리). 예전 to_num 은 Symbol 을 NaN 으로 삼켰다.
+                    let (x, y) = (self.to_number_value(&l)?, self.to_number_value(&r)?);
                     match op {
                         BinOp::Lt => x < y,
                         BinOp::Gt => x > y,
