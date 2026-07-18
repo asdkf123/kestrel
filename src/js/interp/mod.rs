@@ -2331,6 +2331,7 @@ impl Interp {
             is_arrow: false,
             is_generator: false,
             is_async: false,
+            is_method: false,
             this: None,
             super_class: None,
             props: RefCell::new(ObjMap::new()),
@@ -3669,6 +3670,7 @@ impl Interp {
                     is_arrow: false,
                     is_generator: *is_generator,
                     is_async: *is_async,
+                    is_method: false,
                     this: None,
                     super_class: None,
                     props: RefCell::new(ObjMap::new()),
@@ -4214,6 +4216,7 @@ impl Interp {
                     is_arrow: *is_arrow,
                     is_generator: *is_generator,
                     is_async: *is_async,
+                    is_method: false,
                     this,
                     super_class: None,
                     props: RefCell::new(ObjMap::new()),
@@ -5062,6 +5065,7 @@ impl Interp {
                     is_arrow: false,
                     is_generator: *is_generator,
                     is_async: *is_async,
+                    is_method: false,
                     this: None,
                     super_class: None,
                     props: RefCell::new(ObjMap::new()),
@@ -5103,6 +5107,7 @@ impl Interp {
                 is_arrow: false,
                 is_generator: false,
                 is_async: false,
+                is_method: true,
                 this: None,
                 super_class: None,
                 props: RefCell::new(ObjMap::new()),
@@ -5624,7 +5629,7 @@ impl Interp {
                 // prototype 은 생성자성 함수만 가진다 — 화살표·async(비제너레이터)는 없다
                 // (§ 화살표/메서드/async 엔 [[Construct]] 없음, 제너레이터는 있음).
                 // 예전엔 모든 함수에 대해 true 라 `'prototype' in (()=>{})` 가 참이었다.
-                let has_proto = !f.is_arrow && (f.is_generator || !f.is_async);
+                let has_proto = f.is_generator || (!f.is_arrow && !f.is_method && !f.is_async);
                 if f.props.borrow().contains_key(key) || (key == "prototype" && has_proto) {
                     return true;
                 }
@@ -6611,7 +6616,7 @@ impl Interp {
                     "toString" => Ok(Value::Native(Native::FnToString)),
                     // 화살표·async(비제너레이터) 함수는 prototype 이 없다 (§ [[Construct]]
                     // 없음). 제너레이터/async-generator 는 prototype 을 가진다.
-                    "prototype" if func.is_arrow || (func.is_async && !func.is_generator) => {
+                    "prototype" if !func.is_generator && (func.is_arrow || func.is_method || func.is_async) => {
                         Ok(Value::Undefined)
                     }
                     // F.prototype 지연 생성: 접근 시 { constructor: F } 객체를 만들어 저장.
@@ -7660,6 +7665,7 @@ impl Interp {
                 is_arrow: false,
                 is_generator,
                 is_async,
+                is_method: true,
                 this: None,
                 // super.x → 이 클래스의 부모 (클래스 또는 일반 생성자)
                 super_class: parent

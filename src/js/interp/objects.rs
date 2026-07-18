@@ -285,6 +285,9 @@ pub struct JsFn {
     pub is_arrow: bool,
     pub is_generator: bool, // function* — 호출 시 yield 값을 모아 반복자 반환(eager)
     pub is_async: bool, // async — 반환값을 이행된 Promise 로 감싼다
+    // 메서드/getter/setter(클래스·객체 축약 메서드). 화살표처럼 [[Construct]] 가 없어
+    // prototype 프로퍼티도 없다(§15.4.4) — 단 제너레이터 메서드는 제너레이터라 있다.
+    pub is_method: bool,
     pub this: Option<Box<Value>>, // 화살표가 정의 시점에 캡처한 this
     // 이 함수가 클래스 메서드면 그 클래스의 부모 (super.x 해석용)
     // 이 함수가 클래스 메서드면 그 클래스의 부모 생성자 (super.x 해석용).

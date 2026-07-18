@@ -2166,7 +2166,7 @@ impl Interp {
                             // prototype 은 생성자성 함수(비화살표·제너레이터·비async)만 own
                             // 으로 가진다. 화살표·async(비제너레이터)는 서술자 자체가 없다.
                             "prototype" => {
-                                let has_proto = !f.is_arrow && (f.is_generator || !f.is_async);
+                                let has_proto = f.is_generator || (!f.is_arrow && !f.is_method && !f.is_async);
                                 if has_proto || f.props.borrow().contains_key("prototype") {
                                     Some(self.member_get(&target, "prototype")?)
                                 } else {

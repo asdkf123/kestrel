@@ -3179,6 +3179,13 @@ fn only_constructor_functions_have_prototype() {
     // gOPD 도 일관: 화살표는 서술자 없음, 일반 함수는 있음
     assert!(run_bool("Object.getOwnPropertyDescriptor(()=>{}, 'prototype')===undefined"));
     assert!(run_bool("typeof Object.getOwnPropertyDescriptor(function(){}, 'prototype')==='object'"));
+    // 메서드/getter 는 prototype 없음, 제너레이터 메서드는 있음
+    assert!(run_bool("class C { m(){} } ('prototype' in C.prototype.m)===false"));
+    assert!(run_bool("class C { *g(){} } ('prototype' in C.prototype.g)===true"));
+    assert!(run_bool(
+        "class C { get x(){return 1;} } \
+         ('prototype' in Object.getOwnPropertyDescriptor(C.prototype,'x').get)===false"
+    ));
 }
 
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.

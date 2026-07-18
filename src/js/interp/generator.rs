@@ -315,6 +315,7 @@ impl Interp {
                         is_arrow: false,
                         is_generator: *is_generator,
                         is_async: *is_async,
+                        is_method: false,
                         this: None,
                         super_class: None,
                         props: RefCell::new(super::objects::ObjMap::new()),
