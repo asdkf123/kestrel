@@ -6401,9 +6401,10 @@ impl Interp {
                 Ok(out)
             }
             Native::JsonParse => {
-                // §25.5.1: 잘못된 JSON 은 SyntaxError 다. 예전엔 일반 Err(String)→Error 라
-                // "SyntaxError 기대" 검사가 깨졌다.
-                let src = args.first().map(to_display).unwrap_or_default();
+                // §25.5.1: text = ToString(arg) 를 먼저(Symbol→TypeError, toString 예외 전파).
+                // 그 다음 파싱 — 잘못된 JSON 은 SyntaxError.
+                let text_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let src = self.to_string_value(&text_arg)?;
                 let (parsed, snap) = match json_parse_snap(&src) {
                     Ok(v) => v,
                     Err(msg) => return Err(self.throw_error("SyntaxError", msg)),

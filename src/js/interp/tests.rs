@@ -7101,3 +7101,13 @@ fn json_stringify_replacer_array_getter_circular() {
     // 순환 → TypeError.
     assert!(run_bool("var o={}; o.self=o; var t=false; try{ JSON.stringify(o) }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn json_parse_text_tostring() {
+    // §25.5.1: text = ToString(arg) 를 먼저 — Symbol → TypeError, toString 예외 전파.
+    assert!(run_bool("var t=false; try{ JSON.parse(Symbol()) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ JSON.parse({toString:function(){throw new RangeError('x')}}) }catch(e){ t=e instanceof RangeError } t"));
+    // 원시값은 ToString 후 파싱.
+    assert_eq!(run_num("JSON.parse(123)"), 123.0);
+    assert!(run_bool("JSON.parse(true)===true"));
+}
