@@ -7885,3 +7885,19 @@ fn array_set_length_via_define_and_assign() {
     assert_eq!(run_str("var d=[1,2,3,4]; d.length=2; d.join(',')"), "1,2");
     assert_eq!(run_str("try{ ([1,2]).length=-1; 'no' }catch(e){ e.constructor.name }"), "RangeError");
 }
+
+#[test]
+fn array_length_writable_false() {
+    // §10.4.2.4: defineProperty(arr,"length",{writable:false}) 후 length 고정.
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); var d=Object.getOwnPropertyDescriptor(a,'length'); !d.writable"));
+    // 대입 무시.
+    assert_eq!(run_num("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); a.length=5; a.length"), 3.0);
+    // 값 변경/writable:true 재정의 TypeError.
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); try{ Object.defineProperty(a,'length',{value:5}); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); try{ Object.defineProperty(a,'length',{writable:true}); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // 같은 값 재정의는 허용.
+    assert_eq!(run_num("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); Object.defineProperty(a,'length',{value:3}); a.length"), 3.0);
+    // 회귀: 기본 배열은 writable.
+    assert!(run_bool("Object.getOwnPropertyDescriptor([1,2],'length').writable"));
+    assert_eq!(run_str("var b=[1,2,3,4]; b.length=2; b.join(',')"), "1,2");
+}

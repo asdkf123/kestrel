@@ -1982,8 +1982,8 @@ impl Interp {
                     Value::Arr(a) => {
                         if key == "length" {
                             d.insert("value".to_string(), Value::Num(a.borrow().len() as f64));
-                            d.insert("writable".to_string(), Value::Bool(true));
-                            // length 는 비열거다 (표준)
+                            d.insert("writable".to_string(), Value::Bool(a.length_writable()));
+                            // length 는 비열거·non-configurable 다 (§10.4.2).
                             d.insert("enumerable".to_string(), Value::Bool(false));
                             d.insert("configurable".to_string(), Value::Bool(false));
                             return Ok(Value::Obj(Rc::new(RefCell::new(d))));
@@ -2291,6 +2291,8 @@ impl Interp {
                 };
                 let enumerable = matches!(d.get("enumerable"), Some(v) if to_bool(v));
                 let configurable = matches!(d.get("configurable"), Some(v) if to_bool(v));
+                let has_writable = d.contains_key("writable");
+                let writable = matches!(d.get("writable"), Some(v) if to_bool(v));
                 drop(d);
                 // 배열 length 는 exotic (§10.4.2.1): {enumerable:false, configurable:false}
                 // 데이터 프로퍼티. accessor·configurable:true·enumerable:true 로 재정의하면
@@ -2300,11 +2302,27 @@ impl Interp {
                     if matches!(entry, Some(Value::Accessor(_))) || configurable || enumerable {
                         return Err(self.redefine_err());
                     }
-                    // value 가 있으면 ArraySetLength(검증 + 요소 축소/확장). writable:false
-                    // (length 고정)는 배열 표현 확장이 필요해 아직 미지원(별도).
-                    if let Some(val) = entry {
-                        let a = a.clone();
-                        self.array_set_length(&a, val)?;
+                    // length 가 non-writable 이면(§10.4.2.4): writable:true 로 되돌리기
+                    // (non-configurable 의 writable false→true 금지)나 다른 값으로의 변경은
+                    // TypeError. 같은 값/미변경은 허용.
+                    if !a.length_writable() {
+                        if has_writable && writable {
+                            return Err(self.redefine_err());
+                        }
+                        if let Some(val) = &entry {
+                            let newn = self.to_number_value(val)?;
+                            let cur = a.borrow().len() as f64;
+                            if newn != cur {
+                                return Err(self.redefine_err());
+                            }
+                        }
+                    } else if let Some(val) = &entry {
+                        let a2 = a.clone();
+                        self.array_set_length(&a2, val.clone())?;
+                    }
+                    // writable:false 면 length 를 고정한다.
+                    if has_writable && !writable {
+                        a.set_length_writable(false);
                     }
                     return Ok(target);
                 }

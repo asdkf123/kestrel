@@ -7976,7 +7976,10 @@ impl Interp {
                             a.fill_hole(i); // i 는 이제 값이 있음
                         } else if key == "length" {
                             // §10.4.2.4 ArraySetLength (ToNumber/ToUint32 검증 + resize).
-                            self.array_set_length(&a, value.clone())?;
+                            // length 가 non-writable 이면 대입 무시(sloppy 근사).
+                            if a.length_writable() {
+                                self.array_set_length(&a, value.clone())?;
+                            }
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
                             if a.get_prop(&key).is_none() && self.is_nonextensible_val(&av) {

@@ -160,6 +160,9 @@ pub struct ArrayObj {
     // 오버헤드 0. 구멍은 HasProperty 가 false 라 forEach/map/reduce/… 가 건너뛴다.
     // items[i] 는 구멍 자리에 Undefined 를 채워 두고, 이 집합이 "존재 여부"를 판별한다.
     holes: RefCell<std::collections::HashSet<usize>>,
+    // length 프로퍼티의 [[Writable]] (§10.4.2.4). 기본 true. defineProperty 로
+    // {writable:false} 하면 false — 이후 length 변경 불가(대입/defineProperty).
+    length_writable: std::cell::Cell<bool>,
 }
 
 impl ArrayObj {
@@ -168,6 +171,7 @@ impl ArrayObj {
             items: RefCell::new(items),
             props: RefCell::new(HashMap::new()),
             holes: RefCell::new(std::collections::HashSet::new()),
+            length_writable: std::cell::Cell::new(true),
         })
     }
     // 구멍이 있는 배열 (배열 리터럴 엘리전/new Array(n) 등).
@@ -176,7 +180,15 @@ impl ArrayObj {
             items: RefCell::new(items),
             props: RefCell::new(HashMap::new()),
             holes: RefCell::new(holes),
+            length_writable: std::cell::Cell::new(true),
         })
+    }
+    // length 프로퍼티의 [[Writable]] (§10.4.2.4).
+    pub fn length_writable(&self) -> bool {
+        self.length_writable.get()
+    }
+    pub fn set_length_writable(&self, w: bool) {
+        self.length_writable.set(w);
     }
     // 인덱스 i 가 구멍(존재하지 않는 인덱스)인가.
     pub fn is_hole(&self, i: usize) -> bool {
