@@ -7299,3 +7299,17 @@ fn array_indexof_includes_huge_arraylike() {
     assert_eq!(run_num("[1,2,3,2].indexOf(2)"), 1.0);
     assert!(run_bool("[1,2,3].includes(3) && ![1,2,3].includes(9)"));
 }
+
+#[test]
+fn array_slice_inherited_and_holes() {
+    // §23.1.3.25: 구멍의 상속 원소는 [[Get]] 로 읽고, 진짜 구멍은 결과에서도 구멍.
+    assert_eq!(run_str("Array.prototype[1]=1; var x=[0]; x.length=2; var r=JSON.stringify(x.slice()); delete Array.prototype[1]; r"), "[0,1]");
+    assert_eq!(run_str("JSON.stringify([1,2,3,4,5].slice(1,3))"), "[2,3]");
+    assert_eq!(run_str("JSON.stringify([1,2,3,4].slice(-2))"), "[3,4]");
+    // 진짜 구멍은 구멍으로 보존(1 in 결과 == false).
+    assert!(run_bool("var s=[1,,3].slice(); !(1 in s)"));
+    assert_eq!(run_str("JSON.stringify(Array.prototype.slice.call({0:'a',1:'b',length:2}))"), "[\"a\",\"b\"]");
+    // arr_elem 상속 홀: indexOf/filter 도.
+    assert_eq!(run_num("Array.prototype[1]=1; var x=[0]; x.length=2; var r=x.indexOf(1); delete Array.prototype[1]; r"), 1.0);
+    assert!(run_bool("var c=0; [1,,3].forEach(function(){c++}); c===2"));
+}

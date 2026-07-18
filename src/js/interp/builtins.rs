@@ -1514,7 +1514,14 @@ impl Interp {
     ) -> Result<Option<Value>, String> {
         if has_holes && a.is_hole(i) {
             let key = i.to_string();
-            if a.get_prop(&key).is_some() || self.proto_method("Array", &key).is_some() {
+            // own(defineProperty) 이거나 프로토타입 체인(Array.prototype 에 사용자가 얹은
+            // 인덱스 포함)에 그 키가 있으면 HasProperty=true → [[Get]]. 예전엔 proto_method
+            // 로 내장 메서드만 봐서 Array.prototype[1]=1 상속 원소를 놓쳤다.
+            let inherited = {
+                let proto = self.member_get(&self.array_ns.clone(), "prototype")?;
+                self.has_property(&proto, &key)
+            };
+            if a.get_prop(&key).is_some() || inherited {
                 Ok(Some(self.member_get(arr_val, &key)?))
             } else {
                 Ok(None) // 진짜 구멍
@@ -6010,14 +6017,29 @@ impl Interp {
                             }
                             _ => len0,
                         };
-                        let items = a.borrow();
-                        let len = items.len() as f64; // valueOf 가 배열을 줄였을 수 있어 재확인
+                        let len = a.borrow().len() as f64; // valueOf 가 배열을 줄였을 수 있어 재확인
                         let rel = |v: f64| -> usize {
                             (if v < 0.0 { (len + v).max(0.0) } else { v.min(len) }) as usize
                         };
                         let start = rel(start_f);
-                        let end = rel(end_f);
-                        Value::Arr(ArrayObj::new(items[start..end.max(start)].to_vec()))
+                        let end = rel(end_f).max(start);
+                        // §23.1.3.25: k 마다 HasProperty+Get(구멍은 결과에서도 구멍, 상속 원소는
+                        // [[Get]] 로 읽음). arr_elem 이 구멍/상속/접근자를 해석한다.
+                        let has_holes = a.has_holes();
+                        let arr_val = cb_arr.clone();
+                        let snapshot: Vec<Value> = a.borrow().clone();
+                        let mut out = Vec::with_capacity(end - start);
+                        let mut holes = std::collections::HashSet::new();
+                        for k in start..end {
+                            match self.arr_elem(&a, &arr_val, &snapshot, k, has_holes)? {
+                                Some(v) => out.push(v),
+                                None => {
+                                    holes.insert(out.len());
+                                    out.push(Value::Undefined);
+                                }
+                            }
+                        }
+                        Value::Arr(ArrayObj::with_holes(out, holes))
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
                         let f = args.first().cloned().unwrap_or(Value::Undefined);
