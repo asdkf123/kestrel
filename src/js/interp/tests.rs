@@ -8035,3 +8035,13 @@ fn proxy_set_invariant() {
     // 일반 Proxy set 무회귀.
     assert_eq!(run_num("var p=new Proxy({},{set:function(t,k,v){t[k]=v;return true}}); p.x=5; p.x"), 5.0);
 }
+
+#[test]
+fn proxy_has_invariant() {
+    // §10.5.7: 트랩이 false 인데 target 에 non-configurable 프로퍼티면 TypeError.
+    assert_eq!(run_str("var t={}; Object.defineProperty(t,'a',{value:1,configurable:false}); var p=new Proxy(t,{has:function(){return false}}); try{ ('a' in p); 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // configurable 프로퍼티는 has 자유.
+    assert!(run_bool("var p=new Proxy({b:1},{has:function(){return false}}); !('b' in p)"));
+    // 일반 has 무회귀.
+    assert!(run_bool("var p=new Proxy({x:1},{has:function(t,k){return k in t}}); ('x' in p) && !('y' in p)"));
+}

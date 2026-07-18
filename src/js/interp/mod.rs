@@ -7620,9 +7620,25 @@ impl Interp {
                             let res = self.call_value(
                                 trap,
                                 Some(handler),
-                                vec![target, Value::Str(key)],
+                                vec![target.clone(), Value::Str(key.clone())],
                             )?;
-                            return Ok(Value::Bool(to_bool(&res)));
+                            let has = to_bool(&res);
+                            // §10.5.7 [[HasProperty]] invariant: 트랩이 false 인데 target 에
+                            // non-configurable 프로퍼티가 있으면 숨길 수 없다 → TypeError.
+                            if !has {
+                                let td = self.call_native(
+                                    Native::ObjectGetOwnPropertyDescriptor,
+                                    None,
+                                    vec![target.clone(), Value::Str(key.clone())],
+                                )?;
+                                if let Value::Obj(d) = &td {
+                                    if !matches!(d.borrow().get("configurable"), Some(v) if to_bool(v))
+                                    {
+                                        return Err(self.throw_error("TypeError", "'has' on proxy: non-configurable property on target cannot be reported as non-existent"));
+                                    }
+                                }
+                            }
+                            return Ok(Value::Bool(has));
                         }
                         return self.binary(BinOp::In, l, target);
                     }
