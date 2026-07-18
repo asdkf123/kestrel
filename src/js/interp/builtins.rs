@@ -5070,7 +5070,81 @@ impl Interp {
                     accumulated.extend(&schars[next_pos.min(schars.len())..]);
                     return Ok(Value::Str(accumulated));
                 }
-                // 나머지(@@split/@@matchAll)는 아직 String 측에 위임.
+                if let natives::StrOp::Split = op {
+                    // §22.2.6.14 RegExp.prototype[@@split](string, limit).
+                    if !is_object(&re) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "RegExp.prototype[Symbol.split] called on non-object",
+                        ));
+                    }
+                    let s = self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                    let flags_val = self.member_get(&re, "flags")?;
+                    let flags = self.to_string_value(&flags_val)?;
+                    let new_flags = if flags.contains('y') { flags } else { format!("{}y", flags) };
+                    // splitter = Construct(%RegExp%, [rx, newFlags]) — sticky 로 앵커 분할.
+                    let splitter = self.construct(
+                        Value::Native(Native::RegExpCtor),
+                        vec![re.clone(), Value::Str(new_flags)],
+                    )?;
+                    let lim = match args.get(1) {
+                        None | Some(Value::Undefined) => u32::MAX as usize,
+                        Some(v) => self.to_int32(v)? as u32 as usize,
+                    };
+                    let schars: Vec<char> = s.chars().collect();
+                    let size = schars.len();
+                    let mut out: Vec<Value> = Vec::new();
+                    if lim == 0 {
+                        return Ok(Value::Arr(ArrayObj::new(out)));
+                    }
+                    if size == 0 {
+                        let z = self.regexp_exec(&splitter, &s)?;
+                        if matches!(z, Value::Null) {
+                            out.push(Value::Str(s.clone()));
+                        }
+                        return Ok(Value::Arr(ArrayObj::new(out)));
+                    }
+                    let mut p = 0usize;
+                    let mut q = 0usize;
+                    let guard_cap = size.saturating_mul(2) + 1000;
+                    let mut guard = 0;
+                    while q < size {
+                        guard += 1;
+                        if guard > guard_cap {
+                            break;
+                        }
+                        self.set_throw(&splitter, "lastIndex", Value::Num(q as f64))?;
+                        let z = self.regexp_exec(&splitter, &s)?;
+                        if matches!(z, Value::Null) {
+                            q += 1;
+                            continue;
+                        }
+                        let li_val = self.member_get(&splitter, "lastIndex")?;
+                        let e = (to_length(to_num(&li_val)) as usize).min(size);
+                        if e == p {
+                            q += 1;
+                            continue;
+                        }
+                        out.push(Value::Str(schars[p..q].iter().collect()));
+                        if out.len() >= lim {
+                            return Ok(Value::Arr(ArrayObj::new(out)));
+                        }
+                        let zlen_val = self.member_get(&z, "length")?;
+                        let n_caps = (to_length(self.to_number_value(&zlen_val)?).max(1.0) - 1.0) as usize;
+                        for i in 1..=n_caps {
+                            let cv = self.member_get(&z, &i.to_string())?;
+                            out.push(cv);
+                            if out.len() >= lim {
+                                return Ok(Value::Arr(ArrayObj::new(out)));
+                            }
+                        }
+                        p = e;
+                        q = p;
+                    }
+                    out.push(Value::Str(schars[p..].iter().collect()));
+                    return Ok(Value::Arr(ArrayObj::new(out)));
+                }
+                // 나머지(@@matchAll)는 아직 String 측에 위임.
                 let s = args.first().map(to_display).unwrap_or_default();
                 let mut fwd = vec![re];
                 fwd.extend(args.into_iter().skip(1));

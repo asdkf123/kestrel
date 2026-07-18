@@ -7432,3 +7432,18 @@ fn regex_sticky_exec() {
     // 비sticky/비global 은 lastIndex 무시.
     assert!(run_bool("var re=/a/; re.lastIndex=100; re.exec('bab')[0]==='a'"));
 }
+
+#[test]
+fn regex_symbol_split_protocol() {
+    // §22.2.6.14: sticky splitter, 캡처 포함, limit=ToUint32, 빈매치/빈문자열 특례.
+    assert_eq!(run_str("JSON.stringify(/,/[Symbol.split]('a,b,c'))"), "[\"a\",\"b\",\"c\"]");
+    assert_eq!(run_str("JSON.stringify(/(-)/[Symbol.split]('2016-01-02'))"), "[\"2016\",\"-\",\"01\",\"-\",\"02\"]");
+    assert_eq!(run_str("JSON.stringify(/,/[Symbol.split]('a,b,c,d',2))"), "[\"a\",\"b\"]");
+    assert_eq!(run_str("JSON.stringify(/(?:)/[Symbol.split]('abc'))"), "[\"a\",\"b\",\"c\"]");
+    assert_eq!(run_str("JSON.stringify(/x/[Symbol.split]('abc'))"), "[\"abc\"]");
+    assert_eq!(run_str("JSON.stringify(/x/[Symbol.split](''))"), "[\"\"]");
+    assert_eq!(run_str("JSON.stringify(/(?:)/[Symbol.split](''))"), "[]");
+    assert_eq!(run_str("JSON.stringify(/,/[Symbol.split]('a,b',0))"), "[]");
+    // brand.
+    assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.split].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
+}
