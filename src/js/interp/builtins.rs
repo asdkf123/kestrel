@@ -5522,45 +5522,84 @@ impl Interp {
                         }
                     }
                     StrOp::Split => {
-                        // 정규식 구분자 지원
-                        if let Some((src, flags)) = args.first().and_then(regex_src_flags) {
+                        // §22.1.3.21: lim=ToUint32(limit)(undefined→2^32-1)를 separator ToString
+                        // '전에' 구한다. lim==0 → [], separator undefined → [S].
+                        let sep_val = args.first().cloned().unwrap_or(Value::Undefined);
+                        let lim = match args.get(1) {
+                            None | Some(Value::Undefined) => u32::MAX as usize,
+                            // ToUint32: ToInt32 와 비트패턴 동일(top-bit 해석만 다름).
+                            Some(v) => self.to_int32(v)? as u32 as usize,
+                        };
+                        if lim == 0 {
+                            Value::Arr(ArrayObj::new(Vec::new()))
+                        } else if matches!(sep_val, Value::Undefined) {
+                            Value::Arr(ArrayObj::new(vec![Value::Str(s.clone())]))
+                        } else if let Some((src, flags)) = regex_src_flags(&sep_val) {
+                            // 정규식 split (§22.2.6.14): 앵커(sticky) 매치로 분할, 캡처 그룹 포함,
+                            // 빈 매치 처리, lim 적용.
                             let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                                 .map_err(|e| format!("정규식: {}", e))?;
-                            let mut parts = Vec::new();
-                            let mut last = 0;
-                            let mut pos = 0;
-                            while pos <= chars.len() {
-                                match re.find(&chars, pos) {
-                                    Some(mt) if mt.end > mt.start => {
-                                        parts.push(Value::Str(chars[last..mt.start].iter().collect()));
-                                        last = mt.end;
-                                        pos = mt.end;
+                            let size = chars.len();
+                            let mut parts: Vec<Value> = Vec::new();
+                            if size == 0 {
+                                // 빈 문자열: 정규식이 빈 문자열에 매치하면 [], 아니면 [""].
+                                if re.find(&chars, 0).filter(|mt| mt.start == 0).is_none() {
+                                    parts.push(Value::Str(String::new()));
+                                }
+                            } else {
+                                let mut p = 0usize; // 마지막 분할 끝
+                                let mut q = 0usize; // 스캔 위치
+                                while q < size {
+                                    match re.find(&chars, q) {
+                                        None => break,
+                                        Some(mt) => {
+                                            q = mt.start; // 그 앞엔 매치 없음 → 점프
+                                            let e = mt.end.min(size);
+                                            if e == p {
+                                                q += 1; // 빈 매치가 분할 끝과 겹침 → 전진
+                                            } else {
+                                                parts.push(Value::Str(
+                                                    chars[p..mt.start].iter().collect(),
+                                                ));
+                                                if parts.len() >= lim {
+                                                    break;
+                                                }
+                                                let mut hit_lim = false;
+                                                for g in mt.groups.iter().skip(1) {
+                                                    parts.push(match g {
+                                                        Some((a, b)) => Value::Str(
+                                                            chars[*a..*b].iter().collect(),
+                                                        ),
+                                                        None => Value::Undefined,
+                                                    });
+                                                    if parts.len() >= lim {
+                                                        hit_lim = true;
+                                                        break;
+                                                    }
+                                                }
+                                                if hit_lim {
+                                                    break;
+                                                }
+                                                p = e;
+                                                q = if e > mt.start { e } else { e + 1 };
+                                            }
+                                        }
                                     }
-                                    _ => break,
+                                }
+                                if parts.len() < lim {
+                                    parts.push(Value::Str(chars[p..].iter().collect()));
                                 }
                             }
-                            parts.push(Value::Str(chars[last..].iter().collect()));
+                            parts.truncate(lim);
                             Value::Arr(ArrayObj::new(parts))
                         } else {
-                            // separator 가 undefined/없음이면 [전체 문자열], 그 밖엔 ToString.
-                            let sep_undef =
-                                args.is_empty() || matches!(args.first(), Some(Value::Undefined));
-                            let sep = if sep_undef {
-                                String::new()
-                            } else {
-                                self.to_string_value(args.first().unwrap())?
-                            };
-                            let mut parts: Vec<Value> = if sep_undef {
-                                vec![Value::Str(s.clone())]
-                            } else if sep.is_empty() {
+                            let sep = self.to_string_value(&sep_val)?;
+                            let mut parts: Vec<Value> = if sep.is_empty() {
                                 chars.iter().map(|c| Value::Str(c.to_string())).collect()
                             } else {
                                 s.split(&sep).map(|p| Value::Str(p.to_string())).collect()
                             };
-                            // limit (2번째 인자): 결과를 그 개수로 자름
-                            if let Some(lim) = args.get(1).map(to_num).filter(|n| !n.is_nan() && *n >= 0.0) {
-                                parts.truncate(lim as usize);
-                            }
+                            parts.truncate(lim);
                             Value::Arr(ArrayObj::new(parts))
                         }
                     }

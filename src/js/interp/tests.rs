@@ -7029,3 +7029,21 @@ fn string_replace_substitution_and_coercion() {
     // replaceAll.
     assert_eq!(run_str("'a.b.c'.replaceAll('.', '-')"), "a-b-c");
 }
+
+#[test]
+fn string_split_limit_regex_capture() {
+    // §22.1.3.21/§22.2.6.14: 빈매치 분할, 캡처 그룹 포함, limit=ToUint32(separator 전).
+    assert_eq!(run_str("JSON.stringify('hello'.split(/(?:)/))"), "[\"h\",\"e\",\"l\",\"l\",\"o\"]");
+    assert_eq!(run_str("JSON.stringify('hello'.split(/l/))"), "[\"he\",\"\",\"o\"]");
+    assert_eq!(run_str("JSON.stringify('2016-01-02'.split(/(-)/))"), "[\"2016\",\"-\",\"01\",\"-\",\"02\"]");
+    assert_eq!(run_str("JSON.stringify('a,b,c,d'.split(',', 2))"), "[\"a\",\"b\"]");
+    assert_eq!(run_str("JSON.stringify('abc'.split('', 0))"), "[]");
+    assert_eq!(run_str("JSON.stringify('abc'.split(undefined))"), "[\"abc\"]");
+    // limit 은 separator ToString '전에' 강제변환 (§22.1.3.21 step 3<4).
+    assert_eq!(
+        run_str("var log=''; 'abc'.split({toString:function(){log+='sep';return 'b'}}, {valueOf:function(){log+='lim';return 1}}); log"),
+        "limsep"
+    );
+    // 정규식 + limit.
+    assert_eq!(run_str("JSON.stringify('a1b2c3d'.split(/\\d/, 2))"), "[\"a\",\"b\"]");
+}
