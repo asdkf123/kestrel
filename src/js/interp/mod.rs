@@ -3532,7 +3532,8 @@ impl Interp {
                             };
                             let cscope = Env::new(Some(env.clone()));
                             if let Some(p) = param {
-                                env_declare(&cscope, p, caught);
+                                // 식별자/구조분해 패턴 모두 bind_pattern 으로 (assign=false: 선언).
+                                self.bind_pattern(p, caught, &cscope, false)?;
                             }
                             result = self.exec_block(cbody, &cscope);
                         }

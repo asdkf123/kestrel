@@ -225,10 +225,10 @@ pub enum Stmt {
     With { obj: Expr, body: Box<Stmt> },
     Expr(Expr),
     Throw(Expr),
-    // catch: (바인딩 이름 — ES2019 생략 가능, 몸통)
+    // catch: (바인딩 패턴 — ES2019 생략 가능, 구조분해 가능, 몸통)
     Try {
         body: Vec<Stmt>,
-        catch: Option<(Option<String>, Vec<Stmt>)>,
+        catch: Option<(Option<Pattern>, Vec<Stmt>)>,
         finally: Option<Vec<Stmt>>,
     },
     // cases: (판별식 — None 은 default, 문 목록). 폴스루 의미론.

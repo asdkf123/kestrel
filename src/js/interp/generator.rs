@@ -898,7 +898,7 @@ impl Interp {
     fn gen_try(
         &mut self,
         body: &[Stmt],
-        catch: &Option<(Option<String>, Vec<Stmt>)>,
+        catch: &Option<(Option<crate::js::ast::Pattern>, Vec<Stmt>)>,
         finally: &Option<Vec<Stmt>>,
         scope: &EnvRef,
         drive: &mut Drive,
@@ -955,7 +955,7 @@ impl Interp {
                         };
                         let cscope = Env::new(Some(scope.clone()));
                         if let Some(p) = param {
-                            env_declare(&cscope, p, caught);
+                            self.bind_pattern(p, caught, &cscope, false)?;
                         }
                         result = self.gen_list(cbody, &cscope, drive);
                         if let Ok(GenFlow::Yield(v)) = &result {

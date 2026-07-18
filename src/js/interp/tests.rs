@@ -7534,3 +7534,21 @@ fn regex_species_constructor() {
     // constructor 가 객체 아니면 TypeError.
     assert!(run_bool("var r=/x/; r.constructor=5; var t=false; try{ r[Symbol.split]('x') }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn destructuring_catch_binding() {
+    // §14.15 Catch: CatchParameter 가 BindingPattern 이면 구조 분해 바인딩.
+    // 배열 패턴.
+    assert_eq!(run_num("try{ throw [1,2,3] }catch([a,b,c]){ a+b+c }"), 6.0);
+    // 객체 패턴.
+    assert_eq!(run_str("try{ throw {message:'boom',code:42} }catch({message,code}){ message+code }"), "boom42");
+    // 기본값.
+    assert_eq!(run_num("try{ throw {} }catch({x=7}){ x }"), 7.0);
+    // 중첩 패턴.
+    assert_eq!(run_str("try{ throw {info:{name:'kestrel'}} }catch({info:{name}}){ name }"), "kestrel");
+    // rest 요소.
+    assert_eq!(run_str("try{ throw [1,2,3,4] }catch([h,...t]){ h+'/'+t.join(',') }"), "1/2,3,4");
+    // 식별자 바인딩(회귀) 및 바인딩 없음(회귀).
+    assert_eq!(run_str("try{ throw new Error('x') }catch(e){ e.message }"), "x");
+    assert_eq!(run_str("try{ throw 1 }catch{ 'nobind' }"), "nobind");
+}

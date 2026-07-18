@@ -949,7 +949,8 @@ impl Parser {
         let body = self.block()?;
         let catch = if self.eat(&Tok::Catch) {
             let param = if self.eat(&Tok::LParen) {
-                let p = self.ident()?;
+                // 바인딩은 식별자 또는 구조분해 패턴 (catch ([a,b]) / catch ({m})).
+                let p = self.binding_pattern()?;
                 self.expect(&Tok::RParen)?;
                 Some(p)
             } else {
