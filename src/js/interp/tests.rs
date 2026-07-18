@@ -3093,6 +3093,17 @@ fn derived_constructor_must_call_super() {
     ));
     // 암묵(기본) 파생 생성자는 자동으로 super 호출 → OK
     assert!(run_bool("class A extends Array {} (new A()) instanceof A"));
+    // 파생 생성자가 원시값 반환 → TypeError(§10.2.2 step 12.c, super 여부 무관하게 먼저)
+    assert!(run_bool(
+        "class A extends Array { constructor(){ super(); return 5; } } \
+         var t=false; try{ new A() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    assert!(run_bool(
+        "class A extends Array { constructor(){ return 5; } } \
+         var t=false; try{ new A() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // 기저 클래스는 원시값 반환을 무시하고 this
+    assert!(run_bool("class E { constructor(){ this.y=3; return 5; } } new E().y===3"));
 }
 
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.

@@ -7503,9 +7503,17 @@ impl Interp {
                 }
                 let flow = self.exec_block(&ctor.body, &scope)?;
                 // 생성자 본문이 객체를 반환했거나, super() 가 this 를 갈아끼웠다면 그것이 결과다
-                if let Flow::Return(v) = flow {
-                    if is_object(&v) {
-                        return Ok(Some(v));
+                if let Flow::Return(v) = &flow {
+                    if is_object(v) {
+                        return Ok(Some(v.clone()));
+                    }
+                    // 파생 생성자가 객체도 undefined 도 아닌 값(원시값)을 반환하면 TypeError
+                    // (§10.2.2 step 12.c) — this 미초기화(ReferenceError)보다 먼저 검사한다.
+                    if is_derived && !matches!(v, Value::Undefined) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Derived constructors may only return an object or undefined",
+                        ));
                     }
                 }
                 // 파생 생성자인데 super() 를 안 불렀고 객체도 안 돌려줬으면 this 가
