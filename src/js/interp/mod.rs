@@ -1238,6 +1238,8 @@ impl Interp {
             ("values", Native::Map(MapOp::Values)),
             ("entries", Native::Map(MapOp::Entries)),
             ("\u{0}@@iterator", Native::Map(MapOp::Entries)),
+            ("getOrInsert", Native::Map(MapOp::GetOrInsert)),
+            ("getOrInsertComputed", Native::Map(MapOp::GetOrInsertComputed)),
         ]);
         let set_proto = mk_proto(vec![
             ("add", Native::Set(SetOp::Add)),
@@ -2517,6 +2519,37 @@ impl Interp {
                     .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
                     .collect(),
             ),
+            // getOrInsert(key, value): 키가 있으면 그 값, 없으면 (key,value) 삽입 후 value.
+            MapOp::GetOrInsert => {
+                let val = args.get(1).cloned().unwrap_or(Value::Undefined);
+                match m.borrow().iter().find(|(k, _)| same_value_zero(k, &key)) {
+                    Some((_, v)) => return Ok(v.clone()),
+                    None => {}
+                }
+                m.borrow_mut().push((key, val.clone()));
+                val
+            }
+            // getOrInsertComputed(key, callbackfn): 없으면 callbackfn(key) 로 계산해 삽입.
+            // 콜백이 map 을 변경할 수 있으니 호출 후 다시 확인한다(§ 제안).
+            MapOp::GetOrInsertComputed => {
+                let cb = args.get(1).cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&cb) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Map.prototype.getOrInsertComputed callbackfn is not a function",
+                    ));
+                }
+                if let Some((_, v)) = m.borrow().iter().find(|(k, _)| same_value_zero(k, &key)) {
+                    return Ok(v.clone());
+                }
+                let v = self.call_value(cb, None, vec![key.clone()])?;
+                let pos = m.borrow().iter().position(|(k, _)| same_value_zero(k, &key));
+                match pos {
+                    Some(i) => m.borrow_mut()[i].1 = v.clone(),
+                    None => m.borrow_mut().push((key, v.clone())),
+                }
+                v
+            }
         })
     }
 

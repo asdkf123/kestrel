@@ -561,6 +561,9 @@ pub enum MapOp {
     Keys,
     Values,
     Entries,
+    // TC39 upsert 제안(스펙 병합): 키가 있으면 그 값, 없으면 삽입 후 값.
+    GetOrInsert,
+    GetOrInsertComputed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -834,6 +837,8 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
                 MapOp::Keys => ("keys", 0),
                 MapOp::Values => ("values", 0),
                 MapOp::Entries => ("entries", 0),
+                MapOp::GetOrInsert => ("getOrInsert", 2),
+                MapOp::GetOrInsertComputed => ("getOrInsertComputed", 2),
             };
             return Some((name, len));
         }

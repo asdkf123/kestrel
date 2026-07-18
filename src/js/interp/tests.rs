@@ -1045,6 +1045,17 @@ fn map_and_set() {
         run_num("var m=new Map([['a',10],['b',20]]); var t=0; m.forEach(function(v){t+=v}); t"),
         30.0
     );
+    // getOrInsert / getOrInsertComputed (TC39 upsert): 있으면 기존값, 없으면 삽입 후 값
+    assert_eq!(run_num("var m=new Map([['a',1]]); m.getOrInsert('a',9)"), 1.0);
+    assert_eq!(run_num("var m=new Map(); m.getOrInsert('b',2); m.get('b')"), 2.0);
+    assert_eq!(run_num("var m=new Map([['a',1]]); m.getOrInsertComputed('a',function(){return 99;})"), 1.0);
+    assert_eq!(run_str("var m=new Map(); m.getOrInsertComputed('c',function(k){return k+'!';})"), "c!");
+    assert_eq!(run_str("Map.prototype.getOrInsert.name"), "getOrInsert");
+    assert_eq!(run_num("Map.prototype.getOrInsertComputed.length"), 2.0);
+    // 비함수 콜백 → TypeError
+    assert!(run_bool(
+        "var t=false; try{ new Map().getOrInsertComputed('d',5) }catch(e){ t=e instanceof TypeError } t"
+    ));
 }
 
 #[test]
