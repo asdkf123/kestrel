@@ -6960,3 +6960,18 @@ fn number_statics_and_predicates() {
     assert_eq!(run_str("typeof Number.propertyIsEnumerable"), "function");
     assert!(run_bool("!Number.propertyIsEnumerable('MAX_VALUE')"));
 }
+
+#[test]
+fn is_prototype_of_and_getprototypeof_all_kinds() {
+    // isPrototypeOf 는 함수/배열/인스턴스 등 모든 객체형 인자에서 프로토타입 체인을 걷는다.
+    assert!(run_bool("Function.prototype.isPrototypeOf(Number)"));
+    assert!(run_bool("Function.prototype.isPrototypeOf(Date)"));
+    assert!(run_bool("Object.prototype.isPrototypeOf(Number)"));
+    assert!(run_bool("Array.prototype.isPrototypeOf([])"));
+    // 원시값 인자는 false (객체 아님).
+    assert!(run_bool("!Number.prototype.isPrototypeOf(5)"));
+    // getPrototypeOf 도 종류별로 정확.
+    assert!(run_bool("Object.getPrototypeOf([])===Array.prototype"));
+    assert!(run_bool("Object.getPrototypeOf(Number)===Function.prototype"));
+    assert!(run_bool("Object.getPrototypeOf(Object.prototype)===null"));
+}

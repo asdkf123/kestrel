@@ -1294,6 +1294,48 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
+    // [[GetPrototypeOf]] (§20.1.2.12 등) — 모든 Value 종류의 프로토타입을 돌려준다.
+    // 체인의 끝/프로토타입 없음은 Null. Object.getPrototypeOf 와 isPrototypeOf 가 공유한다.
+    pub(super) fn proto_of(&mut self, v: &Value) -> Result<Value, String> {
+        let obj_proto = self.member_get(&self.object_ns.clone(), "prototype")?;
+        Ok(match v {
+            Value::Obj(m) => {
+                // Object.prototype 자신의 프로토타입은 null (체인의 끝).
+                if let Value::Obj(op) = &obj_proto {
+                    if Rc::ptr_eq(m, op) {
+                        return Ok(Value::Null);
+                    }
+                }
+                match m.borrow().get("__proto__") {
+                    Some(p) => p.clone(),
+                    None => obj_proto,
+                }
+            }
+            Value::Arr(_) => self.member_get(&self.array_ns.clone(), "prototype")?,
+            Value::Instance(inst) => {
+                self.member_get(&Value::Class(inst.class.clone()), "prototype")?
+            }
+            // NativeError 생성자의 [[Prototype]] 은 Error 생성자 (§20.5.6.2).
+            Value::Native(Native::ErrorCtor(n)) if *n != "Error" => {
+                env_get(&self.global, "Error").unwrap_or_else(|| self.fn_proto.clone())
+            }
+            Value::Fn(f) => f
+                .props
+                .borrow()
+                .get("__proto__")
+                .cloned()
+                .unwrap_or_else(|| self.fn_proto.clone()),
+            Value::Native(_) | Value::Bound(_) => self.fn_proto.clone(),
+            Value::Str(_) => self.string_proto.clone(),
+            Value::Num(_) => self.number_proto.clone(),
+            Value::Bool(_) => self.boolean_proto.clone(),
+            Value::MapVal(_) => self.map_proto.clone(),
+            Value::SetVal(_) => self.set_proto.clone(),
+            Value::Gen(_) | Value::Class(_) | Value::Proxy(_) => obj_proto,
+            _ => Value::Null,
+        })
+    }
+
     pub(super) fn generic_array_read(&mut self, recv: &Value) -> Result<Vec<Value>, String> {
         let len_val = self.member_get(recv, "length")?;
         // ToLength(? ToNumber(len)) — 객체 length 의 valueOf/toString 을 호출하고
@@ -2099,23 +2141,30 @@ impl Interp {
             }
             // proto.isPrototypeOf(obj) — 예전엔 항상 false 였다(거짓말).
             Native::ObjectIsPrototypeOf => {
-                let (Some(proto), Some(Value::Obj(target))) = (&recv, args.first()) else {
-                    return Ok(Value::Bool(false));
+                // §20.1.3.4: V 가 객체가 아니면 false. 아니면 V 의 프로토타입 체인에서 this 를 찾는다.
+                // 인자는 Obj 뿐 아니라 함수/배열/인스턴스 등 모든 객체형이 될 수 있다
+                // (Function.prototype.isPrototypeOf(Number) 등).
+                let proto = match &recv {
+                    Some(p) => p.clone(),
+                    None => return Ok(Value::Bool(false)),
                 };
-                let mut cur = target.borrow().get("__proto__").cloned();
-                for _ in 0..100 {
-                    match cur {
-                        Some(p) => {
-                            if strict_eq(&p, proto) {
-                                return Ok(Value::Bool(true));
-                            }
-                            cur = match &p {
-                                Value::Obj(pm) => pm.borrow().get("__proto__").cloned(),
-                                _ => None,
-                            };
-                        }
-                        None => break,
+                let arg = match args.first() {
+                    Some(a) => a.clone(),
+                    None => return Ok(Value::Bool(false)),
+                };
+                if !is_object(&arg) {
+                    return Ok(Value::Bool(false));
+                }
+                let mut cur = arg;
+                for _ in 0..1000 {
+                    let p = self.proto_of(&cur)?;
+                    if matches!(p, Value::Null) {
+                        break;
                     }
+                    if strict_eq(&p, &proto) {
+                        return Ok(Value::Bool(true));
+                    }
+                    cur = p;
                 }
                 Ok(Value::Bool(false))
             }
@@ -2191,57 +2240,10 @@ impl Interp {
             // 캐내는데, null 이 나오면 그 위에 세우는 이터레이터 체인이 통째로 무너진다
             // (naver 가 여기서 죽고 메모리까지 터졌다).
             Native::ObjectGetPrototypeOf => {
-                let obj_proto = self.member_get(&self.object_ns.clone(), "prototype")?;
-                Ok(match args.first() {
-                    Some(Value::Obj(m)) => {
-                        // Object.prototype 자신의 프로토타입은 **null** 이다 (체인의 끝).
-                        // 자기 자신을 돌려주면 체인을 걷는 코드가 무한 루프에 빠진다.
-                        if let Value::Obj(op) = &obj_proto {
-                            if Rc::ptr_eq(m, op) {
-                                return Ok(Value::Null);
-                            }
-                        }
-                        match m.borrow().get("__proto__") {
-                            Some(p) => p.clone(),
-                            // 링크가 없으면 Object.prototype (표준)
-                            None => obj_proto,
-                        }
-                    }
-                    Some(Value::Arr(_)) => {
-                        self.member_get(&self.array_ns.clone(), "prototype")?
-                    }
-                    // 인스턴스의 프로토타입은 그 클래스의 prototype 객체
-                    Some(Value::Instance(inst)) => {
-                        self.member_get(&Value::Class(inst.class.clone()), "prototype")?
-                    }
-                    // NativeError 생성자의 [[Prototype]] 은 **Error 생성자**다 (§20.5.6.2).
-                    // 없으면 TypeError 가 Error 의 서브타입임을 확인하는 코드
-                    // (testharness 의 assert_throws_js 가 정확히 이 체인을 걷는다)가
-                    // "Error 의 서브타입이 아니다" 라고 판정한다.
-                    Some(Value::Native(Native::ErrorCtor(n))) if *n != "Error" => {
-                        env_get(&self.global, "Error").unwrap_or_else(|| self.fn_proto.clone())
-                    }
-                    // 함수의 [[Prototype]]: setPrototypeOf 로 설정됐으면 그것, 아니면
-                    // Function.prototype (§20.2.3). class B extends A / %TypedArray% 상속의 토대.
-                    Some(Value::Fn(f)) => f
-                        .props
-                        .borrow()
-                        .get("__proto__")
-                        .cloned()
-                        .unwrap_or_else(|| self.fn_proto.clone()),
-                    Some(Value::Native(_)) | Some(Value::Bound(_)) => self.fn_proto.clone(),
-                    Some(Value::Str(_)) => self.string_proto.clone(),
-                    Some(Value::Num(_)) => self.number_proto.clone(),
-                    Some(Value::Bool(_)) => self.boolean_proto.clone(),
-                    Some(Value::MapVal(_)) => self.map_proto.clone(),
-                    Some(Value::SetVal(_)) => self.set_proto.clone(),
-                    // 제너레이터/그 밖의 객체형은 Object.prototype 으로 (null 보다 정확하다)
-                    Some(Value::Gen(_)) | Some(Value::Class(_)) | Some(Value::Proxy(_)) => {
-                        obj_proto
-                    }
-                    // null/undefined 는 TypeError 지만 관대하게 null
-                    _ => Value::Null,
-                })
+                // 예전엔 __proto__ 링크가 없으면 무조건 null 이라 평범한 객체/배열/인스턴스가
+                // 전부 null 이었다(regenerator 런타임이 여기서 무너졌다). proto_of 로 통일.
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                self.proto_of(&arg)
             }
             // Object.prototype.hasOwnProperty.call(obj, key) / obj.hasOwnProperty(key)
             Native::HasOwnProperty => {
