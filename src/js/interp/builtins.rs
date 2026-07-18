@@ -1424,6 +1424,93 @@ impl Interp {
         self.call_native(Native::RegexExec, Some(r.clone()), vec![Value::Str(s.to_string())])
     }
 
+    // GetSubstitution (§22.1.3.19): $$ / $& / $` / $' / $n(1~2자리) / $<name> 치환.
+    // captures 는 이미 ToString 된 그룹(없으면 None), named 는 groups 객체(없으면 Undefined).
+    fn get_substitution(
+        &mut self,
+        matched: &str,
+        str_chars: &[char],
+        position: usize,
+        captures: &[Option<String>],
+        named: &Value,
+        template: &str,
+    ) -> Result<String, String> {
+        let t: Vec<char> = template.chars().collect();
+        let matched_len = matched.chars().count();
+        let tail_start = (position + matched_len).min(str_chars.len());
+        let mut out = String::new();
+        let mut i = 0;
+        while i < t.len() {
+            if t[i] == '$' && i + 1 < t.len() {
+                match t[i + 1] {
+                    '$' => {
+                        out.push('$');
+                        i += 2;
+                    }
+                    '&' => {
+                        out.push_str(matched);
+                        i += 2;
+                    }
+                    '`' => {
+                        out.extend(&str_chars[..position]);
+                        i += 2;
+                    }
+                    '\'' => {
+                        out.extend(&str_chars[tail_start..]);
+                        i += 2;
+                    }
+                    '<' if !matches!(named, Value::Undefined) => {
+                        if let Some(close) = t[i + 2..].iter().position(|&c| c == '>') {
+                            let name: String = t[i + 2..i + 2 + close].iter().collect();
+                            let v = self.member_get(named, &name)?;
+                            if !matches!(v, Value::Undefined) {
+                                out.push_str(&self.to_string_value(&v)?);
+                            }
+                            i = i + 2 + close + 1;
+                        } else {
+                            out.push('$');
+                            i += 1;
+                        }
+                    }
+                    d if d.is_ascii_digit() => {
+                        // 2자리 그룹 우선, 유효하지 않으면 1자리 폴백.
+                        let two = if i + 2 < t.len() && t[i + 2].is_ascii_digit() {
+                            let n = (d as usize - '0' as usize) * 10
+                                + (t[i + 2] as usize - '0' as usize);
+                            if n >= 1 && n <= captures.len() { Some((n, 3usize)) } else { None }
+                        } else {
+                            None
+                        };
+                        let pick = two.or_else(|| {
+                            let n = d as usize - '0' as usize;
+                            if n >= 1 && n <= captures.len() { Some((n, 2usize)) } else { None }
+                        });
+                        match pick {
+                            Some((n, adv)) => {
+                                if let Some(Some(c)) = captures.get(n - 1) {
+                                    out.push_str(c);
+                                }
+                                i += adv;
+                            }
+                            None => {
+                                out.push('$');
+                                i += 1;
+                            }
+                        }
+                    }
+                    _ => {
+                        out.push('$');
+                        i += 1;
+                    }
+                }
+            } else {
+                out.push(t[i]);
+                i += 1;
+            }
+        }
+        Ok(out)
+    }
+
     // Set(O, P, V, Throw=true) (§7.3.4): 실패하면 TypeError. 접근자 setter 예외는 전파.
     pub(super) fn set_throw(&mut self, o: &Value, key: &str, v: Value) -> Result<(), String> {
         if !self.ordinary_set(o, key, v, o)? {
@@ -4891,7 +4978,99 @@ impl Interp {
                         Ok(Value::Arr(ArrayObj::new(out)))
                     };
                 }
-                // 나머지(@@replace/@@split/@@matchAll)는 아직 String 측에 위임.
+                if let natives::StrOp::Replace = op {
+                    // §22.2.6.11 RegExp.prototype[@@replace](string, replaceValue).
+                    if !is_object(&re) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "RegExp.prototype[Symbol.replace] called on non-object",
+                        ));
+                    }
+                    let s = self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                    let repl_val = args.get(1).cloned().unwrap_or(Value::Undefined);
+                    let functional = is_callable(&repl_val);
+                    let repl_str = if functional {
+                        None
+                    } else {
+                        Some(self.to_string_value(&repl_val)?)
+                    };
+                    let global = to_bool(&self.member_get(&re, "global")?);
+                    if global {
+                        self.set_throw(&re, "lastIndex", Value::Num(0.0))?;
+                    }
+                    let schars: Vec<char> = s.chars().collect();
+                    let cap = schars.len().saturating_mul(2) + 1000;
+                    // 1) 모든 매치 결과 수집.
+                    let mut results: Vec<Value> = Vec::new();
+                    for _ in 0..cap {
+                        let result = self.regexp_exec(&re, &s)?;
+                        if matches!(result, Value::Null) {
+                            break;
+                        }
+                        let m0v = self.member_get(&result, "0")?;
+                        let m0 = self.to_string_value(&m0v)?;
+                        results.push(result);
+                        if !global {
+                            break;
+                        }
+                        if m0.is_empty() {
+                            let li = to_num(&self.member_get(&re, "lastIndex")?);
+                            self.set_throw(&re, "lastIndex", Value::Num(li + 1.0))?;
+                        }
+                    }
+                    // 2) 결과별로 치환 문자열 조립.
+                    let mut accumulated = String::new();
+                    let mut next_pos = 0usize;
+                    for result in &results {
+                        let matched_v = self.member_get(result, "0")?;
+                        let matched = self.to_string_value(&matched_v)?;
+                        let len_val = self.member_get(result, "length")?;
+                        let n_caps = (to_length(self.to_number_value(&len_val)?).max(1.0) - 1.0) as usize;
+                        let idx_v = self.member_get(result, "index")?;
+                        let idx = self.to_integer_or_infinity(&idx_v)?;
+                        let position = (idx.max(0.0).min(schars.len() as f64)) as usize;
+                        let mut captures: Vec<Option<String>> = Vec::with_capacity(n_caps);
+                        for i in 1..=n_caps {
+                            let cv = self.member_get(result, &i.to_string())?;
+                            captures.push(if matches!(cv, Value::Undefined) {
+                                None
+                            } else {
+                                Some(self.to_string_value(&cv)?)
+                            });
+                        }
+                        let named = self.member_get(result, "groups")?;
+                        let replacement = if functional {
+                            let mut cargs = vec![Value::Str(matched.clone())];
+                            for c in &captures {
+                                cargs.push(c.clone().map(Value::Str).unwrap_or(Value::Undefined));
+                            }
+                            cargs.push(Value::Num(position as f64));
+                            cargs.push(Value::Str(s.clone()));
+                            if !matches!(named, Value::Undefined) {
+                                cargs.push(named.clone());
+                            }
+                            let r = self.call_value(repl_val.clone(), None, cargs)?;
+                            self.to_string_value(&r)?
+                        } else {
+                            self.get_substitution(
+                                &matched,
+                                &schars,
+                                position,
+                                &captures,
+                                &named,
+                                repl_str.as_deref().unwrap_or(""),
+                            )?
+                        };
+                        if position >= next_pos {
+                            accumulated.extend(&schars[next_pos..position]);
+                            accumulated.push_str(&replacement);
+                            next_pos = position + matched.chars().count();
+                        }
+                    }
+                    accumulated.extend(&schars[next_pos.min(schars.len())..]);
+                    return Ok(Value::Str(accumulated));
+                }
+                // 나머지(@@split/@@matchAll)는 아직 String 측에 위임.
                 let s = args.first().map(to_display).unwrap_or_default();
                 let mut fwd = vec![re];
                 fwd.extend(args.into_iter().skip(1));

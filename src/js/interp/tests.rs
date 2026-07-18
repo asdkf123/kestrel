@@ -7403,3 +7403,20 @@ fn regex_symbol_match_protocol() {
     // brand.
     assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.match].call(5,'x') }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn regex_symbol_replace_protocol() {
+    // §22.2.6.11: 캡처/$치환/named/functional/custom exec/global.
+    assert_eq!(run_str("/o/[Symbol.replace]('foo bar','0')"), "f0o bar");
+    assert_eq!(run_str("/o/g[Symbol.replace]('foo boo','0')"), "f00 b00");
+    assert_eq!(run_str("/(a)(b)/[Symbol.replace]('xabz','[$&:$1:$2]')"), "x[ab:a:b]z");
+    assert_eq!(run_str("/b/[Symbol.replace]('abc','<$`|$\\''+'>')"), "a<a|c>c");
+    assert_eq!(run_str("/a/[Symbol.replace]('a','$$')"), "$");
+    assert_eq!(run_str("/(?<y>b)/[Symbol.replace]('abc','[$<y>]')"), "a[b]c");
+    assert_eq!(run_str("/(\\d)/g[Symbol.replace]('a1b2',function(m,p1,pos){return '('+p1+'@'+pos+')'})"), "a(1@1)b(2@3)");
+    assert_eq!(run_str("/(?:)/g[Symbol.replace]('ab','-')"), "-a-b-");
+    // custom exec.
+    assert_eq!(run_str("var c=0;var o={exec:function(){c++;return c===1?{0:'X',index:1,length:1}:null},global:true,lastIndex:0};Object.setPrototypeOf(o,RegExp.prototype);o[Symbol.replace]('abcd','Y')"), "aYcd");
+    // brand.
+    assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.replace].call(5,'x','y') }catch(e){ t=e instanceof TypeError } t"));
+}
