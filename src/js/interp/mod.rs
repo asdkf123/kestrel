@@ -6281,9 +6281,22 @@ impl Interp {
                 }
                 _ => self.native_fn_member(recv, key).unwrap_or(Value::Undefined),
             }),
-            // 네이티브/바운드 함수: 함수 공통 멤버(name/length/call/apply/bind + 상속 메서드)
-            Value::Native(_) | Value::Bound(_) => {
+            // 네이티브 함수: 함수 공통 멤버(name/length/call/apply/bind + 상속 메서드)
+            Value::Native(_) => {
                 Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined))
+            }
+            // 바운드 함수: name/length/call/apply/bind 우선, 없으면 Function.prototype
+            // 체인 상속(§10.4.1: [[Prototype]]=%Function.prototype%). 예전엔 상속을 안 걸어
+            // boundFn 이 Function.prototype 에 추가된 프로퍼티를 못 봤다.
+            Value::Bound(_) => {
+                if let Some(v) = self.native_fn_member(recv, key) {
+                    return Ok(v);
+                }
+                if key == "__proto__" {
+                    return Ok(self.fn_proto.clone());
+                }
+                let proto = self.fn_proto.clone();
+                self.member_get(&proto, key)
             }
             // BigInt 메서드: toString(radix) / toLocaleString / valueOf
             Value::BigInt(_) => Ok(match key {

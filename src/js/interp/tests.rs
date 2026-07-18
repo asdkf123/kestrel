@@ -7651,3 +7651,15 @@ fn strict_this_binding_and_iterator_receiver() {
     // 정상 사용은 그대로.
     assert_eq!(prelude_str("function* g(){yield 1;yield 2;} g().map(x=>x*2).toArray().join(',')"), "2,4");
 }
+
+#[test]
+fn bound_function_inherits_function_prototype() {
+    // §10.4.1: 바운드 함수의 [[Prototype]] 은 %Function.prototype% — 상속 프로퍼티가 보인다.
+    assert_eq!(run_num("var f=function(){}; var b=f.bind({}); Function.prototype.p=12; var r=b.p; delete Function.prototype.p; r"), 12.0);
+    assert!(run_bool("var b=(function(){}).bind({}); b.constructor === Function"));
+    assert!(run_bool("var b=(function(){}).bind({}); Object.getPrototypeOf(b) === Function.prototype"));
+    assert!(run_bool("var b=(function(){}).bind({}); b.hasOwnProperty('name')"));
+    // name/length 는 여전히 바운드 계산값 우선.
+    assert_eq!(run_str("function foo(a,b){}; foo.bind({},1).name"), "bound foo");
+    assert_eq!(run_num("function foo(a,b){}; foo.bind({},1).length"), 1.0);
+}
