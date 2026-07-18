@@ -3104,6 +3104,17 @@ fn derived_constructor_must_call_super() {
     ));
     // 기저 클래스는 원시값 반환을 무시하고 this
     assert!(run_bool("class E { constructor(){ this.y=3; return 5; } } new E().y===3"));
+    // gOPD 가 인스턴스 필드의 실제 속성을 보고한다 — class extends Error 의 message 는
+    // non-enumerable(예전엔 반환부가 enumerable:true 로 덮었다). 일반 필드는 enumerable.
+    assert!(run_bool(
+        "class Err extends Error {} var e=new Err('x'); \
+         var d=Object.getOwnPropertyDescriptor(e,'message'); \
+         d.value==='x' && d.enumerable===false && d.writable===true && d.configurable===true"
+    ));
+    assert!(run_bool(
+        "class C { constructor(){ this.a=1; } } \
+         Object.getOwnPropertyDescriptor(new C(),'a').enumerable===true"
+    ));
 }
 
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.

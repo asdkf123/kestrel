@@ -2237,11 +2237,18 @@ impl Interp {
                     Value::Instance(inst) => {
                         // private 이름은 프로퍼티가 아니다 — 서술자도 없다
                         let fk = field_key(&key, self.priv_id);
-                        match inst.fields.borrow().get(&fk) {
+                        let b = inst.fields.borrow();
+                        match b.get(&fk) {
                             Some(v) if !is_private_name(&key) => {
+                                // 실제 속성 비트로 정확히 보고한다 — 예전엔 writable 만 세우고
+                                // 반환부가 enumerable/configurable 을 항상 true 로 덮어, class
+                                // extends Error 의 message(non-enumerable)가 열거로 보고됐다.
+                                let attrs = prop_attrs(&b, &key);
                                 d.insert("value".to_string(), v.clone());
-                                d.insert("writable".to_string(), Value::Bool(true));
-                                true
+                                d.insert("writable".to_string(), Value::Bool(attrs & ATTR_WRITABLE != 0));
+                                d.insert("enumerable".to_string(), Value::Bool(attrs & ATTR_ENUMERABLE != 0));
+                                d.insert("configurable".to_string(), Value::Bool(attrs & ATTR_CONFIGURABLE != 0));
+                                return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                             }
                             _ => false,
                         }
