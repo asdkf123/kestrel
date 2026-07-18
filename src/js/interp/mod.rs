@@ -2660,6 +2660,11 @@ impl Interp {
         v: Value,
         receiver: &Value,
     ) -> Result<bool, String> {
+        // exotic: Proxy 는 [[Set]] 트랩을 탄다(§10.5.9). Reflect.set 이 이 경로로 온다.
+        if let Value::Proxy(p) = o {
+            let p = p.clone();
+            return self.proxy_set(&p, key, v, receiver);
+        }
         // ownDesc = O.[[GetOwnProperty]](P).
         match self.own_desc_fields(o, key)? {
             None => {
@@ -2689,6 +2694,67 @@ impl Interp {
                 }
             }
         }
+    }
+
+    // §10.5.9 [[Set]](P, V, Receiver) — Proxy 의 set 트랩. 트랩 없으면 타깃에 위임,
+    // 트랩 결과가 falsy 면 false, non-configurable non-writable 데이터/setter 없는
+    // 접근자에 대한 거짓 성공은 TypeError. Reflect.set 이 이 불리언을 그대로 돌려준다.
+    fn proxy_set(
+        &mut self,
+        p: &Rc<(Value, Value)>,
+        key: &str,
+        v: Value,
+        receiver: &Value,
+    ) -> Result<bool, String> {
+        self.proxy_revoked_guard(p)?;
+        let (t, h) = (p.0.clone(), p.1.clone());
+        let trap = self.member_get(&h, "set")?;
+        if matches!(trap, Value::Undefined | Value::Null) {
+            return self.ordinary_set(&t, key, v, receiver);
+        }
+        if !is_callable(&trap) {
+            return Err(self.throw_error("TypeError", "'set' trap is not callable"));
+        }
+        let btr = self.call_value(
+            trap,
+            Some(h),
+            vec![
+                t.clone(),
+                Value::Str(key.to_string()),
+                v.clone(),
+                receiver.clone(),
+            ],
+        )?;
+        if !to_bool(&btr) {
+            return Ok(false);
+        }
+        let td = self.call_native(
+            Native::ObjectGetOwnPropertyDescriptor,
+            None,
+            vec![t.clone(), Value::Str(key.to_string())],
+        )?;
+        if let Value::Obj(d) = &td {
+            let b = d.borrow();
+            let configurable = matches!(b.get("configurable"), Some(x) if to_bool(x));
+            if !configurable {
+                if b.contains_key("value") {
+                    let writable = matches!(b.get("writable"), Some(x) if to_bool(x));
+                    let val = b.get("value").cloned().unwrap_or(Value::Undefined);
+                    if !writable && !same_value(&v, &val) {
+                        return Err(self.throw_error("TypeError", "'set' on proxy: cannot change the value of a non-configurable non-writable data property"));
+                    }
+                } else if matches!(
+                    b.get("set").cloned().unwrap_or(Value::Undefined),
+                    Value::Undefined
+                ) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "'set' on proxy: non-configurable accessor property without a setter",
+                    ));
+                }
+            }
+        }
+        Ok(true)
     }
 
     // §10.1.9.2 step 2.b-e: 데이터 값을 Receiver 에 설정. Receiver 가 비객체면 false.

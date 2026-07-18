@@ -1635,6 +1635,47 @@ fn proxy_define_property_trap_invariants() {
     );
 }
 
+// Proxy set 트랩 (§10.5.9): Reflect.set 은 트랩의 불리언을 그대로 돌려주고,
+// non-configurable non-writable 데이터/setter 없는 접근자에 대한 거짓 성공은
+// TypeError. 트랩 없으면 타깃에 위임(receiver 전달). 예전엔 Reflect.set 이
+// ordinary_set 을 타는데 거기서 프록시 set 트랩을 아예 안 불렀다.
+#[test]
+fn proxy_set_trap_reflect() {
+    // 트랩 false → Reflect.set false
+    assert!(run_bool(
+        "Reflect.set(new Proxy({},{set:function(){return false;}}),'attr','foo')===false"
+    ));
+    // 트랩 true + target configurable writable:false → true(invariant 미적용)
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'attr',{configurable:true,writable:false,value:'foo'}); \
+         Reflect.set(new Proxy(t,{set:function(){return true;}}),'attr','foo')===true"
+    ));
+    // invariant: non-config non-writable 다른 값 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,writable:false,configurable:false}); \
+         var p=new Proxy(t,{set:function(){return true;}}); \
+         var f=false; try{ Reflect.set(p,'x',2) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{set:5}); \
+         var f=false; try{ Reflect.set(p,'x',1) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // 트랩 없으면 타깃 위임 + receiver 전달
+    assert!(run_bool(
+        "var t={}; var p=new Proxy(t,{}); Reflect.set(p,'y',7)===true && t.y===7"
+    ));
+    assert!(run_bool(
+        "var seen=null; var r={}; var p=new Proxy({},{set:function(a,k,v,rc){seen=rc;return true;}}); \
+         Reflect.set(p,'x',1,r); seen===r"
+    ));
+    // 할당(p.x=v)도 여전히 트랩 경유
+    assert!(run_bool(
+        "var hit=false; var p=new Proxy({},{set:function(t,k,v){hit=true;t[k]=v;return true;}}); \
+         p.z=5; hit && p.z===5"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());
