@@ -1557,6 +1557,8 @@ impl Interp {
             Value::Str(_) => self.string_proto.clone(),
             Value::Num(_) => self.number_proto.clone(),
             Value::Bool(_) => self.boolean_proto.clone(),
+            Value::Symbol(_) => self.symbol_proto.clone(),
+            Value::BigInt(_) => self.bigint_proto.clone(),
             Value::MapVal(_) => self.map_proto.clone(),
             Value::SetVal(_) => self.set_proto.clone(),
             // 제너레이터의 [[Prototype]] 은 %IteratorPrototype%(프렐류드 __kIterProto)로

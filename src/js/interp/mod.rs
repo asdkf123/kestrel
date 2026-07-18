@@ -8922,6 +8922,10 @@ impl Interp {
                         }
                         Ok(())
                     }
+                    // 원시값(심볼/숫자/불리언/문자열)에 프로퍼티 대입은 sloppy 모드에서
+                    // 무음 no-op 이다(§6.2.5.4 PutValue: base 가 원시면 auto-boxing 후 버려짐).
+                    // 예전엔 throw 라 s.foo=1 이 죽었다. strict 면 TypeError 지만 기본은 sloppy.
+                    Value::Symbol(_) | Value::Num(_) | Value::Bool(_) | Value::Str(_) => Ok(()),
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
     }

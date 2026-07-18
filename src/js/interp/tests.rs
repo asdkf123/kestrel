@@ -368,6 +368,12 @@ fn symbol_prototype_delegation() {
     // 메서드 name/length 는 표준값
     assert_eq!(run_str("Symbol.prototype.valueOf.name"), "valueOf");
     assert_eq!(run_num("Symbol.prototype.valueOf.length"), 0.0);
+    // Object.getPrototypeOf(심볼) === Symbol.prototype, constructor 도 Symbol
+    assert!(run_bool("Object.getPrototypeOf(Symbol('x')) === Symbol.prototype"));
+    assert!(run_bool("Symbol('x').constructor === Symbol"));
+    assert!(run_bool("Object.getPrototypeOf(10n) === BigInt.prototype"));
+    // sloppy: 심볼 원시값에 프로퍼티 대입은 무음 no-op (throw 아님)
+    assert!(run_bool("var s=Symbol('x'); s.foo=1; s.foo === undefined"));
 }
 
 #[test]
