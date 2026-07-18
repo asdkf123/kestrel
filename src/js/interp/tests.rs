@@ -6799,3 +6799,20 @@ fn json_stringify_primitive_wrappers() {
     assert_eq!(run_str("JSON.stringify(new Number(42))"), "42");
     assert_eq!(run_str("JSON.stringify(new String('x'))"), "\"x\"");
 }
+
+#[test]
+fn json_parse_strict_grammar() {
+    // §25.5.1: 엄격한 JSON 문법 — 잘못된 입력은 SyntaxError.
+    for bad in ["01", "1.", "1e", "\\x41 wrapped", "0x1F"] {
+        let _ = bad;
+    }
+    assert!(run_bool("var t=false; try{ JSON.parse('01'); }catch(e){ t=e instanceof SyntaxError; } t"));
+    assert!(run_bool("var t=false; try{ JSON.parse('1.'); }catch(e){ t=e instanceof SyntaxError; } t"));
+    assert!(run_bool("var t=false; try{ JSON.parse('1e'); }catch(e){ t=e instanceof SyntaxError; } t"));
+    // \x 이스케이프 금지
+    assert!(run_bool("var t=false; try{ JSON.parse('\"\\\\x41\"'); }catch(e){ t=e instanceof SyntaxError; } t"));
+    // 유효한 것은 통과
+    assert_eq!(run_num("JSON.parse('0')"), 0.0);
+    assert_eq!(run_num("JSON.parse('-1.5e3')"), -1500.0);
+    assert_eq!(run_str("JSON.parse('\"a\\\\tb\"')"), "a\tb");
+}

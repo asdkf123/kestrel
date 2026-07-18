@@ -1165,11 +1165,42 @@ pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
         Some('f') if json_lit(c, p, "false") => Ok(Value::Bool(false)),
         Some('n') if json_lit(c, p, "null") => Ok(Value::Null),
         Some(&ch) if ch == '-' || ch.is_ascii_digit() => {
+            // 엄격한 JSON 수 문법 (§25.5.1): [-] int [frac] [exp]. leading zero(01)/
+            // 소수점 뒤 숫자 없음(1.)/지수 숫자 없음(1e)/+부호 금지. 예전엔 관대 collect 였다.
             let start = *p;
-            while *p < c.len()
-                && matches!(c[*p], '-' | '+' | '.' | 'e' | 'E' | '0'..='9')
-            {
+            let is_digit = |x: Option<&char>| x.map_or(false, |d| d.is_ascii_digit());
+            if c.get(*p) == Some(&'-') {
                 *p += 1;
+            }
+            match c.get(*p) {
+                Some('0') => *p += 1, // 0 단독(뒤에 숫자 오면 아래 caller 가 거부)
+                Some(d) if d.is_ascii_digit() => {
+                    while is_digit(c.get(*p)) {
+                        *p += 1;
+                    }
+                }
+                _ => return Err("JSON: 잘못된 수".to_string()),
+            }
+            if c.get(*p) == Some(&'.') {
+                *p += 1;
+                if !is_digit(c.get(*p)) {
+                    return Err("JSON: 소수점 뒤 숫자 필요".to_string());
+                }
+                while is_digit(c.get(*p)) {
+                    *p += 1;
+                }
+            }
+            if matches!(c.get(*p), Some('e') | Some('E')) {
+                *p += 1;
+                if matches!(c.get(*p), Some('+') | Some('-')) {
+                    *p += 1;
+                }
+                if !is_digit(c.get(*p)) {
+                    return Err("JSON: 지수 숫자 필요".to_string());
+                }
+                while is_digit(c.get(*p)) {
+                    *p += 1;
+                }
             }
             let s: String = c[start..*p].iter().collect();
             s.parse::<f64>().map(Value::Num).map_err(|_| format!("JSON: 잘못된 수 {}", s))
@@ -1206,12 +1237,20 @@ pub(super) fn json_string(c: &[char], p: &mut usize) -> Result<String, String> {
                         s.push(char::from_u32(code).unwrap_or('\u{fffd}'));
                         *p += 4;
                     }
-                    Some(&other) => s.push(other), // \" \\ \/ 등
+                    // 유효한 JSON 이스케이프는 " \ / b f n r t u 뿐. \x 등은 SyntaxError.
+                    Some('"') => s.push('"'),
+                    Some('\\') => s.push('\\'),
+                    Some('/') => s.push('/'),
+                    Some(_) => return Err("JSON: 잘못된 이스케이프".to_string()),
                     None => return Err("JSON: 문자열 끝의 역슬래시".to_string()),
                 }
                 *p += 1;
             }
             Some(&ch) => {
+                // 이스케이프 안 된 제어문자(U+0000-U+001F)는 JSON 문자열에서 금지 (§25.5.1).
+                if (ch as u32) < 0x20 {
+                    return Err("JSON: 문자열의 제어문자".to_string());
+                }
                 s.push(ch);
                 *p += 1;
             }
