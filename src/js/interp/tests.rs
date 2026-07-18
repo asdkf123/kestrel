@@ -1442,6 +1442,54 @@ fn proxy_extensibility_traps() {
     ));
 }
 
+// 함수 프록시의 apply/construct 트랩 (§10.5.12, §10.5.13). 타깃이 callable/
+// constructor 면 프록시도 그렇고, typeof 는 "function". 트랩이 없으면 타깃을
+// 직접 호출/생성한다.
+#[test]
+fn proxy_apply_construct_traps() {
+    // apply 트랩 + typeof + call/apply
+    assert_eq!(
+        run_num("var p=new Proxy(function(a,b){return a+b;},{apply:function(t,th,a){return t(a[0],a[1])*10;}}); p(2,3)"),
+        50.0
+    );
+    assert_eq!(run_str("typeof new Proxy(function(){}, {})"), "function");
+    assert_eq!(
+        run_num("var p=new Proxy(function(a,b){return a+b;},{apply:function(t,th,a){return a[0]-a[1];}}); p.call(null,9,4)"),
+        5.0
+    );
+    // 트랩 없으면 타깃 직접 호출
+    assert_eq!(run_num("(new Proxy(function(){return 7;}, {}))()"), 7.0);
+    // construct 트랩
+    assert_eq!(
+        run_num("function C(x){this.x=x;} var p=new Proxy(C,{construct:function(t,a){return {y:a[0]*2};}}); (new p(21)).y"),
+        42.0
+    );
+    // construct 트랩 없으면 타깃 생성
+    assert_eq!(
+        run_num("function C(x){this.x=x;} var p=new Proxy(C,{}); (new p(9)).x"),
+        9.0
+    );
+    // Reflect.apply / Reflect.construct 도 트랩 경유
+    assert_eq!(
+        run_num("var p=new Proxy(function(a,b){return a*b;},{apply:function(t,th,a){return a[0]+a[1];}}); Reflect.apply(p,null,[10,20])"),
+        30.0
+    );
+    // 비함수 타깃 프록시는 호출 불가 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{}); var t=false; try{ p() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // construct 트랩이 비객체 반환 → TypeError
+    assert!(run_bool(
+        "function C(){} var p=new Proxy(C,{construct:function(){return 5;}}); \
+         var t=false; try{ new p() }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-callable apply 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy(function(){}, {apply:5}); \
+         var t=false; try{ p() }catch(e){ t=e instanceof TypeError } t"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

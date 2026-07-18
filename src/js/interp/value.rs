@@ -237,7 +237,13 @@ pub(super) fn find_tag(
 }
 
 pub(super) fn is_callable(v: &Value) -> bool {
-    matches!(v, Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_))
+    match v {
+        Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => true,
+        // Proxy 는 타깃이 callable 일 때만 [[Call]] 을 갖는다(§10.5.12). 함수 프록시가
+        // callable 로 인식돼야 p() 호출·apply 트랩·Function.prototype.call 이 동작한다.
+        Value::Proxy(p) => is_callable(&p.0),
+        _ => false,
+    }
 }
 
 // 객체 수신자(XHR 등)의 리스너 보관 키. NUL 접두라 JS 코드가 만들 수 없고
@@ -994,6 +1000,14 @@ pub(super) fn type_of(v: &Value) -> &'static str {
         Value::Symbol(_) => "symbol",
         // Symbol 생성자만 함수, 다른 Native 도 함수.
         Value::Fn(_) | Value::Native(_) | Value::Class(_) | Value::Bound(_) => "function",
+        // 프록시는 타깃이 callable 이면 typeof === "function"(§13.5.3).
+        Value::Proxy(p) => {
+            if is_callable(&p.0) {
+                "function"
+            } else {
+                "object"
+            }
+        }
         _ => "object",
     }
 }

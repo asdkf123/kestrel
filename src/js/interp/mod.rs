@@ -6920,6 +6920,24 @@ impl Interp {
                 all.extend(args);
                 self.call_value(target, Some(this_val), all)
             }
+            // §10.5.12 [[Call]] — 함수 프록시의 apply 트랩(없으면 타깃 직접 호출).
+            Value::Proxy(p) => {
+                self.proxy_revoked_guard(&p)?;
+                let (t, h) = (p.0.clone(), p.1.clone());
+                if !is_callable(&t) {
+                    return Err(self.throw_error("TypeError", "proxy target is not callable"));
+                }
+                let trap = self.member_get(&h, "apply")?;
+                if matches!(trap, Value::Undefined | Value::Null) {
+                    return self.call_value(t, recv, args);
+                }
+                if !is_callable(&trap) {
+                    return Err(self.throw_error("TypeError", "'apply' trap is not callable"));
+                }
+                let this_arg = recv.unwrap_or(Value::Undefined);
+                let arg_array = Value::Arr(ArrayObj::new(args));
+                self.call_value(trap, Some(h), vec![t, this_arg, arg_array])
+            }
             other => {
                 let d = to_display(&other);
                 Err(self.throw_error("TypeError", format!("{} 은(는) 함수가 아님", d)))
@@ -7124,6 +7142,40 @@ impl Interp {
                 let name = self.native_fn_name(&Value::Native(n));
                 let label = if name.is_empty() { "value".to_string() } else { name };
                 return Err(self.throw_error("TypeError", format!("{} is not a constructor", label)));
+            }
+            // §10.5.13 [[Construct]] — 생성 가능한 프록시의 construct 트랩.
+            Value::Proxy(p) => {
+                self.proxy_revoked_guard(&p)?;
+                let (t, h) = (p.0.clone(), p.1.clone());
+                if !self.is_constructor(&t) {
+                    return Err(
+                        self.throw_error("TypeError", "proxy target is not a constructor")
+                    );
+                }
+                let trap = self.member_get(&h, "construct")?;
+                if matches!(trap, Value::Undefined | Value::Null) {
+                    return self.construct(t, args);
+                }
+                if !is_callable(&trap) {
+                    return Err(self.throw_error("TypeError", "'construct' trap is not callable"));
+                }
+                // newTarget: new proxy() 면 프록시 자신. 트랩 호출 자체는 new.target 이
+                // undefined 인 일반 호출이므로 슬롯을 비운다.
+                let new_target = self
+                    .new_target
+                    .take()
+                    .unwrap_or_else(|| Value::Proxy(p.clone()));
+                let arg_array = Value::Arr(ArrayObj::new(args));
+                let new_obj =
+                    self.call_value(trap, Some(h), vec![t, arg_array, new_target])?;
+                // 결과가 객체가 아니면 TypeError(§10.5.13 step 9).
+                if !is_object(&new_obj) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "proxy 'construct' trap must return an object",
+                    ));
+                }
+                return Ok(new_obj);
             }
             Value::Obj(_) | Value::Native(_) => {
                 let mut map = ObjMap::new();
