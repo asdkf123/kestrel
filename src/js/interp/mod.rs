@@ -6530,6 +6530,10 @@ impl Interp {
                         None | Some(Value::Undefined) | Some(Value::Null) => {
                             env_get(&self.global, "window").unwrap_or(Value::Undefined)
                         }
+                        // 원시값 this 는 ToObject 로 박싱(sloppy 모드): f.call(5) → this=Number(5).
+                        Some(v @ (Value::Str(_) | Value::Num(_) | Value::Bool(_))) => {
+                            self.to_object_value(v)
+                        }
                         Some(v) => v,
                     };
                     env_declare(&scope, "this", this);

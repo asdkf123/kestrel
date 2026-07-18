@@ -7220,3 +7220,14 @@ fn sloppy_this_binding_undefined_null_to_global() {
     // 일반 무인자 호출 this 는 객체(window).
     assert_eq!(run_str("(function(){ return typeof this; })()"), "object");
 }
+
+#[test]
+fn sloppy_this_primitive_boxing() {
+    // §10.2.1.2: sloppy 함수의 원시값 this 는 ToObject 로 박싱된다.
+    assert_eq!(run_str("(function(){ return typeof this; }).call(5)"), "object");
+    assert_eq!(run_num("(function(){ return this.valueOf(); }).call(42)"), 42.0);
+    assert_eq!(run_num("(function(){ return this.length; }).call('hello')"), 5.0);
+    assert!(run_bool("(function(){ return this instanceof Number; }).call(7)"));
+    // apply(원시) 에 프로퍼티 할당이 터지지 않는다.
+    assert_eq!(run_str("(function(){ Function('this.x=1').apply(1); return 'ok'; })()"), "ok");
+}
