@@ -9036,6 +9036,15 @@ fn proxy_has_invariant() {
     assert!(run_bool("var p=new Proxy({b:1},{has:function(){return false}}); !('b' in p)"));
     // 일반 has 무회귀.
     assert!(run_bool("var p=new Proxy({x:1},{has:function(t,k){return k in t}}); ('x' in p) && !('y' in p)"));
+    // 프로토타입 체인의 프록시 has 트랩도 in 이 호출한다(§7.3.11 [[HasProperty]] 체인).
+    assert!(run_bool(
+        "var p=new Proxy({},{has:function(t,k){return k==='attr';}}); \
+         ('attr' in Object.create(p)) && !('nope' in Object.create(p))"
+    ));
+    // 트랩의 this 는 handler 다
+    assert!(run_bool(
+        "var h={has:function(){ return this===h; }}; var p=new Proxy({},h); ('x' in Object.create(p))"
+    ));
 }
 
 #[test]

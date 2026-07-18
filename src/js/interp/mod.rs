@@ -8388,13 +8388,35 @@ impl Interp {
                         return Ok(Value::Bool(has));
                     }
                     Value::Obj(m) => {
-                        // HasProperty(§7.3.11): own + 프로토타입 체인(배열/함수 프로토 포함).
-                        // has_property 로 통일 — 예전엔 Value::Obj 체인만 걸어 배열 프로토타입의
-                        // 상속 인덱스('0' in (proto 가 배열인 객체))를 놓쳤다.
+                        // HasProperty(§7.3.11): own + 프로토타입 체인. 체인에 프록시가 있으면
+                        // 그 [[HasProperty]](has 트랩)에 위임한다 — has_property 는 &self 라
+                        // 트랩을 못 부른다(예: "k" in Object.create(proxy)). Obj 단계에서
+                        // own 을 확인하며 내려가다 프록시를 만나면 위임하고, 프록시가 없으면
+                        // 기존 has_property 로 마무리한다(암묵 Object.prototype/배열·함수 프로토).
+                        let mut cur = r.clone();
+                        loop {
+                            if matches!(cur, Value::Proxy(_)) {
+                                return self.binary(BinOp::In, l, cur);
+                            }
+                            let next = match &cur {
+                                Value::Obj(cm) => {
+                                    if (!is_internal_key(&key) || is_symbol_key(&key))
+                                        && cm.borrow().contains_key(&key)
+                                    {
+                                        return Ok(Value::Bool(true));
+                                    }
+                                    cm.borrow().get("__proto__").cloned()
+                                }
+                                _ => None,
+                            };
+                            match next {
+                                Some(n) => cur = n,
+                                None => break,
+                            }
+                        }
                         if self.has_property(&r, &key) {
                             return Ok(Value::Bool(true));
                         }
-                        // 전역 객체면 전역 환경의 바인딩도 프로퍼티다
                         Value::Bool(self.global_has(m, &key))
                     }
                     // 인스턴스: 필드 + 클래스 체인의 메서드/게터
