@@ -5572,11 +5572,42 @@ impl Interp {
                 let (target, handler) = (&p.0, &p.1);
                 let trap = self.member_get(handler, "get")?;
                 if !matches!(trap, Value::Undefined) {
-                    return self.call_value(
+                    let target = target.clone();
+                    let handler = handler.clone();
+                    let tr = self.call_value(
                         trap,
-                        Some(handler.clone()),
+                        Some(handler),
                         vec![target.clone(), Value::Str(key.to_string()), recv.clone()],
-                    );
+                    )?;
+                    // §10.5.8 [[Get]] invariant: target 의 non-configurable 프로퍼티와
+                    // 어긋나면 TypeError — non-writable 데이터는 값 SameValue, getter 없는
+                    // accessor 는 undefined 여야.
+                    let td = self.call_native(
+                        Native::ObjectGetOwnPropertyDescriptor,
+                        None,
+                        vec![target.clone(), Value::Str(key.to_string())],
+                    )?;
+                    if let Value::Obj(d) = &td {
+                        let b = d.borrow();
+                        let configurable = matches!(b.get("configurable"), Some(v) if to_bool(v));
+                        if !configurable {
+                            if b.contains_key("value") {
+                                let writable = matches!(b.get("writable"), Some(v) if to_bool(v));
+                                let val = b.get("value").cloned().unwrap_or(Value::Undefined);
+                                if !writable && !same_value(&tr, &val) {
+                                    return Err(self.throw_error("TypeError", "'get' on proxy: non-configurable, non-writable data property but trap returned a different value"));
+                                }
+                            } else {
+                                let get = b.get("get").cloned().unwrap_or(Value::Undefined);
+                                if matches!(get, Value::Undefined)
+                                    && !matches!(tr, Value::Undefined)
+                                {
+                                    return Err(self.throw_error("TypeError", "'get' on proxy: non-configurable accessor without getter but trap returned non-undefined"));
+                                }
+                            }
+                        }
+                    }
+                    return Ok(tr);
                 }
                 let target = target.clone();
                 self.member_get(&target, key)

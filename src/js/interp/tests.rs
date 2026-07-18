@@ -8015,3 +8015,15 @@ fn object_rest_copydataproperties() {
     // 무회귀.
     assert_eq!(run_str("var {a,...r}={a:1,b:2,c:3}; JSON.stringify(r)"), "{\"b\":2,\"c\":3}");
 }
+
+#[test]
+fn proxy_get_invariant() {
+    // §10.5.8: non-configurable non-writable 데이터는 get 트랩이 SameValue 아니면 TypeError.
+    assert_eq!(run_str("var t={}; Object.defineProperty(t,'a',{value:10,writable:false,configurable:false}); var p=new Proxy(t,{get:function(){return 99}}); try{ p.a; 'no' }catch(e){ e.constructor.name }"), "TypeError");
+    // 같은 값이면 허용.
+    assert_eq!(run_num("var t={}; Object.defineProperty(t,'a',{value:10,writable:false,configurable:false}); var p=new Proxy(t,{get:function(){return 10}}); p.a"), 10.0);
+    // configurable 프로퍼티는 트랩 자유.
+    assert_eq!(run_num("var t={}; Object.defineProperty(t,'b',{value:1,writable:false,configurable:true}); var p=new Proxy(t,{get:function(){return 5}}); p.b"), 5.0);
+    // 일반 Proxy get 무회귀.
+    assert_eq!(run_num("var p=new Proxy({x:1},{get:function(t,k){return t[k]*10}}); p.x"), 10.0);
+}
