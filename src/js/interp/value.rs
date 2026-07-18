@@ -362,21 +362,29 @@ pub(super) fn expand_replacement(
                     i += 2;
                 }
                 d if d.is_ascii_digit() => {
-                    let mut j = i + 1;
-                    let mut num = String::new();
-                    while j < t.len() && t[j].is_ascii_digit() && num.len() < 2 {
-                        num.push(t[j]);
-                        j += 1;
-                    }
-                    let gi: usize = num.parse().unwrap_or(0);
-                    if gi >= 1 && gi < mt.groups.len() {
-                        if let Some((a, b)) = mt.groups[gi] {
-                            out.push_str(&chars[a..b].iter().collect::<String>());
-                        }
-                        i = j;
+                    // §22.1.3.19: 두 자리 그룹번호를 우선 시도하고, 유효하지 않으면 한 자리로
+                    // 폴백한다. 예: 그룹이 1개뿐이면 $11 → $1 + 리터럴 "1", $10 → $1 + "0".
+                    let two = if i + 2 < t.len() && t[i + 2].is_ascii_digit() {
+                        let n = (d as usize - '0' as usize) * 10 + (t[i + 2] as usize - '0' as usize);
+                        if n >= 1 && n < mt.groups.len() { Some((n, 3usize)) } else { None }
                     } else {
-                        out.push('$');
-                        i += 1;
+                        None
+                    };
+                    let pick = two.or_else(|| {
+                        let n = d as usize - '0' as usize;
+                        if n >= 1 && n < mt.groups.len() { Some((n, 2usize)) } else { None }
+                    });
+                    match pick {
+                        Some((gi, adv)) => {
+                            if let Some((a, b)) = mt.groups[gi] {
+                                out.push_str(&chars[a..b].iter().collect::<String>());
+                            }
+                            i += adv;
+                        }
+                        None => {
+                            out.push('$');
+                            i += 1;
+                        }
                     }
                 }
                 _ => {

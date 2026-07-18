@@ -835,43 +835,75 @@ impl Interp {
             }
             Ok(out)
         } else {
-            let needle = to_display(pat);
-            if needle.is_empty() {
-                return Ok(s.to_string());
-            }
-            let rep_fn = is_callable(repl);
+            // 문자열 패턴 (§22.1.3.19/.20): ToString(pat), 함수가 아니면 ToString(repl),
+            // $ 치환은 GetSubstitution($$/$&/$`/$'). 문자 인덱스로 순회한다.
+            let needle = self.to_string_value(pat)?;
+            let repl_tmpl = if is_callable(repl) {
+                None
+            } else {
+                Some(self.to_string_value(repl)?)
+            };
+            let hay: Vec<char> = s.chars().collect();
+            let nchars: Vec<char> = needle.chars().collect();
+            let nlen = nchars.len();
             let mut out = String::new();
-            let mut rest = s;
-            let mut consumed = 0usize;
+            let mut i = 0usize;
             loop {
-                match rest.find(&needle) {
-                    Some(idx) => {
-                        out.push_str(&rest[..idx]);
-                        let at = consumed + idx;
-                        if rep_fn {
+                let found = if nlen == 0 {
+                    Some(i)
+                } else if nlen > hay.len() || i > hay.len() - nlen {
+                    None
+                } else {
+                    (i..=hay.len() - nlen).find(|&k| hay[k..k + nlen] == nchars[..])
+                };
+                match found {
+                    Some(at) => {
+                        out.extend(&hay[i..at]);
+                        let mt = crate::js::regex::Match {
+                            start: at,
+                            end: at + nlen,
+                            groups: vec![Some((at, at + nlen))],
+                        };
+                        if is_callable(repl) {
+                            // position 은 UTF-16 코드유닛 인덱스 (§22.1.3.19 step 14.d).
+                            let pos16 =
+                                hay[..at].iter().collect::<String>().encode_utf16().count();
                             let r = self.call_value(
                                 repl.clone(),
                                 None,
                                 vec![
                                     Value::Str(needle.clone()),
-                                    Value::Num(s[..at].encode_utf16().count() as f64), // UTF-16 인덱스
+                                    Value::Num(pos16 as f64),
                                     Value::Str(s.to_string()),
                                 ],
                             )?;
-                            out.push_str(&to_display(&r));
+                            out.push_str(&self.to_string_value(&r)?);
                         } else {
-                            out.push_str(&to_display(repl));
+                            out.push_str(&expand_replacement(
+                                repl_tmpl.as_deref().unwrap_or(""),
+                                &hay,
+                                &mt,
+                            ));
                         }
-                        let adv = idx + needle.len();
-                        consumed = at + needle.len();
-                        rest = &rest[adv..];
+                        if nlen == 0 {
+                            // 빈 패턴: 현재 문자를 흘리고 한 칸 전진.
+                            if at < hay.len() {
+                                out.push(hay[at]);
+                            }
+                            i = at + 1;
+                        } else {
+                            i = at + nlen;
+                        }
                         if !all {
-                            out.push_str(rest);
+                            out.extend(hay.get(i.min(hay.len())..).unwrap_or(&[]));
+                            break;
+                        }
+                        if i > hay.len() {
                             break;
                         }
                     }
                     None => {
-                        out.push_str(rest);
+                        out.extend(hay.get(i.min(hay.len())..).unwrap_or(&[]));
                         break;
                     }
                 }

@@ -7014,3 +7014,18 @@ fn string_includes_startswith_endswith_position() {
     // 기본 동작.
     assert!(run_bool("'hello'.endsWith('lo') && 'hello'.startsWith('he') && 'hello'.includes('ell')"));
 }
+
+#[test]
+fn string_replace_substitution_and_coercion() {
+    // §22.1.3.19 GetSubstitution: $nn 2자리→1자리 폴백, $&/$$/$`/$'.
+    assert_eq!(run_str("'uid=31'.replace(/(uid=)\\d+/, '$11'+'5')"), "uid=15");
+    assert_eq!(run_str("'foo-x-bar'.replace(/(x)/, '$10')"), "foo-x0-bar");
+    assert_eq!(run_str("'hello'.replace('ell', '[$&]')"), "h[ell]o");
+    assert_eq!(run_str("'a$b'.replace('$', '$$')"), "a$b");
+    assert_eq!(run_str("'abc'.replace('b', '<$`|$\\''+'>')"), "a<a|c>c");
+    // 문자열 패턴/치환 ToString 강제변환.
+    assert_eq!(run_str("'ABBABABAB'.replace({toString:function(){return 'AB'}}, 'X')"), "XBABABAB");
+    assert_eq!(run_str("'aXa'.replace('X', {toString:function(){return 'Y'}})"), "aYa");
+    // replaceAll.
+    assert_eq!(run_str("'a.b.c'.replaceAll('.', '-')"), "a-b-c");
+}
