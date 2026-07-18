@@ -7260,3 +7260,17 @@ fn function_apply_call_argarray() {
     // length getter 예외 전파.
     assert!(run_bool("var t=false; try{ (function(){}).apply(null,{get length(){throw new RangeError('x')}}) }catch(e){ t=e instanceof RangeError } t"));
 }
+
+#[test]
+fn function_prototype_has_instance() {
+    // §20.2.3.6: Function.prototype[@@hasInstance] = OrdinaryHasInstance.
+    assert_eq!(run_str("function F(){}; typeof F[Symbol.hasInstance]"), "function");
+    assert!(run_bool("function F(){}; var f=new F(); F[Symbol.hasInstance](f)"));
+    assert!(run_bool("function F(){}; !F[Symbol.hasInstance]({})"));
+    assert!(run_bool("function F(){}; !F[Symbol.hasInstance](5)"));
+    // 비callable this → false.
+    assert!(run_bool("!Function.prototype[Symbol.hasInstance].call({}, {})"));
+    // instanceof 는 그대로(기본/커스텀).
+    assert!(run_bool("[] instanceof Array && (function F(){}); var f=new (function F(){}); true"));
+    assert!(run_bool("function C(){}; C[Symbol.hasInstance]=function(){return true}; 5 instanceof C"));
+}

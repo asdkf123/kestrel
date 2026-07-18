@@ -1075,6 +1075,9 @@ impl Interp {
         fn_proto.insert("bind".to_string(), Value::Native(Native::FnBind));
         // Function.prototype.toString — core-js 등이 uncurryThis 로 참조
         fn_proto.insert("toString".to_string(), Value::Native(Native::FnToString));
+        // Function.prototype[@@hasInstance] (§20.2.3.6) — OrdinaryHasInstance. {w:f,e:f,c:f}.
+        fn_proto.insert("\u{0}@@hasInstance".to_string(), Value::Native(Native::FnHasInstance));
+        set_prop_attrs(&mut fn_proto, "\u{0}@@hasInstance", 0);
         let fn_proto = Value::Obj(Rc::new(RefCell::new(fn_proto)));
         // Function.prototype.[[Prototype]] === Object.prototype (§20.2.3): 함수도 ordinary
         // object 라 Object.prototype 메서드(hasOwnProperty/valueOf/isPrototypeOf/
@@ -7462,8 +7465,11 @@ impl Interp {
             BinOp::Instanceof => {
                 // 표준 §13.10.2: 오른쪽에 [Symbol.hasInstance] 가 있으면 **그것이 최우선**이다.
                 // (Symbol.hasInstance 로 instanceof 를 커스터마이즈하는 라이브러리가 있다)
+                // 기본 Function.prototype[@@hasInstance](FnHasInstance)는 아래 수동 로직으로
+                // OrdinaryHasInstance 를 수행하므로 우회한다(무한 재귀 방지). 사용자 커스텀
+                // @@hasInstance 만 여기서 호출한다.
                 let hi = self.member_get(&r, "\u{0}@@hasInstance").unwrap_or(Value::Undefined);
-                if is_callable(&hi) {
+                if is_callable(&hi) && !matches!(hi, Value::Native(Native::FnHasInstance)) {
                     let res = self.call_value(hi, Some(r.clone()), vec![l.clone()])?;
                     return Ok(Value::Bool(to_bool(&res)));
                 }

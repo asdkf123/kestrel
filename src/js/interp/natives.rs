@@ -54,6 +54,7 @@ pub enum Native {
     FnCall,
     FnApply,
     FnBind,
+    FnHasInstance,
     FunctionCtor,
     // eval (§19.2.1). 직접 호출은 현재 스코프에서, 간접 호출은 전역 스코프에서 평가한다.
     Eval,
@@ -745,6 +746,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         FnCall => ("call", 1),
         FnApply => ("apply", 2),
         FnBind => ("bind", 1),
+        FnHasInstance => ("[Symbol.hasInstance]", 1),
         FnToString => ("toString", 0),
         SpeciesGet => ("get [Symbol.species]", 0),
         // ── Object.* 정적 ──

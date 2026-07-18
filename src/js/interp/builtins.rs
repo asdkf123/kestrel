@@ -1724,6 +1724,17 @@ impl Interp {
                 let partial: Vec<Value> = it.collect();
                 Ok(Value::Bound(Rc::new((target, this_arg, partial))))
             }
+            // Function.prototype[@@hasInstance](V) = OrdinaryHasInstance (§20.2.3.6).
+            // instanceof 연산자의 기본 경로에 위임한다(그쪽이 FnHasInstance 를 우회하므로
+            // 무한 재귀 없음). C 가 callable 이 아니면 false.
+            Native::FnHasInstance => {
+                let c = recv.unwrap_or(Value::Undefined);
+                if !is_callable(&c) {
+                    return Ok(Value::Bool(false));
+                }
+                let o = args.into_iter().next().unwrap_or(Value::Undefined);
+                self.binary(BinOp::Instanceof, o, c)
+            }
             Native::FunctionCtor => self.make_function(args),
             // 간접 eval: 전역 스코프에서 평가 (§19.2.1)
             Native::Eval => {
