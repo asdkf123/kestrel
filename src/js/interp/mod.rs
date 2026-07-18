@@ -2320,8 +2320,10 @@ impl Interp {
             None => (String::new(), Vec::new()),
         };
         let mut params = Vec::new();
+        let mut raw_params = Vec::new();
         for p in &param_args {
             let s = self.to_string_value(p)?;
+            raw_params.push(s.clone());
             for name in s.split(',') {
                 let name = name.trim();
                 if !name.is_empty() {
@@ -2329,6 +2331,14 @@ impl Interp {
                 }
             }
         }
+        // §20.2.1.1.1: 동적 함수의 소스는 "function anonymous(<P>\n) {\n<body>\n}".
+        // 예전엔 source=None 이라 toString 이 본문 없이 재구성해 "function anonymous(a, b) { }"
+        // 를 냈다(NativeFunction Syntax 검사 실패).
+        let src = format!(
+            "function anonymous({}\n) {{\n{}\n}}",
+            raw_params.join(","),
+            body_src
+        );
         // 본문 파싱 실패는 SyntaxError (§20.2.1.1.1) — 예전엔 일반 Error 라
         // "e instanceof SyntaxError" 검사가 깨졌다.
         let body = match parse(&body_src) {
@@ -2351,7 +2361,7 @@ impl Interp {
             this: None,
             super_class: None,
             props: RefCell::new(ObjMap::new()),
-            source: None,
+            source: Some(Rc::from(src.as_str())),
         })))
     }
 

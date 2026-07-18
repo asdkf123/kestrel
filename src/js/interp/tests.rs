@@ -8190,6 +8190,15 @@ fn function_constructor_params_and_syntaxerror() {
     // 잘못된 본문 → SyntaxError.
     assert!(run_bool("var t=false; try{ new Function('return {') }catch(e){ t=e instanceof SyntaxError } t"));
     assert!(run_bool("var t=false; try{ new Function('if(') }catch(e){ t=e instanceof SyntaxError } t"));
+    // §20.2.1.1.1: 동적 함수 소스는 "function anonymous(<P>\n) {\n<body>\n}".
+    assert_eq!(
+        run_str("new Function('a','b','return a+b').toString()"),
+        "function anonymous(a,b\n) {\nreturn a+b\n}"
+    );
+    assert_eq!(
+        run_str("new Function('return 1').toString()"),
+        "function anonymous(\n) {\nreturn 1\n}"
+    );
 }
 
 #[test]
