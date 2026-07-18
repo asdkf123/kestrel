@@ -4345,6 +4345,10 @@ fn in_operator_walks_prototype_chain() {
     assert_eq!(run_str("var o = Object.create({a:1}); ('a' in o) + ',' + ('b' in o)"), "true,false");
     // 클래스 인스턴스: 메서드도 in 으로 보인다
     assert_eq!(run_str("class C { m(){} } var c = new C(); String('m' in c)"), "true");
+    // 일반 객체 리터럴도 암묵 Object.prototype 상속분을 in 으로 본다 (§7.3.11 체인)
+    assert!(run_bool("('toString' in {}) && ('hasOwnProperty' in {}) && ('valueOf' in {})"));
+    // Object.create(null) 은 상속이 없다 (무회귀)
+    assert!(run_bool("!('toString' in Object.create(null))"));
 }
 
 #[test]

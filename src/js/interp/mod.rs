@@ -5723,7 +5723,10 @@ impl Interp {
                 // 예전엔 Value::Obj 만 걸어 배열 프로토타입의 상속 인덱스를 놓쳤다.
                 match m.borrow().get("__proto__").cloned() {
                     Some(p) => self.value_chain_has(&p, key),
-                    None => false,
+                    // 명시 __proto__ 링크가 없으면(일반 객체 리터럴) 암묵 Object.prototype
+                    // 상속분을 본다 — member_get 은 주는데 in/has 는 안 줘서
+                    // "toString" in {} 가 false 였다(§7.3.11 은 [[Prototype]] 체인을 본다).
+                    None => !is_internal_key(key) && self.proto_method("Object", key).is_some(),
                 }
             }
             Value::Instance(i) => i.fields.borrow().contains_key(key),
