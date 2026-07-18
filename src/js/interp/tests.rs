@@ -1676,6 +1676,28 @@ fn proxy_set_trap_reflect() {
     ));
 }
 
+// Proxy has 트랩 (§10.5.7) invariant 보강 + Reflect.has 배선.
+#[test]
+fn proxy_has_trap_invariants_and_reflect() {
+    // non-extensible 타깃의 존재 프로퍼티를 false 로 숨김 → TypeError
+    assert!(run_bool(
+        "var t={x:1}; Object.preventExtensions(t); var p=new Proxy(t,{has:function(){return false;}}); \
+         var f=false; try{ ('x' in p) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{has:5}); \
+         var f=false; try{ ('x' in p) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // Reflect.has 가 has 트랩 경유 + this=handler
+    assert!(run_bool(
+        "var ctx=null; var h={has:function(t,k){ctx=this;return k==='yes';}}; var p=new Proxy({},h); \
+         Reflect.has(p,'yes')===true && Reflect.has(p,'no')===false && ctx===h"
+    ));
+    // 트랩 없으면 위임
+    assert!(run_bool("Reflect.has(new Proxy({a:1},{}),'a')===true"));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

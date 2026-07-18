@@ -7971,31 +7971,40 @@ impl Interp {
                         self.proxy_revoked_guard(p)?;
                         let (target, handler) = (p.0.clone(), p.1.clone());
                         let trap = self.member_get(&handler, "has")?;
-                        if is_callable(&trap) {
-                            let res = self.call_value(
-                                trap,
-                                Some(handler),
+                        // GetMethod: undefined/null → 타깃 위임, non-callable → TypeError.
+                        if matches!(trap, Value::Undefined | Value::Null) {
+                            return self.binary(BinOp::In, l, target);
+                        }
+                        if !is_callable(&trap) {
+                            return Err(self
+                                .throw_error("TypeError", "'has' trap is not callable"));
+                        }
+                        let res = self.call_value(
+                            trap,
+                            Some(handler),
+                            vec![target.clone(), Value::Str(key.clone())],
+                        )?;
+                        let has = to_bool(&res);
+                        // §10.5.7 [[HasProperty]] invariant: 트랩이 false 인데 target 에
+                        // 그 프로퍼티가 있으면 — non-configurable 이거나 target 이
+                        // non-extensible 이면 숨길 수 없다 → TypeError.
+                        if !has {
+                            let td = self.call_native(
+                                Native::ObjectGetOwnPropertyDescriptor,
+                                None,
                                 vec![target.clone(), Value::Str(key.clone())],
                             )?;
-                            let has = to_bool(&res);
-                            // §10.5.7 [[HasProperty]] invariant: 트랩이 false 인데 target 에
-                            // non-configurable 프로퍼티가 있으면 숨길 수 없다 → TypeError.
-                            if !has {
-                                let td = self.call_native(
-                                    Native::ObjectGetOwnPropertyDescriptor,
-                                    None,
-                                    vec![target.clone(), Value::Str(key.clone())],
-                                )?;
-                                if let Value::Obj(d) = &td {
-                                    if !matches!(d.borrow().get("configurable"), Some(v) if to_bool(v))
-                                    {
-                                        return Err(self.throw_error("TypeError", "'has' on proxy: non-configurable property on target cannot be reported as non-existent"));
-                                    }
+                            if let Value::Obj(d) = &td {
+                                let configurable = matches!(d.borrow().get("configurable"), Some(v) if to_bool(v));
+                                if !configurable {
+                                    return Err(self.throw_error("TypeError", "'has' on proxy: non-configurable property on target cannot be reported as non-existent"));
+                                }
+                                if !self.value_is_extensible(&target)? {
+                                    return Err(self.throw_error("TypeError", "'has' on proxy: existing property of non-extensible target cannot be reported as non-existent"));
                                 }
                             }
-                            return Ok(Value::Bool(has));
                         }
-                        return self.binary(BinOp::In, l, target);
+                        return Ok(Value::Bool(has));
                     }
                     Value::Obj(m) => {
                         // HasProperty(§7.3.11): own + 프로토타입 체인(배열/함수 프로토 포함).

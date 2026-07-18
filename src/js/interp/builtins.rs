@@ -7696,20 +7696,10 @@ impl Interp {
                     Some(k) => self.to_property_key(k)?,
                     None => String::new(),
                 };
-                let has = match args.first() {
-                    Some(Value::Obj(m)) => {
-                        // 심볼 own 키("\0@@…")도 HasProperty 대상 — 내부마커만 제외.
-                        (!is_internal_key(&key) || is_symbol_key(&key))
-                            && (m.borrow().contains_key(&key)
-                                || self
-                                    .proto_chain_lookup(m, &key, args.first().unwrap())
-                                    .map(|v| v.is_some())
-                                    .unwrap_or(false))
-                    }
-                    Some(Value::Instance(i)) => i.fields.borrow().contains_key(&key),
-                    _ => false,
-                };
-                Ok(Value::Bool(has))
+                // Reflect.has(t, k) = k in t = t.[[HasProperty]](k). Proxy 는 has 트랩,
+                // 그 외는 프로토타입 체인까지 — In 연산자 경로로 통일(예전엔 Proxy 를
+                // false 로 떨궈 has 트랩을 아예 안 불렀다).
+                self.binary(BinOp::In, Value::Str(key), target)
             }
             Native::ReflectDeleteProperty => {
                 let target = args.first().cloned().unwrap_or(Value::Undefined);
