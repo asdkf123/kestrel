@@ -6813,12 +6813,24 @@ impl Interp {
                 return self.construct(target, all);
             }
             Value::Native(Native::ErrorCtor(name)) => {
-                // message 는 인자가 undefined 가 아닐 때만 own 프로퍼티 (§20.5.1.1)
-                let msg = match args.first() {
+                // AggregateError(errors, message, options) (§20.5.7.1): 1번째 인자가
+                // message 가 아니라 errors 이터러블이다 → 배열로 모아 .errors(비열거)에.
+                // message 는 2번째. 일반 Error 는 1번째가 message.
+                let msg_idx = if name == "AggregateError" { 1 } else { 0 };
+                let msg = match args.get(msg_idx) {
                     None | Some(Value::Undefined) => None,
                     Some(v) => Some(to_display(v)),
                 };
                 let err = self.make_error(name, msg);
+                if name == "AggregateError" {
+                    let errors_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                    let list = self.iterate_to_vec(&errors_arg)?;
+                    if let Value::Obj(m) = &err {
+                        let mut b = m.borrow_mut();
+                        b.insert("errors".to_string(), Value::Arr(ArrayObj::new(list)));
+                        b.insert(nonenum_marker("errors"), Value::Bool(true));
+                    }
+                }
                 self.install_error_cause(&err, &args, name)?;
                 return Ok(err);
             }

@@ -1706,24 +1706,97 @@ if (!window.atob) window.atob = function(s){
 };
 var btoa = window.btoa, atob = window.atob;
 
-// Promise.any — 하나라도 이행되면 이행, 전부 거부면 AggregateError.
-if (!Promise.any) Promise.any = function(list){
-  var arr = Array.from(list);
-  return new Promise(function(resolve, reject){
-    var errs = [], left = arr.length;
-    if (left === 0) { reject(new Error('AggregateError: 모든 프로미스가 거부됨')); return; }
-    arr.forEach(function(p, i){
-      Promise.resolve(p).then(resolve, function(e){
-        errs[i] = e;
-        if (--left === 0) {
-          var ag = new Error('AggregateError: 모든 프로미스가 거부됨');
-          ag.errors = errs;
-          reject(ag);
-        }
-      });
+// Promise 조합자 (§27.2.4.1-3): iterator 프로토콜 + C.resolve + per-element resolve
+// 함수(length 1) + remaining 카운트로 규격대로. this(C)로 new C 캡빌리티, C.resolve 로
+// 각 항목 래핑. 네이티브 근사(배열만, then 미호출)를 대체 — thenable/비배열 이터러블/
+// subclass(C=this)/resolve-element 관측을 통과한다.
+(function(){
+  var getIter = function(obj){
+    if (obj === null || obj === undefined) throw new TypeError('Promise combinator: argument is not iterable');
+    var m = obj[Symbol.iterator];
+    if (typeof m !== 'function') throw new TypeError('Promise combinator: argument is not iterable');
+    var it = m.call(obj);
+    if (it === null || typeof it !== 'object') throw new TypeError('iterator is not an object');
+    return it;
+  };
+  var resolveOf = function(C){
+    var r = C.resolve;
+    if (typeof r !== 'function') throw new TypeError('Promise combinator: this.resolve is not callable');
+    return r;
+  };
+  var step = function(iter){
+    var res = iter.next();
+    if (res === null || typeof res !== 'object') throw new TypeError('iterator result is not an object');
+    return res;
+  };
+  Promise.all = function(iterable){
+    var C = this;
+    return new C(function(resolve, reject){
+      var rf = resolveOf(C), iter = getIter(iterable);
+      var values = [], remaining = 1, index = 0;
+      while (true) {
+        var res = step(iter); if (res.done) break;
+        values.push(undefined);
+        var i = index++; remaining++;
+        var p = rf.call(C, res.value);
+        (function(i, p){
+          var called = false;
+          p.then(function(v){ if(called) return; called=true; values[i]=v; if(--remaining===0) resolve(values); }, reject);
+        })(i, p);
+      }
+      if (--remaining === 0) resolve(values);
     });
-  });
-};
+  };
+  Promise.allSettled = function(iterable){
+    var C = this;
+    return new C(function(resolve, reject){
+      var rf = resolveOf(C), iter = getIter(iterable);
+      var values = [], remaining = 1, index = 0;
+      while (true) {
+        var res = step(iter); if (res.done) break;
+        values.push(undefined);
+        var i = index++; remaining++;
+        var p = rf.call(C, res.value);
+        (function(i, p){
+          var called = false;
+          p.then(
+            function(v){ if(called) return; called=true; values[i]={status:'fulfilled',value:v}; if(--remaining===0) resolve(values); },
+            function(e){ if(called) return; called=true; values[i]={status:'rejected',reason:e}; if(--remaining===0) resolve(values); }
+          );
+        })(i, p);
+      }
+      if (--remaining === 0) resolve(values);
+    });
+  };
+  Promise.race = function(iterable){
+    var C = this;
+    return new C(function(resolve, reject){
+      var rf = resolveOf(C), iter = getIter(iterable);
+      while (true) {
+        var res = step(iter); if (res.done) break;
+        rf.call(C, res.value).then(resolve, reject);
+      }
+    });
+  };
+  Promise.any = function(iterable){
+    var C = this;
+    return new C(function(resolve, reject){
+      var rf = resolveOf(C), iter = getIter(iterable);
+      var errors = [], remaining = 1, index = 0;
+      while (true) {
+        var res = step(iter); if (res.done) break;
+        errors.push(undefined);
+        var i = index++; remaining++;
+        var p = rf.call(C, res.value);
+        (function(i, p){
+          var called = false;
+          p.then(resolve, function(e){ if(called) return; called=true; errors[i]=e; if(--remaining===0) reject(new AggregateError(errors, 'All promises were rejected')); });
+        })(i, p);
+      }
+      if (--remaining === 0) reject(new AggregateError(errors, 'All promises were rejected'));
+    });
+  };
+})();
 
 // Promise.try(fn, ...args) (§27.2.4.6, ES2025): fn 을 동기 호출해 결과/예외를 프로미스로
 // 감싼다. this(생성자)로 new 하고 executor 에서 resolve(fn(...args)) — fn 이 throw 하면

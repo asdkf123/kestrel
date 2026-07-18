@@ -7663,3 +7663,36 @@ fn bound_function_inherits_function_prototype() {
     assert_eq!(run_str("function foo(a,b){}; foo.bind({},1).name"), "bound foo");
     assert_eq!(run_num("function foo(a,b){}; foo.bind({},1).length"), 1.0);
 }
+
+#[test]
+fn promise_reject_schedules_registered_reactions() {
+    // 늦게(핸들러 등록 후) reject 돼도 대기 반응이 스케줄돼야 한다(§27.2.1.3.1).
+    assert_eq!(run_str(
+        "var r; await new Promise(function(res,rej){ Promise.reject('e').then(res,function(x){rej('m-'+x)}); })\
+         .then(function(){r='no'}, function(e){r=e}); r"), "m-e");
+}
+
+#[test]
+fn promise_combinators_spec() {
+    // §27.2.4.1-3: 조합자는 프렐류드 재구현이라 prelude_* 로 검사(run_* 은 네이티브 근사).
+    assert_eq!(prelude_str("(await Promise.all([Promise.resolve(1),2,Promise.resolve(3)])).join(',')"), "1,2,3");
+    // 비배열 이터러블(Set)도 iterator 프로토콜로 소비.
+    assert_eq!(prelude_str("(await Promise.all(new Set([Promise.resolve(1),Promise.resolve(2)]))).join(',')"), "1,2");
+    // race: 첫 정착.
+    assert_eq!(prelude_str("await Promise.race([Promise.resolve('fast'), new Promise(function(){})])"), "fast");
+    // allSettled.
+    assert_eq!(prelude_str("JSON.stringify(await Promise.allSettled([Promise.resolve(1),Promise.reject('e')]))"),
+        "[{\"status\":\"fulfilled\",\"value\":1},{\"status\":\"rejected\",\"reason\":\"e\"}]");
+    // any: 첫 이행.
+    assert_eq!(prelude_str("await Promise.any([Promise.reject('a'),Promise.resolve('b')])"), "b");
+    // any 전부 거부 → AggregateError(errors).
+    assert_eq!(prelude_str(
+        "var r; try{ await Promise.any([Promise.reject('x'),Promise.reject('y')]); }\
+         catch(e){ r=(e instanceof AggregateError)+'/'+e.errors.join(','); } r"), "true/x,y");
+    // 빈 all → [].
+    assert_eq!(prelude_num("(await Promise.all([])).length"), 0.0);
+    // AggregateError(errors, message) 생성자.
+    assert_eq!(prelude_str("var e=new AggregateError([1,2],'m'); e.errors.join(',')+'/'+e.message"), "1,2/m");
+    // Promise.resolve 동일성.
+    assert!(prelude_bool("var p=Promise.resolve(1); Promise.resolve(p)===p"));
+}

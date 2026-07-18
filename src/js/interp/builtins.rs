@@ -7942,20 +7942,42 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
-            // executor 의 reject(e): this(=promise)를 거부 상태로
+            // executor 의 reject(e): this(=promise)를 거부 상태로.
+            // reject_promise(→settle)로 정착해야 이미 등록된 대기 반응(.then 핸들러)이
+            // 마이크로태스크로 스케줄된다. 예전엔 상태 맵만 직접 바꿔, 핸들러가 먼저
+            // 붙은 뒤(pending 상태에서 .then) 늦게 reject 되면 그 핸들러가 영영 안 돌았다
+            // — 조합자/비동기 거부 전파가 통째로 깨졌다. resolve 쪽과 대칭.
             Native::PromiseSettleReject => {
                 let v = args.into_iter().next().unwrap_or(Value::Undefined);
-                if let Some(Value::Obj(o)) = recv {
-                    let mut m = o.borrow_mut();
-                    if matches!(m.get("\u{0}state"), Some(Value::Str(s)) if s == "pending") {
-                        m.insert("\u{0}state".to_string(), Value::Str("rejected".to_string()));
-                        m.insert("\u{0}value".to_string(), v);
+                if let Some(p) = recv {
+                    let pending = matches!(&p, Value::Obj(o)
+                        if matches!(o.borrow().get("\u{0}state"), Some(Value::Str(s)) if s == "pending"));
+                    if pending {
+                        self.reject_promise(&p, v);
                     }
                 }
                 Ok(Value::Undefined)
             }
             Native::PromiseResolve => {
                 let v = args.into_iter().next().unwrap_or(Value::Undefined);
+                // §27.2.4.7: v 가 이미 프로미스이고 그 constructor 가 C(this)면 그대로
+                // 반환(새 프로미스로 감싸지 않는다). Promise.resolve(p) === p (동일 생성자).
+                // 예전엔 항상 새 프로미스로 감싸 조합자의 then 재정의/동일성 검사가 어긋났다.
+                if is_promise(&v) {
+                    let c = recv.unwrap_or_else(|| {
+                        env_get(&self.global, "Promise").unwrap_or(Value::Undefined)
+                    });
+                    // C 가 %Promise% 네이티브면 네이티브 프로미스를 그대로 반환. 프로미스
+                    // 객체에 constructor 슬롯이 없어 Get(v,"constructor")===C 대신 C 동일성으로
+                    // 근사(흔한 Promise.resolve(promise) 경로). 그 외엔 constructor 비교.
+                    let matches = matches!(&c, Value::Native(Native::PromiseCtor)) || {
+                        let ctor = self.member_get(&v, "constructor").unwrap_or(Value::Undefined);
+                        strict_eq(&ctor, &c)
+                    };
+                    if matches {
+                        return Ok(v);
+                    }
+                }
                 let p = self.new_promise();
                 self.resolve_promise(&p, v);
                 Ok(p)
