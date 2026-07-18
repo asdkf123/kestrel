@@ -2418,6 +2418,7 @@ __kDataView.prototype.getUint16 = function(o, le){ var b = this._rd(o, 2, le); r
 __kDataView.prototype.getInt16 = function(o, le){ var v = this.getUint16(o, le); return v > 32767 ? v - 65536 : v; };
 __kDataView.prototype.getUint32 = function(o, le){ var b = this._rd(o, 4, le); var v = (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)); return v < 0 ? v + 4294967296 : v; };
 __kDataView.prototype.getInt32 = function(o, le){ var b = this._rd(o, 4, le); return (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)); };
+__kDataView.prototype.getFloat16 = function(o, le){ return __kB2F(this._rd(o, 2, le), 10, 5); };
 __kDataView.prototype.getFloat32 = function(o, le){ return __kB2F(this._rd(o, 4, le), 23, 8); };
 __kDataView.prototype.getFloat64 = function(o, le){ return __kB2F(this._rd(o, 8, le), 52, 11); };
 __kDataView.prototype.getBigInt64 = function(o, le){ var b = this._rd(o, 8, le), r = 0n; for (var i = 7; i >= 0; i--) r = r * 256n + BigInt(b[i]); if (r >= __kBI63) r -= __kBI64; return r; };
@@ -2428,10 +2429,26 @@ __kDataView.prototype.setUint16 = function(o, v, le){ v = ((v | 0) % 65536 + 655
 __kDataView.prototype.setInt16 = function(o, v, le){ this.setUint16(o, v, le); };
 __kDataView.prototype.setUint32 = function(o, v, le){ v = v >>> 0; this._wr(o, 4, le, [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]); };
 __kDataView.prototype.setInt32 = function(o, v, le){ this.setUint32(o, v, le); };
+__kDataView.prototype.setFloat16 = function(o, v, le){ this._wr(o, 2, le, __kF2B(+v, 2, 10, 5)); };
 __kDataView.prototype.setFloat32 = function(o, v, le){ this._wr(o, 4, le, __kF2B(+v, 4, 23, 8)); };
 __kDataView.prototype.setFloat64 = function(o, v, le){ this._wr(o, 8, le, __kF2B(+v, 8, 52, 11)); };
 __kDataView.prototype.setBigInt64 = function(o, v, le){ if (typeof v !== 'bigint') v = BigInt(v); var u = ((v % __kBI64) + __kBI64) % __kBI64, by = []; for (var i = 0; i < 8; i++){ by.push(Number(u % 256n)); u = u / 256n; } this._wr(o, 8, le, by); };
 __kDataView.prototype.setBigUint64 = function(o, v, le){ this.setBigInt64(o, v, le); };
+// 메서드 메타: getX 는 length 1(byteOffset), setX 는 length 2(byteOffset,value),
+// 이름 명시, non-enumerable (§25.3.4). 예전엔 function(o,le)/(o,v,le) 라 length 가
+// 2/3 이었고 대입이라 enumerable 이었다.
+['getInt8','getUint8','getInt16','getUint16','getInt32','getUint32','getFloat16','getFloat32','getFloat64','getBigInt64','getBigUint64'].forEach(function(n){
+  var f = __kDataView.prototype[n];
+  Object.defineProperty(f, 'length', { value: 1, configurable: true });
+  Object.defineProperty(f, 'name', { value: n, configurable: true });
+  Object.defineProperty(__kDataView.prototype, n, { value: f, writable: true, enumerable: false, configurable: true });
+});
+['setInt8','setUint8','setInt16','setUint16','setInt32','setUint32','setFloat16','setFloat32','setFloat64','setBigInt64','setBigUint64'].forEach(function(n){
+  var f = __kDataView.prototype[n];
+  Object.defineProperty(f, 'length', { value: 2, configurable: true });
+  Object.defineProperty(f, 'name', { value: n, configurable: true });
+  Object.defineProperty(__kDataView.prototype, n, { value: f, writable: true, enumerable: false, configurable: true });
+});
 if (!window.DataView) window.DataView = __kDataView;
 var DataView = window.DataView;
 

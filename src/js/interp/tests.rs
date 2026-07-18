@@ -7779,3 +7779,15 @@ fn typedarray_fill_coerces_value_once() {
     assert_eq!(prelude_str("var b=new BigInt64Array(2); b.fill(5n); b.join(',')"), "5,5");
     assert_eq!(prelude_str("try{ new Int8Array(2).fill(Symbol()); 'no' }catch(e){ e.constructor.name }"), "TypeError");
 }
+
+#[test]
+fn dataview_float16_and_method_meta() {
+    // §25.3: getFloat16/setFloat16(ES2024) + 메서드 length/name/non-enumerable.
+    assert_eq!(prelude_str("var dv=new DataView(new ArrayBuffer(4)); dv.setFloat16(0,1.5); String(dv.getFloat16(0))"), "1.5");
+    assert!(prelude_bool("var dv=new DataView(new ArrayBuffer(4)); dv.setFloat16(0,Infinity); dv.getFloat16(0)===Infinity"));
+    assert!(prelude_bool("var dv=new DataView(new ArrayBuffer(4)); dv.setFloat16(0,NaN); Number.isNaN(dv.getFloat16(0))"));
+    // 메서드 메타: getX length 1, setX length 2, 이름, non-enumerable.
+    assert!(prelude_bool("DataView.prototype.getFloat16.length===1 && DataView.prototype.getFloat16.name==='getFloat16'"));
+    assert!(prelude_bool("DataView.prototype.setInt32.length===2 && DataView.prototype.getInt8.length===1"));
+    assert!(prelude_bool("!Object.getOwnPropertyDescriptor(DataView.prototype,'getInt8').enumerable"));
+}
