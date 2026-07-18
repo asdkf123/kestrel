@@ -4455,6 +4455,10 @@ impl Interp {
                     if i >= a.borrow().len() && self.is_nonextensible_val(target) {
                         return false;
                     }
+                    // length 가 non-writable 이면 길이를 넘기는 인덱스 추가 불가 (§10.4.2.1).
+                    if i >= a.borrow().len() && !a.length_writable() {
+                        return false;
+                    }
                     if i >= MAX_DENSE_ARRAY {
                         return false; // 방어: 초거대 인덱스는 무시 (희박 배열 미구현)
                     }
@@ -7955,6 +7959,11 @@ impl Interp {
                             let old_len = a.borrow().len();
                             let is_new = i >= old_len;
                             if is_new && self.is_nonextensible_val(&av) {
+                                return Ok(());
+                            }
+                            // length 가 non-writable 이면 길이를 넘기는 새 인덱스 추가 불가
+                            // (§10.4.2.1) — sloppy 대입은 조용히 무시.
+                            if is_new && !a.length_writable() {
                                 return Ok(());
                             }
                             if i >= MAX_DENSE_ARRAY {

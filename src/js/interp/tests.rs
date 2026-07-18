@@ -7901,3 +7901,13 @@ fn array_length_writable_false() {
     assert!(run_bool("Object.getOwnPropertyDescriptor([1,2],'length').writable"));
     assert_eq!(run_str("var b=[1,2,3,4]; b.length=2; b.join(',')"), "1,2");
 }
+
+#[test]
+fn array_length_nonwritable_blocks_index_add() {
+    // §10.4.2.1: length non-writable 이면 길이를 넘기는 새 인덱스 추가 불가.
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); a[5]=9; a.length===3 && a[5]===undefined"));
+    // 기존 요소 덮어쓰기는 허용.
+    assert_eq!(run_num("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); a[1]=99; a[1]"), 99.0);
+    // 회귀: 정상 배열은 확장.
+    assert_eq!(run_num("var b=[1,2]; b[5]=7; b.length"), 6.0);
+}
