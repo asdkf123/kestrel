@@ -6590,9 +6590,25 @@ impl Interp {
                         cur = cls.parent.clone();
                     }
                 }
-                // 클래스가 아닌 부모를 확장했으면(extends Error/함수) 그 prototype 에서 찾는다.
+                // 클래스가 아닌 부모를 확장했으면(extends Error/함수/Set/Map) 그 prototype 에서
+                // 찾는다. 접근자(size 등)는 this=인스턴스로 호출해야 한다 — member_get(proto,key)
+                // 는 this=proto 로 호출해버려 extends Set 인스턴스의 s.size 가 깨졌다. raw
+                // 프로퍼티를 꺼내 접근자면 this=recv 로 직접 호출한다.
                 if let Some(pc) = inst.class.find_parent_ctor() {
                     let proto = self.member_get(&pc, "prototype")?;
+                    if let Value::Obj(pm) = &proto {
+                        let raw = pm.borrow().get(key).cloned();
+                        match raw {
+                            Some(Value::Accessor(acc)) => {
+                                return Ok(match &acc.get {
+                                    Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![])?,
+                                    None => Value::Undefined,
+                                });
+                            }
+                            Some(v) => return Ok(v),
+                            None => {}
+                        }
+                    }
                     if !matches!(proto, Value::Undefined) {
                         let m = self.member_get(&proto, key)?;
                         if !matches!(m, Value::Undefined) {
@@ -7086,6 +7102,13 @@ impl Interp {
                                 match produced {
                                     // 커스텀 엘리먼트 업그레이드: 진짜 DOM 노드가 this 다
                                     Value::Dom(_) => env_set(env, "this", produced),
+                                    // Set/Map 등 내부 슬롯을 가진 내장 확장: 부모가 만든 exotic
+                                    // 컬렉션을 파생 인스턴스의 내부 슬롯으로 붙인다([[SetData]]/
+                                    // [[MapData]] 상속). 예전엔 own_entries_all 이 빈 결과라
+                                    // 파생 인스턴스에 컬렉션 데이터가 없어 size/메서드가 다 깨졌다.
+                                    Value::SetVal(_) | Value::MapVal(_) => {
+                                        self.set_own_property(&this, COLLECTION_SLOT.to_string(), produced);
+                                    }
                                     // 부모가 별도 객체를 만들어 돌려준 경우(Error 등):
                                     // 그 own 프로퍼티를 this 에 얹는다 (클래스 정체성은 유지)
                                     v if is_object(&v) => {
@@ -7733,6 +7756,11 @@ impl Interp {
                         self.call_value(pc.clone(), Some(inst.clone()), args)?;
                     match produced {
                         Value::Dom(_) => return Ok(Some(produced)),
+                        // Set/Map 확장: 부모가 만든 exotic 컬렉션을 내부 슬롯으로 상속
+                        // (암묵 생성자 경로 — class S extends Set {} 처럼 ctor 가 없을 때).
+                        Value::SetVal(_) | Value::MapVal(_) => {
+                            self.set_own_property(inst, COLLECTION_SLOT.to_string(), produced);
+                        }
                         v if is_object(&v) => {
                             for (k, val) in builtins::own_entries_all(&v) {
                                 self.set_own_property(inst, k, val);

@@ -1056,6 +1056,18 @@ fn map_and_set() {
     assert!(run_bool(
         "var t=false; try{ new Map().getOrInsertComputed('d',5) }catch(e){ t=e instanceof TypeError } t"
     ));
+    // extends Set/Map: 파생 인스턴스가 내부 슬롯([[SetData]]/[[MapData]])을 물려받아
+    // size/메서드/이터레이션이 동작한다. 예전엔 인스턴스에 컬렉션 데이터가 없어 다 깨졌다.
+    assert_eq!(run_num("class S extends Set {} new S([1,2,3]).size"), 3.0);
+    assert!(run_bool("class S extends Set {} var s=new S([1,2]); s.add(9); s.has(9)"));
+    assert_eq!(run_str("class S extends Set {} [...new S([1,2,3])].join(',')"), "1,2,3");
+    assert_eq!(run_num("class M extends Map {} var m=new M([['a',1]]); m.set('b',2); m.size"), 2.0);
+    assert_eq!(run_num("class M extends Map {} new M([['a',7]]).get('a')"), 7.0);
+    // Set 연산도 파생 수신자에서 동작
+    assert_eq!(run_num("class S extends Set {} new S([1,2]).union(new Set([2,3])).size"), 3.0);
+    // 무회귀: 잘못된 수신자(plain object)는 여전히 TypeError
+    assert!(run_bool("var t=false; try{ Set.prototype.has.call({},1) }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var t=false; try{ Map.prototype.get.call({},1) }catch(e){ t=e instanceof TypeError } t"));
 }
 
 #[test]

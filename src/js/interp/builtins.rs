@@ -437,6 +437,35 @@ fn recv_prop_str(recv: &Option<Value>, key: &str) -> String {
     String::new()
 }
 
+// 수신자에서 Set 의 내부 데이터([[SetData]])를 꺼낸다 — SetVal 이거나 extends Set
+// 파생 인스턴스(내부 슬롯 COLLECTION_SLOT)면 Some, 아니면 None(brand check 실패).
+fn recv_set_data(recv: &Option<Value>) -> Option<Rc<RefCell<Vec<Value>>>> {
+    let from_slot = |m: &ObjMap| match m.get(COLLECTION_SLOT) {
+        Some(Value::SetVal(s)) => Some(s.clone()),
+        _ => None,
+    };
+    match recv {
+        Some(Value::SetVal(s)) => Some(s.clone()),
+        Some(Value::Instance(i)) => from_slot(&i.fields.borrow()),
+        Some(Value::Obj(m)) => from_slot(&m.borrow()),
+        _ => None,
+    }
+}
+
+// 수신자에서 Map 의 내부 데이터([[MapData]])를 꺼낸다 (Set 과 동형).
+fn recv_map_data(recv: &Option<Value>) -> Option<Rc<RefCell<Vec<(Value, Value)>>>> {
+    let from_slot = |m: &ObjMap| match m.get(COLLECTION_SLOT) {
+        Some(Value::MapVal(mm)) => Some(mm.clone()),
+        _ => None,
+    };
+    match recv {
+        Some(Value::MapVal(m)) => Some(m.clone()),
+        Some(Value::Instance(i)) => from_slot(&i.fields.borrow()),
+        Some(Value::Obj(m)) => from_slot(&m.borrow()),
+        _ => None,
+    }
+}
+
 
 
 
@@ -3937,9 +3966,9 @@ impl Interp {
                 Ok(err)
             }
             Native::Map(op) => {
-                // brand 체크: Map 이 아니면 TypeError (§24.1.3, RequireInternalSlot).
-                // 예전엔 일반 Err(String)→Error 라 "TypeError 기대" 검사가 깨졌다.
-                let Some(Value::MapVal(m)) = recv else {
+                // brand 체크: Map(또는 extends Map 파생 인스턴스)이 아니면 TypeError
+                // (§24.1.3, RequireInternalSlot). 예전엔 일반 Err→Error 라 검사가 깨졌다.
+                let Some(m) = recv_map_data(&recv) else {
                     return Err(self.throw_error(
                         "TypeError",
                         "Map.prototype method called on incompatible receiver",
@@ -3948,7 +3977,7 @@ impl Interp {
                 self.map_method(m, op, args)
             }
             Native::Set(op) => {
-                let Some(Value::SetVal(s)) = recv else {
+                let Some(s) = recv_set_data(&recv) else {
                     return Err(self.throw_error(
                         "TypeError",
                         "Set.prototype method called on incompatible receiver",
@@ -3957,16 +3986,17 @@ impl Interp {
                 self.set_method(s, op, args)
             }
             // get Map.prototype.size / Set.prototype.size — brand 체크 후 원소 수.
-            Native::MapSize => match recv {
-                Some(Value::MapVal(m)) => Ok(Value::Num(m.borrow().len() as f64)),
-                _ => Err(self.throw_error(
+            // extends Map/Set 파생 인스턴스도 내부 슬롯을 통해 지원.
+            Native::MapSize => match recv_map_data(&recv) {
+                Some(m) => Ok(Value::Num(m.borrow().len() as f64)),
+                None => Err(self.throw_error(
                     "TypeError",
                     "get Map.prototype.size called on incompatible receiver",
                 )),
             },
-            Native::SetSize => match recv {
-                Some(Value::SetVal(s)) => Ok(Value::Num(s.borrow().len() as f64)),
-                _ => Err(self.throw_error(
+            Native::SetSize => match recv_set_data(&recv) {
+                Some(s) => Ok(Value::Num(s.borrow().len() as f64)),
+                None => Err(self.throw_error(
                     "TypeError",
                     "get Set.prototype.size called on incompatible receiver",
                 )),

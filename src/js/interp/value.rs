@@ -907,6 +907,10 @@ pub(super) fn invalid_regex_flags(flags: &str) -> Option<String> {
 // 원시 래퍼 객체(new String/Number/Boolean)의 내부 [[PrimitiveValue]] 슬롯을 읽는다.
 // 래퍼가 아니면 None. 강제 변환(to_num/to_display/valueOf)이 이걸 참조한다.
 pub(super) const WRAPPER_SLOT: &str = "\u{0}primitive";
+// class X extends Set/Map {} 인스턴스가 물려받는 내부 슬롯([[SetData]]/[[MapData]]).
+// 파생 인스턴스는 Value::Instance 라 SetVal/MapVal 을 직접 담을 수 없어, super() 가
+// 부모(내장 생성자)로 만든 exotic 컬렉션을 이 슬롯에 붙이고 메서드가 언랩한다.
+pub(super) const COLLECTION_SLOT: &str = "\u{0}collectiondata";
 pub(super) fn wrapper_primitive(v: &Value) -> Option<Value> {
     if let Value::Obj(m) = v {
         return m.borrow().get(WRAPPER_SLOT).cloned();
