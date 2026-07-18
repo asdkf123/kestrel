@@ -505,6 +505,75 @@ if (!Object.fromEntries) Object.fromEntries = function(e){ var r = {}; for (var 
 if (!Array.prototype.at) Array.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this[i]; };
 if (!String.prototype.at) String.prototype.at = function(i){ i = i < 0 ? this.length + i : i; return this.charAt(i); };
 if (!Array.of) Array.of = function(...a){ return a; };
+// Array.fromAsync (§23.1.3.1): from 의 비동기판. @@asyncIterator > @@iterator >
+// array-like 순으로 소비하며 각 값을 await 한다(sync iterator/array-like 는 값도 await).
+// mapfn 이 있으면 await mapfn(v,k). 결과는 Promise. this(C)가 생성자면 new C 로 만든다.
+if (!Array.fromAsync) {
+  var __kFromAsync = async function(asyncItems, mapfn, thisArg){
+    var C = this;
+    if (mapfn !== undefined && typeof mapfn !== 'function') throw new TypeError('Array.fromAsync: mapfn is not a function');
+    var mapping = mapfn !== undefined;
+    var nil = (asyncItems === null || asyncItems === undefined);
+    var usingAsync = nil ? undefined : asyncItems[Symbol.asyncIterator];
+    var usingSync;
+    if (usingAsync === undefined || usingAsync === null) {
+      usingSync = nil ? undefined : asyncItems[Symbol.iterator];
+    } else if (typeof usingAsync !== 'function') {
+      throw new TypeError('Array.fromAsync: @@asyncIterator is not a function');
+    }
+    var isAsyncIter = (usingAsync !== undefined && usingAsync !== null);
+    if (isAsyncIter || (usingSync !== undefined && usingSync !== null)) {
+      if (!isAsyncIter && typeof usingSync !== 'function') throw new TypeError('Array.fromAsync: @@iterator is not a function');
+      var A = (typeof C === 'function') ? new C() : [];
+      var iter = isAsyncIter ? usingAsync.call(asyncItems) : usingSync.call(asyncItems);
+      if (iter === null || typeof iter !== 'object') throw new TypeError('Array.fromAsync: iterator is not an object');
+      var nx = iter.next;
+      if (typeof nx !== 'function') throw new TypeError('Array.fromAsync: iterator.next is not a function');
+      var k = 0;
+      try {
+        while (true) {
+          if (k >= 9007199254740991) throw new TypeError('Array.fromAsync: iterator produced too many values');
+          var res = await nx.call(iter);
+          if (res === null || typeof res !== 'object') throw new TypeError('Array.fromAsync: iterator result is not an object');
+          if (res.done) break;
+          var val = res.value;
+          if (!isAsyncIter) val = await val;
+          var mapped = mapping ? await mapfn.call(thisArg, val, k) : val;
+          A[k] = mapped;
+          k++;
+        }
+      } catch (e) {
+        // IfAbruptCloseAsyncIterator: 밑 iterator 를 닫는다(에러는 무시하고 원 에러 전파).
+        try { var rm = iter['return']; if (typeof rm === 'function') { var rr = rm.call(iter); if (isAsyncIter) await rr; } } catch (_) {}
+        throw e;
+      }
+      A.length = k;
+      return A;
+    }
+    // array-like 경로.
+    var arrayLike = Object(asyncItems);
+    var rl = Number(arrayLike.length);
+    var len;
+    if (isNaN(rl) || rl <= 0) len = 0;
+    else if (rl >= 9007199254740991) len = 9007199254740991;
+    else len = Math.floor(rl);
+    var A2 = (typeof C === 'function') ? new C(len) : new Array(len);
+    var k2 = 0;
+    while (k2 < len) {
+      var kv = await arrayLike[k2];
+      var mv = mapping ? await mapfn.call(thisArg, kv, k2) : kv;
+      A2[k2] = mv;
+      k2++;
+    }
+    A2.length = len;
+    return A2;
+  };
+  Object.defineProperty(__kFromAsync, 'name', { value: 'fromAsync', configurable: true });
+  Object.defineProperty(__kFromAsync, 'length', { value: 1, configurable: true });
+  // Array 는 네이티브 생성자라 defineProperty 가 안 먹는다 — 대입으로 붙인다
+  // (Array.from/of 와 동일 경로).
+  Array.fromAsync = __kFromAsync;
+}
 if (!Array.prototype.fill) Array.prototype.fill = function(v, s, e){ s = s === undefined ? 0 : (s < 0 ? this.length + s : s); e = e === undefined ? this.length : (e < 0 ? this.length + e : e); for (var i = s; i < e; i++) this[i] = v; return this; };
 if (!Array.prototype.flatMap) Array.prototype.flatMap = function(fn){ return this.map(fn).flat(); };
 if (!Array.prototype.reduceRight) Array.prototype.reduceRight = function(fn){ var i = this.length - 1, acc; if (arguments.length > 1) { acc = arguments[1]; } else { acc = this[i--]; } for (; i >= 0; i--) acc = fn(acc, this[i], i, this); return acc; };

@@ -7601,3 +7601,20 @@ fn iterator_helper_return_forwards_to_underlying() {
         "var n=0; class T extends Iterator{ next(){++n; return{done:true};} }\
          var h=new T().map(function(x){return x;}); String(n)"), "0");
 }
+
+#[test]
+fn array_from_async() {
+    // §23.1.3.1 Array.fromAsync: sync/async 이터러블 + array-like + mapfn.
+    assert_eq!(prelude_str("var a=await Array.fromAsync([1,2,3]); a.join(',')+'/'+Array.isArray(a)"), "1,2,3/true");
+    // 값이 프로미스면 await.
+    assert_eq!(prelude_str("(await Array.fromAsync([Promise.resolve(5),Promise.resolve(6)])).join(',')"), "5,6");
+    // mapfn.
+    assert_eq!(prelude_str("(await Array.fromAsync([1,2],x=>x*10)).join(',')"), "10,20");
+    // async generator.
+    assert_eq!(prelude_str("async function* g(){yield 1;yield 2;} (await Array.fromAsync(g())).join(',')"), "1,2");
+    // array-like.
+    assert_eq!(prelude_str("(await Array.fromAsync({length:2,0:'a',1:'b'})).join(',')"), "a,b");
+    // mapfn 이 함수 아니면 reject(TypeError).
+    assert_eq!(prelude_str("var r; try{ await Array.fromAsync([1],5); r='no'; }catch(e){ r=(e instanceof TypeError)?'te':'x'; } r"), "te");
+    assert!(prelude_bool("Array.fromAsync.length===1 && Array.fromAsync.name==='fromAsync'"));
+}
