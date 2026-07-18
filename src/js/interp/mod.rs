@@ -7733,20 +7733,18 @@ impl Interp {
                 // Proxy 인스턴스: [[GetPrototypeOf]] (§10.5.1) 를 따른다. getPrototypeOf 트랩이
                 // 있으면 그걸로 첫 프로토타입을 얻고, 없으면 타깃의 프로토타입. 이후 체인은
                 // __proto__ 로 올라간다. typed array 가 Proxy 라 instanceof 가 여기 걸린다.
-                if let (Value::Proxy(pp), Value::Fn(func)) = (&l, &r) {
-                    let fp = match func.props.borrow().get("prototype").cloned() {
-                        Some(Value::Obj(fp)) => fp,
+                if let (Value::Proxy(_), Value::Fn(_)) = (&l, &r) {
+                    // member_get 으로 .prototype 을 materialize 한다 — 예전엔 props 를
+                    // 직접 읽어 아직 안 만들어진 함수 프로토타입이 None → 무조건 false 였다
+                    // (getPrototypeOf 트랩이 그 프로토타입을 돌려줘도 instanceof 가 실패).
+                    let fp = match self.member_get(&r, "prototype")? {
+                        Value::Obj(fp) => fp,
                         _ => return Ok(Value::Bool(false)),
                     };
-                    let (target, handler) = (pp.0.clone(), pp.1.clone());
-                    let trap = self.member_get(&handler, "getPrototypeOf").unwrap_or(Value::Undefined);
-                    let mut proto = if is_callable(&trap) {
-                        self.call_value(trap, Some(handler), vec![target])?
-                    } else if let Value::Obj(tm) = &target {
-                        tm.borrow().get("__proto__").cloned().unwrap_or(Value::Null)
-                    } else {
-                        Value::Null
-                    };
+                    // 첫 프로토타입은 proto_of([[GetPrototypeOf]]) 하나로 얻는다 — 트랩
+                    // 호출·GetMethod·non-extensible invariant 가 전부 거기 모여 있어
+                    // instanceof 도 같은 규칙을 탄다(트랩 로직 중복 제거).
+                    let mut proto = self.proto_of(&l)?;
                     let mut depth = 0;
                     while let Value::Obj(p) = &proto {
                         if Rc::ptr_eq(p, &fp) {

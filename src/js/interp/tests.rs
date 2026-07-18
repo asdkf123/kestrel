@@ -1293,6 +1293,69 @@ fn proxy_revocable() {
     assert_eq!(run_num("var p=new Proxy({z:7},{}); p.z"), 7.0);
 }
 
+// Proxy getPrototypeOf 트랩 (§10.5.1). Object.getPrototypeOf/isPrototypeOf/
+// Reflect.getPrototypeOf/instanceof 가 전부 트랩을 경유해야 하고, 트랩이 없으면
+// 타깃의 실제 프로토타입에 위임한다. non-extensible 타깃에는 invariant 가 걸린다.
+#[test]
+fn proxy_get_prototype_of_trap() {
+    // 트랩 결과를 그대로 돌려준다
+    assert!(run_bool(
+        "var proto={}; var p=new Proxy({},{getPrototypeOf:function(){return proto;}}); \
+         Object.getPrototypeOf(p)===proto"
+    ));
+    // 트랩 없으면 타깃의 프로토타입에 위임 (예전엔 무조건 Object.prototype 이었다)
+    assert!(run_bool(
+        "var base={}; var t=Object.create(base); var p=new Proxy(t,{}); \
+         Object.getPrototypeOf(p)===base"
+    ));
+    // 트랩 결과가 object/null 이 아니면 TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{getPrototypeOf:function(){return 42;}}); \
+         var t=false; try{ Object.getPrototypeOf(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // null 반환 허용
+    assert!(run_bool(
+        "var p=new Proxy({},{getPrototypeOf:function(){return null;}}); \
+         Object.getPrototypeOf(p)===null"
+    ));
+    // non-extensible 타깃: 실제 프로토타입과 다른 값을 보고하면 TypeError
+    assert!(run_bool(
+        "var rp={}; var t=Object.create(rp); Object.preventExtensions(t); \
+         var p=new Proxy(t,{getPrototypeOf:function(){return {};}}); \
+         var f=false; try{ Object.getPrototypeOf(p) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-extensible 타깃: 실제 프로토타입을 보고하면 OK
+    assert!(run_bool(
+        "var rp={}; var t=Object.create(rp); Object.preventExtensions(t); \
+         var p=new Proxy(t,{getPrototypeOf:function(){return rp;}}); \
+         Object.getPrototypeOf(p)===rp"
+    ));
+    // isPrototypeOf / Reflect.getPrototypeOf / instanceof 도 트랩 경유
+    assert!(run_bool(
+        "var base={}; var p=new Proxy({},{getPrototypeOf:function(){return base;}}); \
+         base.isPrototypeOf(p)"
+    ));
+    assert!(run_bool(
+        "var proto={}; var p=new Proxy({},{getPrototypeOf:function(){return proto;}}); \
+         Reflect.getPrototypeOf(p)===proto"
+    ));
+    assert!(run_bool(
+        "function C(){}; var p=new Proxy({},{getPrototypeOf:function(){return C.prototype;}}); \
+         p instanceof C"
+    ));
+    // GetMethod: 트랩이 있으나 호출 불가면 TypeError (undefined/null 은 위임)
+    assert!(run_bool(
+        "var p=new Proxy({},{getPrototypeOf:42}); \
+         var t=false; try{ Object.getPrototypeOf(p) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // instanceof 도 non-extensible invariant 를 탄다 (거짓 프로토타입 보고 → TypeError)
+    assert!(run_bool(
+        "var t=Object.create({}); Object.preventExtensions(t); function C(){}; \
+         var p=new Proxy(t,{getPrototypeOf:function(){return C.prototype;}}); \
+         var f=false; try{ p instanceof C }catch(e){ f=e instanceof TypeError } f"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

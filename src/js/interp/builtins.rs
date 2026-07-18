@@ -1564,7 +1564,47 @@ impl Interp {
             // (§27.5 GeneratorPrototype → §27.1.2 %IteratorPrototype%). 근사이지만
             // Object.prototype 로 두는 것보다 정확하다.
             Value::Gen(_) => env_get(&self.global, "__kIterProto").unwrap_or(obj_proto),
-            Value::Class(_) | Value::Proxy(_) => obj_proto,
+            Value::Class(_) => obj_proto,
+            // §10.5.1 [[GetPrototypeOf]]: getPrototypeOf 트랩(없으면 타깃에 위임).
+            // 예전엔 Proxy 를 무조건 Object.prototype 으로 답해 트랩도, 타깃의
+            // 실제 프로토타입도 무시했다(Object.getPrototypeOf/isPrototypeOf 가
+            // 프록시에서 전부 틀린 답).
+            Value::Proxy(p) => {
+                self.proxy_revoked_guard(p)?;
+                let (t, h) = (p.0.clone(), p.1.clone());
+                let trap = self.member_get(&h, "getPrototypeOf")?;
+                // GetMethod(§7.3.10): undefined/null 이면 트랩 없음(타깃 위임),
+                // 존재하나 호출 불가면 TypeError.
+                if matches!(trap, Value::Undefined | Value::Null) {
+                    return self.proto_of(&t);
+                }
+                if !is_callable(&trap) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "'getPrototypeOf' trap is not callable",
+                    ));
+                }
+                let handler_proto = self.call_value(trap, Some(h), vec![t.clone()])?;
+                // 트랩 결과는 Object 또는 Null 이어야 한다.
+                if !matches!(handler_proto, Value::Null) && !is_object(&handler_proto) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "'getPrototypeOf' on proxy must return an object or null",
+                    ));
+                }
+                // target 이 non-extensible 이면 트랩 결과가 실제 프로토타입과
+                // SameValue 여야 한다(트랩이 거짓 프로토타입을 보고 못 함).
+                if self.is_nonextensible_val(&t) {
+                    let target_proto = self.proto_of(&t)?;
+                    if !same_value(&handler_proto, &target_proto) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "'getPrototypeOf' on proxy: inconsistent result for non-extensible target",
+                        ));
+                    }
+                }
+                handler_proto
+            }
             _ => Value::Null,
         })
     }
