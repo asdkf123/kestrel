@@ -1081,15 +1081,28 @@ pub(super) fn loose_eq(a: &Value, b: &Value) -> bool {
 
 // ── JSON ──────────────────────────────────────────────────────────
 
+// json-parse-with-source (ES2023): reviver 의 3번째 인자 context.source 를 채우려면
+// 파싱 시 각 원시 리프의 원본 텍스트 스냅샷이 필요하다. 객체/배열은 자식만 담는다.
+pub(super) enum JsonSrc {
+    Prim { raw: String, val: Value },
+    Arr(Vec<JsonSrc>),
+    Obj(Vec<(String, JsonSrc)>),
+}
+
 pub(super) fn json_parse(src: &str) -> Result<Value, String> {
+    json_parse_snap(src).map(|(v, _)| v)
+}
+
+// 값과 함께 소스 스냅샷을 돌려준다 (reviver 경로 전용).
+pub(super) fn json_parse_snap(src: &str) -> Result<(Value, JsonSrc), String> {
     let chars: Vec<char> = src.chars().collect();
     let mut pos = 0usize;
-    let v = json_value(&chars, &mut pos)?;
+    let (v, snap) = json_value(&chars, &mut pos)?;
     json_ws(&chars, &mut pos);
     if pos != chars.len() {
         return Err("JSON: 값 뒤에 잉여 문자".to_string());
     }
-    Ok(v)
+    Ok((v, snap))
 }
 
 pub(super) fn json_ws(c: &[char], p: &mut usize) {
@@ -1109,17 +1122,18 @@ pub(super) fn json_lit(c: &[char], p: &mut usize, lit: &str) -> bool {
     }
 }
 
-pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
+pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<(Value, JsonSrc), String> {
     json_ws(c, p);
     match c.get(*p) {
         None => Err("JSON 이 갑자기 끝남".to_string()),
         Some('{') => {
             *p += 1;
             let mut map = ObjMap::new();
+            let mut snap: Vec<(String, JsonSrc)> = Vec::new();
             json_ws(c, p);
             if c.get(*p) == Some(&'}') {
                 *p += 1;
-                return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+                return Ok((Value::Obj(Rc::new(RefCell::new(map))), JsonSrc::Obj(snap)));
             }
             loop {
                 json_ws(c, p);
@@ -1129,13 +1143,15 @@ pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
                     return Err("JSON: ':' 필요".to_string());
                 }
                 *p += 1;
-                map.insert(key, json_value(c, p)?);
+                let (v, s) = json_value(c, p)?;
+                map.insert(key.clone(), v);
+                snap.push((key, s));
                 json_ws(c, p);
                 match c.get(*p) {
                     Some(',') => *p += 1,
                     Some('}') => {
                         *p += 1;
-                        return Ok(Value::Obj(Rc::new(RefCell::new(map))));
+                        return Ok((Value::Obj(Rc::new(RefCell::new(map))), JsonSrc::Obj(snap)));
                     }
                     _ => return Err("JSON: ',' 나 '}' 필요".to_string()),
                 }
@@ -1144,28 +1160,42 @@ pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
         Some('[') => {
             *p += 1;
             let mut items = Vec::new();
+            let mut snap: Vec<JsonSrc> = Vec::new();
             json_ws(c, p);
             if c.get(*p) == Some(&']') {
                 *p += 1;
-                return Ok(Value::Arr(ArrayObj::new(items)));
+                return Ok((Value::Arr(ArrayObj::new(items)), JsonSrc::Arr(snap)));
             }
             loop {
-                items.push(json_value(c, p)?);
+                let (v, s) = json_value(c, p)?;
+                items.push(v);
+                snap.push(s);
                 json_ws(c, p);
                 match c.get(*p) {
                     Some(',') => *p += 1,
                     Some(']') => {
                         *p += 1;
-                        return Ok(Value::Arr(ArrayObj::new(items)));
+                        return Ok((Value::Arr(ArrayObj::new(items)), JsonSrc::Arr(snap)));
                     }
                     _ => return Err("JSON: ',' 나 ']' 필요".to_string()),
                 }
             }
         }
-        Some('"') => Ok(Value::Str(json_string(c, p)?)),
-        Some('t') if json_lit(c, p, "true") => Ok(Value::Bool(true)),
-        Some('f') if json_lit(c, p, "false") => Ok(Value::Bool(false)),
-        Some('n') if json_lit(c, p, "null") => Ok(Value::Null),
+        Some('"') => {
+            let start = *p;
+            let v = Value::Str(json_string(c, p)?);
+            let raw: String = c[start..*p].iter().collect();
+            Ok((v.clone(), JsonSrc::Prim { raw, val: v }))
+        }
+        Some('t') if json_lit(c, p, "true") => {
+            Ok((Value::Bool(true), JsonSrc::Prim { raw: "true".into(), val: Value::Bool(true) }))
+        }
+        Some('f') if json_lit(c, p, "false") => {
+            Ok((Value::Bool(false), JsonSrc::Prim { raw: "false".into(), val: Value::Bool(false) }))
+        }
+        Some('n') if json_lit(c, p, "null") => {
+            Ok((Value::Null, JsonSrc::Prim { raw: "null".into(), val: Value::Null }))
+        }
         Some(&ch) if ch == '-' || ch.is_ascii_digit() => {
             // 엄격한 JSON 수 문법 (§25.5.1): [-] int [frac] [exp]. leading zero(01)/
             // 소수점 뒤 숫자 없음(1.)/지수 숫자 없음(1e)/+부호 금지. 예전엔 관대 collect 였다.
@@ -1205,7 +1235,8 @@ pub(super) fn json_value(c: &[char], p: &mut usize) -> Result<Value, String> {
                 }
             }
             let s: String = c[start..*p].iter().collect();
-            s.parse::<f64>().map(Value::Num).map_err(|_| format!("JSON: 잘못된 수 {}", s))
+            let n = s.parse::<f64>().map_err(|_| format!("JSON: 잘못된 수 {}", s))?;
+            Ok((Value::Num(n), JsonSrc::Prim { raw: s, val: Value::Num(n) }))
         }
         Some(other) => Err(format!("JSON: 예상 못한 문자 {:?}", other)),
     }

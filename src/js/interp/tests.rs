@@ -6816,3 +6816,25 @@ fn json_parse_strict_grammar() {
     assert_eq!(run_num("JSON.parse('-1.5e3')"), -1500.0);
     assert_eq!(run_str("JSON.parse('\"a\\\\tb\"')"), "a\tb");
 }
+
+#[test]
+fn json_parse_reviver_source_context() {
+    // json-parse-with-source (§25.5.1.1): reviver 3번째 인자 context.source.
+    // 원시 리프면 원본 텍스트, 객체/배열이면 없음.
+    assert_eq!(run_str("JSON.parse('1.50', function(k,v,c){ return c.source; })"), "1.50");
+    assert_eq!(run_str("JSON.parse('\"ab\"', function(k,v,c){ return c.source; })"), "\"ab\"");
+    // 객체 노드는 source 없음(빈 context)
+    assert!(run_bool(
+        "var r; JSON.parse('{\"x\":1}', function(k,v,c){ if(k==='') r=(c.source===undefined); return v; }); r"
+    ));
+    // 배열 리프는 원본, 배열 노드는 없음
+    assert!(run_bool(
+        "var s0; JSON.parse('[9]', function(k,v,c){ if(k==='0') s0=c.source; return v; }); s0==='9'"
+    ));
+    // reviver 가 바꾼 값은 source 없음
+    assert!(run_bool(
+        "var s1; var o=JSON.parse('[1,2]', function(k,v,c){ if(k==='0') this[1]=42; if(k==='1') s1=c.source; return this[k]; }); s1===undefined && o[1]===42"
+    ));
+    // context 의 프로토타입은 Object.prototype
+    assert!(run_bool("JSON.parse('1', function(k,v,c){ return Object.getPrototypeOf(c)===Object.prototype; })"));
+}

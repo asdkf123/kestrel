@@ -464,14 +464,26 @@ impl Interp {
     // replacer 배열이면 객체 키를 그 목록으로 거른다. indent 가 있으면 표준 들여쓰기.
     #[allow(clippy::too_many_arguments)]
     // InternalizeJSONProperty (§25.5.1.1): reviver 를 후위 순회로 적용한다. 자식을 먼저
-    // 되살린 뒤(undefined 면 삭제) reviver(holder, [name, val]) 를 호출한다.
-    fn json_revive(&mut self, holder: &Value, name: &str, reviver: &Value) -> Result<Value, String> {
+    // 되살린 뒤(undefined 면 삭제) reviver(holder, [name, val, context]) 를 호출한다.
+    // context 는 3번째 인자 (json-parse-with-source): 원시 리프면 { source: 원본텍스트 },
+    // 객체/배열이거나 reviver 가 값을 바꿨으면 빈 객체.
+    fn json_revive(
+        &mut self,
+        holder: &Value,
+        name: &str,
+        reviver: &Value,
+        snap: Option<&JsonSrc>,
+    ) -> Result<Value, String> {
         let val = self.member_get(holder, name)?;
         match &val {
             Value::Arr(a) => {
                 let len = a.borrow().len();
                 for i in 0..len {
-                    let nv = self.json_revive(&val, &i.to_string(), reviver)?;
+                    let child = match snap {
+                        Some(JsonSrc::Arr(v)) => v.get(i),
+                        _ => None,
+                    };
+                    let nv = self.json_revive(&val, &i.to_string(), reviver, child)?;
                     // undefined 면 삭제(배열에선 hole) — 근사로 undefined 유지.
                     if let Some(slot) = a.borrow_mut().get_mut(i) {
                         *slot = nv;
@@ -480,7 +492,13 @@ impl Interp {
             }
             Value::Obj(m) => {
                 for k in enumerable_keys(m) {
-                    let nv = self.json_revive(&val, &k, reviver)?;
+                    let child = match snap {
+                        Some(JsonSrc::Obj(v)) => {
+                            v.iter().rev().find(|(kk, _)| *kk == k).map(|(_, s)| s)
+                        }
+                        _ => None,
+                    };
+                    let nv = self.json_revive(&val, &k, reviver, child)?;
                     if matches!(nv, Value::Undefined) {
                         m.borrow_mut().remove(&k);
                     } else {
@@ -490,10 +508,20 @@ impl Interp {
             }
             _ => {}
         }
+        // context 객체: 원시 리프이고 파싱된 값이 그대로면 source 를 채운다.
+        let ctx = ObjMap::new();
+        let ctx = Rc::new(RefCell::new(ctx));
+        if !matches!(val, Value::Arr(_) | Value::Obj(_) | Value::Instance(_)) {
+            if let Some(JsonSrc::Prim { raw, val: pv }) = snap {
+                if same_value(&val, pv) {
+                    ctx.borrow_mut().insert("source".to_string(), Value::Str(raw.clone()));
+                }
+            }
+        }
         self.call_value(
             reviver.clone(),
             Some(holder.clone()),
-            vec![Value::Str(name.to_string()), val],
+            vec![Value::Str(name.to_string()), val, Value::Obj(ctx)],
         )
     }
 
@@ -6177,7 +6205,7 @@ impl Interp {
                 // §25.5.1: 잘못된 JSON 은 SyntaxError 다. 예전엔 일반 Err(String)→Error 라
                 // "SyntaxError 기대" 검사가 깨졌다.
                 let src = args.first().map(to_display).unwrap_or_default();
-                let parsed = match json_parse(&src) {
+                let (parsed, snap) = match json_parse_snap(&src) {
                     Ok(v) => v,
                     Err(msg) => return Err(self.throw_error("SyntaxError", msg)),
                 };
@@ -6189,7 +6217,7 @@ impl Interp {
                             m.insert(String::new(), parsed);
                             m
                         })));
-                        self.json_revive(&holder, "", &reviver)
+                        self.json_revive(&holder, "", &reviver, Some(&snap))
                     }
                     None => Ok(parsed),
                 }
