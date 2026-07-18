@@ -6736,3 +6736,16 @@ fn object_create_null_prototype() {
     assert_eq!(run_num("Object.create({x:1}).x"), 1.0);
     assert!(matches!(run("var o={}; Object.setPrototypeOf(o,null); Object.getPrototypeOf(o)"), Value::Null));
 }
+
+#[test]
+fn array_from_and_object_fromentries_coercion() {
+    // Array.from: length ToNumber, mapFn IsCallable.
+    assert_eq!(run_str("JSON.stringify(Array.from({length:{valueOf:function(){return 2;}},0:'x',1:'y'}))"), "[\"x\",\"y\"]");
+    assert!(run_bool("var t=false; try{ Array.from([1], 5); }catch(e){ t=e instanceof TypeError; } t"));
+    assert_eq!(run_str("Array.from('ab').join()"), "a,b");
+    assert_eq!(run_str("Array.from([1,2], function(x,i){return x+i;}).join()"), "1,3");
+    // Object.fromEntries: 비이터러블/비객체 항목 TypeError, getter Get, ToPropertyKey.
+    assert!(run_bool("var t=false; try{ Object.fromEntries(5); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ Object.fromEntries([5]); }catch(e){ t=e instanceof TypeError; } t"));
+    assert_eq!(run_str("JSON.stringify(Object.fromEntries(new Map([['a',1],['b',2]])))"), "{\"a\":1,\"b\":2}");
+}

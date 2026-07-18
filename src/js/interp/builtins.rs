@@ -6877,21 +6877,42 @@ impl Interp {
                 Ok(Value::Arr(ArrayObj::new(entries)))
             }
             Native::ObjectFromEntries => {
-                // [[k,v], ...] 또는 Map → 객체. 이터러블 순회.
-                let mut map = ObjMap::new();
-                if let Some(src) = args.first() {
-                    for entry in self.iterate_to_vec(src)? {
-                        let (k, v) = match &entry {
-                            Value::Arr(a) => {
-                                let b = a.borrow();
-                                (b.first().cloned(), b.get(1).cloned())
-                            }
-                            _ => (None, None),
-                        };
-                        if let Some(k) = k {
-                            map.insert(to_display(&k), v.unwrap_or(Value::Undefined));
-                        }
+                // §20.1.2.7: iterable 을 순회, 각 항목은 객체여야 하며 [0]/[1] 을 Get 해
+                // CreateDataProperty(ToPropertyKey(k), v). 비이터러블/비객체 항목은 TypeError.
+                let src = args.first().cloned().unwrap_or(Value::Undefined);
+                let it = match self.try_get_iterator(&src)? {
+                    Some(it) => it,
+                    None => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Object.fromEntries requires an iterable",
+                        ))
                     }
+                };
+                let mut map = ObjMap::new();
+                loop {
+                    let (entry, done) = self.gen_iter_next(&it, Value::Undefined)?;
+                    if done {
+                        break;
+                    }
+                    if !is_object(&entry) {
+                        let e = self.throw_error("TypeError", "iterator entry is not an object");
+                        return Err(self.iterator_close_throw(&it, e));
+                    }
+                    let k = match self.member_get(&entry, "0") {
+                        Ok(k) => k,
+                        Err(e) => return Err(self.iterator_close_throw(&it, e)),
+                    };
+                    let v = match self.member_get(&entry, "1") {
+                        Ok(v) => v,
+                        Err(e) => return Err(self.iterator_close_throw(&it, e)),
+                    };
+                    let key = match self.to_property_key(k) {
+                        Ok(key) => key,
+                        Err(e) => return Err(self.iterator_close_throw(&it, e)),
+                    };
+                    map.insert(key, v);
+                    self.tick()?;
                 }
                 Ok(Value::Obj(Rc::new(RefCell::new(map))))
             }
@@ -6949,9 +6970,19 @@ impl Interp {
             Native::ArrayOf => Ok(Value::Arr(ArrayObj::new(args))),
             Native::ArrayFrom => {
                 let src = args.first().cloned().unwrap_or(Value::Undefined);
-                let map_fn = args.get(1).cloned().filter(is_callable);
+                // §23.1.2.1: mapFn 이 undefined 아니면 반드시 callable(아니면 TypeError).
+                let map_fn = match args.get(1) {
+                    None | Some(Value::Undefined) => None,
+                    Some(f) if is_callable(f) => Some(f.clone()),
+                    Some(_) => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Array.from: mapFn is not a function",
+                        ))
+                    }
+                };
                 // 이터러블(배열/문자열/Set/Map/제너레이터/반복자/사용자 [Symbol.iterator])이면
-                // 프로토콜로, 아니면 array-like(length + 인덱스).
+                // 프로토콜로, 아니면 array-like(ToLength(ToNumber(length)) + 인덱스).
                 let items: Vec<Value> = match &src {
                     Value::Arr(_)
                     | Value::Str(_)
@@ -6964,8 +6995,8 @@ impl Interp {
                         self.iterate_to_vec(&src)?
                     }
                     _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src)?,
-                    // array-like: length + 인덱스 프로퍼티 (길이 상한은 표준대로 RangeError)
-                    Value::Obj(o) => array_like_to_vec(o)?,
+                    // array-like: generic_array_read 로 length 강제변환(valueOf) + [[Get]].
+                    Value::Obj(_) => self.generic_array_read(&src)?,
                     _ => Vec::new(),
                 };
                 // mapFn(value, index) 적용
