@@ -4459,6 +4459,10 @@ impl Interp {
                     if i >= a.borrow().len() && !a.length_writable() {
                         return false;
                     }
+                    // non-writable 로 정의된 인덱스는 덮어쓰기 불가 (§10.4.2).
+                    if matches!(a.index_attr(i), Some(at) if at & ATTR_WRITABLE == 0) {
+                        return false;
+                    }
                     if i >= MAX_DENSE_ARRAY {
                         return false; // 방어: 초거대 인덱스는 무시 (희박 배열 미구현)
                     }
@@ -7964,6 +7968,10 @@ impl Interp {
                             // length 가 non-writable 이면 길이를 넘기는 새 인덱스 추가 불가
                             // (§10.4.2.1) — sloppy 대입은 조용히 무시.
                             if is_new && !a.length_writable() {
+                                return Ok(());
+                            }
+                            // non-writable 로 정의된 인덱스 덮어쓰기 불가(§10.4.2, sloppy 무시).
+                            if matches!(a.index_attr(i), Some(at) if at & ATTR_WRITABLE == 0) {
                                 return Ok(());
                             }
                             if i >= MAX_DENSE_ARRAY {

@@ -1999,12 +1999,22 @@ impl Interp {
                         });
                         match idx_val {
                             Some(v) => {
-                                // 배열 인덱스 프로퍼티는 { w:true, e:true, c:true } (§10.4.2).
+                                // 배열 인덱스는 기본 { w:t, e:t, c:t } (§10.4.2), non-default
+                                // 속성이 있으면 side-table 반영.
+                                let at = key
+                                    .parse::<usize>()
+                                    .ok()
+                                    .and_then(|i| a.index_attr(i))
+                                    .unwrap_or(
+                                        ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                    );
                                 d.insert("value".to_string(), v);
-                                d.insert("writable".to_string(), Value::Bool(true));
-                                d.insert("enumerable".to_string(), Value::Bool(true));
-                                d.insert("configurable".to_string(), Value::Bool(true));
-                                true
+                                d.insert("writable".to_string(), Value::Bool(at & ATTR_WRITABLE != 0));
+                                d.insert("enumerable".to_string(), Value::Bool(at & ATTR_ENUMERABLE != 0));
+                                d.insert("configurable".to_string(), Value::Bool(at & ATTR_CONFIGURABLE != 0));
+                                // early return — 아래 반환부(2193~)가 배열 enumerable/
+                                // configurable 을 항상 true 로 덮어쓰므로 여기서 완성해 반환.
+                                return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                             }
                             None => match a.get_prop(&key) {
                                 Some(v) => {
@@ -2293,6 +2303,8 @@ impl Interp {
                 let configurable = matches!(d.get("configurable"), Some(v) if to_bool(v));
                 let has_writable = d.contains_key("writable");
                 let writable = matches!(d.get("writable"), Some(v) if to_bool(v));
+                let has_enumerable = d.contains_key("enumerable");
+                let has_configurable = d.contains_key("configurable");
                 drop(d);
                 // 배열 length 는 exotic (§10.4.2.1): {enumerable:false, configurable:false}
                 // 데이터 프로퍼티. accessor·configurable:true·enumerable:true 로 재정의하면
@@ -2343,6 +2355,8 @@ impl Interp {
                         Value::Arr(a) => {
                             if let Ok(i) = key.parse::<usize>() {
                                 let old_len = a.borrow().len();
+                                // 값 설정 전에 "기존 데이터 프로퍼티였나"(§10.1.6 재정의 여부).
+                                let existed = i < old_len && !a.is_hole(i);
                                 {
                                     let mut items = a.borrow_mut();
                                     while items.len() <= i {
@@ -2357,6 +2371,38 @@ impl Interp {
                                     }
                                 }
                                 a.fill_hole(i);
+                                // 인덱스별 속성 병합(§10.1.6): 지정된 필드(has_*)만 반영,
+                                // 미지정은 재정의면 기존값, 새 정의면 false. default(7)면 제거.
+                                let cur = if existed {
+                                    a.index_attr(i).unwrap_or(
+                                        ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                    )
+                                } else {
+                                    0
+                                };
+                                let wbit = if has_writable {
+                                    if writable { ATTR_WRITABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_WRITABLE
+                                };
+                                let ebit = if has_enumerable {
+                                    if enumerable { ATTR_ENUMERABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_ENUMERABLE
+                                };
+                                let cbit = if has_configurable {
+                                    if configurable { ATTR_CONFIGURABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_CONFIGURABLE
+                                };
+                                let attrs = wbit | ebit | cbit;
+                                if attrs
+                                    != ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE
+                                {
+                                    a.set_index_attr(i, attrs);
+                                } else {
+                                    a.clear_index_attr(i);
+                                }
                             } else {
                                 a.set_prop(key, val);
                             }

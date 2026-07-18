@@ -163,6 +163,9 @@ pub struct ArrayObj {
     // length 프로퍼티의 [[Writable]] (§10.4.2.4). 기본 true. defineProperty 로
     // {writable:false} 하면 false — 이후 length 변경 불가(대입/defineProperty).
     length_writable: std::cell::Cell<bool>,
+    // 인덱스별 non-default 속성(§10.4.2). 비어 있음 = 모든 인덱스 default {w:t,e:t,c:t}
+    // (오버헤드 0). defineProperty 로 non-default 속성 준 인덱스만 u8 비트(ATTR_*)로.
+    index_attrs: RefCell<HashMap<usize, u8>>,
 }
 
 impl ArrayObj {
@@ -172,6 +175,7 @@ impl ArrayObj {
             props: RefCell::new(HashMap::new()),
             holes: RefCell::new(std::collections::HashSet::new()),
             length_writable: std::cell::Cell::new(true),
+            index_attrs: RefCell::new(HashMap::new()),
         })
     }
     // 구멍이 있는 배열 (배열 리터럴 엘리전/new Array(n) 등).
@@ -181,6 +185,7 @@ impl ArrayObj {
             props: RefCell::new(HashMap::new()),
             holes: RefCell::new(holes),
             length_writable: std::cell::Cell::new(true),
+            index_attrs: RefCell::new(HashMap::new()),
         })
     }
     // length 프로퍼티의 [[Writable]] (§10.4.2.4).
@@ -189,6 +194,20 @@ impl ArrayObj {
     }
     pub fn set_length_writable(&self, w: bool) {
         self.length_writable.set(w);
+    }
+    pub fn index_attr(&self, i: usize) -> Option<u8> {
+        if self.index_attrs.borrow().is_empty() {
+            return None;
+        }
+        self.index_attrs.borrow().get(&i).copied()
+    }
+    pub fn set_index_attr(&self, i: usize, attrs: u8) {
+        self.index_attrs.borrow_mut().insert(i, attrs);
+    }
+    pub fn clear_index_attr(&self, i: usize) {
+        if !self.index_attrs.borrow().is_empty() {
+            self.index_attrs.borrow_mut().remove(&i);
+        }
     }
     // 인덱스 i 가 구멍(존재하지 않는 인덱스)인가.
     pub fn is_hole(&self, i: usize) -> bool {

@@ -7911,3 +7911,19 @@ fn array_length_nonwritable_blocks_index_add() {
     // 회귀: 정상 배열은 확장.
     assert_eq!(run_num("var b=[1,2]; b[5]=7; b.length"), 6.0);
 }
+
+#[test]
+fn array_index_property_attrs() {
+    // §10.4.2: 배열 인덱스에 defineProperty 로 non-default 속성 — gOPD 반영(병합).
+    assert_eq!(run_str("var a=[1,2,3]; Object.defineProperty(a,'0',{value:9,writable:false,enumerable:true,configurable:true}); JSON.stringify(Object.getOwnPropertyDescriptor(a,'0'))"),
+        "{\"value\":9,\"writable\":false,\"enumerable\":true,\"configurable\":true}");
+    // 재정의 시 미지정 속성은 기존 유지(§10.1.6): w/c 유지, e 만 false.
+    assert!(run_bool("var a=[1,2,3]; Object.defineProperty(a,'1',{value:8,enumerable:false}); var d=Object.getOwnPropertyDescriptor(a,'1'); d.writable && !d.enumerable && d.configurable"));
+    // all false.
+    assert!(run_bool("var a=[1,2]; Object.defineProperty(a,'0',{value:9,writable:false,enumerable:false,configurable:false}); var d=Object.getOwnPropertyDescriptor(a,'0'); !d.writable && !d.enumerable && !d.configurable"));
+    // non-writable index 덮어쓰기 차단.
+    assert_eq!(run_num("var a=[1,2,3]; Object.defineProperty(a,'0',{value:9,writable:false,enumerable:true,configurable:true}); a[0]=99; a[0]"), 9.0);
+    // 일반 배열 무회귀: index 는 default {w:t,e:t,c:t}.
+    assert!(run_bool("var d=Object.getOwnPropertyDescriptor([5,6],'0'); d.value===5 && d.writable && d.enumerable && d.configurable"));
+    assert_eq!(run_num("var a=[10,20]; a[0]=99; a[0]"), 99.0);
+}
