@@ -6942,3 +6942,21 @@ fn to_primitive_abrupt_symbol_getter_propagates() {
     // @@toPrimitive 없으면 valueOf/toString 정상 경로.
     assert_eq!(run_num("1 + {valueOf:function(){return 2}}"), 3.0);
 }
+
+#[test]
+fn number_statics_and_predicates() {
+    // §21.1.2.9: MIN_VALUE 는 최소 비정규값 → /2 == 0.
+    assert_eq!(run_num("Number.MIN_VALUE"), 5e-324);
+    assert_eq!(run_num("Number.MIN_VALUE/2"), 0.0);
+    // 상수는 writable:false → sloppy 재대입 무시.
+    assert!(run_bool("Number.MAX_VALUE = 42; Number.MAX_VALUE > 1e308"));
+    assert!(run_bool("var d=Object.getOwnPropertyDescriptor(Number,'MAX_VALUE'); d.writable===false && d.configurable===false && d.enumerable===false"));
+    // isSafeInteger 경계: 2^53 는 아니고 2^53-1 은 맞다.
+    assert!(run_bool("!Number.isSafeInteger(9007199254740992)"));
+    assert!(run_bool("Number.isSafeInteger(9007199254740991)"));
+    assert!(run_bool("!Number.isSafeInteger(1.5) && !Number.isSafeInteger(NaN)"));
+    assert_eq!(run_str("Number.isSafeInteger.name"), "isSafeInteger");
+    // 내장 함수도 Object.prototype.propertyIsEnumerable 을 상속.
+    assert_eq!(run_str("typeof Number.propertyIsEnumerable"), "function");
+    assert!(run_bool("!Number.propertyIsEnumerable('MAX_VALUE')"));
+}

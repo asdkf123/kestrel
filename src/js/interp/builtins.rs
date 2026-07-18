@@ -4276,6 +4276,12 @@ impl Interp {
                 let ok = matches!(args.first(), Some(Value::Num(n)) if n.fract() == 0.0 && n.is_finite());
                 Ok(Value::Bool(ok))
             }
+            // §21.1.2.5: 정수이면서 |n| ≤ 2^53-1 (안전 정수).
+            Native::NumIsSafeInteger => {
+                let ok = matches!(args.first(),
+                    Some(Value::Num(n)) if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0);
+                Ok(Value::Bool(ok))
+            }
             Native::NumIsFinite => {
                 let ok = matches!(args.first(), Some(Value::Num(n)) if n.is_finite());
                 Ok(Value::Bool(ok))

@@ -4946,6 +4946,32 @@ impl Interp {
         Ok(Some(Value::Obj(Rc::new(RefCell::new(d)))))
     }
 
+    // 내장 생성자의 own 정적 프로퍼티가 writable:false 인가 (상수/prototype). 재대입 거부에 쓴다.
+    // 정적 메서드는 writable:true 라 폴리필 오버라이드가 가능하다.
+    fn native_static_readonly(&mut self, recv: &Value, key: &str) -> bool {
+        let n = match recv {
+            Value::Native(n) => *n,
+            _ => return false,
+        };
+        let Some(keys) = self.native_ctor_own_keys(&n) else {
+            return false;
+        };
+        if !keys.iter().any(|k| k == key) {
+            return false;
+        }
+        if key == "prototype" {
+            return true;
+        }
+        // 값이 함수/생성자면 정적 메서드(writable) — 아니면 상수(read-only).
+        match self.member_get(recv, key) {
+            Ok(v) => !matches!(
+                v,
+                Value::Native(_) | Value::Fn(_) | Value::Bound(_) | Value::Class(_)
+            ),
+            Err(_) => false,
+        }
+    }
+
     fn native_fn_member(&self, recv: &Value, key: &str) -> Option<Value> {
         // delete 된 name/length 는 없는 것으로 (configurable:true).
         if matches!(key, "name" | "length") && self.native_prop_deleted(recv, key) {
@@ -4962,6 +4988,7 @@ impl Interp {
             // Object.prototype 상속 메서드 — 함수도 객체이므로 상속한다.
             "hasOwnProperty" => Value::Native(Native::HasOwnProperty),
             "isPrototypeOf" => Value::Native(Native::ObjectIsPrototypeOf),
+            "propertyIsEnumerable" => Value::Native(Native::PropertyIsEnumerable),
             "valueOf" => Value::Native(Native::ValueOfSelf),
             _ => return None,
         })
@@ -6147,7 +6174,8 @@ impl Interp {
             }),
             // Number.isInteger/isNaN/isFinite/parseInt/parseFloat + 상수
             Value::Native(Native::NumberCtor) => Ok(match key {
-                "isInteger" | "isSafeInteger" => Value::Native(Native::NumIsInteger),
+                "isInteger" => Value::Native(Native::NumIsInteger),
+                "isSafeInteger" => Value::Native(Native::NumIsSafeInteger),
                 "isFinite" => Value::Native(Native::NumIsFinite),
                 "isNaN" => Value::Native(Native::NumIsNaN),
                 "parseInt" => Value::Native(Native::ParseInt),
@@ -6155,7 +6183,9 @@ impl Interp {
                 "MAX_SAFE_INTEGER" => Value::Num(9007199254740991.0),
                 "MIN_SAFE_INTEGER" => Value::Num(-9007199254740991.0),
                 "MAX_VALUE" => Value::Num(f64::MAX),
-                "MIN_VALUE" => Value::Num(f64::MIN_POSITIVE),
+                // §21.1.2.9: MIN_VALUE 는 최소 양의 "비정규(denormal)"값 5e-324 (from_bits(1)).
+                // f64::MIN_POSITIVE 는 최소 정규값(2.2e-308)이라 MIN_VALUE/2 가 0 이 안 됐다.
+                "MIN_VALUE" => Value::Num(f64::from_bits(1)),
                 "EPSILON" => Value::Num(f64::EPSILON),
                 "POSITIVE_INFINITY" => Value::Num(f64::INFINITY),
                 "NEGATIVE_INFINITY" => Value::Num(f64::NEG_INFINITY),
@@ -7883,11 +7913,13 @@ impl Interp {
                     Value::Native(n) => {
                         // name/length 는 내장 함수의 non-writable own 프로퍼티 (§17).
                         // @@species 는 setter 없는 접근자라 = 재대입은 무시(writable:false).
-                        // 재대입은 조용히 무시. 나머지(폴리필이 얹는 메서드 등)는 native_props 에
-                        // 저장. defineProperty 는 별도 경로라 오버라이드 여전히 가능.
-                        let readonly_species =
-                            key == "\u{0}@@species" && native_has_species(&n);
-                        if !matches!(key.as_str(), "name" | "length") && !readonly_species {
+                        // Number.MAX_VALUE 등 상수와 prototype 도 writable:false → 재대입 무시.
+                        // 나머지(폴리필이 얹는 메서드 등)는 native_props 에 저장.
+                        // defineProperty 는 별도 경로라 오버라이드 여전히 가능.
+                        let readonly = matches!(key.as_str(), "name" | "length")
+                            || (key == "\u{0}@@species" && native_has_species(&n))
+                            || self.native_static_readonly(&Value::Native(n), &key);
+                        if !readonly {
                             self.native_props.entry(n).or_default().insert(key, value);
                         }
                         Ok(())

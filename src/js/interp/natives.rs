@@ -171,6 +171,7 @@ pub enum Native {
     StrFromCodePoint,
     StrRaw,
     NumIsInteger,
+    NumIsSafeInteger,
     NumIsFinite,
     NumIsNaN,
     NumToFixed,
@@ -926,6 +927,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         StrRaw => ("raw", 1),
         // ── Number.* 정적 ──
         NumIsInteger => ("isInteger", 1),
+        NumIsSafeInteger => ("isSafeInteger", 1),
         NumIsFinite => ("isFinite", 1),
         NumIsNaN => ("isNaN", 1),
         NumToFixed => ("toFixed", 1),
