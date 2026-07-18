@@ -7111,3 +7111,20 @@ fn json_parse_text_tostring() {
     assert_eq!(run_num("JSON.parse(123)"), 123.0);
     assert!(run_bool("JSON.parse(true)===true"));
 }
+
+#[test]
+fn array_iteration_callback_typeerror() {
+    // §23.1.3: 콜백/predicate 미지정·비호출은 순회 전 TypeError(예전엔 일반 Error).
+    for e in [
+        "new Array(10).reduce()", "[1,2].reduce()", "[1,2].reduceRight()",
+        "[1,2].filter()", "[1,2].map(5)", "[1,2].some()", "[1,2].every()",
+        "[1,2].forEach()", "[1,2].findLast()", "[1,2].findLastIndex()",
+    ] {
+        assert!(run_bool(&format!(
+            "var t=false; try{{ {}; }}catch(e){{ t=e instanceof TypeError }} t", e
+        )), "{}", e);
+    }
+    // 정상 동작 보존.
+    assert_eq!(run_num("[1,2,3].reduce(function(a,b){return a+b})"), 6.0);
+    assert_eq!(run_str("JSON.stringify([1,2,3].filter(function(x){return x>1}))"), "[2,3]");
+}

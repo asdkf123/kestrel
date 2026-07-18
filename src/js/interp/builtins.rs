@@ -5878,7 +5878,7 @@ impl Interp {
                         Value::Arr(ArrayObj::new(items[start..end.max(start)].to_vec()))
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
-                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let f = args.first().cloned().unwrap_or(Value::Undefined);
                         // §23.1.3: 콜백은 순회 전에 IsCallable 검사 — 비호출이면 TypeError
                         // (빈/전부-구멍 배열이라 콜백이 안 불려도 던져야 한다).
                         if !is_callable(&f) {
@@ -5937,7 +5937,7 @@ impl Interp {
                         }
                     }
                     ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {
-                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let f = args.first().cloned().unwrap_or(Value::Undefined);
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
                         }
@@ -6002,7 +6002,7 @@ impl Interp {
                         }
                     }
                     ArrOp::Reduce => {
-                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let f = args.first().cloned().unwrap_or(Value::Undefined);
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
                         }
@@ -6039,7 +6039,7 @@ impl Interp {
                         acc
                     }
                     ArrOp::ReduceRight => {
-                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let f = args.first().cloned().unwrap_or(Value::Undefined);
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
                         }
@@ -6076,7 +6076,11 @@ impl Interp {
                         acc
                     }
                     ArrOp::FindLast | ArrOp::FindLastIndex => {
-                        let f = args.first().cloned().ok_or("콜백이 필요")?;
+                        let f = args.first().cloned().unwrap_or(Value::Undefined);
+                        // §23.1.3.13/.14: predicate 는 순회 전 IsCallable 검사(비호출 TypeError).
+                        if !is_callable(&f) {
+                            return Err(self.throw_error("TypeError", "predicate is not a function"));
+                        }
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let mut result = if matches!(op, ArrOp::FindLastIndex) {
                             Value::Num(-1.0)
