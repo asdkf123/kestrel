@@ -7420,3 +7420,15 @@ fn regex_symbol_replace_protocol() {
     // brand.
     assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.replace].call(5,'x','y') }catch(e){ t=e instanceof TypeError } t"));
 }
+
+#[test]
+fn regex_sticky_exec() {
+    // §22.2.7.2: sticky('y')는 lastIndex 에 앵커된 매치만, lastIndex 사용/갱신, 실패 시 0.
+    assert!(run_bool("var y=/a/y; y.lastIndex=0; y.exec('bab')===null")); // 앵커: 0 에 'a' 없음
+    assert!(run_bool("var y=/a/y; y.lastIndex=1; var r=y.exec('bab'); r[0]==='a' && y.lastIndex===2"));
+    assert!(run_bool("var y=/a/y; var r1=y.exec('abc'); r1[0]==='a' && y.lastIndex===1"));
+    assert!(run_bool("var y=/a/y; y.exec('abc'); y.exec('abc')===null && y.lastIndex===0")); // li=1 에서 'b'
+    assert!(run_bool("var y=/\\d/y; y.lastIndex=2; y.exec('ab3')[0]==='3'"));
+    // 비sticky/비global 은 lastIndex 무시.
+    assert!(run_bool("var re=/a/; re.lastIndex=100; re.exec('bab')[0]==='a'"));
+}

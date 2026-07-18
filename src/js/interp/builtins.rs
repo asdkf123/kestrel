@@ -5112,7 +5112,11 @@ impl Interp {
                 let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
                     .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
                 let chars: Vec<char> = text.chars().collect();
-                let from = if re.global {
+                // sticky('y')/global 은 lastIndex 를 쓴다. sticky 는 lastIndex 에 '앵커'된
+                // 매치만 인정한다(그 위치에서 시작 안 하면 실패). §22.2.7.2.
+                let sticky = flags.contains('y');
+                let use_li = re.global || sticky;
+                let from = if use_li {
                     match &recv_obj {
                         Some(Value::Obj(m)) => match m.borrow().get("lastIndex") {
                             Some(Value::Num(n)) => to_length(*n) as usize,
@@ -5123,17 +5127,19 @@ impl Interp {
                 } else {
                     0
                 };
-                // §22.2.7.2: lastIndex > length 면(전역) 매치 실패 → lastIndex 0, null.
-                // 예전엔 from 을 len 으로 clamp 해 문자열 끝에서 빈 매치를 무한히 냈다.
-                if re.global && from > chars.len() {
+                // lastIndex > length 면 매치 실패 → lastIndex 0, null. 예전엔 from 을 len 으로
+                // clamp 해 문자열 끝에서 빈 매치를 무한히 냈다.
+                if use_li && from > chars.len() {
                     if let Some(Value::Obj(m)) = &recv_obj {
                         m.borrow_mut().insert("lastIndex".to_string(), Value::Num(0.0));
                     }
                     return Ok(Value::Null);
                 }
-                match re.find(&chars, from) {
+                // sticky 는 from 에서 시작하는 매치만 (엔진에 y 미지원 → 여기서 앵커 검사).
+                let mat = re.find(&chars, from).filter(|mt| !sticky || mt.start == from);
+                match mat {
                     Some(mt) => {
-                        if re.global {
+                        if use_li {
                             if let Some(Value::Obj(m)) = &recv_obj {
                                 m.borrow_mut()
                                     .insert("lastIndex".to_string(), Value::Num(mt.end as f64));
@@ -5142,7 +5148,7 @@ impl Interp {
                         Ok(self.regex_match_array(&chars, &mt, &re.group_names))
                     }
                     None => {
-                        if re.global {
+                        if use_li {
                             if let Some(Value::Obj(m)) = &recv_obj {
                                 m.borrow_mut().insert("lastIndex".to_string(), Value::Num(0.0));
                             }
