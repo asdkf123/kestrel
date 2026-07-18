@@ -6770,3 +6770,13 @@ fn typedarray_subarray_indexof() {
     assert_eq!(prelude_num("new Uint8Array([5,6,5]).indexOf(5,1)"), 2.0);
     assert_eq!(prelude_num("new Uint8Array([5,6,5]).indexOf(5,-1)"), 2.0);
 }
+
+#[test]
+fn typedarray_includes_lastindexof() {
+    // includes: fromIndex + NaN(SameValueZero). lastIndexOf: fromIndex 클램프.
+    assert!(prelude_bool("new Uint8Array([5,6,5]).includes(5,1)"));
+    assert!(prelude_bool("new Float64Array([NaN,2]).includes(NaN)"));
+    assert_eq!(prelude_num("new Uint8Array([5,6,5]).lastIndexOf(5,10)"), 2.0);
+    assert_eq!(prelude_num("new Uint8Array([5,6,5]).lastIndexOf(5,1)"), 0.0);
+    assert_eq!(prelude_num("new Uint8Array([5,6,5]).lastIndexOf(6,{valueOf:function(){return 2;}})"), 1.0);
+}
