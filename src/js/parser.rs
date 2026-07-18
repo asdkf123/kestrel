@@ -1634,6 +1634,9 @@ impl Parser {
         match self.next()? {
             Tok::Ident(s) => Ok(s),
             Tok::Str(s) => Ok(s),
+            // 숫자 프로퍼티 이름: { get 0(){} } / { 0(){} } 등. 키는 ToString(number)
+            // (객체 리터럴 키 경로와 동일하게 n.to_string()).
+            Tok::Num(n) => Ok(n.to_string()),
             other => keyword_word(&other)
                 .ok_or_else(|| format!("메서드 이름이 필요한데 {:?}{}", other, self.ctx())),
         }

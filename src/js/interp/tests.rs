@@ -7477,3 +7477,13 @@ fn string_match_routes_through_symbol_match() {
     assert_eq!(run_str("JSON.stringify('axc'.match('a.c'))"), "[\"axc\"]");
     assert_eq!(run_str("'x1'.match(/(?<d>\\d)/).groups.d"), "1");
 }
+
+#[test]
+fn parser_numeric_property_getter_setter_method() {
+    // 숫자 프로퍼티 이름: { get 0(){} } / { 0(){} } / { set 5(v){} } (§13.2.5 PropertyName).
+    assert_eq!(run_str("var o={get 0(){return 'a'}, get 1(){return 'b'}}; o[0]+o[1]"), "ab");
+    assert_eq!(run_str("var o={0(){return 'm'}}; o[0]()"), "m");
+    assert!(run_bool("var o={set 5(v){this._v=v}}; o[5]=99; o._v===99"));
+    // 정규식 결과 객체의 숫자 getter (@@replace 패턴).
+    assert_eq!(run_str("var r={exec:function(){return {0:'X',get 1(){return 'cap'},index:0,length:2}},global:false,lastIndex:0}; Object.setPrototypeOf(r,RegExp.prototype); r[Symbol.replace]('abc','[$1]')"), "[cap]bc");
+}
