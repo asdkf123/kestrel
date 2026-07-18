@@ -3264,6 +3264,11 @@ impl Interp {
                             Ok(res) => match self.await_iter_result_value(res) {
                                 Ok(res) => self.resolve_promise(&p, res),
                                 Err(e) => {
+                                    // yield 된 값의 Await 가 거부되면 그 예외는 yield 지점에서
+                                    // 제너레이터 안으로 던져진 것과 같다 → 제너레이터 종료
+                                    // (§27.6.3.8). 예전엔 promise 만 거부하고 상태를 안 닫아,
+                                    // 다음 next() 가 그 다음 yield 로 진행했다(done:false 오답).
+                                    Self::gen_mark_done(&gs);
                                     let reason = self.thrown.take().unwrap_or(Value::Str(e));
                                     self.reject_promise(&p, reason);
                                 }

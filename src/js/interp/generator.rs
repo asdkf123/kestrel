@@ -217,6 +217,12 @@ impl Interp {
         gs.borrow().is_async
     }
 
+    // 제너레이터를 완료 상태로 표시(이후 next/return/throw 는 {done:true}). yield 된 값의
+    // Await 거부가 제너레이터를 종료시킬 때 등 외부(builtins)에서 닫아야 할 때 쓴다.
+    pub(super) fn gen_mark_done(gs: &Rc<RefCell<GenState>>) {
+        gs.borrow_mut().done = true;
+    }
+
     // { value, done } 결과 객체.
     fn iter_result(&self, value: Value, done: bool) -> Value {
         let mut m = ObjMap::new();
