@@ -5621,7 +5621,11 @@ impl Interp {
             }
             Value::Instance(i) => i.fields.borrow().contains_key(key),
             Value::Fn(f) => {
-                if f.props.borrow().contains_key(key) || key == "prototype" {
+                // prototype 은 생성자성 함수만 가진다 — 화살표·async(비제너레이터)는 없다
+                // (§ 화살표/메서드/async 엔 [[Construct]] 없음, 제너레이터는 있음).
+                // 예전엔 모든 함수에 대해 true 라 `'prototype' in (()=>{})` 가 참이었다.
+                let has_proto = !f.is_arrow && (f.is_generator || !f.is_async);
+                if f.props.borrow().contains_key(key) || (key == "prototype" && has_proto) {
                     return true;
                 }
                 // name/length 는 계산 own 프로퍼티지만 delete 됐으면(툼스톤) 없는 것.
@@ -6605,8 +6609,11 @@ impl Interp {
                     }
                     // 함수도 toString 을 가진다 (번들이 fn.toString() 으로 소스 검사)
                     "toString" => Ok(Value::Native(Native::FnToString)),
-                    // 화살표 함수는 prototype 이 없다 (§ 화살표엔 [[Construct]] 없음).
-                    "prototype" if func.is_arrow => Ok(Value::Undefined),
+                    // 화살표·async(비제너레이터) 함수는 prototype 이 없다 (§ [[Construct]]
+                    // 없음). 제너레이터/async-generator 는 prototype 을 가진다.
+                    "prototype" if func.is_arrow || (func.is_async && !func.is_generator) => {
+                        Ok(Value::Undefined)
+                    }
                     // F.prototype 지연 생성: 접근 시 { constructor: F } 객체를 만들어 저장.
                     // §20.1.1: F.prototype.constructor === F (writable, non-enum,
                     // configurable). 예전엔 빈 객체라 new F().constructor 가 Object 로

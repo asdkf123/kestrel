@@ -3166,6 +3166,21 @@ fn generator_param_destructuring_at_call_time() {
     assert_eq!(run_num("function* p(a,b){ yield a+b; } p(1,2).next().value"), 3.0);
 }
 
+// prototype 은 생성자성 함수만 가진다: 화살표·async(비제너레이터)는 없고,
+// 일반 함수·제너레이터·async-generator 는 있다 (§ [[Construct]] 유무).
+#[test]
+fn only_constructor_functions_have_prototype() {
+    assert!(run_bool("('prototype' in (()=>{}))===false"));
+    assert!(run_bool("(()=>{}).prototype===undefined"));
+    assert!(run_bool("('prototype' in async function(){})===false"));
+    assert!(run_bool("('prototype' in function(){})===true"));
+    assert!(run_bool("('prototype' in function*(){})===true"));
+    assert!(run_bool("('prototype' in async function*(){})===true"));
+    // gOPD 도 일관: 화살표는 서술자 없음, 일반 함수는 있음
+    assert!(run_bool("Object.getOwnPropertyDescriptor(()=>{}, 'prototype')===undefined"));
+    assert!(run_bool("typeof Object.getOwnPropertyDescriptor(function(){}, 'prototype')==='object'"));
+}
+
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.
 #[test]
 fn regex_unicode_property_escapes() {
