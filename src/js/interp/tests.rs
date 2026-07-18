@@ -6838,3 +6838,16 @@ fn json_parse_reviver_source_context() {
     // context 의 프로토타입은 Object.prototype
     assert!(run_bool("JSON.parse('1', function(k,v,c){ return Object.getPrototypeOf(c)===Object.prototype; })"));
 }
+
+#[test]
+fn json_stringify_escapes_and_space() {
+    // §25.5.2.3 QuoteJSONString: backspace/formfeed 는 짧은 이스케이프.
+    assert_eq!(run_str("JSON.stringify('\\b\\f')"), "\"\\b\\f\"");
+    // §25.5.2.1: Number/String 래퍼 space 는 원시값으로 (들여쓰기).
+    assert_eq!(run_str("JSON.stringify({a:1}, null, new Number(2))"), "{\n  \"a\": 1\n}");
+    assert_eq!(run_str("JSON.stringify({a:1}, null, new String('xx'))"), "{\nxx\"a\": 1\n}");
+    // Boolean 래퍼는 무시(들여쓰기 없음).
+    assert_eq!(run_str("JSON.stringify({a:1}, null, new Boolean(true))"), "{\"a\":1}");
+    // 소수 space 는 floor.
+    assert_eq!(run_str("JSON.stringify([1], null, 3.9)"), "[\n   1\n]");
+}

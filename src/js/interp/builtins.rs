@@ -6267,9 +6267,22 @@ impl Interp {
             Native::JsonStringify => {
                 let v = args.first().cloned().unwrap_or(Value::Undefined);
                 let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
-                let indent = match args.get(2) {
-                    Some(Value::Num(n)) if *n >= 1.0 => " ".repeat((*n as usize).min(10)),
-                    Some(Value::Str(s)) => s.chars().take(10).collect(),
+                // space(3번째 인자, §25.5.2.1): Number/String 래퍼 객체는 원시값으로 푼다.
+                // Number → floor 만큼 공백(최대 10), String → 앞 10글자. 그 외는 들여쓰기 없음.
+                let space = args.get(2).cloned().unwrap_or(Value::Undefined);
+                let space = match &space {
+                    Value::Obj(m) if m.borrow().contains_key(WRAPPER_SLOT) => {
+                        match wrapper_primitive(&space) {
+                            Some(Value::Num(n)) => Value::Num(n),
+                            Some(Value::Str(s)) => Value::Str(s),
+                            _ => Value::Undefined,
+                        }
+                    }
+                    _ => space,
+                };
+                let indent = match &space {
+                    Value::Num(n) if *n >= 1.0 => " ".repeat((n.floor() as usize).min(10)),
+                    Value::Str(s) => s.chars().take(10).collect(),
                     _ => String::new(),
                 };
                 let keys: Option<Vec<String>> = match &replacer {
