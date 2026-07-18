@@ -1593,7 +1593,7 @@ impl Parser {
             body.extend(self.block()?);
             let msrc = self.src_between(method_start, self.pos);
             if !is_static && mname == "constructor" {
-                ctor = Some((params, body));
+                ctor = Some((params, body, prologue_len));
             } else if accessor.as_deref() == Some("get") {
                 if is_static {
                     static_getters.push((mname, params, body, msrc, member_computed));

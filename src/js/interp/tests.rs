@@ -5227,6 +5227,24 @@ fn class_length_and_new_required() {
     assert!(run_bool("class C{ constructor(){ this.x=1; } } new C().x===1"));
     // static length 오버라이드가 우선
     assert_eq!(run_num("class C{ constructor(a,b){} static get length(){ return 99; } } C.length"), 99.0);
+    // ExpectedArgumentCount: 첫 기본값/rest 앞까지만 센다 (§ FunctionLength)
+    assert_eq!(run_num("class C{ constructor(a,b,c=1){} } C.length"), 2.0);
+    assert_eq!(run_num("class C{ constructor(a,...b){} } C.length"), 1.0);
+}
+
+// 함수/메서드 length 는 ExpectedArgumentCount — 첫 기본값/rest 앞까지의 형식 매개변수 수.
+// 예전엔 params.len() 전체를 세서 f(a,b=1,c).length 가 3 이었다.
+#[test]
+fn function_length_expected_argument_count() {
+    assert_eq!(run_num("(function(a,b=1,c){}).length"), 1.0);
+    assert_eq!(run_num("(function(a,...b){}).length"), 1.0);
+    assert_eq!(run_num("((a,b,...r)=>{}).length"), 2.0);
+    assert_eq!(run_num("(function({a},b){}).length"), 2.0); // 구조분해는 센다
+    assert_eq!(run_num("(function({a}={},b){}).length"), 0.0); // 구조분해+기본값
+    assert_eq!(run_num("(function(a,b){}).length"), 2.0); // 무회귀
+    // 클래스 메서드/접근자
+    assert_eq!(run_num("class C{ m(a,b=1,c){} } C.prototype.m.length"), 1.0);
+    assert_eq!(run_num("class C{ set x(v){} } Object.getOwnPropertyDescriptor(C.prototype,'x').set.length"), 1.0);
 }
 
 // 내장 함수는 스펙상 name/length own 프로퍼티를 가진다 (§17). 예전엔 항상 ""/0.

@@ -2175,7 +2175,7 @@ impl Interp {
                             }
                             "name" if !materialized => Some(Value::Str(f.name.borrow().clone())),
                             "length" if !materialized => {
-                                Some(Value::Num(f.params.len() as f64))
+                                Some(Value::Num(Self::fn_expected_args(f)))
                             }
                             _ => f.props.borrow().get(&key).cloned(),
                         };

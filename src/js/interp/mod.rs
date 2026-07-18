@@ -5506,6 +5506,34 @@ impl Interp {
         }
     }
     // 내장/바운드 함수의 length. Bound 는 max(0, target.length - 바운드된 인자 수) (§10.4.1.3).
+    // ExpectedArgumentCount(§ FunctionDeclarationInstantiation): 첫 기본값/rest 파라미터
+    // 앞까지의 형식 매개변수 수. 기본값은 프롤로그의 `if (p === undefined)` 로, rest 는
+    // "...p" 로, 구조분해는 "__patN__" 로 desugar 되므로 params 와 프롤로그를 함께 본다.
+    fn expected_arg_count(params: &[String], prologue: &[Stmt]) -> f64 {
+        let mut count = 0usize;
+        for p in params {
+            if p.starts_with("...") {
+                break; // rest 및 그 뒤는 세지 않는다
+            }
+            let has_default = prologue.iter().any(|s| {
+                matches!(s, Stmt::If { cond: Expr::Binary { op: BinOp::EqEqEq, left, right }, .. }
+                    if matches!(&**left, Expr::Ident(n) if n == p)
+                        && matches!(&**right, Expr::Undefined))
+            });
+            if has_default {
+                break; // 기본값 있는 파라미터 및 그 뒤는 세지 않는다
+            }
+            count += 1;
+        }
+        count as f64
+    }
+
+    // JsFn 의 ExpectedArgumentCount (프롤로그는 body 앞 param_prologue_len 개 문장)
+    fn fn_expected_args(f: &JsFn) -> f64 {
+        let plen = f.param_prologue_len.min(f.body.len());
+        Self::expected_arg_count(&f.params, &f.body[..plen])
+    }
+
     fn native_fn_length(&self, v: &Value) -> f64 {
         match v {
             Value::Native(n) => natives::native_meta(n).map(|(_, l)| l as f64).unwrap_or(0.0),
@@ -5529,7 +5557,7 @@ impl Interp {
     fn fn_length_of(&self, v: &Value) -> f64 {
         match v {
             // getOwnPropertyDescriptor(Fn,"length") 와 같은 셈법 유지.
-            Value::Fn(f) => f.params.len() as f64,
+            Value::Fn(f) => Self::fn_expected_args(f),
             Value::Native(_) | Value::Bound(_) => self.native_fn_length(v),
             _ => 0.0,
         }
@@ -6531,8 +6559,8 @@ impl Interp {
                     && c.statics.borrow().get("length").is_none()
                     && c.find_static_getter("length").is_none()
                 {
-                    let n = c.ctor.as_ref().map(|f| f.params.len()).unwrap_or(0);
-                    return Ok(Value::Num(n as f64));
+                    let n = c.ctor.as_ref().map(|f| Self::fn_expected_args(f)).unwrap_or(0.0);
+                    return Ok(Value::Num(n));
                 }
                 // C.prototype — 클래스 메서드를 담은 객체 (상속 체인 포함).
                 // 예전엔 undefined 라, 프로토타입에서 메서드를 꺼내 특정 this 로 호출하는
@@ -6659,7 +6687,7 @@ impl Interp {
                         Ok(Value::Str(func.name.borrow().clone()))
                     }
                     "length" if !func.props.borrow().contains_key("\u{0}fndel:length") => {
-                        Ok(Value::Num(func.params.len() as f64))
+                        Ok(Value::Num(Self::fn_expected_args(func)))
                     }
                     // 함수도 toString 을 가진다 (번들이 fn.toString() 으로 소스 검사)
                     "toString" => Ok(Value::Native(Native::FnToString)),
@@ -7730,7 +7758,7 @@ impl Interp {
             *f.name.borrow_mut() = n.to_string();
             f
         };
-        let ctor = def.ctor.as_ref().map(|(p, b)| named(mk(p, b, false, false, None, 0), def.name.as_deref().unwrap_or("")));
+        let ctor = def.ctor.as_ref().map(|(p, b, plen)| named(mk(p, b, false, false, None, *plen), def.name.as_deref().unwrap_or("")));
         // 계산된 멤버 키([x](){}, get [k](){})는 클래스 정의 시 1회 평가해 실제 키로 쓴다.
         // computed 가 Some 이면 그 식을 평가한 값이 키, None 이면 정적 이름을 그대로 쓴다.
         let mut methods = HashMap::new();

@@ -78,7 +78,7 @@ pub enum PropKey {
 pub struct ClassDef {
     pub name: Option<String>,
     pub parent: Option<Box<Expr>>,
-    pub ctor: Option<(Vec<String>, Vec<Stmt>)>,
+    pub ctor: Option<(Vec<String>, Vec<Stmt>, usize)>,
     // (이름, 파라미터, 몸통, is_generator, is_async, 소스텍스트, prologue_len)
     // prologue_len: 몸통 앞 파라미터 구조분해/기본값 문장 수(제너레이터 메서드 호출 시 실행).
     pub methods: Vec<(String, Vec<String>, Vec<Stmt>, bool, bool, Option<std::rc::Rc<str>>, usize, Option<Expr>)>,
