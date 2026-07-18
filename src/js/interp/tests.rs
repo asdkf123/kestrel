@@ -1820,6 +1820,23 @@ fn proxy_traps_receive_symbol_keys() {
     );
 }
 
+// 프로토타입 체인에 프록시가 있으면 그 get 트랩을 거친다 + Object.create 가
+// 모든 객체형(Proxy/Fn/Instance) 프로토타입을 링크한다.
+#[test]
+fn proxy_in_prototype_chain_get() {
+    // Object.create(proxy) 의 프로토타입이 유지되고 get 트랩 경유
+    assert!(run_bool(
+        "var p=new Proxy({},{get:function(t,k){return k==='foo'?3:undefined;}}); \
+         var o=Object.create(p); Object.getPrototypeOf(o)===p && o.foo===3"
+    ));
+    // 없는 키는 undefined
+    assert!(run_bool(
+        "var p=new Proxy({},{get:function(){return undefined;}}); Object.create(p).bar===undefined"
+    ));
+    // Object.create 무회귀: 일반 객체 프로토타입
+    assert!(run_bool("var d=Object.create({x:5}); d.x===5 && Object.getPrototypeOf(d).x===5"));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

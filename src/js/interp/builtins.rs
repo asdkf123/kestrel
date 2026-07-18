@@ -2669,16 +2669,13 @@ impl Interp {
                 }
                 // proto 를 __proto__ 로 링크. Object.create(null) 은 __proto__ 를 **명시적
                 // Null** 로 저장한다(부재=기본 Object.prototype 과 구분) → getPrototypeOf 가 null,
-                // 상속 메서드 없음.
+                // 상속 메서드 없음. Proxy/Fn/Instance/Arr 등 모든 객체형 프로토타입도 링크한다
+                // (예전엔 Obj/Null 만 저장해 Object.create(proxy) 의 프로토타입이 유실됐다).
                 let mut map = ObjMap::new();
-                match &proto {
-                    Value::Obj(_) => {
-                        map.insert("__proto__".to_string(), proto.clone());
-                    }
-                    Value::Null => {
-                        map.insert("__proto__".to_string(), Value::Null);
-                    }
-                    _ => {}
+                if matches!(proto, Value::Null) {
+                    map.insert("__proto__".to_string(), Value::Null);
+                } else {
+                    map.insert("__proto__".to_string(), proto.clone());
                 }
                 let obj = Value::Obj(Rc::new(RefCell::new(map)));
                 // 2번째 인자(프로퍼티 서술자): defineProperties 에 위임 → get/set/속성 전부 반영.

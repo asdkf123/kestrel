@@ -5691,6 +5691,13 @@ impl Interp {
                     let v = self.member_get(&Value::Arr(a), key)?;
                     return Ok(if matches!(v, Value::Undefined) { None } else { Some(v) });
                 }
+                // 프로토타입이 프록시면 그 [[Get]](get 트랩)을 거친다 —
+                // Object.create(proxy).foo 처럼 프록시가 프로토타입 체인에 있을 때.
+                // 프록시에서 조회는 멈춘다(결과가 최종답).
+                Some(v @ Value::Proxy(_)) => {
+                    let r = self.member_get(&v, key)?;
+                    return Ok(if matches!(r, Value::Undefined) { None } else { Some(r) });
+                }
                 _ => break,
             }
         }
