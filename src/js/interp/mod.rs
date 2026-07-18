@@ -2257,21 +2257,31 @@ impl Interp {
 
     // Function(p1, p2, ..., body) 를 실제 함수로 컴파일. 마지막 인자가 본문,
     // 앞 인자들은 파라미터 이름(각각 콤마로 여러 개 가능). new/호출 공용.
-    fn make_function(&self, args: Vec<Value>) -> Result<Value, String> {
+    fn make_function(&mut self, args: Vec<Value>) -> Result<Value, String> {
+        // §20.2.1.1 CreateDynamicFunction: 각 인자 ToString(valueOf/toString 호출, Symbol
+        // TypeError). 마지막이 본문, 나머지가 파라미터 목록(쉼표 구분).
         let (body_src, param_args) = match args.split_last() {
-            Some((last, rest)) => (to_display(last), rest.to_vec()),
+            Some((last, rest)) => (self.to_string_value(last)?, rest.to_vec()),
             None => (String::new(), Vec::new()),
         };
         let mut params = Vec::new();
         for p in &param_args {
-            for name in to_display(p).split(',') {
+            let s = self.to_string_value(p)?;
+            for name in s.split(',') {
                 let name = name.trim();
                 if !name.is_empty() {
                     params.push(name.to_string());
                 }
             }
         }
-        let body = parse(&body_src).map_err(|e| format!("Function 본문 파싱 실패: {}", e))?;
+        // 본문 파싱 실패는 SyntaxError (§20.2.1.1.1) — 예전엔 일반 Error 라
+        // "e instanceof SyntaxError" 검사가 깨졌다.
+        let body = match parse(&body_src) {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(self.throw_error("SyntaxError", format!("Function body: {}", e)))
+            }
+        };
         Ok(Value::Fn(Rc::new(JsFn {
             priv_id: std::cell::Cell::new(0),
             name: RefCell::new("anonymous".to_string()),

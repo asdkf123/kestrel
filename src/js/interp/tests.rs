@@ -7196,3 +7196,15 @@ fn symbol_description_and_keyfor_coercion() {
     assert_eq!(run_str("Symbol.keyFor(Symbol.for('reg'))"), "reg");
     assert!(run_bool("Symbol.keyFor(Symbol())===undefined"));
 }
+
+#[test]
+fn function_constructor_params_and_syntaxerror() {
+    // §20.2.1.1: 여러 파라미터 + 본문, 인자 ToString, 본문 파싱 실패 SyntaxError.
+    assert_eq!(run_num("new Function('a','b','return a+b')(3,4)"), 7.0);
+    assert_eq!(run_num("new Function('a, b, c','return a*b*c')(2,3,4)"), 24.0);
+    assert_eq!(run_num("new Function('return 42')()"), 42.0);
+    assert_eq!(run_num("new Function({toString:function(){return 'return 7'}})()"), 7.0);
+    // 잘못된 본문 → SyntaxError.
+    assert!(run_bool("var t=false; try{ new Function('return {') }catch(e){ t=e instanceof SyntaxError } t"));
+    assert!(run_bool("var t=false; try{ new Function('if(') }catch(e){ t=e instanceof SyntaxError } t"));
+}
