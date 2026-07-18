@@ -2549,7 +2549,9 @@ impl Interp {
                     ));
                 }
                 // 원시값 target 은 [[SetPrototypeOf]] 없이 그대로 반환(§ step 4).
-                if matches!(target, Value::Obj(_) | Value::Fn(_)) {
+                // Proxy 도 객체이므로 [[SetPrototypeOf]](트랩)을 타야 한다 — 예전엔
+                // Obj/Fn 만 게이트해 프록시의 setPrototypeOf 가 조용히 무시됐다.
+                if matches!(target, Value::Obj(_) | Value::Fn(_) | Value::Proxy(_)) {
                     if !self.ordinary_set_prototype_of(&target, proto)? {
                         return Err(self.throw_error(
                             "TypeError",

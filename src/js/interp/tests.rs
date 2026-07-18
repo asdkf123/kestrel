@@ -1356,6 +1356,45 @@ fn proxy_get_prototype_of_trap() {
     ));
 }
 
+// Proxy setPrototypeOf 트랩 (§10.5.2). Object.setPrototypeOf 는 트랩이 false 면
+// TypeError, Reflect.setPrototypeOf 는 불리언을 그대로 돌려준다. non-extensible
+// 타깃이면 트랩이 true 라도 실제 프로토타입과 달라선 안 된다(invariant).
+#[test]
+fn proxy_set_prototype_of_trap() {
+    // 트랩 호출 + 성공 후 프로토타입 반영
+    assert!(run_bool(
+        "var np={}; var seen=null; \
+         var p=new Proxy({},{setPrototypeOf:function(t,v){seen=v;Object.setPrototypeOf(t,v);return true;}}); \
+         Object.setPrototypeOf(p,np); seen===np && Object.getPrototypeOf(p)===np"
+    ));
+    // 트랩 없으면 타깃에 위임
+    assert!(run_bool(
+        "var t={}; var np={}; var p=new Proxy(t,{}); Reflect.setPrototypeOf(p,np); \
+         Object.getPrototypeOf(t)===np"
+    ));
+    // Object.setPrototypeOf: 트랩 false → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{setPrototypeOf:function(){return false;}}); \
+         var t=false; try{ Object.setPrototypeOf(p,{}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // Reflect.setPrototypeOf: 트랩 false → false 반환(throw 안 함)
+    assert!(run_bool(
+        "var p=new Proxy({},{setPrototypeOf:function(){return false;}}); \
+         Reflect.setPrototypeOf(p,{})===false"
+    ));
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{setPrototypeOf:5}); \
+         var t=false; try{ Reflect.setPrototypeOf(p,{}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // non-extensible invariant: 트랩 true 지만 다른 proto → TypeError
+    assert!(run_bool(
+        "var t=Object.preventExtensions(Object.create(null)); \
+         var p=new Proxy(t,{setPrototypeOf:function(){return true;}}); \
+         var f=false; try{ Reflect.setPrototypeOf(p,{}) }catch(e){ f=e instanceof TypeError } f"
+    ));
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

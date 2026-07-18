@@ -2742,6 +2742,13 @@ impl Interp {
         target: &Value,
         proto: Value,
     ) -> Result<bool, String> {
+        // exotic: Proxy 는 ordinary 가 아니라 [[SetPrototypeOf]] 트랩을 탄다(§10.5.2).
+        // 예전엔 여기 step 6 의 match 가 Proxy 를 `_ => {}` 로 무시해 설정이 조용히
+        // 버려졌다(트랩도 안 불리고 타깃에도 안 씀).
+        if let Value::Proxy(p) = target {
+            let p = p.clone();
+            return self.proxy_set_prototype_of(&p, proto);
+        }
         // step 1-2: 현재 [[Prototype]] 과 SameValue 면 무변경 성공.
         let current = self.call_native(Native::ObjectGetPrototypeOf, None, vec![target.clone()])?;
         if same_value(&current, &proto) {
@@ -2778,6 +2785,41 @@ impl Interp {
                 f.props.borrow_mut().insert("__proto__".to_string(), proto);
             }
             _ => {}
+        }
+        Ok(true)
+    }
+
+    // §10.5.2 [[SetPrototypeOf]](V) — Proxy 의 setPrototypeOf 트랩.
+    fn proxy_set_prototype_of(
+        &mut self,
+        p: &Rc<(Value, Value)>,
+        proto: Value,
+    ) -> Result<bool, String> {
+        self.proxy_revoked_guard(p)?;
+        let (t, h) = (p.0.clone(), p.1.clone());
+        let trap = self.member_get(&h, "setPrototypeOf")?;
+        // GetMethod: undefined/null 이면 타깃에 위임, 존재하나 호출 불가면 TypeError.
+        if matches!(trap, Value::Undefined | Value::Null) {
+            return self.ordinary_set_prototype_of(&t, proto);
+        }
+        if !is_callable(&trap) {
+            return Err(self.throw_error("TypeError", "'setPrototypeOf' trap is not callable"));
+        }
+        let res = self.call_value(trap, Some(h), vec![t.clone(), proto.clone()])?;
+        // 트랩이 falsy 면 실패(false), truthy 면 계속.
+        if !to_bool(&res) {
+            return Ok(false);
+        }
+        // non-extensible 타깃이면 V 가 실제 프로토타입과 SameValue 여야 한다
+        // (트랩이 거짓 성공을 보고 못 함).
+        if self.is_nonextensible_val(&t) {
+            let target_proto = self.proto_of(&t)?;
+            if !same_value(&proto, &target_proto) {
+                return Err(self.throw_error(
+                    "TypeError",
+                    "'setPrototypeOf' on proxy: cannot change prototype of non-extensible target",
+                ));
+            }
         }
         Ok(true)
     }
