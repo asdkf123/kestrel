@@ -3129,6 +3129,13 @@ fn derived_constructor_must_call_super() {
          var e=new Err(); e.hasOwnProperty('message')===false && e.message==='custom'"
     ));
     assert!(run_bool("class A{} A.prototype.p='x'; class B extends A{} new B().p==='x'"));
+    // non-writable 로 defineProperty 한 인스턴스 필드는 대입이 무시된다(§10.1.9.1).
+    // 마커 없는 일반 필드는 그대로 쓰기 가능(무회귀).
+    assert!(run_bool(
+        "class C {} var c=new C(); Object.defineProperty(c,'x',{value:5,writable:false}); \
+         c.x=99; c.x===5"
+    ));
+    assert!(run_bool("class C {} var c=new C(); c.y=1; c.y=2; c.y===2"));
 }
 
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.

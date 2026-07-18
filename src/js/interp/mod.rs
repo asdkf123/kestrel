@@ -8644,11 +8644,24 @@ impl Interp {
                         if self.is_frozen_val(&iv) {
                             return Ok(());
                         }
+                        let plain = key.clone();
                         let key = field_key(&key, self.priv_id);
                         if !inst.fields.borrow().contains_key(&key)
                             && self.is_nonextensible_val(&iv)
                         {
                             return Ok(());
+                        }
+                        // 존재하는 필드가 non-writable(defineProperty 로 지정)이면 대입 무시
+                        // (§10.1.9.1 OrdinarySetWithOwnDescriptor). 마커 없는 일반 필드는
+                        // writable 기본이라 영향 없다.
+                        {
+                            let b = inst.fields.borrow();
+                            if b.contains_key(&key)
+                                && !is_private_name(&plain)
+                                && prop_attrs(&b, &plain) & ATTR_WRITABLE == 0
+                            {
+                                return Ok(());
+                            }
                         }
                         inst.fields.borrow_mut().insert(key, value);
                         Ok(())
