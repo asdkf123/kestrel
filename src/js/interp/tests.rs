@@ -6759,3 +6759,14 @@ fn typedarray_fill_relative_indices() {
     assert_eq!(prelude_str("var a=new Uint8Array([1,2,3,4]); a.fill(9,-2); Array.from(a).join()"), "1,2,9,9");
     assert_eq!(prelude_str("var a=new Uint8Array(3); a.fill(9); Array.from(a).join()"), "9,9,9");
 }
+
+#[test]
+fn typedarray_subarray_indexof() {
+    // subarray/indexOf: ToInteger 상대 인덱스, subarray 는 버퍼 공유, indexOf fromIndex.
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4]).subarray(1,3)).join()"), "2,3");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4]).subarray(-2)).join()"), "3,4");
+    assert_eq!(prelude_str("Array.from(new Uint8Array([1,2,3,4]).subarray({valueOf:function(){return 1;}})).join()"), "2,3,4");
+    assert_eq!(prelude_str("var a=new Uint8Array([1,2,3,4]); a.subarray(1,3)[0]=99; String(a[1])"), "99");
+    assert_eq!(prelude_num("new Uint8Array([5,6,5]).indexOf(5,1)"), 2.0);
+    assert_eq!(prelude_num("new Uint8Array([5,6,5]).indexOf(5,-1)"), 2.0);
+}
