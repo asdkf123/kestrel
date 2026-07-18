@@ -2515,6 +2515,16 @@ impl Interp {
                         return Ok(target);
                     }
                 }
+                // 클래스 인스턴스도 ordinary object — 공개 필드는 fields(ObjMap)에 표준
+                // 속성 강제로 정의한다(§10.1.6). private 이름은 프로퍼티가 아니라 제외.
+                // 예전엔 근사라 속성이 강제 안 돼 verifyProperty(재정의/삭제)가 깨졌다.
+                if let Value::Instance(inst) = &target {
+                    if !is_private_name(&key) {
+                        let ext = !self.is_nonextensible_val(&target);
+                        self.ordinary_define(&inst.fields, &key, &desc, ext)?;
+                        return Ok(target);
+                    }
+                }
                 // ── 근사 경로 (표준 강제 없음) ──
                 let d = if let Value::Obj(d) = &desc { d.borrow() } else {
                     return Ok(target);

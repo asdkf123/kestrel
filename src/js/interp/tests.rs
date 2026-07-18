@@ -3115,6 +3115,20 @@ fn derived_constructor_must_call_super() {
         "class C { constructor(){ this.a=1; } } \
          Object.getOwnPropertyDescriptor(new C(),'a').enumerable===true"
     ));
+    // 인스턴스에 defineProperty 로 속성 강제(non-configurable 재정의 거부·delete 거부)
+    assert!(run_bool(
+        "class C {} var c=new C(); Object.defineProperty(c,'x',{value:5,configurable:false}); \
+         var t=false; try{ Object.defineProperty(c,'x',{value:1,configurable:true}) }catch(e){ t=e instanceof TypeError } \
+         t && (delete c.x)===false && c.x===5"
+    ));
+    // 클래스 prototype 에 동적으로 얹은 데이터 프로퍼티를 인스턴스가 상속한다
+    // (C.prototype.x=v → instance.x). extends Error 의 prototype.message 도.
+    assert!(run_bool("class A { m(){return 1;} } A.prototype.d='hi'; new A().d==='hi'"));
+    assert!(run_bool(
+        "class Err extends Error {} Err.prototype.message='custom'; \
+         var e=new Err(); e.hasOwnProperty('message')===false && e.message==='custom'"
+    ));
+    assert!(run_bool("class A{} A.prototype.p='x'; class B extends A{} new B().p==='x'"));
 }
 
 // RegExp \p{...} 유니코드 속성 이스케이프 (§, u 플래그). UCD 실제 데이터로 매칭.

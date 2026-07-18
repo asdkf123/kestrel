@@ -6419,6 +6419,31 @@ impl Interp {
                 if let Some(m) = inst.class.find_method(key) {
                     return Ok(Value::Fn(m));
                 }
+                // 클래스 prototype 에 **동적으로 얹은** 데이터 프로퍼티/접근자
+                // (C.prototype.x = v). 클래스 체인의 각 prototype(proto_cache) own 을
+                // 본다 — 예전엔 find_method(메서드만) 후 곧장 부모 네이티브 prototype 으로
+                // 점프해, Err.prototype.message='custom' 같은 상속 데이터가 무시됐다.
+                {
+                    let mut cur = Some(inst.class.clone());
+                    while let Some(cls) = cur {
+                        let cached = cls.proto_cache.borrow().clone();
+                        if let Some(Value::Obj(pm)) = cached {
+                            let v = pm.borrow().get(key).cloned();
+                            if let Some(v) = v {
+                                return match v {
+                                    Value::Accessor(acc) => match &acc.get {
+                                        Some(g) => {
+                                            self.call_value(g.clone(), Some(recv.clone()), vec![])
+                                        }
+                                        None => Ok(Value::Undefined),
+                                    },
+                                    other => Ok(other),
+                                };
+                            }
+                        }
+                        cur = cls.parent.clone();
+                    }
+                }
                 // 클래스가 아닌 부모를 확장했으면(extends Error/함수) 그 prototype 에서 찾는다.
                 if let Some(pc) = inst.class.find_parent_ctor() {
                     let proto = self.member_get(&pc, "prototype")?;
