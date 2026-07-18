@@ -4887,6 +4887,30 @@ fn iterator_helpers() {
         "var a=Iterator.zipKeyed({a:[1,2],b:[10,20]}).toArray(); \
          a.length===2 && a[0].a===1 && a[0].b===10 && a[1].a===2 && a[1].b===20"
     ));
+    // Iterator.from: WrapForValidIterator (§27.1.2.1)
+    // @@iterator 없는 객체는 O 자신을 iterator 로(빈 객체도 래핑, return()={undefined,true})
+    assert!(prelude_bool("var w=Iterator.from({}); var r=w['return'](); r.value===undefined && r.done===true"));
+    assert_eq!(
+        prelude_str("var c=0; var o={next:function(){return c<3?{value:c++,done:false}:{value:undefined,done:true};}}; \
+                     Iterator.from(o).toArray().join(',')"),
+        "0,1,2"
+    );
+    assert_eq!(prelude_str("Iterator.from('abc').toArray().join(',')"), "a,b,c");
+    assert!(prelude_bool("Iterator.from.name==='from'"));
+    assert!(prelude_bool("var e=false; for(var k in Iterator){if(k==='from')e=true;} e===false"));
+    // return 은 밑 iterator 의 return 으로 위임
+    assert!(prelude_bool(
+        "var closed=false; var it={next:function(){return{value:1,done:false};},'return':function(){closed=true;return{value:42,done:true};}}; \
+         var r=Iterator.from(it)['return'](); closed && r.value===42"
+    ));
+    // 원시값 → TypeError
+    assert!(prelude_bool("var t=false; try{ Iterator.from(5) }catch(e){ t=e instanceof TypeError } t"));
+    // 인자검증 실패가 밑 이터레이터를 닫는다 (§27.1.4)
+    assert!(prelude_bool(
+        "var closed=false; var it=Object.assign(Object.create(Iterator.prototype),\
+         {next:function(){return{value:1,done:false};},'return':function(){closed=true;return{};}}); \
+         try{ it.map(5) }catch(e){} closed"
+    ));
 }
 
 // Explicit Resource Management (§): Symbol.dispose + DisposableStack + SuppressedError.

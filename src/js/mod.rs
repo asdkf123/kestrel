@@ -2700,18 +2700,38 @@ if (!window.Iterator) {
   function Iterator(){ if (new.target === undefined || new.target === Iterator) throw new TypeError('Abstract class Iterator not directly constructable'); }
   Iterator.prototype = __kIterProto;
   Object.defineProperty(__kIterProto, 'constructor', { value: Iterator, writable: true, enumerable: false, configurable: true });
-  // Iterator.from(§27.1.2.1): iterable 이면 @@iterator 로, 이미 iterator 면 그 next 로.
-  // 밑 iterator 를 제너레이터로 감싸 __kIterProto 헬퍼를 부여한다(WrapForValidIterator 근사).
-  Iterator.from = function(O){
-    var it;
-    if (typeof O === 'string' || (O !== null && (typeof O === 'object' || typeof O === 'function'))) {
-      var m = O[Symbol.iterator];
-      if (typeof m === 'function') { it = m.call(O); __kIterRecv(it); }
-      else if (typeof O.next === 'function') { it = O; }
-      else throw new TypeError('Iterator.from called on non-iterable');
-    } else throw new TypeError('Iterator.from called on non-iterable');
-    return (function*(){ while(true){ var r=it.next(); if(r.done) return r.value; yield r.value; } })();
-  };
+  // Iterator.from(§27.1.2.1): GetIteratorFlattenable(O, iterate-strings) → 이미
+  // Iterator 인스턴스면 그대로, 아니면 WrapForValidIterator(next/return 을 밑
+  // iterator 로 위임하는 %Iterator.prototype% 상속 래퍼)로 감싼다.
+  Object.defineProperty(Iterator, 'from', {
+    value: function from(O){
+      var iter;
+      if (typeof O === 'string') { iter = O[Symbol.iterator](); }
+      else if (O !== null && (typeof O === 'object' || typeof O === 'function')) {
+        var m = O[Symbol.iterator];
+        if (m === undefined || m === null) { iter = O; } // @@iterator 없으면 O 자신이 iterator
+        else {
+          if (typeof m !== 'function') throw new TypeError('Iterator.from: @@iterator is not callable');
+          iter = m.call(O);
+          if (iter === null || typeof iter !== 'object') throw new TypeError('Iterator.from: iterator is not an object');
+        }
+      } else throw new TypeError('Iterator.from called on non-iterable');
+      // 이미 %Iterator.prototype% 를 상속하면 그대로 반환(§27.1.2.1 step 3-4).
+      if (iter instanceof Iterator) return iter;
+      // GetIteratorDirect: next 를 한 번만 읽어 캐시. WrapForValidIterator.
+      var nx = iter.next;
+      var wrap = Object.create(Iterator.prototype);
+      Object.defineProperty(wrap, 'next', { value: function(){ return nx.call(iter); }, writable: true, enumerable: false, configurable: true });
+      Object.defineProperty(wrap, 'return', { value: function(){
+        var rm = iter['return'];
+        if (rm === undefined || rm === null) return { value: undefined, done: true };
+        if (typeof rm !== 'function') throw new TypeError('Iterator.from: return is not callable');
+        return rm.call(iter);
+      }, writable: true, enumerable: false, configurable: true });
+      return wrap;
+    },
+    writable: true, enumerable: false, configurable: true
+  });
   // Iterator.concat(...items) — Iterator Sequencing 제안. 각 인자의 @@iterator 를
   // 순서대로(GetMethod) 검증한 뒤, 각 이터러블을 지연 오픈하며 값을 이어붙이는
   // 제너레이터를 돌려준다. 조기 return 은 현재 inner iterator 의 return 으로 전달.
