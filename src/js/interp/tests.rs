@@ -1585,6 +1585,56 @@ fn proxy_own_keys_trap() {
     ));
 }
 
+// Proxy defineProperty 트랩 (§10.5.6): 트랩이 true 를 보고해도 타깃과 정합하지
+// 않으면 TypeError(non-extensible 에 추가, non-configurable 재정의, 값/속성 위조).
+#[test]
+fn proxy_define_property_trap_invariants() {
+    // non-callable 트랩 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{defineProperty:5}); \
+         var t=false; try{ Object.defineProperty(p,'x',{value:1}) }catch(e){ t=e instanceof TypeError } t"
+    ));
+    // targetDesc 없음 + non-extensible → TypeError
+    assert!(run_bool(
+        "var t={}; Object.preventExtensions(t); var p=new Proxy(t,{defineProperty:function(){return true;}}); \
+         var f=false; try{ Object.defineProperty(p,'x',{value:1}) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // targetDesc 없음 + configurable:false 보고 → TypeError
+    assert!(run_bool(
+        "var p=new Proxy({},{defineProperty:function(){return true;}}); \
+         var f=false; try{ Object.defineProperty(p,'x',{value:1,configurable:false}) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // target configurable, desc non-configurable → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,configurable:true}); \
+         var p=new Proxy(t,{defineProperty:function(){return true;}}); \
+         var f=false; try{ Object.defineProperty(p,'x',{value:1,configurable:false}) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // incompatible: non-config non-writable 값 변경 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'foo',{value:1}); \
+         var p=new Proxy(t,{defineProperty:function(){return true;}}); \
+         var f=false; try{ Object.defineProperty(p,'foo',{value:2}) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // non-config writable 를 writable:false 로 보고 → TypeError
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{value:1,writable:true,configurable:false}); \
+         var p=new Proxy(t,{defineProperty:function(){return true;}}); \
+         var f=false; try{ Object.defineProperty(p,'x',{value:1,writable:false}) }catch(e){ f=e instanceof TypeError } f"
+    ));
+    // 정상: configurable 타깃 자유 재정의 / 트랩 없으면 위임
+    assert_eq!(
+        run_num("var t={}; Object.defineProperty(t,'x',{value:1,configurable:true,writable:true}); \
+                 var p=new Proxy(t,{defineProperty:function(a,k,d){Object.defineProperty(a,k,d);return true;}}); \
+                 Object.defineProperty(p,'x',{value:9}); t.x"),
+        9.0
+    );
+    assert_eq!(
+        run_num("var t={}; var p=new Proxy(t,{}); Object.defineProperty(p,'y',{value:7,configurable:true}); t.y"),
+        7.0
+    );
+}
+
 #[test]
 fn document_fragment_moves_children() {
     let mut dom = crate::html::parse_dom("<ul id=\"list\"></ul>".to_string());

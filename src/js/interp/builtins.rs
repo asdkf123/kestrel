@@ -2341,25 +2341,121 @@ impl Interp {
                     self.proxy_revoked_guard(p)?;
                     let (t, h) = (p.0.clone(), p.1.clone());
                     let trap = self.member_get(&h, "defineProperty")?;
-                    if is_callable(&trap) {
-                        let ok = self.call_value(
-                            trap,
-                            Some(h),
+                    // GetMethod: undefined/null → 위임, non-callable → TypeError.
+                    if matches!(trap, Value::Undefined | Value::Null) {
+                        return self.call_native(
+                            Native::ObjectDefineProperty,
+                            None,
                             vec![t, Value::Str(key), desc],
-                        )?;
-                        if !to_bool(&ok) {
-                            return Err(self.throw_error(
-                                "TypeError",
-                                "'defineProperty' on proxy: trap returned falsish for property",
-                            ));
+                        );
+                    }
+                    if !is_callable(&trap) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "'defineProperty' trap is not callable",
+                        ));
+                    }
+                    let ok = self.call_value(
+                        trap,
+                        Some(h),
+                        vec![t.clone(), Value::Str(key.clone()), desc.clone()],
+                    )?;
+                    if !to_bool(&ok) {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "'defineProperty' on proxy: trap returned falsish for property",
+                        ));
+                    }
+                    // §10.5.6 invariant: 트랩이 true 를 보고한 뒤 타깃과의 정합성 검증.
+                    let target_desc = self.call_native(
+                        Native::ObjectGetOwnPropertyDescriptor,
+                        None,
+                        vec![t.clone(), Value::Str(key.clone())],
+                    )?;
+                    let extensible = self.value_is_extensible(&t)?;
+                    // Desc 필드(ToPropertyDescriptor 의미: HasProperty + Get).
+                    let d_has_conf = self.has_property(&desc, "configurable");
+                    let d_conf = d_has_conf && to_bool(&self.member_get(&desc, "configurable")?);
+                    let setting_config_false = d_has_conf && !d_conf;
+                    if matches!(target_desc, Value::Undefined) {
+                        if !extensible {
+                            return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot add property to a non-extensible target"));
+                        }
+                        if setting_config_false {
+                            return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot define non-configurable property that is absent on target"));
                         }
                         return Ok(target);
                     }
-                    return self.call_native(
-                        Native::ObjectDefineProperty,
-                        None,
-                        vec![t, Value::Str(key), desc],
-                    );
+                    // targetDesc 필드(gOPD 결과 Obj 직접 조회).
+                    let (td_conf, td_enum, td_writable, td_is_accessor, td_value, td_get, td_set) =
+                        if let Value::Obj(m) = &target_desc {
+                            let b = m.borrow();
+                            let is_acc = b.contains_key("get") || b.contains_key("set");
+                            (
+                                matches!(b.get("configurable"), Some(v) if to_bool(v)),
+                                matches!(b.get("enumerable"), Some(v) if to_bool(v)),
+                                matches!(b.get("writable"), Some(v) if to_bool(v)),
+                                is_acc,
+                                b.get("value").cloned().unwrap_or(Value::Undefined),
+                                b.get("get").cloned().unwrap_or(Value::Undefined),
+                                b.get("set").cloned().unwrap_or(Value::Undefined),
+                            )
+                        } else {
+                            (true, false, false, false, Value::Undefined, Value::Undefined, Value::Undefined)
+                        };
+                    let d_has_enum = self.has_property(&desc, "enumerable");
+                    let d_enum = d_has_enum && to_bool(&self.member_get(&desc, "enumerable")?);
+                    let d_has_writable = self.has_property(&desc, "writable");
+                    let d_writable = d_has_writable && to_bool(&self.member_get(&desc, "writable")?);
+                    let d_has_value = self.has_property(&desc, "value");
+                    let d_value = if d_has_value { self.member_get(&desc, "value")? } else { Value::Undefined };
+                    let d_has_get = self.has_property(&desc, "get");
+                    let d_get = if d_has_get { self.member_get(&desc, "get")? } else { Value::Undefined };
+                    let d_has_set = self.has_property(&desc, "set");
+                    let d_set = if d_has_set { self.member_get(&desc, "set")? } else { Value::Undefined };
+                    // (15.b) configurable:false 를 보고하는데 타깃은 configurable → 무효.
+                    if setting_config_false && td_conf {
+                        return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot report a configurable target property as non-configurable"));
+                    }
+                    // (15.a) IsCompatiblePropertyDescriptor — non-configurable 타깃만 실질 제약.
+                    if !td_conf {
+                        if d_has_conf && d_conf {
+                            return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot make a non-configurable target property configurable"));
+                        }
+                        if d_has_enum && d_enum != td_enum {
+                            return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot change enumerability of a non-configurable target property"));
+                        }
+                        if td_is_accessor {
+                            // 접근자 → 데이터로 못 바꾸고, get/set 도 못 바꿈.
+                            if d_has_value || d_has_writable {
+                                return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot convert a non-configurable accessor to a data property"));
+                            }
+                            if d_has_get && !same_value(&d_get, &td_get) {
+                                return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot change getter of a non-configurable property"));
+                            }
+                            if d_has_set && !same_value(&d_set, &td_set) {
+                                return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot change setter of a non-configurable property"));
+                            }
+                        } else {
+                            // 데이터 → 접근자로 못 바꿈.
+                            if d_has_get || d_has_set {
+                                return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot convert a non-configurable data property to an accessor"));
+                            }
+                            if !td_writable {
+                                if d_has_writable && d_writable {
+                                    return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot make a non-writable non-configurable property writable"));
+                                }
+                                if d_has_value && !same_value(&d_value, &td_value) {
+                                    return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot change the value of a non-writable non-configurable property"));
+                                }
+                            }
+                        }
+                    }
+                    // (15.c) 데이터+non-configurable+writable 인데 writable:false 보고 → 무효.
+                    if !td_conf && !td_is_accessor && td_writable && d_has_writable && !d_writable {
+                        return Err(self.throw_error("TypeError", "'defineProperty' on proxy: cannot report a writable non-configurable property as non-writable"));
+                    }
+                    return Ok(target);
                 }
                 // Value::Obj 는 표준 OrdinaryDefineOwnProperty (§10.1.6) 로 처리한다.
                 // 그 외 대상(Instance/Arr/Class)은 속성 강제 없이 값만 넣는 근사 유지.
