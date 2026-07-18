@@ -724,6 +724,15 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         RegExpEscape => ("escape", 1),
         RegexExec => ("exec", 1),
         RegexTest => ("test", 1),
+        // RegExp.prototype[@@match/@@replace/@@split/@@search/@@matchAll] (§22.2.6).
+        RegexSym(op) => match op {
+            StrOp::Match => ("[Symbol.match]", 1),
+            StrOp::MatchAll => ("[Symbol.matchAll]", 1),
+            StrOp::Replace => ("[Symbol.replace]", 2),
+            StrOp::Search => ("[Symbol.search]", 1),
+            StrOp::Split => ("[Symbol.split]", 2),
+            _ => ("[Symbol.match]", 1),
+        },
         MapCtor => ("Map", 0),
         SetCtor => ("Set", 0),
         DateCtor => ("Date", 7),

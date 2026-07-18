@@ -7358,3 +7358,17 @@ fn regex_source_and_flag_getter_brand() {
     let gg = "var gg=Object.getOwnPropertyDescriptor(RegExp.prototype,'global').get; ";
     assert!(run_bool(&format!("{}var t=false; try{{ gg.call({{}}) }}catch(e){{ t=e instanceof TypeError }} t", gg)));
 }
+
+#[test]
+fn regex_symbol_method_metadata() {
+    // §22.2.6: RegExp.prototype[@@match/@@replace/@@split/@@search/@@matchAll] name/length.
+    assert_eq!(run_str("RegExp.prototype[Symbol.search].name"), "[Symbol.search]");
+    assert_eq!(run_num("RegExp.prototype[Symbol.search].length"), 1.0);
+    assert_eq!(run_str("RegExp.prototype[Symbol.replace].name"), "[Symbol.replace]");
+    assert_eq!(run_num("RegExp.prototype[Symbol.replace].length"), 2.0);
+    assert_eq!(run_num("RegExp.prototype[Symbol.match].length"), 1.0);
+    assert_eq!(run_num("RegExp.prototype[Symbol.split].length"), 2.0);
+    // 동작 보존.
+    assert_eq!(run_num("'hello'.search(/l/)"), 2.0);
+    assert_eq!(run_str("JSON.stringify('a1b2'.match(/\\d/g))"), "[\"1\",\"2\"]");
+}
