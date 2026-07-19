@@ -5916,6 +5916,21 @@ impl Interp {
                 collect_elements(dom, root, scope.is_some(), &query, by_class, &mut out);
                 Ok(Value::Arr(ArrayObj::new(out)))
             }
+            // getElementsByTagNameNS(namespace, localName) — §4.5. "*" 는 와일드카드,
+            // 빈 네임스페이스는 null(네임스페이스 없음)로 취급. localName 은 대소문자 구분.
+            Native::GetElementsByTagNS => {
+                let scope = match &recv {
+                    Some(Value::Dom(id)) => Some(*id),
+                    _ => None,
+                };
+                let ns = args.first().map(to_display).unwrap_or_default();
+                let local = args.get(1).map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                let root = scope.unwrap_or(dom.root);
+                let mut out = Vec::new();
+                collect_elements_ns(dom, root, scope.is_some(), &ns, &local, &mut out);
+                Ok(Value::Arr(ArrayObj::new(out)))
+            }
             Native::EventPreventDefault => {
                 if let Some(Value::Obj(o)) = &recv {
                     // passive 리스너 안에서의 preventDefault 는 무효(§DOM 2.8). cancelable

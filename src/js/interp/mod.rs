@@ -625,6 +625,7 @@ impl Interp {
         document
             .insert("getElementsByClassName".to_string(), Value::Native(Native::GetElementsByClass));
         document.insert("getElementsByTagName".to_string(), Value::Native(Native::GetElementsByTag));
+        document.insert("getElementsByTagNameNS".to_string(), Value::Native(Native::GetElementsByTagNS));
         // 라이브 접근자: document.body/head/documentElement → DOM 요소 핸들
         let live = |tag| Value::Accessor(AccessorPair::getter(Value::Native(Native::DocQuery(tag))));
         document.insert("body".to_string(), live("body"));
@@ -7156,6 +7157,7 @@ impl Interp {
                     "querySelectorAll" => Some(Native::QuerySelectorAll),
                     "getElementsByClassName" => Some(Native::GetElementsByClass),
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
+                    "getElementsByTagNameNS" => Some(Native::GetElementsByTagNS),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "scrollIntoView" => Some(Native::ScrollIntoView),
                     "click" => Some(Native::ElementClick),

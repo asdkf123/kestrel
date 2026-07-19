@@ -452,6 +452,35 @@ pub(super) fn collect_elements(
     }
 }
 
+// getElementsByTagNameNS(namespace, localName) 의 서브트리 수집(§4.5). "*" 와일드카드,
+// 빈 네임스페이스는 null 로 취급(네임스페이스 없는 요소 매칭). localName 은 대소문자 구분.
+pub(super) fn collect_elements_ns(
+    dom: &crate::dom::Dom,
+    id: crate::dom::NodeId,
+    skip_self: bool,
+    ns: &str,
+    local: &str,
+    out: &mut Vec<Value>,
+) {
+    if !skip_self {
+        if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+            let ns_ok = ns == "*" || {
+                // 빈 문자열은 null 네임스페이스 → 우리 표현엔 null 네임스페이스 요소가
+                // 없으므로(HTML 기본), 그 외엔 namespaceURI 문자열과 정확 비교.
+                let el_ns = e.ns();
+                (ns.is_empty() && el_ns.is_empty()) || el_ns == ns
+            };
+            let local_ok = local == "*" || e.local_name() == local;
+            if ns_ok && local_ok {
+                out.push(Value::Dom(id));
+            }
+        }
+    }
+    for &c in &dom.get(id).children {
+        collect_elements_ns(dom, c, false, ns, local, out);
+    }
+}
+
 // epoch millis → (year, month[1-12], day, hours, min, sec, ms, weekday[0=일])
 // UTC 기준 (타임존 미구현). Howard Hinnant 의 civil_from_days 알고리즘.
 pub(super) fn date_parts(millis: f64) -> (i64, u32, u32, u32, u32, u32, u32, u32) {
