@@ -8001,13 +8001,22 @@ impl Interp {
                         let mut out_holes = std::collections::HashSet::new();
                         for item in all {
                             if self.is_concat_spreadable(&item)? {
-                                let len = match &item {
-                                    Value::Arr(b) => b.borrow().len(),
+                                let len_f = match &item {
+                                    Value::Arr(b) => b.borrow().len() as f64,
                                     _ => {
                                         let lv = self.member_get(&item, "length")?;
-                                        to_length(self.to_number_value(&lv)?) as usize
+                                        to_length(self.to_number_value(&lv)?)
                                     }
                                 };
+                                // §23.1.3.1 step iii: n + len > 2^53-1 → TypeError. 초거대 length
+                                // 를 그대로 펼치면 Vec 이 OOM(패닉)하므로 스펙대로 먼저 던진다.
+                                if out.len() as f64 + len_f > 9007199254740991.0 {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Array length exceeds the maximum safe integer",
+                                    ));
+                                }
+                                let len = len_f as usize;
                                 for k in 0..len {
                                     let key = k.to_string();
                                     if self.has_property(&item, &key) {
