@@ -4994,6 +4994,20 @@ impl Interp {
         Ok(())
     }
 
+    // §7.2.2 IsArray — Array exotic 이면 true, Proxy 면 타깃으로 재귀(revoked 는 TypeError),
+    // 그 밖엔 false. Array.isArray / JSON.stringify / concat 등이 프록시-of-배열을 인식한다.
+    pub(super) fn is_array(&mut self, v: &Value) -> Result<bool, String> {
+        match v {
+            Value::Arr(_) => Ok(true),
+            Value::Proxy(p) => {
+                let p = p.clone();
+                self.proxy_revoked_guard(&p)?;
+                self.is_array(&p.0)
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub(super) fn is_frozen_val(&self, v: &Value) -> bool {
         self.integrity_bits(v) & INTEG_FROZEN != 0
     }

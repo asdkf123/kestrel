@@ -3347,6 +3347,11 @@ fn more_array_string_methods() {
         ),
         "a,b,sym"
     );
+    // IsArray 는 Proxy-of-배열도 인식하고, JSON.stringify 는 프록시를 트랩 경유로 직렬화한다.
+    assert!(run_bool("Array.isArray(new Proxy([1,2],{}))"));
+    assert!(!run_bool("Array.isArray(new Proxy({},{}))"));
+    assert_eq!(run_str("JSON.stringify(new Proxy([1,2],{}))"), "[1,2]");
+    assert_eq!(run_str("JSON.stringify(new Proxy({a:1},{}))"), "{\"a\":1}");
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

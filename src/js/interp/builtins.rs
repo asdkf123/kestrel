@@ -798,10 +798,50 @@ impl Interp {
             | Value::Style(_)
             | Value::Dataset(_)
             | Value::ClassList(_)
-            | Value::Proxy(_)
             | Value::Gen(_)
             | Value::Symbol(_)
             | Value::ComputedStyle(_) => None,
+            // §25.5.2.2: Proxy 는 IsArray(타깃)에 따라 배열/객체로 직렬화하며, 길이·키·값을
+            // 모두 트랩(get/ownKeys/gOPD)으로 읽는다. revoked proxy 는 그 트랩이 TypeError.
+            Value::Proxy(_) => {
+                if self.is_array(v)? {
+                    let len_v = self.member_get(v, "length")?;
+                    let len = to_length(self.to_number_value(&len_v)?);
+                    let mut parts = Vec::with_capacity((len as usize).min(4096));
+                    let mut i: u64 = 0;
+                    while (i as f64) < len {
+                        let item = self.member_get(v, &i.to_string())?;
+                        let s = self
+                            .json_ser(&item, &i.to_string(), v, fnrep, keys, indent, depth + 1, path)?
+                            .unwrap_or_else(|| "null".to_string());
+                        parts.push(s);
+                        i += 1;
+                    }
+                    Some(wrap(parts, '[', ']'))
+                } else {
+                    let key_list: Vec<String> = match keys {
+                        Some(ks) => ks.clone(),
+                        None => self
+                            .enumerable_own_live(v, true, false)?
+                            .into_iter()
+                            .filter_map(|k| match k {
+                                Value::Str(s) => Some(s),
+                                _ => None,
+                            })
+                            .collect(),
+                    };
+                    let mut parts = Vec::new();
+                    for k in &key_list {
+                        let val = self.member_get(v, k)?;
+                        if let Some(s) =
+                            self.json_ser(&val, k, v, fnrep, keys, indent, depth + 1, path)?
+                        {
+                            parts.push(format!("{}{}{}", json_quote_pub(k), colon, s));
+                        }
+                    }
+                    Some(wrap(parts, '{', '}'))
+                }
+            }
             | Value::BigInt(_) => None, // 위에서 TypeError 로 처리됨
             Value::Null => Some("null".to_string()),
             Value::Bool(b) => Some(b.to_string()),
@@ -9331,7 +9371,9 @@ impl Interp {
                 Ok(target)
             }
             Native::ArrayIsArray => {
-                Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
+                // §23.1.2.2 = IsArray: Proxy-of-배열도 true, revoked proxy 는 TypeError.
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                Ok(Value::Bool(self.is_array(&v)?))
             }
             Native::ArrayOf => {
                 // §23.1.2.3: C = this. IsConstructor(C) 면 Construct(C, [len]) 로 만들고
