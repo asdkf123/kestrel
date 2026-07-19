@@ -3247,6 +3247,22 @@ fn more_array_string_methods() {
     assert!(run_bool(
         "[].includes(1,{valueOf:function(){throw new Error('x');}})===false"
     ));
+    // Object.prototype 에 얹은 상속 접근자는 일반 객체 접근 시 getter(this=recv)를 호출한다.
+    assert_eq!(
+        run_num(
+            "Object.defineProperty(Object.prototype,'q',{get:function(){return 7;},configurable:true}); \
+             var v={}.q; delete Object.prototype.q; v"
+        ),
+        7.0
+    );
+    // 그 결과로 indexOf 가 상속 인덱스를 [[Get]] 로 찾는다.
+    assert_eq!(
+        run_num(
+            "Object.defineProperty(Object.prototype,'0',{get:function(){return 10;},configurable:true}); \
+             var r=Array.prototype.indexOf.call({length:1},10); delete Object.prototype['0']; r"
+        ),
+        0.0
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

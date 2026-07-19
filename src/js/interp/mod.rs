@@ -5681,6 +5681,21 @@ impl Interp {
         }
     }
 
+    // Object.prototype 상속분 [[Get]] — 명시 __proto__ 링크가 없는 일반 객체/인스턴스가
+    // Object.prototype 에서 상속하는 프로퍼티를 읽는다. 사용자가 defineProperty 로 얹은
+    // 접근자면 getter(this=recv)를 호출한다(예전엔 raw Accessor 를 그대로 반환해
+    // obj[k] 가 [accessor] 로 새던 것 — §10.1.8.1 OrdinaryGet 은 접근자를 호출한다).
+    fn object_proto_get(&mut self, key: &str, recv: &Value) -> Result<Value, String> {
+        match self.proto_method("Object", key) {
+            Some(Value::Accessor(acc)) => match &acc.get {
+                Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                None => Ok(Value::Undefined),
+            },
+            Some(other) => Ok(other),
+            None => Ok(Value::Undefined),
+        }
+    }
+
     fn proto_method(&self, ctor: &str, key: &str) -> Option<Value> {
         let ns = env_get(&self.global, ctor)?;
         let proto = match &ns {
@@ -6318,10 +6333,10 @@ impl Interp {
                                 }
                             }
                             // Date.prototype 에 없으면 Object.prototype 폴백 (hasOwnProperty 등).
-                            Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined))
+                            self.object_proto_get(key, recv)
                         }
                         // Object.prototype 폴백 — 인스턴스 객체도 valueOf/toString/hasOwnProperty 등
-                        _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),
+                        _ => self.object_proto_get(key, recv),
                         }
                     }
                 }
@@ -6728,7 +6743,7 @@ impl Interp {
                 match key {
                     "hasOwnProperty" => Ok(Value::Native(Native::HasOwnProperty)),
                     "propertyIsEnumerable" => Ok(Value::Native(Native::PropertyIsEnumerable)),
-                    _ => Ok(self.proto_method("Object", key).unwrap_or(Value::Undefined)),
+                    _ => self.object_proto_get(key, recv),
                 }
             }
             Value::Class(c) => {
