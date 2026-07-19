@@ -646,6 +646,31 @@ impl Interp {
         // 문서를 검증하는데, 없으면 조기 반환해 로컬 document 가 undefined 로 남고
         // 이후 document.createElement 가 죽는다 → jQuery 전체가 못 뜬다.
         document.insert("nodeType".to_string(), Value::Num(9.0));
+        // document 도 Node — 인터페이스 상수를 상속한다(document.DOCUMENT_NODE 등).
+        for k in [
+            "ELEMENT_NODE",
+            "ATTRIBUTE_NODE",
+            "TEXT_NODE",
+            "CDATA_SECTION_NODE",
+            "ENTITY_REFERENCE_NODE",
+            "ENTITY_NODE",
+            "PROCESSING_INSTRUCTION_NODE",
+            "COMMENT_NODE",
+            "DOCUMENT_NODE",
+            "DOCUMENT_TYPE_NODE",
+            "DOCUMENT_FRAGMENT_NODE",
+            "NOTATION_NODE",
+            "DOCUMENT_POSITION_DISCONNECTED",
+            "DOCUMENT_POSITION_PRECEDING",
+            "DOCUMENT_POSITION_FOLLOWING",
+            "DOCUMENT_POSITION_CONTAINS",
+            "DOCUMENT_POSITION_CONTAINED_BY",
+            "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC",
+        ] {
+            if let Some(v) = crate::js::interp::dom_api::node_constant(k) {
+                document.insert(k.to_string(), Value::Num(v));
+            }
+        }
         // document.implementation.createHTMLDocument — jQuery 가 이걸로 분리 문서를
         // 만들어 feature test 를 한다(support.createHTMLDocument).
         let mut implementation = ObjMap::new();
@@ -889,22 +914,29 @@ impl Interp {
         env_declare(&global, "Symbol", Value::Native(Native::SymbolCtor));
         // Node — 노드 타입/문서 위치 상수 (jQuery 등이 Node.ELEMENT_NODE 를 읽는다).
         let mut node_ns = ObjMap::new();
-        for (k, v) in [
-            ("ELEMENT_NODE", 1.0),
-            ("ATTRIBUTE_NODE", 2.0),
-            ("TEXT_NODE", 3.0),
-            ("CDATA_SECTION_NODE", 4.0),
-            ("COMMENT_NODE", 8.0),
-            ("DOCUMENT_NODE", 9.0),
-            ("DOCUMENT_TYPE_NODE", 10.0),
-            ("DOCUMENT_FRAGMENT_NODE", 11.0),
-            ("DOCUMENT_POSITION_DISCONNECTED", 1.0),
-            ("DOCUMENT_POSITION_PRECEDING", 2.0),
-            ("DOCUMENT_POSITION_FOLLOWING", 4.0),
-            ("DOCUMENT_POSITION_CONTAINS", 8.0),
-            ("DOCUMENT_POSITION_CONTAINED_BY", 16.0),
+        for k in [
+            "ELEMENT_NODE",
+            "ATTRIBUTE_NODE",
+            "TEXT_NODE",
+            "CDATA_SECTION_NODE",
+            "ENTITY_REFERENCE_NODE",
+            "ENTITY_NODE",
+            "PROCESSING_INSTRUCTION_NODE",
+            "COMMENT_NODE",
+            "DOCUMENT_NODE",
+            "DOCUMENT_TYPE_NODE",
+            "DOCUMENT_FRAGMENT_NODE",
+            "NOTATION_NODE",
+            "DOCUMENT_POSITION_DISCONNECTED",
+            "DOCUMENT_POSITION_PRECEDING",
+            "DOCUMENT_POSITION_FOLLOWING",
+            "DOCUMENT_POSITION_CONTAINS",
+            "DOCUMENT_POSITION_CONTAINED_BY",
+            "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC",
         ] {
-            node_ns.insert(k.to_string(), Value::Num(v));
+            if let Some(v) = crate::js::interp::dom_api::node_constant(k) {
+                node_ns.insert(k.to_string(), Value::Num(v));
+            }
         }
         env_declare(&global, "Node", Value::Obj(Rc::new(RefCell::new(node_ns))));
         env_declare(&global, "Date", Value::Native(Native::DateCtor));

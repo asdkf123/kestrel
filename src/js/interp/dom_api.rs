@@ -2,6 +2,32 @@
 use super::value::*;
 use super::*;
 
+// Node 인터페이스의 상수(§Node): nodeType 값 + compareDocumentPosition 비트마스크.
+// 전역 Node 와 모든 노드 인스턴스가 공유한다(Node.prototype 상속).
+pub(super) fn node_constant(key: &str) -> Option<f64> {
+    Some(match key {
+        "ELEMENT_NODE" => 1.0,
+        "ATTRIBUTE_NODE" => 2.0,
+        "TEXT_NODE" => 3.0,
+        "CDATA_SECTION_NODE" => 4.0,
+        "ENTITY_REFERENCE_NODE" => 5.0,
+        "ENTITY_NODE" => 6.0,
+        "PROCESSING_INSTRUCTION_NODE" => 7.0,
+        "COMMENT_NODE" => 8.0,
+        "DOCUMENT_NODE" => 9.0,
+        "DOCUMENT_TYPE_NODE" => 10.0,
+        "DOCUMENT_FRAGMENT_NODE" => 11.0,
+        "NOTATION_NODE" => 12.0,
+        "DOCUMENT_POSITION_DISCONNECTED" => 1.0,
+        "DOCUMENT_POSITION_PRECEDING" => 2.0,
+        "DOCUMENT_POSITION_FOLLOWING" => 4.0,
+        "DOCUMENT_POSITION_CONTAINS" => 8.0,
+        "DOCUMENT_POSITION_CONTAINED_BY" => 16.0,
+        "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC" => 32.0,
+        _ => return None,
+    })
+}
+
 impl Interp {
     pub(super) fn dom_arena(&mut self) -> Result<&mut crate::dom::Dom, String> {
         match self.dom {
@@ -541,6 +567,12 @@ impl Interp {
     }
 
     pub(super) fn dom_get(&mut self, id: crate::dom::NodeId, key: &str) -> Result<Value, String> {
+        // Node 인터페이스 상수(§Node): 모든 노드가 Node.prototype 에서 상속한다 —
+        // el.ELEMENT_NODE === 1 등. 예전엔 전역 Node 에만 있고 인스턴스엔 없어
+        // el.nodeType === el.ELEMENT_NODE 를 검사하는 WPT 다수가 undefined 로 깨졌다.
+        if let Some(c) = node_constant(key) {
+            return Ok(Value::Num(c));
+        }
         // href/src 절대 URL 해석용 base (dom borrow 전에 복제).
         let base = self.base_url.clone();
         let self_shadow = self.shadow_hosts.contains(&id);
