@@ -9550,13 +9550,11 @@ impl Interp {
                         vec![Value::Num(len as f64)]
                     };
                     let a = self.construct(this, ctor_args)?;
+                    // §23.1.2.1 step: CreateDataPropertyOrThrow — [[Set]] 이 아니라
+                    // [[DefineOwnProperty]]. 대상의 setter/non-writable 인덱스에 막히지 않고
+                    // own 데이터 프로퍼티를 만들며, 거부는 TypeError 로 전파한다.
                     for (k, item) in out.into_iter().enumerate() {
-                        if !self.set_own_property(&a, k.to_string(), item) {
-                            return Err(self.throw_error(
-                                "TypeError",
-                                format!("Cannot create property '{}' on Array.from result", k),
-                            ));
-                        }
+                        self.create_data_property_or_throw(&a, k, item)?;
                     }
                     self.ordinary_set(&a, "length", Value::Num(len as f64), &a)?;
                     Ok(a)
