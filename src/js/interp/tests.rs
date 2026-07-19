@@ -3307,6 +3307,12 @@ fn more_array_string_methods() {
     assert!(prelude_bool(
         "Object.getOwnPropertyNames(Array.prototype.copyWithin).indexOf('\\u0000nonctor')<0"
     ));
+    // 프렐류드 폴리필 내장 메서드는 스펙 name/length 를 가진다(obj.m=fn 은 익명이라 별도 보정).
+    assert!(prelude_bool("Object.is.name==='is' && Object.hasOwn.name==='hasOwn'"));
+    assert!(prelude_bool("Promise.all.name==='all' && Promise.allSettled.name==='allSettled'"));
+    assert!(prelude_bool(
+        "String.prototype.normalize.name==='normalize' && String.prototype.normalize.length===0"
+    ));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
