@@ -2397,6 +2397,10 @@ fn builtin_constructors_are_functions() {
          Object.getPrototypeOf(g)===Object.getPrototypeOf(async function(){})"
     ));
     assert_eq!(run_str("var GF=Object.getPrototypeOf(function*(){}).constructor; GF('x','yield x').toString().slice(0,17)"), "function* anonymo");
+    // 인트린식.prototype === getPrototypeOf(fn), constructor 왕복, @@toStringTag
+    assert!(run_bool("var GF=Object.getPrototypeOf(function*(){}).constructor; GF.prototype===Object.getPrototypeOf(function*(){}) && GF.prototype.constructor===GF"));
+    assert_eq!(run_str("Object.getPrototypeOf(function*(){})[Symbol.toStringTag]"), "GeneratorFunction");
+    assert_eq!(run_str("Object.getPrototypeOf(async function*(){})[Symbol.toStringTag]"), "AsyncGeneratorFunction");
 }
 
 #[test]

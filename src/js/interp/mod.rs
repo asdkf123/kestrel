@@ -1120,6 +1120,9 @@ impl Interp {
             m.insert("__proto__".to_string(), fnp.clone());
             m.insert("constructor".to_string(), Value::Native(Native::FnKindCtor(name)));
             set_prop_attrs(&mut m, "constructor", ATTR_WRITABLE | ATTR_CONFIGURABLE);
+            // [[Prototype]] 의 @@toStringTag = 이름(§27.3.3.1 등, {w:f,e:f,c:t}).
+            m.insert("\u{0}@@toStringTag".to_string(), Value::Str(name.to_string()));
+            set_prop_attrs(&mut m, "\u{0}@@toStringTag", ATTR_CONFIGURABLE);
             Value::Obj(Rc::new(RefCell::new(m)))
         };
         let async_fn_proto = mk_fn_kind_proto("AsyncFunction", &fn_proto);
@@ -7374,6 +7377,16 @@ impl Interp {
             }
             // Function.prototype (정체성 보존된 객체)
             Value::Native(Native::FunctionCtor) if key == "prototype" => Ok(self.fn_proto.clone()),
+            // %AsyncFunction/GeneratorFunction/AsyncGeneratorFunction%.prototype — 각 인트린식
+            // 프로토타입(§27.3/27.4). getPrototypeOf(gen fn)=그 prototype 과 동일 객체.
+            Value::Native(Native::FnKindCtor(n)) if key == "prototype" => Ok(match *n {
+                "AsyncFunction" => self.async_fn_proto.clone(),
+                "GeneratorFunction" => self.gen_fn_proto.clone(),
+                _ => self.async_gen_fn_proto.clone(),
+            }),
+            Value::Native(Native::FnKindCtor(_)) => {
+                Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined))
+            }
             // Date.now / Date.parse / Date.UTC / Date.prototype
             Value::Native(Native::DateCtor) => Ok(match key {
                 "now" => Value::Native(Native::DateNow),
