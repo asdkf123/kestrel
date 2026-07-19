@@ -1170,7 +1170,8 @@ var __kIfaceNames = [
   'HTMLTableCellElement', 'HTMLTemplateElement', 'HTMLTextAreaElement', 'HTMLTimeElement',
   'HTMLTitleElement', 'HTMLTableRowElement', 'HTMLTrackElement', 'HTMLUListElement',
   'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
-  'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSStyleDeclaration'
+  'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSStyleDeclaration',
+  'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot'
 ];
 for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   var __n = __kIfaceNames[__i];
@@ -1187,6 +1188,7 @@ if (window.Node) {
 if (!window.Node) window.Node = __kIface(function(x){ return typeof x.nodeType === 'number'; });
 if (!window.Element) window.Element = __kIface(function(x){ return typeof x.tagName === 'string'; });
 if (!window.Document) window.Document = __kIface(function(x){ return x.nodeType === 9; });
+if (!window.DocumentFragment) window.DocumentFragment = __kIface(function(x){ return !!x && x.nodeType === 11; });
 if (!window.HTMLAnchorElement) window.HTMLAnchorElement = __kTagIface('A');
 if (!window.HTMLImageElement) window.HTMLImageElement = __kTagIface('IMG');
 if (!window.HTMLInputElement) window.HTMLInputElement = __kTagIface('INPUT');

@@ -5613,6 +5613,7 @@ impl Interp {
                     Some(Value::RuleStyle(_, _))
                     | Some(Value::Style(_))
                     | Some(Value::ComputedStyle(_)) => vec!["CSSStyleDeclaration"],
+                    Some(Value::ClassList(_)) => vec!["DOMTokenList"],
                     _ => vec![],
                 };
                 Ok(Value::Arr(ArrayObj::new(
