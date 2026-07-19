@@ -7780,9 +7780,29 @@ impl Interp {
                         }
                     }
                     StrOp::Split => {
+                        // §22.1.3.20: separator 가 (정규식 아닌) Object 면 @@split 로 위임한다
+                        // (GetMethod+Call, 사용자 override 존중, 인자는 [O, limit]). 정규식은
+                        // 아래 기존 경로(RegexSym 동등)로 처리한다.
+                        let sep_val = args.first().cloned().unwrap_or(Value::Undefined);
+                        if is_object(&sep_val) && regex_src_flags(&sep_val).is_none() {
+                            let splitter = self.member_get(&sep_val, "\u{0}@@split")?;
+                            if !matches!(splitter, Value::Undefined | Value::Null) {
+                                if !is_callable(&splitter) {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Symbol.split method is not callable",
+                                    ));
+                                }
+                                let limit = args.get(1).cloned().unwrap_or(Value::Undefined);
+                                return self.call_value(
+                                    splitter,
+                                    Some(sep_val),
+                                    vec![Value::Str(s.clone()), limit],
+                                );
+                            }
+                        }
                         // §22.1.3.21: lim=ToUint32(limit)(undefined→2^32-1)를 separator ToString
                         // '전에' 구한다. lim==0 → [], separator undefined → [S].
-                        let sep_val = args.first().cloned().unwrap_or(Value::Undefined);
                         let lim = match args.get(1) {
                             None | Some(Value::Undefined) => u32::MAX as usize,
                             // ToUint32: ToInt32 와 비트패턴 동일(top-bit 해석만 다름).
