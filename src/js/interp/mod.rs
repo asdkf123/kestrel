@@ -4699,29 +4699,49 @@ impl Interp {
                 if let Expr::Member { obj, prop, computed } = &**target {
                     if !matches!(&**obj, Expr::Super) {
                         let recv = self.eval(obj, env)?;
-                        // §13.15.2 평가 순서: base → prop 식(GetValue) → RHS → ToPropertyKey.
-                        // 단순 대입(=)에서 computed 키의 ToPropertyKey(toString/valueOf)는
-                        // RHS 평가 뒤에 일어난다. 예전엔 member_key 가 RHS 전에 toString 을
-                        // 불러 base[{toString(){throw}}] = rhs() 의 순서가 어긋났다.
-                        if *computed && matches!(op, AssignOp::Set) {
-                            let prop_val = self.eval(prop, env)?;
-                            let rhs = self.eval(value, env)?;
-                            let key = self.to_property_key(prop_val)?;
-                            self.member_assign(recv, key, rhs.clone())?;
-                            return Ok(rhs);
-                        }
-                        let key = self.member_key(prop, *computed, env)?;
-                        let rhs = self.eval(value, env)?;
-                        let new = match op {
-                            AssignOp::Set => rhs,
-                            compound => {
-                                let old = self.member_get(&recv, &key)?;
-                                let bin = compound_binop(compound);
-                                self.binary(bin, old, rhs)?
+                        // computed 키는 prop 식만 먼저 평가한다(§13.3.3: 참조는 raw
+                        // propertyNameValue 를 담고 ToPropertyKey 는 GetValue/PutValue 때).
+                        let prop_val = if *computed { Some(self.eval(prop, env)?) } else { None };
+                        match op {
+                            // 단순 대입(=): RHS → ToPropertyKey → PutValue (§13.15.2).
+                            // ToPropertyKey(toString/valueOf)는 RHS 뒤에 일어난다.
+                            AssignOp::Set => {
+                                let rhs = self.eval(value, env)?;
+                                let key = match prop_val {
+                                    Some(v) => self.to_property_key(v)?,
+                                    None => self.member_key(prop, false, env)?,
+                                };
+                                self.member_assign(recv, key, rhs.clone())?;
+                                return Ok(rhs);
                             }
-                        };
-                        self.member_assign(recv, key, new.clone())?;
-                        return Ok(new);
+                            // 복합 대입(@=): GetValue(old) → RHS → 연산 → PutValue.
+                            // GetValue 가 RHS 보다 먼저다. null/undefined base 는 GetValue 에서
+                            // TypeError(ToPropertyKey·RHS 전). 예전엔 old 를 RHS 뒤에 읽고
+                            // ToPropertyKey 도 RHS 전에 해서 순서가 어긋났다.
+                            compound => {
+                                let key = match prop_val {
+                                    Some(v) => {
+                                        if matches!(recv, Value::Null | Value::Undefined) {
+                                            return Err(self.throw_error(
+                                                "TypeError",
+                                                format!(
+                                                    "Cannot read properties of {} (reading key)",
+                                                    to_display(&recv)
+                                                ),
+                                            ));
+                                        }
+                                        self.to_property_key(v)?
+                                    }
+                                    None => self.member_key(prop, false, env)?,
+                                };
+                                let old = self.member_get(&recv, &key)?;
+                                let rhs = self.eval(value, env)?;
+                                let bin = compound_binop(compound);
+                                let new = self.binary(bin, old, rhs)?;
+                                self.member_assign(recv, key, new.clone())?;
+                                return Ok(new);
+                            }
+                        }
                     }
                 }
                 let rhs = self.eval(value, env)?;

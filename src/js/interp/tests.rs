@@ -4841,6 +4841,19 @@ fn assignment_evaluates_left_reference_first() {
          try{ var b={}; b[(function(){throw new D()})()]=(function(){throw new Error('R')})(); } \
          catch(e){ got=e; } got instanceof D"
     ));
+    // 복합 대입: GetValue(old)가 RHS 전 → null base 는 RHS 부수효과 전에 TypeError
+    assert_eq!(
+        run_num("var c=0; try{ var b=null; b.foo ^= (c+=1); }catch(e){} c"),
+        0.0
+    );
+    // computed 복합 대입 null base: ToPropertyKey(toString) 전에 TypeError
+    assert!(run_bool(
+        "var ok=false; var b=null; var p={toString:function(){throw new Error('K')}}; \
+         try{ b[p] *= 2; }catch(e){ ok = e instanceof TypeError; } ok"
+    ));
+    // 정상 복합 대입(값 계산) 회귀 없음
+    assert_eq!(run_num("var o={n:5}; o.n += 3; o.n"), 8.0);
+    assert_eq!(run_num("var o={n:5}; var p={toString:function(){return 'n'}}; o[p]*=2; o.n"), 10.0);
 }
 
 #[test]
