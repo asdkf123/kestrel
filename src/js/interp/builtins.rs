@@ -428,6 +428,80 @@ pub(super) fn uri_decode(s: &str, preserve_reserved: bool) -> Result<String, ()>
 }
 
 // 수신자 객체의 문자열 프로퍼티 (URL/URLSearchParams 네이티브 메서드용).
+// §19.2.4 parseFloat: 문자열 앞쪽의 StrDecimalLiteral 최장 프리픽스를 f64 로 파싱한다.
+// 부호, "Infinity", 정수/소수부(선행·후행 소수점 허용), 지수(e/E±digits) 지원. 유효한
+// 숫자 프리픽스가 없으면 NaN. Rust f64 파서가 "11." 같은 후행점을 거부하므로 직접 스캔한다.
+fn parse_float_prefix(t: &str) -> f64 {
+    let b = t.as_bytes();
+    let mut i = 0;
+    let neg = match b.first() {
+        Some(b'-') => {
+            i = 1;
+            true
+        }
+        Some(b'+') => {
+            i = 1;
+            false
+        }
+        _ => false,
+    };
+    // Infinity
+    if t[i..].starts_with("Infinity") {
+        return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+    }
+    let num_start = i;
+    let mut has_digit = false;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+        has_digit = true;
+    }
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+            has_digit = true;
+        }
+    }
+    if !has_digit {
+        return f64::NAN;
+    }
+    // 지수: e/E [±] digits — 지수 자릿수가 없으면 e 전까지만 숫자로 본다.
+    if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+        let mut j = i + 1;
+        if j < b.len() && (b[j] == b'+' || b[j] == b'-') {
+            j += 1;
+        }
+        if j < b.len() && b[j].is_ascii_digit() {
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            i = j;
+        }
+    }
+    // Rust 파서가 후행점("11.")을 거부하므로 제거 후 파싱. 부호는 마지막에 적용.
+    let mut chunk = t[num_start..i].to_string();
+    if let Some(dot) = chunk.find('.') {
+        // 소수점 뒤가 비었거나 바로 e 면 소수점을 지운다("11.e-1"→"11e-1", "11."→"11").
+        let after = &chunk[dot + 1..];
+        if after.is_empty() || after.starts_with(['e', 'E']) {
+            chunk.remove(dot);
+        }
+    }
+    if chunk.starts_with('.') {
+        chunk.insert(0, '0'); // ".22e-1" → "0.22e-1"
+    }
+    match chunk.parse::<f64>() {
+        Ok(n) => {
+            if neg {
+                -n
+            } else {
+                n
+            }
+        }
+        Err(_) => f64::NAN,
+    }
+}
+
 fn recv_prop_str(recv: &Option<Value>, key: &str) -> String {
     if let Some(Value::Obj(o)) = recv {
         if let Some(v) = o.borrow().get(key) {
@@ -7788,24 +7862,12 @@ impl Interp {
                 Ok(Value::Num(if neg { -val } else { val }))
             }
             Native::ParseFloat => {
-                let s = args.first().map(to_display).unwrap_or_default();
-                let t = s.trim();
-                // 앞부분의 유효한 수 프리픽스만
-                let mut end = 0;
-                let bytes = t.as_bytes();
-                let mut seen_dot = false;
-                if end < bytes.len() && (bytes[end] == b'-' || bytes[end] == b'+') {
-                    end += 1;
-                }
-                while end < bytes.len()
-                    && (bytes[end].is_ascii_digit() || (bytes[end] == b'.' && !seen_dot))
-                {
-                    if bytes[end] == b'.' {
-                        seen_dot = true;
-                    }
-                    end += 1;
-                }
-                Ok(t[..end].parse::<f64>().map(Value::Num).unwrap_or(Value::Num(f64::NAN)))
+                // §19.2.4: ToString(arg) 후 앞쪽 StrDecimalLiteral 프리픽스를 파싱한다 —
+                // 부호/Infinity/지수(e±d)/선행·후행 소수점 모두 지원. 예전엔 부호+digits+dot
+                // 만 봐서 "Infinity"/"1e1"/".22e-1"/"11.e-1" 이 전부 틀렸다.
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let s = self.to_string_value(&arg)?;
+                Ok(Value::Num(parse_float_prefix(s.trim_start())))
             }
             Native::EncodeUri => {
                 // encodeURI: 예약문자(;,/?:@&=+$#) 와 비예약문자는 보존

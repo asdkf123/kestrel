@@ -1011,6 +1011,16 @@ fn string_number_boolean_globals() {
     // ToNumber 의 valueOf/@@toPrimitive 예외 전파, Symbol → TypeError
     assert!(run_bool("var t=false; try{ isNaN({valueOf:function(){throw new Error('e');}}) }catch(e){ t=true } t"));
     assert!(run_bool("var t=false; try{ isFinite(Symbol()) }catch(e){ t=e instanceof TypeError } t"));
+    // parseFloat: 부호/Infinity/지수/선행·후행 소수점, 유효 프리픽스만(§19.2.4)
+    assert_eq!(run_num("parseFloat('Infinity')"), f64::INFINITY);
+    assert_eq!(run_num("parseFloat('Infinity1')"), f64::INFINITY);
+    assert_eq!(run_num("parseFloat('-11.e-1')"), -1.1);
+    assert_eq!(run_num("parseFloat('+.22e-1')"), 0.022);
+    assert_eq!(run_num("parseFloat('1e1x')"), 10.0);
+    assert_eq!(run_num("parseFloat('  42abc')"), 42.0);
+    assert_eq!(run_num("parseFloat('.5')"), 0.5);
+    assert!(run_bool("isNaN(parseFloat('xyz'))"));
+    assert_eq!(run_num("parseFloat(new Number(Infinity))"), f64::INFINITY);
 }
 
 #[test]
