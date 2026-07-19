@@ -2989,6 +2989,11 @@ impl Interp {
                         }
                         // 구멍 인덱스는 own 프로퍼티가 없다 → 서술자 undefined.
                         let idx_val = key.parse::<usize>().ok().and_then(|i| {
+                            // 매핑된 arguments[i] 는 현재 파라미터 값을 보고한다
+                            // (§10.4.4.1 [[GetOwnProperty]]: desc.[[Value]] = Get(map, P)).
+                            if let Some((name, penv)) = a.mapped_param(i) {
+                                return Some(env_get(&penv, &name).unwrap_or(Value::Undefined));
+                            }
                             let b = a.borrow();
                             if i < b.len() && !a.is_hole(i) {
                                 Some(b[i].clone())
