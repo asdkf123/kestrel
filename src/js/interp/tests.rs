@@ -3329,6 +3329,24 @@ fn more_array_string_methods() {
     // ToObject: null/undefined → TypeError, 원시는 박싱.
     assert!(run_bool("try{Object.entries(null);false}catch(e){e instanceof TypeError}"));
     assert_eq!(run_str("Object.values('ab').join(',')"), "a,b");
+    // getOwnPropertyNames(함수)는 length/name/prototype + 사용자 props (예전엔 빈 배열).
+    assert_eq!(
+        run_str("function S(){}; S.k=1; Object.getOwnPropertyNames(S).join(',')"),
+        "length,name,prototype,k"
+    );
+    // Object.assign 은 소스가 함수여도 own prop 을 복사한다(ownKeys 기반).
+    assert_eq!(run_num("function S(){}; S.k=4; var t={}; Object.assign(t,S); t.k"), 4.0);
+    // Object.assign 은 문자열 키를 심볼 키보다 먼저 복사한다(ownKeys 순서).
+    assert_eq!(
+        run_str(
+            "var order=[]; var sy=Symbol('s'); var src={}; \
+             Object.defineProperty(src,'a',{enumerable:true,get:function(){order.push('a');return 1;}}); \
+             Object.defineProperty(src,sy,{enumerable:true,get:function(){order.push('sym');return 2;}}); \
+             Object.defineProperty(src,'b',{enumerable:true,get:function(){order.push('b');return 3;}}); \
+             Object.assign({}, src); order.join(',')"
+        ),
+        "a,b,sym"
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

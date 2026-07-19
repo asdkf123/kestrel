@@ -9141,6 +9141,48 @@ impl Interp {
                             .filter(|k| matches!(k, Value::Str(_)))
                             .collect()
                     }
+                    // 함수도 ordinary object — own 키(정수 인덱스 + length/name/prototype 계산
+                    // 프로퍼티 + 사용자 props, §10.1.11 순서)를 가진다. 예전엔 arm 이 없어
+                    // getOwnPropertyNames/Reflect.ownKeys(fn) 이 빈 배열이라 Object.assign 소스가
+                    // 함수일 때 own prop 을 놓쳤다.
+                    Some(Value::Fn(f)) => {
+                        let props = f.props.borrow();
+                        let deleted = |k: &str| props.contains_key(&format!("\u{0}fndel:{}", k));
+                        let has_proto =
+                            f.is_generator || (!f.is_arrow && !f.is_method && !f.is_async);
+                        let mut ints: Vec<usize> = props
+                            .keys()
+                            .filter(|k| !is_internal_key(k))
+                            .filter_map(|k| k.parse::<usize>().ok())
+                            .collect();
+                        ints.sort_unstable();
+                        ints.dedup();
+                        let mut seen: std::collections::HashSet<String> =
+                            ints.iter().map(|i| i.to_string()).collect();
+                        let mut out: Vec<Value> =
+                            ints.iter().map(|i| Value::Str(i.to_string())).collect();
+                        // 계산 프로퍼티 length/name/prototype (툼스톤/비생성자 제외), props 에
+                        // 이미 있으면(defineProperty 실체화) 중복 방지.
+                        for (k, ok) in [
+                            ("length", !deleted("length")),
+                            ("name", !deleted("name")),
+                            ("prototype", has_proto && !deleted("prototype")),
+                        ] {
+                            if ok && seen.insert(k.to_string()) {
+                                out.push(Value::Str(k.to_string()));
+                            }
+                        }
+                        // 사용자 문자열 props (삽입순, 정수/내부 제외).
+                        for k in props.keys() {
+                            if is_internal_key(k) || k.parse::<usize>().is_ok() {
+                                continue;
+                            }
+                            if seen.insert(k.clone()) {
+                                out.push(Value::Str(k.clone()));
+                            }
+                        }
+                        out
+                    }
                     _ => Vec::new(),
                 };
                 Ok(Value::Arr(ArrayObj::new(names)))
@@ -9232,39 +9274,45 @@ impl Interp {
                 } else {
                     self.to_object_value(target)
                 };
-                // §20.1.2.1: 각 소스의 열거 가능한 own 키(문자열+심볼)를 Get(getter 호출)해서
-                // Set(Throw=true)로 대상에 복사. 실패(read-only/non-extensible/getter-only)면 TypeError.
+                // §20.1.2.1 step 3: 각 소스는 ToObject 후 [[OwnPropertyKeys]](정수·문자열·심볼
+                // 순서) → 키마다 live [[GetOwnProperty]](enumerable) → [[Get]](getter 호출) →
+                // Set(To, key, v, Throw=true). Proxy 는 ownKeys/gOPD/get 트랩을 순서대로 거치고
+                // 그 예외(및 read-only/getter-only Set 실패)를 전파한다. 예전엔 맵을 직접 훑어
+                // 심볼·문자열 순서가 뒤섞이고 프록시 트랩·live 서술자를 놓쳤다.
                 for src in args[1..].to_vec() {
                     if matches!(src, Value::Undefined | Value::Null) {
                         continue;
                     }
-                    // 열거 가능한 own 키 — 심볼 키("\0@@…")도 포함(그 밖 내부 마커는 제외).
-                    let keys: Vec<String> = match &src {
-                        Value::Obj(m) => {
-                            let b = m.borrow();
-                            b.keys()
-                                .filter(|k| {
-                                    (!is_internal_key(k) || is_symbol_key(k))
-                                        && !b.contains_key(&nonenum_marker(k))
-                                })
-                                .cloned()
-                                .collect()
-                        }
-                        _ => own_enumerable_entries(&src)
-                            .into_iter()
-                            .map(|(k, _)| k)
-                            .collect(),
+                    let from = if is_object(&src) {
+                        src
+                    } else {
+                        self.to_object_value(src)
+                    };
+                    let keys = self.call_native(Native::ReflectOwnKeys, None, vec![from.clone()])?;
+                    let keys: Vec<Value> = match keys {
+                        Value::Arr(a) => a.borrow().clone(),
+                        _ => Vec::new(),
                     };
                     for k in keys {
-                        // Get: 접근자면 getter 호출(값을 복사, 서술자 아님).
-                        let v = self.member_get(&src, &k)?;
-                        // Set(To, key, v, Throw=true) — [[Set]] 이라 대상 setter 를 호출하고
-                        // 그 예외를 전파한다(§20.1.2.1). 예전엔 set_own_property 라 setter 예외를
-                        // 삼켰다. 실패(read-only 등)면 TypeError.
-                        if !self.ordinary_set(&target, &k, v, &target)? {
+                        let desc = self.call_native(
+                            Native::ObjectGetOwnPropertyDescriptor,
+                            None,
+                            vec![from.clone(), k.clone()],
+                        )?;
+                        let enumerable = matches!(&desc, Value::Obj(m)
+                            if matches!(m.borrow().get("enumerable"), Some(v) if to_bool(v)));
+                        if !enumerable {
+                            continue;
+                        }
+                        let key_str = self.to_property_key(k)?;
+                        let v = self.member_get(&from, &key_str)?;
+                        if !self.ordinary_set(&target, &key_str, v, &target)? {
                             return Err(self.throw_error(
                                 "TypeError",
-                                format!("Cannot assign to read only property '{}' of object", k),
+                                format!(
+                                    "Cannot assign to read only property '{}' of object",
+                                    key_str
+                                ),
                             ));
                         }
                     }
