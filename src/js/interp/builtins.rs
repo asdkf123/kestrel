@@ -3799,6 +3799,14 @@ impl Interp {
                         Value::Class(c) => {
                             c.statics.borrow_mut().insert(key, val);
                         }
+                        // 내장(Object/Number/…)의 정적 프로퍼티 재정의는 native_props 오버라이드로
+                        // 저장하고 삭제 툼스톤을 해제한다(member_get 이 이 값을 우선한다). 예전엔
+                        // _ => {} 라 defineProperty(Number,"isNaN",{value}) 가 무시됐다.
+                        Value::Native(n) => {
+                            let ov = self.native_props.entry(*n).or_default();
+                            ov.remove(&format!("\u{0}del:{}", key));
+                            ov.insert(key, val);
+                        }
                         _ => {}
                     }
                 }
