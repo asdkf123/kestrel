@@ -2100,6 +2100,14 @@ fn object_assign_to_object_types() {
     );
     // 반환값은 대상 (체이닝)
     assert_eq!(run_num("Object.assign({}, {n:5}).n"), 5.0);
+    // 원시값 대상은 ToObject 로 박싱된다(§20.1.2.1 step1) — 결과는 객체, 소스 복사됨.
+    assert_eq!(run_str("typeof Object.assign(true, {a:1})"), "object");
+    assert_eq!(run_num("Object.assign(42, {x:2}).x"), 2.0);
+    assert_eq!(run_str("typeof Object.assign('foo')"), "object"); // 인자 하나여도 박싱
+    assert_eq!(run_num("Object.assign(Symbol(), {k:5}).k"), 5.0);
+    // Object() 로도 심볼/BigInt 박싱
+    assert_eq!(run_str("typeof Object(Symbol())"), "object");
+    assert_eq!(run_str("typeof Object(10n)"), "object");
     // null/undefined 대상만 에러
     assert_eq!(
         run_str("try { Object.assign(null, {}); 'no-throw' } catch(e) { 'threw' }"),

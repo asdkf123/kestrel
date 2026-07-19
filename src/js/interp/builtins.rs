@@ -1339,6 +1339,8 @@ impl Interp {
             Value::Str(_) => (self.string_proto.clone(), "String"),
             Value::Num(_) => (self.number_proto.clone(), "Number"),
             Value::Bool(_) => (self.boolean_proto.clone(), "Boolean"),
+            Value::Symbol(_) => (self.symbol_proto.clone(), "Symbol"),
+            Value::BigInt(_) => (self.bigint_proto.clone(), "BigInt"),
             _ => return v, // 이미 객체(또는 null/undefined — 호출부에서 이미 처리)
         };
         let mut m = ObjMap::new();
@@ -8364,6 +8366,14 @@ impl Interp {
                         "Cannot convert undefined or null to object",
                     ));
                 }
+                // §20.1.2.1 step 1: To = ToObject(target). 원시값 타깃은 래퍼 객체로 박싱한다 —
+                // 예전엔 원시값에 직접 set 을 시도해 "read only" 로 죽었고, 인자가 하나면
+                // typeof 결과가 "object" 가 아니라 원시 타입이었다.
+                let target = if is_object(&target) {
+                    target
+                } else {
+                    self.to_object_value(target)
+                };
                 // §20.1.2.1: 각 소스의 열거 가능한 own 키(문자열+심볼)를 Get(getter 호출)해서
                 // Set(Throw=true)로 대상에 복사. 실패(read-only/non-extensible/getter-only)면 TypeError.
                 for src in args[1..].to_vec() {
