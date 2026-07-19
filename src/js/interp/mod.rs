@@ -2772,6 +2772,10 @@ impl Interp {
                         a.clear_index_attr(i);
                     }
                 } else {
+                    // non-index own 프로퍼티: configurable:false 면 삭제 불가(§10.1.10).
+                    if matches!(a.prop_attr(key), Some(at) if at & ATTR_CONFIGURABLE == 0) {
+                        return Ok(false);
+                    }
                     a.del_prop(key);
                 }
                 Ok(true)
@@ -4501,6 +4505,15 @@ impl Interp {
                                         a.mark_hole(i);
                                         a.clear_index_attr(i);
                                     }
+                                } else {
+                                    // non-index own 프로퍼티(배열/arguments 의 명명 속성).
+                                    // configurable:false 면 삭제 불가(§10.1.10). 예전엔 이
+                                    // else 가 없어 delete arr.foo 가 no-op 로 true 만 냈다 —
+                                    // verifyConfigurable 의 delete 후 hasOwnProperty 검사가 깨졌다.
+                                    if matches!(a.prop_attr(&key), Some(at) if at & ATTR_CONFIGURABLE == 0) {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    a.del_prop(&key);
                                 }
                             }
                             // 내장 함수의 name/length 는 configurable → delete 성공.

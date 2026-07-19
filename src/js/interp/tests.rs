@@ -5349,6 +5349,18 @@ fn instanceof_and_in_operators() {
     assert!(!run_bool("'z' in { a: 1 }"));
     assert!(run_bool("0 in [7]"));
     assert!(!run_bool("3 in [7]"));
+    // 배열/arguments 의 non-index own 프로퍼티는 delete 로 제거된다 (§10.1.10)
+    assert!(!run_bool(
+        "var a=[]; Object.defineProperty(a,'p',{value:1,configurable:true,enumerable:true}); \
+         delete a.p; a.hasOwnProperty('p')"
+    ));
+    // configurable:false 면 삭제 불가(false 반환, 유지)
+    assert!(run_bool(
+        "var a=[]; Object.defineProperty(a,'p',{value:1,configurable:false}); \
+         var r=delete a.p; !r && a.hasOwnProperty('p')"
+    ));
+    // 일반 배열 프로퍼티(defineProperty 아님)도 삭제
+    assert!(!run_bool("var a=[1,2]; a.foo='x'; delete a.foo; a.hasOwnProperty('foo')"));
 }
 
 #[test]
