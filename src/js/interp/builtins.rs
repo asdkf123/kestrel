@@ -4493,7 +4493,9 @@ impl Interp {
                             "function () { [native code] }".to_string()
                         }
                     }
-                    // §20.2.3.5 step 1: 수신자가 함수(호출 가능)가 아니면 TypeError.
+                    // §20.2.3.5: [[SourceText]] 없는 호출 가능 객체(함수 Proxy 등)는
+                    // NativeFunction 문법(step 4). 호출 불가면 TypeError(step 5).
+                    _ if is_callable(&f) => "function () { [native code] }".to_string(),
                     _ => {
                         return Err(self.throw_error(
                             "TypeError",

@@ -8631,6 +8631,7 @@ impl Interp {
                 | Value::Native(_)
                 | Value::Class(_)
                 | Value::Bound(_)
+                | Value::Proxy(_)
         ) {
             return Ok(v);
         }
@@ -8682,7 +8683,8 @@ impl Interp {
             | Value::Fn(_)
             | Value::Native(_)
             | Value::Class(_)
-            | Value::Bound(_) => {
+            | Value::Bound(_)
+            | Value::Proxy(_) => {
                 let p = self.to_primitive_or_throw(v.clone(), false)?;
                 self.to_number_value(&p)
             }
@@ -8703,7 +8705,10 @@ impl Interp {
             | Value::Fn(_)
             | Value::Native(_)
             | Value::Class(_)
-            | Value::Bound(_) => {
+            | Value::Bound(_)
+            // Proxy 도 객체다 — ToPrimitive 로 (get 트랩→타깃) toString/valueOf 를 거쳐야
+            // 한다. 예전엔 여기 빠져 to_display(타깃) 지름길로 "function" 만 나왔다.
+            | Value::Proxy(_) => {
                 let p = self.to_primitive_or_throw(v.clone(), true)?;
                 self.to_string_value(&p)
             }

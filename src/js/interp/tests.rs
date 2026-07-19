@@ -7740,6 +7740,12 @@ fn function_tostring_source_text() {
     );
     // async 가 메서드명인 경우 회귀 없음
     assert_eq!(run_num("({ async(){ return 3; } }).async()"), 3.0);
+    // 함수 Proxy 의 toString 은 NativeFunction 문법(§20.2.3.5 step 4, callable)
+    assert_eq!(run_str("''+new Proxy(function(){},{})"), "function () { [native code] }");
+    assert!(run_bool("/function.*\\[native code\\]/.test(Function.prototype.toString.call(new Proxy(function(){},{})))"));
+    // Proxy 도 ToPrimitive(get 트랩→타깃 valueOf/toString)를 탄다 — 예전엔 to_display 로 "function"
+    assert_eq!(run_num("+new Proxy({valueOf(){return 7}},{})"), 7.0);
+    assert_eq!(run_str("''+new Proxy({toString(){return 'ok'},valueOf(){return {}}},{})"), "ok");
 }
 
 #[test]
