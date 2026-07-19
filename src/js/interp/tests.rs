@@ -3968,6 +3968,11 @@ fn for_of_destructuring() {
     // for-of 루프 변수 구조분해 (배열/entries 순회의 핵심 패턴)
     assert_eq!(run_num("var s=0; for(var [a,b] of [[1,2],[3,4]]){s+=a+b;} s"), 10.0);
     assert_eq!(run_str("var r=''; for(const [k,v] of [['x',1],['y',2]]){r+=k+v;} r"), "x1y2");
+    // 선언 없는 구조분해 대입 for-of: 멤버 표현식 대상 허용 (x.y, o[k])
+    assert_eq!(run_num("var o={}; for([o.p,o.q] of [[1,2],[3,4]]){} o.p*10+o.q"), 34.0);
+    assert_eq!(run_num("var a=[0,0]; for([a[0],a[1]] of [[7,8]]){} a[0]*10+a[1]"), 78.0);
+    // 멤버 대상 + 기본값
+    assert_eq!(run_num("var x={}; for([x.y=9] of [[]]){} x.y"), 9.0);
 }
 
 #[test]

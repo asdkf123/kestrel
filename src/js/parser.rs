@@ -872,10 +872,22 @@ impl Parser {
         };
         if let Some(is_in) = destr {
             let tmp = format!("__forpat{}__", self.pos);
-            if matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const)) {
+            let has_decl = matches!(self.peek(), Some(Tok::Var | Tok::Let | Tok::Const));
+            if has_decl {
                 self.pos += 1;
             }
-            let pat = self.binding_pattern()?;
+            // 선언(var/let/const)이면 binding 패턴. 선언이 없으면 구조분해 **대입**이라
+            // LHS 를 식으로 파싱해 패턴으로 변환한다 — 멤버 표현식 대상(x.y, o[k], {}.y)을
+            // 허용해야 하는데 binding_pattern 은 식별자만 받아 for([x.y] of …)가 파스 실패했다.
+            let (pat, is_assign) = if has_decl {
+                (self.binding_pattern()?, false)
+            } else {
+                let e = self.assignment()?;
+                (
+                    expr_to_pattern(e).ok_or_else(|| "잘못된 구조분해 for 대상".to_string())?,
+                    true,
+                )
+            };
             if is_in {
                 self.expect(&Tok::In)?;
             } else {
@@ -884,13 +896,19 @@ impl Parser {
             let seq = self.expr()?;
             self.expect(&Tok::RParen)?;
             let mut body = self.body_of_clause()?;
-            body.insert(
-                0,
+            // 선언이면 루프 변수 선언, 선언 없으면 기존 대상에 구조분해 대입.
+            let head = if is_assign {
+                Stmt::Expr(Expr::AssignPattern {
+                    pattern: pat,
+                    value: Box::new(Expr::Ident(tmp.clone())),
+                })
+            } else {
                 Stmt::VarDecl {
                     kind: DeclKind::Let,
                     decls: vec![(pat, Some(Expr::Ident(tmp.clone())))],
-                },
-            );
+                }
+            };
+            body.insert(0, head);
             return Ok(if is_in {
                 Stmt::ForIn { name: tmp, obj: seq, body }
             } else {
