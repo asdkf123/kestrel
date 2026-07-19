@@ -5826,6 +5826,28 @@ impl Interp {
         }
     }
 
+    // 객체의 [[Prototype]] 체인에 프록시가 있는가 — 있으면 대입/[[Set]] 이 그 트랩을
+    // 타야 한다(has_property/find_accessor 는 &self 라 프록시 트랩을 못 부른다).
+    fn proto_chain_has_proxy(&self, obj: &Value) -> bool {
+        let mut cur = match obj {
+            Value::Obj(m) => m.borrow().get("__proto__").cloned(),
+            _ => return false,
+        };
+        let mut depth = 0;
+        while let Some(p) = cur {
+            depth += 1;
+            if depth > 100 {
+                break;
+            }
+            match p {
+                Value::Proxy(_) => return true,
+                Value::Obj(m) => cur = m.borrow().get("__proto__").cloned(),
+                _ => break,
+            }
+        }
+        false
+    }
+
     fn proto_chain_lookup(
         &mut self,
         map: &Rc<RefCell<ObjMap>>,
@@ -8813,6 +8835,15 @@ impl Interp {
                             if acc.get.is_some() {
                                 return Ok(());
                             }
+                        }
+                        // own 프로퍼티가 없고 프로토타입 체인에 프록시가 있으면 그 [[Set]] 트랩에
+                        // 위임한다(receiver=이 객체) — ordinary_set 이 체인을 걸어 프록시를 처리.
+                        // 예전엔 프록시를 무시하고 이 객체에 직접 저장해 트랩이 안 불렸다.
+                        if !map.borrow().contains_key(&key)
+                            && self.proto_chain_has_proxy(&this_obj)
+                        {
+                            self.ordinary_set(&this_obj, &key, value, &this_obj)?;
+                            return Ok(());
                         }
                         // window.x = v 는 전역 변수 x 를 만든다(전역 객체 의미론).
                         let is_window = Rc::ptr_eq(&map, &self.window_obj);

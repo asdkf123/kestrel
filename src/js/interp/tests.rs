@@ -1790,6 +1790,14 @@ fn proxy_set_trap_reflect() {
     assert!(run_bool(
         "var t={}; var p=new Proxy(t,{set:undefined}); p.w=9; t.w===9"
     ));
+    // 프로토타입 체인의 프록시 set 트랩도 대입이 호출한다(receiver=대입 객체)
+    assert!(run_bool(
+        "var log=[]; var p=new Proxy({},{set:function(t,k,v,r){log.push(k+'='+v); return true;}});          var c=Object.create(p); c.x=5; log[0]==='x=5'"
+    ));
+    // 트랩 없으면 target 의 setter 를 receiver=자식 this 로 호출
+    assert!(run_bool(
+        "var ctx; var t={set attr(v){ctx=this;}}; var c=Object.create(new Proxy(t,{}));          c.attr=1; ctx===c"
+    ));
 }
 
 // Proxy has 트랩 (§10.5.7) invariant 보강 + Reflect.has 배선.
