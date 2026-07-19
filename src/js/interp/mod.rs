@@ -6232,12 +6232,12 @@ impl Interp {
             }
             Value::Num(_) => self.value_chain_has(&self.number_proto.clone(), key),
             Value::Bool(_) => self.value_chain_has(&self.boolean_proto.clone(), key),
-            // getComputedStyle 뷰(CSSStyleDeclaration): 'color' in cs 등 지원 CSS 속성명
-            // (카멜/대시)과 선언 멤버는 HasProperty 다. member_get 은 값을 주는데 in 은
-            // 안 줘서, WPT test_computed_value 의 게이트("property in getComputedStyle")가
-            // 실패해 color-computed-* 전부가 0% 였다. (&self 라 layout 을 못 돌리므로 computed
-            // 맵이 아니라 정적 지원 속성 집합으로 판정한다.)
-            Value::ComputedStyle(_) => {
+            // CSSStyleDeclaration 뷰(getComputedStyle / el.style): 'color' in cs 등 지원 CSS
+            // 속성명(카멜/대시)과 선언 멤버는 HasProperty 다. member_get 은 값을 주는데 in 은
+            // 안 줘서, WPT 의 게이트("property in getComputedStyle" / "property in el.style")가
+            // 실패해 color-computed-* 등이 통째로 0% 였다. (&self 라 layout 을 못 돌리므로
+            // computed 맵이 아니라 정적 지원 속성 집합으로 판정한다.)
+            Value::ComputedStyle(_) | Value::Style(_) => {
                 matches!(
                     key,
                     "getPropertyValue"
