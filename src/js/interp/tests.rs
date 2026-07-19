@@ -1109,6 +1109,27 @@ fn define_property_getter_and_value() {
     // hasOwnProperty
     assert!(run_bool("var o={a:1}; Object.prototype.hasOwnProperty.call(o,'a')"));
     assert!(!run_bool("var o={a:1}; o.hasOwnProperty('b')"));
+    // generic 서술자(enumerable 만)로 접근자 재정의 시 get/set 보존 (§10.1.6.3)
+    assert_eq!(
+        run_str(
+            "var o={x:'data'}; \
+             Object.defineProperty(o,'foo',{get:function(){return o.x},set:function(v){o.x=v},enumerable:true,configurable:true}); \
+             Object.defineProperty(o,'foo',{enumerable:false}); o.foo"
+        ),
+        "data"
+    );
+    // 재정의 후에도 setter 동작하고 enumerable=false 적용
+    assert!(run_bool(
+        "var o={x:1}; \
+         Object.defineProperty(o,'p',{get:function(){return o.x},set:function(v){o.x=v},enumerable:true,configurable:true}); \
+         Object.defineProperty(o,'p',{enumerable:false}); o.p=9; \
+         var d=Object.getOwnPropertyDescriptor(o,'p'); o.x===9 && d.enumerable===false && typeof d.get==='function'"
+    ));
+    // 데이터 속성 generic 재정의는 값 보존
+    assert_eq!(
+        run_num("var o={}; Object.defineProperty(o,'d',{value:5,writable:true,enumerable:true,configurable:true}); Object.defineProperty(o,'d',{enumerable:false}); o.d"),
+        5.0
+    );
 }
 
 #[test]

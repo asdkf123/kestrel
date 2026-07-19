@@ -1439,12 +1439,25 @@ impl Interp {
                 get: if has_get { g } else { og },
                 set: if has_set { s } else { os },
             }))
-        } else if has_value {
-            new_value
+        } else if is_data_desc {
+            // 데이터 서술자(value 또는 writable 포함). value 가 있으면 그 값을,
+            // writable 만 있으면 기존 데이터 값을 보존한다. 기존이 접근자였다면
+            // 접근자→데이터 전환이므로 value 는 undefined 로 기본값(§10.1.6.3).
+            if has_value {
+                new_value
+            } else {
+                match &existing {
+                    Some(v) if !matches!(v, Value::Accessor(_)) => v.clone(),
+                    _ => Value::Undefined,
+                }
+            }
         } else {
+            // generic 서술자(value/get/set 없음): 기존 값을 그대로 보존한다 —
+            // 접근자면 접근자, 데이터면 데이터. 예전엔 이 분기가 접근자를 undefined
+            // 로 날려(가드 실패) enumerable 만 바꾼 재정의가 getter/setter 를 잃었다.
             match &existing {
-                Some(v) if !matches!(v, Value::Accessor(_)) => v.clone(),
-                _ => Value::Undefined,
+                Some(v) => v.clone(),
+                None => Value::Undefined,
             }
         };
 
