@@ -14,6 +14,9 @@ enum Inst {
     End,                 // $
     WordBoundary(bool),  // \b(true) / \B(false)
     Backref(usize),      // \1..
+    // \k<name> — 이름 있는 백레퍼런스. 매치 시점에 group_names 로 이름→그룹(들)을
+    // 해석해(forward reference 허용) 같은 이름의 그룹 중 실제 캡처된 첫 슬롯을 참조.
+    BackrefName(String),
     Look { neg: bool, prog: Vec<Inst> }, // (?=..) / (?!..)
     // (?<=..) / (?<!..) — sp 에서 **끝나는** 매치를 찾는다 (오른쪽에서 왼쪽).
     LookBehind { neg: bool, prog: Vec<Inst> },
@@ -94,6 +97,7 @@ enum Ast {
     End,
     WordBoundary(bool),
     Backref(usize),
+    BackrefName(String),
     Group(usize, Box<Ast>),
     NonCap(Box<Ast>),
     Look(bool, Box<Ast>),
@@ -253,15 +257,7 @@ impl Parser {
                                 Ok(Ast::LookBehind(neg, Box::new(inner)))
                             }
                             _ => {
-                                let mut name = String::new();
-                                while let Some(c) = self.peek() {
-                                    if c == '>' {
-                                        break;
-                                    }
-                                    name.push(c);
-                                    self.i += 1;
-                                }
-                                self.eat('>');
+                                let name = self.parse_group_name()?;
                                 self.ngroups += 1;
                                 let idx = self.ngroups;
                                 self.group_names.push((name, idx));
@@ -329,6 +325,10 @@ impl Parser {
             }
             'u' => Ast::Char(self.parse_unicode().unwrap_or('u')),
             'x' => Ast::Char(self.parse_hex2().unwrap_or('x')),
+            // \k<name> 이름 있는 백레퍼런스(§22.2.1 DecimalEscape/GroupName). <name> 이
+            // 뒤따르면 해당 이름 그룹 참조(forward reference 포함), 아니면 Annex B 에서
+            // 리터럴 'k'. 해석은 매치 시점에 group_names 로.
+            'k' if self.eat('<') => Ast::BackrefName(self.parse_group_name()?),
             // \p{...} / \P{...} — u/v 모드에서만 유니코드 속성 이스케이프.
             'p' | 'P' if self.unicode => {
                 Ast::Class(kind_class(self.parse_prop_escape(ch == 'P')?))
@@ -364,8 +364,9 @@ impl Parser {
         Ok(ClassKind::UProp { ranges, neg })
     }
 
-    fn parse_unicode(&mut self) -> Option<char> {
-        // \uXXXX 또는 \u{XXXX}
+    // \uXXXX 또는 \u{XXXX} 를 코드 유닛/코드 포인트 u32 로. 서로게이트도 그대로
+    // 반환(그룹 이름의 서로게이트 쌍 결합에서 필요) — char 변환은 호출측이.
+    fn parse_unicode_u32(&mut self) -> Option<u32> {
         if self.eat('{') {
             let mut hex = String::new();
             while let Some(c) = self.peek() {
@@ -376,14 +377,57 @@ impl Parser {
                 self.i += 1;
             }
             self.eat('}');
-            char::from_u32(u32::from_str_radix(&hex, 16).ok()?)
+            u32::from_str_radix(&hex, 16).ok()
         } else {
             let mut hex = String::new();
             for _ in 0..4 {
                 hex.push(self.next()?);
             }
-            char::from_u32(u32::from_str_radix(&hex, 16).ok()?)
+            u32::from_str_radix(&hex, 16).ok()
         }
+    }
+    fn parse_unicode(&mut self) -> Option<char> {
+        self.parse_unicode_u32().and_then(char::from_u32)
+    }
+    // (?<name>...) / \k<name> 의 그룹 이름(§22.2.1 RegExpIdentifierName). 이름 안의
+    // \uXXXX / \u{...} 이스케이프를 디코드하고, 하이+로우 서로게이트 \u 쌍은 하나의
+    // 코드 포인트로 결합한다. 닫는 '>' 까지 읽고 소비한다.
+    fn parse_group_name(&mut self) -> Result<String, String> {
+        let mut name = String::new();
+        while let Some(c) = self.peek() {
+            if c == '>' {
+                break;
+            }
+            if c == '\\' {
+                self.i += 1; // '\'
+                if self.next() != Some('u') {
+                    return Err("그룹 이름의 이스케이프는 \\u 만 허용".to_string());
+                }
+                let mut cp = self
+                    .parse_unicode_u32()
+                    .ok_or("그룹 이름의 잘못된 \\u 이스케이프")?;
+                // 하이 서로게이트 뒤에 로우 서로게이트 \u 이스케이프가 오면 결합.
+                if (0xD800..=0xDBFF).contains(&cp) {
+                    let save = self.i;
+                    let lo = if self.eat('\\') && self.eat('u') {
+                        self.parse_unicode_u32()
+                            .filter(|lo| (0xDC00..=0xDFFF).contains(lo))
+                    } else {
+                        None
+                    };
+                    match lo {
+                        Some(lo) => cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00),
+                        None => self.i = save,
+                    }
+                }
+                name.push(char::from_u32(cp).ok_or("그룹 이름의 잘못된 코드 포인트")?);
+            } else {
+                name.push(c);
+                self.i += 1;
+            }
+        }
+        self.eat('>');
+        Ok(name)
     }
 
     fn parse_hex2(&mut self) -> Option<char> {
@@ -492,6 +536,7 @@ fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
         Ast::End => prog.push(Inst::End),
         Ast::WordBoundary(b) => prog.push(Inst::WordBoundary(*b)),
         Ast::Backref(n) => prog.push(Inst::Backref(*n)),
+        Ast::BackrefName(name) => prog.push(Inst::BackrefName(name.clone())),
         Ast::Concat(items) => {
             for it in items {
                 compile(it, prog);
@@ -739,13 +784,37 @@ impl Regex {
                     false
                 }
             }
+            Inst::BackrefName(name) => {
+                // 이름 있는 백레퍼런스: 같은 이름의 그룹(중복 이름 ES2025 포함) 중
+                // 실제 캡처된(set) 첫 슬롯을 참조한다. 아무 것도 캡처 안 됐으면 빈 매치.
+                let found = self.group_names.iter().filter(|(gn, _)| gn == name).find_map(
+                    |&(_, n)| match (
+                        saves.get(n * 2).copied().flatten(),
+                        saves.get(n * 2 + 1).copied().flatten(),
+                    ) {
+                        (Some(a), Some(b)) => Some((a, b)),
+                        _ => None,
+                    },
+                );
+                let (gs, ge) = match found {
+                    Some(p) => p,
+                    None => return self.run(pc + 1, s, sp, saves, steps),
+                };
+                let len = ge - gs;
+                if sp + len <= s.len() && (0..len).all(|k| self.char_eq(s[sp + k], s[gs + k])) {
+                    self.run(pc + 1, s, sp + len, saves, steps)
+                } else {
+                    false
+                }
+            }
             Inst::Look { neg, prog } => {
                 // 룩어라운드 **안의 캡처 그룹도 표준상 값을 남긴다** — /(?=(\d+))/ 는 그룹 1 을
                 // 채운다. 예전엔 ngroups:0 에 임시 saves 를 써서 통째로 버렸다.
                 let sub = Regex {
                     prog: prog.clone(),
                     ngroups: self.ngroups,
-                    group_names: Vec::new(),
+                    // 룩어라운드 안의 \k<name> 도 해석되도록 이름 맵을 넘긴다.
+                    group_names: self.group_names.clone(),
                     ignore_case: self.ignore_case,
                     multiline: self.multiline,
                     dotall: self.dotall,
@@ -771,7 +840,7 @@ impl Regex {
                 let sub = Regex {
                     prog: prog.clone(),
                     ngroups: self.ngroups,
-                    group_names: Vec::new(),
+                    group_names: self.group_names.clone(),
                     ignore_case: self.ignore_case,
                     multiline: self.multiline,
                     dotall: self.dotall,

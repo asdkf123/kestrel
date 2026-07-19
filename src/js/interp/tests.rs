@@ -3848,6 +3848,54 @@ fn regex_sticky_test_lastindex() {
 }
 
 #[test]
+fn regex_duplicate_named_groups_and_indices() {
+    // ES2025 중복 이름 캡처 그룹(§22.2.9.2): 같은 이름이 여러 대안에 있으면 실제
+    // 매치된 대안의 값이 이기고, 매치 안 된 undefined 는 덮지 않는다. 키는 최초
+    // 등장(source order) 순서로 한 번.
+    let re = "/(?:(?<x>a)|(?<y>a)(?<x>b))(?:(?<z>c)|(?<z>d))/";
+    assert!(run_bool(&format!(
+        "var m={}.exec('abc'); m.groups.x==='b' && m.groups.y==='a' && m.groups.z==='c'",
+        re
+    )));
+    assert!(run_bool(&format!(
+        "var m={}.exec('ad'); m.groups.x==='a' && m.groups.y===undefined && m.groups.z==='d'",
+        re
+    )));
+    assert!(run_bool(&format!(
+        "JSON.stringify(Object.keys({}.exec('ad').groups))==='[\"x\",\"y\",\"z\"]'",
+        re
+    )));
+    // d 플래그(hasIndices): [start,end] UTF-16 쌍 배열 + indices.groups(같은 규칙).
+    assert!(run_bool(
+        "var m=/(?<a>b)(?<c>d)/d.exec('bd'); \
+         JSON.stringify(m.indices[0])==='[0,2]' && JSON.stringify(m.indices[1])==='[0,1]' && \
+         JSON.stringify(m.indices.groups.a)==='[0,1]' && JSON.stringify(m.indices.groups.c)==='[1,2]'"
+    ));
+    // d 플래그 없으면 indices 없음.
+    assert!(run_bool("/(?<a>b)/.exec('b').indices === undefined"));
+    // indices 의 중복 이름도 매치된 것이 이긴다(re 는 '/' 로 끝나므로 뒤에 'd' → /.../d).
+    assert!(run_bool(&format!(
+        "var m={}d.exec('ad'); JSON.stringify(m.indices.groups.x)==='[0,1]' && m.indices.groups.y===undefined",
+        re
+    )));
+}
+
+#[test]
+fn regex_named_backreferences() {
+    // \k<name> 이름 있는 백레퍼런스(§22.2.1): 같은 이름 그룹의 캡처를 참조.
+    assert!(run_bool("/(?<q>a)\\k<q>/.test('aa')"));
+    assert!(run_bool("/(?<q>a)\\k<q>/.test('ab') === false"));
+    // forward reference: 이름이 뒤에 정의돼도 매치 시점에 해석(미캡처 → 빈 매치).
+    assert!(run_bool("/\\k<q>(?<q>a)/.test('a')"));
+    // 그룹 이름의 유니코드 이스케이프(\\uXXXX / \\u{...})와 서로게이트 쌍 디코드.
+    assert!(run_bool("RegExp('(?<\\\\u0041>.)').exec('a').groups.A === 'a'"));
+    assert!(run_bool("RegExp('(?<\\\\u{0041}>.)').exec('a').groups.A === 'a'"));
+    assert!(run_bool("RegExp('(?<\\\\ud835\\\\udc53>.)').exec('a').groups['\u{1d453}'] === 'a'"));
+    // 유니코드 식별자 그대로도(π, $, _).
+    assert!(run_bool("/(?<π>a)/.exec('bab').groups['\u{3c0}'] === 'a'"));
+}
+
+#[test]
 fn regex_exec_lastindex_access() {
     // §22.2.7.2 step 2: exec 는 global/sticky 여부와 무관하게 lastIndex 를 항상
     // 정확히 한 번 Get+ToLength 한다(valueOf 1회). step 6: non-global/sticky 면

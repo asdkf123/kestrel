@@ -968,7 +968,33 @@ impl Interp {
         chars: &[char],
         mt: &crate::js::regex::Match,
         group_names: &[(String, usize)],
+        has_indices: bool,
     ) -> Value {
+        // 정규식 엔진은 코드포인트(char) 인덱스를 쓰지만 JS 오프셋은 UTF-16 코드 유닛.
+        let u16off = |i: usize| -> usize { chars[..i].iter().map(|c| c.len_utf16()).sum() };
+        // 이름 있는 캡처 그룹의 {name: value} 를 만든다. ES2025 중복 이름 그룹(§22.2.9.2):
+        // 같은 이름이 여러 대안에 있으면 실제 매치된 대안의 값이 이기고, 매치 안 된
+        // 캡처의 undefined 는 이미 채워진 값을 덮지 않는다. 키는 최초 등장 순서로 한 번.
+        let build_groups = |mk: &dyn Fn((usize, usize)) -> Value| -> Value {
+            if group_names.is_empty() {
+                return Value::Undefined;
+            }
+            let mut g = ObjMap::new();
+            for (name, idx) in group_names {
+                match mt.groups.get(*idx).and_then(|o| o.as_ref()) {
+                    Some(&(a, b)) => {
+                        g.insert(name.clone(), mk((a, b)));
+                    }
+                    None => {
+                        if !g.contains_key(name) {
+                            g.insert(name.clone(), Value::Undefined);
+                        }
+                    }
+                }
+            }
+            Value::Obj(Rc::new(RefCell::new(g)))
+        };
+
         let mut items = Vec::new();
         for g in &mt.groups {
             match g {
@@ -977,27 +1003,31 @@ impl Interp {
             }
         }
         let arr = ArrayObj::new(items);
-        // index 는 UTF-16 코드 유닛 오프셋(정규식 엔진은 코드포인트 인덱스).
-        let u16_index: usize = chars[..mt.start].iter().map(|c| c.len_utf16()).sum();
-        arr.set_prop("index".to_string(), Value::Num(u16_index as f64));
+        arr.set_prop("index".to_string(), Value::Num(u16off(mt.start) as f64));
         arr.set_prop("input".to_string(), Value::Str(chars.iter().collect()));
-        // groups: 이름 있는 그룹의 {name: value} (없으면 undefined)
-        let groups = if group_names.is_empty() {
-            Value::Undefined
-        } else {
-            let mut g = ObjMap::new();
-            for (name, idx) in group_names {
-                let v = mt
-                    .groups
-                    .get(*idx)
-                    .and_then(|o| o.as_ref())
-                    .map(|(a, b)| Value::Str(chars[*a..*b].iter().collect()))
-                    .unwrap_or(Value::Undefined);
-                g.insert(name.clone(), v);
-            }
-            Value::Obj(Rc::new(RefCell::new(g)))
-        };
+        let groups = build_groups(&|(a, b)| Value::Str(chars[a..b].iter().collect()));
         arr.set_prop("groups".to_string(), groups);
+        // §22.2.7.2 d 플래그(hasIndices): 매치/각 캡처의 [start,end] UTF-16 쌍 배열 +
+        // indices.groups(이름 있는 그룹, 같은 중복 이름 규칙).
+        if has_indices {
+            let pair = |a: usize, b: usize| -> Value {
+                Value::Arr(ArrayObj::new(vec![
+                    Value::Num(u16off(a) as f64),
+                    Value::Num(u16off(b) as f64),
+                ]))
+            };
+            let mut idx_items = Vec::new();
+            for g in &mt.groups {
+                match g {
+                    Some((a, b)) => idx_items.push(pair(*a, *b)),
+                    None => idx_items.push(Value::Undefined),
+                }
+            }
+            let idx_arr = ArrayObj::new(idx_items);
+            let idx_groups = build_groups(&|(a, b)| pair(a, b));
+            idx_arr.set_prop("groups".to_string(), idx_groups);
+            arr.set_prop("indices".to_string(), Value::Arr(idx_arr));
+        }
         Value::Arr(arr)
     }
 
@@ -7008,7 +7038,12 @@ impl Interp {
                         if use_li {
                             self.set_throw(&r, "lastIndex", Value::Num(mt.end as f64))?;
                         }
-                        Ok(self.regex_match_array(&chars, &mt, &re.group_names))
+                        Ok(self.regex_match_array(
+                            &chars,
+                            &mt,
+                            &re.group_names,
+                            flags.contains('d'),
+                        ))
                     }
                     None => {
                         if use_li {
