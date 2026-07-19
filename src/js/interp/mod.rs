@@ -6688,17 +6688,39 @@ impl Interp {
                                 .iter()
                                 .find(|(n, _, _)| *n == key)
                                 .unwrap();
-                            Ok(match entry.2 {
+                            match entry.2 {
                                 // 개별 플래그: 포함 여부
-                                Some(ch) => Value::Bool(flags.contains(ch)),
-                                // source/flags: 계산값
-                                None if key == "source" => {
-                                    Value::Str(if src.is_empty() { "(?:)".to_string() } else { src })
+                                Some(ch) => Ok(Value::Bool(flags.contains(ch))),
+                                // source: 계산값
+                                None if key == "source" => Ok(Value::Str(if src.is_empty() {
+                                    "(?:)".to_string()
+                                } else {
+                                    src
+                                })),
+                                // flags(§22.2.6.4): 개별 플래그 프로퍼티를 [[Get]]+ToBoolean 으로
+                                // 관찰적으로 읽어 d,g,i,m,s,u,v,y 순으로 조립. own override/getter/
+                                // 에러 전파가 동작한다(직접 \0flags 를 쓰면 defineProperty(re,'global',
+                                // {get}) 같은 재정의와 throwing getter 를 무시했다 — @@match 가
+                                // 관찰적 global/unicode 조회를 못 해 관련 test262 가 실패).
+                                None => {
+                                    let mut out = String::new();
+                                    for (prop, ch) in [
+                                        ("hasIndices", 'd'),
+                                        ("global", 'g'),
+                                        ("ignoreCase", 'i'),
+                                        ("multiline", 'm'),
+                                        ("dotAll", 's'),
+                                        ("unicode", 'u'),
+                                        ("unicodeSets", 'v'),
+                                        ("sticky", 'y'),
+                                    ] {
+                                        if to_bool(&self.member_get(recv, prop)?) {
+                                            out.push(ch);
+                                        }
+                                    }
+                                    Ok(Value::Str(out))
                                 }
-                                None => Value::Str(
-                                    "dgimsuvy".chars().filter(|c| flags.contains(*c)).collect(),
-                                ),
-                            })
+                            }
                         }
                         // promise 메서드는 프로토타입 격(비열거) — own 프로퍼티 아님.
                         "then" if is_promise(recv) => Ok(Value::Native(Native::PromiseThen)),

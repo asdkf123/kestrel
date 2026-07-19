@@ -3881,6 +3881,30 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_flags_getter_observable() {
+    // §22.2.6.4 flags getter 는 개별 플래그 프로퍼티를 [[Get]]+ToBoolean 으로 읽는다 —
+    // own override/throwing getter 가 관찰돼야 한다(직접 내부 비트를 읽으면 무시됐다).
+    // global getter 가 던지면 @@match(= flags 조회)이 전파.
+    assert!(run_bool(
+        "var re=/./; Object.defineProperty(re,'global',{get(){throw new TypeError('x');}}); \
+         try{ RegExp.prototype[Symbol.match].call(re); false }catch(e){ e instanceof TypeError }"
+    ));
+    // unicode getter 가 던지면 비전역 정규식이라도 @@match 이 flags 를 먼저 읽어 전파.
+    assert!(run_bool(
+        "var re=/./; Object.defineProperty(re,'unicode',{get(){throw new TypeError('u');}}); \
+         try{ re[Symbol.match](''); false }catch(e){ e instanceof TypeError }"
+    ));
+    // global 을 undefined 로 재정의하면 ToBoolean=false → flags 에서 'g' 제외 → 비전역.
+    assert!(run_bool(
+        "var r=/a/g; Object.defineProperty(r,'global',{value:undefined,writable:true}); \
+         r.flags.indexOf('g') === -1"
+    ));
+    // 재정의 없는 일반 정규식은 그대로.
+    assert!(run_bool("/a/gi.flags === 'gi'"));
+    assert!(run_bool("/x/dgimsy.flags === 'dgimsy'"));
+}
+
+#[test]
 fn regex_symbol_method_prop_desc() {
     // §22.2.6 RegExp.prototype[@@match/@@replace/@@matchAll/@@search/@@split] 는
     // { writable:true, enumerable:false, configurable:true }. 예전엔 심볼 키가
