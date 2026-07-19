@@ -3504,6 +3504,25 @@ window.WebAssembly = WebAssembly;
     }
   }
 })();
+
+// 프릴류로 폴리필한 내장 메서드는 [[Construct]] 가 없어야 한다(new/Reflect.construct 불가). 일반 함수식이라 기본은 생성 가능하므로 내부 마커
+// '\u0000nonctor' 를 달아 비생성자로 표시한다(is_constructor/new 가 이 키를 본다). 내부 키라 열거에 안 보인다.
+// 프릴류드 맨 끝에서 실행해 Promise/String/Number 등 늦게 정의된 메서드도 달린다.
+(function(){
+  function mark(holder, names){
+    if (!holder) return;
+    for (var i = 0; i < names.length; i++){
+      var f = holder[names[i]];
+      if (typeof f === 'function') {
+        try { Object.defineProperty(f, '\u0000nonctor', { value: true, writable: false, enumerable: false, configurable: false }); } catch (e) {}
+      }
+    }
+  }
+  mark(Array.prototype, ['copyWithin','lastIndexOf','toReversed','toSorted','findLast','findLastIndex','flat','flatMap','at','includes']);
+  mark(Object, ['is','hasOwn','getOwnPropertyDescriptors','fromEntries']);
+  mark(typeof Promise !== 'undefined' ? Promise : null, ['all','race','any','allSettled']);
+  mark(String.prototype, ['normalize']);
+})();
 "#;
 
 

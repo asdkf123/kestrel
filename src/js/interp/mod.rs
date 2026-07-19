@@ -7574,7 +7574,16 @@ impl Interp {
         match v {
             Value::Class(_) => true,
             // 메서드(클래스/객체 축약형)는 [[Construct]] 가 없다 — 화살표/async/제너레이터도.
-            Value::Fn(f) => !f.is_arrow && !f.is_async && !f.is_generator && !f.is_method,
+            // 프렐류드로 폴리필한 내장 메서드(copyWithin/Object.is/Promise.all 등)도 [[Construct]]
+            // 가 없어야 하는데 일반 함수식이라 is_method=false — 프렐류드가 "\0nonctor" 마커를
+            // 달아 비생성자로 표시한다(§ 내장 함수는 명시된 것 외엔 [[Construct]] 없음).
+            Value::Fn(f) => {
+                !f.is_arrow
+                    && !f.is_async
+                    && !f.is_generator
+                    && !f.is_method
+                    && !f.props.borrow().contains_key("\u{0}nonctor")
+            }
             Value::Native(n) => natives::native_is_constructor(n),
             Value::Bound(b) => self.is_constructor(&b.0),
             Value::Proxy(p) => self.is_constructor(&p.0),
@@ -7734,8 +7743,14 @@ impl Interp {
             // F.prototype.m 추가도 인스턴스에 반영되고 프로토타입 체인 조회가 동작한다.
             // 함수가 객체를 반환하면 그것 우선(JS 규칙).
             Value::Fn(func) => {
-                // 메서드/화살표/async/제너레이터는 [[Construct]] 가 없다 → new 하면 TypeError.
-                if func.is_arrow || func.is_async || func.is_generator || func.is_method {
+                // 메서드/화살표/async/제너레이터, 그리고 "\0nonctor" 로 표시된 프렐류드 내장
+                // 메서드는 [[Construct]] 가 없다 → new 하면 TypeError(§ IsConstructor 와 일관).
+                if func.is_arrow
+                    || func.is_async
+                    || func.is_generator
+                    || func.is_method
+                    || func.props.borrow().contains_key("\u{0}nonctor")
+                {
                     let name = func.name.borrow().clone();
                     let label = if name.is_empty() { "value".to_string() } else { name };
                     return Err(

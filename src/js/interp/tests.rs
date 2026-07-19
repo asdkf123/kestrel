@@ -3295,6 +3295,18 @@ fn more_array_string_methods() {
         ),
         123.0
     );
+    // 프렐류드로 폴리필한 내장 메서드는 [[Construct]] 가 없다 — new/Reflect.construct 불가,
+    // 열거엔 마커가 안 보인다. 실제 생성자/사용자 함수는 영향 없음.
+    assert!(prelude_bool(
+        "try{ new Array.prototype.copyWithin(); false }catch(e){ e instanceof TypeError }"
+    ));
+    assert!(prelude_bool(
+        "function isC(f){try{Reflect.construct(function(){},[],f);return true}catch(e){return false}} \
+         !isC(Object.is) && !isC(Promise.all) && isC(Array) && isC(function(){})"
+    ));
+    assert!(prelude_bool(
+        "Object.getOwnPropertyNames(Array.prototype.copyWithin).indexOf('\\u0000nonctor')<0"
+    ));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
