@@ -65,6 +65,11 @@ impl Interp {
         let v = match spec.kind {
             Reflect::Bool => Value::Bool(raw.is_some()),
             Reflect::String => Value::Str(raw.unwrap_or_default()),
+            // nullable: 속성이 없으면 null (ARIA IDL 은 DOMString?)
+            Reflect::NullableString => match raw {
+                Some(s) => Value::Str(s),
+                None => Value::Null,
+            },
             Reflect::Url => {
                 // 없으면 빈 문자열, 있으면 문서 기준 URL 로 절대화 (표준)
                 match raw {
@@ -150,6 +155,14 @@ impl Interp {
             Reflect::Double => {
                 let n = to_num(value);
                 dom.set_attr(id, attr, crate::style::num_css(n as f32));
+            }
+            // nullable DOMString?: null/undefined 대입은 콘텐츠 속성을 제거(ARIA IDL).
+            Reflect::NullableString => {
+                if matches!(value, Value::Null | Value::Undefined) {
+                    dom.remove_attr(id, attr);
+                } else {
+                    dom.set_attr(id, attr, to_display(value));
+                }
             }
             // 문자열/URL/열거: 그대로 문자열로 (URL 은 **절대화하지 않는다** — 표준은
             // 콘텐츠 속성에 준 값을 그대로 넣고, 읽을 때 절대화한다)

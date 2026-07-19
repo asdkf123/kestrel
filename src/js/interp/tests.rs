@@ -521,6 +521,32 @@ fn document_create_attribute() {
 }
 
 #[test]
+fn aria_attribute_reflection() {
+    let mut dom = crate::html::parse_dom(
+        "<div id='x' role='button' aria-label='hi' aria-atomic='true'></div>".to_string(),
+    );
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // role 및 aria-* → IDL (nullable DOMString)
+    assert_eq!(g("document.getElementById('x').role"), "button");
+    assert_eq!(g("document.getElementById('x').ariaLabel"), "hi");
+    assert_eq!(g("document.getElementById('x').ariaAtomic"), "true");
+    // 없는 속성은 null
+    assert_eq!(g("document.getElementById('x').ariaHidden"), "null");
+    // 대입은 콘텐츠 속성을 세팅
+    assert_eq!(
+        g("var e=document.getElementById('x'); e.ariaChecked='mixed'; e.getAttribute('aria-checked')"),
+        "mixed",
+    );
+    // null/undefined 대입은 콘텐츠 속성 제거 → 읽으면 null
+    assert_eq!(
+        g("var e=document.getElementById('x'); e.role=null; e.hasAttribute('role')+','+e.role"),
+        "false,null",
+    );
+}
+
+#[test]
 fn html_collection_item_named_indexed() {
     let mut dom = crate::html::parse_dom(
         "<div><foo id='a'></foo><foo id='0'></foo><foo name='b'></foo></div>".to_string(),
