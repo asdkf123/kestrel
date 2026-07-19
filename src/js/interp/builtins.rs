@@ -3341,24 +3341,59 @@ impl Interp {
                         return Ok(target);
                     }
                 }
-                // ── 근사 경로 (표준 강제 없음) ──
-                let d = if let Value::Obj(d) = &desc { d.borrow() } else {
+                // ── 근사 경로 (표준 강제 없음) ── ToPropertyDescriptor (§10.2.4): 각 필드를
+                // HasProperty + Get 으로 읽어 서술자 객체가 프로토타입에서 상속한 필드도
+                // 반영한다(예전엔 own map 만 봐서 상속 value/get/set/enumerable 등을 놓쳤다).
+                // Get 은 스펙 순서(enumerable→configurable→value→writable→get→set)로 한다.
+                if !is_object(&desc) {
                     return Ok(target);
+                }
+                let has_enumerable = self.has_property(&desc, "enumerable");
+                let has_configurable = self.has_property(&desc, "configurable");
+                let has_value = self.has_property(&desc, "value");
+                let has_writable = self.has_property(&desc, "writable");
+                let has_get = self.has_property(&desc, "get");
+                let has_set = self.has_property(&desc, "set");
+                let enumerable =
+                    has_enumerable && to_bool(&self.member_get(&desc, "enumerable")?);
+                let configurable =
+                    has_configurable && to_bool(&self.member_get(&desc, "configurable")?);
+                let value_v = if has_value {
+                    Some(self.member_get(&desc, "value")?)
+                } else {
+                    None
                 };
-                let g = d.get("get").cloned().filter(is_callable);
-                let st = d.get("set").cloned().filter(is_callable);
-                let entry = if g.is_some() || st.is_some() {
+                let writable = has_writable && to_bool(&self.member_get(&desc, "writable")?);
+                let get_v = if has_get {
+                    self.member_get(&desc, "get")?
+                } else {
+                    Value::Undefined
+                };
+                let set_v = if has_set {
+                    self.member_get(&desc, "set")?
+                } else {
+                    Value::Undefined
+                };
+                // §10.2.4: get/set 은 callable 이거나 undefined. accessor+data 는 동시 지정 불가.
+                if has_get && !matches!(get_v, Value::Undefined) && !is_callable(&get_v) {
+                    return Err(self.throw_error("TypeError", "Getter must be a function"));
+                }
+                if has_set && !matches!(set_v, Value::Undefined) && !is_callable(&set_v) {
+                    return Err(self.throw_error("TypeError", "Setter must be a function"));
+                }
+                if (has_get || has_set) && (has_value || has_writable) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+                    ));
+                }
+                let entry = if has_get || has_set {
+                    let g = if is_callable(&get_v) { Some(get_v) } else { None };
+                    let st = if is_callable(&set_v) { Some(set_v) } else { None };
                     Some(Value::Accessor(Rc::new(super::AccessorPair { get: g, set: st })))
                 } else {
-                    d.get("value").cloned()
+                    value_v
                 };
-                let enumerable = matches!(d.get("enumerable"), Some(v) if to_bool(v));
-                let configurable = matches!(d.get("configurable"), Some(v) if to_bool(v));
-                let has_writable = d.contains_key("writable");
-                let writable = matches!(d.get("writable"), Some(v) if to_bool(v));
-                let has_enumerable = d.contains_key("enumerable");
-                let has_configurable = d.contains_key("configurable");
-                drop(d);
                 // 배열 length 는 exotic (§10.4.2.1): {enumerable:false, configurable:false}
                 // 데이터 프로퍼티. accessor·configurable:true·enumerable:true 로 재정의하면
                 // TypeError. (value 로 길이 변경 + writable:false 고정은 배열 표현 확장이
