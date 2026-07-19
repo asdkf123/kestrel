@@ -7658,6 +7658,63 @@ impl Interp {
                 }))
             }
             Native::Str(op) => {
+                // §22.1.3.19/.20 replace/replaceAll: ToString(this) 를 위임/검사보다 뒤로
+                // 미룬다. RequireObjectCoercible(this) → (replaceAll) IsRegExp + flags 'g'
+                // 검사 → GetMethod(searchValue,@@replace) 위임 → 없으면 그때 ToString(this)
+                // 후 문자열 치환. 예전엔 핸들러 진입 즉시 ToString(this) 해서, searchValue
+                // 검사/위임보다 먼저 this.toString 이 실행됐다(poisoned this 관측 순서 위반).
+                if matches!(op, StrOp::Replace | StrOp::ReplaceAll) {
+                    let all = matches!(op, StrOp::ReplaceAll);
+                    let this_val = match recv {
+                        None | Some(Value::Undefined) | Some(Value::Null) => {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "String.prototype.replace called on null or undefined",
+                            ));
+                        }
+                        Some(v) => v,
+                    };
+                    let pat = args.first().cloned().unwrap_or(Value::Undefined);
+                    let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
+                    // searchValue 가 Object 일 때만 IsRegExp/flags 검사 + @@replace 위임.
+                    // 원시값(문자열/숫자 등)은 @@replace 를 조회하지 않고 문자열 치환으로 간다
+                    // (String.prototype[@@replace] 재정의를 건드리지 않는다 — cstm-*-primitive).
+                    if is_object(&pat) {
+                        // replaceAll: IsRegExp 면 flags 를 Get+RequireObjectCoercible+ToString
+                        // 해 'g' 를 요구(§22.1.3.20 step 2).
+                        if all && self.is_regexp_p(&pat)? {
+                            let flags = self.member_get(&pat, "flags")?;
+                            if matches!(flags, Value::Undefined | Value::Null) {
+                                return Err(self.throw_error(
+                                    "TypeError",
+                                    "replaceAll called with a RegExp whose flags is undefined or null",
+                                ));
+                            }
+                            let fs = self.to_string_value(&flags)?;
+                            if !fs.contains('g') {
+                                return Err(self.throw_error(
+                                    "TypeError",
+                                    "replaceAll must be called with a global RegExp",
+                                ));
+                            }
+                        }
+                        // GetMethod(searchValue, @@replace): 있으면 위임(O 를 그대로 넘겨
+                        // @@replace 가 ToString 하게). 비함수면 TypeError.
+                        let replacer = self.member_get(&pat, "\u{0}@@replace")?;
+                        if !matches!(replacer, Value::Undefined | Value::Null) {
+                            if !is_callable(&replacer) {
+                                return Err(self.throw_error(
+                                    "TypeError",
+                                    "Symbol.replace method is not callable",
+                                ));
+                            }
+                            return self.call_value(replacer, Some(pat), vec![this_val, repl]);
+                        }
+                    }
+                    // 위임 대상이 없을 때만 ToString(this) 후 문자열 치환.
+                    let s = self.to_string_value(&this_val)?;
+                    return Ok(Value::Str(self.str_replace(&s, &pat, &repl, all)?));
+                }
                 // String.prototype 메서드는 generic 하다 (§22.1.3): this 를
                 // ToString(RequireObjectCoercible(this)) 로 강제한다. null/undefined 는
                 // TypeError. 예전엔 진짜 문자열이 아니면 일반 Error 를 던져서
@@ -7784,66 +7841,10 @@ impl Interp {
                         let head: String = schars[..end].iter().collect();
                         Value::Bool(head.ends_with(&search))
                     }
-                    StrOp::Replace => {
-                        let pat = args.first().cloned().unwrap_or(Value::Undefined);
-                        let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
-                        // §22.1.3.17: searchValue 가 Object 면 @@replace 로 위임(override 존중).
-                        if is_object(&pat) {
-                            let replacer = self.member_get(&pat, "\u{0}@@replace")?;
-                            if !matches!(replacer, Value::Undefined | Value::Null) {
-                                if !is_callable(&replacer) {
-                                    return Err(self.throw_error(
-                                        "TypeError",
-                                        "Symbol.replace method is not callable",
-                                    ));
-                                }
-                                return self.call_value(
-                                    replacer,
-                                    Some(pat),
-                                    vec![Value::Str(s.clone()), repl],
-                                );
-                            }
-                        }
-                        Value::Str(self.str_replace(&s, &pat, &repl, false)?)
-                    }
-                    StrOp::ReplaceAll => {
-                        let pat = args.first().cloned().unwrap_or(Value::Undefined);
-                        let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
-                        // §22.1.3.18: searchValue 가 Object 면 IsRegExp 시 flags 'g' 검사 후
-                        // @@replace 로 위임.
-                        if is_object(&pat) {
-                            if self.is_regexp_p(&pat)? {
-                                let flags = self.member_get(&pat, "flags")?;
-                                if matches!(flags, Value::Undefined | Value::Null) {
-                                    return Err(self.throw_error(
-                                        "TypeError",
-                                        "RegExp flags is undefined or null",
-                                    ));
-                                }
-                                let fs = self.to_string_value(&flags)?;
-                                if !fs.contains('g') {
-                                    return Err(self.throw_error(
-                                        "TypeError",
-                                        "replaceAll must be called with a global RegExp",
-                                    ));
-                                }
-                            }
-                            let replacer = self.member_get(&pat, "\u{0}@@replace")?;
-                            if !matches!(replacer, Value::Undefined | Value::Null) {
-                                if !is_callable(&replacer) {
-                                    return Err(self.throw_error(
-                                        "TypeError",
-                                        "Symbol.replace method is not callable",
-                                    ));
-                                }
-                                return self.call_value(
-                                    replacer,
-                                    Some(pat),
-                                    vec![Value::Str(s.clone()), repl],
-                                );
-                            }
-                        }
-                        Value::Str(self.str_replace(&s, &pat, &repl, true)?)
+                    // replace/replaceAll 은 ToString(this) 이전에 위 early branch 에서
+                    // 완전히 처리되고 return 한다 — 여기 도달하지 않는다.
+                    StrOp::Replace | StrOp::ReplaceAll => {
+                        unreachable!("replace/replaceAll handled before ToString(this)")
                     }
                     StrOp::Search => {
                         // §22.1.3.12: regexp[@@search] 로 위임(GetMethod+Call, override 존중),

@@ -3881,6 +3881,35 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn string_replace_replaceall_delegation_order() {
+    // §22.1.3.19/.20: replace/replaceAll 은 RequireObjectCoercible(this) 후
+    // searchValue 검사/@@replace 위임을 먼저 하고 ToString(this) 는 fallback 에서만.
+    // (1) replaceAll: 비전역 정규식 searchValue 면 this.toString 전에 TypeError.
+    assert!(run_bool(
+        "var p=0; var poison={toString:function(){p++;throw 'x';}}; \
+         try{ ''.replaceAll.call(poison, /./, poison); false }catch(e){ e instanceof TypeError && p===0 }"
+    ));
+    // (2) 원시 searchValue 는 @@replace 를 조회하지 않는다(String.prototype[@@replace]
+    //     재정의를 건드리지 않음) — 문자열 치환 경로.
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(String.prototype, Symbol.replace); \
+         Object.defineProperty(String.prototype, Symbol.replace, {get:function(){throw new Error('no');}, configurable:true}); \
+         var r='a,b,c'.replaceAll(',','X'); \
+         if(d){Object.defineProperty(String.prototype,Symbol.replace,d);}else{delete String.prototype[Symbol.replace];} \
+         r==='aXbXc'"
+    ));
+    // (3) 정상 위임: object searchValue 의 @@replace 로 위임, this 는 O 로 넘어가 거기서 ToString.
+    assert!(run_bool(
+        "var o={toString:function(){return 'THIS';}}; String.prototype.replace.call(o,/T/,'X')==='XHIS'"
+    ));
+    // (4) 회귀: 일반 문자열/정규식 replace/replaceAll.
+    assert!(run_bool("'aaa'.replaceAll('a','b')==='bbb' && 'a1b2'.replaceAll(/\\d/g,'X')==='aXbX'"));
+    assert!(run_bool("'abc'.replace('b','X')==='aXc' && 'abc'.replace(/b/,'X')==='aXc'"));
+    // (5) replaceAll 비전역 정규식은 TypeError.
+    assert!(run_bool("try{ 'aaa'.replaceAll(/a/,'b'); false }catch(e){ e instanceof TypeError }"));
+}
+
+#[test]
 fn regex_empty_match_advance_tolength() {
     // 빈 매치 후 lastIndex 전진은 ToLength(Get(rx,"lastIndex"))+1 이다(§22.2.6.8/.11).
     // 객체 lastIndex 는 valueOf 로 강제변환하고 2^53-1 로 클램프한다(예전 to_num 은
