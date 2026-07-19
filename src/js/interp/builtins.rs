@@ -7314,7 +7314,17 @@ impl Interp {
                                 out.push(item);
                             }
                         }
-                        Value::Arr(ArrayObj::new(out))
+                        // concat 결과도 ArraySpeciesCreate(§23.1.3.1). 기본 배열이면 빠른 경로.
+                        match self.array_species_ctor(&cb_arr)? {
+                            Some(ctor) => {
+                                let sp = self.construct(ctor, vec![Value::Num(0.0)])?;
+                                for (k, v) in out.into_iter().enumerate() {
+                                    self.set_own_property(&sp, k.to_string(), v);
+                                }
+                                sp
+                            }
+                            None => Value::Arr(ArrayObj::new(out)),
+                        }
                     }
                     ArrOp::Includes => {
                         // §22.1.3.13: includes(searchElement, fromIndex). SameValueZero
@@ -7355,12 +7365,24 @@ impl Interp {
                         } else {
                             self.to_integer_or_infinity(&args[1])?.max(0.0).min(len0 - start)
                         };
-                        let mut arr = a.borrow_mut();
-                        let start = (start as usize).min(arr.len());
-                        let del = (del_f as usize).min(arr.len() - start);
-                        let removed: Vec<Value> =
-                            arr.splice(start..start + del, args.iter().skip(2).cloned()).collect();
-                        Value::Arr(ArrayObj::new(removed))
+                        let removed: Vec<Value> = {
+                            let mut arr = a.borrow_mut();
+                            let start = (start as usize).min(arr.len());
+                            let del = (del_f as usize).min(arr.len() - start);
+                            arr.splice(start..start + del, args.iter().skip(2).cloned()).collect()
+                        };
+                        // splice 의 제거 배열도 ArraySpeciesCreate(§23.1.3.29). 기본은 빠른 경로.
+                        match self.array_species_ctor(&cb_arr)? {
+                            Some(ctor) => {
+                                let sp =
+                                    self.construct(ctor, vec![Value::Num(removed.len() as f64)])?;
+                                for (k, v) in removed.into_iter().enumerate() {
+                                    self.set_own_property(&sp, k.to_string(), v);
+                                }
+                                sp
+                            }
+                            None => Value::Arr(ArrayObj::new(removed)),
+                        }
                     }
                     ArrOp::Shift => {
                         let mut arr = a.borrow_mut();

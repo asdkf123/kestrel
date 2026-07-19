@@ -3265,6 +3265,15 @@ fn derived_constructor_must_call_super() {
                       var r=new M(1,2).map(x=>x); (r instanceof Array) && !(r instanceof M)"));
     // 무회귀: 일반 배열 map 은 일반 배열
     assert!(run_bool("var r=[1,2].map(x=>x); (r instanceof Array) && r.constructor===Array"));
+    // slice/splice(제거배열)/concat 도 species 인스턴스
+    assert!(run_bool("class M extends Array {} new M(1,2,3,4).slice(1,3) instanceof M"));
+    assert!(run_bool("class M extends Array {} new M(1,2,3,4).splice(1,2) instanceof M"));
+    assert!(run_bool("class M extends Array {} new M(1,2).concat(new M(3,4)) instanceof M"));
+    // 서브클래스에서 mutating 메서드(sort/reverse/push)는 제자리 동작, 인스턴스 유지
+    assert!(run_bool("class M extends Array {} var m=new M(3,1,2); m.sort(); m.join(',')==='1,2,3' && (m instanceof M)"));
+    assert!(run_bool("class M extends Array {} var m=new M(1,2); m.push(9); m.length===3 && m[2]===9"));
+    // 무회귀: 일반 배열 slice/splice/concat 은 일반 배열
+    assert!(run_bool("[1,2,3].slice(1).constructor===Array && [1,2].concat([3]).constructor===Array"));
     // gOPD 가 인스턴스 필드의 실제 속성을 보고한다 — class extends Error 의 message 는
     // non-enumerable(예전엔 반환부가 enumerable:true 로 덮었다). 일반 필드는 enumerable.
     assert!(run_bool(
