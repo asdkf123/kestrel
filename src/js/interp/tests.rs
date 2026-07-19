@@ -3980,6 +3980,31 @@ fn destructuring_rest() {
 }
 
 #[test]
+fn destructuring_respects_overridden_array_iterator() {
+    // Array.prototype[Symbol.iterator] 재정의를 구조분해/for-of/spread 가 존중해야 한다
+    // (빠른 재료화 경로가 override 를 무시하면 안 됨). §22.1.3.35 / IteratorBindingInitialization.
+    let over = "Array.prototype[Symbol.iterator]=function*(){ yield 7; yield 8; yield 42; };";
+    assert_eq!(
+        run_num(&format!("{over} var [x,y,z]=[1,2,3]; x*100+y*10+z")),
+        822.0 // 7*100 + 8*10 + 42
+    );
+    assert_eq!(
+        run_str(&format!("{over} var o=[]; for(var v of [1,2]) o.push(v); JSON.stringify(o)")),
+        "[7,8,42]"
+    );
+    assert_eq!(
+        run_str(&format!("{over} JSON.stringify([...[9]])")),
+        "[7,8,42]"
+    );
+    // 인스턴스 @@iterator 조회도 override 를 반환
+    assert!(run_bool(&format!(
+        "{over} [1][Symbol.iterator]===Array.prototype[Symbol.iterator]"
+    )));
+    // 회귀: 재정의 없으면 기본 순서
+    assert_eq!(run_num("var [a,b,c]=[3,4,5]; a*100+b*10+c"), 345.0);
+}
+
+#[test]
 fn destructuring_closes_iterator() {
     // §8.5.2: 사용자 이터러블을 배열 구조분해로 부분 소비하면 IteratorClose(return 호출).
     // 정상 완료 + iterator 미소진 → return() 1회.

@@ -2124,9 +2124,27 @@ impl Interp {
     // 이터러블(배열/문자열/Set/Map/반복자 객체)을 값 Vec 으로. yield* 와 for-of 공용.
     // 반복자가 던진 오류는 반드시 전파한다. 예전엔 Err(_) => break 로 삼켜서,
     // 검증하다 throw 하는 이터러블이 조용히 빈 결과가 됐다.
+    // 배열의 @@iterator 가 기본(Native::MakeIter)인가 — 사용자가 Array.prototype
+    // [Symbol.iterator] 나 인스턴스 @@iterator 를 재정의했으면 false. 재정의됐으면
+    // 직접 원소 접근(빠른 경로) 대신 반복자 프로토콜을 써야 한다(§ 구조분해/전개/for-of).
+    fn array_has_default_iterator(&self, a: &Rc<ArrayObj>) -> bool {
+        if a.get_prop("\u{0}@@iterator").is_some() {
+            return false;
+        }
+        if let Value::Obj(ns) = &self.array_ns {
+            if let Some(Value::Obj(proto)) = ns.borrow().get("prototype").cloned() {
+                if let Some(ov) = proto.borrow().get("\u{0}@@iterator").cloned() {
+                    return matches!(ov, Value::Native(Native::MakeIter));
+                }
+            }
+        }
+        true
+    }
+
     fn iterate_to_vec(&mut self, v: &Value) -> Result<Vec<Value>, String> {
         Ok(match v {
-            Value::Arr(a) => a.borrow().clone(),
+            // @@iterator 가 재정의된 배열은 빠른 경로를 건너뛰고 아래 반복자 프로토콜로.
+            Value::Arr(a) if self.array_has_default_iterator(a) => a.borrow().clone(),
             Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
             Value::SetVal(s) => s.borrow().clone(),
             Value::MapVal(m) => m
@@ -3595,10 +3613,14 @@ impl Interp {
                     return Err(self
                         .throw_error("TypeError", format!("{} 은(는) 이터러블이 아님", d)));
                 }
-                let eager = matches!(
-                    value,
-                    Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_)
-                );
+                // 배열/문자열/Set/Map 은 유한 + 사용자 코드 없음 → 재료화 빠른 경로.
+                // 단 @@iterator 가 재정의된 배열은 반복자 프로토콜(지연)로 가야 override
+                // 와 IteratorClose 가 지켜진다.
+                let eager = match &value {
+                    Value::Arr(a) => self.array_has_default_iterator(a),
+                    Value::Str(_) | Value::SetVal(_) | Value::MapVal(_) => true,
+                    _ => false,
+                };
                 if eager {
                     let items = self.iterate_to_vec(&value)?;
                     for (i, slot) in elems.iter().enumerate() {
@@ -6630,6 +6652,19 @@ impl Interp {
                     return Ok(Value::Native(Native::PropertyIsEnumerable));
                 }
                 if key == "\u{0}@@iterator" {
+                    // 배열 인스턴스 own override 우선, 다음 Array.prototype override
+                    // (기본은 MakeIter 가 저장돼 있음). 예전엔 무조건 MakeIter 라
+                    // Array.prototype[Symbol.iterator] 재정의가 배열 인스턴스에 안 먹혔다.
+                    if let Some(ov) = a.get_prop("\u{0}@@iterator") {
+                        return Ok(ov);
+                    }
+                    if let Value::Obj(ns) = &self.array_ns {
+                        if let Some(Value::Obj(proto)) = ns.borrow().get("prototype").cloned() {
+                            if let Some(ov) = proto.borrow().get("\u{0}@@iterator").cloned() {
+                                return Ok(ov);
+                            }
+                        }
+                    }
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
