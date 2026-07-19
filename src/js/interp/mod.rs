@@ -6366,6 +6366,17 @@ impl Interp {
                     }
                     return Ok(Value::Undefined);
                 }
+                // 서브클래스(class X extends Array)면 커스텀 __proto__(X.prototype)를 걷는다 —
+                // 서브클래스가 추가한 메서드와 instanceof 체인이 여기서 해석된다(getter this=배열).
+                // 내장 배열 op(map/push/length 등)는 위에서 이미 처리했으므로 그게 우선.
+                if let Some(proto) = a.get_prop("__proto__") {
+                    if is_object(&proto) {
+                        let v = self.exotic_proto_get(proto, key, recv)?;
+                        if !matches!(v, Value::Undefined) {
+                            return Ok(v);
+                        }
+                    }
+                }
                 // Array.prototype 폴리필 메서드 (at/flatMap/findLast 등) 조회
                 if let Some(m) = self.proto_method("Array", key) {
                     return Ok(m);
@@ -7193,6 +7204,21 @@ impl Interp {
                                     Value::SetVal(_) | Value::MapVal(_) => {
                                         self.set_own_property(&this, COLLECTION_SLOT.to_string(), produced);
                                     }
+                                    // extends Array: 부모가 만든 진짜 배열 exotic 이 this 다
+                                    // (§10.4.2). new.target.prototype 로 프로토 연결해 서브클래스
+                                    // 메서드·instanceof·Array.isArray 가 동작한다. 예전엔 배열이
+                                    // 버려져 length/인덱스/메서드가 전부 깨졌다.
+                                    Value::Arr(_) => {
+                                        let nt = env_get(env, "\u{0}newtarget")
+                                            .unwrap_or(Value::Undefined);
+                                        let proto = self.member_get(&nt, "prototype")?;
+                                        if let Value::Arr(arr) = &produced {
+                                            if is_object(&proto) {
+                                                arr.set_prop("__proto__".to_string(), proto);
+                                            }
+                                        }
+                                        env_set(env, "this", produced);
+                                    }
                                     // 부모가 별도 객체를 만들어 돌려준 경우(Error 등):
                                     // 그 own 프로퍼티를 this 에 얹는다 (클래스 정체성은 유지)
                                     v if is_object(&v) => {
@@ -7855,6 +7881,17 @@ impl Interp {
                         // (암묵 생성자 경로 — class S extends Set {} 처럼 ctor 가 없을 때).
                         Value::SetVal(_) | Value::MapVal(_) => {
                             self.set_own_property(inst, COLLECTION_SLOT.to_string(), produced);
+                        }
+                        // extends Array(암묵 생성자): 부모가 만든 배열이 결과다. inst 의 프로토
+                        // (new.target.prototype)를 배열에 연결해 서브클래스 메서드/instanceof 지원.
+                        Value::Arr(_) => {
+                            let proto = self.proto_of(inst)?;
+                            if let Value::Arr(arr) = &produced {
+                                if is_object(&proto) {
+                                    arr.set_prop("__proto__".to_string(), proto);
+                                }
+                            }
+                            return Ok(Some(produced));
                         }
                         v if is_object(&v) => {
                             for (k, val) in builtins::own_entries_all(&v) {
@@ -8635,6 +8672,28 @@ impl Interp {
                         }
                     }
                     return Ok(Value::Bool(false));
+                }
+                // extends Array 서브클래스 인스턴스(커스텀 __proto__ 를 가진 배열):
+                // __proto__ 체인에 r.prototype 이 있으면 인스턴스(OrdinaryHasInstance).
+                if let Value::Arr(a) = &l {
+                    if let Some(start) = a.get_prop("__proto__") {
+                        if let Value::Obj(fp) = self.member_get(&r, "prototype")? {
+                            let mut proto = start;
+                            let mut depth = 0;
+                            while let Value::Obj(p) = &proto {
+                                if Rc::ptr_eq(p, &fp) {
+                                    return Ok(Value::Bool(true));
+                                }
+                                depth += 1;
+                                if depth > 100 {
+                                    break;
+                                }
+                                let next =
+                                    p.borrow().get("__proto__").cloned().unwrap_or(Value::Null);
+                                proto = next;
+                            }
+                        }
+                    }
                 }
                 // 내장 생성자별 값 타입 판정 (feature-detection/에러 처리에 흔함)
                 let obj_has = |key: &str| -> bool {

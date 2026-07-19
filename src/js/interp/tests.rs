@@ -3245,6 +3245,14 @@ fn derived_constructor_must_call_super() {
     ));
     // 기저 클래스는 원시값 반환을 무시하고 this
     assert!(run_bool("class E { constructor(){ this.y=3; return 5; } } new E().y===3"));
+    // class X extends Array: 파생 인스턴스가 진짜 배열 exotic 이다(§10.4.2) —
+    // Array.isArray/length/인덱스/메서드/instanceof/서브클래스 메서드가 전부 동작.
+    assert!(run_bool("class M extends Array {} Array.isArray(new M(1,2,3))"));
+    assert_eq!(run_num("class M extends Array {} new M(1,2,3).length"), 3.0);
+    assert_eq!(run_str("class M extends Array {} new M('a','b').join(',')"), "a,b");
+    assert!(run_bool("class M extends Array {} (new M(1,2)) instanceof M && (new M(1,2)) instanceof Array"));
+    assert_eq!(run_num("class M extends Array { sum(){ return this.reduce((a,b)=>a+b,0); } } new M(1,2,3).sum()"), 6.0);
+    assert_eq!(run_str("class M extends Array {} var m=new M(); m.push(1,2); m[0]+''+m[1]"), "12");
     // gOPD 가 인스턴스 필드의 실제 속성을 보고한다 — class extends Error 의 message 는
     // non-enumerable(예전엔 반환부가 enumerable:true 로 덮었다). 일반 필드는 enumerable.
     assert!(run_bool(
