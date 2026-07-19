@@ -4629,6 +4629,16 @@ fn function_names_follow_standard() {
     assert_eq!(run_str("class C {} C.name='X'; C.name"), "C");
     // 명시 static name(){} 이 있으면 실제 프로퍼티라 유지
     assert_eq!(run_str("class C { static name(){ return 1; } } typeof C.name"), "function");
+    // 클래스 name 은 configurable:true → delete 가능(이후 없는 것으로 보이고 복원도 가능)
+    assert!(run_bool(
+        "class C {} var ok=delete C.name; ok && !C.hasOwnProperty('name') && C.name===undefined"
+    ));
+    assert!(run_bool(
+        "class C {} delete C.name; Object.defineProperty(C,'name',{value:'R',configurable:true}); \
+         C.name==='R' && C.hasOwnProperty('name')"
+    ));
+    // length 도 configurable → delete 가능
+    assert!(run_bool("class C { constructor(a,b){} } var d=delete C.length; d && !C.hasOwnProperty('length')"));
     assert_eq!(run_str("class C { m(){} } C.prototype.m.name"), "m");
     assert_eq!(run_str("({ p: function(){} }).p.name"), "p");
     assert_eq!(run_str("({ q(){} }).q.name"), "q");

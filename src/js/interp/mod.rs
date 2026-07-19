@@ -4490,10 +4490,20 @@ impl Interp {
                             // 필드는 configurable:true 라 삭제 가능 (§ ClassDefinitionEvaluation).
                             // prototype/name/length 는 non-configurable → false.
                             Value::Class(cls) => {
-                                if matches!(key.as_str(), "prototype" | "name" | "length") {
+                                // prototype 은 non-configurable → 삭제 불가.
+                                if key == "prototype" {
                                     return Ok(Value::Bool(false));
                                 }
-                                cls.statics.borrow_mut().remove(&key);
+                                // name/length 는 configurable:true 계산 프로퍼티 → 삭제 가능.
+                                // 툼스톤을 남겨 이후 member_get/gOPD/hasOwn 이 계산값을 되살리지
+                                // 않게 한다(함수의 \0fndel: 과 동형). 예전엔 무조건 false 였다.
+                                if matches!(key.as_str(), "name" | "length") {
+                                    let mut st = cls.statics.borrow_mut();
+                                    st.remove(&key);
+                                    st.insert(format!("\u{0}clsdel:{}", key), Value::Bool(true));
+                                } else {
+                                    cls.statics.borrow_mut().remove(&key);
+                                }
                             }
                             // 클래스 인스턴스 필드도 own 프로퍼티다 — configurable 존중 삭제.
                             Value::Instance(inst) => {
@@ -7079,12 +7089,14 @@ impl Interp {
                 // 파라미터 수(기본 0). 정적 오버라이드(데이터 또는 getter)가 있으면 그게 우선.
                 if key == "name"
                     && c.statics.borrow().get("name").is_none()
+                    && !c.statics.borrow().contains_key("\u{0}clsdel:name")
                     && c.find_static_getter("name").is_none()
                 {
                     return Ok(Value::Str(c.name.borrow().clone()));
                 }
                 if key == "length"
                     && c.statics.borrow().get("length").is_none()
+                    && !c.statics.borrow().contains_key("\u{0}clsdel:length")
                     && c.find_static_getter("length").is_none()
                 {
                     let n = c.ctor.as_ref().map(|f| Self::fn_expected_args(f)).unwrap_or(0.0);

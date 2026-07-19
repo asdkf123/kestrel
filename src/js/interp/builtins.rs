@@ -3126,8 +3126,18 @@ impl Interp {
                             d.insert("value".to_string(), self.member_get(&target, "prototype")?);
                             d.insert("writable".to_string(), Value::Bool(false));
                             true
-                        } else if key == "name" {
+                        } else if key == "name"
+                            && !c.statics.borrow().contains_key("\u{0}clsdel:name")
+                        {
                             d.insert("value".to_string(), Value::Str(c.name.borrow().clone()));
+                            d.insert("writable".to_string(), Value::Bool(false));
+                            true
+                        } else if key == "length"
+                            && !c.statics.borrow().contains_key("\u{0}clsdel:length")
+                        {
+                            // 클래스 생성자의 length 도 own { w:false, e:false, c:true } (§15.7).
+                            let n = c.ctor.as_ref().map(|f| Self::fn_expected_args(f)).unwrap_or(0.0);
+                            d.insert("value".to_string(), Value::Num(n));
                             d.insert("writable".to_string(), Value::Bool(false));
                             true
                         } else {
@@ -4151,12 +4161,15 @@ impl Interp {
                     }
                     // 클래스의 static 멤버는 클래스 객체의 own 프로퍼티다
                     Some(Value::Class(c)) => {
+                        // name/length 는 계산 own 프로퍼티지만 delete 됐으면(툼스톤) 없는 것.
+                        let live_computed = matches!(key.as_str(), "name" | "length")
+                            && !c.statics.borrow().contains_key(&format!("\u{0}clsdel:{}", key));
                         !is_private_name(&key)
                             && (c.statics.borrow().contains_key(&key)
                                 || c.static_getters.contains_key(&key)
                                 || c.static_setters.contains_key(&key)
                                 || key == "prototype"
-                                || key == "name")
+                                || live_computed)
                     }
                     Some(Value::Fn(f)) => {
                         f.props.borrow().contains_key(&key)
