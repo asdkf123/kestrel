@@ -2274,6 +2274,107 @@ impl Interp {
         Ok(Value::Bool(false))
     }
 
+    // §23.1.3.30 Array.prototype.sort 의 generic array-like(Obj) 경로. SortIndexedProperties
+    // 로 존재 인덱스의 [[Get]] 값만 수집(구멍 스킵, 접근자·상속 원소 관측) → comparefn 정렬
+    // (undefined 는 뒤로, comparefn 결과는 ToNumber) → 0..itemCount 는 [[Set]](Throw),
+    // itemCount..len 은 [[Delete]](Throw)로 되쓰기. len 과 itemCount 는 시작에 고정.
+    pub(super) fn array_sort_generic(
+        &mut self,
+        o: &Value,
+        cmp_arg: &Value,
+    ) -> Result<Value, String> {
+        let lv = self.member_get(o, "length")?;
+        let len = to_length(self.to_number_value(&lv)?);
+        if len > MAX_ARRAY_LEN {
+            return Err(self.throw_error("RangeError", "Invalid array length"));
+        }
+        let n = len as usize;
+        let cmp = if matches!(cmp_arg, Value::Undefined) {
+            None
+        } else {
+            Some(cmp_arg.clone())
+        };
+        // SortIndexedProperties: HasProperty 인 인덱스의 [[Get]] 값만.
+        let mut items: Vec<Value> = Vec::new();
+        for k in 0..n {
+            let ks = k.to_string();
+            if self.has_property(o, &ks) {
+                items.push(self.member_get(o, &ks)?);
+            }
+        }
+        // 삽입정렬(안정, comparefn 오류 전파). undefined 는 comparefn 없이 항상 뒤로.
+        let m = items.len();
+        for i in 1..m {
+            let mut j = i;
+            while j > 0 {
+                let (xu, yu) = (
+                    matches!(items[j - 1], Value::Undefined),
+                    matches!(items[j], Value::Undefined),
+                );
+                let ord = if xu || yu {
+                    if xu && yu {
+                        0.0
+                    } else if xu {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                } else {
+                    match &cmp {
+                        Some(f) => {
+                            let r = self.call_value(
+                                f.clone(),
+                                None,
+                                vec![items[j - 1].clone(), items[j].clone()],
+                            )?;
+                            let v = self.to_number_value(&r)?;
+                            if v.is_nan() {
+                                0.0
+                            } else {
+                                v
+                            }
+                        }
+                        None => {
+                            let x = self.to_string_value(&items[j - 1])?;
+                            let y = self.to_string_value(&items[j])?;
+                            if x < y {
+                                -1.0
+                            } else if x > y {
+                                1.0
+                            } else {
+                                0.0
+                            }
+                        }
+                    }
+                };
+                if ord > 0.0 {
+                    items.swap(j - 1, j);
+                    j -= 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        // 되쓰기: Set(Throw) 후 남은 자리 Delete(Throw). len/itemCount 는 고정.
+        let item_count = items.len();
+        for (j, v) in items.into_iter().enumerate() {
+            if !self.ordinary_set(o, &j.to_string(), v, o)? {
+                return Err(self.throw_error(
+                    "TypeError",
+                    "Cannot assign to read only property during sort",
+                ));
+            }
+        }
+        for j in item_count..n {
+            if !self.delete_own(o, &j.to_string())? {
+                return Err(
+                    self.throw_error("TypeError", "Cannot delete property during sort")
+                );
+            }
+        }
+        Ok(o.clone())
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -7446,6 +7547,22 @@ impl Interp {
                             }
                             return Ok(o);
                         }
+                    }
+                }
+                // §23.1.3.30 sort: generic array-like(Obj)는 SortIndexedProperties(존재
+                // 인덱스만 [[Get]] 로 수집)+정렬+[[Set]]/[[Delete]] 되쓰기로 접근자·상속
+                // 원소·되쓰기 setter 를 정확히 관측한다. 밀집 배열/문자열은 아래 Vec 경로.
+                if matches!(op, ArrOp::Sort) {
+                    if let Some(Value::Obj(_)) = &recv {
+                        let o = recv.clone().unwrap();
+                        let cmp_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        if !matches!(cmp_arg, Value::Undefined) && !is_callable(&cmp_arg) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "The comparison function must be either a function or undefined",
+                            ));
+                        }
+                        return self.array_sort_generic(&o, &cmp_arg);
                     }
                 }
                 // §23.1.3 반복 메서드: 배열/generic array-like 수신자는 재료화 이전에

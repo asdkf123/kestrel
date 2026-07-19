@@ -3279,6 +3279,22 @@ fn more_array_string_methods() {
     assert!(run_bool("var a=[1,2,3]; a.fill(0)===a"));
     assert!(run_bool("var o={length:2,0:1,1:2}; Array.prototype.fill.call(o,9)===o"));
     assert!(run_bool("Array.prototype.fill.call(true) instanceof Boolean"));
+    // generic array-like sort: SortIndexedProperties([[Get]] 수집)+정렬+[[Set]]/[[Delete]].
+    assert_eq!(
+        run_str(
+            "var o={0:'c',1:'a',2:'b',length:3}; \
+             Array.prototype.sort.call(o); o[0]+o[1]+o[2]"
+        ),
+        "abc"
+    );
+    // comparefn 으로 generic array-like 정렬 + 되쓰기.
+    assert_eq!(
+        run_num(
+            "var o={0:3,1:1,2:2,length:3}; \
+             Array.prototype.sort.call(o,function(a,b){return a-b;}); o[0]*100+o[1]*10+o[2]"
+        ),
+        123.0
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
