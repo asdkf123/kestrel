@@ -7291,23 +7291,28 @@ impl Interp {
                         let mut all: Vec<Value> = Vec::with_capacity(1 + args.len());
                         all.push(Value::Arr(a.clone()));
                         all.extend(args.iter().cloned());
+                        // §23.1.3.1: 스프레드 대상은 k 마다 HasProperty+Get 으로 읽는다 —
+                        // 상속 인덱스(Array.prototype[k])도 읽고, 없는 자리는 결과에서도 구멍.
+                        // 예전엔 raw items 를 그대로 복사해 상속/구멍 의미를 놓쳤다.
                         let mut out: Vec<Value> = Vec::new();
+                        let mut out_holes = std::collections::HashSet::new();
                         for item in all {
                             if self.is_concat_spreadable(&item)? {
-                                match &item {
-                                    Value::Arr(b) => out.extend(b.borrow().iter().cloned()),
+                                let len = match &item {
+                                    Value::Arr(b) => b.borrow().len(),
                                     _ => {
                                         let lv = self.member_get(&item, "length")?;
-                                        let len =
-                                            to_length(self.to_number_value(&lv)?) as usize;
-                                        for k in 0..len {
-                                            let key = k.to_string();
-                                            if self.has_property(&item, &key) {
-                                                out.push(self.member_get(&item, &key)?);
-                                            } else {
-                                                out.push(Value::Undefined);
-                                            }
-                                        }
+                                        to_length(self.to_number_value(&lv)?) as usize
+                                    }
+                                };
+                                for k in 0..len {
+                                    let key = k.to_string();
+                                    if self.has_property(&item, &key) {
+                                        out.push(self.member_get(&item, &key)?);
+                                    } else {
+                                        // 없는 인덱스(구멍) → 결과에서도 구멍(§CreateDataProperty 미호출).
+                                        out_holes.insert(out.len());
+                                        out.push(Value::Undefined);
                                     }
                                 }
                             } else {
@@ -7319,11 +7324,13 @@ impl Interp {
                             Some(ctor) => {
                                 let sp = self.construct(ctor, vec![Value::Num(0.0)])?;
                                 for (k, v) in out.into_iter().enumerate() {
-                                    self.set_own_property(&sp, k.to_string(), v);
+                                    if !out_holes.contains(&k) {
+                                        self.set_own_property(&sp, k.to_string(), v);
+                                    }
                                 }
                                 sp
                             }
-                            None => Value::Arr(ArrayObj::new(out)),
+                            None => Value::Arr(ArrayObj::with_holes(out, out_holes)),
                         }
                     }
                     ArrOp::Includes => {
