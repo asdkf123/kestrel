@@ -4854,11 +4854,14 @@ impl Interp {
     // Symbol/BigInt TypeError) 후 ToUint32 와 다르면(음수/소수/2^32↑) RangeError,
     // 같으면 items 를 resize(축소는 truncate + 구멍 정리, 확장은 구멍). arr.length=
     // 대입과 defineProperty(arr,"length",{value}) 양쪽에서 재사용한다.
+    // §10.4.2.4 ArraySetLength. 반환값 = 요청 길이로 완전히 설정됐는지(true). 축소 시
+    // non-configurable 인덱스에 막혀 요청보다 큰 길이에서 멈추면 false — defineProperty
+    // (Throw=true) 호출부는 이때 TypeError 를 던지고, 대입(arr.length=n, sloppy)은 무시한다.
     pub(super) fn array_set_length(
         &mut self,
         a: &Rc<ArrayObj>,
         value: Value,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let num = self.to_number_value(&value)?;
         let u = if num.is_finite() {
             num.trunc().rem_euclid(4294967296.0)
@@ -4869,16 +4872,18 @@ impl Interp {
             return Err(self.throw_error("RangeError", "Invalid array length"));
         }
         let mut n = u as usize;
+        let mut succeeded = true;
         if n > MAX_DENSE_ARRAY {
             a.set_prop("\u{0}sparse_len".to_string(), Value::Num(num));
         } else {
             let old_len = a.borrow().len();
-            // §10.4.2.4: 축소 시 삭제될 인덱스 중 non-configurable 이 있으면 그 위로만
-            // 줄인다(그 요소는 삭제 불가라 유지). index_attrs 빈 배열은 영향 없음.
+            // §10.4.2.4 step: 축소 시 삭제될 인덱스 중 non-configurable 이 있으면 가장 높은
+            // 그 인덱스+1 에서 멈추고(그 요소는 삭제 불가) 실패로 표시한다.
             if n < old_len && a.has_index_attrs() {
                 for i in (n..old_len).rev() {
                     if matches!(a.index_attr(i), Some(at) if at & ATTR_CONFIGURABLE == 0) {
                         n = i + 1;
+                        succeeded = false;
                         break;
                     }
                 }
@@ -4894,7 +4899,7 @@ impl Interp {
                 }
             }
         }
-        Ok(())
+        Ok(succeeded)
     }
 
     // 프로퍼티를 설정한다. 성공 여부를 돌려준다(§10.1.9 [[Set]]) — Object.assign 등이
@@ -9111,9 +9116,11 @@ impl Interp {
                             a.fill_hole(i); // i 는 이제 값이 있음
                         } else if key == "length" {
                             // §10.4.2.4 ArraySetLength (ToNumber/ToUint32 검증 + resize).
-                            // length 가 non-writable 이면 대입 무시(sloppy 근사).
+                            // length 가 non-writable 이면 대입 무시(sloppy 근사). 축소가
+                            // non-configurable 인덱스에 막혀도 sloppy 대입은 부분 축소 후 무시
+                            // (반환 bool 은 defineProperty Throw 경로만 사용).
                             if a.length_writable() {
-                                self.array_set_length(&a, value.clone())?;
+                                let _ = self.array_set_length(&a, value.clone())?;
                             }
                         } else {
                             // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장

@@ -3426,6 +3426,7 @@ impl Interp {
                     // length 가 non-writable 이면(§10.4.2.4): writable:true 로 되돌리기
                     // (non-configurable 의 writable false→true 금지)나 다른 값으로의 변경은
                     // TypeError. 같은 값/미변경은 허용.
+                    let mut length_set_ok = true;
                     if !a.length_writable() {
                         if has_writable && writable {
                             return Err(self.redefine_err());
@@ -3439,11 +3440,15 @@ impl Interp {
                         }
                     } else if let Some(val) = &entry {
                         let a2 = a.clone();
-                        self.array_set_length(&a2, val.clone())?;
+                        length_set_ok = self.array_set_length(&a2, val.clone())?;
                     }
-                    // writable:false 면 length 를 고정한다.
+                    // writable:false 면 length 를 고정한다(§10.4.2.4: 축소 실패 여부와 무관).
                     if has_writable && !writable {
                         a.set_length_writable(false);
+                    }
+                    // 삭제 불가한 non-configurable 인덱스에 막혀 요청 길이로 못 줄이면 TypeError.
+                    if !length_set_ok {
+                        return Err(self.redefine_err());
                     }
                     return Ok(target);
                 }
