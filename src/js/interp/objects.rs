@@ -171,6 +171,11 @@ pub struct ArrayObj {
     // 비인덱스 문자열 프로퍼티(props)의 non-default 속성. 비어 있음 = 모두 default.
     // arguments-as-array 나 arr.foo 등에 defineProperty 로 속성을 줄 때만 채워진다.
     prop_attrs: RefCell<HashMap<String, u8>>,
+    // [[ParameterMap]] (§10.4.4): sloppy + 단순 파라미터 함수의 arguments 에서만
+    // Some. names[i]=Some(param) 이면 arguments[i] 는 그 파라미터의 별칭이다(읽기는
+    // 파라미터 바인딩을 delegate, 쓰기는 양쪽 갱신). env 는 Weak 로 순환/누수 방지 —
+    // 호출 스택/클로저가 살아 있는 동안 유효, 죽으면 스냅샷 items 로 폴백.
+    param_map: RefCell<Option<(std::rc::Weak<RefCell<Env>>, Vec<Option<String>>)>>,
 }
 
 impl ArrayObj {
@@ -182,6 +187,7 @@ impl ArrayObj {
             length_writable: std::cell::Cell::new(true),
             index_attrs: RefCell::new(HashMap::new()),
             prop_attrs: RefCell::new(HashMap::new()),
+            param_map: RefCell::new(None),
         })
     }
     // 구멍이 있는 배열 (배열 리터럴 엘리전/new Array(n) 등).
@@ -193,7 +199,31 @@ impl ArrayObj {
             length_writable: std::cell::Cell::new(true),
             index_attrs: RefCell::new(HashMap::new()),
             prop_attrs: RefCell::new(HashMap::new()),
+            param_map: RefCell::new(None),
         })
+    }
+    // [[ParameterMap]] 설정 (arguments 생성 시). names[i]=Some(param) 이면 매핑.
+    pub fn set_param_map(&self, env: std::rc::Weak<RefCell<Env>>, names: Vec<Option<String>>) {
+        *self.param_map.borrow_mut() = Some((env, names));
+    }
+    // 인덱스 i 가 매핑돼 있으면 (파라미터명, 살아있는 env). 죽었으면 None.
+    pub fn mapped_param(&self, i: usize) -> Option<(String, EnvRef)> {
+        let pm = self.param_map.borrow();
+        let (weak, names) = pm.as_ref()?;
+        let name = names.get(i)?.clone()?;
+        let env = weak.upgrade()?;
+        Some((name, env))
+    }
+    pub fn has_param_map(&self) -> bool {
+        self.param_map.borrow().is_some()
+    }
+    // 인덱스 i 의 매핑 해제 (defineProperty 로 accessor/non-writable 되거나 delete 될 때).
+    pub fn unmap_param(&self, i: usize) {
+        if let Some((_, names)) = self.param_map.borrow_mut().as_mut() {
+            if let Some(slot) = names.get_mut(i) {
+                *slot = None;
+            }
+        }
     }
     // length 프로퍼티의 [[Writable]] (§10.4.2.4).
     pub fn length_writable(&self) -> bool {

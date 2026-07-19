@@ -3662,6 +3662,11 @@ impl Interp {
                                 } else {
                                     a.clear_index_attr(i);
                                 }
+                                // [[ParameterMap]] (§10.4.4.2): writable:false 로 만들면
+                                // 매핑 해제(이후 파라미터 변경이 arguments[i] 에 반영 안 됨).
+                                if has_writable && !writable {
+                                    a.unmap_param(i);
+                                }
                             }
                         } else if a.get_prop(&key).is_some() {
                             // 기존 비인덱스 프로퍼티: 속성만 병합(§10.1.6, prop_attrs).
@@ -3780,6 +3785,21 @@ impl Interp {
                                             if has_value && !same_value(&val, &cur_val) {
                                                 return Err(self.redefine_err());
                                             }
+                                        }
+                                    }
+                                }
+                                // [[ParameterMap]] (§10.4.4.2): 매핑된 인덱스 defineProperty.
+                                // 접근자로 바뀌면 매핑 해제, 데이터면 value 로 파라미터 갱신하고
+                                // writable:false 면 해제.
+                                if let Some((name, penv)) = a.mapped_param(i) {
+                                    if matches!(&val, Value::Accessor(_)) {
+                                        a.unmap_param(i);
+                                    } else {
+                                        if has_value {
+                                            env_set(&penv, &name, val.clone());
+                                        }
+                                        if has_writable && !writable {
+                                            a.unmap_param(i);
                                         }
                                     }
                                 }

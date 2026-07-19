@@ -2788,6 +2788,7 @@ impl Interp {
                     if in_range {
                         a.mark_hole(i);
                         a.clear_index_attr(i);
+                        a.unmap_param(i); // [[ParameterMap]]: 삭제된 인덱스는 매핑 해제
                     }
                 } else {
                     // non-index own 프로퍼티: configurable:false 면 삭제 불가(§10.1.10).
@@ -4620,6 +4621,7 @@ impl Interp {
                                     if in_range {
                                         a.mark_hole(i);
                                         a.clear_index_attr(i);
+                                        a.unmap_param(i); // [[ParameterMap]]: 삭제 시 매핑 해제
                                     }
                                 } else {
                                     // non-index own 프로퍼티(배열/arguments 의 명명 속성).
@@ -6728,6 +6730,11 @@ impl Interp {
                     return Ok(Value::Native(Native::MakeIter));
                 }
                 if let Ok(i) = key.parse::<usize>() {
+                    // [[ParameterMap]] (§10.4.4.1): 매핑된 arguments[i] 는 i 번째 파라미터
+                    // 바인딩의 별칭이라 그 값을 읽는다(파라미터가 바뀌면 반영된다).
+                    if let Some((name, penv)) = a.mapped_param(i) {
+                        return Ok(env_get(&penv, &name).unwrap_or(Value::Undefined));
+                    }
                     // 구멍/범위 밖은 own 이 아니다 — 프로토타입 체인으로(§10.4.2 [[Get]]).
                     let hit = {
                         let b = a.borrow();
@@ -7831,7 +7838,28 @@ impl Interp {
                 }
                 // arguments 객체 (화살표 제외). 배열로 근사 — .length/인덱스/slice.call 동작.
                 if !func.is_arrow {
-                    env_declare(&scope, "arguments", Value::Arr(ArrayObj::new(args.clone())));
+                    let arguments = ArrayObj::new(args.clone());
+                    // §10.4.4 CreateMappedArgumentsObject: sloppy + **단순 파라미터**(기본값·
+                    // 구조분해·rest 없음 → prologue 0)면 [[ParameterMap]] 로 arguments[i] 를
+                    // i 번째 파라미터의 별칭으로 만든다. 중복 파라미터명은 마지막 인덱스만 매핑.
+                    let simple = func.param_prologue_len == 0
+                        && !func.params.iter().any(|p| p.starts_with("..."));
+                    if simple && !body_is_strict(&func.body) {
+                        let mapped = args.len().min(func.params.len());
+                        let mut names: Vec<Option<String>> =
+                            (0..mapped).map(|i| Some(func.params[i].clone())).collect();
+                        // 중복 이름: 뒤 인덱스만 유효(앞을 None) — 뒤에서 앞으로 훑는다.
+                        let mut seen = std::collections::HashSet::new();
+                        for i in (0..names.len()).rev() {
+                            if let Some(n) = names[i].clone() {
+                                if !seen.insert(n) {
+                                    names[i] = None;
+                                }
+                            }
+                        }
+                        arguments.set_param_map(Rc::downgrade(&scope), names);
+                    }
+                    env_declare(&scope, "arguments", Value::Arr(arguments));
                 }
                 // new.target: new 로 호출된 경우만 (construct 가 직전 설정). 일반 호출은 undefined.
                 // 화살표는 렉시컬(자기 스코프에 안 심음 → 바깥 것 상속).
@@ -9382,6 +9410,11 @@ impl Interp {
                             return Ok(());
                         }
                         if let Ok(i) = key.parse::<usize>() {
+                            // [[ParameterMap]] (§10.4.4.3): 매핑된 arguments[i] 대입은 i 번째
+                            // 파라미터 바인딩도 갱신한다(별칭). 아래에서 arguments 항목도 같이 쓴다.
+                            if let Some((name, penv)) = a.mapped_param(i) {
+                                env_set(&penv, &name, value.clone());
+                            }
                             let old_len = a.borrow().len();
                             let is_new = i >= old_len;
                             if is_new && self.is_nonextensible_val(&av) {

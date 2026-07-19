@@ -5487,6 +5487,27 @@ fn multi_declarator_and_comma_operator() {
 }
 
 #[test]
+fn mapped_arguments() {
+    // §10.4.4 [[ParameterMap]]: sloppy + 단순 파라미터면 arguments[i] ↔ 파라미터 별칭
+    assert_eq!(run_num("(function(a){ arguments[0]=99; return a; })(1)"), 99.0); // args→param
+    assert_eq!(run_num("(function(a){ a=88; return arguments[0]; })(2)"), 88.0); // param→args
+    // defineProperty(value) 도 파라미터 갱신
+    assert_eq!(run_num("(function(a,b){ Object.defineProperty(arguments,'0',{value:20}); return a; })(0,1)"), 20.0);
+    // writable:false 로 만들면 매핑 해제(이후 파라미터 변경 반영 안 됨)
+    assert_eq!(run_num(
+        "(function(a){ Object.defineProperty(arguments,'0',{writable:false}); a=2; return arguments[0]; })(1)"), 1.0);
+    // 삭제하면 매핑 해제
+    assert_eq!(run_num(
+        "(function(a){ delete arguments[0]; a=2; return arguments[0]===undefined?7:arguments[0]; })(1)"), 7.0);
+    // strict 모드는 매핑 없음(독립)
+    assert_eq!(run_num("(function(a){ 'use strict'; arguments[0]=99; return a; })(1)"), 1.0);
+    // 기본값/구조분해/rest 있으면 매핑 없음(단순 파라미터 아님)
+    assert_eq!(run_num("(function(a,b=5){ arguments[0]=99; return a; })(1)"), 1.0);
+    // 매핑 안 된 인덱스(인자 없음)는 일반 프로퍼티
+    assert_eq!(run_num("(function(a){ arguments[1]=7; return arguments[1]; })(1)"), 7.0);
+}
+
+#[test]
 fn temporal_dead_zone() {
     // TDZ: 초기화 전 let/const/class 읽기·쓰기·typeof 는 ReferenceError (§13.3.1.1)
     assert!(run_bool(
