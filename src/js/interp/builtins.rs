@@ -7374,6 +7374,58 @@ impl Interp {
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
                         }
+                        // reduceRight 와 대칭: 매 인덱스 live(HasProperty/Get)로 읽어 콜백·게터
+                        // 중 변형을 관측한다(§23.1.3.24). length 는 순회 시작에 한 번, 구멍은
+                        // 건너뛴다(array_like_live_get 이 홀/접근자/상속 해석). 초거대만 폴백.
+                        if let Some(o) = recv.clone() {
+                            if matches!(o, Value::Arr(_) | Value::Obj(_)) {
+                                let len = match &o {
+                                    Value::Arr(a) => a.borrow().len() as f64,
+                                    _ => {
+                                        let lv = self.member_get(&o, "length")?;
+                                        to_length(self.to_number_value(&lv)?)
+                                    }
+                                };
+                                if len <= MAX_ARRAY_LEN {
+                                    let n = len as i64;
+                                    let mut k: i64 = 0;
+                                    let mut acc = match args.get(1) {
+                                        Some(init) => init.clone(),
+                                        None => {
+                                            let mut seed = None;
+                                            while k < n {
+                                                if let Some(v) =
+                                                    self.array_like_live_get(&o, k as usize)?
+                                                {
+                                                    seed = Some(v);
+                                                    k += 1;
+                                                    break;
+                                                }
+                                                k += 1;
+                                            }
+                                            match seed {
+                                                Some(v) => v,
+                                                None => return Err(self.throw_error(
+                                                    "TypeError",
+                                                    "Reduce of empty array with no initial value",
+                                                )),
+                                            }
+                                        }
+                                    };
+                                    while k < n {
+                                        if let Some(v) = self.array_like_live_get(&o, k as usize)? {
+                                            acc = self.call_value(
+                                                f.clone(),
+                                                None,
+                                                vec![acc, v, Value::Num(k as f64), o.clone()],
+                                            )?;
+                                        }
+                                        k += 1;
+                                    }
+                                    return Ok(acc);
+                                }
+                            }
+                        }
                         let arr_val = cb_arr.clone(); // 콜백 4번째 인자 (표준)
                         let snapshot: Vec<Value> = a.borrow().clone();
                         // 구멍은 건너뛴다 (§23.1.3.24 HasProperty) — 초기값 선택과 순회 모두.

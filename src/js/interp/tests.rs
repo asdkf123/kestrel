@@ -3168,6 +3168,20 @@ fn more_array_string_methods() {
         run_str("var s=[]; [1,,3].reduceRight(function(a,v,i){s.push(i);return a;},0); s.join(',')"),
         "2,0"
     );
+    // forward reduce 도 콜백 중 요소 재대입을 live 로 관측(reduceRight 와 대칭).
+    assert_eq!(
+        run_num("var a=[1,2,3,4,5]; a.reduce(function(p,c){a[4]=-9;return p+c;})"),
+        1.0 + 2.0 + 3.0 + 4.0 - 9.0
+    );
+    // forward reduce: generic array-like 상속 인덱스와 구멍 스킵.
+    assert_eq!(
+        run_num("Array.prototype.reduce.call({0:1,2:3,length:3},function(a,b){return a+b;})"),
+        4.0
+    );
+    assert_eq!(
+        run_str("var s=[]; [1,,3].reduce(function(a,v,i){s.push(i);return a;},0); s.join(',')"),
+        "0,2"
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
