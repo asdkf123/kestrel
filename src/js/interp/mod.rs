@@ -9476,6 +9476,14 @@ impl Interp {
                             self.call_value(Value::Fn(setter), Some(cv), vec![value])?;
                             return Ok(());
                         }
+                        // name/length 는 클래스(생성자)의 계산 non-writable 프로퍼티(§17)
+                        // — statics 에 명시 정적 멤버(static name(){})가 없을 때 대입 무시.
+                        // 예전엔 검사 없이 statics 에 덮어써 cls.name=x 가 실제로 바뀌었다.
+                        if matches!(key.as_str(), "name" | "length")
+                            && !c.statics.borrow().contains_key(&key)
+                        {
+                            return Ok(());
+                        }
                         c.statics.borrow_mut().insert(key, value);
                         Ok(())
                     }

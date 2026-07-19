@@ -4583,6 +4583,10 @@ fn function_names_follow_standard() {
     assert_eq!(run_str("var h = function named(){}; h.name"), "named"); // 명명식이 이긴다
     assert_eq!(run_str("const k = () => {}; k.name"), "k");
     assert_eq!(run_str("class C { m(){} } C.name"), "C");
+    // 클래스(생성자)의 name 은 non-writable 계산 프로퍼티 — 대입은 sloppy 무시(§17)
+    assert_eq!(run_str("class C {} C.name='X'; C.name"), "C");
+    // 명시 static name(){} 이 있으면 실제 프로퍼티라 유지
+    assert_eq!(run_str("class C { static name(){ return 1; } } typeof C.name"), "function");
     assert_eq!(run_str("class C { m(){} } C.prototype.m.name"), "m");
     assert_eq!(run_str("({ p: function(){} }).p.name"), "p");
     assert_eq!(run_str("({ q(){} }).q.name"), "q");
