@@ -590,6 +590,7 @@ pub enum SetOp {
 pub enum ArrOp {
     Entries,
     Join,
+    ArrToString,
     Pop,
     IndexOf,
     Slice,
@@ -658,7 +659,7 @@ pub static ARRAY_PROTO_OPS: &[(&str, ArrOp)] = &[
     ("reduceRight", ArrOp::ReduceRight),
     ("with", ArrOp::With),
     ("toSpliced", ArrOp::ToSpliced),
-    ("toString", ArrOp::Join),
+    ("toString", ArrOp::ArrToString),
 ];
 
 pub fn array_op_for(name: &str) -> Option<ArrOp> {
@@ -679,7 +680,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
             let len = match op {
                 ArrOp::Slice | ArrOp::Splice | ArrOp::With | ArrOp::ToSpliced => 2,
                 ArrOp::Pop | ArrOp::Shift | ArrOp::Reverse | ArrOp::Keys
-                | ArrOp::Values | ArrOp::Entries | ArrOp::Flat => 0,
+                | ArrOp::Values | ArrOp::Entries | ArrOp::Flat | ArrOp::ArrToString => 0,
                 _ => 1,
             };
             return Some((name, len));

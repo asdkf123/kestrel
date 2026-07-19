@@ -7025,6 +7025,16 @@ impl Interp {
                 // 임시 복사 a 가 아니다. 원시 수신자는 래퍼로 박는다(obj instanceof Boolean).
                 let cb_arr = self.to_object_value(recv.clone().unwrap_or(Value::Undefined));
                 let out = match op {
+                    // §23.1.3.36 Array.prototype.toString: func=Get(this,"join"); callable 이면
+                    // 그걸 호출(사용자 오버라이드 존중), 아니면 %Object.prototype.toString%.
+                    // 예전엔 toString 을 Join 으로 하드코딩해 join 오버라이드/비호출을 무시했다.
+                    ArrOp::ArrToString => {
+                        let join = self.member_get(&cb_arr, "join")?;
+                        if is_callable(&join) {
+                            return self.call_value(join, Some(cb_arr), vec![]);
+                        }
+                        return self.call_native(Native::ObjToString, Some(cb_arr), vec![]);
+                    }
                     ArrOp::Join => {
                         // §23.1.3.18: 구분자 undefined 는 ",", 아니면 ToString(구분자) —
                         // 원소도 ToString. 예전엔 lenient to_display 라 valueOf/toString·@@
