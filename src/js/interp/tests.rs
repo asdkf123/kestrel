@@ -3881,6 +3881,29 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn json_stringify_space_wrapper_tonumber() {
+    // §25.5.2 step 5: space 가 Number 래퍼면 ToNumber(space), String 래퍼면
+    // ToString(space) — valueOf/toString 을 관찰적으로 호출한다(예전엔 내부 슬롯 직접).
+    // 재정의된 valueOf 가 이겨야 한다(내부 NumberData 가 아니라).
+    assert_eq!(
+        run_str(
+            "var n=new Number(1); n.valueOf=function(){return 3;}; \
+             JSON.stringify({a:{b:1}}, null, n)"
+        ),
+        run_str("JSON.stringify({a:{b:1}}, null, 3)")
+    );
+    // abrupt: valueOf 가 던지면 전파.
+    assert!(run_bool(
+        "var n=new Number(4); n.valueOf=function(){throw new RangeError('x');}; \
+         n.toString=function(){throw new RangeError('y');}; \
+         try{ JSON.stringify({a:1}, null, n); false }catch(e){ e instanceof RangeError }"
+    ));
+    // 기본 Number/String 래퍼도 동작.
+    assert_eq!(run_str("JSON.stringify({a:1},null,new Number(2))"), run_str("JSON.stringify({a:1},null,2)"));
+    assert_eq!(run_str("JSON.stringify({a:1},null,new String('xy'))"), run_str("JSON.stringify({a:1},null,'xy')"));
+}
+
+#[test]
 fn regex_lastindex_non_enumerable() {
     // §22.2.7.1: lastIndex 는 { writable:true, enumerable:false, configurable:false }.
     // 예전엔 기본(전부 true)이라 Object.keys/JSON.stringify 에 새어 나갔다.

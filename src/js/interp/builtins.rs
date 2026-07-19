@@ -9166,9 +9166,13 @@ impl Interp {
                 let space = args.get(2).cloned().unwrap_or(Value::Undefined);
                 let space = match &space {
                     Value::Obj(m) if m.borrow().contains_key(WRAPPER_SLOT) => {
+                        // §25.5.2 step 5: [[NumberData]] 면 ToNumber(space), [[StringData]] 면
+                        // ToString(space) — valueOf/toString 을 관찰적으로 호출하고 예외를
+                        // 전파한다. 예전엔 내부 슬롯을 직접 읽어(wrapper_primitive) 재정의된
+                        // valueOf(예: 3 반환)와 abrupt 를 우회했다.
                         match wrapper_primitive(&space) {
-                            Some(Value::Num(n)) => Value::Num(n),
-                            Some(Value::Str(s)) => Value::Str(s),
+                            Some(Value::Num(_)) => Value::Num(self.to_number_value(&space)?),
+                            Some(Value::Str(_)) => Value::Str(self.to_string_value(&space)?),
                             _ => Value::Undefined,
                         }
                     }
