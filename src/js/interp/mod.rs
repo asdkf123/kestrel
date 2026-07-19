@@ -8574,6 +8574,7 @@ impl Interp {
                 | Value::Native(_)
                 | Value::Class(_)
                 | Value::Bound(_)
+                | Value::Proxy(_)
         ) {
             return v;
         }
