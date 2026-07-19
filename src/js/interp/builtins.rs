@@ -1911,6 +1911,138 @@ impl Interp {
         }
     }
 
+    // §23.1.3 반복 메서드(reduce/reduceRight/some/every/find/findIndex/forEach/map/
+    // filter/flatMap)를 배열/generic array-like 위에서 매 인덱스 live 로 실행한다.
+    // 스냅샷·재료화를 하지 않으므로 (1) 콜백·게터 중 배열 변형을 관측하고 (2) generic
+    // array-like 재료화의 getter 이중호출을 없앤다. length 는 순회 시작에 한 번 읽는다.
+    // some/every/forEach/map/filter/flatMap 는 HasProperty 로 구멍을 건너뛰고(map 은
+    // 출력에 구멍 보존), find/findIndex 는 Get 으로 구멍도 방문한다(§23.1.3).
+    pub(super) fn array_iter_live(
+        &mut self,
+        op: ArrOp,
+        o: &Value,
+        args: &[Value],
+    ) -> Result<Value, String> {
+        let len_f = match o {
+            Value::Arr(a) => a.borrow().len() as f64,
+            _ => {
+                let lv = self.member_get(o, "length")?;
+                to_length(self.to_number_value(&lv)?)
+            }
+        };
+        let f = args.first().cloned().unwrap_or(Value::Undefined);
+        if !is_callable(&f) {
+            return Err(self.throw_error("TypeError", "callback is not a function"));
+        }
+        // 초거대 length 는 재료화 경로와 동일하게 RangeError (huge sparse 는 별도 프론티어).
+        if len_f > MAX_ARRAY_LEN {
+            return Err(self.throw_error("RangeError", "Invalid array length"));
+        }
+        let n = len_f as i64;
+
+        // reduce/reduceRight: thisArg 없이 누산, args[1] 은 초기값.
+        if matches!(op, ArrOp::Reduce | ArrOp::ReduceRight) {
+            let reverse = matches!(op, ArrOp::ReduceRight);
+            let has_init = args.len() >= 2;
+            let mut acc = if has_init { args[1].clone() } else { Value::Undefined };
+            let mut have_acc = has_init;
+            let mut i: i64 = if reverse { n - 1 } else { 0 };
+            while i >= 0 && i < n {
+                if let Some(v) = self.array_like_live_get(o, i as usize)? {
+                    if have_acc {
+                        acc = self.call_value(
+                            f.clone(),
+                            None,
+                            vec![acc, v, Value::Num(i as f64), o.clone()],
+                        )?;
+                    } else {
+                        acc = v;
+                        have_acc = true;
+                    }
+                }
+                i += if reverse { -1 } else { 1 };
+            }
+            if !have_acc {
+                return Err(self.throw_error(
+                    "TypeError",
+                    "Reduce of empty array with no initial value",
+                ));
+            }
+            return Ok(acc);
+        }
+
+        let this_arg = args.get(1).cloned();
+        let mut out: Vec<Value> = Vec::new();
+        let mut out_holes: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut i: i64 = 0;
+        while i < n {
+            let k = i as usize;
+            // find/findIndex 는 Get(구멍도 undefined 로 방문), 그 외는 HasProperty 로 present.
+            let (present, item) = if matches!(op, ArrOp::Find | ArrOp::FindIndex) {
+                (true, self.member_get(o, &k.to_string())?)
+            } else {
+                match self.array_like_live_get(o, k)? {
+                    Some(v) => (true, v),
+                    None => (false, Value::Undefined),
+                }
+            };
+            if !present {
+                if matches!(op, ArrOp::Map) {
+                    out_holes.insert(out.len());
+                    out.push(Value::Undefined);
+                }
+                i += 1;
+                continue;
+            }
+            let r = self.call_value(
+                f.clone(),
+                this_arg.clone(),
+                vec![item.clone(), Value::Num(k as f64), o.clone()],
+            )?;
+            match op {
+                ArrOp::Some if to_bool(&r) => return Ok(Value::Bool(true)),
+                ArrOp::Every if !to_bool(&r) => return Ok(Value::Bool(false)),
+                ArrOp::Find if to_bool(&r) => return Ok(item),
+                ArrOp::FindIndex if to_bool(&r) => return Ok(Value::Num(k as f64)),
+                ArrOp::Map => out.push(r),
+                ArrOp::Filter => {
+                    if to_bool(&r) {
+                        out.push(item);
+                    }
+                }
+                ArrOp::FlatMap => match r {
+                    Value::Arr(inner) => out.extend(inner.borrow().iter().cloned()),
+                    other => out.push(other),
+                },
+                _ => {}
+            }
+            i += 1;
+        }
+
+        match op {
+            ArrOp::Some => Ok(Value::Bool(false)),
+            ArrOp::Every => Ok(Value::Bool(true)),
+            ArrOp::Find => Ok(Value::Undefined),
+            ArrOp::FindIndex => Ok(Value::Num(-1.0)),
+            ArrOp::ForEach => Ok(Value::Undefined),
+            // map/filter/flatMap 결과는 ArraySpeciesCreate (§23.1.3).
+            _ => match self.array_species_ctor(o)? {
+                Some(ctor) => {
+                    let a = self.construct(ctor, vec![Value::Num(out.len() as f64)])?;
+                    for (k, v) in out.into_iter().enumerate() {
+                        self.create_data_property_or_throw(&a, k, v)?;
+                    }
+                    Ok(a)
+                }
+                None => Ok(Value::Arr(if out_holes.is_empty() {
+                    ArrayObj::new(out)
+                } else {
+                    ArrayObj::with_holes(out, out_holes)
+                })),
+            },
+        }
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -7079,6 +7211,30 @@ impl Interp {
                         }
                     }
                 }
+                // §23.1.3 반복 메서드: 배열/generic array-like 수신자는 재료화 이전에
+                // 매 인덱스 live 로 순회한다 — 콜백·게터 중 변형 관측 + 재료화 getter
+                // 이중호출 제거. 문자열/원시 래퍼 수신자는 아래 기존 경로(불변이라 동일).
+                if matches!(
+                    op,
+                    ArrOp::Reduce
+                        | ArrOp::ReduceRight
+                        | ArrOp::Some
+                        | ArrOp::Every
+                        | ArrOp::Find
+                        | ArrOp::FindIndex
+                        | ArrOp::ForEach
+                        | ArrOp::Map
+                        | ArrOp::Filter
+                        | ArrOp::FlatMap
+                ) {
+                    if matches!(
+                        &recv,
+                        Some(Value::Arr(_)) | Some(Value::Obj(_)) | Some(Value::Instance(_))
+                    ) {
+                        let o = recv.clone().unwrap();
+                        return self.array_iter_live(op, &o, &args);
+                    }
+                }
                 let (a, write_back) = match &recv {
                     // 얼린 배열은 제자리 변형을 무시한다(표준: 조용히 실패).
                     Some(Value::Arr(a))
@@ -7374,58 +7530,8 @@ impl Interp {
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
                         }
-                        // reduceRight 와 대칭: 매 인덱스 live(HasProperty/Get)로 읽어 콜백·게터
-                        // 중 변형을 관측한다(§23.1.3.24). length 는 순회 시작에 한 번, 구멍은
-                        // 건너뛴다(array_like_live_get 이 홀/접근자/상속 해석). 초거대만 폴백.
-                        if let Some(o) = recv.clone() {
-                            if matches!(o, Value::Arr(_) | Value::Obj(_)) {
-                                let len = match &o {
-                                    Value::Arr(a) => a.borrow().len() as f64,
-                                    _ => {
-                                        let lv = self.member_get(&o, "length")?;
-                                        to_length(self.to_number_value(&lv)?)
-                                    }
-                                };
-                                if len <= MAX_ARRAY_LEN {
-                                    let n = len as i64;
-                                    let mut k: i64 = 0;
-                                    let mut acc = match args.get(1) {
-                                        Some(init) => init.clone(),
-                                        None => {
-                                            let mut seed = None;
-                                            while k < n {
-                                                if let Some(v) =
-                                                    self.array_like_live_get(&o, k as usize)?
-                                                {
-                                                    seed = Some(v);
-                                                    k += 1;
-                                                    break;
-                                                }
-                                                k += 1;
-                                            }
-                                            match seed {
-                                                Some(v) => v,
-                                                None => return Err(self.throw_error(
-                                                    "TypeError",
-                                                    "Reduce of empty array with no initial value",
-                                                )),
-                                            }
-                                        }
-                                    };
-                                    while k < n {
-                                        if let Some(v) = self.array_like_live_get(&o, k as usize)? {
-                                            acc = self.call_value(
-                                                f.clone(),
-                                                None,
-                                                vec![acc, v, Value::Num(k as f64), o.clone()],
-                                            )?;
-                                        }
-                                        k += 1;
-                                    }
-                                    return Ok(acc);
-                                }
-                            }
-                        }
+                        // 배열/generic array-like 수신자는 위 pre-dispatch 의 array_iter_live
+                        // 로 처리된다. 여기 도달하는 건 문자열/원시 래퍼 수신자(불변).
                         let arr_val = cb_arr.clone(); // 콜백 4번째 인자 (표준)
                         let snapshot: Vec<Value> = a.borrow().clone();
                         // 구멍은 건너뛴다 (§23.1.3.24 HasProperty) — 초기값 선택과 순회 모두.
@@ -7463,58 +7569,8 @@ impl Interp {
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
                         }
-                        // 배열/generic array-like 모두 인덱스마다 live 로 읽어 콜백·게터 중
-                        // 변형(구멍 채우기, 요소 재대입, length 축소, 상속 인덱스 삭제)을
-                        // 관측한다(§23.1.3.24). length 는 순회 시작에 한 번 읽는다. 초거대
-                        // length 만 아래 스냅샷 폴백(그쪽은 RangeError 를 던진다).
-                        if let Some(o) = recv.clone() {
-                            if matches!(o, Value::Arr(_) | Value::Obj(_)) {
-                                let len = match &o {
-                                    Value::Arr(a) => a.borrow().len() as f64,
-                                    _ => {
-                                        let lv = self.member_get(&o, "length")?;
-                                        to_length(self.to_number_value(&lv)?)
-                                    }
-                                };
-                                if len <= MAX_ARRAY_LEN {
-                                    let mut k = len as i64 - 1;
-                                    let mut acc = match args.get(1) {
-                                        Some(init) => init.clone(),
-                                        None => {
-                                            let mut seed = None;
-                                            while k >= 0 {
-                                                if let Some(v) =
-                                                    self.array_like_live_get(&o, k as usize)?
-                                                {
-                                                    seed = Some(v);
-                                                    k -= 1;
-                                                    break;
-                                                }
-                                                k -= 1;
-                                            }
-                                            match seed {
-                                                Some(v) => v,
-                                                None => return Err(self.throw_error(
-                                                    "TypeError",
-                                                    "Reduce of empty array with no initial value",
-                                                )),
-                                            }
-                                        }
-                                    };
-                                    while k >= 0 {
-                                        if let Some(v) = self.array_like_live_get(&o, k as usize)? {
-                                            acc = self.call_value(
-                                                f.clone(),
-                                                None,
-                                                vec![acc, v, Value::Num(k as f64), o.clone()],
-                                            )?;
-                                        }
-                                        k -= 1;
-                                    }
-                                    return Ok(acc);
-                                }
-                            }
-                        }
+                        // 배열/generic array-like 수신자는 위 pre-dispatch 의 array_iter_live
+                        // 로 처리된다. 여기 도달하는 건 문자열/원시 래퍼 수신자(불변).
                         let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
                         let has_holes = a.has_holes();

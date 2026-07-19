@@ -3182,6 +3182,32 @@ fn more_array_string_methods() {
         run_str("var s=[]; [1,,3].reduce(function(a,v,i){s.push(i);return a;},0); s.join(',')"),
         "0,2"
     );
+    // some/every/forEach/map/filter 도 재료화 없이 매 인덱스 live 로 순회한다.
+    // generic array-like getter 이중호출 없음(getter 1회만).
+    assert_eq!(
+        run_num(
+            "var c=0; var o={length:3,1:2,2:3}; \
+             Object.defineProperty(o,'0',{get:function(){c++;return 1;},configurable:true}); \
+             o.forEach ? 0 : Array.prototype.forEach.call(o,function(){}); c"
+        ),
+        1.0
+    );
+    // some: 콜백 중 재대입을 live 로 관측(15.4.4.17-7-2).
+    assert!(run_bool(
+        "var a=[1,2,3,4,5]; a.some(function(v){a[4]=6; return v>=6;})"
+    ));
+    // map: 구멍 보존 + 콜백은 존재 원소만.
+    assert_eq!(
+        run_str("var s=[]; var r=[1,,3].map(function(v){s.push(v);return v*2;}); r[1]+'|'+(1 in r)+'|'+s.join(',')"),
+        "undefined|false|1,3"
+    );
+    // filter: generic array-like, 상속 인덱스 포함.
+    assert_eq!(
+        run_num("Array.prototype.filter.call({0:1,2:3,length:3},function(v){return v>1;}).length"),
+        1.0
+    );
+    // every: 구멍은 건너뛰어 vacuously true.
+    assert!(run_bool("[,,].every(function(){return false;})"));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
