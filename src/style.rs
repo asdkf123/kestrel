@@ -1357,6 +1357,12 @@ fn collect_pseudo_plans<'a>(
             } else {
                 c.clone()
             };
+            // attr(name) → 소유 요소의 속성값 (content 의 CSS 2.1 문자열 형태)
+            let resolved = if resolved.contains("attr(") {
+                resolve_attr(&resolved, elem)
+            } else {
+                resolved
+            };
             let resolved = match resolved.as_str() {
                 "open-quote" => "\u{201C}".to_string(),  // "
                 "close-quote" => "\u{201D}".to_string(), // "
@@ -1456,6 +1462,41 @@ fn resolve_counters(content: &str, counters: &HashMap<String, i32>) -> String {
         out.push_str(&val.to_string());
         rest = &after[close + 1..];
     }
+    out
+}
+
+// content 의 attr(name) / attr(name, fallback) 를 요소의 속성값으로 치환한다
+// (CSS 2.1 문자열 형태 — content 에서 유효한 형태). 속성이 없으면 fallback,
+// fallback 도 없으면 빈 문자열(§CSS Values). 타입 지정 attr(name <type>) 은
+// content 에서 무효이므로 이름만 취해 문자열로 근사한다.
+fn resolve_attr(content: &str, elem: &ElementData) -> String {
+    let mut out = String::new();
+    let mut rest = content;
+    while let Some(p) = rest.find("attr(") {
+        out.push_str(&rest[..p]);
+        let after = &rest[p + 5..];
+        let Some(close) = after.find(')') else {
+            out.push_str(&rest[p..]);
+            return out;
+        };
+        let inner = after[..close].trim();
+        let (name_part, fallback) = match inner.split_once(',') {
+            Some((n, f)) => (n.trim(), Some(f.trim())),
+            None => (inner, None),
+        };
+        // 이름 뒤 타입 토큰(px, type(...) 등)은 무시하고 이름만 쓴다.
+        let name = name_part.split_whitespace().next().unwrap_or("");
+        match elem.attributes.get(name) {
+            Some(v) => out.push_str(v),
+            None => {
+                if let Some(fb) = fallback {
+                    out.push_str(fb.trim().trim_matches(|c| c == '"' || c == '\''));
+                }
+            }
+        }
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
     out
 }
 
@@ -2012,6 +2053,49 @@ mod tests {
             .collect();
         texts.sort();
         assert_eq!(texts, vec!["1", "2", "3"], "카운터 번호: {:?}", texts);
+    }
+
+    #[test]
+    fn css_content_attr_resolves_attribute() {
+        // ::before content: attr(data-x) → 요소의 data-x 속성값을 텍스트로.
+        // 속성 없으면 fallback, fallback 없으면 아무것도(빈 문자열 → 미생성).
+        let mut dom = crate::html::parse_dom_fragment(
+            "<div data-x=\"HELLO\"></div><p data-y=\"W\"></p><a></a>".to_string(),
+        );
+        let ss = crate::css::parse(
+            "div::before { content: attr(data-x); } \
+             p::before { content: attr(data-missing, \"fb\"); } \
+             a::before { content: attr(data-none); }"
+                .to_string(),
+        );
+        let map = generate_pseudo_elements(&mut dom, &ss);
+        let texts: Vec<String> = map
+            .keys()
+            .filter_map(|&nid| {
+                dom.get(nid).children.first().and_then(|&c| match &dom.get(c).node_type {
+                    NodeType::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+        assert!(texts.contains(&"HELLO".to_string()), "속성값: {:?}", texts);
+        assert!(texts.contains(&"fb".to_string()), "fallback: {:?}", texts);
+        // 속성/폴백 모두 없으면 빈 문자열 → 생성 콘텐츠 아님(노드 미생성)
+        assert!(!texts.contains(&String::new()), "빈 attr 은 미생성");
+    }
+
+    #[test]
+    fn resolve_attr_unit() {
+        let e = ElementData {
+            tag_name: "div".into(),
+            attributes: [("data-x".to_string(), "abc".to_string())].into_iter().collect(),
+            namespace: None,
+        };
+        assert_eq!(resolve_attr("attr(data-x)", &e), "abc");
+        assert_eq!(resolve_attr("attr(data-missing, \"fb\")", &e), "fb");
+        assert_eq!(resolve_attr("attr(data-missing)", &e), "");
+        // 이름 뒤 타입 토큰은 무시하고 이름만
+        assert_eq!(resolve_attr("attr(data-x px)", &e), "abc");
     }
 
     #[test]
