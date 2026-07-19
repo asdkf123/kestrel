@@ -7339,6 +7339,15 @@ impl Interp {
                 m.insert("bubbles".to_string(), Value::Bool(bubbles));
                 m.insert("cancelable".to_string(), Value::Bool(cancelable));
                 m.insert("defaultPrevented".to_string(), Value::Bool(false));
+                // DOM §2.2 Event 기본 상태: 디스패치 전 target/currentTarget/srcElement 는
+                // null, eventPhase 는 0(NONE). 예전엔 이 필드들이 아예 없어 undefined 였다.
+                m.insert("target".to_string(), Value::Null);
+                m.insert("currentTarget".to_string(), Value::Null);
+                m.insert("srcElement".to_string(), Value::Null);
+                m.insert("eventPhase".to_string(), Value::Num(0.0));
+                if !m.contains_key("composed") {
+                    m.insert("composed".to_string(), Value::Bool(false));
+                }
                 m.insert("preventDefault".to_string(), Value::Native(Native::EventPreventDefault));
                 m.insert("stopPropagation".to_string(), Value::Native(Native::EventStopProp));
                 m.insert(
