@@ -3881,6 +3881,29 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn json_stringify_root_holder_wrapper() {
+    // §25.5.2 step 10-11: replacer 함수는 wrapper = { "": value }(Object.prototype
+    // 상속)를 this 로 받는다. wrapper[""] 는 CreateDataProperty 로 own 삽입(상속 setter
+    // 미발동). 예전엔 빈 홀더라 this[""] 가 undefined 였다.
+    assert!(run_bool(
+        "var value={x:1}; var wrapper; JSON.stringify(value, function(k,v){ if(wrapper===undefined) wrapper=this; return v; }); \
+         typeof wrapper==='object' && Object.getPrototypeOf(wrapper)===Object.prototype && wrapper['']===value"
+    ));
+    // 루트 key 는 빈 문자열.
+    assert!(run_bool(
+        "var rk; JSON.stringify(1, function(k,v){ if(rk===undefined) rk=k; return v; }); rk===''"
+    ));
+    // 상속 setter 를 건드리지 않음.
+    assert!(run_bool(
+        "var called=0; var d=Object.getOwnPropertyDescriptor(Object.prototype,''); \
+         Object.defineProperty(Object.prototype,'',{set:function(){called++;},configurable:true}); \
+         JSON.stringify({}, function(k,v){return v;}); \
+         if(d){Object.defineProperty(Object.prototype,'',d);}else{delete Object.prototype[''];} \
+         called===0"
+    ));
+}
+
+#[test]
 fn json_stringify_space_wrapper_tonumber() {
     // §25.5.2 step 5: space 가 Number 래퍼면 ToNumber(space), String 래퍼면
     // ToString(space) — valueOf/toString 을 관찰적으로 호출한다(예전엔 내부 슬롯 직접).

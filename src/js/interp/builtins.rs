@@ -9218,7 +9218,15 @@ impl Interp {
                     None
                 };
                 let mut path = Vec::new();
-                let holder = Value::Obj(Rc::new(RefCell::new(ObjMap::new())));
+                // §25.5.2 step 10-11: wrapper = OrdinaryObjectCreate(%Object.prototype%);
+                // CreateDataPropertyOrThrow(wrapper, "", value). replacer 함수의 this 로
+                // 넘어간다. own 데이터로 넣어(Object.prototype[''] setter 를 건드리지 않음)
+                // this[''] === value 가 되게 한다(예전엔 빈 홀더라 undefined 였다).
+                let holder = {
+                    let mut m = ObjMap::new();
+                    m.insert(String::new(), v.clone());
+                    Value::Obj(Rc::new(RefCell::new(m)))
+                };
                 // json_ser 의 Err 는 이미 throw 된 것(순환/BigInt 는 내부 throw_error, 사용자
                 // getter/toJSON/replacer 는 전파) — 재래핑하면 원래 던진 값이 TypeError 로
                 // 뭉개진다. 그대로 전파한다.
