@@ -7076,6 +7076,7 @@ impl Interp {
                     "ownerElement" => Ok(Value::Null),
                     "nodeType" => Ok(Value::Num(2.0)), // ATTRIBUTE_NODE
                     "specified" => Ok(Value::Bool(true)),
+                    "cloneNode" => Ok(Value::Native(Native::CloneNode)),
                     "childNodes" => Ok(Value::Arr(ArrayObj::new(vec![]))),
                     "parentNode" | "parentElement" | "firstChild" | "lastChild"
                     | "previousSibling" | "nextSibling" => Ok(Value::Null),

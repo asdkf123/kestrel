@@ -7629,6 +7629,12 @@ impl Interp {
                         let dom = self.dom_arena()?;
                         Ok(Value::Dom(dom.clone_node(id, deep)))
                     }
+                    // Attr 복제(§4.5 cloneNode): 같은 name/namespace/value 의 새 detached Attr.
+                    // Attr 은 자식이 없어 deep 여부와 무관하다.
+                    Some(Value::DetachedAttr(cell)) => {
+                        let a = cell.borrow().clone();
+                        Ok(Value::DetachedAttr(Rc::new(RefCell::new(a))))
+                    }
                     _ => Err("cloneNode 는 요소 메서드".to_string()),
                 }
             }
