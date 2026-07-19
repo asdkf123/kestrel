@@ -950,6 +950,13 @@ fn builtin_prototypes() {
     // Array.prototype.slice.call (배열형 → 배열)
     assert_eq!(run_num("var a=[1,2,3]; Array.prototype.slice.call(a,1).length"), 2.0);
     assert_eq!(run_num("Array.prototype.indexOf.call([7,8,9], 8)"), 1.0);
+    // Array.prototype.reverse.call(array-like) 는 HasProperty/Set/Delete 스왑으로 구멍 보존
+    // (§23.1.3.26). 구멍(없는 인덱스)은 결과에서도 없어야 한다.
+    assert!(run_bool(
+        "var o={0:'a',2:'c',length:3}; Array.prototype.reverse.call(o); \
+         o[0]==='c' && o[2]==='a' && !o.hasOwnProperty('1')"
+    ));
+    assert_eq!(run_str("[1,2,3,4].reverse().join(',')"), "4,3,2,1"); // 밀집 무회귀
     // Object.prototype.toString.call (타입 판별 관용)
     assert_eq!(run_str("Object.prototype.toString.call([])"), "[object Array]");
     assert_eq!(run_str("Object.prototype.toString.call({})"), "[object Object]");

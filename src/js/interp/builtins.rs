@@ -6999,6 +6999,48 @@ impl Interp {
                         return self.generic_array_search_huge(&rv, op, &args, len);
                     }
                 }
+                // §23.1.3.26 reverse: generic array-like(Obj)는 HasProperty/Get/Set/Delete
+                // 스왑으로 구멍을 보존한다 — Vec 재료화는 구멍을 undefined 로 잃는다(A2/A3
+                // 테스트). 밀집 배열/문자열은 아래 Vec 경로. 초거대 length 도 Vec 경로가
+                // RangeError 로 방어.
+                if matches!(op, ArrOp::Reverse) {
+                    if let Some(Value::Obj(_)) = &recv {
+                        let o = recv.clone().unwrap();
+                        let len_v = self.member_get(&o, "length")?;
+                        let len = to_length(self.to_number_value(&len_v)?);
+                        if len <= MAX_ARRAY_LEN {
+                            let mut lower = 0u64;
+                            let middle = (len / 2.0) as u64;
+                            let last = len as u64;
+                            while lower < middle {
+                                let upper = last - lower - 1;
+                                let (lk, uk) = (lower.to_string(), upper.to_string());
+                                let le = self.has_property(&o, &lk);
+                                let lv = if le { self.member_get(&o, &lk)? } else { Value::Undefined };
+                                let ue = self.has_property(&o, &uk);
+                                let uv = if ue { self.member_get(&o, &uk)? } else { Value::Undefined };
+                                // 존재 여부에 따라 Set/Delete (구멍은 Delete 로 보존).
+                                match (le, ue) {
+                                    (true, true) => {
+                                        self.set_own_property(&o, lk, uv);
+                                        self.set_own_property(&o, uk, lv);
+                                    }
+                                    (false, true) => {
+                                        self.set_own_property(&o, lk, uv);
+                                        self.delete_own(&o, &uk)?;
+                                    }
+                                    (true, false) => {
+                                        self.delete_own(&o, &lk)?;
+                                        self.set_own_property(&o, uk, lv);
+                                    }
+                                    (false, false) => {}
+                                }
+                                lower += 1;
+                            }
+                            return Ok(o);
+                        }
+                    }
+                }
                 let (a, write_back) = match &recv {
                     // 얼린 배열은 제자리 변형을 무시한다(표준: 조용히 실패).
                     Some(Value::Arr(a))
