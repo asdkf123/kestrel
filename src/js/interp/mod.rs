@@ -8724,7 +8724,10 @@ impl Interp {
                             .map_or(false, |i| i < a.borrow().len() && !a.is_hole(i))
                             || key == "length"
                             || a.get_prop(&key).is_some()
-                            || self.proto_method("Array", &key).is_some(),
+                            || self.proto_method("Array", &key).is_some()
+                            // Array.prototype 에 없으면 Object.prototype 상속분(사용자 정의).
+                            || (!is_internal_key(&key)
+                                && self.proto_method("Object", &key).is_some()),
                     ),
                     // 함수/내장 생성자 등: HasProperty 로 위임 (name/length/정적/prototype + 상속).
                     other => Value::Bool(self.has_property(other, &key)),
