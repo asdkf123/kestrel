@@ -8400,7 +8400,10 @@ impl Interp {
                     for k in keys {
                         // Get: 접근자면 getter 호출(값을 복사, 서술자 아님).
                         let v = self.member_get(&src, &k)?;
-                        if !self.set_own_property(&target, k.clone(), v) {
+                        // Set(To, key, v, Throw=true) — [[Set]] 이라 대상 setter 를 호출하고
+                        // 그 예외를 전파한다(§20.1.2.1). 예전엔 set_own_property 라 setter 예외를
+                        // 삼켰다. 실패(read-only 등)면 TypeError.
+                        if !self.ordinary_set(&target, &k, v, &target)? {
                             return Err(self.throw_error(
                                 "TypeError",
                                 format!("Cannot assign to read only property '{}' of object", k),

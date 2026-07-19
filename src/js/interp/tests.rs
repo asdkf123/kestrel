@@ -2108,6 +2108,15 @@ fn object_assign_to_object_types() {
     // Object() 로도 심볼/BigInt 박싱
     assert_eq!(run_str("typeof Object(Symbol())"), "object");
     assert_eq!(run_str("typeof Object(10n)"), "object");
+    // 대상 setter 를 호출하고(§20.1.2.1 Set with Throw) 그 예외를 전파한다
+    assert!(run_bool(
+        "var log=[]; var t={}; Object.defineProperty(t,'a',{set:function(v){log.push(v);},enumerable:true}); \
+         Object.assign(t,{a:5}); log[0]===5"
+    ));
+    assert!(run_bool(
+        "var t={}; Object.defineProperty(t,'x',{set:function(){throw new Error('b');}}); \
+         var threw=false; try{ Object.assign(t,{x:1}); }catch(e){ threw=true; } threw"
+    ));
     // null/undefined 대상만 에러
     assert_eq!(
         run_str("try { Object.assign(null, {}); 'no-throw' } catch(e) { 'threw' }"),
