@@ -6989,12 +6989,13 @@ impl Interp {
                 let sticky = flags.contains('y');
                 let use_li = re.global || sticky;
                 let r = recv_obj.clone().unwrap_or(Value::Undefined);
-                let from = if use_li {
-                    let liv = self.member_get(&r, "lastIndex")?;
-                    to_length(self.to_number_value(&liv)?) as usize
-                } else {
-                    0
-                };
+                // §22.2.7.2 step 2: lastIndex 는 global/sticky 여부와 무관하게 항상
+                // Get+ToLength 로 읽는다(valueOf/getter 정확히 1회 관측). step 6 에서
+                // global/sticky 가 아니면 로컬 시작 위치만 0 으로 하고 프로퍼티는 쓰지
+                // 않는다. 예전엔 non-global 일 때 아예 안 읽어 valueOf 관측을 빠뜨렸다.
+                let liv = self.member_get(&r, "lastIndex")?;
+                let li = to_length(self.to_number_value(&liv)?) as usize;
+                let from = if use_li { li } else { 0 };
                 // lastIndex > length 면 매치 실패 → lastIndex 0, null.
                 if use_li && from > chars.len() {
                     self.set_throw(&r, "lastIndex", Value::Num(0.0))?;

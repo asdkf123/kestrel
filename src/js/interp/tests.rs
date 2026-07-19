@@ -3848,6 +3848,23 @@ fn regex_sticky_test_lastindex() {
 }
 
 #[test]
+fn regex_exec_lastindex_access() {
+    // §22.2.7.2 step 2: exec 는 global/sticky 여부와 무관하게 lastIndex 를 항상
+    // 정확히 한 번 Get+ToLength 한다(valueOf 1회). step 6: non-global/sticky 면
+    // 로컬 시작만 0 으로 두고 프로퍼티는 쓰지 않아 원래 객체가 보존된다.
+    // 성공 매치: valueOf 1회, lastIndex 프로퍼티 불변.
+    assert!(run_bool(
+        "var g=0,c={valueOf:function(){g++;return 0;}}; var r=/./; r.lastIndex=c; \
+         var res=r.exec('abc'); res[0]==='a' && r.lastIndex===c && g===1"
+    ));
+    // 실패 매치: valueOf 1회, lastIndex 불변.
+    assert!(run_bool(
+        "var g=0,c={valueOf:function(){g++;return 0;}}; var r=/a/; r.lastIndex=c; \
+         var res=r.exec('nbc'); res===null && r.lastIndex===c && g===1"
+    ));
+}
+
+#[test]
 fn array_from_and_of() {
     // Array.from: 이터러블/문자열(코드포인트)/Set/array-like/mapFn.
     assert_eq!(run_str("Array.from([1,2,3]).join(',')"), "1,2,3");
