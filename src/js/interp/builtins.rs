@@ -5744,6 +5744,24 @@ impl Interp {
                     },
                 ))))
             }
+            // HTMLCollection.item(index) — index 는 unsigned long(ToUint32, 2^32 모듈로).
+            // 변환 후 범위를 벗어나면 null. 예: item(2^32) → item(0), item(-2) → 범위밖.
+            Native::CollectionItem => {
+                let Some(Value::Arr(a)) = recv else { return Ok(Value::Null) };
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let idx = self.to_int32(&arg)? as u32 as usize; // ToUint32
+                let items = a.borrow();
+                if idx >= items.len() {
+                    return Ok(Value::Null);
+                }
+                Ok(items.get(idx).cloned().unwrap_or(Value::Null))
+            }
+            // HTMLCollection.namedItem(name) — id 또는 name 속성이 일치하는 첫 요소.
+            Native::CollectionNamedItem => {
+                let Some(Value::Arr(a)) = recv else { return Ok(Value::Null) };
+                let name = args.first().map(to_display).unwrap_or_default();
+                Ok(self.collection_named(&a, &name).unwrap_or(Value::Null))
+            }
             // document.styleSheets — 저작자 시트 목록 (문서 순서)
             Native::StyleSheets => {
                 self.sync_sheets();
@@ -6136,7 +6154,7 @@ impl Interp {
                 let root = scope.unwrap_or(dom.root);
                 let mut out = Vec::new();
                 collect_elements(dom, root, scope.is_some(), &query, by_class, &mut out);
-                Ok(Value::Arr(ArrayObj::new(out)))
+                Ok(self.make_collection(out))
             }
             // getElementsByTagNameNS(namespace, localName) — §4.5. "*" 는 와일드카드,
             // 빈 네임스페이스는 null(네임스페이스 없음)로 취급. localName 은 대소문자 구분.
@@ -6151,7 +6169,7 @@ impl Interp {
                 let root = scope.unwrap_or(dom.root);
                 let mut out = Vec::new();
                 collect_elements_ns(dom, root, scope.is_some(), &ns, &local, &mut out);
-                Ok(Value::Arr(ArrayObj::new(out)))
+                Ok(self.make_collection(out))
             }
             Native::EventPreventDefault => {
                 if let Some(Value::Obj(o)) = &recv {

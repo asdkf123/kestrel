@@ -2897,6 +2897,11 @@ impl Interp {
             // 배열 인덱스 삭제는 진짜 구멍(hole)을 남긴다(길이 불변) — delete 연산자와 동일.
             // 예전엔 _ => Ok(true) 라 [[Delete]] 헬퍼(sort 되쓰기 등)가 배열 인덱스를 못 지웠다.
             Value::Arr(a) => {
+                // HTMLCollection 의 인덱스 프로퍼티는 삭제할 수 없다(WebIDL, 인덱스는
+                // 항상 존재하는 것으로 취급) → delete coll[i] 는 false. 이름 프로퍼티는 아래로.
+                if a.get_prop("\u{0}coll").is_some() && key.parse::<u32>().is_ok() {
+                    return Ok(false);
+                }
                 if let Ok(i) = key.parse::<usize>() {
                     // non-configurable 로 정의된 인덱스는 삭제 불가 (§10.4.2).
                     if matches!(a.index_attr(i), Some(at) if at & ATTR_CONFIGURABLE == 0) {
@@ -4728,6 +4733,11 @@ impl Interp {
                                 return Ok(Value::Bool(self.proxy_delete(&p, &key)?));
                             }
                             Value::Arr(a) => {
+                                // HTMLCollection 의 인덱스는 삭제 불가(WebIDL) → delete coll[i]
+                                // 는 false. 이름 프로퍼티(expando)는 아래 일반 처리로.
+                                if a.get_prop("\u{0}coll").is_some() && key.parse::<u32>().is_ok() {
+                                    return Ok(Value::Bool(false));
+                                }
                                 // 배열 요소 삭제는 진짜 구멍(hole)을 남긴다 (길이 불변) —
                                 // delete arr[i] 후 i 는 hasOwnProperty/in/for-in 에서 사라진다.
                                 if let Ok(i) = key.parse::<usize>() {
@@ -6863,6 +6873,33 @@ impl Interp {
                         };
                     }
                     return Ok(v);
+                }
+                // HTMLCollection(WebIDL legacy platform object §3.9): item()/namedItem()
+                // 메서드 + 이름 접근. 유효 배열 인덱스(0..2^32-2)는 아래 표준 인덱스
+                // 처리로 넘기고, 그 밖의 정수/문자열 키는 이름(id/name)으로 요소를 찾는다.
+                // (예: coll[2^32] 은 인덱스가 아니라 이름 프로퍼티다.)
+                if a.get_prop("\u{0}coll").is_some() {
+                    if key == "item" {
+                        return Ok(Value::Native(Native::CollectionItem));
+                    }
+                    if key == "namedItem" {
+                        return Ok(Value::Native(Native::CollectionNamedItem));
+                    }
+                    let valid_index = matches!(key.parse::<u32>(), Ok(i) if i != u32::MAX);
+                    if !valid_index
+                        && key != "length"
+                        && !key.starts_with('\u{0}')
+                        && natives::array_op_for(key).is_none()
+                        && !matches!(
+                            key,
+                            "constructor" | "__proto__" | "hasOwnProperty"
+                                | "propertyIsEnumerable" | "push"
+                        )
+                    {
+                        if let Some(el) = self.collection_named(a, key) {
+                            return Ok(el);
+                        }
+                    }
                 }
                 if key == "length" {
                     // 근사 희박 배열: length 만 크게 잡은 경우 그 값을 돌려준다
@@ -9689,6 +9726,12 @@ impl Interp {
                         // freeze: 모든 변경 금지. seal/preventExtensions: 새 인덱스·프로퍼티 금지.
                         let av = Value::Arr(a.clone());
                         if self.is_frozen_val(&av) {
+                            return Ok(());
+                        }
+                        // HTMLCollection 의 인덱스 프로퍼티는 읽기 전용이다(WebIDL legacy
+                        // platform object: 인덱스 setter 없음). 인덱스 키 대입은 조용히
+                        // 무시하고, 이름 프로퍼티(expando)만 허용한다.
+                        if a.get_prop("\u{0}coll").is_some() && key.parse::<u32>().is_ok() {
                             return Ok(());
                         }
                         if let Ok(i) = key.parse::<usize>() {

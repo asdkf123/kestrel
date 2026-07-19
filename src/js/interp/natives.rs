@@ -238,6 +238,8 @@ pub enum Native {
     CreateElement,
     CreateAttribute,
     CreateAttributeNS,
+    CollectionItem,
+    CollectionNamedItem,
     AppendChild,
     NodeAppend,
     NodePrepend,

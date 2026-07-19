@@ -244,6 +244,40 @@ impl Interp {
         it.all(Self::is_name_char)
     }
 
+    // HTMLCollection 을 만든다: 요소 배열에 "\0coll" 표시를 달아 member_get 이
+    // item()/namedItem()/이름 접근을 처리하게 한다.
+    pub(super) fn make_collection(&self, items: Vec<Value>) -> Value {
+        let a = ArrayObj::new(items);
+        a.set_prop("\u{0}coll".to_string(), Value::Bool(true));
+        Value::Arr(a)
+    }
+
+    // HTMLCollection 의 이름 조회(§4.2.10.2 "named item"): id 가 일치하는 첫 요소,
+    // 없으면 name 속성이 일치하는 첫 요소. 빈 이름은 매칭하지 않는다.
+    pub(super) fn collection_named(
+        &mut self,
+        a: &std::rc::Rc<ArrayObj>,
+        name: &str,
+    ) -> Option<Value> {
+        if name.is_empty() {
+            return None;
+        }
+        let items = a.borrow().clone();
+        let dom = self.dom_arena().ok()?;
+        for attr in ["id", "name"] {
+            for v in &items {
+                if let Value::Dom(id) = v {
+                    if let crate::dom::NodeType::Element(e) = &dom.get(*id).node_type {
+                        if e.attributes.get(attr).map(String::as_str) == Some(name) {
+                            return Some(v.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     // §4.4 "locate a namespace": 요소에서 조상으로 올라가며 네임스페이스를 찾는다.
     // prefix 가 비면 기본 네임스페이스(xmlns), 아니면 xmlns:prefix 선언을 본다.
     // 선언이 없으면 요소 자신의 네임스페이스(접두사가 일치할 때)를 쓴다.
@@ -827,7 +861,10 @@ impl Interp {
                     .filter(|&c| is_el(dom, c))
                     .map(Value::Dom)
                     .collect();
-                Ok(Value::Arr(ArrayObj::new(arr)))
+                // children 은 HTMLCollection — item()/namedItem()/이름 접근을 위해 표시.
+                let a = ArrayObj::new(arr);
+                a.set_prop("\u{0}coll".to_string(), Value::Bool(true));
+                Ok(Value::Arr(a))
             }
             "childNodes" => {
                 let arr: Vec<Value> =

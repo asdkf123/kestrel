@@ -521,6 +521,33 @@ fn document_create_attribute() {
 }
 
 #[test]
+fn html_collection_item_named_indexed() {
+    let mut dom = crate::html::parse_dom(
+        "<div><foo id='a'></foo><foo id='0'></foo><foo name='b'></foo></div>".to_string(),
+    );
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // item(i): 인덱스 요소, ToUint32(2^32 모듈로), 범위밖 null
+    assert_eq!(g("document.getElementsByTagName('foo').length"), "3");
+    assert_eq!(g("document.getElementsByTagName('foo').item(0).id"), "a");
+    assert_eq!(g("document.getElementsByTagName('foo').item(4294967296).id"), "a"); // 2^32→0
+    assert_eq!(g("document.getElementsByTagName('foo').item(99)"), "null");
+    assert_eq!(g("document.getElementsByTagName('foo').item(-1)"), "null");
+    // namedItem: id 우선, 다음 name
+    assert_eq!(g("document.getElementsByTagName('foo').namedItem('a').id"), "a");
+    assert_eq!(g("document.getElementsByTagName('foo').namedItem('b').getAttribute('name')"), "b");
+    assert_eq!(g("document.getElementsByTagName('foo').namedItem('none')"), "null");
+    // 이름 접근: 유효 인덱스가 아닌 키는 이름 조회 (coll['a'])
+    assert_eq!(g("document.getElementsByTagName('foo')['a'].id"), "a");
+    // 인덱스 프로퍼티는 읽기 전용 — 대입 무시, 삭제 false
+    assert_eq!(g("var c=document.getElementsByTagName('foo'); c[0]=1; c[0].id"), "a");
+    assert_eq!(g("var c=document.getElementsByTagName('foo'); delete c[0]"), "false");
+    // 이름 expando 는 허용
+    assert_eq!(g("var c=document.getElementsByTagName('foo'); c.x=9; c.x"), "9");
+}
+
+#[test]
 fn constructor_found_on_prototype_chain() {
     // jQuery 는 `jQuery.fn.constructor = jQuery` 로 프로토타입에 둔다.
     // own 만 보면 this.constructor() 가 전역 Object 로 떨어져 "함수 아님" 이 됐다.
