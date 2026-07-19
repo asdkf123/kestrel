@@ -3881,6 +3881,22 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_lastindex_non_enumerable() {
+    // §22.2.7.1: lastIndex 는 { writable:true, enumerable:false, configurable:false }.
+    // 예전엔 기본(전부 true)이라 Object.keys/JSON.stringify 에 새어 나갔다.
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(/x/g,'lastIndex'); \
+         d.writable===true && d.enumerable===false && d.configurable===false"
+    ));
+    assert_eq!(run_str("JSON.stringify(Object.keys(/x/g))"), "[]");
+    assert_eq!(run_str("JSON.stringify(/x/g)"), "{}");
+    // toJSON 이 함수가 아니면 무시하고 값을 직렬화(정규식은 own 열거 프로퍼티 없음 → {}).
+    assert_eq!(run_str("JSON.stringify({toJSON: /re/})"), r#"{"toJSON":{}}"#);
+    // 여전히 쓰기 가능.
+    assert!(run_bool("var r=/x/g; r.lastIndex=7; r.lastIndex===7"));
+}
+
+#[test]
 fn regex_prototype_tostring() {
     // §22.2.6.13 RegExp.prototype.toString → "/" + source + "/" + flags. 예전엔
     // 정규식이 Object.prototype.toString 으로 떨어져 "[object Object]" 였다.

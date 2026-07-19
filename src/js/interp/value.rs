@@ -832,7 +832,10 @@ pub(super) fn make_regex_obj(source: &str, flags: &str) -> Value {
     map.insert("\u{0}source".to_string(), Value::Str(source.to_string()));
     map.insert("\u{0}flags".to_string(), Value::Str(flags.to_string()));
     map.insert("\u{0}isRegex".to_string(), Value::Bool(true));
+    // lastIndex 는 { writable:true, enumerable:false, configurable:false }(§22.2.7.1).
+    // 기본(전부 true)으로 두면 Object.keys/JSON.stringify 에 새어 나갔다.
     map.insert("lastIndex".to_string(), Value::Num(0.0));
+    set_prop_attrs(&mut map, "lastIndex", ATTR_WRITABLE);
     Value::Obj(Rc::new(RefCell::new(map)))
 }
 
