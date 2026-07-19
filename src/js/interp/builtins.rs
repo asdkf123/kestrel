@@ -4784,9 +4784,40 @@ impl Interp {
                 if let Some(el) = root_el {
                     children.push(Value::Dom(el));
                 }
+                // contentType(§): HTML 네임스페이스면 XHTML, SVG 면 svg, 그 외 application/xml.
+                let content_type = match ns.as_deref() {
+                    Some("http://www.w3.org/1999/xhtml") => "application/xhtml+xml",
+                    Some("http://www.w3.org/2000/svg") => "image/svg+xml",
+                    _ => "application/xml",
+                };
                 let mut d = ObjMap::new();
                 d.insert("nodeType".to_string(), Value::Num(9.0));
                 d.insert("nodeName".to_string(), Value::Str("#document".to_string()));
+                d.insert("nodeValue".to_string(), Value::Null);
+                // 문서 메타데이터(§Document): 대부분 고정값.
+                d.insert("location".to_string(), Value::Null);
+                d.insert("compatMode".to_string(), Value::Str("CSS1Compat".to_string()));
+                d.insert("characterSet".to_string(), Value::Str("UTF-8".to_string()));
+                d.insert("charset".to_string(), Value::Str("UTF-8".to_string()));
+                d.insert("inputEncoding".to_string(), Value::Str("UTF-8".to_string()));
+                d.insert("contentType".to_string(), Value::Str(content_type.to_string()));
+                d.insert("URL".to_string(), Value::Str("about:blank".to_string()));
+                d.insert("documentURI".to_string(), Value::Str("about:blank".to_string()));
+                for k in [
+                    "ELEMENT_NODE",
+                    "ATTRIBUTE_NODE",
+                    "TEXT_NODE",
+                    "CDATA_SECTION_NODE",
+                    "PROCESSING_INSTRUCTION_NODE",
+                    "COMMENT_NODE",
+                    "DOCUMENT_NODE",
+                    "DOCUMENT_TYPE_NODE",
+                    "DOCUMENT_FRAGMENT_NODE",
+                ] {
+                    if let Some(v) = crate::js::interp::dom_api::node_constant(k) {
+                        d.insert(k.to_string(), Value::Num(v));
+                    }
+                }
                 d.insert(
                     "documentElement".to_string(),
                     root_el.map(Value::Dom).unwrap_or(Value::Null),
