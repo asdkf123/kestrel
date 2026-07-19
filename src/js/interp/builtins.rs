@@ -274,7 +274,14 @@ pub(super) fn own_enumerable_entries(v: &Value) -> Vec<(String, Value)> {
                 .map(|i| (i.to_string(), b[i].clone()))
                 .collect();
             drop(b);
-            out.extend(a.own_props());
+            // 비인덱스 프로퍼티도 non-enumerable(prop_attrs) 은 열거에서 제외한다.
+            out.extend(
+                a.own_props()
+                    .into_iter()
+                    .filter(|(k, _)| {
+                        !matches!(a.prop_attr(k), Some(at) if at & ATTR_ENUMERABLE == 0)
+                    }),
+            );
             out
         }
         Value::Instance(i) => {
@@ -3550,6 +3557,44 @@ impl Interp {
                                 } else {
                                     a.clear_index_attr(i);
                                 }
+                            }
+                        } else if a.get_prop(&key).is_some() {
+                            // 기존 비인덱스 프로퍼티: 속성만 병합(§10.1.6, prop_attrs).
+                            let cur = a.prop_attr(&key).unwrap_or(
+                                ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                            );
+                            if cur & ATTR_CONFIGURABLE == 0 {
+                                let cur_enum = cur & ATTR_ENUMERABLE != 0;
+                                let cur_wr = cur & ATTR_WRITABLE != 0;
+                                let is_acc =
+                                    matches!(a.get_prop(&key), Some(Value::Accessor(_)));
+                                if (has_configurable && configurable)
+                                    || (has_enumerable && enumerable != cur_enum)
+                                    || (!is_acc && has_writable && writable && !cur_wr)
+                                {
+                                    return Err(self.redefine_err());
+                                }
+                            }
+                            let wbit = if has_writable {
+                                if writable { ATTR_WRITABLE } else { 0 }
+                            } else {
+                                cur & ATTR_WRITABLE
+                            };
+                            let ebit = if has_enumerable {
+                                if enumerable { ATTR_ENUMERABLE } else { 0 }
+                            } else {
+                                cur & ATTR_ENUMERABLE
+                            };
+                            let cbit = if has_configurable {
+                                if configurable { ATTR_CONFIGURABLE } else { 0 }
+                            } else {
+                                cur & ATTR_CONFIGURABLE
+                            };
+                            let attrs = wbit | ebit | cbit;
+                            if attrs != ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE {
+                                a.set_prop_attr(key.clone(), attrs);
+                            } else {
+                                a.clear_prop_attr(&key);
                             }
                         }
                     }
