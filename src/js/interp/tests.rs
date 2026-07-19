@@ -3881,6 +3881,25 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_empty_match_advance_tolength() {
+    // 빈 매치 후 lastIndex 전진은 ToLength(Get(rx,"lastIndex"))+1 이다(§22.2.6.8/.11).
+    // 객체 lastIndex 는 valueOf 로 강제변환하고 2^53-1 로 클램프한다(예전 to_num 은
+    // 객체를 NaN 으로 만들어 NaN 을 썼다).
+    // @@replace: exec 가 lastIndex 를 2^54 객체로 두고 빈 매치 반환 → 최종 2^53.
+    assert!(run_bool(
+        "var r=/./g; var c=false; \
+         r.exec=function(){ if(c) return null; r.lastIndex={valueOf:function(){return Math.pow(2,54);}}; c=true; return {length:1,0:'',index:0}; }; \
+         r[Symbol.replace]('',''); r.lastIndex===Math.pow(2,53)"
+    ));
+    // @@match 도 동일 규약.
+    assert!(run_bool(
+        "var r=/./g; var c=false; \
+         r.exec=function(){ if(c) return null; r.lastIndex={valueOf:function(){return 5;}}; c=true; return {length:1,0:'',index:0}; }; \
+         r[Symbol.match](''); r.lastIndex===6"
+    ));
+}
+
+#[test]
 fn regex_flags_getter_observable() {
     // §22.2.6.4 flags getter 는 개별 플래그 프로퍼티를 [[Get]]+ToBoolean 으로 읽는다 —
     // own override/throwing getter 가 관찰돼야 한다(직접 내부 비트를 읽으면 무시됐다).

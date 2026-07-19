@@ -6758,8 +6758,11 @@ impl Interp {
                         let empty = match_str.is_empty();
                         out.push(Value::Str(match_str));
                         if empty {
-                            // AdvanceStringIndex(근사): lastIndex + 1.
-                            let li = to_num(&self.member_get(&re, "lastIndex")?);
+                            // AdvanceStringIndex(근사): ToLength(Get(lastIndex)) + 1.
+                            // ToLength 로 valueOf 강제변환(예외 전파) + 2^53-1 클램프한다.
+                            // 예전 to_num 은 객체 lastIndex 를 NaN 으로 만들었다.
+                            let liv = self.member_get(&re, "lastIndex")?;
+                            let li = to_length(self.to_number_value(&liv)?);
                             self.set_throw(&re, "lastIndex", Value::Num(li + 1.0))?;
                         }
                     }
@@ -6811,7 +6814,9 @@ impl Interp {
                             break;
                         }
                         if m0.is_empty() {
-                            let li = to_num(&self.member_get(&re, "lastIndex")?);
+                            // ToLength(Get(lastIndex)) + 1 (valueOf 강제변환/예외 전파/클램프).
+                            let liv = self.member_get(&re, "lastIndex")?;
+                            let li = to_length(self.to_number_value(&liv)?);
                             self.set_throw(&re, "lastIndex", Value::Num(li + 1.0))?;
                         }
                     }
@@ -6974,8 +6979,10 @@ impl Interp {
                         let m0v = self.member_get(&result, "0")?;
                         let m0 = self.to_string_value(&m0v)?;
                         if m0.is_empty() {
+                            // ToLength(Get(lastIndex)) + 1 (valueOf 강제변환/예외 전파/클램프).
                             let liv = self.member_get(&matcher, "lastIndex")?;
-                            self.set_throw(&matcher, "lastIndex", Value::Num(to_num(&liv) + 1.0))?;
+                            let li = to_length(self.to_number_value(&liv)?);
+                            self.set_throw(&matcher, "lastIndex", Value::Num(li + 1.0))?;
                         }
                     }
                     return Ok(self.make_iter_from_vec(out));
