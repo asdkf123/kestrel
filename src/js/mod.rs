@@ -590,8 +590,18 @@ if (!Array.prototype.lastIndexOf) Array.prototype.lastIndexOf = function(searchE
   for (; k >= 0; k--) { if (k in o && o[k] === searchElement) return k; }
   return -1;
 };
-if (!Array.prototype.toReversed) Array.prototype.toReversed = function(){ return this.slice().reverse(); };
-if (!Array.prototype.toSorted) Array.prototype.toSorted = function(fn){ return this.slice().sort(fn); };
+// §23.1.3.34/.33: toReversed/toSorted 는 ToObject(this)+LengthOfArrayLike 로 array-like 에도
+// 동작하고 Get 으로 모든 인덱스를 읽어 밀집 배열을 만든다. 예전엔 this.slice() 라
+// generic array-like/원시값 수신자에서 "slice 없음" 으로 죽었다.
+if (!Array.prototype.toReversed) Array.prototype.toReversed = function(){
+  var O = Object(this); var n = Math.floor(+O.length); if (!(n > 0)) n = 0; if (n > 9007199254740991) n = 9007199254740991;
+  var A = new Array(n); for (var k = 0; k < n; k++) A[k] = O[n - 1 - k]; return A;
+};
+if (!Array.prototype.toSorted) Array.prototype.toSorted = function(fn){
+  if (fn !== undefined && typeof fn !== 'function') throw new TypeError('The comparison function must be either a function or undefined');
+  var O = Object(this); var n = Math.floor(+O.length); if (!(n > 0)) n = 0; if (n > 9007199254740991) n = 9007199254740991;
+  var A = new Array(n); for (var k = 0; k < n; k++) A[k] = O[k]; A.sort(fn); return A;
+};
 // Array.prototype.toLocaleString (§23.1.3.32): 각 원소의 toLocaleString() 을 호출해
 // 로케일 구분자(구현 정의, ',')로 잇는다. null/undefined 는 빈 문자열. 예전 폴리필은
 // join(',') 라 원소 toLocaleString 을 안 불렀다.
