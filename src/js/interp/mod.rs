@@ -1233,9 +1233,15 @@ impl Interp {
                     name.to_string(),
                     Value::Accessor(AccessorPair::getter(Value::Native(Native::RegexGet(*kind)))),
                 );
+                // 접근자 프로퍼티는 { enumerable:false, configurable:true }(§22.2.6).
+                // 생성 시점에 직접 표식해 프렐류드 없이도 스펙과 일치(방어적).
+                set_prop_attrs(&mut b, name, ATTR_CONFIGURABLE);
             }
             // Symbol.match/replace/split/search/matchAll 메서드 (§22.2.6). str.match(re)
             // 등이 표준상 위임하는 대상. 내부 심볼 키 \0@@match 등으로 얹는다.
+            // 전부 { writable:true, enumerable:false, configurable:true } — mark_nonenum_all
+            // 은 심볼 키를 건너뛰므로 직접 표식(안 하면 getOwnPropertyDescriptor 가
+            // enumerable:true 를 보고했다).
             for (sym, op) in [
                 ("\u{0}@@match", StrOp::Match),
                 ("\u{0}@@matchAll", StrOp::MatchAll),
@@ -1244,6 +1250,7 @@ impl Interp {
                 ("\u{0}@@split", StrOp::Split),
             ] {
                 b.insert(sym.to_string(), Value::Native(Native::RegexSym(op)));
+                set_prop_attrs(&mut b, sym, ATTR_WRITABLE | ATTR_CONFIGURABLE);
             }
         }
         // Map/Set/Date/Symbol.prototype — 인스턴스 멤버 해석과 같은 Native 를 얹는다.

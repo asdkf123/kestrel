@@ -3881,6 +3881,32 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_symbol_method_prop_desc() {
+    // §22.2.6 RegExp.prototype[@@match/@@replace/@@matchAll/@@search/@@split] 는
+    // { writable:true, enumerable:false, configurable:true }. 예전엔 심볼 키가
+    // mark_nonenum_all 에서 제외돼 enumerable:true 로 새어 나왔다.
+    for sym in ["match", "replace", "matchAll", "search", "split"] {
+        assert!(
+            run_bool(&format!(
+                "var d=Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.{}); \
+                 d.writable===true && d.enumerable===false && d.configurable===true && typeof d.value==='function'",
+                sym
+            )),
+            "@@{} descriptor",
+            sym
+        );
+    }
+    // flag 접근자는 { enumerable:false, configurable:true }(접근자라 writable 없음).
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(RegExp.prototype,'source'); \
+         d.enumerable===false && d.configurable===true && typeof d.get==='function' && d.writable===undefined"
+    ));
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(RegExp.prototype,'flags').enumerable===false"
+    ));
+}
+
+#[test]
 fn regex_capture_reset_per_iteration() {
     // §22.2.2.5.1 RepeatMatcher: 반복 iteration 시작마다 서브식 내부 캡처를 undefined
     // 로 리셋. (?:(a)|b){2} on "ab" → 마지막 iteration 에서 (a) 미참여 → g1 undefined.
