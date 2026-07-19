@@ -3444,6 +3444,27 @@ impl Interp {
                 } else {
                     value_v
                 };
+                // §10.1.6.3: value/get/set 없는 generic 서술자로 **새** 배열 프로퍼티를 정의
+                // 하면 value=undefined 데이터로 생성한다(기존 프로퍼티는 속성만 병합 — entry
+                // None 유지). 예전엔 새 인덱스/prop 이 아예 안 만들어졌다("0" doesn't exist).
+                let entry = if entry.is_none() && key.as_str() != "length" {
+                    if let Value::Arr(a) = &target {
+                        let exists = if let Ok(i) = key.parse::<usize>() {
+                            i < a.borrow().len() && !a.is_hole(i)
+                        } else {
+                            a.get_prop(&key).is_some()
+                        };
+                        if exists {
+                            entry
+                        } else {
+                            Some(Value::Undefined)
+                        }
+                    } else {
+                        entry
+                    }
+                } else {
+                    entry
+                };
                 // 배열 length 는 exotic (§10.4.2.1): {enumerable:false, configurable:false}
                 // 데이터 프로퍼티. accessor·configurable:true·enumerable:true 로 재정의하면
                 // TypeError. (value 로 길이 변경 + writable:false 고정은 배열 표현 확장이
