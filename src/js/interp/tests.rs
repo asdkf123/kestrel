@@ -3239,6 +3239,14 @@ fn more_array_string_methods() {
     assert!(prelude_bool(
         "var t=false; var r=[].lastIndexOf(1,{valueOf:function(){t=true;return 0;}}); r===-1 && t===false"
     ));
+    // includes: 모든 인덱스 [[Get]](구멍도 undefined 로 방문) + SameValueZero(NaN 매칭),
+    // len==0 은 fromIndex 강제변환 이전에 false.
+    assert!(run_bool("[1,,3].includes(undefined)")); // 구멍 방문
+    assert!(run_bool("[NaN].includes(NaN)")); // SameValueZero
+    // len==0 이면 fromIndex 강제변환 이전에 false(valueOf 미호출 → throw 안 함).
+    assert!(run_bool(
+        "[].includes(1,{valueOf:function(){throw new Error('x');}})===false"
+    ));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

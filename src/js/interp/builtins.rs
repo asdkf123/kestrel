@@ -1432,60 +1432,6 @@ impl Interp {
         Value::Obj(Rc::new(RefCell::new(m)))
     }
 
-    // indexOf/lastIndexOf/includes 를 length 가 배열 상한 초과인 array-like 에서 재료화 없이
-    // 지연 검색한다({0:0,length:Infinity} 등). 존재하는 정수 own 키만 검사 → OOM/무한루프 없음.
-    fn generic_array_search_huge(
-        &mut self,
-        recv: &Value,
-        op: ArrOp,
-        args: &[Value],
-        len: f64,
-    ) -> Result<Value, String> {
-        let needle = args.first().cloned().unwrap_or(Value::Undefined);
-        // fromIndex (ToIntegerOrInfinity). indexOf/includes 기본 0.
-        let n = match args.get(1) {
-            Some(v) if !matches!(v, Value::Undefined) => self.to_integer_or_infinity(v)?,
-            _ => 0.0,
-        };
-        let start = if n < 0.0 { (len + n).max(0.0) } else { n };
-        // 존재하는 정수 own 키(오름차순).
-        let mut keys: Vec<usize> = match recv {
-            Value::Obj(m) => m.borrow().keys().filter_map(|k| k.parse::<usize>().ok()).collect(),
-            _ => Vec::new(),
-        };
-        keys.sort_unstable();
-        keys.dedup();
-        if matches!(op, ArrOp::Includes) {
-            // huge sparse array-like 에는 구멍(=undefined)이 존재하므로 undefined 검색은 true.
-            if start < len && same_value_zero(&needle, &Value::Undefined) {
-                return Ok(Value::Bool(true));
-            }
-            for &k in &keys {
-                if (k as f64) < start || (k as f64) >= len {
-                    continue;
-                }
-                let v = self.member_get(recv, &k.to_string())?;
-                if same_value_zero(&v, &needle) {
-                    return Ok(Value::Bool(true));
-                }
-            }
-            return Ok(Value::Bool(false));
-        }
-        // IndexOf
-        for &k in &keys {
-            if (k as f64) < start || (k as f64) >= len {
-                continue;
-            }
-            if self.has_property(recv, &k.to_string()) {
-                let v = self.member_get(recv, &k.to_string())?;
-                if strict_eq(&v, &needle) {
-                    return Ok(Value::Num(k as f64));
-                }
-            }
-        }
-        Ok(Value::Num(-1.0))
-    }
-
     // RegExpExec (§22.2.7.1): exec = Get(R,"exec"); IsCallable 이면 Call(exec, R, [S]) 후
     // 결과가 Object/null 아니면 TypeError. 아니면 내장 exec(정규식 필요).
     pub(super) fn regexp_exec(&mut self, r: &Value, s: &str) -> Result<Value, String> {
@@ -2230,6 +2176,73 @@ impl Interp {
             }
         }
         Ok(Value::Num(-1.0))
+    }
+
+    // §23.1.3.13 includes 를 배열/generic array-like 위에서 매 인덱스 live 로 검색한다.
+    // indexOf 와 달리 HasProperty 로 거르지 않고 모든 인덱스를 [[Get]](구멍은 undefined 로
+    // 방문)하며 SameValueZero 비교(NaN 매칭). len==0 은 fromIndex 강제변환 이전에 false.
+    pub(super) fn array_includes_live(
+        &mut self,
+        o: &Value,
+        args: &[Value],
+    ) -> Result<Value, String> {
+        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+        let len_f = match o {
+            Value::Arr(a) => a.borrow().len() as f64,
+            _ => {
+                let lv = self.member_get(o, "length")?;
+                to_length(self.to_number_value(&lv)?)
+            }
+        };
+        if len_f == 0.0 {
+            return Ok(Value::Bool(false));
+        }
+        let n = match args.get(1) {
+            None | Some(Value::Undefined) => 0.0,
+            Some(v) => self.to_integer_or_infinity(v)?,
+        };
+        if n == f64::INFINITY {
+            return Ok(Value::Bool(false));
+        }
+        let n = if n == f64::NEG_INFINITY { 0.0 } else { n };
+        let start = if n >= 0.0 { n } else { (len_f + n).max(0.0) };
+
+        // 초거대 length: 존재하지 않는 인덱스(=undefined)가 범위 안에 있으므로 undefined
+        // 검색은 true. 그 외엔 존재 own 정수키만 훑는다.
+        if len_f > MAX_ARRAY_LEN {
+            if start < len_f && same_value_zero(&needle, &Value::Undefined) {
+                return Ok(Value::Bool(true));
+            }
+            let mut keys: Vec<usize> = match o {
+                Value::Obj(m) => m
+                    .borrow()
+                    .keys()
+                    .filter_map(|s| s.parse::<usize>().ok())
+                    .filter(|&k| (k as f64) >= start && (k as f64) < len_f)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            keys.sort_unstable();
+            keys.dedup();
+            for &k in &keys {
+                let v = self.member_get(o, &k.to_string())?;
+                if same_value_zero(&v, &needle) {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            return Ok(Value::Bool(false));
+        }
+
+        let end = len_f as i64;
+        let mut k = start as i64;
+        while k < end {
+            let v = self.member_get(o, &k.to_string())?;
+            if same_value_zero(&v, &needle) {
+                return Ok(Value::Bool(true));
+            }
+            k += 1;
+        }
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn call_native(
@@ -7346,30 +7359,23 @@ impl Interp {
                         "Array.prototype method called on null or undefined",
                     ));
                 }
-                // includes: length 가 배열 상한 초과인 array-like 객체는 재료화하면
-                // RangeError/OOM 이므로 존재 인덱스만 지연 검색한다. (indexOf/lastIndexOf 는
-                // 아래 array_index_search_live 가 huge 를 포함해 통째로 처리한다.)
-                if matches!(op, ArrOp::Includes)
-                    && matches!(recv, Some(Value::Obj(_)) | Some(Value::Instance(_)))
-                {
-                    let rv = recv.clone().unwrap();
-                    let len_val = self.member_get(&rv, "length")?;
-                    let len = to_length(self.to_number_value(&len_val)?);
-                    if len > MAX_ARRAY_LEN {
-                        return self.generic_array_search_huge(&rv, op, &args, len);
+                // §22.1.3.14 indexOf / §23.1.3.13 includes: 배열/generic array-like 수신자는
+                // 재료화 이전에 매 인덱스 live([[Get]])로 검색한다 — 게터 중 삭제·length 축소·
+                // 상속 인덱스·비캐시 값을 관측하고 huge length 도 지연 처리한다. indexOf 는
+                // HasProperty 로 구멍 스킵+strict, includes 는 모든 인덱스 방문+SameValueZero.
+                // (lastIndexOf 는 프렐류드 폴리필.) 문자열/원시 래퍼는 아래 스냅샷 arm.
+                if matches!(
+                    &recv,
+                    Some(Value::Arr(_)) | Some(Value::Obj(_)) | Some(Value::Instance(_))
+                ) {
+                    if matches!(op, ArrOp::IndexOf) {
+                        let o = recv.clone().unwrap();
+                        return self.array_index_search_live(false, &o, &args);
                     }
-                }
-                // §22.1.3.14 indexOf: 배열/generic array-like 수신자는 재료화 이전에 매 인덱스
-                // live(HasProperty/Get)로 검색한다 — 게터 중 삭제·length 축소·상속 인덱스를
-                // 관측하고 huge length 도 지연 처리한다. (lastIndexOf 는 프렐류드 폴리필.)
-                if matches!(op, ArrOp::IndexOf)
-                    && matches!(
-                        &recv,
-                        Some(Value::Arr(_)) | Some(Value::Obj(_)) | Some(Value::Instance(_))
-                    )
-                {
-                    let o = recv.clone().unwrap();
-                    return self.array_index_search_live(false, &o, &args);
+                    if matches!(op, ArrOp::Includes) {
+                        let o = recv.clone().unwrap();
+                        return self.array_includes_live(&o, &args);
+                    }
                 }
                 // §23.1.3.26 reverse: generic array-like(Obj)는 HasProperty/Get/Set/Delete
                 // 스왑으로 구멍을 보존한다 — Vec 재료화는 구멍을 undefined 로 잃는다(A2/A3
