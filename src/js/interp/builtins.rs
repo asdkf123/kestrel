@@ -6951,22 +6951,19 @@ impl Interp {
                 self.call_native(Native::Str(op), Some(Value::Str(s)), fwd)
             }
             Native::RegexTest => {
-                // §22.2.6.16: this 가 정규식이 아니면 TypeError, 인자는 ToString.
-                let (src, flags) = match recv.as_ref().and_then(regex_src_flags) {
-                    Some(sf) => sf,
-                    None => {
-                        return Err(self.throw_error(
-                            "TypeError",
-                            "Method RegExp.prototype.test called on incompatible receiver",
-                        ))
-                    }
-                };
-                let text =
-                    self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
-                let re = crate::js::regex::Regex::compile_pattern(&src, &flags)
-                    .map_err(|e| format!("SyntaxError: Invalid regular expression: /{}/: {}", src, e))?;
-                let chars: Vec<char> = text.chars().collect();
-                Ok(Value::Bool(re.find(&chars, 0).is_some()))
+                // §22.2.6.16 test: RegExpExec(R, string) 을 수행하고 결과가 null 이 아닌지
+                // 반환한다. 예전엔 lastIndex=0 에서 find 만 해 sticky('y')/global 의
+                // lastIndex 앵커링/갱신/실패시 0 리셋/non-writable Set(throw) TypeError 를
+                // 전부 우회했다. 이제 builtin exec 로직(Native::RegexExec)에 위임해
+                // 동일한 lastIndex 관측 규약을 공유한다.
+                if recv.as_ref().and_then(regex_src_flags).is_none() {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Method RegExp.prototype.test called on incompatible receiver",
+                    ));
+                }
+                let res = self.call_native(Native::RegexExec, recv.clone(), args.clone())?;
+                Ok(Value::Bool(!matches!(res, Value::Null)))
             }
             // regex.exec(str) → [full, g1, ...] with .index, or null. global 이면 lastIndex 갱신.
             Native::RegexExec => {

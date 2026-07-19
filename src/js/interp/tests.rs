@@ -3829,6 +3829,25 @@ fn regex_named_groups() {
 }
 
 #[test]
+fn regex_sticky_test_lastindex() {
+    // §22.2.6.16: RegExp.prototype.test 는 RegExpExec 를 거쳐 sticky('y')/global 의
+    // lastIndex 앵커링·갱신·실패시 0 리셋·non-writable Set(throw) 를 준수해야 한다.
+    // 예전엔 test 가 lastIndex=0 에서 find 만 해 이 규약을 전부 우회했다.
+    assert!(run_bool("/b/y.test('ab') === false")); // sticky 앵커: b 는 0 이 아님
+    assert!(run_bool("var r=/c/y; r.lastIndex=1; r.test('abc'); r.lastIndex===0")); // 실패→0
+    assert!(run_bool("var r=/abc/y; r.test('abc'); r.lastIndex===3")); // 성공→끝
+    assert!(run_bool("var r=/./y; r.lastIndex=1; r.test('a')===false")); // 앵커 밖
+    assert!(run_bool(
+        "var r=/c/y; Object.defineProperty(r,'lastIndex',{writable:false}); \
+         try{ r.test('abc'); false }catch(e){ e instanceof TypeError }"
+    )); // non-writable lastIndex Set(throw)
+    // global test 도 lastIndex 를 전진시킨다.
+    assert!(run_bool("var r=/(?:ab|cd)\\d?/g; r.test('aacd22'); r.lastIndex===5"));
+    // sticky 아닌 일반 test 는 여전히 위치 무관.
+    assert!(run_bool("/b/.test('ab') === true"));
+}
+
+#[test]
 fn array_from_and_of() {
     // Array.from: 이터러블/문자열(코드포인트)/Set/array-like/mapFn.
     assert_eq!(run_str("Array.from([1,2,3]).join(',')"), "1,2,3");
