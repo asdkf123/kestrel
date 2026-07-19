@@ -202,6 +202,12 @@ fn is_js_ws(c: char) -> bool {
     )
 }
 
+// §DOM 2.8 "default passive value": 이 이벤트들은 특정 대상(Window/Document/
+// documentElement/body)에서 리스너가 기본 passive 다.
+fn is_default_passive_event(event: &str) -> bool {
+    matches!(event, "touchstart" | "touchmove" | "wheel" | "mousewheel")
+}
+
 fn to_length(n: f64) -> f64 {
     if n.is_nan() || n <= 0.0 {
         0.0
@@ -2718,17 +2724,36 @@ impl Interp {
                     return Ok(Value::Undefined); // null/undefined 리스너는 무시 (표준)
                 }
                 // 3번째 인자: true 또는 {capture: true, once: true, passive: …} (표준)
-                let (capture, once) = match args.get(2) {
-                    Some(Value::Bool(b)) => (*b, false),
-                    Some(Value::Obj(o)) => (
-                        matches!(o.borrow().get("capture"), Some(v) if to_bool(v)),
-                        matches!(o.borrow().get("once"), Some(v) if to_bool(v)),
-                    ),
-                    _ => (false, false),
+                let (capture, once, explicit_passive) = match args.get(2) {
+                    Some(Value::Bool(b)) => (*b, false, None),
+                    Some(Value::Obj(o)) => {
+                        let b = o.borrow();
+                        (
+                            matches!(b.get("capture"), Some(v) if to_bool(v)),
+                            matches!(b.get("once"), Some(v) if to_bool(v)),
+                            b.get("passive").map(to_bool),
+                        )
+                    }
+                    _ => (false, false, None),
                 };
                 match recv {
                     Some(Value::Dom(id)) => {
-                        self.handlers.push((id, event, listener, capture, once));
+                        // §DOM 2.8 default-passive: touchstart/touchmove/wheel/mousewheel 를
+                        // documentElement(html)/body 에 붙이면 passive 기본값(명시 없으면).
+                        let passive = explicit_passive.unwrap_or_else(|| {
+                            is_default_passive_event(&event)
+                                && self
+                                    .dom
+                                    .map(|p| unsafe {
+                                        matches!(
+                                            &(*p).get(id).node_type,
+                                            crate::dom::NodeType::Element(e)
+                                                if e.tag_name == "html" || e.tag_name == "body"
+                                        )
+                                    })
+                                    .unwrap_or(false)
+                        });
+                        self.handlers.push((id, event, listener, capture, once, passive));
                         Ok(Value::Undefined)
                     }
                     // EventTarget 은 요소 전용이 아니다. XHR 등 객체 수신자는 리스너를
@@ -2759,7 +2784,7 @@ impl Interp {
                 let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
                 match recv {
                     Some(Value::Dom(id)) => {
-                        self.handlers.retain(|(hid, t, f, _, _)| {
+                        self.handlers.retain(|(hid, t, f, _, _, _)| {
                             !(*hid == id && *t == event && same_callable(f, &listener))
                         });
                     }
@@ -5875,7 +5900,16 @@ impl Interp {
             }
             Native::EventPreventDefault => {
                 if let Some(Value::Obj(o)) = &recv {
-                    o.borrow_mut().insert("defaultPrevented".to_string(), Value::Bool(true));
+                    // passive 리스너 안에서의 preventDefault 는 무효(§DOM 2.8). cancelable
+                    // 이 false 인 이벤트도 무효. 그 외에만 defaultPrevented 를 세운다.
+                    let blocked = {
+                        let b = o.borrow();
+                        matches!(b.get("\u{0}passive"), Some(Value::Bool(true)))
+                            || matches!(b.get("cancelable"), Some(Value::Bool(false)))
+                    };
+                    if !blocked {
+                        o.borrow_mut().insert("defaultPrevented".to_string(), Value::Bool(true));
+                    }
                 }
                 Ok(Value::Undefined)
             }

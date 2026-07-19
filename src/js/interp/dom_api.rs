@@ -1077,7 +1077,7 @@ impl Interp {
         // el.onclick = fn → 핸들러 등록
         if let Some(event) = key.strip_prefix("on") {
             if matches!(value, Value::Fn(_)) {
-                self.handlers.push((id, event.to_string(), value, false, false)); // on* 속성은 버블 단계
+                self.handlers.push((id, event.to_string(), value, false, false, false)); // on* 속성은 버블 단계, non-passive
             }
             return Ok(());
         }

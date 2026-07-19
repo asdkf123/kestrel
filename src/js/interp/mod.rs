@@ -204,9 +204,9 @@ pub struct Interp {
     // 이벤트 핸들러 레지스트리: (요소 NodeId, 이벤트 타입, 핸들러 함수)
     // (요소, 이벤트, 리스너, 캡처 여부). 캡처 플래그가 없으면 DOM 이벤트의 3단계
     // (캡처 → 타깃 → 버블)를 지킬 수 없다 — 캡처 리스너가 버블 순서로 늦게 불린다.
-    // (요소, 이벤트, 리스너, 캡처, once). once 를 무시하면 리스너가 두 번 이상 불린다 —
-    // "한 번만" 을 전제로 짠 코드(모달 닫기, 애니메이션 종료 처리)가 조용히 두 번 돈다.
-    pub handlers: Vec<(crate::dom::NodeId, String, Value, bool, bool)>,
+    // (요소, 이벤트, 리스너, 캡처, once, passive). once 를 무시하면 리스너가 두 번 이상
+    // 불린다. passive 리스너의 preventDefault 는 무효(§DOM 2.8: passive → cancelable 무력화).
+    pub handlers: Vec<(crate::dom::NodeId, String, Value, bool, bool, bool)>,
     // MutationObserver 배달을 이미 예약했는가 (마이크로태스크 중복 예약 방지)
     mutation_scheduled: bool,
     // attachShadow 를 부른 요소들. 우리는 섀도 트리를 따로 두지 않고 요소 자신을
@@ -2327,13 +2327,13 @@ impl Interp {
         // 예전 소스로 등록된 리스너가 있으면 뺀다 (속성이 바뀐 경우)
         if let Some(old) = self.inline_handlers.get(&(id, attr.clone())).cloned() {
             let _ = old;
-            self.handlers.retain(|(hid, t, _, cap, _)| {
+            self.handlers.retain(|(hid, t, _, cap, _, _)| {
                 !(*hid == id && t == event && !*cap && self.inline_fns.contains_key(&(id, t.clone())))
             });
         }
         self.inline_fns.insert((id, event.to_string()), f.clone());
         self.inline_handlers.insert((id, attr), src);
-        self.handlers.push((id, event.to_string(), f, false, false));
+        self.handlers.push((id, event.to_string(), f, false, false, false));
     }
 
     pub fn dispatch_event_value(
@@ -2377,31 +2377,41 @@ impl Interp {
             if want_capture != Some(true) {
                 self.ensure_inline_handler(id, event);
             }
-            let to_run: Vec<Value> = self
+            let to_run: Vec<(Value, bool)> = self
                 .handlers
                 .iter()
-                .filter(|(hid, t, _, cap, _)| {
+                .filter(|(hid, t, _, cap, _, _)| {
                     *hid == id && t == event && want_capture.map_or(true, |w| *cap == w)
                 })
-                .map(|(_, _, f, _, _)| f.clone())
+                .map(|(_, _, f, _, _, passive)| (f.clone(), *passive))
                 .collect();
             if !to_run.is_empty() {
                 fired = true;
                 evt_obj.borrow_mut().insert("currentTarget".to_string(), Value::Dom(id));
                 evt_obj.borrow_mut().insert("eventPhase".to_string(), Value::Num(phase as f64));
             }
-            for f in to_run {
+            for (f, passive) in to_run {
                 // once 리스너는 **부르기 전에** 목록에서 뺀다 (핸들러가 재진입해도 두 번 안 불린다)
-                let once = self.handlers.iter().any(|(hid, t, hf, _, o)| {
+                let once = self.handlers.iter().any(|(hid, t, hf, _, o, _)| {
                     *o && *hid == id && t == event && strict_eq(hf, &f)
                 });
                 if once {
-                    self.handlers.retain(|(hid, t, hf, _, o)| {
+                    self.handlers.retain(|(hid, t, hf, _, o, _)| {
                         !(*o && *hid == id && t == event && strict_eq(hf, &f))
                     });
                 }
+                // passive 리스너 동안엔 preventDefault 를 무력화한다(§DOM 2.8) — 내부
+                // 플래그를 세워 EventPreventDefault 가 이를 보고 무시하게 한다.
+                if passive {
+                    evt_obj
+                        .borrow_mut()
+                        .insert("\u{0}passive".to_string(), Value::Bool(true));
+                }
                 if let Err(e) = self.call_value(f, Some(Value::Dom(id)), vec![evt.clone()]) {
                     println!("[js error] {}", e);
+                }
+                if passive {
+                    evt_obj.borrow_mut().remove("\u{0}passive");
                 }
             }
             if matches!(evt_obj.borrow().get("\u{0}stopProp"), Some(Value::Bool(true))) {
