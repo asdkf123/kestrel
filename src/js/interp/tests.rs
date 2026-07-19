@@ -9413,10 +9413,17 @@ fn regex_symbol_replace_protocol() {
     assert_eq!(run_str("/(?<y>b)/[Symbol.replace]('abc','[$<y>]')"), "a[b]c");
     assert_eq!(run_str("/(\\d)/g[Symbol.replace]('a1b2',function(m,p1,pos){return '('+p1+'@'+pos+')'})"), "a(1@1)b(2@3)");
     assert_eq!(run_str("/(?:)/g[Symbol.replace]('ab','-')"), "-a-b-");
-    // custom exec.
-    assert_eq!(run_str("var c=0;var o={exec:function(){c++;return c===1?{0:'X',index:1,length:1}:null},global:true,lastIndex:0};Object.setPrototypeOf(o,RegExp.prototype);o[Symbol.replace]('abcd','Y')"), "aYcd");
+    // custom exec (실제 정규식 위에 exec 오버라이드 — flags getter 가 관찰적으로
+    // 개별 플래그를 읽으므로 가짜 정규식이 아니라 진짜 /x/g 를 쓴다).
+    assert_eq!(run_str("var c=0;var o=/x/g;o.exec=function(){c++;return c===1?{0:'X',index:1,length:1}:null};o[Symbol.replace]('abcd','Y')"), "aYcd");
     // brand.
     assert!(run_bool("var t=false; try{ RegExp.prototype[Symbol.replace].call(5,'x','y') }catch(e){ t=e instanceof TypeError } t"));
+    // §22.2.6.11 step 7: flags 를 Get(rx,"flags") 로 읽는다(개별 global 직접 읽지 않음).
+    // flags getter 가 던지면 전파하고 global 을 건드리지 않는다.
+    assert!(run_bool(
+        "function CE(){}; var o={get flags(){throw new CE();}, get global(){throw new Error('nope');}}; \
+         try{ RegExp.prototype[Symbol.replace].call(o,'a','b'); false }catch(e){ e instanceof CE }"
+    ));
 }
 
 #[test]
@@ -9482,8 +9489,8 @@ fn parser_numeric_property_getter_setter_method() {
     assert_eq!(run_str("var o={get 0(){return 'a'}, get 1(){return 'b'}}; o[0]+o[1]"), "ab");
     assert_eq!(run_str("var o={0(){return 'm'}}; o[0]()"), "m");
     assert!(run_bool("var o={set 5(v){this._v=v}}; o[5]=99; o._v===99"));
-    // 정규식 결과 객체의 숫자 getter (@@replace 패턴).
-    assert_eq!(run_str("var r={exec:function(){return {0:'X',get 1(){return 'cap'},index:0,length:2}},global:false,lastIndex:0}; Object.setPrototypeOf(r,RegExp.prototype); r[Symbol.replace]('abc','[$1]')"), "[cap]bc");
+    // 정규식 결과 객체의 숫자 getter (@@replace 패턴 — 실제 정규식 위에 exec 오버라이드).
+    assert_eq!(run_str("var r=/x/; r.exec=function(){return {0:'X',get 1(){return 'cap'},index:0,length:2}}; r[Symbol.replace]('abc','[$1]')"), "[cap]bc");
 }
 
 #[test]

@@ -6785,7 +6785,13 @@ impl Interp {
                     } else {
                         Some(self.to_string_value(&repl_val)?)
                     };
-                    let global = to_bool(&self.member_get(&re, "global")?);
+                    // §22.2.6.11 step 7-9: flags 를 Get+ToString 한 뒤 문자열에서 'g'/'u'
+                    // 를 본다(개별 global/unicode 프로퍼티를 직접 읽지 않는다). 예전엔
+                    // global 을 직접 member_get 해, flags getter 가 던지기 전에 global
+                    // getter 를 먼저 건드렸다(get-flags-err 는 flags 의 예외를 기대).
+                    let flags_val = self.member_get(&re, "flags")?;
+                    let flags = self.to_string_value(&flags_val)?;
+                    let global = flags.contains('g');
                     if global {
                         self.set_throw(&re, "lastIndex", Value::Num(0.0))?;
                     }
