@@ -938,6 +938,10 @@ impl Interp {
                 _ => Value::Null,
             }),
             "nodeName" => Ok(Value::Str(match &dom.get(id).node_type {
+                // DocumentFragment 센티널: nodeName 은 "#document-fragment"(대문자화 안 함).
+                crate::dom::NodeType::Element(e) if e.tag_name == "#document-fragment" => {
+                    "#document-fragment".to_string()
+                }
                 crate::dom::NodeType::Element(e) => {
                     if e.namespace.is_none() {
                         e.tag_name.to_ascii_uppercase()
@@ -972,6 +976,8 @@ impl Interp {
             // nodeType: ELEMENT_NODE(1) / TEXT_NODE(3).
             // jQuery·프레임워크가 노드 종류 판별에 광범위하게 쓴다.
             "nodeType" => Ok(Value::Num(match &dom.get(id).node_type {
+                // DocumentFragment 센티널(#document-fragment)은 DOCUMENT_FRAGMENT_NODE(11).
+                crate::dom::NodeType::Element(e) if e.tag_name == "#document-fragment" => 11.0,
                 crate::dom::NodeType::Element(_) => 1.0,
                 crate::dom::NodeType::Text(_) => 3.0,
                 crate::dom::NodeType::Comment(_) => 8.0,
