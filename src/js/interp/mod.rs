@@ -686,6 +686,8 @@ impl Interp {
             "createDocumentType".to_string(),
             Value::Native(Native::CreateDocumentType),
         );
+        implementation
+            .insert("createDocument".to_string(), Value::Native(Native::CreateDocument));
         document.insert(
             "implementation".to_string(),
             Value::Obj(Rc::new(RefCell::new(implementation))),

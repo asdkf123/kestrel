@@ -4748,6 +4748,81 @@ impl Interp {
             // document.implementation.createHTMLDocument(title) — 분리된 문서.
             // html>head+body 를 아레나에 만들어(문서 트리엔 안 붙임) 문서형 객체로 돌려준다.
             // jQuery 가 support.createHTMLDocument 판정과 parseHTML 컨텍스트에 쓴다.
+            // implementation.createDocument(namespace, qualifiedName, doctype) — §4.5.1.
+            // 공유 아레나에 root 요소를 만들고 문서 객체(ObjMap)를 조립한다.
+            Native::CreateDocument => {
+                let ns = match args.first() {
+                    None | Some(Value::Null) | Some(Value::Undefined) => None,
+                    Some(v) => {
+                        let s = to_display(v);
+                        if s.is_empty() { None } else { Some(s) }
+                    }
+                };
+                let qname = match args.get(1) {
+                    None | Some(Value::Null) | Some(Value::Undefined) => String::new(),
+                    Some(v) => to_display(v),
+                };
+                let doctype = match args.get(2) {
+                    Some(Value::Dom(id)) => Some(*id),
+                    _ => None,
+                };
+                if !qname.is_empty() {
+                    self.validate_qualified_name(&qname, ns.as_deref())?;
+                }
+                // root 요소 생성(qualifiedName 이 있으면).
+                let root_el = if qname.is_empty() {
+                    None
+                } else {
+                    let dom = self.dom_arena()?;
+                    Some(dom.create_element_ns(ns.as_deref(), &qname))
+                };
+                // childNodes = [doctype?, documentElement?] (문서 순서).
+                let mut children: Vec<Value> = Vec::new();
+                if let Some(dt) = doctype {
+                    children.push(Value::Dom(dt));
+                }
+                if let Some(el) = root_el {
+                    children.push(Value::Dom(el));
+                }
+                let mut d = ObjMap::new();
+                d.insert("nodeType".to_string(), Value::Num(9.0));
+                d.insert("nodeName".to_string(), Value::Str("#document".to_string()));
+                d.insert(
+                    "documentElement".to_string(),
+                    root_el.map(Value::Dom).unwrap_or(Value::Null),
+                );
+                d.insert("doctype".to_string(), doctype.map(Value::Dom).unwrap_or(Value::Null));
+                d.insert("firstChild".to_string(), children.first().cloned().unwrap_or(Value::Null));
+                d.insert("lastChild".to_string(), children.last().cloned().unwrap_or(Value::Null));
+                d.insert("childNodes".to_string(), Value::Arr(ArrayObj::new(children)));
+                for (k, n) in [
+                    ("createElement", Native::CreateElement),
+                    ("createElementNS", Native::CreateElementNS),
+                    ("createTextNode", Native::CreateTextNode),
+                    ("createComment", Native::CreateComment),
+                    ("createProcessingInstruction", Native::CreateProcessingInstruction),
+                    ("createDocumentFragment", Native::CreateDocumentFragment),
+                    ("getElementsByTagName", Native::GetElementsByTag),
+                    ("getElementsByTagNameNS", Native::GetElementsByTagNS),
+                ] {
+                    d.insert(k.to_string(), Value::Native(n));
+                }
+                // 생성된 문서 자신의 implementation(재귀: createDocument/createDocumentType).
+                let mut impl_obj = ObjMap::new();
+                impl_obj
+                    .insert("createDocument".to_string(), Value::Native(Native::CreateDocument));
+                impl_obj.insert(
+                    "createDocumentType".to_string(),
+                    Value::Native(Native::CreateDocumentType),
+                );
+                impl_obj.insert(
+                    "createHTMLDocument".to_string(),
+                    Value::Native(Native::CreateHTMLDocument),
+                );
+                impl_obj.insert("hasFeature".to_string(), Value::Native(Native::ReturnTrue));
+                d.insert("implementation".to_string(), Value::Obj(Rc::new(RefCell::new(impl_obj))));
+                Ok(Value::Obj(Rc::new(RefCell::new(d))))
+            }
             Native::CreateHTMLDocument => {
                 let dom = self.dom_arena()?;
                 let html = dom.create_element("html");

@@ -113,6 +113,7 @@ pub enum Native {
     // document.createComment (§4.5.1). 코멘트 노드는 DOM 의 일부다.
     CreateComment,
     CreateProcessingInstruction,
+    CreateDocument,
     CreateDocumentType,
     // CharacterData 메서드 (§4.9): 텍스트/코멘트의 문자 데이터 조작.
     CharData(CharDataOp),
