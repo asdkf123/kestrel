@@ -219,6 +219,10 @@ pub struct DomMut {
     pub old_value: Option<String>,
     pub added: Vec<NodeId>,
     pub removed: Vec<NodeId>,
+    // childList 레코드의 previousSibling/nextSibling (§4.3.3). 추가/제거된 노드 런의
+    // 양옆 형제. attributes/characterData 는 None.
+    pub prev: Option<NodeId>,
+    pub next: Option<NodeId>,
 }
 
 // srcset 후보: (URL, 디스크립터). w=폭(px), x=배율.
@@ -516,16 +520,28 @@ impl Dom {
             return;
         }
         self.detach(child); // 기존 부모에서의 제거도 기록된다
+        // 끝에 붙이므로 previousSibling = 기존 마지막 자식, nextSibling = null.
+        let prev = self.nodes[parent].children.last().copied();
         self.nodes[child].parent = Some(parent);
         self.nodes[parent].children.push(child);
-        self.record(parent, "childList", None, vec![child], Vec::new());
+        self.record_child(parent, vec![child], Vec::new(), prev, None);
     }
 
     pub fn detach(&mut self, id: NodeId) {
         self.touch();
         if let Some(p) = self.nodes[id].parent.take() {
+            // 제거 전 양옆 형제를 기록한다.
+            let sibs = &self.nodes[p].children;
+            let idx = sibs.iter().position(|&c| c == id);
+            let (prev, next) = match idx {
+                Some(i) => (
+                    i.checked_sub(1).map(|j| sibs[j]),
+                    sibs.get(i + 1).copied(),
+                ),
+                None => (None, None),
+            };
             self.nodes[p].children.retain(|&c| c != id);
-            self.record(p, "childList", None, Vec::new(), vec![id]);
+            self.record_child(p, Vec::new(), vec![id], prev, next);
         }
     }
 
@@ -543,7 +559,14 @@ impl Dom {
             Some(idx) => self.nodes[parent].children.insert(idx, child),
             None => self.nodes[parent].children.push(child),
         }
-        self.record(parent, "childList", None, vec![child], Vec::new());
+        // 삽입 후 child 위치 기준 양옆 형제.
+        let sibs = &self.nodes[parent].children;
+        let ci = sibs.iter().position(|&c| c == child);
+        let (prev, next) = match ci {
+            Some(i) => (i.checked_sub(1).map(|j| sibs[j]), sibs.get(i + 1).copied()),
+            None => (None, None),
+        };
+        self.record_child(parent, vec![child], Vec::new(), prev, next);
     }
 
     // 부모 → 루트 순 조상 체인
@@ -752,14 +775,23 @@ impl Dom {
         if let NodeType::Text(t) = &mut self.nodes[id].node_type {
             *t = text;
             self.touch();
-            self.record(id, "characterData", None, Vec::new(), Vec::new());
+            self.records.push(DomMut {
+                target: id,
+                kind: "characterData",
+                attr: None,
+                old_value: None,
+                added: Vec::new(),
+                removed: Vec::new(),
+                prev: None,
+                next: None,
+            });
             return;
         }
         self.clear_children(id);
         let t = self.create_text(text);
         self.nodes[t].parent = Some(id);
         self.nodes[id].children.push(t);
-        self.record(id, "childList", None, vec![t], Vec::new());
+        self.record_child(id, vec![t], Vec::new(), None, None);
     }
 
     pub fn clear_children(&mut self, id: NodeId) {
@@ -769,7 +801,7 @@ impl Dom {
             self.nodes[c].parent = None; // 고아로 방치 (아레나 재사용 없음)
         }
         if !old.is_empty() {
-            self.record(id, "childList", None, Vec::new(), old);
+            self.record_child(id, Vec::new(), old, None, None);
         }
     }
 
@@ -798,15 +830,24 @@ impl Dom {
         self.record_attr(id, name.to_string(), old);
     }
 
-    fn record(
+    fn record_child(
         &mut self,
         target: NodeId,
-        kind: &'static str,
-        attr: Option<String>,
         added: Vec<NodeId>,
         removed: Vec<NodeId>,
+        prev: Option<NodeId>,
+        next: Option<NodeId>,
     ) {
-        self.records.push(DomMut { target, kind, attr, old_value: None, added, removed });
+        self.records.push(DomMut {
+            target,
+            kind: "childList",
+            attr: None,
+            old_value: None,
+            added,
+            removed,
+            prev,
+            next,
+        });
     }
 
     fn record_attr(&mut self, target: NodeId, name: String, old_value: Option<String>) {
@@ -817,6 +858,8 @@ impl Dom {
             old_value,
             added: Vec::new(),
             removed: Vec::new(),
+            prev: None,
+            next: None,
         });
     }
 

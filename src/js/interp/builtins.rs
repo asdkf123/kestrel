@@ -5249,11 +5249,16 @@ impl Interp {
                         Value::Arr(ArrayObj::new(r.removed.into_iter().map(Value::Dom).collect())),
                     );
                     // MutationRecord(§4.3.3)는 모든 필드를 가진다 — 적용 안 되면 null.
-                    // attributeNamespace/previousSibling/nextSibling 이 없어 undefined 였고,
-                    // 이 필드를 null 로 검사하는 WPT 가 대량 실패했다.
+                    // childList 는 추가/제거 런의 양옆 형제, attributes 는 null.
                     m.insert("attributeNamespace".to_string(), Value::Null);
-                    m.insert("previousSibling".to_string(), Value::Null);
-                    m.insert("nextSibling".to_string(), Value::Null);
+                    m.insert(
+                        "previousSibling".to_string(),
+                        r.prev.map(Value::Dom).unwrap_or(Value::Null),
+                    );
+                    m.insert(
+                        "nextSibling".to_string(),
+                        r.next.map(Value::Dom).unwrap_or(Value::Null),
+                    );
                     out.push(Value::Obj(Rc::new(RefCell::new(m))));
                 }
                 Ok(Value::Arr(ArrayObj::new(out)))
