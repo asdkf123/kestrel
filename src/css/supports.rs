@@ -87,6 +87,12 @@ fn longhand_supported(prop: &str) -> bool {
     SUPPORTED.contains(&p.as_str())
 }
 
+// getComputedStyle 뷰의 HasProperty('X' in cs) 판정용 — 엔진이 아는 CSS 속성명인가.
+// (대시 형태로 정규화된 이름을 받는다. §CSSOM: 지원 속성은 선언 뷰에 존재한다.)
+pub(crate) fn is_known_property(name: &str) -> bool {
+    longhand_supported(name)
+}
+
 // 엔진이 실제로 계산하는 값 함수 전부. 여기 없는 함수(color-mix/oklch/lab/env/attr/
 // image-set …)는 파싱만 되고 무시되므로 지원한다고 하면 거짓말이다.
 // 프로퍼티별로 나누지 않고 합집합으로 본다 — 과소보고는 안전, 과다보고만 위험하다.

@@ -32,6 +32,7 @@ pub(crate) fn shorthand_table() -> &'static std::collections::HashMap<&'static s
 }
 use shorthand::expand_declaration;
 pub(crate) use supports::supports_condition;
+pub(crate) use supports::is_known_property;
 use values::valid_identifier_char;
 
 #[derive(Debug, PartialEq, Clone)]
