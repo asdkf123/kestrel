@@ -6411,6 +6411,16 @@ impl Interp {
             // recv.toString([radix]) / valueOf()
             Native::ValueToStr => {
                 let v0 = recv.unwrap_or(Value::Undefined);
+                // §22.2.6.13 RegExp.prototype.toString: "/" + source + "/" + flags
+                // (source/flags 를 Get 으로 읽어 관찰적). 예전엔 정규식이 Object.prototype.
+                // toString 으로 떨어져 "[object Object]" 였다.
+                if matches!(&v0, Value::Obj(m) if is_regex_obj(m)) {
+                    let src = self.member_get(&v0, "source")?;
+                    let src = self.to_string_value(&src)?;
+                    let flags = self.member_get(&v0, "flags")?;
+                    let flags = self.to_string_value(&flags)?;
+                    return Ok(Value::Str(format!("/{}/{}", src, flags)));
+                }
                 // 원시 래퍼는 내부 슬롯을 문자열화 대상으로
                 let v = wrapper_primitive(&v0).unwrap_or(v0);
                 // 숫자 + radix 면 진법 변환 (§21.1.3.6). radix 는 2..=36, 아니면 RangeError.
@@ -7711,9 +7721,18 @@ impl Interp {
                             return self.call_value(replacer, Some(pat), vec![this_val, repl]);
                         }
                     }
-                    // 위임 대상이 없을 때만 ToString(this) 후 문자열 치환.
+                    // 위임 대상이 없을 때(§ step 3 fallback): ToString(this) 와
+                    // ToString(searchValue) 로 문자열 검색/치환. searchValue 가 정규식이라도
+                    // @@replace 가 undefined 면 빌트인 위임이 아니라 그 문자열 표현으로
+                    // 검색해야 한다(예: @@replace 를 지운 /./g 는 "/./g" 로 검색).
                     let s = self.to_string_value(&this_val)?;
-                    return Ok(Value::Str(self.str_replace(&s, &pat, &repl, all)?));
+                    let pat_str = self.to_string_value(&pat)?;
+                    return Ok(Value::Str(self.str_replace(
+                        &s,
+                        &Value::Str(pat_str),
+                        &repl,
+                        all,
+                    )?));
                 }
                 // String.prototype 메서드는 generic 하다 (§22.1.3): this 를
                 // ToString(RequireObjectCoercible(this)) 로 강제한다. null/undefined 는

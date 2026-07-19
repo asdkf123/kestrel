@@ -6645,6 +6645,9 @@ impl Interp {
                         "propertyIsEnumerable" => Ok(Value::Native(Native::PropertyIsEnumerable)),
                         "test" if is_regex_obj(map) => Ok(Value::Native(Native::RegexTest)),
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
+                        // §22.2.6.13 RegExp.prototype.toString → /source/flags. 정규식 인스턴스는
+                        // __proto__ 링크가 없어 여기서 직접 준다(ValueToStr 가 정규식을 처리).
+                        "toString" if is_regex_obj(map) => Ok(Value::Native(Native::ValueToStr)),
                         // Symbol.match/replace/split/search/matchAll — 정규식 인스턴스엔
                         // __proto__ 링크가 없으므로 프로토타입 메서드를 여기서 직접 준다.
                         // 단 사용자가 RegExp.prototype[@@…] 를 재정의했으면 그것을 우선한다

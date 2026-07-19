@@ -3881,6 +3881,26 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_prototype_tostring() {
+    // §22.2.6.13 RegExp.prototype.toString → "/" + source + "/" + flags. 예전엔
+    // 정규식이 Object.prototype.toString 으로 떨어져 "[object Object]" 였다.
+    assert_eq!(run_str("String(/./g)"), "/./g");
+    assert_eq!(run_str("/a/gi.toString()"), "/a/gi");
+    assert_eq!(run_str("''+/foo\\d+/m"), "/foo\\d+/m");
+    assert_eq!(run_str("/(?:)/.toString()"), "/(?:)/"); // 빈 source 는 (?:)
+    // 암묵적 ToString(정규식): 배열 join, 템플릿.
+    assert_eq!(run_str("[/x/g,/y/i].join(',')"), "/x/g,/y/i");
+    // @@replace 를 지운 정규식을 replaceAll 에 주면 ToString(정규식) 로 문자열 검색.
+    assert_eq!(
+        run_str(
+            "var re=/./g; Object.defineProperty(re,Symbol.replace,{value:undefined}); \
+             '--- /./g --- /a/g ---'.replaceAll(re,'a($1$1)')"
+        ),
+        "--- a($1$1) --- /a/g ---"
+    );
+}
+
+#[test]
 fn string_replace_replaceall_delegation_order() {
     // §22.1.3.19/.20: replace/replaceAll 은 RequireObjectCoercible(this) 후
     // searchValue 검사/@@replace 위임을 먼저 하고 ToString(this) 는 fallback 에서만.
