@@ -2477,6 +2477,12 @@ fn destructuring_targets_can_be_members() {
     assert_eq!(run_num("var a=[0,0]; [a[0], a[1]] = [7, 8]; a[0] + a[1]"), 15.0);
     // 기존 동작(이름 대상 / 스왑)도 그대로
     assert_eq!(run_num("var a=1,b=2; [a,b]=[b,a]; a*10+b"), 21.0);
+    // 엘리전(구멍)이 있는 구조분해 할당 — 배열 리터럴은 Expr::Hole 로 파싱된다.
+    // 예전엔 Hole 을 패턴 변환이 못 받아 "[,i,,j]=x" 파싱이 죽었다.
+    assert_eq!(run_num("var i,j; [,i,,j]=[1,2,3,4]; i*10+j"), 24.0);
+    assert_eq!(run_num("var a,b; [a,,b]=[10,20,30]; a+b"), 40.0);
+    // 선행 구멍 + rest 혼합
+    assert_eq!(run_str("var x,r; [,x,...r]=[1,2,3,4]; x+':'+JSON.stringify(r)"), "2:[3,4]");
 }
 
 #[test]

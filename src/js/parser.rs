@@ -89,7 +89,10 @@ fn expr_to_pattern(e: Expr) -> Option<Pattern> {
             let mut rest = None;
             for it in items {
                 match it {
-                    Expr::Undefined => out.push(None), // 홀 [a, , b]
+                    // 엘리전(구멍): 배열 리터럴은 [,a,,b] 를 Expr::Hole 로 파싱한다.
+                    // 구조분해 할당 대상에서도 건너뛴 자리 → None (예전엔 Undefined 만
+                    // 처리하고 Hole 은 _ => None 으로 떨어져 "[,i,,j]=x" 파싱이 죽었다).
+                    Expr::Hole | Expr::Undefined => out.push(None), // 홀 [a, , b]
                     Expr::Spread(inner) => {
                         rest = Some(Box::new(expr_to_pattern(*inner)?));
                     }
