@@ -6079,9 +6079,12 @@ impl Interp {
                         return Ok(v.clone());
                     }
                 }
-                // extends Array 서브클래스 인스턴스는 커스텀 __proto__(X.prototype)의
-                // constructor 를 쓴다. 없으면 아래 constructor_of 로 Array.
+                // 배열의 own "constructor"(arr.constructor=X) 가 최우선, 그다음 extends Array
+                // 서브클래스의 커스텀 __proto__(X.prototype)의 constructor. 없으면 constructor_of.
                 Value::Arr(a) => {
+                    if let Some(c) = a.get_prop("constructor") {
+                        return Ok(c);
+                    }
                     if let Some(proto) = a.get_prop("__proto__") {
                         if is_object(&proto) {
                             let c = self.member_get(&proto, "constructor")?;
