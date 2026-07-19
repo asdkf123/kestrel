@@ -257,6 +257,9 @@ impl ArrayObj {
     pub fn set_prop(&self, k: String, v: Value) {
         self.props.borrow_mut().insert(k, v);
     }
+    pub fn del_prop(&self, k: &str) {
+        self.props.borrow_mut().remove(k);
+    }
     // 인덱스 외의 own 프로퍼티 (엔진 내부 마커 제외) — Object.assign 등의 열거용
     pub fn own_props(&self) -> Vec<(String, Value)> {
         self.props

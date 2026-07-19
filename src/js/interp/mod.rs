@@ -2750,6 +2750,32 @@ impl Interp {
                 }
                 Ok(true)
             }
+            // 배열 인덱스 삭제는 진짜 구멍(hole)을 남긴다(길이 불변) — delete 연산자와 동일.
+            // 예전엔 _ => Ok(true) 라 [[Delete]] 헬퍼(sort 되쓰기 등)가 배열 인덱스를 못 지웠다.
+            Value::Arr(a) => {
+                if let Ok(i) = key.parse::<usize>() {
+                    // non-configurable 로 정의된 인덱스는 삭제 불가 (§10.4.2).
+                    if matches!(a.index_attr(i), Some(at) if at & ATTR_CONFIGURABLE == 0) {
+                        return Ok(false);
+                    }
+                    let in_range = {
+                        let mut b = a.borrow_mut();
+                        if i < b.len() {
+                            b[i] = Value::Undefined;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if in_range {
+                        a.mark_hole(i);
+                        a.clear_index_attr(i);
+                    }
+                } else {
+                    a.del_prop(key);
+                }
+                Ok(true)
+            }
             _ => Ok(true),
         }
     }

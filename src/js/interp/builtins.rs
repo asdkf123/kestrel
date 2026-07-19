@@ -2345,12 +2345,13 @@ impl Interp {
         } else {
             Some(cmp_arg.clone())
         };
-        // SortIndexedProperties: HasProperty 인 인덱스의 [[Get]] 값만.
+        // SortIndexedProperties: 존재하는(HasProperty) 인덱스의 [[Get]] 값만. 배열 구멍은
+        // has_property 가 true 를 주므로(len 내면 참), array_like_live_get 으로 구멍/접근자/
+        // 상속을 정확히 판정한다(None = 진짜 구멍 → 수집 제외).
         let mut items: Vec<Value> = Vec::new();
         for k in 0..n {
-            let ks = k.to_string();
-            if self.has_property(o, &ks) {
-                items.push(self.member_get(o, &ks)?);
+            if let Some(v) = self.array_like_live_get(o, k as usize)? {
+                items.push(v);
             }
         }
         // 삽입정렬(안정, comparefn 오류 전파). undefined 는 comparefn 없이 항상 뒤로.
@@ -2904,8 +2905,28 @@ impl Interp {
                                     .unwrap_or(
                                         ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
                                     );
-                                d.insert("value".to_string(), v);
-                                d.insert("writable".to_string(), Value::Bool(at & ATTR_WRITABLE != 0));
+                                // defineProperty 로 인덱스에 심긴 접근자는 accessor 서술자
+                                // {get,set}로 낸다 — 예전엔 Accessor 값을 그대로 "value" 로
+                                // 넣어 gOPD/[[Set]] 이 접근자를 데이터로 오인했다.
+                                match v {
+                                    Value::Accessor(acc) => {
+                                        d.insert(
+                                            "get".to_string(),
+                                            acc.get.clone().unwrap_or(Value::Undefined),
+                                        );
+                                        d.insert(
+                                            "set".to_string(),
+                                            acc.set.clone().unwrap_or(Value::Undefined),
+                                        );
+                                    }
+                                    _ => {
+                                        d.insert("value".to_string(), v);
+                                        d.insert(
+                                            "writable".to_string(),
+                                            Value::Bool(at & ATTR_WRITABLE != 0),
+                                        );
+                                    }
+                                }
                                 d.insert("enumerable".to_string(), Value::Bool(at & ATTR_ENUMERABLE != 0));
                                 d.insert("configurable".to_string(), Value::Bool(at & ATTR_CONFIGURABLE != 0));
                                 // early return — 아래 반환부(2193~)가 배열 enumerable/
@@ -7696,7 +7717,13 @@ impl Interp {
                 // 인덱스만 [[Get]] 로 수집)+정렬+[[Set]]/[[Delete]] 되쓰기로 접근자·상속
                 // 원소·되쓰기 setter 를 정확히 관측한다. 밀집 배열/문자열은 아래 Vec 경로.
                 if matches!(op, ArrOp::Sort) {
-                    if let Some(Value::Obj(_)) = &recv {
+                    // 구멍이나 인덱스 접근자를 가진 배열도 정밀 경로로 — SortIndexedProperties
+                    // 가 [[Get]]/[[Set]]/[[Delete]] 로 접근자·구멍을 정확히 처리한다. 순수
+                    // 밀집 배열은 아래 빠른 Vec 정렬(무회귀).
+                    let complex_arr = matches!(&recv, Some(Value::Arr(a))
+                        if a.has_holes()
+                            || a.borrow().iter().any(|v| matches!(v, Value::Accessor(_))));
+                    if matches!(&recv, Some(Value::Obj(_))) || complex_arr {
                         let o = recv.clone().unwrap();
                         let cmp_arg = args.first().cloned().unwrap_or(Value::Undefined);
                         if !matches!(cmp_arg, Value::Undefined) && !is_callable(&cmp_arg) {

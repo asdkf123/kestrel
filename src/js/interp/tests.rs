@@ -3352,6 +3352,24 @@ fn more_array_string_methods() {
     assert!(!run_bool("Array.isArray(new Proxy({},{}))"));
     assert_eq!(run_str("JSON.stringify(new Proxy([1,2],{}))"), "[1,2]");
     assert_eq!(run_str("JSON.stringify(new Proxy({a:1},{}))"), "{\"a\":1}");
+    // 배열 인덱스 접근자: gOPD 가 {get,set}로, [[Set]]이 setter 호출, delete 가 홀 생성.
+    assert_eq!(
+        run_str(
+            "var a=[1,2,3]; Object.defineProperty(a,'1',{get:function(){return this._v;},set:function(v){this._v=v;},configurable:true}); \
+             var d=Object.getOwnPropertyDescriptor(a,'1'); typeof d.get+','+typeof d.set+','+('value' in d)"
+        ),
+        "function,function,false"
+    );
+    assert!(run_bool(
+        "var a=[1,2,3]; Object.defineProperty(a,'1',{set:function(v){this._v=v;},configurable:true}); Reflect.set(a,'1',9); a._v===9"
+    ));
+    // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
+    assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
+    // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.
+    assert_eq!(
+        run_str("var a=['b','a',,]; a.sort(); a[0]+a[1]+','+(2 in a)"),
+        "ab,false"
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
