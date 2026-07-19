@@ -2117,6 +2117,121 @@ impl Interp {
         }
     }
 
+    // §22.1.3.14/.17 indexOf/lastIndexOf 를 배열/generic array-like 위에서 매 인덱스 live
+    // 로 검색한다. len 은 시작에 한 번 읽고(len==0 이면 fromIndex 강제변환 이전에 -1),
+    // 존재 인덱스만 [[Get]] 후 strict 비교(§ IsStrictlyEqual). array_like_live_get 이
+    // 구멍/접근자/Array.prototype 상속을 해석해 콜백/게터 중 삭제·length 축소를 관측한다.
+    pub(super) fn array_index_search_live(
+        &mut self,
+        reverse: bool,
+        o: &Value,
+        args: &[Value],
+    ) -> Result<Value, String> {
+        let needle = args.first().cloned().unwrap_or(Value::Undefined);
+        let len_f = match o {
+            Value::Arr(a) => a.borrow().len() as f64,
+            _ => {
+                let lv = self.member_get(o, "length")?;
+                to_length(self.to_number_value(&lv)?)
+            }
+        };
+        // §22.1.3.14 step 3 / .17 step 3: len==0 → -1 (fromIndex 강제변환보다 먼저).
+        if len_f == 0.0 {
+            return Ok(Value::Num(-1.0));
+        }
+
+        // fromIndex → 시작 인덱스.
+        let k_start: f64 = if !reverse {
+            let n = match args.get(1) {
+                None | Some(Value::Undefined) => 0.0,
+                Some(v) => self.to_integer_or_infinity(v)?,
+            };
+            if n == f64::INFINITY {
+                return Ok(Value::Num(-1.0));
+            }
+            let n = if n == f64::NEG_INFINITY { 0.0 } else { n };
+            if n >= 0.0 {
+                n
+            } else {
+                (len_f + n).max(0.0)
+            }
+        } else {
+            let n = match args.get(1) {
+                None | Some(Value::Undefined) => len_f - 1.0,
+                Some(v) => self.to_integer_or_infinity(v)?,
+            };
+            if n == f64::NEG_INFINITY {
+                return Ok(Value::Num(-1.0));
+            }
+            if n >= 0.0 {
+                n.min(len_f - 1.0)
+            } else {
+                len_f + n
+            }
+        };
+        if reverse && k_start < 0.0 {
+            return Ok(Value::Num(-1.0));
+        }
+
+        // 초거대 length: 존재 own 정수 인덱스만 (오름/내림차순).
+        if len_f > MAX_ARRAY_LEN {
+            let mut keys: Vec<usize> = match o {
+                Value::Obj(m) => m
+                    .borrow()
+                    .keys()
+                    .filter_map(|s| s.parse::<usize>().ok())
+                    .filter(|&k| (k as f64) < len_f)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            keys.sort_unstable();
+            keys.dedup();
+            if reverse {
+                keys.reverse();
+            }
+            for &k in &keys {
+                let kf = k as f64;
+                if !reverse && kf < k_start {
+                    continue;
+                }
+                if reverse && kf > k_start {
+                    continue;
+                }
+                if self.has_property(o, &k.to_string()) {
+                    let v = self.member_get(o, &k.to_string())?;
+                    if strict_eq(&v, &needle) {
+                        return Ok(Value::Num(kf));
+                    }
+                }
+            }
+            return Ok(Value::Num(-1.0));
+        }
+
+        if !reverse {
+            let end = len_f as i64;
+            let mut k = k_start as i64;
+            while k < end {
+                if let Some(v) = self.array_like_live_get(o, k as usize)? {
+                    if strict_eq(&v, &needle) {
+                        return Ok(Value::Num(k as f64));
+                    }
+                }
+                k += 1;
+            }
+        } else {
+            let mut k = k_start as i64;
+            while k >= 0 {
+                if let Some(v) = self.array_like_live_get(o, k as usize)? {
+                    if strict_eq(&v, &needle) {
+                        return Ok(Value::Num(k as f64));
+                    }
+                }
+                k -= 1;
+            }
+        }
+        Ok(Value::Num(-1.0))
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -7231,9 +7346,10 @@ impl Interp {
                         "Array.prototype method called on null or undefined",
                     ));
                 }
-                // indexOf/lastIndexOf/includes: length 가 배열 상한 초과인 array-like 객체는
-                // 재료화하면 RangeError/OOM 이므로 존재 인덱스만 지연 검색한다.
-                if matches!(op, ArrOp::IndexOf | ArrOp::Includes)
+                // includes: length 가 배열 상한 초과인 array-like 객체는 재료화하면
+                // RangeError/OOM 이므로 존재 인덱스만 지연 검색한다. (indexOf/lastIndexOf 는
+                // 아래 array_index_search_live 가 huge 를 포함해 통째로 처리한다.)
+                if matches!(op, ArrOp::Includes)
                     && matches!(recv, Some(Value::Obj(_)) | Some(Value::Instance(_)))
                 {
                     let rv = recv.clone().unwrap();
@@ -7242,6 +7358,18 @@ impl Interp {
                     if len > MAX_ARRAY_LEN {
                         return self.generic_array_search_huge(&rv, op, &args, len);
                     }
+                }
+                // §22.1.3.14 indexOf: 배열/generic array-like 수신자는 재료화 이전에 매 인덱스
+                // live(HasProperty/Get)로 검색한다 — 게터 중 삭제·length 축소·상속 인덱스를
+                // 관측하고 huge length 도 지연 처리한다. (lastIndexOf 는 프렐류드 폴리필.)
+                if matches!(op, ArrOp::IndexOf)
+                    && matches!(
+                        &recv,
+                        Some(Value::Arr(_)) | Some(Value::Obj(_)) | Some(Value::Instance(_))
+                    )
+                {
+                    let o = recv.clone().unwrap();
+                    return self.array_index_search_live(false, &o, &args);
                 }
                 // §23.1.3.26 reverse: generic array-like(Obj)는 HasProperty/Get/Set/Delete
                 // 스왑으로 구멍을 보존한다 — Vec 재료화는 구멍을 undefined 로 잃는다(A2/A3

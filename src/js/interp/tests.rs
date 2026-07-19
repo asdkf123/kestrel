@@ -3215,6 +3215,20 @@ fn more_array_string_methods() {
     assert!(run_bool(
         "Array.prototype.every.call({0:11,1:12,length:4294967297},function(v){return v>10;})"
     ));
+    // indexOf: len==0 이면 fromIndex 강제변환 이전에 -1(§22.1.3.14 step3).
+    assert_eq!(
+        run_num("[].indexOf(2,{valueOf:function(){throw new Error('x');}})"),
+        -1.0
+    );
+    // indexOf: 게터 중 삭제를 live 로, 삭제된 인덱스는 Array.prototype 상속분을 방문.
+    assert_eq!(
+        run_num(
+            "var arr=[0,111,2]; \
+             Object.defineProperty(arr,'0',{get:function(){delete arr[1];return 0;},configurable:true}); \
+             Array.prototype[1]=1; var r=arr.indexOf(1); delete Array.prototype[1]; r"
+        ),
+        1.0
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
