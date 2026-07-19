@@ -5545,6 +5545,17 @@ fn temporal_dead_zone() {
     ));
     // 미선언 typeof 는 여전히 "undefined"(throw 아님)
     assert_eq!(run_str("typeof neverDeclaredXYZ"), "undefined");
+    // 파라미터 기본값 TDZ (§10.2.11): 뒤 파라미터/자기 자신 참조는 ReferenceError
+    assert!(run_bool(
+        "var ok=false; try{ (function(a=b, b){})(); }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    assert!(run_bool(
+        "var ok=false; try{ (function(a=a){})(); }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    // 앞 파라미터 참조는 정상, 기본값 부수효과는 1회, NamedEvaluation 유지
+    assert_eq!(run_num("(function(a, b=a*2){ return b; })(3)"), 6.0);
+    assert_eq!(run_num("var c=0; (function(a=(c++,9)){})(); c"), 1.0);
+    assert_eq!(run_str("(function(a=function(){}){ return a.name; })()"), "a");
     // 초기화 후 정상 접근 (회귀)
     assert_eq!(run_num("let a=3; a+1"), 4.0);
     assert_eq!(run_num("{ let b=5; b } 0; (function(){ let c=7; return c; })()"), 7.0);

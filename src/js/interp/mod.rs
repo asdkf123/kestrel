@@ -7858,13 +7858,57 @@ impl Interp {
                 if let Some(sc) = &func.super_class {
                     env_declare(&scope, "\u{0}superclass__", sc.clone());
                 }
+                // 파라미터 TDZ (§10.2.11): 기본값이 뒤 파라미터/자기 자신을 참조하면
+                // ReferenceError. 프롤로그의 `if(x===undefined) x=default` 에서 단순
+                // 파라미터 기본값을 추출하고, 모든 파라미터를 TDZ 로 예약한 뒤 왼→오로
+                // 바인딩한다(arg 있으면 그 값, 없으면 default 평가 — 이때 뒤/자기 파라미터는
+                // 아직 TDZ). 바인딩 후엔 프롤로그의 default if 가 대개 no-op 이 된다.
+                let plen = func.param_prologue_len.min(func.body.len());
+                let mut param_defaults: std::collections::HashMap<String, Expr> =
+                    std::collections::HashMap::new();
+                for s in &func.body[..plen] {
+                    if let Stmt::If { cond, then, .. } = s {
+                        if let Expr::Binary { op: BinOp::EqEqEq, left, right } = cond {
+                            if let (Expr::Ident(n), Expr::Undefined) = (&**left, &**right) {
+                                if !n.starts_with("__pat") {
+                                    if let Some(Stmt::Expr(Expr::Assign { value, .. })) = then.first()
+                                    {
+                                        param_defaults.insert(n.clone(), (**value).clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for p in &func.params {
+                    env_declare_tdz(&scope, p.strip_prefix("...").unwrap_or(p));
+                }
                 for (i, p) in func.params.iter().enumerate() {
                     if let Some(rest) = p.strip_prefix("...") {
                         // rest 파라미터: i 번째부터 남은 인자를 배열로 모은다
                         let items = args.get(i..).map(|s| s.to_vec()).unwrap_or_default();
                         env_declare(&scope, rest, Value::Arr(ArrayObj::new(items)));
-                    } else {
+                    } else if p.starts_with("__pat") {
+                        // 구조분해 자리표시: arg 값을 바인딩(프롤로그가 분해/기본값 처리).
                         env_declare(&scope, p, args.get(i).cloned().unwrap_or(Value::Undefined));
+                    } else {
+                        let v = match args.get(i) {
+                            Some(a) => a.clone(),
+                            None => match param_defaults.get(p).cloned() {
+                                // 기본값 평가: 뒤/자기 파라미터는 아직 TDZ → ReferenceError.
+                                Some(def) => {
+                                    let dv = self.eval(&def, &scope)?;
+                                    // 기본값이 익명 함수/클래스면 파라미터 이름을 갖는다
+                                    // (§10.2.11 NamedEvaluation).
+                                    if is_anonymous_fn_expr(&def) {
+                                        Self::set_fn_name(&dv, p);
+                                    }
+                                    dv
+                                }
+                                None => Value::Undefined,
+                            },
+                        };
+                        env_declare(&scope, p, v);
                     }
                 }
                 // arguments 객체 (화살표 제외). 배열로 근사 — .length/인덱스/slice.call 동작.
