@@ -1727,6 +1727,27 @@ impl Interp {
         }
     }
 
+    // 프로퍼티 키 → 함수 이름 (§10.2.9 SetFunctionName). 심볼 키는 내부 키가 아니라
+    // 표준 이름을 준다: Symbol(desc) → "[desc]"(desc 없으면 ""), 잘 알려진 심볼
+    // \0@@iterator → "[Symbol.iterator]", 레지스트리 \0@@for:k → "[k]". 일반 문자열은 그대로.
+    fn fn_name_from_key(key: &str) -> String {
+        if let Some(rest) = key.strip_prefix("\u{0}@@sym:") {
+            // \0@@sym:<n>:<desc> — desc 없으면 "" (익명 심볼).
+            let desc = rest.splitn(2, ':').nth(1).unwrap_or("");
+            if desc.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", desc)
+            }
+        } else if let Some(k) = key.strip_prefix("\u{0}@@for:") {
+            format!("[{}]", k)
+        } else if let Some(name) = key.strip_prefix("\u{0}@@") {
+            format!("[Symbol.{}]", name)
+        } else {
+            key.to_string()
+        }
+    }
+
     pub(super) fn event_proto(&self, iface: &str) -> Option<Value> {
         self.event_protos.iter().find(|(k, _)| *k == iface).map(|(_, p)| p.clone())
     }
@@ -4332,7 +4353,8 @@ impl Interp {
                     // 단 `__proto__: v` 는 프로퍼티 정의가 아니라 [[Prototype]] 설정이므로
                     // 이름을 주지 않는다 (§B.3.1) — 표준이 명시적으로 제외한다.
                     if key != "__proto__" {
-                        Self::set_fn_name(&val, &key);
+                        // 심볼 키는 "[desc]"/""/"[Symbol.x]" 로 (내부 키 그대로가 아니라).
+                        Self::set_fn_name(&val, &Self::fn_name_from_key(&key));
                     }
                     // 접근자: get/set 함수를 Accessor 로 감싼다. 같은 키에 get 과 set 이
                     // 따로 오면({get x(){}, set x(v){}}) 하나의 접근자로 병합해야 한다.

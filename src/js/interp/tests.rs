@@ -4673,6 +4673,12 @@ fn function_names_follow_standard() {
     assert_eq!(run_str("var h = function named(){}; h.name"), "named"); // 명명식이 이긴다
     assert_eq!(run_str("const k = () => {}; k.name"), "k");
     assert_eq!(run_str("class C { m(){} } C.name"), "C");
+    // 심볼 키 프로퍼티/메서드의 이름은 "[desc]"/""/"[Symbol.x]" (내부 키 아님, §10.2.9)
+    assert_eq!(run_str("var s=Symbol('test262'); var o={[s]:()=>{}}; o[s].name"), "[test262]");
+    assert_eq!(run_str("var s=Symbol(); var o={[s]:()=>{}}; o[s].name"), "");
+    assert_eq!(run_str("var o={[Symbol.iterator](){}}; o[Symbol.iterator].name"), "[Symbol.iterator]");
+    // 문자열 computed 키는 그대로
+    assert_eq!(run_str("var o={['xy']:function(){}}; o.xy.name"), "xy");
     // 클래스(생성자)의 name 은 non-writable 계산 프로퍼티 — 대입은 sloppy 무시(§17)
     assert_eq!(run_str("class C {} C.name='X'; C.name"), "C");
     // 명시 static name(){} 이 있으면 실제 프로퍼티라 유지
