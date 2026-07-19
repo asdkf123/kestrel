@@ -4820,6 +4820,27 @@ fn assignment_evaluates_left_reference_first() {
         run_num("var o, box = {}; (o = box.v = { n: 1 }).n += o.n; box.v.n"),
         2.0
     );
+    // null/undefined 에 프로퍼티 대입은 TypeError (raw Error 아님)
+    assert!(run_bool(
+        "var ok=false; var b=null; try{ b.p=1; }catch(e){ ok=e instanceof TypeError; } ok"
+    ));
+    // RHS 는 대입 대상 참조가 던지기 전에 평가된다: null.p = (count+=1) 후 count===1
+    assert_eq!(
+        run_num("var count=0; try{ var b=null; b.p=(count+=1); }catch(e){} count"),
+        1.0
+    );
+    // computed 키 ToPropertyKey 는 RHS 뒤: base[p]=rhs(), p.toString 던짐 & rhs() 던짐 → rhs 오류
+    assert!(run_bool(
+        "function D(){} var got=null; \
+         try{ var b={}; var p={toString:function(){throw new Error('K')}}; b[p]=(function(){throw new D()})(); } \
+         catch(e){ got=e; } got instanceof D"
+    ));
+    // prop 식은 RHS 전에 평가: base[prop()]=rhs(), prop() 던짐 먼저
+    assert!(run_bool(
+        "function D(){} var got=null; \
+         try{ var b={}; b[(function(){throw new D()})()]=(function(){throw new Error('R')})(); } \
+         catch(e){ got=e; } got instanceof D"
+    ));
 }
 
 #[test]

@@ -4699,6 +4699,17 @@ impl Interp {
                 if let Expr::Member { obj, prop, computed } = &**target {
                     if !matches!(&**obj, Expr::Super) {
                         let recv = self.eval(obj, env)?;
+                        // §13.15.2 평가 순서: base → prop 식(GetValue) → RHS → ToPropertyKey.
+                        // 단순 대입(=)에서 computed 키의 ToPropertyKey(toString/valueOf)는
+                        // RHS 평가 뒤에 일어난다. 예전엔 member_key 가 RHS 전에 toString 을
+                        // 불러 base[{toString(){throw}}] = rhs() 의 순서가 어긋났다.
+                        if *computed && matches!(op, AssignOp::Set) {
+                            let prop_val = self.eval(prop, env)?;
+                            let rhs = self.eval(value, env)?;
+                            let key = self.to_property_key(prop_val)?;
+                            self.member_assign(recv, key, rhs.clone())?;
+                            return Ok(rhs);
+                        }
                         let key = self.member_key(prop, *computed, env)?;
                         let rhs = self.eval(value, env)?;
                         let new = match op {
@@ -9522,6 +9533,17 @@ impl Interp {
                     // 무음 no-op 이다(§6.2.5.4 PutValue: base 가 원시면 auto-boxing 후 버려짐).
                     // 예전엔 throw 라 s.foo=1 이 죽었다. strict 면 TypeError 지만 기본은 sloppy.
                     Value::Symbol(_) | Value::Num(_) | Value::Bool(_) | Value::Str(_) => Ok(()),
+                    // null/undefined 에 프로퍼티 대입은 TypeError (§6.2.4.5 PutValue →
+                    // ToObject(null/undefined) 실패). 예전엔 raw 문자열 Err 이라 generic
+                    // Error 로 잡혀 assert.throws(TypeError) 가 실패했다.
+                    Value::Null => Err(self.throw_error(
+                        "TypeError",
+                        format!("Cannot set properties of null (setting '{}')", key),
+                    )),
+                    Value::Undefined => Err(self.throw_error(
+                        "TypeError",
+                        format!("Cannot set properties of undefined (setting '{}')", key),
+                    )),
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }
     }
