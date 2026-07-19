@@ -3208,6 +3208,13 @@ fn more_array_string_methods() {
     );
     // every: 구멍은 건너뛰어 vacuously true.
     assert!(run_bool("[,,].every(function(){return false;})"));
+    // 초거대 length(> 2^32-1) array-like: 존재 인덱스만 방문(재료화 없이 short-circuit).
+    assert!(run_bool(
+        "Array.prototype.some.call({0:11,length:Infinity},function(v){return v>10;})"
+    ));
+    assert!(run_bool(
+        "Array.prototype.every.call({0:11,1:12,length:4294967297},function(v){return v>10;})"
+    ));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

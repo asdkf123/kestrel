@@ -1934,9 +1934,83 @@ impl Interp {
         if !is_callable(&f) {
             return Err(self.throw_error("TypeError", "callback is not a function"));
         }
-        // 초거대 length 는 재료화 경로와 동일하게 RangeError (huge sparse 는 별도 프론티어).
+        // 초거대 length(> 2^32-1): 0..len 순회는 불가능하므로 존재하는 own 정수 인덱스만
+        // 오름차순으로 방문한다(HasProperty 로 걸러지는 부재 인덱스는 어차피 콜백 미호출이라
+        // 관측 동치). 결과 배열을 재료화해야 하는 map/filter/flatMap 과, 구멍도 Get 으로
+        // 방문해야 하는 find/findIndex 는 초거대에서 실현 불가 → RangeError.
         if len_f > MAX_ARRAY_LEN {
-            return Err(self.throw_error("RangeError", "Invalid array length"));
+            if matches!(
+                op,
+                ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap | ArrOp::Find | ArrOp::FindIndex
+            ) {
+                return Err(self.throw_error("RangeError", "Invalid array length"));
+            }
+            let mut keys: Vec<usize> = match o {
+                Value::Obj(m) => m
+                    .borrow()
+                    .keys()
+                    .filter_map(|k| k.parse::<usize>().ok())
+                    .filter(|&k| (k as f64) < len_f)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            keys.sort_unstable();
+            keys.dedup();
+            if matches!(op, ArrOp::Reduce | ArrOp::ReduceRight) {
+                let reverse = matches!(op, ArrOp::ReduceRight);
+                if reverse {
+                    keys.reverse();
+                }
+                let has_init = args.len() >= 2;
+                let mut acc = if has_init { args[1].clone() } else { Value::Undefined };
+                let mut have_acc = has_init;
+                for &k in &keys {
+                    if !self.has_property(o, &k.to_string()) {
+                        continue; // 콜백이 지웠을 수 있음
+                    }
+                    let v = self.member_get(o, &k.to_string())?;
+                    if have_acc {
+                        acc = self.call_value(
+                            f.clone(),
+                            None,
+                            vec![acc, v, Value::Num(k as f64), o.clone()],
+                        )?;
+                    } else {
+                        acc = v;
+                        have_acc = true;
+                    }
+                }
+                if !have_acc {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Reduce of empty array with no initial value",
+                    ));
+                }
+                return Ok(acc);
+            }
+            // some/every/forEach
+            let this_arg = args.get(1).cloned();
+            for &k in &keys {
+                if !self.has_property(o, &k.to_string()) {
+                    continue;
+                }
+                let v = self.member_get(o, &k.to_string())?;
+                let r = self.call_value(
+                    f.clone(),
+                    this_arg.clone(),
+                    vec![v, Value::Num(k as f64), o.clone()],
+                )?;
+                match op {
+                    ArrOp::Some if to_bool(&r) => return Ok(Value::Bool(true)),
+                    ArrOp::Every if !to_bool(&r) => return Ok(Value::Bool(false)),
+                    _ => {}
+                }
+            }
+            return Ok(match op {
+                ArrOp::Some => Value::Bool(false),
+                ArrOp::Every => Value::Bool(true),
+                _ => Value::Undefined,
+            });
         }
         let n = len_f as i64;
 
