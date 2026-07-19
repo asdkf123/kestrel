@@ -3881,6 +3881,30 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn json_stringify_replacer_array_observable() {
+    // §25.5.2 step 4.b: replacer 가 IsArray(Proxy-of-배열 포함)면 length 와 각 인덱스를
+    // [[Get]] 으로 관찰적으로 읽어 PropertyList 를 만든다.
+    assert_eq!(run_str("JSON.stringify({a:1,b:2,c:3},['a','c'])"), r#"{"a":1,"c":3}"#);
+    // Proxy 배열 replacer.
+    assert_eq!(
+        run_str("JSON.stringify({a:1,b:2,c:3}, new Proxy(['a','b'],{}))"),
+        r#"{"a":1,"b":2}"#
+    );
+    // length getter 가 던지면 전파.
+    assert!(run_bool(
+        "var p=new Proxy([],{get:function(t,k){ if(k==='length') throw new RangeError('L'); return t[k]; }}); \
+         try{ JSON.stringify(null,p); false }catch(e){ e instanceof RangeError }"
+    ));
+    // revoked proxy replacer → IsArray 가 TypeError.
+    assert!(run_bool(
+        "var r=Proxy.revocable([],{}); r.revoke(); \
+         try{ JSON.stringify(null,r.proxy); false }catch(e){ e instanceof TypeError }"
+    ));
+    // 숫자/String 래퍼 요소도 키로(ToString), 중복 제거.
+    assert_eq!(run_str("JSON.stringify({1:'a',2:'b'},[1,new String('2'),1])"), r#"{"1":"a","2":"b"}"#);
+}
+
+#[test]
 fn json_stringify_root_holder_wrapper() {
     // §25.5.2 step 10-11: replacer 함수는 wrapper = { "": value }(Object.prototype
     // 상속)를 this 로 받는다. wrapper[""] 는 CreateDataProperty 로 own 삽입(상속 setter

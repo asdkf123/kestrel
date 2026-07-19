@@ -9183,19 +9183,30 @@ impl Interp {
                     Value::Str(s) => s.chars().take(10).collect(),
                     _ => String::new(),
                 };
-                // replacer 배열 → PropertyList (§25.5.2.1 step 5): 문자열/수/String·Number 래퍼만
-                // 채택(래퍼는 ToString), 중복 제거, 그 밖(undefined/불리언/일반객체 등)은 제외.
-                let keys: Option<Vec<String>> = if let Value::Arr(a) = &replacer {
-                    let items = a.borrow().clone();
+                // §25.5.2 step 4: IsCallable 이 먼저(ReplacerFunction), 아니면 IsArray 면
+                // PropertyList. 순서가 중요해 fnrep 를 먼저 판정한다.
+                let fnrep = if is_callable(&replacer) {
+                    Some(replacer.clone())
+                } else {
+                    None
+                };
+                // replacer 배열 → PropertyList (§25.5.2 step 4.b): IsArray(Proxy-of-배열
+                // 포함, revoked 는 TypeError)면 length 와 각 인덱스를 [[Get]] 으로 관찰적으로
+                // 읽는다(예전엔 Value::Arr 내부를 직접 읽어 Proxy 와 length/요소 getter 를
+                // 우회했다). 문자열/수/String·Number 래퍼만 채택(래퍼는 ToString), 중복 제거.
+                let keys: Option<Vec<String>> = if fnrep.is_none() && self.is_array(&replacer)? {
+                    let len_v = self.member_get(&replacer, "length")?;
+                    let len = to_length(self.to_number_value(&len_v)?) as usize;
                     let mut list: Vec<String> = Vec::new();
-                    for el in &items {
-                        let item: Option<String> = match el {
+                    for k in 0..len {
+                        let el = self.member_get(&replacer, &k.to_string())?;
+                        let item: Option<String> = match &el {
                             Value::Str(s) => Some(s.clone()),
                             Value::Num(n) => Some(num_to_str(*n)),
                             Value::Obj(m) if m.borrow().contains_key(WRAPPER_SLOT) => {
-                                match wrapper_primitive(el) {
+                                match wrapper_primitive(&el) {
                                     Some(Value::Str(_)) | Some(Value::Num(_)) => {
-                                        Some(self.to_string_value(el)?)
+                                        Some(self.to_string_value(&el)?)
                                     }
                                     _ => None,
                                 }
@@ -9209,11 +9220,6 @@ impl Interp {
                         }
                     }
                     Some(list)
-                } else {
-                    None
-                };
-                let fnrep = if matches!(replacer, Value::Fn(_) | Value::Native(_) | Value::Bound(_)) {
-                    Some(replacer.clone())
                 } else {
                     None
                 };
