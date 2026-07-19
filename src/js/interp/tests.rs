@@ -3973,6 +3973,18 @@ fn for_of_destructuring() {
     assert_eq!(run_num("var a=[0,0]; for([a[0],a[1]] of [[7,8]]){} a[0]*10+a[1]"), 78.0);
     // 멤버 대상 + 기본값
     assert_eq!(run_num("var x={}; for([x.y=9] of [[]]){} x.y"), 9.0);
+    // 배열 for-of 는 live: 순회 중 축소를 반영 (§CreateArrayIterator, 매 스텝 length)
+    assert_eq!(
+        run_str("var arr=[0,1,2,3]; var s=[]; for(var v of arr){ s.push(v); if(v===1) arr.length=2; } JSON.stringify(s)"),
+        "[0,1]"
+    );
+    // 순회 중 확장도 반영
+    assert_eq!(
+        run_str("var a=[0]; var s=[]; var n=0; for(var v of a){ s.push(v); if(n++<2) a.push(a.length); } JSON.stringify(s)"),
+        "[0,1,2]"
+    );
+    // 회귀: 정상 순회
+    assert_eq!(run_num("var s=0; for(var v of [1,2,3,4]) s+=v; s"), 10.0);
 }
 
 #[test]

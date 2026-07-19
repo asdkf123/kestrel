@@ -4096,7 +4096,36 @@ impl Interp {
                 // for await: 각 값이 promise 면 이행값을 꺼낸다 (ES2018 §14.7.5).
                 // 우리 promise 는 동기 정착 모델이라 마이크로태스크를 흘리고 값을 읽으면 된다.
                 let unwrap = *is_await;
-                // 유한한 내장 이터러블(배열/문자열/Set/Map/재료화 반복자)은 재료화해 순회.
+                // 기본 이터레이터를 가진 배열은 live 순회한다(§CreateArrayIterator): 매
+                // 스텝 length 를 다시 읽어 순회 중 축소(arr.length=n)/확장(push)을 반영한다.
+                // 예전엔 upfront 스냅샷이라 순회 중 변형이 안 보였다. 이터레이터 객체 없이
+                // 직접 [[Get]] 해 빠른 경로를 유지한다. (override·비동기는 아래 경로.)
+                if !unwrap {
+                    if let Value::Arr(a) = &target {
+                        if self.array_has_default_iterator(a) {
+                            let a = a.clone();
+                            let mut i = 0usize;
+                            loop {
+                                self.tick()?;
+                                if i >= a.borrow().len() {
+                                    break;
+                                }
+                                // 구멍도 undefined 로 산출(배열 반복자는 [[Get]] 사용).
+                                let v = a.borrow().get(i).cloned().unwrap_or(Value::Undefined);
+                                i += 1;
+                                let scope = Env::new(Some(env.clone()));
+                                env_declare(&scope, name, v);
+                                match loop_action(self.exec_block(body, &scope)?, &my_label) {
+                                    LoopAct::Exit => break,
+                                    LoopAct::Next => {}
+                                    LoopAct::Propagate(f) => return Ok(f),
+                                }
+                            }
+                            return Ok(Flow::Normal(Value::Undefined));
+                        }
+                    }
+                }
+                // 유한한 내장 이터러블(문자열/Set/Map/재료화 반복자)은 재료화해 순회.
                 let finite = matches!(&target,
                     Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
                     || matches!(&target, Value::Obj(o) if o.borrow().contains_key("\u{0}items"));
