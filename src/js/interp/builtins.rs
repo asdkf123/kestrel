@@ -7664,7 +7664,9 @@ impl Interp {
                         // 위임한다(GetMethod+Call) — 사용자 override 를 존중하고, IsRegExp 면
                         // flags 를 Get 해 'g' 를 검사한다(하드코딩 RegexSym 직행이 아니라).
                         let arg = args.first().cloned().unwrap_or(Value::Undefined);
-                        if !matches!(arg, Value::Undefined | Value::Null) {
+                        // 최신 스펙: regexp 가 **Object** 일 때만 @@matchAll·flags 를 접근한다
+                        // (원시값은 심볼 메서드/flags 를 건드리지 않고 RegExpCreate 로).
+                        if is_object(&arg) {
                             // 2.b IsRegExp 면 flags(Get, RequireObjectCoercible) 가 'g' 포함해야.
                             if self.is_regexp_p(&arg)? {
                                 let flags = self.member_get(&arg, "flags")?;
