@@ -3980,6 +3980,42 @@ fn destructuring_rest() {
 }
 
 #[test]
+fn destructuring_closes_iterator() {
+    // §8.5.2: 사용자 이터러블을 배열 구조분해로 부분 소비하면 IteratorClose(return 호출).
+    // 정상 완료 + iterator 미소진 → return() 1회.
+    assert_eq!(
+        run_num(
+            "var rc=0,nc=0; var it={}; \
+             it[Symbol.iterator]=function(){ return { \
+               next:function(){ nc++; return {done:false,value:nc}; }, \
+               return:function(){ rc++; return {}; } }; }; \
+             var a,b; [a,b]=it; rc"
+        ),
+        1.0
+    );
+    // rest 로 완전 소진하면 iterator 가 done → return() 안 부른다.
+    assert_eq!(
+        run_num(
+            "var rc=0,i=0; var it={}; \
+             it[Symbol.iterator]=function(){ return { \
+               next:function(){ i++; return i<=2?{done:false,value:i}:{done:true,value:undefined}; }, \
+               return:function(){ rc++; return {}; } }; }; \
+             var a,r; [a,...r]=it; rc"
+        ),
+        0.0
+    );
+    // binding 단계가 던지면 throw completion 으로 close (return 호출) 후 원래 오류 전파.
+    assert!(run_bool(
+        "var rc=0; var it={}; \
+         it[Symbol.iterator]=function(){ return { \
+           next:function(){ return {done:false,value:1}; }, \
+           return:function(){ rc++; return {}; } }; }; \
+         var o={set p(v){ throw new Error('x'); }}; \
+         var caught=false; try{ [o.p]=it; }catch(e){ caught=true; } caught && rc===1"
+    ));
+}
+
+#[test]
 fn destructuring_defaults_and_nesting() {
     // 기본값: 없는 프로퍼티/슬롯은 default 사용
     assert_eq!(run_num("var {a=3,b=4}={a:1}; a+b"), 5.0);

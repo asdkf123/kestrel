@@ -3637,41 +3637,81 @@ impl Interp {
                     }
                 };
                 let mut done = false;
-                // 구멍(elision)도 반복자를 한 칸 전진시킨다 — 표준
-                for slot in elems.iter() {
-                    let mut v = Value::Undefined;
-                    if !done {
-                        let (val, d) = self.gen_iter_next(&it, Value::Undefined)?;
-                        if d {
-                            done = true;
-                        } else {
-                            v = val;
-                        }
-                    }
-                    if let Some((sub, default)) = slot {
-                        if matches!(v, Value::Undefined) {
-                            if let Some(d) = default {
-                                v = self.eval(d, env)?;
-                                if let Pattern::Name(n) = sub {
-                                    // 콤마식 등 직접 익명 함수가 아니면 NamedEvaluation 안 한다
-                                    if is_anonymous_fn_expr(d) { Self::set_fn_name(&v, n); }
+                // §8.5.2/§13.15.5.5: 각 단계가 비정상 완료면 iterator 가 안 끝났을 때
+                // IteratorClose(throw). 단 next() 자체가 던지면 done=true 로 보고 close 하지
+                // 않는다(§IteratorStep). 정상 완료 후에도 iterator 가 안 끝났으면 close(ok).
+                // 예전엔 close 를 아예 안 해서 사용자 이터러블의 return() 이 안 불렸다.
+                let mut abrupt: Option<String> = None;
+                'destr: {
+                    // 구멍(elision)도 반복자를 한 칸 전진시킨다 — 표준
+                    for slot in elems.iter() {
+                        let mut v = Value::Undefined;
+                        if !done {
+                            match self.gen_iter_next(&it, Value::Undefined) {
+                                Ok((val, d)) => {
+                                    if d { done = true; } else { v = val; }
                                 }
+                                // next() 던짐 → done, close 없이 전파
+                                Err(e) => { done = true; abrupt = Some(e); break 'destr; }
                             }
                         }
-                        self.bind_pattern(sub, v, env, assign)?;
+                        if let Some((sub, default)) = slot {
+                            if matches!(v, Value::Undefined) {
+                                if let Some(d) = default {
+                                    match self.eval(d, env) {
+                                        Ok(dv) => {
+                                            v = dv;
+                                            if let Pattern::Name(n) = sub {
+                                                // 콤마식 등 직접 익명 함수가 아니면 NamedEvaluation 안 한다
+                                                if is_anonymous_fn_expr(d) { Self::set_fn_name(&v, n); }
+                                            }
+                                        }
+                                        Err(e) => { abrupt = Some(e); break 'destr; }
+                                    }
+                                }
+                            }
+                            if let Err(e) = self.bind_pattern(sub, v, env, assign) {
+                                abrupt = Some(e);
+                                break 'destr;
+                            }
+                        }
+                    }
+                    if let Some(rest_pat) = rest {
+                        let mut items = Vec::new();
+                        while !done {
+                            match self.gen_iter_next(&it, Value::Undefined) {
+                                Ok((val, d)) => {
+                                    if d { done = true; break; }
+                                    items.push(val);
+                                }
+                                Err(e) => { done = true; abrupt = Some(e); break 'destr; }
+                            }
+                            if let Err(e) = self.tick() { abrupt = Some(e); break 'destr; }
+                        }
+                        if let Err(e) =
+                            self.bind_pattern(rest_pat, Value::Arr(ArrayObj::new(items)), env, assign)
+                        {
+                            abrupt = Some(e);
+                            break 'destr;
+                        }
                     }
                 }
-                if let Some(rest_pat) = rest {
-                    let mut items = Vec::new();
-                    while !done {
-                        let (val, d) = self.gen_iter_next(&it, Value::Undefined)?;
-                        if d {
-                            break;
-                        }
-                        items.push(val);
-                        self.tick()?;
+                match abrupt {
+                    // 비정상 완료: iterator 가 안 끝났으면 throw completion 으로 close
+                    // (close 중 오류는 무시, 원래 오류 우선), 끝났으면 그대로 전파.
+                    Some(e) => {
+                        return if !done {
+                            Err(self.iterator_close_throw(&it, e))
+                        } else {
+                            Err(e)
+                        };
                     }
-                    self.bind_pattern(rest_pat, Value::Arr(ArrayObj::new(items)), env, assign)?;
+                    // 정상 완료: iterator 가 안 끝났으면 normal completion 으로 close
+                    None => {
+                        if !done {
+                            self.iterator_close_ok(&it)?;
+                        }
+                    }
                 }
             }
         }
