@@ -17,6 +17,9 @@ enum Inst {
     // \k<name> — 이름 있는 백레퍼런스. 매치 시점에 group_names 로 이름→그룹(들)을
     // 해석해(forward reference 허용) 같은 이름의 그룹 중 실제 캡처된 첫 슬롯을 참조.
     BackrefName(String),
+    // 반복(quantifier) iteration 시작에 node 내부 그룹 idx lo..=hi 의 캡처를 undefined
+    // 로 리셋(§22.2.2.5.1 RepeatMatcher). 백트래킹 대비 자체 저장/복원.
+    ClearSaves(usize, usize),
     Look { neg: bool, prog: Vec<Inst> }, // (?=..) / (?!..)
     // (?<=..) / (?<!..) — sp 에서 **끝나는** 매치를 찾는다 (오른쪽에서 왼쪽).
     LookBehind { neg: bool, prog: Vec<Inst> },
@@ -525,6 +528,30 @@ fn kind_class(k: ClassKind) -> ClassData {
     ClassData { neg: false, ranges: Vec::new(), kinds: vec![k] }
 }
 
+// AST 서브트리 안의 캡처 그룹 인덱스 범위(최소, 최대). 없으면 None. 그룹 번호는
+// source order 로 매겨져 서브트리 내에서 연속 범위를 이룬다 — 반복 iteration 캡처
+// 리셋(ClearSaves)에서 어느 슬롯을 비울지 계산할 때 쓴다.
+fn ast_group_range(ast: &Ast) -> Option<(usize, usize)> {
+    fn merge(a: Option<(usize, usize)>, b: Option<(usize, usize)>) -> Option<(usize, usize)> {
+        match (a, b) {
+            (Some((l1, h1)), Some((l2, h2))) => Some((l1.min(l2), h1.max(h2))),
+            (x, None) => x,
+            (None, y) => y,
+        }
+    }
+    match ast {
+        Ast::Group(idx, inner) => merge(Some((*idx, *idx)), ast_group_range(inner)),
+        Ast::NonCap(inner)
+        | Ast::Look(_, inner)
+        | Ast::LookBehind(_, inner)
+        | Ast::Repeat { node: inner, .. } => ast_group_range(inner),
+        Ast::Concat(items) | Ast::Alt(items) => {
+            items.iter().fold(None, |acc, it| merge(acc, ast_group_range(it)))
+        }
+        _ => None,
+    }
+}
+
 // ── 컴파일: AST → 명령어 ────────────────────────────────────────────
 fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
     match ast {
@@ -585,8 +612,16 @@ fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
             }
         }
         Ast::Repeat { node, min, max, greedy } => {
+            // 각 iteration 시작에 node 내부 그룹 캡처를 리셋(§22.2.2.5.1). 그룹 없으면 생략.
+            let clear = ast_group_range(node);
+            let emit_clear = |prog: &mut Vec<Inst>| {
+                if let Some((lo, hi)) = clear {
+                    prog.push(Inst::ClearSaves(lo, hi));
+                }
+            };
             // min 회 필수 복제
             for _ in 0..*min {
+                emit_clear(prog);
                 compile(node, prog);
             }
             match max {
@@ -596,6 +631,7 @@ fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
                     let split_pc = prog.len();
                     prog.push(Inst::Split(0, 0));
                     let body = prog.len();
+                    emit_clear(prog);
                     compile(node, prog);
                     prog.push(Inst::Jmp(l));
                     let end = prog.len();
@@ -613,6 +649,7 @@ fn compile(ast: &Ast, prog: &mut Vec<Inst>) {
                         let split_pc = prog.len();
                         prog.push(Inst::Split(0, 0));
                         split_pcs.push(split_pc);
+                        emit_clear(prog);
                         compile(node, prog);
                     }
                     let end = prog.len();
@@ -759,6 +796,28 @@ impl Regex {
                     true
                 } else {
                     saves[*slot] = old;
+                    false
+                }
+            }
+            Inst::ClearSaves(lo, hi) => {
+                // 반복 iteration 시작: node 내부 그룹 슬롯을 undefined 로. 백트래킹 대비
+                // 이전 값을 저장했다가 실패 시 복원(Save 와 같은 규약).
+                let range = (*lo * 2)..=(*hi * 2 + 1);
+                let old: Vec<Option<usize>> =
+                    range.clone().map(|slot| saves.get(slot).copied().flatten()).collect();
+                for slot in range.clone() {
+                    if slot < saves.len() {
+                        saves[slot] = None;
+                    }
+                }
+                if self.run(pc + 1, s, sp, saves, steps) {
+                    true
+                } else {
+                    for (k, slot) in range.enumerate() {
+                        if slot < saves.len() {
+                            saves[slot] = old[k];
+                        }
+                    }
                     false
                 }
             }

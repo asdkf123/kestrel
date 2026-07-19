@@ -3881,6 +3881,24 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_capture_reset_per_iteration() {
+    // §22.2.2.5.1 RepeatMatcher: 반복 iteration 시작마다 서브식 내부 캡처를 undefined
+    // 로 리셋. (?:(a)|b){2} on "ab" → 마지막 iteration 에서 (a) 미참여 → g1 undefined.
+    assert!(run_bool("/(?:(a)|b){2}/.exec('ab')[1] === undefined"));
+    assert!(run_bool("/(?:(a)|b){2}/.exec('aa')[1] === 'a'"));
+    // 스타 반복도 리셋: ((a)|b)+ on "ab" → g1='b'(마지막), g2 undefined.
+    assert!(run_bool("var m=/((a)|b)+/.exec('ab'); m[1]==='b' && m[2]===undefined"));
+    // 백트래킹/기존 캡처는 보존.
+    assert!(run_bool("/(a)?b/.exec('ab')[1] === 'a'"));
+    assert!(run_bool("/(a+)(a+)/.exec('aaa')[1] === 'aa'"));
+    // 중복 이름 + \k<name> + 리셋 결합: (?:(?:(?<x>a)|(?<x>b)|c)\k<x>){2} on "aac"
+    // → 매치하되 마지막 iteration 의 c 대안이라 groups.x 는 undefined.
+    assert!(run_bool(
+        "var m=/(?:(?:(?<x>a)|(?<x>b)|c)\\k<x>){2}/.exec('aac'); m[0]==='aac' && m.groups.x===undefined"
+    ));
+}
+
+#[test]
 fn regex_flag_getter_names() {
     // §22.2.6 플래그 접근자 getter 의 name 은 "get <prop>", length 0.
     assert!(run_bool(
