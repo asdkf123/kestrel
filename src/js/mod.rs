@@ -579,15 +579,36 @@ if (!Array.prototype.fill) Array.prototype.fill = function(v, s, e){ s = s === u
 if (!Array.prototype.flatMap) Array.prototype.flatMap = function(fn){ return this.map(fn).flat(); };
 if (!Array.prototype.reduceRight) Array.prototype.reduceRight = function(fn){ var i = this.length - 1, acc; if (arguments.length > 1) { acc = arguments[1]; } else { acc = this[i--]; } for (; i >= 0; i--) acc = fn(acc, this[i], i, this); return acc; };
 if (!Array.prototype.lastIndexOf) Array.prototype.lastIndexOf = function(searchElement, fromIndex){
-  // §22.1.3.20. ToObject(this), ToLength(length), fromIndex 는 ToIntegerOrInfinity
-  // (기본 len-1). 음수면 len+n. 뒤에서 앞으로 검색, 존재하는 인덱스만(SameValueZero 아님, ===).
-  var o = Object(this), len = o.length >>> 0;
+  "use strict"; // §22.1.3.20 step 1: ToObject(this) — sloppy this 강제로 null/undefined 를 놓치지 않게.
+  // ToObject(null/undefined→TypeError), LengthOfArrayLike(래핑 없이), fromIndex 는
+  // ToIntegerOrInfinity(기본 len-1, 음수면 len+n). 뒤→앞, 존재 인덱스만(SameValueZero 아님, ===).
+  if (this === undefined || this === null) {
+    throw new TypeError('Array.prototype.lastIndexOf called on null or undefined');
+  }
+  var o = Object(this);
+  // ToLength: >>> 0 은 2^32 초과를 래핑하므로 못 씀(무한루프/오판). 0..2^53-1 로.
+  var len = Number(o.length);
+  len = (len !== len || len <= 0) ? 0 : Math.min(Math.floor(len), 9007199254740991);
   if (len === 0) return -1;
-  var n;
-  if (arguments.length > 1) { n = Number(fromIndex); n = (n !== n) ? 0 : (n < 0 ? Math.ceil(n) : Math.floor(n)); }
-  else { n = len - 1; }
-  var k = n >= 0 ? Math.min(n, len - 1) : len + n;
-  for (; k >= 0; k--) { if (k in o && o[k] === searchElement) return k; }
+  // n=NaN→0, ±Infinity 는 유지해 start 계산이 처리(+∞→len-1, -∞→음수→-1).
+  var n = (arguments.length > 1) ? Number(fromIndex) : len - 1;
+  n = (n !== n) ? 0 : Math.trunc(n);
+  var start = n >= 0 ? Math.min(n, len - 1) : len + n;
+  if (start < 0) return -1;
+  if (len > 4294967295) {
+    // 초거대 sparse: 0..start 의 존재하는 정수 인덱스만 내림차순으로 방문.
+    var keys = Object.keys(o).map(Number).filter(function(k){
+      return k === Math.floor(k) && k >= 0 && k <= start && k < len;
+    }).sort(function(a, b){ return b - a; });
+    for (var ki = 0; ki < keys.length; ki++) {
+      var kk = keys[ki];
+      if (kk in o && o[kk] === searchElement) return kk;
+    }
+    return -1;
+  }
+  for (var k = start; k >= 0; k--) {
+    if (k in o && o[k] === searchElement) return k === 0 ? 0 : k; // -0 → +0
+  }
   return -1;
 };
 // §23.1.3.34/.33: toReversed/toSorted 는 ToObject(this)+LengthOfArrayLike 로 array-like 에도

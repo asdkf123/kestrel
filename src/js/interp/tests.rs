@@ -3229,6 +3229,16 @@ fn more_array_string_methods() {
         ),
         1.0
     );
+    // lastIndexOf(프렐류드 폴리필): fromIndex -Infinity → -1(§22.1.3.20),
+    // null/undefined → TypeError, len==0 은 fromIndex 강제변환 이전에 -1(부작용 없음).
+    assert_eq!(prelude_num("[true].lastIndexOf(true, -Infinity)"), -1.0);
+    assert_eq!(prelude_num("[1,2,3,2].lastIndexOf(2)"), 3.0);
+    assert!(prelude_bool(
+        "try{ Array.prototype.lastIndexOf.call(undefined); false }catch(e){ e instanceof TypeError }"
+    ));
+    assert!(prelude_bool(
+        "var t=false; var r=[].lastIndexOf(1,{valueOf:function(){t=true;return 0;}}); r===-1 && t===false"
+    ));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
