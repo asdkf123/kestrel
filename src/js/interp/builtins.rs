@@ -1622,17 +1622,23 @@ impl Interp {
         Ok(Some(c))
     }
 
-    // CreateDataPropertyOrThrow(O, P, V) (§7.3.5): 정의 실패(non-extensible/non-configurable
-    // 대상 등)면 TypeError. species 결과 채우기가 이 시맨틱을 써야 한다.
+    // CreateDataPropertyOrThrow(O, P, V) (§7.3.5): [[DefineOwnProperty]] 로 {value, writable:t,
+    // enumerable:t, configurable:t} 데이터를 정의한다([[Set]]이 아님 — 기존 non-writable 이라도
+    // configurable 이면 redefine 성공). 정의 실패(non-configurable/non-extensible)면 TypeError.
     fn create_data_property_or_throw(&mut self, target: &Value, key: usize, v: Value) -> Result<(), String> {
-        if self.set_own_property(target, key.to_string(), v) {
-            Ok(())
-        } else {
-            Err(self.throw_error(
-                "TypeError",
-                format!("Cannot create property '{}' on array species result", key),
-            ))
-        }
+        let mut desc = ObjMap::new();
+        desc.insert("value".to_string(), v);
+        desc.insert("writable".to_string(), Value::Bool(true));
+        desc.insert("enumerable".to_string(), Value::Bool(true));
+        desc.insert("configurable".to_string(), Value::Bool(true));
+        let desc = Value::Obj(Rc::new(RefCell::new(desc)));
+        // Object.defineProperty 는 정의 실패 시 TypeError 를 던진다 → 그대로 전파.
+        self.call_native(
+            Native::ObjectDefineProperty,
+            None,
+            vec![target.clone(), Value::Str(key.to_string()), desc],
+        )?;
+        Ok(())
     }
 
     // SpeciesConstructor(O, defaultConstructor) (§7.3.22): C=Get(O,"constructor"); undefined 면
