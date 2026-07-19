@@ -7824,14 +7824,18 @@ impl Interp {
                 Ok(s.map(Value::Str).unwrap_or(Value::Undefined))
             }
             Native::ParseInt => {
-                let s = args.first().map(to_display).unwrap_or_default();
-                let t = s.trim();
+                // §19.2.5: ToString(arg) 후 앞쪽 정수 프리픽스. radix 는 ToInt32(§7.1.6)로
+                // 강제변환(Infinity→0, mod 2^32) — 예전엔 to_display/to_num 이라 valueOf/
+                // toString 오버라이드와 큰 radix(mod)·Infinity 를 놓쳤다. 순서: 문자열 먼저.
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                let s = self.to_string_value(&arg)?;
+                let radix_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+                let mut radix = self.to_int32(&radix_arg)? as i64;
+                let t = s.trim_start();
                 let (neg, mut body) = match t.strip_prefix('-') {
                     Some(rest) => (true, rest),
                     None => (false, t.strip_prefix('+').unwrap_or(t)),
                 };
-                // radix: 인자 있으면 사용, 0/미지정이면 자동(0x→16, 아니면 10)
-                let mut radix = args.get(1).map(|v| to_num(v) as i64).unwrap_or(0);
                 if (radix == 16 || radix == 0)
                     && (body.starts_with("0x") || body.starts_with("0X"))
                 {
