@@ -253,8 +253,8 @@ pub struct Interp {
     // 캔버스 미지원 기능 경고 중복 방지
     canvas_warned: std::collections::HashSet<String>,
     pub canvas_cmds: std::collections::HashMap<crate::dom::NodeId, Vec<CanvasOp>>,
-    // document/window 레벨 핸들러: (이벤트 타입, 핸들러) — DOMContentLoaded/load 등
-    pub global_handlers: Vec<(String, Value)>,
+    // document/window 레벨 핸들러: (이벤트 타입, 핸들러, passive) — DOMContentLoaded/load 등
+    pub global_handlers: Vec<(String, Value, bool)>,
     // Math.random 용 xorshift 상태
     rng: u64,
     // throw 된 값 (에러 채널은 String 이라 값은 사이드 채널로 전달)
@@ -3523,8 +3523,8 @@ impl Interp {
         let to_run: Vec<Value> = self
             .global_handlers
             .iter()
-            .filter(|(t, _)| t == event)
-            .map(|(_, f)| f.clone())
+            .filter(|(t, _, _)| t == event)
+            .map(|(_, f, _)| f.clone())
             .collect();
         let fired = !to_run.is_empty();
         // 문서 레벨 이벤트 객체 (target = 문서 루트)

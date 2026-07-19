@@ -2807,7 +2807,7 @@ impl Interp {
                 let event = args.first().map(to_display).unwrap_or_default();
                 let listener = args.get(1).cloned().unwrap_or(Value::Undefined);
                 self.global_handlers
-                    .retain(|(t, f)| !(*t == event && same_callable(f, &listener)));
+                    .retain(|(t, f, _)| !(*t == event && same_callable(f, &listener)));
                 Ok(Value::Undefined)
             }
             // document/window.dispatchEvent — 전역 핸들러를 실제로 부른다.
@@ -2818,15 +2818,25 @@ impl Interp {
                     Value::Obj(o) => o.borrow().get("type").map(to_display).unwrap_or_default(),
                     _ => to_display(&evt),
                 };
-                let to_run: Vec<Value> = self
+                let to_run: Vec<(Value, bool)> = self
                     .global_handlers
                     .iter()
-                    .filter(|(t, _)| *t == ty)
-                    .map(|(_, f)| f.clone())
+                    .filter(|(t, _, _)| *t == ty)
+                    .map(|(_, f, passive)| (f.clone(), *passive))
                     .collect();
-                for f in to_run {
+                for (f, passive) in to_run {
+                    if let Value::Obj(o) = &evt {
+                        if passive {
+                            o.borrow_mut().insert("\u{0}passive".to_string(), Value::Bool(true));
+                        }
+                    }
                     if let Err(e) = self.call_value(f, None, vec![evt.clone()]) {
                         println!("[js error] {}", e);
+                    }
+                    if let Value::Obj(o) = &evt {
+                        if passive {
+                            o.borrow_mut().remove("\u{0}passive");
+                        }
                     }
                 }
                 let prevented = match &evt {
@@ -2837,12 +2847,20 @@ impl Interp {
                 };
                 Ok(Value::Bool(!prevented))
             }
-            // document/window.addEventListener — 전역 핸들러로 등록 (recv 무시)
+            // document/window.addEventListener — 전역 핸들러로 등록 (recv 무시).
+            // window/Document 는 §DOM 2.8 default-passive 대상이라 touch/wheel 계열은
+            // 명시 없으면 기본 passive.
             Native::AddGlobalListener => {
                 let event = args.first().map(to_display).unwrap_or_default();
+                let explicit_passive = match args.get(2) {
+                    Some(Value::Obj(o)) => o.borrow().get("passive").map(to_bool),
+                    _ => None,
+                };
                 if let Some(f) = args.get(1) {
                     if is_callable(f) {
-                        self.global_handlers.push((event, f.clone()));
+                        let passive = explicit_passive
+                            .unwrap_or_else(|| is_default_passive_event(&event));
+                        self.global_handlers.push((event, f.clone(), passive));
                     }
                 }
                 Ok(Value::Undefined)

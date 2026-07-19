@@ -110,7 +110,7 @@ pub fn run_scripts_with_base(
     // 콘텐츠를 구성한다(DOMContentLoaded → load 순). dom 포인터는 아직 유효.
     if std::env::var("KESTREL_JS_DEBUG").is_ok() {
         let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for (t, _) in &it.global_handlers {
+        for (t, _, _) in &it.global_handlers {
             *counts.entry(t.as_str()).or_default() += 1;
         }
         eprintln!("[js debug] 전역 핸들러 {}개: {:?}", it.global_handlers.len(), counts);
