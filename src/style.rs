@@ -1759,7 +1759,10 @@ fn style_node<'a>(
             StyledNode { node, id, specified_values: values, children }
         }
         // 코멘트: 스타일도 박스도 없다 (자식도 없다)
-        NodeType::Comment(_) => StyledNode {
+        // Comment/PI/DocumentType 는 렌더 박스를 만들지 않는다(빈 스타일 노드).
+        NodeType::Comment(_)
+        | NodeType::ProcessingInstruction { .. }
+        | NodeType::DocumentType { .. } => StyledNode {
             node,
             id,
             specified_values: HashMap::new(),

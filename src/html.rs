@@ -415,12 +415,14 @@ impl Sink {
             NodeType::Element(e) => &e.tag_name,
             NodeType::Text(_) => "#text",
             NodeType::Comment(_) => "#comment",
+            NodeType::ProcessingInstruction { target, .. } => target,
+            NodeType::DocumentType { name, .. } => name,
         }
     }
     fn attrs(&self, id: usize) -> AttrMap {
         match &self.nodes[id].node_type {
             NodeType::Element(e) => e.attributes.clone(),
-            NodeType::Text(_) | NodeType::Comment(_) => AttrMap::new(),
+            NodeType::Text(_) | NodeType::Comment(_) | NodeType::ProcessingInstruction { .. } | NodeType::DocumentType { .. } => AttrMap::new(),
         }
     }
 }

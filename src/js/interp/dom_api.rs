@@ -235,7 +235,7 @@ impl Interp {
             || matches!(c as u32, 0x0300..=0x036F | 0x203F..=0x2040)
     }
 
-    fn is_valid_name(name: &str) -> bool {
+    pub(super) fn is_valid_name(name: &str) -> bool {
         let mut it = name.chars();
         match it.next() {
             Some(c) if Self::is_name_start(c) => {}
@@ -465,6 +465,8 @@ impl Interp {
                 crate::dom::NodeType::Element(e) => {
                     (node.children.clone(), false, String::new(), e.tag_name.to_ascii_lowercase())
                 }
+                // PI/DocumentType 는 텍스트 콘텐츠에 기여하지 않는다.
+                _ => (Vec::new(), true, String::new(), String::new()),
             }
         };
         if is_text {
@@ -937,6 +939,31 @@ impl Interp {
                 }
                 _ => Value::Null,
             }),
+            // ProcessingInstruction.target / DocumentType.name/publicId/systemId (§4.13/4.7).
+            "target"
+                if matches!(&dom.get(id).node_type, crate::dom::NodeType::ProcessingInstruction { .. }) =>
+            {
+                match &dom.get(id).node_type {
+                    crate::dom::NodeType::ProcessingInstruction { target, .. } => {
+                        Ok(Value::Str(target.clone()))
+                    }
+                    _ => Ok(Value::Undefined),
+                }
+            }
+            "name" | "publicId" | "systemId"
+                if matches!(&dom.get(id).node_type, crate::dom::NodeType::DocumentType { .. }) =>
+            {
+                match &dom.get(id).node_type {
+                    crate::dom::NodeType::DocumentType { name, public_id, system_id } => {
+                        Ok(Value::Str(match key {
+                            "name" => name.clone(),
+                            "publicId" => public_id.clone(),
+                            _ => system_id.clone(),
+                        }))
+                    }
+                    _ => Ok(Value::Undefined),
+                }
+            }
             "nodeName" => Ok(Value::Str(match &dom.get(id).node_type {
                 // DocumentFragment 센티널: nodeName 은 "#document-fragment"(대문자화 안 함).
                 crate::dom::NodeType::Element(e) if e.tag_name == "#document-fragment" => {
@@ -951,18 +978,30 @@ impl Interp {
                 }
                 crate::dom::NodeType::Text(_) => "#text".to_string(),
                 crate::dom::NodeType::Comment(_) => "#comment".to_string(),
+                // PI 의 nodeName 은 target, DocumentType 의 nodeName 은 name(§4.4).
+                crate::dom::NodeType::ProcessingInstruction { target, .. } => target.clone(),
+                crate::dom::NodeType::DocumentType { name, .. } => name.clone(),
             })),
             // nodeValue/data: 텍스트·코멘트의 문자 데이터 (§4.9 CharacterData).
             // 예전엔 아예 없어서 textNode.data 가 undefined 였다.
             "nodeValue" => Ok(match &dom.get(id).node_type {
                 crate::dom::NodeType::Text(t) => Value::Str(t.clone()),
                 crate::dom::NodeType::Comment(c) => Value::Str(c.clone()),
-                crate::dom::NodeType::Element(_) => Value::Null, // 요소는 null (표준)
+                crate::dom::NodeType::ProcessingInstruction { data, .. } => Value::Str(data.clone()),
+                // 요소/DocumentType 는 nodeValue 가 null (표준)
+                crate::dom::NodeType::Element(_) | crate::dom::NodeType::DocumentType { .. } => {
+                    Value::Null
+                }
             }),
             "data" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Text(t) => Ok(Value::Str(t.clone())),
                 crate::dom::NodeType::Comment(c) => Ok(Value::Str(c.clone())),
-                crate::dom::NodeType::Element(_) => Ok(Value::Undefined),
+                crate::dom::NodeType::ProcessingInstruction { data, .. } => {
+                    Ok(Value::Str(data.clone()))
+                }
+                crate::dom::NodeType::Element(_) | crate::dom::NodeType::DocumentType { .. } => {
+                    Ok(Value::Undefined)
+                }
             },
             "length" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Text(t) => {
@@ -971,7 +1010,12 @@ impl Interp {
                 crate::dom::NodeType::Comment(c) => {
                     Ok(Value::Num(c.encode_utf16().count() as f64))
                 }
-                crate::dom::NodeType::Element(_) => Ok(Value::Undefined),
+                crate::dom::NodeType::ProcessingInstruction { data, .. } => {
+                    Ok(Value::Num(data.encode_utf16().count() as f64))
+                }
+                crate::dom::NodeType::Element(_) | crate::dom::NodeType::DocumentType { .. } => {
+                    Ok(Value::Undefined)
+                }
             },
             // nodeType: ELEMENT_NODE(1) / TEXT_NODE(3).
             // jQuery·프레임워크가 노드 종류 판별에 광범위하게 쓴다.
@@ -980,7 +1024,9 @@ impl Interp {
                 crate::dom::NodeType::Element(e) if e.tag_name == "#document-fragment" => 11.0,
                 crate::dom::NodeType::Element(_) => 1.0,
                 crate::dom::NodeType::Text(_) => 3.0,
+                crate::dom::NodeType::ProcessingInstruction { .. } => 7.0,
                 crate::dom::NodeType::Comment(_) => 8.0,
+                crate::dom::NodeType::DocumentType { .. } => 10.0,
             })),
             "id" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => {

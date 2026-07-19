@@ -626,6 +626,7 @@ impl Interp {
             .insert("getElementsByClassName".to_string(), Value::Native(Native::GetElementsByClass));
         document.insert("getElementsByTagName".to_string(), Value::Native(Native::GetElementsByTag));
         document.insert("getElementsByTagNameNS".to_string(), Value::Native(Native::GetElementsByTagNS));
+        document.insert("createProcessingInstruction".to_string(), Value::Native(Native::CreateProcessingInstruction));
         // 라이브 접근자: document.body/head/documentElement → DOM 요소 핸들
         let live = |tag| Value::Accessor(AccessorPair::getter(Value::Native(Native::DocQuery(tag))));
         document.insert("body".to_string(), live("body"));
@@ -681,6 +682,10 @@ impl Interp {
         // 우리는 ReturnFalse 였다 — 표준과 정반대라, 기능 탐지를 하는 코드가 조용히
         // 다른 길로 샜다.
         implementation.insert("hasFeature".to_string(), Value::Native(Native::ReturnTrue));
+        implementation.insert(
+            "createDocumentType".to_string(),
+            Value::Native(Native::CreateDocumentType),
+        );
         document.insert(
             "implementation".to_string(),
             Value::Obj(Rc::new(RefCell::new(implementation))),

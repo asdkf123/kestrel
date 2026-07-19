@@ -5418,7 +5418,10 @@ impl Interp {
                 let cur: Vec<u16> = match &dom.get(id).node_type {
                     crate::dom::NodeType::Text(t) => t.encode_utf16().collect(),
                     crate::dom::NodeType::Comment(c) => c.encode_utf16().collect(),
-                    crate::dom::NodeType::Element(_) => {
+                    crate::dom::NodeType::ProcessingInstruction { data, .. } => {
+                        data.encode_utf16().collect()
+                    }
+                    crate::dom::NodeType::Element(_) | crate::dom::NodeType::DocumentType { .. } => {
                         return Err(self.throw_error("TypeError", "요소에는 문자 데이터가 없다"))
                     }
                 };
@@ -5616,6 +5619,12 @@ impl Interp {
                             crate::dom::NodeType::Comment(_) => {
                                 vec!["Comment", "CharacterData", "Node", "EventTarget"]
                             }
+                            crate::dom::NodeType::ProcessingInstruction { .. } => {
+                                vec!["ProcessingInstruction", "CharacterData", "Node", "EventTarget"]
+                            }
+                            crate::dom::NodeType::DocumentType { .. } => {
+                                vec!["DocumentType", "Node", "EventTarget"]
+                            }
                         }
                     }
                     Some(Value::Attr(_, _)) => vec!["Attr", "Node", "EventTarget"],
@@ -5672,6 +5681,32 @@ impl Interp {
                 let data = args.first().map(to_display).unwrap_or_default();
                 let dom = self.dom_arena()?;
                 Ok(Value::Dom(dom.create_comment(data)))
+            }
+            // document.createProcessingInstruction(target, data) — §4.5.
+            // target 이 유효한 이름이 아니거나 data 에 "?>" 가 있으면 에러(단순화: 이름 검사).
+            Native::CreateProcessingInstruction => {
+                let target = args.first().map(to_display).unwrap_or_default();
+                let data = args.get(1).map(to_display).unwrap_or_default();
+                if !Self::is_valid_name(&target) {
+                    return Err(self.throw_dom(
+                        "InvalidCharacterError",
+                        "The target is not a valid name",
+                    ));
+                }
+                if data.contains("?>") {
+                    return Err(self.throw_dom("InvalidCharacterError", "The data contains '?>'"));
+                }
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_pi(target, data)))
+            }
+            // implementation.createDocumentType(name, publicId, systemId) — §4.5.1.
+            Native::CreateDocumentType => {
+                let name = args.first().map(to_display).unwrap_or_default();
+                let public_id = args.get(1).map(to_display).unwrap_or_default();
+                let system_id = args.get(2).map(to_display).unwrap_or_default();
+                self.validate_qualified_name(&name, None)?;
+                let dom = self.dom_arena()?;
+                Ok(Value::Dom(dom.create_doctype(name, public_id, system_id)))
             }
             // 네임스페이스 속성 (§4.9.2). 우리 AttrMap 은 정규화된 이름(qualified name)을
             // 키로 쓴다 — setAttributeNS(ns, 'xlink:href', v) 는 'xlink:href' 로 저장되고,

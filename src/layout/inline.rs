@@ -744,8 +744,8 @@ fn collect_node<'a>(
 ) {
     match &node.node.node_type {
         NodeType::Text(t) => runs.push((t.clone(), style)),
-        // 코멘트는 렌더링되지 않는다 (§CSS Display: 박스를 만들지 않는다)
-        NodeType::Comment(_) => {}
+        // 코멘트/PI/DocumentType 는 렌더링되지 않는다 (박스 없음)
+        NodeType::Comment(_) | NodeType::ProcessingInstruction { .. } | NodeType::DocumentType { .. } => {}
         // <br>: 무조건 줄바꿈 (white-space 무관). U+2028 LINE SEPARATOR 를 강제 개행 신호로.
         NodeType::Element(e) if e.tag_name == "br" => runs.push(("\u{2028}".to_string(), style)),
         NodeType::Element(e) => match node.display() {

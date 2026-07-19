@@ -90,6 +90,10 @@ pub enum NodeType {
     // 표준과 달랐고, document.createComment 도 없었다. 프레임워크가 코멘트를 앵커로
     // 쓴다 (Vue 의 v-if 자리표시자, React SSR 의 <!--$--> Suspense 경계).
     Comment(String),
+    // ProcessingInstruction (§4.13): <?target data?>. nodeType 7. target + data(문자데이터).
+    ProcessingInstruction { target: String, data: String },
+    // DocumentType (§4.7): <!DOCTYPE name>. nodeType 10. name/publicId/systemId.
+    DocumentType { name: String, public_id: String, system_id: String },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -502,6 +506,28 @@ impl Dom {
         id
     }
 
+    pub fn create_pi(&mut self, target: String, data: String) -> NodeId {
+        self.touch();
+        let id = self.nodes.len();
+        self.nodes.push(NodeData {
+            parent: None,
+            children: Vec::new(),
+            node_type: NodeType::ProcessingInstruction { target, data },
+        });
+        id
+    }
+
+    pub fn create_doctype(&mut self, name: String, public_id: String, system_id: String) -> NodeId {
+        self.touch();
+        let id = self.nodes.len();
+        self.nodes.push(NodeData {
+            parent: None,
+            children: Vec::new(),
+            node_type: NodeType::DocumentType { name, public_id, system_id },
+        });
+        id
+    }
+
     pub fn create_text(&mut self, text: String) -> NodeId {
         self.touch();
         let id = self.nodes.len();
@@ -721,6 +747,18 @@ impl Dom {
                 out.push_str(c);
                 out.push_str("-->");
             }
+            NodeType::ProcessingInstruction { target, data } => {
+                out.push_str("<?");
+                out.push_str(target);
+                out.push(' ');
+                out.push_str(data);
+                out.push_str(">");
+            }
+            NodeType::DocumentType { name, .. } => {
+                out.push_str("<!DOCTYPE ");
+                out.push_str(name);
+                out.push('>');
+            }
             NodeType::Element(e) => {
                 out.push('<');
                 out.push_str(&e.tag_name);
@@ -766,7 +804,8 @@ impl Dom {
         match &mut self.nodes[id].node_type {
             NodeType::Text(t) => *t = data,
             NodeType::Comment(c) => *c = data,
-            NodeType::Element(_) => {}
+            NodeType::ProcessingInstruction { data: d, .. } => *d = data,
+            NodeType::Element(_) | NodeType::DocumentType { .. } => {}
         }
     }
 

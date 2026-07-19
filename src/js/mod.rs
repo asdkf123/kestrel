@@ -1171,7 +1171,8 @@ var __kIfaceNames = [
   'HTMLTitleElement', 'HTMLTableRowElement', 'HTMLTrackElement', 'HTMLUListElement',
   'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
   'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSStyleDeclaration',
-  'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot'
+  'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot',
+  'ProcessingInstruction', 'DocumentType'
 ];
 for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   var __n = __kIfaceNames[__i];
