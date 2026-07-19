@@ -3393,6 +3393,15 @@ fn more_array_string_methods() {
     assert!(run_bool(
         "var a=[]; a.foo='x'; Object.freeze(a); var d=Object.getOwnPropertyDescriptor(a,'foo'); !d.writable && !d.configurable"
     ));
+    // 배열 비인덱스 접근자 prop: 대입은 setter 호출, non-writable 데이터는 sloppy 무시.
+    assert!(run_bool(
+        "var a=[]; Object.defineProperty(a,'p',{set:function(v){this._s=v;},configurable:true}); a.p=8; a._s===8"
+    ));
+    assert!(run_bool(
+        "var a=[]; Object.defineProperty(a,'p',{value:1,writable:false}); a.p=9; a.p===1"
+    ));
+    // arr.foo=x 흔한 동작 무회귀.
+    assert_eq!(run_str("var a=[1,2]; a.foo='bar'; a.foo"), "bar");
     // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
     assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
     // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.

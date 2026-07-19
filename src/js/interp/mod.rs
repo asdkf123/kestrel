@@ -9123,8 +9123,26 @@ impl Interp {
                                 let _ = self.array_set_length(&a, value.clone())?;
                             }
                         } else {
-                            // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장
-                            if a.get_prop(&key).is_none() && self.is_nonextensible_val(&av) {
+                            // 비인덱스 프로퍼티/메서드 재정의는 own-property 로 저장.
+                            let cur = a.get_prop(&key);
+                            // 기존 값이 접근자면 데이터로 덮어쓰지 말고 setter 호출(§10.4.2 [[Set]]).
+                            if let Some(Value::Accessor(acc)) = &cur {
+                                if let Some(setter) = &acc.set {
+                                    self.call_value(
+                                        setter.clone(),
+                                        Some(av.clone()),
+                                        vec![value],
+                                    )?;
+                                }
+                                return Ok(());
+                            }
+                            // non-writable 데이터 프로퍼티 대입은 sloppy 무시(§10.1.9.2).
+                            if cur.is_some()
+                                && matches!(a.prop_attr(&key), Some(at) if at & ATTR_WRITABLE == 0)
+                            {
+                                return Ok(());
+                            }
+                            if cur.is_none() && self.is_nonextensible_val(&av) {
                                 return Ok(());
                             }
                             a.set_prop(key, value);
