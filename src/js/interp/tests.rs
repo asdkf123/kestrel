@@ -521,6 +521,31 @@ fn document_create_attribute() {
 }
 
 #[test]
+fn insert_adjacent_element_returns_and_validates() {
+    let mut dom = crate::html::parse_dom(
+        "<div id='t'><span id='c'>x</span></div>".to_string(),
+    );
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    it.run(crate::js::JS_PRELUDE).expect("프렐류드");
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // 삽입한 요소를 돌려준다
+    assert_eq!(
+        g("var t=document.getElementById('t'); var n=document.createElement('b'); n.id='n'; \
+           t.insertAdjacentElement('afterbegin', n).id"),
+        "n",
+    );
+    // afterbegin 이면 첫 자식이 된다
+    assert_eq!(g("document.getElementById('t').firstElementChild.id"), "n");
+    // 잘못된 위치는 SyntaxError
+    assert_eq!(
+        g("try{document.getElementById('t').insertAdjacentElement('nope', document.createElement('i'))}\
+           catch(e){e.name}"),
+        "SyntaxError",
+    );
+}
+
+#[test]
 fn aria_attribute_reflection() {
     let mut dom = crate::html::parse_dom(
         "<div id='x' role='button' aria-label='hi' aria-atomic='true'></div>".to_string(),

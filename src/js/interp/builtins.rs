@@ -7842,6 +7842,13 @@ impl Interp {
             Native::InsertAdjacentHTML | Native::InsertAdjacentElement => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
                 let pos = args.first().map(to_display).unwrap_or_default().to_ascii_lowercase();
+                // 위치 검증 (§DOM insertAdjacent*): 4개 키워드가 아니면 SyntaxError.
+                if !matches!(
+                    pos.as_str(),
+                    "beforebegin" | "afterbegin" | "beforeend" | "afterend"
+                ) {
+                    return Err(self.throw_dom("SyntaxError", "insertAdjacent: 잘못된 위치"));
+                }
                 // 삽입할 노드들: HTML 이면 조각 파싱, Element 면 그 노드
                 let nodes: Vec<crate::dom::NodeId> =
                     if matches!(n, Native::InsertAdjacentElement) {
@@ -7859,18 +7866,26 @@ impl Interp {
                     };
                 let dom = self.dom_arena()?;
                 let parent = dom.get(id).parent;
+                // insertAdjacentElement 는 삽입한 요소를 돌려준다(§DOM). beforebegin/afterend
+                // 에서 부모가 없으면 삽입하지 못하고 null.
+                let mut inserted: Option<crate::dom::NodeId> = None;
                 for node in nodes {
                     match pos.as_str() {
                         "beforebegin" => {
                             if let Some(p) = parent {
                                 dom.insert_before(p, node, Some(id));
+                                inserted = Some(node);
                             }
                         }
                         "afterbegin" => {
                             let first = dom.get(id).children.first().copied();
                             dom.insert_before(id, node, first);
+                            inserted = Some(node);
                         }
-                        "beforeend" => dom.append_child(id, node),
+                        "beforeend" => {
+                            dom.append_child(id, node);
+                            inserted = Some(node);
+                        }
                         "afterend" => {
                             if let Some(p) = parent {
                                 // id 의 다음 형제 앞에 (없으면 끝)
@@ -7881,12 +7896,17 @@ impl Interp {
                                     .position(|&c| c == id)
                                     .and_then(|i| dom.get(p).children.get(i + 1).copied());
                                 dom.insert_before(p, node, next);
+                                inserted = Some(node);
                             }
                         }
                         _ => {}
                     }
                 }
-                Ok(Value::Undefined)
+                if matches!(n, Native::InsertAdjacentElement) {
+                    Ok(inserted.map(Value::Dom).unwrap_or(Value::Null))
+                } else {
+                    Ok(Value::Undefined)
+                }
             }
             Native::RemoveElement => match recv {
                 Some(Value::Dom(id)) => {
