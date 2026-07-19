@@ -168,6 +168,9 @@ pub struct ArrayObj {
     // 인덱스별 non-default 속성(§10.4.2). 비어 있음 = 모든 인덱스 default {w:t,e:t,c:t}
     // (오버헤드 0). defineProperty 로 non-default 속성 준 인덱스만 u8 비트(ATTR_*)로.
     index_attrs: RefCell<HashMap<usize, u8>>,
+    // 비인덱스 문자열 프로퍼티(props)의 non-default 속성. 비어 있음 = 모두 default.
+    // arguments-as-array 나 arr.foo 등에 defineProperty 로 속성을 줄 때만 채워진다.
+    prop_attrs: RefCell<HashMap<String, u8>>,
 }
 
 impl ArrayObj {
@@ -178,6 +181,7 @@ impl ArrayObj {
             holes: RefCell::new(std::collections::HashSet::new()),
             length_writable: std::cell::Cell::new(true),
             index_attrs: RefCell::new(HashMap::new()),
+            prop_attrs: RefCell::new(HashMap::new()),
         })
     }
     // 구멍이 있는 배열 (배열 리터럴 엘리전/new Array(n) 등).
@@ -188,6 +192,7 @@ impl ArrayObj {
             holes: RefCell::new(holes),
             length_writable: std::cell::Cell::new(true),
             index_attrs: RefCell::new(HashMap::new()),
+            prop_attrs: RefCell::new(HashMap::new()),
         })
     }
     // length 프로퍼티의 [[Writable]] (§10.4.2.4).
@@ -212,6 +217,21 @@ impl ArrayObj {
     pub fn clear_index_attr(&self, i: usize) {
         if !self.index_attrs.borrow().is_empty() {
             self.index_attrs.borrow_mut().remove(&i);
+        }
+    }
+    // 비인덱스 문자열 프로퍼티의 속성(§10.1.6). 비어 있음 = default {w:t,e:t,c:t}.
+    pub fn prop_attr(&self, k: &str) -> Option<u8> {
+        if self.prop_attrs.borrow().is_empty() {
+            return None;
+        }
+        self.prop_attrs.borrow().get(k).copied()
+    }
+    pub fn set_prop_attr(&self, k: String, attrs: u8) {
+        self.prop_attrs.borrow_mut().insert(k, attrs);
+    }
+    pub fn clear_prop_attr(&self, k: &str) {
+        if !self.prop_attrs.borrow().is_empty() {
+            self.prop_attrs.borrow_mut().remove(k);
         }
     }
     // 인덱스 i 가 구멍(존재하지 않는 인덱스)인가.
@@ -259,6 +279,7 @@ impl ArrayObj {
     }
     pub fn del_prop(&self, k: &str) {
         self.props.borrow_mut().remove(k);
+        self.clear_prop_attr(k);
     }
     // 인덱스 외의 own 프로퍼티 (엔진 내부 마커 제외) — Object.assign 등의 열거용
     pub fn own_props(&self) -> Vec<(String, Value)> {

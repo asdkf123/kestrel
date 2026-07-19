@@ -2935,11 +2935,39 @@ impl Interp {
                             }
                             None => match a.get_prop(&key) {
                                 Some(v) => {
-                                    d.insert("value".to_string(), v);
-                                    d.insert("writable".to_string(), Value::Bool(true));
-                                    d.insert("enumerable".to_string(), Value::Bool(true));
-                                    d.insert("configurable".to_string(), Value::Bool(true));
-                                    true
+                                    // 비인덱스 배열 프로퍼티도 prop_attrs 로 속성을 추적한다
+                                    // (defineProperty/freeze 로 non-default 준 경우). 기본 {w,e,c}=true.
+                                    let at = a.prop_attr(&key).unwrap_or(
+                                        ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                    );
+                                    match v {
+                                        Value::Accessor(acc) => {
+                                            d.insert(
+                                                "get".to_string(),
+                                                acc.get.clone().unwrap_or(Value::Undefined),
+                                            );
+                                            d.insert(
+                                                "set".to_string(),
+                                                acc.set.clone().unwrap_or(Value::Undefined),
+                                            );
+                                        }
+                                        _ => {
+                                            d.insert("value".to_string(), v);
+                                            d.insert(
+                                                "writable".to_string(),
+                                                Value::Bool(at & ATTR_WRITABLE != 0),
+                                            );
+                                        }
+                                    }
+                                    d.insert(
+                                        "enumerable".to_string(),
+                                        Value::Bool(at & ATTR_ENUMERABLE != 0),
+                                    );
+                                    d.insert(
+                                        "configurable".to_string(),
+                                        Value::Bool(at & ATTR_CONFIGURABLE != 0),
+                                    );
+                                    return Ok(Value::Obj(Rc::new(RefCell::new(d))));
                                 }
                                 None => false,
                             },
@@ -3622,7 +3650,84 @@ impl Interp {
                                     a.clear_index_attr(i);
                                 }
                             } else {
-                                a.set_prop(key, val);
+                                // 비인덱스 배열 프로퍼티: §10.1.6.3 검증 + prop_attrs 병합.
+                                let cur_val = a.get_prop(&key);
+                                let existed = cur_val.is_some();
+                                if existed {
+                                    let cur = a.prop_attr(&key).unwrap_or(
+                                        ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                    );
+                                    if cur & ATTR_CONFIGURABLE == 0 {
+                                        let cur_enum = cur & ATTR_ENUMERABLE != 0;
+                                        let cur_wr = cur & ATTR_WRITABLE != 0;
+                                        let cur_is_acc =
+                                            matches!(cur_val, Some(Value::Accessor(_)));
+                                        let new_is_acc = matches!(&val, Value::Accessor(_));
+                                        if (has_configurable && configurable)
+                                            || (has_enumerable && enumerable != cur_enum)
+                                            || (new_is_acc != cur_is_acc)
+                                        {
+                                            return Err(self.redefine_err());
+                                        }
+                                        if let (Some(Value::Accessor(cur_acc)), Value::Accessor(_)) =
+                                            (&cur_val, &val)
+                                        {
+                                            let cg =
+                                                cur_acc.get.clone().unwrap_or(Value::Undefined);
+                                            let cs =
+                                                cur_acc.set.clone().unwrap_or(Value::Undefined);
+                                            if (has_get && !same_value(&get_v, &cg))
+                                                || (has_set && !same_value(&set_v, &cs))
+                                            {
+                                                return Err(self.redefine_err());
+                                            }
+                                        } else if !cur_is_acc && !cur_wr {
+                                            if has_writable && writable {
+                                                return Err(self.redefine_err());
+                                            }
+                                            if has_value
+                                                && !same_value(
+                                                    &val,
+                                                    cur_val.as_ref().unwrap_or(&Value::Undefined),
+                                                )
+                                            {
+                                                return Err(self.redefine_err());
+                                            }
+                                        }
+                                    }
+                                }
+                                // 속성 병합: 미지정은 재정의면 기존, 새 정의면 false.
+                                let cur = if existed {
+                                    a.prop_attr(&key).unwrap_or(
+                                        ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                    )
+                                } else {
+                                    0
+                                };
+                                let wbit = if has_writable {
+                                    if writable { ATTR_WRITABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_WRITABLE
+                                };
+                                let ebit = if has_enumerable {
+                                    if enumerable { ATTR_ENUMERABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_ENUMERABLE
+                                };
+                                let cbit = if has_configurable {
+                                    if configurable { ATTR_CONFIGURABLE } else { 0 }
+                                } else {
+                                    cur & ATTR_CONFIGURABLE
+                                };
+                                let attrs = wbit | ebit | cbit;
+                                a.set_prop(key.clone(), val);
+                                if attrs
+                                    != (ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE)
+                                {
+                                    a.set_prop_attr(key, attrs);
+                                } else {
+                                    a.clear_prop_attr(&key);
+                                }
                             }
                         }
                         Value::Class(c) => {
@@ -3861,6 +3966,18 @@ impl Interp {
                                 na &= !ATTR_WRITABLE;
                             }
                             a.set_index_attr(i, na);
+                        }
+                        // 배열의 비인덱스 문자열 프로퍼티(arr.foo, arguments.foo 등)도 조인다.
+                        for (k, v) in a.own_props() {
+                            let is_acc = matches!(v, Value::Accessor(_));
+                            let cur = a.prop_attr(&k).unwrap_or(
+                                ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                            );
+                            let mut na = cur & !ATTR_CONFIGURABLE;
+                            if bit == super::INTEG_FROZEN && !is_acc {
+                                na &= !ATTR_WRITABLE;
+                            }
+                            a.set_prop_attr(k, na);
                         }
                     }
                 }
