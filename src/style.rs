@@ -202,6 +202,91 @@ impl NodePos {
     }
 }
 
+// 결합자 체인을 DOM NodeId 로 정확히 걷는다(앵커가 있을 때). 각 비대상 compound 를
+// 그 요소의 정확한 형제/앵커 문맥(sibling_ctx_for)으로 평가하므로, :has()/:nth-child 등
+// 앵커가 필요한 의사류가 비대상(결합자 왼쪽) 위치에서도 정확하다. 예전 ElementData 근사
+// 경로는 비대상 compound 에 None/근사 sib 를 넘겨 :has() 가 무조건 매칭됐다(편법 과다매칭).
+// subject(가장 오른쪽 compound)는 호출 전에 이미 매칭된 상태로 들어온다.
+fn matches_complex_anchored(
+    dom: &Dom,
+    subject_id: NodeId,
+    parts: &[(crate::css::Combinator, crate::css::SimpleSelector)],
+) -> bool {
+    use crate::css::Combinator;
+    let is_elem = |n: NodeId| matches!(dom.get(n).node_type, NodeType::Element(_));
+    let parent_elem = |n: NodeId| dom.get(n).parent.filter(|&p| is_elem(p));
+    let prev_elem_sib = |n: NodeId| -> Option<NodeId> {
+        let parent = dom.get(n).parent?;
+        let sibs: Vec<NodeId> =
+            dom.get(parent).children.iter().copied().filter(|&c| is_elem(c)).collect();
+        let k = sibs.iter().position(|&c| c == n)?;
+        k.checked_sub(1).map(|j| sibs[j])
+    };
+    let compound_at = |node: NodeId, compound: &crate::css::SimpleSelector| -> bool {
+        match &dom.get(node).node_type {
+            NodeType::Element(e) => {
+                // 구조/관계 의사류(:has()/:nth-*/:is 등)가 있을 때만 형제 문맥을 만든다
+                // (sibling_ctx_for 는 부모 자식 스캔이라 비싸다) — 없으면 빠른 경로.
+                if compound.pseudos.is_empty() {
+                    matches_compound(e, compound, None)
+                } else {
+                    let sib = sibling_ctx_for(dom, node);
+                    matches_compound(e, compound, Some(&sib))
+                }
+            }
+            _ => false,
+        }
+    };
+    let mut cur = subject_id;
+    for i in (1..parts.len()).rev() {
+        let comb = parts[i].0;
+        let part = &parts[i - 1].1;
+        match comb {
+            Combinator::Child => {
+                let Some(p) = parent_elem(cur) else { return false };
+                if !compound_at(p, part) {
+                    return false;
+                }
+                cur = p;
+            }
+            Combinator::Descendant => {
+                let mut a = parent_elem(cur);
+                let mut found = None;
+                while let Some(p) = a {
+                    if compound_at(p, part) {
+                        found = Some(p);
+                        break;
+                    }
+                    a = parent_elem(p);
+                }
+                let Some(p) = found else { return false };
+                cur = p;
+            }
+            Combinator::NextSibling => {
+                let Some(ps) = prev_elem_sib(cur) else { return false };
+                if !compound_at(ps, part) {
+                    return false;
+                }
+                cur = ps;
+            }
+            Combinator::LaterSibling => {
+                let mut s = prev_elem_sib(cur);
+                let mut found = None;
+                while let Some(ps) = s {
+                    if compound_at(ps, part) {
+                        found = Some(ps);
+                        break;
+                    }
+                    s = prev_elem_sib(ps);
+                }
+                let Some(p) = found else { return false };
+                cur = p;
+            }
+        }
+    }
+    true
+}
+
 // ancestors: 루트→부모 순. 결합자 체인을 대상부터 왼쪽으로 걸어 매칭.
 // anc_pos: ancestors 와 병렬(같은 길이). 조상의 구조적 의사 클래스 평가용.
 fn matches(
@@ -218,6 +303,12 @@ fn matches(
             if !matches_compound(elem, subject, Some(sib)) {
                 return false;
             }
+            // 앵커(DOM+대상 NodeId)가 있으면 결합자 체인을 DOM 으로 정확히 걷는다 —
+            // 비대상 compound 의 :has()/구조 의사류도 그 요소 문맥으로 평가한다.
+            if let Some((dom, subject_id)) = sib.anchor {
+                return matches_complex_anchored(dom, subject_id, parts);
+            }
+            // 앵커 없으면(조상 근사 문맥 등) 기존 ElementData 근사 경로.
             // 현재 요소 기준 조상/선행형제를 유지하며 왼쪽으로 이동
             let mut cur_anc: &[&ElementData] = ancestors;
             let mut cur_pos: &[NodePos] = anc_pos;
