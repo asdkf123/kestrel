@@ -1493,7 +1493,50 @@ impl Parser {
     }
 
     fn parse_identifier(&mut self) -> String {
-        self.consume_while(valid_identifier_char)
+        // CSS 식별자: ident 문자 + 이스케이프(§4.3.7). \HH (1-6 hex, 뒤 공백 1개) 는
+        // 코드 포인트, \X 는 리터럴 X. 예전엔 consume_while 만 해서 #foo\.bar 가
+        // "foo" 에서 끊겨 querySelector('#'+CSS.escape(id)) 가 통째로 깨졌다.
+        let mut out = String::new();
+        while let Some(c) = self.peek() {
+            if c == '\\' {
+                self.consume_char(); // 백슬래시
+                match self.peek() {
+                    Some(h) if h.is_ascii_hexdigit() => {
+                        let mut hex = String::new();
+                        while hex.len() < 6 {
+                            match self.peek() {
+                                Some(hc) if hc.is_ascii_hexdigit() => {
+                                    hex.push(hc);
+                                    self.consume_char();
+                                }
+                                _ => break,
+                            }
+                        }
+                        // 16진 이스케이프 뒤 공백 1개는 구분자로 소비.
+                        if matches!(self.peek(), Some(' ') | Some('\t') | Some('\n') | Some('\r')) {
+                            self.consume_char();
+                        }
+                        let cp = u32::from_str_radix(&hex, 16)
+                            .ok()
+                            .filter(|&n| n != 0)
+                            .and_then(char::from_u32)
+                            .unwrap_or('\u{FFFD}');
+                        out.push(cp);
+                    }
+                    Some(other) => {
+                        out.push(other);
+                        self.consume_char();
+                    }
+                    None => out.push('\u{FFFD}'), // 끝의 백슬래시
+                }
+            } else if valid_identifier_char(c) {
+                out.push(c);
+                self.consume_char();
+            } else {
+                break;
+            }
+        }
+        out
     }
 
     fn peek(&self) -> Option<char> {

@@ -5792,6 +5792,39 @@ impl Interp {
                 let Some(Value::ClassList(id)) = recv else { return Ok(Value::Str(String::new())) };
                 Ok(Value::Str(self.class_attr(id)))
             }
+            // CSS.escape(ident) — §CSSOM "serialize an identifier". 문자열을 유효한 CSS
+            // 식별자로 이스케이프한다(querySelector('#'+CSS.escape(id)) 등에 쓴다).
+            Native::CssEscape => {
+                let s = self.to_string_value(&args.first().cloned().unwrap_or(Value::Undefined))?;
+                let chars: Vec<char> = s.chars().collect();
+                let mut out = String::new();
+                for (i, &c) in chars.iter().enumerate() {
+                    let cp = c as u32;
+                    if cp == 0 {
+                        out.push('\u{FFFD}'); // NULL → U+FFFD
+                    } else if (0x1..=0x1f).contains(&cp)
+                        || cp == 0x7f
+                        || (i == 0 && c.is_ascii_digit())
+                        || (i == 1 && c.is_ascii_digit() && chars[0] == '-')
+                    {
+                        // 제어문자 / 선두 숫자 / '-' 뒤 숫자 → \{hex} + 공백
+                        out.push_str(&format!("\\{:x} ", cp));
+                    } else if i == 0 && c == '-' && chars.len() == 1 {
+                        out.push_str("\\-"); // 단독 '-'
+                    } else if cp >= 0x80
+                        || c == '-'
+                        || c == '_'
+                        || c.is_ascii_digit()
+                        || c.is_ascii_alphabetic()
+                    {
+                        out.push(c); // 그대로
+                    } else {
+                        out.push('\\'); // 그 외 → \{char}
+                        out.push(c);
+                    }
+                }
+                Ok(Value::Str(out))
+            }
             // DOMTokenList.forEach(cb, thisArg) — cb(value, index, list)(§7.1 iterable).
             Native::ClassForEach => {
                 let Some(Value::ClassList(id)) = recv.clone() else { return Ok(Value::Undefined) };

@@ -827,7 +827,7 @@ impl Interp {
         // CSS.supports — CSS 의 @supports 와 같은 평가기를 쓴다 (한 엔진 두 답 금지)
         let mut css_ns = ObjMap::new();
         css_ns.insert("supports".to_string(), Value::Native(Native::CssSupports));
-        css_ns.insert("escape".to_string(), Value::Native(Native::Noop));
+        css_ns.insert("escape".to_string(), Value::Native(Native::CssEscape));
         env_declare(&global, "CSS", Value::Obj(Rc::new(RefCell::new(css_ns))));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();

@@ -159,6 +159,7 @@ pub enum Native {
     ClassValue,
     ClassForEach,
     ClassEntries,
+    CssEscape,
     RegExpCtor,
     RegExpEscape,
     RegexTest,
@@ -737,6 +738,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         SymbolCtor => ("Symbol", 0),
         RegExpCtor => ("RegExp", 2),
         RegExpEscape => ("escape", 1),
+        CssEscape => ("escape", 1),
         RegexExec => ("exec", 1),
         RegexTest => ("test", 1),
         // RegExp.prototype[@@match/@@replace/@@split/@@search/@@matchAll] (§22.2.6).
