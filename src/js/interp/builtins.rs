@@ -1880,6 +1880,35 @@ impl Interp {
         if !is_callable(&f) {
             return Err(self.throw_error("TypeError", "callback is not a function"));
         }
+        // findLast/findLastIndex(§23.1.3.11/.12): len-1 부터 뒤로 매 인덱스 [[Get]](구멍도
+        // undefined 방문)+predicate, 첫 truthy 에서 값/인덱스 반환. 초거대 length 도 최고
+        // 인덱스부터라 predicate 가 일찍 true 면 즉시 끝난다(maximum-index). live 순회라
+        // 콜백 중 배열 변형을 관측한다.
+        if matches!(op, ArrOp::FindLast | ArrOp::FindLastIndex) {
+            let this_arg = args.get(1).cloned();
+            let mut i: i64 = len_f as i64 - 1;
+            while i >= 0 {
+                let item = self.member_get(o, &(i as usize).to_string())?;
+                let r = self.call_value(
+                    f.clone(),
+                    this_arg.clone(),
+                    vec![item.clone(), Value::Num(i as f64), o.clone()],
+                )?;
+                if to_bool(&r) {
+                    return Ok(if matches!(op, ArrOp::FindLastIndex) {
+                        Value::Num(i as f64)
+                    } else {
+                        item
+                    });
+                }
+                i -= 1;
+            }
+            return Ok(if matches!(op, ArrOp::FindLastIndex) {
+                Value::Num(-1.0)
+            } else {
+                Value::Undefined
+            });
+        }
         // 초거대 length(> 2^32-1): 0..len 순회는 불가능하므로 존재하는 own 정수 인덱스만
         // 오름차순으로 방문한다(HasProperty 로 걸러지는 부재 인덱스는 어차피 콜백 미호출이라
         // 관측 동치). 결과 배열을 재료화해야 하는 map/filter/flatMap 과, 구멍도 Get 으로
@@ -7430,6 +7459,8 @@ impl Interp {
                         | ArrOp::Every
                         | ArrOp::Find
                         | ArrOp::FindIndex
+                        | ArrOp::FindLast
+                        | ArrOp::FindLastIndex
                         | ArrOp::ForEach
                         | ArrOp::Map
                         | ArrOp::Filter

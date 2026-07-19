@@ -3263,6 +3263,17 @@ fn more_array_string_methods() {
         ),
         0.0
     );
+    // findLast/findLastIndex: 콜백 중 배열 변형을 live 로 관측(범위는 시작에 고정, 값은 live).
+    assert_eq!(
+        run_str("var a=['Shoes','Car','Bike']; var s=[]; a.findLast(function(v){ if(s.length===0)a.splice(1,1); s.push(v); }); s.join(',')"),
+        "Bike,Bike,Shoes"
+    );
+    assert_eq!(run_num("[5,1,8,2].findLastIndex(function(x){return x<5;})"), 3.0);
+    // findLast: 초거대 length 도 최고 인덱스부터라 즉시 true 면 1회만.
+    assert_eq!(
+        run_num("var c=[]; Array.prototype.findLast.call({length:Number.MAX_VALUE},function(_,i){c.push(i);return true;}); c.length"),
+        1.0
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);
