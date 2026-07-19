@@ -3274,6 +3274,11 @@ fn more_array_string_methods() {
         run_num("var c=[]; Array.prototype.findLast.call({length:Number.MAX_VALUE},function(_,i){c.push(i);return true;}); c.length"),
         1.0
     );
+    // fill 은 ToObject(this)(임시 복사 아님)를 반환한다(§23.1.3.6): 밀집 배열은 그 배열,
+    // generic 객체는 수신 객체, 원시는 래퍼.
+    assert!(run_bool("var a=[1,2,3]; a.fill(0)===a"));
+    assert!(run_bool("var o={length:2,0:1,1:2}; Array.prototype.fill.call(o,9)===o"));
+    assert!(run_bool("Array.prototype.fill.call(true) instanceof Boolean"));
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

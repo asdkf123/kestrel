@@ -8164,7 +8164,9 @@ impl Interp {
                                 }
                             }
                         }
-                        Value::Arr(a.clone())
+                        // §23.1.3.6 은 O(=ToObject(this))를 돌려준다 — 임시 복사 a 가 아니다.
+                        // 밀집 배열이면 cb_arr 이 곧 그 배열, generic/원시 래퍼면 수신 객체.
+                        cb_arr.clone()
                     }
                     // arr.with(index, value) (§23.1.3.39): 원본 불변, 새 배열 반환.
                     // 범위 밖 인덱스면 RangeError.
