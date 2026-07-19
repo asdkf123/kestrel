@@ -3363,6 +3363,10 @@ fn more_array_string_methods() {
     assert!(run_bool(
         "var a=[1,2,3]; Object.defineProperty(a,'1',{set:function(v){this._v=v;},configurable:true}); Reflect.set(a,'1',9); a._v===9"
     ));
+    // 직접 대입 arr[i]=v 도 인덱스 접근자 setter 를 호출한다(§10.4.2 [[Set]]).
+    assert!(run_bool(
+        "var a=[1,2,3]; Object.defineProperty(a,'1',{set:function(v){this._w=v;},configurable:true}); a[1]=7; a._w===7"
+    ));
     // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
     assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
     // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.

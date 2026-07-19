@@ -9066,6 +9066,28 @@ impl Interp {
                             if is_new && !a.length_writable() {
                                 return Ok(());
                             }
+                            // 기존 인덱스에 defineProperty 접근자가 심겨 있으면 데이터로
+                            // 덮어쓰지 말고 setter 를 호출한다(§10.4.2 ordinary [[Set]]). setter
+                            // 없는 접근자면 sloppy 대입은 조용히 무시(§10.1.9.2).
+                            if !is_new {
+                                let acc = {
+                                    let b = a.borrow();
+                                    match b.get(i) {
+                                        Some(Value::Accessor(ap)) => Some(ap.clone()),
+                                        _ => None,
+                                    }
+                                };
+                                if let Some(acc) = acc {
+                                    if let Some(setter) = &acc.set {
+                                        self.call_value(
+                                            setter.clone(),
+                                            Some(av.clone()),
+                                            vec![value],
+                                        )?;
+                                    }
+                                    return Ok(());
+                                }
+                            }
                             // non-writable 로 정의된 인덱스 덮어쓰기 불가(§10.4.2, sloppy 무시).
                             if matches!(a.index_attr(i), Some(at) if at & ATTR_WRITABLE == 0) {
                                 return Ok(());
