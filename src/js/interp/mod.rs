@@ -5785,7 +5785,8 @@ impl Interp {
         if !matches!(flag, Value::Undefined) {
             return Ok(to_bool(&flag));
         }
-        Ok(matches!(v, Value::Arr(_)))
+        // §23.1.3.1.1 step 3 = IsArray(O) — Proxy-of-배열도 spreadable(revoked→TypeError).
+        self.is_array(v)
     }
 
     pub(super) fn has_property(&self, obj: &Value, key: &str) -> bool {
