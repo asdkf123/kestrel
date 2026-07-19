@@ -8505,6 +8505,15 @@ impl Interp {
                         } else {
                             self.to_integer_or_infinity(&args[1])?.max(0.0).min(len0 - start)
                         };
+                        // §23.1.3.31 step 24: 끝에 Set(O,"length",…). 길이가 바뀌는데 배열
+                        // length 가 non-writable 이면 그 Set 이 실패해 TypeError(밀집 배열).
+                        let insert_count = args.len().saturating_sub(2) as f64;
+                        if (len0 - del_f + insert_count) != len0
+                            && matches!(&recv, Some(Value::Arr(_)))
+                            && !a.length_writable()
+                        {
+                            return Err(self.redefine_err());
+                        }
                         let removed: Vec<Value> = {
                             let mut arr = a.borrow_mut();
                             let start = (start as usize).min(arr.len());
