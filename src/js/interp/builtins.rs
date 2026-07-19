@@ -8263,7 +8263,9 @@ impl Interp {
                     }
                     ArrOp::Reverse => {
                         a.borrow_mut().reverse();
-                        Value::Arr(a.clone())
+                        // §23.1.3.26 은 O(=ToObject(this))를 돌려준다 — 임시 복사 a 가 아니다.
+                        // 밀집 배열이면 cb_arr 이 곧 그 배열, 원시 래퍼면 그 래퍼 객체.
+                        cb_arr.clone()
                     }
                     // keys/values 는 **이터레이터**다 (배열이 아니다 — 표준).
                     // 배열을 주면 .next() 가 없어서 이터레이터 프로토콜을 직접 쓰는
@@ -9418,13 +9420,11 @@ impl Interp {
                 if self.is_constructor(&this) && !matches!(this, Value::Native(Native::ArrayCtor)) {
                     let len = args.len();
                     let a = self.construct(this, vec![Value::Num(len as f64)])?;
+                    // §23.1.2.3 step 8.c: CreateDataPropertyOrThrow — [[Set]] 이 아니라
+                    // [[DefineOwnProperty]]. 대상 프로토타입의 setter/인덱스 접근자를 타지
+                    // 않고 own 데이터 프로퍼티를 만들며, 실패(거부)는 TypeError 로 전파한다.
                     for (k, item) in args.into_iter().enumerate() {
-                        if !self.set_own_property(&a, k.to_string(), item) {
-                            return Err(self.throw_error(
-                                "TypeError",
-                                format!("Cannot create property '{}' on Array.of result", k),
-                            ));
-                        }
+                        self.create_data_property_or_throw(&a, k, item)?;
                     }
                     self.ordinary_set(&a, "length", Value::Num(len as f64), &a)?;
                     Ok(a)
