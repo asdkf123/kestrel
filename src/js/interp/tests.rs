@@ -1049,6 +1049,19 @@ fn regex_and_string_methods() {
     assert_eq!(run_num("'a1b2'.match(/\\d/g).length"), 2.0);
     assert_eq!(run_num("'hello world'.search(/wor/)"), 6.0);
     assert_eq!(run_num("'a,b;c'.split(/[,;]/).length"), 3.0);
+    // matchAll: 정상 순회
+    assert_eq!(run_str("var r=[]; for(var m of 'a1b2'.matchAll(/\\d/g)) r.push(m[0]); r.join('')"), "12");
+    // matchAll 은 regexp[Symbol.matchAll] 로 위임 — RegExp.prototype override 존중
+    assert_eq!(
+        run_str(
+            "var o=RegExp.prototype[Symbol.matchAll]; \
+             RegExp.prototype[Symbol.matchAll]=function(s){return 'OV:'+s;}; \
+             var r='xy'.matchAll(/./g); RegExp.prototype[Symbol.matchAll]=o; r"
+        ),
+        "OV:xy"
+    );
+    // 비전역 정규식 matchAll → TypeError
+    assert!(run_bool("var t=false; try{'a'.matchAll(/./);}catch(e){t=e instanceof TypeError;} t"));
     // 문자열 유틸
     assert_eq!(run_str("'5'.padStart(3,'0')"), "005");
     assert_eq!(run_str("'ab'.repeat(3)"), "ababab");

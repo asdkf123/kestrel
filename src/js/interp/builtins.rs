@@ -7656,32 +7656,51 @@ impl Interp {
                         );
                     }
                     StrOp::MatchAll => {
-                        // §22.1.3.14: 정규식이고 비전역이면 TypeError. 정규식이면 그 @@matchAll
-                        // 로, 아니면 RegExpCreate(arg,"g") 후 @@matchAll → 실제 이터레이터.
+                        // §22.1.3.14 String.prototype.matchAll(regexp): regexp[@@matchAll] 로
+                        // 위임한다(GetMethod+Call) — 사용자 override 를 존중하고, IsRegExp 면
+                        // flags 를 Get 해 'g' 를 검사한다(하드코딩 RegexSym 직행이 아니라).
                         let arg = args.first().cloned().unwrap_or(Value::Undefined);
-                        if let Some((_, flags)) = regex_src_flags(&arg) {
-                            if !flags.contains('g') {
-                                return Err(self.throw_error(
-                                    "TypeError",
-                                    "String.prototype.matchAll called with a non-global RegExp argument",
-                                ));
+                        if !matches!(arg, Value::Undefined | Value::Null) {
+                            // 2.b IsRegExp 면 flags(Get, RequireObjectCoercible) 가 'g' 포함해야.
+                            if self.is_regexp_p(&arg)? {
+                                let flags = self.member_get(&arg, "flags")?;
+                                if matches!(flags, Value::Undefined | Value::Null) {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "RegExp flags is undefined or null",
+                                    ));
+                                }
+                                let flags_str = self.to_string_value(&flags)?;
+                                if !flags_str.contains('g') {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "String.prototype.matchAll called with a non-global RegExp argument",
+                                    ));
+                                }
                             }
-                            return self.call_native(
-                                Native::RegexSym(StrOp::MatchAll),
-                                Some(arg),
-                                vec![Value::Str(s.clone())],
-                            );
+                            // 2.c-d GetMethod(regexp, @@matchAll): 있으면 호출해 그 결과 반환.
+                            let matcher = self.member_get(&arg, "\u{0}@@matchAll")?;
+                            if !matches!(matcher, Value::Undefined | Value::Null) {
+                                if !is_callable(&matcher) {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Symbol.matchAll method is not callable",
+                                    ));
+                                }
+                                return self.call_value(matcher, Some(arg), vec![Value::Str(s.clone())]);
+                            }
                         }
-                        let pat = match args.first() {
-                            None | Some(Value::Undefined) => String::new(),
-                            Some(v) => self.to_string_value(v)?,
+                        // 3-5: RegExpCreate(regexp,"g") 후 그 @@matchAll 로 Invoke.
+                        let pat = match &arg {
+                            Value::Undefined | Value::Null => String::new(),
+                            v => match regex_src_flags(v) {
+                                Some((src, _)) => src,
+                                None => self.to_string_value(v)?,
+                            },
                         };
                         let rx = make_regex_obj(&pat, "g");
-                        return self.call_native(
-                            Native::RegexSym(StrOp::MatchAll),
-                            Some(rx),
-                            vec![Value::Str(s.clone())],
-                        );
+                        let matcher = self.member_get(&rx, "\u{0}@@matchAll")?;
+                        return self.call_value(matcher, Some(rx), vec![Value::Str(s.clone())]);
                     }
                     StrOp::Slice => {
                         // §22.1.3.20: start/end=ToIntegerOrInfinity(음수는 끝에서, ±∞ 처리).

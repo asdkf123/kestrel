@@ -6571,7 +6571,15 @@ impl Interp {
                         "exec" if is_regex_obj(map) => Ok(Value::Native(Native::RegexExec)),
                         // Symbol.match/replace/split/search/matchAll — 정규식 인스턴스엔
                         // __proto__ 링크가 없으므로 프로토타입 메서드를 여기서 직접 준다.
+                        // 단 사용자가 RegExp.prototype[@@…] 를 재정의했으면 그것을 우선한다
+                        // (기본은 아래 RegexSym 로 계산) — 예전엔 하드코딩이라 String.prototype.
+                        // matchAll/match/replace 의 위임이 override 를 무시했다.
                         _ if is_regex_obj(map) && key.starts_with("\u{0}@@") => {
+                            if let Value::Obj(proto) = &self.regexp_proto {
+                                if let Some(ov) = proto.borrow().get(key).cloned() {
+                                    return Ok(ov);
+                                }
+                            }
                             let op = match key {
                                 "\u{0}@@match" => Some(natives::StrOp::Match),
                                 "\u{0}@@matchAll" => Some(natives::StrOp::MatchAll),
