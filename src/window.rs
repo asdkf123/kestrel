@@ -44,8 +44,16 @@ pub fn sync_style_sheets(
     dom: &crate::dom::Dom,
     sheets: &mut Vec<crate::css::SheetEntry>,
     vw: f32,
+    base: Option<&str>,
 ) -> bool {
     let mut changed = false;
+    // 인라인 <style> 의 @import 규칙(layer/supports/media 조건 포함)을 받아
+    // 본문 규칙 앞에 병합한다. @import 없는 시트는 즉시 반환되어 비용 0.
+    let build = |text: &str| -> crate::css::Stylesheet {
+        let mut s = crate::resolve_style_imports(text, base, vw);
+        s.merge(crate::css::parse_viewport(text.to_string(), vw));
+        s
+    };
     // 문서에서 사라진 <style> 시트 제거
     let alive = |id: crate::dom::NodeId| -> bool {
         (id == dom.root || dom.ancestors(id).contains(&dom.root))
@@ -65,13 +73,13 @@ pub fn sync_style_sheets(
         match sheets.iter_mut().find(|e| e.owner == Some(id) && e.href.is_none()) {
             Some(e) => {
                 if e.text != text {
-                    e.sheet = crate::css::parse_viewport(text.clone(), vw);
+                    e.sheet = build(&text);
                     e.text = text;
                     changed = true;
                 }
             }
             None => {
-                let sheet = crate::css::parse_viewport(text.clone(), vw);
+                let sheet = build(&text);
                 sheets.push(crate::css::SheetEntry {
                     href: None,
                     owner: Some(id),
@@ -117,7 +125,7 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
     // 이라, style 을 주입하고 바로 getComputedStyle 을 읽는 코드(CSS-in-JS 가 정확히
     // 이렇게 한다)가 옛 값을 받았다 — 조용히 틀린 값.
     let sheets = unsafe { &mut *ctx.sheets };
-    let dom_changed = sync_style_sheets(dom, sheets, ctx.vw);
+    let dom_changed = sync_style_sheets(dom, sheets, ctx.vw, js.base_url());
     if dom_changed || js.css_epoch != js.css_applied_epoch {
         let sheet = unsafe { &mut *ctx.sheet };
         let base = unsafe { &*ctx.css_base };

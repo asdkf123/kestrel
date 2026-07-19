@@ -602,8 +602,8 @@ fn load_stylesheet_body(
         .map(|(_, v)| v.clone());
     let (text, _) = encoding::decode(&r.body, ctype.as_deref());
     let this_base = url::Url::parse(css_url).ok();
-    for (imp, media) in extract_imports(&text) {
-        if !media.is_empty() && !css::media_matches(&media, page_vw) {
+    for (imp, cond) in extract_imports(&text) {
+        if !import_condition_matches(&cond, page_vw) {
             continue;
         }
         if let Some(b) = &this_base {
@@ -620,6 +620,44 @@ fn load_stylesheet_body(
         absolutize_css_urls(&mut parsed, b);
     }
     sheet.merge(parsed);
+}
+
+// <style> 본문에 있는 @import 를 조건(layer/supports/media) 판정 후 받아서
+// **하나의 시트로** 합쳐 돌려준다. 인라인 시트가 동적으로 삽입/변경될 때
+// (sync_style_sheets) 쓰인다. data: URL 은 그 자리에서 디코드하고, 상대/절대
+// http(s) URL 은 base 기준으로 풀어 동기 fetch 한다. @import 는 규칙보다 앞서므로
+// 반환 시트를 호출측이 본문 규칙보다 먼저 병합해야 캐스케이드 순서가 맞다.
+pub(crate) fn resolve_style_imports(
+    text: &str,
+    base: Option<&str>,
+    page_vw: f32,
+) -> css::Stylesheet {
+    let mut out = css::parse_viewport(String::new(), page_vw);
+    let imports = extract_imports(text);
+    if imports.is_empty() {
+        return out;
+    }
+    let base_url = base.and_then(|b| url::Url::parse(b).ok());
+    let mut seen = std::collections::HashSet::new();
+    for (imp, cond) in imports {
+        if !import_condition_matches(&cond, page_vw) {
+            continue;
+        }
+        if dataurl::is_data_url(&imp) {
+            if let Some(bytes) = dataurl::decode(&imp) {
+                let (css_text, _) = encoding::decode(&bytes, Some("text/css"));
+                out.merge(css::parse_viewport(css_text, page_vw));
+            }
+            continue;
+        }
+        // 상대 URL 은 문서 base 기준으로 푼다.
+        if let Some(b) = &base_url {
+            if let Some(u) = b.join(&imp) {
+                load_stylesheet(&u.as_string(), page_vw, &mut out, 1, &mut seen);
+            }
+        }
+    }
+    out
 }
 
 // 문서 텍스트에 나오는 코드포인트 집합 (@font-face 의 unicode-range 판정용).
@@ -707,6 +745,68 @@ fn rewrite_urls_in_text(text: &str, abs: &dyn Fn(&str) -> String) -> String {
 
 // CSS 텍스트에서 @import 규칙 추출 → (url, 미디어조건) 목록.
 // `@import url("x") media;` / `@import "x" media;` 모두 지원.
+// @import 의 조건(§css-cascade-5 #import-conditions): `layer(name)? supports(...)?
+// media-query?`. layer 는 매칭에 영향 없음, supports() 는 css::supports_condition 으로,
+// 남은 media 는 media_matches 로 평가한다. 모두 통과해야 임포트한다.
+fn import_condition_matches(cond: &str, page_vw: f32) -> bool {
+    let mut c = cond.trim();
+    // layer(name) / layer — 벗겨낸다(매칭 무관, 캐스케이드 순서는 별개).
+    if let Some(rest) = c.strip_prefix("layer(") {
+        match rest.find(')') {
+            Some(end) => c = rest[end + 1..].trim(),
+            None => return false, // 닫히지 않은 layer( → 무효
+        }
+    } else if let Some(rest) = c.strip_prefix("layer") {
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            c = rest.trim_start();
+        }
+    }
+    // supports(condition) — 괄호 균형으로 내부를 뽑아 평가.
+    if let Some(rest) = c.strip_prefix("supports(") {
+        let mut depth = 1usize;
+        let mut endi = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        endi = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(ei) = endi else { return false };
+        // supports() 안은 <supports-condition> 또는 bare <declaration>. supports_condition
+        // 은 괄호로 감싼 선언을 기대하므로, 괄호/not 으로 시작하지 않으면 bare 선언으로
+        // 보고 감싼다: supports(display:block) → "(display:block)".
+        let inner = rest[..ei].trim();
+        let low = inner.to_ascii_lowercase();
+        let target = if inner.starts_with('(')
+            || low.starts_with("not ")
+            || low.starts_with("not(")
+        {
+            inner.to_string()
+        } else {
+            format!("({})", inner)
+        };
+        if !crate::css::supports_condition(&target) {
+            return false;
+        }
+        c = rest[ei + 1..].trim();
+    }
+    // 문법: layer? supports()? <media-query-list>?  — supports() 는 반드시 media 앞.
+    // 여기까지 온 뒤에도 supports( 가 남아 있으면 media 자리에 supports 가 온 것 →
+    // 순서 위반 → 조건 전체가 무효 → @import 를 받지 않는다.
+    if c.to_ascii_lowercase().contains("supports(") {
+        return false;
+    }
+    // 남은 것은 media query.
+    c.is_empty() || crate::css::media_matches(c, page_vw)
+}
+
 fn extract_imports(css: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut rest = css;
@@ -729,8 +829,20 @@ fn extract_imports(css: &str) -> Vec<(String, String)> {
 fn parse_import_stmt(stmt: &str) -> Option<(String, String)> {
     let s = stmt.trim();
     let (url, media) = if let Some(inner) = s.strip_prefix("url(") {
-        let close = inner.find(')')?;
-        (inner[..close].trim(), inner[close + 1..].trim())
+        let inner = inner.trim_start();
+        // url("...") / url('...') — 따옴표 안의 URL 은 ) 를 포함할 수 있다(데이터/SVG
+        // URL 등). 먼저 닫는 따옴표를 찾고 그 뒤의 ) 로 url() 를 닫는다. 예전엔 첫 ) 로
+        // 잘라서 rgb() 나 () 를 담은 데이터 URL 이 통째로 망가졌다.
+        if let Some(rest) = inner.strip_prefix(['"', '\'']) {
+            let quote = inner.as_bytes()[0] as char;
+            let close = rest.find(quote)?;
+            let after = rest[close + 1..].trim_start();
+            let media = after.strip_prefix(')')?.trim();
+            (&rest[..close], media)
+        } else {
+            let close = inner.find(')')?;
+            (inner[..close].trim(), inner[close + 1..].trim())
+        }
     } else {
         // "x" 또는 'x' 로 시작
         let q = s.chars().next()?;
@@ -1044,7 +1156,18 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
             }
             CssSrc::Style(node) => {
                 let text = dom.text_content(*node);
-                let one = css::parse_viewport(text.clone(), page_vw);
+                // 인라인 @import 도 처리한다(§css-cascade): 조건 평가 후 fetch 해서
+                // 규칙을 앞에 병합한다. 예전엔 <link> 만 @import 를 따랐다.
+                let mut one = css::parse_viewport(String::new(), page_vw);
+                let mut seen = std::collections::HashSet::new();
+                for (imp, cond) in extract_imports(&text) {
+                    if import_condition_matches(&cond, page_vw) {
+                        if let Some(u) = base.join(&imp) {
+                            load_stylesheet(&u.as_string(), page_vw, &mut one, 1, &mut seen);
+                        }
+                    }
+                }
+                one.merge(css::parse_viewport(text.clone(), page_vw));
                 sheets.push(css::SheetEntry {
                     href: None,
                     owner: Some(*node),
@@ -1216,7 +1339,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
     // 스크립트가 <style> 을 넣었거나 지웠거나 내용을 바꿨으면 시트 목록을 갱신하고
     // 병합 시트를 다시 만든다 (한 곳에서만 — 예전엔 '새로 생긴 것만' 추가로 얹어서
     // 지워진 <style> 이 계속 적용됐다).
-    window::sync_style_sheets(&dom, &mut sheets, page_vw);
+    window::sync_style_sheets(&dom, &mut sheets, page_vw, Some(&base.as_string()));
     sheet = css_base.clone();
     for e in &sheets {
         if !e.disabled {
@@ -1640,7 +1763,7 @@ fn dump_glyphs(text: &str, path: &str) {
 
 #[cfg(test)]
 mod import_tests {
-    use super::{extract_imports, parse_import_stmt};
+    use super::{extract_imports, import_condition_matches, parse_import_stmt, resolve_style_imports};
 
     #[test]
     fn extracts_url_and_bare_imports_with_media() {
@@ -1663,5 +1786,42 @@ p { color: red; }"#;
         assert_eq!(parse_import_stmt("url(b.css) screen"), Some(("b.css".into(), "screen".into())));
         assert_eq!(parse_import_stmt("'c.css'"), Some(("c.css".into(), "".into())));
         assert_eq!(parse_import_stmt("nonsense"), None);
+    }
+
+    #[test]
+    fn import_condition_grammar() {
+        let vw = 800.0;
+        // 조건 없음 → 항상 적용
+        assert!(import_condition_matches("", vw));
+        // layer 프리픽스는 벗겨내고 나머지를 평가 (매칭 무관)
+        assert!(import_condition_matches("layer", vw));
+        assert!(import_condition_matches("layer(A.B)", vw));
+        // supports(): 지원되는 선언 → 참, 미지원 → 거짓
+        assert!(import_condition_matches("supports(display: block)", vw));
+        assert!(import_condition_matches("supports((display:block) and (display:flex))", vw));
+        assert!(!import_condition_matches("supports((display:block) and (foo:bar))", vw));
+        assert!(import_condition_matches("supports(display: block !important)", vw));
+        assert!(import_condition_matches("supports(selector(a))", vw));
+        assert!(import_condition_matches("supports(font-format(woff))", vw));
+        assert!(!import_condition_matches("supports(font-format(invalid))", vw));
+        // supports 다음에 media 는 허용
+        assert!(import_condition_matches("supports(display:block) (width >= 0px)", vw));
+        // 문법 위반: media 뒤에 supports() → 조건 전체 무효(거짓)
+        assert!(!import_condition_matches("(width >= 0px) supports(display:block)", vw));
+        assert!(!import_condition_matches("(width >= 0px) supports(foo:bar)", vw));
+    }
+
+    #[test]
+    fn resolve_style_imports_data_url() {
+        // 인라인 <style> 의 @import data: URL 을 조건 판정 후 받아 병합한다.
+        let vw = 800.0;
+        // 따옴표 data URL 은 값에 괄호(rgb(...))를 담아도 온전히 파싱돼야 한다.
+        let text = "@import url(\"data:text/css,.t{color:rgb(0,128,0)}\") supports(display:block);";
+        let s = resolve_style_imports(text, None, vw);
+        assert!(!s.rules.is_empty(), "지원 조건이면 @import 규칙이 병합돼야 한다");
+        // 조건 불충족이면 받지 않는다
+        let text2 = "@import url(\"data:text/css,.t{color:rgb(0,128,0)}\") supports(foo:bar);";
+        let s2 = resolve_style_imports(text2, None, vw);
+        assert!(s2.rules.is_empty(), "미지원 조건이면 @import 를 받지 않는다");
     }
 }

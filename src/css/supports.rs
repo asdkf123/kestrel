@@ -31,8 +31,55 @@ pub(crate) fn supports_condition(cond: &str) -> bool {
         }
         return supports_condition(inner);
     }
-    false // selector(...) / font-tech(...) 등 함수형 조건 미지원
+    // selector() / font-tech() / font-format() — 함수형 조건 (CSS Conditional §3)
+    if let Some(r) = functional_supports(c) {
+        return r;
+    }
+    false
 }
+
+// @supports 의 함수형 조건. 처리 대상이면 Some(결과), 아니면 None(비함수형).
+fn functional_supports(c: &str) -> Option<bool> {
+    let lower = c.to_ascii_lowercase();
+    // selector(<complex-selector>): 셀렉터가 파싱되면(엔진이 매칭하는 표준 문법) 지원.
+    if let Some(rest) = lower.strip_prefix("selector(") {
+        if !rest.ends_with(')') {
+            return Some(false);
+        }
+        let inner = c["selector(".len()..c.len() - 1].trim();
+        return Some(
+            crate::css::parse_selector_list(inner)
+                .map(|l| !l.is_empty())
+                .unwrap_or(false),
+        );
+    }
+    // font-tech(<font-tech>): 알려진 폰트 기술 식별자만 참.
+    if let Some(rest) = lower.strip_prefix("font-tech(") {
+        if !rest.ends_with(')') {
+            return Some(false);
+        }
+        return Some(FONT_TECHS.contains(&rest[..rest.len() - 1].trim()));
+    }
+    // font-format(<font-format>): 알려진 폰트 포맷 식별자만 참.
+    if let Some(rest) = lower.strip_prefix("font-format(") {
+        if !rest.ends_with(')') {
+            return Some(false);
+        }
+        return Some(FONT_FORMATS.contains(&rest[..rest.len() - 1].trim()));
+    }
+    None
+}
+
+// CSS Fonts §11.1 <font-tech> 값. 대소문자 무시(호출측이 소문자로 넘긴다).
+const FONT_TECHS: &[&str] = &[
+    "features-opentype", "features-aat", "features-graphite",
+    "color-colrv0", "color-colrv1", "color-svg", "color-sbix", "color-cbdt",
+    "variations", "palettes", "incremental",
+];
+// CSS Fonts §11.1 <font-format> 값.
+const FONT_FORMATS: &[&str] = &[
+    "collection", "embedded-opentype", "opentype", "svg", "truetype", "woff", "woff2",
+];
 
 fn strip_not(c: &str) -> Option<&str> {
     let lower = c.to_ascii_lowercase();
@@ -201,6 +248,17 @@ fn declaration_supported(atom: &str) -> bool {
     let Some(colon) = atom.find(':') else { return false };
     let prop = atom[..colon].trim();
     let value = atom[colon + 1..].trim();
+    // 선언의 !important 플래그는 문법상 허용되며 지원 판정과 무관하다
+    // (@supports (display: block !important) 은 참). 뒤에 붙은 플래그를 떼고 값만 본다.
+    let value = {
+        let low = value.to_ascii_lowercase();
+        match low.rfind("!important") {
+            Some(idx) if value[idx + "!important".len()..].trim().is_empty() => {
+                value[..idx].trim()
+            }
+            _ => value,
+        }
+    };
     if prop.is_empty() || value.is_empty() {
         return false;
     }
@@ -355,5 +413,34 @@ mod tests {
 
         // 전역 키워드는 어디서나 유효
         assert!(supports_condition("(display: inherit)"));
+    }
+
+    #[test]
+    fn supports_important_flag_is_ignored() {
+        // @supports (prop: value !important) 은 플래그를 무시하고 값만 본다 (CSS Cond §2.1).
+        assert!(supports_condition("(display: block !important)"));
+        assert!(supports_condition("(color: red !important)"));
+        // 값 자체가 미구현이면 !important 여도 거짓
+        assert!(!supports_condition("(display: table-cell !important)"));
+    }
+
+    #[test]
+    fn supports_functional_selector_font() {
+        // selector(): 엔진이 매칭하는 표준 셀렉터는 참
+        assert!(supports_condition("selector(a)"));
+        assert!(supports_condition("selector(p a)"));
+        assert!(supports_condition("selector(p > a)"));
+        assert!(supports_condition("selector(p + a)"));
+        assert!(supports_condition("(selector(div.x))"));
+        // 파싱 실패하는 셀렉터는 거짓
+        assert!(!supports_condition("selector(!!!)"));
+        // font-tech(): 알려진 값만 참 (대소문자 무시)
+        assert!(supports_condition("font-tech(color-COLRv1)"));
+        assert!(supports_condition("font-tech(variations)"));
+        assert!(!supports_condition("font-tech(invalid)"));
+        // font-format(): 알려진 값만 참
+        assert!(supports_condition("font-format(opentype)"));
+        assert!(supports_condition("font-format(woff)"));
+        assert!(!supports_condition("font-format(invalid)"));
     }
 }

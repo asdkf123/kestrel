@@ -2051,6 +2051,10 @@ impl Interp {
         self.base_url = Some(base.to_string());
     }
 
+    pub fn base_url(&self) -> Option<&str> {
+        self.base_url.as_deref()
+    }
+
     pub fn install_location(&mut self, url: &str) {
         self.base_url = Some(url.to_string());
         let Ok(u) = crate::url::Url::parse(url) else { return };

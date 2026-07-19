@@ -16,7 +16,8 @@ impl Interp {
         let (Some(ctx), Some(dom_ptr)) = (self.layout_ctx, self.dom) else { return };
         let dom = unsafe { &*dom_ptr };
         let sheets = unsafe { &mut *ctx.sheets };
-        if crate::window::sync_style_sheets(dom, sheets, ctx.vw) {
+        let base = self.base_url().map(|s| s.to_string());
+        if crate::window::sync_style_sheets(dom, sheets, ctx.vw, base.as_deref()) {
             self.css_epoch += 1;
         }
     }
