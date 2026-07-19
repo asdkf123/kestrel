@@ -3409,8 +3409,9 @@ impl Interp {
                     ));
                 }
                 let entry = if has_get || has_set {
-                    let g = if is_callable(&get_v) { Some(get_v) } else { None };
-                    let st = if is_callable(&set_v) { Some(set_v) } else { None };
+                    // get_v/set_v 는 아래 배열 인덱스 재정의 검증에서도 쓰므로 clone.
+                    let g = if is_callable(&get_v) { Some(get_v.clone()) } else { None };
+                    let st = if is_callable(&set_v) { Some(set_v.clone()) } else { None };
                     Some(Value::Accessor(Rc::new(super::AccessorPair { get: g, set: st })))
                 } else {
                     value_v
@@ -3461,6 +3462,22 @@ impl Interp {
                                 let cur = a.index_attr(i).unwrap_or(
                                     ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
                                 );
+                                // §10.1.6.3: non-configurable 인덱스는 configurable false→true,
+                                // enumerable 변경, non-writable→writable 이 금지된다(TypeError).
+                                if cur & ATTR_CONFIGURABLE == 0 {
+                                    let cur_enum = cur & ATTR_ENUMERABLE != 0;
+                                    let cur_wr = cur & ATTR_WRITABLE != 0;
+                                    let is_acc = matches!(
+                                        a.borrow().get(i),
+                                        Some(Value::Accessor(_))
+                                    );
+                                    if (has_configurable && configurable)
+                                        || (has_enumerable && enumerable != cur_enum)
+                                        || (!is_acc && has_writable && writable && !cur_wr)
+                                    {
+                                        return Err(self.redefine_err());
+                                    }
+                                }
                                 let wbit = if has_writable {
                                     if writable { ATTR_WRITABLE } else { 0 }
                                 } else {
@@ -3512,6 +3529,52 @@ impl Interp {
                                 let old_len = a.borrow().len();
                                 // 값 설정 전에 "기존 데이터 프로퍼티였나"(§10.1.6 재정의 여부).
                                 let existed = i < old_len && !a.is_hole(i);
+                                // §10.1.6.3 ValidateAndApplyPropertyDescriptor: 기존
+                                // non-configurable 인덱스는 configurable false→true, enumerable
+                                // 변경, data↔accessor 전환이 금지되고, non-writable 데이터는
+                                // writable false→true·value 변경이, 접근자는 get/set 변경이
+                                // 금지된다(모두 TypeError). 예전엔 검증 없이 덮어썼다.
+                                if existed {
+                                    let cur_attrs = a.index_attr(i).unwrap_or(
+                                        ATTR_WRITABLE | ATTR_ENUMERABLE | ATTR_CONFIGURABLE,
+                                    );
+                                    if cur_attrs & ATTR_CONFIGURABLE == 0 {
+                                        let cur_enum = cur_attrs & ATTR_ENUMERABLE != 0;
+                                        let cur_writable = cur_attrs & ATTR_WRITABLE != 0;
+                                        let cur_item = a.borrow().get(i).cloned();
+                                        let cur_is_acc =
+                                            matches!(cur_item, Some(Value::Accessor(_)));
+                                        let new_is_acc = matches!(&val, Value::Accessor(_));
+                                        if (has_configurable && configurable)
+                                            || (has_enumerable && enumerable != cur_enum)
+                                            || (new_is_acc != cur_is_acc)
+                                        {
+                                            return Err(self.redefine_err());
+                                        }
+                                        if let (Some(Value::Accessor(cur_acc)), Value::Accessor(_)) =
+                                            (&cur_item, &val)
+                                        {
+                                            let cur_get =
+                                                cur_acc.get.clone().unwrap_or(Value::Undefined);
+                                            let cur_set =
+                                                cur_acc.set.clone().unwrap_or(Value::Undefined);
+                                            if (has_get && !same_value(&get_v, &cur_get))
+                                                || (has_set && !same_value(&set_v, &cur_set))
+                                            {
+                                                return Err(self.redefine_err());
+                                            }
+                                        } else if !cur_is_acc && !cur_writable {
+                                            if has_writable && writable {
+                                                return Err(self.redefine_err());
+                                            }
+                                            let cur_val =
+                                                cur_item.unwrap_or(Value::Undefined);
+                                            if has_value && !same_value(&val, &cur_val) {
+                                                return Err(self.redefine_err());
+                                            }
+                                        }
+                                    }
+                                }
                                 {
                                     let mut items = a.borrow_mut();
                                     while items.len() <= i {

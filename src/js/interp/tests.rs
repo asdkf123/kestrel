@@ -3367,6 +3367,20 @@ fn more_array_string_methods() {
     assert!(run_bool(
         "var a=[1,2,3]; Object.defineProperty(a,'1',{set:function(v){this._w=v;},configurable:true}); a[1]=7; a._w===7"
     ));
+    // §10.1.6.3: non-configurable 배열 인덱스 재정의 검증 — configurable false→true 금지,
+    // non-writable 의 value/writable 변경 금지, 같은 값은 허용.
+    assert!(run_bool(
+        "var a=[]; Object.defineProperty(a,0,{value:1,configurable:false}); \
+         try{ Object.defineProperty(a,0,{configurable:true}); false }catch(e){ e instanceof TypeError }"
+    ));
+    assert!(run_bool(
+        "var b=[]; Object.defineProperty(b,0,{value:101,writable:false,configurable:false}); \
+         try{ Object.defineProperty(b,'0',{value:'x'}); false }catch(e){ e instanceof TypeError }"
+    ));
+    assert!(run_bool(
+        "var c=[]; Object.defineProperty(c,0,{value:5,writable:false,configurable:false}); \
+         Object.defineProperty(c,'0',{value:5}); c[0]===5" // 같은 값 재정의는 허용
+    ));
     // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
     assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
     // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.
