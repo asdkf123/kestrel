@@ -1520,6 +1520,34 @@ impl Interp {
         Ok(out)
     }
 
+    // ArraySpeciesCreate 용 생성자 결정(§23.1.3.5). 반환 Some(C) 면 그 생성자로 결과를
+    // 만들어야 하고, None 이면 기본 Array(빠른 경로). original 이 배열이 아니거나 species 가
+    // 기본 Array/undefined 면 None. species 가 non-constructor 면 TypeError.
+    pub(super) fn array_species_ctor(&mut self, original: &Value) -> Result<Option<Value>, String> {
+        if !matches!(original, Value::Arr(_)) {
+            return Ok(None);
+        }
+        let c = self.member_get(original, "constructor")?;
+        let c = if is_object(&c) {
+            let s = self.member_get(&c, "\u{0}@@species")?;
+            if matches!(s, Value::Null) {
+                Value::Undefined
+            } else {
+                s
+            }
+        } else {
+            c
+        };
+        // 기본 Array 또는 undefined → 빠른 경로(일반 배열).
+        if matches!(c, Value::Undefined | Value::Native(Native::ArrayCtor)) {
+            return Ok(None);
+        }
+        if !self.is_constructor(&c) {
+            return Err(self.throw_error("TypeError", "Array species is not a constructor"));
+        }
+        Ok(Some(c))
+    }
+
     // SpeciesConstructor(O, defaultConstructor) (§7.3.22): C=Get(O,"constructor"); undefined 면
     // default. 객체 아니면 TypeError. S=Get(C,@@species); undefined/null 이면 default.
     // IsConstructor(S) 면 S, 아니면 TypeError. 예외는 그대로 전파.
@@ -1578,7 +1606,12 @@ impl Interp {
                     None => obj_proto,
                 }
             }
-            Value::Arr(_) => self.member_get(&self.array_ns.clone(), "prototype")?,
+            // 서브클래스(extends Array) 인스턴스는 커스텀 __proto__(X.prototype)를 갖는다 —
+            // 그게 [[Prototype]] 이다. 없으면 %Array.prototype%.
+            Value::Arr(a) => match a.get_prop("__proto__") {
+                Some(p) if is_object(&p) => p,
+                _ => self.member_get(&self.array_ns.clone(), "prototype")?,
+            },
             Value::Instance(inst) => {
                 self.member_get(&Value::Class(inst.class.clone()), "prototype")?
             }
@@ -7055,11 +7088,23 @@ impl Interp {
                         }
                         match op {
                             ArrOp::ForEach => Value::Undefined,
-                            _ => Value::Arr(if out_holes.is_empty() {
-                                ArrayObj::new(out)
-                            } else {
-                                ArrayObj::with_holes(out, out_holes)
-                            }),
+                            // map/filter/flatMap 결과는 ArraySpeciesCreate 로 만든다(§23.1.3).
+                            // 기본 배열이면 빠른 경로, 서브클래스/커스텀 @@species 면 그걸로.
+                            _ => match self.array_species_ctor(&cb_arr)? {
+                                Some(ctor) => {
+                                    let a =
+                                        self.construct(ctor, vec![Value::Num(out.len() as f64)])?;
+                                    for (k, v) in out.into_iter().enumerate() {
+                                        self.set_own_property(&a, k.to_string(), v);
+                                    }
+                                    a
+                                }
+                                None => Value::Arr(if out_holes.is_empty() {
+                                    ArrayObj::new(out)
+                                } else {
+                                    ArrayObj::with_holes(out, out_holes)
+                                }),
+                            },
                         }
                     }
                     ArrOp::Some | ArrOp::Every | ArrOp::Find | ArrOp::FindIndex => {

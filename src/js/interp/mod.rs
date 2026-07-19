@@ -6064,6 +6064,18 @@ impl Interp {
                         return Ok(v.clone());
                     }
                 }
+                // extends Array 서브클래스 인스턴스는 커스텀 __proto__(X.prototype)의
+                // constructor 를 쓴다. 없으면 아래 constructor_of 로 Array.
+                Value::Arr(a) => {
+                    if let Some(proto) = a.get_prop("__proto__") {
+                        if is_object(&proto) {
+                            let c = self.member_get(&proto, "constructor")?;
+                            if !matches!(c, Value::Undefined) {
+                                return Ok(c);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             return Ok(self.constructor_of(recv));
@@ -6367,11 +6379,11 @@ impl Interp {
                     return Ok(Value::Undefined);
                 }
                 // 서브클래스(class X extends Array)면 커스텀 __proto__(X.prototype)를 걷는다 —
-                // 서브클래스가 추가한 메서드와 instanceof 체인이 여기서 해석된다(getter this=배열).
+                // 서브클래스가 추가한 메서드/constructor 와 instanceof 체인이 여기서 해석된다.
                 // 내장 배열 op(map/push/length 등)는 위에서 이미 처리했으므로 그게 우선.
                 if let Some(proto) = a.get_prop("__proto__") {
                     if is_object(&proto) {
-                        let v = self.exotic_proto_get(proto, key, recv)?;
+                        let v = self.member_get(&proto, key)?;
                         if !matches!(v, Value::Undefined) {
                             return Ok(v);
                         }
@@ -6810,6 +6822,17 @@ impl Interp {
                 // 멤버 뒤에 둔다(클래스 자신의 name/length/toString 우선).
                 if let Some(np) = &native_parent {
                     if matches!(np, Value::Native(_) | Value::Fn(_) | Value::Bound(_)) {
+                        // @@species 는 this 를 돌려주는 접근자다 — 부모(np)로 member_get 하면
+                        // np 가 나와 버리므로, 원 수신자(이 클래스)를 돌려준다. 그래야
+                        // (class M extends Array)[Symbol.species] === M 이 되고 map/filter 가
+                        // M 인스턴스를 만든다(ArraySpeciesCreate).
+                        if key == "\u{0}@@species" {
+                            if let Value::Native(n) = np {
+                                if native_has_species(n) {
+                                    return Ok(recv.clone());
+                                }
+                            }
+                        }
                         let v = self.member_get(np, key)?;
                         if !matches!(v, Value::Undefined) {
                             return Ok(v);

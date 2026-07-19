@@ -3253,6 +3253,18 @@ fn derived_constructor_must_call_super() {
     assert!(run_bool("class M extends Array {} (new M(1,2)) instanceof M && (new M(1,2)) instanceof Array"));
     assert_eq!(run_num("class M extends Array { sum(){ return this.reduce((a,b)=>a+b,0); } } new M(1,2,3).sum()"), 6.0);
     assert_eq!(run_str("class M extends Array {} var m=new M(); m.push(1,2); m[0]+''+m[1]"), "12");
+    // constructor·getPrototypeOf·@@species 상속
+    assert!(run_bool("class M extends Array {} new M(1).constructor === M"));
+    assert!(run_bool("class M extends Array {} Object.getPrototypeOf(new M()) === M.prototype"));
+    assert!(run_bool("class M extends Array {} M[Symbol.species] === M"));
+    // map/filter 는 ArraySpeciesCreate 로 서브클래스 인스턴스를 만든다(§23.1.3)
+    assert!(run_bool("class M extends Array {} var r=new M(1,2,3).map(x=>x*2); (r instanceof M) && r.join(',')==='2,4,6'"));
+    assert!(run_bool("class M extends Array {} new M(1,2,3).filter(x=>x>1) instanceof M"));
+    // 커스텀 @@species → Array
+    assert!(run_bool("class M extends Array { static get [Symbol.species](){ return Array; } } \
+                      var r=new M(1,2).map(x=>x); (r instanceof Array) && !(r instanceof M)"));
+    // 무회귀: 일반 배열 map 은 일반 배열
+    assert!(run_bool("var r=[1,2].map(x=>x); (r instanceof Array) && r.constructor===Array"));
     // gOPD 가 인스턴스 필드의 실제 속성을 보고한다 — class extends Error 의 message 는
     // non-enumerable(예전엔 반환부가 enumerable:true 로 덮었다). 일반 필드는 enumerable.
     assert!(run_bool(
