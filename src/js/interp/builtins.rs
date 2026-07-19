@@ -4142,13 +4142,21 @@ impl Interp {
                         if matches!(key.as_str(), "name" | "length") {
                             !self.native_prop_deleted(v, &key)
                         } else if let Value::Native(n) = v {
-                            // 프렐류드가 native_props 에 얹은 정적 메서드도 own 이다.
-                            (!is_internal_key(&key)
-                                && self.native_props.get(n).map_or(false, |m| m.contains_key(&key)))
-                                || self
-                                    .native_ctor_own_keys(n)
-                                    .map(|ks| ks.iter().any(|k| *k == key))
-                                    .unwrap_or(false)
+                            // 삭제된(툼스톤) 정적 프로퍼티는 own 이 아니다.
+                            if self.native_prop_deleted(v, &key) {
+                                false
+                            } else {
+                                // 프렐류드가 native_props 에 얹은 정적 메서드도 own 이다.
+                                (!is_internal_key(&key)
+                                    && self
+                                        .native_props
+                                        .get(n)
+                                        .map_or(false, |m| m.contains_key(&key)))
+                                    || self
+                                        .native_ctor_own_keys(n)
+                                        .map(|ks| ks.iter().any(|k| *k == key))
+                                        .unwrap_or(false)
+                            }
                         } else if let Value::Bound(b) = v {
                             b.3.borrow().contains_key(&key)
                         } else {
@@ -9503,7 +9511,22 @@ impl Interp {
                         }
                         if let Value::Native(n) = v {
                             if let Some(keys) = self.native_ctor_own_keys(n) {
-                                out.extend(keys.into_iter().map(Value::Str));
+                                // 삭제된(툼스톤) 정적 프로퍼티는 own 키에서 제외한다.
+                                out.extend(
+                                    keys.into_iter()
+                                        .filter(|k| !self.native_prop_deleted(v, k))
+                                        .map(Value::Str),
+                                );
+                            }
+                            // 사용자가 defineProperty 로 얹은 프로퍼티도 own 으로.
+                            if let Some(m) = self.native_props.get(n) {
+                                for k in m.keys() {
+                                    if !is_internal_key(k)
+                                        && !matches!(k.as_str(), "length" | "name")
+                                    {
+                                        out.push(Value::Str(k.clone()));
+                                    }
+                                }
                             }
                         }
                         out

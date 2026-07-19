@@ -4543,11 +4543,14 @@ impl Interp {
                             // 도 안 보이게). 예전엔 delete 가 no-op 라 verifyProperty 의
                             // configurable 검사가 깨졌다.
                             Value::Native(n) => {
+                                // 내장의 정적 메서드/상수·name·length 는 configurable 이라 삭제
+                                // 가능하다. native_props 오버라이드를 지우고 삭제 툼스톤을 남겨
+                                // 하드코딩 조회(member_get/has/ownKeys)가 되살리지 못하게 한다.
+                                // 예전엔 name/length 만 툼스톤이라 delete Object.assign 이
+                                // "성공"을 보고하고도 여전히 존재했다(verifyProperty configurable).
                                 let ov = self.native_props.entry(*n).or_default();
                                 ov.remove(&key);
-                                if matches!(key.as_str(), "name" | "length") {
-                                    ov.insert(format!("\u{0}del:{}", key), Value::Bool(true));
-                                }
+                                ov.insert(format!("\u{0}del:{}", key), Value::Bool(true));
                             }
                             _ => {}
                         }
@@ -5881,6 +5884,14 @@ impl Interp {
             }
             // HasProperty (§7.3.11): own(name/length/정적/prototype) + 상속 함수 메서드.
             Value::Native(n) => {
+                // 사용자가 defineProperty 로 얹은 프로퍼티는 존재.
+                if self.native_props.get(n).map(|m| m.contains_key(key)).unwrap_or(false) {
+                    return true;
+                }
+                // 삭제된(툼스톤) 정적 프로퍼티는 없다.
+                if self.native_prop_deleted(obj, key) {
+                    return false;
+                }
                 matches!(key, "name" | "length")
                     || self
                         .native_ctor_own_keys(n)
@@ -6082,6 +6093,10 @@ impl Interp {
         if let Value::Native(n) = recv {
             if let Some(v) = self.native_props.get(n).and_then(|m| m.get(key)) {
                 return Ok(v.clone());
+            }
+            // 삭제된(툼스톤) 정적 프로퍼티는 하드코딩 조회로 되살아나지 않는다.
+            if self.native_prop_deleted(recv, key) {
+                return Ok(Value::Undefined);
             }
             // Symbol.species (§): get [Symbol.species] 접근자는 this 를 돌려준다 →
             // C[Symbol.species] === C. 사용자 오버라이드(native_props)가 우선.

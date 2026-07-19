@@ -3402,6 +3402,16 @@ fn more_array_string_methods() {
     ));
     // arr.foo=x 흔한 동작 무회귀.
     assert_eq!(run_str("var a=[1,2]; a.foo='bar'; a.foo"), "bar");
+    // 내장 정적 메서드는 configurable — delete 하면 member_get/in/hasOwnProperty/ownKeys 모두
+    // 사라진다(하드코딩 조회가 되살리지 않음). verifyProperty 의 configurable 검사가 이를 쓴다.
+    assert!(run_bool(
+        "delete Number.isNaN; typeof Number.isNaN==='undefined' && !('isNaN' in Number) && !Number.hasOwnProperty('isNaN')"
+    ));
+    assert!(run_bool(
+        "delete Object.assign; Object.getOwnPropertyNames(Object).indexOf('assign')<0"
+    ));
+    // 안 지운 메서드는 무회귀.
+    assert_eq!(run_str("typeof Object.keys+','+typeof Array.isArray"), "function,function");
     // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
     assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
     // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.
