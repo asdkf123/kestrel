@@ -3881,6 +3881,28 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn regex_flag_getter_names() {
+    // §22.2.6 플래그 접근자 getter 의 name 은 "get <prop>", length 0.
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(RegExp.prototype,'hasIndices').get.name === 'get hasIndices'"
+    ));
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(RegExp.prototype,'global').get.name === 'get global'"
+    ));
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get.name === 'get source'"
+    ));
+    assert!(run_bool(
+        "Object.getOwnPropertyDescriptor(RegExp.prototype,'flags').get.length === 0"
+    ));
+    // getter name 은 non-writable, configurable.
+    assert!(run_bool(
+        "var d=Object.getOwnPropertyDescriptor(Object.getOwnPropertyDescriptor(RegExp.prototype,'sticky').get,'name'); \
+         d.writable===false && d.configurable===true && d.enumerable===false"
+    ));
+}
+
+#[test]
 fn regex_named_backreferences() {
     // \k<name> 이름 있는 백레퍼런스(§22.2.1): 같은 이름 그룹의 캡처를 참조.
     assert!(run_bool("/(?<q>a)\\k<q>/.test('aa')"));

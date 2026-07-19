@@ -1008,6 +1008,23 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         // Number.prototype.toString 만 radix 인자로 length 1, 나머지는 0 (§21.1.3.6).
         PrimValueOf(_) => ("valueOf", 0),
         PrimToString(b) => ("toString", if matches!(b, PrimBrand::Number) { 1 } else { 0 }),
+        // RegExp.prototype 플래그 접근자 getter — 이름은 "get <prop>", length 0
+        // (§22.2.6 / 접근자 함수의 name 은 "get "+propertyKey).
+        RegexGet(kind) => (
+            match kind {
+                RegexAccessor::Source => "get source",
+                RegexAccessor::Flags => "get flags",
+                RegexAccessor::Global => "get global",
+                RegexAccessor::IgnoreCase => "get ignoreCase",
+                RegexAccessor::Multiline => "get multiline",
+                RegexAccessor::DotAll => "get dotAll",
+                RegexAccessor::Unicode => "get unicode",
+                RegexAccessor::Sticky => "get sticky",
+                RegexAccessor::HasIndices => "get hasIndices",
+                RegexAccessor::UnicodeSets => "get unicodeSets",
+            },
+            0,
+        ),
         _ => return None,
     })
 }
