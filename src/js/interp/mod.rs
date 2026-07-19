@@ -3833,6 +3833,9 @@ impl Interp {
                 env_declare(env, name, f);
             }
         }
+        // 렉시컬 선언(let/const/class)을 TDZ 로 예약한다 — 선언 실행 전 접근은
+        // ReferenceError(§14.2.3 Block Declaration Instantiation).
+        hoist_lexical(stmts, env);
         let mut last = Value::Undefined;
         for s in stmts {
             match self.exec_stmt(s, env)? {
@@ -4224,6 +4227,14 @@ impl Interp {
             Expr::Bool(b) => Ok(Value::Bool(*b)),
             Expr::Null => Ok(Value::Null),
             Expr::Undefined => Ok(Value::Undefined),
+            Expr::Ident(name) if env_in_tdz(env, name) => {
+                // TDZ: 하이스트됐지만 아직 초기화 안 된 let/const/class 를 읽으면
+                // ReferenceError (§13.3.1.1 — Cannot access before initialization).
+                Err(self.throw_error(
+                    "ReferenceError",
+                    format!("Cannot access '{}' before initialization", name),
+                ))
+            }
             Expr::Ident(name) => match env_get(env, name) {
                 // import 바인딩은 살아있는 바인딩이다 — 스코프에 접근자가 들어 있으면
                 // 읽는 시점에 모듈의 현재 값을 가져온다. 값 스냅샷으로 흉내내면
@@ -4451,7 +4462,9 @@ impl Interp {
                     if let Expr::Ident(name) = expr.as_ref() {
                         // 전역 객체의 이름 붙은 프로퍼티(id 있는 요소 등)도 '있는' 것이다 —
                         // 그래야 typeof 와 실제 조회가 같은 답을 한다.
-                        if env_get(env, name).is_none() {
+                        // TDZ 인 이름은 미선언과 달리 typeof 도 ReferenceError 여야 하므로
+                        // 이 지름길을 건너뛰고 아래 일반 평가(→ TDZ 오류)로 보낸다.
+                        if !env_in_tdz(env, name) && env_get(env, name).is_none() {
                             return Ok(match self.window_prop(name) {
                                 Some(v) => Value::Str(type_of(&v).to_string()),
                                 None => Value::Str("undefined".to_string()),
@@ -9655,6 +9668,13 @@ impl Interp {
     fn assign_to(&mut self, target: &Expr, value: Value, env: &EnvRef) -> Result<(), String> {
         match target {
             Expr::Ident(name) => {
+                // TDZ: 초기화 전 let/const 에 대입도 ReferenceError (§ PutValue → GetBinding).
+                if env_in_tdz(env, name) {
+                    return Err(self.throw_error(
+                        "ReferenceError",
+                        format!("Cannot access '{}' before initialization", name),
+                    ));
+                }
                 // const 재대입은 TypeError (표준). 진짜 TypeError 객체를 던진다 —
                 // 예전엔 Value::Str 을 thrown 에 넣어 catch 에서 e instanceof TypeError 가
                 // false, e.constructor.name 이 "String" 이었다(assert.throws(TypeError) 실패).

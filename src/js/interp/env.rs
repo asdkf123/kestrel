@@ -9,6 +9,9 @@ pub struct Env {
     pub(crate) vars: HashMap<String, Value>,
     // const 로 선언된 이름 (재대입 시 TypeError). 바인딩과 같은 스코프에 표시.
     pub(crate) consts: std::collections::HashSet<String>,
+    // TDZ(§9.1.1.1): 하이스트됐지만 아직 초기화 안 된 let/const/class 이름.
+    // 초기화 전 읽기/쓰기는 ReferenceError. 초기화(선언 실행) 시 제거된다.
+    pub(crate) tdz: std::collections::HashSet<String>,
     // 객체 환경 레코드 (§9.1.1.2): with (obj) { ... } 의 obj.
     // 이 스코프에서 이름을 찾을 때 이 객체의 프로퍼티(프로토타입 체인 포함)를 본다.
     pub(crate) with_obj: Option<Value>,
@@ -47,9 +50,60 @@ impl Env {
         Rc::new(RefCell::new(Env {
             vars: HashMap::new(),
             consts: std::collections::HashSet::new(),
+            tdz: std::collections::HashSet::new(),
             with_obj: None,
             parent,
         }))
+    }
+}
+
+// name 이 (그 이름을 가진 가장 안쪽 스코프에서) TDZ(미초기화 let/const/class)인가.
+// vars 에 있으면 초기화된 것(false), tdz 에 있으면 미초기화(true), 둘 다 없으면
+// 바깥으로. 안쪽 tdz 가 바깥 바인딩을 가린다(shadowing).
+pub(crate) fn env_in_tdz(env: &EnvRef, name: &str) -> bool {
+    let (has_var, in_tdz, parent) = {
+        let e = env.borrow();
+        (e.vars.contains_key(name), e.tdz.contains(name), e.parent.clone())
+    };
+    if has_var {
+        return false;
+    }
+    if in_tdz {
+        return true;
+    }
+    parent.map_or(false, |p| env_in_tdz(&p, name))
+}
+
+// 렉시컬 선언 이름을 TDZ 로 예약(하이스팅). 이미 초기화됐으면(vars) 건드리지 않는다.
+pub(crate) fn env_declare_tdz(env: &EnvRef, name: &str) {
+    let mut e = env.borrow_mut();
+    if !e.vars.contains_key(name) {
+        e.tdz.insert(name.to_string());
+    }
+}
+
+// 블록/함수/전역 진입 시 최상위 let/const/class 를 TDZ 로 예약한다(§ Block Instantiation).
+// 중첩 블록/함수 몸통은 각자의 스코프라 파고들지 않는다.
+pub(crate) fn hoist_lexical(stmts: &[Stmt], env: &EnvRef) {
+    use crate::js::ast::DeclKind;
+    for s in stmts {
+        match s {
+            Stmt::VarDecl { kind: DeclKind::Let | DeclKind::Const, decls } => {
+                for (pat, _) in decls {
+                    let mut names = Vec::new();
+                    pattern_names(pat, &mut names);
+                    for n in &names {
+                        env_declare_tdz(env, n);
+                    }
+                }
+            }
+            Stmt::ClassDecl(c) => {
+                if let Some(n) = &c.name {
+                    env_declare_tdz(env, n);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -156,7 +210,9 @@ pub(crate) fn env_set(env: &EnvRef, name: &str, value: Value) {
 }
 
 pub(crate) fn env_declare(env: &EnvRef, name: &str, value: Value) {
-    env.borrow_mut().vars.insert(name.to_string(), value);
+    let mut e = env.borrow_mut();
+    e.tdz.remove(name); // 선언/초기화되면 TDZ 해제
+    e.vars.insert(name.to_string(), value);
 }
 
 // 프로토타입 객체(Value::Obj)에서 키를 꺼낸다 (원시값이 자기 프로토타입 참조용).

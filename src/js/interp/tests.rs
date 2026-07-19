@@ -5439,6 +5439,37 @@ fn multi_declarator_and_comma_operator() {
 }
 
 #[test]
+fn temporal_dead_zone() {
+    // TDZ: 초기화 전 let/const/class 읽기·쓰기·typeof 는 ReferenceError (§13.3.1.1)
+    assert!(run_bool(
+        "var ok=false; try{ x; let x=1; }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    assert!(run_bool(
+        "var ok=false; try{ y=5; let y; }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    assert!(run_bool(
+        "var ok=false; try{ z; const z=1; }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    assert!(run_bool(
+        "var ok=false; try{ typeof w; let w; }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    assert!(run_bool(
+        "var ok=false; try{ new C(); class C{} }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    // 구조분해 대입도 TDZ 존중
+    assert!(run_bool(
+        "var ok=false; try{ [q]=[1]; let q; }catch(e){ ok=e instanceof ReferenceError; } ok"
+    ));
+    // 미선언 typeof 는 여전히 "undefined"(throw 아님)
+    assert_eq!(run_str("typeof neverDeclaredXYZ"), "undefined");
+    // 초기화 후 정상 접근 (회귀)
+    assert_eq!(run_num("let a=3; a+1"), 4.0);
+    assert_eq!(run_num("{ let b=5; b } 0; (function(){ let c=7; return c; })()"), 7.0);
+    // 함수 선언은 hoisting 되어 forward-ref 정상 (TDZ 아님)
+    assert_eq!(run_num("function f(){ return g(); function g(){ return 9; } } f()"), 9.0);
+}
+
+#[test]
 fn for_in_iterates_keys_and_indices() {
     assert_eq!(
         run_num("var o = { a: 1, b: 2, c: 3 }; var n = 0; for (var k in o) n += o[k]; n"),
