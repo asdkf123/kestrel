@@ -5769,7 +5769,16 @@ impl Interp {
                         .filter(|k| !is_internal_key(k))
                         .map(|k| (k.clone(), !b.contains_key(&nonenum_marker(k))))
                         .collect();
-                    (pairs, b.get("__proto__").cloned())
+                    // 정규식 인스턴스는 명시 __proto__ 없이 RegExp.prototype 을 상속한다
+                    // — for-in 도 그 상속 열거 가능분을 봐야 한다(RegExp.prototype 에 얹은 것).
+                    let next = b.get("__proto__").cloned().or_else(|| {
+                        if is_regex_obj(m) {
+                            Some(self.regexp_proto.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    (pairs, next)
                 }
                 Value::Instance(i) => {
                     let f = i.fields.borrow();

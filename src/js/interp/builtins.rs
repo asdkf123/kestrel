@@ -3636,6 +3636,15 @@ impl Interp {
                                 let old_len = a.borrow().len();
                                 // 값 설정 전에 "기존 데이터 프로퍼티였나"(§10.1.6 재정의 여부).
                                 let existed = i < old_len && !a.is_hole(i);
+                                // §10.4.2.1 3.c: 인덱스가 현재 length 이상인데 length 가
+                                // non-writable 이면 배열을 늘릴 수 없다 → 거부(TypeError).
+                                // (범위 내 인덱스/구멍 채우기는 length 를 안 늘리므로 허용.)
+                                if i >= old_len && !a.length_writable() {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Cannot define array index beyond a non-writable length",
+                                    ));
+                                }
                                 // §10.1.6.3 ValidateAndApplyPropertyDescriptor: 기존
                                 // non-configurable 인덱스는 configurable false→true, enumerable
                                 // 변경, data↔accessor 전환이 금지되고, non-writable 데이터는

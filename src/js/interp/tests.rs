@@ -5329,6 +5329,12 @@ fn for_in_iterates_keys_and_indices() {
     assert!(run_bool(
         "var a=[10,20]; a.foo='x'; var seen=false; for(var k in a){ if(k==='foo') seen=true; } seen"
     ));
+    // 정규식 인스턴스는 RegExp.prototype 상속 열거 가능분도 for-in 에 나온다
+    assert!(run_bool(
+        "Object.defineProperty(RegExp.prototype,'rpX',{value:1,enumerable:true,configurable:true}); \
+         var r=new RegExp(); var f=false; for(var k in r){ if(k==='rpX') f=true; } \
+         delete RegExp.prototype.rpX; f"
+    ));
     // 하위 non-enumerable own 이 상위 열거 가능 동명을 가린다 (shadow)
     assert_eq!(
         run_num(
@@ -9413,6 +9419,17 @@ fn array_length_nonwritable_blocks_index_add() {
     assert_eq!(run_num("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); a[1]=99; a[1]"), 99.0);
     // 회귀: 정상 배열은 확장.
     assert_eq!(run_num("var b=[1,2]; b[5]=7; b.length"), 6.0);
+    // defineProperty 로 length 이상 인덱스 정의도 TypeError (§10.4.2.1 3.c)
+    assert!(run_bool(
+        "var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); \
+         var threw=false; try{ Object.defineProperty(a,3,{value:'x'}); }catch(e){ threw=e instanceof TypeError; } \
+         threw && a.length===3"
+    ));
+    // 범위 내 인덱스 재정의는 length 를 안 늘리므로 허용
+    assert_eq!(
+        run_num("var a=[1,2,3]; Object.defineProperty(a,'length',{writable:false}); Object.defineProperty(a,1,{value:88}); a[1]"),
+        88.0
+    );
 }
 
 #[test]
