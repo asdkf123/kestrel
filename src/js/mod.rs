@@ -623,7 +623,16 @@ if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(target, s
   return O;
 };
 if (!String.prototype.localeCompare) String.prototype.localeCompare = function(o){ o = String(o); return this < o ? -1 : (this > o ? 1 : 0); };
-if (!String.prototype.normalize) String.prototype.normalize = function(){ return String(this); };
+if (!String.prototype.normalize) String.prototype.normalize = function(form){ 'use strict';
+  // §22.1.3.13: RequireObjectCoercible(this) → ToString(this) → form(기본 "NFC", ToString) →
+  // NFC/NFD/NFKC/NFKD 아니면 RangeError. (실제 유니코드 정규화는 UCD 데이터가 필요해 미구현 —
+  // ASCII/이미 정규화된 문자열은 그대로. 인자·this 검증은 표준대로.)
+  if (this === undefined || this === null) throw new TypeError("String.prototype.normalize called on null or undefined");
+  var s = `${this}`;
+  var f = form === undefined ? "NFC" : `${form}`;
+  if (f !== "NFC" && f !== "NFD" && f !== "NFKC" && f !== "NFKD") throw new RangeError("The normalization form should be one of NFC, NFD, NFKC, NFKD.");
+  return s;
+};
 // toLocaleLowerCase/toLocaleUpperCase 는 이제 네이티브 메서드다(StrOp::LocaleLower/Upper) —
 // 프렐류드 폴리필(함수 .prototype 있고 생성자 취급되던 문제)을 제거했다.
 if (!Object.hasOwn) Object.hasOwn = function(o, k){ return Object.prototype.hasOwnProperty.call(o, k); };
