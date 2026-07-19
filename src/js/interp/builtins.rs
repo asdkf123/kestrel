@@ -7034,7 +7034,17 @@ impl Interp {
                                 }
                             }
                         }
-                        Value::Arr(ArrayObj::with_holes(out, holes))
+                        // slice 결과도 ArraySpeciesCreate(§23.1.3.25). 기본 배열이면 빠른 경로.
+                        match self.array_species_ctor(&cb_arr)? {
+                            Some(ctor) => {
+                                let sp = self.construct(ctor, vec![Value::Num(out.len() as f64)])?;
+                                for (k, v) in out.into_iter().enumerate() {
+                                    self.set_own_property(&sp, k.to_string(), v);
+                                }
+                                sp
+                            }
+                            None => Value::Arr(ArrayObj::with_holes(out, holes)),
+                        }
                     }
                     ArrOp::ForEach | ArrOp::Map | ArrOp::Filter | ArrOp::FlatMap => {
                         let f = args.first().cloned().unwrap_or(Value::Undefined);
