@@ -1816,7 +1816,16 @@ impl Interp {
                 .borrow()
                 .get("__proto__")
                 .cloned()
-                .unwrap_or_else(|| self.fn_proto.clone()),
+                .unwrap_or_else(|| {
+                    // async/generator 함수는 각 인트린식 프로토타입을 가진다(§ %AsyncFunction%
+                    // 등). getPrototypeOf(async fn).constructor 로 인트린식에 도달한다.
+                    match (f.is_async, f.is_generator) {
+                        (true, true) => self.async_gen_fn_proto.clone(),
+                        (true, false) => self.async_fn_proto.clone(),
+                        (false, true) => self.gen_fn_proto.clone(),
+                        (false, false) => self.fn_proto.clone(),
+                    }
+                }),
             Value::Native(_) | Value::Bound(_) => self.fn_proto.clone(),
             Value::Str(_) => self.string_proto.clone(),
             Value::Num(_) => self.number_proto.clone(),
@@ -2599,6 +2608,13 @@ impl Interp {
         args: Vec<Value>,
     ) -> Result<Value, String> {
         match n {
+            // %AsyncFunction%/%GeneratorFunction%/%AsyncGeneratorFunction%: 동적 함수 생성
+            // (async/generator 키워드가 붙는 CreateDynamicFunction).
+            Native::FnKindCtor(name) => {
+                let is_async = name.starts_with("Async");
+                let is_generator = name.contains("Generator");
+                self.make_dynamic_function(args, is_async, is_generator)
+            }
             // Proxy 는 new 로만 생성 (construct 에서 처리). 함수 호출은 무의미.
             Native::ProxyCtor => Err("Proxy 는 new 로 생성해야 함".to_string()),
             // Proxy.revocable(target, handler) (§28.2.1): { proxy, revoke } 를 만든다.

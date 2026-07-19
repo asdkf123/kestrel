@@ -2383,6 +2383,20 @@ fn builtin_constructors_are_functions() {
     assert!(run_bool("typeof Object.keys === 'function' && typeof Array.prototype.map === 'function'"));
     // instanceof 유지
     assert!(run_bool("[1,2] instanceof Array && ({}) instanceof Object"));
+    // %AsyncFunction%/%GeneratorFunction% 인트린식: getPrototypeOf(async/gen fn).constructor
+    assert_eq!(run_str("Object.getPrototypeOf(async function(){}).constructor.name"), "AsyncFunction");
+    assert_eq!(run_str("Object.getPrototypeOf(function*(){}).constructor.name"), "GeneratorFunction");
+    assert_eq!(run_str("Object.getPrototypeOf(async function*(){}).constructor.name"), "AsyncGeneratorFunction");
+    assert_eq!(run_str("Object.getPrototypeOf(function*(){}).constructor.toString()"), "function GeneratorFunction() { [native code] }");
+    // async/gen 함수의 프로토타입은 Function.prototype 과 구별된다
+    assert!(run_bool("Object.getPrototypeOf(async function(){})!==Function.prototype"));
+    assert!(run_bool("Object.getPrototypeOf(function(){})===Function.prototype"));
+    // 동적 생성: AsyncFunction("body") → async 함수
+    assert!(run_bool(
+        "var AF=Object.getPrototypeOf(async function(){}).constructor; var g=AF('return 1'); \
+         Object.getPrototypeOf(g)===Object.getPrototypeOf(async function(){})"
+    ));
+    assert_eq!(run_str("var GF=Object.getPrototypeOf(function*(){}).constructor; GF('x','yield x').toString().slice(0,17)"), "function* anonymo");
 }
 
 #[test]

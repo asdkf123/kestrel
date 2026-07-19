@@ -271,6 +271,12 @@ pub struct Interp {
     microtasks: std::collections::VecDeque<(Value, Value, Value, bool)>,
     // Function.prototype (call/apply/bind). 정체성 보존 위해 보관.
     fn_proto: Value,
+    // %AsyncFunction/GeneratorFunction/AsyncGeneratorFunction.prototype% 인트린식.
+    // getPrototypeOf(async/gen 함수)가 돌려주는 프로토타입(정체성 보존). constructor
+    // 는 각 인트린식 생성자(FnKindCtor)로 링크된다.
+    async_fn_proto: Value,
+    gen_fn_proto: Value,
+    async_gen_fn_proto: Value,
     // String.prototype (문자열 메서드) — String.prototype.slice.call(x) 용.
     string_proto: Value,
     // Number/Boolean/RegExp.prototype — core-js uncurryThis(Constructor.prototype.method) 용.
@@ -1107,6 +1113,18 @@ impl Interp {
                 fp.borrow_mut().insert("__proto__".to_string(), op);
             }
         }
+        // %AsyncFunction/GeneratorFunction/AsyncGeneratorFunction.prototype% 인트린식:
+        // __proto__ = Function.prototype, constructor = 해당 인트린식 생성자(비열거).
+        let mk_fn_kind_proto = |name: &'static str, fnp: &Value| -> Value {
+            let mut m = ObjMap::new();
+            m.insert("__proto__".to_string(), fnp.clone());
+            m.insert("constructor".to_string(), Value::Native(Native::FnKindCtor(name)));
+            set_prop_attrs(&mut m, "constructor", ATTR_WRITABLE | ATTR_CONFIGURABLE);
+            Value::Obj(Rc::new(RefCell::new(m)))
+        };
+        let async_fn_proto = mk_fn_kind_proto("AsyncFunction", &fn_proto);
+        let gen_fn_proto = mk_fn_kind_proto("GeneratorFunction", &fn_proto);
+        let async_gen_fn_proto = mk_fn_kind_proto("AsyncGeneratorFunction", &fn_proto);
         // String.prototype: 문자열 메서드 (String.prototype.slice.call(x) 지원)
         let mut string_proto = ObjMap::new();
         // 문자열 프로토타입 메서드 전량 — member_get 의 인스턴스 조회와 같은 목록이어야
@@ -1475,6 +1493,9 @@ impl Interp {
             next_timer_id: 1,
             microtasks: std::collections::VecDeque::new(),
             fn_proto,
+            async_fn_proto,
+            gen_fn_proto,
+            async_gen_fn_proto,
             map_proto,
             set_proto,
             error_proto,
@@ -2352,6 +2373,17 @@ impl Interp {
     // Function(p1, p2, ..., body) 를 실제 함수로 컴파일. 마지막 인자가 본문,
     // 앞 인자들은 파라미터 이름(각각 콤마로 여러 개 가능). new/호출 공용.
     fn make_function(&mut self, args: Vec<Value>) -> Result<Value, String> {
+        self.make_dynamic_function(args, false, false)
+    }
+
+    // %AsyncFunction%/%GeneratorFunction%/%AsyncGeneratorFunction% 의 동적 생성.
+    // FunctionCtor 와 같은 CreateDynamicFunction 이지만 async/generator 키워드가 붙는다.
+    fn make_dynamic_function(
+        &mut self,
+        args: Vec<Value>,
+        is_async: bool,
+        is_generator: bool,
+    ) -> Result<Value, String> {
         // §20.2.1.1 CreateDynamicFunction: 각 인자 ToString(valueOf/toString 호출, Symbol
         // TypeError). 마지막이 본문, 나머지가 파라미터 목록(쉼표 구분).
         let (body_src, param_args) = match args.split_last() {
@@ -2373,8 +2405,15 @@ impl Interp {
         // §20.2.1.1.1: 동적 함수의 소스는 "function anonymous(<P>\n) {\n<body>\n}".
         // 예전엔 source=None 이라 toString 이 본문 없이 재구성해 "function anonymous(a, b) { }"
         // 를 냈다(NativeFunction Syntax 검사 실패).
+        let kw = match (is_async, is_generator) {
+            (true, true) => "async function*",
+            (true, false) => "async function",
+            (false, true) => "function*",
+            (false, false) => "function",
+        };
         let src = format!(
-            "function anonymous({}\n) {{\n{}\n}}",
+            "{} anonymous({}\n) {{\n{}\n}}",
+            kw,
             raw_params.join(","),
             body_src
         );
@@ -2394,8 +2433,8 @@ impl Interp {
             param_prologue_len: 0,
             env: self.global.clone(),
             is_arrow: false,
-            is_generator: false,
-            is_async: false,
+            is_generator,
+            is_async,
             is_method: false,
             this: None,
             super_class: None,
@@ -5813,6 +5852,8 @@ impl Interp {
     // 내장/바운드 함수의 name (§10.2.9 SetFunctionName, §17). Bound 는 "bound " 접두.
     fn native_fn_name(&self, v: &Value) -> String {
         match v {
+            // %AsyncFunction% 등 인트린식 생성자: 이름은 보유 문자열.
+            Value::Native(Native::FnKindCtor(n)) => n.to_string(),
             Value::Native(n) => natives::native_meta(n).map(|(nm, _)| nm.to_string()).unwrap_or_default(),
             Value::Bound(b) => format!("bound {}", self.fn_name_of(&b.0)),
             _ => String::new(),
@@ -5861,6 +5902,7 @@ impl Interp {
 
     fn native_fn_length(&self, v: &Value) -> f64 {
         match v {
+            Value::Native(Native::FnKindCtor(_)) => 1.0, // 함수 생성자류의 length 는 1
             Value::Native(n) => natives::native_meta(n).map(|(_, l)| l as f64).unwrap_or(0.0),
             Value::Bound(b) => {
                 let target_len = self.fn_length_of(&b.0);
@@ -8078,6 +8120,12 @@ impl Interp {
             Value::Class(c) => c,
             // new Function(params.., body) → 실제 함수로 컴파일
             Value::Native(Native::FunctionCtor) => return self.make_function(args),
+            // new AsyncFunction/GeneratorFunction/AsyncGeneratorFunction(...) — 동적 생성.
+            Value::Native(Native::FnKindCtor(name)) => {
+                let is_async = name.starts_with("Async");
+                let is_generator = name.contains("Generator");
+                return self.make_dynamic_function(args, is_async, is_generator);
+            }
             Value::Native(Native::MapCtor) => return self.make_map(args),
             Value::Native(Native::SetCtor) => return self.make_set(args),
             Value::Native(Native::EventCtor(n)) => {

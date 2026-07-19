@@ -224,6 +224,10 @@ pub enum Native {
     // 이름 "[Symbol.toPrimitive]", length 1. (valueOf 와 동작은 같지만 이름/길이가 다르다)
     SymbolToPrimitive,
     ErrorCtor(&'static str),
+    // %AsyncFunction%/%GeneratorFunction%/%AsyncGeneratorFunction% 인트린식 생성자.
+    // getPrototypeOf(async/gen 함수).constructor 로만 도달한다(전역엔 없음). name 은
+    // 보유 문자열, toString 은 NativeFunction 문법.
+    FnKindCtor(&'static str),
     CreateElement,
     AppendChild,
     NodeAppend,
