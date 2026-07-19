@@ -656,9 +656,13 @@ impl Interp {
         depth: usize,
         path: &mut Vec<usize>,
     ) -> Result<Option<String>, String> {
-        // 1) toJSON(key) 가 있으면 그 반환값을 직렬화한다 (Date 등).
+        // 1) toJSON(key) 가 있으면 그 반환값을 직렬화한다 (Date 등). §25.5.2.2 step 2:
+        // value 가 Object 또는 BigInt 면 Get(value,"toJSON") — BigInt.prototype.toJSON 도 본다.
         let mut v = v.clone();
-        if matches!(v, Value::Obj(_) | Value::Instance(_) | Value::Arr(_)) {
+        if matches!(
+            v,
+            Value::Obj(_) | Value::Instance(_) | Value::Arr(_) | Value::BigInt(_)
+        ) {
             let tj = self.member_get(&v, "toJSON").unwrap_or(Value::Undefined);
             if matches!(tj, Value::Fn(_) | Value::Native(_) | Value::Bound(_)) {
                 v = self.call_value(tj, Some(v.clone()), vec![Value::Str(key.to_string())])?;
@@ -764,7 +768,14 @@ impl Interp {
                 unwrapped = match prim {
                     Value::Num(_) => Value::Num(self.to_number_value(v)?),
                     Value::Str(_) => Value::Str(self.to_string_value(v)?),
-                    other => other, // Boolean/BigInt: 슬롯 그대로(강제변환 없음)
+                    // §25.5.2.2 step 4.d: [[BigIntData]] 슬롯을 가진 래퍼도 TypeError.
+                    Value::BigInt(_) => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Do not know how to serialize a BigInt",
+                        ))
+                    }
+                    other => other, // Boolean: 슬롯 그대로(강제변환 없음)
                 };
                 &unwrapped
             }
