@@ -1001,6 +1001,16 @@ fn string_number_boolean_globals() {
     assert_eq!(run_num("Number.MAX_SAFE_INTEGER"), 9007199254740991.0);
     // String.prototype.slice.call
     assert_eq!(run_str("String.prototype.slice.call('hello', 1, 3)"), "el");
+    // 전역 isNaN/isFinite 는 ToNumber 로 강제변환한다(§19.2.3/.5) — Number.isNaN/isFinite 와 다름.
+    assert!(!run_bool("isNaN('42')")); // '42'→42, NaN 아님
+    assert!(run_bool("isNaN('x')"));
+    assert!(run_bool("isFinite('42')")); // '42'→42, 유한
+    assert!(!run_bool("isFinite(Infinity)"));
+    assert!(!run_bool("Number.isFinite('42')")); // 강제변환 안 함
+    assert!(!run_bool("Number.isNaN('x')"));
+    // ToNumber 의 valueOf/@@toPrimitive 예외 전파, Symbol → TypeError
+    assert!(run_bool("var t=false; try{ isNaN({valueOf:function(){throw new Error('e');}}) }catch(e){ t=true } t"));
+    assert!(run_bool("var t=false; try{ isFinite(Symbol()) }catch(e){ t=e instanceof TypeError } t"));
 }
 
 #[test]

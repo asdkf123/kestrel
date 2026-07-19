@@ -7882,7 +7882,18 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             Native::IsNaN => {
-                Ok(Value::Bool(args.first().map(to_num).unwrap_or(f64::NAN).is_nan()))
+                // §19.2.3 isNaN(number): ToNumber(number) 후 NaN 판정. ToNumber 는 객체의
+                // valueOf/@@toPrimitive 를 호출하고 예외를 전파하며 Symbol/BigInt 는 TypeError.
+                // 예전엔 lenient to_num 이라 예외를 삼키고 @@toPrimitive 를 무시했다.
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                Ok(Value::Bool(self.to_number_value(&v)?.is_nan()))
+            }
+            // 전역 isFinite(number) (§19.2.5): ToNumber 후 유한 판정 — Number.isFinite 와 달리
+            // 강제변환한다. 예전엔 Number.isFinite(NumIsFinite)와 같은 native 라 강제변환을
+            // 안 해 isFinite("42")===false 였다.
+            Native::GlobalIsFinite => {
+                let v = args.first().cloned().unwrap_or(Value::Undefined);
+                Ok(Value::Bool(self.to_number_value(&v)?.is_finite()))
             }
             Native::StructuredClone => {
                 Ok(deep_clone(args.first().unwrap_or(&Value::Undefined), 0))

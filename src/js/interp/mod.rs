@@ -766,7 +766,7 @@ impl Interp {
         env_declare(&global, "Reflect", Value::Obj(Rc::new(RefCell::new(reflect_ns))));
         env_declare(&global, "NaN", Value::Num(f64::NAN));
         env_declare(&global, "Infinity", Value::Num(f64::INFINITY));
-        env_declare(&global, "isFinite", Value::Native(Native::NumIsFinite));
+        env_declare(&global, "isFinite", Value::Native(Native::GlobalIsFinite));
         // 타이머
         env_declare(&global, "setTimeout", Value::Native(Native::SetTimeout));
         env_declare(&global, "setInterval", Value::Native(Native::SetInterval));
