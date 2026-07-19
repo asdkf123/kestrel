@@ -618,12 +618,12 @@ impl Interp {
                     if matches!(nv, Value::Undefined) {
                         self.delete_own(&val, &i.to_string())?;
                     } else {
-                        self.create_data_property_or_throw(&val, i, nv)?;
+                        self.json_define_revived(&val, &i.to_string(), nv)?;
                     }
                 }
             } else {
                 // EnumerableOwnPropertyNames(val, key) — 평범 객체는 enumerable_keys,
-                // 인스턴스는 own 필드. (Proxy-of-객체 reviver 는 드물어 생략.)
+                // 인스턴스는 own 필드, 그 외(Proxy 등)는 Object.keys 로(ownKeys/gOPD 트랩 경유).
                 let keys: Vec<String> = match &val {
                     Value::Obj(m) => enumerable_keys(m),
                     Value::Instance(i) => i
@@ -633,7 +633,20 @@ impl Interp {
                         .filter(|k| !is_internal_key(k))
                         .cloned()
                         .collect(),
-                    _ => Vec::new(),
+                    _ => {
+                        let ks = self.call_native(Native::ObjectKeys, None, vec![val.clone()])?;
+                        match &ks {
+                            Value::Arr(a) => a
+                                .borrow()
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Str(s) => Some(s.clone()),
+                                    _ => None,
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        }
+                    }
                 };
                 for k in keys {
                     let child = match snap {
@@ -646,7 +659,7 @@ impl Interp {
                     if matches!(nv, Value::Undefined) {
                         self.delete_own(&val, &k)?;
                     } else {
-                        self.create_data_property_str(&val, &k, nv)?;
+                        self.json_define_revived(&val, &k, nv)?;
                     }
                 }
             }
@@ -666,6 +679,24 @@ impl Interp {
             Some(holder.clone()),
             vec![Value::Str(name.to_string()), val, Value::Obj(ctx)],
         )
+    }
+
+    // §25.5.1.1 의 CreateDataProperty(val, key, newElement): [[DefineOwnProperty]] 로
+    // {value, w/e/c:true} 정의. non-configurable 등으로 실패하면 false(무시), Proxy
+    // defineProperty 트랩이 던지면 전파한다 — Reflect.defineProperty 의미(OrThrow 아님).
+    fn json_define_revived(&mut self, target: &Value, key: &str, v: Value) -> Result<(), String> {
+        let mut desc = ObjMap::new();
+        desc.insert("value".to_string(), v);
+        desc.insert("writable".to_string(), Value::Bool(true));
+        desc.insert("enumerable".to_string(), Value::Bool(true));
+        desc.insert("configurable".to_string(), Value::Bool(true));
+        let desc = Value::Obj(Rc::new(RefCell::new(desc)));
+        self.call_native(
+            Native::ReflectDefineProperty,
+            None,
+            vec![target.clone(), Value::Str(key.to_string()), desc],
+        )?;
+        Ok(())
     }
 
     fn json_ser(
