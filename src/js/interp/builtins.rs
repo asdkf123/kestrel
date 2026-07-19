@@ -8462,6 +8462,7 @@ impl Interp {
                 }
                 // 이터러블(배열/문자열/Set/Map/제너레이터/반복자/사용자 [Symbol.iterator])이면
                 // 프로토콜로, 아니면 array-like(ToLength(ToNumber(length)) + 인덱스).
+                let mut iterable_path = true;
                 let items: Vec<Value> = match &src {
                     Value::Arr(_)
                     | Value::Str(_)
@@ -8475,8 +8476,14 @@ impl Interp {
                     }
                     _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src)?,
                     // array-like: generic_array_read 로 length 강제변환(valueOf) + [[Get]].
-                    Value::Obj(_) => self.generic_array_read(&src)?,
-                    _ => Vec::new(),
+                    Value::Obj(_) => {
+                        iterable_path = false;
+                        self.generic_array_read(&src)?
+                    }
+                    _ => {
+                        iterable_path = false;
+                        Vec::new()
+                    }
                 };
                 // mapFn(value, index) 적용
                 let out = match map_fn {
@@ -8493,7 +8500,31 @@ impl Interp {
                     }
                     None => items,
                 };
-                Ok(Value::Arr(ArrayObj::new(out)))
+                // §23.1.2.1: C = this. IsConstructor(C) 면 그걸로 만든다 — 이터러블 경로는
+                // Construct(C)(길이 미지), array-like 는 Construct(C,[len]). 각 요소는
+                // CreateDataProperty, 마지막에 Set(length). 예전엔 this 를 무시했다.
+                let this = recv.clone().unwrap_or(Value::Undefined);
+                if self.is_constructor(&this) && !matches!(this, Value::Native(Native::ArrayCtor)) {
+                    let len = out.len();
+                    let ctor_args = if iterable_path {
+                        vec![]
+                    } else {
+                        vec![Value::Num(len as f64)]
+                    };
+                    let a = self.construct(this, ctor_args)?;
+                    for (k, item) in out.into_iter().enumerate() {
+                        if !self.set_own_property(&a, k.to_string(), item) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                format!("Cannot create property '{}' on Array.from result", k),
+                            ));
+                        }
+                    }
+                    self.ordinary_set(&a, "length", Value::Num(len as f64), &a)?;
+                    Ok(a)
+                } else {
+                    Ok(Value::Arr(ArrayObj::new(out)))
+                }
             }
             Native::SetTimeout | Native::SetInterval => {
                 let callback = args.first().cloned().unwrap_or(Value::Undefined);

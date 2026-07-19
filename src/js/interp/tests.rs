@@ -3388,6 +3388,12 @@ fn array_from_and_of() {
         "function Coop(n){this.n=n;} var c=Array.of.call(Coop,'a','b'); \
          (c instanceof Coop) && c.n===2 && c[0]==='a' && c[1]==='b' && c.length===2"
     ));
+    // Array.from 도 this 생성자 사용(§23.1.2.1)
+    assert!(run_bool(
+        "function C(){} var r=Array.from.call(C,[9,8]); \
+         (r instanceof C) && r[0]===9 && r[1]===8 && r.length===2"
+    ));
+    assert_eq!(run_str("Array.from([1,2],function(x){return x*2;}).join(',')"), "2,4"); // mapFn 무회귀
 }
 
 #[test]
