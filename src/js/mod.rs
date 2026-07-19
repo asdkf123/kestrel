@@ -636,8 +636,12 @@ Array.prototype.toLocaleString = function(){
   return r;
 };
 if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(target, start, end){
-  // §23.1.3.4: target/start/end 를 ToIntegerOrInfinity 로 강제하고(Math.trunc(+x)),
-  // 상대 인덱스+클램프. 배열-유사 수신자도 Get/Set/HasProperty·구멍(delete) 처리.
+  "use strict"; // §23.1.3.4 step 1: ToObject(this) — null/undefined 는 TypeError(sloppy this 강제 방지).
+  // target/start/end 를 ToIntegerOrInfinity 로 강제하고(Math.trunc(+x)), 상대 인덱스+클램프.
+  // 배열-유사 수신자도 Get/Set/HasProperty·구멍(DeletePropertyOrThrow) 처리.
+  if (this === undefined || this === null) {
+    throw new TypeError('Array.prototype.copyWithin called on null or undefined');
+  }
   var O = Object(this);
   var len = O.length; len = (len > 0) ? Math.min(Math.floor(len) || 0, 9007199254740991) : 0;
   var toI = function(x){ x = Math.trunc(+x); return (x !== x) ? 0 : x; };
@@ -648,7 +652,12 @@ if (!Array.prototype.copyWithin) Array.prototype.copyWithin = function(target, s
   var dir = 1;
   if (from < to && to < from + count) { dir = -1; from = from + count - 1; to = to + count - 1; }
   while (count > 0) {
-    if (from in O) { O[to] = O[from]; } else { delete O[to]; }
+    if (from in O) {
+      O[to] = O[from];
+    } else if (!(delete O[to])) {
+      // §DeletePropertyOrThrow: 비configurable 삭제 실패는 TypeError.
+      throw new TypeError('Cannot delete property during copyWithin');
+    }
     from += dir; to += dir; count--;
   }
   return O;
