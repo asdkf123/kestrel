@@ -9423,15 +9423,21 @@ impl Interp {
                             | Value::SetVal(_)
                             | Value::Instance(_)
                     ),
-                    // 원시 래퍼 생성자(Boolean/Number/String): 래퍼의 __proto__ 체인에
-                    // 해당 prototype 이 있는가. 예전엔 new Boolean() instanceof Boolean 조차
-                    // false 였다(§20/21/22 프로토타입이 체크 대상이 아니었다).
+                    // 원시 래퍼 생성자(Boolean/Number/String/Symbol/BigInt): 래퍼의
+                    // __proto__ 체인에 해당 prototype 이 있는가. 예전엔 Boolean/Number/String
+                    // 만 처리해 Object(Symbol()) instanceof Symbol 등이 false 였다.
                     Value::Native(
-                        Native::BooleanCtor | Native::NumberCtor | Native::StringCtor,
+                        Native::BooleanCtor
+                        | Native::NumberCtor
+                        | Native::StringCtor
+                        | Native::SymbolCtor
+                        | Native::BigIntCtor,
                     ) => {
                         let target = match &r {
                             Value::Native(Native::BooleanCtor) => self.boolean_proto.clone(),
                             Value::Native(Native::NumberCtor) => self.number_proto.clone(),
+                            Value::Native(Native::SymbolCtor) => self.symbol_proto.clone(),
+                            Value::Native(Native::BigIntCtor) => self.bigint_proto.clone(),
                             _ => self.string_proto.clone(),
                         };
                         match (&l, &target) {

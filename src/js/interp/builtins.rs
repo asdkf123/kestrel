@@ -8283,6 +8283,30 @@ impl Interp {
                 // 인덱스만 [[Get]] 로 수집)+정렬+[[Set]]/[[Delete]] 되쓰기로 접근자·상속
                 // 원소·되쓰기 setter 를 정확히 관측한다. 밀집 배열/문자열은 아래 Vec 경로.
                 if matches!(op, ArrOp::Sort) {
+                    // §23.1.3.30 step 2: ToObject(this). 원시 this(Bool/Num/Str/Symbol/
+                    // BigInt)는 래퍼로 박아 generic 정렬 경로로 보낸다 — 정렬 대상 인덱스
+                    // 원소가 없으면(래퍼 length 0) 래퍼를 그대로 돌려준다([].sort.call(false)
+                    // instanceof Boolean). 예전엔 원시 this 가 정렬 경로에 못 들어갔다.
+                    if matches!(
+                        &recv,
+                        Some(
+                            Value::Bool(_)
+                                | Value::Num(_)
+                                | Value::Str(_)
+                                | Value::Symbol(_)
+                                | Value::BigInt(_)
+                        )
+                    ) {
+                        let cmp_arg = args.first().cloned().unwrap_or(Value::Undefined);
+                        if !matches!(cmp_arg, Value::Undefined) && !is_callable(&cmp_arg) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "The comparison function must be either a function or undefined",
+                            ));
+                        }
+                        let o = self.to_object_value(recv.clone().unwrap());
+                        return self.array_sort_generic(&o, &cmp_arg);
+                    }
                     // 구멍이나 인덱스 접근자를 가진 배열도 정밀 경로로 — SortIndexedProperties
                     // 가 [[Get]]/[[Set]]/[[Delete]] 로 접근자·구멍을 정확히 처리한다. 순수
                     // 밀집 배열은 아래 빠른 Vec 정렬(무회귀).

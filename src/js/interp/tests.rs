@@ -3881,6 +3881,28 @@ fn regex_duplicate_named_groups_and_indices() {
 }
 
 #[test]
+fn sort_and_instanceof_primitive_wrappers() {
+    // §23.1.3.30 step 2: Array.prototype.sort 는 ToObject(this). 원시 this 는 래퍼로
+    // 박혀 정렬(원소 없음) 후 그 래퍼를 반환한다.
+    assert!(run_bool("[].sort.call(false) instanceof Boolean"));
+    assert!(run_bool("[].sort.call(0) instanceof Number"));
+    assert!(run_bool("[].sort.call('') instanceof String"));
+    assert!(run_bool("[].sort.call(Symbol()) instanceof Symbol"));
+    assert!(run_bool("[].sort.call(0n) instanceof BigInt"));
+    // null/undefined 는 TypeError.
+    assert!(run_bool("try{ [].sort.call(undefined); false }catch(e){ e instanceof TypeError }"));
+    assert!(run_bool("try{ [].sort.call(null); false }catch(e){ e instanceof TypeError }"));
+    // Symbol/BigInt 래퍼의 instanceof (예전엔 Boolean/Number/String 만 처리했다).
+    assert!(run_bool("Object(Symbol()) instanceof Symbol"));
+    assert!(run_bool("Object(10n) instanceof BigInt"));
+    // 원시값 자체는 instanceof false(스펙).
+    assert!(run_bool("(5 instanceof Number) === false"));
+    // 정상 정렬 회귀.
+    assert_eq!(run_str("JSON.stringify([3,1,2].sort())"), "[1,2,3]");
+    assert_eq!(run_str("JSON.stringify(['b','a','c'].sort())"), r#"["a","b","c"]"#);
+}
+
+#[test]
 fn json_stringify_replacer_array_observable() {
     // §25.5.2 step 4.b: replacer 가 IsArray(Proxy-of-배열 포함)면 length 와 각 인덱스를
     // [[Get]] 으로 관찰적으로 읽어 PropertyList 를 만든다.
