@@ -8460,45 +8460,89 @@ impl Interp {
                         "Array.from: items is undefined or null",
                     ));
                 }
-                // 이터러블(배열/문자열/Set/Map/제너레이터/반복자/사용자 [Symbol.iterator])이면
-                // 프로토콜로, 아니면 array-like(ToLength(ToNumber(length)) + 인덱스).
+                // 유한 fast path(배열/문자열/Set/Map/제너레이터/재료화 반복자)는 그대로 수집하고,
+                // 일반 사용자 이터러블은 반복자를 직접 스텝하며 mapFn 을 즉시 적용한다 —
+                // mapFn 이 abrupt 면 IteratorClose(return 호출) 후 전파(§23.1.2.1 step vii.2).
+                // 예전엔 전량 수집 후 매핑이라, 무한 이터레이터 + throwing mapFn 이 스텝 상한까지
+                // 돌았다(첫 항목에서 멈춰야 함).
                 let mut iterable_path = true;
-                let items: Vec<Value> = match &src {
+                let user_iter = match &src {
                     Value::Arr(_)
                     | Value::Str(_)
                     | Value::SetVal(_)
                     | Value::MapVal(_)
-                    | Value::Gen(_) => self.iterate_to_vec(&src)?,
+                    | Value::Gen(_) => None,
                     Value::Obj(o)
                         if o.borrow().contains_key("\u{0}items") || o.borrow().contains_key("next") =>
                     {
-                        self.iterate_to_vec(&src)?
+                        None
                     }
-                    _ if self.try_get_iterator(&src)?.is_some() => self.iterate_to_vec(&src)?,
-                    // array-like: generic_array_read 로 length 강제변환(valueOf) + [[Get]].
-                    Value::Obj(_) => {
-                        iterable_path = false;
-                        self.generic_array_read(&src)?
-                    }
-                    _ => {
-                        iterable_path = false;
-                        Vec::new()
-                    }
+                    _ => self.try_get_iterator(&src)?,
                 };
-                // mapFn(value, index) 적용
-                let out = match map_fn {
-                    Some(f) => {
-                        let mut r = Vec::with_capacity(items.len());
-                        for (i, v) in items.into_iter().enumerate() {
-                            r.push(self.call_value(
-                                f.clone(),
-                                Some(this_arg.clone()),
-                                vec![v, Value::Num(i as f64)],
-                            )?);
+                let out: Vec<Value> = if let Some(it) = user_iter {
+                    // 일반 사용자 이터러블: 스텝별 next → (선택) mapFn → 수집.
+                    let mut r = Vec::new();
+                    let mut k = 0usize;
+                    loop {
+                        let (val, done) = self.gen_iter_next(&it, Value::Undefined)?;
+                        if done {
+                            break;
                         }
-                        r
+                        let mapped = match &map_fn {
+                            Some(f) => {
+                                match self.call_value(
+                                    f.clone(),
+                                    Some(this_arg.clone()),
+                                    vec![val, Value::Num(k as f64)],
+                                ) {
+                                    Ok(m) => m,
+                                    // mapFn 예외 → IteratorClose 후 전파.
+                                    Err(e) => return Err(self.iterator_close_throw(&it, e)),
+                                }
+                            }
+                            None => val,
+                        };
+                        r.push(mapped);
+                        k += 1;
+                        self.tick()?;
                     }
-                    None => items,
+                    r
+                } else {
+                    // 유한 fast path 또는 array-like: 수집 후 매핑.
+                    let items = match &src {
+                        Value::Obj(o)
+                            if !(o.borrow().contains_key("\u{0}items")
+                                || o.borrow().contains_key("next")) =>
+                        {
+                            // array-like: generic_array_read 로 length 강제변환(valueOf) + [[Get]].
+                            iterable_path = false;
+                            self.generic_array_read(&src)?
+                        }
+                        Value::Arr(_)
+                        | Value::Str(_)
+                        | Value::SetVal(_)
+                        | Value::MapVal(_)
+                        | Value::Gen(_)
+                        | Value::Obj(_) => self.iterate_to_vec(&src)?,
+                        _ => {
+                            iterable_path = false;
+                            Vec::new()
+                        }
+                    };
+                    match &map_fn {
+                        Some(f) => {
+                            let mut r = Vec::with_capacity(items.len());
+                            for (i, v) in items.into_iter().enumerate() {
+                                r.push(self.call_value(
+                                    f.clone(),
+                                    Some(this_arg.clone()),
+                                    vec![v, Value::Num(i as f64)],
+                                )?);
+                            }
+                            r
+                        }
+                        None => items,
+                    }
                 };
                 // §23.1.2.1: C = this. IsConstructor(C) 면 그걸로 만든다 — 이터러블 경로는
                 // Construct(C)(길이 미지), array-like 는 Construct(C,[len]). 각 요소는

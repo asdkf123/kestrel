@@ -3394,6 +3394,11 @@ fn array_from_and_of() {
          (r instanceof C) && r[0]===9 && r[1]===8 && r.length===2"
     ));
     assert_eq!(run_str("Array.from([1,2],function(x){return x*2;}).join(',')"), "2,4"); // mapFn 무회귀
+    // 사용자 이터러블 + mapFn 은 스텝별 적용; mapFn abrupt 면 IteratorClose(return) 후 전파.
+    // 무한 이터레이터라도 첫 항목에서 멈춘다(예전엔 전량 수집이라 스텝 상한까지 돌았다).
+    assert!(run_bool(
+        "var cc=0; var inf={}; inf[Symbol.iterator]=function(){return {return:function(){cc++;},          next:function(){return {done:false,value:1};}};};          var threw=false; try{ Array.from(inf, function(){throw new Error('x');}); }catch(e){threw=true;}          threw && cc===1"
+    ));
 }
 
 #[test]
