@@ -8416,7 +8416,28 @@ impl Interp {
             Native::ArrayIsArray => {
                 Ok(Value::Bool(matches!(args.first(), Some(Value::Arr(_)))))
             }
-            Native::ArrayOf => Ok(Value::Arr(ArrayObj::new(args))),
+            Native::ArrayOf => {
+                // §23.1.2.3: C = this. IsConstructor(C) 면 Construct(C, [len]) 로 만들고
+                // 각 항목을 CreateDataPropertyOrThrow, 마지막에 Set(length). 아니면 일반 배열.
+                // 예전엔 this 를 무시하고 항상 일반 배열이라 Array.of.call(Ctor,…)이 깨졌다.
+                let this = recv.clone().unwrap_or(Value::Undefined);
+                if self.is_constructor(&this) && !matches!(this, Value::Native(Native::ArrayCtor)) {
+                    let len = args.len();
+                    let a = self.construct(this, vec![Value::Num(len as f64)])?;
+                    for (k, item) in args.into_iter().enumerate() {
+                        if !self.set_own_property(&a, k.to_string(), item) {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                format!("Cannot create property '{}' on Array.of result", k),
+                            ));
+                        }
+                    }
+                    self.ordinary_set(&a, "length", Value::Num(len as f64), &a)?;
+                    Ok(a)
+                } else {
+                    Ok(Value::Arr(ArrayObj::new(args)))
+                }
+            }
             Native::ArrayFrom => {
                 let src = args.first().cloned().unwrap_or(Value::Undefined);
                 // §23.1.2.1: mapFn 이 undefined 아니면 반드시 callable(아니면 TypeError).

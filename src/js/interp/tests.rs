@@ -3383,6 +3383,11 @@ fn array_from_and_of() {
     // Array.of: 인자 그대로(Array(7)과 달리 [7])
     assert_eq!(run_num("Array.of(7).length"), 1.0);
     assert_eq!(run_str("Array.of(1,2,3).join(',')"), "1,2,3");
+    // this 가 생성자면 그걸로 만든다(§23.1.2.3) — Construct(C,[len]) 후 요소·length 설정
+    assert!(run_bool(
+        "function Coop(n){this.n=n;} var c=Array.of.call(Coop,'a','b'); \
+         (c instanceof Coop) && c.n===2 && c[0]==='a' && c[1]==='b' && c.length===2"
+    ));
 }
 
 #[test]
