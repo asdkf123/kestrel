@@ -670,6 +670,18 @@ if (!Object.is) Object.is = function(a, b){ if (a === b) return a !== 0 || 1 / a
 Object.getOwnPropertyDescriptors = function(o){ if (o === undefined || o === null) throw new TypeError("Cannot convert undefined or null to object"); var obj = Object(o); var r = {}, k = Reflect.ownKeys(obj); for (var i = 0; i < k.length; i++) { var d = Object.getOwnPropertyDescriptor(obj, k[i]); if (d !== undefined) r[k[i]] = d; } return r; };
 if (!Array.prototype.findLast) Array.prototype.findLast = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return this[i]; return undefined; };
 if (!Array.prototype.findLastIndex) Array.prototype.findLastIndex = function(fn){ for (var i = this.length - 1; i >= 0; i--) if (fn(this[i], i)) return i; return -1; };
+// 프렐류드로 얹은 Array 메서드는 익명 함수 대입이라 name="" 이고 length 가 실제
+// 파라미터 수(§ ExpectedArgumentCount)라 스펙과 다르다(copyWithin 3→2 등). 스펙 값으로
+// 보정한다(name/length 는 {w:false,e:false,c:true} 계산 프로퍼티).
+(function(){
+  var fix = { copyWithin: [2, 'copyWithin'], lastIndexOf: [1, 'lastIndexOf'], toReversed: [0, 'toReversed'], toSorted: [1, 'toSorted'], flatMap: [1, 'flatMap'], reduceRight: [1, 'reduceRight'] };
+  for (var n in fix) {
+    var f = Array.prototype[n];
+    if (typeof f !== 'function') continue;
+    try { Object.defineProperty(f, 'length', { value: fix[n][0], writable: false, enumerable: false, configurable: true }); } catch (e) {}
+    try { Object.defineProperty(f, 'name', { value: fix[n][1], writable: false, enumerable: false, configurable: true }); } catch (e) {}
+  }
+})();
 if (typeof console !== 'undefined') { var __klg = console.log; if (!console.warn) console.warn = __klg; if (!console.error) console.error = __klg; if (!console.info) console.info = __klg; if (!console.debug) console.debug = __klg; if (!console.trace) console.trace = __klg; if (!console.group) console.group = __kNoop; if (!console.groupEnd) console.groupEnd = __kNoop; if (!console.groupCollapsed) console.groupCollapsed = __kNoop; if (!console.table) console.table = __klg; if (!console.dir) console.dir = __klg; if (!console.assert) console.assert = __kNoop; if (!console.count) console.count = __kNoop; if (!console.time) console.time = __kNoop; if (!console.timeEnd) console.timeEnd = __kNoop; }
 // IntersectionObserver — 진짜 교차 판정. 예전엔 콜백이 영영 발화하지 않는 무동작 스텁이라,
 // 교차 시점에 콘텐츠를 드러내는 사이트(reveal-on-scroll)가 화면 안 요소까지 opacity:0 인
