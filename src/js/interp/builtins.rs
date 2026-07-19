@@ -7640,11 +7640,62 @@ impl Interp {
                     StrOp::Replace => {
                         let pat = args.first().cloned().unwrap_or(Value::Undefined);
                         let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
+                        // §22.1.3.17: searchValue 가 Object 면 @@replace 로 위임(override 존중).
+                        if is_object(&pat) {
+                            let replacer = self.member_get(&pat, "\u{0}@@replace")?;
+                            if !matches!(replacer, Value::Undefined | Value::Null) {
+                                if !is_callable(&replacer) {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Symbol.replace method is not callable",
+                                    ));
+                                }
+                                return self.call_value(
+                                    replacer,
+                                    Some(pat),
+                                    vec![Value::Str(s.clone()), repl],
+                                );
+                            }
+                        }
                         Value::Str(self.str_replace(&s, &pat, &repl, false)?)
                     }
                     StrOp::ReplaceAll => {
                         let pat = args.first().cloned().unwrap_or(Value::Undefined);
                         let repl = args.get(1).cloned().unwrap_or(Value::Undefined);
+                        // §22.1.3.18: searchValue 가 Object 면 IsRegExp 시 flags 'g' 검사 후
+                        // @@replace 로 위임.
+                        if is_object(&pat) {
+                            if self.is_regexp_p(&pat)? {
+                                let flags = self.member_get(&pat, "flags")?;
+                                if matches!(flags, Value::Undefined | Value::Null) {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "RegExp flags is undefined or null",
+                                    ));
+                                }
+                                let fs = self.to_string_value(&flags)?;
+                                if !fs.contains('g') {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "replaceAll must be called with a global RegExp",
+                                    ));
+                                }
+                            }
+                            let replacer = self.member_get(&pat, "\u{0}@@replace")?;
+                            if !matches!(replacer, Value::Undefined | Value::Null) {
+                                if !is_callable(&replacer) {
+                                    return Err(self.throw_error(
+                                        "TypeError",
+                                        "Symbol.replace method is not callable",
+                                    ));
+                                }
+                                return self.call_value(
+                                    replacer,
+                                    Some(pat),
+                                    vec![Value::Str(s.clone()), repl],
+                                );
+                            }
+                        }
                         Value::Str(self.str_replace(&s, &pat, &repl, true)?)
                     }
                     StrOp::Search => {
