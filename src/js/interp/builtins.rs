@@ -1622,6 +1622,19 @@ impl Interp {
         Ok(Some(c))
     }
 
+    // CreateDataPropertyOrThrow(O, P, V) (§7.3.5): 정의 실패(non-extensible/non-configurable
+    // 대상 등)면 TypeError. species 결과 채우기가 이 시맨틱을 써야 한다.
+    fn create_data_property_or_throw(&mut self, target: &Value, key: usize, v: Value) -> Result<(), String> {
+        if self.set_own_property(target, key.to_string(), v) {
+            Ok(())
+        } else {
+            Err(self.throw_error(
+                "TypeError",
+                format!("Cannot create property '{}' on array species result", key),
+            ))
+        }
+    }
+
     // SpeciesConstructor(O, defaultConstructor) (§7.3.22): C=Get(O,"constructor"); undefined 면
     // default. 객체 아니면 TypeError. S=Get(C,@@species); undefined/null 이면 default.
     // IsConstructor(S) 면 S, 아니면 TypeError. 예외는 그대로 전파.
@@ -7127,7 +7140,7 @@ impl Interp {
                             Some(ctor) => {
                                 let sp = self.construct(ctor, vec![Value::Num(out.len() as f64)])?;
                                 for (k, v) in out.into_iter().enumerate() {
-                                    self.set_own_property(&sp, k.to_string(), v);
+                                    self.create_data_property_or_throw(&sp, k, v)?;
                                 }
                                 sp
                             }
@@ -7193,7 +7206,7 @@ impl Interp {
                                     let a =
                                         self.construct(ctor, vec![Value::Num(out.len() as f64)])?;
                                     for (k, v) in out.into_iter().enumerate() {
-                                        self.set_own_property(&a, k.to_string(), v);
+                                        self.create_data_property_or_throw(&a, k, v)?;
                                     }
                                     a
                                 }
@@ -7413,7 +7426,7 @@ impl Interp {
                                 let sp = self.construct(ctor, vec![Value::Num(0.0)])?;
                                 for (k, v) in out.into_iter().enumerate() {
                                     if !out_holes.contains(&k) {
-                                        self.set_own_property(&sp, k.to_string(), v);
+                                        self.create_data_property_or_throw(&sp, k, v)?;
                                     }
                                 }
                                 sp
@@ -7472,7 +7485,7 @@ impl Interp {
                                 let sp =
                                     self.construct(ctor, vec![Value::Num(removed.len() as f64)])?;
                                 for (k, v) in removed.into_iter().enumerate() {
-                                    self.set_own_property(&sp, k.to_string(), v);
+                                    self.create_data_property_or_throw(&sp, k, v)?;
                                 }
                                 sp
                             }
@@ -7586,20 +7599,18 @@ impl Interp {
                         Value::Arr(a.clone())
                     }
                     ArrOp::Flat => {
-                        // depth 인자만큼 재귀적으로 펼친다 (§23.1.3.11). 기본 1.
-                        // Infinity 면 완전 평탄화. 예전엔 인자를 무시하고 항상 1단계였다.
-                        let depth = match args.first() {
-                            None | Some(Value::Undefined) => 1i32,
-                            Some(v) => {
-                                let n = to_num(v);
-                                if n.is_nan() || n <= 0.0 {
-                                    0
-                                } else if n > i32::MAX as f64 {
-                                    i32::MAX
-                                } else {
-                                    n as i32
-                                }
-                            }
+                        // §23.1.3.11: depth = ToIntegerOrInfinity(depth)(기본 1, Symbol→TypeError,
+                        // Infinity 면 완전 평탄화). 예전엔 lenient to_num 이라 Symbol depth 를 놓쳤다.
+                        let depth_f = match args.first() {
+                            None | Some(Value::Undefined) => 1.0,
+                            Some(v) => self.to_integer_or_infinity(v)?,
+                        };
+                        let depth = if depth_f.is_nan() || depth_f <= 0.0 {
+                            0
+                        } else if depth_f > i32::MAX as f64 {
+                            i32::MAX
+                        } else {
+                            depth_f as i32
                         };
                         fn flatten(items: &[Value], depth: i32, out: &mut Vec<Value>) {
                             for v in items {
@@ -7613,7 +7624,17 @@ impl Interp {
                         }
                         let mut out = Vec::new();
                         flatten(&a.borrow(), depth, &mut out);
-                        Value::Arr(ArrayObj::new(out))
+                        // 결과도 ArraySpeciesCreate + CreateDataPropertyOrThrow(§23.1.3.11).
+                        match self.array_species_ctor(&cb_arr)? {
+                            Some(ctor) => {
+                                let sp = self.construct(ctor, vec![Value::Num(0.0)])?;
+                                for (k, v) in out.into_iter().enumerate() {
+                                    self.create_data_property_or_throw(&sp, k, v)?;
+                                }
+                                sp
+                            }
+                            None => Value::Arr(ArrayObj::new(out)),
+                        }
                     }
                     ArrOp::At => {
                         // arr.at(i): ToIntegerOrInfinity, 음수는 끝에서. 범위 밖 undefined.
