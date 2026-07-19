@@ -2483,6 +2483,14 @@ fn destructuring_targets_can_be_members() {
     assert_eq!(run_num("var a,b; [a,,b]=[10,20,30]; a+b"), 40.0);
     // 선행 구멍 + rest 혼합
     assert_eq!(run_str("var x,r; [,x,...r]=[1,2,3,4]; x+':'+JSON.stringify(r)"), "2:[3,4]");
+    // const 재대입은 진짜 TypeError 객체 (e instanceof TypeError) — Value::Str 아님
+    assert!(run_bool(
+        "var ok=false; const c=1; try{ c=5; }catch(e){ ok = e instanceof TypeError; } ok"
+    ));
+    // 구조분해 할당도 const 를 존중(TypeError)하고 값은 안 바뀐다
+    assert!(run_bool(
+        "var ok=false; const c=1; try{ [c]=[9]; }catch(e){ ok = (e instanceof TypeError) && c===1; } ok"
+    ));
 }
 
 #[test]

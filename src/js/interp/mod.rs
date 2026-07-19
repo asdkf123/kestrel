@@ -3507,15 +3507,17 @@ impl Interp {
         assign: bool,
     ) -> Result<(), String> {
         use crate::js::ast::Pattern;
-        let bind = |env: &EnvRef, n: &str, v: Value| {
-            if assign {
-                env_set(env, n, v);
-            } else {
-                env_declare(env, n, v);
-            }
-        };
         match pat {
-            Pattern::Name(n) => bind(env, n, value),
+            // assign=true(구조분해 할당): 기존 바인딩에 대입 — const 재대입/with 스코프를
+            // assign_to 로 존중한다(§13.15.5.2). 예전엔 env_set 로 직접 써서 [c]=[v] 가
+            // const c 를 조용히 덮었다. assign=false(let/const/param): 새로 선언.
+            Pattern::Name(n) => {
+                if assign {
+                    self.assign_to(&Expr::Ident(n.clone()), value, env)?;
+                } else {
+                    env_declare(env, n, value);
+                }
+            }
             // 멤버 대상: 선언이 아니라 대입이다 (o.p = v)
             Pattern::Member(e) => {
                 self.assign_to(e, value, env)?;
@@ -9487,12 +9489,14 @@ impl Interp {
     fn assign_to(&mut self, target: &Expr, value: Value, env: &EnvRef) -> Result<(), String> {
         match target {
             Expr::Ident(name) => {
-                // const 재대입은 TypeError (표준).
+                // const 재대입은 TypeError (표준). 진짜 TypeError 객체를 던진다 —
+                // 예전엔 Value::Str 을 thrown 에 넣어 catch 에서 e instanceof TypeError 가
+                // false, e.constructor.name 이 "String" 이었다(assert.throws(TypeError) 실패).
                 if env_is_const(env, name) {
-                    self.thrown = Some(Value::Str(format!(
-                        "TypeError: Assignment to constant variable."
-                    )));
-                    return Err(format!("상수 '{}' 에 재대입", name));
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Assignment to constant variable.",
+                    ));
                 }
                 // with 스코프의 객체가 그 이름을 가지면 **그 객체의 프로퍼티**에 쓴다
                 // (§9.1.1.2 SetMutableBinding). 세터가 있으면 세터가 돈다.
