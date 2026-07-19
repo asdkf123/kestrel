@@ -3391,7 +3391,12 @@ impl Interp {
                             }
                         }
                         Value::Arr(a) => {
-                            if let Ok(i) = key.parse::<usize>() {
+                            // 유효 배열 인덱스는 0..2^32-1(canonical). 2^32-1 이상(예: "4294967295")은
+                            // 배열 인덱스가 아니라 일반 프로퍼티다 — dense Vec 를 그만큼 키우면
+                            // OOM 이므로 props 에 저장한다(§10.4.2.1, §6.1.7 array index 정의).
+                            let as_index =
+                                key.parse::<usize>().ok().filter(|&i| (i as u64) < 4294967295);
+                            if let Some(i) = as_index {
                                 let old_len = a.borrow().len();
                                 // 값 설정 전에 "기존 데이터 프로퍼티였나"(§10.1.6 재정의 여부).
                                 let existed = i < old_len && !a.is_hole(i);
