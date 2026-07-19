@@ -5834,6 +5834,12 @@ impl Interp {
                 // 예전엔 Value::Obj 만 걸어 배열 프로토타입의 상속 인덱스를 놓쳤다.
                 match m.borrow().get("__proto__").cloned() {
                     Some(p) => self.value_chain_has(&p, key),
+                    // 정규식 인스턴스는 RegExp.prototype 을 상속한다(source/flags 접근자, exec/
+                    // test, 사용자 프로퍼티). member_get 은 위임하는데 in/has 는 안 봐서
+                    // ToPropertyDescriptor(HasProperty+Get)가 정규식 서술자의 상속 필드를 놓쳤다.
+                    None if is_regex_obj(m) => {
+                        self.value_chain_has(&self.regexp_proto.clone(), key)
+                    }
                     // 명시 __proto__ 링크가 없으면(일반 객체 리터럴) 암묵 Object.prototype
                     // 상속분을 본다 — member_get 은 주는데 in/has 는 안 줘서
                     // "toString" in {} 가 false 였다(§7.3.11 은 [[Prototype]] 체인을 본다).
@@ -6394,6 +6400,26 @@ impl Interp {
                                 }
                             }
                             // Date.prototype 에 없으면 Object.prototype 폴백 (hasOwnProperty 등).
+                            self.object_proto_get(key, recv)
+                        }
+                        // 정규식 인스턴스는 RegExp.prototype 을 상속한다 — exec/test/@@메서드
+                        // 및 사용자가 얹은 RegExp.prototype.x 를 본다. source/flags/각 플래그
+                        // 계산 접근자는 위 is_regex_obj arm 이 이미 처리했고, 여기 오는 건 그 밖의 키.
+                        _ if is_regex_obj(map) => {
+                            if let Value::Obj(pm) = &self.regexp_proto {
+                                let v = pm.borrow().get(key).cloned();
+                                if let Some(v) = v {
+                                    return match v {
+                                        Value::Accessor(acc) => match &acc.get {
+                                            Some(g) => {
+                                                self.call_value(g.clone(), Some(recv.clone()), vec![])
+                                            }
+                                            None => Ok(Value::Undefined),
+                                        },
+                                        other => Ok(other),
+                                    };
+                                }
+                            }
                             self.object_proto_get(key, recv)
                         }
                         // Object.prototype 폴백 — 인스턴스 객체도 valueOf/toString/hasOwnProperty 등

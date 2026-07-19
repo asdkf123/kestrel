@@ -3412,6 +3412,16 @@ fn more_array_string_methods() {
     ));
     // 안 지운 메서드는 무회귀.
     assert_eq!(run_str("typeof Object.keys+','+typeof Array.isArray"), "function,function");
+    // 정규식 인스턴스는 RegExp.prototype 을 상속한다(member_get/has_property 위임).
+    assert_eq!(run_num("RegExp.prototype.zq=5; var v=(/a/).zq; delete RegExp.prototype.zq; v"), 5.0);
+    assert!(run_bool("'source' in /a/ && 'exec' in /a/ && 'flags' in /a/"));
+    // 정규식을 서술자로 쓰면 프로토타입 상속 필드(value 등)를 HasProperty+Get 으로 읽는다.
+    assert_eq!(
+        run_str("RegExp.prototype.value='RX'; var o={}; Object.defineProperty(o,'p',new RegExp()); var r=o.p; delete RegExp.prototype.value; r"),
+        "RX"
+    );
+    // regex 메서드/계산 프로퍼티 무회귀.
+    assert!(run_bool("(/ab/).test('xabx') && (/ab/).source==='ab' && !(/ab/).global"));
     // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
     assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
     // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.
