@@ -3313,6 +3313,22 @@ fn more_array_string_methods() {
     assert!(prelude_bool(
         "String.prototype.normalize.name==='normalize' && String.prototype.normalize.length===0"
     ));
+    // Object.entries/values 는 live EnumerableOwnProperties — getter 를 호출하고,
+    // getter 가 뒤 키를 non-enumerable 로 바꾸면 그 키를 제외한다(§7.3.25).
+    assert_eq!(
+        run_num(
+            "var o={}; var calls=0; \
+             Object.defineProperty(o,'a',{enumerable:true,configurable:true,get:function(){calls++; Object.defineProperty(o,'b',{enumerable:false}); return 1;}}); \
+             Object.defineProperty(o,'b',{enumerable:true,configurable:true,value:2}); \
+             var e=Object.entries(o); e.length*10+calls"
+        ),
+        11.0 // 길이 1(b 제외) * 10 + getter 1회 호출
+    );
+    assert_eq!(run_str("Object.values({a:1,b:2}).join(',')"), "1,2");
+    assert_eq!(run_str("Object.entries({x:9}).map(function(e){return e[0]+e[1];}).join()"), "x9");
+    // ToObject: null/undefined → TypeError, 원시는 박싱.
+    assert!(run_bool("try{Object.entries(null);false}catch(e){e instanceof TypeError}"));
+    assert_eq!(run_str("Object.values('ab').join(',')"), "a,b");
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

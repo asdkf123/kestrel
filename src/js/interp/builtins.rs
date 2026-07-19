@@ -2375,6 +2375,58 @@ impl Interp {
         Ok(o.clone())
     }
 
+    // §7.3.25 EnumerableOwnProperties — Object.keys/values/entries 공용. [[OwnPropertyKeys]]
+    // 로 문자열 own 키를 순서대로 얻고, 각 키마다 live 로 [[GetOwnProperty]](enumerable 검사)
+    // 후 [[Get]]. 스냅샷이 아니라 매 키 live 라 getter 가 뒤 키를 지우거나 non-enumerable 로
+    // 바꾸는 것을 관측하고, Proxy 는 ownKeys/gOPD/get 트랩을 순서대로 거친다.
+    pub(super) fn enumerable_own_live(
+        &mut self,
+        obj: &Value,
+        want_key: bool,
+        want_val: bool,
+    ) -> Result<Vec<Value>, String> {
+        let names = self.call_native(
+            Native::ObjectGetOwnPropertyNames,
+            None,
+            vec![obj.clone()],
+        )?;
+        let names: Vec<String> = match names {
+            Value::Arr(a) => a
+                .borrow()
+                .iter()
+                .filter_map(|v| match v {
+                    Value::Str(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        for k in names {
+            let desc = self.call_native(
+                Native::ObjectGetOwnPropertyDescriptor,
+                None,
+                vec![obj.clone(), Value::Str(k.clone())],
+            )?;
+            let enumerable = matches!(&desc, Value::Obj(m)
+                if matches!(m.borrow().get("enumerable"), Some(v) if to_bool(v)));
+            if !enumerable {
+                continue;
+            }
+            if want_val {
+                let v = self.member_get(obj, &k)?;
+                if want_key {
+                    out.push(Value::Arr(ArrayObj::new(vec![Value::Str(k), v])));
+                } else {
+                    out.push(v);
+                }
+            } else {
+                out.push(Value::Str(k));
+            }
+        }
+        Ok(out)
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -9089,38 +9141,30 @@ impl Interp {
                 Ok(Value::Arr(ArrayObj::new(names)))
             }
             Native::ObjectValues => {
-                let vals: Vec<Value> = match args.first() {
-                    Some(Value::Obj(m)) => {
-                        enumerable_entries(m).into_iter().map(|(_, v)| v).collect()
-                    }
-                    Some(v @ (Value::Arr(_) | Value::Instance(_))) => {
-                        // own_enumerable_entries: 구멍·non-enumerable 인덱스 제외 (§10.4.2).
-                        own_enumerable_entries(v).into_iter().map(|(_, v)| v).collect()
-                    }
-                    _ => Vec::new(),
-                };
+                // §20.1.2.23: O = ToObject(arg)(null/undefined → TypeError), 그다음 live
+                // EnumerableOwnProperties(value). getter·proxy 트랩·live enumerable 관측.
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                if matches!(arg, Value::Undefined | Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot convert undefined or null to object",
+                    ));
+                }
+                let obj = self.to_object_value(arg);
+                let vals = self.enumerable_own_live(&obj, false, true)?;
                 Ok(Value::Arr(ArrayObj::new(vals)))
             }
             Native::ObjectEntries => {
-                let pair = |k: &str, v: &Value| {
-                    Value::Arr(ArrayObj::new(vec![Value::Str(k.to_string()), v.clone()]))
-                };
-                let entries: Vec<Value> = match args.first() {
-                    Some(Value::Obj(m)) => {
-                        enumerable_entries(m).iter().map(|(k, v)| pair(k, v)).collect()
-                    }
-                    Some(v @ Value::Arr(_)) => {
-                        // 구멍·non-enumerable 인덱스 제외 (§10.4.2).
-                        own_enumerable_entries(v)
-                            .iter()
-                            .map(|(k, val)| pair(k, val))
-                            .collect()
-                    }
-                    Some(v @ Value::Instance(_)) => {
-                        own_enumerable_entries(v).iter().map(|(k, v)| pair(k, v)).collect()
-                    }
-                    _ => Vec::new(),
-                };
+                // §20.1.2.6: O = ToObject(arg), 그다음 live EnumerableOwnProperties(key+value).
+                let arg = args.first().cloned().unwrap_or(Value::Undefined);
+                if matches!(arg, Value::Undefined | Value::Null) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Cannot convert undefined or null to object",
+                    ));
+                }
+                let obj = self.to_object_value(arg);
+                let entries = self.enumerable_own_live(&obj, true, true)?;
                 Ok(Value::Arr(ArrayObj::new(entries)))
             }
             Native::ObjectFromEntries => {
