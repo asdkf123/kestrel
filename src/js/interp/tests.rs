@@ -1141,6 +1141,10 @@ fn functions_are_objects() {
          Object.defineProperty(b,'q',{value:1,configurable:true}); \
          Object.getOwnPropertyDescriptor(b,'q').value===1 && (delete b.q) && !('q' in b)"
     ));
+    // caller/arguments 는 바운드 함수에서 poison-pill — 읽기/대입 모두 TypeError (§10.2.4)
+    assert!(run_bool("var b=(function(){}).bind(null); var t=false; try{ b.caller }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var b=(function(){}).bind(null); var t=false; try{ b.arguments }catch(e){ t=e instanceof TypeError } t"));
+    assert!(run_bool("var b=(function(){}).bind(null); var t=false; try{ b.arguments={} }catch(e){ t=e instanceof TypeError } t"));
 }
 
 #[test]

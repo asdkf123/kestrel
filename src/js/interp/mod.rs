@@ -7016,6 +7016,14 @@ impl Interp {
                 if let Some(v) = b.3.borrow().get(key) {
                     return Ok(v.clone());
                 }
+                // caller/arguments 는 %ThrowTypeError% poison-pill 접근자라 읽으면 TypeError
+                // (§10.2.4 — 바운드/strict 함수). 예전엔 undefined 를 돌려줬다.
+                if matches!(key, "caller" | "arguments") {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "'caller' and 'arguments' are restricted on bound functions",
+                    ));
+                }
                 // name/length 가 delete 됐으면(툼스톤) 계산값을 주지 않는다.
                 let deleted = matches!(key, "name" | "length")
                     && b.3.borrow().contains_key(&format!("\u{0}fndel:{}", key));
@@ -9034,6 +9042,13 @@ impl Interp {
                     // 바운드 함수도 객체 — 임의 프로퍼티를 얹을 수 있다(fn.foo=1). name/length 는
                     // 계산 프로퍼티(non-writable, §20.2.4)라 재대입 무시(sloppy). 나머지는 props 맵.
                     Value::Bound(b) => {
+                        // caller/arguments 는 poison-pill 접근자 — 대입도 TypeError (§10.2.4).
+                        if matches!(key.as_str(), "caller" | "arguments") {
+                            return Err(self.throw_error(
+                                "TypeError",
+                                "'caller' and 'arguments' are restricted on bound functions",
+                            ));
+                        }
                         if !matches!(key.as_str(), "name" | "length") {
                             b.3.borrow_mut().insert(key, value);
                         }
