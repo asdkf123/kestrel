@@ -1166,6 +1166,10 @@ fn array_methods_batch() {
     assert_eq!(run_num("[5,6,7].findIndex(function(x){return x===7})"), 2.0);
     assert!(run_bool("[1,2,3].includes(2)"));
     assert_eq!(run_num("[1,2].concat([3,4]).length"), 4.0);
+    // concat 은 희소 배열의 구멍을 보존한다 (§23.1.3.1, HasProperty 로 판정)
+    assert!(run_bool("var r=[1,,3].concat([4]); r.length===4 && !(1 in r) && r[0]===1 && r[2]===3"));
+    // 구멍이 상속 인덱스로 채워지면 값으로 (§CreateDataProperty)
+    assert!(run_bool("Object.prototype[1]=9; var r=[1,,3].concat([4]); var ok=(1 in r) && r[1]===9; delete Object.prototype[1]; ok"));
     // splice: 원본 변형 + 제거분 반환
     assert_eq!(run_num("var a=[1,2,3,4]; a.splice(1,2); a.length"), 2.0);
     assert_eq!(run_num("var a=[1,2,3]; a.unshift(0); a[0]"), 0.0);

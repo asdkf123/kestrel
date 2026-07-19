@@ -8672,13 +8672,16 @@ impl Interp {
                                 }
                                 let len = len_f as usize;
                                 for k in 0..len {
-                                    let key = k.to_string();
-                                    if self.has_property(&item, &key) {
-                                        out.push(self.member_get(&item, &key)?);
-                                    } else {
-                                        // 없는 인덱스(구멍) → 결과에서도 구멍(§CreateDataProperty 미호출).
-                                        out_holes.insert(out.len());
-                                        out.push(Value::Undefined);
+                                    // array_like_live_get 은 구멍을 정확히 판정한다(has_property 는
+                                    // 배열 구멍에도 true 라 예전엔 구멍이 결과에서 실원소가 됐다).
+                                    // 상속 인덱스(Array/Object.prototype[k])는 값으로 읽는다.
+                                    match self.array_like_live_get(&item, k)? {
+                                        Some(v) => out.push(v),
+                                        None => {
+                                            // 없는 인덱스(구멍) → 결과에서도 구멍.
+                                            out_holes.insert(out.len());
+                                            out.push(Value::Undefined);
+                                        }
                                     }
                                 }
                             } else {
