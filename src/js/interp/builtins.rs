@@ -860,7 +860,8 @@ impl Interp {
             | Value::ClassList(_)
             | Value::Gen(_)
             | Value::Symbol(_)
-            | Value::ComputedStyle(_) => None,
+            | Value::ComputedStyle(_)
+            | Value::DetachedAttr(_) => None,
             // §25.5.2.2: Proxy 는 IsArray(타깃)에 따라 배열/객체로 직렬화하며, 길이·키·값을
             // 모두 트랩(get/ownKeys/gOPD)으로 읽는다. revoked proxy 는 그 트랩이 TypeError.
             Value::Proxy(_) => {
@@ -4494,6 +4495,7 @@ impl Interp {
                     | Some(Value::Class(_)) => "Function".into(),
                     Some(Value::MapVal(_)) => "Map".into(),
                     Some(Value::SetVal(_)) => "Set".into(),
+                    Some(Value::Attr(_, _)) | Some(Value::DetachedAttr(_)) => "Attr".into(),
                     Some(Value::Obj(o)) => {
                         let b = o.borrow();
                         // Symbol.toStringTag 우선 (문자열이면)
@@ -4833,11 +4835,15 @@ impl Interp {
                     ("createComment", Native::CreateComment),
                     ("createProcessingInstruction", Native::CreateProcessingInstruction),
                     ("createDocumentFragment", Native::CreateDocumentFragment),
+                    ("createAttribute", Native::CreateAttribute),
+                    ("createAttributeNS", Native::CreateAttributeNS),
                     ("getElementsByTagName", Native::GetElementsByTag),
                     ("getElementsByTagNameNS", Native::GetElementsByTagNS),
                 ] {
                     d.insert(k.to_string(), Value::Native(n));
                 }
+                // XML 문서 표시: createAttribute 가 이름을 소문자화하지 않도록.
+                d.insert("\u{0}xmlDoc".to_string(), Value::Bool(true));
                 // 생성된 문서 자신의 implementation(재귀: createDocument/createDocumentType).
                 let mut impl_obj = ObjMap::new();
                 impl_obj
@@ -5650,18 +5656,30 @@ impl Interp {
                     crate::dom::NodeType::Element(e) if e.attributes.get(&name).is_some());
                 Ok(if has { Value::Attr(id, name) } else { Value::Null })
             }
-            // setAttributeNode(attr) → 같은 이름의 기존 Attr 를 반환(없으면 null)
+            // setAttributeNode(attr) → 같은 이름의 기존 Attr 를 반환(없으면 null).
+            // 요소에 묶인 Attr(live) 과 createAttribute 로 만든 detached Attr 둘 다 받는다.
             Native::SetAttributeNode => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Null) };
-                let Some(Value::Attr(src, name)) = args.first().cloned() else {
+                let arg = args.first().cloned();
+                if !matches!(arg, Some(Value::Attr(_, _)) | Some(Value::DetachedAttr(_))) {
                     return Err(self.throw_error("TypeError", "setAttributeNode 인자는 Attr"));
-                };
+                }
                 let dom = self.dom_arena()?;
-                let value = match &dom.get(src).node_type {
-                    crate::dom::NodeType::Element(e) => {
-                        e.attributes.get(&name).cloned().unwrap_or_default()
+                let (name, value) = match arg {
+                    Some(Value::Attr(src, name)) => {
+                        let value = match &dom.get(src).node_type {
+                            crate::dom::NodeType::Element(e) => {
+                                e.attributes.get(&name).cloned().unwrap_or_default()
+                            }
+                            _ => String::new(),
+                        };
+                        (name, value)
                     }
-                    _ => String::new(),
+                    Some(Value::DetachedAttr(cell)) => {
+                        let a = cell.borrow();
+                        (a.name.clone(), a.value.clone())
+                    }
+                    _ => unreachable!(),
                 };
                 let old = matches!(&dom.get(id).node_type,
                     crate::dom::NodeType::Element(e) if e.attributes.get(&name).is_some());
@@ -5676,6 +5694,55 @@ impl Interp {
                 let dom = self.dom_arena()?;
                 dom.remove_attr(id, &name);
                 Ok(Value::Attr(id, name))
+            }
+            // document.createAttribute(localName) → 소유자 없는 Attr (§4.5).
+            // 빈 이름은 InvalidCharacterError. HTML 문서는 이름을 소문자화(XML 은 보존).
+            // 접두사 분리 없이 통짜를 localName 으로 쓴다(NS 없음).
+            Native::CreateAttribute => {
+                let name = args.first().map(to_display).unwrap_or_else(|| "undefined".to_string());
+                if name.is_empty() {
+                    return Err(self.throw_dom("InvalidCharacterError", "createAttribute: 빈 이름"));
+                }
+                // XML 문서는 이름을 보존, HTML 문서는 소문자화. 문서 객체에 붙인
+                // "\0xmlDoc" 표시로 구분한다(없으면 HTML 로 본다).
+                let is_xml = matches!(&recv, Some(Value::Obj(o))
+                    if matches!(o.borrow().get("\u{0}xmlDoc"), Some(Value::Bool(true))));
+                let name = if is_xml { name } else { name.to_ascii_lowercase() };
+                Ok(Value::DetachedAttr(Rc::new(RefCell::new(
+                    crate::js::interp::objects::DetachedAttrData {
+                        local: name.clone(),
+                        name,
+                        prefix: None,
+                        namespace: None,
+                        value: String::new(),
+                    },
+                ))))
+            }
+            // document.createAttributeNS(namespace, qualifiedName) → 소유자 없는 Attr.
+            // 정규화 이름을 접두사:로컬로 나누고 네임스페이스를 붙인다(§Validate and extract).
+            Native::CreateAttributeNS => {
+                let ns = match args.first() {
+                    Some(Value::Null) | Some(Value::Undefined) | None => None,
+                    Some(v) => {
+                        let s = to_display(v);
+                        if s.is_empty() { None } else { Some(s) }
+                    }
+                };
+                let qname = args.get(1).map(to_display).unwrap_or_default();
+                self.validate_qualified_name(&qname, ns.as_deref())?;
+                let (prefix, local) = match qname.split_once(':') {
+                    Some((p, l)) => (Some(p.to_string()), l.to_string()),
+                    None => (None, qname.clone()),
+                };
+                Ok(Value::DetachedAttr(Rc::new(RefCell::new(
+                    crate::js::interp::objects::DetachedAttrData {
+                        name: qname,
+                        local,
+                        prefix,
+                        namespace: ns,
+                        value: String::new(),
+                    },
+                ))))
             }
             // document.styleSheets — 저작자 시트 목록 (문서 순서)
             Native::StyleSheets => {
@@ -5733,7 +5800,9 @@ impl Interp {
                             }
                         }
                     }
-                    Some(Value::Attr(_, _)) => vec!["Attr", "Node", "EventTarget"],
+                    Some(Value::Attr(_, _)) | Some(Value::DetachedAttr(_)) => {
+                        vec!["Attr", "Node", "EventTarget"]
+                    }
                     Some(Value::Sheet(_)) => vec!["CSSStyleSheet", "StyleSheet"],
                     Some(Value::CssRule(_, _)) => vec!["CSSStyleRule", "CSSRule"],
                     Some(Value::RuleStyle(_, _))

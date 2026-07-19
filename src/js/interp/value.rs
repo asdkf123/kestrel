@@ -1005,7 +1005,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::MapVal(_) => "[object Map]".to_string(),
         Value::SetVal(_) => "[object Set]".to_string(),
         Value::Style(_) => "[object CSSStyleDeclaration]".to_string(),
-        Value::Attr(_, _) => "[object Attr]".to_string(),
+        Value::Attr(_, _) | Value::DetachedAttr(_) => "[object Attr]".to_string(),
         Value::Sheet(_) => "[object CSSStyleSheet]".to_string(),
         Value::CssRule(_, _) => "[object CSSStyleRule]".to_string(),
         Value::RuleStyle(_, _) => "[object CSSStyleDeclaration]".to_string(),
@@ -1164,6 +1164,8 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::Style(x), Value::Style(y)) => x == y,
         // CSSOM/Attr 은 (대상, 키) 로 식별되는 살아 있는 뷰다 — 같은 대상이면 같은 것.
         (Value::Attr(a, x), Value::Attr(b, y)) => a == b && x == y,
+        // 소유자 없는 Attr 은 참조 동일성(같은 Rc 셀이면 같은 노드).
+        (Value::DetachedAttr(x), Value::DetachedAttr(y)) => Rc::ptr_eq(x, y),
         (Value::Sheet(x), Value::Sheet(y)) => x == y,
         (Value::CssRule(a, x), Value::CssRule(b, y)) => a == b && x == y,
         (Value::RuleStyle(a, x), Value::RuleStyle(b, y)) => a == b && x == y,

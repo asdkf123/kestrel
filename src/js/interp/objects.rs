@@ -131,6 +131,20 @@ pub enum Value {
     // getComputedStyle(el) 이 돌려주는 읽기전용 계산 스타일 뷰. 요소 NodeId 로
     // computed_styles 맵을 조회한다(카멜케이스/대시 프로퍼티 + getPropertyValue).
     ComputedStyle(crate::dom::NodeId),
+    // document.createAttribute(NS) 로 만든 **소유자 없는** Attr (§4.9.2). 요소에 붙기
+    // 전이라 자체적으로 값을 저장한다(Value::Attr 은 요소에 묶여 live 인 반면 이건 detached).
+    DetachedAttr(Rc<RefCell<DetachedAttrData>>),
+}
+
+// 소유 요소가 없는 Attr 노드의 데이터. name/local/prefix/namespace 는 생성 시 확정,
+// value 는 attr.value 대입으로 바뀐다. 요소에 attach 되면 요소 속성으로 옮겨간다.
+#[derive(Clone)]
+pub struct DetachedAttrData {
+    pub name: String,              // qualified name = nodeName = name
+    pub local: String,             // localName
+    pub prefix: Option<String>,
+    pub namespace: Option<String>,
+    pub value: String,
 }
 
 // 접근자 프로퍼티: get/set 함수 쌍. 둘 중 하나만 있을 수 있다.
@@ -474,6 +488,7 @@ impl std::fmt::Debug for Value {
             Value::Gen(_) => write!(f, "[object Generator]"),
             Value::Symbol(s) => write!(f, "Symbol({})", s.desc.as_deref().unwrap_or("")),
             Value::ComputedStyle(id) => write!(f, "[computedStyle {:?}]", id),
+            Value::DetachedAttr(a) => write!(f, "[attr {}]", a.borrow().name),
         }
     }
 }

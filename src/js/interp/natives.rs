@@ -236,6 +236,8 @@ pub enum Native {
     // 보유 문자열, toString 은 NativeFunction 문법.
     FnKindCtor(&'static str),
     CreateElement,
+    CreateAttribute,
+    CreateAttributeNS,
     AppendChild,
     NodeAppend,
     NodePrepend,

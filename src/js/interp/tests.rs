@@ -491,6 +491,36 @@ fn dom_node_type_and_owner_document() {
 }
 
 #[test]
+fn document_create_attribute() {
+    let mut dom = crate::html::parse_dom("<div></div>".to_string());
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    it.run(crate::js::JS_PRELUDE).expect("프렐류드"); // DOMException 등 전역
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // HTML 문서: 이름 소문자화, nodeType=2, value="", ownerElement=null, specified=true
+    assert_eq!(g("document.createAttribute('TITLE').name"), "title");
+    assert_eq!(g("document.createAttribute('x').nodeType"), "2");
+    assert_eq!(g("document.createAttribute('x').value"), "");
+    assert_eq!(g("document.createAttribute('x').ownerElement"), "null");
+    assert_eq!(g("document.createAttribute('x').specified"), "true");
+    // createAttribute 는 접두사를 나누지 않는다 — 통짜가 localName
+    assert_eq!(g("document.createAttribute('a:0').localName"), "a:0");
+    assert_eq!(g("document.createAttribute('a:0').prefix"), "null");
+    // value 대입은 nodeValue/textContent 와 동기
+    assert_eq!(g("var a=document.createAttribute('x'); a.value='v'; a.nodeValue+a.textContent"), "vv");
+    // 빈 이름은 InvalidCharacterError
+    assert_eq!(g("try{document.createAttribute('')}catch(e){e.name}"), "InvalidCharacterError");
+    // instanceof/toStringTag = Attr
+    assert_eq!(g("Object.prototype.toString.call(document.createAttribute('x'))"), "[object Attr]");
+    // setAttributeNode 로 요소에 붙으면 실제 속성이 된다
+    assert_eq!(
+        g("var el=document.querySelector('div'); var at=document.createAttribute('data-k'); \
+           at.value='V'; el.setAttributeNode(at); el.getAttribute('data-k')"),
+        "V",
+    );
+}
+
+#[test]
 fn constructor_found_on_prototype_chain() {
     // jQuery 는 `jQuery.fn.constructor = jQuery` 로 프로토타입에 둔다.
     // own 만 보면 this.constructor() 가 전역 Object 로 떨어져 "함수 아님" 이 됐다.

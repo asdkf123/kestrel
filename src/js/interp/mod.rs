@@ -565,6 +565,8 @@ impl Interp {
         let mut document = ObjMap::new();
         document.insert("getElementById".to_string(), Value::Native(Native::GetElementById));
         document.insert("createElement".to_string(), Value::Native(Native::CreateElement));
+        document.insert("createAttribute".to_string(), Value::Native(Native::CreateAttribute));
+        document.insert("createAttributeNS".to_string(), Value::Native(Native::CreateAttributeNS));
         document.insert(
             "createDocumentFragment".to_string(),
             Value::Native(Native::CreateDocumentFragment),
@@ -7025,6 +7027,24 @@ impl Interp {
                     _ => Ok(Value::Undefined),
                 }
             }
+            // 소유자 없는 Attr (createAttribute). 값을 자체 저장하므로 요소를 보지 않는다.
+            Value::DetachedAttr(cell) => {
+                let a = cell.borrow();
+                match key {
+                    "name" | "nodeName" => Ok(Value::Str(a.name.clone())),
+                    "localName" => Ok(Value::Str(a.local.clone())),
+                    "prefix" => Ok(a.prefix.clone().map(Value::Str).unwrap_or(Value::Null)),
+                    "namespaceURI" => Ok(a.namespace.clone().map(Value::Str).unwrap_or(Value::Null)),
+                    "value" | "nodeValue" | "textContent" => Ok(Value::Str(a.value.clone())),
+                    "ownerElement" => Ok(Value::Null),
+                    "nodeType" => Ok(Value::Num(2.0)), // ATTRIBUTE_NODE
+                    "specified" => Ok(Value::Bool(true)),
+                    "childNodes" => Ok(Value::Arr(ArrayObj::new(vec![]))),
+                    "parentNode" | "parentElement" | "firstChild" | "lastChild"
+                    | "previousSibling" | "nextSibling" => Ok(Value::Null),
+                    _ => Ok(Value::Undefined),
+                }
+            }
             // element.style.prop 읽기 (라이브 프록시)
             Value::Style(id) => {
                 let id = *id;
@@ -9808,6 +9828,13 @@ impl Interp {
                             let text = to_display(&value);
                             let dom = self.dom_arena()?;
                             dom.set_attr(id, &name, text);
+                        }
+                        Ok(())
+                    }
+                    // 소유자 없는 Attr: 값만 자체 저장(요소 없음). value/nodeValue/textContent 동기.
+                    Value::DetachedAttr(cell) => {
+                        if matches!(key.as_str(), "value" | "nodeValue" | "textContent") {
+                            cell.borrow_mut().value = to_display(&value);
                         }
                         Ok(())
                     }
