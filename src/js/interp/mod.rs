@@ -5472,6 +5472,21 @@ impl Interp {
             d.insert("configurable".to_string(), Value::Bool(true));
             return Ok(Some(Value::Obj(Rc::new(RefCell::new(d)))));
         }
+        // 프렐류드/폴리필이 native_props 에 얹은 정적 메서드도 own 데이터 프로퍼티다
+        // ({w:t,e:f,c:t}). 예전엔 native_ctor_own_keys 목록에만 있어 Object.fromEntries/
+        // getOwnPropertyDescriptors 등이 gOPD/hasOwnProperty 에 안 나왔다.
+        if !is_internal_key(key) {
+            if let Some(v) = self.native_props.get(&n).and_then(|m| m.get(key)).cloned() {
+                if !matches!(v, Value::Undefined) {
+                    let mut d = ObjMap::new();
+                    d.insert("value".to_string(), v);
+                    d.insert("writable".to_string(), Value::Bool(true));
+                    d.insert("enumerable".to_string(), Value::Bool(false));
+                    d.insert("configurable".to_string(), Value::Bool(true));
+                    return Ok(Some(Value::Obj(Rc::new(RefCell::new(d)))));
+                }
+            }
+        }
         let Some(keys) = self.native_ctor_own_keys(&n) else {
             return Ok(None);
         };

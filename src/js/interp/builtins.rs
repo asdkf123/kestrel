@@ -3206,9 +3206,13 @@ impl Interp {
                         if matches!(key.as_str(), "name" | "length") {
                             !self.native_prop_deleted(v, &key)
                         } else if let Value::Native(n) = v {
-                            self.native_ctor_own_keys(n)
-                                .map(|ks| ks.iter().any(|k| *k == key))
-                                .unwrap_or(false)
+                            // 프렐류드가 native_props 에 얹은 정적 메서드도 own 이다.
+                            (!is_internal_key(&key)
+                                && self.native_props.get(n).map_or(false, |m| m.contains_key(&key)))
+                                || self
+                                    .native_ctor_own_keys(n)
+                                    .map(|ks| ks.iter().any(|k| *k == key))
+                                    .unwrap_or(false)
                         } else if let Value::Bound(b) = v {
                             b.3.borrow().contains_key(&key)
                         } else {
