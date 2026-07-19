@@ -2339,6 +2339,17 @@ impl Interp {
                             }
                         }
                     }
+                    // 바운드 함수의 사용자 프로퍼티(재정의된 name/length 포함)는 props 맵의
+                    // 실제 값·속성으로 보고한다.
+                    Value::Bound(b) if b.3.borrow().contains_key(&key) => {
+                        let bm = b.3.borrow();
+                        let attrs = prop_attrs(&bm, &key);
+                        d.insert("value".to_string(), bm.get(&key).cloned().unwrap_or(Value::Undefined));
+                        d.insert("writable".to_string(), Value::Bool(attrs & ATTR_WRITABLE != 0));
+                        d.insert("enumerable".to_string(), Value::Bool(attrs & ATTR_ENUMERABLE != 0));
+                        d.insert("configurable".to_string(), Value::Bool(attrs & ATTR_CONFIGURABLE != 0));
+                        return Ok(Value::Obj(Rc::new(RefCell::new(d))));
+                    }
                     // 내장/바운드 함수의 name/length 는 own 프로퍼티다 (§17):
                     // { writable:false, enumerable:false, configurable:true }.
                     // delete 로 지워졌으면 서술자 없음(undefined).
@@ -2563,6 +2574,29 @@ impl Interp {
                         self.ordinary_define(&func.props, &key, &desc, ext)?;
                         return Ok(target);
                     }
+                }
+                // 바운드 함수도 ordinary object — 프로퍼티는 props 맵(b.3)에 정의한다.
+                // name/length 는 { w:false, e:false, c:true } 계산 프로퍼티라 재정의 전에
+                // 현재 값을 실체화해 ordinary_define 이 표준 검증을 하게 한다(Fn 과 동형).
+                if let Value::Bound(b) = &target {
+                    if matches!(key.as_str(), "name" | "length") {
+                        let tomb = format!("\u{0}fndel:{}", key);
+                        let missing = !b.3.borrow().contains_key(&key);
+                        if missing && !b.3.borrow().contains_key(&tomb) {
+                            let cur = if key == "name" {
+                                Value::Str(self.native_fn_name(&target))
+                            } else {
+                                Value::Num(self.native_fn_length(&target))
+                            };
+                            let mut mm = b.3.borrow_mut();
+                            mm.insert(key.clone(), cur);
+                            set_prop_attrs(&mut mm, &key, ATTR_CONFIGURABLE);
+                        }
+                        b.3.borrow_mut().remove(&tomb);
+                    }
+                    let ext = !self.is_nonextensible_val(&target);
+                    self.ordinary_define(&b.3, &key, &desc, ext)?;
+                    return Ok(target);
                 }
                 // 클래스 인스턴스도 ordinary object — 공개 필드는 fields(ObjMap)에 표준
                 // 속성 강제로 정의한다(§10.1.6). private 이름은 프로퍼티가 아니라 제외.

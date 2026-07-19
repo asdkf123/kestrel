@@ -4455,6 +4455,31 @@ impl Interp {
                                     mm.remove(&nonenum_marker(&key));
                                 }
                             }
+                            // 바운드 함수도 ordinary object — Fn 과 동형으로 삭제.
+                            // name/length 는 configurable 계산 프로퍼티라 툼스톤을 남기고,
+                            // 사용자 프로퍼티는 configurable 존중.
+                            Value::Bound(b) => {
+                                if matches!(key.as_str(), "name" | "length") {
+                                    if b.3.borrow().contains_key(&key)
+                                        && prop_attrs(&b.3.borrow(), &key) & ATTR_CONFIGURABLE == 0
+                                    {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    let mut mm = b.3.borrow_mut();
+                                    mm.remove(&key);
+                                    mm.remove(&attr_marker(&key));
+                                    mm.remove(&nonenum_marker(&key));
+                                    mm.insert(format!("\u{0}fndel:{}", key), Value::Bool(true));
+                                } else if b.3.borrow().contains_key(&key) {
+                                    if prop_attrs(&b.3.borrow(), &key) & ATTR_CONFIGURABLE == 0 {
+                                        return Ok(Value::Bool(false));
+                                    }
+                                    let mut mm = b.3.borrow_mut();
+                                    mm.remove(&key);
+                                    mm.remove(&attr_marker(&key));
+                                    mm.remove(&nonenum_marker(&key));
+                                }
+                            }
                             // Proxy: deleteProperty 트랩 (§10.5.10, 없으면 타깃 위임).
                             // 반응성 라이브러리(Vue 등)가 delete 를 이 트랩으로 잡는다.
                             // proxy_delete 로 통일 — GetMethod·non-extensible invariant·
@@ -5369,14 +5394,16 @@ impl Interp {
     // 예전엔 분기마다 _ => Undefined 라 Array.name/String.length 등이 사라졌다.
     // 내장 함수의 name/length 가 delete 로 지워졌는지 (verifyProperty 의 configurable 검사).
     pub(super) fn native_prop_deleted(&self, recv: &Value, key: &str) -> bool {
-        if let Value::Native(n) = recv {
-            return self
+        match recv {
+            Value::Native(n) => self
                 .native_props
                 .get(n)
                 .map(|m| m.contains_key(&format!("\u{0}del:{}", key)))
-                .unwrap_or(false);
+                .unwrap_or(false),
+            // 바운드 함수의 name/length 삭제 툼스톤은 props 맵(b.3)에 있다.
+            Value::Bound(b) => b.3.borrow().contains_key(&format!("\u{0}fndel:{}", key)),
+            _ => false,
         }
-        false
     }
 
     // 내장 생성자의 own 문자열 프로퍼티 키(정적 메서드/상수 + prototype). name/length 는
@@ -6989,8 +7016,13 @@ impl Interp {
                 if let Some(v) = b.3.borrow().get(key) {
                     return Ok(v.clone());
                 }
-                if let Some(v) = self.native_fn_member(recv, key) {
-                    return Ok(v);
+                // name/length 가 delete 됐으면(툼스톤) 계산값을 주지 않는다.
+                let deleted = matches!(key, "name" | "length")
+                    && b.3.borrow().contains_key(&format!("\u{0}fndel:{}", key));
+                if !deleted {
+                    if let Some(v) = self.native_fn_member(recv, key) {
+                        return Ok(v);
+                    }
                 }
                 if key == "__proto__" {
                     return Ok(self.fn_proto.clone());

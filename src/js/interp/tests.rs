@@ -1127,6 +1127,20 @@ fn functions_are_objects() {
     // name/length 는 non-writable 계산 프로퍼티 — 재대입 무시(sloppy)
     assert_eq!(run_str("var b=(function target(){}).bind(null); b.name='x'; b.name"), "bound target");
     assert_eq!(run_num("var b=(function(a,b){}).bind(null,1); b.length=99; b.length"), 1.0);
+    // defineProperty: 바운드 함수에 own 데이터가 상속 접근자를 덮는다
+    assert_eq!(run_num(
+        "var b=(function(){}).bind({}); \
+         Object.defineProperty(Function.prototype,'p',{get:function(){return 3;},configurable:true}); \
+         Object.defineProperty(b,'p',{value:12}); var r=b.p; delete Function.prototype.p; r"
+    ), 12.0);
+    // name/length 는 configurable — 재정의/삭제 가능(verifyProperty)
+    assert_eq!(run_str("var b=(function t(){}).bind(null); Object.defineProperty(b,'name',{value:'z'}); b.name"), "z");
+    assert!(run_bool("var b=(function(){}).bind(null); (delete b.name) && b.name===undefined"));
+    assert!(run_bool(
+        "var b=(function(){}).bind(null); \
+         Object.defineProperty(b,'q',{value:1,configurable:true}); \
+         Object.getOwnPropertyDescriptor(b,'q').value===1 && (delete b.q) && !('q' in b)"
+    ));
 }
 
 #[test]
