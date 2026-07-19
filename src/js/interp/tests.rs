@@ -2502,6 +2502,18 @@ fn destructuring_targets_can_be_members() {
     assert_eq!(run_num("var a=[0,0]; [a[0], a[1]] = [7, 8]; a[0] + a[1]"), 15.0);
     // 기존 동작(이름 대상 / 스왑)도 그대로
     assert_eq!(run_num("var a=1,b=2; [a,b]=[b,a]; a*10+b"), 21.0);
+    // 배열 구멍 읽기는 프로토타입 체인을 본다 (Object.prototype[i] 상속)
+    assert_eq!(
+        run_num("Object.prototype[2]=4; var a=[10,11,,13]; var r=a[2]; delete Object.prototype[2]; r"),
+        4.0
+    );
+    // sort(SortIndexedProperties)가 프로토타입 원소를 수집한다 (§23.1.3.30)
+    assert!(run_bool(
+        "Object.prototype[2]=4; var a=[undefined,3,,2,undefined,,1]; a.sort(); \
+         var ok = a[0]===1 && a[1]===2 && a[2]===3 && a[3]===4 && a[4]===undefined \
+           && a[5]===undefined && !('6' in a) && a.length===7; \
+         delete Object.prototype[2]; ok"
+    ));
     // 엘리전(구멍)이 있는 구조분해 할당 — 배열 리터럴은 Expr::Hole 로 파싱된다.
     // 예전엔 Hole 을 패턴 변환이 못 받아 "[,i,,j]=x" 파싱이 죽었다.
     assert_eq!(run_num("var i,j; [,i,,j]=[1,2,3,4]; i*10+j"), 24.0);

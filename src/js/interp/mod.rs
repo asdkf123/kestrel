@@ -6758,7 +6758,10 @@ impl Interp {
                         }
                         return Ok(m);
                     }
-                    return Ok(Value::Undefined);
+                    // Array.prototype 에 없으면 Object.prototype 상속분(Object.prototype[i] 등).
+                    // 예전엔 undefined 로 끊어 배열 구멍이 상속 인덱스를 안 봤다(sort 의
+                    // SortIndexedProperties 가 프로토타입 원소를 놓쳤다).
+                    return self.object_proto_get(key, recv);
                 }
                 // 서브클래스(class X extends Array)면 커스텀 __proto__(X.prototype)를 걷는다 —
                 // 서브클래스가 추가한 메서드/constructor 와 instanceof 체인이 여기서 해석된다.
