@@ -3133,6 +3133,41 @@ fn more_array_string_methods() {
     assert_eq!(run_str("[1,2,3].fill(0).join(',')"), "0,0,0");
     assert_eq!(run_str("[1,2,3,4].fill(9,1,3).join(',')"), "1,9,9,4");
     assert_eq!(run_num("[1,2,3,4].reduceRight(function(a,b){return a-b;})"), -2.0); // 4-3-2-1
+    // generic array-like 에서 reduceRight 는 인덱스마다 HasProperty/Get 을 live 로 읽어
+    // 콜백(getter) 중 배열 변형을 관측한다(§23.1.3.24).
+    assert_eq!(
+        run_num(
+            "var o={2:2,length:20}; var seen=[]; \
+             Object.defineProperty(o,'5',{get:function(){delete Object.prototype[3];return 0;},configurable:true}); \
+             Object.prototype[3]=1; \
+             Array.prototype.reduceRight.call(o,function(a,b,i){seen.push(i);return a;},0); \
+             delete Object.prototype[3]; \
+             (seen.indexOf(5)>=0 && seen.indexOf(3)<0)?1:0"
+        ),
+        1.0
+    );
+    // 초기값 없이 generic array-like: 최고 present 인덱스가 acc 시드.
+    assert_eq!(
+        run_num("Array.prototype.reduceRight.call({0:1,2:3,length:3},function(a,b){return a+b;})"),
+        4.0
+    );
+    // dense 배열: 콜백 중 구멍 채우기를 live 로 관측(15.4.4.22-9-1).
+    assert_eq!(
+        run_str(
+            "var arr=['1',2,,4,'5']; arr.reduceRight(function(p,c){arr[5]=6;arr[2]=3;return p+c;})"
+        ),
+        "54321"
+    );
+    // dense 배열: 콜백 중 요소 재대입을 live 로 관측(15.4.4.22-9-2).
+    assert_eq!(
+        run_num("var a=[1,2,3,4,5]; a.reduceRight(function(p,c){a[3]=-2;a[0]=-1;return p+c;})"),
+        13.0
+    );
+    // dense 배열 구멍은 여전히 건너뛴다.
+    assert_eq!(
+        run_str("var s=[]; [1,,3].reduceRight(function(a,v,i){s.push(i);return a;},0); s.join(',')"),
+        "2,0"
+    );
     assert_eq!(run_num("'a'.localeCompare('b')"), -1.0);
     assert_eq!(run_num("'b'.localeCompare('b')"), 0.0);
     assert_eq!(run_num("Object.getOwnPropertyNames({a:1,b:2}).length"), 2.0);

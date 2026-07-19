@@ -1873,6 +1873,44 @@ impl Interp {
         }
     }
 
+    // reduce/reduceRight 의 live 순회용: 인덱스 k 가 (own 이든 상속이든) present 면 [[Get]]
+    // 값을 Some 으로, 진짜 없으면 None 을 준다. Arr 은 is_hole+접근자+Array.prototype 상속,
+    // 그 외(generic array-like)는 HasProperty 로 판정한다(§7.3.12 HasProperty + §7.3.3 Get).
+    // 스냅샷 대신 매 인덱스 live 로 읽어 콜백/게터 중 변형을 관측한다.
+    pub(super) fn array_like_live_get(
+        &mut self,
+        o: &Value,
+        k: usize,
+    ) -> Result<Option<Value>, String> {
+        match o {
+            Value::Arr(a) => {
+                let own_present = k < a.borrow().len() && !a.is_hole(k);
+                if own_present {
+                    return Ok(Some(self.member_get(o, &k.to_string())?));
+                }
+                // 구멍이거나 잘려나간 인덱스: own defineProperty 나 Array.prototype 상속 확인.
+                let key = k.to_string();
+                let inherited = {
+                    let proto = self.member_get(&self.array_ns.clone(), "prototype")?;
+                    self.has_property(&proto, &key)
+                };
+                if a.get_prop(&key).is_some() || inherited {
+                    Ok(Some(self.member_get(o, &key)?))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => {
+                let key = k.to_string();
+                if self.has_property(o, &key) {
+                    Ok(Some(self.member_get(o, &key)?))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
     pub(super) fn call_native(
         &mut self,
         n: Native,
@@ -7372,6 +7410,58 @@ impl Interp {
                         let f = args.first().cloned().unwrap_or(Value::Undefined);
                         if !is_callable(&f) {
                             return Err(self.throw_error("TypeError", "callback is not a function"));
+                        }
+                        // 배열/generic array-like 모두 인덱스마다 live 로 읽어 콜백·게터 중
+                        // 변형(구멍 채우기, 요소 재대입, length 축소, 상속 인덱스 삭제)을
+                        // 관측한다(§23.1.3.24). length 는 순회 시작에 한 번 읽는다. 초거대
+                        // length 만 아래 스냅샷 폴백(그쪽은 RangeError 를 던진다).
+                        if let Some(o) = recv.clone() {
+                            if matches!(o, Value::Arr(_) | Value::Obj(_)) {
+                                let len = match &o {
+                                    Value::Arr(a) => a.borrow().len() as f64,
+                                    _ => {
+                                        let lv = self.member_get(&o, "length")?;
+                                        to_length(self.to_number_value(&lv)?)
+                                    }
+                                };
+                                if len <= MAX_ARRAY_LEN {
+                                    let mut k = len as i64 - 1;
+                                    let mut acc = match args.get(1) {
+                                        Some(init) => init.clone(),
+                                        None => {
+                                            let mut seed = None;
+                                            while k >= 0 {
+                                                if let Some(v) =
+                                                    self.array_like_live_get(&o, k as usize)?
+                                                {
+                                                    seed = Some(v);
+                                                    k -= 1;
+                                                    break;
+                                                }
+                                                k -= 1;
+                                            }
+                                            match seed {
+                                                Some(v) => v,
+                                                None => return Err(self.throw_error(
+                                                    "TypeError",
+                                                    "Reduce of empty array with no initial value",
+                                                )),
+                                            }
+                                        }
+                                    };
+                                    while k >= 0 {
+                                        if let Some(v) = self.array_like_live_get(&o, k as usize)? {
+                                            acc = self.call_value(
+                                                f.clone(),
+                                                None,
+                                                vec![acc, v, Value::Num(k as f64), o.clone()],
+                                            )?;
+                                        }
+                                        k -= 1;
+                                    }
+                                    return Ok(acc);
+                                }
+                            }
                         }
                         let arr_val = cb_arr.clone();
                         let snapshot: Vec<Value> = a.borrow().clone();
