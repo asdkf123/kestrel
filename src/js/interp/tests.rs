@@ -5415,6 +5415,16 @@ fn class_length_and_new_required() {
     // ExpectedArgumentCount: 첫 기본값/rest 앞까지만 센다 (§ FunctionLength)
     assert_eq!(run_num("class C{ constructor(a,b,c=1){} } C.length"), 2.0);
     assert_eq!(run_num("class C{ constructor(a,...b){} } C.length"), 1.0);
+    // 메서드/화살표/async/제너레이터는 [[Construct]] 가 없다 → new 하면 TypeError.
+    let non_ctor = |src: &str| run_bool(&format!("var t=false; try{{ {} }}catch(e){{ t=e instanceof TypeError }} t", src));
+    assert!(non_ctor("class C{m(){}} new (new C().m)()"));
+    assert!(non_ctor("new (()=>{})()"));
+    assert!(non_ctor("new (async function(){})()"));
+    assert!(non_ctor("new (function*(){})()"));
+    assert!(non_ctor("var t=Reflect.construct(class C{m(){}}.prototype.m,[])")); // Reflect.construct target
+    // 무회귀: 일반 함수·클래스는 생성자
+    assert!(run_bool("new (function(){})() instanceof Object"));
+    assert!(run_bool("(new (class{})()) instanceof Object"));
 }
 
 // 함수/메서드 length 는 ExpectedArgumentCount — 첫 기본값/rest 앞까지의 형식 매개변수 수.

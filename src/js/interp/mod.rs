@@ -7491,7 +7491,8 @@ impl Interp {
     pub(super) fn is_constructor(&self, v: &Value) -> bool {
         match v {
             Value::Class(_) => true,
-            Value::Fn(f) => !f.is_arrow && !f.is_async && !f.is_generator,
+            // 메서드(클래스/객체 축약형)는 [[Construct]] 가 없다 — 화살표/async/제너레이터도.
+            Value::Fn(f) => !f.is_arrow && !f.is_async && !f.is_generator && !f.is_method,
             Value::Native(n) => natives::native_is_constructor(n),
             Value::Bound(b) => self.is_constructor(&b.0),
             Value::Proxy(p) => self.is_constructor(&p.0),
@@ -7651,6 +7652,14 @@ impl Interp {
             // F.prototype.m 추가도 인스턴스에 반영되고 프로토타입 체인 조회가 동작한다.
             // 함수가 객체를 반환하면 그것 우선(JS 규칙).
             Value::Fn(func) => {
+                // 메서드/화살표/async/제너레이터는 [[Construct]] 가 없다 → new 하면 TypeError.
+                if func.is_arrow || func.is_async || func.is_generator || func.is_method {
+                    let name = func.name.borrow().clone();
+                    let label = if name.is_empty() { "value".to_string() } else { name };
+                    return Err(
+                        self.throw_error("TypeError", format!("{} is not a constructor", label))
+                    );
+                }
                 let obj = Rc::new(RefCell::new(ObjMap::new()));
                 // new.target: 명시적(Reflect.construct 3번째 인자·Proxy 위임)이면 그것,
                 // 아니면 이 함수. §10.1.13 OrdinaryCreateFromConstructor 는 인스턴스
