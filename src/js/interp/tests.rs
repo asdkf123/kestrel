@@ -3422,6 +3422,16 @@ fn more_array_string_methods() {
     );
     // regex 메서드/계산 프로퍼티 무회귀.
     assert!(run_bool("(/ab/).test('xabx') && (/ab/).source==='ab' && !(/ab/).global"));
+    // 배열도 Object.prototype 상속분(사용자 정의)을 본다([[Prototype]] 체인 끝).
+    assert_eq!(run_num("Object.prototype.zv=42; var v=[].zv; delete Object.prototype.zv; v"), 42.0);
+    // 배열을 서술자로 써도 Object.prototype 상속 필드를 HasProperty+Get 으로 읽는다.
+    assert_eq!(
+        run_num("Object.prototype.value=7; var o={}; Object.defineProperty(o,'p',[]); var r=o.p; delete Object.prototype.value; r"),
+        7.0
+    );
+    // 흔한 배열 접근 무회귀.
+    assert_eq!(run_num("[10,20,30][1]"), 20.0);
+    assert_eq!(run_str("[1,2,3].map(function(x){return x*2;}).join()"), "2,4,6");
     // 배열 인덱스 delete 는 진짜 구멍(길이 불변).
     assert!(run_bool("var a=[1,2,3]; delete a[1]; !(1 in a) && a.length===3"));
     // sort 는 접근자·구멍을 정밀 처리(SortIndexedProperties): 구멍은 뒤로 밀리고 되쓰기서 delete.

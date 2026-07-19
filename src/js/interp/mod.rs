@@ -5883,10 +5883,13 @@ impl Interp {
                 // Array.prototype 체인의 상속 프로퍼티(사용자가 얹은 것 포함).
                 if let Value::Obj(ns) = &self.array_ns {
                     if let Some(proto) = ns.borrow().get("prototype").cloned() {
-                        return self.value_chain_has(&proto, key);
+                        if self.value_chain_has(&proto, key) {
+                            return true;
+                        }
                     }
                 }
-                false
+                // Array.prototype 에 없으면 Object.prototype 상속분(사용자 정의 포함).
+                !is_internal_key(key) && self.proto_method("Object", key).is_some()
             }
             // HasProperty (§7.3.11): own(name/length/정적/prototype) + 상속 함수 메서드.
             Value::Native(n) => {
@@ -6513,7 +6516,9 @@ impl Interp {
                 if let Some(m) = self.proto_method("Array", key) {
                     return Ok(m);
                 }
-                Ok(Value::Undefined)
+                // Array.prototype 에 없으면 Object.prototype 상속분(사용자 정의 데이터/접근자
+                // 포함) — 배열도 [[Prototype]] 체인 끝은 Object.prototype 이다(§10.4.2).
+                self.object_proto_get(key, recv)
             }
             Value::MapVal(m) => {
                 // size 는 exotic 접근자(수신자별). @@iterator 는 entries 반복자.
