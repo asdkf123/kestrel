@@ -1479,6 +1479,36 @@ impl Interp {
     // ToObject (§7.1.18): 원시값(Bool/Num/Str)을 래퍼 객체로 박는다. 이미 객체면 그대로.
     // generic 배열/문자열 메서드의 콜백 3번째 인자(=ToObject(this))에 쓴다 — 예전엔
     // 원시값을 그대로 넘겨 `obj instanceof Boolean` 등이 어긋났다.
+    // §22.1.3.11/.12 String.prototype.{match,search}: regexp[sym] 로 위임한다.
+    // regexp 가 null/undefined 아니면 GetMethod(regexp, sym) 를 호출(override 존중),
+    // 없으면 RegExpCreate(regexp) 후 그 sym 으로 Invoke. sym 은 "\0@@match"/"\0@@search".
+    fn str_regex_delegate(&mut self, s: &str, arg: Value, sym: &str) -> Result<Value, String> {
+        // 최신 스펙(§22.1.3.11/.12): regexp 가 **Object** 일 때만 @@match/@@search 를
+        // 접근한다 — 원시값(숫자/불리언 등)은 그 프로토타입의 심볼 메서드를 건드리지
+        // 않고 곧장 RegExpCreate 로 간다.
+        if is_object(&arg) {
+            let matcher = self.member_get(&arg, sym)?;
+            if !matches!(matcher, Value::Undefined | Value::Null) {
+                if !is_callable(&matcher) {
+                    return Err(self.throw_error("TypeError", "regexp method is not callable"));
+                }
+                return self.call_value(matcher, Some(arg), vec![Value::Str(s.to_string())]);
+            }
+        }
+        // RegExpCreate(regexp): 정규식이면 source+flags 보존, undefined 는 빈 패턴,
+        // 그 외(null 포함)는 ToString(arg)+무플래그 (null → "null").
+        let (pat, flags) = match &arg {
+            Value::Undefined => (String::new(), String::new()),
+            v => match regex_src_flags(v) {
+                Some((src, f)) => (src, f),
+                None => (self.to_string_value(v)?, String::new()),
+            },
+        };
+        let rx = make_regex_obj(&pat, &flags);
+        let matcher = self.member_get(&rx, sym)?;
+        self.call_value(matcher, Some(rx), vec![Value::Str(s.to_string())])
+    }
+
     pub(super) fn to_object_value(&self, v: Value) -> Value {
         let (proto, tag) = match &v {
             Value::Str(_) => (self.string_proto.clone(), "String"),
@@ -7618,42 +7648,16 @@ impl Interp {
                         Value::Str(self.str_replace(&s, &pat, &repl, true)?)
                     }
                     StrOp::Search => {
-                        // §22.1.3.11: 정규식이면 그 @@search 로, 아니면 RegExpCreate(arg) 후
-                        // @@search → custom @@search/exec, lastIndex 저장/복원 모두 표준.
+                        // §22.1.3.12: regexp[@@search] 로 위임(GetMethod+Call, override 존중),
+                        // 없으면 RegExpCreate(arg) 후 @@search.
                         let arg = args.first().cloned().unwrap_or(Value::Undefined);
-                        let rx = if regex_src_flags(&arg).is_some() {
-                            arg
-                        } else {
-                            let pat = match args.first() {
-                                None | Some(Value::Undefined) => String::new(),
-                                Some(v) => self.to_string_value(v)?,
-                            };
-                            make_regex_obj(&pat, "")
-                        };
-                        return self.call_native(
-                            Native::RegexSym(natives::StrOp::Search),
-                            Some(rx),
-                            vec![Value::Str(s.clone())],
-                        );
+                        return self.str_regex_delegate(&s, arg, "\u{0}@@search");
                     }
                     StrOp::Match => {
-                        // §22.1.3.11: 정규식이면 그 @@match 로, 아니면 RegExpCreate(arg) 후
-                        // @@match → custom @@match/exec, 전역 수집 모두 표준대로.
+                        // §22.1.3.11: regexp[@@match] 로 위임(GetMethod+Call, override 존중),
+                        // 없으면 RegExpCreate(arg) 후 @@match.
                         let arg = args.first().cloned().unwrap_or(Value::Undefined);
-                        let rx = if regex_src_flags(&arg).is_some() {
-                            arg
-                        } else {
-                            let pat = match args.first() {
-                                None | Some(Value::Undefined) => String::new(),
-                                Some(v) => self.to_string_value(v)?,
-                            };
-                            make_regex_obj(&pat, "")
-                        };
-                        return self.call_native(
-                            Native::RegexSym(natives::StrOp::Match),
-                            Some(rx),
-                            vec![Value::Str(s.clone())],
-                        );
+                        return self.str_regex_delegate(&s, arg, "\u{0}@@match");
                     }
                     StrOp::MatchAll => {
                         // §22.1.3.14 String.prototype.matchAll(regexp): regexp[@@matchAll] 로
@@ -7691,8 +7695,9 @@ impl Interp {
                             }
                         }
                         // 3-5: RegExpCreate(regexp,"g") 후 그 @@matchAll 로 Invoke.
+                        // undefined 는 빈 패턴, null 포함 그 외는 ToString.
                         let pat = match &arg {
-                            Value::Undefined | Value::Null => String::new(),
+                            Value::Undefined => String::new(),
                             v => match regex_src_flags(v) {
                                 Some((src, _)) => src,
                                 None => self.to_string_value(v)?,

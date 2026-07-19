@@ -1062,6 +1062,18 @@ fn regex_and_string_methods() {
     );
     // 비전역 정규식 matchAll → TypeError
     assert!(run_bool("var t=false; try{'a'.matchAll(/./);}catch(e){t=e instanceof TypeError;} t"));
+    // match/search 는 객체 인자의 @@match/@@search 로 위임(override 존중)
+    assert_eq!(
+        run_str("var o=RegExp.prototype[Symbol.match]; RegExp.prototype[Symbol.match]=function(s){return 'M:'+s;}; var r='xy'.match(/./); RegExp.prototype[Symbol.match]=o; r"),
+        "M:xy"
+    );
+    // 원시값 인자는 @@match 를 접근하지 않고 RegExpCreate (§22.1.3.11 최신)
+    assert_eq!(
+        run_str("Object.defineProperty(Number.prototype,Symbol.match,{get:function(){throw new Error('no')},configurable:true}); var r='a1b1'.match(1)[0]; delete Number.prototype[Symbol.match]; r"),
+        "1"
+    );
+    // match(null) 은 /null/ 로 (ToString(null))
+    assert_eq!(run_str("'gnulluna'.match(null)[0]"), "null");
     // 문자열 유틸
     assert_eq!(run_str("'5'.padStart(3,'0')"), "005");
     assert_eq!(run_str("'ab'.repeat(3)"), "ababab");
