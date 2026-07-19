@@ -5309,6 +5309,34 @@ fn for_in_iterates_keys_and_indices() {
         "01"
     );
     assert_eq!(run_num("var n = 0; for (k in null) n++; n"), 0.0);
+    // for-in 은 [[Prototype]] 체인의 상속 열거 가능분도 순회 (§14.7.5.9)
+    // Object.create 체인: 상속 열거 가능 pa 는 나오고 non-enumerable hidden 은 제외
+    assert_eq!(
+        run_str(
+            "var parent={pa:1}; Object.defineProperty(parent,'hidden',{value:2,enumerable:false}); \
+             var child=Object.create(parent); child.ca=3; \
+             var ks=[]; for(var k in child) ks.push(k); ks.sort().join(',')"
+        ),
+        "ca,pa"
+    );
+    // 래퍼 객체(new Boolean)의 프로토타입 상속 열거 가능
+    assert!(run_bool(
+        "Object.defineProperty(Boolean.prototype,'bpX',{value:1,enumerable:true,configurable:true}); \
+         var bo=new Boolean(true); var f=false; for(var k in bo){ if(k==='bpX') f=true; } \
+         delete Boolean.prototype.bpX; f"
+    ));
+    // 배열/arguments 의 non-index own 프로퍼티도 for-in 에 나온다
+    assert!(run_bool(
+        "var a=[10,20]; a.foo='x'; var seen=false; for(var k in a){ if(k==='foo') seen=true; } seen"
+    ));
+    // 하위 non-enumerable own 이 상위 열거 가능 동명을 가린다 (shadow)
+    assert_eq!(
+        run_num(
+            "var p={x:1}; var c=Object.create(p); Object.defineProperty(c,'x',{value:9,enumerable:false}); \
+             var n=0; for(var k in c){ if(k==='x') n++; } n"
+        ),
+        0.0
+    );
 }
 
 #[test]

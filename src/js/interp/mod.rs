@@ -4008,44 +4008,9 @@ impl Interp {
             }
             Stmt::ForIn { name, obj, body } => {
                 let target = self.eval(obj, env)?;
-                let keys: Vec<String> = match &target {
-                    // __proto__ 링크는 열거 대상 아님(JS 에서 non-enumerable accessor)
-                    Value::Obj(m) => enumerable_keys(m),
-                    // 클래스 인스턴스: own 열거 가능 필드(내부/private/비열거 제외).
-                    // 프로토타입 메서드는 비열거라 안 나온다(표준).
-                    Value::Instance(i) => {
-                        let f = i.fields.borrow();
-                        f.keys()
-                            .filter(|k| {
-                                !is_internal_key(k) && !f.contains_key(&nonenum_marker(k))
-                            })
-                            .cloned()
-                            .collect()
-                    }
-                    // 희소 배열의 구멍은 for-in 이 건너뛴다 (§enumerate: 존재 인덱스만).
-                    // defineProperty 로 non-enumerable 이 된 인덱스도 제외 (§10.4.2).
-                    Value::Arr(a) => a
-                        .present_indices()
-                        .iter()
-                        .filter(|&&i| !matches!(a.index_attr(i), Some(at) if at & ATTR_ENUMERABLE == 0))
-                        .map(|i| i.to_string())
-                        .collect(),
-                    Value::Str(s) => (0..s.encode_utf16().count()).map(|i| i.to_string()).collect(),
-                    // 함수도 ordinary object — 열거 가능한 own 프로퍼티를 순회
-                    // (name/length/prototype 및 상속된 Function/Object.prototype 멤버는 비열거).
-                    Value::Fn(f) => {
-                        let b = f.props.borrow();
-                        b.keys()
-                            .filter(|k| {
-                                !is_internal_key(k)
-                                    && !matches!(k.as_str(), "prototype" | "name" | "length")
-                                    && !b.contains_key(&nonenum_marker(k))
-                            })
-                            .cloned()
-                            .collect()
-                    }
-                    _ => Vec::new(), // null/undefined 등: 순회 없음 (JS 동일)
-                };
+                // for-in 은 own + [[Prototype]] 체인의 열거 가능 문자열 키를 순회한다
+                // (§14.7.5.9). 래퍼 상속·Object.create 체인·배열 non-index own 포함.
+                let keys: Vec<String> = self.for_in_keys(&target);
                 for k in keys {
                     self.tick()?;
                     let scope = Env::new(Some(env.clone()));
@@ -5765,6 +5730,95 @@ impl Interp {
             Value::Obj(m) => m.borrow().get(key).cloned(),
             _ => None,
         }
+    }
+
+    /// for-in 열거 (§14.7.5.9 EnumerateObjectProperties): own + [[Prototype]] 체인의
+    /// 문자열 키 열거 가능 프로퍼티를 순서대로. 이미 본 키(비열거 own 포함)는 shadow
+    /// 되어 상위 프로토타입의 동명 프로퍼티를 가린다. 예전엔 own 만 봐서 래퍼 객체
+    /// (new Boolean 등)의 상속 enumerable, Object.create 체인 상속분, 배열/arguments 의
+    /// non-index own 프로퍼티가 for-in 에 안 나왔다.
+    fn for_in_keys(&self, target: &Value) -> Vec<String> {
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<String> = Vec::new();
+        let mut node = target.clone();
+        let mut depth = 0;
+        loop {
+            depth += 1;
+            if depth > 100 {
+                break;
+            }
+            // 이 레벨의 own (키, 열거가능) 목록 + 다음 프로토타입 노드
+            let (pairs, next): (Vec<(String, bool)>, Option<Value>) = match &node {
+                Value::Obj(m) => {
+                    let b = m.borrow();
+                    let pairs = b
+                        .keys()
+                        .filter(|k| !is_internal_key(k))
+                        .map(|k| (k.clone(), !b.contains_key(&nonenum_marker(k))))
+                        .collect();
+                    (pairs, b.get("__proto__").cloned())
+                }
+                Value::Instance(i) => {
+                    let f = i.fields.borrow();
+                    let pairs = f
+                        .keys()
+                        .filter(|k| !is_internal_key(k))
+                        .map(|k| (k.clone(), !f.contains_key(&nonenum_marker(k))))
+                        .collect();
+                    (pairs, f.get("__proto__").cloned())
+                }
+                Value::Fn(f) => {
+                    let b = f.props.borrow();
+                    let pairs = b
+                        .keys()
+                        .filter(|k| {
+                            !is_internal_key(k)
+                                && !matches!(k.as_str(), "prototype" | "name" | "length")
+                        })
+                        .map(|k| (k.clone(), !b.contains_key(&nonenum_marker(k))))
+                        .collect();
+                    let next = b
+                        .get("__proto__")
+                        .cloned()
+                        .or_else(|| Some(self.fn_proto.clone()));
+                    (pairs, next)
+                }
+                // 배열/arguments: 존재 인덱스(비열거 제외) + non-index own 프로퍼티.
+                // 상위 Array.prototype 은 사용자가 얹은 열거 가능분이 드물어 생략(회귀 0).
+                Value::Arr(a) => {
+                    let mut pairs: Vec<(String, bool)> = a
+                        .present_indices()
+                        .iter()
+                        .map(|&i| {
+                            let en = !matches!(a.index_attr(i), Some(at) if at & ATTR_ENUMERABLE == 0);
+                            (i.to_string(), en)
+                        })
+                        .collect();
+                    for (k, _) in a.own_props() {
+                        let en = a.prop_attr(&k).map_or(true, |at| at & ATTR_ENUMERABLE != 0);
+                        pairs.push((k, en));
+                    }
+                    (pairs, None)
+                }
+                Value::Str(s) => {
+                    let pairs = (0..s.encode_utf16().count())
+                        .map(|i| (i.to_string(), true))
+                        .collect();
+                    (pairs, None)
+                }
+                _ => break,
+            };
+            for (k, en) in pairs {
+                if visited.insert(k.clone()) && en {
+                    out.push(k);
+                }
+            }
+            match next {
+                Some(n) if is_object(&n) => node = n,
+                _ => break,
+            }
+        }
+        out
     }
 
     // __proto__ 링크를 따라 프로퍼티를 찾는다. getter 면 this=원 객체로 호출. 순환 방지.
