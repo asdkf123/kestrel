@@ -7733,6 +7733,13 @@ fn function_tostring_source_text() {
     // 비함수 수신자는 TypeError (§20.2.3.5)
     assert!(run_bool("var t=false; try{ Function.prototype.toString.call({}); }catch(e){ t=e instanceof TypeError; } t"));
     assert!(run_bool("var t=false; try{ Function.prototype.toString.call(undefined); }catch(e){ t=e instanceof TypeError; } t"));
+    // computed-name async 메서드 소스는 async 접두를 포함한다 (§20.2.3.5 [[SourceText]])
+    assert_eq!(
+        run_str("(class { async ['g'](){} }).prototype.g.toString()"),
+        "async ['g'](){}"
+    );
+    // async 가 메서드명인 경우 회귀 없음
+    assert_eq!(run_num("({ async(){ return 3; } }).async()"), 3.0);
 }
 
 #[test]

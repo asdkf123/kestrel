@@ -1571,11 +1571,14 @@ impl Parser {
             // 메서드 소스 시작(§20.2.3.5): static 소비 뒤(메서드 toString 은 static 제외),
             // async/*/get/set 접두 포함.
             let method_start = self.pos;
-            // async 메서드: async 뒤가 메서드 이름/`*` 이면 비동기 표시.
+            // async 메서드: async 뒤가 메서드 이름/`*`/computed 키(`[`)/숫자 키면 비동기.
+            // 예전엔 LBracket 을 빠뜨려 async [expr](){} 의 async 를 메서드명으로 오인해
+            // 소스가 async 접두를 놓쳤다.
             let is_async = matches!(self.peek(), Some(Tok::Ident(w)) if w == "async")
                 && matches!(
                     self.toks.get(self.pos + 1),
                     Some(Tok::Ident(_)) | Some(Tok::Str(_)) | Some(Tok::Star)
+                        | Some(Tok::LBracket) | Some(Tok::Num(_))
                 );
             if is_async {
                 self.pos += 1;
