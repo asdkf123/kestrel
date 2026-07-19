@@ -7026,22 +7026,22 @@ impl Interp {
                 let cb_arr = self.to_object_value(recv.clone().unwrap_or(Value::Undefined));
                 let out = match op {
                     ArrOp::Join => {
-                        // §23.1.3.18: 구분자 undefined 는 ",". 원소 null/undefined 는 빈
-                        // 문자열(예전엔 "undefined"/"null" 로 찍혔다).
+                        // §23.1.3.18: 구분자 undefined 는 ",", 아니면 ToString(구분자) —
+                        // 원소도 ToString. 예전엔 lenient to_display 라 valueOf/toString·@@
+                        // toPrimitive·예외를 무시했다. 구분자 강제변환이 먼저(스펙 순서).
                         let sep = match args.first() {
                             None | Some(Value::Undefined) => ",".to_string(),
-                            Some(v) => to_display(v),
+                            Some(v) => self.to_string_value(v)?,
                         };
-                        Value::Str(
-                            a.borrow()
-                                .iter()
-                                .map(|v| match v {
-                                    Value::Undefined | Value::Null => String::new(),
-                                    other => to_display(other),
-                                })
-                                .collect::<Vec<_>>()
-                                .join(&sep),
-                        )
+                        let items: Vec<Value> = a.borrow().clone();
+                        let mut parts = Vec::with_capacity(items.len());
+                        for v in items {
+                            parts.push(match v {
+                                Value::Undefined | Value::Null => String::new(),
+                                other => self.to_string_value(&other)?,
+                            });
+                        }
+                        Value::Str(parts.join(&sep))
                     }
                     ArrOp::Pop => a.borrow_mut().pop().unwrap_or(Value::Undefined),
                     ArrOp::IndexOf => {
