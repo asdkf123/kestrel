@@ -713,6 +713,12 @@ impl Interp {
                     arr.set_prop(n.clone(), v.clone());
                 }
                 arr.set_prop("getNamedItem".to_string(), Value::Native(Native::GetNamedItem));
+                // NamedNodeMap 브랜드 — Object.prototype.toString 이 @@toStringTag 를 읽어
+                // "[object NamedNodeMap]" 를 낸다(내부 키라 Object.keys 등엔 안 샌다).
+                arr.set_prop(
+                    "\u{0}@@toStringTag".to_string(),
+                    Value::Str("NamedNodeMap".to_string()),
+                );
                 Ok(Value::Arr(arr))
             }
             // <style>/<link> 의 .sheet — 그 요소가 만든 CSSStyleSheet (§CSSOM 6.3)
