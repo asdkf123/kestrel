@@ -5367,6 +5367,18 @@ fn instanceof_and_in_operators() {
     ));
     // 일반 배열 프로퍼티(defineProperty 아님)도 삭제
     assert!(!run_bool("var a=[1,2]; a.foo='x'; delete a.foo; a.hasOwnProperty('foo')"));
+    // 배열 대입이 Array.prototype 상속 setter 를 호출(own 생성 안 함) + 읽기는 getter (§10.1.9.2)
+    assert!(run_bool(
+        "var d='d'; Object.defineProperty(Array.prototype,'apX',{get:function(){return d},set:function(v){d=v},configurable:true}); \
+         var a=[]; a.apX='set'; var ok = !a.hasOwnProperty('apX') && a.apX==='set' && d==='set'; \
+         delete Array.prototype.apX; ok"
+    ));
+    // Object.prototype 상속 setter 도 배열 대입에서 호출
+    assert!(run_bool(
+        "var d='d'; Object.defineProperty(Object.prototype,'opX',{get:function(){return d},set:function(v){d=v},configurable:true}); \
+         var a=[]; a.opX='v'; var ok = !a.hasOwnProperty('opX') && d==='v'; \
+         delete Object.prototype.opX; ok"
+    ));
 }
 
 #[test]

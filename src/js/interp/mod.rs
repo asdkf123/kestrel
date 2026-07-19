@@ -5029,6 +5029,21 @@ impl Interp {
         self.integrity_bits(v) & (INTEG_FROZEN | INTEG_SEALED | INTEG_NONEXT) != 0
     }
 
+    // 배열의 프로토타입 체인(Array.prototype→Object.prototype)에서 상속 접근자를 찾는다.
+    // Array.prototype 을 먼저 보고(체인 순서), 데이터가 먼저 나오면 가려진 것이라 None.
+    // arr.p=v / 읽기에서 상속 getter/setter 를 존중하는 데 쓴다(§10.1.9.2).
+    fn array_inherited_accessor(&self, key: &str) -> Option<Rc<AccessorPair>> {
+        match self.proto_method("Array", key) {
+            Some(Value::Accessor(acc)) => return Some(acc),
+            Some(_) => return None, // 데이터 프로퍼티가 가림
+            None => {}
+        }
+        match self.proto_method("Object", key) {
+            Some(Value::Accessor(acc)) => Some(acc),
+            _ => None,
+        }
+    }
+
     // 접근자 프로퍼티 탐색: own → __proto__ 체인. 대입 시 setter 를 찾는 데 쓴다.
     fn find_accessor(&self, map: &Rc<RefCell<ObjMap>>, key: &str) -> Option<Rc<AccessorPair>> {
         let mut cur = map.clone();
@@ -6588,8 +6603,16 @@ impl Interp {
                         }
                     }
                 }
-                // Array.prototype 폴리필 메서드 (at/flatMap/findLast 등) 조회
+                // Array.prototype 폴리필 메서드 (at/flatMap/findLast 등) 조회.
+                // 사용자가 defineProperty 로 얹은 접근자면 getter 를 this=배열로 호출한다
+                // (예전엔 raw Accessor 를 그대로 반환해 arr.p 가 "[accessor]" 였다).
                 if let Some(m) = self.proto_method("Array", key) {
+                    if let Value::Accessor(acc) = &m {
+                        return match &acc.get {
+                            Some(g) => self.call_value(g.clone(), Some(recv.clone()), vec![]),
+                            None => Ok(Value::Undefined),
+                        };
+                    }
                     return Ok(m);
                 }
                 // Array.prototype 에 없으면 Object.prototype 상속분(사용자 정의 데이터/접근자
@@ -9266,6 +9289,22 @@ impl Interp {
                                 && matches!(a.prop_attr(&key), Some(at) if at & ATTR_WRITABLE == 0)
                             {
                                 return Ok(());
+                            }
+                            // own 이 없으면 프로토타입 체인(Array.prototype→Object.prototype)의
+                            // 상속 접근자를 본다(§10.1.9.2 OrdinarySet): setter 가 있으면 own 을
+                            // 만들지 말고 그 setter 를 receiver=배열로 호출한다. 예전엔 체인을
+                            // 안 봐서 arr.p=v 가 상속 setter 를 무시하고 own 데이터를 만들었다.
+                            if cur.is_none() {
+                                if let Some(acc) = self.array_inherited_accessor(&key) {
+                                    if let Some(setter) = &acc.set {
+                                        self.call_value(
+                                            setter.clone(),
+                                            Some(av.clone()),
+                                            vec![value],
+                                        )?;
+                                    }
+                                    return Ok(());
+                                }
                             }
                             if cur.is_none() && self.is_nonextensible_val(&av) {
                                 return Ok(());
