@@ -7726,6 +7726,13 @@ fn function_tostring_source_text() {
     assert_eq!(run_str("(function f(){}).bind(null).toString()"), "function () { [native code] }");
     // toString 결과가 다시 파싱 가능(대략) — 최소한 'function' 포함
     assert!(run_bool("/function|=>/.test((function abc(){}).toString())"));
+    // 내장 **생성자**도 NativeFunction 문법 (Object.prototype.toString 이 아니라)
+    assert_eq!(run_str("Array.toString()"), "function Array() { [native code] }");
+    assert_eq!(run_str("Object.toString()"), "function Object() { [native code] }");
+    assert!(run_bool("Array.toString===Function.prototype.toString"));
+    // 비함수 수신자는 TypeError (§20.2.3.5)
+    assert!(run_bool("var t=false; try{ Function.prototype.toString.call({}); }catch(e){ t=e instanceof TypeError; } t"));
+    assert!(run_bool("var t=false; try{ Function.prototype.toString.call(undefined); }catch(e){ t=e instanceof TypeError; } t"));
 }
 
 #[test]

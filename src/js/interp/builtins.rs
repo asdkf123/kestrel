@@ -4493,7 +4493,13 @@ impl Interp {
                             "function () { [native code] }".to_string()
                         }
                     }
-                    _ => "function () { [native code] }".to_string(),
+                    // §20.2.3.5 step 1: 수신자가 함수(호출 가능)가 아니면 TypeError.
+                    _ => {
+                        return Err(self.throw_error(
+                            "TypeError",
+                            "Function.prototype.toString requires that 'this' be a Function",
+                        ))
+                    }
                 };
                 Ok(Value::Str(s))
             }

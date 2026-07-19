@@ -7324,18 +7324,27 @@ impl Interp {
             // 보관된 네임스페이스 맵에 위임한다.
             Value::Native(Native::ObjectCtor) => {
                 let ns = self.object_ns.clone();
-                match self.member_get(&ns, key)? {
-                    // ns 에 없으면 함수 공통 멤버(name/length/call/…)로 폴백
-                    Value::Undefined => Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined)),
-                    v => Ok(v),
+                // ns 의 **own** 정적 멤버(assign/keys/prototype…)가 우선. 그다음 함수 공통
+                // 멤버(Function.prototype.toString/call/… → Object.prototype). ns 는 객체라
+                // toString 을 Object.prototype 에서 상속하는데, 생성자는 함수이므로
+                // Function.prototype.toString 이 우선이어야 한다(예전엔 [object Function]).
+                if matches!(&ns, Value::Obj(m) if m.borrow().contains_key(key)) {
+                    return self.member_get(&ns, key);
                 }
+                if let Some(v) = self.native_fn_member(recv, key) {
+                    return Ok(v);
+                }
+                self.member_get(&ns, key)
             }
             Value::Native(Native::ArrayCtor) => {
                 let ns = self.array_ns.clone();
-                match self.member_get(&ns, key)? {
-                    Value::Undefined => Ok(self.native_fn_member(recv, key).unwrap_or(Value::Undefined)),
-                    v => Ok(v),
+                if matches!(&ns, Value::Obj(m) if m.borrow().contains_key(key)) {
+                    return self.member_get(&ns, key);
                 }
+                if let Some(v) = self.native_fn_member(recv, key) {
+                    return Ok(v);
+                }
+                self.member_get(&ns, key)
             }
             // Map/Set(=WeakMap/WeakSet).prototype — 번들의 Map.prototype.get 등.
             Value::Native(Native::MapCtor) if key == "prototype" => Ok(self.map_proto.clone()),
