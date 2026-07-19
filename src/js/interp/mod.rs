@@ -7033,6 +7033,14 @@ impl Interp {
                     // 예전엔 토큰을 다시 이어 붙여서 "  a  a b" 가 "a b" 로 보였다.
                     "value" => Ok(Value::Str(self.class_attr(id))),
                     "toString" => Ok(Value::Native(Native::ClassValue)),
+                    // DOMTokenList 브랜드(§7.1) — Object.prototype.toString 이 읽는다.
+                    "\u{0}@@toStringTag" => Ok(Value::Str("DOMTokenList".to_string())),
+                    // 이터러블(§7.1): @@iterator/values 는 토큰 값, keys 는 인덱스.
+                    // (MakeIter 가 ClassList 토큰을 재료화한다.)
+                    "\u{0}@@iterator" | "values" => Ok(Value::Native(Native::MakeIter)),
+                    "keys" => Ok(Value::Native(Native::Arr(natives::ArrOp::Keys))),
+                    "forEach" => Ok(Value::Native(Native::ClassForEach)),
+                    "entries" => Ok(Value::Native(Native::ClassEntries)),
                     _ => {
                         if let Ok(i) = key.parse::<usize>() {
                             Ok(self

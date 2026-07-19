@@ -157,6 +157,8 @@ pub enum Native {
     ClassSupports,
     ClassItem,
     ClassValue,
+    ClassForEach,
+    ClassEntries,
     RegExpCtor,
     RegExpEscape,
     RegexTest,

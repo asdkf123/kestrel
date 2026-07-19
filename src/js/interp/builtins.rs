@@ -4562,6 +4562,10 @@ impl Interp {
                         .iter()
                         .map(|(k, v)| Value::Arr(ArrayObj::new(vec![k.clone(), v.clone()])))
                         .collect(),
+                    // DOMTokenList(classList) 는 토큰 값을 순회한다(§7.1 iterable).
+                    Some(Value::ClassList(id)) => {
+                        self.class_tokens(*id).into_iter().map(Value::Str).collect()
+                    }
                     _ => Vec::new(),
                 };
                 // make_iter_from_vec 로 통일 — @@iterator(스스로 이터러블) +
@@ -5787,6 +5791,34 @@ impl Interp {
             Native::ClassValue => {
                 let Some(Value::ClassList(id)) = recv else { return Ok(Value::Str(String::new())) };
                 Ok(Value::Str(self.class_attr(id)))
+            }
+            // DOMTokenList.forEach(cb, thisArg) — cb(value, index, list)(§7.1 iterable).
+            Native::ClassForEach => {
+                let Some(Value::ClassList(id)) = recv.clone() else { return Ok(Value::Undefined) };
+                let cb = args.first().cloned().unwrap_or(Value::Undefined);
+                if !is_callable(&cb) {
+                    return Err(self.throw_error("TypeError", "forEach callback is not a function"));
+                }
+                let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+                for (i, tok) in self.class_tokens(id).into_iter().enumerate() {
+                    self.call_value(
+                        cb.clone(),
+                        Some(this_arg.clone()),
+                        vec![Value::Str(tok), Value::Num(i as f64), recv.clone().unwrap()],
+                    )?;
+                }
+                Ok(Value::Undefined)
+            }
+            // DOMTokenList.entries() — [index, value] 쌍 이터레이터.
+            Native::ClassEntries => {
+                let Some(Value::ClassList(id)) = recv else { return Ok(Value::Undefined) };
+                let items: Vec<Value> = self
+                    .class_tokens(id)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, t)| Value::Arr(ArrayObj::new(vec![Value::Num(i as f64), Value::Str(t)])))
+                    .collect();
+                Ok(self.make_iter_from_vec(items))
             }
             Native::ClassContains => {
                 let Some(Value::ClassList(id)) = recv else { return Ok(Value::Bool(false)) };
