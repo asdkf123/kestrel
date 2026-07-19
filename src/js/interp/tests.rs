@@ -4679,6 +4679,10 @@ fn function_names_follow_standard() {
     assert_eq!(run_str("var o={[Symbol.iterator](){}}; o[Symbol.iterator].name"), "[Symbol.iterator]");
     // 문자열 computed 키는 그대로
     assert_eq!(run_str("var o={['xy']:function(){}}; o.xy.name"), "xy");
+    // 클래스 심볼 메서드/static/접근자 이름도 "[desc]"/"[Symbol.x]"
+    assert_eq!(run_str("var s=Symbol('m'); class C{[s](){}} C.prototype[s].name"), "[m]");
+    assert_eq!(run_str("class C{static [Symbol.iterator](){}} C[Symbol.iterator].name"), "[Symbol.iterator]");
+    assert_eq!(run_str("var s=Symbol('g'); class C{get [s](){return 1}} Object.getOwnPropertyDescriptor(C.prototype,s).get.name"), "get [g]");
     // 클래스(생성자)의 name 은 non-writable 계산 프로퍼티 — 대입은 sloppy 무시(§17)
     assert_eq!(run_str("class C {} C.name='X'; C.name"), "C");
     // 명시 static name(){} 이 있으면 실제 프로퍼티라 유지
