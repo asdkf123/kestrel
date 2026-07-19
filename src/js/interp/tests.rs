@@ -3962,6 +3962,17 @@ fn json_roundtrip() {
     );
     // 파싱 실패는 스크립트 에러
     assert!(Interp::new().run("JSON.parse('{oops')").is_err());
+    // reviver: 변환/배열/삭제(undefined)
+    assert_eq!(run_num("JSON.parse('{\"a\":1,\"b\":2}', function(k,v){return typeof v==='number'?v*10:v;}).b"), 20.0);
+    assert_eq!(run_str("JSON.stringify(JSON.parse('[1,2]', function(k,v){return typeof v==='number'?v+1:v;}))"), "[2,3]");
+    assert!(run_bool("var o=JSON.parse('{\"a\":1,\"b\":2}', function(k,v){return k==='a'?undefined:v;}); !('a' in o) && o.b===2"));
+    // reviver 가 되살린 값 설정은 CreateDataProperty — 아직 처리 안 된 형제 슬롯에
+    // Proxy 를 심으면 그 슬롯을 되살릴 때 defineProperty 트랩이 불린다(§25.5.1.1).
+    assert!(run_bool(
+        "var bad=new Proxy([null],{defineProperty:function(){throw new TypeError('x');}}); \
+         var threw=false; try{ JSON.parse('[0,1]', function(k,v){ if(k==='0') this[1]=bad; return v; }); } \
+         catch(e){ threw=e instanceof TypeError; } threw"
+    ));
 }
 
 // 원시 래퍼 값은 ToNumber/ToString 을 타 오버라이드된 valueOf/toString 을 관측한다

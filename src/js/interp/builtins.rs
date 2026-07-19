@@ -602,23 +602,40 @@ impl Interp {
         snap: Option<&JsonSrc>,
     ) -> Result<Value, String> {
         let val = self.member_get(holder, name)?;
-        match &val {
-            Value::Arr(a) => {
-                let len = a.borrow().len();
+        // §25.5.1.1: Type(val) 이 Object 면 IsArray 로 분기해 자식을 되살린다. 설정은
+        // 추상연산(Get/CreateDataProperty/[[Delete]])으로 — Proxy 트랩·non-configurable 을
+        // 존중한다. 예전엔 Value::Arr/Obj 만 매칭해 Proxy 를 놓치고 raw 슬롯을 썼다.
+        if is_object(&val) {
+            if self.is_array(&val)? {
+                let len_v = self.member_get(&val, "length")?;
+                let len = to_length(self.to_number_value(&len_v)?) as usize;
                 for i in 0..len {
                     let child = match snap {
                         Some(JsonSrc::Arr(v)) => v.get(i),
                         _ => None,
                     };
                     let nv = self.json_revive(&val, &i.to_string(), reviver, child)?;
-                    // undefined 면 삭제(배열에선 hole) — 근사로 undefined 유지.
-                    if let Some(slot) = a.borrow_mut().get_mut(i) {
-                        *slot = nv;
+                    if matches!(nv, Value::Undefined) {
+                        self.delete_own(&val, &i.to_string())?;
+                    } else {
+                        self.create_data_property_or_throw(&val, i, nv)?;
                     }
                 }
-            }
-            Value::Obj(m) => {
-                for k in enumerable_keys(m) {
+            } else {
+                // EnumerableOwnPropertyNames(val, key) — 평범 객체는 enumerable_keys,
+                // 인스턴스는 own 필드. (Proxy-of-객체 reviver 는 드물어 생략.)
+                let keys: Vec<String> = match &val {
+                    Value::Obj(m) => enumerable_keys(m),
+                    Value::Instance(i) => i
+                        .fields
+                        .borrow()
+                        .keys()
+                        .filter(|k| !is_internal_key(k))
+                        .cloned()
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                for k in keys {
                     let child = match snap {
                         Some(JsonSrc::Obj(v)) => {
                             v.iter().rev().find(|(kk, _)| *kk == k).map(|(_, s)| s)
@@ -627,13 +644,12 @@ impl Interp {
                     };
                     let nv = self.json_revive(&val, &k, reviver, child)?;
                     if matches!(nv, Value::Undefined) {
-                        m.borrow_mut().remove(&k);
+                        self.delete_own(&val, &k)?;
                     } else {
-                        m.borrow_mut().insert(k, nv);
+                        self.create_data_property_str(&val, &k, nv)?;
                     }
                 }
             }
-            _ => {}
         }
         // context 객체: 원시 리프이고 파싱된 값이 그대로면 source 를 채운다.
         let ctx = ObjMap::new();
@@ -1673,13 +1689,18 @@ impl Interp {
     // enumerable:t, configurable:t} 데이터를 정의한다([[Set]]이 아님 — 기존 non-writable 이라도
     // configurable 이면 redefine 성공). 정의 실패(non-configurable/non-extensible)면 TypeError.
     fn create_data_property_or_throw(&mut self, target: &Value, key: usize, v: Value) -> Result<(), String> {
+        self.create_data_property_str(target, &key.to_string(), v)
+    }
+
+    // CreateDataPropertyOrThrow(target, key, v): {value, w/e/c:true} 로 정의(실패 시 TypeError).
+    // Proxy 의 defineProperty 트랩·non-configurable 불변식을 존중한다.
+    fn create_data_property_str(&mut self, target: &Value, key: &str, v: Value) -> Result<(), String> {
         let mut desc = ObjMap::new();
         desc.insert("value".to_string(), v);
         desc.insert("writable".to_string(), Value::Bool(true));
         desc.insert("enumerable".to_string(), Value::Bool(true));
         desc.insert("configurable".to_string(), Value::Bool(true));
         let desc = Value::Obj(Rc::new(RefCell::new(desc)));
-        // Object.defineProperty 는 정의 실패 시 TypeError 를 던진다 → 그대로 전파.
         self.call_native(
             Native::ObjectDefineProperty,
             None,
