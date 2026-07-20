@@ -783,6 +783,63 @@ fn parse_alpha(s: Option<&String>) -> Option<Comp> {
 fn alpha_u8(c: Comp) -> u8 {
     (c.get().clamp(0.0, 1.0) * 255.0).round() as u8
 }
+fn alpha_frac(c: Comp) -> f32 {
+    c.get().clamp(0.0, 1.0)
+}
+
+// lab/lch/oklab/oklch 색을 float sRGB+알파로 (u8 양자화 회피 — color-mix 정밀도용).
+fn lab_family_srgb_f(name: &str, text: &str) -> Option<[f32; 4]> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 3 {
+        return None;
+    }
+    let alpha = alpha_frac(parse_alpha(p.get(3))?);
+    let (l_hi, ab_base, c_base) = match name {
+        "lab" => (100.0, 125.0, 0.0),
+        "oklab" => (1.0, 0.4, 0.0),
+        "lch" => (100.0, 0.0, 150.0),
+        "oklch" => (1.0, 0.0, 0.4),
+        _ => return None,
+    };
+    let l = parse_comp(&p[0], l_hi)?.clamp(0.0, l_hi).get();
+    let (lr, lg, lb) = if matches!(name, "lch" | "oklch") {
+        let c = parse_comp(&p[1], c_base)?.clamp_lo(0.0).get();
+        let h = parse_comp_angle(&p[2])?.get().to_radians();
+        let (a, b) = (c * h.cos(), c * h.sin());
+        if name == "lch" {
+            lab_to_lin_srgb(l, a, b)
+        } else {
+            oklab_to_lin_srgb(l, a, b)
+        }
+    } else {
+        let a = parse_comp(&p[1], ab_base)?.get();
+        let b = parse_comp(&p[2], ab_base)?.get();
+        if name == "lab" {
+            lab_to_lin_srgb(l, a, b)
+        } else {
+            oklab_to_lin_srgb(l, a, b)
+        }
+    };
+    Some([linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb), alpha])
+}
+
+// 색 문자열 → float sRGB+알파. 모던 색함수는 float 로 직접(u8 양자화 회피),
+// 나머지는 interpret_value 의 u8 을 /255.
+fn srgb_float_of(s: &str) -> Option<[f32; 4]> {
+    let low = s.trim().to_ascii_lowercase();
+    for name in ["oklch", "oklab", "lch", "lab"] {
+        if low.starts_with(name) && low[name.len()..].starts_with('(') {
+            return lab_family_srgb_f(name, &low);
+        }
+    }
+    let c = interpret_value(&low).and_then(|v| v.paint_color())?;
+    Some([
+        c.r as f32 / 255.0,
+        c.g as f32 / 255.0,
+        c.b as f32 / 255.0,
+        c.a as f32 / 255.0,
+    ])
+}
 // 알파 직렬화: 1 이면 생략, none 이면 " / none", 그 외 " / <값>".
 fn alpha_ser(c: Comp) -> String {
     match c {
@@ -862,16 +919,8 @@ fn parse_mix_color(s: &str) -> Option<([f32; 4], Option<f32>)> {
         }
         color_str.push_str(t);
     }
-    let col = interpret_value(&color_str.to_ascii_lowercase()).and_then(|v| v.paint_color())?;
-    Some((
-        [
-            col.r as f32 / 255.0,
-            col.g as f32 / 255.0,
-            col.b as f32 / 255.0,
-            col.a as f32 / 255.0,
-        ],
-        pct,
-    ))
+    let col = srgb_float_of(&color_str)?;
+    Some((col, pct))
 }
 
 // sRGB float(0..1) → 보간 색공간 좌표. 극좌표 공간은 [2] 가 색상(도).
