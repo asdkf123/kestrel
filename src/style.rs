@@ -1512,6 +1512,62 @@ pub fn normalize_translate(v: &str) -> String {
 
 // scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
 // 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
+// transition 단축 캐논 직렬화(§CSSOM). 각 전이를 "property [duration] [timing]
+// [delay] [behavior]" 로, 기본값(0s/ease/normal)은 생략. delay!=0s 면 duration 표시.
+pub fn normalize_transition(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("none") {
+        return raw.to_string();
+    }
+    let is_time = |s: &str| -> bool {
+        s.strip_suffix("ms").map(|n| n.parse::<f32>().is_ok()).unwrap_or(false)
+            || s.strip_suffix('s').map(|n| n.parse::<f32>().is_ok()).unwrap_or(false)
+    };
+    let is_timing = |s: &str| -> bool {
+        matches!(s, "ease" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end")
+            || s.starts_with("cubic-bezier(")
+            || s.starts_with("steps(")
+    };
+    let mut out = Vec::new();
+    for part in split_top_commas_str(raw) {
+        let (mut prop, mut times, mut tf, mut beh): (Option<String>, Vec<String>, Option<String>, Option<String>) =
+            (None, vec![], None, None);
+        for tok in split_top_ws(part.trim()) {
+            let tl = tok.to_ascii_lowercase();
+            if is_time(&tl) {
+                times.push(tok.clone());
+            } else if is_timing(&tl) {
+                tf = Some(tok.clone());
+            } else if tl == "allow-discrete" {
+                beh = Some("allow-discrete".to_string());
+            } else if tl == "normal" {
+                beh = Some("normal".to_string());
+            } else {
+                prop = Some(tok.clone());
+            }
+        }
+        let dur = times.first().cloned().unwrap_or_else(|| "0s".to_string());
+        let delay = times.get(1).cloned().unwrap_or_else(|| "0s".to_string());
+        let tf = tf.unwrap_or_else(|| "ease".to_string());
+        let beh = beh.unwrap_or_else(|| "normal".to_string());
+        let mut s = vec![prop.unwrap_or_else(|| "all".to_string())];
+        if dur != "0s" || delay != "0s" {
+            s.push(dur);
+        }
+        if tf != "ease" {
+            s.push(tf);
+        }
+        if delay != "0s" {
+            s.push(delay);
+        }
+        if beh != "normal" {
+            s.push(beh);
+        }
+        out.push(s.join(" "));
+    }
+    out.join(", ")
+}
+
 // box-shadow 계산값 캐논 직렬화(§CSS Backgrounds). 각 그림자를 "색 x y blur
 // spread [inset]" 순서로(색 먼저, rgb, blur/spread 기본 0px 표시, inset 마지막).
 // 색 미지정이면 current_color. 파싱 실패는 원문 유지.

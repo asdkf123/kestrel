@@ -225,6 +225,10 @@ impl Interp {
         if prop == "font" {
             return crate::style::normalize_font_shorthand(raw);
         }
+        // transition 단축: property 먼저, 기본값 생략 캐논 직렬화(§CSSOM).
+        if prop == "transition" {
+            return crate::style::normalize_transition(raw);
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".

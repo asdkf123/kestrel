@@ -302,6 +302,12 @@ fn fill_js_maps(
                 }
             }
         }
+        // transition 단축 계산값: 캐논 직렬화(property 먼저, 기본값 생략).
+        if let Some(tr) = m.get("transition") {
+            if tr != "none" && !tr.is_empty() {
+                m.insert("transition".to_string(), crate::style::normalize_transition(tr));
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [
