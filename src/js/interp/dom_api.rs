@@ -355,8 +355,14 @@ impl Interp {
         let easing = first(self.style_get_raw(id, "transition-timing-function"));
         let easing = if easing.is_empty() { "ease".to_string() } else { easing };
         // from = 덮어쓰기 전 현재 인라인 지정값(테스트가 setup 에서 el.style[p]=from 설정).
-        // computed_styles 는 JS 실행 중 stale 할 수 있어 인라인을 우선.
-        let mut from = self.style_get(id, prop);
+        // computed_styles 는 JS 실행 중 stale 할 수 있어 인라인을 우선. transform 은
+        // 원문(raw)으로 읽어야 to(new_value, 원문)와 각도 단위(rad/deg)가 어긋나지
+        // 않는다 — style_get 은 rad→deg 로 정규화한다.
+        let mut from = if prop == "transform" {
+            self.style_get_raw(id, prop)
+        } else {
+            self.style_get(id, prop)
+        };
         if from.is_empty() {
             // neutral from: 기저 계산값. 동적 생성 요소는 computed_styles 가 비어 있을 수
             // 있으므로 레이아웃을 강제해 채운다(덮어쓰기 전이라 아직 neutral 상태).
