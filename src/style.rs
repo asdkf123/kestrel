@@ -1213,8 +1213,56 @@ pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
 // getComputedStyle 은 규칙이 없는 프로퍼티에도 resolved value 를 돌려줘야 한다 —
 // 예전엔 빈 문자열이라 `getComputedStyle(el).display === 'block'` 같은 검사가 전부 실패했다.
 // currentcolor 로 계산되는 값(테두리/아웃라인/텍스트 장식 색)은 호출부가 color 로 채운다.
+// 시간 값 → 초(f32). "500ms"→0.5, "2s"→2, "calc(2 * 3s)"→6, 무단위 0 허용.
+fn parse_time_s(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(inner) = s.strip_prefix("calc(").and_then(|x| x.strip_suffix(')')) {
+        // 시간 단위를 초 계수로: ms→e-3, 그 뒤 남은 s 제거 후 산술 평가.
+        let e = inner.replace("ms", "e-3s").replace('s', "");
+        return crate::css::eval_calc_number(&e);
+    }
+    if let Some(p) = s.strip_suffix("ms") {
+        return p.trim().parse::<f32>().ok().map(|v| v / 1000.0);
+    }
+    if let Some(p) = s.strip_suffix('s') {
+        return p.trim().parse::<f32>().ok();
+    }
+    if s == "0" {
+        return Some(0.0);
+    }
+    None
+}
+
+// transition/animation 시간 목록 계산값: 각 항목을 초로 정규화("0.5s, 6s").
+pub fn normalize_time_list(s: &str) -> String {
+    s.split(',')
+        .map(|t| match parse_time_s(t) {
+            Some(sec) => format!("{}s", num_css(sec)),
+            None => t.trim().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// 쉼표 목록 계산값: 각 항목 트림 후 ", " 로 결합(간격 정규화).
+pub fn normalize_comma_list(s: &str) -> String {
+    s.split(',').map(|t| t.trim()).collect::<Vec<_>>().join(", ")
+}
+
 pub fn initial_value(prop: &str) -> Option<&'static str> {
     Some(match prop {
+        // transition/animation 롱핸드 초기값 (CSS Transitions/Animations)
+        "transition-property" => "all",
+        "transition-duration" | "transition-delay" | "animation-duration"
+        | "animation-delay" => "0s",
+        "transition-timing-function" | "animation-timing-function" => "ease",
+        "transition-behavior" => "normal",
+        "animation-name" => "none",
+        "animation-iteration-count" => "1",
+        "animation-direction" => "normal",
+        "animation-fill-mode" => "none",
+        "animation-play-state" => "running",
+        "animation-composition" => "replace",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

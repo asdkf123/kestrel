@@ -123,6 +123,13 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "text-decoration-line", "text-indent", "text-overflow", "text-transform", "top",
     "transform", "vertical-align", "visibility", "white-space", "width", "word-break",
     "word-spacing", "word-wrap", "z-index",
+    // transition/animation 롱핸드: 애니메이션은 미구현이나 계산값(속성 목록/시간/이징)은
+    // 파싱·직렬화한다 — 실제 CSS 프로퍼티이므로 getComputedStyle·CSS.supports 에 노출.
+    "transition-property", "transition-duration", "transition-delay",
+    "transition-timing-function", "transition-behavior",
+    "animation-name", "animation-duration", "animation-delay",
+    "animation-timing-function", "animation-iteration-count", "animation-direction",
+    "animation-fill-mode", "animation-play-state", "animation-composition",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

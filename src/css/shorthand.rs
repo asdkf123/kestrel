@@ -355,6 +355,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "transform" | "-webkit-transform" => {
             vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // transition/animation 롱핸드: 원문 보존(애니메이션은 미구현이지만 계산값은
+        // 정규화해 돌려준다 — collect_computed_styles 가 시간(ms→s)·목록 간격을 정규화).
+        "transition-property" | "transition-duration" | "transition-delay"
+        | "transition-timing-function" | "transition-behavior"
+        | "animation-name" | "animation-duration" | "animation-delay"
+        | "animation-timing-function" | "animation-iteration-count"
+        | "animation-direction" | "animation-fill-mode" | "animation-play-state"
+        | "animation-composition" => {
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
         // 일반 값 파서는 다중 토큰을 파싱하지 못해 None 을 돌려주고, 그러면 선언이
         // 통째로 사라져서 **항상 중심 기준 회전**이 되어 버린다. 원문을 보존한다.

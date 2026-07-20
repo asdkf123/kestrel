@@ -34,6 +34,7 @@ use shorthand::expand_declaration;
 pub(crate) use supports::supports_condition;
 pub(crate) use supports::is_known_property;
 use values::valid_identifier_char;
+pub(crate) use values::eval_calc_number;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Stylesheet {

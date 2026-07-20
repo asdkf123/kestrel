@@ -626,6 +626,17 @@ fn collect_computed_styles(
                 m.insert(prop.to_string(), v.to_string());
             }
         }
+        // transition/animation 계산값 정규화: 시간은 초(ms→s, calc), 목록은 쉼표+공백.
+        for key in ["transition-duration", "transition-delay", "animation-duration", "animation-delay"] {
+            if let Some(v) = m.get(key) {
+                m.insert(key.to_string(), crate::style::normalize_time_list(v));
+            }
+        }
+        for key in ["transition-property", "transition-timing-function", "animation-name", "animation-timing-function"] {
+            if let Some(v) = m.get(key) {
+                m.insert(key.to_string(), crate::style::normalize_comma_list(v));
+            }
+        }
         out.insert(node.id, m);
     }
     for child in &node.children {

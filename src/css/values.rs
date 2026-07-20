@@ -214,6 +214,14 @@ impl CalcVal {
     }
 }
 
+// calc() 내부 식을 순수 수(단위 무시)로 평가. transition 시간 정규화 등에 쓴다.
+pub(crate) fn eval_calc_number(inner: &str) -> Option<f32> {
+    match eval_calc(inner) {
+        Some(Value::Length(n, _)) if n.is_finite() => Some(n),
+        _ => None,
+    }
+}
+
 fn eval_calc(inner: &str) -> Option<Value> {
     let toks: Vec<char> = inner.chars().collect();
     let mut p = 0usize;
