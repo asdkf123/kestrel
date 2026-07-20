@@ -1098,6 +1098,12 @@ const INHERITED: &[&str] = &[
     "visibility",
     "direction",
     "cursor",
+    "tab-size",
+    "font-kerning",
+    "font-size-adjust",
+    "hyphens",
+    "text-align-last",
+    "text-justify",
 ];
 
 // 상속 속성인지(unset 이 inherit 처럼 동작할지) 판정. 롱핸드 기준.

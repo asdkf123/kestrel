@@ -7945,6 +7945,21 @@ impl Interp {
                 return Some(crate::style::num_css(v));
             }
         }
+        // letter-spacing/word-spacing 의 normal 은 0 처럼 보간한다. 단 정확한 끝점
+        // (eased 0/1)에서는 키워드(normal)를 그대로 둔다(계산값이 normal 로 직렬화).
+        if matches!(dash_prop, "letter-spacing" | "word-spacing")
+            && (from == "normal" || to == "normal")
+        {
+            if eased == 0.0 {
+                return Some(from.to_string());
+            }
+            if eased == 1.0 {
+                return Some(to.to_string());
+            }
+            let f = if from == "normal" { "0px" } else { from };
+            let t = if to == "normal" { "0px" } else { to };
+            return Self::interp_css_value(f, t, eased);
+        }
         let special = match dash_prop {
             "scale" => Self::interp_scale(from, to, eased),
             "translate" => Self::interp_translate(from, to, eased),
