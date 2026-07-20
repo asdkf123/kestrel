@@ -296,6 +296,7 @@ pub enum Native {
     // new Event('x') instanceof Event 조차 false 였다.
     EventCtor(&'static str),
     CloneNode,
+    Normalize,
     Matches,
     Closest,
     DomContains,

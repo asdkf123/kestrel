@@ -521,6 +521,25 @@ fn document_create_attribute() {
 }
 
 #[test]
+fn node_normalize_merges_and_drops_text() {
+    let mut dom = crate::html::parse_dom("<div id='t'>a</div>".to_string());
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // 텍스트 노드 여러 개 + 빈 텍스트 노드 추가 후 normalize → 하나로 병합, 빈 것 제거
+    let setup = "var t=document.getElementById('t'); \
+                 t.appendChild(document.createTextNode('b')); \
+                 t.appendChild(document.createTextNode('')); \
+                 t.appendChild(document.createTextNode('c')); \
+                 t.childNodes.length";
+    assert_eq!(g(setup), "4"); // a, b, '', c
+    assert_eq!(g("t.normalize(); t.childNodes.length"), "1");
+    assert_eq!(g("t.firstChild.data"), "abc");
+    // document.normalize() 도 동작(루트부터)
+    assert_eq!(g("typeof document.normalize"), "function");
+}
+
+#[test]
 fn style_css_text_serializes_with_semicolons() {
     let mut dom = crate::html::parse_dom(
         "<div id='t' style='color:red;font-size:10pt'></div>".to_string(),

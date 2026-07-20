@@ -605,6 +605,12 @@ impl Interp {
         document.insert("visibilityState".to_string(), Value::Str("visible".to_string()));
         document.insert("createTextNode".to_string(), Value::Native(Native::CreateTextNode));
         document.insert("createComment".to_string(), Value::Native(Native::CreateComment));
+        document.insert(
+            "createProcessingInstruction".to_string(),
+            Value::Native(Native::CreateProcessingInstruction),
+        );
+        // document.normalize() — 문서 트리 전체(루트부터)의 텍스트 노드를 정규화한다.
+        document.insert("normalize".to_string(), Value::Native(Native::Normalize));
         // document.styleSheets (§CSSOM 6.1). 예전엔 아예 없어서, 이걸 읽는 스크립트가
         // 그 줄에서 통째로 죽었다.
         document.insert(
@@ -7241,6 +7247,7 @@ impl Interp {
                     "attachShadow" => Some(Native::AttachShadow),
                     "dispatchEvent" => Some(Native::DispatchEvent),
                     "cloneNode" => Some(Native::CloneNode),
+                    "normalize" => Some(Native::Normalize),
                     "substringData" => Some(Native::CharData(CharDataOp::Substring)),
                     "appendData" => Some(Native::CharData(CharDataOp::Append)),
                     "insertData" => Some(Native::CharData(CharDataOp::Insert)),

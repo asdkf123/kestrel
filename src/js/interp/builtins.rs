@@ -7638,6 +7638,17 @@ impl Interp {
                     _ => Err("cloneNode 는 요소 메서드".to_string()),
                 }
             }
+            // node.normalize() — 서브트리의 텍스트 노드를 병합/정리(§DOM 4.5).
+            // document.normalize() 는 문서 노드(루트)에서 시작한다.
+            Native::Normalize => {
+                let dom = self.dom_arena()?;
+                let root = match recv {
+                    Some(Value::Dom(id)) => id,
+                    _ => dom.root, // document 객체 등 → 루트
+                };
+                dom.normalize(root);
+                Ok(Value::Undefined)
+            }
             Native::DispatchEvent => {
                 let node = match recv {
                     Some(Value::Dom(id)) => id,

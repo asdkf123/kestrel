@@ -797,6 +797,42 @@ impl Dom {
         s
     }
 
+    // Node.normalize (§DOM 4.5): 서브트리의 텍스트 노드를 정규화한다. 길이 0 인
+    // 텍스트 노드는 제거하고, 인접(연속) 텍스트 노드는 첫 번째로 병합한다. 요소
+    // 자식은 재귀. 예전엔 아예 없어서 node.normalize() 가 그 자리에서 죽었다.
+    pub fn normalize(&mut self, id: NodeId) {
+        let mut i = 0;
+        loop {
+            let Some(child) = self.get(id).children.get(i).copied() else {
+                break;
+            };
+            match &self.get(child).node_type {
+                NodeType::Text(t) => {
+                    if t.is_empty() {
+                        self.detach(child);
+                        continue; // i 유지 (뒤 형제가 당겨진다)
+                    }
+                    // 뒤따르는 연속 텍스트 노드를 이 노드로 병합
+                    let mut data = t.clone();
+                    while let Some(next) = self.get(id).children.get(i + 1).copied() {
+                        let NodeType::Text(t2) = &self.get(next).node_type else {
+                            break;
+                        };
+                        data.push_str(t2);
+                        self.detach(next);
+                    }
+                    self.set_char_data(child, data);
+                    i += 1;
+                }
+                NodeType::Element(_) => {
+                    self.normalize(child); // 자손 재귀
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+    }
+
     // 자식들을 텍스트 노드 하나로 교체
     // 텍스트/코멘트 노드의 문자 데이터 설정 (요소는 무시 — 표준의 nodeValue 규칙)
     pub fn set_char_data(&mut self, id: NodeId, data: String) {
