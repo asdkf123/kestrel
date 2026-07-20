@@ -160,6 +160,23 @@ pub(crate) const SUPPORTED: &[&str] = &[
     // SVG 페인트/색 프로퍼티
     "fill", "stroke", "stop-color", "flood-color", "lighting-color", "column-rule-color",
     "text-emphasis-color", "-webkit-text-fill-color", "-webkit-text-stroke-color",
+    // 4차: logical 프로퍼티(길이/색/스타일) — 계산값 노출(가로쓰기 기준 물리와 동치).
+    "inset-block-start", "inset-block-end", "inset-inline-start", "inset-inline-end",
+    "margin-block-start", "margin-block-end", "margin-inline-start", "margin-inline-end",
+    "padding-block-start", "padding-block-end", "padding-inline-start", "padding-inline-end",
+    "border-block-start-width", "border-block-end-width", "border-inline-start-width",
+    "border-inline-end-width", "border-block-start-style", "border-block-end-style",
+    "border-inline-start-style", "border-inline-end-style", "border-block-start-color",
+    "border-block-end-color", "border-inline-start-color", "border-inline-end-color",
+    "block-size", "inline-size", "min-block-size", "min-inline-size", "max-block-size",
+    "max-inline-size",
+    // mask / offset / scroll / contain-intrinsic
+    "mask-image", "mask-repeat", "mask-position", "mask-size", "mask-origin", "mask-clip",
+    "mask-composite", "mask-mode", "offset-path", "offset-distance", "offset-rotate",
+    "offset-anchor", "scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom",
+    "scroll-margin-left", "scroll-padding-top", "scroll-padding-right",
+    "scroll-padding-bottom", "scroll-padding-left", "scroll-snap-stop", "place-self",
+    "contain-intrinsic-width", "contain-intrinsic-height",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

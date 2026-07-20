@@ -1384,6 +1384,34 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "fill" | "stop-color" | "flood-color" => "rgb(0, 0, 0)",
         "lighting-color" => "rgb(255, 255, 255)",
         "stroke" => "none",
+        // 4차: logical 프로퍼티(가로쓰기 기준 물리와 동일 초기값).
+        "inset-block-start" | "inset-block-end" | "inset-inline-start" | "inset-inline-end" => {
+            "auto"
+        }
+        "margin-block-start" | "margin-block-end" | "margin-inline-start"
+        | "margin-inline-end" | "padding-block-start" | "padding-block-end"
+        | "padding-inline-start" | "padding-inline-end" => "0px",
+        "border-block-start-width" | "border-block-end-width" | "border-inline-start-width"
+        | "border-inline-end-width" => "0px",
+        "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
+        | "border-inline-end-style" => "none",
+        "block-size" | "inline-size" | "min-block-size" | "min-inline-size" => "auto",
+        "max-block-size" | "max-inline-size" => "none",
+        // mask / offset / scroll / contain-intrinsic
+        "mask-image" | "offset-path" => "none",
+        "mask-repeat" => "repeat",
+        "mask-position" => "0% 0%",
+        "mask-size" | "offset-rotate" | "offset-anchor" | "place-self" => "auto",
+        "mask-origin" | "mask-clip" => "border-box",
+        "mask-composite" => "add",
+        "mask-mode" => "match-source",
+        "offset-distance" => "0px",
+        "scroll-margin-top" | "scroll-margin-right" | "scroll-margin-bottom"
+        | "scroll-margin-left" => "0px",
+        "scroll-padding-top" | "scroll-padding-right" | "scroll-padding-bottom"
+        | "scroll-padding-left" => "auto",
+        "scroll-snap-stop" => "normal",
+        "contain-intrinsic-width" | "contain-intrinsic-height" => "none",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",
@@ -1442,9 +1470,12 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
 pub fn is_current_color_prop(prop: &str) -> bool {
     matches!(
         prop,
-        "border-color" | "border-top-color" | "outline-color" | "text-decoration-color"
+        "border-color" | "border-top-color" | "border-right-color" | "border-bottom-color"
+            | "border-left-color" | "outline-color" | "text-decoration-color"
             | "column-rule-color" | "text-emphasis-color" | "-webkit-text-fill-color"
-            | "-webkit-text-stroke-color"
+            | "-webkit-text-stroke-color" | "border-block-start-color"
+            | "border-block-end-color" | "border-inline-start-color"
+            | "border-inline-end-color"
     )
 }
 

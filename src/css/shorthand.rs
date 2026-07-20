@@ -393,14 +393,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
         | "column-span" | "column-fill" | "column-rule-style" | "caret-shape"
         | "unicode-bidi" | "border-image-repeat" | "text-underline-offset"
-        | "column-width" => {
+        | "column-width"
+        // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
+        | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
+        | "border-inline-end-style" | "mask-image" | "mask-repeat" | "mask-position"
+        | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
+        | "offset-path" | "offset-rotate" | "offset-anchor" | "scroll-snap-stop"
+        | "contain-intrinsic-width" | "contain-intrinsic-height" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
         // 키워드로 보존. column-rule-color 도 색.
         "fill" | "stroke" | "stop-color" | "flood-color" | "lighting-color"
         | "column-rule-color" | "text-emphasis-color"
-        | "-webkit-text-fill-color" | "-webkit-text-stroke-color" => {
+        | "-webkit-text-fill-color" | "-webkit-text-stroke-color"
+        | "border-block-start-color" | "border-block-end-color"
+        | "border-inline-start-color" | "border-inline-end-color" => {
             let value = match interpret_value(value_text.trim()) {
                 Some(v @ Value::Color(_)) => v,
                 _ => Value::Keyword(value_text.trim().to_string()),
