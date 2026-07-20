@@ -5523,6 +5523,8 @@ impl Interp {
                         // getPropertyValue('top') 경로에도 주입한다.
                         if let Some(interp) = self.animated_value(*id, &name) {
                             Value::Str(interp)
+                        } else if let Some(sh) = self.computed_shorthand_animated(*id, &name) {
+                            Value::Str(sh)
                         } else {
                             Value::Str(
                                 self.computed_styles

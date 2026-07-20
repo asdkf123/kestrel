@@ -6623,6 +6623,10 @@ impl Interp {
                 if let Some(interp) = self.animated_value(id, &dashed) {
                     return Ok(Value::Str(interp));
                 }
+                // 박스 단축(border-width 등): 애니메이션된 롱핸드에서 조립.
+                if let Some(sh) = self.computed_shorthand_animated(id, &dashed) {
+                    return Ok(Value::Str(sh));
+                }
                 let v = self
                     .computed_styles
                     .get(&id)
@@ -7869,6 +7873,68 @@ impl Interp {
         self.css_animation_value(id, dash_prop)
     }
 
+    // 박스 단축 프로퍼티(border-width/margin/…)를 롱핸드에서 조립한다. 단 롱핸드
+    // 하나라도 애니메이션 중일 때만(additive) — getComputedStyle(단축)이 정적 값만
+    // 갖고 있어 애니메이션된 롱핸드가 반영 안 되던 문제. 네 값은 최단 형태로 접는다.
+    fn computed_shorthand_animated(&self, id: crate::dom::NodeId, prop: &str) -> Option<String> {
+        let longhands: &[&str] = match prop {
+            "margin" => &["margin-top", "margin-right", "margin-bottom", "margin-left"],
+            "padding" => &["padding-top", "padding-right", "padding-bottom", "padding-left"],
+            "border-width" => &[
+                "border-top-width",
+                "border-right-width",
+                "border-bottom-width",
+                "border-left-width",
+            ],
+            "border-style" => &[
+                "border-top-style",
+                "border-right-style",
+                "border-bottom-style",
+                "border-left-style",
+            ],
+            "border-color" => &[
+                "border-top-color",
+                "border-right-color",
+                "border-bottom-color",
+                "border-left-color",
+            ],
+            "inset" => &["top", "right", "bottom", "left"],
+            _ => return None,
+        };
+        let mut any_anim = false;
+        let mut vals: Vec<String> = Vec::with_capacity(4);
+        for lh in longhands {
+            let v = if let Some(a) = self.animated_value(id, lh) {
+                any_anim = true;
+                a
+            } else {
+                self.computed_styles
+                    .get(&id)
+                    .and_then(|m| m.get(*lh))
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            if v.is_empty() {
+                return None;
+            }
+            vals.push(v);
+        }
+        if !any_anim {
+            return None; // 애니메이션 없으면 기존 경로에 맡김(동작 불변)
+        }
+        // [top, right, bottom, left] → 최단 형태.
+        let (t, r, b, l) = (&vals[0], &vals[1], &vals[2], &vals[3]);
+        Some(if l == r && b == t && r == t {
+            t.clone()
+        } else if l == r && b == t {
+            format!("{} {}", t, r)
+        } else if l == r {
+            format!("{} {} {}", t, r, b)
+        } else {
+            format!("{} {} {} {}", t, r, b, l)
+        })
+    }
+
     // from→to 를 이징 출력 eased 로 보간해 직렬화. scale/translate 컴포넌트 확장,
     // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
     fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32) -> Option<String> {
@@ -7962,13 +8028,27 @@ impl Interp {
         }
     }
 
-    // 키프레임 선언에서 프로퍼티 값을 계산값 문자열로(마지막 선언 우선).
+    // 키프레임 선언에서 프로퍼티 값을 계산값 문자열로(마지막 선언 우선). 직접 매치가
+    // 없으면 단축 선언(border-width/margin 등)을 롱핸드로 확장해 찾는다.
     fn frame_prop(frame: &[(String, crate::css::Value)], prop: &str) -> Option<String> {
-        frame
+        if let Some(v) = frame
             .iter()
             .rev()
             .find(|(k, _)| k == prop)
             .map(|(_, v)| crate::style::computed_value_string(v))
+        {
+            return Some(v);
+        }
+        // 단축 확장: 프레임의 각 선언을 롱핸드로 펼쳐 prop 을 찾는다.
+        for (k, v) in frame.iter().rev() {
+            let vs = crate::style::computed_value_string(v);
+            for d in crate::css::expand_decl_pub(k, &vs) {
+                if d.name == prop {
+                    return Some(crate::style::computed_value_string(&d.value));
+                }
+            }
+        }
+        None
     }
 
     // CSS 전역 키워드(initial/inherit/unset)를 실제 값으로 해석(애니메이션 from/to 용).
