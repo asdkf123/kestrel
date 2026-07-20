@@ -890,6 +890,29 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
         };
         return Some(([c0, c1, c2], alpha));
     }
+    // color(<space> …) 입력이 보간 공간과 같으면 성분 직접(none 보존, 감마 좌표 그대로).
+    if low.starts_with("color(") {
+        let p = color_parts(func_inner(&low)?);
+        if p.len() >= 4 {
+            let in_sp = if p[0] == "xyz" { "xyz-d65" } else { p[0].as_str() };
+            let mix_sp = if space == "xyz" { "xyz-d65" } else { space };
+            if in_sp == mix_sp {
+                let alpha = if p.len() >= 5 {
+                    comp_opt(parse_alpha(Some(&p[4]))?)
+                } else {
+                    Some(1.0)
+                };
+                return Some((
+                    [
+                        comp_opt(parse_comp(&p[1], 1.0)?),
+                        comp_opt(parse_comp(&p[2], 1.0)?),
+                        comp_opt(parse_comp(&p[3], 1.0)?),
+                    ],
+                    alpha,
+                ));
+            }
+        }
+    }
     // 교차 공간: sRGB 를 거쳐 변환(none 없음).
     let f = srgb_float_of(&low)?;
     let co = srgb_to_space(space, f[0], f[1], f[2])?;
@@ -1315,8 +1338,9 @@ fn serialize_mix_native(space: &str, mixed: &[f32; 3], none: &[bool; 3], a: Opti
         }
     };
     match space {
-        "hsl" => format!("hsl({} {} {}{})", cp(0, 1.0, false), cp(1, 100.0, true), cp(2, 100.0, true), ap),
-        "hwb" => format!("hwb({} {} {}{})", cp(0, 1.0, false), cp(1, 100.0, true), cp(2, 100.0, true), ap),
+        // hsl/hwb 계산값의 채도·명도는 0-100 수(% 없이) — fuzzy 형식대조가 % 유무를 본다.
+        "hsl" => format!("hsl({} {} {}{})", cp(0, 1.0, false), cp(1, 100.0, false), cp(2, 100.0, false), ap),
+        "hwb" => format!("hwb({} {} {}{})", cp(0, 1.0, false), cp(1, 100.0, false), cp(2, 100.0, false), ap),
         "oklab" => format!("oklab({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
         "oklch" => format!("oklch({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
         "lab" => format!("lab({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
