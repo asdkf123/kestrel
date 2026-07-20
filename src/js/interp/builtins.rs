@@ -7838,6 +7838,13 @@ impl Interp {
                 // new Event(type, opts) / new MouseEvent(type, {...}) → 이벤트 객체.
                 // 인터페이스별 prototype 을 붙인다 — 그래야 instanceof 와
                 // Object.getPrototypeOf 가 표준대로 답한다.
+                // type 인자는 필수(WebIDL) — 인자 0개면 TypeError.
+                if args.is_empty() {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        format!("Failed to construct '{iface}': 1 argument required, but only 0 present."),
+                    ));
+                }
                 let etype = args.first().map(to_display).unwrap_or_default();
                 let mut m = ObjMap::new();
                 if let Some(p) = self.event_proto(iface) {
@@ -7869,6 +7876,32 @@ impl Interp {
                 m.insert("bubbles".to_string(), Value::Bool(bubbles));
                 m.insert("cancelable".to_string(), Value::Bool(cancelable));
                 m.insert("defaultPrevented".to_string(), Value::Bool(false));
+                // 인터페이스별 속성: WebIDL 타입 강제 + 기본값. DOMString 멤버는
+                // 문자열로 강제(null→"null", false→"false", 0.5→"0.5", 없음/undefined→
+                // 기본 ""), double 멤버는 수로. §DOM TransitionEvent/AnimationEvent.
+                let str_members: &[&str] = match iface {
+                    "TransitionEvent" => &["propertyName", "pseudoElement"],
+                    "AnimationEvent" => &["animationName", "pseudoElement"],
+                    _ => &[],
+                };
+                let num_members: &[&str] = match iface {
+                    "TransitionEvent" | "AnimationEvent" => &["elapsedTime"],
+                    _ => &[],
+                };
+                for k in str_members {
+                    let v = match m.get(*k) {
+                        None | Some(Value::Undefined) => String::new(),
+                        Some(v) => to_display(v),
+                    };
+                    m.insert(k.to_string(), Value::Str(v));
+                }
+                for k in num_members {
+                    let v = match m.get(*k) {
+                        None | Some(Value::Undefined) => 0.0,
+                        Some(v) => to_num(v),
+                    };
+                    m.insert(k.to_string(), Value::Num(v));
+                }
                 // DOM §2.2 Event 기본 상태: 디스패치 전 target/currentTarget/srcElement 는
                 // null, eventPhase 는 0(NONE). 예전엔 이 필드들이 아예 없어 undefined 였다.
                 m.insert("target".to_string(), Value::Null);
