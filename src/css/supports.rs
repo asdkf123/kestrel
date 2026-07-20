@@ -245,6 +245,9 @@ const FUNCS: &[&str] = &[
     // transform — 2D 함수 전부 (행렬로 합성해 서브트리를 실제로 변환한다)
     "translate", "translatex", "translatey", "scale", "scalex", "scaley",
     "rotate", "rotatez", "skew", "skewx", "skewy", "matrix",
+    // transform — 3D 함수. 4x4 행렬로 계산·직렬화(matrix3d)하고 보간도 한다.
+    "translate3d", "translatez", "scale3d", "scalez", "rotate3d", "rotatex",
+    "rotatey", "matrix3d", "perspective",
     // filter / backdrop-filter
     "blur", "grayscale", "brightness", "invert", "contrast", "sepia", "saturate",
     "hue-rotate", "opacity",
@@ -527,9 +530,11 @@ mod tests {
         assert!(supports_condition("(transform: rotate(45deg))"));
         assert!(supports_condition("(transform: translateX(10px))"));
         assert!(supports_condition("(transform: matrix(1, 0, 0, 1, 5, 5))"));
-        // 3D 는 아직 미구현 → 거짓 (지원한다고 하면 사이트가 2D 폴백을 줄 기회를 잃는다)
-        assert!(!supports_condition("(transform: rotate3d(0, 1, 0, 45deg))"));
-        assert!(!supports_condition("(transform: perspective(500px))"));
+        // 3D 도 이제 4x4 행렬로 계산·직렬화(matrix3d)하고 보간까지 하므로 지원 → 참.
+        // (translateZ/scaleZ/rotateX·Y·Z/perspective/matrix3d 모두 정확한 계산값을 낸다.)
+        assert!(supports_condition("(transform: rotate3d(0, 1, 0, 45deg))"));
+        assert!(supports_condition("(transform: perspective(500px))"));
+        assert!(supports_condition("(transform: scaleZ(2))"));
 
         // 구현된 함수는 참
         assert!(supports_condition("(width: calc(100% - 10px))"));

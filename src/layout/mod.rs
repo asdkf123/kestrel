@@ -3060,6 +3060,12 @@ pub(crate) fn parse_transform4(text: &str, bw: f32, bh: f32) -> Mat4 {
                 t.m[2][2] = args.get(2).map(|v| v.parse().unwrap_or(1.0)).unwrap_or(1.0);
                 t
             }
+            "scalez" => {
+                saw_3d = true;
+                let mut t = Mat4::IDENTITY;
+                t.m[2][2] = args.first().map(|v| v.parse().unwrap_or(1.0)).unwrap_or(1.0);
+                t
+            }
             "perspective" => {
                 saw_3d = true;
                 let d = crate::css::parse_len_px(get(0)).unwrap_or(0.0);
