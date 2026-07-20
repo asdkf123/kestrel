@@ -1446,6 +1446,9 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "scroll-snap-type" | "scroll-snap-align" | "view-transition-name"
         | "anchor-name" => "none",
         "field-sizing" => "fixed",
+        // 9차: transform-origin/perspective-origin + 개별 변환 프로퍼티.
+        "transform-origin" | "perspective-origin" => "50% 50%",
+        "scale" | "rotate" | "translate" => "none",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

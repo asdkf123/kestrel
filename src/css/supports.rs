@@ -192,6 +192,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     // 8차: 순수 키워드 롱핸드(paint 핸들러 없음 — 게이트 안전).
     "scroll-snap-type", "scroll-snap-align", "view-transition-name", "anchor-name",
     "field-sizing",
+    // 9차: transform-origin + 개별 변환 프로퍼티(scale/rotate/translate).
+    "transform-origin", "scale", "rotate", "translate",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
