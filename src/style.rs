@@ -1506,23 +1506,66 @@ pub fn normalize_translate(v: &str) -> String {
 
 // scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
 // 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
+// 최상위 공백으로 분리하되 괄호 안(calc(1 + 1) 등)의 공백은 무시한다.
+fn split_top_ws(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// number 토큰을 수로 평가. 직접 파싱 실패 시 calc()/수학 함수(cos/round/abs…)를
+// interpret_value 로 확정한다(§CSS Values 4). %→수(100%→1).
+fn eval_number_token(t: &str) -> Option<f32> {
+    let t = t.trim();
+    if let Some(p) = t.strip_suffix('%') {
+        if let Ok(x) = p.parse::<f32>() {
+            return Some(x / 100.0);
+        }
+    }
+    if let Ok(x) = t.parse::<f32>() {
+        return Some(x);
+    }
+    match crate::css::interpret_value(t) {
+        Some(Value::Length(x, Unit::Number)) => Some(x),
+        Some(Value::Length(x, Unit::Percent)) => Some(x / 100.0),
+        _ => None,
+    }
+}
+
 pub fn normalize_scale(v: &str) -> String {
     let v = v.trim();
     if v == "none" || v.is_empty() {
         return v.to_string();
     }
-    let toks: Vec<&str> = v.split_whitespace().collect();
+    let toks: Vec<String> = split_top_ws(v);
     if toks.is_empty() || toks.len() > 3 {
         return v.to_string();
     }
     let mut nums = Vec::with_capacity(toks.len());
     for t in &toks {
-        let n = if let Some(p) = t.strip_suffix('%') {
-            p.parse::<f32>().ok().map(|x| x / 100.0)
-        } else {
-            t.parse::<f32>().ok()
-        };
-        match n {
+        match eval_number_token(t) {
             Some(x) => nums.push(x),
             None => return v.to_string(), // 파싱 실패 시 원문 보존
         }
