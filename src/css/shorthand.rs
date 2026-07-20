@@ -528,6 +528,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Declaration { important: false, name: "text-shadow-x".to_string(), value: px(lens[0]) },
                 Declaration { important: false, name: "text-shadow-y".to_string(), value: px(lens[1]) },
                 Declaration { important: false, name: "text-shadow-color".to_string(), value: color },
+                // 전체 원문 보존 — getComputedStyle 이 캐논 직렬화(색 우선)하고 보간에 쓴다.
+                Declaration { important: false,
+                    name: "text-shadow".to_string(),
+                    value: Value::Keyword(value_text.trim().to_string()),
+                },
             ]
         }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)

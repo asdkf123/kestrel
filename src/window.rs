@@ -292,12 +292,14 @@ fn fill_js_maps(
                 m.insert("background-image".to_string(), resolved);
             }
         }
-        // box-shadow 계산값: "색 x y blur spread [inset]" 캐논 순서(색 먼저, rgb).
-        if let Some(bs) = m.get("box-shadow") {
-            if bs != "none" && !bs.is_empty() {
-                let cc = m.get("color").cloned().unwrap_or_else(|| "rgb(0, 0, 0)".to_string());
-                let norm = crate::style::normalize_box_shadow(bs, &cc);
-                m.insert("box-shadow".to_string(), norm);
+        // box-shadow/text-shadow 계산값: "색 x y blur [spread] [inset]" 캐논 순서.
+        for (key, spread) in [("box-shadow", true), ("text-shadow", false)] {
+            if let Some(sh) = m.get(key) {
+                if sh != "none" && !sh.is_empty() {
+                    let cc = m.get("color").cloned().unwrap_or_else(|| "rgb(0, 0, 0)".to_string());
+                    let norm = crate::style::normalize_box_shadow(sh, &cc, spread);
+                    m.insert(key.to_string(), norm);
+                }
             }
         }
         m.insert("width".to_string(), px(d.content.width));

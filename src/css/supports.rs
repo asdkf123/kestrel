@@ -120,7 +120,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "outline-offset", "outline-style", "outline-width", "overflow", "overflow-wrap",
     "overflow-x", "overflow-y", "padding-bottom", "padding-left", "padding-right",
     "padding-top", "position", "right", "row-gap", "text-align", "text-decoration-color",
-    "text-decoration-line", "text-indent", "text-overflow", "text-transform", "top",
+    "text-decoration-line", "text-indent", "text-overflow", "text-shadow", "text-transform", "top",
     "transform", "vertical-align", "visibility", "white-space", "width", "word-break",
     "word-spacing", "word-wrap", "z-index",
     // transition/animation 롱핸드: 애니메이션은 미구현이나 계산값(속성 목록/시간/이징)은

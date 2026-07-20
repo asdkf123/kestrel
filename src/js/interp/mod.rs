@@ -8177,7 +8177,7 @@ impl Interp {
 
     // box-shadow 보간(계산값 형태 "색 x y blur spread [inset]"). 쉼표 다중 그림자.
     // 그림자 수/inset 불일치는 불연속(None → 플립). 색은 rgb lerp, 길이는 lerp.
-    fn interp_box_shadow(from: &str, to: &str, t: f32) -> Option<String> {
+    fn interp_box_shadow(from: &str, to: &str, t: f32, spread: bool) -> Option<String> {
         let split_commas = |s: &str| -> Vec<String> {
             let mut out = Vec::new();
             let (mut depth, mut cur) = (0i32, String::new());
@@ -8292,10 +8292,11 @@ impl Interp {
             }
             let color = Self::interp_css_value(&ca, &cb, t)?;
             let mut s = color;
-            for i in 0..4 {
+            let n = if spread { 4 } else { 3 };
+            for i in 0..n {
                 s.push_str(&format!(" {}px", crate::style::num_css(la[i] + (lb[i] - la[i]) * t)));
             }
-            if ia {
+            if ia && spread {
                 s.push_str(" inset");
             }
             out.push(s);
@@ -8953,9 +8954,14 @@ impl Interp {
                 return Some(v);
             }
         }
-        // box-shadow: 다중 그림자(색 + 4길이 + inset).
+        // box-shadow(색+4길이+inset) / text-shadow(색+3길이).
         if matches!(dash_prop, "box-shadow" | "-webkit-box-shadow") {
-            if let Some(v) = Self::interp_box_shadow(from, to, eased) {
+            if let Some(v) = Self::interp_box_shadow(from, to, eased, true) {
+                return Some(v);
+            }
+        }
+        if dash_prop == "text-shadow" {
+            if let Some(v) = Self::interp_box_shadow(from, to, eased, false) {
                 return Some(v);
             }
         }

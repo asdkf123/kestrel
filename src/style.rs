@@ -1515,7 +1515,7 @@ pub fn normalize_translate(v: &str) -> String {
 // box-shadow 계산값 캐논 직렬화(§CSS Backgrounds). 각 그림자를 "색 x y blur
 // spread [inset]" 순서로(색 먼저, rgb, blur/spread 기본 0px 표시, inset 마지막).
 // 색 미지정이면 current_color. 파싱 실패는 원문 유지.
-pub fn normalize_box_shadow(raw: &str, current_color: &str) -> String {
+pub fn normalize_box_shadow(raw: &str, current_color: &str, spread: bool) -> String {
     let raw = raw.trim();
     if raw.is_empty() || raw == "none" {
         return raw.to_string();
@@ -1547,19 +1547,14 @@ pub fn normalize_box_shadow(raw: &str, current_color: &str) -> String {
         if lens.len() < 2 {
             return raw.to_string();
         }
-        let (x, y) = (lens[0], lens[1]);
-        let blur = lens.get(2).copied().unwrap_or(0.0);
-        let spread = lens.get(3).copied().unwrap_or(0.0);
         let color = color.unwrap_or_else(|| current_color.to_string());
-        let mut s = format!(
-            "{} {}px {}px {}px {}px",
-            color,
-            num_css(x),
-            num_css(y),
-            num_css(blur),
-            num_css(spread)
-        );
-        if inset {
+        // text-shadow 는 x y blur(3), box-shadow 는 x y blur spread(4).
+        let n = if spread { 4 } else { 3 };
+        let mut s = color;
+        for i in 0..n {
+            s.push_str(&format!(" {}px", num_css(lens.get(i).copied().unwrap_or(0.0))));
+        }
+        if inset && spread {
             s.push_str(" inset");
         }
         out.push(s);
