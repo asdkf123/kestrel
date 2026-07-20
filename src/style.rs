@@ -1427,6 +1427,21 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "text-anchor" => "start",
         "color-interpolation" => "srgb",
         "color-interpolation-filters" => "linearrgb",
+        // 6차: font/text/webkit-box/math/misc 초기값.
+        "font-feature-settings" | "font-variation-settings" | "math-shift" | "math-style" => {
+            "normal"
+        }
+        "font-stretch" => "100%",
+        "font-size-adjust" | "hanging-punctuation" | "-webkit-line-clamp"
+        | "line-clamp" => "none",
+        "font-palette" | "text-autospace" => "normal",
+        "text-decoration-thickness" | "text-size-adjust" | "-webkit-text-size-adjust" => "auto",
+        "-webkit-box-orient" => "horizontal",
+        "-webkit-box-align" => "stretch",
+        "-webkit-box-pack" => "start",
+        "zoom" => "1",
+        "image-orientation" => "from-image",
+        "math-depth" => "0",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

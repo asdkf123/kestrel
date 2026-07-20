@@ -405,7 +405,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "stroke-dasharray" | "stroke-miterlimit" | "clip-rule" | "fill-rule"
         | "paint-order" | "vector-effect" | "dominant-baseline" | "text-anchor"
         | "shape-rendering" | "color-interpolation" | "color-interpolation-filters"
-        | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift" => {
+        | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift"
+        // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
+        | "font-feature-settings" | "font-variation-settings" | "font-stretch"
+        | "font-size-adjust" | "font-palette" | "text-decoration-thickness"
+        | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
+        | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
+        | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
+        | "image-orientation" | "math-style" | "math-depth" | "math-shift" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는

@@ -183,6 +183,12 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "paint-order", "vector-effect", "dominant-baseline", "text-anchor", "shape-rendering",
     "color-interpolation", "color-interpolation-filters", "marker-start", "marker-mid",
     "marker-end", "baseline-shift",
+    // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티.
+    "font-feature-settings", "font-variation-settings", "font-stretch", "font-size-adjust",
+    "font-palette", "text-decoration-thickness", "hanging-punctuation",
+    "text-autospace", "text-size-adjust", "-webkit-text-size-adjust", "-webkit-box-orient",
+    "-webkit-line-clamp", "line-clamp", "-webkit-box-align", "-webkit-box-pack", "zoom",
+    "image-orientation", "math-style", "math-depth", "math-shift",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
