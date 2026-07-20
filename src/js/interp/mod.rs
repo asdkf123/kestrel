@@ -8007,6 +8007,123 @@ impl Interp {
         Some(format!("{}{}", crate::style::num_css(v), ua))
     }
 
+    // length-percentage 값을 (px, %) 로 파싱. "10px"/"50%"/"calc(10px + 20%)"/"0".
+    // 위치 키워드(left/center/…)는 여기선 안 다룸(호출부에서 %로 치환).
+    fn parse_len_pct(s: &str) -> Option<(Option<f32>, Option<f32>)> {
+        let s = s.trim();
+        if let Some(p) = s.strip_suffix('%') {
+            return p.trim().parse::<f32>().ok().map(|v| (None, Some(v)));
+        }
+        if let Some(p) = s.strip_suffix("px") {
+            return p.trim().parse::<f32>().ok().map(|v| (Some(v), None));
+        }
+        if s == "0" {
+            return Some((Some(0.0), None));
+        }
+        // calc(A px ± B %) 두 항.
+        if let Some(inner) = s.strip_prefix("calc(").and_then(|x| x.strip_suffix(')')) {
+            let mut px = None;
+            let mut pct = None;
+            let mut sign = 1.0f32;
+            for tok in inner.split_whitespace() {
+                match tok {
+                    "+" => sign = 1.0,
+                    "-" => sign = -1.0,
+                    _ => {
+                        if let Some(p) = tok.strip_suffix('%') {
+                            pct = Some(pct.unwrap_or(0.0) + sign * p.parse::<f32>().ok()?);
+                        } else if let Some(p) = tok.strip_suffix("px") {
+                            px = Some(px.unwrap_or(0.0) + sign * p.parse::<f32>().ok()?);
+                        } else {
+                            return None;
+                        }
+                        sign = 1.0;
+                    }
+                }
+            }
+            return Some((px, pct));
+        }
+        None
+    }
+
+    // length-percentage 보간. 단위가 섞이면(% ↔ px) calc() 로 출력(§CSS Values).
+    fn interp_len_pct(from: &str, to: &str, t: f32) -> Option<String> {
+        let (fpx, fpct) = Self::parse_len_pct(from)?;
+        let (tpx, tpct) = Self::parse_len_pct(to)?;
+        let lerp_opt = |a: Option<f32>, b: Option<f32>| -> (bool, f32) {
+            (a.is_some() || b.is_some(), (1.0 - t) * a.unwrap_or(0.0) + t * b.unwrap_or(0.0))
+        };
+        let (has_px, px) = lerp_opt(fpx, tpx);
+        let (has_pct, pct) = lerp_opt(fpct, tpct);
+        let nc = crate::style::num_css;
+        Some(match (has_px, has_pct) {
+            (true, true) => {
+                let sign = if px < 0.0 { "-" } else { "+" };
+                format!("calc({}% {} {}px)", nc(pct), sign, nc(px.abs()))
+            }
+            (true, false) => format!("{}px", nc(px)),
+            (false, true) => format!("{}%", nc(pct)),
+            _ => return None,
+        })
+    }
+
+    // 위치(background-position/object-position) 보간: 최상위 쉼표 레이어별, 공백
+    // 컴포넌트별 length-percentage 보간(혼합 단위 → calc). 레이어 수가 다르면 반복.
+    fn interp_position(from: &str, to: &str, t: f32) -> Option<String> {
+        let split_commas = |s: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let mut depth = 0i32;
+            let mut cur = String::new();
+            for c in s.chars() {
+                match c {
+                    '(' => {
+                        depth += 1;
+                        cur.push(c);
+                    }
+                    ')' => {
+                        depth -= 1;
+                        cur.push(c);
+                    }
+                    ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+                    _ => cur.push(c),
+                }
+            }
+            out.push(cur);
+            out
+        };
+        // 위치 키워드 → %.
+        let kw = |tok: &str| -> String {
+            match tok.trim().to_ascii_lowercase().as_str() {
+                "left" | "top" => "0%".to_string(),
+                "center" => "50%".to_string(),
+                "right" | "bottom" => "100%".to_string(),
+                other => other.to_string(),
+            }
+        };
+        let fl = split_commas(from);
+        let tl = split_commas(to);
+        if fl.is_empty() || tl.is_empty() {
+            return None;
+        }
+        let n = fl.len().max(tl.len());
+        let mut layers = Vec::with_capacity(n);
+        for i in 0..n {
+            let fa = fl[i % fl.len()].trim();
+            let ta = tl[i % tl.len()].trim();
+            let fc: Vec<String> = fa.split_whitespace().map(kw).collect();
+            let tc: Vec<String> = ta.split_whitespace().map(kw).collect();
+            if fc.is_empty() || fc.len() != tc.len() {
+                return None;
+            }
+            let mut comps = Vec::with_capacity(fc.len());
+            for (a, b) in fc.iter().zip(&tc) {
+                comps.push(Self::interp_len_pct(a, b, t)?);
+            }
+            layers.push(comps.join(" "));
+        }
+        Some(layers.join(", "))
+    }
+
     // transform 리스트 보간(매칭 케이스): 함수 개수/이름/인자수가 같으면 각 인자를
     // 보간해 함수 리스트를 만들고 계산값 행렬로 직렬화. 불일치(행렬 분해 필요)는 None.
     fn interp_transform(from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
@@ -8489,6 +8606,20 @@ impl Interp {
             if let (Ok(f), Ok(t)) = (from.trim().parse::<f32>(), to.trim().parse::<f32>()) {
                 let v = (f + (t - f) * eased).clamp(0.0, 1.0);
                 return Some(crate::style::num_css(v));
+            }
+        }
+        // 위치 프로퍼티: 다중 레이어 + 혼합 단위(% ↔ px → calc) 보간.
+        if matches!(
+            dash_prop,
+            "background-position"
+                | "background-position-x"
+                | "background-position-y"
+                | "object-position"
+                | "mask-position"
+                | "-webkit-mask-position"
+        ) {
+            if let Some(v) = Self::interp_position(from, to, eased) {
+                return Some(v);
             }
         }
         // <integer> 프로퍼티는 보간 결과를 가장 가까운 정수로 반올림(§CSS Values).
