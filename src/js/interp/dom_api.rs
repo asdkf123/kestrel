@@ -231,7 +231,10 @@ impl Interp {
             "background-image" | "-webkit-background-image"
                 if raw.contains("gradient(") =>
             {
-                return crate::css::normalize_gradient_serial(raw, false)
+                if !crate::css::gradient_valid(raw) {
+                    return String::new(); // 무효 gradient → 거부
+                }
+                return crate::css::normalize_gradient_serial(raw, false);
             }
             _ => {}
         }

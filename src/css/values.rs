@@ -803,6 +803,83 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
 // 보간 메서드 구조는 원문 그대로 둔다. 렌더용 Gradient 구조체는 방향키워드·보간
 // 메서드를 잃으므로(각도로 접힘) 원문 텍스트에서 색만 바꾸는 게 정확하다.
 // "linear-gradient(30deg, red, blue)" → "...(30deg, rgb(255, 0, 0), rgb(0, 0, 255))".
+// gradient 유효성(세터 거부용). 단일 gradient 함수만 검사하고, 다중 값/미인식
+// 형태는 관대하게 true(오탐 회피 — 게터에서만 쓰이므로 렌더 무영향). 명백한 무효
+// (빈 세그먼트/비색 비위치 스톱/무효 prefix/스톱<2)만 false.
+pub(crate) fn gradient_valid(text: &str) -> bool {
+    let text = text.trim();
+    let lower = text.to_ascii_lowercase();
+    let is_grad = ["linear-gradient(", "radial-gradient(", "conic-gradient(",
+        "repeating-linear-gradient(", "repeating-radial-gradient(", "repeating-conic-gradient("]
+        .iter().any(|p| lower.starts_with(p));
+    if !is_grad || !text.ends_with(')') {
+        return true; // gradient 아님/다중 값 → 판단 보류(통과)
+    }
+    let Some(open) = text.find('(') else { return true };
+    // 단일 함수 확인 — 아니면 보류.
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    for (k, &b) in bytes.iter().enumerate() {
+        if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            depth -= 1;
+            if depth == 0 && k != bytes.len() - 1 {
+                return true;
+            }
+        }
+    }
+    let inner = &text[open + 1..text.len() - 1];
+    let segs = split_top_commas(inner);
+    if segs.is_empty() || segs.iter().any(|s| s.trim().is_empty()) {
+        return false; // 빈 세그먼트("linear-gradient(, red, blue)")
+    }
+    let is_color = |seg: &str| {
+        let toks = split_top_level(seg);
+        !toks.is_empty()
+            && matches!(interpret_value(&toks[0]), Some(Value::Color(_) | Value::ColorFn(..)))
+    };
+    let is_position = |seg: &str| {
+        let toks = split_top_level(seg);
+        toks.len() == 1 && matches!(interpret_value(&toks[0]), Some(Value::Length(..)))
+    };
+    let is_angle = |t: &str| {
+        ["deg", "rad", "grad", "turn"]
+            .iter()
+            .any(|u| t.strip_suffix(u).map(|p| p.trim().parse::<f32>().is_ok()).unwrap_or(false))
+    };
+    let is_prefix = |seg: &str| {
+        let toks = split_top_level(seg);
+        let Some(first) = toks.first() else { return false };
+        let t = first.to_ascii_lowercase();
+        matches!(
+            t.as_str(),
+            "to" | "in" | "from" | "at" | "circle" | "ellipse"
+                | "closest-side" | "closest-corner" | "farthest-side" | "farthest-corner"
+        ) || is_angle(&t)
+            || interpret_value(first).map(|v| matches!(v, Value::Length(..))).unwrap_or(false)
+    };
+    // 첫 세그먼트: 색 스톱 또는 prefix. 나머지: 색 스톱 또는 위치(color hint).
+    let first = segs[0].trim();
+    let start = if is_color(first) {
+        0
+    } else if is_prefix(first) {
+        1
+    } else {
+        return false;
+    };
+    let mut stops = 0;
+    for seg in &segs[start..] {
+        let seg = seg.trim();
+        if is_color(seg) {
+            stops += 1;
+        } else if !is_position(seg) {
+            return false; // 색도 위치도 아닌 세그먼트("...,lab")
+        }
+    }
+    stops >= 2
+}
+
 // computed=true 면 색을 rgb()(계산값), false 면 키워드 유지(지정값 el.style).
 pub(crate) fn normalize_gradient_serial(text: &str, computed: bool) -> String {
     let text = text.trim();
