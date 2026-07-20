@@ -849,7 +849,8 @@ fn animation_shorthand(value_text: &str) -> Vec<Declaration> {
             }
         }
         names.push(name.unwrap_or_else(|| "none".to_string()));
-        durs.push(times.first().cloned().unwrap_or_else(|| "0s".to_string()));
+        // animation-duration 초기값은 auto(§CSS Animations 2, 스크롤 구동).
+        durs.push(times.first().cloned().unwrap_or_else(|| "auto".to_string()));
         delays.push(times.get(1).cloned().unwrap_or_else(|| "0s".to_string()));
         tfs.push(tf.unwrap_or_else(|| "ease".to_string()));
         iters.push(iter.unwrap_or_else(|| "1".to_string()));
@@ -866,6 +867,10 @@ fn animation_shorthand(value_text: &str) -> Vec<Declaration> {
         kw("animation-direction", dirs.join(", ")),
         kw("animation-fill-mode", fills.join(", ")),
         kw("animation-play-state", states.join(", ")),
+        // animation 단축은 스크롤 구동 롱핸드도 초기값으로 리셋한다(§CSS Animations 2).
+        kw("animation-timeline", "auto".to_string()),
+        kw("animation-range-start", "normal".to_string()),
+        kw("animation-range-end", "normal".to_string()),
         kw("animation", value_text.trim().to_string()),
     ]
 }
