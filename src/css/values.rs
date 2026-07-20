@@ -1046,6 +1046,25 @@ fn srgb_to_space(space: &str, r: f32, g: f32, b: f32) -> Option<[f32; 3]> {
                 [linear_to_srgb(pr), linear_to_srgb(pg), linear_to_srgb(pb)]
             }
         }
+        "rec2020" => {
+            let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+            let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+            let (a, b2, c) = mat3(&XYZ65_TO_REC2020, x, y, z);
+            [rec2020_encode(a), rec2020_encode(b2), rec2020_encode(c)]
+        }
+        "a98-rgb" => {
+            let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+            let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+            let (a, b2, c) = mat3(&XYZ65_TO_A98, x, y, z);
+            [a98_encode(a), a98_encode(b2), a98_encode(c)]
+        }
+        "prophoto-rgb" => {
+            let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+            let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+            let (x, y, z) = mat3(&BRADFORD_D65_D50, x, y, z);
+            let (a, b2, c) = mat3(&XYZ50_TO_PROPHOTO, x, y, z);
+            [prophoto_encode(a), prophoto_encode(b2), prophoto_encode(c)]
+        }
         _ => return None,
     })
 }
@@ -1096,6 +1115,25 @@ fn space_to_srgb(space: &str, c: [f32; 3]) -> Option<(f32, f32, f32)> {
                 (srgb_gamma_inv(c[0]), srgb_gamma_inv(c[1]), srgb_gamma_inv(c[2]))
             };
             let (x, y, z) = mat3(&P3_TO_XYZ65, pr, pg, pb);
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "rec2020" => {
+            let (a, b, cc) = (rec2020_decode(c[0]), rec2020_decode(c[1]), rec2020_decode(c[2]));
+            let (x, y, z) = mat3(&REC2020_TO_XYZ65, a, b, cc);
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "a98-rgb" => {
+            let (a, b, cc) = (a98_decode(c[0]), a98_decode(c[1]), a98_decode(c[2]));
+            let (x, y, z) = mat3(&A98_TO_XYZ65, a, b, cc);
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "prophoto-rgb" => {
+            let (a, b, cc) = (prophoto_decode(c[0]), prophoto_decode(c[1]), prophoto_decode(c[2]));
+            let (x, y, z) = mat3(&PROPHOTO_TO_XYZ50, a, b, cc);
+            let (x, y, z) = mat3(&BRADFORD_D50_D65, x, y, z);
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
             (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
         }
@@ -1335,31 +1373,9 @@ fn parse_color_func(text: &str) -> Option<(Color, Box<str>)> {
     let alpha = parse_alpha(p.get(4))?;
     let au = alpha_u8(alpha);
     let (c1, c2, c3) = (s1.get(), s2.get(), s3.get());
-    let rgba = match space.as_str() {
-        "srgb" => Color { r: to_u8(c1), g: to_u8(c2), b: to_u8(c3), a: au },
-        "srgb-linear" => lin_srgb_to_color(c1, c2, c3, au),
-        "display-p3" => {
-            let (x, y, z) =
-                mat3(&P3_TO_XYZ65, srgb_gamma_inv(c1), srgb_gamma_inv(c2), srgb_gamma_inv(c3));
-            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            lin_srgb_to_color(lr, lg, lb, au)
-        }
-        "xyz" | "xyz-d65" => {
-            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, c1, c2, c3);
-            lin_srgb_to_color(lr, lg, lb, au)
-        }
-        "xyz-d50" => {
-            let (x, y, z) = mat3(&BRADFORD_D50_D65, c1, c2, c3);
-            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            lin_srgb_to_color(lr, lg, lb, au)
-        }
-        // 알려진 predefined 색공간(전달함수가 달라 페인팅은 근사 못 해도 직렬화는 보존).
-        "rec2020" | "a98-rgb" | "prophoto-rgb" => {
-            // 페인팅은 sRGB 성분으로 근사(부정확하지만 무색보다 낫다)하되 직렬화는 원 공간 보존.
-            Color { r: to_u8(c1), g: to_u8(c2), b: to_u8(c3), a: au }
-        }
-        _ => return None,
-    };
+    // 모든 predefined 색공간을 space_to_srgb 로 sRGB 근사(정확한 매트릭스/전달함수).
+    let (rr, gg, bb) = space_to_srgb(&space, [c1, c2, c3])?;
+    let rgba = Color { r: to_u8(rr), g: to_u8(gg), b: to_u8(bb), a: au };
     // xyz 는 계산값에서 xyz-d65 로 정규화된다(CSS Color 4).
     let space_out = if space == "xyz" { "xyz-d65" } else { space.as_str() };
     let serial = format!(
@@ -1475,6 +1491,70 @@ const XYZ65_TO_P3: [f32; 9] = [
     -0.829_489, 1.762_664_1, 0.023_624_69,
     0.035_845_63, -0.076_172_39, 0.956_884_5,
 ];
+
+// ── rec2020 / a98-rgb / prophoto-rgb 전달함수 + 매트릭스 (CSS Color 4) ──
+const REC2020_TO_XYZ65: [f32; 9] = [
+    0.636_958, 0.144_616_9, 0.168_881,
+    0.262_700_2, 0.677_998_1, 0.059_301_72,
+    0.0, 0.028_072_693, 1.060_985_1,
+];
+const XYZ65_TO_REC2020: [f32; 9] = [
+    1.716_651_2, -0.355_670_8, -0.253_366_3,
+    -0.666_684_4, 1.616_481_2, 0.015_768_546,
+    0.017_639_857, -0.042_770_613, 0.942_103_1,
+];
+const A98_TO_XYZ65: [f32; 9] = [
+    0.576_669, 0.185_558_2, 0.188_228_65,
+    0.297_345, 0.627_363_5, 0.075_291_46,
+    0.027_031_36, 0.070_688_85, 0.991_337_5,
+];
+const XYZ65_TO_A98: [f32; 9] = [
+    2.041_588, -0.565_007, -0.344_731_35,
+    -0.969_243_6, 1.875_967_5, 0.041_555_057,
+    0.013_444_281, -0.118_362_39, 1.015_175,
+];
+const PROPHOTO_TO_XYZ50: [f32; 9] = [
+    0.797_760_5, 0.135_185_84, 0.031_349_35,
+    0.288_071_12, 0.711_843_2, 0.000_085_653_96,
+    0.0, 0.0, 0.825_104_6,
+];
+const XYZ50_TO_PROPHOTO: [f32; 9] = [
+    1.345_799, -0.255_580_1, -0.051_106_286,
+    -0.544_622_5, 1.508_232_7, 0.020_536_033,
+    0.0, 0.0, 1.211_967_5,
+];
+fn rec2020_encode(l: f32) -> f32 {
+    const A: f32 = 1.099_296_8;
+    const B: f32 = 0.018_053_968;
+    let s = l.signum();
+    let l = l.abs();
+    s * if l < B { 4.5 * l } else { A * l.powf(0.45) - (A - 1.0) }
+}
+fn rec2020_decode(v: f32) -> f32 {
+    const A: f32 = 1.099_296_8;
+    const B: f32 = 0.018_053_968;
+    let s = v.signum();
+    let v = v.abs();
+    s * if v < 4.5 * B { v / 4.5 } else { ((v + (A - 1.0)) / A).powf(1.0 / 0.45) }
+}
+fn a98_encode(l: f32) -> f32 {
+    l.signum() * l.abs().powf(256.0 / 563.0)
+}
+fn a98_decode(v: f32) -> f32 {
+    v.signum() * v.abs().powf(563.0 / 256.0)
+}
+fn prophoto_encode(l: f32) -> f32 {
+    const ET: f32 = 1.0 / 512.0;
+    let s = l.signum();
+    let l = l.abs();
+    s * if l < ET { 16.0 * l } else { l.powf(1.0 / 1.8) }
+}
+fn prophoto_decode(v: f32) -> f32 {
+    const ET2: f32 = 16.0 / 512.0;
+    let s = v.signum();
+    let v = v.abs();
+    s * if v < ET2 { v / 16.0 } else { v.powf(1.8) }
+}
 
 // XYZ(D50) → CIELAB.
 fn xyz_d50_to_lab(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
