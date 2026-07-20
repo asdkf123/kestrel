@@ -1249,6 +1249,49 @@ pub fn normalize_comma_list(s: &str) -> String {
     s.split(',').map(|t| t.trim()).collect::<Vec<_>>().join(", ")
 }
 
+// 각도 토큰 → 도(f32). deg/grad/turn/rad 만(맨수는 None — rotate 축 성분과 구분).
+fn angle_token_deg(t: &str) -> Option<f32> {
+    let low = t.to_ascii_lowercase();
+    for (suffix, factor) in [
+        ("grad", 0.9f32),
+        ("turn", 360.0),
+        ("deg", 1.0),
+        ("rad", 180.0 / std::f32::consts::PI),
+    ] {
+        if let Some(num) = low.strip_suffix(suffix) {
+            return num.trim().parse::<f32>().ok().map(|n| n * factor);
+        }
+    }
+    None
+}
+
+// rotate 프로퍼티 계산값 정규화(§CSS Transforms 2): 각도를 도로 변환하고 마지막에
+// 둔다(축/벡터 먼저). rotate: 400grad→"360deg", 400grad 1 2 3→"1 2 3 360deg".
+pub fn normalize_rotate(v: &str) -> String {
+    let v = v.trim();
+    if v == "none" || v.is_empty() {
+        return v.to_string();
+    }
+    let mut angle: Option<f32> = None;
+    let mut rest: Vec<&str> = Vec::new();
+    for t in v.split_whitespace() {
+        match angle_token_deg(t) {
+            Some(d) if angle.is_none() => angle = Some(d),
+            Some(_) => return v.to_string(), // 각도 둘 → 원문 보존
+            None => rest.push(t),
+        }
+    }
+    let Some(a) = angle else {
+        return v.to_string();
+    };
+    let angle_str = format!("{}deg", num_css(a));
+    if rest.is_empty() {
+        angle_str
+    } else {
+        format!("{} {}", rest.join(" "), angle_str)
+    }
+}
+
 // scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
 // 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
 pub fn normalize_scale(v: &str) -> String {

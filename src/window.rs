@@ -654,6 +654,10 @@ fn collect_computed_styles(
         if let Some(v) = m.get("scale") {
             m.insert("scale".to_string(), crate::style::normalize_scale(v));
         }
+        // rotate 프로퍼티 계산값: 각도→도, 각도 마지막.
+        if let Some(v) = m.get("rotate") {
+            m.insert("rotate".to_string(), crate::style::normalize_rotate(v));
+        }
         out.insert(node.id, m);
     }
     for child in &node.children {
