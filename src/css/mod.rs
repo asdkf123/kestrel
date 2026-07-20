@@ -329,6 +329,9 @@ pub struct Gradient {
     // 값 파싱이 실패했고 → **배경이 통째로 안 그려졌다** (조용히 사라졌다).
     pub repeating: bool,
     pub stops: Vec<(Color, StopPos)>,
+    // getComputedStyle 용 캐논 직렬화(색만 rgb()/color() 로 정규화, 방향/보간/각도
+    // 구조는 원문 유지). 렌더는 위 필드만 읽으므로 이건 계산값 전용. 파서가 채운다.
+    pub serial: String,
 }
 
 // 색 스톱의 위치. px 는 그라디언트 선 길이를 알아야 풀리므로 **페인트 시점까지** 남긴다.

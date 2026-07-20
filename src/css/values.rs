@@ -52,6 +52,7 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let inner = &text["repeating-linear-gradient(".len()..text.len() - 1];
         return parse_linear_gradient(inner).map(|mut g| {
             g.repeating = true;
+            g.serial = normalize_gradient_serial(text);
             Value::Gradient(g)
         });
     }
@@ -59,6 +60,7 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let inner = &text["repeating-radial-gradient(".len()..text.len() - 1];
         return parse_radial_gradient(inner).map(|mut g| {
             g.repeating = true;
+            g.serial = normalize_gradient_serial(text);
             Value::Gradient(g)
         });
     }
@@ -66,17 +68,27 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let inner = &text["repeating-conic-gradient(".len()..text.len() - 1];
         return parse_conic_gradient(inner).map(|mut g| {
             g.repeating = true;
+            g.serial = normalize_gradient_serial(text);
             Value::Gradient(g)
         });
     }
     if lower.starts_with("linear-gradient(") && text.ends_with(')') {
-        return parse_linear_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
+        return parse_linear_gradient(&text[16..text.len() - 1]).map(|mut g| {
+            g.serial = normalize_gradient_serial(text);
+            Value::Gradient(g)
+        });
     }
     if lower.starts_with("radial-gradient(") && text.ends_with(')') {
-        return parse_radial_gradient(&text[16..text.len() - 1]).map(Value::Gradient);
+        return parse_radial_gradient(&text[16..text.len() - 1]).map(|mut g| {
+            g.serial = normalize_gradient_serial(text);
+            Value::Gradient(g)
+        });
     }
     if lower.starts_with("conic-gradient(") && text.ends_with(')') {
-        return parse_conic_gradient(&text[15..text.len() - 1]).map(Value::Gradient);
+        return parse_conic_gradient(&text[15..text.len() - 1]).map(|mut g| {
+            g.serial = normalize_gradient_serial(text);
+            Value::Gradient(g)
+        });
     }
     // min()/max()/clamp() — 인자를 각각 해석해 MinMax 로 (계산은 style/layout).
     for (name, kind) in [
@@ -670,6 +682,7 @@ fn parse_linear_gradient(inner: &str) -> Option<crate::css::Gradient> {
         conic: false,
         repeating: false,
         stops,
+        serial: String::new(),
     })
 }
 
@@ -700,6 +713,7 @@ fn parse_radial_gradient(inner: &str) -> Option<crate::css::Gradient> {
         conic: false,
         repeating: false,
         stops,
+        serial: String::new(),
     })
 }
 
@@ -724,6 +738,7 @@ fn parse_conic_gradient(inner: &str) -> Option<crate::css::Gradient> {
         conic: true,
         repeating: false,
         stops,
+        serial: String::new(),
     })
 }
 
@@ -779,6 +794,45 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
         return None;
     }
     Some(stops)
+}
+
+// gradient 계산값 캐논 직렬화: 색 스톱의 색만 rgb()/color() 로 정규화하고 방향/각도/
+// 보간 메서드 구조는 원문 그대로 둔다. 렌더용 Gradient 구조체는 방향키워드·보간
+// 메서드를 잃으므로(각도로 접힘) 원문 텍스트에서 색만 바꾸는 게 정확하다.
+// "linear-gradient(30deg, red, blue)" → "...(30deg, rgb(255, 0, 0), rgb(0, 0, 255))".
+pub(crate) fn normalize_gradient_serial(text: &str) -> String {
+    let text = text.trim();
+    let Some(open) = text.find('(') else {
+        return text.to_string();
+    };
+    if !text.ends_with(')') {
+        return text.to_string();
+    }
+    let func = text[..open].to_ascii_lowercase();
+    let inner = &text[open + 1..text.len() - 1];
+    let out: Vec<String> =
+        split_top_commas(inner).iter().map(|s| normalize_gradient_seg(s.trim())).collect();
+    format!("{}({})", func, out.join(", "))
+}
+
+// 그라디언트 세그먼트: 첫 토큰이 색이면 색을 정규화(위치는 유지), 아니면(방향/각도/
+// 보간 in <space>) 원문 유지.
+fn normalize_gradient_seg(seg: &str) -> String {
+    let toks = split_top_level(seg);
+    if toks.is_empty() {
+        return seg.to_string();
+    }
+    match interpret_value(&toks[0]) {
+        Some(v @ (Value::Color(_) | Value::ColorFn(..))) => {
+            let color = crate::style::computed_value_string(&v);
+            if toks.len() == 1 {
+                color
+            } else {
+                format!("{} {}", color, toks[1..].join(" "))
+            }
+        }
+        _ => seg.to_string(),
+    }
 }
 
 // 최상위(괄호 밖) 콤마로 분리

@@ -50,7 +50,9 @@ pub fn computed_value_string(v: &Value) -> String {
             }
         }
         Value::Url(u) => format!("url(\"{}\")", u),
-        // calc/var/gradient/min-max 는 getComputedStyle 로 잘 읽히지 않음 — 근사 빈값.
+        // gradient: 파서가 채운 캐논 직렬화(색만 rgb()/color(), 구조 원문).
+        Value::Gradient(g) if !g.serial.is_empty() => g.serial.clone(),
+        // calc/var/기타 는 getComputedStyle 로 잘 읽히지 않음 — 근사 빈값.
         _ => String::new(),
     }
 }
