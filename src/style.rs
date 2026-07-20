@@ -1291,7 +1291,19 @@ pub fn normalize_transform(v: &str) -> String {
         if i >= chars.len() || chars[i] != '(' {
             return v.to_string(); // 함수 형태 아님 → 원문
         }
-        let name: String = chars[name_start..i].iter().collect::<String>().to_ascii_lowercase();
+        let orig_name: String = chars[name_start..i].iter().collect();
+        let name = orig_name.to_ascii_lowercase();
+        // 출력 이름: scale/rotate/skew 계열만 소문자 정규화, translate/matrix/
+        // perspective 등은 원문 케이스 유지(브라우저 정규형: translateX 는 유지,
+        // scaleX→scalex, skewX→skewx). 인자 정규화는 name(소문자)로 판별.
+        let out_name = if name.starts_with("scale")
+            || name.starts_with("rotate")
+            || name.starts_with("skew")
+        {
+            name.clone()
+        } else {
+            orig_name
+        };
         // 균형 괄호
         let mut depth = 0usize;
         let args_start = i + 1;
@@ -1317,7 +1329,7 @@ pub fn normalize_transform(v: &str) -> String {
             .split(',')
             .map(|a| norm_transform_arg(&name, a.trim()))
             .collect();
-        out.push(format!("{}({})", name, parts.join(", ")));
+        out.push(format!("{}({})", out_name, parts.join(", ")));
     }
     if out.is_empty() {
         v.to_string()
