@@ -359,6 +359,16 @@ fn declaration_supported(atom: &str) -> bool {
     if prop.is_empty() || value.is_empty() {
         return false;
     }
+    // CSS 전역 키워드(initial/inherit/unset/revert/revert-layer)는 알려진 프로퍼티
+    // 모두에 유효하다(§CSS Cascade). expand_declaration 이 이들을 롱핸드로 펼치지
+    // 못해 CSS.supports 가 false 를 내던 문제 — interpolation 하네스의 "from initial
+    // value should be supported" 선행조건이 전 서브셋에서 깨졌다.
+    if matches!(
+        value.to_ascii_lowercase().as_str(),
+        "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+    ) {
+        return is_known_property(prop);
+    }
     // gradient 는 문법 검증(빈 세그먼트/무효 스톱/hint 배치)이 필요 — 파서가 관대해서
     // 무효 형태도 파싱하므로 gradient_valid 로 걸러 CSS.supports 가 정확히 false.
     if value.to_ascii_lowercase().contains("gradient(") && !super::gradient_valid(value) {
