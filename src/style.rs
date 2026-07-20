@@ -1292,6 +1292,35 @@ pub fn normalize_rotate(v: &str) -> String {
     }
 }
 
+// translate 프로퍼티 계산값 정규화(§CSS Transforms 2): 후행 0 축약(z=0 생략, 그다음
+// y=0 생략). 퍼센트/길이 원문 유지(translate % 는 계산값에서 안 풀린다). x 는 항상.
+// translate: 10px 0px→"10px", 10px 20px 0px→"10px 20px", 0px 20px→"0px 20px".
+pub fn normalize_translate(v: &str) -> String {
+    let v = v.trim();
+    if v == "none" || v.is_empty() {
+        return v.to_string();
+    }
+    let toks: Vec<&str> = v.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 3 {
+        return v.to_string();
+    }
+    // 토큰이 0 인가(0/0px/0%/0.0). calc 등은 0 아님으로 본다.
+    let is_zero = |t: &str| -> bool {
+        let core = t.trim_end_matches('%');
+        let core = core.strip_suffix("px").unwrap_or(core);
+        core.trim().parse::<f32>().map(|n| n == 0.0).unwrap_or(false)
+    };
+    let n = toks.len();
+    let show = if n == 3 && !is_zero(toks[2]) {
+        3
+    } else if n >= 2 && !is_zero(toks[1]) {
+        2
+    } else {
+        1
+    };
+    toks[..show].join(" ")
+}
+
 // scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
 // 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
 pub fn normalize_scale(v: &str) -> String {

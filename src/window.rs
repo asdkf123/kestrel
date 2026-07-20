@@ -658,6 +658,10 @@ fn collect_computed_styles(
         if let Some(v) = m.get("rotate") {
             m.insert("rotate".to_string(), crate::style::normalize_rotate(v));
         }
+        // translate 프로퍼티 계산값: 후행 0 축약.
+        if let Some(v) = m.get("translate") {
+            m.insert("translate".to_string(), crate::style::normalize_translate(v));
+        }
         out.insert(node.id, m);
     }
     for child in &node.children {
