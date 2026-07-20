@@ -7849,6 +7849,8 @@ impl Interp {
 
     // 활성 애니메이션이 dash_prop 을 다루면 currentTime 에서 보간한 계산값(뒤 애니 우선).
     fn animated_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
+        // transform 행렬화용 박스 크기(rotate/scale 엔 무의미, translate% 에만 필요).
+        let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
         // element.animate / CSS transition 스냅샷 우선.
         if let Some(anims) = self.element_animations.get(&id) {
             let mut result = None;
@@ -7860,7 +7862,7 @@ impl Interp {
                     let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
                     let progress = (ct / duration).clamp(0.0, 1.0) as f32;
                     let eased = Self::eval_easing(easing, progress);
-                    if let Some(v) = Self::interp_prop(dash_prop, from, to, eased) {
+                    if let Some(v) = Self::interp_prop(dash_prop, from, to, eased, bw, bh) {
                         result = Some(v);
                     }
                 }
@@ -7935,9 +7937,108 @@ impl Interp {
         })
     }
 
+    // transform 함수 리스트를 파싱: [(함수명, [인자])]. 균형 괄호까지 자른다.
+    fn parse_transform_funcs(s: &str) -> Option<Vec<(String, Vec<String>)>> {
+        let s = s.trim();
+        if s == "none" {
+            return Some(Vec::new());
+        }
+        let ch: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        let mut out = Vec::new();
+        while i < ch.len() {
+            while i < ch.len() && ch[i].is_whitespace() {
+                i += 1;
+            }
+            if i >= ch.len() {
+                break;
+            }
+            let ns = i;
+            while i < ch.len() && (ch[i].is_ascii_alphanumeric()) {
+                i += 1;
+            }
+            let name: String = ch[ns..i].iter().collect::<String>().to_ascii_lowercase();
+            if name.is_empty() || i >= ch.len() || ch[i] != '(' {
+                return None;
+            }
+            i += 1;
+            let as_ = i;
+            let mut depth = 1i32;
+            while i < ch.len() {
+                match ch[i] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if depth != 0 {
+                return None;
+            }
+            let args_str: String = ch[as_..i].iter().collect();
+            i += 1; // ')'
+            let args: Vec<String> = args_str.split(',').map(|a| a.trim().to_string()).collect();
+            out.push((name, args));
+        }
+        Some(out)
+    }
+
+    // 숫자+단위 하나를 보간(같은 단위끼리). "30deg"↔"330deg" → "105deg".
+    fn interp_num_unit(a: &str, b: &str, t: f32) -> Option<String> {
+        let split = |s: &str| -> Option<(f32, String)> {
+            let s = s.trim();
+            let pos = s
+                .find(|c: char| c.is_ascii_alphabetic() || c == '%')
+                .unwrap_or(s.len());
+            let num: f32 = s[..pos].parse().ok()?;
+            Some((num, s[pos..].to_string()))
+        };
+        let (na, ua) = split(a)?;
+        let (nb, ub) = split(b)?;
+        if ua != ub {
+            return None;
+        }
+        let v = na + (nb - na) * t;
+        Some(format!("{}{}", crate::style::num_css(v), ua))
+    }
+
+    // transform 리스트 보간(매칭 케이스): 함수 개수/이름/인자수가 같으면 각 인자를
+    // 보간해 함수 리스트를 만들고 계산값 행렬로 직렬화. 불일치(행렬 분해 필요)는 None.
+    fn interp_transform(from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
+        let ff = Self::parse_transform_funcs(from)?;
+        let tf = Self::parse_transform_funcs(to)?;
+        if ff.is_empty() || ff.len() != tf.len() {
+            return None;
+        }
+        let mut parts = Vec::with_capacity(ff.len());
+        for ((fname, fa), (tname, ta)) in ff.iter().zip(&tf) {
+            if fname != tname || fa.len() != ta.len() {
+                return None;
+            }
+            let args: Option<Vec<String>> = fa
+                .iter()
+                .zip(ta)
+                .map(|(a, b)| Self::interp_num_unit(a, b, eased))
+                .collect();
+            parts.push(format!("{}({})", fname, args?.join(", ")));
+        }
+        Some(crate::layout::transform_computed_string(&parts.join(" "), w, h))
+    }
+
     // from→to 를 이징 출력 eased 로 보간해 직렬화. scale/translate 컴포넌트 확장,
     // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
-    fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32) -> Option<String> {
+    fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
+        // transform 매칭 리스트 보간(rotate/translate/scale 함수별 인자 보간 → 행렬).
+        if dash_prop == "transform" {
+            if let Some(v) = Self::interp_transform(from, to, eased, w, h) {
+                return Some(v);
+            }
+        }
         // opacity 는 계산값이 [0,1] 로 클램프된다 — 외삽(at<0/>1) 시에도.
         if matches!(dash_prop, "opacity" | "shape-image-threshold") {
             if let (Ok(f), Ok(t)) = (from.trim().parse::<f32>(), to.trim().parse::<f32>()) {
@@ -8041,7 +8142,8 @@ impl Interp {
         let to = self.resolve_wide_keyword(id, dash_prop, &Self::frame_prop(to_frame, dash_prop)?);
         let progress = (elapsed / dur).clamp(0.0, 1.0);
         let eased = Self::eval_easing(&easing, progress);
-        Self::interp_prop(dash_prop, &from, &to, eased)
+        let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
+        Self::interp_prop(dash_prop, &from, &to, eased, bw, bh)
     }
 
     // 최상위 쉼표 기준 첫 값(cubic-bezier()/steps() 내부 쉼표는 무시).

@@ -2892,6 +2892,40 @@ pub fn layout_tree<'a>(
 // (요소가 안 돌아간 채 그려졌다 — 조용히 틀린 그림).
 // 변환 목록이 3D 함수를 포함하면 4x4 의 16개 값(열 우선)을 돌려준다.
 // getComputedStyle 은 3D 변환에 대해 matrix3d(...) 를 돌려줘야 한다 (표준).
+// transform 지정값(함수 리스트)을 계산값 matrix()/matrix3d() 문자열로 직렬화.
+// window.rs 의 collect_computed_styles 와 동일한 규칙(6자리 정밀, 3D 는 matrix3d).
+// 애니메이션 보간 결과(rotate(105deg) 등)를 계산값 형태로 되돌릴 때 쓴다.
+pub fn transform_computed_string(text: &str, bw: f32, bh: f32) -> String {
+    let text = text.trim();
+    if text == "none" || text.is_empty() {
+        return "none".to_string();
+    }
+    let n = |v: f32| -> String {
+        let v = if v.abs() < 1e-6 { 0.0 } else { v };
+        if v.fract() == 0.0 && v.is_finite() {
+            format!("{}", v as i64)
+        } else {
+            let s = format!("{:.6}", v);
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        }
+    };
+    if let Some(v) = transform_matrix3d(text, bw, bh) {
+        let parts: Vec<String> = v.iter().map(|x| n(*x)).collect();
+        format!("matrix3d({})", parts.join(", "))
+    } else {
+        let mt = parse_transform(text, bw, bh);
+        format!(
+            "matrix({}, {}, {}, {}, {}, {})",
+            n(mt.a),
+            n(mt.b),
+            n(mt.c),
+            n(mt.d),
+            n(mt.e),
+            n(mt.f)
+        )
+    }
+}
+
 pub fn transform_matrix3d(text: &str, bw: f32, bh: f32) -> Option<[f32; 16]> {
     if !has_3d_function(text) {
         return None;
