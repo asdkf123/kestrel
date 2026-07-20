@@ -193,6 +193,12 @@ impl Interp {
     // (파싱된 값으로 전부 직렬화하면 이 모두가 계산값으로 접혀 버린다 — 실제로 그랬다.)
     pub(super) fn serialize_decl(prop: &str, raw: &str) -> String {
         let raw = raw.trim();
+        // image-set() 은 어느 이미지 프로퍼티에서든(background-image/content/
+        // border-image-source/mask-image 등) 캐논 직렬화한다(§CSS Images 4).
+        let rl = raw.to_ascii_lowercase();
+        if rl.starts_with("image-set(") || rl.starts_with("-webkit-image-set(") {
+            return crate::css::normalize_image_set(raw);
+        }
         // content 의 단일 문자열 토큰은 CSSOM 문자열 직렬화 — 항상 큰따옴표로(§CSSOM
         // "serialize a string"). content: 'x' 도 "x" 가 된다.
         if prop == "content" {
@@ -226,12 +232,6 @@ impl Interp {
             }
             "transform-origin" if !crate::style::origin_valid(raw, 3) => {
                 return String::new()
-            }
-            // background-image image-set() 지정값: url("...") 정규화 + 함수명 표준화.
-            "background-image" | "-webkit-background-image"
-                if raw.to_ascii_lowercase().contains("image-set(") =>
-            {
-                return crate::css::normalize_image_set(raw);
             }
             // background-image gradient 지정값: 보간 재정렬 + 색 정규화(키워드 유지).
             "background-image" | "-webkit-background-image"
