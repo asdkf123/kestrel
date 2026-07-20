@@ -272,6 +272,14 @@ fn fill_js_maps(
                 }
             }
         }
+        // transform-origin/perspective-origin 계산값: 키워드/% → 박스 기준 px.
+        let bb = d.border_box();
+        for key in ["transform-origin", "perspective-origin"] {
+            if let Some(v) = m.get(key) {
+                let resolved = crate::layout::resolve_origin(v, bb.width, bb.height);
+                m.insert(key.to_string(), resolved);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

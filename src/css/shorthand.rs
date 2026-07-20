@@ -456,6 +456,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "transform-origin" | "-webkit-transform-origin" => {
             vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // perspective-origin: 다중 토큰 원문 보존(계산값은 resolve_origin 이 px 로).
+        "perspective-origin" | "-webkit-perspective-origin" => {
+            vec![Declaration { important: false, name: "perspective-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
         "filter" | "-webkit-filter" => {
             vec![Declaration { important: false, name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]

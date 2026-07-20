@@ -3067,6 +3067,55 @@ pub(crate) fn parse_transform4(text: &str, bw: f32, bh: f32) -> Mat4 {
     m
 }
 
+// transform-origin/perspective-origin 계산값: 키워드/%/길이를 박스 기준 px 로 해석해
+// "Xpx Ypx[ Zpx]" (§CSS Transforms). 단일 y키워드(top/bottom)는 x=center.
+pub fn resolve_origin(v: &str, w: f32, h: f32) -> String {
+    let f = crate::style::num_css;
+    let v = v.trim();
+    if v.is_empty() || v == "none" {
+        return format!("{}px {}px", f(w / 2.0), f(h / 2.0));
+    }
+    let mut toks: Vec<&str> = v.split_whitespace().collect();
+    // 3번째 토큰 = z (길이). 축약: z=0 이면 생략.
+    let z = if toks.len() == 3 {
+        let zt = toks.pop().unwrap();
+        crate::css::parse_len_px(zt)
+    } else {
+        None
+    };
+    // 단일 y키워드는 x=center 로 보정(transform-origin: top → center top).
+    if toks.len() == 1 && matches!(toks[0], "top" | "bottom") {
+        toks.insert(0, "center");
+    }
+    // 두 키워드는 순서 뒤집기 허용("top left"=="left top").
+    if toks.len() == 2
+        && matches!(toks[0], "top" | "bottom")
+        && matches!(toks[1], "left" | "right" | "center")
+    {
+        toks.swap(0, 1);
+    }
+    let axis = |t: &str, base: f32| -> f32 {
+        match t {
+            "left" | "top" => 0.0,
+            "center" => base / 2.0,
+            "right" | "bottom" => base,
+            other => {
+                if let Some(p) = other.strip_suffix('%') {
+                    p.parse::<f32>().map(|x| x / 100.0 * base).unwrap_or(base / 2.0)
+                } else {
+                    crate::css::parse_len_px(other).unwrap_or(base / 2.0)
+                }
+            }
+        }
+    };
+    let ox = toks.first().map(|t| axis(t, w)).unwrap_or(w / 2.0);
+    let oy = toks.get(1).map(|t| axis(t, h)).unwrap_or(h / 2.0);
+    match z {
+        Some(zz) if zz != 0.0 => format!("{}px {}px {}px", f(ox), f(oy), f(zz)),
+        _ => format!("{}px {}px", f(ox), f(oy)),
+    }
+}
+
 // transform-origin → 절대 좌표 (기본 50% 50%, border box 기준)
 fn transform_origin(b: &LayoutBox) -> (f32, f32) {
     let bb = b.dimensions.border_box();
