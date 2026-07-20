@@ -8175,6 +8175,134 @@ impl Interp {
         Some(layers.join(", "))
     }
 
+    // box-shadow 보간(계산값 형태 "색 x y blur spread [inset]"). 쉼표 다중 그림자.
+    // 그림자 수/inset 불일치는 불연속(None → 플립). 색은 rgb lerp, 길이는 lerp.
+    fn interp_box_shadow(from: &str, to: &str, t: f32) -> Option<String> {
+        let split_commas = |s: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let (mut depth, mut cur) = (0i32, String::new());
+            for c in s.chars() {
+                match c {
+                    '(' => {
+                        depth += 1;
+                        cur.push(c);
+                    }
+                    ')' => {
+                        depth -= 1;
+                        cur.push(c);
+                    }
+                    ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+                    _ => cur.push(c),
+                }
+            }
+            out.push(cur);
+            out
+        };
+        let ws = |s: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let (mut depth, mut cur) = (0i32, String::new());
+            for c in s.chars() {
+                match c {
+                    '(' => {
+                        depth += 1;
+                        cur.push(c);
+                    }
+                    ')' => {
+                        depth -= 1;
+                        cur.push(c);
+                    }
+                    c if c.is_whitespace() && depth == 0 => {
+                        if !cur.is_empty() {
+                            out.push(std::mem::take(&mut cur));
+                        }
+                    }
+                    _ => cur.push(c),
+                }
+            }
+            if !cur.is_empty() {
+                out.push(cur);
+            }
+            out
+        };
+        // 그림자 토큰 → (색, [x,y,blur,spread], inset). 색 위치 무관(옛/새 형식 모두).
+        let parse = |toks: &[String]| -> Option<(String, [f32; 4], bool)> {
+            let mut inset = false;
+            let mut color: Option<String> = None;
+            let mut lens: Vec<f32> = Vec::new();
+            for tok in toks {
+                if tok.eq_ignore_ascii_case("inset") {
+                    inset = true;
+                } else if let Some(px) =
+                    tok.strip_suffix("px").and_then(|n| n.trim().parse::<f32>().ok())
+                {
+                    lens.push(px);
+                } else if *tok == "0" {
+                    lens.push(0.0);
+                } else {
+                    color = Some(tok.clone());
+                }
+            }
+            if lens.len() < 2 {
+                return None;
+            }
+            while lens.len() < 4 {
+                lens.push(0.0);
+            }
+            Some((
+                color.unwrap_or_else(|| "currentcolor".to_string()),
+                [lens[0], lens[1], lens[2], lens[3]],
+                inset,
+            ))
+        };
+        let (fnone, tnone) = (from.trim() == "none", to.trim() == "none");
+        if fnone && tnone {
+            return None;
+        }
+        let fs = split_commas(from);
+        let ts = split_commas(to);
+        // none 은 반대쪽 그림자 수만큼 투명 zero-shadow(색 transparent, 길이 0, 같은
+        // inset)로 확장한다.
+        let n = if fnone {
+            ts.len()
+        } else if tnone {
+            fs.len()
+        } else if fs.len() != ts.len() {
+            return None;
+        } else {
+            fs.len()
+        };
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let (ca, la, ia);
+            let (cb, lb, ib);
+            if fnone {
+                let p = parse(&ws(ts[i].trim()))?;
+                (cb, lb, ib) = p.clone();
+                (ca, la, ia) = ("transparent".to_string(), [0.0; 4], p.2);
+            } else if tnone {
+                let p = parse(&ws(fs[i].trim()))?;
+                (ca, la, ia) = p.clone();
+                (cb, lb, ib) = ("transparent".to_string(), [0.0; 4], p.2);
+            } else {
+                (ca, la, ia) = parse(&ws(fs[i].trim()))?;
+                (cb, lb, ib) = parse(&ws(ts[i].trim()))?;
+            }
+            if ia != ib {
+                return None;
+            }
+            let color = Self::interp_css_value(&ca, &cb, t)?;
+            let mut s = color;
+            for i in 0..4 {
+                s.push_str(&format!(" {}px", crate::style::num_css(la[i] + (lb[i] - la[i]) * t)));
+            }
+            if ia {
+                s.push_str(" inset");
+            }
+            out.push(s);
+        }
+        Some(out.join(", "))
+    }
+
     // background-size 보간: 쉼표 레이어별. contain/cover 는 불연속(레이어 플립),
     // 각 레이어는 "w h"(1값이면 "w auto"), auto 컴포넌트는 불연속.
     fn interp_bg_size(from: &str, to: &str, t: f32) -> Option<String> {
@@ -8822,6 +8950,12 @@ impl Interp {
         // background-size: 다중 레이어 + auto/contain/cover.
         if matches!(dash_prop, "background-size" | "-webkit-background-size" | "mask-size") {
             if let Some(v) = Self::interp_bg_size(from, to, eased) {
+                return Some(v);
+            }
+        }
+        // box-shadow: 다중 그림자(색 + 4길이 + inset).
+        if matches!(dash_prop, "box-shadow" | "-webkit-box-shadow") {
+            if let Some(v) = Self::interp_box_shadow(from, to, eased) {
                 return Some(v);
             }
         }

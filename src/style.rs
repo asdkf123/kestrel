@@ -1512,6 +1512,61 @@ pub fn normalize_translate(v: &str) -> String {
 
 // scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
 // 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
+// box-shadow 계산값 캐논 직렬화(§CSS Backgrounds). 각 그림자를 "색 x y blur
+// spread [inset]" 순서로(색 먼저, rgb, blur/spread 기본 0px 표시, inset 마지막).
+// 색 미지정이면 current_color. 파싱 실패는 원문 유지.
+pub fn normalize_box_shadow(raw: &str, current_color: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "none" {
+        return raw.to_string();
+    }
+    let mut out = Vec::new();
+    for sh in split_top_commas_str(raw) {
+        let toks = split_top_ws(sh.trim());
+        if toks.is_empty() {
+            return raw.to_string();
+        }
+        let mut inset = false;
+        let mut color: Option<String> = None;
+        let mut lens: Vec<f32> = Vec::new();
+        for tok in &toks {
+            let tl = tok.to_ascii_lowercase();
+            if tl == "inset" {
+                inset = true;
+            } else if let Some(px) = tl.strip_suffix("px").and_then(|n| n.trim().parse::<f32>().ok())
+            {
+                lens.push(px);
+            } else if tl == "0" {
+                lens.push(0.0);
+            } else if let Some(Value::Color(c)) = crate::css::interpret_value(tok) {
+                color = Some(computed_value_string(&Value::Color(c)));
+            } else {
+                return raw.to_string(); // 미해석 토큰 → 원문 유지
+            }
+        }
+        if lens.len() < 2 {
+            return raw.to_string();
+        }
+        let (x, y) = (lens[0], lens[1]);
+        let blur = lens.get(2).copied().unwrap_or(0.0);
+        let spread = lens.get(3).copied().unwrap_or(0.0);
+        let color = color.unwrap_or_else(|| current_color.to_string());
+        let mut s = format!(
+            "{} {}px {}px {}px {}px",
+            color,
+            num_css(x),
+            num_css(y),
+            num_css(blur),
+            num_css(spread)
+        );
+        if inset {
+            s.push_str(" inset");
+        }
+        out.push(s);
+    }
+    out.join(", ")
+}
+
 // font 단축 지정값 캐논 직렬화(§CSS Fonts 4 §font). 기본값 normal 인 style/variant/
 // weight/stretch 는 생략, line-height 가 normal 이면 /line-height 생략, 남으면
 // "size / line-height"(공백 포함). 파싱 실패(시스템 폰트/전역 키워드 등)는 원문 유지.
