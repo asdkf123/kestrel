@@ -7869,6 +7869,23 @@ impl Interp {
         if e.is_empty() || e == "linear" {
             return t;
         }
+        // CSS 이징 키워드 → 등가 cubic-bezier (§easing-functions).
+        let kw = match e.as_str() {
+            "ease" => Some((0.25f32, 0.1f32, 0.25f32, 1.0f32)),
+            "ease-in" => Some((0.42, 0.0, 1.0, 1.0)),
+            "ease-out" => Some((0.0, 0.0, 0.58, 1.0)),
+            "ease-in-out" => Some((0.42, 0.0, 0.58, 1.0)),
+            _ => None,
+        };
+        if let Some((x1, y1, x2, y2)) = kw {
+            return Self::eval_easing(&format!("cubic-bezier({x1},{y1},{x2},{y2})"), t);
+        }
+        if e == "step-start" {
+            return Self::eval_easing("steps(1,start)", t);
+        }
+        if e == "step-end" {
+            return Self::eval_easing("steps(1,end)", t);
+        }
         if let Some(rest) = e.strip_prefix("steps(").and_then(|r| r.strip_suffix(')')) {
             let parts: Vec<&str> = rest.split(',').map(|s| s.trim()).collect();
             let n: f32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1.0);

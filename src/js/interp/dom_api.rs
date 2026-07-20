@@ -276,6 +276,11 @@ impl Interp {
 
     // style.prop = value 쓰기 (빈 값이면 제거)
     pub(super) fn style_set(&mut self, id: crate::dom::NodeId, prop: &str, value: &str) {
+        // CSS Transitions: transition 걸린 프로퍼티가 바뀌면 이전 계산값→새 값 전이를
+        // element_animations 에 등록(getComputedStyle 이 진행률에서 보간). additive.
+        if !prop.starts_with("transition") && !value.trim().is_empty() {
+            self.maybe_capture_transition(id, prop, value.trim());
+        }
         let attr = self.style_attr(id);
         let mut pairs = style_pairs(&attr);
         pairs.retain(|(k, _)| k != prop);
@@ -289,6 +294,78 @@ impl Interp {
         }
         let s = style_serialize(&pairs);
         self.set_style_attr(id, s);
+    }
+
+    // transition 걸린 프로퍼티 변경 시 이전 계산값→새 값 전이를 element_animations 에
+    // 등록. currentTime=-delay(경과), 진행률 = 경과/지속. 테스트가 먼저 getComputedStyle
+    // 로 from 을 확정하므로 computed_styles 에서 from 을 읽는다.
+    fn maybe_capture_transition(&mut self, id: crate::dom::NodeId, prop: &str, new_value: &str) {
+        let time_ms = |s: &str| -> f32 {
+            let s = s.trim();
+            if let Some(n) = s.strip_suffix("ms") {
+                n.trim().parse::<f32>().unwrap_or(0.0)
+            } else if let Some(n) = s.strip_suffix('s') {
+                n.trim().parse::<f32>().unwrap_or(0.0) * 1000.0
+            } else {
+                0.0
+            }
+        };
+        // 다중값(최상위 쉼표)은 첫 값만. 단 cubic-bezier()/steps() 내부 쉼표는
+        // 무시해야 하므로 괄호 깊이를 추적한다.
+        let first = |s: String| -> String {
+            let mut depth = 0i32;
+            for (i, c) in s.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    ',' if depth == 0 => return s[..i].trim().to_string(),
+                    _ => {}
+                }
+            }
+            s.trim().to_string()
+        };
+        let dur = time_ms(&first(self.style_get(id, "transition-duration")));
+        if dur <= 0.0 {
+            return;
+        }
+        let tprop = self.style_get(id, "transition-property");
+        let tprop = tprop.trim();
+        if !(tprop.is_empty()
+            || tprop == "all"
+            || tprop.split(',').any(|p| p.trim() == prop))
+        {
+            return;
+        }
+        let delay = time_ms(&first(self.style_get(id, "transition-delay")));
+        let elapsed = -delay; // 음수 delay = 과거 시작(경과). 양수면 아직 미시작.
+        if elapsed < 0.0 {
+            return;
+        }
+        let easing = first(self.style_get(id, "transition-timing-function"));
+        let easing = if easing.is_empty() { "ease".to_string() } else { easing };
+        // from = 덮어쓰기 전 현재 인라인 지정값(테스트가 setup 에서 el.style[p]=from 설정).
+        // computed_styles 는 JS 실행 중 stale 할 수 있어 인라인을 우선.
+        let mut from = self.style_get(id, prop);
+        if from.is_empty() {
+            // neutral from: 기저 계산값. 동적 생성 요소는 computed_styles 가 비어 있을 수
+            // 있으므로 레이아웃을 강제해 채운다(덮어쓰기 전이라 아직 neutral 상태).
+            self.ensure_layout();
+            from = self
+                .computed_styles
+                .get(&id)
+                .and_then(|m| m.get(prop))
+                .cloned()
+                .unwrap_or_default();
+        }
+        if from.is_empty() || from == new_value {
+            return;
+        }
+        let mut m = ObjMap::new();
+        m.insert("currentTime".to_string(), Value::Num(elapsed as f64));
+        let rc = std::rc::Rc::new(std::cell::RefCell::new(m));
+        let mut props = std::collections::HashMap::new();
+        props.insert(prop.to_string(), (from, new_value.to_string(), easing));
+        self.element_animations.entry(id).or_default().push((rc, dur as f64, props));
     }
 
     // element.classList: class 속성을 공백 구분 토큰 목록으로

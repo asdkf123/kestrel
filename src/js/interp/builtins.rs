@@ -4957,7 +4957,7 @@ impl Interp {
                     _ => Vec::new(),
                 };
                 let mut props: HashMap<String, (String, String, String)> = HashMap::new();
-                if frames.len() >= 2 {
+                if !frames.is_empty() {
                     let kf_easing = |kf: &Value| -> String {
                         if let Value::Obj(o) = kf {
                             if let Some(e) = o.borrow().get("easing") {
@@ -4970,31 +4970,52 @@ impl Interp {
                         let e = kf_easing(&frames[0]);
                         if e.is_empty() { opt_easing.clone() } else { e }
                     };
-                    // "from neutral" 은 from 키프레임에 값이 없다 → 요소의 기저 계산값을 from 으로.
+                    // "from neutral"/"to neutral" 은 한쪽 키프레임 값이 없다 → 요소의 기저 계산값을 그쪽으로.
                     self.ensure_layout();
                     let base = self.computed_styles.get(&id).cloned().unwrap_or_default();
-                    let last = frames[frames.len() - 1].clone();
-                    let first = frames[0].clone();
-                    // TO 키프레임의 프로퍼티들을 애니메이트한다(from 은 frames[0] 또는 기저값).
-                    let (to_keys, tb): (Vec<String>, Option<_>) = match &last {
-                        Value::Obj(t) => (t.borrow().keys().cloned().collect(), Some(t.clone())),
-                        _ => (Vec::new(), None),
-                    };
-                    let fb = if let Value::Obj(f) = &first { Some(f.clone()) } else { None };
-                    for k in to_keys {
-                        if matches!(k.as_str(), "offset" | "easing" | "composite")
-                            || is_internal_key(&k)
-                        {
-                            continue;
+                    if frames.len() == 1 {
+                        // 단일 키프레임(한쪽 neutral): offset 으로 from/to 판정, 반대편은 기저 계산값.
+                        if let Value::Obj(t) = &frames[0] {
+                            let offset = t.borrow().get("offset").map(to_num).unwrap_or(1.0);
+                            let is_to = offset >= 0.5;
+                            let keys: Vec<String> = t.borrow().keys().cloned().collect();
+                            for k in keys {
+                                if matches!(k.as_str(), "offset" | "easing" | "composite")
+                                    || is_internal_key(&k)
+                                {
+                                    continue;
+                                }
+                                let dash = camel_to_dashed(&k);
+                                let kv = t.borrow().get(&k).map(to_display).unwrap_or_default();
+                                let bv = base.get(&dash).cloned().unwrap_or_default();
+                                let (from, to) = if is_to { (bv, kv) } else { (kv, bv) };
+                                props.insert(dash, (from, to, easing.clone()));
+                            }
                         }
-                        let dash = camel_to_dashed(&k);
-                        let to = tb.as_ref().and_then(|t| t.borrow().get(&k).map(to_display)).unwrap_or_default();
-                        let from = fb
-                            .as_ref()
-                            .and_then(|f| f.borrow().get(&k).map(to_display))
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or_else(|| base.get(&dash).cloned().unwrap_or_default());
-                        props.insert(dash, (from, to, easing.clone()));
+                    } else {
+                        let last = frames[frames.len() - 1].clone();
+                        let first = frames[0].clone();
+                        // TO 키프레임의 프로퍼티들을 애니메이트한다(from 은 frames[0] 또는 기저값).
+                        let (to_keys, tb): (Vec<String>, Option<_>) = match &last {
+                            Value::Obj(t) => (t.borrow().keys().cloned().collect(), Some(t.clone())),
+                            _ => (Vec::new(), None),
+                        };
+                        let fb = if let Value::Obj(f) = &first { Some(f.clone()) } else { None };
+                        for k in to_keys {
+                            if matches!(k.as_str(), "offset" | "easing" | "composite")
+                                || is_internal_key(&k)
+                            {
+                                continue;
+                            }
+                            let dash = camel_to_dashed(&k);
+                            let to = tb.as_ref().and_then(|t| t.borrow().get(&k).map(to_display)).unwrap_or_default();
+                            let from = fb
+                                .as_ref()
+                                .and_then(|f| f.borrow().get(&k).map(to_display))
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| base.get(&dash).cloned().unwrap_or_default());
+                            props.insert(dash, (from, to, easing.clone()));
+                        }
                     }
                     // 단축 프로퍼티(margin/padding/border-radius 등)를 롱핸드로 확장 —
                     // getComputedStyle 은 롱핸드(margin-top)로 읽으므로.
@@ -5491,13 +5512,22 @@ impl Interp {
                 self.ensure_layout();
                 let name = args.first().map(to_display).unwrap_or_default();
                 Ok(match &recv {
-                    Some(Value::ComputedStyle(id)) => Value::Str(
-                        self.computed_styles
-                            .get(id)
-                            .and_then(|m| m.get(&name))
-                            .cloned()
-                            .unwrap_or_default(),
-                    ),
+                    Some(Value::ComputedStyle(id)) => {
+                        // 활성 애니메이션(element.animate / transition)이 이 프로퍼티를
+                        // 다루면 currentTime 에서 보간한 값 — 멤버 접근(.top)과 동일하게
+                        // getPropertyValue('top') 경로에도 주입한다.
+                        if let Some(interp) = self.animated_value(*id, &name) {
+                            Value::Str(interp)
+                        } else {
+                            Value::Str(
+                                self.computed_styles
+                                    .get(id)
+                                    .and_then(|m| m.get(&name))
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            )
+                        }
+                    }
                     _ => Value::Str(String::new()),
                 })
             }
