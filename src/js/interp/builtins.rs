@@ -3362,6 +3362,30 @@ impl Interp {
                         Some(desc) => return Ok(desc),
                         None => false,
                     }
+                    // CSSStyleDeclaration(getComputedStyle/el.style): 지원 CSS 속성명(카멜/대시)
+                    // 과 선언 멤버를 own 서술자로 낸다. has_property 는 'X' in cs 게이트를 열지만
+                    // getOwnPropertyDescriptor 는 별개 경로라 undefined 였다(getComputedStyle-
+                    // listing 등이 서술자 존재를 확인). 계산 스타일은 읽기전용(writable false),
+                    // el.style 은 writable. member_get 이 계산맵에서 값을 준다.
+                    Value::ComputedStyle(_) | Value::Style(_) => {
+                        let is_member = matches!(
+                            key.as_str(),
+                            "getPropertyValue" | "getPropertyPriority" | "setProperty"
+                                | "removeProperty" | "item" | "length" | "cssText"
+                                | "parentRule"
+                        );
+                        if is_member || crate::css::is_known_property(&camel_to_dashed(&key)) {
+                            let v = self.member_get(&target, &key)?;
+                            d.insert("value".to_string(), v);
+                            d.insert(
+                                "writable".to_string(),
+                                Value::Bool(matches!(target, Value::Style(_))),
+                            );
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     _ => false,
                 };
                 if !found {
@@ -5869,6 +5893,16 @@ impl Interp {
                 let i = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
                 let key = i.to_string();
                 self.cssom_get(&Value::RuleStyle(si, ri), &key)
+            }
+            // cs.item(i) — 계산 스타일의 i 번째 프로퍼티 이름(대시). 범위 밖은 빈 문자열.
+            Native::ComputedItem => {
+                let Some(Value::ComputedStyle(id)) = recv else {
+                    return Ok(Value::Str(String::new()));
+                };
+                self.ensure_layout();
+                let i = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                let names = self.computed_prop_names(id);
+                Ok(names.get(i).map(|s| Value::Str(s.clone())).unwrap_or(Value::Str(String::new())))
             }
             Native::CreateComment => {
                 let data = args.first().map(to_display).unwrap_or_default();
@@ -10350,6 +10384,14 @@ impl Interp {
                             }
                         }
                         out
+                    }
+                    // CSSStyleDeclaration(getComputedStyle): 계산 프로퍼티 이름을 own 키로.
+                    // 표준 불변식(`k in cs` 이고 gOPD(cs,k) 존재면 k 는 ownKeys 에 있어야 함)을
+                    // 지킨다 — has_property/getOwnPropertyDescriptor 와 일관.
+                    Some(Value::ComputedStyle(id)) => {
+                        let id = *id;
+                        self.ensure_layout();
+                        self.computed_prop_names(id).into_iter().map(Value::Str).collect()
                     }
                     _ => Vec::new(),
                 };

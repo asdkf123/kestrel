@@ -48,6 +48,23 @@ impl Interp {
         }
     }
 
+    // 계산 스타일의 열거 가능한 프로퍼티 이름 목록(대시 표기, 정렬).
+    // CSSStyleDeclaration 의 인덱스 접근·length·item·ownKeys 가 공유한다. 단축
+    // 프로퍼티(margin/background/inset 등)는 제외 — getComputedStyle 은 롱핸드만 나열한다.
+    pub(super) fn computed_prop_names(&self, id: crate::dom::NodeId) -> Vec<String> {
+        let Some(m) = self.computed_styles.get(&id) else {
+            return Vec::new();
+        };
+        let sh = crate::css::shorthand_table();
+        let mut names: Vec<String> = m
+            .keys()
+            .filter(|k| !sh.contains_key(k.as_str()))
+            .cloned()
+            .collect();
+        names.sort();
+        names
+    }
+
     pub(super) fn cssom_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
         match recv {
             // CSSStyleSheet

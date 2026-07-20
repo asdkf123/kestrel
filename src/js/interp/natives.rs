@@ -104,6 +104,8 @@ pub enum Native {
     GetComputedStyle,
     MatchMedia,
     ComputedGetProperty,
+    // cs.item(i) — CSSStyleDeclaration 의 i 번째 프로퍼티 이름(대시 표기)
+    ComputedItem,
     // a.compareDocumentPosition(b) — 문서 순서 비트마스크 (jQuery sortOrder)
     CompareDocPosition,
     // document.implementation.createHTMLDocument(title) — 분리된 문서
@@ -1038,6 +1040,7 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
             },
             0,
         ),
+        ComputedItem => ("item", 1),
         _ => return None,
     })
 }

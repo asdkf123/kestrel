@@ -6590,14 +6590,25 @@ impl Interp {
         match recv {
             // getComputedStyle 뷰: getPropertyValue + 카멜케이스/대시 프로퍼티 읽기.
             Value::ComputedStyle(id) => {
-                if key == "getPropertyValue" {
-                    return Ok(Value::Native(Native::ComputedGetProperty));
+                let id = *id;
+                match key {
+                    "getPropertyValue" => return Ok(Value::Native(Native::ComputedGetProperty)),
+                    "item" => return Ok(Value::Native(Native::ComputedItem)),
+                    _ => {}
                 }
                 self.ensure_layout();
+                // length / 정수 인덱스: 프로퍼티 이름 나열(CSSStyleDeclaration 표준 §CSSOM).
+                if key == "length" {
+                    return Ok(Value::Num(self.computed_prop_names(id).len() as f64));
+                }
+                if let Ok(i) = key.parse::<usize>() {
+                    let names = self.computed_prop_names(id);
+                    return Ok(names.get(i).map(|s| Value::Str(s.clone())).unwrap_or(Value::Str(String::new())));
+                }
                 let dashed = camel_to_dashed(key);
                 let v = self
                     .computed_styles
-                    .get(id)
+                    .get(&id)
                     .and_then(|m| m.get(&dashed))
                     .cloned()
                     .unwrap_or_default();
