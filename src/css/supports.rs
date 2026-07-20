@@ -141,6 +141,15 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "background-blend-mode", "font-kerning", "font-variant-caps", "text-rendering",
     "color-scheme", "forced-color-adjust", "print-color-adjust",
     "caret-color", "accent-color", "tab-size",
+    // 2차 배치: text/font-variant/ruby/scrollbar/list 키워드 프로퍼티
+    "text-emphasis-style", "text-emphasis-position", "text-combine-upright",
+    "text-decoration-skip-ink", "line-break", "text-wrap", "text-wrap-mode",
+    "text-wrap-style", "text-spacing-trim", "ruby-position", "ruby-align",
+    "white-space-collapse", "font-optical-sizing", "font-synthesis",
+    "font-variant-ligatures", "font-variant-numeric", "font-variant-east-asian",
+    "font-variant-position", "font-variant-alternates", "font-language-override",
+    "list-style-position", "quotes", "scrollbar-width", "scrollbar-color",
+    "scrollbar-gutter", "mask-type", "text-justify",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

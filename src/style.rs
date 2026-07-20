@@ -1350,6 +1350,22 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "forced-color-adjust" | "print-color-adjust" => "auto",
         "caret-color" | "accent-color" => "auto",
         "tab-size" => "8",
+        // 2차 배치 초기값
+        "text-emphasis-style" | "text-combine-upright" | "font-variant-alternates" => "none",
+        "text-emphasis-position" => "over right",
+        "text-decoration-skip-ink" | "line-break" | "font-optical-sizing" | "quotes"
+        | "scrollbar-width" | "scrollbar-color" | "scrollbar-gutter" | "text-justify" => "auto",
+        "text-wrap" | "text-wrap-mode" => "wrap",
+        "text-wrap-style" => "auto",
+        "text-spacing-trim" => "normal",
+        "ruby-position" => "alternate",
+        "ruby-align" => "space-around",
+        "white-space-collapse" => "collapse",
+        "font-synthesis" => "weight style small-caps",
+        "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
+        | "font-variant-position" | "font-language-override" => "normal",
+        "list-style-position" => "outside",
+        "mask-type" => "luminance",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

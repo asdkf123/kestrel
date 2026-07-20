@@ -378,7 +378,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "scroll-snap-type" | "scroll-snap-align"
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
-        | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust" => {
+        | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
+        // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
+        | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
+        | "text-decoration-skip-ink" | "line-break" | "text-wrap" | "text-wrap-mode"
+        | "text-wrap-style" | "text-spacing-trim" | "ruby-position" | "ruby-align"
+        | "white-space-collapse" | "font-optical-sizing" | "font-synthesis"
+        | "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
+        | "font-variant-position" | "font-variant-alternates" | "font-language-override"
+        | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
+        | "scrollbar-gutter" | "mask-type" | "hyphenate-character" | "text-justify" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
