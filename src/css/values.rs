@@ -187,6 +187,25 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
         return Some(Value::Length(r, ua));
     }
+    // sin()/cos()/tan() — 각도(deg/rad/grad/turn) 또는 수(라디안)를 받아 단위 없는
+    // 수를 낸다(CSS Values 4 §10). sin(30deg)=0.5, cos(0)=1, tan(45deg)=1. 상수
+    // 인자만 파스 타임 확정(calc/변수는 미해석→드롭). f64 로 계산해 정밀도 보존.
+    for (name, kind) in [("sin(", b's'), ("cos(", b'c'), ("tan(", b't')] {
+        if !(lower.starts_with(name) && text.ends_with(')')) {
+            continue;
+        }
+        let inner = text[name.len()..text.len() - 1].trim();
+        let rad = parse_angle_rad(inner)?;
+        let r = match kind {
+            b's' => rad.sin(),
+            b'c' => rad.cos(),
+            _ => rad.tan(),
+        };
+        if !r.is_finite() {
+            return None;
+        }
+        return Some(Value::Length(r as f32, Unit::Number));
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
@@ -311,6 +330,26 @@ pub(crate) fn eval_calc_number(inner: &str) -> Option<f32> {
         Some(Value::Length(n, _)) if n.is_finite() => Some(n),
         _ => None,
     }
+}
+
+// 각도 리터럴 → 라디안(f64). deg/grad/turn/rad 또는 단위 없는 수(라디안).
+// grad 가 rad 를 접미로 포함하므로 검사 순서 주의(deg→grad→turn→rad→수).
+fn parse_angle_rad(s: &str) -> Option<f64> {
+    let s = s.trim();
+    let lower = s.to_ascii_lowercase();
+    let pi = std::f64::consts::PI;
+    for (suffix, factor) in [
+        ("deg", pi / 180.0),
+        ("grad", pi / 200.0),
+        ("turn", 2.0 * pi),
+        ("rad", 1.0),
+    ] {
+        if let Some(num) = lower.strip_suffix(suffix) {
+            return num.trim().parse::<f64>().ok().map(|n| n * factor);
+        }
+    }
+    // 단위 없는 수는 라디안(CSS: sin(수)는 라디안 취급).
+    s.parse::<f64>().ok()
 }
 
 fn eval_calc(inner: &str) -> Option<Value> {
