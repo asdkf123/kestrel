@@ -1289,7 +1289,7 @@ pub fn normalize_transform(v: &str) -> String {
             i += 1;
         }
         if i >= chars.len() || chars[i] != '(' {
-            return v.to_string(); // 함수 형태 아님 → 원문
+            return String::new(); // 함수 형태 아님(none 혼용 등) → 무효
         }
         let orig_name: String = chars[name_start..i].iter().collect();
         let name = orig_name.to_ascii_lowercase();
@@ -1321,20 +1321,39 @@ pub fn normalize_transform(v: &str) -> String {
             i += 1;
         }
         if i >= chars.len() {
-            return v.to_string(); // 괄호 불균형
+            return String::new(); // 괄호 불균형 → 무효
         }
         let args: String = chars[args_start..i].iter().collect();
         i += 1; // ')' 소비
-        let parts: Vec<String> = args
-            .split(',')
-            .map(|a| norm_transform_arg(&name, a.trim()))
-            .collect();
+        let arg_strs: Vec<&str> =
+            args.split(',').map(|a| a.trim()).filter(|a| !a.is_empty()).collect();
+        // 함수별 인자 개수 검증(§CSS Transforms). 미지 함수/잘못된 개수는 무효.
+        if !transform_arity_ok(&name, arg_strs.len()) {
+            return String::new();
+        }
+        let parts: Vec<String> =
+            arg_strs.iter().map(|a| norm_transform_arg(&name, a)).collect();
         out.push(format!("{}({})", out_name, parts.join(", ")));
     }
     if out.is_empty() {
         v.to_string()
     } else {
         out.join(" ")
+    }
+}
+
+// transform 함수의 유효 인자 개수(§CSS Transforms). 미지 함수는 무효(표준 함수 21종).
+fn transform_arity_ok(func: &str, argc: usize) -> bool {
+    match func {
+        "translate" | "scale" | "skew" => argc == 1 || argc == 2,
+        "translatex" | "translatey" | "translatez" | "scalex" | "scaley" | "scalez"
+        | "rotate" | "rotatex" | "rotatey" | "rotatez" | "skewx" | "skewy"
+        | "perspective" => argc == 1,
+        "translate3d" | "scale3d" => argc == 3,
+        "rotate3d" => argc == 4,
+        "matrix" => argc == 6,
+        "matrix3d" => argc == 16,
+        _ => false,
     }
 }
 
