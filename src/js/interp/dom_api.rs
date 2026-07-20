@@ -193,6 +193,17 @@ impl Interp {
     // (파싱된 값으로 전부 직렬화하면 이 모두가 계산값으로 접혀 버린다 — 실제로 그랬다.)
     pub(super) fn serialize_decl(prop: &str, raw: &str) -> String {
         let raw = raw.trim();
+        // content 의 단일 문자열 토큰은 CSSOM 문자열 직렬화 — 항상 큰따옴표로(§CSSOM
+        // "serialize a string"). content: 'x' 도 "x" 가 된다.
+        if prop == "content" {
+            if let Some(inner) = single_css_string(raw) {
+                return serialize_css_string(&inner);
+            }
+            // url(...) 은 url("...") 로 — URL 을 문자열로 직렬화(§CSSOM).
+            if let Some(u) = single_url(raw) {
+                return format!("url({})", serialize_css_string(&u));
+            }
+        }
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))
             .into_iter()
             .find(|d| d.name == prop)
@@ -1358,6 +1369,64 @@ pub(super) fn option_value(dom: &crate::dom::Dom, o: crate::dom::NodeId) -> Stri
 
 // CSS 값 원문 안의 숫자를 정규 형태로 (§6.7.2 "serialize a CSS component value"):
 //   .5 → 0.5,  1.50 → 1.5,  +3 → 3
+// 값 전체가 하나의 따옴표 문자열이면 그 내용(따옴표 제거)을 돌려준다. 내부에
+// 이스케이프 안 된 같은 종류 따옴표가 있으면(= 여러 토큰일 수 있음) None.
+fn single_css_string(raw: &str) -> Option<String> {
+    let b = raw.as_bytes();
+    if raw.len() < 2 {
+        return None;
+    }
+    let q = b[0];
+    if (q != b'"' && q != b'\'') || b[raw.len() - 1] != q {
+        return None;
+    }
+    let inner = &raw[1..raw.len() - 1];
+    if inner.contains(q as char) {
+        return None;
+    }
+    Some(inner.to_string())
+}
+
+// 값 전체가 하나의 url(...) 토큰이면 그 URL(따옴표 제거)을 돌려준다.
+fn single_url(raw: &str) -> Option<String> {
+    let low = raw.to_ascii_lowercase();
+    if !low.starts_with("url(") || !raw.ends_with(')') {
+        return None;
+    }
+    let inner = raw[4..raw.len() - 1].trim();
+    // url() 안에 또 ) 가 있으면 단일 토큰이 아니다
+    if inner.contains(')') {
+        return None;
+    }
+    let unq = if inner.len() >= 2 {
+        let q = inner.as_bytes()[0];
+        if (q == b'"' || q == b'\'') && inner.as_bytes()[inner.len() - 1] == q {
+            &inner[1..inner.len() - 1]
+        } else {
+            inner
+        }
+    } else {
+        inner
+    };
+    Some(unq.to_string())
+}
+
+// CSSOM "serialize a string" (§common serializing): 큰따옴표로 감싸고 내부의
+// 큰따옴표와 역슬래시를 이스케이프한다.
+fn serialize_css_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 // 문자열 리터럴과 url(...) 안은 건드리지 않는다 (그 안의 숫자는 값이 아니다).
 fn normalize_numbers(s: &str) -> String {
     let b: Vec<char> = s.chars().collect();

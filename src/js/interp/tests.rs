@@ -562,6 +562,24 @@ fn node_normalize_merges_and_drops_text() {
 }
 
 #[test]
+fn content_string_serializes_double_quoted() {
+    let mut dom = crate::html::parse_dom("<div id='t'></div>".to_string());
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // content 의 단일 문자열은 항상 큰따옴표 (CSSOM)
+    assert_eq!(
+        g("var s=document.getElementById('t').style; s.content=\"'hi'\"; s.content"),
+        "\"hi\"",
+    );
+    // url(...) 은 url("...") 로
+    assert_eq!(
+        g("var s=document.getElementById('t').style; s.content='url(http://x/)'; s.content"),
+        "url(\"http://x/\")",
+    );
+}
+
+#[test]
 fn style_css_text_serializes_with_semicolons() {
     let mut dom = crate::html::parse_dom(
         "<div id='t' style='color:red;font-size:10pt'></div>".to_string(),
