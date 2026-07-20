@@ -300,6 +300,20 @@ impl Interp {
             // 이 rgb(0, 0, 0) 으로 저장됐다 — 지정값이 통째로 사라졌다.
             // 직렬화는 **읽을 때** serialize_decl 이 한 번만 한다.
             let text = value.trim().to_string();
+            // transition/animation 등 단축은 인라인 롱핸드로도 펼친다(§CSSOM: el.style
+            // 로 단축을 설정하면 롱핸드가 읽힌다). 확장이 자기 자신과 다른 이름을 내면
+            // 단축이다. 기존 동명 롱핸드는 교체.
+            let longhands = crate::css::expand_decl_pub(prop, &text);
+            if longhands.iter().any(|d| d.name != prop) {
+                for d in &longhands {
+                    if d.name == prop {
+                        continue;
+                    }
+                    let lv = crate::style::computed_value_string(&d.value);
+                    pairs.retain(|(k, _)| k != &d.name);
+                    pairs.push((d.name.clone(), lv));
+                }
+            }
             pairs.push((prop.to_string(), text));
         }
         let s = style_serialize(&pairs);

@@ -540,6 +540,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
+        // transition: [<property> || <duration> || <timing-function> || <delay> ||
+        // <behavior>]# — 첫 시간=duration, 둘째=delay. 롱핸드로 확장.
+        "transition" => transition_shorthand(value_text),
         // border: <width> <style> <color> (임의 순서) → 네 변 longhand 로
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
         // list-style 단축 → type/position/image. `list-style: none` 이 마커를 없앤다.
@@ -809,6 +812,80 @@ fn space_top_level_slashes(text: &str) -> String {
         }
     }
     out
+}
+
+// transition 단축 → 다섯 롱핸드. 각 롱핸드는 콤마 목록. 첫 시간값=duration,
+// 둘째=delay. timing-function/behavior/property 는 키워드로 구분.
+fn transition_shorthand(value_text: &str) -> Vec<Declaration> {
+    let kw = |name: &str, val: String| Declaration {
+        important: false,
+        name: name.to_string(),
+        value: Value::Keyword(val),
+    };
+    let vt = value_text.trim();
+    let is_time = |s: &str| -> bool {
+        if let Some(n) = s.strip_suffix("ms") {
+            n.parse::<f32>().is_ok()
+        } else if let Some(n) = s.strip_suffix('s') {
+            n.parse::<f32>().is_ok()
+        } else {
+            false
+        }
+    };
+    let is_timing = |s: &str| -> bool {
+        matches!(
+            s,
+            "ease" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end"
+        ) || s.starts_with("cubic-bezier(")
+            || s.starts_with("steps(")
+    };
+    if vt.eq_ignore_ascii_case("none") {
+        return vec![
+            kw("transition-property", "none".to_string()),
+            kw("transition-duration", "0s".to_string()),
+            kw("transition-timing-function", "ease".to_string()),
+            kw("transition-delay", "0s".to_string()),
+            kw("transition-behavior", "normal".to_string()),
+            kw("transition", "none".to_string()),
+        ];
+    }
+    let (mut props, mut durs, mut tfs, mut delays, mut behs) =
+        (vec![], vec![], vec![], vec![], vec![]);
+    for part in split_top_level_commas(vt) {
+        let (mut prop, mut times, mut tf, mut beh): (
+            Option<String>,
+            Vec<String>,
+            Option<String>,
+            Option<String>,
+        ) = (None, vec![], None, None);
+        for tok in split_top_level(part.trim()) {
+            let tl = tok.to_ascii_lowercase();
+            if is_time(&tl) {
+                times.push(tok.to_string());
+            } else if is_timing(&tl) {
+                tf = Some(tok.to_string());
+            } else if tl == "allow-discrete" {
+                beh = Some("allow-discrete".to_string());
+            } else if tl == "normal" {
+                beh = Some("normal".to_string());
+            } else {
+                prop = Some(tok.to_string());
+            }
+        }
+        props.push(prop.unwrap_or_else(|| "all".to_string()));
+        durs.push(times.first().cloned().unwrap_or_else(|| "0s".to_string()));
+        delays.push(times.get(1).cloned().unwrap_or_else(|| "0s".to_string()));
+        tfs.push(tf.unwrap_or_else(|| "ease".to_string()));
+        behs.push(beh.unwrap_or_else(|| "normal".to_string()));
+    }
+    vec![
+        kw("transition-property", props.join(", ")),
+        kw("transition-duration", durs.join(", ")),
+        kw("transition-timing-function", tfs.join(", ")),
+        kw("transition-delay", delays.join(", ")),
+        kw("transition-behavior", behs.join(", ")),
+        kw("transition", vt.to_string()),
+    ]
 }
 
 fn split_top_level(text: &str) -> Vec<&str> {
