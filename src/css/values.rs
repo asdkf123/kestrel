@@ -834,7 +834,41 @@ fn normalize_gradient_seg(seg: &str) -> String {
                 format!("{} {}", color, toks[1..].join(" "))
             }
         }
-        _ => seg.to_string(),
+        // prefix 세그먼트(각도/방향/보간): 보간 메서드(in ...)를 각도/방향 뒤로 재정렬
+        // (§CSS Images 4 캐논: <angle|direction> in <space>). "in lab 30deg"→"30deg in lab".
+        _ => reorder_interp(&toks),
+    }
+}
+
+// prefix 세그먼트에서 보간 메서드(in ...)를 각도/방향 뒤로 옮긴다.
+fn reorder_interp(toks: &[String]) -> String {
+    let Some(in_idx) = toks.iter().position(|t| t.eq_ignore_ascii_case("in")) else {
+        return toks.join(" ");
+    };
+    let is_angle = |t: &str| {
+        ["deg", "rad", "grad", "turn"]
+            .iter()
+            .any(|u| t.strip_suffix(u).map(|p| p.trim().parse::<f32>().is_ok()).unwrap_or(false))
+    };
+    // in 블록: in_idx 부터 각도/방향("to"/각도) 토큰 전까지.
+    let mut end = toks.len();
+    for (j, t) in toks.iter().enumerate().skip(in_idx + 1) {
+        if t.eq_ignore_ascii_case("to") || is_angle(t) {
+            end = j;
+            break;
+        }
+    }
+    let interp = toks[in_idx..end].join(" ");
+    let rest: Vec<&str> = toks
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| *k < in_idx || *k >= end)
+        .map(|(_, t)| t.as_str())
+        .collect();
+    if rest.is_empty() {
+        interp
+    } else {
+        format!("{} {}", rest.join(" "), interp)
     }
 }
 
