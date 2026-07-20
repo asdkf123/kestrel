@@ -8175,6 +8175,72 @@ impl Interp {
         Some(layers.join(", "))
     }
 
+    // background-size 보간: 쉼표 레이어별. contain/cover 는 불연속(레이어 플립),
+    // 각 레이어는 "w h"(1값이면 "w auto"), auto 컴포넌트는 불연속.
+    fn interp_bg_size(from: &str, to: &str, t: f32) -> Option<String> {
+        let split_commas = |s: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let mut depth = 0i32;
+            let mut cur = String::new();
+            for c in s.chars() {
+                match c {
+                    '(' => {
+                        depth += 1;
+                        cur.push(c);
+                    }
+                    ')' => {
+                        depth -= 1;
+                        cur.push(c);
+                    }
+                    ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+                    _ => cur.push(c),
+                }
+            }
+            out.push(cur);
+            out
+        };
+        let is_kw = |s: &str| matches!(s.trim().to_ascii_lowercase().as_str(), "contain" | "cover");
+        let fl = split_commas(from);
+        let tl = split_commas(to);
+        if fl.is_empty() || tl.is_empty() {
+            return None;
+        }
+        let n = fl.len().max(tl.len());
+        let mut layers = Vec::with_capacity(n);
+        for i in 0..n {
+            let fa = fl[i % fl.len()].trim();
+            let ta = tl[i % tl.len()].trim();
+            // contain/cover 는 보간 불가 → 전체 프로퍼티가 불연속(None → 플립).
+            if is_kw(fa) || is_kw(ta) {
+                return None;
+            }
+            let expand = |a: &str| -> Vec<String> {
+                let v: Vec<String> = a.split_whitespace().map(|x| x.to_string()).collect();
+                match v.len() {
+                    1 => vec![v[0].clone(), "auto".to_string()],
+                    _ => v,
+                }
+            };
+            let fc = expand(fa);
+            let tc = expand(ta);
+            if fc.len() != tc.len() {
+                return None;
+            }
+            let mut comps = Vec::with_capacity(fc.len());
+            for (a, b) in fc.iter().zip(&tc) {
+                if a == "auto" && b == "auto" {
+                    comps.push("auto".to_string());
+                } else if a == "auto" || b == "auto" {
+                    return None; // auto ↔ 길이 불일치 → 전체 불연속
+                } else {
+                    comps.push(Self::interp_len_pct(a, b, t)?);
+                }
+            }
+            layers.push(comps.join(" "));
+        }
+        Some(layers.join(", "))
+    }
+
     // 한 background-position 레이어를 (수평, 수직) length-percentage 로 해석.
     // "20px 30px", "left top", "center", edge-offset("right 20px bottom 10px") 지원.
     fn resolve_position_layer(s: &str) -> Option<(String, String)> {
@@ -8750,6 +8816,12 @@ impl Interp {
         // 단일 축 위치(background-position-x/y): 쉼표 레이어별 단일 length-percentage.
         if matches!(dash_prop, "background-position-x" | "background-position-y") {
             if let Some(v) = Self::interp_position_axis(from, to, eased) {
+                return Some(v);
+            }
+        }
+        // background-size: 다중 레이어 + auto/contain/cover.
+        if matches!(dash_prop, "background-size" | "-webkit-background-size" | "mask-size") {
+            if let Some(v) = Self::interp_bg_size(from, to, eased) {
                 return Some(v);
             }
         }
