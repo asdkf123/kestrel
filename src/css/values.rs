@@ -955,16 +955,27 @@ pub(crate) fn normalize_gradient_serial(text: &str, computed: bool) -> String {
     }
     let func = text[..open].to_ascii_lowercase();
     let inner = &text[open + 1..text.len() - 1];
-    let out: Vec<String> = split_top_commas(inner)
+    let segs = split_top_commas(inner);
+    // 스톱이 모던 색함수(ColorFn=color()/lab/oklch)를 하나라도 포함하면 non-legacy.
+    // 기본 보간 색공간: non-legacy=oklab, legacy=srgb (§CSS Color 4). 기본이면 생략.
+    let non_legacy = segs.iter().any(|s| {
+        split_top_level(s.trim())
+            .first()
+            .map(|t| matches!(interpret_value(t), Some(Value::ColorFn(..))))
+            .unwrap_or(false)
+    });
+    let default_space = if non_legacy { "oklab" } else { "srgb" };
+    let out: Vec<String> = segs
         .iter()
-        .map(|s| normalize_gradient_seg(s.trim(), computed))
+        .map(|s| normalize_gradient_seg(s.trim(), computed, default_space))
+        .filter(|s| !s.is_empty()) // 기본 보간만이던 prefix 세그먼트는 삭제
         .collect();
     format!("{}({})", func, out.join(", "))
 }
 
 // 그라디언트 세그먼트: 첫 토큰이 색이면 색을 정규화(위치는 유지), 아니면(방향/각도/
 // 보간 in <space>) 재정렬. computed=false 면 색 키워드(red)를 유지한다(지정값).
-fn normalize_gradient_seg(seg: &str, computed: bool) -> String {
+fn normalize_gradient_seg(seg: &str, computed: bool, default_space: &str) -> String {
     let toks = split_top_level(seg);
     if toks.is_empty() {
         return seg.to_string();
@@ -986,39 +997,46 @@ fn normalize_gradient_seg(seg: &str, computed: bool) -> String {
         }
         // prefix 세그먼트(각도/방향/보간): 보간 메서드(in ...)를 각도/방향 뒤로 재정렬
         // (§CSS Images 4 캐논: <angle|direction> in <space>). "in lab 30deg"→"30deg in lab".
-        _ => reorder_interp(&toks),
+        _ => reorder_interp(&toks, default_space),
     }
 }
 
-// prefix 세그먼트에서 보간 메서드(in ...)를 각도/방향 뒤로 옮긴다.
-fn reorder_interp(toks: &[String]) -> String {
+// prefix 세그먼트에서 보간 메서드(in <space> [<method> hue])를 각도/방향/크기 뒤로
+// 옮긴다. 기본 색공간(default_space)이면 생략(hue 없을 때), xyz→xyz-d65.
+fn reorder_interp(toks: &[String], default_space: &str) -> String {
     let Some(in_idx) = toks.iter().position(|t| t.eq_ignore_ascii_case("in")) else {
         return toks.join(" ");
     };
-    let is_angle = |t: &str| {
-        ["deg", "rad", "grad", "turn"]
-            .iter()
-            .any(|u| t.strip_suffix(u).map(|p| p.trim().parse::<f32>().is_ok()).unwrap_or(false))
-    };
-    // in 블록: in_idx 부터 각도/방향("to"/각도) 토큰 전까지.
-    let mut end = toks.len();
-    for (j, t) in toks.iter().enumerate().skip(in_idx + 1) {
-        if t.eq_ignore_ascii_case("to") || is_angle(t) {
-            end = j;
-            break;
-        }
+    // in 블록 = in + <space> [+ <method> hue]. space 는 in 바로 뒤.
+    let space_idx = in_idx + 1;
+    let mut end = (space_idx + 1).min(toks.len()); // in + space 까지
+    let has_hue = toks.get(end + 1).map(|t| t.eq_ignore_ascii_case("hue")).unwrap_or(false);
+    if has_hue {
+        end += 2; // <method> hue 포함
     }
-    let interp = toks[in_idx..end].join(" ");
+    let space = toks.get(space_idx).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    // xyz → xyz-d65 정규화.
+    let space_out = if space == "xyz" { "xyz-d65".to_string() } else { space.clone() };
+    // 기본 색공간이고 hue 없으면 보간 메서드 생략.
+    let interp = if !has_hue && space.eq_ignore_ascii_case(default_space) {
+        String::new()
+    } else {
+        let mut parts = vec!["in".to_string(), space_out];
+        if has_hue {
+            parts.extend(toks[space_idx + 1..end].iter().cloned());
+        }
+        parts.join(" ")
+    };
     let rest: Vec<&str> = toks
         .iter()
         .enumerate()
         .filter(|(k, _)| *k < in_idx || *k >= end)
         .map(|(_, t)| t.as_str())
         .collect();
-    if rest.is_empty() {
-        interp
-    } else {
-        format!("{} {}", rest.join(" "), interp)
+    match (rest.is_empty(), interp.is_empty()) {
+        (true, _) => interp,               // 각도/방향 없음 → 보간만(또는 빈=삭제)
+        (false, true) => rest.join(" "),   // 기본 보간 생략 → 각도/방향만
+        (false, false) => format!("{} {}", rest.join(" "), interp),
     }
 }
 
