@@ -368,8 +368,16 @@ fn declaration_supported(atom: &str) -> bool {
         return false; // 값이 파싱 안 됨
     }
     // 확장된 longhand 가 전부 구현돼 있고, 값도 엔진이 실제로 해석하는 값이어야 한다.
+    // box-shadow/text-shadow 의 내부 longhand(-x/-y/-blur/-color 등, 비표준 구현세부)는
+    // 제외 — box-shadow 자신은 SUPPORTED 이고 paint 가 원문 Keyword 를 읽어 그린다.
+    let is_internal = |name: &str| {
+        (name.starts_with("box-shadow-") || name.starts_with("text-shadow-"))
+            && name != "box-shadow"
+            && name != "text-shadow"
+    };
     expanded
         .iter()
+        .filter(|d| !is_internal(&d.name))
         .all(|d| longhand_decl_supported(&d.name, &crate::style::computed_value_string(&d.value)))
 }
 
