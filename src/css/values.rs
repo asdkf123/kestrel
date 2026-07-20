@@ -1011,6 +1011,30 @@ fn resolve_at_position(toks: &[String], fs: f32, root_fs: f32) -> String {
         None => (after, &after[after.len()..]),
     };
     let mut pos: Vec<String> = pos_slice.to_vec();
+    // 4-값 문법: <x-edge> <x-off> <y-edge> <y-off> ("left 10px top 50em"). edge 가
+    // left/top 이면 오프셋 그대로, right/bottom 이면 calc(100% - off).
+    if pos.len() == 4 {
+        let is_x = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "left" | "right");
+        let (xe, xo, ye, yo) = if is_x(&pos[0]) {
+            (&pos[0], &pos[1], &pos[2], &pos[3])
+        } else {
+            (&pos[2], &pos[3], &pos[0], &pos[1])
+        };
+        let edge_off = |edge: &str, off: &str| -> String {
+            let off_px = resolve_len_token(off, fs, root_fs);
+            match edge.to_ascii_lowercase().as_str() {
+                "right" | "bottom" => format!("calc(100% - {})", off_px),
+                _ => off_px, // left/top → 오프셋 그대로
+            }
+        };
+        let x = edge_off(xe, xo);
+        let y = edge_off(ye, yo);
+        return if rest.is_empty() {
+            format!("at {} {}", x, y)
+        } else {
+            format!("at {} {} {}", x, y, rest.join(" "))
+        };
+    }
     if pos.len() == 2
         && matches!(pos[0].to_ascii_lowercase().as_str(), "top" | "bottom")
         && matches!(pos[1].to_ascii_lowercase().as_str(), "left" | "right" | "center")
