@@ -249,6 +249,17 @@ pub struct Interp {
     // 계산된 스타일 (NodeId → 대시 프로퍼티명 → CSS 텍스트). 리빌드 후 호스트가 채움.
     // getComputedStyle 이 읽는다. 빈 맵이면 빈 문자열.
     pub computed_styles: std::collections::HashMap<crate::dom::NodeId, HashMap<String, String>>,
+    // 요소별 활성 애니메이션(element.animate). getComputedStyle 이 currentTime 에서 키프레임
+    // 을 보간해 계산값에 덮어쓴다. (Animation 객체 Rc[currentTime], 지속시간ms, 프로퍼티맵
+    // dash-prop→(from, to, from키프레임 easing)). 애니 있는 요소만 영향(additive).
+    pub element_animations: std::collections::HashMap<
+        crate::dom::NodeId,
+        Vec<(
+            std::rc::Rc<std::cell::RefCell<ObjMap>>,
+            f64,
+            HashMap<String, (String, String, String)>,
+        )>,
+    >,
     // <canvas> 2D 그리기 명령 (NodeId → ops). 호스트가 렌더 시 DisplayItem 으로 변환.
     // 캔버스 미지원 기능 경고 중복 방지
     canvas_warned: std::collections::HashSet<String>,
@@ -1540,6 +1551,7 @@ impl Interp {
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
+            element_animations: std::collections::HashMap::new(),
             canvas_warned: std::collections::HashSet::new(),
             canvas_cmds: std::collections::HashMap::new(),
             global_handlers: Vec::new(),
@@ -6606,6 +6618,11 @@ impl Interp {
                     return Ok(names.get(i).map(|s| Value::Str(s.clone())).unwrap_or(Value::Str(String::new())));
                 }
                 let dashed = camel_to_dashed(key);
+                // 활성 애니메이션(element.animate)이 이 프로퍼티를 다루면 currentTime 에서
+                // 보간한 값으로 덮어쓴다(애니 있는 요소만 — additive).
+                if let Some(interp) = self.animated_value(id, &dashed) {
+                    return Ok(Value::Str(interp));
+                }
                 let v = self
                     .computed_styles
                     .get(&id)
@@ -7824,6 +7841,108 @@ impl Interp {
             }
             _ => Ok(Value::Undefined),
         }
+    }
+
+    // 활성 애니메이션이 dash_prop 을 다루면 currentTime 에서 보간한 계산값(뒤 애니 우선).
+    fn animated_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
+        let anims = self.element_animations.get(&id)?;
+        let mut result = None;
+        for (rc, duration, props) in anims {
+            if *duration <= 0.0 {
+                continue;
+            }
+            if let Some((from, to, easing)) = props.get(dash_prop) {
+                let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
+                let progress = (ct / duration).clamp(0.0, 1.0) as f32;
+                let eased = Self::eval_easing(easing, progress);
+                if let Some(v) = Self::interp_css_value(from, to, eased) {
+                    result = Some(v);
+                }
+            }
+        }
+        result
+    }
+
+    // 이징 함수를 진행률 t(0..1)에서 평가. linear/steps/cubic-bezier.
+    fn eval_easing(easing: &str, t: f32) -> f32 {
+        let e = easing.trim().to_ascii_lowercase();
+        if e.is_empty() || e == "linear" {
+            return t;
+        }
+        if let Some(rest) = e.strip_prefix("steps(").and_then(|r| r.strip_suffix(')')) {
+            let parts: Vec<&str> = rest.split(',').map(|s| s.trim()).collect();
+            let n: f32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+            if n <= 0.0 {
+                return t;
+            }
+            let pos = parts.get(1).copied().unwrap_or("end");
+            let steps = if pos.contains("start") {
+                (t * n).ceil()
+            } else {
+                (t * n).floor()
+            };
+            return (steps / n).clamp(0.0, 1.0);
+        }
+        if let Some(rest) = e.strip_prefix("cubic-bezier(").and_then(|r| r.strip_suffix(')')) {
+            let c: Vec<f32> = rest.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            if c.len() == 4 {
+                let (x1, x2) = (c[0], c[2]);
+                let (y1, y2) = (c[1], c[3]);
+                // bezier_x(s)=t 를 이분탐색으로 풀고 bezier_y(s) 반환.
+                let bx = |s: f32| 3.0 * (1.0 - s).powi(2) * s * x1 + 3.0 * (1.0 - s) * s * s * x2 + s.powi(3);
+                let by = |s: f32| 3.0 * (1.0 - s).powi(2) * s * y1 + 3.0 * (1.0 - s) * s * s * y2 + s.powi(3);
+                let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                for _ in 0..30 {
+                    let mid = (lo + hi) / 2.0;
+                    if bx(mid) < t {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                return by((lo + hi) / 2.0);
+            }
+        }
+        t
+    }
+
+    // CSS 값 보간(from→to, t). px 길이/%/수/색(rgb) lerp. 그 외 타입은 None(불연속).
+    fn interp_css_value(from: &str, to: &str, t: f32) -> Option<String> {
+        let f = from.trim();
+        let g = to.trim();
+        let lerp = |a: f32, b: f32| a + (b - a) * t;
+        // <length>px
+        if let (Some(a), Some(b)) = (
+            f.strip_suffix("px").and_then(|x| x.trim().parse::<f32>().ok()),
+            g.strip_suffix("px").and_then(|x| x.trim().parse::<f32>().ok()),
+        ) {
+            return Some(format!("{}px", crate::style::num_css(lerp(a, b))));
+        }
+        // <percentage>
+        if let (Some(a), Some(b)) = (
+            f.strip_suffix('%').and_then(|x| x.trim().parse::<f32>().ok()),
+            g.strip_suffix('%').and_then(|x| x.trim().parse::<f32>().ok()),
+        ) {
+            return Some(format!("{}%", crate::style::num_css(lerp(a, b))));
+        }
+        // <number>
+        if let (Ok(a), Ok(b)) = (f.parse::<f32>(), g.parse::<f32>()) {
+            return Some(crate::style::num_css(lerp(a, b)));
+        }
+        // <color> — interpret_value 로 파싱해 컴포넌트 lerp.
+        if let (Some(crate::css::Value::Color(a)), Some(crate::css::Value::Color(b))) =
+            (crate::css::interpret_value(f), crate::css::interpret_value(g))
+        {
+            let ch = |x: u8, y: u8| lerp(x as f32, y as f32).round().clamp(0.0, 255.0) as u8;
+            let (r, gg, bl) = (ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
+            let al = lerp(a.a as f32, b.a as f32).round().clamp(0.0, 255.0) as u8;
+            if al == 255 {
+                return Some(format!("rgb({}, {}, {})", r, gg, bl));
+            }
+            let af = crate::style::num_css((al as f32 / 255.0 * 100.0).round() / 100.0);
+            return Some(format!("rgba({}, {}, {}, {})", r, gg, bl, af));
+        }
+        None
     }
 
     // Expr::Call 의 본문 (프레임 push/pop 을 위해 분리). 동작은 그대로.

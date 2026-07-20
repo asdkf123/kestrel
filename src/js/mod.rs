@@ -1201,6 +1201,19 @@ if (window.Node) {
 }
 if (!window.Node) window.Node = __kIface(function(x){ return typeof x.nodeType === 'number'; });
 if (!window.Element) window.Element = __kIface(function(x){ return typeof x.tagName === 'string'; });
+// Element.prototype 에 DOM 메서드를 등록(feature detection `'animate' in Element.prototype`
+// 용). 실제 호출은 요소 인스턴스의 member_get 이 네이티브로 가로챈다(이 함수는 폴백/탐지용).
+if (window.Element && Element.prototype && !('animate' in Element.prototype)) {
+  Element.prototype.animate = function(k, o){ return undefined; };
+  Element.prototype.getAnimations = function(){ return []; };
+  Element.prototype.getBoundingClientRect = function(){ return undefined; };
+  Element.prototype.getClientRects = function(){ return []; };
+  Element.prototype.closest = function(){ return null; };
+  Element.prototype.matches = function(){ return false; };
+  Element.prototype.scrollIntoView = function(){};
+  Element.prototype.attachShadow = function(){ return null; };
+  Element.prototype.requestFullscreen = function(){ return Promise.reject(); };
+}
 if (!window.Document) window.Document = __kIface(function(x){ return x.nodeType === 9; });
 if (!window.DocumentFragment) window.DocumentFragment = __kIface(function(x){ return !!x && x.nodeType === 11; });
 if (!window.HTMLAnchorElement) window.HTMLAnchorElement = __kTagIface('A');

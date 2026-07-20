@@ -4939,46 +4939,93 @@ impl Interp {
             // 코드에서 그 콘텐츠가 영영 안 나온다.
             Native::ElementAnimate => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
-                let fill = match args.get(1) {
+                // 옵션: duration(ms), fill, easing.
+                let (duration, fill, opt_easing) = match args.get(1) {
                     Some(Value::Obj(o)) => {
-                        o.borrow().get("fill").map(to_display).unwrap_or_default()
+                        let b = o.borrow();
+                        let d = b.get("duration").map(to_num).filter(|d| d.is_finite() && *d > 0.0).unwrap_or(0.0);
+                        let f = b.get("fill").map(to_display).unwrap_or_default();
+                        let e = b.get("easing").map(to_display).unwrap_or_default();
+                        (d, f, e)
                     }
-                    _ => String::new(),
+                    Some(v) => (to_num(v).max(0.0), String::new(), String::new()),
+                    _ => (0.0, String::new(), String::new()),
                 };
-                if fill == "forwards" || fill == "both" {
-                    // 마지막 키프레임의 프로퍼티를 인라인 스타일로
-                    let last = match args.first() {
-                        Some(Value::Arr(a)) => a.borrow().last().cloned(),
-                        Some(v @ Value::Obj(_)) => Some(v.clone()),
-                        _ => None,
-                    };
-                    if let Some(Value::Obj(kf)) = last {
-                        let props: Vec<(String, String)> = kf
-                            .borrow()
-                            .iter()
-                            .filter(|(k, _)| {
-                                !matches!(k.as_str(), "offset" | "easing" | "composite")
-                                    && !is_internal_key(k)
-                            })
-                            .map(|(k, v)| (camel_to_dashed(k), to_display(v)))
-                            .collect();
-                        for (k, v) in props {
-                            self.style_set(id, &k, &v);
+                // 키프레임(배열형)에서 프로퍼티별 from/to/easing 추출.
+                let frames: Vec<Value> = match args.first() {
+                    Some(Value::Arr(a)) => a.borrow().clone(),
+                    _ => Vec::new(),
+                };
+                let mut props: HashMap<String, (String, String, String)> = HashMap::new();
+                if frames.len() >= 2 {
+                    let kf_easing = |kf: &Value| -> String {
+                        if let Value::Obj(o) = kf {
+                            if let Some(e) = o.borrow().get("easing") {
+                                return to_display(e);
+                            }
                         }
+                        String::new()
+                    };
+                    let easing = {
+                        let e = kf_easing(&frames[0]);
+                        if e.is_empty() { opt_easing.clone() } else { e }
+                    };
+                    // "from neutral" 은 from 키프레임에 값이 없다 → 요소의 기저 계산값을 from 으로.
+                    self.ensure_layout();
+                    let base = self.computed_styles.get(&id).cloned().unwrap_or_default();
+                    let last = frames[frames.len() - 1].clone();
+                    let first = frames[0].clone();
+                    // TO 키프레임의 프로퍼티들을 애니메이트한다(from 은 frames[0] 또는 기저값).
+                    let (to_keys, tb): (Vec<String>, Option<_>) = match &last {
+                        Value::Obj(t) => (t.borrow().keys().cloned().collect(), Some(t.clone())),
+                        _ => (Vec::new(), None),
+                    };
+                    let fb = if let Value::Obj(f) = &first { Some(f.clone()) } else { None };
+                    for k in to_keys {
+                        if matches!(k.as_str(), "offset" | "easing" | "composite")
+                            || is_internal_key(&k)
+                        {
+                            continue;
+                        }
+                        let dash = camel_to_dashed(&k);
+                        let to = tb.as_ref().and_then(|t| t.borrow().get(&k).map(to_display)).unwrap_or_default();
+                        let from = fb
+                            .as_ref()
+                            .and_then(|f| f.borrow().get(&k).map(to_display))
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| base.get(&dash).cloned().unwrap_or_default());
+                        props.insert(dash, (from, to, easing.clone()));
                     }
                 }
+                // 기본 currentTime: fill forwards/both 면 종료시각(마지막 키프레임 유지),
+                // 아니면 0. interpolation 테스트는 pause 후 currentTime 을 명시 설정한다.
+                let default_ct = if matches!(fill.as_str(), "forwards" | "both") {
+                    duration
+                } else {
+                    0.0
+                };
                 let done = self.new_promise();
                 self.resolve_promise(&done, Value::Undefined);
                 let mut m = ObjMap::new();
                 m.insert("finished".to_string(), done.clone());
                 m.insert("ready".to_string(), done);
                 m.insert("playState".to_string(), Value::Str("finished".to_string()));
-                m.insert("currentTime".to_string(), Value::Num(0.0));
-                for k in ["play", "pause", "cancel", "finish", "reverse", "addEventListener",
-                          "removeEventListener"] {
+                m.insert("currentTime".to_string(), Value::Num(default_ct));
+                m.insert("\u{0}duration".to_string(), Value::Num(duration));
+                for k in ["play", "pause", "cancel", "finish", "reverse", "updatePlaybackRate",
+                          "addEventListener", "removeEventListener"] {
                     m.insert(k.to_string(), Value::Native(Native::Noop));
                 }
-                Ok(Value::Obj(Rc::new(RefCell::new(m))))
+                let rc = Rc::new(RefCell::new(m));
+                // 애니 등록(계산값 보간용). duration>0 이고 프로퍼티가 있을 때만.
+                if duration > 0.0 && !props.is_empty() {
+                    self.element_animations.entry(id).or_default().push((
+                        rc.clone(),
+                        duration,
+                        props,
+                    ));
+                }
+                Ok(Value::Obj(rc))
             }
             Native::GetAttributeNames => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
