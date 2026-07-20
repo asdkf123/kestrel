@@ -486,14 +486,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "filter" | "-webkit-filter" => {
             vec![Declaration { important: false, name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
-        // animation 단축: 이름 토큰만 추출 (정적 렌더가 @keyframes 최종 상태를 적용하기 위함).
-        "animation" | "-webkit-animation" => {
-            let name = split_top_level(value_text).into_iter().find(|t| is_animation_name(t));
-            match name {
-                Some(n) => vec![Declaration { important: false, name: "animation-name".to_string(), value: Value::Keyword(n.to_string()) }],
-                None => Vec::new(),
-            }
-        }
+        // animation 단축 → 롱핸드. 첫 시간=duration, 둘째=delay. 나머지는 키워드로 구분.
+        "animation" | "-webkit-animation" => animation_shorthand(value_text),
         // text-shadow: <dx> <dy> [blur] <color> (단일 그림자). 상속 속성. paint 가 글리프 뒤에 그림.
         "text-shadow" => {
             if value_text.trim() == "none" {
@@ -812,6 +806,68 @@ fn space_top_level_slashes(text: &str) -> String {
         }
     }
     out
+}
+
+// animation 단축 → 여덟 롱핸드. 첫 시간=duration, 둘째=delay. 나머지는 키워드/수로.
+fn animation_shorthand(value_text: &str) -> Vec<Declaration> {
+    let kw = |name: &str, val: String| Declaration {
+        important: false,
+        name: name.to_string(),
+        value: Value::Keyword(val),
+    };
+    let is_time = |s: &str| -> bool {
+        s.strip_suffix("ms").map(|n| n.parse::<f32>().is_ok()).unwrap_or(false)
+            || s.strip_suffix('s').map(|n| n.parse::<f32>().is_ok()).unwrap_or(false)
+    };
+    let is_timing = |s: &str| -> bool {
+        matches!(s, "ease" | "linear" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end")
+            || s.starts_with("cubic-bezier(")
+            || s.starts_with("steps(")
+    };
+    let (mut names, mut durs, mut tfs, mut delays, mut iters, mut dirs, mut fills, mut states) =
+        (vec![], vec![], vec![], vec![], vec![], vec![], vec![], vec![]);
+    for part in split_top_level_commas(value_text.trim()) {
+        let (mut name, mut times, mut tf, mut iter, mut dir, mut fill, mut state): (
+            Option<String>, Vec<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+        ) = (None, vec![], None, None, None, None, None);
+        for tok in split_top_level(part.trim()) {
+            let tl = tok.to_ascii_lowercase();
+            if is_time(&tl) {
+                times.push(tok.to_string());
+            } else if is_timing(&tl) {
+                tf = Some(tok.to_string());
+            } else if tl == "infinite" || tl.parse::<f32>().is_ok() {
+                iter = Some(tok.to_string());
+            } else if matches!(tl.as_str(), "normal" | "reverse" | "alternate" | "alternate-reverse") {
+                dir = Some(tl.clone());
+            } else if matches!(tl.as_str(), "forwards" | "backwards" | "both") {
+                fill = Some(tl.clone());
+            } else if matches!(tl.as_str(), "running" | "paused") {
+                state = Some(tl.clone());
+            } else {
+                name = Some(tok.to_string());
+            }
+        }
+        names.push(name.unwrap_or_else(|| "none".to_string()));
+        durs.push(times.first().cloned().unwrap_or_else(|| "0s".to_string()));
+        delays.push(times.get(1).cloned().unwrap_or_else(|| "0s".to_string()));
+        tfs.push(tf.unwrap_or_else(|| "ease".to_string()));
+        iters.push(iter.unwrap_or_else(|| "1".to_string()));
+        dirs.push(dir.unwrap_or_else(|| "normal".to_string()));
+        fills.push(fill.unwrap_or_else(|| "none".to_string()));
+        states.push(state.unwrap_or_else(|| "running".to_string()));
+    }
+    vec![
+        kw("animation-name", names.join(", ")),
+        kw("animation-duration", durs.join(", ")),
+        kw("animation-timing-function", tfs.join(", ")),
+        kw("animation-delay", delays.join(", ")),
+        kw("animation-iteration-count", iters.join(", ")),
+        kw("animation-direction", dirs.join(", ")),
+        kw("animation-fill-mode", fills.join(", ")),
+        kw("animation-play-state", states.join(", ")),
+        kw("animation", value_text.trim().to_string()),
+    ]
 }
 
 // transition 단축 → 다섯 롱핸드. 각 롱핸드는 콤마 목록. 첫 시간값=duration,
