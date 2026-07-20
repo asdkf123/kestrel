@@ -113,7 +113,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             ]
         }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
-        // 직접 파싱 실패 시 수학 함수(abs/sign/round/…)를 평가한다 — z-index: abs(1) 등.
+        // z-index: <integer> | auto. 직접 파싱 실패 시 수학 함수(abs/sign/round/…) 평가.
+        "z-index" if value_text.trim().eq_ignore_ascii_case("auto") => {
+            vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Keyword("auto".to_string()) }]
+        }
         "z-index" => match number_or_math(value_text) {
             Some(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
