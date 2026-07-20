@@ -8074,12 +8074,97 @@ impl Interp {
         Some(crate::layout::transform_computed_string(&parts.join(" "), w, h))
     }
 
+    // 2D transform 행렬 분해: (a,b,c,d,e,f) → (tx,ty,sx,sy,skew,angle). §CSS Transforms
+    // "Interpolation of Matrices" 의 2D unmatrix. 3D/특이행렬은 None.
+    fn decompose_2d(mut a: f32, mut b: f32, mut c: f32, mut d: f32, e: f32, f: f32) -> Option<(f32, f32, f32, f32, f32, f32)> {
+        let det = a * d - b * c;
+        if det == 0.0 {
+            return None;
+        }
+        let mut sx = (a * a + b * b).sqrt();
+        if sx == 0.0 {
+            return None;
+        }
+        a /= sx;
+        b /= sx;
+        let mut skew = a * c + b * d;
+        c -= a * skew;
+        d -= b * skew;
+        let sy = (c * c + d * d).sqrt();
+        if sy == 0.0 {
+            return None;
+        }
+        c /= sy;
+        d /= sy;
+        skew /= sy;
+        // 반사(음의 행렬식): sx 부호를 뒤집어 회전으로 흡수.
+        if a * d - b * c < 0.0 {
+            a = -a;
+            b = -b;
+            sx = -sx;
+        }
+        let angle = b.atan2(a);
+        Some((e, f, sx, sy, skew, angle))
+    }
+
+    // 분해 컴포넌트 → 2D 행렬. recompose = translate · rotate · skew · scale.
+    fn recompose_2d(tx: f32, ty: f32, sx: f32, sy: f32, skew: f32, angle: f32) -> [f32; 6] {
+        let (cos, sin) = (angle.cos(), angle.sin());
+        // rotate
+        let (ra, rb, rc, rd) = (cos, sin, -sin, cos);
+        // skew (x): [1 skew; 0 1] 를 오른쪽 곱
+        let (ka, kb, kc, kd) = (ra, rb, ra * skew + rc, rb * skew + rd);
+        // scale
+        [ka * sx, kb * sx, kc * sy, kd * sy, tx, ty]
+    }
+
+    // 불일치 함수 리스트는 양쪽을 2D 행렬로 분해해 컴포넌트 보간 후 재합성한다.
+    // 3D(matrix3d/perspective/rotate3d 등)는 미지원(→플립).
+    fn interp_matrix_2d(from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
+        if crate::layout::transform_matrix3d(from, w, h).is_some()
+            || crate::layout::transform_matrix3d(to, w, h).is_some()
+        {
+            return None; // 3D → 미지원
+        }
+        let ma = crate::layout::parse_transform(from, w, h);
+        let mb = crate::layout::parse_transform(to, w, h);
+        let da = Self::decompose_2d(ma.a, ma.b, ma.c, ma.d, ma.e, ma.f)?;
+        let db = Self::decompose_2d(mb.a, mb.b, mb.c, mb.d, mb.e, mb.f)?;
+        let t = eased;
+        let lerp = |x: f32, y: f32| x + (y - x) * t;
+        // 회전은 최단 경로가 아니라 분해된 각도를 직접 보간(§spec).
+        let m = Self::recompose_2d(
+            lerp(da.0, db.0),
+            lerp(da.1, db.1),
+            lerp(da.2, db.2),
+            lerp(da.3, db.3),
+            lerp(da.4, db.4),
+            lerp(da.5, db.5),
+        );
+        let n = |v: f32| -> String {
+            let v = if v.abs() < 1e-6 { 0.0 } else { v };
+            if v.fract() == 0.0 && v.is_finite() {
+                format!("{}", v as i64)
+            } else {
+                format!("{:.6}", v).trim_end_matches('0').trim_end_matches('.').to_string()
+            }
+        };
+        Some(format!(
+            "matrix({}, {}, {}, {}, {}, {})",
+            n(m[0]), n(m[1]), n(m[2]), n(m[3]), n(m[4]), n(m[5])
+        ))
+    }
+
     // from→to 를 이징 출력 eased 로 보간해 직렬화. scale/translate 컴포넌트 확장,
     // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
     fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
         // transform 매칭 리스트 보간(rotate/translate/scale 함수별 인자 보간 → 행렬).
         if dash_prop == "transform" {
             if let Some(v) = Self::interp_transform(from, to, eased, w, h) {
+                return Some(v);
+            }
+            // 불일치 리스트: 2D 행렬 분해 보간.
+            if let Some(v) = Self::interp_matrix_2d(from, to, eased, w, h) {
                 return Some(v);
             }
         }
