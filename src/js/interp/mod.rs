@@ -7855,7 +7855,16 @@ impl Interp {
                 let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
                 let progress = (ct / duration).clamp(0.0, 1.0) as f32;
                 let eased = Self::eval_easing(easing, progress);
-                if let Some(v) = Self::interp_css_value(from, to, eased) {
+                // scale/translate 프로퍼티는 컴포넌트 수가 달라도(예: "2 1" ↔ "26 17 9")
+                // 각각 x y z 로 확장(scale z 는 1, translate y/z 는 0)해 보간해야 한다.
+                let special = match dash_prop {
+                    "scale" => Self::interp_scale(from, to, eased),
+                    "translate" => Self::interp_translate(from, to, eased),
+                    _ => None,
+                };
+                if let Some(v) = special {
+                    result = Some(v);
+                } else if let Some(v) = Self::interp_css_value(from, to, eased) {
                     result = Some(v);
                 } else if !from.is_empty() && !to.is_empty() {
                     // 보간 불가(불연속 타입) → 플립. 기본은 이징 출력 0.5 기준.
@@ -8021,6 +8030,91 @@ impl Interp {
             return Some(format!("rgba({}, {}, {}, {})", r, gg, bl, af));
         }
         None
+    }
+
+    // scale 프로퍼티 보간(§CSS Transforms 2). "sx [sy] [sz]" 를 [x,y,z] 로 확장
+    // (1개→[a a 1], 2개→[a b 1], 3개→[a b c]) 후 각 컴포넌트 lerp, normalize_scale 로
+    // 직렬화. 컴포넌트 수가 달라도 되므로 generic 다중값 보간이 못 하는 경우를 처리.
+    fn interp_scale(from: &str, to: &str, t: f32) -> Option<String> {
+        let expand = |s: &str| -> Option<[f32; 3]> {
+            let toks: Vec<f32> = s
+                .split_whitespace()
+                .map(|x| {
+                    if let Some(p) = x.strip_suffix('%') {
+                        p.parse::<f32>().ok().map(|v| v / 100.0)
+                    } else {
+                        x.parse::<f32>().ok()
+                    }
+                })
+                .collect::<Option<Vec<f32>>>()?;
+            match toks.len() {
+                1 => Some([toks[0], toks[0], 1.0]),
+                2 => Some([toks[0], toks[1], 1.0]),
+                3 => Some([toks[0], toks[1], toks[2]]),
+                _ => None,
+            }
+        };
+        let f = expand(from)?;
+        let g = expand(to)?;
+        let r = [
+            f[0] + (g[0] - f[0]) * t,
+            f[1] + (g[1] - f[1]) * t,
+            f[2] + (g[2] - f[2]) * t,
+        ];
+        Some(crate::style::normalize_scale(&format!("{} {} {}", r[0], r[1], r[2])))
+    }
+
+    // translate 프로퍼티 보간(§CSS Transforms 2). "tx [ty] [tz]" 를 [x,y,z] 로 확장
+    // (생략된 축은 0), 같은 단위(px 또는 %)끼리 컴포넌트 lerp. x/y 단위가 서로 다르면
+    // (px↔%) generic 경로로(→불연속). normalize_translate 로 직렬화.
+    fn interp_translate(from: &str, to: &str, t: f32) -> Option<String> {
+        // 각 축을 (수, 단위) 로. 빈 축은 (0,"px"). 단위는 px/%.
+        let comp = |x: &str| -> Option<(f32, &'static str)> {
+            let x = x.trim();
+            if let Some(p) = x.strip_suffix('%') {
+                p.parse::<f32>().ok().map(|v| (v, "%"))
+            } else if let Some(p) = x.strip_suffix("px") {
+                p.parse::<f32>().ok().map(|v| (v, "px"))
+            } else if x == "0" {
+                Some((0.0, "px"))
+            } else {
+                None
+            }
+        };
+        let expand = |s: &str| -> Option<[(f32, &'static str); 3]> {
+            let toks: Vec<&str> = s.split_whitespace().collect();
+            if toks.is_empty() || toks.len() > 3 {
+                return None;
+            }
+            let mut out = [(0.0f32, "px"); 3];
+            for (i, tk) in toks.iter().enumerate() {
+                out[i] = comp(tk)?;
+            }
+            Some(out)
+        };
+        let f = expand(from)?;
+        let g = expand(to)?;
+        let mut axes = [String::new(), String::new(), String::new()];
+        for i in 0..3 {
+            let (fv, fu) = f[i];
+            let (gv, gu) = g[i];
+            // 단위가 다르면(0 이 아닌 px↔%) 보간 불가 → 전체 None(generic/플립으로).
+            let unit = if fv == 0.0 {
+                gu
+            } else if gv == 0.0 {
+                fu
+            } else if fu == gu {
+                fu
+            } else {
+                return None;
+            };
+            let r = fv + (gv - fv) * t;
+            axes[i] = format!("{}{}", crate::style::num_css(r), unit);
+        }
+        Some(crate::style::normalize_translate(&format!(
+            "{} {} {}",
+            axes[0], axes[1], axes[2]
+        )))
     }
 
     // Expr::Call 의 본문 (프레임 push/pop 을 위해 분리). 동작은 그대로.
