@@ -418,7 +418,10 @@ fn eval_calc(inner: &str) -> Option<Value> {
         return None;
     }
     if v.is_num {
-        return Some(Value::Length(v.num, Unit::Px));
+        // 맨수 calc(2)/calc(cos(0)) 는 단위 없는 수다(표준). 예전엔 Px 로 반환해
+        // line-height:calc(1.5)=1.5px, calc(cos(0)) 계산값=1px 처럼 틀렸다. 길이
+        // 문맥의 calc(<수>)는 애초에 무효 CSS라 Number 로 두는 게 더 정확하다.
+        return Some(Value::Length(v.num, Unit::Number));
     }
     let sum = crate::css::CalcSum {
         pct: v.pct,
