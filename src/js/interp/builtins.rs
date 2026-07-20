@@ -5022,6 +5022,32 @@ impl Interp {
                         *from = self.resolve_wide_keyword(id, dash, from);
                         *to = self.resolve_wide_keyword(id, dash, to);
                     }
+                    // composite: add/accumulate — 키프레임 값을 기저값에 더한다
+                    // (§Web Animations). 길이/수 프로퍼티만(transform 은 행렬 합성이라 제외).
+                    let composite = frames
+                        .iter()
+                        .find_map(|f| {
+                            if let Value::Obj(o) = f {
+                                o.borrow().get("composite").map(to_display)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+                    if (composite == "add" || composite == "accumulate")
+                        && !props.contains_key("transform")
+                    {
+                        for (dash, (from, to, _ez)) in props.iter_mut() {
+                            if let Some(bv) = base.get(dash) {
+                                if let Some(nf) = Self::add_css_values(bv, from) {
+                                    *from = nf;
+                                }
+                                if let Some(nt) = Self::add_css_values(bv, to) {
+                                    *to = nt;
+                                }
+                            }
+                        }
+                    }
                     // 단축 프로퍼티(margin/padding/border-radius 등)를 롱핸드로 확장 —
                     // getComputedStyle 은 롱핸드(margin-top)로 읽으므로.
                     let mut expanded: HashMap<String, (String, String, String)> = HashMap::new();

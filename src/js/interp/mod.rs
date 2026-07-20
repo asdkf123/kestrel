@@ -8007,6 +8007,31 @@ impl Interp {
         Some(format!("{}{}", crate::style::num_css(v), ua))
     }
 
+    // 두 CSS 값을 더한다(composite:add). 같은 단위의 수치 토큰끼리 합산. 토큰 수나
+    // 단위가 안 맞으면 None(덧셈 불가). 길이/수/% 만.
+    pub(super) fn add_css_values(a: &str, b: &str) -> Option<String> {
+        let at: Vec<&str> = a.split_whitespace().collect();
+        let bt: Vec<&str> = b.split_whitespace().collect();
+        if at.is_empty() || at.len() != bt.len() {
+            return None;
+        }
+        let split = |s: &str| -> Option<(f32, String)> {
+            let s = s.trim();
+            let pos = s.find(|c: char| c.is_ascii_alphabetic() || c == '%').unwrap_or(s.len());
+            s[..pos].parse::<f32>().ok().map(|n| (n, s[pos..].to_string()))
+        };
+        let mut out = Vec::with_capacity(at.len());
+        for (x, y) in at.iter().zip(&bt) {
+            let (nx, ux) = split(x)?;
+            let (ny, uy) = split(y)?;
+            if ux != uy {
+                return None;
+            }
+            out.push(format!("{}{}", crate::style::num_css(nx + ny), ux));
+        }
+        Some(out.join(" "))
+    }
+
     // 다중값의 각 수치 토큰을 0 이상으로 클램프(비음수 프로퍼티 외삽용).
     fn clamp_nonneg(v: &str) -> String {
         v.split_whitespace()
