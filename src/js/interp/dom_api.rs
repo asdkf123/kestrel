@@ -218,6 +218,12 @@ impl Interp {
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
+        // shape-outside/clip-path 의 circle()/ellipse() "at" 위치 캐논 직렬화.
+        if matches!(prop, "shape-outside" | "clip-path" | "offset-path")
+            && (rl.starts_with("circle(") || rl.starts_with("ellipse("))
+        {
+            return crate::css::normalize_shape(raw);
+        }
         match prop {
             "scale" => return crate::style::normalize_scale(raw),
             "rotate" => return crate::style::normalize_rotate(raw),

@@ -816,6 +816,66 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
 // 보간 메서드 구조는 원문 그대로 둔다. 렌더용 Gradient 구조체는 방향키워드·보간
 // 메서드를 잃으므로(각도로 접힘) 원문 텍스트에서 색만 바꾸는 게 정확하다.
 // "linear-gradient(30deg, red, blue)" → "...(30deg, rgb(255, 0, 0), rgb(0, 0, 255))".
+// shape 함수(circle/ellipse) 의 "at <position>" 캐논 직렬화(§CSS Shapes): 위치는
+// x-part 먼저, 빠진 축은 center, 값은 원문 유지(cm/키워드 해석 안 함). circle(at
+// 50cm)→"circle(at 50cm center)", circle(at top 50% left 50cm)→"...(at left 50cm
+// top 50%)". inset/polygon/path 및 "at" 없는 경우는 원문.
+pub(crate) fn normalize_shape(text: &str) -> String {
+    let text = text.trim();
+    let lower = text.to_ascii_lowercase();
+    if !(lower.starts_with("circle(") || lower.starts_with("ellipse(")) || !text.ends_with(')') {
+        return text.to_string();
+    }
+    let open = text.find('(').unwrap();
+    let func = text[..open].to_ascii_lowercase();
+    let inner = text[open + 1..text.len() - 1].trim();
+    let toks = split_top_level(inner);
+    let Some(at_idx) = toks.iter().position(|t| t.eq_ignore_ascii_case("at")) else {
+        return text.to_string();
+    };
+    let before = toks[..at_idx].join(" "); // radius 등
+    let pos = normalize_position(&toks[at_idx + 1..]);
+    let mut parts = Vec::new();
+    if !before.is_empty() {
+        parts.push(before);
+    }
+    parts.push(format!("at {}", pos));
+    format!("{}({})", func, parts.join(" "))
+}
+
+// CSS <position> 캐논 직렬화: x-part 먼저, 빠진 축 center. 값 원문 유지(해석 안 함).
+fn normalize_position(toks: &[String]) -> String {
+    let is_x = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "left" | "right");
+    let is_y = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "top" | "bottom");
+    match toks.len() {
+        0 => "center center".to_string(),
+        1 => {
+            if is_y(&toks[0]) {
+                format!("center {}", toks[0])
+            } else {
+                format!("{} center", toks[0])
+            }
+        }
+        2 => {
+            // <x> <y>. y키워드가 먼저면 x/y 뒤집기.
+            if is_y(&toks[0]) {
+                format!("{} {}", toks[1], toks[0])
+            } else {
+                format!("{} {}", toks[0], toks[1])
+            }
+        }
+        4 => {
+            // <edge> <off> <edge> <off>. x-edge(left/right) 쪽을 먼저.
+            if is_x(&toks[0]) {
+                format!("{} {} {} {}", toks[0], toks[1], toks[2], toks[3])
+            } else {
+                format!("{} {} {} {}", toks[2], toks[3], toks[0], toks[1])
+            }
+        }
+        _ => toks.join(" "),
+    }
+}
+
 // image-set() 지정값 캐논 직렬화(§CSS Images 4): 함수명 표준화(-webkit-image-set
 // →image-set), 각 이미지의 url(x)/'x'/"x" → url("x"). image-set(url(a.png) 1x)→
 // image-set(url("a.png") 1x). 해상도/타입은 유지.
