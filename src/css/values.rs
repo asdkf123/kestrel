@@ -1174,6 +1174,17 @@ fn space_to_srgb(space: &str, c: [f32; 3]) -> Option<(f32, f32, f32)> {
         _ => return None,
     })
 }
+// 색공간별 채널 클램프(계산값 범위): L 은 lab/lch 0-100, oklab/oklch 0-1;
+// C(채도)는 lch/oklch 에서 음수 불가. 그 외는 클램프 안 함.
+fn clamp_channel(space: &str, i: usize, v: f32) -> f32 {
+    match (space, i) {
+        ("lab" | "lch", 0) => v.clamp(0.0, 100.0),
+        ("oklab" | "oklch", 0) => v.clamp(0.0, 1.0),
+        ("lch" | "oklch", 1) => v.max(0.0),
+        _ => v,
+    }
+}
+
 // 극좌표 색공간에서 색상(hue) 성분의 인덱스. hsl/hwb 는 0, lch/oklch 는 2.
 fn hue_index(space: &str) -> Option<usize> {
     match space {
@@ -1280,11 +1291,11 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     // 원본 색을 공간 좌표+알파로. 같은 공간이면 직접 파싱해 gamut 밖 값·정밀도 보존.
     let (oc_opt, oa_opt) = color_coords_none(spec.space, &origin_str)?;
     let oc = [
-        oc_opt[0].unwrap_or(0.0),
-        oc_opt[1].unwrap_or(0.0),
-        oc_opt[2].unwrap_or(0.0),
+        clamp_channel(spec.space, 0, oc_opt[0].unwrap_or(0.0)),
+        clamp_channel(spec.space, 1, oc_opt[1].unwrap_or(0.0)),
+        clamp_channel(spec.space, 2, oc_opt[2].unwrap_or(0.0)),
     ];
-    let oalpha = oa_opt.unwrap_or(1.0);
+    let oalpha = oa_opt.unwrap_or(1.0).clamp(0.0, 1.0);
     // 키워드→값 맵(채널별 배율).
     let kv = |name: &str| -> Option<f32> {
         if name == "alpha" {
@@ -1321,11 +1332,11 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
             }
         }
     };
-    // 공간 좌표(채널별 배율로 환원).
+    // 공간 좌표(채널별 배율로 환원 + 범위 클램프).
     let coords = [
-        c0.get() / spec.scale[0],
-        c1.get() / spec.scale[1],
-        c2.get() / spec.scale[2],
+        clamp_channel(spec.space, 0, c0.get() / spec.scale[0]),
+        clamp_channel(spec.space, 1, c1.get() / spec.scale[1]),
+        clamp_channel(spec.space, 2, c2.get() / spec.scale[2]),
     ];
     let (rr, gg, bb) = space_to_srgb(spec.space, coords)?;
     let a = alpha_frac(alpha);
