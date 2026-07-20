@@ -8171,9 +8171,8 @@ impl Interp {
     // 열우선 m[i*4+j]. 반환: (translation[3], scale[3], skew[3](xy,xz,yz), quat[4]).
     // perspective 는 이 경로에선 무시(대부분 테스트가 affine). 실패 시 None.
     #[allow(clippy::type_complexity)]
-    fn decompose_3d(m: &[f32; 16]) -> Option<([f32; 3], [f32; 3], [f32; 3], [f32; 4])> {
-        let at = |i: usize, j: usize| m[i * 4 + j];
-        if at(3, 3) == 0.0 {
+    fn decompose_3d(m: &[f32; 16]) -> Option<([f32; 4], [f32; 3], [f32; 3], [f32; 3], [f32; 4])> {
+        if m[15] == 0.0 {
             return None;
         }
         // 정규화.
@@ -8181,11 +8180,36 @@ impl Interp {
         for v in lm.iter_mut() {
             *v /= m[15];
         }
+        // perspective 추출(§spec). perspectiveMatrix = lm 에서 perspective 열(at(i,3),
+        // i<3)을 0 으로. 역행렬의 전치 · rhs 로 perspective 4-벡터를 푼다.
+        let perspective = {
+            let has_p = lm[3].abs() > 1e-6 || lm[7].abs() > 1e-6 || lm[11].abs() > 1e-6;
+            if has_p {
+                let mut pm = lm;
+                pm[3] = 0.0;
+                pm[7] = 0.0;
+                pm[11] = 0.0;
+                pm[15] = 1.0;
+                let inv = Self::mat4_inverse(&pm)?;
+                // transpose(inv) · rhs, rhs = perspective 열.
+                let rhs = [lm[3], lm[7], lm[11], lm[15]];
+                let tinv = Self::mat4_transpose(&inv);
+                // tinv(열우선) · rhs(열벡터): p[r] = sum_k tinv[k*4+r]*rhs[k]
+                let mut p = [0.0f32; 4];
+                for r in 0..4 {
+                    p[r] = (0..4).map(|k| tinv[k * 4 + r] * rhs[k]).sum();
+                }
+                // perspective 열 제거(이후 affine 분해).
+                lm[3] = 0.0;
+                lm[7] = 0.0;
+                lm[11] = 0.0;
+                lm[15] = 1.0;
+                p
+            } else {
+                [0.0, 0.0, 0.0, 1.0]
+            }
+        };
         let at = |i: usize, j: usize| lm[i * 4 + j];
-        // perspective 성분이 있으면 이 단순 경로는 포기(affine 만 처리).
-        if at(0, 3).abs() > 1e-5 || at(1, 3).abs() > 1e-5 || at(2, 3).abs() > 1e-5 {
-            return None;
-        }
         let translation = [at(3, 0), at(3, 1), at(3, 2)];
         // 행(row[i] = 열 i 의 x,y,z).
         let mut row = [
@@ -8259,14 +8283,80 @@ impl Interp {
             let s = 2.0 * (1.0 + r22 - r00 - r11).sqrt();
             [(r20 + r02) / s, (r12 + r21) / s, 0.25 * s, (r01 - r10) / s]
         };
-        Some((translation, scale, skew, quat))
+        Some((perspective, translation, scale, skew, quat))
     }
 
-    // 분해 컴포넌트 → 열우선 4x4. recompose(§spec): perspective 없이 translate ·
+    // 4x4 전치(열우선).
+    fn mat4_transpose(m: &[f32; 16]) -> [f32; 16] {
+        let mut o = [0.0f32; 16];
+        for i in 0..4 {
+            for j in 0..4 {
+                o[i * 4 + j] = m[j * 4 + i];
+            }
+        }
+        o
+    }
+
+    // 4x4 역행렬(여인수, 열우선 m[c*4+r]). 특이면 None.
+    fn mat4_inverse(m: &[f32; 16]) -> Option<[f32; 16]> {
+        let mut inv = [0.0f32; 16];
+        inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15]
+            + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+        inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15]
+            - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+        inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15]
+            + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+        inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14]
+            - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+        inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15]
+            - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+        inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15]
+            + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+        inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15]
+            - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+        inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14]
+            + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+        inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15]
+            + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+        inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15]
+            - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+        inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15]
+            + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+        inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14]
+            - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+        inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11]
+            - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+        inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11]
+            + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+        inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11]
+            - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+        inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10]
+            + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+        let det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+        if det == 0.0 {
+            return None;
+        }
+        let idet = 1.0 / det;
+        for v in inv.iter_mut() {
+            *v *= idet;
+        }
+        Some(inv)
+    }
+
+    // 분해 컴포넌트 → 열우선 4x4. recompose(§spec): perspective · translate ·
     // rotate(quat) · skew · scale.
-    fn recompose_3d(t: &[f32; 3], s: &[f32; 3], sk: &[f32; 3], q: &[f32; 4]) -> [f32; 16] {
+    fn recompose_3d(p: &[f32; 4], t: &[f32; 3], s: &[f32; 3], sk: &[f32; 3], q: &[f32; 4]) -> [f32; 16] {
+        let mul = |a: &[f32; 16], b: &[f32; 16]| -> [f32; 16] {
+            let mut o = [0.0f32; 16];
+            for c in 0..4 {
+                for r in 0..4 {
+                    o[c * 4 + r] = (0..4).map(|k| a[k * 4 + r] * b[c * 4 + k]).sum();
+                }
+            }
+            o
+        };
         let (x, y, z, w) = (q[0], q[1], q[2], q[3]);
-        // 쿼터니언 → 회전행렬(열우선 rot[i*4+j]).
+        // affine 부분 = rotate · skew · scale (translation 제외).
         let mut m = [0.0f32; 16];
         m[15] = 1.0;
         m[0] = 1.0 - 2.0 * (y * y + z * z);
@@ -8278,16 +8368,6 @@ impl Interp {
         m[8] = 2.0 * (x * z + y * w);
         m[9] = 2.0 * (y * z - x * w);
         m[10] = 1.0 - 2.0 * (x * x + y * y);
-        // skew (temp 행렬 곱). skew 순서: yz, xz, xy 를 각각 적용.
-        let mul = |a: &[f32; 16], b: &[f32; 16]| -> [f32; 16] {
-            let mut o = [0.0f32; 16];
-            for c in 0..4 {
-                for r in 0..4 {
-                    o[c * 4 + r] = (0..4).map(|k| a[k * 4 + r] * b[c * 4 + k]).sum();
-                }
-            }
-            o
-        };
         let mut tmp = [0.0f32; 16];
         tmp[0] = 1.0;
         tmp[5] = 1.0;
@@ -8308,28 +8388,39 @@ impl Interp {
             t2[4] = sk[0];
             m = mul(&m, &t2);
         }
-        // scale (열 i 에 s[i]).
         for i in 0..3 {
             m[i * 4] *= s[i];
             m[i * 4 + 1] *= s[i];
             m[i * 4 + 2] *= s[i];
         }
-        // translation (열 3).
-        m[12] = t[0];
-        m[13] = t[1];
-        m[14] = t[2];
-        m
+        // perspective 행렬(perspective 열) · translate · affine (§spec 순서).
+        let mut persp = tmp;
+        persp[3] = p[0];
+        persp[7] = p[1];
+        persp[11] = p[2];
+        persp[15] = p[3];
+        let mut trans = tmp;
+        trans[12] = t[0];
+        trans[13] = t[1];
+        trans[14] = t[2];
+        mul(&mul(&persp, &trans), &m)
     }
 
     // 불일치 3D transform 리스트: 행렬 분해 후 컴포넌트 보간(회전은 쿼터니언 nlerp).
     fn interp_matrix_3d(from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
         let ma = Self::transform_mat16(from, w, h);
         let mb = Self::transform_mat16(to, w, h);
-        let (ta, sa, ska, mut qa) = Self::decompose_3d(&ma)?;
-        let (tb, sb, skb, mut qb) = Self::decompose_3d(&mb)?;
+        let (pa, ta, sa, ska, mut qa) = Self::decompose_3d(&ma)?;
+        let (pb, tb, sb, skb, mut qb) = Self::decompose_3d(&mb)?;
         let t = eased;
         let lerp = |x: f32, y: f32| x + (y - x) * t;
         let l3 = |a: &[f32; 3], b: &[f32; 3]| [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])];
+        let persp = [
+            lerp(pa[0], pb[0]),
+            lerp(pa[1], pb[1]),
+            lerp(pa[2], pb[2]),
+            lerp(pa[3], pb[3]),
+        ];
         // 쿼터니언 nlerp(최단 경로: dot<0 이면 한쪽 부호 반전).
         let mut dotq = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
         if dotq < 0.0 {
@@ -8360,7 +8451,7 @@ impl Interp {
         let tr = l3(&ta, &tb);
         let sc = l3(&sa, &sb);
         let sk = l3(&ska, &skb);
-        let m = Self::recompose_3d(&tr, &sc, &sk, &q);
+        let m = Self::recompose_3d(&persp, &tr, &sc, &sk, &q);
         let n = |v: f32| -> String {
             let v = if v.abs() < 1e-6 { 0.0 } else { v };
             if v.fract() == 0.0 && v.is_finite() {
