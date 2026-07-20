@@ -577,6 +577,15 @@ fn content_string_serializes_double_quoted() {
         g("var s=document.getElementById('t').style; s.content='url(http://x/)'; s.content"),
         "url(\"http://x/\")",
     );
+    // font-family: 식별자 시퀀스는 따옴표 제거, 아니면 큰따옴표 유지
+    assert_eq!(
+        g("var s=document.getElementById('t').style; s.fontFamily=\"'Lucida Grande', serif\"; s.fontFamily"),
+        "Lucida Grande, serif",
+    );
+    assert_eq!(
+        g("var s=document.getElementById('t').style; s.fontFamily=\"'Font 2'\"; s.fontFamily"),
+        "\"Font 2\"", // '2' 로 시작하는 토큰은 식별자 아님 → 문자열 유지
+    );
 }
 
 #[test]

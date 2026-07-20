@@ -204,6 +204,11 @@ impl Interp {
                 return format!("url({})", serialize_css_string(&u));
             }
         }
+        // font-family: 각 패밀리가 따옴표 문자열이고 내용이 유효한 식별자 시퀀스면
+        // 따옴표를 제거한다(§CSSOM serialize a font-family). 'Lucida Grande' → Lucida Grande.
+        if prop == "font-family" {
+            return serialize_font_family(raw);
+        }
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))
             .into_iter()
             .find(|d| d.name == prop)
@@ -1385,6 +1390,40 @@ fn single_css_string(raw: &str) -> Option<String> {
         return None;
     }
     Some(inner.to_string())
+}
+
+// font-family 직렬화(§CSSOM): 쉼표로 나눈 각 패밀리에서, 따옴표 문자열인데
+// 내용이 유효한 식별자 시퀀스(공백으로 나뉜 각 토큰이 CSS 식별자)면 따옴표를 뺀다.
+// 아니면 큰따옴표 문자열로. 이미 따옴표 없는 이름/generic 은 그대로.
+fn serialize_font_family(raw: &str) -> String {
+    raw.split(',')
+        .map(|fam| {
+            let f = fam.trim();
+            match single_css_string(f) {
+                Some(inner) if is_css_ident_sequence(&inner) => inner,
+                Some(inner) => serialize_css_string(&inner),
+                None => f.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// 공백으로 나뉜 각 토큰이 모두 유효한 CSS 식별자인가(비어있지 않아야 함).
+fn is_css_ident_sequence(s: &str) -> bool {
+    let toks: Vec<&str> = s.split(' ').collect();
+    !s.is_empty() && toks.iter().all(|t| is_css_ident(t))
+}
+
+// CSS 식별자 근사(§CSS Syntax): 첫 글자는 문자/_/-(숫자·빈문자 불가), 나머지는
+// 문자/숫자/_/-. (이스케이프는 근사로 미지원 — 있으면 문자열로 유지된다.)
+fn is_css_ident(t: &str) -> bool {
+    let mut it = t.chars();
+    match it.next() {
+        Some(c) if c.is_alphabetic() || c == '_' || c == '-' => {}
+        _ => return false,
+    }
+    t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
 }
 
 // 값 전체가 하나의 url(...) 토큰이면 그 URL(따옴표 제거)을 돌려준다.
