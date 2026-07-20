@@ -280,6 +280,18 @@ fn fill_js_maps(
                 m.insert(key.to_string(), resolved);
             }
         }
+        // background-image gradient 계산값: em/rem→px, "at" 위치 키워드→%.
+        if let Some(bg) = m.get("background-image") {
+            if bg.contains("gradient(") {
+                let fs = m
+                    .get("font-size")
+                    .and_then(|v| v.strip_suffix("px"))
+                    .and_then(|n| n.parse::<f32>().ok())
+                    .unwrap_or(16.0);
+                let resolved = crate::css::resolve_gradient_computed(bg, fs, 16.0);
+                m.insert("background-image".to_string(), resolved);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

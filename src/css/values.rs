@@ -957,6 +957,73 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     stops >= 2
 }
 
+// gradient 계산값의 박스 문맥 해석: em/rem→px(폰트크기), "at <위치>" 키워드→%.
+// window.rs 레이아웃 경로(폰트크기 있음)에서 g.serial 을 재처리한다(계산값 전용,
+// 지정값 el.style 은 원문 유지). radial-gradient(50% 40em, …)→(50% 640px, …),
+// at right center→at 100% 50%.
+pub(crate) fn resolve_gradient_computed(serial: &str, fs: f32, root_fs: f32) -> String {
+    let serial = serial.trim();
+    let Some(open) = serial.find('(') else {
+        return serial.to_string();
+    };
+    if !serial.ends_with(')') {
+        return serial.to_string();
+    }
+    let func = &serial[..open];
+    let inner = &serial[open + 1..serial.len() - 1];
+    let segs: Vec<String> = split_top_commas(inner)
+        .iter()
+        .map(|seg| {
+            let toks = split_top_level(seg.trim());
+            if toks.first().map(|t| t.eq_ignore_ascii_case("at")).unwrap_or(false) {
+                resolve_at_position(&toks, fs, root_fs)
+            } else {
+                toks.iter().map(|t| resolve_len_token(t, fs, root_fs)).collect::<Vec<_>>().join(" ")
+            }
+        })
+        .collect();
+    format!("{}({})", func, segs.join(", "))
+}
+
+// 길이 토큰 em/rem → px(폰트크기 곱). 그 외는 원문.
+fn resolve_len_token(tok: &str, fs: f32, root_fs: f32) -> String {
+    let low = tok.to_ascii_lowercase();
+    if let Some(p) = low.strip_suffix("rem") {
+        if let Ok(n) = p.parse::<f32>() {
+            return format!("{}px", crate::style::num_css(n * root_fs));
+        }
+    } else if let Some(p) = low.strip_suffix("em") {
+        if let Ok(n) = p.parse::<f32>() {
+            return format!("{}px", crate::style::num_css(n * fs));
+        }
+    }
+    tok.to_string()
+}
+
+// "at <위치>" 계산값: 키워드→%(left/top=0%, right/bottom=100%, center=50%), 길이는
+// em→px, 단일 값이면 y=center(50%). 두 키워드 순서 뒤집기(top left→left top).
+fn resolve_at_position(toks: &[String], fs: f32, root_fs: f32) -> String {
+    // toks[0]="at". 나머지 위치.
+    let mut pos: Vec<String> = toks[1..].to_vec();
+    if pos.len() == 2
+        && matches!(pos[0].to_ascii_lowercase().as_str(), "top" | "bottom")
+        && matches!(pos[1].to_ascii_lowercase().as_str(), "left" | "right" | "center")
+    {
+        pos.swap(0, 1);
+    }
+    let axis = |t: &str| -> String {
+        match t.to_ascii_lowercase().as_str() {
+            "left" | "top" => "0%".to_string(),
+            "right" | "bottom" => "100%".to_string(),
+            "center" => "50%".to_string(),
+            _ => resolve_len_token(t, fs, root_fs),
+        }
+    };
+    let x = pos.first().map(|t| axis(t)).unwrap_or_else(|| "50%".to_string());
+    let y = pos.get(1).map(|t| axis(t)).unwrap_or_else(|| "50%".to_string());
+    format!("at {} {}", x, y)
+}
+
 // computed=true 면 색을 rgb()(계산값), false 면 키워드 유지(지정값 el.style).
 pub(crate) fn normalize_gradient_serial(text: &str, computed: bool) -> String {
     let text = text.trim();
