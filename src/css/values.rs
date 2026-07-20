@@ -96,6 +96,38 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
             return Some(Value::MinMax(kind, args));
         }
     }
+    // abs()/sign() — 단위 독립적이라 파스 타임에 해석 가능(CSS Values 4 §10).
+    // abs(-5em)=5em(부호만 뒤집음, 단위 보존), sign(-5px)=-1(단위 없는 수).
+    // 인자는 단일 값 또는 calc 식(abs(5px - 10px)). 혼합 단위 calc 는 미해석→None.
+    if (lower.starts_with("abs(") || lower.starts_with("sign(")) && text.ends_with(')') {
+        let is_sign = lower.starts_with("sign(");
+        let open = if is_sign { 5 } else { 4 };
+        let inner = text[open..text.len() - 1].trim();
+        // abs/sign 은 단위 독립적(부호만 다룸)이라 어떤 단위든 정확: abs(-3em)=3em,
+        // sign(-3em)=-1. 단일 Length 는 그대로, calc 식은 순수 px 만 확정.
+        let v = interpret_value(inner).or_else(|| eval_calc(inner));
+        let (n, unit) = match v {
+            Some(Value::Length(f, u)) => (f, u),
+            // 순수 px calc(문맥 단위/% 없음)만 부호 확정 가능.
+            Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => (c.px, Unit::Px),
+            _ => return None,
+        };
+        return Some(if is_sign {
+            // signed zero: sign(0)=0, sign(-0)=-0 (수). NaN 은 미해석.
+            let s = if n.is_nan() {
+                return None;
+            } else if n > 0.0 {
+                1.0
+            } else if n < 0.0 {
+                -1.0
+            } else {
+                n // 0 또는 -0 그대로(부호 보존)
+            };
+            Value::Length(s, Unit::Number)
+        } else {
+            Value::Length(n.abs(), unit)
+        });
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
