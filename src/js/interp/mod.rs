@@ -8007,6 +8007,25 @@ impl Interp {
         Some(format!("{}{}", crate::style::num_css(v), ua))
     }
 
+    // 다중값의 각 수치 토큰을 0 이상으로 클램프(비음수 프로퍼티 외삽용).
+    fn clamp_nonneg(v: &str) -> String {
+        v.split_whitespace()
+            .map(|tok| {
+                let (num, unit) = {
+                    let pos = tok
+                        .find(|c: char| c.is_ascii_alphabetic() || c == '%')
+                        .unwrap_or(tok.len());
+                    (tok[..pos].parse::<f32>().ok(), &tok[pos..])
+                };
+                match num {
+                    Some(n) if n < 0.0 => format!("0{unit}"),
+                    _ => tok.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     // length-percentage 값을 (px, %) 로 파싱. "10px"/"50%"/"calc(10px + 20%)"/"0".
     // 위치 키워드(left/center/…)는 여기선 안 다룸(호출부에서 %로 치환).
     fn parse_len_pct(s: &str) -> Option<(Option<f32>, Option<f32>)> {
@@ -9008,6 +9027,18 @@ impl Interp {
             return special;
         }
         if let Some(v) = Self::interp_css_value(from, to, eased) {
+            // 비음수 프로퍼티는 외삽 시 음수를 0 으로 클램프(§CSS Values).
+            if matches!(
+                dash_prop,
+                "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height"
+                    | "padding-top" | "padding-right" | "padding-bottom" | "padding-left"
+                    | "border-top-width" | "border-right-width" | "border-bottom-width"
+                    | "border-left-width" | "outline-width" | "border-image-width"
+                    | "border-image-outset" | "column-width" | "column-gap" | "row-gap"
+                    | "flex-basis" | "column-rule-width" | "border-spacing"
+            ) {
+                return Some(Self::clamp_nonneg(&v));
+            }
             return Some(v);
         }
         if !from.is_empty() && !to.is_empty() {
