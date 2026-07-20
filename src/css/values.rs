@@ -803,6 +803,57 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
 // 보간 메서드 구조는 원문 그대로 둔다. 렌더용 Gradient 구조체는 방향키워드·보간
 // 메서드를 잃으므로(각도로 접힘) 원문 텍스트에서 색만 바꾸는 게 정확하다.
 // "linear-gradient(30deg, red, blue)" → "...(30deg, rgb(255, 0, 0), rgb(0, 0, 255))".
+// image-set() 지정값 캐논 직렬화(§CSS Images 4): 함수명 표준화(-webkit-image-set
+// →image-set), 각 이미지의 url(x)/'x'/"x" → url("x"). image-set(url(a.png) 1x)→
+// image-set(url("a.png") 1x). 해상도/타입은 유지.
+pub(crate) fn normalize_image_set(text: &str) -> String {
+    let text = text.trim();
+    let lower = text.to_ascii_lowercase();
+    let open = if lower.starts_with("image-set(") {
+        "image-set(".len()
+    } else if lower.starts_with("-webkit-image-set(") {
+        "-webkit-image-set(".len()
+    } else {
+        return text.to_string();
+    };
+    if !text.ends_with(')') {
+        return text.to_string();
+    }
+    let inner = &text[open..text.len() - 1];
+    let items: Vec<String> =
+        split_top_commas(inner).iter().map(|it| normalize_image_set_item(it.trim())).collect();
+    format!("image-set({})", items.join(", "))
+}
+
+fn normalize_image_set_item(item: &str) -> String {
+    let toks = split_top_level(item);
+    if toks.is_empty() {
+        return item.to_string();
+    }
+    let img = normalize_image_ref(&toks[0]);
+    if toks.len() == 1 {
+        img
+    } else {
+        format!("{} {}", img, toks[1..].join(" "))
+    }
+}
+
+// url(x)/url("x")/url('x') 및 맨문자열 'x'/"x" → url("x"). 그 외(gradient 등)는 원문.
+fn normalize_image_ref(t: &str) -> String {
+    let tl = t.to_ascii_lowercase();
+    if tl.starts_with("url(") && t.ends_with(')') {
+        let inner = t[4..t.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
+        return format!("url(\"{}\")", inner);
+    }
+    if t.len() >= 2
+        && ((t.starts_with('"') && t.ends_with('"'))
+            || (t.starts_with('\'') && t.ends_with('\'')))
+    {
+        return format!("url(\"{}\")", &t[1..t.len() - 1]);
+    }
+    t.to_string()
+}
+
 // gradient 유효성(세터 거부용). 단일 gradient 함수만 검사하고, 다중 값/미인식
 // 형태는 관대하게 true(오탐 회피 — 게터에서만 쓰이므로 렌더 무영향). 명백한 무효
 // (빈 세그먼트/비색 비위치 스톱/무효 prefix/스톱<2)만 false.

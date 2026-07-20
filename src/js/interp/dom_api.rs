@@ -227,6 +227,12 @@ impl Interp {
             "transform-origin" if !crate::style::origin_valid(raw, 3) => {
                 return String::new()
             }
+            // background-image image-set() 지정값: url("...") 정규화 + 함수명 표준화.
+            "background-image" | "-webkit-background-image"
+                if raw.to_ascii_lowercase().contains("image-set(") =>
+            {
+                return crate::css::normalize_image_set(raw);
+            }
             // background-image gradient 지정값: 보간 재정렬 + 색 정규화(키워드 유지).
             "background-image" | "-webkit-background-image"
                 if raw.contains("gradient(") =>
