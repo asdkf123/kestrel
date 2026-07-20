@@ -830,16 +830,26 @@ pub(crate) fn normalize_shape(text: &str) -> String {
     let func = text[..open].to_ascii_lowercase();
     let inner = text[open + 1..text.len() - 1].trim();
     let toks = split_top_level(inner);
-    let Some(at_idx) = toks.iter().position(|t| t.eq_ignore_ascii_case("at")) else {
-        return text.to_string();
+    let at_idx = toks.iter().position(|t| t.eq_ignore_ascii_case("at"));
+    let radius_toks = match at_idx {
+        Some(i) => &toks[..i],
+        None => &toks[..],
     };
-    let before = toks[..at_idx].join(" "); // radius 등
-    let pos = normalize_position(&toks[at_idx + 1..]);
+    // 기본 반지름(모두 closest-side)은 생략(§CSS Shapes). circle(closest-side)→circle().
+    let radius = if !radius_toks.is_empty()
+        && radius_toks.iter().all(|t| t.eq_ignore_ascii_case("closest-side"))
+    {
+        String::new()
+    } else {
+        radius_toks.join(" ")
+    };
     let mut parts = Vec::new();
-    if !before.is_empty() {
-        parts.push(before);
+    if !radius.is_empty() {
+        parts.push(radius);
     }
-    parts.push(format!("at {}", pos));
+    if let Some(i) = at_idx {
+        parts.push(format!("at {}", normalize_position(&toks[i + 1..])));
+    }
     format!("{}({})", func, parts.join(" "))
 }
 
