@@ -365,6 +365,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "animation-composition" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // 키워드 값 프로퍼티(계산값 = 지정 키워드): UI/인터랙션/표/스크롤 등. 원문 보존.
+        // 예전엔 interpret_value(키워드) 가 None 이라 선언이 통째로 드롭돼 getComputedStyle
+        // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
+        "cursor" | "appearance" | "-webkit-appearance" | "user-select" | "-webkit-user-select"
+        | "resize" | "pointer-events" | "touch-action" | "hyphens" | "writing-mode"
+        | "text-orientation" | "image-rendering" | "isolation" | "box-decoration-break"
+        | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
+        | "background-clip" | "background-origin" | "overflow-anchor" | "scroll-behavior"
+        | "text-decoration-style" | "text-underline-position" | "will-change" | "contain"
+        | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
+        | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
+        | "overscroll-behavior-y" | "scroll-snap-type" | "scroll-snap-align"
+        | "background-blend-mode" | "font-kerning" | "font-variant-caps"
+        | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust" => {
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
         // 일반 값 파서는 다중 토큰을 파싱하지 못해 None 을 돌려주고, 그러면 선언이
         // 통째로 사라져서 **항상 중심 기준 회전**이 되어 버린다. 원문을 보존한다.

@@ -130,6 +130,17 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "animation-name", "animation-duration", "animation-delay",
     "animation-timing-function", "animation-iteration-count", "animation-direction",
     "animation-fill-mode", "animation-play-state", "animation-composition",
+    // UI/인터랙션/표/스크롤 키워드 프로퍼티 — 실제 CSS 프로퍼티라 계산값 노출.
+    "cursor", "appearance", "user-select", "resize", "pointer-events", "touch-action",
+    "hyphens", "writing-mode", "text-orientation", "image-rendering", "isolation",
+    "box-decoration-break", "caption-side", "empty-cells", "table-layout",
+    "background-attachment", "background-clip", "background-origin", "overflow-anchor",
+    "scroll-behavior", "text-decoration-style", "text-underline-position", "will-change",
+    "contain", "content-visibility", "backface-visibility", "transform-style",
+    "transform-box", "text-align-last", "overscroll-behavior-x", "overscroll-behavior-y",
+    "background-blend-mode", "font-kerning", "font-variant-caps", "text-rendering",
+    "color-scheme", "forced-color-adjust", "print-color-adjust",
+    "caret-color", "accent-color", "tab-size",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
