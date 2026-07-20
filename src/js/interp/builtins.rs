@@ -5034,11 +5034,17 @@ impl Interp {
                             }
                         })
                         .unwrap_or_default();
-                    if (composite == "add" || composite == "accumulate")
-                        && !props.contains_key("transform")
-                    {
+                    if composite == "add" || composite == "accumulate" {
                         for (dash, (from, to, _ez)) in props.iter_mut() {
-                            if let Some(bv) = base.get(dash) {
+                            let Some(bv) = base.get(dash) else { continue };
+                            if dash == "transform" {
+                                // transform composite:add 는 언더라이닝 리스트를 앞에
+                                // 연결한다(§Web Animations). 행렬 분해가 합성을 처리.
+                                if !bv.is_empty() && bv != "none" {
+                                    *from = format!("{bv} {from}");
+                                    *to = format!("{bv} {to}");
+                                }
+                            } else {
                                 if let Some(nf) = Self::add_css_values(bv, from) {
                                     *from = nf;
                                 }
