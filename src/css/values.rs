@@ -1201,28 +1201,29 @@ struct RelSpec {
     chans: [&'static str; 3],
     pct: [f32; 3],
     angle: [bool; 3],
-    scale: f32, // 원본 좌표→키워드 및 성분→공간좌표 배율 (rgb=255, else 1)
+    // 채널별 배율: 원본좌표→키워드값(oc*scale) 및 성분값→공간좌표(comp/scale).
+    // rgb=255, hsl/hwb 의 s/l/w/b=100(퍼센트 수), 그 외 native=1.
+    scale: [f32; 3],
 }
 fn rel_spec(func: &str, color_space: Option<&str>) -> Option<RelSpec> {
     Some(match func {
-        "rgb" | "rgba" => RelSpec { space: "srgb", chans: ["r", "g", "b"], pct: [255.0, 255.0, 255.0], angle: [false; 3], scale: 255.0 },
-        "hsl" | "hsla" => RelSpec { space: "hsl", chans: ["h", "s", "l"], pct: [1.0, 1.0, 1.0], angle: [true, false, false], scale: 1.0 },
-        "hwb" => RelSpec { space: "hwb", chans: ["h", "w", "b"], pct: [1.0, 1.0, 1.0], angle: [true, false, false], scale: 1.0 },
-        "lab" => RelSpec { space: "lab", chans: ["l", "a", "b"], pct: [100.0, 125.0, 125.0], angle: [false; 3], scale: 1.0 },
-        "oklab" => RelSpec { space: "oklab", chans: ["l", "a", "b"], pct: [1.0, 0.4, 0.4], angle: [false; 3], scale: 1.0 },
-        "lch" => RelSpec { space: "lch", chans: ["l", "c", "h"], pct: [100.0, 150.0, 1.0], angle: [false, false, true], scale: 1.0 },
-        "oklch" => RelSpec { space: "oklch", chans: ["l", "c", "h"], pct: [1.0, 0.4, 1.0], angle: [false, false, true], scale: 1.0 },
+        "rgb" | "rgba" => RelSpec { space: "srgb", chans: ["r", "g", "b"], pct: [255.0, 255.0, 255.0], angle: [false; 3], scale: [255.0, 255.0, 255.0] },
+        "hsl" | "hsla" => RelSpec { space: "hsl", chans: ["h", "s", "l"], pct: [1.0, 100.0, 100.0], angle: [true, false, false], scale: [1.0, 100.0, 100.0] },
+        "hwb" => RelSpec { space: "hwb", chans: ["h", "w", "b"], pct: [1.0, 100.0, 100.0], angle: [true, false, false], scale: [1.0, 100.0, 100.0] },
+        "lab" => RelSpec { space: "lab", chans: ["l", "a", "b"], pct: [100.0, 125.0, 125.0], angle: [false; 3], scale: [1.0, 1.0, 1.0] },
+        "oklab" => RelSpec { space: "oklab", chans: ["l", "a", "b"], pct: [1.0, 0.4, 0.4], angle: [false; 3], scale: [1.0, 1.0, 1.0] },
+        "lch" => RelSpec { space: "lch", chans: ["l", "c", "h"], pct: [100.0, 150.0, 1.0], angle: [false, false, true], scale: [1.0, 1.0, 1.0] },
+        "oklch" => RelSpec { space: "oklch", chans: ["l", "c", "h"], pct: [1.0, 0.4, 1.0], angle: [false, false, true], scale: [1.0, 1.0, 1.0] },
         "color" => {
             let sp = color_space?;
             let chans = if sp.starts_with("xyz") { ["x", "y", "z"] } else { ["r", "g", "b"] };
-            // sp 를 'static 로 매핑(space_to_srgb 가 아는 이름).
             let space = match sp {
                 "srgb" => "srgb", "srgb-linear" => "srgb-linear", "display-p3" => "display-p3",
                 "display-p3-linear" => "display-p3-linear", "rec2020" => "rec2020",
                 "a98-rgb" => "a98-rgb", "prophoto-rgb" => "prophoto-rgb",
                 "xyz" | "xyz-d65" => "xyz-d65", "xyz-d50" => "xyz-d50", _ => return None,
             };
-            RelSpec { space, chans, pct: [1.0, 1.0, 1.0], angle: [false; 3], scale: 1.0 }
+            RelSpec { space, chans, pct: [1.0, 1.0, 1.0], angle: [false; 3], scale: [1.0, 1.0, 1.0] }
         }
         _ => return None,
     })
@@ -1276,17 +1277,22 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
         return None;
     }
     let alpha_tok = toks.iter().position(|t| t == "/").and_then(|p| toks.get(p + 1));
-    // 원본 색을 공간 좌표+알파로.
-    let of = srgb_float_of(&origin_str)?;
-    let oc = srgb_to_space(spec.space, of[0], of[1], of[2])?;
-    // 키워드→값 맵(rgb 는 *255).
+    // 원본 색을 공간 좌표+알파로. 같은 공간이면 직접 파싱해 gamut 밖 값·정밀도 보존.
+    let (oc_opt, oa_opt) = color_coords_none(spec.space, &origin_str)?;
+    let oc = [
+        oc_opt[0].unwrap_or(0.0),
+        oc_opt[1].unwrap_or(0.0),
+        oc_opt[2].unwrap_or(0.0),
+    ];
+    let oalpha = oa_opt.unwrap_or(1.0);
+    // 키워드→값 맵(채널별 배율).
     let kv = |name: &str| -> Option<f32> {
         if name == "alpha" {
-            return Some(of[3]);
+            return Some(oalpha);
         }
         for i in 0..3 {
             if spec.chans[i] == name {
-                return Some(oc[i] * spec.scale);
+                return Some(oc[i] * spec.scale[i]);
             }
         }
         None
@@ -1304,19 +1310,23 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     let c1 = resolve(comp_toks[1], 1)?;
     let c2 = resolve(comp_toks[2], 2)?;
     let alpha = match alpha_tok {
-        None => Comp::Val(of[3]), // 알파 생략 시 원본 알파를 보존(기본값 1 아님)
+        None => Comp::Val(oalpha), // 알파 생략 시 원본 알파를 보존(기본값 1 아님)
         Some(t) => {
             // alpha 키워드는 0-1, 그 외 채널 키워드/calc 도 치환해 파싱.
             if t.eq_ignore_ascii_case("alpha") {
-                Comp::Val(of[3])
+                Comp::Val(oalpha)
             } else {
                 let subbed = subst_channels(t, &kv);
                 parse_alpha(Some(&subbed))?
             }
         }
     };
-    // 공간 좌표(rgb 는 /255).
-    let coords = [c0.get() / spec.scale, c1.get() / spec.scale, c2.get() / spec.scale];
+    // 공간 좌표(채널별 배율로 환원).
+    let coords = [
+        c0.get() / spec.scale[0],
+        c1.get() / spec.scale[1],
+        c2.get() / spec.scale[2],
+    ];
     let (rr, gg, bb) = space_to_srgb(spec.space, coords)?;
     let a = alpha_frac(alpha);
     let rgba = Color { r: to_u8(rr), g: to_u8(gg), b: to_u8(bb), a: (a * 255.0).round() as u8 };
