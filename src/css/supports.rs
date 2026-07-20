@@ -200,6 +200,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-block-end-shape", "corner-inline-start-shape", "corner-inline-end-shape",
     "corner-top-shape", "corner-bottom-shape", "corner-left-shape", "corner-right-shape",
     "corner-block-shape", "corner-inline-shape",
+    // 11차: border-image 롱핸드(계산값 노출 — border-image 렌더는 별개).
+    "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

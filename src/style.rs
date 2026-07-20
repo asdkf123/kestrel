@@ -1742,6 +1742,11 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         | "corner-inline-start-shape" | "corner-inline-end-shape" | "corner-top-shape"
         | "corner-bottom-shape" | "corner-left-shape" | "corner-right-shape"
         | "corner-block-shape" | "corner-inline-shape" => "round",
+        // 11차: border-image 롱핸드 초기값.
+        "border-image-source" => "none",
+        "border-image-slice" => "100%",
+        "border-image-width" => "1",
+        "border-image-outset" => "0",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

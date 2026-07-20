@@ -441,7 +441,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "corner-block-start-shape" | "corner-block-end-shape"
         | "corner-inline-start-shape" | "corner-inline-end-shape" | "corner-top-shape"
         | "corner-bottom-shape" | "corner-left-shape" | "corner-right-shape"
-        | "corner-block-shape" | "corner-inline-shape" => {
+        | "corner-block-shape" | "corner-inline-shape"
+        // 11차: border-image 롱핸드(원문 보존 — none/url/gradient/수치 목록).
+        | "border-image-source" | "border-image-slice" | "border-image-width"
+        | "border-image-outset" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
