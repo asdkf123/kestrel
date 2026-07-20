@@ -1424,6 +1424,12 @@ fn color_parts(inner: &str) -> Vec<String> {
 
 // 채널 값: 0-255 정수/실수 또는 퍼센트(0-100%).
 fn chan_val(s: &str) -> Option<u8> {
+    let s = s.trim();
+    // none 은 0 으로 계산(§CSS Color 4). 우리 색 모델은 8비트라 none 을 못 실으므로
+    // 근사(계산값 none 보존은 색 모델 확장이 필요한 별개 과제).
+    if s.eq_ignore_ascii_case("none") {
+        return Some(0);
+    }
     if let Some(p) = s.strip_suffix('%') {
         return Some((p.trim().parse::<f32>().ok()? / 100.0 * 255.0).clamp(0.0, 255.0).round() as u8);
     }
@@ -1431,6 +1437,10 @@ fn chan_val(s: &str) -> Option<u8> {
 }
 
 fn alpha_val(s: &str) -> Option<u8> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return Some(0);
+    }
     if let Some(p) = s.strip_suffix('%') {
         return Some((p.trim().parse::<f32>().ok()? / 100.0 * 255.0).clamp(0.0, 255.0).round() as u8);
     }
