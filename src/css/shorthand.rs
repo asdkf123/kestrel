@@ -387,7 +387,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
         | "font-variant-position" | "font-variant-alternates" | "font-language-override"
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
-        | "scrollbar-gutter" | "mask-type" | "hyphenate-character" | "text-justify" => {
+        | "scrollbar-gutter" | "mask-type" | "hyphenate-character" | "text-justify"
+        // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
+        | "grid-auto-flow" | "grid-auto-columns" | "break-before" | "break-after"
+        | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
+        | "column-span" | "column-fill" | "column-rule-style" | "caret-shape"
+        | "unicode-bidi" | "border-image-repeat" | "text-underline-offset"
+        | "column-width" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.

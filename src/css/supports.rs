@@ -150,6 +150,13 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "font-variant-position", "font-variant-alternates", "font-language-override",
     "list-style-position", "quotes", "scrollbar-width", "scrollbar-color",
     "scrollbar-gutter", "mask-type", "text-justify",
+    // 3차 배치: grid/break/column/bidi 키워드 + 수치 프로퍼티
+    "grid-auto-flow", "grid-auto-columns", "break-before", "break-after", "break-inside",
+    "page-break-before", "page-break-after", "page-break-inside", "column-span",
+    "column-fill", "column-rule-style", "caret-shape", "unicode-bidi",
+    "border-image-repeat", "text-underline-offset", "column-width", "column-rule-width",
+    "counter-reset", "counter-increment", "counter-set", "orphans", "widows",
+    "shape-margin", "shape-image-threshold",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
