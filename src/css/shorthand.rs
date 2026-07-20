@@ -11,7 +11,9 @@ fn number_or_math(s: &str) -> Option<f32> {
     }
     match interpret_value(s) {
         Some(Value::Length(f, Unit::Number)) => Some(f),
-        _ => None,
+        // calc(2 + 3)/calc(1 / 4) 등 수식은 eval_calc_number 로 수를 추출한다
+        // (eval_calc 는 맨수를 Px 로 반환하지만 여기선 단위 무시하고 수만 쓴다).
+        _ => super::eval_calc_number(s),
     }
 }
 
