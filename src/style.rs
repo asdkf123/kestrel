@@ -1442,6 +1442,10 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "zoom" => "1",
         "image-orientation" => "from-image",
         "math-depth" => "0",
+        // 8차: 순수 키워드 롱핸드 초기값.
+        "scroll-snap-type" | "scroll-snap-align" | "view-transition-name"
+        | "anchor-name" => "none",
+        "field-sizing" => "fixed",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

@@ -412,7 +412,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
-        | "image-orientation" | "math-style" | "math-depth" | "math-shift" => {
+        | "image-orientation" | "math-style" | "math-depth" | "math-shift"
+        // 8차: 순수 키워드 롱핸드.
+        | "view-transition-name" | "anchor-name" | "field-sizing" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는

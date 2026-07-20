@@ -189,6 +189,9 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "text-autospace", "text-size-adjust", "-webkit-text-size-adjust", "-webkit-box-orient",
     "-webkit-line-clamp", "line-clamp", "-webkit-box-align", "-webkit-box-pack", "zoom",
     "image-orientation", "math-style", "math-depth", "math-shift",
+    // 8차: 순수 키워드 롱핸드(paint 핸들러 없음 — 게이트 안전).
+    "scroll-snap-type", "scroll-snap-align", "view-transition-name", "anchor-name",
+    "field-sizing",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
