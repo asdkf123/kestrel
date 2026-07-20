@@ -833,9 +833,39 @@ pub(crate) fn normalize_image_set(text: &str) -> String {
         return text.to_string();
     }
     let inner = &text[open..text.len() - 1];
+    let raw_items = split_top_commas(inner);
+    // 무효 image-set 거부(""): 빈 아이템, none 이미지, 음수/무효 해상도.
+    if raw_items.is_empty() || raw_items.iter().any(|i| i.trim().is_empty()) {
+        return String::new();
+    }
+    for it in &raw_items {
+        let toks = split_top_level(it.trim());
+        let Some(img) = toks.first() else { return String::new() };
+        if img.eq_ignore_ascii_case("none") {
+            return String::new();
+        }
+        // 해상도(있으면): 양수 + x/dppx/dpi/dpcm.
+        if let Some(res) = toks.get(1) {
+            if !image_set_resolution_valid(res) {
+                return String::new();
+            }
+        }
+    }
     let items: Vec<String> =
-        split_top_commas(inner).iter().map(|it| normalize_image_set_item(it.trim())).collect();
+        raw_items.iter().map(|it| normalize_image_set_item(it.trim())).collect();
     format!("image-set({})", items.join(", "))
+}
+
+// image-set 해상도: 양수 + x/dppx/dpi/dpcm. "-20x" 는 무효.
+fn image_set_resolution_valid(res: &str) -> bool {
+    let low = res.to_ascii_lowercase();
+    for unit in ["dppx", "dpcm", "dpi", "x"] {
+        if let Some(n) = low.strip_suffix(unit) {
+            return n.trim().parse::<f32>().map(|v| v > 0.0).unwrap_or(false);
+        }
+    }
+    // type(...) 은 해상도 자리 아님(별도 토큰) — 여기선 해상도로 안 옴. 그 외 무효.
+    false
 }
 
 fn normalize_image_set_item(item: &str) -> String {
