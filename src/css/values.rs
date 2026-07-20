@@ -823,7 +823,29 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
 pub(crate) fn normalize_shape(text: &str) -> String {
     let text = text.trim();
     let lower = text.to_ascii_lowercase();
-    if !(lower.starts_with("circle(") || lower.starts_with("ellipse(")) || !text.ends_with(')') {
+    if !text.ends_with(')') {
+        return text.to_string();
+    }
+    // inset()/rect()/xywh(): border-radius "round <h> / <v>" 에서 h==v 면 "/ v" 생략.
+    if lower.starts_with("inset(") || lower.starts_with("rect(") || lower.starts_with("xywh(") {
+        let open = text.find('(').unwrap();
+        let func = text[..open].to_ascii_lowercase();
+        let inner = text[open + 1..text.len() - 1].trim();
+        let low_inner = inner.to_ascii_lowercase();
+        if let Some(ri) = low_inner.find(" round ") {
+            let before = inner[..ri].trim();
+            let radius = inner[ri + " round ".len()..].trim();
+            if let Some((h, v)) = radius.split_once('/') {
+                let hv: Vec<&str> = h.split_whitespace().collect();
+                let vv: Vec<&str> = v.split_whitespace().collect();
+                if hv == vv {
+                    return format!("{}({} round {})", func, before, h.trim());
+                }
+            }
+        }
+        return text.to_string();
+    }
+    if !(lower.starts_with("circle(") || lower.starts_with("ellipse(")) {
         return text.to_string();
     }
     let open = text.find('(').unwrap();
