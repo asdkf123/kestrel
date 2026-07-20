@@ -1072,19 +1072,47 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
         b: to_u8(bb),
         a: (out_a * 255.0).round() as u8,
     };
-    // 계산값은 color(srgb r g b [/ a]) 로 직렬화(성분은 [0,1] 실수).
+    // 계산값은 **보간 색공간 형태**로 직렬화된다(§CSS Color 5 serial): 레거시 공간
+    // (srgb/hsl/hwb)은 color(srgb …), 모던 공간은 자기 형태(oklch/oklab/lab/lch) 또는
+    // color(<space> …). 성분은 보간 좌표(hsl/hwb 만 sRGB 로 접는다).
     let alpha_part = if (out_a - 1.0).abs() < 1e-4 {
         String::new()
     } else {
         format!(" / {}", csnum(out_a))
     };
-    let serial = format!(
-        "color(srgb {} {} {}{})",
-        csnum(rr.clamp(0.0, 1.0)),
-        csnum(gg.clamp(0.0, 1.0)),
-        csnum(bb.clamp(0.0, 1.0)),
-        alpha_part
-    );
+    let n = |v: f32| csnum(v);
+    let nc = |v: f32| csnum(v.clamp(0.0, 1.0));
+    let serial = match space.as_str() {
+        "srgb" | "hsl" | "hwb" => {
+            format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), alpha_part)
+        }
+        "srgb-linear" => format!(
+            "color(srgb-linear {} {} {}{})",
+            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
+        ),
+        "display-p3" => format!(
+            "color(display-p3 {} {} {}{})",
+            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
+        ),
+        "display-p3-linear" => format!(
+            "color(display-p3-linear {} {} {}{})",
+            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
+        ),
+        "xyz" | "xyz-d65" => format!(
+            "color(xyz-d65 {} {} {}{})",
+            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
+        ),
+        "xyz-d50" => format!(
+            "color(xyz-d50 {} {} {}{})",
+            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
+        ),
+        // 극좌표/직교 모던 공간은 자기 함수 형태로. hue 는 [0,360).
+        "oklab" => format!("oklab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
+        "oklch" => format!("oklch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
+        "lab" => format!("lab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
+        "lch" => format!("lch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
+        _ => format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), alpha_part),
+    };
     Some((rgba, serial.into_boxed_str()))
 }
 
