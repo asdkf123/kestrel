@@ -1506,6 +1506,76 @@ pub fn normalize_translate(v: &str) -> String {
 
 // scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
 // 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
+// font 단축 지정값 캐논 직렬화(§CSS Fonts 4 §font). 기본값 normal 인 style/variant/
+// weight/stretch 는 생략, line-height 가 normal 이면 /line-height 생략, 남으면
+// "size / line-height"(공백 포함). 파싱 실패(시스템 폰트/전역 키워드 등)는 원문 유지.
+pub fn normalize_font_shorthand(raw: &str) -> String {
+    let toks = split_top_ws(raw);
+    if toks.len() < 2 {
+        return raw.to_string(); // 시스템 폰트/inherit 등 단일 토큰
+    }
+    let is_prefix = |t: &str, prev_oblique: bool| -> bool {
+        let l = t.to_ascii_lowercase();
+        l == "normal"
+            || matches!(
+                l.as_str(),
+                "italic" | "oblique" | "small-caps" | "bold" | "bolder" | "lighter"
+                    | "ultra-condensed" | "extra-condensed" | "condensed" | "semi-condensed"
+                    | "semi-expanded" | "expanded" | "extra-expanded" | "ultra-expanded"
+            )
+            || l.parse::<f32>().map(|n| (1.0..=1000.0).contains(&n)).unwrap_or(false)
+            || (prev_oblique && l.ends_with("deg"))
+    };
+    let mut i = 0;
+    let mut prefix: Vec<String> = Vec::new();
+    let mut prev_oblique = false;
+    while i < toks.len() && is_prefix(&toks[i], prev_oblique) {
+        prev_oblique = toks[i].eq_ignore_ascii_case("oblique");
+        prefix.push(toks[i].clone());
+        i += 1;
+    }
+    if i >= toks.len() {
+        return raw.to_string(); // size 없음
+    }
+    let mut size = toks[i].clone();
+    let mut line_height: Option<String> = None;
+    i += 1;
+    if let Some(pos) = size.find('/') {
+        line_height = Some(size[pos + 1..].to_string());
+        size = size[..pos].to_string();
+    } else if i < toks.len() {
+        if toks[i] == "/" {
+            i += 1;
+            if i < toks.len() {
+                line_height = Some(toks[i].clone());
+                i += 1;
+            }
+        } else if let Some(lh) = toks[i].strip_prefix('/') {
+            line_height = Some(lh.to_string());
+            i += 1;
+        }
+    }
+    if i >= toks.len() {
+        return raw.to_string(); // family 없음
+    }
+    let family = toks[i..].join(" ");
+    let mut out = String::new();
+    for p in prefix.iter().filter(|t| !t.eq_ignore_ascii_case("normal")) {
+        out.push_str(p);
+        out.push(' ');
+    }
+    out.push_str(&size);
+    if let Some(lh) = line_height {
+        if !lh.eq_ignore_ascii_case("normal") {
+            out.push_str(" / ");
+            out.push_str(&lh);
+        }
+    }
+    out.push(' ');
+    out.push_str(&family);
+    out
+}
+
 // 최상위 공백으로 분리하되 괄호 안(calc(1 + 1) 등)의 공백은 무시한다.
 fn split_top_ws(s: &str) -> Vec<String> {
     let mut out = Vec::new();
