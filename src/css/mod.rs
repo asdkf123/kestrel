@@ -1094,7 +1094,17 @@ impl Parser {
         }
         if !name.is_empty() && !final_decls.is_empty() {
             self.keyframes.insert(name.clone(), final_decls);
-            self.keyframes_ft.insert(name, (from_decls, to_decls));
+            // from/to 프레임이 서로 다른 offset 이면 둘 다. 단일 offset 프레임뿐이면
+            // 0% 는 from(to=neutral), 그 외(100% 등)는 to(from=neutral) 로 — 반대편은
+            // 요소의 기저값으로 보간해야 한다(§from/to neutral).
+            let ft = if from_offset < to_offset {
+                (from_decls, to_decls)
+            } else if to_offset <= 0.0 {
+                (to_decls, Vec::new())
+            } else {
+                (Vec::new(), to_decls)
+            };
+            self.keyframes_ft.insert(name, ft);
         }
     }
 

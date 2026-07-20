@@ -2428,6 +2428,12 @@ fn style_node<'a>(
             if let Some(Value::Keyword(name)) = values.get("animation-name").cloned() {
                 if let Some(frame) = keyframes.get(&name) {
                     for (k, v) in frame {
+                        // 애니메이션 전 기저값(underlying)을 보존한다 — getComputedStyle 이
+                        // "from neutral" CSS 애니메이션을 보간할 때 from 으로 쓴다.
+                        // 정적 렌더는 여전히 100% 프레임을 적용(진입 애니 UX).
+                        if let Some(prev) = values.get(k) {
+                            values.insert(format!("\u{0}under-{k}"), prev.clone());
+                        }
                         let mut vv = v.clone();
                         resolve_units(&mut vv, fs, root_fs, vp);
                         values.insert(k.clone(), vv);

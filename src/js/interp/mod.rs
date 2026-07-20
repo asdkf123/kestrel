@@ -8582,9 +8582,18 @@ impl Interp {
             .get("animation-timing-function")
             .map(|s| Self::first_top_comma_value(s))
             .unwrap_or_default();
+        // from 프레임에 값이 없으면(from neutral) 애니메이션 전 기저값(\0under-)을 쓴다.
+        let from_raw = match Self::frame_prop(from_frame, dash_prop) {
+            Some(f) => f,
+            None => cs.get(&format!("\u{0}under-{dash_prop}")).cloned()?,
+        };
+        let to_raw = match Self::frame_prop(to_frame, dash_prop) {
+            Some(t) => t,
+            None => cs.get(&format!("\u{0}under-{dash_prop}")).cloned()?,
+        };
         // 키프레임 값의 전역 키워드(initial/inherit/unset) 해석.
-        let from = self.resolve_wide_keyword(id, dash_prop, &Self::frame_prop(from_frame, dash_prop)?);
-        let to = self.resolve_wide_keyword(id, dash_prop, &Self::frame_prop(to_frame, dash_prop)?);
+        let from = self.resolve_wide_keyword(id, dash_prop, &from_raw);
+        let to = self.resolve_wide_keyword(id, dash_prop, &to_raw);
         let progress = (elapsed / dur).clamp(0.0, 1.0);
         let eased = Self::eval_easing(&easing, progress);
         let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));

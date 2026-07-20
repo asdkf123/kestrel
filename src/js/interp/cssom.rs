@@ -58,7 +58,8 @@ impl Interp {
         let sh = crate::css::shorthand_table();
         let mut names: Vec<String> = m
             .keys()
-            .filter(|k| !sh.contains_key(k.as_str()))
+            // \0-접두 내부 키(\0under-*: 애니 기저값 보존)는 열거에서 제외.
+            .filter(|k| !sh.contains_key(k.as_str()) && !k.starts_with('\u{0}'))
             .cloned()
             .collect();
         names.sort();
