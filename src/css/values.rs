@@ -823,6 +823,79 @@ fn lab_family_srgb_f(name: &str, text: &str) -> Option<[f32; 4]> {
     Some([linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb), alpha])
 }
 
+fn comp_opt(c: Comp) -> Option<f32> {
+    match c {
+        Comp::None => None,
+        Comp::Val(v) => Some(v),
+    }
+}
+
+// 색을 보간 공간의 좌표(성분별 none 보존)+알파로 파싱한다(color-mix 용).
+// 입력 색 함수가 보간 공간과 같으면 성분을 직접(none 보존) 파싱하고, 다르면
+// sRGB 를 거쳐 변환한다(이 경우 none 은 소실 — 교차 공간의 analogous 는 근사).
+fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<f32>)> {
+    let low = cs.trim().to_ascii_lowercase();
+    // 같은 공간 함수면 성분을 none 보존해 직접.
+    let direct = match space {
+        "hsl" => low.starts_with("hsl(") || low.starts_with("hsla("),
+        "hwb" => low.starts_with("hwb("),
+        "oklch" => low.starts_with("oklch("),
+        "oklab" => low.starts_with("oklab("),
+        "lch" => low.starts_with("lch("),
+        "lab" => low.starts_with("lab("),
+        _ => false,
+    };
+    if direct {
+        let p = color_parts(func_inner(&low)?);
+        if p.len() < 3 {
+            return None;
+        }
+        let alpha = if p.len() >= 4 {
+            comp_opt(parse_alpha(Some(&p[3]))?)
+        } else {
+            Some(1.0)
+        };
+        let (c0, c1, c2) = match space {
+            "hsl" => (
+                comp_opt(parse_comp_angle(&p[0])?),
+                comp_opt(parse_comp(&p[1], 1.0)?),
+                comp_opt(parse_comp(&p[2], 1.0)?),
+            ),
+            "hwb" => (
+                comp_opt(parse_comp_angle(&p[0])?),
+                comp_opt(parse_comp(&p[1], 1.0)?),
+                comp_opt(parse_comp(&p[2], 1.0)?),
+            ),
+            "oklab" => (
+                comp_opt(parse_comp(&p[0], 1.0)?),
+                comp_opt(parse_comp(&p[1], 0.4)?),
+                comp_opt(parse_comp(&p[2], 0.4)?),
+            ),
+            "lab" => (
+                comp_opt(parse_comp(&p[0], 100.0)?),
+                comp_opt(parse_comp(&p[1], 125.0)?),
+                comp_opt(parse_comp(&p[2], 125.0)?),
+            ),
+            "oklch" => (
+                comp_opt(parse_comp(&p[0], 1.0)?),
+                comp_opt(parse_comp(&p[1], 0.4)?),
+                comp_opt(parse_comp_angle(&p[2])?),
+            ),
+            "lch" => (
+                comp_opt(parse_comp(&p[0], 100.0)?),
+                comp_opt(parse_comp(&p[1], 150.0)?),
+                comp_opt(parse_comp_angle(&p[2])?),
+            ),
+            _ => return None,
+        };
+        return Some(([c0, c1, c2], alpha));
+    }
+    // 교차 공간: sRGB 를 거쳐 변환(none 없음).
+    let f = srgb_float_of(&low)?;
+    let co = srgb_to_space(space, f[0], f[1], f[2])?;
+    Some(([Some(co[0]), Some(co[1]), Some(co[2])], Some(f[3])))
+}
+
 // 색 문자열 → float sRGB+알파. 모던 색함수는 float 로 직접(u8 양자화 회피),
 // 나머지는 interpret_value 의 u8 을 /255.
 fn srgb_float_of(s: &str) -> Option<[f32; 4]> {
@@ -1049,27 +1122,46 @@ fn hue_powerless(space: &str, co: &[f32; 3]) -> bool {
     }
 }
 
+// color-mix 의 한 성분에서 색 문자열과 퍼센트를 분리.
+fn split_mix_part(s: &str) -> (String, Option<f32>) {
+    let mut pct = None;
+    let mut color_str = String::new();
+    for t in &split_top_level(s.trim()) {
+        if let Some(p) = t.strip_suffix('%') {
+            if let Ok(v) = p.trim().parse::<f32>() {
+                pct = Some(v);
+                continue;
+            }
+        }
+        if !color_str.is_empty() {
+            color_str.push(' ');
+        }
+        color_str.push_str(t);
+    }
+    (color_str, pct)
+}
+
 // color-mix(in <space> [<hue>], c1 [p1], c2 [p2]) — 두 색을 색공간에서 보간.
-// 계산값은 결과를 sRGB 로 접어 color(srgb r g b [/ a]) 로 직렬화한다(§CSS Color 5).
+// 성분별 none 을 운반한다(한쪽만 none 이면 상대값, 둘 다면 결과 none). 계산값은
+// 보간 색공간 형태로 직렬화(§CSS Color 5 serial); 결과에 none 이 있으면 공간 native 형태.
 fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
     let inner = func_inner(text)?;
     let parts = split_top_commas(inner);
     if parts.len() != 3 {
         return None;
     }
-    // parts[0] = "in <space> [<hue> hue]"
     let spec = parts[0].trim().to_ascii_lowercase();
     let mut toks = spec.split_whitespace();
     if toks.next() != Some("in") {
         return None;
     }
     let space = toks.next()?.to_string();
-    // 색상 보간법: shorter(기본)/longer/increasing/decreasing. "hue" 토큰 앞의 낱말.
     let hue_method = toks.next().unwrap_or("shorter").to_string();
-    let ([r1, g1, b1, a1], p1) = parse_mix_color(&parts[1])?;
-    let ([r2, g2, b2, a2], p2) = parse_mix_color(&parts[2])?;
-    // 퍼센트 정규화 (§CSS Color 5): 둘 다 없으면 50/50, 하나면 100-상대, 합≠100 이면
-    // 100 으로 스케일. 합<100 이면 결과 알파에 합/100 곱한다.
+    let (cs1, p1) = split_mix_part(&parts[1]);
+    let (cs2, p2) = split_mix_part(&parts[2]);
+    let (mut c1, ao1) = color_coords_none(&space, &cs1)?;
+    let (mut c2, ao2) = color_coords_none(&space, &cs2)?;
+    // 퍼센트 정규화(§CSS Color 5).
     let (w1, w2, alpha_mul) = match (p1, p2) {
         (None, None) => (0.5, 0.5, 1.0),
         (Some(a), None) => (a / 100.0, 1.0 - a / 100.0, 1.0),
@@ -1082,21 +1174,33 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
             (a / sum, b / sum, if sum < 100.0 { sum / 100.0 } else { 1.0 })
         }
     };
-    let mut co1 = srgb_to_space(&space, r1, g1, b1)?;
-    let mut co2 = srgb_to_space(&space, r2, g2, b2)?;
+    // 성분별 none 운반: 한쪽만 none 이면 상대값으로, 둘 다면 결과 none.
+    let mut none_out = [false; 3];
+    for i in 0..3 {
+        match (c1[i], c2[i]) {
+            (None, None) => none_out[i] = true,
+            (None, Some(v)) => c1[i] = Some(v),
+            (Some(v), None) => c2[i] = Some(v),
+            _ => {}
+        }
+    }
+    // 알파 none 운반.
+    let (a1, a2, alpha_none) = match (ao1, ao2) {
+        (None, None) => (1.0, 1.0, true),
+        (None, Some(b)) => (b, b, false),
+        (Some(a), None) => (a, a, false),
+        (Some(a), Some(b)) => (a, b, false),
+    };
+    let mut co1 = [c1[0].unwrap_or(0.0), c1[1].unwrap_or(0.0), c1[2].unwrap_or(0.0)];
+    let mut co2 = [c2[0].unwrap_or(0.0), c2[1].unwrap_or(0.0), c2[2].unwrap_or(0.0)];
     let hi = hue_index(&space);
-    // 무채색(achromatic) 색의 색상은 무력(powerless)이라 보간에 참여하지 않고
-    // 상대 색의 색상을 쓴다(§CSS Color 4 "powerless" 성분).
     let pw1 = hue_powerless(&space, &co1);
     let pw2 = hue_powerless(&space, &co2);
     let mixed_hue = hi.map(|i| {
-        // 무력한 색상은 상대 색의 색상으로 대체한 뒤 보간법을 적용한다(§CSS Color 4/5).
-        // 예: red+transparent 를 longer 로 섞으면 0→0 이 360 우회라 중간이 180(청록)이 된다.
         let h1 = if pw1 { co2[i] } else { co1[i] };
         let h2 = if pw2 { co1[i] } else { co2[i] };
         interp_hue(h1, h2, w2, &hue_method)
     });
-    // 알파 프리멀티플라이 후 보간(색상 성분 제외).
     for i in 0..3 {
         if hi == Some(i) {
             continue;
@@ -1119,50 +1223,72 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
         r: to_u8(rr),
         g: to_u8(gg),
         b: to_u8(bb),
-        a: (out_a * 255.0).round() as u8,
+        a: if alpha_none { 0 } else { (out_a * 255.0).round() as u8 },
     };
-    // 계산값은 **보간 색공간 형태**로 직렬화된다(§CSS Color 5 serial): 레거시 공간
-    // (srgb/hsl/hwb)은 color(srgb …), 모던 공간은 자기 형태(oklch/oklab/lab/lch) 또는
-    // color(<space> …). 성분은 보간 좌표(hsl/hwb 만 sRGB 로 접는다).
-    let alpha_part = if (out_a - 1.0).abs() < 1e-4 {
-        String::new()
+    let alpha_out = if alpha_none { None } else { Some(out_a) };
+    // 결과에 none 성분이 있으면 공간 native 형태로(none 은 sRGB 로 접을 수 없음).
+    let serial = if none_out.iter().any(|&x| x) || alpha_none {
+        serialize_mix_native(&space, &mixed, &none_out, alpha_out)
     } else {
-        format!(" / {}", csnum(out_a))
+        serialize_mix(&space, &mixed, rr, gg, bb, alpha_out)
+    };
+    Some((rgba, serial.into_boxed_str()))
+}
+
+// none 없는 color-mix 결과 직렬화: 보간 공간 형태.
+fn serialize_mix(space: &str, mixed: &[f32; 3], rr: f32, gg: f32, bb: f32, a: Option<f32>) -> String {
+    let ap = match a {
+        Some(v) if (v - 1.0).abs() < 1e-4 => String::new(),
+        Some(v) => format!(" / {}", csnum(v)),
+        None => " / none".to_string(),
     };
     let n = |v: f32| csnum(v);
     let nc = |v: f32| csnum(v.clamp(0.0, 1.0));
-    let serial = match space.as_str() {
-        "srgb" | "hsl" | "hwb" => {
-            format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), alpha_part)
-        }
-        "srgb-linear" => format!(
-            "color(srgb-linear {} {} {}{})",
-            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
-        ),
-        "display-p3" => format!(
-            "color(display-p3 {} {} {}{})",
-            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
-        ),
-        "display-p3-linear" => format!(
-            "color(display-p3-linear {} {} {}{})",
-            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
-        ),
-        "xyz" | "xyz-d65" => format!(
-            "color(xyz-d65 {} {} {}{})",
-            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
-        ),
-        "xyz-d50" => format!(
-            "color(xyz-d50 {} {} {}{})",
-            n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part
-        ),
-        // 극좌표/직교 모던 공간은 자기 함수 형태로. hue 는 [0,360).
-        "oklab" => format!("oklab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
-        "oklch" => format!("oklch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
-        "lab" => format!("lab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
-        "lch" => format!("lch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), alpha_part),
-        _ => format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), alpha_part),
+    match space {
+        "srgb" | "hsl" | "hwb" => format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), ap),
+        "srgb-linear" => format!("color(srgb-linear {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "display-p3" => format!("color(display-p3 {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "display-p3-linear" => format!("color(display-p3-linear {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "xyz" | "xyz-d65" => format!("color(xyz-d65 {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "xyz-d50" => format!("color(xyz-d50 {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "oklab" => format!("oklab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "oklch" => format!("oklch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "lab" => format!("lab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        "lch" => format!("lch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        _ => format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), ap),
+    }
+}
+
+// none 성분이 있는 color-mix 결과 직렬화: 공간 native 형태로, none 은 "none".
+fn serialize_mix_native(space: &str, mixed: &[f32; 3], none: &[bool; 3], a: Option<f32>) -> String {
+    let ap = match a {
+        Some(v) if (v - 1.0).abs() < 1e-4 => String::new(),
+        Some(v) => format!(" / {}", csnum(v)),
+        None => " / none".to_string(),
     };
-    Some((rgba, serial.into_boxed_str()))
+    // 성분 직렬화: none 이면 "none", 아니면 스케일 적용한 수(퍼센트면 %).
+    let cp = |i: usize, scale: f32, pct: bool| -> String {
+        if none[i] {
+            "none".to_string()
+        } else if pct {
+            format!("{}%", csnum(mixed[i] * scale))
+        } else {
+            csnum(mixed[i] * scale)
+        }
+    };
+    match space {
+        "hsl" => format!("hsl({} {} {}{})", cp(0, 1.0, false), cp(1, 100.0, true), cp(2, 100.0, true), ap),
+        "hwb" => format!("hwb({} {} {}{})", cp(0, 1.0, false), cp(1, 100.0, true), cp(2, 100.0, true), ap),
+        "oklab" => format!("oklab({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
+        "oklch" => format!("oklch({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
+        "lab" => format!("lab({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
+        "lch" => format!("lch({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
+        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "xyz" | "xyz-d65" | "xyz-d50" => {
+            let sp = if space == "xyz" { "xyz-d65" } else { space };
+            format!("color({} {} {} {}{})", sp, cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap)
+        }
+        _ => format!("color(srgb {} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
+    }
 }
 
 // 색상(hue) 보간: 보간법에 따라 각도차를 조정 후 선형 보간. w2 는 두 번째 색 가중치.
