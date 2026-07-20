@@ -17,6 +17,25 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
         return parse_hsl_func(&lower).map(Value::Color);
     }
+    // 모던 색 함수(CSS Color 4) — 페인팅용 sRGB 근사 변환.
+    if lower.starts_with("oklch(") {
+        return parse_oklch(&lower).map(Value::Color);
+    }
+    if lower.starts_with("oklab(") {
+        return parse_oklab(&lower).map(Value::Color);
+    }
+    if lower.starts_with("lch(") {
+        return parse_lch(&lower).map(Value::Color);
+    }
+    if lower.starts_with("lab(") {
+        return parse_lab(&lower).map(Value::Color);
+    }
+    if lower.starts_with("hwb(") {
+        return parse_hwb(&lower).map(Value::Color);
+    }
+    if lower.starts_with("color(") {
+        return parse_color_func(&lower).map(Value::Color);
+    }
     if lower.starts_with("calc(") && text.ends_with(')') {
         return eval_calc(&text[5..text.len() - 1]);
     }
@@ -615,6 +634,109 @@ fn alpha_val(s: &str) -> Option<u8> {
     Some((s.parse::<f32>().ok()?.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
+// 함수 표기의 괄호 안 내용.
+fn func_inner(text: &str) -> Option<&str> {
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    if close <= open { return None; }
+    Some(&text[open + 1..close])
+}
+
+// 모던 색 함수 컴포넌트: 수 / 퍼센트(pct_base 기준) / none(→0).
+fn comp_num(s: &str, pct_base: f32) -> Option<f32> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return Some(0.0);
+    }
+    if let Some(p) = s.strip_suffix('%') {
+        return Some(p.trim().parse::<f32>().ok()? / 100.0 * pct_base);
+    }
+    s.parse::<f32>().ok()
+}
+
+// 각도 컴포넌트(deg/grad/rad/turn, 무단위=deg, none→0).
+fn comp_angle(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return Some(0.0);
+    }
+    for (suf, mul) in [("deg", 1.0), ("grad", 0.9), ("turn", 360.0)] {
+        if let Some(p) = s.strip_suffix(suf) {
+            return Some(p.trim().parse::<f32>().ok()? * mul);
+        }
+    }
+    if let Some(p) = s.strip_suffix("rad") {
+        return Some(p.trim().parse::<f32>().ok()?.to_degrees());
+    }
+    s.parse::<f32>().ok()
+}
+
+// oklch(L C H [/ A]) — L: 0..1(또는 %of1), C: 수(또는 %of0.4), H: 각도.
+fn parse_oklch(text: &str) -> Option<Color> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 3 { return None; }
+    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
+    Some(oklch_to_color(comp_num(&p[0], 1.0)?, comp_num(&p[1], 0.4)?, comp_angle(&p[2])?, a))
+}
+// oklab(L a b [/ A]) — L: 0..1, a/b: 수(또는 %of0.4).
+fn parse_oklab(text: &str) -> Option<Color> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 3 { return None; }
+    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
+    Some(oklab_to_color(comp_num(&p[0], 1.0)?, comp_num(&p[1], 0.4)?, comp_num(&p[2], 0.4)?, a))
+}
+// lch(L C H [/ A]) — L: 0..100(또는 %of100), C: 수(또는 %of150), H: 각도.
+fn parse_lch(text: &str) -> Option<Color> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 3 { return None; }
+    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
+    Some(lch_to_color(comp_num(&p[0], 100.0)?, comp_num(&p[1], 150.0)?, comp_angle(&p[2])?, a))
+}
+// lab(L a b [/ A]) — L: 0..100, a/b: 수(또는 %of125).
+fn parse_lab(text: &str) -> Option<Color> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 3 { return None; }
+    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
+    Some(lab_to_color(comp_num(&p[0], 100.0)?, comp_num(&p[1], 125.0)?, comp_num(&p[2], 125.0)?, a))
+}
+// hwb(H W B [/ A]) — H: 각도, W/B: 퍼센트.
+fn parse_hwb(text: &str) -> Option<Color> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 3 { return None; }
+    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
+    Some(hwb_to_color(comp_angle(&p[0])?, comp_num(&p[1], 1.0)?, comp_num(&p[2], 1.0)?, a))
+}
+
+// color(<space> c1 c2 c3 [/ A]) — 지정 색공간의 성분을 sRGB 로.
+fn parse_color_func(text: &str) -> Option<Color> {
+    let p = color_parts(func_inner(text)?);
+    if p.len() < 4 { return None; }
+    let space = p[0].to_ascii_lowercase();
+    let c1 = comp_num(&p[1], 1.0)?;
+    let c2 = comp_num(&p[2], 1.0)?;
+    let c3 = comp_num(&p[3], 1.0)?;
+    let a = if p.len() >= 5 { alpha_val(&p[4])? } else { 255 };
+    let (lr, lg, lb) = match space.as_str() {
+        // sRGB: 성분이 이미 감마 인코딩된 sRGB → 그대로.
+        "srgb" => return Some(Color { r: to_u8(c1), g: to_u8(c2), b: to_u8(c3), a }),
+        "srgb-linear" => (c1, c2, c3),
+        // display-p3 는 sRGB 와 같은 전달함수 → 디코드 후 P3→sRGB 매트릭스.
+        "display-p3" => {
+            let (x, y, z) =
+                mat3(&P3_TO_XYZ65, srgb_gamma_inv(c1), srgb_gamma_inv(c2), srgb_gamma_inv(c3));
+            mat3(&XYZ65_TO_LSRGB, x, y, z)
+        }
+        "xyz" | "xyz-d65" => mat3(&XYZ65_TO_LSRGB, c1, c2, c3),
+        "xyz-d50" => {
+            let (x, y, z) = mat3(&BRADFORD_D50_D65, c1, c2, c3);
+            mat3(&XYZ65_TO_LSRGB, x, y, z)
+        }
+        // rec2020/a98-rgb/prophoto-rgb 는 전달함수가 달라 정확히 못 한다 → 미지원(정직).
+        _ => return None,
+    };
+    Some(lin_srgb_to_color(lr, lg, lb, a))
+}
+
 fn parse_rgb_func(text: &str) -> Option<Color> {
     let open = text.find('(')?;
     let close = text.rfind(')')?;
@@ -642,6 +764,145 @@ fn parse_hsl_func(text: &str) -> Option<Color> {
     let a = if parts.len() == 4 { alpha_val(&parts[3])? } else { 255 };
     let (r, g, b) = hsl_to_rgb(h, s.clamp(0.0, 1.0), l.clamp(0.0, 1.0));
     Some(Color { r, g, b, a })
+}
+
+// ── 모던 색 함수 → sRGB 변환 (CSS Color 4). 우리 색 모델은 8비트 sRGB 라 페인팅용
+// 근사로 변환한다. 표준 매트릭스/공식 사용(편법 없음). getComputedStyle 은 아직 rgb()
+// 로 접히므로 색공간 보존은 별개 과제(색 모델 확장 필요).
+
+// 선형 광량 → sRGB 감마 인코딩 (IEC 61966-2-1).
+fn linear_to_srgb(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.0031308 {
+        12.92 * c
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+fn to_u8(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+// 3x3 행렬(행 우선) × 벡터.
+fn mat3(m: &[f32; 9], x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+    (
+        m[0] * x + m[1] * y + m[2] * z,
+        m[3] * x + m[4] * y + m[5] * z,
+        m[6] * x + m[7] * y + m[8] * z,
+    )
+}
+
+// XYZ(D65) → 선형 sRGB (CSS Color 4).
+const XYZ65_TO_LSRGB: [f32; 9] = [
+    3.240_625_5, -1.537_208, -0.498_628_6,
+    -0.968_930_7, 1.875_756_1, 0.041_517_5,
+    0.055_710_1, -0.204_021_1, 1.056_995_9,
+];
+// 선형 display-p3 → XYZ(D65).
+const P3_TO_XYZ65: [f32; 9] = [
+    0.486_570_95, 0.265_667_7, 0.198_217_28,
+    0.228_974_56, 0.691_738_5, 0.079_286_91,
+    0.0, 0.045_113_38, 1.043_944_4,
+];
+// Bradford 색순응 XYZ(D50) → XYZ(D65).
+const BRADFORD_D50_D65: [f32; 9] = [
+    0.955_473_4, -0.023_008_5, 0.063_258_7,
+    -0.028_369_8, 1.009_994_3, 0.021_041_8,
+    0.012_313, -0.020_542_2, 1.329_909_8,
+];
+
+// sRGB 감마 디코드(감마 인코딩 sRGB/디스플레이P3 → 선형).
+fn srgb_gamma_inv(c: f32) -> f32 {
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+// 선형 sRGB 3채널(0..1) → 8비트 sRGB Color.
+fn lin_srgb_to_color(lr: f32, lg: f32, lb: f32, a: u8) -> Color {
+    Color {
+        r: to_u8(linear_to_srgb(lr)),
+        g: to_u8(linear_to_srgb(lg)),
+        b: to_u8(linear_to_srgb(lb)),
+        a,
+    }
+}
+
+// Oklab(L, a, b) → 선형 sRGB (Oklab 스펙의 역변환 매트릭스).
+fn oklab_to_lin_srgb(l_: f32, a: f32, b: f32) -> (f32, f32, f32) {
+    let l = l_ + 0.396_337_78 * a + 0.215_803_76 * b;
+    let m = l_ - 0.105_561_346 * a - 0.063_854_17 * b;
+    let s = l_ - 0.089_484_18 * a - 1.291_485_5 * b;
+    let (l, m, s) = (l * l * l, m * m * m, s * s * s);
+    (
+        4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s,
+        -1.268_438 * l + 2.609_757_4 * m - 0.341_319_4 * s,
+        -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s,
+    )
+}
+
+fn oklab_to_color(l: f32, a: f32, b: f32, alpha: u8) -> Color {
+    let (lr, lg, lb) = oklab_to_lin_srgb(l, a, b);
+    lin_srgb_to_color(lr, lg, lb, alpha)
+}
+
+// Oklch(L, C, H도) → Oklab → sRGB.
+fn oklch_to_color(l: f32, c: f32, h_deg: f32, alpha: u8) -> Color {
+    let h = h_deg.to_radians();
+    oklab_to_color(l, c * h.cos(), c * h.sin(), alpha)
+}
+
+// CIELAB(D50) → 선형 sRGB. XYZ(D50) → Bradford D50→D65 → sRGB 매트릭스 합성.
+fn lab_to_lin_srgb(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
+    // Lab → XYZ (D50 백색점)
+    let fy = (l + 16.0) / 116.0;
+    let fx = fy + a / 500.0;
+    let fz = fy - b / 200.0;
+    let eps = 216.0 / 24389.0;
+    let kappa = 24389.0 / 27.0;
+    let f_inv = |t: f32| {
+        let t3 = t * t * t;
+        if t3 > eps { t3 } else { (116.0 * t - 16.0) / kappa }
+    };
+    let (xn, yn, zn) = (0.964_212_26, 1.0, 0.825_188_25); // D50 백색점
+    let x = f_inv(fx) * xn;
+    let y = if l > kappa * eps { fy * fy * fy } else { l / kappa } * yn;
+    let z = f_inv(fz) * zn;
+    // XYZ(D50) → 선형 sRGB (Bradford D50→D65 를 합성한 매트릭스, CSS Color 4 부록)
+    (
+        3.134_136_2 * x - 1.617_386 * y - 0.490_662_28 * z,
+        -0.978_795_47 * x + 1.916_254_4 * y + 0.033_442_29 * z,
+        0.071_945_6 * x - 0.228_976_76 * y + 1.405_386_1 * z,
+    )
+}
+
+fn lab_to_color(l: f32, a: f32, b: f32, alpha: u8) -> Color {
+    let (lr, lg, lb) = lab_to_lin_srgb(l, a, b);
+    lin_srgb_to_color(lr, lg, lb, alpha)
+}
+
+fn lch_to_color(l: f32, c: f32, h_deg: f32, alpha: u8) -> Color {
+    let h = h_deg.to_radians();
+    lab_to_color(l, c * h.cos(), c * h.sin(), alpha)
+}
+
+// HWB(색상, 흰색 비율, 검정 비율) → sRGB (CSS Color 4).
+fn hwb_to_color(h: f32, mut w: f32, mut blk: f32, alpha: u8) -> Color {
+    if w + blk > 1.0 {
+        let sum = w + blk;
+        w /= sum;
+        blk /= sum;
+    }
+    // 순색(HSL s=1,l=0.5)에 흰/검정을 섞는다
+    let (r, g, b) = hsl_to_rgb(h, 1.0, 0.5);
+    let mix = |c: u8| {
+        let base = c as f32 / 255.0;
+        to_u8(base * (1.0 - w - blk) + w)
+    };
+    Color { r: mix(r), g: mix(g), b: mix(b), a: alpha }
 }
 
 // HSL(각도, 채도[0-1], 명도[0-1]) → RGB. 표준 변환.
@@ -869,6 +1130,28 @@ mod tests {
         assert!((cm - 96.0).abs() < 0.01, "2.54cm ≈ 96px, 실제 {}", cm);
         // ch/ex 는 0.5em 근사로 저장
         assert_eq!(interpret_value("2ch"), Some(Value::Length(1.0, Unit::Em)));
+    }
+
+    #[test]
+    fn modern_color_functions_to_srgb() {
+        // 모던 색 함수(CSS Color 4)를 sRGB 근사로 변환. 알려진 빨강/초록 값.
+        // 손으로 계산한 색공간 입력값이라 몇 단위 오차 허용(변환 방향/근사 검증이 목적).
+        let near = |c: Color, r: u8, g: u8, b: u8| {
+            (c.r as i32 - r as i32).abs() <= 10
+                && (c.g as i32 - g as i32).abs() <= 10
+                && (c.b as i32 - b as i32).abs() <= 10
+        };
+        assert!(near(color("oklch(0.628 0.2577 29.23)"), 255, 0, 0), "oklch red");
+        assert!(near(color("oklab(0.628 0.225 0.126)"), 255, 0, 0), "oklab red");
+        assert!(near(color("lab(53.24 80.09 67.2)"), 255, 0, 0), "lab red");
+        assert!(near(color("lch(53.24 104.55 40.0)"), 255, 0, 0), "lch red");
+        assert_eq!(color("color(srgb 1 0 0)"), Color { r: 255, g: 0, b: 0, a: 255 });
+        assert!(near(color("color(display-p3 0 1 0)"), 0, 255, 0), "p3 green");
+        assert!(near(color("color(xyz 0.9505 1 1.089)"), 255, 255, 255), "xyz white");
+        assert!(near(color("hwb(0 0% 0%)"), 255, 0, 0), "hwb red");
+        assert!(near(color("hwb(0 50% 0%)"), 255, 128, 128), "hwb tinted");
+        // 알파 보존
+        assert_eq!(color("oklch(0.628 0.2577 29.23 / 0.5)").a, 128);
     }
 
     #[test]
