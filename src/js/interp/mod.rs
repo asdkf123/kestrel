@@ -9122,8 +9122,23 @@ impl Interp {
             None => cs.get(&format!("\u{0}under-{dash_prop}")).cloned()?,
         };
         // 키프레임 값의 전역 키워드(initial/inherit/unset) 해석.
-        let from = self.resolve_wide_keyword(id, dash_prop, &from_raw);
-        let to = self.resolve_wide_keyword(id, dash_prop, &to_raw);
+        let mut from = self.resolve_wide_keyword(id, dash_prop, &from_raw);
+        let mut to = self.resolve_wide_keyword(id, dash_prop, &to_raw);
+        // animation-composition: add/accumulate — 기저값(\0under-)을 더한다(길이/수).
+        let composite = cs
+            .get("animation-composition")
+            .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
+            .unwrap_or_default();
+        if (composite == "add" || composite == "accumulate") && dash_prop != "transform" {
+            if let Some(base) = cs.get(&format!("\u{0}under-{dash_prop}")).cloned() {
+                if let Some(nf) = Self::add_css_values(&base, &from) {
+                    from = nf;
+                }
+                if let Some(nt) = Self::add_css_values(&base, &to) {
+                    to = nt;
+                }
+            }
+        }
         let progress = (elapsed / dur).clamp(0.0, 1.0);
         let eased = Self::eval_easing(&easing, progress);
         let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
