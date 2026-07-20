@@ -7945,6 +7945,16 @@ impl Interp {
                 return Some(crate::style::num_css(v));
             }
         }
+        // <integer> 프로퍼티는 보간 결과를 가장 가까운 정수로 반올림(§CSS Values).
+        if matches!(
+            dash_prop,
+            "z-index" | "order" | "column-count" | "-webkit-line-clamp" | "orphans" | "widows"
+        ) {
+            if let (Ok(f), Ok(t)) = (from.trim().parse::<f32>(), to.trim().parse::<f32>()) {
+                let v = (f + (t - f) * eased).round();
+                return Some(format!("{}", v as i64));
+            }
+        }
         // letter-spacing/word-spacing 의 normal 은 0 처럼 보간한다. 단 정확한 끝점
         // (eased 0/1)에서는 키워드(normal)를 그대로 둔다(계산값이 normal 로 직렬화).
         if matches!(dash_prop, "letter-spacing" | "word-spacing")
