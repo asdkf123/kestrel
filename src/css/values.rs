@@ -776,6 +776,9 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
         }
         let color = match interpret_value(&toks[0]) {
             Some(Value::Color(c)) => c,
+            // color()/lab()/oklch()/color-mix() 스톱: 렌더는 sRGB 근사(ColorFn 의
+            // Color), 계산값 직렬화는 serial 이 원문(color() 등)을 보존한다.
+            Some(Value::ColorFn(c, _)) => c,
             _ => continue,
         };
         let p1 = toks.get(1).and_then(|t| parse_pos(t));
