@@ -1751,6 +1751,11 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         | "border-bottom-right-radius" => "0px",
         "border-top-style" | "border-right-style" | "border-bottom-style"
         | "border-left-style" => "none",
+        // 12차: 흩어진 프로퍼티 초기값.
+        "background-position-x" | "background-position-y" => "0%",
+        "shape-outside" | "view-transition-class" | "text-box-trim" | "text-box" => "none",
+        "word-space-transform" | "white-space-trim" => "none",
+        "text-box-edge" => "auto",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

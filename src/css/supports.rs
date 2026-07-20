@@ -207,6 +207,10 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "border-bottom-right-radius",
     // 개별 border-*-style(border-style 롱핸드) — 계산값/supports.
     "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+    // 12차: 흩어진 미지원 프로퍼티(계산값 노출).
+    "background-position-x", "background-position-y", "shape-outside", "shape-image-threshold",
+    "word-space-transform", "view-transition-class", "text-box-trim", "text-box-edge",
+    "text-box", "white-space-trim",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
