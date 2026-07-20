@@ -129,14 +129,22 @@ pub(crate) fn camel_to_dashed(s: &str) -> String {
         return s.to_string();
     }
     let mut out = String::with_capacity(s.len() + 2);
+    // 소문자 벤더 접두 IDL 속성(webkitLineClamp/mozFoo/msFoo)도 -webkit-/-moz-/-ms-
+    // 로 매핑한다(CSSOM: 대문자선두 WebkitLineClamp 와 함께 소문자선두 별칭도 유효).
+    // 대문자선두(WebkitLineClamp)는 아래 루프의 i==0 대시가 이미 처리.
+    let vendor_prefixed = ["webkit", "moz", "ms"].iter().any(|p| {
+        s.strip_prefix(*p)
+            .and_then(|r| r.chars().next())
+            .is_some_and(|c| c.is_ascii_uppercase())
+    });
+    if vendor_prefixed {
+        out.push('-');
+    }
     for (i, c) in s.chars().enumerate() {
         if c.is_ascii_uppercase() {
-            // 선두 대문자(webkit/moz/ms/o 벤더)는 앞에도 대시
-            if i == 0 {
-                out.push('-');
-            } else {
-                out.push('-');
-            }
+            // 대문자마다 앞에 대시 + 소문자화 (선두 대문자 벤더 접두 포함)
+            let _ = i;
+            out.push('-');
             out.push(c.to_ascii_lowercase());
         } else {
             out.push(c);
