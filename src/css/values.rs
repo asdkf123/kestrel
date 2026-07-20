@@ -1041,13 +1041,11 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
     let pw1 = hue_powerless(&space, &co1);
     let pw2 = hue_powerless(&space, &co2);
     let mixed_hue = hi.map(|i| {
-        if pw1 && !pw2 {
-            co2[i]
-        } else if pw2 && !pw1 {
-            co1[i]
-        } else {
-            interp_hue(co1[i], co2[i], w2, &hue_method)
-        }
+        // 무력한 색상은 상대 색의 색상으로 대체한 뒤 보간법을 적용한다(§CSS Color 4/5).
+        // 예: red+transparent 를 longer 로 섞으면 0→0 이 360 우회라 중간이 180(청록)이 된다.
+        let h1 = if pw1 { co2[i] } else { co1[i] };
+        let h2 = if pw2 { co1[i] } else { co2[i] };
+        interp_hue(h1, h2, w2, &hue_method)
     });
     // 알파 프리멀티플라이 후 보간(색상 성분 제외).
     for i in 0..3 {
