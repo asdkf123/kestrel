@@ -1249,6 +1249,42 @@ pub fn normalize_comma_list(s: &str) -> String {
     s.split(',').map(|t| t.trim()).collect::<Vec<_>>().join(", ")
 }
 
+// scale 프로퍼티 계산값 정규화(§CSS Transforms 2): 퍼센트→수(100%→1), z 가 1 이면
+// 생략, y==x 면 하나로 접기. scale: 100 100→"100", 100% 100% 1→"1", 2 3→"2 3".
+pub fn normalize_scale(v: &str) -> String {
+    let v = v.trim();
+    if v == "none" || v.is_empty() {
+        return v.to_string();
+    }
+    let toks: Vec<&str> = v.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 3 {
+        return v.to_string();
+    }
+    let mut nums = Vec::with_capacity(toks.len());
+    for t in &toks {
+        let n = if let Some(p) = t.strip_suffix('%') {
+            p.parse::<f32>().ok().map(|x| x / 100.0)
+        } else {
+            t.parse::<f32>().ok()
+        };
+        match n {
+            Some(x) => nums.push(x),
+            None => return v.to_string(), // 파싱 실패 시 원문 보존
+        }
+    }
+    let f = num_css;
+    let x = nums[0];
+    let y = nums.get(1).copied().unwrap_or(x);
+    let z = nums.get(2).copied().unwrap_or(1.0);
+    if nums.len() == 3 && z != 1.0 {
+        format!("{} {} {}", f(x), f(y), f(z))
+    } else if y != x {
+        format!("{} {}", f(x), f(y))
+    } else {
+        f(x)
+    }
+}
+
 // 이징 함수 계산값 정규화(§CSS Easing): step-start→steps(1, start), step-end→steps(1),
 // steps(n[, end/jump-end])→steps(n)(기본 생략), steps(n, start)→그대로,
 // cubic-bezier 인자 간격 정규화. 쉼표 목록.

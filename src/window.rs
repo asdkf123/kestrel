@@ -650,6 +650,10 @@ fn collect_computed_styles(
                 m.insert(key.to_string(), crate::style::normalize_easing_list(v));
             }
         }
+        // scale 프로퍼티 계산값: 퍼센트→수, z=1 생략, y==x 접기.
+        if let Some(v) = m.get("scale") {
+            m.insert("scale".to_string(), crate::style::normalize_scale(v));
+        }
         out.insert(node.id, m);
     }
     for child in &node.children {
