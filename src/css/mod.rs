@@ -52,6 +52,9 @@ pub struct Stylesheet {
     pub font_faces: Vec<FontFace>,
     // @keyframes 이름 → 최종(100%/to) 프레임 선언. 정적 렌더는 애니메이션 종료 상태를 적용.
     pub keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
+    // @keyframes 이름 → (0%/from 프레임, 100%/to 프레임). CSS 애니메이션 보간용
+    // (getComputedStyle 이 진행 중 값을 계산). 정적 렌더는 keyframes(최종)만 쓴다.
+    pub keyframes_ft: std::collections::HashMap<String, (Vec<(String, Value)>, Vec<(String, Value)>)>,
 }
 
 // CSSOM 의 한 스타일시트 (§CSSOM 6.2 CSSStyleSheet).
@@ -76,6 +79,7 @@ impl Stylesheet {
             layers: Vec::new(),
             font_faces: Vec::new(),
             keyframes: std::collections::HashMap::new(),
+            keyframes_ft: std::collections::HashMap::new(),
         }
     }
 
@@ -96,6 +100,7 @@ impl Stylesheet {
         self.rules.extend(other.rules);
         self.font_faces.extend(other.font_faces);
         self.keyframes.extend(other.keyframes);
+        self.keyframes_ft.extend(other.keyframes_ft);
     }
 }
 
@@ -594,6 +599,7 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
         viewport_width,
         font_faces: Vec::new(),
         keyframes: std::collections::HashMap::new(),
+            keyframes_ft: std::collections::HashMap::new(),
         layers: Vec::new(),
         cur_container: None,
         cur_layer: None,
@@ -605,6 +611,7 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
         layers: parser.layers,
         font_faces: parser.font_faces,
         keyframes: parser.keyframes,
+        keyframes_ft: parser.keyframes_ft,
     }
 }
 
@@ -639,6 +646,7 @@ pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
         viewport_width: 0.0,
         font_faces: Vec::new(),
         keyframes: std::collections::HashMap::new(),
+            keyframes_ft: std::collections::HashMap::new(),
         layers: Vec::new(),
         cur_container: None,
         cur_layer: None,
@@ -743,6 +751,8 @@ struct Parser {
     viewport_width: f32,
     font_faces: Vec<FontFace>,
     keyframes: std::collections::HashMap<String, Vec<(String, Value)>>,
+    keyframes_ft:
+        std::collections::HashMap<String, (Vec<(String, Value)>, Vec<(String, Value)>)>,
     // @layer 선언 순서 (이름). 익명 레이어는 "\u{0}anon<N>" 로 유일한 이름을 준다.
     layers: Vec<String>,
     // 지금 파싱 중인 @container 블록 (이름, 조건)
@@ -1043,6 +1053,11 @@ impl Parser {
         self.consume_char(); // '{'
         let mut final_decls: Vec<(String, Value)> = Vec::new();
         let mut best_offset = -1.0f32;
+        // 0%(from)/100%(to) 프레임 선언 — 보간용. min/max offset 프레임을 잡는다.
+        let mut from_decls: Vec<(String, Value)> = Vec::new();
+        let mut to_decls: Vec<(String, Value)> = Vec::new();
+        let mut from_offset = f32::INFINITY;
+        let mut to_offset = f32::NEG_INFINITY;
         loop {
             self.consume_whitespace();
             match self.peek() {
@@ -1058,16 +1073,28 @@ impl Parser {
                     if self.peek() == Some('{') {
                         self.consume_char();
                         let decls = self.parse_declarations();
+                        let pairs: Vec<(String, Value)> =
+                            decls.into_iter().map(|d| (d.name, d.value)).collect();
                         if offset >= best_offset {
                             best_offset = offset;
-                            final_decls = decls.into_iter().map(|d| (d.name, d.value)).collect();
+                            final_decls = pairs.clone();
+                        }
+                        // 같은 offset 프레임이 여러 번이면 뒤가 이긴다(<=/>=).
+                        if offset <= from_offset {
+                            from_offset = offset;
+                            from_decls = pairs.clone();
+                        }
+                        if offset >= to_offset {
+                            to_offset = offset;
+                            to_decls = pairs;
                         }
                     }
                 }
             }
         }
         if !name.is_empty() && !final_decls.is_empty() {
-            self.keyframes.insert(name, final_decls);
+            self.keyframes.insert(name.clone(), final_decls);
+            self.keyframes_ft.insert(name, (from_decls, to_decls));
         }
     }
 

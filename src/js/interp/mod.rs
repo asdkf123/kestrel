@@ -7845,48 +7845,130 @@ impl Interp {
 
     // 활성 애니메이션이 dash_prop 을 다루면 currentTime 에서 보간한 계산값(뒤 애니 우선).
     fn animated_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
-        let anims = self.element_animations.get(&id)?;
-        let mut result = None;
-        for (rc, duration, props) in anims {
-            if *duration <= 0.0 {
-                continue;
-            }
-            if let Some((from, to, easing)) = props.get(dash_prop) {
-                let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
-                let progress = (ct / duration).clamp(0.0, 1.0) as f32;
-                let eased = Self::eval_easing(easing, progress);
-                // scale/translate 프로퍼티는 컴포넌트 수가 달라도(예: "2 1" ↔ "26 17 9")
-                // 각각 x y z 로 확장(scale z 는 1, translate y/z 는 0)해 보간해야 한다.
-                let special = match dash_prop {
-                    "scale" => Self::interp_scale(from, to, eased),
-                    "translate" => Self::interp_translate(from, to, eased),
-                    _ => None,
-                };
-                if let Some(v) = special {
-                    result = Some(v);
-                } else if let Some(v) = Self::interp_css_value(from, to, eased) {
-                    result = Some(v);
-                } else if !from.is_empty() && !to.is_empty() {
-                    // 보간 불가(불연속 타입) → 플립. 기본은 이징 출력 0.5 기준.
-                    // display/content-visibility 는 none 이 "보이는" 쪽에 밀려 끝점에서만
-                    // 적용된다(§css-display-4): to==none 이면 t>=1 에서만, from==none 이면
-                    // t>0 에서 즉시 반대쪽(보이는 값).
-                    let to_side = if dash_prop == "display" || dash_prop == "content-visibility" {
-                        if to == "none" {
-                            eased >= 1.0
-                        } else if from == "none" {
-                            eased > 0.0
-                        } else {
-                            eased >= 0.5
-                        }
-                    } else {
-                        eased >= 0.5
-                    };
-                    result = Some(if to_side { to.clone() } else { from.clone() });
+        // element.animate / CSS transition 스냅샷 우선.
+        if let Some(anims) = self.element_animations.get(&id) {
+            let mut result = None;
+            for (rc, duration, props) in anims {
+                if *duration <= 0.0 {
+                    continue;
+                }
+                if let Some((from, to, easing)) = props.get(dash_prop) {
+                    let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
+                    let progress = (ct / duration).clamp(0.0, 1.0) as f32;
+                    let eased = Self::eval_easing(easing, progress);
+                    if let Some(v) = Self::interp_prop(dash_prop, from, to, eased) {
+                        result = Some(v);
+                    }
                 }
             }
+            if result.is_some() {
+                return result;
+            }
         }
-        result
+        // CSS @keyframes 애니메이션(animation-name/duration/delay/timing + @keyframes).
+        self.css_animation_value(id, dash_prop)
+    }
+
+    // from→to 를 이징 출력 eased 로 보간해 직렬화. scale/translate 컴포넌트 확장,
+    // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
+    fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32) -> Option<String> {
+        let special = match dash_prop {
+            "scale" => Self::interp_scale(from, to, eased),
+            "translate" => Self::interp_translate(from, to, eased),
+            _ => None,
+        };
+        if special.is_some() {
+            return special;
+        }
+        if let Some(v) = Self::interp_css_value(from, to, eased) {
+            return Some(v);
+        }
+        if !from.is_empty() && !to.is_empty() {
+            let to_side = if dash_prop == "display" || dash_prop == "content-visibility" {
+                if to == "none" {
+                    eased >= 1.0
+                } else if from == "none" {
+                    eased > 0.0
+                } else {
+                    eased >= 0.5
+                }
+            } else {
+                eased >= 0.5
+            };
+            return Some(if to_side { to.to_string() } else { from.to_string() });
+        }
+        None
+    }
+
+    // CSS 애니메이션(animation-name + @keyframes) 이 이 프로퍼티를 다루면 현재 진행
+    // 값으로 보간. 명시적 0%/100% 프레임이 둘 다 있을 때만(neutral 은 정적 렌더에 맡김).
+    fn css_animation_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
+        let cs = self.computed_styles.get(&id)?;
+        let name = cs.get("animation-name")?.split(',').next()?.trim().to_string();
+        if name.is_empty() || name == "none" {
+            return None;
+        }
+        let ctx = self.layout_ctx.as_ref()?;
+        let sheet = unsafe { &*ctx.sheet };
+        let (from_frame, to_frame) = sheet.keyframes_ft.get(&name)?;
+        let first_time = |k: &str| -> f32 {
+            cs.get(k)
+                .map(|s| Self::time_ms_css(s.split(',').next().unwrap_or("").trim()))
+                .unwrap_or(0.0)
+        };
+        let dur = first_time("animation-duration");
+        if dur <= 0.0 {
+            return None;
+        }
+        let elapsed = -first_time("animation-delay"); // 음수 delay = 경과 시간
+        if elapsed < 0.0 {
+            return None;
+        }
+        // timing-function 은 cubic-bezier()/steps() 내부에 쉼표가 있으므로 괄호 인식.
+        let easing = cs
+            .get("animation-timing-function")
+            .map(|s| Self::first_top_comma_value(s))
+            .unwrap_or_default();
+        let from = Self::frame_prop(from_frame, dash_prop)?;
+        let to = Self::frame_prop(to_frame, dash_prop)?;
+        let progress = (elapsed / dur).clamp(0.0, 1.0);
+        let eased = Self::eval_easing(&easing, progress);
+        Self::interp_prop(dash_prop, &from, &to, eased)
+    }
+
+    // 최상위 쉼표 기준 첫 값(cubic-bezier()/steps() 내부 쉼표는 무시).
+    fn first_top_comma_value(s: &str) -> String {
+        let mut depth = 0i32;
+        for (i, c) in s.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ',' if depth == 0 => return s[..i].trim().to_string(),
+                _ => {}
+            }
+        }
+        s.trim().to_string()
+    }
+
+    // 시간 값(100s/50ms) → ms. 단위 없으면 0.
+    fn time_ms_css(s: &str) -> f32 {
+        let s = s.trim();
+        if let Some(n) = s.strip_suffix("ms") {
+            n.trim().parse().unwrap_or(0.0)
+        } else if let Some(n) = s.strip_suffix('s') {
+            n.trim().parse::<f32>().unwrap_or(0.0) * 1000.0
+        } else {
+            0.0
+        }
+    }
+
+    // 키프레임 선언에서 프로퍼티 값을 계산값 문자열로(마지막 선언 우선).
+    fn frame_prop(frame: &[(String, crate::css::Value)], prop: &str) -> Option<String> {
+        frame
+            .iter()
+            .rev()
+            .find(|(k, _)| k == prop)
+            .map(|(_, v)| crate::style::computed_value_string(v))
     }
 
     // CSS 전역 키워드(initial/inherit/unset)를 실제 값으로 해석(애니메이션 from/to 용).
