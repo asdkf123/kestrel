@@ -9284,10 +9284,17 @@ impl Interp {
         let ft: Vec<&str> = f.split_whitespace().collect();
         let gt: Vec<&str> = g.split_whitespace().collect();
         if ft.len() > 1 && ft.len() == gt.len() {
+            // 동일 토큰(fill/auto 같은 키워드)은 그대로 유지 — 보간 불가여도 안 깨진다.
             let parts: Option<Vec<String>> = ft
                 .iter()
                 .zip(gt.iter())
-                .map(|(a, b)| Self::interp_css_value(a, b, t))
+                .map(|(a, b)| {
+                    if a == b {
+                        Some(a.to_string())
+                    } else {
+                        Self::interp_css_value(a, b, t)
+                    }
+                })
                 .collect();
             return parts.map(|p| p.join(" "));
         }
