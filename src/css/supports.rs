@@ -177,6 +177,12 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "scroll-margin-left", "scroll-padding-top", "scroll-padding-right",
     "scroll-padding-bottom", "scroll-padding-left", "scroll-snap-stop", "place-self",
     "contain-intrinsic-width", "contain-intrinsic-height",
+    // 5차: SVG presentation 프로퍼티(비페인트) — svg/ 및 css 전반에서 대량 테스트.
+    "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin",
+    "stroke-dasharray", "stroke-dashoffset", "stroke-miterlimit", "clip-rule", "fill-rule",
+    "paint-order", "vector-effect", "dominant-baseline", "text-anchor", "shape-rendering",
+    "color-interpolation", "color-interpolation-filters", "marker-start", "marker-mid",
+    "marker-end", "baseline-shift",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

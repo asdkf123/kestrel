@@ -399,7 +399,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-inline-end-style" | "mask-image" | "mask-repeat" | "mask-position"
         | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
         | "offset-path" | "offset-rotate" | "offset-anchor" | "scroll-snap-stop"
-        | "contain-intrinsic-width" | "contain-intrinsic-height" => {
+        | "contain-intrinsic-width" | "contain-intrinsic-height"
+        // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
+        | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
+        | "stroke-dasharray" | "stroke-miterlimit" | "clip-rule" | "fill-rule"
+        | "paint-order" | "vector-effect" | "dominant-baseline" | "text-anchor"
+        | "shape-rendering" | "color-interpolation" | "color-interpolation-filters"
+        | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
