@@ -8550,7 +8550,7 @@ impl Interp {
             if fname != tname || fa.len() != ta.len() {
                 return None;
             }
-            // matrix/matrix3d 는 성분별 보간이 틀리다 — 행렬 분해 경로로 넘긴다.
+            // matrix/matrix3d 는 성분별 보간이 틀리다 — 리스트를 합쳐 행렬 분해 경로로.
             if matches!(fname.as_str(), "matrix" | "matrix3d") {
                 return None;
             }
@@ -8618,8 +8618,24 @@ impl Interp {
         }
         let ma = crate::layout::parse_transform(from, w, h);
         let mb = crate::layout::parse_transform(to, w, h);
-        let da = Self::decompose_2d(ma.a, ma.b, ma.c, ma.d, ma.e, ma.f)?;
-        let db = Self::decompose_2d(mb.a, mb.b, mb.c, mb.d, mb.e, mb.f)?;
+        let n = |v: f32| -> String {
+            let v = if v.abs() < 1e-6 { 0.0 } else { v };
+            if v.fract() == 0.0 && v.is_finite() {
+                format!("{}", v as i64)
+            } else {
+                format!("{:.6}", v).trim_end_matches('0').trim_end_matches('.').to_string()
+            }
+        };
+        let mat_str =
+            |m: &crate::layout::Mat| format!("matrix({}, {}, {}, {}, {}, {})", n(m.a), n(m.b), n(m.c), n(m.d), n(m.e), n(m.f));
+        let (da, db) = match (
+            Self::decompose_2d(ma.a, ma.b, ma.c, ma.d, ma.e, ma.f),
+            Self::decompose_2d(mb.a, mb.b, mb.c, mb.d, mb.e, mb.f),
+        ) {
+            (Some(a), Some(b)) => (a, b),
+            // 특이행렬(det=0)은 분해 불가 → 불연속 플립(§CSS Transforms, 50% 기준).
+            _ => return Some(mat_str(if eased < 0.5 { &ma } else { &mb })),
+        };
         let t = eased;
         let lerp = |x: f32, y: f32| x + (y - x) * t;
         // 회전은 최단 경로가 아니라 분해된 각도를 직접 보간(§spec).
@@ -8631,14 +8647,6 @@ impl Interp {
             lerp(da.4, db.4),
             lerp(da.5, db.5),
         );
-        let n = |v: f32| -> String {
-            let v = if v.abs() < 1e-6 { 0.0 } else { v };
-            if v.fract() == 0.0 && v.is_finite() {
-                format!("{}", v as i64)
-            } else {
-                format!("{:.6}", v).trim_end_matches('0').trim_end_matches('.').to_string()
-            }
-        };
         Some(format!(
             "matrix({}, {}, {}, {}, {}, {})",
             n(m[0]), n(m[1]), n(m[2]), n(m[3]), n(m[4]), n(m[5])
@@ -9124,18 +9132,31 @@ impl Interp {
         // 키프레임 값의 전역 키워드(initial/inherit/unset) 해석.
         let mut from = self.resolve_wide_keyword(id, dash_prop, &from_raw);
         let mut to = self.resolve_wide_keyword(id, dash_prop, &to_raw);
-        // animation-composition: add/accumulate — 기저값(\0under-)을 더한다(길이/수).
-        let composite = cs
+        // animation-composition: add/accumulate — 키프레임 값을 언더라이닝(\0under-)에
+        // 합성한다. composite 는 **키프레임별**(@keyframes 안에 animation-composition
+        // 선언)이라 from/to 각자 읽는다. 프레임에 없으면 요소 레벨 값으로 폴백.
+        let elem_comp = cs
             .get("animation-composition")
             .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
             .unwrap_or_default();
-        if (composite == "add" || composite == "accumulate") && dash_prop != "transform" {
-            if let Some(base) = cs.get(&format!("\u{0}under-{dash_prop}")).cloned() {
-                if let Some(nf) = Self::add_css_values(&base, &from) {
-                    from = nf;
+        let from_comp = Self::frame_prop(from_frame, "animation-composition")
+            .unwrap_or_else(|| elem_comp.clone());
+        let to_comp =
+            Self::frame_prop(to_frame, "animation-composition").unwrap_or_else(|| elem_comp.clone());
+        let is_add = |c: &str| c == "add" || c == "accumulate";
+        let base = cs.get(&format!("\u{0}under-{dash_prop}")).cloned();
+        if let Some(base) = base {
+            for (side, comp) in [(&mut from, &from_comp), (&mut to, &to_comp)] {
+                if !is_add(comp) {
+                    continue;
                 }
-                if let Some(nt) = Self::add_css_values(&base, &to) {
-                    to = nt;
+                if dash_prop == "transform" {
+                    // transform 합성: 언더라이닝 리스트를 앞에 연결(행렬 분해가 처리).
+                    if !base.is_empty() && base != "none" {
+                        *side = format!("{base} {side}");
+                    }
+                } else if let Some(n) = Self::add_css_values(&base, side) {
+                    *side = n;
                 }
             }
         }

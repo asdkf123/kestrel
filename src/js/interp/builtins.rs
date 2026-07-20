@@ -5022,34 +5022,54 @@ impl Interp {
                         *from = self.resolve_wide_keyword(id, dash, from);
                         *to = self.resolve_wide_keyword(id, dash, to);
                     }
-                    // composite: add/accumulate — 키프레임 값을 기저값에 더한다
-                    // (§Web Animations). 길이/수 프로퍼티만(transform 은 행렬 합성이라 제외).
-                    let composite = frames
-                        .iter()
-                        .find_map(|f| {
-                            if let Value::Obj(o) = f {
-                                o.borrow().get("composite").map(to_display)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or_default();
-                    if composite == "add" || composite == "accumulate" {
+                    // composite: add/accumulate — 키프레임 값을 언더라이닝(기저)값에
+                    // 합성한다(§Web Animations). composite 는 **키프레임별**이라 from/to 를
+                    // 각자의 composite 로 처리한다. 수치 프로퍼티는 add_css_values, transform
+                    // 은 언더라이닝 리스트를 앞에 연결(행렬 분해가 합성 처리).
+                    let frame_composite = |f: &Value| -> String {
+                        if let Value::Obj(o) = f {
+                            o.borrow().get("composite").map(to_display).unwrap_or_default()
+                        } else {
+                            String::new()
+                        }
+                    };
+                    let (from_comp, to_comp) = if frames.len() >= 2 {
+                        (frame_composite(&frames[0]), frame_composite(&frames[frames.len() - 1]))
+                    } else if frames.len() == 1 {
+                        // 단일 프레임(반대편 neutral=기저): offset 으로 어느 쪽인지 판정,
+                        // 그쪽만 composite 적용(neutral 쪽은 기저 자체라 합성 없음).
+                        let off = if let Value::Obj(t) = &frames[0] {
+                            t.borrow().get("offset").map(to_num).unwrap_or(1.0)
+                        } else {
+                            1.0
+                        };
+                        let c = frame_composite(&frames[0]);
+                        if off >= 0.5 { (String::new(), c) } else { (c, String::new()) }
+                    } else {
+                        (String::new(), String::new())
+                    };
+                    let is_add = |c: &str| c == "add" || c == "accumulate";
+                    if is_add(&from_comp) || is_add(&to_comp) {
+                        // transform 언더라이닝은 인라인 지정값(computed_styles 는 stale).
+                        let under_tf = self.style_get_raw(id, "transform");
                         for (dash, (from, to, _ez)) in props.iter_mut() {
-                            let Some(bv) = base.get(dash) else { continue };
-                            if dash == "transform" {
-                                // transform composite:add 는 언더라이닝 리스트를 앞에
-                                // 연결한다(§Web Animations). 행렬 분해가 합성을 처리.
-                                if !bv.is_empty() && bv != "none" {
-                                    *from = format!("{bv} {from}");
-                                    *to = format!("{bv} {to}");
+                            for (side, comp) in [(&mut *from, &from_comp), (&mut *to, &to_comp)] {
+                                if !is_add(comp) {
+                                    continue;
                                 }
-                            } else {
-                                if let Some(nf) = Self::add_css_values(bv, from) {
-                                    *from = nf;
-                                }
-                                if let Some(nt) = Self::add_css_values(bv, to) {
-                                    *to = nt;
+                                if dash == "transform" {
+                                    let u = if !under_tf.is_empty() {
+                                        under_tf.as_str()
+                                    } else {
+                                        base.get(dash).map(String::as_str).unwrap_or("")
+                                    };
+                                    if !u.is_empty() && u != "none" {
+                                        *side = format!("{u} {side}");
+                                    }
+                                } else if let Some(bv) = base.get(dash) {
+                                    if let Some(n) = Self::add_css_values(bv, side) {
+                                        *side = n;
+                                    }
                                 }
                             }
                         }
