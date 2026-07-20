@@ -8091,13 +8091,73 @@ impl Interp {
             out.push(cur);
             out
         };
-        // 위치 키워드 → %.
-        let kw = |tok: &str| -> String {
-            match tok.trim().to_ascii_lowercase().as_str() {
-                "left" | "top" => "0%".to_string(),
-                "center" => "50%".to_string(),
-                "right" | "bottom" => "100%".to_string(),
-                other => other.to_string(),
+        let fl = split_commas(from);
+        let tl = split_commas(to);
+        if fl.is_empty() || tl.is_empty() {
+            return None;
+        }
+        let n = fl.len().max(tl.len());
+        let mut layers = Vec::with_capacity(n);
+        for i in 0..n {
+            let (fh, fv) = Self::resolve_position_layer(fl[i % fl.len()].trim())?;
+            let (th, tv) = Self::resolve_position_layer(tl[i % tl.len()].trim())?;
+            let h = Self::interp_len_pct(&fh, &th, t)?;
+            let v = Self::interp_len_pct(&fv, &tv, t)?;
+            layers.push(format!("{h} {v}"));
+        }
+        Some(layers.join(", "))
+    }
+
+    // 단일 축 위치(background-position-x/y): 쉼표 레이어별 단일 값.
+    // "right 20px" → calc(100% - 20px), "left"/"top" → 0%, "center" → 50%.
+    fn interp_position_axis(from: &str, to: &str, t: f32) -> Option<String> {
+        let split_commas = |s: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            let mut depth = 0i32;
+            let mut cur = String::new();
+            for c in s.chars() {
+                match c {
+                    '(' => {
+                        depth += 1;
+                        cur.push(c);
+                    }
+                    ')' => {
+                        depth -= 1;
+                        cur.push(c);
+                    }
+                    ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+                    _ => cur.push(c),
+                }
+            }
+            out.push(cur);
+            out
+        };
+        // 축 값 → length-percentage. "left"/"top"→0%, "right"/"bottom"→100% 기준 offset.
+        let axis_val = |s: &str| -> Option<String> {
+            let toks: Vec<&str> = s.split_whitespace().collect();
+            match toks.as_slice() {
+                [v] => match v.to_ascii_lowercase().as_str() {
+                    "left" | "top" => Some("0%".to_string()),
+                    "right" | "bottom" => Some("100%".to_string()),
+                    "center" => Some("50%".to_string()),
+                    _ => Some(v.to_string()),
+                },
+                [edge, off] => {
+                    let far = matches!(edge.to_ascii_lowercase().as_str(), "right" | "bottom");
+                    let (px, pct) = Self::parse_len_pct(off)?;
+                    if !far {
+                        return Some(off.to_string());
+                    }
+                    Some(match (px, pct) {
+                        (Some(p), None) if p != 0.0 => {
+                            format!("calc(100% - {}px)", crate::style::num_css(p))
+                        }
+                        (Some(_), None) => "100%".to_string(),
+                        (None, Some(p)) => format!("{}%", crate::style::num_css(100.0 - p)),
+                        _ => return None,
+                    })
+                }
+                _ => None,
             }
         };
         let fl = split_commas(from);
@@ -8108,20 +8168,90 @@ impl Interp {
         let n = fl.len().max(tl.len());
         let mut layers = Vec::with_capacity(n);
         for i in 0..n {
-            let fa = fl[i % fl.len()].trim();
-            let ta = tl[i % tl.len()].trim();
-            let fc: Vec<String> = fa.split_whitespace().map(kw).collect();
-            let tc: Vec<String> = ta.split_whitespace().map(kw).collect();
-            if fc.is_empty() || fc.len() != tc.len() {
-                return None;
-            }
-            let mut comps = Vec::with_capacity(fc.len());
-            for (a, b) in fc.iter().zip(&tc) {
-                comps.push(Self::interp_len_pct(a, b, t)?);
-            }
-            layers.push(comps.join(" "));
+            let fv = axis_val(fl[i % fl.len()].trim())?;
+            let tv = axis_val(tl[i % tl.len()].trim())?;
+            layers.push(Self::interp_len_pct(&fv, &tv, t)?);
         }
         Some(layers.join(", "))
+    }
+
+    // 한 background-position 레이어를 (수평, 수직) length-percentage 로 해석.
+    // "20px 30px", "left top", "center", edge-offset("right 20px bottom 10px") 지원.
+    fn resolve_position_layer(s: &str) -> Option<(String, String)> {
+        let toks: Vec<&str> = s.split_whitespace().collect();
+        let is_h = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "left" | "right");
+        let is_v = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "top" | "bottom");
+        // edge + 선택 오프셋 → length-percentage. right/bottom 은 100% 기준.
+        let edge_val = |edge: &str, off: Option<&str>| -> Option<String> {
+            let el = edge.to_ascii_lowercase();
+            if el == "center" {
+                return Some("50%".to_string());
+            }
+            let far = el == "right" || el == "bottom";
+            let off = off.unwrap_or("0%");
+            let (px, pct) = Self::parse_len_pct(off)?;
+            if !far {
+                return Some(off.to_string());
+            }
+            // 100% - off
+            Some(match (px, pct) {
+                (Some(p), None) => {
+                    if p == 0.0 {
+                        "100%".to_string()
+                    } else {
+                        format!("calc(100% - {}px)", crate::style::num_css(p))
+                    }
+                }
+                (None, Some(p)) => format!("{}%", crate::style::num_css(100.0 - p)),
+                _ => return None,
+            })
+        };
+        match toks.len() {
+            1 => {
+                let t = toks[0];
+                if is_v(t) {
+                    Some(("50%".to_string(), edge_val(t, None)?))
+                } else {
+                    Some((edge_val(t, None)?, "50%".to_string()))
+                }
+            }
+            2 => {
+                // "H V" 또는 키워드 쌍. top/bottom 이 먼저 오면 뒤집힌 순서.
+                if is_v(toks[0]) || is_h(toks[1]) {
+                    Some((edge_val(toks[1], None)?, edge_val(toks[0], None)?))
+                } else {
+                    let h = if is_h(toks[0]) { edge_val(toks[0], None)? } else { toks[0].to_string() };
+                    let v = if is_v(toks[1]) { edge_val(toks[1], None)? } else { toks[1].to_string() };
+                    Some((h, v))
+                }
+            }
+            3 | 4 => {
+                // edge [offset] edge [offset] — 수평/수직 그룹으로 나눈다.
+                let mut hpart: Option<String> = None;
+                let mut vpart: Option<String> = None;
+                let mut i = 0;
+                while i < toks.len() {
+                    let e = toks[i];
+                    let off = toks.get(i + 1).filter(|o| !is_h(o) && !is_v(o) && o.to_ascii_lowercase() != "center").copied();
+                    let val = edge_val(e, off)?;
+                    if is_v(e) {
+                        vpart = Some(val);
+                    } else if is_h(e) {
+                        hpart = Some(val);
+                    } else {
+                        // center — 남은 축에 배정
+                        if hpart.is_none() {
+                            hpart = Some(val);
+                        } else {
+                            vpart = Some(val);
+                        }
+                    }
+                    i += if off.is_some() { 2 } else { 1 };
+                }
+                Some((hpart?, vpart?))
+            }
+            _ => None,
+        }
     }
 
     // transform 리스트 보간(매칭 케이스): 함수 개수/이름/인자수가 같으면 각 인자를
@@ -8611,14 +8741,15 @@ impl Interp {
         // 위치 프로퍼티: 다중 레이어 + 혼합 단위(% ↔ px → calc) 보간.
         if matches!(
             dash_prop,
-            "background-position"
-                | "background-position-x"
-                | "background-position-y"
-                | "object-position"
-                | "mask-position"
-                | "-webkit-mask-position"
+            "background-position" | "object-position" | "mask-position" | "-webkit-mask-position"
         ) {
             if let Some(v) = Self::interp_position(from, to, eased) {
+                return Some(v);
+            }
+        }
+        // 단일 축 위치(background-position-x/y): 쉼표 레이어별 단일 length-percentage.
+        if matches!(dash_prop, "background-position-x" | "background-position-y") {
+            if let Some(v) = Self::interp_position_axis(from, to, eased) {
                 return Some(v);
             }
         }
