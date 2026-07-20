@@ -202,6 +202,11 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-block-shape", "corner-inline-shape",
     // 11차: border-image 롱핸드(계산값 노출 — border-image 렌더는 별개).
     "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
+    // border-radius 코너 롱핸드(border-radius 가 이들로 펼쳐짐 — CSS.supports/계산값).
+    "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius",
+    "border-bottom-right-radius",
+    // 개별 border-*-style(border-style 롱핸드) — 계산값/supports.
+    "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

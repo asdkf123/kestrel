@@ -1747,6 +1747,10 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "border-image-slice" => "100%",
         "border-image-width" => "1",
         "border-image-outset" => "0",
+        "border-top-left-radius" | "border-top-right-radius" | "border-bottom-left-radius"
+        | "border-bottom-right-radius" => "0px",
+        "border-top-style" | "border-right-style" | "border-bottom-style"
+        | "border-left-style" => "none",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",

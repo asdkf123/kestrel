@@ -444,7 +444,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "corner-block-shape" | "corner-inline-shape"
         // 11차: border-image 롱핸드(원문 보존 — none/url/gradient/수치 목록).
         | "border-image-source" | "border-image-slice" | "border-image-width"
-        | "border-image-outset" => {
+        | "border-image-outset"
+        // 개별 border-*-style(solid/dashed 등 키워드).
+        | "border-top-style" | "border-right-style" | "border-bottom-style"
+        | "border-left-style" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
