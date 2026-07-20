@@ -216,6 +216,9 @@ impl Interp {
             "scale" => return crate::style::normalize_scale(raw),
             "rotate" => return crate::style::normalize_rotate(raw),
             "translate" => return crate::style::normalize_translate(raw),
+            "transform" | "-webkit-transform" => {
+                return crate::style::normalize_transform(raw)
+            }
             _ => {}
         }
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))

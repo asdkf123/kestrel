@@ -1265,6 +1265,96 @@ fn angle_token_deg(t: &str) -> Option<f32> {
     None
 }
 
+// transform 함수 리스트 지정값 직렬화(§CSS Transforms): 함수명 소문자화, scale 계열
+// 인자 %→수, rotate/skew 계열 인자 각도→도. translate/matrix/perspective 는 인자
+// 유지. transform: scale(250%)→"scale(2.5)", skewX(0)→"skewx(0deg)".
+pub fn normalize_transform(v: &str) -> String {
+    let v = v.trim();
+    if v == "none" || v.is_empty() {
+        return v.to_string();
+    }
+    let chars: Vec<char> = v.chars().collect();
+    let mut i = 0usize;
+    let mut out: Vec<String> = Vec::new();
+    while i < chars.len() {
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        // 함수 이름
+        let name_start = i;
+        while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '-') {
+            i += 1;
+        }
+        if i >= chars.len() || chars[i] != '(' {
+            return v.to_string(); // 함수 형태 아님 → 원문
+        }
+        let name: String = chars[name_start..i].iter().collect::<String>().to_ascii_lowercase();
+        // 균형 괄호
+        let mut depth = 0usize;
+        let args_start = i + 1;
+        while i < chars.len() {
+            match chars[i] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if i >= chars.len() {
+            return v.to_string(); // 괄호 불균형
+        }
+        let args: String = chars[args_start..i].iter().collect();
+        i += 1; // ')' 소비
+        let parts: Vec<String> = args
+            .split(',')
+            .map(|a| norm_transform_arg(&name, a.trim()))
+            .collect();
+        out.push(format!("{}({})", name, parts.join(", ")));
+    }
+    if out.is_empty() {
+        v.to_string()
+    } else {
+        out.join(" ")
+    }
+}
+
+// transform 함수 인자 하나 정규화. scale 계열 %→수, rotate/skew 계열 각도→도(맨수도
+// deg), 그 외(translate/matrix/perspective)는 원문.
+fn norm_transform_arg(func: &str, a: &str) -> String {
+    if func.starts_with("scale") {
+        if let Some(p) = a.strip_suffix('%') {
+            if let Ok(n) = p.trim().parse::<f32>() {
+                return num_css(n / 100.0);
+            }
+        }
+        if let Ok(n) = a.parse::<f32>() {
+            return num_css(n);
+        }
+    } else if func.starts_with("rotate") || func.starts_with("skew") {
+        // rotate3d 는 앞 3개가 축(수)라 각도 변환 대상 아님 → 맨수는 그대로,
+        // 각도 단위 있는 것만 도로. rotate/skew(단일 각도)는 맨수도 deg.
+        if let Ok(n) = a.parse::<f32>() {
+            // rotate3d/축 성분(맨수)은 그대로; 단일 각도 함수의 맨수는 deg.
+            if func == "rotate3d" {
+                return num_css(n);
+            }
+            return format!("{}deg", num_css(n));
+        }
+        if let Some(d) = angle_token_deg(a) {
+            return format!("{}deg", num_css(d));
+        }
+    }
+    a.to_string()
+}
+
 // rotate 프로퍼티 계산값 정규화(§CSS Transforms 2): 각도를 도로 변환하고 마지막에
 // 둔다(축/벡터 먼저). rotate: 400grad→"360deg", 400grad 1 2 3→"1 2 3 360deg".
 pub fn normalize_rotate(v: &str) -> String {
