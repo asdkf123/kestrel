@@ -1342,6 +1342,61 @@ pub fn normalize_transform(v: &str) -> String {
     }
 }
 
+// 토큰이 유효한 <length-percentage> 인가(0/단위 있는 수). 맨수(auto 등)는 무효.
+fn is_len_pct(t: &str) -> bool {
+    if t == "0" {
+        return true;
+    }
+    for u in [
+        "px", "%", "em", "rem", "vw", "vh", "vmin", "vmax", "pt", "pc", "in", "cm", "mm", "q",
+        "ch", "ex", "cap", "ic", "lh", "rlh", "vi", "vb",
+    ] {
+        if let Some(p) = t.strip_suffix(u) {
+            return p.parse::<f32>().is_ok();
+        }
+    }
+    false
+}
+
+// transform-origin/perspective-origin 지정값 유효성(§CSS Transforms). maxn=2(
+// perspective-origin) 또는 3(transform-origin, z 허용). auto/과다토큰/동축키워드
+// 중복은 무효. 계산값이 아니라 세터 거부용.
+pub fn origin_valid(v: &str, maxn: usize) -> bool {
+    let v = v.trim();
+    if v.is_empty() {
+        return false;
+    }
+    let toks: Vec<&str> = v.split_whitespace().collect();
+    if toks.len() > maxn {
+        return false;
+    }
+    // 0=무효, 1=x키워드(left/right), 2=y키워드(top/bottom), 3=center, 4=길이%
+    let cls = |t: &str| -> u8 {
+        match t {
+            "left" | "right" => 1,
+            "top" | "bottom" => 2,
+            "center" => 3,
+            _ if is_len_pct(t) => 4,
+            _ => 0,
+        }
+    };
+    let c: Vec<u8> = toks.iter().map(|t| cls(t)).collect();
+    if c.iter().any(|&x| x == 0) {
+        return false; // auto 등 무효 토큰
+    }
+    if toks.len() >= 2 {
+        // 같은 축 키워드 중복 금지(left right / top bottom)
+        if c[0] == 1 && c[1] == 1 || c[0] == 2 && c[1] == 2 {
+            return false;
+        }
+    }
+    // z(3번째, transform-origin)는 길이여야
+    if toks.len() == 3 && c[2] != 4 {
+        return false;
+    }
+    true
+}
+
 // transform 함수의 유효 인자 개수(§CSS Transforms). 미지 함수는 무효(표준 함수 21종).
 fn transform_arity_ok(func: &str, argc: usize) -> bool {
     match func {

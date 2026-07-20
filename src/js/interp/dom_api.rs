@@ -219,6 +219,14 @@ impl Interp {
             "transform" | "-webkit-transform" => {
                 return crate::style::normalize_transform(raw)
             }
+            // origin 프로퍼티 무효값 거부(auto/과다토큰/동축중복). 유효면 원문(계산값에서
+            // 박스 해석은 getComputedStyle 이 담당).
+            "perspective-origin" if !crate::style::origin_valid(raw, 2) => {
+                return String::new()
+            }
+            "transform-origin" if !crate::style::origin_valid(raw, 3) => {
+                return String::new()
+            }
             _ => {}
         }
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))
