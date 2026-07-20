@@ -8041,23 +8041,51 @@ impl Interp {
             return (steps / n).clamp(0.0, 1.0);
         }
         if let Some(rest) = e.strip_prefix("cubic-bezier(").and_then(|r| r.strip_suffix(')')) {
-            let c: Vec<f32> = rest.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            let c: Vec<f64> = rest.split(',').filter_map(|s| s.trim().parse().ok()).collect();
             if c.len() == 4 {
-                let (x1, x2) = (c[0], c[2]);
-                let (y1, y2) = (c[1], c[3]);
-                // bezier_x(s)=t 를 이분탐색으로 풀고 bezier_y(s) 반환.
-                let bx = |s: f32| 3.0 * (1.0 - s).powi(2) * s * x1 + 3.0 * (1.0 - s) * s * s * x2 + s.powi(3);
-                let by = |s: f32| 3.0 * (1.0 - s).powi(2) * s * y1 + 3.0 * (1.0 - s) * s * s * y2 + s.powi(3);
-                let (mut lo, mut hi) = (0.0f32, 1.0f32);
-                for _ in 0..30 {
-                    let mid = (lo + hi) / 2.0;
-                    if bx(mid) < t {
-                        lo = mid;
-                    } else {
-                        hi = mid;
+                let (x1, y1, x2, y2) = (c[0], c[1], c[2], c[3]);
+                let x = t as f64;
+                // WebKit UnitBezier: 다항식 계수. bx(s)=((ax·s+bx)·s+cx)·s.
+                let cx = 3.0 * x1;
+                let bxc = 3.0 * (x2 - x1) - cx;
+                let axc = 1.0 - cx - bxc;
+                let cy = 3.0 * y1;
+                let byc = 3.0 * (y2 - y1) - cy;
+                let ayc = 1.0 - cy - byc;
+                let sample_x = |s: f64| ((axc * s + bxc) * s + cx) * s;
+                let sample_dx = |s: f64| (3.0 * axc * s + 2.0 * bxc) * s + cx;
+                let sample_y = |s: f64| ((ayc * s + byc) * s + cy) * s;
+                // solveCurveX: 뉴턴-랩슨(8회) 후 실패 시 이분법. 브라우저와 동일.
+                let solve = |x: f64| -> f64 {
+                    let mut s = x;
+                    for _ in 0..8 {
+                        let err = sample_x(s) - x;
+                        if err.abs() < 1e-9 {
+                            return s;
+                        }
+                        let d = sample_dx(s);
+                        if d.abs() < 1e-9 {
+                            break;
+                        }
+                        s -= err / d;
                     }
-                }
-                return by((lo + hi) / 2.0);
+                    let (mut lo, mut hi) = (0.0f64, 1.0f64);
+                    let mut s = x.clamp(0.0, 1.0);
+                    for _ in 0..40 {
+                        let xx = sample_x(s);
+                        if (xx - x).abs() < 1e-9 {
+                            break;
+                        }
+                        if x > xx {
+                            lo = s;
+                        } else {
+                            hi = s;
+                        }
+                        s = (hi + lo) * 0.5;
+                    }
+                    s
+                };
+                return sample_y(solve(x)) as f32;
             }
         }
         t

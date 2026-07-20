@@ -170,17 +170,23 @@ impl Interp {
     // 조용히 틀렸다 (setProperty 로 쓴 값은 정규화하면서 읽기만 원문이라 앞뒤가
     // 맞지 않기까지 했다).
     pub(super) fn style_get(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
-        let attr = self.style_attr(id);
-        let raw = style_pairs(&attr)
-            .into_iter()
-            .rev() // 뒤 선언 우선 (마지막 것이 유효)
-            .find(|(k, _)| k == prop)
-            .map(|(_, v)| v)
-            .unwrap_or_default();
+        let raw = self.style_get_raw(id, prop);
         if raw.is_empty() {
             return raw;
         }
         Self::serialize_decl(prop, &raw)
+    }
+
+    // 인라인 지정값을 정규화(serialize_decl) 없이 원문 그대로. cubic-bezier 인자
+    // 정밀도 등 직렬화가 접는 정보가 필요할 때(전이 easing 캡처).
+    pub(super) fn style_get_raw(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
+        let attr = self.style_attr(id);
+        style_pairs(&attr)
+            .into_iter()
+            .rev() // 뒤 선언 우선 (마지막 것이 유효)
+            .find(|(k, _)| k == prop)
+            .map(|(_, v)| v)
+            .unwrap_or_default()
     }
 
     // 선언 하나를 CSSOM 정규 형태로 직렬화 (§6.7).
@@ -341,7 +347,8 @@ impl Interp {
         if elapsed < 0.0 {
             return;
         }
-        let easing = first(self.style_get(id, "transition-timing-function"));
+        // easing 은 원문(반올림 안 된 cubic-bezier 인자)으로 읽어야 진행률이 정확하다.
+        let easing = first(self.style_get_raw(id, "transition-timing-function"));
         let easing = if easing.is_empty() { "ease".to_string() } else { easing };
         // from = 덮어쓰기 전 현재 인라인 지정값(테스트가 setup 에서 el.style[p]=from 설정).
         // computed_styles 는 JS 실행 중 stale 할 수 있어 인라인을 우선.
