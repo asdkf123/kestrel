@@ -209,6 +209,15 @@ impl Interp {
         if prop == "font-family" {
             return serialize_font_family(raw);
         }
+        // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
+        // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
+        // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
+        match prop {
+            "scale" => return crate::style::normalize_scale(raw),
+            "rotate" => return crate::style::normalize_rotate(raw),
+            "translate" => return crate::style::normalize_translate(raw),
+            _ => {}
+        }
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))
             .into_iter()
             .find(|d| d.name == prop)
