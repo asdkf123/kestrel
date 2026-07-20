@@ -1272,11 +1272,12 @@ function __kComparePoints(nodeA, offsetA, nodeB, offsetB) {
   return 0; // 서로 다른 트리 — 순서 미정
 }
 function Range() {
+  // §DOM 5.5: new Range() / createRange() 의 시작·끝은 (연관 Document, 0) 이다.
+  // 예전엔 document.body(Element)로 잘못 잡아 startContainer 가 문서가 아니었다.
   var d = typeof document !== 'undefined' ? document : null;
-  var root = d && d.body ? d.body : null;
-  this.startContainer = root;
+  this.startContainer = d;
   this.startOffset = 0;
-  this.endContainer = root;
+  this.endContainer = d;
   this.endOffset = 0;
 }
 Object.defineProperty(Range.prototype, 'collapsed', {
