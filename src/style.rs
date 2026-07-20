@@ -1514,26 +1514,58 @@ pub fn normalize_font_shorthand(raw: &str) -> String {
     if toks.len() < 2 {
         return raw.to_string(); // 시스템 폰트/inherit 등 단일 토큰
     }
-    let is_prefix = |t: &str, prev_oblique: bool| -> bool {
-        let l = t.to_ascii_lowercase();
-        l == "normal"
-            || matches!(
-                l.as_str(),
-                "italic" | "oblique" | "small-caps" | "bold" | "bolder" | "lighter"
-                    | "ultra-condensed" | "extra-condensed" | "condensed" | "semi-condensed"
-                    | "semi-expanded" | "expanded" | "extra-expanded" | "ultra-expanded"
-            )
-            || l.parse::<f32>().map(|n| (1.0..=1000.0).contains(&n)).unwrap_or(false)
-            || (prev_oblique && l.ends_with("deg"))
+    // 접두 토큰을 카테고리별로 분류. 캐논 순서는 style→variant→weight→stretch
+    // (입력 순서와 무관). normal 은 모든 카테고리 기본값이라 버린다.
+    let is_stretch = |l: &str| {
+        matches!(
+            l,
+            "ultra-condensed" | "extra-condensed" | "condensed" | "semi-condensed"
+                | "semi-expanded" | "expanded" | "extra-expanded" | "ultra-expanded"
+        )
     };
+    let is_weight = |l: &str| {
+        matches!(l, "bold" | "bolder" | "lighter")
+            || l.parse::<f32>().map(|n| (1.0..=1000.0).contains(&n)).unwrap_or(false)
+    };
+    let mut style: Option<String> = None;
+    let mut variant: Option<String> = None;
+    let mut weight: Option<String> = None;
+    let mut stretch: Option<String> = None;
     let mut i = 0;
-    let mut prefix: Vec<String> = Vec::new();
-    let mut prev_oblique = false;
-    while i < toks.len() && is_prefix(&toks[i], prev_oblique) {
-        prev_oblique = toks[i].eq_ignore_ascii_case("oblique");
-        prefix.push(toks[i].clone());
-        i += 1;
+    while i < toks.len() {
+        let l = toks[i].to_ascii_lowercase();
+        if l == "normal" {
+            i += 1;
+        } else if l == "italic" || l == "oblique" {
+            let mut s = toks[i].clone();
+            // oblique <angle>
+            if l == "oblique"
+                && i + 1 < toks.len()
+                && toks[i + 1].to_ascii_lowercase().ends_with("deg")
+            {
+                s.push(' ');
+                s.push_str(&toks[i + 1]);
+                i += 1;
+            }
+            style = Some(s);
+            i += 1;
+        } else if l == "small-caps" {
+            variant = Some(toks[i].clone());
+            i += 1;
+        } else if is_weight(&l) {
+            weight = Some(toks[i].clone());
+            i += 1;
+        } else if is_stretch(&l) {
+            stretch = Some(toks[i].clone());
+            i += 1;
+        } else {
+            break; // size
+        }
     }
+    let prefix: Vec<String> = [style, variant, weight, stretch]
+        .into_iter()
+        .flatten()
+        .collect();
     if i >= toks.len() {
         return raw.to_string(); // size 없음
     }
@@ -1560,7 +1592,7 @@ pub fn normalize_font_shorthand(raw: &str) -> String {
     }
     let family = toks[i..].join(" ");
     let mut out = String::new();
-    for p in prefix.iter().filter(|t| !t.eq_ignore_ascii_case("normal")) {
+    for p in &prefix {
         out.push_str(p);
         out.push(' ');
     }
