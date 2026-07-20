@@ -128,6 +128,65 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
             Value::Length(n.abs(), unit)
         });
     }
+    // round()/mod()/rem() — 두 인자가 같은 단위면 파스 타임 확정(CSS Values 4 §10).
+    // round([strategy,] a, b), mod(a, b), rem(a, b). 혼합 단위/미해석은 드롭.
+    for (name, kind) in [("round(", b'R'), ("mod(", b'M'), ("rem(", b'E')] {
+        if !(lower.starts_with(name) && text.ends_with(')')) {
+            continue;
+        }
+        let inner = &text[name.len()..text.len() - 1];
+        // 인자를 (수, 단위)로 해석. 단일 Length 또는 순수 px calc 만.
+        let resolve = |s: &str| -> Option<(f32, Unit)> {
+            match interpret_value(s).or_else(|| eval_calc(s)) {
+                Some(Value::Length(f, u)) => Some((f, u)),
+                Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => {
+                    Some((c.px, Unit::Px))
+                }
+                _ => None,
+            }
+        };
+        let mut segs = split_top_commas(inner);
+        // round 의 선택적 첫 인자: 반올림 방향 키워드.
+        let mut strategy = "nearest";
+        if kind == b'R' && segs.len() == 3 {
+            let s = segs[0].trim().to_ascii_lowercase();
+            if matches!(s.as_str(), "nearest" | "up" | "down" | "to-zero") {
+                strategy = match s.as_str() {
+                    "up" => "up",
+                    "down" => "down",
+                    "to-zero" => "to-zero",
+                    _ => "nearest",
+                };
+                segs.remove(0);
+            }
+        }
+        if segs.len() != 2 {
+            return None;
+        }
+        let (a, ua) = resolve(segs[0].trim())?;
+        let (bb, ub) = resolve(segs[1].trim())?;
+        if ua != ub || bb == 0.0 {
+            return None; // 단위 불일치 또는 0 으로 나눔 → 미해석
+        }
+        let r = match kind {
+            b'R' => {
+                let q = a / bb;
+                let rounded = match strategy {
+                    "up" => q.ceil(),
+                    "down" => q.floor(),
+                    "to-zero" => q.trunc(),
+                    _ => (q + 0.5).floor(), // nearest: 동점은 +∞ 쪽(CSS 규정)
+                };
+                rounded * bb
+            }
+            b'M' => a - bb * (a / bb).floor(), // mod: 결과 부호는 제수 b
+            _ => a - bb * (a / bb).trunc(),    // rem: 결과 부호는 피제수 a
+        };
+        if !r.is_finite() {
+            return None;
+        }
+        return Some(Value::Length(r, ua));
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
