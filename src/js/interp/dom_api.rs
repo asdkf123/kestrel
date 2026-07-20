@@ -227,6 +227,12 @@ impl Interp {
             "transform-origin" if !crate::style::origin_valid(raw, 3) => {
                 return String::new()
             }
+            // background-image gradient 지정값: 보간 재정렬 + 색 정규화(키워드 유지).
+            "background-image" | "-webkit-background-image"
+                if raw.contains("gradient(") =>
+            {
+                return crate::css::normalize_gradient_serial(raw, false)
+            }
             _ => {}
         }
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, raw))

@@ -52,7 +52,7 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let inner = &text["repeating-linear-gradient(".len()..text.len() - 1];
         return parse_linear_gradient(inner).map(|mut g| {
             g.repeating = true;
-            g.serial = normalize_gradient_serial(text);
+            g.serial = normalize_gradient_serial(text, true);
             Value::Gradient(g)
         });
     }
@@ -60,7 +60,7 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let inner = &text["repeating-radial-gradient(".len()..text.len() - 1];
         return parse_radial_gradient(inner).map(|mut g| {
             g.repeating = true;
-            g.serial = normalize_gradient_serial(text);
+            g.serial = normalize_gradient_serial(text, true);
             Value::Gradient(g)
         });
     }
@@ -68,25 +68,25 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let inner = &text["repeating-conic-gradient(".len()..text.len() - 1];
         return parse_conic_gradient(inner).map(|mut g| {
             g.repeating = true;
-            g.serial = normalize_gradient_serial(text);
+            g.serial = normalize_gradient_serial(text, true);
             Value::Gradient(g)
         });
     }
     if lower.starts_with("linear-gradient(") && text.ends_with(')') {
         return parse_linear_gradient(&text[16..text.len() - 1]).map(|mut g| {
-            g.serial = normalize_gradient_serial(text);
+            g.serial = normalize_gradient_serial(text, true);
             Value::Gradient(g)
         });
     }
     if lower.starts_with("radial-gradient(") && text.ends_with(')') {
         return parse_radial_gradient(&text[16..text.len() - 1]).map(|mut g| {
-            g.serial = normalize_gradient_serial(text);
+            g.serial = normalize_gradient_serial(text, true);
             Value::Gradient(g)
         });
     }
     if lower.starts_with("conic-gradient(") && text.ends_with(')') {
         return parse_conic_gradient(&text[15..text.len() - 1]).map(|mut g| {
-            g.serial = normalize_gradient_serial(text);
+            g.serial = normalize_gradient_serial(text, true);
             Value::Gradient(g)
         });
     }
@@ -803,7 +803,8 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
 // 보간 메서드 구조는 원문 그대로 둔다. 렌더용 Gradient 구조체는 방향키워드·보간
 // 메서드를 잃으므로(각도로 접힘) 원문 텍스트에서 색만 바꾸는 게 정확하다.
 // "linear-gradient(30deg, red, blue)" → "...(30deg, rgb(255, 0, 0), rgb(0, 0, 255))".
-pub(crate) fn normalize_gradient_serial(text: &str) -> String {
+// computed=true 면 색을 rgb()(계산값), false 면 키워드 유지(지정값 el.style).
+pub(crate) fn normalize_gradient_serial(text: &str, computed: bool) -> String {
     let text = text.trim();
     let Some(open) = text.find('(') else {
         return text.to_string();
@@ -811,23 +812,44 @@ pub(crate) fn normalize_gradient_serial(text: &str) -> String {
     if !text.ends_with(')') {
         return text.to_string();
     }
+    // 단일 함수인지(첫 '(' 가 끝에서 닫힘) 확인 — 다중 값(grad(), url())이면 원문.
+    let bytes = text.as_bytes();
+    let mut depth = 0i32;
+    for (k, &b) in bytes.iter().enumerate() {
+        if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            depth -= 1;
+            if depth == 0 && k != bytes.len() - 1 {
+                return text.to_string();
+            }
+        }
+    }
     let func = text[..open].to_ascii_lowercase();
     let inner = &text[open + 1..text.len() - 1];
-    let out: Vec<String> =
-        split_top_commas(inner).iter().map(|s| normalize_gradient_seg(s.trim())).collect();
+    let out: Vec<String> = split_top_commas(inner)
+        .iter()
+        .map(|s| normalize_gradient_seg(s.trim(), computed))
+        .collect();
     format!("{}({})", func, out.join(", "))
 }
 
 // 그라디언트 세그먼트: 첫 토큰이 색이면 색을 정규화(위치는 유지), 아니면(방향/각도/
-// 보간 in <space>) 원문 유지.
-fn normalize_gradient_seg(seg: &str) -> String {
+// 보간 in <space>) 재정렬. computed=false 면 색 키워드(red)를 유지한다(지정값).
+fn normalize_gradient_seg(seg: &str, computed: bool) -> String {
     let toks = split_top_level(seg);
     if toks.is_empty() {
         return seg.to_string();
     }
     match interpret_value(&toks[0]) {
         Some(v @ (Value::Color(_) | Value::ColorFn(..))) => {
-            let color = crate::style::computed_value_string(&v);
+            let color = if !computed
+                && toks[0].chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+            {
+                toks[0].to_ascii_lowercase() // 지정값: 색 키워드 유지(red→red)
+            } else {
+                crate::style::computed_value_string(&v)
+            };
             if toks.len() == 1 {
                 color
             } else {

@@ -35,6 +35,7 @@ pub(crate) use supports::supports_condition;
 pub(crate) use supports::is_known_property;
 use values::valid_identifier_char;
 pub(crate) use values::eval_calc_number;
+pub(crate) use values::normalize_gradient_serial;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Stylesheet {
