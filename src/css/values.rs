@@ -2246,7 +2246,8 @@ fn serialize_mix(space: &str, mixed: &[f32; 3], rr: f32, gg: f32, bb: f32, a: Op
     let n = |v: f32| csnum(v);
     let nc = |v: f32| csnum(v.clamp(0.0, 1.0));
     match space {
-        "srgb" | "hsl" | "hwb" => format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), ap),
+        // srgb 계열: 색역 밖 값도 클램프하지 않고 보존(color-mix 계산값, §CSS Color 5).
+        "srgb" | "hsl" | "hwb" => format!("color(srgb {} {} {}{})", n(rr), n(gg), n(bb), ap),
         "srgb-linear" => format!("color(srgb-linear {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
         "display-p3" => format!("color(display-p3 {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
         "display-p3-linear" => format!("color(display-p3-linear {} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
