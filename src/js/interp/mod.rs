@@ -7970,6 +7970,15 @@ impl Interp {
             let t = if to == "normal" { "0px" } else { to };
             return Self::interp_css_value(f, t, eased);
         }
+        // vertical-align 의 baseline 은 0px 처럼 보간(끝점도 0px — 키워드 유지 안 함).
+        // sub/super/top 등 다른 키워드끼리는 불연속(interp None → 플립).
+        if dash_prop == "vertical-align" && (from == "baseline" || to == "baseline") {
+            let f = if from == "baseline" { "0px" } else { from };
+            let t = if to == "baseline" { "0px" } else { to };
+            if let Some(v) = Self::interp_css_value(f, t, eased) {
+                return Some(v);
+            }
+        }
         let special = match dash_prop {
             "scale" => Self::interp_scale(from, to, eased),
             "translate" => Self::interp_translate(from, to, eased),
