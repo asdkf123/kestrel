@@ -7995,8 +7995,9 @@ impl Interp {
             .get("animation-timing-function")
             .map(|s| Self::first_top_comma_value(s))
             .unwrap_or_default();
-        let from = Self::frame_prop(from_frame, dash_prop)?;
-        let to = Self::frame_prop(to_frame, dash_prop)?;
+        // 키프레임 값의 전역 키워드(initial/inherit/unset) 해석.
+        let from = self.resolve_wide_keyword(id, dash_prop, &Self::frame_prop(from_frame, dash_prop)?);
+        let to = self.resolve_wide_keyword(id, dash_prop, &Self::frame_prop(to_frame, dash_prop)?);
         let progress = (elapsed / dur).clamp(0.0, 1.0);
         let eased = Self::eval_easing(&easing, progress);
         Self::interp_prop(dash_prop, &from, &to, eased)
