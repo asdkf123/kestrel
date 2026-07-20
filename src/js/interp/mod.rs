@@ -8010,8 +8010,52 @@ impl Interp {
     // transform 리스트 보간(매칭 케이스): 함수 개수/이름/인자수가 같으면 각 인자를
     // 보간해 함수 리스트를 만들고 계산값 행렬로 직렬화. 불일치(행렬 분해 필요)는 None.
     fn interp_transform(from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
-        let ff = Self::parse_transform_funcs(from)?;
-        let tf = Self::parse_transform_funcs(to)?;
+        let fnone = from.trim() == "none";
+        let tnone = to.trim() == "none";
+        if fnone && tnone {
+            return None;
+        }
+        let ff0 = Self::parse_transform_funcs(from)?;
+        let tf0 = Self::parse_transform_funcs(to)?;
+        // none 은 반대쪽 함수 리스트의 항등(scale→1, 그 외→0+단위)으로 확장한다.
+        // matrix/perspective/rotate3d 는 항등 합성이 단순치 않아 여기선 미지원(→플립).
+        let identity = |funcs: &[(String, Vec<String>)]| -> Option<Vec<(String, Vec<String>)>> {
+            funcs
+                .iter()
+                .map(|(name, args)| {
+                    if matches!(name.as_str(), "matrix" | "matrix3d" | "perspective" | "rotate3d")
+                    {
+                        return None;
+                    }
+                    let id_args: Vec<String> = args
+                        .iter()
+                        .map(|a| {
+                            if name.starts_with("scale") {
+                                "1".to_string()
+                            } else {
+                                let unit: String = a
+                                    .trim()
+                                    .chars()
+                                    .skip_while(|c| {
+                                        c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+'
+                                    })
+                                    .collect();
+                                format!("0{unit}")
+                            }
+                        })
+                        .collect();
+                    Some((name.clone(), id_args))
+                })
+                .collect()
+        };
+        let (ff, tf) = if fnone {
+            (identity(&tf0)?, tf0)
+        } else if tnone {
+            let idt = identity(&ff0)?;
+            (ff0, idt)
+        } else {
+            (ff0, tf0)
+        };
         if ff.is_empty() || ff.len() != tf.len() {
             return None;
         }
