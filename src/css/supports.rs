@@ -194,6 +194,12 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "field-sizing",
     // 9차: transform-origin + 개별 변환 프로퍼티(scale/rotate/translate).
     "transform-origin", "scale", "rotate", "translate",
+    // 10차: corner-shape(신규, 코너 렌더 미세조정 — 계산값 노출, 렌더는 기본 모양).
+    "corner-shape", "corner-top-left-shape", "corner-top-right-shape",
+    "corner-bottom-left-shape", "corner-bottom-right-shape", "corner-block-start-shape",
+    "corner-block-end-shape", "corner-inline-start-shape", "corner-inline-end-shape",
+    "corner-top-shape", "corner-bottom-shape", "corner-left-shape", "corner-right-shape",
+    "corner-block-shape", "corner-inline-shape",
 ];
 
 fn longhand_supported(prop: &str) -> bool {
@@ -235,6 +241,11 @@ const FUNCS: &[&str] = &[
     "repeat", "minmax", "fit-content",
     // 이징 함수(transition/animation-timing-function) — 계산값 직렬화 지원
     "cubic-bezier", "steps",
+    // 수학 함수(파스 타임 계산값 확정 — abs/sign/round/삼각/sqrt 등)
+    "abs", "sign", "mod", "rem", "round", "sin", "cos", "tan", "sqrt", "pow", "log", "exp",
+    "hypot",
+    // corner-shape 의 superellipse() (계산값 노출)
+    "superellipse",
 ];
 
 // 값에 쓰인 함수 이름을 전부 뽑는다: 식별자 바로 뒤에 '(' 가 오는 형태.

@@ -1735,6 +1735,13 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         // 9차: transform-origin/perspective-origin + 개별 변환 프로퍼티.
         "transform-origin" | "perspective-origin" => "50% 50%",
         "scale" | "rotate" | "translate" => "none",
+        // 10차: corner-shape 초기값(round).
+        "corner-shape" | "corner-top-left-shape" | "corner-top-right-shape"
+        | "corner-bottom-left-shape" | "corner-bottom-right-shape"
+        | "corner-block-start-shape" | "corner-block-end-shape"
+        | "corner-inline-start-shape" | "corner-inline-end-shape" | "corner-top-shape"
+        | "corner-bottom-shape" | "corner-left-shape" | "corner-right-shape"
+        | "corner-block-shape" | "corner-inline-shape" => "round",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",
