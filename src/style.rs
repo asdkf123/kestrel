@@ -1380,6 +1380,10 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "orphans" | "widows" => "2",
         "shape-margin" => "0px",
         "shape-image-threshold" => "0",
+        // SVG 페인트 초기값(색). fill/stop/flood=black, lighting=white, stroke=none.
+        "fill" | "stop-color" | "flood-color" => "rgb(0, 0, 0)",
+        "lighting-color" => "rgb(255, 255, 255)",
+        "stroke" => "none",
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",
@@ -1439,6 +1443,8 @@ pub fn is_current_color_prop(prop: &str) -> bool {
     matches!(
         prop,
         "border-color" | "border-top-color" | "outline-color" | "text-decoration-color"
+            | "column-rule-color" | "text-emphasis-color" | "-webkit-text-fill-color"
+            | "-webkit-text-stroke-color"
     )
 }
 

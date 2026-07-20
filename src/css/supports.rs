@@ -157,6 +157,9 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "border-image-repeat", "text-underline-offset", "column-width", "column-rule-width",
     "counter-reset", "counter-increment", "counter-set", "orphans", "widows",
     "shape-margin", "shape-image-threshold",
+    // SVG 페인트/색 프로퍼티
+    "fill", "stroke", "stop-color", "flood-color", "lighting-color", "column-rule-color",
+    "text-emphasis-color", "-webkit-text-fill-color", "-webkit-text-stroke-color",
 ];
 
 fn longhand_supported(prop: &str) -> bool {

@@ -396,6 +396,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "column-width" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
+        // 키워드로 보존. column-rule-color 도 색.
+        "fill" | "stroke" | "stop-color" | "flood-color" | "lighting-color"
+        | "column-rule-color" | "text-emphasis-color"
+        | "-webkit-text-fill-color" | "-webkit-text-stroke-color" => {
+            let value = match interpret_value(value_text.trim()) {
+                Some(v @ Value::Color(_)) => v,
+                _ => Value::Keyword(value_text.trim().to_string()),
+            };
+            vec![Declaration { important: false, name: name.to_string(), value }]
+        }
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
         // 일반 값 파서는 다중 토큰을 파싱하지 못해 None 을 돌려주고, 그러면 선언이
         // 통째로 사라져서 **항상 중심 기준 회전**이 되어 버린다. 원문을 보존한다.
