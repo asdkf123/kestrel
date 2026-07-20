@@ -134,6 +134,25 @@ impl Interp {
         String::new()
     }
 
+    // element.style.cssText 게터 — 선언 블록을 CSSOM 규칙대로 직렬화한다
+    // (§CSSOM "serialize a CSS declaration block"): 각 선언을 "property: value;" 로
+    // 만들어 공백으로 잇는다(각 선언 끝에 세미콜론 — 마지막도 포함). 프로퍼티 이름은
+    // 소문자, 값은 serialize_decl 로 정규화. 예전엔 style 속성 원문을 그대로 줘서
+    // 끝 세미콜론이 없고("color: red") 값도 정규화되지 않았다.
+    pub(super) fn css_text(&mut self, id: crate::dom::NodeId) -> String {
+        let attr = self.style_attr(id);
+        let mut out: Vec<String> = Vec::new();
+        for (prop, raw) in style_pairs(&attr) {
+            let name = prop.to_ascii_lowercase();
+            let val = Self::serialize_decl(&name, &raw);
+            if val.is_empty() {
+                continue;
+            }
+            out.push(format!("{}: {};", name, val));
+        }
+        out.join(" ")
+    }
+
     pub(super) fn set_style_attr(&mut self, id: crate::dom::NodeId, value: String) {
         if let Ok(dom) = self.dom_arena() {
             if value.is_empty() {

@@ -521,6 +521,26 @@ fn document_create_attribute() {
 }
 
 #[test]
+fn style_css_text_serializes_with_semicolons() {
+    let mut dom = crate::html::parse_dom(
+        "<div id='t' style='color:red;font-size:10pt'></div>".to_string(),
+    );
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // CSSOM: 각 선언 끝에 세미콜론, 공백으로 이어붙임 (마지막도 세미콜론)
+    assert_eq!(
+        g("document.getElementById('t').style.cssText"),
+        "color: red; font-size: 10pt;",
+    );
+    // 프로퍼티 이름은 소문자, 색 표기는 정규화(대문자 색 키워드는 소문자)
+    assert_eq!(
+        g("var s=document.getElementById('t').style; s.cssText='COLOR: RED'; s.cssText"),
+        "color: red;",
+    );
+}
+
+#[test]
 fn insert_adjacent_element_returns_and_validates() {
     let mut dom = crate::html::parse_dom(
         "<div id='t'><span id='c'>x</span></div>".to_string(),

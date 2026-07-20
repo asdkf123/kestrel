@@ -7087,7 +7087,7 @@ impl Interp {
             Value::Style(id) => {
                 let id = *id;
                 match key {
-                    "cssText" => Ok(Value::Str(self.style_attr(id))),
+                    "cssText" => Ok(Value::Str(self.css_text(id))),
                     "setProperty" => Ok(Value::Native(Native::StyleSetProperty)),
                     "getPropertyValue" => Ok(Value::Native(Native::StyleGetProperty)),
                     "removeProperty" => Ok(Value::Native(Native::StyleRemoveProperty)),
