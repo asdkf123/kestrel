@@ -2257,6 +2257,10 @@ fn serialize_mix(space: &str, mixed: &[f32; 3], rr: f32, gg: f32, bb: f32, a: Op
         "oklch" => format!("oklch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
         "lab" => format!("lab({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
         "lch" => format!("lch({} {} {}{})", n(mixed[0]), n(mixed[1]), n(mixed[2]), ap),
+        // 넓은 색공간 RGB: native 좌표 그대로(srgb 로 접지 않음).
+        "rec2020" | "a98-rgb" | "prophoto-rgb" => {
+            format!("color({} {} {} {}{})", space, n(mixed[0]), n(mixed[1]), n(mixed[2]), ap)
+        }
         _ => format!("color(srgb {} {} {}{})", nc(rr), nc(gg), nc(bb), ap),
     }
 }
