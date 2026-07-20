@@ -539,6 +539,62 @@ fn calc_factor(t: &[char], p: &mut usize) -> Option<CalcVal> {
         *p += 1;
         return Some(v);
     }
+    // 수학 함수(sin/cos/sqrt/abs/round/hypot/…)를 calc 인자로: 균형 괄호까지 잘라
+    // interpret_value 로 평가한다. calc(sin(30deg) * 100px) 등. min/max/clamp 는
+    // Value::MinMax 를 내므로 여기선 폴백(calc 내 min/max 는 기존대로 미지원).
+    if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        let fstart = *p;
+        let mut j = *p;
+        while j < t.len() && (t[j].is_ascii_alphabetic() || t[j] == '-') {
+            j += 1;
+        }
+        if j < t.len() && t[j] == '(' {
+            let mut depth = 0usize;
+            let mut k = j;
+            while k < t.len() {
+                match t[k] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            k += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+            if depth == 0 {
+                let sub: String = t[fstart..k].iter().collect();
+                if let Some(cv) = interpret_value(&sub).and_then(|v| match v {
+                    Value::Length(f, u) => {
+                        let mut c = CalcVal::default();
+                        match u {
+                            Unit::Number => {
+                                c.num = f;
+                                c.is_num = true;
+                            }
+                            Unit::Px => c.px = f,
+                            Unit::Percent => c.pct = f,
+                            Unit::Em => c.em = f,
+                            Unit::Rem => c.rem = f,
+                            Unit::Vw => c.vw = f,
+                            Unit::Vh => c.vh = f,
+                            Unit::Vmin => c.vmin = f,
+                            Unit::Vmax => c.vmax = f,
+                            _ => return None, // Lh 등 CalcVal 에 없는 단위 → 미지원
+                        }
+                        Some(c)
+                    }
+                    _ => None,
+                }) {
+                    *p = k;
+                    return Some(cv);
+                }
+            }
+        }
+    }
     // 숫자 + 선택적 단위
     let start = *p;
     if t.get(*p) == Some(&'-') || t.get(*p) == Some(&'+') {
