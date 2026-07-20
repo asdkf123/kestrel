@@ -2123,6 +2123,53 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     Some((rgba, serial.into_boxed_str()))
 }
 
+// color-mix 지정값 캐논 직렬화(§CSS Color 5): 퍼센트를 색 뒤로, inner 색 정규화
+// (키워드 유지, 함수→rgb), 기본 50%(한쪽만) 생략. 파싱 불가는 None.
+pub fn normalize_color_mix(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if !low.starts_with("color-mix(") || !low.ends_with(')') {
+        return None;
+    }
+    let inner = &low["color-mix(".len()..low.len() - 1];
+    let parts = split_top_commas(inner);
+    if parts.len() != 3 {
+        return None;
+    }
+    let space = parts[0].split_whitespace().collect::<Vec<_>>().join(" ");
+    let (c1, p1) = split_mix_part(&parts[1]);
+    let (c2, p2) = split_mix_part(&parts[2]);
+    let c1s = serialize_mix_input_color(&c1)?;
+    let c2s = serialize_mix_input_color(&c2)?;
+    let is50 = |p: f32| (p - 50.0).abs() < 1e-4;
+    let pct = |p: Option<f32>, other: Option<f32>| -> String {
+        match p {
+            Some(v) if is50(v) && other.is_none() => String::new(),
+            Some(v) => format!(" {}%", csnum(v)),
+            None => String::new(),
+        }
+    };
+    Some(format!(
+        "color-mix({}, {}{}, {}{})",
+        space, c1s, pct(p1, p2), c2s, pct(p2, p1)
+    ))
+}
+
+// color-mix inner 색을 지정값 형태로. 키워드(식별자)는 그대로, 함수/hex 는 rgb/색공간.
+fn serialize_mix_input_color(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if s.chars().all(|c| c.is_ascii_alphabetic() || c == '-') {
+        return Some(s.to_ascii_lowercase());
+    }
+    match interpret_value(s) {
+        Some(v @ Value::Color(_)) => Some(crate::style::computed_value_string(&v)),
+        Some(Value::ColorFn(_, serial)) => Some(serial.to_string()),
+        _ => None,
+    }
+}
+
 // color-mix 의 한 성분에서 색 문자열과 퍼센트를 분리.
 fn split_mix_part(s: &str) -> (String, Option<f32>) {
     let mut pct = None;

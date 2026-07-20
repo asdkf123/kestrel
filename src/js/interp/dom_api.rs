@@ -205,6 +205,12 @@ impl Interp {
         if rl.starts_with("image-set(") || rl.starts_with("-webkit-image-set(") {
             return crate::css::normalize_image_set(raw);
         }
+        // color-mix 지정값 캐논 직렬화(퍼센트 위치, inner 색, 기본 50% 생략).
+        if rl.starts_with("color-mix(") {
+            if let Some(s) = crate::css::normalize_color_mix(raw) {
+                return s;
+            }
+        }
         // content 의 단일 문자열 토큰은 CSSOM 문자열 직렬화 — 항상 큰따옴표로(§CSSOM
         // "serialize a string"). content: 'x' 도 "x" 가 된다.
         if prop == "content" {
