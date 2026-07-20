@@ -1010,19 +1010,25 @@ fn reorder_interp(toks: &[String], default_space: &str) -> String {
     // in 블록 = in + <space> [+ <method> hue]. space 는 in 바로 뒤.
     let space_idx = in_idx + 1;
     let mut end = (space_idx + 1).min(toks.len()); // in + space 까지
-    let has_hue = toks.get(end + 1).map(|t| t.eq_ignore_ascii_case("hue")).unwrap_or(false);
-    if has_hue {
-        end += 2; // <method> hue 포함
+    let hue_present = toks.get(end + 1).map(|t| t.eq_ignore_ascii_case("hue")).unwrap_or(false);
+    let method = if hue_present {
+        toks.get(space_idx + 1).map(|s| s.to_ascii_lowercase()).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if hue_present {
+        end += 2; // 입력에서 <method> hue 블록 소비(생략하든 유지하든)
     }
+    // 기본 hue 보간(shorter hue)은 생략, 나머지(longer/increasing/decreasing) 유지.
+    let keep_hue = hue_present && method != "shorter";
     let space = toks.get(space_idx).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
-    // xyz → xyz-d65 정규화.
     let space_out = if space == "xyz" { "xyz-d65".to_string() } else { space.clone() };
-    // 기본 색공간이고 hue 없으면 보간 메서드 생략.
-    let interp = if !has_hue && space.eq_ignore_ascii_case(default_space) {
+    // 기본 색공간(srgb/oklab, 직교=무hue)이면 보간 메서드 전체 생략.
+    let interp = if space.eq_ignore_ascii_case(default_space) {
         String::new()
     } else {
         let mut parts = vec!["in".to_string(), space_out];
-        if has_hue {
+        if keep_hue {
             parts.extend(toks[space_idx + 1..end].iter().cloned());
         }
         parts.join(" ")
