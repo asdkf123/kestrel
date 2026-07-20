@@ -206,6 +206,72 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
         return Some(Value::Length(r as f32, Unit::Number));
     }
+    // sqrt()/exp()/log()/pow() — 단위 없는 수 인자·결과(CSS Values 4 §10).
+    // sqrt(4)=2, exp(0)=1, log(e)=1, log(8,2)=3, pow(2,3)=8. 수 인자만.
+    let as_number = |s: &str| -> Option<f64> {
+        if let Ok(n) = s.trim().parse::<f64>() {
+            return Some(n);
+        }
+        match interpret_value(s).or_else(|| eval_calc(s)) {
+            Some(Value::Length(f, Unit::Number)) => Some(f as f64),
+            _ => None,
+        }
+    };
+    for (name, kind) in [("sqrt(", b'q'), ("exp(", b'e'), ("log(", b'l'), ("pow(", b'p')] {
+        if !(lower.starts_with(name) && text.ends_with(')')) {
+            continue;
+        }
+        let inner = &text[name.len()..text.len() - 1];
+        let segs = split_top_commas(inner);
+        let r = match kind {
+            b'q' if segs.len() == 1 => as_number(segs[0].trim())?.sqrt(),
+            b'e' if segs.len() == 1 => as_number(segs[0].trim())?.exp(),
+            b'l' if segs.len() == 1 => as_number(segs[0].trim())?.ln(),
+            b'l' if segs.len() == 2 => {
+                as_number(segs[0].trim())?.log(as_number(segs[1].trim())?)
+            }
+            b'p' if segs.len() == 2 => {
+                as_number(segs[0].trim())?.powf(as_number(segs[1].trim())?)
+            }
+            _ => return None,
+        };
+        if !r.is_finite() {
+            return None;
+        }
+        return Some(Value::Length(r as f32, Unit::Number));
+    }
+    // hypot(a, b, ...) — √(Σ aᵢ²). 인자가 모두 같은 단위(또는 순수 px/수)면 확정.
+    if lower.starts_with("hypot(") && text.ends_with(')') {
+        let inner = &text[6..text.len() - 1];
+        let resolve = |s: &str| -> Option<(f64, Unit)> {
+            match interpret_value(s).or_else(|| eval_calc(s)) {
+                Some(Value::Length(f, u)) => Some((f as f64, u)),
+                Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => {
+                    Some((c.px as f64, Unit::Px))
+                }
+                _ => None,
+            }
+        };
+        let segs = split_top_commas(inner);
+        if segs.is_empty() {
+            return None;
+        }
+        let mut unit: Option<Unit> = None;
+        let mut sum = 0.0f64;
+        for s in &segs {
+            let (n, u) = resolve(s.trim())?;
+            match unit {
+                Some(pu) if pu != u => return None, // 단위 불일치
+                _ => unit = Some(u),
+            }
+            sum += n * n;
+        }
+        let r = sum.sqrt();
+        if !r.is_finite() {
+            return None;
+        }
+        return Some(Value::Length(r as f32, unit.unwrap_or(Unit::Number)));
+    }
     // url(...) — 따옴표 유무 모두. URL 은 대소문자 보존을 위해 원본에서 추출.
     if lower.starts_with("url(") && text.ends_with(')') {
         let inner = text[4..text.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
