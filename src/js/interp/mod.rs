@@ -7938,6 +7938,13 @@ impl Interp {
     // from→to 를 이징 출력 eased 로 보간해 직렬화. scale/translate 컴포넌트 확장,
     // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
     fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32) -> Option<String> {
+        // opacity 는 계산값이 [0,1] 로 클램프된다 — 외삽(at<0/>1) 시에도.
+        if matches!(dash_prop, "opacity" | "shape-image-threshold") {
+            if let (Ok(f), Ok(t)) = (from.trim().parse::<f32>(), to.trim().parse::<f32>()) {
+                let v = (f + (t - f) * eased).clamp(0.0, 1.0);
+                return Some(crate::style::num_css(v));
+            }
+        }
         let special = match dash_prop {
             "scale" => Self::interp_scale(from, to, eased),
             "translate" => Self::interp_translate(from, to, eased),
