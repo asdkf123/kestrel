@@ -7850,7 +7850,7 @@ impl Interp {
     // 활성 애니메이션이 dash_prop 을 다루면 currentTime 에서 보간한 계산값(뒤 애니 우선).
     fn animated_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
         // transform 행렬화용 박스 크기(rotate/scale 엔 무의미, translate% 에만 필요).
-        let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
+        let (bw, bh) = self.elem_border_wh(id);
         // element.animate / CSS transition 스냅샷 우선.
         if let Some(anims) = self.element_animations.get(&id) {
             let mut result = None;
@@ -8150,6 +8150,49 @@ impl Interp {
             layers.push(format!("{h} {v}"));
         }
         Some(layers.join(", "))
+    }
+
+    // transform-origin/perspective-origin 보간(§CSS Transforms). 위치 키워드/퍼센트를
+    // 요소 크기 기준 px 로 해석(x:w, y:h) 후 성분별 lerp. z(3번째)는 길이. 위치 파서
+    // (resolve_position_layer)로 키워드 스왑(top left 등) 처리. calc 등은 미지원(→None).
+    fn interp_origin(from: &str, to: &str, t: f32, w: f32, h: f32) -> Option<String> {
+        let parse = |s: &str| -> Option<(String, String, String)> {
+            let s = s.trim();
+            let toks: Vec<&str> = s.split_whitespace().collect();
+            if toks.len() == 3 {
+                // x y z: z 는 항상 길이. x-y 만 위치 파서로.
+                let (x, y) = Self::resolve_position_layer(&format!("{} {}", toks[0], toks[1]))?;
+                Some((x, y, toks[2].to_string()))
+            } else {
+                let (x, y) = Self::resolve_position_layer(s)?;
+                Some((x, y, "0px".to_string()))
+            }
+        };
+        let (fx, fy, fz) = parse(from)?;
+        let (tx, ty, tz) = parse(to)?;
+        // 축 값 → px. %는 base(요소 크기)로 해석. calc 는 미지원.
+        let px = |v: &str, base: f32| -> Option<f32> {
+            let v = v.trim();
+            if let Some(p) = v.strip_suffix('%') {
+                p.parse::<f32>().ok().map(|n| n / 100.0 * base)
+            } else if let Some(p) = v.strip_suffix("px") {
+                p.parse::<f32>().ok()
+            } else if v == "0" {
+                Some(0.0)
+            } else {
+                None
+            }
+        };
+        let lerp = |a: f32, b: f32| a + (b - a) * t;
+        let x = lerp(px(&fx, w)?, px(&tx, w)?);
+        let y = lerp(px(&fy, h)?, px(&ty, h)?);
+        let z = lerp(px(&fz, 0.0)?, px(&tz, 0.0)?);
+        let nc = crate::style::num_css;
+        if z.abs() < 1e-6 {
+            Some(format!("{}px {}px", nc(x), nc(y)))
+        } else {
+            Some(format!("{}px {}px {}px", nc(x), nc(y), nc(z)))
+        }
     }
 
     // 단일 축 위치(background-position-x/y): 쉼표 레이어별 단일 값.
@@ -8994,6 +9037,12 @@ impl Interp {
                 return Some(v);
             }
         }
+        // transform-origin/perspective-origin: %를 요소 크기 기준 px 로 해석해 보간.
+        if matches!(dash_prop, "transform-origin" | "perspective-origin") {
+            if let Some(v) = Self::interp_origin(from, to, eased, w, h) {
+                return Some(v);
+            }
+        }
         // 단일 축 위치(background-position-x/y): 쉼표 레이어별 단일 length-percentage.
         if matches!(dash_prop, "background-position-x" | "background-position-y") {
             if let Some(v) = Self::interp_position_axis(from, to, eased) {
@@ -9094,6 +9143,16 @@ impl Interp {
 
     // CSS 애니메이션(animation-name + @keyframes) 이 이 프로퍼티를 다루면 현재 진행
     // 값으로 보간. 명시적 0%/100% 프레임이 둘 다 있을 때만(neutral 은 정적 렌더에 맡김).
+    // transform/transform-origin 의 % 해석 기준 = 요소 border-box. layout_rects 는
+    // inline-block 등에서 인라인 조각 합집합이라 부정확 — layout_metrics(정확) 우선.
+    fn elem_border_wh(&self, id: crate::dom::NodeId) -> (f32, f32) {
+        if let Some(m) = self.layout_metrics.get(&id) {
+            let (bt, br, bb, bl) = m.border;
+            return (m.padding_w + bl + br, m.padding_h + bt + bb);
+        }
+        self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0))
+    }
+
     fn css_animation_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
         let cs = self.computed_styles.get(&id)?;
         let name = cs.get("animation-name")?.split(',').next()?.trim().to_string();
@@ -9164,7 +9223,7 @@ impl Interp {
         }
         let progress = (elapsed / dur).clamp(0.0, 1.0);
         let eased = Self::eval_easing(&easing, progress);
-        let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
+        let (bw, bh) = self.elem_border_wh(id);
         Self::interp_prop(dash_prop, &from, &to, eased, bw, bh)
     }
 
@@ -9489,6 +9548,29 @@ impl Interp {
     // 개별 transform 프로퍼티 합성(§CSS Transforms 2). scale 은 add=성분별 곱,
     // accumulate=(a-1)+(b-1)+1. 그 외는 add_css_values(같은 단위 수치 합).
     pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        if matches!(dash, "transform-origin" | "perspective-origin") {
+            // 성분별 길이 합(add/accumulate 동일). px 만 지원(빠진 축은 0px).
+            let nums = |s: &str| -> Option<Vec<f32>> {
+                s.split_whitespace()
+                    .map(|t| {
+                        t.strip_suffix("px")
+                            .and_then(|p| p.parse::<f32>().ok())
+                            .or_else(|| if t == "0" { Some(0.0) } else { None })
+                    })
+                    .collect()
+            };
+            let b = nums(base)?;
+            let k = nums(kf)?;
+            let n = b.len().max(k.len());
+            let r: Vec<String> = (0..n)
+                .map(|i| {
+                    let bv = b.get(i).copied().unwrap_or(0.0);
+                    let kv = k.get(i).copied().unwrap_or(0.0);
+                    format!("{}px", crate::style::num_css(bv + kv))
+                })
+                .collect();
+            return Some(r.join(" "));
+        }
         if dash == "scale" {
             let p = |s: &str| -> Option<[f32; 3]> {
                 if s.trim() == "none" {
