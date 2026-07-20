@@ -41,6 +41,7 @@ pub(crate) use values::normalize_image_set;
 pub(crate) use values::resolve_gradient_computed;
 pub(crate) use values::normalize_shape;
 pub(crate) use values::interpret_value;
+pub(crate) use shorthand::expand_declaration as expand_decl_pub;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Stylesheet {

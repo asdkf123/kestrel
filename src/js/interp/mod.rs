@@ -7911,6 +7911,18 @@ impl Interp {
         let f = from.trim();
         let g = to.trim();
         let lerp = |a: f32, b: f32| a + (b - a) * t;
+        // 다중값(공백 구분, 괄호 밖): 토큰 개수 같으면 각 토큰 보간(margin/background-
+        // position/border-radius 등). 단일 토큰이면 아래 스칼라 경로로.
+        let ft: Vec<&str> = f.split_whitespace().collect();
+        let gt: Vec<&str> = g.split_whitespace().collect();
+        if ft.len() > 1 && ft.len() == gt.len() {
+            let parts: Option<Vec<String>> = ft
+                .iter()
+                .zip(gt.iter())
+                .map(|(a, b)| Self::interp_css_value(a, b, t))
+                .collect();
+            return parts.map(|p| p.join(" "));
+        }
         // <length>px
         if let (Some(a), Some(b)) = (
             f.strip_suffix("px").and_then(|x| x.trim().parse::<f32>().ok()),

@@ -4996,6 +4996,29 @@ impl Interp {
                             .unwrap_or_else(|| base.get(&dash).cloned().unwrap_or_default());
                         props.insert(dash, (from, to, easing.clone()));
                     }
+                    // 단축 프로퍼티(margin/padding/border-radius 등)를 롱핸드로 확장 —
+                    // getComputedStyle 은 롱핸드(margin-top)로 읽으므로.
+                    let mut expanded: HashMap<String, (String, String, String)> = HashMap::new();
+                    for (dash, (from, to, ez)) in &props {
+                        let fl: HashMap<String, String> = crate::css::expand_decl_pub(dash, from)
+                            .into_iter()
+                            .map(|d| (d.name, crate::style::computed_value_string(&d.value)))
+                            .collect();
+                        let tl: HashMap<String, String> = crate::css::expand_decl_pub(dash, to)
+                            .into_iter()
+                            .map(|d| (d.name, crate::style::computed_value_string(&d.value)))
+                            .collect();
+                        if fl.len() <= 1 {
+                            expanded.insert(dash.clone(), (from.clone(), to.clone(), ez.clone()));
+                        } else {
+                            for (ln, fv) in &fl {
+                                if let Some(tv) = tl.get(ln) {
+                                    expanded.insert(ln.clone(), (fv.clone(), tv.clone(), ez.clone()));
+                                }
+                            }
+                        }
+                    }
+                    props = expanded;
                 }
                 // 기본 currentTime: fill forwards/both 면 종료시각(마지막 키프레임 유지),
                 // 아니면 0. interpolation 테스트는 pause 후 currentTime 을 명시 설정한다.
