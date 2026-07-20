@@ -11,6 +11,17 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         return parse_hex_color(text).map(Value::Color);
     }
     let lower = text.to_ascii_lowercase();
+    // 상대 색: <func>(from <origin> …) — 원본 색 채널을 키워드로 참조(CSS Color 5).
+    for f in ["rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color"] {
+        if lower.starts_with(f) && lower[f.len()..].starts_with('(') {
+            if let Some(inr) = func_inner(&lower) {
+                if inr.trim_start().starts_with("from ") {
+                    return parse_relative_color(f, &lower).map(|(c, s)| Value::ColorFn(c, s));
+                }
+            }
+            break;
+        }
+    }
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
         return parse_rgb_func(&lower).map(Value::Color);
     }
@@ -1181,6 +1192,142 @@ fn hue_powerless(space: &str, co: &[f32; 3]) -> bool {
         "lch" | "oklch" => co[1].abs() < 1e-4,
         _ => false,
     }
+}
+
+// relative color 의 함수별 설정: (보간 공간, 채널 키워드 3개, 채널별 pct 기준,
+// 채널별 각도 여부, rgb 스케일). rgb 만 성분이 0-255(스케일 255), 나머지는 native.
+struct RelSpec {
+    space: &'static str,
+    chans: [&'static str; 3],
+    pct: [f32; 3],
+    angle: [bool; 3],
+    scale: f32, // 원본 좌표→키워드 및 성분→공간좌표 배율 (rgb=255, else 1)
+}
+fn rel_spec(func: &str, color_space: Option<&str>) -> Option<RelSpec> {
+    Some(match func {
+        "rgb" | "rgba" => RelSpec { space: "srgb", chans: ["r", "g", "b"], pct: [255.0, 255.0, 255.0], angle: [false; 3], scale: 255.0 },
+        "hsl" | "hsla" => RelSpec { space: "hsl", chans: ["h", "s", "l"], pct: [1.0, 1.0, 1.0], angle: [true, false, false], scale: 1.0 },
+        "hwb" => RelSpec { space: "hwb", chans: ["h", "w", "b"], pct: [1.0, 1.0, 1.0], angle: [true, false, false], scale: 1.0 },
+        "lab" => RelSpec { space: "lab", chans: ["l", "a", "b"], pct: [100.0, 125.0, 125.0], angle: [false; 3], scale: 1.0 },
+        "oklab" => RelSpec { space: "oklab", chans: ["l", "a", "b"], pct: [1.0, 0.4, 0.4], angle: [false; 3], scale: 1.0 },
+        "lch" => RelSpec { space: "lch", chans: ["l", "c", "h"], pct: [100.0, 150.0, 1.0], angle: [false, false, true], scale: 1.0 },
+        "oklch" => RelSpec { space: "oklch", chans: ["l", "c", "h"], pct: [1.0, 0.4, 1.0], angle: [false, false, true], scale: 1.0 },
+        "color" => {
+            let sp = color_space?;
+            let chans = if sp.starts_with("xyz") { ["x", "y", "z"] } else { ["r", "g", "b"] };
+            // sp 를 'static 로 매핑(space_to_srgb 가 아는 이름).
+            let space = match sp {
+                "srgb" => "srgb", "srgb-linear" => "srgb-linear", "display-p3" => "display-p3",
+                "display-p3-linear" => "display-p3-linear", "rec2020" => "rec2020",
+                "a98-rgb" => "a98-rgb", "prophoto-rgb" => "prophoto-rgb",
+                "xyz" | "xyz-d65" => "xyz-d65", "xyz-d50" => "xyz-d50", _ => return None,
+            };
+            RelSpec { space, chans, pct: [1.0, 1.0, 1.0], angle: [false; 3], scale: 1.0 }
+        }
+        _ => return None,
+    })
+}
+
+// 문자열의 식별자 낱말 중 채널 키워드(r/g/b/alpha/l/c/h …)를 그 값으로 치환한다.
+// calc(r * 2) 안의 r 도 바꾼다. 숫자·연산자·괄호는 그대로.
+fn subst_channels(s: &str, kv: &impl Fn(&str) -> Option<f32>) -> String {
+    let b = s.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_alphabetic() || b[i] == b'_' {
+            let start = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'-') {
+                i += 1;
+            }
+            let word = &s[start..i];
+            match kv(&word.to_ascii_lowercase()) {
+                Some(v) => out.push_str(&csnum(v)),
+                None => out.push_str(word),
+            }
+        } else {
+            out.push(b[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+// <func>(from <origin> [<space>] <c0> <c1> <c2> [/ <alpha>]) — 상대 색(CSS Color 5).
+// 원본 색의 채널을 키워드(r/g/b/l/c/h/alpha …)로 성분에 쓴다. calc 는 미지원(이 파일엔 없음).
+fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
+    let inner = func_inner(text)?;
+    let rest = inner.trim().strip_prefix("from ")?.trim();
+    let toks = split_top_level(rest);
+    // color 는 origin 다음에 공간 토큰. 성분은 3개 + 선택적 "/ alpha".
+    let mut idx = 1;
+    let origin_str = toks.first()?.clone();
+    let color_space = if func == "color" {
+        let s = toks.get(idx)?.clone();
+        idx += 1;
+        Some(s)
+    } else {
+        None
+    };
+    let spec = rel_spec(func, color_space.as_deref())?;
+    // 성분/알파 분리 ("/" 토큰 기준).
+    let comp_toks: Vec<&String> = toks[idx..].iter().take_while(|t| t.as_str() != "/").collect();
+    if comp_toks.len() < 3 {
+        return None;
+    }
+    let alpha_tok = toks.iter().position(|t| t == "/").and_then(|p| toks.get(p + 1));
+    // 원본 색을 공간 좌표+알파로.
+    let of = srgb_float_of(&origin_str)?;
+    let oc = srgb_to_space(spec.space, of[0], of[1], of[2])?;
+    // 키워드→값 맵(rgb 는 *255).
+    let kv = |name: &str| -> Option<f32> {
+        if name == "alpha" {
+            return Some(of[3]);
+        }
+        for i in 0..3 {
+            if spec.chans[i] == name {
+                return Some(oc[i] * spec.scale);
+            }
+        }
+        None
+    };
+    // 성분 해석: 채널 키워드를 값으로 치환(calc 안 포함) 후 parse_comp/각도.
+    let resolve = |tok: &str, i: usize| -> Option<Comp> {
+        let subbed = subst_channels(tok.trim(), &kv);
+        if spec.angle[i] {
+            parse_comp_angle(&subbed)
+        } else {
+            parse_comp(&subbed, spec.pct[i])
+        }
+    };
+    let c0 = resolve(comp_toks[0], 0)?;
+    let c1 = resolve(comp_toks[1], 1)?;
+    let c2 = resolve(comp_toks[2], 2)?;
+    let alpha = match alpha_tok {
+        None => Comp::Val(of[3]), // 알파 생략 시 원본 알파를 보존(기본값 1 아님)
+        Some(t) => {
+            // alpha 키워드는 0-1, 그 외 채널 키워드/calc 도 치환해 파싱.
+            if t.eq_ignore_ascii_case("alpha") {
+                Comp::Val(of[3])
+            } else {
+                let subbed = subst_channels(t, &kv);
+                parse_alpha(Some(&subbed))?
+            }
+        }
+    };
+    // 공간 좌표(rgb 는 /255).
+    let coords = [c0.get() / spec.scale, c1.get() / spec.scale, c2.get() / spec.scale];
+    let (rr, gg, bb) = space_to_srgb(spec.space, coords)?;
+    let a = alpha_frac(alpha);
+    let rgba = Color { r: to_u8(rr), g: to_u8(gg), b: to_u8(bb), a: (a * 255.0).round() as u8 };
+    let none_out = [matches!(c0, Comp::None), matches!(c1, Comp::None), matches!(c2, Comp::None)];
+    let alpha_out = if matches!(alpha, Comp::None) { None } else { Some(a) };
+    let serial = if none_out.iter().any(|&x| x) || alpha_out.is_none() {
+        serialize_mix_native(spec.space, &coords, &none_out, alpha_out)
+    } else {
+        serialize_mix(spec.space, &coords, rr, gg, bb, alpha_out)
+    };
+    Some((rgba, serial.into_boxed_str()))
 }
 
 // color-mix 의 한 성분에서 색 문자열과 퍼센트를 분리.
