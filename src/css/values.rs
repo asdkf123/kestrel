@@ -1003,8 +1003,14 @@ fn resolve_len_token(tok: &str, fs: f32, root_fs: f32) -> String {
 // "at <위치>" 계산값: 키워드→%(left/top=0%, right/bottom=100%, center=50%), 길이는
 // em→px, 단일 값이면 y=center(50%). 두 키워드 순서 뒤집기(top left→left top).
 fn resolve_at_position(toks: &[String], fs: f32, root_fs: f32) -> String {
-    // toks[0]="at". 나머지 위치.
-    let mut pos: Vec<String> = toks[1..].to_vec();
+    // toks[0]="at". 위치는 "in"(보간 메서드) 전까지. "in lab" 등 뒤는 보존.
+    let after = &toks[1..];
+    let in_idx = after.iter().position(|t| t.eq_ignore_ascii_case("in"));
+    let (pos_slice, rest) = match in_idx {
+        Some(i) => (&after[..i], &after[i..]),
+        None => (after, &after[after.len()..]),
+    };
+    let mut pos: Vec<String> = pos_slice.to_vec();
     if pos.len() == 2
         && matches!(pos[0].to_ascii_lowercase().as_str(), "top" | "bottom")
         && matches!(pos[1].to_ascii_lowercase().as_str(), "left" | "right" | "center")
@@ -1021,7 +1027,11 @@ fn resolve_at_position(toks: &[String], fs: f32, root_fs: f32) -> String {
     };
     let x = pos.first().map(|t| axis(t)).unwrap_or_else(|| "50%".to_string());
     let y = pos.get(1).map(|t| axis(t)).unwrap_or_else(|| "50%".to_string());
-    format!("at {} {}", x, y)
+    if rest.is_empty() {
+        format!("at {} {}", x, y)
+    } else {
+        format!("at {} {} {}", x, y, rest.join(" "))
+    }
 }
 
 // computed=true 면 색을 rgb()(계산값), false 면 키워드 유지(지정값 el.style).
