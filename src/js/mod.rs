@@ -1179,6 +1179,19 @@ for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   if (__n === 'EventTarget2' || __n === 'Node2') continue; // 아래에서 따로
   window[__n] = __kMakeIface(__n);
 }
+// Text/Comment 는 **생성 가능한** 생성자다 (DOM §4.10/§4.8): new Text(data),
+// new Comment(data). document.createTextNode/createComment 로 분리 노드를 만든다.
+// 인자는 DOMString (undefined → ""). instanceof 는 브랜드 체인으로 판별.
+(function(){
+  function mkNodeCtor(name, factory){
+    var f = function(data){ return factory(data === undefined ? '' : String(data)); };
+    Object.defineProperty(f, 'name', { value: name, configurable: true });
+    f[Symbol.hasInstance] = function(x){ var c = __kBrand(x); return !!c && c.indexOf(name) >= 0; };
+    return f;
+  }
+  window.Text = mkNodeCtor('Text', function(d){ return document.createTextNode(d); });
+  window.Comment = mkNodeCtor('Comment', function(d){ return document.createComment(d); });
+})();
 // Node 는 상수(ELEMENT_NODE 등)를 가진 네임스페이스라 이미 있다 — hasInstance 만 얹는다.
 if (window.Node) {
   window.Node[Symbol.hasInstance] = function (x) {

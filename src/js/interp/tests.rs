@@ -521,6 +521,28 @@ fn document_create_attribute() {
 }
 
 #[test]
+fn text_comment_constructors() {
+    let mut dom = crate::html::parse_dom("<div id='t'></div>".to_string());
+    let mut it = Interp::new();
+    it.dom = Some(&mut dom as *mut _);
+    it.run(crate::js::JS_PRELUDE).expect("프렐류드");
+    let mut g = |s: &str| to_display(&it.run(s).unwrap());
+    // new Text(data): 분리 텍스트 노드 (nodeType 3), data 문자열화
+    assert_eq!(g("new Text('hi').nodeType"), "3");
+    assert_eq!(g("new Text('hi').data"), "hi");
+    assert_eq!(g("new Text().data"), ""); // 인자 없음 → ""
+    assert_eq!(g("new Text(42).data"), "42"); // 숫자 → 문자열
+    assert_eq!(g("new Text('x') instanceof Text"), "true");
+    assert_eq!(g("new Text('x') instanceof CharacterData"), "true");
+    assert_eq!(g("new Text('x') instanceof Node"), "true");
+    assert_eq!(g("new Text('x').parentNode"), "null"); // 분리 상태
+    // new Comment(data): nodeType 8
+    assert_eq!(g("new Comment('c').nodeType"), "8");
+    assert_eq!(g("new Comment('c').data"), "c");
+    assert_eq!(g("new Comment('x') instanceof Comment"), "true");
+}
+
+#[test]
 fn node_normalize_merges_and_drops_text() {
     let mut dom = crate::html::parse_dom("<div id='t'>a</div>".to_string());
     let mut it = Interp::new();
