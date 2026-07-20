@@ -104,14 +104,8 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let open = if is_sign { 5 } else { 4 };
         let inner = text[open..text.len() - 1].trim();
         // abs/sign 은 단위 독립적(부호만 다룸)이라 어떤 단위든 정확: abs(-3em)=3em,
-        // sign(-3em)=-1. 단일 Length 는 그대로, calc 식은 순수 px 만 확정.
-        let v = interpret_value(inner).or_else(|| eval_calc(inner));
-        let (n, unit) = match v {
-            Some(Value::Length(f, u)) => (f, u),
-            // 순수 px calc(문맥 단위/% 없음)만 부호 확정 가능.
-            Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => (c.px, Unit::Px),
-            _ => return None,
-        };
+        // sign(-3em)=-1, abs(-3)=3(수). math_arg 가 맨수/길이/px calc 를 해석.
+        let (n, unit) = math_arg(inner)?;
         return Some(if is_sign {
             // signed zero: sign(0)=0, sign(-0)=-0 (수). NaN 은 미해석.
             let s = if n.is_nan() {
@@ -135,16 +129,6 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
             continue;
         }
         let inner = &text[name.len()..text.len() - 1];
-        // 인자를 (수, 단위)로 해석. 단일 Length 또는 순수 px calc 만.
-        let resolve = |s: &str| -> Option<(f32, Unit)> {
-            match interpret_value(s).or_else(|| eval_calc(s)) {
-                Some(Value::Length(f, u)) => Some((f, u)),
-                Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => {
-                    Some((c.px, Unit::Px))
-                }
-                _ => None,
-            }
-        };
         let mut segs = split_top_commas(inner);
         // round 의 선택적 첫 인자: 반올림 방향 키워드.
         let mut strategy = "nearest";
@@ -163,8 +147,8 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         if segs.len() != 2 {
             return None;
         }
-        let (a, ua) = resolve(segs[0].trim())?;
-        let (bb, ub) = resolve(segs[1].trim())?;
+        let (a, ua) = math_arg(segs[0].trim())?;
+        let (bb, ub) = math_arg(segs[1].trim())?;
         if ua != ub || bb == 0.0 {
             return None; // 단위 불일치 또는 0 으로 나눔 → 미해석
         }
@@ -243,15 +227,6 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     // hypot(a, b, ...) — √(Σ aᵢ²). 인자가 모두 같은 단위(또는 순수 px/수)면 확정.
     if lower.starts_with("hypot(") && text.ends_with(')') {
         let inner = &text[6..text.len() - 1];
-        let resolve = |s: &str| -> Option<(f64, Unit)> {
-            match interpret_value(s).or_else(|| eval_calc(s)) {
-                Some(Value::Length(f, u)) => Some((f as f64, u)),
-                Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => {
-                    Some((c.px as f64, Unit::Px))
-                }
-                _ => None,
-            }
-        };
         let segs = split_top_commas(inner);
         if segs.is_empty() {
             return None;
@@ -259,7 +234,8 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         let mut unit: Option<Unit> = None;
         let mut sum = 0.0f64;
         for s in &segs {
-            let (n, u) = resolve(s.trim())?;
+            let (nf, u) = math_arg(s.trim())?;
+            let n = nf as f64;
             match unit {
                 Some(pu) if pu != u => return None, // 단위 불일치
                 _ => unit = Some(u),
@@ -394,6 +370,21 @@ impl CalcVal {
 pub(crate) fn eval_calc_number(inner: &str) -> Option<f32> {
     match eval_calc(inner) {
         Some(Value::Length(n, _)) if n.is_finite() => Some(n),
+        _ => None,
+    }
+}
+
+// 수학 함수 인자 → (값, 단위). 맨수는 Number(interpret_value 는 맨수를 Keyword 로
+// 보존하므로 먼저 파싱), 길이는 그 단위, 순수 px calc 는 Px.
+fn math_arg(s: &str) -> Option<(f32, Unit)> {
+    let s = s.trim();
+    if let Ok(f) = s.parse::<f32>() {
+        return Some((f, Unit::Number));
+    }
+    match interpret_value(s).or_else(|| eval_calc(s)) {
+        Some(Value::Length(f, u)) => Some((f, u)),
+        Some(Value::Calc(c)) if !c.has_ctx_units() && c.pct == 0.0 => Some((c.px, Unit::Px)),
+        Some(Value::Keyword(k)) => k.trim().parse::<f32>().ok().map(|f| (f, Unit::Number)),
         _ => None,
     }
 }

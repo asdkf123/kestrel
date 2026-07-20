@@ -1,6 +1,20 @@
 use super::values::interpret_value;
 use super::{Color, Declaration, Unit, Value};
 
+// 수 값 파싱: 직접 파싱 실패 시 수학 함수(abs/sign/round/sqrt/…)를 interpret_value
+// 로 평가한다. z-index/order/opacity/flex-* 처럼 수를 직접 파싱하던 프로퍼티가
+// abs(1)/clamp(0,sign(1),1) 등을 받게 한다(수 반환 함수는 Length(_, Number)).
+fn number_or_math(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Ok(n) = s.parse::<f32>() {
+        return Some(n);
+    }
+    match interpret_value(s) {
+        Some(Value::Length(f, Unit::Number)) => Some(f),
+        _ => None,
+    }
+}
+
 // 선언 하나를 (경우에 따라 여러) longhand 선언으로 확장한다.
 pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
     // 커스텀 프로퍼티(--*): 원문 보존, 사용 시점(var())에 해석.
@@ -97,8 +111,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             ]
         }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
-        "z-index" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
+        // 직접 파싱 실패 시 수학 함수(abs/sign/round/…)를 평가한다 — z-index: abs(1) 등.
+        "z-index" => match number_or_math(value_text) {
+            Some(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
         // font-weight 의 계산값은 수다(CSS Fonts §2.2). bold=700, normal=400.
@@ -126,13 +141,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }]
         }
         // order: 정수(음수 가능). 단위 없는 수다.
-        "order" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
+        "order" => match number_or_math(value_text) {
+            Some(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
         // flex-grow/flex-shrink: 단위 없는 수 (레이아웃이 to_px 로 스칼라를 읽는다)
-        "flex-grow" | "flex-shrink" => match value_text.trim().parse::<f32>() {
-            Ok(n) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
+        "flex-grow" | "flex-shrink" => match number_or_math(value_text) {
+            Some(n) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
         // flex 단축: <grow> [<shrink>] [<basis>]. 키워드: none=0 0 auto, auto=1 1 auto,
@@ -313,7 +328,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let n = if let Some(p) = v.strip_suffix('%') {
                 p.trim().parse::<f32>().ok().map(|x| x / 100.0)
             } else {
-                v.parse::<f32>().ok()
+                // 직접 파싱 실패 시 수학 함수(clamp(0,sign(1),1) 등) 평가.
+                number_or_math(v)
             };
             match n {
                 Some(op) => vec![Declaration { important: false,
