@@ -27,6 +27,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("hwb(") {
         return parse_hwb(&lower).map(Value::Color);
     }
+    if lower.starts_with("color-mix(") {
+        return parse_color_mix(&lower).map(|(c, s)| Value::ColorFn(c, s));
+    }
     if lower.starts_with("color(") {
         return parse_color_func(&lower).map(|(c, s)| Value::ColorFn(c, s));
     }
@@ -840,6 +843,284 @@ fn parse_hwb(text: &str) -> Option<Color> {
     Some(hwb_to_color(comp_angle(&p[0])?, comp_num(&p[1], 1.0)?, comp_num(&p[2], 1.0)?, a))
 }
 
+// color-mix 의 한 색 성분: "[p%] <color>" 또는 "<color> [p%]" → (sRGB float+알파, 퍼센트).
+fn parse_mix_color(s: &str) -> Option<([f32; 4], Option<f32>)> {
+    let s = s.trim();
+    let toks = split_top_level(s);
+    // 퍼센트 토큰을 찾아 떼고 나머지를 색으로 해석.
+    let mut pct = None;
+    let mut color_str = String::new();
+    for t in &toks {
+        if let Some(p) = t.strip_suffix('%') {
+            if let Ok(v) = p.trim().parse::<f32>() {
+                pct = Some(v);
+                continue;
+            }
+        }
+        if !color_str.is_empty() {
+            color_str.push(' ');
+        }
+        color_str.push_str(t);
+    }
+    let col = interpret_value(&color_str.to_ascii_lowercase()).and_then(|v| v.paint_color())?;
+    Some((
+        [
+            col.r as f32 / 255.0,
+            col.g as f32 / 255.0,
+            col.b as f32 / 255.0,
+            col.a as f32 / 255.0,
+        ],
+        pct,
+    ))
+}
+
+// sRGB float(0..1) → 보간 색공간 좌표. 극좌표 공간은 [2] 가 색상(도).
+fn srgb_to_space(space: &str, r: f32, g: f32, b: f32) -> Option<[f32; 3]> {
+    Some(match space {
+        "srgb" => [r, g, b],
+        "srgb-linear" => [srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b)],
+        "oklab" => {
+            let (l, a, bb) = srgb_to_oklab(r, g, b);
+            [l, a, bb]
+        }
+        "oklch" => {
+            let (l, a, bb) = srgb_to_oklab(r, g, b);
+            [l, (a * a + bb * bb).sqrt(), bb.atan2(a).to_degrees().rem_euclid(360.0)]
+        }
+        "hsl" => {
+            let (h, s, l) = srgb_to_hsl(r, g, b);
+            [h, s, l]
+        }
+        "hwb" => {
+            let (h, w, bl) = srgb_to_hwb(r, g, b);
+            [h, w, bl]
+        }
+        "lab" => {
+            let (l, a, bb) = srgb_to_lab(r, g, b);
+            [l, a, bb]
+        }
+        "lch" => {
+            let (l, a, bb) = srgb_to_lab(r, g, b);
+            [l, (a * a + bb * bb).sqrt(), bb.atan2(a).to_degrees().rem_euclid(360.0)]
+        }
+        "xyz" | "xyz-d65" => {
+            let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+            let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+            [x, y, z]
+        }
+        "xyz-d50" => {
+            let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+            let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+            let (x, y, z) = mat3(&BRADFORD_D65_D50, x, y, z);
+            [x, y, z]
+        }
+        "display-p3" | "display-p3-linear" => {
+            let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+            let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+            let (pr, pg, pb) = mat3(&XYZ65_TO_P3, x, y, z);
+            if space == "display-p3-linear" {
+                [pr, pg, pb]
+            } else {
+                [linear_to_srgb(pr), linear_to_srgb(pg), linear_to_srgb(pb)]
+            }
+        }
+        _ => return None,
+    })
+}
+// 보간 색공간 좌표 → sRGB float.
+fn space_to_srgb(space: &str, c: [f32; 3]) -> Option<(f32, f32, f32)> {
+    Some(match space {
+        "srgb" => (c[0], c[1], c[2]),
+        "srgb-linear" => (linear_to_srgb(c[0]), linear_to_srgb(c[1]), linear_to_srgb(c[2])),
+        "oklab" => {
+            let (lr, lg, lb) = oklab_to_lin_srgb(c[0], c[1], c[2]);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "oklch" => {
+            let h = c[2].to_radians();
+            let (lr, lg, lb) = oklab_to_lin_srgb(c[0], c[1] * h.cos(), c[1] * h.sin());
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "hsl" => {
+            let (r, g, b) = hsl_to_rgb(c[0], c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0));
+            (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+        }
+        "hwb" => {
+            let col = hwb_to_color(c[0], c[1], c[2], 255);
+            (col.r as f32 / 255.0, col.g as f32 / 255.0, col.b as f32 / 255.0)
+        }
+        "lab" => {
+            let (lr, lg, lb) = lab_to_lin_srgb(c[0], c[1], c[2]);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "lch" => {
+            let h = c[2].to_radians();
+            let (lr, lg, lb) = lab_to_lin_srgb(c[0], c[1] * h.cos(), c[1] * h.sin());
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "xyz" | "xyz-d65" => {
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, c[0], c[1], c[2]);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "xyz-d50" => {
+            let (x, y, z) = mat3(&BRADFORD_D50_D65, c[0], c[1], c[2]);
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        "display-p3" | "display-p3-linear" => {
+            let (pr, pg, pb) = if space == "display-p3-linear" {
+                (c[0], c[1], c[2])
+            } else {
+                (srgb_gamma_inv(c[0]), srgb_gamma_inv(c[1]), srgb_gamma_inv(c[2]))
+            };
+            let (x, y, z) = mat3(&P3_TO_XYZ65, pr, pg, pb);
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+        }
+        _ => return None,
+    })
+}
+// 극좌표 색공간에서 색상(hue) 성분의 인덱스. hsl/hwb 는 0, lch/oklch 는 2.
+fn hue_index(space: &str) -> Option<usize> {
+    match space {
+        "hsl" | "hwb" => Some(0),
+        "lch" | "oklch" => Some(2),
+        _ => None,
+    }
+}
+
+// 색상이 무력(powerless)한가 = 무채색. hsl: s=0 또는 l=0/1, hwb: w+b>=1,
+// lch/oklch: c=0. 이 경우 색상은 보간에서 상대 색을 따른다(§CSS Color 4).
+fn hue_powerless(space: &str, co: &[f32; 3]) -> bool {
+    match space {
+        "hsl" => co[1].abs() < 1e-4 || co[2] <= 1e-4 || co[2] >= 1.0 - 1e-4,
+        "hwb" => co[1] + co[2] >= 1.0 - 1e-4,
+        "lch" | "oklch" => co[1].abs() < 1e-4,
+        _ => false,
+    }
+}
+
+// color-mix(in <space> [<hue>], c1 [p1], c2 [p2]) — 두 색을 색공간에서 보간.
+// 계산값은 결과를 sRGB 로 접어 color(srgb r g b [/ a]) 로 직렬화한다(§CSS Color 5).
+fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
+    let inner = func_inner(text)?;
+    let parts = split_top_commas(inner);
+    if parts.len() != 3 {
+        return None;
+    }
+    // parts[0] = "in <space> [<hue> hue]"
+    let spec = parts[0].trim().to_ascii_lowercase();
+    let mut toks = spec.split_whitespace();
+    if toks.next() != Some("in") {
+        return None;
+    }
+    let space = toks.next()?.to_string();
+    // 색상 보간법: shorter(기본)/longer/increasing/decreasing. "hue" 토큰 앞의 낱말.
+    let hue_method = toks.next().unwrap_or("shorter").to_string();
+    let ([r1, g1, b1, a1], p1) = parse_mix_color(&parts[1])?;
+    let ([r2, g2, b2, a2], p2) = parse_mix_color(&parts[2])?;
+    // 퍼센트 정규화 (§CSS Color 5): 둘 다 없으면 50/50, 하나면 100-상대, 합≠100 이면
+    // 100 으로 스케일. 합<100 이면 결과 알파에 합/100 곱한다.
+    let (w1, w2, alpha_mul) = match (p1, p2) {
+        (None, None) => (0.5, 0.5, 1.0),
+        (Some(a), None) => (a / 100.0, 1.0 - a / 100.0, 1.0),
+        (None, Some(b)) => (1.0 - b / 100.0, b / 100.0, 1.0),
+        (Some(a), Some(b)) => {
+            let sum = a + b;
+            if sum <= 0.0 {
+                return None;
+            }
+            (a / sum, b / sum, if sum < 100.0 { sum / 100.0 } else { 1.0 })
+        }
+    };
+    let mut co1 = srgb_to_space(&space, r1, g1, b1)?;
+    let mut co2 = srgb_to_space(&space, r2, g2, b2)?;
+    let hi = hue_index(&space);
+    // 무채색(achromatic) 색의 색상은 무력(powerless)이라 보간에 참여하지 않고
+    // 상대 색의 색상을 쓴다(§CSS Color 4 "powerless" 성분).
+    let pw1 = hue_powerless(&space, &co1);
+    let pw2 = hue_powerless(&space, &co2);
+    let mixed_hue = hi.map(|i| {
+        if pw1 && !pw2 {
+            co2[i]
+        } else if pw2 && !pw1 {
+            co1[i]
+        } else {
+            interp_hue(co1[i], co2[i], w2, &hue_method)
+        }
+    });
+    // 알파 프리멀티플라이 후 보간(색상 성분 제외).
+    for i in 0..3 {
+        if hi == Some(i) {
+            continue;
+        }
+        co1[i] *= a1;
+        co2[i] *= a2;
+    }
+    let mixed_alpha = a1 * w1 + a2 * w2;
+    let mut mixed = [0.0f32; 3];
+    for i in 0..3 {
+        let m = co1[i] * w1 + co2[i] * w2;
+        mixed[i] = if mixed_alpha > 1e-6 { m / mixed_alpha } else { 0.0 };
+    }
+    if let (Some(i), Some(h)) = (hi, mixed_hue) {
+        mixed[i] = h;
+    }
+    let (rr, gg, bb) = space_to_srgb(&space, mixed)?;
+    let out_a = (mixed_alpha * alpha_mul).clamp(0.0, 1.0);
+    let rgba = Color {
+        r: to_u8(rr),
+        g: to_u8(gg),
+        b: to_u8(bb),
+        a: (out_a * 255.0).round() as u8,
+    };
+    // 계산값은 color(srgb r g b [/ a]) 로 직렬화(성분은 [0,1] 실수).
+    let alpha_part = if (out_a - 1.0).abs() < 1e-4 {
+        String::new()
+    } else {
+        format!(" / {}", csnum(out_a))
+    };
+    let serial = format!(
+        "color(srgb {} {} {}{})",
+        csnum(rr.clamp(0.0, 1.0)),
+        csnum(gg.clamp(0.0, 1.0)),
+        csnum(bb.clamp(0.0, 1.0)),
+        alpha_part
+    );
+    Some((rgba, serial.into_boxed_str()))
+}
+
+// 색상(hue) 보간: 보간법에 따라 각도차를 조정 후 선형 보간. w2 는 두 번째 색 가중치.
+fn interp_hue(h1: f32, h2: f32, w2: f32, method: &str) -> f32 {
+    let mut d = h2 - h1;
+    match method {
+        "longer" => {
+            if d.abs() < 180.0 {
+                d += if d >= 0.0 { -360.0 } else { 360.0 };
+            }
+        }
+        "increasing" => {
+            if d < 0.0 {
+                d += 360.0;
+            }
+        }
+        "decreasing" => {
+            if d > 0.0 {
+                d -= 360.0;
+            }
+        }
+        // shorter(기본)
+        _ => {
+            if d > 180.0 {
+                d -= 360.0;
+            } else if d < -180.0 {
+                d += 360.0;
+            }
+        }
+    }
+    (h1 + d * w2).rem_euclid(360.0)
+}
+
 // color(<space> c1 c2 c3 [/ A]) — 지정 색공간의 성분을 sRGB 근사로 + 캐논 직렬화 보존.
 fn parse_color_func(text: &str) -> Option<(Color, Box<str>)> {
     let p = color_parts(func_inner(text)?);
@@ -975,6 +1256,47 @@ fn srgb_gamma_inv(c: f32) -> f32 {
     }
 }
 
+// 선형 sRGB → XYZ(D65) (CSS Color 4 정방향).
+const LSRGB_TO_XYZ65: [f32; 9] = [
+    0.412_390_8, 0.357_584_3, 0.180_480_8,
+    0.212_639, 0.715_168_7, 0.072_192_32,
+    0.019_330_82, 0.119_194_78, 0.950_532_2,
+];
+// XYZ(D65) → XYZ(D50) Bradford (BRADFORD_D50_D65 의 역).
+const BRADFORD_D65_D50: [f32; 9] = [
+    1.047_922_5, 0.022_946_8, -0.050_192_3,
+    0.029_654_4, 0.990_449_4, -0.017_073_1,
+    -0.009_243_4, 0.015_055_2, 0.751_878_6,
+];
+// XYZ(D65) → 선형 display-p3 (P3_TO_XYZ65 의 역).
+const XYZ65_TO_P3: [f32; 9] = [
+    2.493_497, -0.931_383_6, -0.402_710_8,
+    -0.829_489, 1.762_664_1, 0.023_624_69,
+    0.035_845_63, -0.076_172_39, 0.956_884_5,
+];
+
+// XYZ(D50) → CIELAB.
+fn xyz_d50_to_lab(x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+    let (xn, yn, zn) = (0.964_212_26, 1.0, 0.825_188_25);
+    let eps = 216.0 / 24389.0;
+    let kappa = 24389.0 / 27.0;
+    let f = |t: f32| {
+        if t > eps {
+            t.cbrt()
+        } else {
+            (kappa * t + 16.0) / 116.0
+        }
+    };
+    let (fx, fy, fz) = (f(x / xn), f(y / yn), f(z / zn));
+    (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+}
+fn srgb_to_lab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let (lr, lg, lb) = (srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b));
+    let (x, y, z) = mat3(&LSRGB_TO_XYZ65, lr, lg, lb);
+    let (x, y, z) = mat3(&BRADFORD_D65_D50, x, y, z);
+    xyz_d50_to_lab(x, y, z)
+}
+
 // 선형 sRGB 3채널(0..1) → 8비트 sRGB Color.
 fn lin_srgb_to_color(lr: f32, lg: f32, lb: f32, a: u8) -> Color {
     Color {
@@ -1041,6 +1363,51 @@ fn lab_to_color(l: f32, a: f32, b: f32, alpha: u8) -> Color {
 fn lch_to_color(l: f32, c: f32, h_deg: f32, alpha: u8) -> Color {
     let h = h_deg.to_radians();
     lab_to_color(l, c * h.cos(), c * h.sin(), alpha)
+}
+
+// ── color-mix 용 정방향 변환 (sRGB → 보간 색공간) ────────────────────────────
+
+// 선형 sRGB → Oklab (정방향 매트릭스).
+fn lin_srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let l = 0.412_221_47 * r + 0.536_332_54 * g + 0.051_445_99 * b;
+    let m = 0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b;
+    let s = 0.088_302_46 * r + 0.281_718_84 * g + 0.629_978_7 * b;
+    let (l, m, s) = (l.cbrt(), m.cbrt(), s.cbrt());
+    (
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    )
+}
+// 감마 sRGB(0..1) → Oklab.
+fn srgb_to_oklab(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    lin_srgb_to_oklab(srgb_gamma_inv(r), srgb_gamma_inv(g), srgb_gamma_inv(b))
+}
+// 감마 sRGB → HSL (h도, s[0..1], l[0..1]).
+fn srgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d.abs() < 1e-9 {
+        return (0.0, 0.0, l);
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    ((h * 60.0).rem_euclid(360.0), s, l)
+}
+// 감마 sRGB → HWB (h도, w[0..1], b[0..1]).
+fn srgb_to_hwb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let (h, _, _) = srgb_to_hsl(r, g, b);
+    let w = r.min(g).min(b);
+    let bl = 1.0 - r.max(g).max(b);
+    (h, w, bl)
 }
 
 // HWB(색상, 흰색 비율, 검정 비율) → sRGB (CSS Color 4).

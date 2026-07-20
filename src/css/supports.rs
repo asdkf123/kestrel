@@ -147,7 +147,7 @@ const FUNCS: &[&str] = &[
     // 값 계산
     "var", "calc", "min", "max", "clamp",
     // 색 — 레거시 + 모던 색 함수(계산값 색공간 보존을 구현했으므로 정직하게 지원).
-    "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color",
+    "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix",
     // 이미지
     "url", "linear-gradient", "radial-gradient", "conic-gradient",
     // content
@@ -394,8 +394,9 @@ mod tests {
         assert!(!supports_condition("(display: flow-root)"));
         assert!(!supports_condition("(display: list-item)"));
 
-        // color-mix 는 아직 미지원(정방향 색공간 변환 미구현) → 거짓
-        assert!(!supports_condition("(color: color-mix(in srgb, red, blue))"));
+        // color-mix 도 이제 색공간에서 보간해 지원 → 참
+        assert!(supports_condition("(color: color-mix(in srgb, red, blue))"));
+        assert!(supports_condition("(color: color-mix(in oklch, red, blue))"));
         // lab/lch/oklab/oklch/color() 는 이제 계산값 색공간을 보존하므로 지원 → 참
         assert!(supports_condition("(color: oklch(0.7 0.1 200))"));
         assert!(supports_condition("(color: lab(50 40 30))"));
