@@ -1798,6 +1798,8 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "ruby-align" => "space-around",
         "white-space-collapse" => "collapse",
         "font-synthesis" => "weight style small-caps",
+        "font-synthesis-weight" | "font-synthesis-style" | "font-synthesis-small-caps"
+        | "font-synthesis-position" => "auto",
         "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
         | "font-variant-position" | "font-language-override" => "normal",
         "list-style-position" => "outside",

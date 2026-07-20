@@ -402,6 +402,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-decoration-skip-ink" | "line-break" | "text-wrap" | "text-wrap-mode"
         | "text-wrap-style" | "text-spacing-trim" | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing" | "font-synthesis"
+        | "font-synthesis-weight" | "font-synthesis-style" | "font-synthesis-small-caps"
+        | "font-synthesis-position"
         | "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
         | "font-variant-position" | "font-variant-alternates" | "font-language-override"
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
