@@ -241,14 +241,22 @@ fn fill_js_maps(
                 let bb = d.border_box();
                 // 3D 변환은 matrix3d(...) 로 직렬화해야 한다 (표준). matrix() 로 접으면
                 // z/원근 정보가 사라져 라이브러리가 틀린 변환을 읽는다.
+                // matrix 성분은 6자리 정밀(표준 직렬화: cos30°=0.866025). 전역 num_css
+                // (3자리)는 다른 계산값용이라 여기선 전용 포매터로 쓴다.
+                let n = |v: f32| -> String {
+                    let v = if v.abs() < 1e-6 { 0.0 } else { v };
+                    if v.fract() == 0.0 && v.is_finite() {
+                        format!("{}", v as i64)
+                    } else {
+                        let s = format!("{:.6}", v);
+                        s.trim_end_matches('0').trim_end_matches('.').to_string()
+                    }
+                };
                 if let Some(v) = crate::layout::transform_matrix3d(&t, bb.width, bb.height) {
-                    let n = |x: f32| crate::style::num_css(if x.abs() < 1e-6 { 0.0 } else { x });
                     let parts: Vec<String> = v.iter().map(|x| n(*x)).collect();
                     m.insert("transform".to_string(), format!("matrix3d({})", parts.join(", ")));
                 } else {
                     let mt = crate::layout::parse_transform(&t, bb.width, bb.height);
-                    // cos(90°) 는 정확히 0 이 아니라 -4e-8 이다 → "-0" 으로 찍힌다. 0 으로 정리.
-                    let n = |v: f32| crate::style::num_css(if v.abs() < 1e-6 { 0.0 } else { v });
                     m.insert(
                         "transform".to_string(),
                         format!(
