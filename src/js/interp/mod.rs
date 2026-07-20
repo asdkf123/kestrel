@@ -8064,6 +8064,10 @@ impl Interp {
             if fname != tname || fa.len() != ta.len() {
                 return None;
             }
+            // matrix/matrix3d 는 성분별 보간이 틀리다 — 행렬 분해 경로로 넘긴다.
+            if matches!(fname.as_str(), "matrix" | "matrix3d") {
+                return None;
+            }
             let args: Option<Vec<String>> = fa
                 .iter()
                 .zip(ta)
