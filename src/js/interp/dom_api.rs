@@ -360,11 +360,25 @@ impl Interp {
         if from.is_empty() || from == new_value {
             return;
         }
+        // CSS 전역 키워드(initial/inherit/unset) 해석.
+        let from = self.resolve_wide_keyword(id, prop, &from);
+        let to = self.resolve_wide_keyword(id, prop, new_value);
+        if from.is_empty() || from == to {
+            return;
+        }
+        // 불연속(보간 불가) 값은 transition-behavior:allow-discrete 일 때만 전이한다.
+        // 기본(normal)은 전이 없이 to 로 즉시 점프하므로 캡처하지 않는다.
+        if Self::interp_css_value(&from, &to, 0.5).is_none() {
+            let behavior = self.style_get(id, "transition-behavior");
+            if !behavior.contains("allow-discrete") {
+                return;
+            }
+        }
         let mut m = ObjMap::new();
         m.insert("currentTime".to_string(), Value::Num(elapsed as f64));
         let rc = std::rc::Rc::new(std::cell::RefCell::new(m));
         let mut props = std::collections::HashMap::new();
-        props.insert(prop.to_string(), (from, new_value.to_string(), easing));
+        props.insert(prop.to_string(), (from, to, easing));
         self.element_animations.entry(id).or_default().push((rc, dur as f64, props));
     }
 

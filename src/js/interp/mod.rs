@@ -7857,10 +7857,59 @@ impl Interp {
                 let eased = Self::eval_easing(easing, progress);
                 if let Some(v) = Self::interp_css_value(from, to, eased) {
                     result = Some(v);
+                } else if !from.is_empty() && !to.is_empty() {
+                    // 보간 불가(불연속 타입) → 플립. 기본은 이징 출력 0.5 기준.
+                    // display/content-visibility 는 none 이 "보이는" 쪽에 밀려 끝점에서만
+                    // 적용된다(§css-display-4): to==none 이면 t>=1 에서만, from==none 이면
+                    // t>0 에서 즉시 반대쪽(보이는 값).
+                    let to_side = if dash_prop == "display" || dash_prop == "content-visibility" {
+                        if to == "none" {
+                            eased >= 1.0
+                        } else if from == "none" {
+                            eased > 0.0
+                        } else {
+                            eased >= 0.5
+                        }
+                    } else {
+                        eased >= 0.5
+                    };
+                    result = Some(if to_side { to.clone() } else { from.clone() });
                 }
             }
         }
         result
+    }
+
+    // CSS 전역 키워드(initial/inherit/unset)를 실제 값으로 해석(애니메이션 from/to 용).
+    fn resolve_wide_keyword(&self, id: crate::dom::NodeId, prop: &str, value: &str) -> String {
+        match value.trim() {
+            "initial" => crate::style::initial_value(prop).unwrap_or("").to_string(),
+            "inherit" => self.parent_computed(id, prop),
+            "unset" => {
+                if crate::style::is_inherited(prop) {
+                    self.parent_computed(id, prop)
+                } else {
+                    crate::style::initial_value(prop).unwrap_or("").to_string()
+                }
+            }
+            _ => value.to_string(),
+        }
+    }
+
+    // 조상 사슬에서 이 프로퍼티의 계산값(inherit 해석). 없으면 초기값.
+    fn parent_computed(&self, id: crate::dom::NodeId, prop: &str) -> String {
+        if let Some(p) = self.dom {
+            let mut cur = unsafe { (*p).get(id).parent };
+            while let Some(pid) = cur {
+                if let Some(v) = self.computed_styles.get(&pid).and_then(|m| m.get(prop)) {
+                    if !v.is_empty() {
+                        return v.clone();
+                    }
+                }
+                cur = unsafe { (*p).get(pid).parent };
+            }
+        }
+        crate::style::initial_value(prop).unwrap_or("").to_string()
     }
 
     // 이징 함수를 진행률 t(0..1)에서 평가. linear/steps/cubic-bezier.

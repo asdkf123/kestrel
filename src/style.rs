@@ -1100,6 +1100,11 @@ const INHERITED: &[&str] = &[
     "cursor",
 ];
 
+// 상속 속성인지(unset 이 inherit 처럼 동작할지) 판정. 롱핸드 기준.
+pub fn is_inherited(prop: &str) -> bool {
+    INHERITED.contains(&prop)
+}
+
 // 뷰포트 단위(vw/vh/vmin/vmax) 해석용 뷰포트 크기(px).
 #[derive(Clone, Copy)]
 pub struct Viewport {

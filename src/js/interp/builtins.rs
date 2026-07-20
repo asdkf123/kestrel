@@ -5017,6 +5017,11 @@ impl Interp {
                             props.insert(dash, (from, to, easing.clone()));
                         }
                     }
+                    // CSS 전역 키워드(initial/inherit/unset) from/to 를 실제 값으로 해석.
+                    for (dash, (from, to, _ez)) in props.iter_mut() {
+                        *from = self.resolve_wide_keyword(id, dash, from);
+                        *to = self.resolve_wide_keyword(id, dash, to);
+                    }
                     // 단축 프로퍼티(margin/padding/border-radius 등)를 롱핸드로 확장 —
                     // getComputedStyle 은 롱핸드(margin-top)로 읽으므로.
                     let mut expanded: HashMap<String, (String, String, String)> = HashMap::new();
