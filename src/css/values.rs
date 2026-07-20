@@ -995,9 +995,13 @@ fn normalize_gradient_seg(seg: &str, computed: bool, default_space: &str) -> Str
                 format!("{} {}", color, toks[1..].join(" "))
             }
         }
-        // prefix 세그먼트(각도/방향/보간): 보간 메서드(in ...)를 각도/방향 뒤로 재정렬
-        // (§CSS Images 4 캐논: <angle|direction> in <space>). "in lab 30deg"→"30deg in lab".
-        _ => reorder_interp(&toks, default_space),
+        // prefix 세그먼트(각도/방향/보간): radial 기본 도형 ellipse 생략(§CSS Images 4,
+        // ellipse 50% 40em→50% 40em) 후 보간 메서드를 각도/방향 뒤로 재정렬.
+        _ => {
+            let filtered: Vec<String> =
+                toks.iter().filter(|t| !t.eq_ignore_ascii_case("ellipse")).cloned().collect();
+            reorder_interp(&filtered, default_space)
+        }
     }
 }
 
