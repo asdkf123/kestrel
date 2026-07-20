@@ -47,6 +47,19 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("calc(") && text.ends_with(')') {
         return eval_calc(&text[5..text.len() - 1]);
     }
+    // 무효 gradient(빈 세그먼트/hint 배치/스톱<2/색 아닌 스톱)는 파싱 거부 → 선언 드롭
+    // (계산값 none, 지정값 ""). 파서가 관대하므로 gradient_valid 로 문법 검증.
+    if (lower.starts_with("linear-gradient(")
+        || lower.starts_with("radial-gradient(")
+        || lower.starts_with("conic-gradient(")
+        || lower.starts_with("repeating-linear-gradient(")
+        || lower.starts_with("repeating-radial-gradient(")
+        || lower.starts_with("repeating-conic-gradient("))
+        && text.ends_with(')')
+        && !gradient_valid(text)
+    {
+        return None;
+    }
     // repeating-* 는 같은 문법에 반복 플래그만 다르다
     if lower.starts_with("repeating-linear-gradient(") && text.ends_with(')') {
         let inner = &text["repeating-linear-gradient(".len()..text.len() - 1];
@@ -919,12 +932,25 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     } else {
         return false;
     };
+    // color-stop-list: 색 스톱과 color hint(위치 단독)가 번갈아 온다. hint 는 첫/끝에
+    // 올 수 없고 연속될 수 없다. 색 스톱은 위치를 최대 2개까지(색 + pos1 [pos2]).
+    let list = &segs[start..];
     let mut stops = 0;
-    for seg in &segs[start..] {
+    let mut prev_was_hint = false;
+    for (i, seg) in list.iter().enumerate() {
         let seg = seg.trim();
         if is_color(seg) {
             stops += 1;
-        } else if !is_position(seg) {
+            prev_was_hint = false;
+            if split_top_level(seg).len() > 3 {
+                return false; // 색 + 위치 2개 초과
+            }
+        } else if is_position(seg) {
+            if i == 0 || i + 1 == list.len() || prev_was_hint {
+                return false; // hint 가 첫/끝/연속
+            }
+            prev_was_hint = true;
+        } else {
             return false; // 색도 위치도 아닌 세그먼트("...,lab")
         }
     }

@@ -335,6 +335,11 @@ fn declaration_supported(atom: &str) -> bool {
     if prop.is_empty() || value.is_empty() {
         return false;
     }
+    // gradient 는 문법 검증(빈 세그먼트/무효 스톱/hint 배치)이 필요 — 파서가 관대해서
+    // 무효 형태도 파싱하므로 gradient_valid 로 걸러 CSS.supports 가 정확히 false.
+    if value.to_ascii_lowercase().contains("gradient(") && !super::gradient_valid(value) {
+        return false;
+    }
     // 원문에 우리가 계산하지 않는 함수가 있으면 거짓 (color-mix/oklch/env/attr…).
     // 파싱 뒤에는 원문이 남지 않는 값도 있어서 확장 전에 본다.
     if value_functions(&value.to_ascii_lowercase()).iter().any(|f| !FUNCS.contains(&f.as_str())) {
