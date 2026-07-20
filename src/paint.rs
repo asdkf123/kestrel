@@ -614,7 +614,7 @@ impl Canvas {
 
 fn get_color(layout_box: &LayoutBox, name: &str) -> Option<Color> {
     match layout_box.styled_node.value(name) {
-        Some(Value::Color(c)) => Some(c),
+        Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => Some(c),
         _ => None,
     }
 }
@@ -1591,7 +1591,7 @@ fn emit_outline(lb: &LayoutBox, items: &mut Vec<DisplayItem>) {
         return;
     }
     let color = match lb.styled_node.value("outline-color") {
-        Some(Value::Color(c)) => c,
+        Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
         _ => get_color(lb, "color").unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 }),
     };
     let offset = match lb.styled_node.value("outline-offset") {
@@ -2275,7 +2275,7 @@ fn collect_items(
         match (len("text-shadow-x"), len("text-shadow-y")) {
             (Some(dx), Some(dy)) => {
                 let color = match layout_box.styled_node.value("text-shadow-color") {
-                    Some(Value::Color(c)) => c,
+                    Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
                     _ => Color { r: 0, g: 0, b: 0, a: 128 },
                 };
                 Some((dx, dy, color))

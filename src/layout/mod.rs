@@ -519,7 +519,7 @@ impl<'a> LayoutBox<'a> {
             .filter(|&p| p > 0.0)
             .unwrap_or(16.0);
         let color = match self.styled_node.value("color") {
-            Some(Value::Color(c)) => c,
+            Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
         // 마커 폭 측정 → 콘텐츠 왼쪽에서 gap 만큼 떨어져 우측정렬
@@ -621,7 +621,7 @@ impl<'a> LayoutBox<'a> {
         // inline-block 흐름에서 shrink-to-fit 폭으로 쓰이도록 노출
         self.used_width = self.dimensions.content.width;
         let color = match self.styled_node.value("color") {
-            Some(Value::Color(c)) => c,
+            Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
             _ => Color { r: 20, g: 20, b: 24, a: 255 },
         };
         // content.x 는 이미 CSS padding 만큼 안쪽 — 별도 하드코딩 inset 없음
@@ -693,7 +693,7 @@ impl<'a> LayoutBox<'a> {
         self.dimensions.content.height = px * 1.5;
         self.used_width = self.dimensions.content.width;
         let color = match self.styled_node.value("color") {
-            Some(Value::Color(c)) => c,
+            Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
             _ => Color { r: 20, g: 20, b: 24, a: 255 },
         };
         let mut pen = self.dimensions.content.x;

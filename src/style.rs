@@ -35,6 +35,8 @@ pub fn computed_value_string(v: &Value) -> String {
             Unit::Vmin => format!("{}vmin", num_css(*n)),
             Unit::Vmax => format!("{}vmax", num_css(*n)),
         },
+        // 모던 색 함수: 계산값은 원 형태(lab/oklch/color() …)를 보존한다(rgb() 로 안 접힘).
+        Value::ColorFn(_, serial) => serial.to_string(),
         Value::Color(c) => {
             if c.a == 255 {
                 format!("rgb({}, {}, {})", c.r, c.g, c.b)
@@ -1706,7 +1708,7 @@ fn style_node<'a>(
             // color 가 없으면 계산값은 초기값(검정)이다 — 예전엔 이때 치환을 건너뛰어
             // 키워드가 그대로 남았다(미해석 색).
             let cc = match values.get("color") {
-                Some(Value::Color(c)) => *c,
+                Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => *c,
                 _ => crate::css::Color { r: 0, g: 0, b: 0, a: 255 },
             };
             for (k, v) in values.iter_mut() {

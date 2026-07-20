@@ -17,24 +17,18 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
         return parse_hsl_func(&lower).map(Value::Color);
     }
-    // 모던 색 함수(CSS Color 4) — 페인팅용 sRGB 근사 변환.
-    if lower.starts_with("oklch(") {
-        return parse_oklch(&lower).map(Value::Color);
-    }
-    if lower.starts_with("oklab(") {
-        return parse_oklab(&lower).map(Value::Color);
-    }
-    if lower.starts_with("lch(") {
-        return parse_lch(&lower).map(Value::Color);
-    }
-    if lower.starts_with("lab(") {
-        return parse_lab(&lower).map(Value::Color);
+    // 모던 색 함수(CSS Color 4). lab/lch/oklab/oklch/color() 는 계산값에서 자기 형태를
+    // 보존하므로 Value::ColorFn(sRGB 근사 + 캐논 직렬화). hwb 는 rgb() 로 계산된다.
+    for name in ["oklch", "oklab", "lch", "lab"] {
+        if lower.starts_with(name) && lower[name.len()..].starts_with('(') {
+            return parse_lab_family(name, &lower).map(|(c, s)| Value::ColorFn(c, s));
+        }
     }
     if lower.starts_with("hwb(") {
         return parse_hwb(&lower).map(Value::Color);
     }
     if lower.starts_with("color(") {
-        return parse_color_func(&lower).map(Value::Color);
+        return parse_color_func(&lower).map(|(c, s)| Value::ColorFn(c, s));
     }
     if lower.starts_with("calc(") && text.ends_with(')') {
         return eval_calc(&text[5..text.len() - 1]);
@@ -422,7 +416,7 @@ fn parse_radial_gradient(inner: &str) -> Option<crate::css::Gradient> {
     let first_is_color = split_top_level(parts[0].trim())
         .first()
         .and_then(|t| interpret_value(t))
-        .map(|v| matches!(v, Value::Color(_)))
+        .map(|v| matches!(v, Value::Color(_) | Value::ColorFn(_, _)))
         .unwrap_or(false);
     let idx = if first_is_color { 0 } else { 1 };
     if idx >= parts.len() {
@@ -610,13 +604,36 @@ fn parse_hex_color(text: &str) -> Option<Color> {
 }
 
 // 콤마 또는 공백 구분(모던 문법), '/' 알파 모두 수용.
+// 색 함수 성분 분리. **괄호 깊이 인식**: 최상위(depth 0)의 공백/쉼표/슬래시로만
+// 나누고, calc(50 * 3) 이나 calc(0 / 0) 처럼 괄호 안의 공백·슬래시는 보존한다.
+// 예전엔 단순 split 이라 calc 내부 공백에서 토큰이 쪼개져 모던 색 함수가 깨졌다.
 fn color_parts(inner: &str) -> Vec<String> {
-    inner
-        .replace('/', " ")
-        .split(|c| c == ',' || c == ' ' || c == '\t')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' | ' ' | '\t' | '\n' | '/' if depth == 0 => {
+                if !cur.trim().is_empty() {
+                    out.push(cur.trim().to_string());
+                }
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
 }
 
 // 채널 값: 0-255 정수/실수 또는 퍼센트(0-100%).
@@ -672,32 +689,148 @@ fn comp_angle(s: &str) -> Option<f32> {
 }
 
 // oklch(L C H [/ A]) — L: 0..1(또는 %of1), C: 수(또는 %of0.4), H: 각도.
-fn parse_oklch(text: &str) -> Option<Color> {
-    let p = color_parts(func_inner(text)?);
-    if p.len() < 3 { return None; }
-    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
-    Some(oklch_to_color(comp_num(&p[0], 1.0)?, comp_num(&p[1], 0.4)?, comp_angle(&p[2])?, a))
+// 모던 색 함수의 성분: 수 또는 none(계산값에서 보존). % 는 pct_base 로 해석해 수로.
+#[derive(Clone, Copy)]
+enum Comp {
+    None,
+    Val(f32),
 }
-// oklab(L a b [/ A]) — L: 0..1, a/b: 수(또는 %of0.4).
-fn parse_oklab(text: &str) -> Option<Color> {
-    let p = color_parts(func_inner(text)?);
-    if p.len() < 3 { return None; }
-    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
-    Some(oklab_to_color(comp_num(&p[0], 1.0)?, comp_num(&p[1], 0.4)?, comp_num(&p[2], 0.4)?, a))
+impl Comp {
+    fn get(self) -> f32 {
+        match self {
+            Comp::None => 0.0,
+            Comp::Val(v) => v,
+        }
+    }
+    fn clamp(self, lo: f32, hi: f32) -> Comp {
+        match self {
+            Comp::None => Comp::None,
+            Comp::Val(v) => Comp::Val(v.clamp(lo, hi)),
+        }
+    }
+    fn clamp_lo(self, lo: f32) -> Comp {
+        match self {
+            Comp::None => Comp::None,
+            Comp::Val(v) => Comp::Val(v.max(lo)),
+        }
+    }
+    fn ser(self) -> String {
+        match self {
+            Comp::None => "none".to_string(),
+            Comp::Val(v) => csnum(v),
+        }
+    }
 }
-// lch(L C H [/ A]) — L: 0..100(또는 %of100), C: 수(또는 %of150), H: 각도.
-fn parse_lch(text: &str) -> Option<Color> {
-    let p = color_parts(func_inner(text)?);
-    if p.len() < 3 { return None; }
-    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
-    Some(lch_to_color(comp_num(&p[0], 100.0)?, comp_num(&p[1], 150.0)?, comp_angle(&p[2])?, a))
+
+// 색 성분 수 직렬화(§CSSOM): 최대 4소수 자리 후 뒤 0/점 제거. -0 은 0 으로.
+// (num_css 는 3자리라 lch 각도 등에서 정밀도가 모자랐다.)
+fn csnum(v: f32) -> String {
+    let s = format!("{:.4}", v);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s == "-0" || s.is_empty() {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
 }
-// lab(L a b [/ A]) — L: 0..100, a/b: 수(또는 %of125).
-fn parse_lab(text: &str) -> Option<Color> {
+
+// 성분 파싱: none / 퍼센트(pct_base) / 수 / calc(). calc 는 eval_calc 로 수를 뽑고,
+// NaN/inf 나 계산 불가(sign()/컨테이너단위 등)는 0 으로 근사(값은 유효로 본다).
+fn parse_comp(s: &str, pct_base: f32) -> Option<Comp> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return Some(Comp::None);
+    }
+    if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') {
+        let inner = &s[5..s.len() - 1];
+        let n = match eval_calc(inner) {
+            Some(Value::Length(n, _)) if n.is_finite() => n,
+            _ => 0.0,
+        };
+        return Some(Comp::Val(n));
+    }
+    if let Some(p) = s.strip_suffix('%') {
+        return Some(Comp::Val(p.trim().parse::<f32>().ok()? / 100.0 * pct_base));
+    }
+    s.parse::<f32>().ok().map(Comp::Val)
+}
+fn parse_comp_angle(s: &str) -> Option<Comp> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return Some(Comp::None);
+    }
+    // calc() 각도: deg 를 떼고(결과는 도 단위) 산술만 평가. 비유한/불가는 0.
+    if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') {
+        let inner = s[5..s.len() - 1].replace("deg", "");
+        let n = match eval_calc(&inner) {
+            Some(Value::Length(n, _)) if n.is_finite() => n,
+            _ => 0.0,
+        };
+        return Some(Comp::Val(n));
+    }
+    comp_angle(s).map(Comp::Val)
+}
+// 알파 파싱: 없으면 1(불투명), none, 그 외 [0,1] 클램프(% 는 /100).
+fn parse_alpha(s: Option<&String>) -> Option<Comp> {
+    match s {
+        None => Some(Comp::Val(1.0)),
+        Some(t) => Some(parse_comp(t, 1.0)?.clamp(0.0, 1.0)),
+    }
+}
+fn alpha_u8(c: Comp) -> u8 {
+    (c.get().clamp(0.0, 1.0) * 255.0).round() as u8
+}
+// 알파 직렬화: 1 이면 생략, none 이면 " / none", 그 외 " / <값>".
+fn alpha_ser(c: Comp) -> String {
+    match c {
+        Comp::Val(v) if (v - 1.0).abs() < f32::EPSILON => String::new(),
+        Comp::None => " / none".to_string(),
+        Comp::Val(v) => format!(" / {}", csnum(v)),
+    }
+}
+
+// lab/lch/oklab/oklch — 페인팅 sRGB 근사 + getComputedStyle 캐논 직렬화를 함께 만든다.
+fn parse_lab_family(name: &str, text: &str) -> Option<(Color, Box<str>)> {
     let p = color_parts(func_inner(text)?);
-    if p.len() < 3 { return None; }
-    let a = if p.len() >= 4 { alpha_val(&p[3])? } else { 255 };
-    Some(lab_to_color(comp_num(&p[0], 100.0)?, comp_num(&p[1], 125.0)?, comp_num(&p[2], 125.0)?, a))
+    if p.len() < 3 {
+        return None;
+    }
+    let alpha = parse_alpha(p.get(3))?;
+    let au = alpha_u8(alpha);
+    let (l_hi, ab_base, c_base) = match name {
+        "lab" => (100.0, 125.0, 0.0),
+        "oklab" => (1.0, 0.4, 0.0),
+        "lch" => (100.0, 0.0, 150.0),
+        "oklch" => (1.0, 0.0, 0.4),
+        _ => return None,
+    };
+    let l = parse_comp(&p[0], l_hi)?.clamp(0.0, l_hi);
+    let polar = matches!(name, "lch" | "oklch");
+    let (c2, c3, rgba) = if polar {
+        let c = parse_comp(&p[1], c_base)?.clamp_lo(0.0);
+        // 색상(hue)은 계산값에서 [0, 360) 로 정규화된다.
+        let h = match parse_comp_angle(&p[2])? {
+            Comp::Val(v) => Comp::Val(((v % 360.0) + 360.0) % 360.0),
+            Comp::None => Comp::None,
+        };
+        let rgba = if name == "lch" {
+            lch_to_color(l.get(), c.get(), h.get(), au)
+        } else {
+            oklch_to_color(l.get(), c.get(), h.get(), au)
+        };
+        (c, h, rgba)
+    } else {
+        let a = parse_comp(&p[1], ab_base)?;
+        let b = parse_comp(&p[2], ab_base)?;
+        let rgba = if name == "lab" {
+            lab_to_color(l.get(), a.get(), b.get(), au)
+        } else {
+            oklab_to_color(l.get(), a.get(), b.get(), au)
+        };
+        (a, b, rgba)
+    };
+    let serial = format!("{}({} {} {}{})", name, l.ser(), c2.ser(), c3.ser(), alpha_ser(alpha));
+    Some((rgba, serial.into_boxed_str()))
 }
 // hwb(H W B [/ A]) — H: 각도, W/B: 퍼센트.
 fn parse_hwb(text: &str) -> Option<Color> {
@@ -707,34 +840,55 @@ fn parse_hwb(text: &str) -> Option<Color> {
     Some(hwb_to_color(comp_angle(&p[0])?, comp_num(&p[1], 1.0)?, comp_num(&p[2], 1.0)?, a))
 }
 
-// color(<space> c1 c2 c3 [/ A]) — 지정 색공간의 성분을 sRGB 로.
-fn parse_color_func(text: &str) -> Option<Color> {
+// color(<space> c1 c2 c3 [/ A]) — 지정 색공간의 성분을 sRGB 근사로 + 캐논 직렬화 보존.
+fn parse_color_func(text: &str) -> Option<(Color, Box<str>)> {
     let p = color_parts(func_inner(text)?);
-    if p.len() < 4 { return None; }
+    if p.len() < 4 {
+        return None;
+    }
     let space = p[0].to_ascii_lowercase();
-    let c1 = comp_num(&p[1], 1.0)?;
-    let c2 = comp_num(&p[2], 1.0)?;
-    let c3 = comp_num(&p[3], 1.0)?;
-    let a = if p.len() >= 5 { alpha_val(&p[4])? } else { 255 };
-    let (lr, lg, lb) = match space.as_str() {
-        // sRGB: 성분이 이미 감마 인코딩된 sRGB → 그대로.
-        "srgb" => return Some(Color { r: to_u8(c1), g: to_u8(c2), b: to_u8(c3), a }),
-        "srgb-linear" => (c1, c2, c3),
-        // display-p3 는 sRGB 와 같은 전달함수 → 디코드 후 P3→sRGB 매트릭스.
+    let s1 = parse_comp(&p[1], 1.0)?;
+    let s2 = parse_comp(&p[2], 1.0)?;
+    let s3 = parse_comp(&p[3], 1.0)?;
+    let alpha = parse_alpha(p.get(4))?;
+    let au = alpha_u8(alpha);
+    let (c1, c2, c3) = (s1.get(), s2.get(), s3.get());
+    let rgba = match space.as_str() {
+        "srgb" => Color { r: to_u8(c1), g: to_u8(c2), b: to_u8(c3), a: au },
+        "srgb-linear" => lin_srgb_to_color(c1, c2, c3, au),
         "display-p3" => {
             let (x, y, z) =
                 mat3(&P3_TO_XYZ65, srgb_gamma_inv(c1), srgb_gamma_inv(c2), srgb_gamma_inv(c3));
-            mat3(&XYZ65_TO_LSRGB, x, y, z)
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            lin_srgb_to_color(lr, lg, lb, au)
         }
-        "xyz" | "xyz-d65" => mat3(&XYZ65_TO_LSRGB, c1, c2, c3),
+        "xyz" | "xyz-d65" => {
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, c1, c2, c3);
+            lin_srgb_to_color(lr, lg, lb, au)
+        }
         "xyz-d50" => {
             let (x, y, z) = mat3(&BRADFORD_D50_D65, c1, c2, c3);
-            mat3(&XYZ65_TO_LSRGB, x, y, z)
+            let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
+            lin_srgb_to_color(lr, lg, lb, au)
         }
-        // rec2020/a98-rgb/prophoto-rgb 는 전달함수가 달라 정확히 못 한다 → 미지원(정직).
+        // 알려진 predefined 색공간(전달함수가 달라 페인팅은 근사 못 해도 직렬화는 보존).
+        "rec2020" | "a98-rgb" | "prophoto-rgb" => {
+            // 페인팅은 sRGB 성분으로 근사(부정확하지만 무색보다 낫다)하되 직렬화는 원 공간 보존.
+            Color { r: to_u8(c1), g: to_u8(c2), b: to_u8(c3), a: au }
+        }
         _ => return None,
     };
-    Some(lin_srgb_to_color(lr, lg, lb, a))
+    // xyz 는 계산값에서 xyz-d65 로 정규화된다(CSS Color 4).
+    let space_out = if space == "xyz" { "xyz-d65" } else { space.as_str() };
+    let serial = format!(
+        "color({} {} {} {}{})",
+        space_out,
+        s1.ser(),
+        s2.ser(),
+        s3.ser(),
+        alpha_ser(alpha)
+    );
+    Some((rgba, serial.into_boxed_str()))
 }
 
 fn parse_rgb_func(text: &str) -> Option<Color> {
@@ -1107,7 +1261,7 @@ mod tests {
 
     fn color(s: &str) -> Color {
         match interpret_value(s) {
-            Some(Value::Color(c)) => c,
+            Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
             other => panic!("expected color, got {:?}", other),
         }
     }
@@ -1130,6 +1284,27 @@ mod tests {
         assert!((cm - 96.0).abs() < 0.01, "2.54cm ≈ 96px, 실제 {}", cm);
         // ch/ex 는 0.5em 근사로 저장
         assert_eq!(interpret_value("2ch"), Some(Value::Length(1.0, Unit::Em)));
+    }
+
+    #[test]
+    fn modern_color_computed_serialization() {
+        // 계산값은 원 색공간을 보존한다(rgb() 로 안 접힘) + 클램프/none/각도정규화.
+        let ser = |s: &str| match interpret_value(s) {
+            Some(v) => crate::style::computed_value_string(&v),
+            None => "<none>".to_string(),
+        };
+        assert_eq!(ser("lab(20 0 10/0.5)"), "lab(20 0 10 / 0.5)");
+        assert_eq!(ser("lab(400 0 10/50%)"), "lab(100 0 10 / 0.5)"); // L 클램프 100
+        assert_eq!(ser("lab(-40 0 0)"), "lab(0 0 0)"); // L 클램프 0
+        assert_eq!(ser("oklab(4 0 0.1/50%)"), "oklab(1 0 0.1 / 0.5)"); // L 클램프 1
+        assert_eq!(ser("oklab(20% 70% -80%)"), "oklab(0.2 0.28 -0.32)"); // % 기준
+        assert_eq!(ser("lch(10 20 380deg)"), "lch(10 20 20)"); // hue 정규화
+        assert_eq!(ser("lch(10 20 -340deg)"), "lch(10 20 20)");
+        assert_eq!(ser("oklch(0.5 -0.2 0)"), "oklch(0.5 0 0)"); // C 클램프 0 이상
+        assert_eq!(ser("lab(none none none / none)"), "lab(none none none / none)"); // none 보존
+        assert_eq!(ser("color(srgb 1 0 0)"), "color(srgb 1 0 0)");
+        assert_eq!(ser("color(xyz 0.1 0.2 0.3)"), "color(xyz-d65 0.1 0.2 0.3)"); // xyz→xyz-d65
+        assert_eq!(ser("lab(calc(50 * 3) 0 0)"), "lab(100 0 0)"); // calc 평가 + 클램프
     }
 
     #[test]

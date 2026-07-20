@@ -146,8 +146,8 @@ pub(crate) fn is_known_property(name: &str) -> bool {
 const FUNCS: &[&str] = &[
     // 값 계산
     "var", "calc", "min", "max", "clamp",
-    // 색
-    "rgb", "rgba", "hsl", "hsla",
+    // 색 — 레거시 + 모던 색 함수(계산값 색공간 보존을 구현했으므로 정직하게 지원).
+    "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color",
     // 이미지
     "url", "linear-gradient", "radial-gradient", "conic-gradient",
     // content
@@ -394,9 +394,13 @@ mod tests {
         assert!(!supports_condition("(display: flow-root)"));
         assert!(!supports_condition("(display: list-item)"));
 
-        // 미구현 값 함수 → 거짓 (파싱은 되지만 계산하지 않는다)
+        // color-mix 는 아직 미지원(정방향 색공간 변환 미구현) → 거짓
         assert!(!supports_condition("(color: color-mix(in srgb, red, blue))"));
-        assert!(!supports_condition("(color: oklch(0.7 0.1 200))"));
+        // lab/lch/oklab/oklch/color() 는 이제 계산값 색공간을 보존하므로 지원 → 참
+        assert!(supports_condition("(color: oklch(0.7 0.1 200))"));
+        assert!(supports_condition("(color: lab(50 40 30))"));
+        assert!(supports_condition("(color: color(display-p3 1 0 0))"));
+        // env() 는 여전히 미지원
         assert!(!supports_condition("(width: env(safe-area-inset-left))"));
         // transform: 2D 함수는 전부 행렬로 합성해 실제로 변환한다
         assert!(supports_condition("(transform: rotate(45deg))"));

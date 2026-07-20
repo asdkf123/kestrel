@@ -267,6 +267,10 @@ pub enum Value {
     Keyword(String),
     Length(f32, Unit),
     Color(Color),
+    // 모던 색 함수(lab/lch/oklab/oklch/color()): 페인팅용 sRGB 근사(Color)와 함께
+    // getComputedStyle 직렬화용 캐논 형태를 보존한다(색공간이 rgb() 로 접히지 않게).
+    // 레거시 색(rgb/hsl/hwb/hex/named)은 rgb() 로 계산되므로 그냥 Color 를 쓴다.
+    ColorFn(Color, Box<str>),
     Url(String),
     // var() 를 포함한 미해석 원문. 스타일 계산 시 커스텀 프로퍼티로 치환 후 재파싱.
     Var(String),
@@ -428,6 +432,16 @@ fn pseudo_specificity(p: &Pseudo) -> Specificity {
 }
 
 impl Value {
+    // 페인팅용 sRGB 색: 레거시 Color 와 모던 색함수 ColorFn 둘 다에서 rgba 를 꺼낸다.
+    // (ColorFn 은 계산값 직렬화만 원 색공간을 보존하고, 실제 페인팅은 sRGB 근사를 쓴다.)
+    pub fn paint_color(&self) -> Option<Color> {
+        match self {
+            Value::Color(c) => Some(*c),
+            Value::ColorFn(c, _) => Some(*c),
+            _ => None,
+        }
+    }
+
     pub fn to_px(&self) -> f32 {
         match self {
             // Number 는 단위 없는 수 — 레이아웃이 스칼라로 읽는다(flex-grow/order 등)
@@ -515,10 +529,7 @@ fn extract_urls(text: &str, out: &mut Vec<String>) {
 
 // 색 문자열(hex/named/rgb 등) → Color. SVG fill/stroke 파싱 등에 쓴다.
 pub fn parse_color(s: &str) -> Option<Color> {
-    match values::interpret_value(s.trim()) {
-        Some(Value::Color(c)) => Some(c),
-        _ => None,
-    }
+    values::interpret_value(s.trim()).and_then(|v| v.paint_color())
 }
 
 // @media 없는 시트/테스트/UA 용 기본 파스. 데스크톱 폭(1024)으로 미디어 평가.

@@ -152,7 +152,7 @@ fn inline_border_of(node: &StyledNode) -> Option<(Color, f32, f32)> {
         return None;
     }
     let color = match node.value("border-top-color").or_else(|| node.value("border-color")) {
-        Some(Value::Color(c)) if c.a > 0 => c,
+        Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) if c.a > 0 => c,
         _ => return None,
     };
     let radius = node.value("border-radius").map(|v| v.to_px()).unwrap_or(0.0);
@@ -162,7 +162,7 @@ fn inline_border_of(node: &StyledNode) -> Option<(Color, f32, f32)> {
 // text-decoration-color 명시값 (currentColor/미지정 → None)
 fn deco_color_of(node: &StyledNode) -> Option<Color> {
     match node.value("text-decoration-color") {
-        Some(Value::Color(c)) => Some(c),
+        Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => Some(c),
         _ => None,
     }
 }
@@ -207,7 +207,7 @@ impl<'a> LayoutBox<'a> {
             .filter(|&p| p > 0.0)
             .unwrap_or(16.0);
         let base_color = match self.styled_node.value("color") {
-            Some(Value::Color(c)) => c,
+            Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
             _ => Color { r: 0, g: 0, b: 0, a: 255 },
         };
         let base = TextStyle {
@@ -760,7 +760,7 @@ fn collect_node<'a>(
                     .filter(|&p| p > 0.0)
                     .unwrap_or(style.px);
                 let ccolor = match node.value("color") {
-                    Some(Value::Color(c)) => c,
+                    Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
                     _ => style.color,
                 };
                 // <a href> 는 하위 텍스트에 링크 컨텍스트를 물려준다
@@ -774,7 +774,7 @@ fn collect_node<'a>(
                 // 배경색은 상속 안 됨: 이 요소가 지정하면 그 색, 아니면 조상의 칠 배경 유지
                 // (예: <mark> 안 <span> 은 mark 노랑을 그대로 보이게).
                 let cbg = match node.value("background-color") {
-                    Some(Value::Color(c)) if c.a > 0 => Some(c),
+                    Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) if c.a > 0 => Some(c),
                     _ => style.bg,
                 };
                 // 테두리: 이 요소가 지정하면 새 run id 부여(인접 요소와 병합 방지),
