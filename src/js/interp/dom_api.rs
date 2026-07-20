@@ -378,8 +378,10 @@ impl Interp {
             return;
         }
         // 불연속(보간 불가) 값은 transition-behavior:allow-discrete 일 때만 전이한다.
-        // 기본(normal)은 전이 없이 to 로 즉시 점프하므로 캡처하지 않는다.
-        if Self::interp_css_value(&from, &to, 0.5).is_none() {
+        // 기본(normal)은 전이 없이 to 로 즉시 점프하므로 캡처하지 않는다. transform/
+        // scale 등도 interp_prop 이 판정(interp_css_value 는 함수 리스트를 모른다).
+        let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
+        if Self::interp_prop(prop, &from, &to, 0.5, bw, bh).is_none() {
             let behavior = self.style_get(id, "transition-behavior");
             if !behavior.contains("allow-discrete") {
                 return;
