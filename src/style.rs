@@ -1263,7 +1263,7 @@ pub fn normalize_comma_list(s: &str) -> String {
 }
 
 // 각도 토큰 → 도(f32). deg/grad/turn/rad 만(맨수는 None — rotate 축 성분과 구분).
-fn angle_token_deg(t: &str) -> Option<f32> {
+pub(crate) fn angle_token_deg(t: &str) -> Option<f32> {
     let low = t.to_ascii_lowercase();
     for (suffix, factor) in [
         ("grad", 0.9f32),

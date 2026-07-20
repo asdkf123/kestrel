@@ -5067,7 +5067,9 @@ impl Interp {
                                         *side = format!("{u} {side}");
                                     }
                                 } else if let Some(bv) = base.get(dash) {
-                                    if let Some(n) = Self::add_css_values(bv, side) {
+                                    if let Some(n) =
+                                        Self::compose_prop(dash, bv, side, comp == "accumulate")
+                                    {
                                         *side = n;
                                     }
                                 }

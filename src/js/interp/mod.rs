@@ -9054,6 +9054,7 @@ impl Interp {
         let special = match dash_prop {
             "scale" => Self::interp_scale(from, to, eased),
             "translate" => Self::interp_translate(from, to, eased),
+            "rotate" => Self::interp_rotate(from, to, eased),
             _ => None,
         };
         if special.is_some() {
@@ -9155,7 +9156,8 @@ impl Interp {
                     if !base.is_empty() && base != "none" {
                         *side = format!("{base} {side}");
                     }
-                } else if let Some(n) = Self::add_css_values(&base, side) {
+                } else if let Some(n) = Self::compose_prop(dash_prop, &base, side, comp == "accumulate")
+                {
                     *side = n;
                 }
             }
@@ -9398,6 +9400,9 @@ impl Interp {
     // 직렬화. 컴포넌트 수가 달라도 되므로 generic 다중값 보간이 못 하는 경우를 처리.
     fn interp_scale(from: &str, to: &str, t: f32) -> Option<String> {
         let expand = |s: &str| -> Option<[f32; 3]> {
+            if s.trim() == "none" {
+                return Some([1.0, 1.0, 1.0]); // scale: none = 항등
+            }
             let toks: Vec<f32> = s
                 .split_whitespace()
                 .map(|x| {
@@ -9443,6 +9448,9 @@ impl Interp {
             }
         };
         let expand = |s: &str| -> Option<[(f32, &'static str); 3]> {
+            if s.trim() == "none" {
+                return Some([(0.0, "px"); 3]); // translate: none = 항등
+            }
             let toks: Vec<&str> = s.split_whitespace().collect();
             if toks.is_empty() || toks.len() > 3 {
                 return None;
@@ -9475,6 +9483,105 @@ impl Interp {
         Some(crate::style::normalize_translate(&format!(
             "{} {} {}",
             axes[0], axes[1], axes[2]
+        )))
+    }
+
+    // 개별 transform 프로퍼티 합성(§CSS Transforms 2). scale 은 add=성분별 곱,
+    // accumulate=(a-1)+(b-1)+1. 그 외는 add_css_values(같은 단위 수치 합).
+    pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        if dash == "scale" {
+            let p = |s: &str| -> Option<[f32; 3]> {
+                if s.trim() == "none" {
+                    return Some([1.0, 1.0, 1.0]); // scale: none = 항등
+                }
+                let mut t: Vec<f32> = Vec::new();
+                for x in s.split_whitespace() {
+                    let v = if let Some(pp) = x.strip_suffix('%') {
+                        pp.parse::<f32>().ok()? / 100.0
+                    } else {
+                        x.parse::<f32>().ok()?
+                    };
+                    t.push(v);
+                }
+                match t.len() {
+                    1 => Some([t[0], t[0], 1.0]),
+                    2 => Some([t[0], t[1], 1.0]),
+                    3 => Some([t[0], t[1], t[2]]),
+                    _ => None,
+                }
+            };
+            let b = p(base)?;
+            let k = p(kf)?;
+            let r: [f32; 3] = std::array::from_fn(|i| {
+                if accumulate {
+                    b[i] + k[i] - 1.0
+                } else {
+                    b[i] * k[i]
+                }
+            });
+            return Some(crate::style::normalize_scale(&format!("{} {} {}", r[0], r[1], r[2])));
+        }
+        Self::add_css_values(base, kf)
+    }
+
+    // rotate 프로퍼티 보간(§CSS Transforms 2). "[x y z] angle" 를 (축, 각도) 로.
+    // 같은 축(또는 한쪽 각도 0)이면 축 유지하고 각도 lerp. 축이 다르면 None(→플립;
+    // 쿼터니언 slerp 은 미구현). x/y/z 키워드도 축으로 인식.
+    fn interp_rotate(from: &str, to: &str, t: f32) -> Option<String> {
+        let parse = |s: &str| -> Option<([f32; 3], f32)> {
+            let s = s.trim();
+            if s == "none" {
+                return Some(([0.0, 0.0, 1.0], 0.0));
+            }
+            let mut axis: Vec<f32> = Vec::new();
+            let mut angle: Option<f32> = None;
+            for tok in s.split_whitespace() {
+                if let Some(d) = crate::style::angle_token_deg(tok) {
+                    if angle.is_some() {
+                        return None;
+                    }
+                    angle = Some(d);
+                } else if let Ok(n) = tok.parse::<f32>() {
+                    axis.push(n);
+                } else {
+                    match tok {
+                        "x" => axis = vec![1.0, 0.0, 0.0],
+                        "y" => axis = vec![0.0, 1.0, 0.0],
+                        "z" => axis = vec![0.0, 0.0, 1.0],
+                        _ => return None,
+                    }
+                }
+            }
+            let a = angle?;
+            let ax = match axis.len() {
+                0 => [0.0, 0.0, 1.0],
+                3 => [axis[0], axis[1], axis[2]],
+                _ => return None,
+            };
+            Some((ax, a))
+        };
+        let (fa, fang) = parse(from)?;
+        let (ta, tang) = parse(to)?;
+        let same = (fa[0] - ta[0]).abs() < 1e-4
+            && (fa[1] - ta[1]).abs() < 1e-4
+            && (fa[2] - ta[2]).abs() < 1e-4;
+        // 각도가 0 인 쪽은 축이 무의미 → 반대쪽 축 채택(none↔축 회전 보간).
+        let axis = if fang == 0.0 {
+            ta
+        } else if tang == 0.0 {
+            fa
+        } else if same {
+            fa
+        } else {
+            return None;
+        };
+        let ang = fang + (tang - fang) * t;
+        Some(crate::style::normalize_rotate(&format!(
+            "{} {} {} {}deg",
+            crate::style::num_css(axis[0]),
+            crate::style::num_css(axis[1]),
+            crate::style::num_css(axis[2]),
+            crate::style::num_css(ang)
         )))
     }
 
