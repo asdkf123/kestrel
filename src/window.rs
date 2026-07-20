@@ -632,9 +632,14 @@ fn collect_computed_styles(
                 m.insert(key.to_string(), crate::style::normalize_time_list(v));
             }
         }
-        for key in ["transition-property", "transition-timing-function", "animation-name", "animation-timing-function"] {
+        for key in ["transition-property", "animation-name"] {
             if let Some(v) = m.get(key) {
                 m.insert(key.to_string(), crate::style::normalize_comma_list(v));
+            }
+        }
+        for key in ["transition-timing-function", "animation-timing-function"] {
+            if let Some(v) = m.get(key) {
+                m.insert(key.to_string(), crate::style::normalize_easing_list(v));
             }
         }
         out.insert(node.id, m);

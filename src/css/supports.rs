@@ -169,6 +169,8 @@ const FUNCS: &[&str] = &[
     "inset",
     // grid 트랙
     "repeat", "minmax", "fit-content",
+    // 이징 함수(transition/animation-timing-function) — 계산값 직렬화 지원
+    "cubic-bezier", "steps",
 ];
 
 // 값에 쓰인 함수 이름을 전부 뽑는다: 식별자 바로 뒤에 '(' 가 오는 형태.

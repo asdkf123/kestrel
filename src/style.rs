@@ -1249,6 +1249,64 @@ pub fn normalize_comma_list(s: &str) -> String {
     s.split(',').map(|t| t.trim()).collect::<Vec<_>>().join(", ")
 }
 
+// 이징 함수 계산값 정규화(§CSS Easing): step-start→steps(1, start), step-end→steps(1),
+// steps(n[, end/jump-end])→steps(n)(기본 생략), steps(n, start)→그대로,
+// cubic-bezier 인자 간격 정규화. 쉼표 목록.
+fn normalize_easing(t: &str) -> String {
+    let t = t.trim();
+    let low = t.to_ascii_lowercase();
+    match low.as_str() {
+        "step-start" => return "steps(1, start)".to_string(),
+        "step-end" => return "steps(1)".to_string(),
+        _ => {}
+    }
+    if let Some(inner) = low.strip_prefix("steps(").and_then(|x| x.strip_suffix(')')) {
+        let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+        let n = parts.first().copied().unwrap_or("1");
+        let pos = parts.get(1).copied().unwrap_or("end");
+        // end/jump-end 는 기본값이라 생략, 그 외(start/jump-start/jump-both/jump-none)는 유지.
+        return if matches!(pos, "end" | "jump-end") {
+            format!("steps({})", n)
+        } else {
+            format!("steps({}, {})", n, pos)
+        };
+    }
+    if let Some(inner) = low.strip_prefix("cubic-bezier(").and_then(|x| x.strip_suffix(')')) {
+        let args: Vec<String> = inner.split(',').map(|s| s.trim().to_string()).collect();
+        return format!("cubic-bezier({})", args.join(", "));
+    }
+    t.to_string()
+}
+// 괄호 깊이 0 의 쉼표로 분리(cubic-bezier(a, b, …) 내부 쉼표 보존).
+fn split_top_commas_str(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+pub fn normalize_easing_list(s: &str) -> String {
+    split_top_commas_str(s)
+        .iter()
+        .map(|t| normalize_easing(t))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub fn initial_value(prop: &str) -> Option<&'static str> {
     Some(match prop {
         // transition/animation 롱핸드 초기값 (CSS Transitions/Animations)
