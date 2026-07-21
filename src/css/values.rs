@@ -30,6 +30,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         return parse_rgb_func(&lower).map(Value::Color);
     }
     if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
+        if let Some(v) = parse_hsl_hwb_none(&lower) {
+            return Some(v);
+        }
         return parse_hsl_func(&lower).map(Value::Color);
     }
     // 모던 색 함수(CSS Color 4). lab/lch/oklab/oklch/color() 는 계산값에서 자기 형태를
@@ -40,6 +43,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
     }
     if lower.starts_with("hwb(") {
+        if let Some(v) = parse_hsl_hwb_none(&lower) {
+            return Some(v);
+        }
         return parse_hwb(&lower).map(Value::Color);
     }
     if lower.starts_with("color-mix(") {
@@ -2769,6 +2775,76 @@ fn parse_rgb_none(text: &str) -> Option<Value> {
     };
     let serial = format!("color(srgb {rs} {gs} {bs}{aser})");
     Some(Value::ColorFn(Color { r, g, b, a: au }, serial.into_boxed_str()))
+}
+
+// hsl()/hwb() 에 none 채널이 있으면 계산값은 hsl()/hwb() 형태로 none 을 보존한다
+// (§CSS Color 4, rgb 와 달리 색공간 형태 유지). ColorFn(none→0 fallback + none 보존
+// serial). serial 은 normalize_hsl_hwb 재사용. none 없으면 None → 레거시 경로.
+fn parse_hsl_hwb_none(text: &str) -> Option<Value> {
+    let low = text.to_ascii_lowercase();
+    if !low.contains("none") {
+        return None;
+    }
+    let name = if low.starts_with("hwb") {
+        "hwb"
+    } else if low.starts_with("hsl") {
+        "hsl"
+    } else {
+        return None;
+    };
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    let parts = color_parts(&text[open + 1..close]);
+    if parts.len() != 3 && parts.len() != 4 {
+        return None;
+    }
+    let is_none = |s: &str| s.trim().eq_ignore_ascii_case("none");
+    // 계산값 serial: 지정값(normalize_hsl_hwb, % 제거)과 달리 S/L(W/B) 의 % 를 **유지**.
+    // H 는 각도→deg 수(none 은 유지). hsla→hsl.
+    let h = if is_none(&parts[0]) {
+        "none".to_string()
+    } else {
+        csnum(comp_angle(&parts[0])?)
+    };
+    let keep = |s: &str| if is_none(s) { "none".to_string() } else { s.trim().to_string() };
+    let s = keep(&parts[1]);
+    let l = keep(&parts[2]);
+    let a_ser = match parts.get(3) {
+        None => String::new(),
+        Some(p) if is_none(p) => " / none".to_string(),
+        Some(p) => {
+            let ps = p.trim();
+            let av = if let Some(x) = ps.strip_suffix('%') {
+                x.trim().parse::<f32>().ok()? / 100.0
+            } else {
+                ps.parse::<f32>().ok()?
+            };
+            let ac = av.clamp(0.0, 1.0);
+            if (ac - 1.0).abs() < 1e-9 {
+                String::new()
+            } else {
+                format!(" / {}", csnum(ac))
+            }
+        }
+    };
+    let serial = format!("{name}({h} {s} {l}{a_ser})");
+    // fallback Color(렌더 근사): none→0 치환 후 기존 파서.
+    let z: Vec<String> = parts
+        .iter()
+        .map(|p| if is_none(p) { "0".to_string() } else { p.trim().to_string() })
+        .collect();
+    let mut inner = z[..3].join(" ");
+    if z.len() == 4 {
+        inner.push_str(" / ");
+        inner.push_str(&z[3]);
+    }
+    let zeroed = format!("{}{})", &text[..open + 1], inner);
+    let fallback = if name == "hwb" {
+        parse_hwb(&zeroed)
+    } else {
+        parse_hsl_func(&zeroed)
+    }?;
+    Some(Value::ColorFn(fallback, serial.into_boxed_str()))
 }
 
 fn parse_hsl_func(text: &str) -> Option<Color> {
