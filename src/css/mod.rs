@@ -67,6 +67,7 @@ pub(crate) use values::{
     grid_area_valid, grid_auto_track_valid, grid_line_canonical, grid_line_shorthand_valid,
     grid_line_valid, grid_template_track_canonical, grid_template_track_valid,
 };
+pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::{
     font_stretch_valid, font_synthesis_canonical, font_synthesis_valid,
     font_variant_alternates_valid, font_variant_east_asian_canonical, font_variant_east_asian_valid,

@@ -446,6 +446,14 @@ impl Interp {
         if prop == "font-synthesis" && crate::css::font_synthesis_valid(raw) {
             return crate::css::font_synthesis_canonical(raw);
         }
+        // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
+        if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
+            let allow_reversed = prop == "counter-reset";
+            if crate::css::counter_list_valid(raw, allow_reversed) {
+                let default_int = if prop == "counter-increment" { 1 } else { 0 };
+                return crate::css::counter_list_canonical(raw, default_int);
+            }
+        }
         // font-variant-numeric/east-asian(§CSS Fonts 4): 그룹 순서 캐논.
         if prop == "font-variant-numeric" && crate::css::font_variant_numeric_valid(raw) {
             return crate::css::font_variant_numeric_canonical(raw);
@@ -742,6 +750,9 @@ impl Interp {
                     | "font-variant-numeric"
                     | "font-variant-east-asian"
                     | "font-variant-alternates"
+                    | "counter-increment"
+                    | "counter-reset"
+                    | "counter-set"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

@@ -4202,6 +4202,124 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// counter-increment/reset/set(§CSS Lists 3): none | [ <custom-ident> <integer>? ]+.
+// counter-reset 는 reversed(<custom-ident>) 도 허용. 이스케이프·괄호(calc) 존중.
+
+// 이스케이프(\X)와 괄호를 존중해 공백으로 토큰 분리.
+fn counter_tokens(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                cur.push(c);
+                if let Some(n) = chars.next() {
+                    cur.push(n);
+                }
+            }
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// counter 이름 custom-ident: 이스케이프 포함하면 허용, 아니면 none/default/CSS-wide 제외.
+fn counter_ident_valid(t: &str) -> bool {
+    if t.contains('\\') {
+        return !t.is_empty();
+    }
+    let low = t.to_ascii_lowercase();
+    !matches!(
+        low.as_str(),
+        "none" | "default" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+    ) && is_css_ident(t)
+}
+
+// 정수 토큰: <integer> 또는 calc 류(값은 검증만, 평가 안 함).
+fn counter_int_token(t: &str) -> bool {
+    t.parse::<i64>().is_ok() || is_math_fn(&t.to_ascii_lowercase())
+}
+
+// counter 이름 토큰: reversed(<ident>)[reset 만] 또는 <custom-ident>.
+fn counter_name_valid(t: &str, allow_reversed: bool) -> bool {
+    let low = t.to_ascii_lowercase();
+    if low.starts_with("reversed(") && t.ends_with(')') {
+        return allow_reversed && counter_ident_valid(t["reversed(".len()..t.len() - 1].trim());
+    }
+    counter_ident_valid(t)
+}
+
+pub fn counter_list_valid(raw: &str, allow_reversed: bool) -> bool {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let toks = counter_tokens(s);
+    if toks.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    let mut count = 0;
+    while i < toks.len() {
+        if !counter_name_valid(&toks[i], allow_reversed) {
+            return false;
+        }
+        i += 1;
+        if i < toks.len() && counter_int_token(&toks[i]) {
+            i += 1;
+        }
+        count += 1;
+    }
+    count >= 1
+}
+
+// 캐논: 비reversed 이름에 정수 없으면 default_int 추가, reversed 는 bare 유지. calc verbatim.
+pub fn counter_list_canonical(raw: &str, default_int: i64) -> String {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return "none".to_string();
+    }
+    let toks = counter_tokens(s);
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < toks.len() {
+        let name = toks[i].clone();
+        i += 1;
+        let int_tok = if i < toks.len() && counter_int_token(&toks[i]) {
+            let t = toks[i].clone();
+            i += 1;
+            Some(t)
+        } else {
+            None
+        };
+        let is_reversed = name.to_ascii_lowercase().starts_with("reversed(");
+        match int_tok {
+            Some(n) => out.push(format!("{} {}", name, n)),
+            None if is_reversed => out.push(name),
+            None => out.push(format!("{} {}", name, default_int)),
+        }
+    }
+    out.join(" ")
+}
+
 // name( ... ) 함수 분해: 균형 괄호. 이름은 알파벳/하이픈. 아니면 None.
 fn parse_func(s: &str) -> Option<(String, String)> {
     let s = s.trim();

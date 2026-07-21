@@ -1371,9 +1371,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
-        // counter-reset/counter-increment: 원문 보존 ("name [n] ..."). 카운터 처리기가 파싱.
+        // counter-increment/reset/set(§CSS Lists 3): none | [ <custom-ident> <integer>? ]+.
+        // counter-reset 만 reversed() 허용. 검증 + 기본 정수 추가 캐논(increment 1, 나머지 0).
         "counter-reset" | "counter-increment" | "counter-set" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let allow_reversed = name == "counter-reset";
+            if !crate::css::counter_list_valid(value_text, allow_reversed) {
+                return Vec::new();
+            }
+            let default_int = if name == "counter-increment" { 1 } else { 0 };
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::counter_list_canonical(value_text, default_int)) }]
         }
         // aspect-ratio: "w / h" 또는 단일 수 → 비율(w/h)을 Length(r, Px)로 저장.
         "aspect-ratio" => {
