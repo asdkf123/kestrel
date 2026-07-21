@@ -2404,6 +2404,94 @@ pub fn text_transform_valid(raw: &str) -> bool {
     true
 }
 
+// contain 유효성(§CSS Contain): none | strict | content | [[size|inline-size] ||
+// layout || style || paint]. 단일 특수값 혼합·카테고리 중복·미인식 거부.
+pub fn contain_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() {
+        return false;
+    }
+    if toks.len() == 1 && matches!(toks[0].to_ascii_lowercase().as_str(), "none" | "strict" | "content")
+    {
+        return true;
+    }
+    let (mut sizing, mut layout, mut style, mut paint) = (false, false, false, false);
+    for t in &toks {
+        match t.to_ascii_lowercase().as_str() {
+            "size" | "inline-size" => {
+                if sizing {
+                    return false;
+                }
+                sizing = true;
+            }
+            "layout" => {
+                if layout {
+                    return false;
+                }
+                layout = true;
+            }
+            "style" => {
+                if style {
+                    return false;
+                }
+                style = true;
+            }
+            "paint" => {
+                if paint {
+                    return false;
+                }
+                paint = true;
+            }
+            _ => return false, // none/strict/content 혼합 또는 미인식
+        }
+    }
+    sizing || layout || style || paint
+}
+
+// contain 캐논 직렬화(§CSS Contain): size/inline-size, layout, style, paint 순서.
+pub fn contain_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.len() == 1 {
+        return toks[0].to_ascii_lowercase();
+    }
+    let (mut sizing, mut layout, mut style, mut paint): (Option<String>, bool, bool, bool) =
+        (None, false, false, false);
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        match low.as_str() {
+            "size" | "inline-size" => sizing = Some(low),
+            "layout" => layout = true,
+            "style" => style = true,
+            "paint" => paint = true,
+            _ => {}
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    if let Some(s) = sizing {
+        out.push(s);
+    }
+    if layout {
+        out.push("layout".to_string());
+    }
+    if style {
+        out.push("style".to_string());
+    }
+    if paint {
+        out.push("paint".to_string());
+    }
+    out.join(" ")
+}
+
+// contain 계산값 축약(§CSS Contain): 계산값에서만 layout+style+paint→content,
+// size 까지면 strict(지정값은 축약하지 않고 캐논 순서 유지).
+pub fn contain_computed(canonical: &str) -> String {
+    match canonical.trim() {
+        "size layout style paint" => "strict".to_string(),
+        "layout style paint" => "content".to_string(),
+        other => other.to_string(),
+    }
+}
+
 // display 를 (outside, inside, list-item) 으로 파싱(§CSS Display 3 다값 문법).
 // 각 카테고리 최대 1회, list-item 은 inside 가 flow|flow-root 일 때만. 무효면 None.
 fn parse_display(raw: &str) -> Option<(Option<String>, Option<String>, bool)> {

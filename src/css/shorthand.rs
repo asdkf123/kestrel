@@ -262,6 +262,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             Vec::new()
         }
+        // contain(§CSS Contain): none|strict|content | [[size|inline-size]||layout||
+        // style||paint]. 혼합·중복·미인식 거부. 캐논 순서로 직렬화.
+        "contain" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::contain_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::contain_canonical(value_text)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // display(§CSS Display 3): 다값 문법 검증 + 캐논 직렬화(flow→block, 두값→레거시).
         // 저장은 캐논 형태(레이아웃이 레거시 단일 키워드를 이해). CSS-wide 통과.
         "display" => {
@@ -817,7 +831,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-orientation" | "image-rendering" | "isolation" | "box-decoration-break"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
         | "background-clip" | "background-origin" | "overflow-anchor" | "scroll-behavior"
-        | "text-decoration-style" | "text-underline-position" | "will-change" | "contain"
+        | "text-decoration-style" | "text-underline-position" | "will-change"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "scroll-snap-type" | "scroll-snap-align"

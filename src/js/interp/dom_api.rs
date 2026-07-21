@@ -324,6 +324,10 @@ impl Interp {
         if prop == "display" && crate::css::display_valid(raw) {
             return crate::css::display_canonical(raw);
         }
+        // contain(§CSS Contain): size/layout/style/paint 캐논 순서.
+        if prop == "contain" && crate::css::contain_valid(raw) {
+            return crate::css::contain_canonical(raw);
+        }
         // outline-offset(§CSS UI): <length> 캐논(0 → 0px).
         if prop == "outline-offset" {
             if let Some(v) = crate::css::interpret_value(raw.trim()) {
@@ -434,6 +438,7 @@ impl Interp {
                     | "text-spacing-trim"
                     | "outline-offset"
                     | "display"
+                    | "contain"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

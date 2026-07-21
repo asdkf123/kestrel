@@ -820,6 +820,10 @@ fn collect_computed_styles(
                 }
             }
         }
+        // contain 계산값: layout+style+paint→content, +size→strict.
+        if let Some(v) = m.get("contain") {
+            m.insert("contain".to_string(), crate::css::contain_computed(v));
+        }
         // font-style 계산값: oblique <angle> → 도 접기·클램프, 0deg→normal.
         if let Some(v) = m.get("font-style") {
             m.insert("font-style".to_string(), crate::css::normalize_font_style(v));
