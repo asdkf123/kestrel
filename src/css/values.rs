@@ -4202,6 +4202,65 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// name( ... ) 함수 분해: 균형 괄호. 이름은 알파벳/하이픈. 아니면 None.
+fn parse_func(s: &str) -> Option<(String, String)> {
+    let s = s.trim();
+    let open = s.find('(')?;
+    if !s.ends_with(')') {
+        return None;
+    }
+    let name = &s[..open];
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphabetic() || c == '-') {
+        return None;
+    }
+    Some((name.to_string(), s[open + 1..s.len() - 1].to_string()))
+}
+
+// font-variant-alternates(§CSS Fonts 4): normal | [ stylistic(<ident>) ||
+// historical-forms || styleset(<ident>#) || character-variant(<ident>#) ||
+// swash(<ident>) || ornaments(<ident>) || annotation(<ident>) ]. 각 종류 최대 1회.
+pub fn font_variant_alternates_valid(raw: &str) -> bool {
+    let low = raw.trim();
+    if low.eq_ignore_ascii_case("normal") {
+        return true;
+    }
+    let comps = split_grid_components(low);
+    if comps.is_empty() {
+        return false;
+    }
+    let mut seen: Vec<String> = Vec::new();
+    for c in &comps {
+        let cl = c.trim();
+        let key = if cl.eq_ignore_ascii_case("historical-forms") {
+            "historical-forms".to_string()
+        } else if let Some((fname, args)) = parse_func(cl) {
+            let fl = fname.to_ascii_lowercase();
+            let single = matches!(fl.as_str(), "stylistic" | "swash" | "ornaments" | "annotation");
+            let list = matches!(fl.as_str(), "styleset" | "character-variant");
+            if !single && !list {
+                return false;
+            }
+            let idents = split_top_commas(&args);
+            let ok = if single {
+                idents.len() == 1 && is_css_ident(idents[0].trim())
+            } else {
+                !idents.is_empty() && idents.iter().all(|i| is_css_ident(i.trim()))
+            };
+            if !ok {
+                return false;
+            }
+            fl
+        } else {
+            return false;
+        };
+        if seen.contains(&key) {
+            return false;
+        }
+        seen.push(key);
+    }
+    true
+}
+
 // 그룹형 font-variant 검증: normal 단독 | 상호배타 그룹 각 최대 1개 + 단독 플래그
 // 각 최대 1회. normal 혼합·미지 토큰·그룹 중복 거부. 모든 후보는 소문자.
 fn variant_group_valid(raw: &str, groups: &[&[&str]], singles: &[&str]) -> bool {

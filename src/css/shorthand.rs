@@ -625,6 +625,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-variant-alternates(§CSS Fonts 4): 함수형. 검증 후 원문 보존
+        // (custom-ident 대소문자 보존 위해 소문자화하지 않음).
+        "font-variant-alternates" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else if crate::css::font_variant_alternates_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // font-variant-numeric/east-asian(§CSS Fonts 4): 그룹형. 검증 후 원문 보존.
         "font-variant-numeric" | "font-variant-east-asian" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1432,7 +1444,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing"
         | "font-variant-ligatures"
-        | "font-variant-position" | "font-variant-alternates" | "font-language-override"
+        | "font-variant-position" | "font-language-override"
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "hyphenate-character" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
