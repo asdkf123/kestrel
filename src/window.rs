@@ -375,6 +375,12 @@ fn fill_js_maps(
             m.insert("font-stretch".to_string(), norm.clone());
             m.insert("font-width".to_string(), norm);
         }
+        // font-size-adjust 계산값: 기본 basis 생략, calc 평가(§CSS Fonts 5).
+        if let Some(fsa) = m.get("font-size-adjust") {
+            if let Some(norm) = crate::css::normalize_font_size_adjust(fsa) {
+                m.insert("font-size-adjust".to_string(), norm);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

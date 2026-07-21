@@ -285,6 +285,12 @@ impl Interp {
                 return s;
             }
         }
+        // font-size-adjust(§CSS Fonts 5): 기본 basis 생략, calc 평가.
+        if prop == "font-size-adjust" {
+            if let Some(s) = crate::css::normalize_font_size_adjust(raw) {
+                return s;
+            }
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
@@ -351,7 +357,10 @@ impl Interp {
         // CSSOM 규약상 지정 자체를 무시한다(기존 값·롱핸드 그대로 유지). 반드시 아래
         // retain/capture 전에 조기 반환해야 기존 값이 지워지지 않는다.
         if !text_trimmed.is_empty()
-            && matches!(prop, "white-space" | "text-wrap" | "font-family" | "font")
+            && matches!(
+                prop,
+                "white-space" | "text-wrap" | "font-family" | "font" | "font-size-adjust"
+            )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
             return;

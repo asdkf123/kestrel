@@ -194,6 +194,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // font-size-adjust(§CSS Fonts 5): none | [metric]? [from-font | <number>].
+        // 검증·캐논(기본 ex-height 생략, calc 평가). 무효 거부. CSS-wide 통과.
+        "font-size-adjust" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: "font-size-adjust".to_string(), value: Value::Keyword(low) }];
+            }
+            match crate::css::normalize_font_size_adjust(value_text) {
+                Some(norm) => vec![Declaration { important: false, name: "font-size-adjust".to_string(), value: Value::Keyword(norm) }],
+                None => Vec::new(),
+            }
+        }
         // font-width 는 font-stretch 의 신명칭(§CSS Fonts 4) — 같은 값으로 파싱(별칭).
         // 계산값 노출은 window 가 font-stretch→font-width 미러링.
         "font-width" => expand_declaration("font-stretch", value_text),
@@ -546,7 +559,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "font-feature-settings" | "font-variation-settings" | "font-stretch"
         // font-style: normal/italic/oblique [<angle>] — 2토큰(oblique 10deg) 원문 보존.
         | "font-style"
-        | "font-size-adjust" | "font-palette"
+        | "font-palette"
         | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"

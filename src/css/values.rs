@@ -2267,6 +2267,53 @@ pub fn normalize_font_stretch(raw: &str) -> Option<String> {
     }
 }
 
+// font-size-adjust 검증·캐논(§CSS Fonts 5): none | [metric]? [from-font | <number>].
+// metric ∈ {ex-height,cap-height,ch-width,ic-width,ic-height}. 기본 basis ex-height 는
+// 직렬화에서 생략("ex-height 0.5"→"0.5"). number 는 음수 무효, calc 는 수치 평가 후
+// calc() 유지("calc(0.5+1)"→"calc(1.5)"). 무효면 None.
+pub fn normalize_font_size_adjust(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "none" {
+        return Some("none".to_string());
+    }
+    const METRICS: [&str; 5] =
+        ["ex-height", "cap-height", "ch-width", "ic-width", "ic-height"];
+    let norm_value = |t: &str| -> Option<String> {
+        if t == "from-font" {
+            return Some("from-font".to_string());
+        }
+        if let Ok(n) = t.parse::<f32>() {
+            return if n >= 0.0 {
+                Some(crate::style::num_css(n))
+            } else {
+                None
+            };
+        }
+        if t.starts_with("calc(") && t.ends_with(')') {
+            return eval_calc_number(&t[5..t.len() - 1])
+                .map(|n| format!("calc({})", crate::style::num_css(n)));
+        }
+        None
+    };
+        // calc() 내부 공백을 보존하도록 괄호 인식 분리.
+    let toks: Vec<String> = split_top_level(&low);
+    match toks.len() {
+        1 => norm_value(&toks[0]),
+        2 => {
+            if !METRICS.contains(&toks[0].as_str()) {
+                return None;
+            }
+            let val = norm_value(&toks[1])?;
+            if toks[0] == "ex-height" {
+                Some(val) // 기본 basis 생략
+            } else {
+                Some(format!("{} {}", toks[0], val))
+            }
+        }
+        _ => None,
+    }
+}
+
 // text-wrap 단축 캐논(§CSS Text 4): text-wrap-mode(wrap|nowrap) || text-wrap-style
 // (auto|balance|stable|pretty). 직렬화: style 이 auto(기본)면 mode 만, 아니면 style 만
 // (mode 가 wrap 기본일 때) 또는 "mode style". 무효/중복 토큰은 None.
