@@ -1137,6 +1137,26 @@ impl Interp {
                 crate::dom::NodeType::Element(e) if e.tag_name == "textarea" => Ok(Value::Str(
                     e.attributes.get("value").cloned().unwrap_or_else(|| dom.text_content(id)),
                 )),
+                // <li>.value 는 long 반영(§HTML) — 문자열이 아니라 수. HTML 정수 파싱
+                // (선행 공백/부호 허용), 범위 밖·무효는 기본값 0.
+                crate::dom::NodeType::Element(e) if e.tag_name == "li" => {
+                    let n = e
+                        .attributes
+                        .get("value")
+                        .and_then(|s| {
+                            let t = s.trim_start_matches([' ', '\t', '\n', '\x0C', '\r']);
+                            let (neg, t) = t
+                                .strip_prefix('-')
+                                .map(|r| (true, r))
+                                .unwrap_or_else(|| (false, t.strip_prefix('+').unwrap_or(t)));
+                            let d: String =
+                                t.chars().take_while(|c| c.is_ascii_digit()).collect();
+                            d.parse::<i64>().ok().map(|v| if neg { -v } else { v })
+                        })
+                        .filter(|v| (-2147483648..=2147483647).contains(v))
+                        .unwrap_or(0);
+                    Ok(Value::Num(n as f64))
+                }
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(
                     e.attributes.get("value").cloned().unwrap_or_default(),
                 )),
