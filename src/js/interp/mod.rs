@@ -8597,6 +8597,28 @@ impl Interp {
             if matches!(fname.as_str(), "matrix" | "matrix3d") {
                 return None;
             }
+            // perspective(d) 는 1/d 를 선형 보간한다(§CSS Transforms). none = 무한(1/d=0).
+            if fname == "perspective" && fa.len() == 1 {
+                let recip = |s: &str| -> Option<f32> {
+                    let s = s.trim();
+                    if s == "none" {
+                        return Some(0.0);
+                    }
+                    let px = s.strip_suffix("px")?.trim().parse::<f32>().ok()?;
+                    if px == 0.0 {
+                        return None;
+                    }
+                    Some(1.0 / px)
+                };
+                let r = recip(&fa[0])? + (recip(&ta[0])? - recip(&fa[0])?) * eased;
+                let d = if r <= 1e-9 {
+                    "none".to_string() // 1/d≤0 → 무한 원근(음수 원근은 무효)
+                } else {
+                    format!("{}px", crate::style::num_css(1.0 / r))
+                };
+                parts.push(format!("perspective({d})"));
+                continue;
+            }
             let args: Option<Vec<String>> = fa
                 .iter()
                 .zip(ta)
@@ -9118,7 +9140,7 @@ impl Interp {
                     | "border-top-width" | "border-right-width" | "border-bottom-width"
                     | "border-left-width" | "outline-width" | "border-image-width"
                     | "border-image-outset" | "column-width" | "column-gap" | "row-gap"
-                    | "flex-basis" | "column-rule-width" | "border-spacing"
+                    | "flex-basis" | "column-rule-width" | "border-spacing" | "perspective"
             ) {
                 return Some(Self::clamp_nonneg(&v));
             }
