@@ -8105,6 +8105,9 @@ impl Interp {
         let (has_pct, pct) = lerp_opt(fpct, tpct);
         let nc = crate::style::num_css;
         Some(match (has_px, has_pct) {
+            // px 항이 0 이면 % 만(calc(0% + 0px)→0%). % 는 0 이어도 유지(§ Chrome 은
+            // calc(0% + 480px) 처럼 % 항을 남긴다). px≠0 이면 calc.
+            (true, true) if px.abs() < 1e-6 => format!("{}%", nc(pct)),
             (true, true) => {
                 let sign = if px < 0.0 { "-" } else { "+" };
                 format!("calc({}% {} {}px)", nc(pct), sign, nc(px.abs()))
@@ -9079,6 +9082,12 @@ impl Interp {
         // offset-rotate: [auto|reverse] <angle>. 같은 키워드면 각도 lerp.
         if dash_prop == "offset-rotate" {
             if let Some(v) = Self::interp_offset_rotate(from, to, eased) {
+                return Some(v);
+            }
+        }
+        // 단일 length-percentage(혼합 단위 → calc, % 먼저). text-decoration-thickness 등.
+        if matches!(dash_prop, "text-decoration-thickness" | "text-underline-offset") {
+            if let Some(v) = Self::interp_len_pct(from, to, eased) {
                 return Some(v);
             }
         }
