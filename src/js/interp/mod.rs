@@ -9314,7 +9314,8 @@ impl Interp {
 
     // CSS 전역 키워드(initial/inherit/unset)를 실제 값으로 해석(애니메이션 from/to 용).
     fn resolve_wide_keyword(&self, id: crate::dom::NodeId, prop: &str, value: &str) -> String {
-        match value.trim() {
+        // 먼저 CSS 전역 키워드를 해석.
+        let resolved = match value.trim() {
             "initial" => crate::style::initial_value(prop).unwrap_or("").to_string(),
             "inherit" => self.parent_computed(id, prop),
             "unset" => {
@@ -9325,7 +9326,18 @@ impl Interp {
                 }
             }
             _ => value.to_string(),
+        };
+        // 그다음 currentColor 를 요소 color 계산값으로 해석 — 색 프로퍼티 보간이 실제
+        // 색끼리 이뤄지도록. color 자신은 제외(자기참조).
+        let r = resolved.trim();
+        if prop != "color" && r.eq_ignore_ascii_case("currentcolor") {
+            if let Some(c) = self.computed_styles.get(&id).and_then(|m| m.get("color")) {
+                if !c.is_empty() {
+                    return c.clone();
+                }
+            }
         }
+        resolved
     }
 
     // 조상 사슬에서 이 프로퍼티의 계산값(inherit 해석). 없으면 초기값.

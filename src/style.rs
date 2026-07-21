@@ -1900,6 +1900,12 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "color-scheme" => "normal",
         "forced-color-adjust" | "print-color-adjust" => "auto",
         "caret-color" | "accent-color" => "auto",
+        // 초기값이 currentcolor 인 색 프로퍼티(§CSS). 보간 시 currentColor→color 로 해석.
+        "outline-color" | "border-top-color" | "border-right-color" | "border-bottom-color"
+        | "border-left-color" | "border-block-start-color" | "border-block-end-color"
+        | "border-inline-start-color" | "border-inline-end-color" | "column-rule-color"
+        | "text-decoration-color" | "text-emphasis-color" | "-webkit-text-fill-color"
+        | "-webkit-text-stroke-color" => "currentcolor",
         "tab-size" => "8",
         // 2차 배치 초기값
         "text-emphasis-style" | "text-combine-upright" | "font-variant-alternates" => "none",
