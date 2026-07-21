@@ -625,6 +625,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-variant-numeric/east-asian(§CSS Fonts 4): 그룹형. 검증 후 원문 보존.
+        "font-variant-numeric" | "font-variant-east-asian" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "font-variant-numeric" && crate::css::font_variant_numeric_valid(value_text))
+                || (name == "font-variant-east-asian" && crate::css::font_variant_east_asian_valid(value_text));
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // font-synthesis 롱핸드(§CSS Fonts 4): weight/small-caps/position 은 auto|none,
         // style 은 auto|none|oblique-only. 단일 키워드.
         "font-synthesis-weight" | "font-synthesis-small-caps" | "font-synthesis-position"
@@ -1419,7 +1431,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-decoration-skip-ink" | "line-break"
         | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing"
-        | "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
+        | "font-variant-ligatures"
         | "font-variant-position" | "font-variant-alternates" | "font-language-override"
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "hyphenate-character" | "text-justify"

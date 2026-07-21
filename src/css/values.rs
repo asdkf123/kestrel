@@ -4202,6 +4202,87 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// 그룹형 font-variant 검증: normal 단독 | 상호배타 그룹 각 최대 1개 + 단독 플래그
+// 각 최대 1회. normal 혼합·미지 토큰·그룹 중복 거부. 모든 후보는 소문자.
+fn variant_group_valid(raw: &str, groups: &[&[&str]], singles: &[&str]) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "normal" {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() {
+        return false;
+    }
+    let mut group_used = vec![false; groups.len()];
+    let mut singles_used: Vec<&str> = Vec::new();
+    for t in toks {
+        if let Some(gi) = groups.iter().position(|g| g.contains(&t)) {
+            if group_used[gi] {
+                return false;
+            }
+            group_used[gi] = true;
+        } else if singles.contains(&t) {
+            if singles_used.contains(&t) {
+                return false;
+            }
+            singles_used.push(t);
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+// 그룹형 font-variant 캐논: 그룹 순서대로(존재하는 실제 토큰) 후 단독 플래그 순서.
+fn variant_group_canonical(raw: &str, groups: &[&[&str]], singles: &[&str]) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "normal" {
+        return "normal".to_string();
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    let mut out: Vec<&str> = Vec::new();
+    for g in groups {
+        if let Some(t) = g.iter().find(|k| toks.contains(k)) {
+            out.push(t);
+        }
+    }
+    for s in singles {
+        if toks.contains(s) {
+            out.push(s);
+        }
+    }
+    out.join(" ")
+}
+
+const NUMERIC_GROUPS: &[&[&str]] = &[
+    &["lining-nums", "oldstyle-nums"],
+    &["proportional-nums", "tabular-nums"],
+    &["diagonal-fractions", "stacked-fractions"],
+];
+const NUMERIC_SINGLES: &[&str] = &["ordinal", "slashed-zero"];
+const EAST_ASIAN_GROUPS: &[&[&str]] = &[
+    &["jis78", "jis83", "jis90", "jis04", "simplified", "traditional"],
+    &["full-width", "proportional-width"],
+];
+const EAST_ASIAN_SINGLES: &[&str] = &["ruby"];
+
+pub fn font_variant_numeric_canonical(raw: &str) -> String {
+    variant_group_canonical(raw, NUMERIC_GROUPS, NUMERIC_SINGLES)
+}
+pub fn font_variant_east_asian_canonical(raw: &str) -> String {
+    variant_group_canonical(raw, EAST_ASIAN_GROUPS, EAST_ASIAN_SINGLES)
+}
+
+// font-variant-numeric(§CSS Fonts 4).
+pub fn font_variant_numeric_valid(raw: &str) -> bool {
+    variant_group_valid(raw, NUMERIC_GROUPS, NUMERIC_SINGLES)
+}
+
+// font-variant-east-asian(§CSS Fonts 4).
+pub fn font_variant_east_asian_valid(raw: &str) -> bool {
+    variant_group_valid(raw, EAST_ASIAN_GROUPS, EAST_ASIAN_SINGLES)
+}
+
 // font-synthesis(§CSS Fonts 4): none | [ weight || [style|oblique-only] || small-caps
 // || position ]. style 과 oblique-only 는 같은 슬롯(상호배타). 각 슬롯 최대 1회.
 pub fn font_synthesis_valid(raw: &str) -> bool {
