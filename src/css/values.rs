@@ -4202,6 +4202,95 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// font-variant-emoji(§CSS Fonts 4): normal | text | emoji | unicode.
+pub fn font_variant_emoji_valid(raw: &str) -> bool {
+    matches!(raw.trim().to_ascii_lowercase().as_str(), "normal" | "text" | "emoji" | "unicode")
+}
+
+// font-stretch/font-width(§CSS Fonts 4): normal | <keyword> | <percentage 0+>.
+pub fn font_stretch_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(
+        low.as_str(),
+        "normal"
+            | "ultra-condensed"
+            | "extra-condensed"
+            | "condensed"
+            | "semi-condensed"
+            | "semi-expanded"
+            | "expanded"
+            | "extra-expanded"
+            | "ultra-expanded"
+    ) {
+        return true;
+    }
+    if let Some(num) = low.strip_suffix('%') {
+        return num.trim().parse::<f64>().map(|v| v.is_finite() && v >= 0.0).unwrap_or(false);
+    }
+    is_math_fn(&low)
+}
+
+// 문자열 리터럴 접두 추출: 따옴표로 시작하면 (내용, 이후) 반환. 이스케이프는 미처리
+// (테스트 유효 케이스에 이스케이프 태그 없음).
+fn parse_string_prefix(s: &str) -> Option<(String, String)> {
+    let s = s.trim_start();
+    let q = s.chars().next()?;
+    if q != '"' && q != '\'' {
+        return None;
+    }
+    let rest = &s[q.len_utf8()..];
+    let end = rest.find(q)?;
+    Some((rest[..end].to_string(), rest[end + q.len_utf8()..].trim().to_string()))
+}
+
+// <opentype-tag>: 정확히 4자, 각 0x20~0x7E.
+fn opentype_tag_valid(tag: &str) -> bool {
+    tag.chars().count() == 4 && tag.chars().all(|c| ('\u{20}'..='\u{7e}').contains(&c))
+}
+
+// font-variation-settings(§CSS Fonts 4): normal | [ <opentype-tag> <number> ]#.
+pub fn font_variation_settings_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("normal") {
+        return true;
+    }
+    if t.starts_with(',') || t.ends_with(',') {
+        return false;
+    }
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|item| {
+        let it = item.trim();
+        match parse_string_prefix(it) {
+            Some((tag, rest)) => {
+                opentype_tag_valid(&tag)
+                    && !rest.is_empty()
+                    && rest.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+            }
+            None => false,
+        }
+    })
+}
+
+// font-variation-settings 캐논: 따옴표를 큰따옴표로, 수치 정규화(1e3→1000).
+pub fn font_variation_settings_canonical(raw: &str) -> String {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("normal") {
+        return "normal".to_string();
+    }
+    let mut out = Vec::new();
+    for item in split_top_commas(raw) {
+        if let Some((tag, rest)) = parse_string_prefix(item.trim()) {
+            if let Ok(n) = rest.parse::<f64>() {
+                out.push(format!("\"{}\" {}", tag, crate::style::num_css(n as f32)));
+            }
+        }
+    }
+    out.join(", ")
+}
+
 // grid-auto-columns/rows 값(§CSS Grid): <track-size>+. line-names·repeat·최상위
 // 콤마/슬래시 불가.
 pub fn grid_auto_track_valid(raw: &str) -> bool {

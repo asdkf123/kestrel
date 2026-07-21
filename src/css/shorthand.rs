@@ -614,6 +614,39 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // font-width 는 font-stretch 의 신명칭(§CSS Fonts 4) — 같은 값으로 파싱(별칭).
         // 계산값 노출은 window 가 font-stretch→font-width 미러링.
         "font-width" => expand_declaration("font-stretch", value_text),
+        // font-stretch(§CSS Fonts 4): normal | <keyword> | <percentage 0+>. 검증 후 원문 보존.
+        "font-stretch" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::font_stretch_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // font-variant-emoji(§CSS Fonts 4): normal | text | emoji | unicode.
+        "font-variant-emoji" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::font_variant_emoji_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // font-variation-settings(§CSS Fonts 4): normal | [ <opentype-tag> <number> ]#.
+        "font-variation-settings" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else if crate::css::font_variation_settings_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::font_variation_settings_canonical(value_text)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // text-wrap 단축(§CSS Text 4): text-wrap-mode || text-wrap-style. 캐논 직렬화로
         // 저장(무효값 거부). CSS-wide 키워드는 통과.
         "text-wrap" => {
@@ -1364,7 +1397,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "shape-rendering" | "color-interpolation" | "color-interpolation-filters"
         | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift"
         // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
-        | "font-feature-settings" | "font-variation-settings" | "font-stretch"
+        | "font-feature-settings"
         | "font-palette"
         | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"

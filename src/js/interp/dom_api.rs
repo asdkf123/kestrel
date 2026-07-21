@@ -438,6 +438,10 @@ impl Interp {
         {
             return crate::css::grid_template_track_canonical(raw);
         }
+        // font-variation-settings(§CSS Fonts 4): 따옴표·수치 캐논.
+        if prop == "font-variation-settings" && crate::css::font_variation_settings_valid(raw) {
+            return crate::css::font_variation_settings_canonical(raw);
+        }
         // flex-flow(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저.
         if prop == "flex-flow" {
             let low = raw.trim().to_ascii_lowercase();
@@ -715,6 +719,10 @@ impl Interp {
                     | "grid-template-rows"
                     | "grid-auto-columns"
                     | "grid-auto-rows"
+                    | "font-stretch"
+                    | "font-width"
+                    | "font-variant-emoji"
+                    | "font-variation-settings"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
