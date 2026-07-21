@@ -4862,6 +4862,134 @@ pub fn bg_position_axis_valid(raw: &str, edges: &[&str]) -> bool {
     })
 }
 
+// 부호 없는 <number>(음수 거부). calc 허용.
+fn nonneg_number(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if low.starts_with('-') {
+        return false;
+    }
+    is_math_fn(&low) || low.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+}
+// 부호 없는 <length>(퍼센트·음수 거부).
+fn nonneg_length_only(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if low.starts_with('-') || low.ends_with('%') {
+        return false;
+    }
+    is_math_fn(&low) || (is_length_percentage(t) && low.parse::<f64>().is_err())
+}
+// 부호 없는 <percentage>.
+fn nonneg_percent(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if low.starts_with('-') {
+        return false;
+    }
+    is_math_fn(&low)
+        || low.strip_suffix('%').map(|n| n.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)).unwrap_or(false)
+}
+
+// border-image-repeat(§CSS Backgrounds): [ stretch|repeat|round|space ]{1,2}.
+pub fn border_image_repeat_valid(raw: &str) -> bool {
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    !toks.is_empty()
+        && toks.len() <= 2
+        && toks.iter().all(|t| matches!(t.to_ascii_lowercase().as_str(), "stretch" | "repeat" | "round" | "space"))
+}
+
+// border-image-outset(§CSS Backgrounds): [ <length [0,∞]> | <number [0,∞]> ]{1,4}.
+pub fn border_image_outset_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw.trim());
+    !toks.is_empty() && toks.len() <= 4 && toks.iter().all(|t| nonneg_number(t) || nonneg_length_only(t))
+}
+
+// border-image-width(§CSS Backgrounds): [ <length-percentage [0,∞]> | <number [0,∞]> | auto ]{1,4}.
+pub fn border_image_width_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw.trim());
+    !toks.is_empty()
+        && toks.len() <= 4
+        && toks.iter().all(|t| t.eq_ignore_ascii_case("auto") || nonneg_number(t) || nonneg_length_percentage(t))
+}
+
+// border-image-slice(§CSS Backgrounds): [ <number [0,∞]> | <percentage [0,∞]> ]{1,4} && fill?.
+// fill 은 맨 앞이나 맨 뒤(중간 불가).
+pub fn border_image_slice_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw.trim());
+    if toks.is_empty() || toks.len() > 5 {
+        return false;
+    }
+    let fills: Vec<usize> = toks.iter().enumerate().filter(|(_, t)| t.eq_ignore_ascii_case("fill")).map(|(i, _)| i).collect();
+    if fills.len() > 1 {
+        return false;
+    }
+    if let Some(&fp) = fills.first() {
+        if fp != 0 && fp != toks.len() - 1 {
+            return false;
+        }
+    }
+    let nums: Vec<&str> = toks.iter().filter(|t| !t.eq_ignore_ascii_case("fill")).map(|t| t.as_str()).collect();
+    !nums.is_empty() && nums.len() <= 4 && nums.iter().all(|t| nonneg_number(t) || nonneg_percent(t))
+}
+
+// 1-4 값 박스 대칭 축약(§CSSOM 직렬화). 원문 토큰을 그대로 보존한 채 대칭이면 생략.
+fn box_collapse_tokens(toks: &[String]) -> Vec<String> {
+    match toks.len() {
+        4 => {
+            let (t, r, b, l) = (&toks[0], &toks[1], &toks[2], &toks[3]);
+            if t == r && r == b && b == l {
+                vec![t.clone()]
+            } else if t == b && r == l {
+                vec![t.clone(), r.clone()]
+            } else if r == l {
+                vec![t.clone(), r.clone(), b.clone()]
+            } else {
+                toks.to_vec()
+            }
+        }
+        3 => {
+            let (t, r, b) = (&toks[0], &toks[1], &toks[2]);
+            if t == r && r == b {
+                vec![t.clone()]
+            } else if t == b {
+                vec![t.clone(), r.clone()]
+            } else {
+                toks.to_vec()
+            }
+        }
+        2 => {
+            if toks[0] == toks[1] {
+                vec![toks[0].clone()]
+            } else {
+                toks.to_vec()
+            }
+        }
+        _ => toks.to_vec(),
+    }
+}
+
+// border-image-repeat 캐논: 키워드 소문자화 후 두 값이 같으면 하나로.
+pub fn border_image_repeat_canonical(raw: &str) -> String {
+    let toks: Vec<String> = raw.split_whitespace().map(|s| s.to_ascii_lowercase()).collect();
+    box_collapse_tokens(&toks).join(" ")
+}
+
+// border-image-outset/width 캐논: 박스 대칭 축약.
+pub fn border_image_box_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw.trim());
+    box_collapse_tokens(&toks).join(" ")
+}
+
+// border-image-slice 캐논: 숫자부 박스 축약 후 fill 을 맨 뒤로.
+pub fn border_image_slice_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw.trim());
+    let has_fill = toks.iter().any(|t| t.eq_ignore_ascii_case("fill"));
+    let nums: Vec<String> = toks.iter().filter(|t| !t.eq_ignore_ascii_case("fill")).cloned().collect();
+    let mut out = box_collapse_tokens(&nums);
+    if has_fill {
+        out.push("fill".to_string());
+    }
+    out.join(" ")
+}
+
 // border-radius(§CSS Backgrounds): <lp [0,∞]>{1,4} [ / <lp [0,∞]>{1,4} ]?.
 pub fn border_radius_valid(raw: &str) -> bool {
     let parts = split_top_slash(raw);

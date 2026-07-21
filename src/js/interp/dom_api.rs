@@ -346,6 +346,21 @@ impl Interp {
         if prop == "contain" && crate::css::contain_valid(raw) {
             return crate::css::contain_canonical(raw);
         }
+        // border-image-repeat(§CSS Backgrounds): 두 값 같으면 하나로 축약.
+        if prop == "border-image-repeat" && crate::css::border_image_repeat_valid(raw) {
+            return crate::css::border_image_repeat_canonical(raw);
+        }
+        // border-image-slice(§CSS Backgrounds): 숫자부 박스 축약, fill 맨 뒤로.
+        if prop == "border-image-slice" && crate::css::border_image_slice_valid(raw) {
+            return crate::css::border_image_slice_canonical(raw);
+        }
+        // border-image-outset/width(§CSS Backgrounds): 박스 대칭 축약.
+        if prop == "border-image-outset" && crate::css::border_image_outset_valid(raw) {
+            return crate::css::border_image_box_canonical(raw);
+        }
+        if prop == "border-image-width" && crate::css::border_image_width_valid(raw) {
+            return crate::css::border_image_box_canonical(raw);
+        }
         // inset-block/inset-inline·scroll-*-block/inline·gap 단축(§CSSOM): 0→0px, 두 값
         // 같으면 축약. gap 은 normal 도 그대로(길이 아님) 통과.
         if matches!(
@@ -844,6 +859,10 @@ impl Interp {
                     | "border-top-right-radius"
                     | "border-bottom-left-radius"
                     | "border-bottom-right-radius"
+                    | "border-image-repeat"
+                    | "border-image-outset"
+                    | "border-image-width"
+                    | "border-image-slice"
                     | "background-clip"
                     | "background-origin"
                     | "background-position-x"

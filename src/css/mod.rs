@@ -86,7 +86,9 @@ pub(crate) use values::color_syntax_valid;
 pub(crate) use values::{content_canonical, content_valid};
 pub(crate) use values::{
     background_clip_canonical, background_clip_valid, bg_position_axis_valid,
-    border_corner_radius_valid, border_radius_valid, box_list_valid,
+    border_corner_radius_valid, border_image_box_canonical, border_image_outset_valid,
+    border_image_repeat_canonical, border_image_repeat_valid, border_image_slice_canonical,
+    border_image_slice_valid, border_image_width_valid, border_radius_valid, box_list_valid,
 };
 pub(crate) use values::{
     list_style_image_valid, list_style_type_canonical, list_style_type_valid, list_style_valid,
