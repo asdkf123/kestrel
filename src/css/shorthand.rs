@@ -1745,6 +1745,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-feature-settings·font-palette(§CSS Fonts 4) 검증.
+        "font-feature-settings" | "font-palette" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if name == "font-feature-settings" {
+                if crate::css::font_feature_settings_valid(value_text) {
+                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::font_feature_settings_canonical(value_text)) }];
+                }
+                return Vec::new();
+            }
+            // font-palette: 대소문자 보존(dashed-ident).
+            if crate::css::font_palette_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // font-variant-ligatures·font-language-override(§CSS Fonts 4) 검증.
         "font-variant-ligatures" | "font-language-override" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -2139,8 +2158,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "shape-rendering" | "color-interpolation" | "color-interpolation-filters"
         | "marker-start" | "marker-mid" | "marker-end"
         // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
-        | "font-feature-settings"
-        | "font-palette"
         | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient"
         | "-webkit-box-align" | "-webkit-box-pack" | "zoom"

@@ -111,6 +111,7 @@ pub(crate) use values::{
 };
 pub(crate) use values::{
     font_stretch_valid, font_synthesis_canonical, font_synthesis_valid,
+    font_feature_settings_canonical, font_feature_settings_valid, font_palette_valid,
     font_language_override_valid, font_variant_ligatures_valid,
     font_variant_alternates_valid, font_variant_east_asian_canonical, font_variant_east_asian_valid,
     font_variant_emoji_valid, font_variant_numeric_canonical, font_variant_numeric_valid,

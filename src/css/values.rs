@@ -5824,6 +5824,66 @@ pub fn font_synthesis_canonical(raw: &str) -> String {
     }
 }
 
+// font-feature-settings(§CSS Fonts 4): normal | [ <opentype-tag> [<integer>|on|off]? ]#.
+pub fn font_feature_settings_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("normal") {
+        return true;
+    }
+    if t.starts_with(',') || t.ends_with(',') {
+        return false;
+    }
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|item| match parse_string_prefix(item.trim()) {
+        Some((tag, rest)) => {
+            opentype_tag_valid(&tag)
+                && (rest.is_empty()
+                    || rest.eq_ignore_ascii_case("on")
+                    || rest.eq_ignore_ascii_case("off")
+                    || rest.parse::<i64>().is_ok())
+        }
+        None => false,
+    })
+}
+
+// font-feature-settings 캐논: 따옴표 큰따옴표로, on/1 생략, off→0.
+pub fn font_feature_settings_canonical(raw: &str) -> String {
+    if raw.trim().eq_ignore_ascii_case("normal") {
+        return "normal".to_string();
+    }
+    let mut out = Vec::new();
+    for item in split_top_commas(raw) {
+        if let Some((tag, rest)) = parse_string_prefix(item.trim()) {
+            let val = if rest.is_empty() || rest.eq_ignore_ascii_case("on") || rest == "1" {
+                String::new()
+            } else if rest.eq_ignore_ascii_case("off") {
+                "0".to_string()
+            } else {
+                rest
+            };
+            if val.is_empty() {
+                out.push(format!("\"{}\"", tag));
+            } else {
+                out.push(format!("\"{}\" {}", tag, val));
+            }
+        }
+    }
+    out.join(", ")
+}
+
+// font-palette(§CSS Fonts 4): normal | light | dark | <dashed-ident>.
+pub fn font_palette_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "normal" | "light" | "dark") {
+        return true;
+    }
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    toks.len() == 1 && toks[0].starts_with("--")
+}
+
 // font-variant-emoji(§CSS Fonts 4): normal | text | emoji | unicode.
 pub fn font_variant_emoji_valid(raw: &str) -> bool {
     matches!(raw.trim().to_ascii_lowercase().as_str(), "normal" | "text" | "emoji" | "unicode")
@@ -5865,9 +5925,37 @@ fn parse_string_prefix(s: &str) -> Option<(String, String)> {
     Some((rest[..end].to_string(), rest[end + q.len_utf8()..].trim().to_string()))
 }
 
-// <opentype-tag>: 정확히 4자, 각 0x20~0x7E.
+// CSS 문자열 이스케이프 디코드(\XX 16진, \c 리터럴).
+fn decode_css_esc(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let mut hex = String::new();
+        while hex.len() < 6 && chars.peek().map(|c| c.is_ascii_hexdigit()).unwrap_or(false) {
+            hex.push(chars.next().unwrap());
+        }
+        if !hex.is_empty() {
+            if chars.peek() == Some(&' ') {
+                chars.next();
+            }
+            if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                out.push(ch);
+            }
+        } else if let Some(lit) = chars.next() {
+            out.push(lit);
+        }
+    }
+    out
+}
+
+// <opentype-tag>: 정확히 4자, 각 0x20~0x7E(이스케이프 디코드 후).
 fn opentype_tag_valid(tag: &str) -> bool {
-    tag.chars().count() == 4 && tag.chars().all(|c| ('\u{20}'..='\u{7e}').contains(&c))
+    let d = decode_css_esc(tag);
+    d.chars().count() == 4 && d.chars().all(|c| ('\u{20}'..='\u{7e}').contains(&c))
 }
 
 // font-variation-settings(§CSS Fonts 4): normal | [ <opentype-tag> <number> ]#.

@@ -957,6 +957,8 @@ impl Interp {
                     | "font-language-override"
                     | "font-weight"
                     | "font-size"
+                    | "font-feature-settings"
+                    | "font-palette"
                     | "text-align"
                     | "text-align-last"
                     | "text-align-all"
