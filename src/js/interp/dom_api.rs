@@ -397,6 +397,7 @@ impl Interp {
                     | "transition-delay"
                     | "transition"
                     | "font-variant"
+                    | "font-style"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

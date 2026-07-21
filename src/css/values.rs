@@ -2330,6 +2330,75 @@ pub fn time_list_valid(raw: &str, allow_negative: bool) -> bool {
     })
 }
 
+// <angle> 를 도(deg)로 파싱: 수 + deg|rad|grad|turn. 단위 없으면 None(0 도 무효).
+fn parse_angle_deg(s: &str) -> Option<f64> {
+    let low = s.trim().to_ascii_lowercase();
+    let (num, factor) = if let Some(n) = low.strip_suffix("grad") {
+        (n, 0.9)
+    } else if let Some(n) = low.strip_suffix("deg") {
+        (n, 1.0)
+    } else if let Some(n) = low.strip_suffix("rad") {
+        (n, 180.0 / std::f64::consts::PI)
+    } else if let Some(n) = low.strip_suffix("turn") {
+        (n, 360.0)
+    } else {
+        return None;
+    };
+    let v: f64 = num.parse().ok()?;
+    if v.is_finite() {
+        Some(v * factor)
+    } else {
+        None
+    }
+}
+
+// font-style 유효성(§CSS Fonts): normal | italic | oblique [<angle [-90deg,90deg]>].
+pub fn font_style_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    match toks.len() {
+        1 => matches!(toks[0].to_ascii_lowercase().as_str(), "normal" | "italic" | "oblique"),
+        2 => {
+            if toks[0].to_ascii_lowercase() != "oblique" {
+                return false;
+            }
+            let a = &toks[1];
+            let low = a.to_ascii_lowercase();
+            // calc/min/max/clamp 은 구문상 유효(범위 클램프는 계산시).
+            if low.ends_with(')')
+                && ["calc(", "min(", "max(", "clamp("].iter().any(|p| low.starts_with(p))
+            {
+                return true;
+            }
+            match parse_angle_deg(a) {
+                Some(deg) => (-90.0..=90.0).contains(&deg),
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+// font-style 계산값 정규화(§CSS Fonts): oblique <angle> 를 도로 접고 [-90,90] 클램프,
+// 0deg 는 normal 로. 각도 calc 는 미평가(별개 블로커)라 원문 유지.
+pub fn normalize_font_style(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.len() != 2 || !toks[0].eq_ignore_ascii_case("oblique") {
+        return raw.trim().to_string();
+    }
+    match parse_angle_deg(&toks[1]) {
+        Some(deg) => {
+            let deg = deg.clamp(-90.0, 90.0);
+            if deg == 0.0 {
+                "normal".to_string()
+            } else {
+                let r = (deg * 1e6).round() / 1e6;
+                format!("oblique {}deg", r)
+            }
+        }
+        None => raw.trim().to_string(),
+    }
+}
+
 // font-variant 단축 토큰의 하위 카테고리(§CSS Fonts). 같은 카테고리 중복 금지.
 // 함수형 alternates(stylistic() 등)는 함수명으로 분류한다.
 fn font_variant_category(tok: &str) -> Option<&'static str> {

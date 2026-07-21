@@ -234,6 +234,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-style(§CSS Fonts): normal | italic | oblique [<angle -90~90deg>]. italic+
+        // 각도, 범위밖·단위없는·잘못된 각도, oblique 뒤 잉여 토큰 거부. CSS-wide 통과.
+        "font-style" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::font_style_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // font-variant 단축(§CSS Fonts): 하위 카테고리 충돌·중복·미인식 토큰 거부.
         // normal/none 단독만 허용. 유효값은 원문 보존(현행 동작 유지). CSS-wide 통과.
         "font-variant" => {
@@ -681,8 +695,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift"
         // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
         | "font-feature-settings" | "font-variation-settings" | "font-stretch"
-        // font-style: normal/italic/oblique [<angle>] — 2토큰(oblique 10deg) 원문 보존.
-        | "font-style"
         | "font-palette"
         | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"

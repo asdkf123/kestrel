@@ -808,6 +808,10 @@ fn collect_computed_styles(
                 );
             }
         }
+        // font-style 계산값: oblique <angle> → 도 접기·클램프, 0deg→normal.
+        if let Some(v) = m.get("font-style") {
+            m.insert("font-style".to_string(), crate::css::normalize_font_style(v));
+        }
         // scale 프로퍼티 계산값: 퍼센트→수, z=1 생략, y==x 접기.
         if let Some(v) = m.get("scale") {
             m.insert("scale".to_string(), crate::style::normalize_scale(v));
