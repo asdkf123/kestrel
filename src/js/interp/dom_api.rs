@@ -401,6 +401,10 @@ impl Interp {
         {
             return normalize_numbers(&crate::css::position_canonical(raw));
         }
+        // mask-position(§CSS Masking): <position># — 레이어마다 캐논.
+        if prop == "mask-position" {
+            return normalize_numbers(&crate::css::mask_position_canonical(raw));
+        }
         // contain-intrinsic-size(§CSS Sizing 4): width + height, 두 그룹 같으면 축약.
         if prop == "contain-intrinsic-size" {
             let d = crate::css::expand_decl_pub(prop, raw);
@@ -659,6 +663,7 @@ impl Interp {
                     | "image-orientation"
                     | "object-position"
                     | "background-position"
+                    | "mask-position"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

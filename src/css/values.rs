@@ -2625,6 +2625,21 @@ pub fn position_valid(raw: &str) -> bool {
     }
 }
 
+// mask-position 캐논 직렬화(§CSS Masking): <position># — 레이어마다 position_canonical.
+pub fn mask_position_canonical(raw: &str) -> String {
+    split_top_commas(raw)
+        .iter()
+        .map(|l| {
+            if position_valid(l) {
+                position_canonical(l)
+            } else {
+                l.trim().to_ascii_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // <position> 한 축(1~2 토큰)을 계산값 퍼센트로. left/top→0%, right/bottom→100%,
 // center→50%, 모서리+오프셋은 시작 기준 그대로, 끝(right/bottom) 기준은 100%-오프셋.
 fn pos_axis_computed(tokens: &[&str]) -> String {

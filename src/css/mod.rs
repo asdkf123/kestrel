@@ -86,6 +86,7 @@ pub(crate) use values::contain_intrinsic_valid;
 pub(crate) use values::position_valid;
 pub(crate) use values::position_canonical;
 pub(crate) use values::position_computed;
+pub(crate) use values::mask_position_canonical;
 pub(crate) use values::scroll_padding_valid;
 pub(crate) use values::box_canonical;
 pub(crate) use values::scroll_snap_type_valid;

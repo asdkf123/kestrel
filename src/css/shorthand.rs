@@ -717,6 +717,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             return Vec::new();
         }
+        // mask-position(§CSS Masking): <position>#(콤마 목록). 각 레이어를 검증.
+        "mask-position" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let layers = split_top_level_commas(value_text);
+            if !layers.is_empty() && layers.iter().all(|l| crate::css::position_valid(l)) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+            }
+            return Vec::new();
+        }
         // image-orientation(§CSS Images 3): from-image | none 만(각도/flip 형태는 폐기).
         "image-orientation" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1189,7 +1201,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "column-width"
         // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
-        | "border-inline-end-style" | "mask-image" | "mask-repeat" | "mask-position"
+        | "border-inline-end-style" | "mask-image" | "mask-repeat"
         | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
         | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position" | "scroll-snap-stop"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
