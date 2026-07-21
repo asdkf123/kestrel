@@ -23,6 +23,10 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
     }
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
+        // none 채널이 있으면 color(srgb ...) 로 none 보존(ColorFn), 아니면 레거시 rgb().
+        if let Some(v) = parse_rgb_none(&lower) {
+            return Some(v);
+        }
         return parse_rgb_func(&lower).map(Value::Color);
     }
     if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
@@ -2698,6 +2702,73 @@ fn parse_rgb_func(text: &str) -> Option<Color> {
     let b = chan_val(&parts[2])?;
     let a = if parts.len() == 4 { alpha_val(&parts[3])? } else { 255 };
     Some(Color { r, g, b, a })
+}
+
+// sRGB 채널값(0-1) 직렬화 — 계산값은 정확 비교라 8소수 자리까지(128/255=0.50196078).
+// csnum(4자리)로는 부족. 뒤 0/점 제거, -0→0.
+fn srgb_chan_ser(v: f32) -> String {
+    let s = format!("{:.8}", v);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s.is_empty() || s == "-0" {
+        "0".to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+// rgb() 에 none 채널이 있으면 계산값은 color(srgb ...) 로 none 을 보존한다(§CSS Color
+// 4). 8비트 Color 는 none 을 못 담으므로 ColorFn(fallback + none 보존 serial). none 이
+// 없으면 None → 레거시 rgb() 경로가 처리(rgb() 형태 유지).
+fn parse_rgb_none(text: &str) -> Option<Value> {
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    let parts = color_parts(&text[open + 1..close]);
+    if parts.len() != 3 && parts.len() != 4 {
+        return None;
+    }
+    let is_none = |s: &str| s.trim().eq_ignore_ascii_case("none");
+    if !parts.iter().any(|p| is_none(p)) {
+        return None; // none 없음 → 레거시
+    }
+    // 채널 → (serial 0-1, fallback u8). 수(0-255) 또는 %(0-100→0-1).
+    let ch = |s: &str| -> Option<(String, u8)> {
+        let s = s.trim();
+        if is_none(s) {
+            return Some(("none".to_string(), 0));
+        }
+        let v01 = if let Some(p) = s.strip_suffix('%') {
+            p.trim().parse::<f32>().ok()? / 100.0
+        } else {
+            s.parse::<f32>().ok()? / 255.0
+        };
+        let v = v01.clamp(0.0, 1.0);
+        Some((srgb_chan_ser(v), (v * 255.0).round() as u8))
+    };
+    let (rs, r) = ch(&parts[0])?;
+    let (gs, g) = ch(&parts[1])?;
+    let (bs, b) = ch(&parts[2])?;
+    // 알파: none/수/%(→0-1), 1 이면 생략.
+    let (aser, au) = match parts.get(3) {
+        None => (String::new(), 255u8),
+        Some(s) if is_none(s) => (" / none".to_string(), 0u8),
+        Some(s) => {
+            let s = s.trim();
+            let a = if let Some(p) = s.strip_suffix('%') {
+                p.trim().parse::<f32>().ok()? / 100.0
+            } else {
+                s.parse::<f32>().ok()?
+            };
+            let ac = a.clamp(0.0, 1.0);
+            let ser = if (ac - 1.0).abs() < 1e-9 {
+                String::new()
+            } else {
+                format!(" / {}", srgb_chan_ser(ac))
+            };
+            (ser, (ac * 255.0).round() as u8)
+        }
+    };
+    let serial = format!("color(srgb {rs} {gs} {bs}{aser})");
+    Some(Value::ColorFn(Color { r, g, b, a: au }, serial.into_boxed_str()))
 }
 
 fn parse_hsl_func(text: &str) -> Option<Color> {
