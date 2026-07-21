@@ -1622,28 +1622,70 @@ pub fn normalize_transition(raw: &str) -> String {
         let delay = times.get(1).cloned().unwrap_or_else(|| "0s".to_string());
         let tf = tf.unwrap_or_else(|| "ease".to_string());
         let beh = beh.unwrap_or_else(|| "normal".to_string());
-        // property=all 은 생략(§CSSOM 단축 직렬화). 모든 성분이 기본이면 "all" 만.
-        let mut s: Vec<String> = Vec::new();
         let prop = prop.unwrap_or_else(|| "all".to_string());
-        if !prop.eq_ignore_ascii_case("all") {
-            s.push(prop);
+        out.push(serialize_transition_layer(&prop, &dur, &tf, &delay, &beh));
+    }
+    out.join(", ")
+}
+
+// transition 한 레이어 직렬화(§CSSOM): property=all 생략, 기본값 성분 생략,
+// duration 은 delay 가 있으면 함께 표시. 전부 기본이면 "all".
+fn serialize_transition_layer(prop: &str, dur: &str, tf: &str, delay: &str, beh: &str) -> String {
+    let mut s: Vec<String> = Vec::new();
+    if !prop.eq_ignore_ascii_case("all") {
+        s.push(prop.to_string());
+    }
+    if dur != "0s" || delay != "0s" {
+        s.push(dur.to_string());
+    }
+    if tf != "ease" {
+        s.push(tf.to_string());
+    }
+    if delay != "0s" {
+        s.push(delay.to_string());
+    }
+    if beh != "normal" {
+        s.push(beh.to_string());
+    }
+    if s.is_empty() {
+        s.push("all".to_string());
+    }
+    s.join(" ")
+}
+
+// transition 롱핸드 계산값(각각 콤마 목록)에서 단축 계산값을 재구성한다(§CSSOM).
+// 레이어 수는 transition-property 기준, 나머지 짧은 목록은 순환(§CSS Transitions).
+pub fn reconstruct_transition(
+    property: &str,
+    duration: &str,
+    timing: &str,
+    delay: &str,
+    behavior: &str,
+) -> String {
+    let props = split_top_commas_str(property);
+    if props.is_empty() {
+        return String::new();
+    }
+    let durs = split_top_commas_str(duration);
+    let tfs = split_top_commas_str(timing);
+    let delays = split_top_commas_str(delay);
+    let behs = split_top_commas_str(behavior);
+    let get = |v: &Vec<String>, i: usize, dflt: &str| -> String {
+        if v.is_empty() {
+            dflt.to_string()
+        } else {
+            v[i % v.len()].trim().to_string()
         }
-        if dur != "0s" || delay != "0s" {
-            s.push(dur);
-        }
-        if tf != "ease" {
-            s.push(tf);
-        }
-        if delay != "0s" {
-            s.push(delay);
-        }
-        if beh != "normal" {
-            s.push(beh);
-        }
-        if s.is_empty() {
-            s.push("all".to_string());
-        }
-        out.push(s.join(" "));
+    };
+    let mut out = Vec::new();
+    for (i, p) in props.iter().enumerate() {
+        out.push(serialize_transition_layer(
+            p.trim(),
+            &get(&durs, i, "0s"),
+            &get(&tfs, i, "ease"),
+            &get(&delays, i, "0s"),
+            &get(&behs, i, "normal"),
+        ));
     }
     out.join(", ")
 }

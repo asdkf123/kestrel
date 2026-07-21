@@ -16,11 +16,20 @@ pub(crate) fn shorthand_table() -> &'static std::collections::HashMap<&'static s
     SHORTHANDS.get_or_init(|| {
         let mut m = std::collections::HashMap::new();
         for p in SUPPORTED {
-            let probe = shorthand::expand_declaration(p, "0px");
-            // 자기 자신으로만 펼쳐지면 롱핸드다
-            if probe.len() <= 1 && probe.first().map(|d| d.name.as_str()) == Some(*p) {
-                continue;
-            }
+            // 탐침값 하나가 무효라 빈 확장이 나오는 단축(예: transition 은 "0px" 를
+            // 거부)도 있어, 일반 후보값을 순서대로 시도해 롱핸드 집합을 찾는다.
+            let probe = ["0px", "none", "0s", "auto"].iter().find_map(|v| {
+                let e = shorthand::expand_declaration(p, v);
+                // 빈 확장(무효)·자기 자신으로만 펼쳐짐(롱핸드)은 후보에서 제외.
+                let self_only =
+                    e.len() <= 1 && e.first().map(|d| d.name.as_str()) == Some(*p);
+                if e.is_empty() || self_only {
+                    None
+                } else {
+                    Some(e)
+                }
+            });
+            let Some(probe) = probe else { continue };
             let longs: Vec<String> =
                 probe.into_iter().map(|d| d.name).filter(|n| n != p).collect();
             if !longs.is_empty() {

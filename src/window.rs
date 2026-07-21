@@ -302,12 +302,8 @@ fn fill_js_maps(
                 }
             }
         }
-        // transition 단축 계산값: 캐논 직렬화(property 먼저, 기본값 생략).
-        if let Some(tr) = m.get("transition") {
-            if tr != "none" && !tr.is_empty() {
-                m.insert("transition".to_string(), crate::style::normalize_transition(tr));
-            }
-        }
+        // transition 단축 계산값은 아래에서 롱핸드 계산값으로부터 레이어별 재구성한다
+        // (naive join 은 콤마 목록 롱핸드에 틀리므로 여기서 다루지 않는다).
         // text-decoration-line 계산값: 표준 순서 재정렬.
         if let Some(tdl) = m.get("text-decoration-line") {
             if let Some(norm) = crate::css::normalize_text_decoration_line(tdl) {
@@ -743,6 +739,10 @@ fn collect_computed_styles(
         // (프로퍼티마다 손으로 적지 않는다).
         let mut shorthand_vals: Vec<(String, String)> = Vec::new();
         for (prop, longs) in crate::css::shorthand_table() {
+            // transition 은 콤마 목록 롱핸드라 naive join 이 틀린다 — 아래서 별도 재구성.
+            if *prop == "transition" {
+                continue;
+            }
             let vals: Vec<String> = longs
                 .iter()
                 .map(|l| m.get(l.as_str()).cloned().unwrap_or_default())
@@ -789,6 +789,23 @@ fn collect_computed_styles(
         for key in ["transition-timing-function", "animation-timing-function"] {
             if let Some(v) = m.get(key) {
                 m.insert(key.to_string(), crate::style::normalize_easing_list(v));
+            }
+        }
+        // transition 단축 계산값: 정규화된 다섯 롱핸드에서 레이어별 재구성.
+        {
+            let g = |k: &str| m.get(k).cloned().unwrap_or_default();
+            let (p, d, t, dl, b) = (
+                g("transition-property"),
+                g("transition-duration"),
+                g("transition-timing-function"),
+                g("transition-delay"),
+                g("transition-behavior"),
+            );
+            if !p.is_empty() {
+                m.insert(
+                    "transition".to_string(),
+                    crate::style::reconstruct_transition(&p, &d, &t, &dl, &b),
+                );
             }
         }
         // scale 프로퍼티 계산값: 퍼센트→수, z=1 생략, y==x 접기.
