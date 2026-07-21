@@ -9327,9 +9327,20 @@ impl Interp {
             }
             _ => value.to_string(),
         };
+        let r = resolved.trim();
+        // line-width 키워드(thin/medium/thick → 1/3/5px) — outline/border/column width 보간용.
+        if prop.ends_with("-width")
+            && matches!(prop.split('-').next(), Some("outline") | Some("border") | Some("column"))
+        {
+            match r {
+                "thin" => return "1px".to_string(),
+                "medium" => return "3px".to_string(),
+                "thick" => return "5px".to_string(),
+                _ => {}
+            }
+        }
         // 그다음 currentColor 를 요소 color 계산값으로 해석 — 색 프로퍼티 보간이 실제
         // 색끼리 이뤄지도록. color 자신은 제외(자기참조).
-        let r = resolved.trim();
         if prop != "color" && r.eq_ignore_ascii_case("currentcolor") {
             if let Some(c) = self.computed_styles.get(&id).and_then(|m| m.get("color")) {
                 if !c.is_empty() {

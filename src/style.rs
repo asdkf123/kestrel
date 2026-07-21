@@ -2047,7 +2047,8 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "border-radius" | "border-spacing" | "outline-offset" | "text-indent" => "0px",
         "border-style" | "outline-style" => "none",
         "border-top-width" | "border-right-width" | "border-bottom-width"
-        | "border-left-width" | "border-width" | "outline-width" => "0px",
+        | "border-left-width" | "border-width" => "0px",
+        "outline-width" => "medium", // = 3px (아래 line-width 키워드 해석)
         "box-sizing" => "content-box",
         "color" => "rgb(0, 0, 0)",
         "column-gap" | "row-gap" | "gap" | "letter-spacing" | "word-spacing" | "line-height" => {
