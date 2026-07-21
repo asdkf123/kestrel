@@ -2105,8 +2105,17 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
         None
     };
     // 성분 해석: 채널 키워드를 값으로 치환(calc 안 포함) 후 parse_comp/각도.
+    // 성분이 **직접 채널 참조**(r/g/b 등)이고 origin 의 그 채널이 none 이면 none 을
+    // 보존한다(§CSS Color 5, rgb(from rgb(none...) r g b)→color(srgb none...)).
+    // calc 등 연산이 섞이면 none→0 (계산 결과).
     let resolve = |tok: &str, i: usize| -> Option<Comp> {
-        let subbed = subst_channels(tok.trim(), &kv);
+        let t = tok.trim();
+        if let Some(ci) = spec.chans.iter().position(|&c| c == t) {
+            if oc_opt[ci].is_none() {
+                return Some(Comp::None);
+            }
+        }
+        let subbed = subst_channels(t, &kv);
         if spec.angle[i] {
             parse_comp_angle(&subbed)
         } else {
@@ -2121,7 +2130,11 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
         Some(t) => {
             // alpha 키워드는 0-1, 그 외 채널 키워드/calc 도 치환해 파싱.
             if t.eq_ignore_ascii_case("alpha") {
-                Comp::Val(oalpha)
+                if oa_opt.is_none() {
+                    Comp::None // origin alpha 가 none → 보존
+                } else {
+                    Comp::Val(oalpha)
+                }
             } else {
                 let subbed = subst_channels(t, &kv);
                 parse_alpha(Some(&subbed))?
