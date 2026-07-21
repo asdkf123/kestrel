@@ -9158,6 +9158,7 @@ impl Interp {
                     | "border-left-width" | "outline-width" | "border-image-width"
                     | "border-image-outset" | "column-width" | "column-gap" | "row-gap"
                     | "flex-basis" | "column-rule-width" | "border-spacing" | "perspective"
+                    | "border-image-slice" | "tab-size" | "shape-margin"
             ) {
                 return Some(Self::clamp_nonneg(&v));
             }
