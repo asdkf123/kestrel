@@ -624,8 +624,14 @@ impl Interp {
                 if let Some(v) = e.attributes.get(&attr) {
                     return Ok(if v.is_empty() { None } else { Some(v.clone()) });
                 }
-                // HTML 네임스페이스 요소이고 기본 네임스페이스를 찾는 중이면 HTML ns
-                if prefix.is_empty() && own_prefix.is_empty() && e.namespace.is_none() {
+                // HTML 네임스페이스 요소이고 기본 네임스페이스를 찾는 중이면 HTML ns.
+                // #document/#document-fragment 는 요소가 아니라 컨테이너 — 네임스페이스
+                // 조회에서 null 이다(§DOM locate-a-namespace). HTML ns 를 주면 안 된다.
+                if prefix.is_empty()
+                    && own_prefix.is_empty()
+                    && e.namespace.is_none()
+                    && !matches!(e.tag_name.as_str(), "#document" | "#document-fragment")
+                {
                     return Ok(Some(crate::dom::NS_HTML.to_string()));
                 }
             }
