@@ -2545,8 +2545,16 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
     let pw1 = hue_powerless(&space, &co1);
     let pw2 = hue_powerless(&space, &co2);
     let mixed_hue = hi.map(|i| {
-        let h1 = if pw1 { co2[i] } else { co1[i] };
-        let h2 = if pw2 { co1[i] } else { co2[i] };
+        // powerless(채도 0) hue 는 상대 색의 hue 를 취한다(§CSS Color 4). 단 **한쪽만**
+        // powerless 일 때만 — 둘 다 powerless 면 원래 순서로 보간해야 한다(둘 다 상대값을
+        // 취하면 h1/h2 가 뒤바뀐다).
+        let (h1, h2) = if pw1 && !pw2 {
+            (co2[i], co2[i])
+        } else if pw2 && !pw1 {
+            (co1[i], co1[i])
+        } else {
+            (co1[i], co2[i])
+        };
         interp_hue(h1, h2, w2, &hue_method)
     });
     for i in 0..3 {
