@@ -2454,6 +2454,16 @@ pub fn scroll_snap_type_canonical(raw: &str) -> String {
     toks.iter().map(|t| t.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")
 }
 
+// 정렬 값 캐논 직렬화(§CSS Box Alignment): 기본 "first" 생략(first baseline→baseline).
+pub fn alignment_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "first baseline" {
+        "baseline".to_string()
+    } else {
+        low
+    }
+}
+
 // 정렬 위치 키워드인가(§CSS Box Alignment). is_content 면 content-position, 아니면
 // self-position(self-start/end 추가). allow_lr 이면 left/right 도.
 fn is_align_position(t: &str, is_content: bool, allow_lr: bool) -> bool {

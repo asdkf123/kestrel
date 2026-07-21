@@ -85,6 +85,7 @@ pub(crate) use values::scroll_snap_type_canonical;
 pub(crate) use values::flex_basis_valid;
 pub(crate) use values::flex_flow_canonical;
 pub(crate) use values::alignment_valid;
+pub(crate) use values::alignment_canonical;
 pub(crate) use values::text_autospace_valid;
 pub(crate) use values::text_autospace_canonical;
 pub(crate) use values::timing_function_canonical;

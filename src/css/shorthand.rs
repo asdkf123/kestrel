@@ -768,19 +768,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
         }
         // place-* 단축: <align> [<justify>] → align-*/justify-* longhand
-        "place-items" | "place-content" | "place-self" => {
-            let axis = name.strip_prefix("place-").unwrap();
-            let toks: Vec<&str> = split_top_level(value_text);
-            let a = toks.first().copied().unwrap_or("");
-            let j = toks.get(1).copied().unwrap_or(a);
-            if a.is_empty() {
-                return Vec::new();
-            }
-            vec![
-                Declaration { important: false, name: format!("align-{}", axis), value: Value::Keyword(a.to_string()) },
-                Declaration { important: false, name: format!("justify-{}", axis), value: Value::Keyword(j.to_string()) },
-            ]
-        }
+        // place-items/place-content/place-self(§CSS Box Alignment): <align> <justify>?.
+        "place-items" => place_shorthand("items", value_text, (false, false, false, false, true), (false, false, true, true, true)),
+        "place-content" => place_shorthand("content", value_text, (true, false, false, false, true), (true, false, true, false, false)),
+        "place-self" => place_shorthand("self", value_text, (false, true, false, false, true), (false, true, true, false, true)),
         // grid-gap 은 gap 의 레거시 별칭
         "grid-gap" | "grid-column-gap" | "grid-row-gap" => {
             let mapped = name.strip_prefix("grid-").unwrap();
@@ -1538,6 +1529,53 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
 }
 
 // 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
+// place-items/place-content/place-self 단축(§CSS Box Alignment): <align> <justify>?.
+// 각 절반이 1~2 토큰 정렬값이라 align 을 길게(2토큰) 먼저 시도해 greedy 분할한다.
+// align/justify 파라미터: (is_content, allow_auto, allow_lr, allow_legacy, allow_baseline).
+type AlignParams = (bool, bool, bool, bool, bool);
+fn place_shorthand(axis: &str, value_text: &str, ap: AlignParams, jp: AlignParams) -> Vec<Declaration> {
+    let low = value_text.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return vec![
+            Declaration { important: false, name: format!("align-{}", axis), value: Value::Keyword(low.clone()) },
+            Declaration { important: false, name: format!("justify-{}", axis), value: Value::Keyword(low) },
+        ];
+    }
+    let toks: Vec<&str> = split_top_level(value_text.trim());
+    let n = toks.len();
+    if n == 0 || n > 4 {
+        return Vec::new();
+    }
+    let valid = |slice: &[&str], p: AlignParams| {
+        crate::css::alignment_valid(&slice.join(" "), p.0, p.1, p.2, p.3, p.4)
+    };
+    for align_len in [2usize, 1] {
+        if align_len > n {
+            continue;
+        }
+        let align = &toks[..align_len];
+        if !valid(align, ap) {
+            continue;
+        }
+        let rest = &toks[align_len..];
+        let (a_val, j_val) = if rest.is_empty() {
+            if !valid(align, jp) {
+                continue;
+            }
+            (align.join(" "), align.join(" "))
+        } else if valid(rest, jp) {
+            (align.join(" "), rest.join(" "))
+        } else {
+            continue;
+        };
+        return vec![
+            Declaration { important: false, name: format!("align-{}", axis), value: Value::Keyword(crate::css::alignment_canonical(&a_val)) },
+            Declaration { important: false, name: format!("justify-{}", axis), value: Value::Keyword(crate::css::alignment_canonical(&j_val)) },
+        ];
+    }
+    Vec::new()
+}
+
 // 정렬 프로퍼티 arm(§CSS Box Alignment): CSS-wide 통과, 문법 검증 후 원문(소문자) 보존.
 fn align_arm(
     name: &str,
@@ -1553,7 +1591,7 @@ fn align_arm(
         return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
     }
     if crate::css::alignment_valid(value_text, is_content, allow_auto, allow_lr, allow_legacy, allow_baseline) {
-        vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+        vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::alignment_canonical(&low)) }]
     } else {
         Vec::new()
     }

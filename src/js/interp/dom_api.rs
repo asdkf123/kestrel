@@ -187,12 +187,20 @@ impl Interp {
     pub(super) fn style_get_raw(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
         let prop = canonical_css_name(prop);
         let attr = self.style_attr(id);
-        style_pairs(&attr)
-            .into_iter()
-            .rev() // 뒤 선언 우선 (마지막 것이 유효)
-            .find(|(k, _)| k == prop)
-            .map(|(_, v)| v)
-            .unwrap_or_default()
+        // 뒤 선언 우선. 롱핸드가 직접 없으면 style 속성에 든 단축을 펼쳐 그 롱핸드를
+        // 읽는다(§CSSOM: style="place-items: normal left" → el.style.alignItems 은 normal).
+        for (k, v) in style_pairs(&attr).into_iter().rev() {
+            if k == prop {
+                return v;
+            }
+            let expanded = crate::css::expand_decl_pub(&k, &v);
+            if expanded.iter().any(|d| d.name != k) {
+                if let Some(d) = expanded.iter().find(|d| d.name == prop) {
+                    return crate::style::computed_value_string(&d.value);
+                }
+            }
+        }
+        String::new()
     }
 
     // 선언 하나를 CSSOM 정규 형태로 직렬화 (§6.7).
@@ -345,6 +353,14 @@ impl Interp {
         // scroll-snap-type(§CSS Scroll Snap): 기본 strictness(proximity) 생략.
         if prop == "scroll-snap-type" && crate::css::scroll_snap_type_valid(raw) {
             return crate::css::scroll_snap_type_canonical(raw);
+        }
+        // 정렬 롱핸드(§CSS Box Alignment): first baseline → baseline 캐논.
+        if matches!(
+            prop,
+            "align-content" | "justify-content" | "align-items" | "justify-items" | "align-self"
+                | "justify-self"
+        ) {
+            return crate::css::alignment_canonical(raw);
         }
         // flex-flow(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저.
         if prop == "flex-flow" {
