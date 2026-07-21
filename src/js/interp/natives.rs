@@ -418,6 +418,7 @@ pub enum Native {
     RemoveAttribute,
     HasAttribute,
     RemoveChild,
+    ReplaceChild,
 }
 
 // 예약된 타이머 (창 이벤트 루프 / 헤드리스 flush 가 실행)

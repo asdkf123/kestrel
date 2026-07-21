@@ -7260,6 +7260,7 @@ impl Interp {
                     "removeAttribute" => Some(Native::RemoveAttribute),
                     "hasAttribute" => Some(Native::HasAttribute),
                     "removeChild" => Some(Native::RemoveChild),
+                    "replaceChild" => Some(Native::ReplaceChild),
                     "querySelector" => Some(Native::QuerySelector),
                     "querySelectorAll" => Some(Native::QuerySelectorAll),
                     "getElementsByClassName" => Some(Native::GetElementsByClass),

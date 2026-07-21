@@ -8213,14 +8213,53 @@ impl Interp {
                 };
                 Ok(Value::Bool(has))
             }
+            // parent.removeChild(child) → child 를 트리에서 분리, child 반환.
+            // WebIDL: child 는 Node 필수(아니면 TypeError). child 의 부모가 이 노드가
+            // 아니면 NotFoundError(§DOM).
             Native::RemoveChild => {
-                // parent.removeChild(child) → child 를 트리에서 분리, child 반환
-                let child = args.into_iter().next().unwrap_or(Value::Undefined);
-                if let Value::Dom(cid) = child {
-                    let dom = self.dom_arena()?;
-                    dom.detach(cid);
+                let Some(Value::Dom(parent)) = recv else {
+                    return Err(self.throw_error("TypeError", "removeChild: 수신자가 노드가 아니다"));
+                };
+                let cid = match args.first() {
+                    Some(Value::Dom(c)) => *c,
+                    _ => return Err(self.throw_error("TypeError", "removeChild: 인자가 Node 가 아니다")),
+                };
+                let dom = self.dom_arena()?;
+                if dom.get(cid).parent != Some(parent) {
+                    return Err(self.throw_dom("NotFoundError", "제거하려는 노드가 이 노드의 자식이 아니다"));
                 }
-                Ok(child)
+                dom.detach(cid);
+                Ok(Value::Dom(cid))
+            }
+            // parent.replaceChild(node, child) → child 를 node 로 교체, child 반환(§DOM).
+            Native::ReplaceChild => {
+                let Some(Value::Dom(parent)) = recv else {
+                    return Err(self.throw_error("TypeError", "replaceChild: 수신자가 노드가 아니다"));
+                };
+                let node = match args.first() {
+                    Some(Value::Dom(n)) => *n,
+                    _ => return Err(self.throw_error("TypeError", "replaceChild: 첫 인자가 Node 가 아니다")),
+                };
+                let child = match args.get(1) {
+                    Some(Value::Dom(c)) => *c,
+                    _ => return Err(self.throw_error("TypeError", "replaceChild: 두 번째 인자가 Node 가 아니다")),
+                };
+                // 유효성: parent 타입/node 조상/child 가 parent 의 자식(reference 로 재사용).
+                self.ensure_pre_insert_valid(parent, node, Some(child))?;
+                let dom = self.dom_arena()?;
+                // node 를 child 앞에 넣고 child 제거 → child 자리에 node.
+                // (node 가 child 자신이면 no-op 로 두고 child 반환.)
+                if node != child {
+                    if is_fragment(dom, node) {
+                        for c in dom.get(node).children.clone() {
+                            dom.insert_before(parent, c, Some(child));
+                        }
+                    } else {
+                        dom.insert_before(parent, node, Some(child));
+                    }
+                    dom.detach(child);
+                }
+                Ok(Value::Dom(child))
             }
             Native::SetAttribute => match recv {
                 Some(Value::Dom(id)) => {
