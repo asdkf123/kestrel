@@ -8314,12 +8314,15 @@ impl Interp {
                     MathOp::Ceil => a.ceil(),
                     // JS Math.round: +∞ 방향 반올림. [-0.5,0) 과 -0 은 -0 을 유지한다.
                     MathOp::Round => {
+                        // floor(a + 0.5) 는 큰 수(|a|~2^53)에서 0.5 가 정밀도에 묻혀
+                        // 이미 정수인 값을 잘못 반올림했다(§Math.round). floor + 소수부로.
                         if !a.is_finite() || a == 0.0 {
                             a
                         } else if a >= -0.5 && a < 0.5 {
                             if a.is_sign_negative() { -0.0 } else { 0.0 }
                         } else {
-                            (a + 0.5).floor()
+                            let r = a.floor();
+                            if a - r >= 0.5 { r + 1.0 } else { r } // 동점은 +Inf 쪽으로
                         }
                     }
                     MathOp::Abs => a.abs(),
