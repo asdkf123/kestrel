@@ -824,15 +824,21 @@ impl Interp {
             }
         };
         if is_text {
-            let ws = self
-                .computed_styles
-                .get(&id)
+            // 텍스트 노드는 계산 스타일이 없다 — 부모 요소의 white-space 를 본다(상속).
+            let parent_id = match self.dom_arena() {
+                Ok(dom) => dom.get(id).parent,
+                Err(_) => None,
+            };
+            let ws = parent_id
+                .and_then(|p| self.computed_styles.get(&p))
                 .and_then(|m| m.get("white-space"))
                 .cloned()
                 .unwrap_or_default();
-            let keep = ws.starts_with("pre");
+            let keep = ws.starts_with("pre") || ws == "break-spaces";
             if keep {
-                let mut parts = text.split('\n');
+                // 줄바꿈 정규화(\r\n, \r → \n), 탭/공백은 보존(§HTML get-the-text).
+                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                let mut parts = normalized.split('\n');
                 if let Some(first) = parts.next() {
                     lines.last_mut().unwrap().push_str(first);
                 }
