@@ -841,6 +841,7 @@ impl Interp {
                     | "background-origin"
                     | "background-position-x"
                     | "background-position-y"
+                    | "color"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

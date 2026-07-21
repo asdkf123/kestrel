@@ -23,6 +23,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
     }
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
+        if !rgb_valid(&lower) {
+            return None;
+        }
         // none 채널이 있으면 color(srgb ...) 로 none 보존(ColorFn), 아니면 레거시 rgb().
         if let Some(v) = parse_rgb_none(&lower) {
             return Some(v);
@@ -30,6 +33,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         return parse_rgb_func(&lower).map(Value::Color);
     }
     if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
+        if !hsl_valid(&lower) {
+            return None;
+        }
         if let Some(v) = parse_hsl_hwb_none(&lower) {
             return Some(v);
         }
@@ -39,6 +45,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
     // 보존하므로 Value::ColorFn(sRGB 근사 + 캐논 직렬화). hwb 는 rgb() 로 계산된다.
     for name in ["oklch", "oklab", "lch", "lab"] {
         if lower.starts_with(name) && lower[name.len()..].starts_with('(') {
+            if !lab_valid(name, &lower) {
+                return None;
+            }
             return parse_lab_family(name, &lower).map(|(c, s)| Value::ColorFn(c, s));
         }
     }
@@ -6504,6 +6513,249 @@ fn parse_color_func(text: &str) -> Option<(Color, Box<str>)> {
         alpha_ser(alpha)
     );
     Some((rgba, serial.into_boxed_str()))
+}
+
+// 최상위 콤마로 분리하되 빈 항목 유지(선행/후행/이중 콤마 검출용).
+fn split_commas_keep(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+fn top_level_has(s: &str, ch: char) -> bool {
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            c if c == ch && depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+// rgb()/rgba() 엄격 검증(§CSS Color 4). legacy(콤마): none 불가, RGB 전부 숫자거나
+// 전부 퍼센트, 3~4 인자, 선행/후행/이중 콤마 불가, 각도/키워드 불가. modern(공백):
+// none 허용, 3 채널 + 선택 /알파. 콤마와 슬래시 혼용 불가.
+pub fn rgb_valid(lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    if inner.is_empty() {
+        return false;
+    }
+    let is_num = |p: &str| {
+        let p = p.trim();
+        !p.is_empty() && p.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+    };
+    let is_pct = |p: &str| {
+        p.trim()
+            .strip_suffix('%')
+            .map(|n| n.trim().parse::<f64>().map(|v| v.is_finite()).unwrap_or(false))
+            .unwrap_or(false)
+    };
+    let is_calc = |p: &str| is_math_fn(&p.trim().to_ascii_lowercase());
+    let is_none = |p: &str| p.trim().eq_ignore_ascii_case("none");
+    let has_comma = top_level_has(&inner, ',');
+    let has_slash = top_level_has(&inner, '/');
+    if has_comma {
+        if has_slash {
+            return false;
+        }
+        let parts = split_commas_keep(&inner);
+        if parts.len() != 3 && parts.len() != 4 {
+            return false;
+        }
+        if parts.iter().any(|p| p.trim().is_empty()) {
+            return false;
+        }
+        let rgb = &parts[0..3];
+        if rgb.iter().any(|p| !(is_num(p) || is_pct(p) || is_calc(p))) {
+            return false;
+        }
+        let nums = rgb.iter().filter(|p| is_num(p)).count();
+        let pcts = rgb.iter().filter(|p| is_pct(p)).count();
+        if nums > 0 && pcts > 0 {
+            return false;
+        }
+        if parts.len() == 4 {
+            let a = &parts[3];
+            if !(is_num(a) || is_pct(a) || is_calc(a)) {
+                return false;
+            }
+        }
+        true
+    } else {
+        let parts = split_top_slash(&inner);
+        if parts.is_empty() || parts.len() > 2 {
+            return false;
+        }
+        let vals = split_top_level(parts[0].trim());
+        if vals.len() != 3 {
+            return false;
+        }
+        let ok = |p: &str| is_num(p) || is_pct(p) || is_calc(p) || is_none(p);
+        if vals.iter().any(|p| !ok(p)) {
+            return false;
+        }
+        if parts.len() == 2 {
+            let a = parts[1].trim();
+            if a.is_empty() || !ok(a) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+// 색 채널 판별 공통.
+fn col_is_num(p: &str) -> bool {
+    let p = p.trim();
+    !p.is_empty() && p.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+}
+fn col_is_pct(p: &str) -> bool {
+    p.trim()
+        .strip_suffix('%')
+        .map(|n| n.trim().parse::<f64>().map(|v| v.is_finite()).unwrap_or(false))
+        .unwrap_or(false)
+}
+fn col_is_calc(p: &str) -> bool {
+    is_math_fn(&p.trim().to_ascii_lowercase())
+}
+fn col_is_none(p: &str) -> bool {
+    p.trim().eq_ignore_ascii_case("none")
+}
+fn col_is_angle(p: &str) -> bool {
+    let low = p.trim().to_ascii_lowercase();
+    ["deg", "grad", "rad", "turn"].iter().any(|u| {
+        low.strip_suffix(u)
+            .map(|n| n.trim().parse::<f64>().map(|v| v.is_finite()).unwrap_or(false))
+            .unwrap_or(false)
+    })
+}
+
+// hsl()/hsla() 엄격 검증(§CSS Color 4). legacy(콤마): none 불가, hue=<number|angle>,
+// S·L=<percentage>, 3~4 인자. modern(공백): none 허용, hue/S/L + 선택 /알파.
+pub fn hsl_valid(lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    if inner.is_empty() {
+        return false;
+    }
+    let is_hue = |p: &str| col_is_num(p) || col_is_angle(p) || col_is_calc(p);
+    let has_comma = top_level_has(&inner, ',');
+    let has_slash = top_level_has(&inner, '/');
+    if has_comma {
+        if has_slash {
+            return false;
+        }
+        let parts = split_commas_keep(&inner);
+        if (parts.len() != 3 && parts.len() != 4) || parts.iter().any(|p| p.trim().is_empty()) {
+            return false;
+        }
+        if !is_hue(&parts[0]) {
+            return false;
+        }
+        if !(col_is_pct(&parts[1]) || col_is_calc(&parts[1]))
+            || !(col_is_pct(&parts[2]) || col_is_calc(&parts[2]))
+        {
+            return false;
+        }
+        if parts.len() == 4 {
+            let a = &parts[3];
+            if !(col_is_num(a) || col_is_pct(a) || col_is_calc(a)) {
+                return false;
+            }
+        }
+        true
+    } else {
+        let parts = split_top_slash(&inner);
+        if parts.is_empty() || parts.len() > 2 {
+            return false;
+        }
+        let vals = split_top_level(parts[0].trim());
+        if vals.len() != 3 {
+            return false;
+        }
+        if !(is_hue(&vals[0]) || col_is_none(&vals[0])) {
+            return false;
+        }
+        let sl_ok = |p: &str| col_is_pct(p) || col_is_calc(p) || col_is_none(p);
+        if !sl_ok(&vals[1]) || !sl_ok(&vals[2]) {
+            return false;
+        }
+        if parts.len() == 2 {
+            let a = parts[1].trim();
+            if a.is_empty()
+                || !(col_is_num(a) || col_is_pct(a) || col_is_calc(a) || col_is_none(a))
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+// lab/lch/oklab/oklch 엄격 검증(§CSS Color 4): <func>( <L> <a|C> <b|H> [/ <alpha>]? ).
+// 공백 구분 3채널, 콤마 불가. lab/oklab 의 a·b 는 각도 불가, lch/oklch 의 H 는 각도 허용.
+pub fn lab_valid(name: &str, lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    if inner.is_empty() || top_level_has(&inner, ',') {
+        return false;
+    }
+    let parts = split_top_slash(&inner);
+    if parts.is_empty() || parts.len() > 2 {
+        return false;
+    }
+    let vals = split_top_level(parts[0].trim());
+    if vals.len() != 3 {
+        return false;
+    }
+    let numlike = |p: &str| col_is_num(p) || col_is_pct(p) || col_is_none(p) || col_is_calc(p);
+    let is_lch = name == "lch" || name == "oklch";
+    if !numlike(&vals[0]) {
+        return false;
+    }
+    if is_lch {
+        if !numlike(&vals[1]) {
+            return false;
+        }
+        if !(col_is_num(&vals[2]) || col_is_angle(&vals[2]) || col_is_none(&vals[2]) || col_is_calc(&vals[2])) {
+            return false;
+        }
+    } else if !numlike(&vals[1]) || !numlike(&vals[2]) {
+        return false;
+    }
+    if parts.len() == 2 {
+        let a = parts[1].trim();
+        if a.is_empty() || !numlike(a) {
+            return false;
+        }
+    }
+    true
 }
 
 fn parse_rgb_func(text: &str) -> Option<Color> {

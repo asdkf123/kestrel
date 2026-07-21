@@ -2038,6 +2038,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-bottom" => border_shorthand(&["bottom"], value_text),
         "border-left" => border_shorthand(&["left"], value_text),
         "font" => font_shorthand(value_text),
+        // color(§CSS Color): <color>. CSS-wide 통과, 그 외는 색으로 파싱(무효 rgb 등 거부).
+        "color" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            match interpret_value(value_text.trim()) {
+                Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
+                None => Vec::new(),
+            }
+        }
         _ => match interpret_value(value_text) {
             Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
             None => Vec::new(),
