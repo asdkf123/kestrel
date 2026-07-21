@@ -1727,6 +1727,17 @@ impl Interp {
                 dom.set_attr(id, "class", text);
                 Ok(())
             }
+            // el.style = "..." 는 [PutForwards=cssText] — 문자열을 style 속성(인라인
+            // 선언)으로 파싱해 쓴다. 예전엔 이 대입이 조용히 무시됐다(el.style 은 읽기
+            // 전용 IDL 속성이라 _ 갈래에서 no-op). 빈 문자열은 인라인 스타일을 지운다.
+            "style" => {
+                if text.is_empty() {
+                    dom.remove_attr(id, "style");
+                } else {
+                    dom.set_attr(id, "style", text);
+                }
+                Ok(())
+            }
             _ => {
                 if self.reflect_set(id, key, &value)? {
                     return Ok(());
