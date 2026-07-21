@@ -1686,6 +1686,52 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // letter-spacing(§CSS Text): normal | <length>. tab-size: <number 0+> | <length 0+>.
+        // hyphenate-character: auto | <string>.
+        "letter-spacing" | "tab-size" | "hyphenate-character" => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let single = split_top_level(v).len() == 1;
+            let ok = single && match name {
+                "letter-spacing" => low == "normal" || crate::css::margin_value_valid(v) && low != "auto",
+                "tab-size" => !low.contains('%') && (crate::css::nonneg_lp_valid(v) || v.parse::<f32>().map(|n| n >= 0.0).unwrap_or(false)),
+                "hyphenate-character" => low == "auto" || (v.len() >= 2 && (v.starts_with('"') || v.starts_with('\'')) && v.ends_with(v.chars().next().unwrap())),
+                _ => false,
+            };
+            if !ok {
+                return Vec::new();
+            }
+            let value = if name == "hyphenate-character" || low == "normal" || low == "auto" {
+                Value::Keyword(v.to_string())
+            } else {
+                interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()))
+            };
+            vec![Declaration { important: false, name: name.to_string(), value }]
+        }
+        // word-space-transform(§CSS Text 4): none | [ space | ideographic-space ] || auto-phrase.
+        "word-space-transform" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks: Vec<&str> = low.split_whitespace().collect();
+            let (mut sp, mut auto) = (0u32, 0u32);
+            let ok = !toks.is_empty() && toks.len() <= 2 && toks.iter().all(|t| {
+                match *t {
+                    "space" | "ideographic-space" => { sp += 1; true }
+                    "auto-phrase" => { auto += 1; true }
+                    _ => false,
+                }
+            }) && sp <= 1 && auto <= 1 && sp >= 1;
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // block-step-size(§CSS Rhythm): none | <length [0,∞]>(퍼센트 불가).
         "block-step-size" => {
             let v = value_text.trim();
@@ -1739,7 +1785,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "direction" | "scroll-snap-stop" | "scroll-snap-align"
         | "alignment-baseline" | "dominant-baseline"
         | "ruby-position" | "ruby-align" | "ruby-overhang" | "ruby-merge"
-        | "block-step-align" | "block-step-round" | "block-step-insert" => {
+        | "block-step-align" | "block-step-round" | "block-step-insert"
+        | "text-align" | "text-align-last" | "text-align-all" | "line-break" | "word-wrap"
+        | "overflow-wrap" | "white-space-collapse" => {
             let low = value_text.trim().to_ascii_lowercase();
             let snap_align_ok = || {
                 let toks: Vec<&str> = low.split_whitespace().collect();
@@ -1769,6 +1817,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     "block-step-align" => matches!(low.as_str(), "auto" | "center" | "start" | "end"),
                     "block-step-round" => matches!(low.as_str(), "up" | "down" | "nearest"),
                     "block-step-insert" => matches!(low.as_str(), "margin-box" | "padding-box" | "content-box"),
+                    "text-align" => matches!(low.as_str(), "start" | "end" | "left" | "right" | "center" | "justify" | "match-parent" | "justify-all"),
+                    "text-align-last" => matches!(low.as_str(), "auto" | "start" | "end" | "left" | "right" | "center" | "justify" | "match-parent"),
+                    "text-align-all" => matches!(low.as_str(), "start" | "end" | "left" | "right" | "center" | "justify" | "match-parent"),
+                    "line-break" => matches!(low.as_str(), "auto" | "loose" | "normal" | "strict" | "anywhere"),
+                    "word-wrap" | "overflow-wrap" => matches!(low.as_str(), "normal" | "break-word" | "anywhere"),
+                    "white-space-collapse" => matches!(low.as_str(), "collapse" | "preserve" | "preserve-breaks" | "preserve-spaces" | "break-spaces"),
                     _ => false,
                 };
             if ok {
@@ -1994,17 +2048,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "background-attachment"
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
-        | "text-align-last"
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
         | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
-        | "line-break"
-        | "white-space-collapse" | "font-optical-sizing"
+        | "font-optical-sizing"
         | "font-variant-ligatures"
         | "font-variant-position" | "font-language-override"
         | "quotes" | "scrollbar-width" | "scrollbar-color"
-        | "mask-type" | "hyphenate-character" | "text-justify"
+        | "mask-type" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
@@ -2039,9 +2091,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
         | "shape-outside"
-        // hyphenate-limit-chars/character 원문 보존.
-        | "hyphenate-limit-chars" | "hyphenate-character"
-        | "word-space-transform" | "text-box-trim"
+        // hyphenate-limit-chars 원문 보존.
+        | "hyphenate-limit-chars"
+        | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }

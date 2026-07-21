@@ -945,6 +945,17 @@ impl Interp {
                     | "mask-composite"
                     | "size"
                     | "page"
+                    | "text-align"
+                    | "text-align-last"
+                    | "text-align-all"
+                    | "line-break"
+                    | "word-wrap"
+                    | "overflow-wrap"
+                    | "white-space-collapse"
+                    | "letter-spacing"
+                    | "tab-size"
+                    | "hyphenate-character"
+                    | "word-space-transform"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
