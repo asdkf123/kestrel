@@ -9318,6 +9318,15 @@ impl Interp {
                     if !base.is_empty() && base != "none" {
                         *side = format!("{base} {side}");
                     }
+                } else if matches!(dash_prop, "box-shadow" | "text-shadow" | "-webkit-box-shadow") {
+                    // 그림자 합성: 언더라이닝 그림자 리스트를 앞에 쉼표로 연결.
+                    if !base.is_empty() && base != "none" {
+                        *side = if side.trim() == "none" {
+                            base.clone()
+                        } else {
+                            format!("{base}, {side}")
+                        };
+                    }
                 } else if let Some(n) = Self::compose_prop(dash_prop, &base, side, comp == "accumulate")
                 {
                     *side = n;

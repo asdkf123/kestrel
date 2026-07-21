@@ -5066,6 +5066,20 @@ impl Interp {
                                     if !u.is_empty() && u != "none" {
                                         *side = format!("{u} {side}");
                                     }
+                                } else if matches!(
+                                    dash.as_str(),
+                                    "box-shadow" | "text-shadow" | "-webkit-box-shadow"
+                                ) {
+                                    // 그림자 합성: 언더라이닝 리스트를 앞에 쉼표로 연결.
+                                    if let Some(bv) = base.get(dash) {
+                                        if !bv.is_empty() && bv != "none" {
+                                            *side = if side.trim() == "none" {
+                                                bv.clone()
+                                            } else {
+                                                format!("{bv}, {side}")
+                                            };
+                                        }
+                                    }
                                 } else if let Some(bv) = base.get(dash) {
                                     if let Some(n) =
                                         Self::compose_prop(dash, bv, side, comp == "accumulate")
