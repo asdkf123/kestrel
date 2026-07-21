@@ -1658,6 +1658,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // mask-composite(§CSS Masking): [add|subtract|intersect|exclude]# 콤마 목록.
+        "mask-composite" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::mask_composite_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // block-step-size(§CSS Rhythm): none | <length [0,∞]>(퍼센트 불가).
         "block-step-size" => {
             let v = value_text.trim();
@@ -1984,7 +1995,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-image-repeat"
         // 4차 배치: mask, offset, scroll-snap-stop, place-self.
         | "mask-image" | "mask-repeat"
-        | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
+        | "mask-size" | "mask-origin" | "mask-clip" | "mask-mode"
         | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).

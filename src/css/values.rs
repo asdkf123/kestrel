@@ -5150,6 +5150,19 @@ pub fn color_scheme_valid(raw: &str) -> bool {
     true
 }
 
+// mask-composite(§CSS Masking): [ add | subtract | intersect | exclude ]#(콤마 목록).
+pub fn mask_composite_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.starts_with(',') || t.ends_with(',') {
+        return false;
+    }
+    let items = split_top_commas(raw);
+    !items.is_empty()
+        && items.iter().all(|it| {
+            matches!(it.trim().to_ascii_lowercase().as_str(), "add" | "subtract" | "intersect" | "exclude")
+        })
+}
+
 // overscroll-behavior 값: contain | none | auto | chain.
 fn overscroll_kw(t: &str) -> bool {
     matches!(t.to_ascii_lowercase().as_str(), "contain" | "none" | "auto" | "chain")
