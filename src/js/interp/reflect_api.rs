@@ -154,7 +154,7 @@ impl Interp {
         key: &str,
         value: &Value,
     ) -> Result<bool, String> {
-        let (attr, kind) = {
+        let (attr, kind, missing) = {
             let dom = self.dom_arena()?;
             let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else {
                 return Ok(false);
@@ -163,7 +163,7 @@ impl Interp {
             let Some(spec) = lookup(&tag, key) else {
                 return Ok(false);
             };
-            (spec.attr, spec.kind)
+            (spec.attr, spec.kind, spec.missing)
         };
         if matches!(kind, Reflect::TokenList) {
             return Ok(false);
@@ -185,11 +185,28 @@ impl Interp {
                     dom.remove_attr(id, attr);
                 }
             }
-            // 수치: 표준의 직렬화 (정수는 정수로)
+            // 수치 setter: unsigned long 은 WebIDL ToUint32 후 [0,2^31-1] 밖이면 기본값
+            // (missing), long 은 유한하면 절단(§HTML 반영 setter).
             Reflect::Long | Reflect::UnsignedLong => {
-                let n = to_num(value);
-                let n = if n.is_finite() { n.trunc() } else { 0.0 };
-                dom.set_attr(id, attr, format!("{}", n as i64));
+                let raw_num = to_num(value);
+                let out = if matches!(kind, Reflect::UnsignedLong) {
+                    let default = missing.and_then(parse_int).unwrap_or(0);
+                    if raw_num.is_finite() {
+                        let u = (raw_num.trunc() as i64).rem_euclid(4294967296);
+                        if u <= 2147483647 {
+                            u
+                        } else {
+                            default
+                        }
+                    } else {
+                        default
+                    }
+                } else if raw_num.is_finite() {
+                    raw_num.trunc() as i64
+                } else {
+                    0
+                };
+                dom.set_attr(id, attr, format!("{}", out));
             }
             Reflect::Double => {
                 let n = to_num(value);
