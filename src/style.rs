@@ -52,8 +52,38 @@ pub fn computed_value_string(v: &Value) -> String {
         Value::Url(u) => format!("url(\"{}\")", u),
         // gradient: 파서가 채운 캐논 직렬화(색만 rgb()/color(), 구조 원문).
         Value::Gradient(g) if !g.serial.is_empty() => g.serial.clone(),
-        // calc/var/기타 는 getComputedStyle 로 잘 읽히지 않음 — 근사 빈값.
+        // calc: 단위별 계수를 캐논 순서(%, px, em…)로 직렬화. 단일 항은 calc() 없이
+        // (calc(200% - 0px)→"200%"), 다항은 calc(A% + Bpx) 형태(§CSS Values 4).
+        Value::Calc(c) => serialize_calc(c),
+        // var/min-max/기타 는 getComputedStyle 로 잘 읽히지 않음 — 근사 빈값.
         _ => String::new(),
+    }
+}
+
+// calc() 계산값 직렬화. resolve_units 후엔 보통 %/px 만 남는다(문맥 단위는 px 로 접힘).
+// 캐논 순서로 0 아닌 항만 모아, 단일 항이면 단위값 그대로, 다항이면 calc()로 부호 결합.
+fn serialize_calc(c: &crate::css::CalcSum) -> String {
+    let terms: [(f32, &str); 8] = [
+        (c.pct, "%"), (c.px, "px"), (c.em, "em"), (c.rem, "rem"),
+        (c.vw, "vw"), (c.vh, "vh"), (c.vmin, "vmin"), (c.vmax, "vmax"),
+    ];
+    let present: Vec<(f32, &str)> = terms.iter().copied().filter(|(n, _)| *n != 0.0).collect();
+    match present.len() {
+        0 => "0px".to_string(),
+        1 => format!("{}{}", num_css(present[0].0), present[0].1),
+        _ => {
+            let mut s = String::from("calc(");
+            for (i, (n, u)) in present.iter().enumerate() {
+                if i == 0 {
+                    s.push_str(&format!("{}{}", num_css(*n), u));
+                } else {
+                    let sign = if *n < 0.0 { " - " } else { " + " };
+                    s.push_str(&format!("{}{}{}", sign, num_css(n.abs()), u));
+                }
+            }
+            s.push(')');
+            s
+        }
     }
 }
 

@@ -8095,7 +8095,10 @@ impl Interp {
     }
 
     // length-percentage 보간. 단위가 섞이면(% ↔ px) calc() 로 출력(§CSS Values).
-    fn interp_len_pct(from: &str, to: &str, t: f32) -> Option<String> {
+    // fold_zero_pct: text-decoration-thickness/offset 처럼 계산값에서 0 항을 접는
+    // 프로퍼티는 true — 0% 항도 버려 정적 계산값(serialize_calc)과 일치시킨다.
+    // translate/position 등은 false — Chrome 이 calc(0% + 480px)처럼 0% 를 남긴다.
+    fn interp_len_pct(from: &str, to: &str, t: f32, fold_zero_pct: bool) -> Option<String> {
         let (fpx, fpct) = Self::parse_len_pct(from)?;
         let (tpx, tpct) = Self::parse_len_pct(to)?;
         let lerp_opt = |a: Option<f32>, b: Option<f32>| -> (bool, f32) {
@@ -8105,6 +8108,10 @@ impl Interp {
         let (has_pct, pct) = lerp_opt(fpct, tpct);
         let nc = crate::style::num_css;
         Some(match (has_px, has_pct) {
+            // 0 항 접기(text-decoration-thickness/offset): px 가 0 이면 % 만(둘 다 0 이면
+            // "0%"), px≠0 이고 % 가 0 이면 px 만. 정적 계산값과 형태를 맞춘다.
+            (true, true) if fold_zero_pct && px.abs() < 1e-6 => format!("{}%", nc(pct)),
+            (true, true) if fold_zero_pct && pct.abs() < 1e-6 => format!("{}px", nc(px)),
             // px 항이 0 이면 % 만(calc(0% + 0px)→0%). % 는 0 이어도 유지(§ Chrome 은
             // calc(0% + 480px) 처럼 % 항을 남긴다). px≠0 이면 calc.
             (true, true) if px.abs() < 1e-6 => format!("{}%", nc(pct)),
@@ -8165,8 +8172,8 @@ impl Interp {
         for i in 0..n {
             let (fh, fv) = Self::resolve_position_layer(fl[i % fl.len()].trim())?;
             let (th, tv) = Self::resolve_position_layer(tl[i % tl.len()].trim())?;
-            let h = Self::interp_len_pct(&fh, &th, t)?;
-            let v = Self::interp_len_pct(&fv, &tv, t)?;
+            let h = Self::interp_len_pct(&fh, &th, t, false)?;
+            let v = Self::interp_len_pct(&fv, &tv, t, false)?;
             layers.push(format!("{h} {v}"));
         }
         Some(layers.join(", "))
@@ -8277,7 +8284,7 @@ impl Interp {
         for i in 0..n {
             let fv = axis_val(fl[i % fl.len()].trim())?;
             let tv = axis_val(tl[i % tl.len()].trim())?;
-            layers.push(Self::interp_len_pct(&fv, &tv, t)?);
+            layers.push(Self::interp_len_pct(&fv, &tv, t, false)?);
         }
         Some(layers.join(", "))
     }
@@ -8477,7 +8484,7 @@ impl Interp {
                     return None; // auto ↔ 길이 불일치 → 전체 불연속
                 } else {
                     // background-size 길이는 비음수 — 외삽 시 음수는 0 클램프.
-                    comps.push(Self::clamp_nonneg(&Self::interp_len_pct(a, b, t)?));
+                    comps.push(Self::clamp_nonneg(&Self::interp_len_pct(a, b, t, false)?));
                 }
             }
             layers.push(comps.join(" "));
@@ -9087,7 +9094,7 @@ impl Interp {
         }
         // 단일 length-percentage(혼합 단위 → calc, % 먼저). text-decoration-thickness 등.
         if matches!(dash_prop, "text-decoration-thickness" | "text-underline-offset") {
-            if let Some(v) = Self::interp_len_pct(from, to, eased) {
+            if let Some(v) = Self::interp_len_pct(from, to, eased, true) {
                 return Some(v);
             }
         }

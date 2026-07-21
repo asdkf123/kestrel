@@ -477,7 +477,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "grid-auto-flow" | "grid-auto-columns" | "break-before" | "break-after"
         | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
         | "column-span" | "column-fill" | "column-rule-style" | "caret-shape"
-        | "unicode-bidi" | "border-image-repeat" | "text-underline-offset"
+        | "unicode-bidi" | "border-image-repeat"
         | "column-width"
         // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
@@ -495,7 +495,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "font-feature-settings" | "font-variation-settings" | "font-stretch"
         // font-style: normal/italic/oblique [<angle>] — 2토큰(oblique 10deg) 원문 보존.
         | "font-style"
-        | "font-size-adjust" | "font-palette" | "text-decoration-thickness"
+        | "font-size-adjust" | "font-palette"
         | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
@@ -528,6 +528,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "word-space-transform" | "view-transition-class" | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
+        // text-decoration-thickness: auto | from-font | <length-percentage>
+        // text-underline-offset: auto | <length-percentage>
+        // 길이/calc 는 Length/Calc 로 파싱해 계산값에서 em/rem→px, calc 축약이 되게 한다
+        // (키워드로 보존하면 resolve_units 가 건너뛰어 "2em"/"calc(...)" 원문이 남는다).
+        "text-decoration-thickness" | "text-underline-offset" => {
+            let t = value_text.trim();
+            let value = match interpret_value(t) {
+                Some(v @ (Value::Length(..) | Value::Calc(_) | Value::MinMax(..))) => v,
+                _ => Value::Keyword(t.to_string()), // auto/from-font/CSS-wide 키워드
+            };
+            vec![Declaration { important: false, name: name.to_string(), value }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
         // 키워드로 보존. column-rule-color 도 색.
