@@ -30,6 +30,12 @@ fn parse_int(s: &str) -> Option<i64> {
     Some(if neg { -v } else { v })
 }
 
+// "min:max" (clamped range 반영의 invalid 필드 인코딩) → (min, max).
+fn parse_range(s: &str) -> Option<(i64, i64)> {
+    let (a, b) = s.split_once(':')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
+}
+
 // 부동소수 파싱 (§2.4.4.3)
 fn parse_double(s: &str) -> Option<f64> {
     let t = s.trim_start_matches([' ', '\t', '\n', '\x0C', '\r']);
@@ -116,20 +122,31 @@ impl Interp {
                     _ => default as f64,
                 })
             }
-            // unsigned long: 기본값이 양수면 "limited to only positive numbers"(rows=2,
-            // cols=20, size=20) — 0/음수/무효는 기본값. 아니면 [0,2^31-1].
+            // unsigned long: invalid="min:max" 면 "clamped to the range"(colSpan [1,1000],
+            // rowSpan [0,65534], span [1,1000]) — 파스 성공 시 [min,max]로 클램프,
+            // 파스 실패는 기본값. 아니면 기본값 양수면 "limited to positive"(rows/cols/size),
+            // 그 외 [0,2^31-1].
             Reflect::UnsignedLong => {
                 let default = spec.missing.and_then(parse_int).unwrap_or(0);
-                let limited_positive = default >= 1;
-                Value::Num(match raw.as_deref().and_then(parse_int) {
-                    Some(v)
-                        if (0..=2147483647).contains(&v)
-                            && !(limited_positive && v < 1) =>
-                    {
-                        v as f64
-                    }
-                    _ => default as f64,
-                })
+                if let Some((lo, hi)) = spec.invalid.and_then(parse_range) {
+                    let v = raw
+                        .as_deref()
+                        .and_then(parse_int)
+                        .map(|n| n.clamp(lo, hi))
+                        .unwrap_or(default);
+                    Value::Num(v as f64)
+                } else {
+                    let limited_positive = default >= 1;
+                    Value::Num(match raw.as_deref().and_then(parse_int) {
+                        Some(v)
+                            if (0..=2147483647).contains(&v)
+                                && !(limited_positive && v < 1) =>
+                        {
+                            v as f64
+                        }
+                        _ => default as f64,
+                    })
+                }
             }
             // double: 기본값은 missing. 기본값이 양수면 "limited to numbers greater than
             // zero"(progress.max=1) — 0 이하는 기본값.
