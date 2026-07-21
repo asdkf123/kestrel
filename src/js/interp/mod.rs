@@ -7851,6 +7851,7 @@ impl Interp {
     fn animated_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
         // transform 행렬화용 박스 크기(rotate/scale 엔 무의미, translate% 에만 필요).
         let (bw, bh) = self.elem_border_wh(id);
+        let cc = self.elem_color(id);
         // element.animate / CSS transition 스냅샷 우선.
         if let Some(anims) = self.element_animations.get(&id) {
             let mut result = None;
@@ -7862,7 +7863,7 @@ impl Interp {
                     let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
                     let progress = (ct / duration).clamp(0.0, 1.0) as f32;
                     let eased = Self::eval_easing(easing, progress);
-                    if let Some(v) = Self::interp_prop(dash_prop, from, to, eased, bw, bh) {
+                    if let Some(v) = Self::interp_prop(dash_prop, from, to, eased, bw, bh, &cc) {
                         result = Some(v);
                     }
                 }
@@ -8264,7 +8265,7 @@ impl Interp {
 
     // box-shadow 보간(계산값 형태 "색 x y blur spread [inset]"). 쉼표 다중 그림자.
     // 그림자 수/inset 불일치는 불연속(None → 플립). 색은 rgb lerp, 길이는 lerp.
-    fn interp_box_shadow(from: &str, to: &str, t: f32, spread: bool) -> Option<String> {
+    fn interp_box_shadow(from: &str, to: &str, t: f32, spread: bool, cc: &str) -> Option<String> {
         let split_commas = |s: &str| -> Vec<String> {
             let mut out = Vec::new();
             let (mut depth, mut cur) = (0i32, String::new());
@@ -8377,7 +8378,11 @@ impl Interp {
             if ia != ib {
                 return None;
             }
-            let color = Self::interp_css_value(&ca, &cb, t)?;
+            // 색 없는 그림자는 currentcolor → 요소 color(cc)로 해석해 실제 색끼리 보간.
+            let rc = |c: &str| -> String {
+                if c.eq_ignore_ascii_case("currentcolor") { cc.to_string() } else { c.to_string() }
+            };
+            let color = Self::interp_css_value(&rc(&ca), &rc(&cb), t)?;
             let mut s = color;
             let n = if spread { 4 } else { 3 };
             for i in 0..n {
@@ -9032,7 +9037,8 @@ impl Interp {
 
     // from→to 를 이징 출력 eased 로 보간해 직렬화. scale/translate 컴포넌트 확장,
     // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
-    fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32, w: f32, h: f32) -> Option<String> {
+    #[allow(clippy::too_many_arguments)]
+    fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32, w: f32, h: f32, cc: &str) -> Option<String> {
         // transform 매칭 리스트 보간(rotate/translate/scale 함수별 인자 보간 → 행렬).
         if dash_prop == "transform" {
             if let Some(v) = Self::interp_transform(from, to, eased, w, h) {
@@ -9089,12 +9095,12 @@ impl Interp {
         }
         // box-shadow(색+4길이+inset) / text-shadow(색+3길이).
         if matches!(dash_prop, "box-shadow" | "-webkit-box-shadow") {
-            if let Some(v) = Self::interp_box_shadow(from, to, eased, true) {
+            if let Some(v) = Self::interp_box_shadow(from, to, eased, true, cc) {
                 return Some(v);
             }
         }
         if dash_prop == "text-shadow" {
-            if let Some(v) = Self::interp_box_shadow(from, to, eased, false) {
+            if let Some(v) = Self::interp_box_shadow(from, to, eased, false, cc) {
                 return Some(v);
             }
         }
@@ -9184,6 +9190,16 @@ impl Interp {
     // 값으로 보간. 명시적 0%/100% 프레임이 둘 다 있을 때만(neutral 은 정적 렌더에 맡김).
     // transform/transform-origin 의 % 해석 기준 = 요소 border-box. layout_rects 는
     // inline-block 등에서 인라인 조각 합집합이라 부정확 — layout_metrics(정확) 우선.
+    // 요소의 color 계산값(box-shadow 등 currentColor 해석용). 없으면 검정.
+    fn elem_color(&self, id: crate::dom::NodeId) -> String {
+        self.computed_styles
+            .get(&id)
+            .and_then(|m| m.get("color"))
+            .filter(|c| !c.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "rgb(0, 0, 0)".to_string())
+    }
+
     fn elem_border_wh(&self, id: crate::dom::NodeId) -> (f32, f32) {
         if let Some(m) = self.layout_metrics.get(&id) {
             let (bt, br, bb, bl) = m.border;
@@ -9263,7 +9279,8 @@ impl Interp {
         let progress = (elapsed / dur).clamp(0.0, 1.0);
         let eased = Self::eval_easing(&easing, progress);
         let (bw, bh) = self.elem_border_wh(id);
-        Self::interp_prop(dash_prop, &from, &to, eased, bw, bh)
+        let cc = self.elem_color(id);
+        Self::interp_prop(dash_prop, &from, &to, eased, bw, bh, &cc)
     }
 
     // 최상위 쉼표 기준 첫 값(cubic-bezier()/steps() 내부 쉼표는 무시).
