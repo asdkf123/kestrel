@@ -1103,6 +1103,7 @@ const INHERITED: &[&str] = &[
     "font-size-adjust",
     "hyphens",
     "hyphenate-limit-chars",
+    "hyphenate-character",
     "text-align-last",
     "text-justify",
     // CSS UI: caret-color/accent-color 는 상속 속성(§CSS-UI-4). unset 이 inherit 처럼.
@@ -1892,7 +1893,7 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         | "will-change" | "text-align-last" => "auto",
         "appearance" | "resize" | "contain" => "none",
         "hyphens" => "manual",
-        "hyphenate-limit-chars" => "auto",
+        "hyphenate-limit-chars" | "hyphenate-character" => "auto",
         "writing-mode" => "horizontal-tb",
         "text-orientation" => "mixed",
         "box-decoration-break" => "slice",

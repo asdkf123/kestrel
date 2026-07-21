@@ -505,8 +505,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-top-left-radius" | "border-top-right-radius" | "border-bottom-left-radius"
         | "border-bottom-right-radius"
         | "background-position-x" | "background-position-y" | "shape-outside"
-        // hyphenate-limit-chars: [auto | <integer>]{1,3} — 원문 보존(3정수 형태).
-        | "hyphenate-limit-chars"
+        // hyphenate-limit-chars/character 원문 보존.
+        | "hyphenate-limit-chars" | "hyphenate-character"
         | "word-space-transform" | "view-transition-class" | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
