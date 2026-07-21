@@ -713,6 +713,8 @@ impl Interp {
                     | "grid-column-end"
                     | "grid-template-columns"
                     | "grid-template-rows"
+                    | "grid-auto-columns"
+                    | "grid-auto-rows"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

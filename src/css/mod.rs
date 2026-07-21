@@ -64,8 +64,8 @@ pub(crate) use values::transition_property_canonical;
 pub(crate) use values::time_list_valid;
 pub(crate) use values::single_transition_property_valid;
 pub(crate) use values::{
-    grid_area_valid, grid_line_canonical, grid_line_shorthand_valid, grid_line_valid,
-    grid_template_track_canonical, grid_template_track_valid,
+    grid_area_valid, grid_auto_track_valid, grid_line_canonical, grid_line_shorthand_valid,
+    grid_line_valid, grid_template_track_canonical, grid_template_track_valid,
 };
 pub(crate) use values::font_variant_valid;
 pub(crate) use values::font_style_valid;

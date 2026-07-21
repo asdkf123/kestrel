@@ -920,6 +920,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Declaration { important: false, name: "flex-basis".to_string(), value: basis },
             ]
         }
+        // grid-auto-columns/rows(§CSS Grid): <track-size>+. 검증만, 유효 시 원문 보존.
+        "grid-auto-columns" | "grid-auto-rows" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::grid_auto_track_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // grid-template-areas 는 <string>+ 문법 → 원문 보존, 레이아웃이 파싱.
         "grid-template-areas" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
@@ -1335,7 +1346,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "hyphenate-character" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
-        | "grid-auto-flow" | "grid-auto-columns" | "break-before" | "break-after"
+        | "grid-auto-flow" | "break-before" | "break-after"
         | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
         | "column-span" | "column-fill" | "column-rule-style" | "caret-shape"
         | "unicode-bidi" | "border-image-repeat"

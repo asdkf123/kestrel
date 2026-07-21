@@ -4202,6 +4202,30 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// grid-auto-columns/rows 값(§CSS Grid): <track-size>+. line-names·repeat·최상위
+// 콤마/슬래시 불가.
+pub fn grid_auto_track_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.is_empty() {
+        return false;
+    }
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            ',' | '/' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    let comps = split_grid_components(s);
+    !comps.is_empty()
+        && comps.iter().all(|c| {
+            let t = c.trim();
+            !t.starts_with('[') && track_size_valid(t)
+        })
+}
+
 // grid-template-columns/rows 캐논: 빈 [] line-names 제거, repeat 몸통 재귀 정규화.
 pub fn grid_template_track_canonical(raw: &str) -> String {
     let s = raw.trim();
