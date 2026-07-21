@@ -225,6 +225,12 @@ impl Interp {
                 return s;
             }
         }
+        // hsl/hwb 지정값: none 채널이 있으면 modern 형태로 캐논(rgb 변환 불가).
+        if rl.starts_with("hsl(") || rl.starts_with("hsla(") || rl.starts_with("hwb(") {
+            if let Some(s) = crate::css::normalize_hsl_hwb(raw) {
+                return s;
+            }
+        }
         // content 의 단일 문자열 토큰은 CSSOM 문자열 직렬화 — 항상 큰따옴표로(§CSSOM
         // "serialize a string"). content: 'x' 도 "x" 가 된다.
         if prop == "content" {

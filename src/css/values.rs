@@ -2331,6 +2331,66 @@ pub fn normalize_lab_like(raw: &str) -> Option<String> {
     Some(format!("{}({} {} {}{})", name, l, c1, c2, alpha_part))
 }
 
+// hsl()/hsla()/hwb() 지정값 캐논 — 단, none 채널이 있을 때만(8bit 색 모델이 none 을
+// 못 담아 rgb 변환이 불가하므로 modern 형태로 유지). H 각도→도, S/L(W/B) % 제거,
+// hsla→hsl, alpha [0,1] 클램프·1 생략. none 없으면 None(기존 rgb 변환 경로가 처리).
+pub fn normalize_hsl_hwb(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if !t.ends_with(')') {
+        return None;
+    }
+    let low = t.to_ascii_lowercase();
+    let name = if low.starts_with("hsl(") || low.starts_with("hsla(") {
+        "hsl"
+    } else if low.starts_with("hwb(") {
+        "hwb"
+    } else {
+        return None;
+    };
+    if !low.contains("none") {
+        return None;
+    }
+    let open = t.find('(')?;
+    let toks = color_tokens(&t[open + 1..t.len() - 1]);
+    if toks.len() < 3 {
+        return None;
+    }
+    let nc = crate::style::num_css;
+    let h = if toks[0].eq_ignore_ascii_case("none") {
+        "none".to_string()
+    } else {
+        nc(crate::style::angle_token_deg(&toks[0]).or_else(|| toks[0].parse::<f32>().ok())?)
+    };
+    // S/L(또는 W/B): % 제거해 수로(none 유지).
+    let ch = |s: &str| -> Option<String> {
+        if s.eq_ignore_ascii_case("none") {
+            return Some("none".to_string());
+        }
+        let v = s.strip_suffix('%').unwrap_or(s).parse::<f32>().ok()?;
+        Some(nc(v))
+    };
+    let c1 = ch(&toks[1])?;
+    let c2 = ch(&toks[2])?;
+    let alpha_part = match toks.iter().position(|x| x == "/").and_then(|p| toks.get(p + 1)) {
+        None => String::new(),
+        Some(a) if a.eq_ignore_ascii_case("none") => " / none".to_string(),
+        Some(a) => {
+            let av = if let Some(p) = a.strip_suffix('%') {
+                p.parse::<f32>().ok()? / 100.0
+            } else {
+                a.parse::<f32>().ok()?
+            };
+            let ac = av.clamp(0.0, 1.0);
+            if ac == 1.0 {
+                String::new()
+            } else {
+                format!(" / {}", nc(ac))
+            }
+        }
+    };
+    Some(format!("{}({} {} {}{})", name, h, c1, c2, alpha_part))
+}
+
 pub fn normalize_color_mix(raw: &str) -> Option<String> {
     let low = raw.trim().to_ascii_lowercase();
     if !low.starts_with("color-mix(") || !low.ends_with(')') {
