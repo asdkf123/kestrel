@@ -308,6 +308,10 @@ impl Interp {
                 return crate::css::timing_function_canonical(raw);
             }
         }
+        // transition-property(§CSS Transitions): all 키워드만 소문자화, custom-ident 보존.
+        if prop == "transition-property" && crate::css::transition_property_valid(raw) {
+            return crate::css::transition_property_canonical(raw);
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
@@ -388,6 +392,7 @@ impl Interp {
                     | "box-shadow"
                     | "transition-timing-function"
                     | "animation-timing-function"
+                    | "transition-property"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

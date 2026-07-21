@@ -2285,6 +2285,57 @@ pub fn cursor_valid(raw: &str) -> bool {
     true
 }
 
+// transition-property 유효성(§CSS Transitions): none | <custom-ident>#.
+// 각 항목은 유효 식별자(all 포함)이고 none/CSS-wide 키워드/default 는 항목이 될 수 없다.
+pub fn transition_property_valid(raw: &str) -> bool {
+    let whole = raw.trim().to_ascii_lowercase();
+    if whole == "none" {
+        return true;
+    }
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    let is_ident = |s: &str| {
+        let mut ch = s.chars();
+        let start = |c: char| c.is_ascii_alphabetic() || c == '-' || c == '_' || (c as u32) >= 0x80;
+        match ch.next() {
+            Some(c0) if start(c0) => {}
+            _ => return false,
+        }
+        s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || (c as u32) >= 0x80)
+    };
+    items.iter().all(|item| {
+        let t = item.trim();
+        let low = t.to_ascii_lowercase();
+        !matches!(
+            low.as_str(),
+            "none" | "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "default"
+        ) && is_ident(t)
+    })
+}
+
+// transition-property 캐논 직렬화: all 키워드만 소문자화, custom-ident 는 대소문자 보존.
+pub fn transition_property_canonical(raw: &str) -> String {
+    let whole = raw.trim();
+    if whole.eq_ignore_ascii_case("none") {
+        return "none".to_string();
+    }
+    split_top_commas(raw)
+        .iter()
+        .map(|item| {
+            let t = item.trim();
+            if t.eq_ignore_ascii_case("all") {
+                "all".to_string()
+            } else {
+                t.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // <easing-function> 하나가 유효한가(§CSS Easing). keyword/cubic-bezier/steps/linear().
 fn single_easing_valid(s: &str) -> bool {
     let low = s.trim().to_ascii_lowercase();

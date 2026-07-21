@@ -50,6 +50,8 @@ pub(crate) use values::normalize_font_size_adjust;
 pub(crate) use values::caret_color_valid;
 pub(crate) use values::caret_color_computed;
 pub(crate) use values::timing_function_valid;
+pub(crate) use values::transition_property_valid;
+pub(crate) use values::transition_property_canonical;
 pub(crate) use values::timing_function_canonical;
 pub(crate) use values::cursor_valid;
 pub(crate) use values::normalize_hyphenate_limit_chars;

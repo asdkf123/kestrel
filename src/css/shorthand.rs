@@ -234,6 +234,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // transition-property(§CSS Transitions): none | <custom-ident>#. 항목별 유효
+        // 식별자 검증(none/CSS-wide/default 항목 거부). CSS-wide 전체값은 통과.
+        "transition-property" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::transition_property_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // box-sizing(§CSS Sizing): content-box | border-box 만. 그 외(auto/fill-box/
         // margin-box/두값 등) 거부. CSS-wide 통과.
         "box-sizing" => {
@@ -586,7 +600,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // transition/animation 롱핸드: 원문 보존(애니메이션은 미구현이지만 계산값은
         // 정규화해 돌려준다 — collect_computed_styles 가 시간(ms→s)·목록 간격을 정규화).
-        "transition-property" | "transition-duration" | "transition-delay"
+        "transition-duration" | "transition-delay"
         | "transition-behavior"
         | "animation-name" | "animation-duration" | "animation-delay"
         | "animation-iteration-count"
