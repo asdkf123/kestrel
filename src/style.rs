@@ -1951,7 +1951,7 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "mask-image" | "offset-path" => "none",
         "mask-repeat" => "repeat",
         "mask-position" => "0% 0%",
-        "mask-size" | "offset-rotate" | "offset-anchor" | "place-self" => "auto",
+        "mask-size" | "offset-rotate" | "offset-anchor" | "offset-position" | "place-self" => "auto",
         "mask-origin" | "mask-clip" => "border-box",
         "mask-composite" => "add",
         "mask-mode" => "match-source",

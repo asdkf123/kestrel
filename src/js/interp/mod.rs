@@ -9050,10 +9050,17 @@ impl Interp {
                 return Some(crate::style::num_css(v));
             }
         }
+        // offset-rotate: [auto|reverse] <angle>. 같은 키워드면 각도 lerp.
+        if dash_prop == "offset-rotate" {
+            if let Some(v) = Self::interp_offset_rotate(from, to, eased) {
+                return Some(v);
+            }
+        }
         // 위치 프로퍼티: 다중 레이어 + 혼합 단위(% ↔ px → calc) 보간.
         if matches!(
             dash_prop,
             "background-position" | "object-position" | "mask-position" | "-webkit-mask-position"
+                | "offset-position" | "offset-anchor"
         ) {
             if let Some(v) = Self::interp_position(from, to, eased) {
                 return Some(v);
@@ -9626,6 +9633,41 @@ impl Interp {
             return Some(crate::style::normalize_scale(&format!("{} {} {}", r[0], r[1], r[2])));
         }
         Self::add_css_values(base, kf)
+    }
+
+    // offset-rotate 보간(§CSS Motion). "[auto|reverse] <angle>". 키워드가 같으면(둘 다
+    // 없거나 같은 키워드) 각도를 lerp. 키워드가 다르면 불연속(None). calc 각도는 미지원.
+    fn interp_offset_rotate(from: &str, to: &str, t: f32) -> Option<String> {
+        let parse = |s: &str| -> Option<(Option<&'static str>, f32)> {
+            let mut kw: Option<&'static str> = None;
+            let mut ang: Option<f32> = None;
+            for tok in s.split_whitespace() {
+                match tok {
+                    "auto" => kw = Some("auto"),
+                    "reverse" => kw = Some("reverse"),
+                    _ => {
+                        if ang.is_some() {
+                            return None;
+                        }
+                        ang = Some(crate::style::angle_token_deg(tok)?);
+                    }
+                }
+            }
+            if kw.is_none() && ang.is_none() {
+                return None;
+            }
+            Some((kw, ang.unwrap_or(0.0)))
+        };
+        let (fk, fa) = parse(from)?;
+        let (tk, ta) = parse(to)?;
+        if fk != tk {
+            return None;
+        }
+        let a = format!("{}deg", crate::style::num_css(fa + (ta - fa) * t));
+        Some(match fk {
+            Some(k) => format!("{k} {a}"),
+            None => a,
+        })
     }
 
     // rotate 프로퍼티 보간(§CSS Transforms 2). "[x y z] angle" 를 (축, 각도) 로.

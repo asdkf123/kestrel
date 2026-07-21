@@ -176,7 +176,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     // mask / offset / scroll / contain-intrinsic
     "mask-image", "mask-repeat", "mask-position", "mask-size", "mask-origin", "mask-clip",
     "mask-composite", "mask-mode", "offset-path", "offset-distance", "offset-rotate",
-    "offset-anchor", "scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom",
+    "offset-anchor", "offset-position", "scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom",
     "scroll-margin-left", "scroll-padding-top", "scroll-padding-right",
     "scroll-padding-bottom", "scroll-padding-left", "scroll-snap-stop", "place-self",
     "contain-intrinsic-width", "contain-intrinsic-height",

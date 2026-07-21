@@ -421,7 +421,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
         | "border-inline-end-style" | "mask-image" | "mask-repeat" | "mask-position"
         | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
-        | "offset-path" | "offset-rotate" | "offset-anchor" | "scroll-snap-stop"
+        | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position" | "scroll-snap-stop"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
         | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
