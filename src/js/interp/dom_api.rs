@@ -877,6 +877,12 @@ impl Interp {
                     | "flex-shrink"
                     | "view-transition-name"
                     | "view-transition-class"
+                    | "border-block-start-color"
+                    | "border-block-end-color"
+                    | "border-inline-start-color"
+                    | "border-inline-end-color"
+                    | "border-block-color"
+                    | "border-inline-color"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

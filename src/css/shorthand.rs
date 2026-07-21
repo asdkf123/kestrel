@@ -1944,12 +1944,37 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 키워드로 보존.
         "fill" | "stroke" | "stop-color" | "flood-color" | "lighting-color"
         | "text-emphasis-color"
-        | "-webkit-text-fill-color" | "-webkit-text-stroke-color"
-        | "border-block-start-color" | "border-block-end-color"
-        | "border-inline-start-color" | "border-inline-end-color" => {
+        | "-webkit-text-fill-color" | "-webkit-text-stroke-color" => {
             let value = match interpret_value(value_text.trim()) {
                 Some(v @ Value::Color(_)) => v,
                 _ => Value::Keyword(value_text.trim().to_string()),
+            };
+            vec![Declaration { important: false, name: name.to_string(), value }]
+        }
+        // border-*-color 논리 롱핸드(§CSS Logical): 단일 <color>. border-{block,inline}
+        // -color 는 <color>{1,2}. 검증 후 색은 Value, 무효는 거부.
+        "border-block-start-color" | "border-block-end-color"
+        | "border-inline-start-color" | "border-inline-end-color"
+        | "border-block-color" | "border-inline-color" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let is_pair = name == "border-block-color" || name == "border-inline-color";
+            let toks = split_top_level(value_text);
+            let ok = if is_pair {
+                !toks.is_empty() && toks.len() <= 2 && toks.iter().all(|t| crate::css::single_color_valid(t))
+            } else {
+                crate::css::single_color_valid(value_text)
+            };
+            if !ok {
+                return Vec::new();
+            }
+            // 단일 색은 Value 로, 쌍은 원문 보존.
+            let value = if !is_pair {
+                interpret_value(value_text.trim()).unwrap_or_else(|| Value::Keyword(value_text.trim().to_string()))
+            } else {
+                Value::Keyword(value_text.trim().to_string())
             };
             vec![Declaration { important: false, name: name.to_string(), value }]
         }
