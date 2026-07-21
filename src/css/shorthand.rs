@@ -1300,7 +1300,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // text-decoration[-line]: line 키워드 + 색 추출 (style/thickness 는 미사용).
         // none/키워드 없음 → "none". 인라인 레이아웃이 밑줄/취소선/윗줄로 그린다.
-        "text-decoration" | "text-decoration-line" => {
+        // text-decoration-line(§CSS Text Decor): 검증 + 표준 순서 캐논.
+        "text-decoration-line" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::text_decoration_line_valid(value_text) {
+                return Vec::new();
+            }
+            let canon = crate::css::normalize_text_decoration_line(value_text).unwrap_or(low);
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }]
+        }
+        "text-decoration" => {
             let is_shorthand = name == "text-decoration";
             let mut lines: Vec<&str> = Vec::new();
             let mut style: Option<&str> = None;
@@ -1379,6 +1391,37 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (name == "column-width" && crate::css::column_width_valid(value_text))
                 || (name == "column-rule-width" && crate::css::column_rule_width_valid(value_text));
             if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-decoration-skip-ink(§CSS Text Decor 4): auto | none | all.
+        "text-decoration-skip-ink" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "auto" | "none" | "all" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-decoration-skip-spaces(§CSS Text Decor 4): none | all | [ start || end ].
+        "text-decoration-skip-spaces" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::text_decoration_skip_spaces_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // widows/orphans(§CSS Fragmentation): <integer [1,∞]>.
+        "widows" | "orphans" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::positive_integer_valid(value_text)
+            {
                 vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
@@ -1529,7 +1572,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
-        | "text-decoration-skip-ink" | "line-break"
+        | "line-break"
         | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing"
         | "font-variant-ligatures"

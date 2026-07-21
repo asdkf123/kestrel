@@ -4217,6 +4217,59 @@ fn nonneg_length(t: &str) -> bool {
     is_length_percentage(t)
 }
 
+// text-decoration-line(§CSS Text Decor): none | spelling-error | grammar-error |
+// [ underline || overline || line-through || blink ]. 단독형은 조합 불가.
+pub fn text_decoration_line_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "none" | "spelling-error" | "grammar-error") {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() {
+        return false;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for t in toks {
+        if !matches!(t, "underline" | "overline" | "line-through" | "blink") {
+            return false;
+        }
+        if seen.contains(&t) {
+            return false;
+        }
+        seen.push(t);
+    }
+    true
+}
+
+// text-decoration-skip-spaces(§CSS Text Decor 4): none | all | [ start || end ].
+pub fn text_decoration_skip_spaces_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "none" | "all") {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 2 {
+        return false;
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for t in toks {
+        if !matches!(t, "start" | "end") {
+            return false;
+        }
+        if seen.contains(&t) {
+            return false;
+        }
+        seen.push(t);
+    }
+    true
+}
+
+// widows/orphans(§CSS Fragmentation): <integer [1,∞]>.
+pub fn positive_integer_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    is_math_fn(&low) || matches!(low.parse::<i64>(), Ok(n) if n >= 1)
+}
+
 // will-change(§CSS Will Change): auto | [ scroll-position | contents | <custom-ident> ]#.
 // custom-ident 는 CSS-wide·default·will-change·none·all·auto 제외. 항목당 단일 토큰.
 pub fn will_change_valid(raw: &str) -> bool {

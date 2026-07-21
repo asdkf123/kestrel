@@ -773,6 +773,11 @@ impl Interp {
                     | "column-rule-color"
                     | "column-rule"
                     | "will-change"
+                    | "text-decoration-line"
+                    | "text-decoration-skip-ink"
+                    | "text-decoration-skip-spaces"
+                    | "widows"
+                    | "orphans"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
