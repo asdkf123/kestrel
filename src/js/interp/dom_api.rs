@@ -1580,6 +1580,71 @@ impl Interp {
                 }
                 Ok(())
             }
+            // outerText 대입: 요소 **자신**을 텍스트로 교체(§HTML). 줄바꿈(\r\n,\r,\n)→
+            // <br>, 빈 문자열은 빈 텍스트 노드 하나. 앞/뒤 텍스트 노드와만 경계 병합
+            // (전체 정규화 아님). 부모가 없으면 NoModificationAllowedError.
+            "outerText" => {
+                let Some(parent) = dom.get(id).parent else {
+                    return Err(self.throw_dom(
+                        "NoModificationAllowedError",
+                        "outerText: 부모 없는 요소는 교체할 수 없다",
+                    ));
+                };
+                let idx = dom.get(parent).children.iter().position(|&c| c == id).unwrap_or(0);
+                let norm = text.replace("\r\n", "\n").replace('\r', "\n");
+                let mut new_nodes: Vec<crate::dom::NodeId> = Vec::new();
+                if norm.is_empty() {
+                    new_nodes.push(dom.create_text(String::new()));
+                } else {
+                    for (i, seg) in norm.split('\n').enumerate() {
+                        if i > 0 {
+                            new_nodes.push(dom.create_element("br"));
+                        }
+                        if !seg.is_empty() {
+                            new_nodes.push(dom.create_text(seg.to_string()));
+                        }
+                    }
+                }
+                let is_text = |d: &crate::dom::Dom, n: crate::dom::NodeId| {
+                    matches!(d.get(n).node_type, crate::dom::NodeType::Text(_))
+                };
+                let text_of = |d: &crate::dom::Dom, n: crate::dom::NodeId| match &d.get(n).node_type {
+                    crate::dom::NodeType::Text(t) => t.clone(),
+                    _ => String::new(),
+                };
+                // 경계 병합: 첫 new 텍스트를 이전 형제(텍스트)와, 마지막 new 텍스트를 다음
+                // 형제(텍스트)와 이어붙이고, 그 형제들을 splice 범위에 포함시켜 제거.
+                let prev = if idx > 0 { dom.get(parent).children.get(idx - 1).copied() } else { None };
+                let next = dom.get(parent).children.get(idx + 1).copied();
+                let mut start = idx;
+                let mut end = idx + 1;
+                if let (Some(p), Some(&f)) = (prev, new_nodes.first()) {
+                    if is_text(dom, p) && is_text(dom, f) {
+                        let pd = text_of(dom, p);
+                        if let crate::dom::NodeType::Text(t) = &mut dom.get_mut(f).node_type {
+                            *t = pd + t;
+                        }
+                        dom.get_mut(p).parent = None;
+                        start = idx - 1;
+                    }
+                }
+                if let (Some(nx), Some(&l)) = (next, new_nodes.last()) {
+                    if is_text(dom, nx) && is_text(dom, l) {
+                        let nd = text_of(dom, nx);
+                        if let crate::dom::NodeType::Text(t) = &mut dom.get_mut(l).node_type {
+                            t.push_str(&nd);
+                        }
+                        dom.get_mut(nx).parent = None;
+                        end = idx + 2;
+                    }
+                }
+                dom.get_mut(id).parent = None;
+                for &nn in &new_nodes {
+                    dom.get_mut(nn).parent = Some(parent);
+                }
+                dom.get_mut(parent).children.splice(start..end, new_nodes.iter().copied());
+                Ok(())
+            }
             "innerHTML" => {
                 // 조각 파싱 (관용 파서) → 자식 교체
                 dom.clear_children(id);
