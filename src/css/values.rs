@@ -55,6 +55,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
     }
     if lower.starts_with("hwb(") {
+        if !hwb_valid(&lower) {
+            return None;
+        }
         if let Some(v) = parse_hsl_hwb_none(&lower) {
             return Some(v);
         }

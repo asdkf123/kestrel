@@ -1394,19 +1394,30 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             vec![Declaration { important: false, name: "content".to_string(), value: Value::Keyword(unquoted) }]
         }
         // opacity: 0..1 수 또는 퍼센트(50%). 단위 없는 수(Number)로 저장.
+        // opacity(§CSS Color): <number> | <percentage>. 무효(auto/길이/다값) 거부,
+        // 계산 불가하지만 문법 유효한 calc(%) 는 지정값 보존.
         "opacity" => {
             let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(low) }];
+            }
+            // 순수 수(단위 없음) 또는 퍼센트만 계산. 단위 붙은 값(10px)은 거부.
             let n = if let Some(p) = v.strip_suffix('%') {
                 p.trim().parse::<f32>().ok().map(|x| x / 100.0)
             } else {
-                // 직접 파싱 실패 시 수학 함수(clamp(0,sign(1),1) 등) 평가.
-                number_or_math(v)
+                v.parse::<f32>().ok()
             };
             match n {
                 Some(op) => vec![Declaration { important: false,
                     name: "opacity".to_string(),
                     value: Value::Length(op.clamp(0.0, 1.0), Unit::Number),
                 }],
+                // 순수 수·퍼센트·수학함수만 유효(단위·키워드·다값 거부).
+                None if (low.ends_with(')') && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("].iter().any(|p| low.starts_with(p)))
+                    || v.strip_suffix('%').map(|p| p.trim().parse::<f64>().is_ok()).unwrap_or(false) => {
+                    vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(v.to_string()) }]
+                }
                 None => Vec::new(),
             }
         }
