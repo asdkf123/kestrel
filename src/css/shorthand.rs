@@ -780,13 +780,44 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // gap: <row-gap> [<column-gap>]. 값이 둘이면 일반 값 파서가 None 을 돌려주고
         // 선언이 통째로 사라져서 간격이 0 이 됐다. longhand 로 쪼갠다.
         // 한 값이어도 longhand 를 함께 내보내 소비자가 어느 쪽을 읽든 맞게 한다.
+        // gap(§CSS Box Alignment): <row-gap> [<column-gap>]. 각 normal|<length-percentage
+        // 0+>. 음수·단위없는·none·max-content·3값·슬래시 거부.
         "gap" => {
-            let toks = split_top_level(value_text);
-            let Some(r) = toks.first().copied() else { return Vec::new() };
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { important: false, name: "row-gap".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "column-gap".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            let toks = split_top_level(value_text.trim());
+            if toks.is_empty() || toks.len() > 2 || !toks.iter().all(|t| crate::css::gap_value_valid(t)) {
+                return Vec::new();
+            }
+            let r = toks[0];
             let c = toks.get(1).copied().unwrap_or(r);
             let mut out = expand_declaration("row-gap", r);
             out.extend(expand_declaration("column-gap", c));
             out
+        }
+        // row-gap/column-gap(§CSS Box Alignment): normal | <length-percentage 0+>.
+        "row-gap" | "column-gap" | "grid-row-gap" | "grid-column-gap" => {
+            let phys = name.strip_prefix("grid-").unwrap_or(name);
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = split_top_level(value_text.trim());
+            if toks.len() != 1 || !crate::css::gap_value_valid(toks[0]) {
+                return Vec::new();
+            }
+            if toks[0].eq_ignore_ascii_case("normal") {
+                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword("normal".to_string()) }];
+            }
+            match interpret_value(toks[0]) {
+                Some(v) => vec![Declaration { important: false, name: phys.to_string(), value: v }],
+                None => Vec::new(),
+            }
         }
         // overflow: <x> [<y>] (CSS Overflow §3). 두 값이면 선언이 사라져 visible 이 됐다.
         // overflow-x/overflow-y(§CSS Overflow): 단일 키워드만. 두값·미인식 거부.

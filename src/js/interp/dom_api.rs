@@ -616,6 +616,12 @@ impl Interp {
                     | "place-items"
                     | "place-content"
                     | "place-self"
+                    | "gap"
+                    | "row-gap"
+                    | "column-gap"
+                    | "grid-gap"
+                    | "grid-row-gap"
+                    | "grid-column-gap"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

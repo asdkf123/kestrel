@@ -2581,6 +2581,18 @@ fn is_math_fn(low: &str) -> bool {
             .any(|p| low.starts_with(p))
 }
 
+// row-gap/column-gap 값(§CSS Box Alignment): normal | <length-percentage>(비음수).
+pub fn gap_value_valid(tok: &str) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if low == "normal" {
+        return true;
+    }
+    if is_math_fn(&low) {
+        return !(low.contains("deg") || low.contains("rad") || low.contains("turn"));
+    }
+    is_length_percentage(&low) && !low.starts_with('-')
+}
+
 // scroll-margin 값(§CSS Scroll Snap): <length>(부호 무관, % 없음, auto 없음).
 pub fn scroll_margin_valid(tok: &str) -> bool {
     let low = tok.trim().to_ascii_lowercase();

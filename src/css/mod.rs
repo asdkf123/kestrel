@@ -78,6 +78,7 @@ pub(crate) use values::contain_computed;
 pub(crate) use values::inset_length_valid;
 pub(crate) use values::inset_pair_canonical;
 pub(crate) use values::scroll_margin_valid;
+pub(crate) use values::gap_value_valid;
 pub(crate) use values::scroll_padding_valid;
 pub(crate) use values::box_canonical;
 pub(crate) use values::scroll_snap_type_valid;
