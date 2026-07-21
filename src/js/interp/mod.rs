@@ -9174,6 +9174,30 @@ impl Interp {
                 return Some(format!("oblique {}deg", crate::style::num_css(a)));
             }
         }
+        // font-size-adjust: [metric] <number>. 같은 metric 이면 수 보간(비음수), 기본
+        // metric(ex-height)은 생략. none 등은 아래 generic(불연속).
+        if dash_prop == "font-size-adjust" {
+            let p = |s: &str| -> Option<(String, f32)> {
+                let toks: Vec<&str> = s.split_whitespace().collect();
+                match toks.len() {
+                    1 if toks[0] != "none" => {
+                        toks[0].parse::<f32>().ok().map(|n| ("ex-height".to_string(), n))
+                    }
+                    2 => toks[1].parse::<f32>().ok().map(|n| (toks[0].to_string(), n)),
+                    _ => None,
+                }
+            };
+            if let (Some((m1, n1)), Some((m2, n2))) = (p(from), p(to)) {
+                if m1 == m2 {
+                    let n = (n1 + (n2 - n1) * eased).max(0.0);
+                    return Some(if m1 == "ex-height" {
+                        crate::style::num_css(n)
+                    } else {
+                        format!("{} {}", m1, crate::style::num_css(n))
+                    });
+                }
+            }
+        }
         // font-stretch: normal/named 키워드를 %로 변환해 보간(§CSS Fonts, 계산값도 %).
         if dash_prop == "font-stretch" {
             let kw = |s: &str| -> String {
@@ -9804,6 +9828,29 @@ impl Interp {
     // 개별 transform 프로퍼티 합성(§CSS Transforms 2). scale 은 add=성분별 곱,
     // accumulate=(a-1)+(b-1)+1. 그 외는 add_css_values(같은 단위 수치 합).
     pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        // font-size-adjust: [metric] <number>. 같은 metric 이면 수 합산. 기본 metric
+        // (ex-height)은 계산값에서 생략.
+        if dash == "font-size-adjust" {
+            let parse = |s: &str| -> Option<(String, f32)> {
+                let toks: Vec<&str> = s.split_whitespace().collect();
+                match toks.len() {
+                    1 => toks[0].parse::<f32>().ok().map(|n| ("ex-height".to_string(), n)),
+                    2 => toks[1].parse::<f32>().ok().map(|n| (toks[0].to_string(), n)),
+                    _ => None,
+                }
+            };
+            let (m1, n1) = parse(base)?;
+            let (m2, n2) = parse(kf)?;
+            if m1 != m2 {
+                return None; // metric 다르면 불연속
+            }
+            let sum = n1 + n2;
+            return Some(if m1 == "ex-height" {
+                crate::style::num_css(sum)
+            } else {
+                format!("{} {}", m1, crate::style::num_css(sum))
+            });
+        }
         if matches!(dash, "transform-origin" | "perspective-origin") {
             // 성분별 길이 합(add/accumulate 동일). px 만 지원(빠진 축은 0px).
             let nums = |s: &str| -> Option<Vec<f32>> {
