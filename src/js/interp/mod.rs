@@ -9174,6 +9174,18 @@ impl Interp {
                 return Some(format!("oblique {}deg", crate::style::num_css(a)));
             }
         }
+        // font-size: px/절대 키워드(large 등)를 px 로 해석해 보간(비음수). em/rem 은 이미
+        // resolve_font_units 로 px. %/그 외는 아래 generic.
+        if dash_prop == "font-size" {
+            let px = |s: &str| -> Option<f32> {
+                Self::font_size_kw_px(s)
+                    .or_else(|| s.trim().strip_suffix("px").and_then(|n| n.parse::<f32>().ok()))
+            };
+            if let (Some(f), Some(t)) = (px(from), px(to)) {
+                let v = (f + (t - f) * eased).max(0.0);
+                return Some(format!("{}px", crate::style::num_css(v)));
+            }
+        }
         // font-size-adjust: [metric] <number>. 같은 metric 이면 수 보간(비음수), 기본
         // metric(ex-height)은 생략. none 등은 아래 generic(불연속).
         if dash_prop == "font-size-adjust" {
@@ -9827,7 +9839,32 @@ impl Interp {
 
     // 개별 transform 프로퍼티 합성(§CSS Transforms 2). scale 은 add=성분별 곱,
     // accumulate=(a-1)+(b-1)+1. 그 외는 add_css_values(같은 단위 수치 합).
+    // font-size 절대 키워드 → px(브라우저 절대 크기 테이블, medium=16). 그 외 None.
+    fn font_size_kw_px(s: &str) -> Option<f32> {
+        Some(match s.trim() {
+            "xx-small" => 9.0,
+            "x-small" => 10.0,
+            "small" => 13.0,
+            "medium" => 16.0,
+            "large" => 18.0,
+            "x-large" => 24.0,
+            "xx-large" => 32.0,
+            "xxx-large" => 48.0,
+            _ => return None,
+        })
+    }
+
     pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        // font-size: px/키워드(large 등)를 px 로 해석해 합산.
+        if dash == "font-size" {
+            let px = |s: &str| -> Option<f32> {
+                Self::font_size_kw_px(s)
+                    .or_else(|| s.trim().strip_suffix("px").and_then(|n| n.parse::<f32>().ok()))
+            };
+            if let (Some(b), Some(k)) = (px(base), px(kf)) {
+                return Some(format!("{}px", crate::style::num_css(b + k)));
+            }
+        }
         // font-variation-settings/font-feature-settings: 축(태그, 수)별 합산(같은 태그).
         if matches!(dash, "font-variation-settings" | "font-feature-settings") {
             let parse = |s: &str| -> Option<Vec<(String, f32)>> {
