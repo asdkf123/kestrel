@@ -238,8 +238,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         //   <grid-template>
         //   | <rows> / [ auto-flow && dense? ] <auto-columns>?
         //   | [ auto-flow && dense? ] <auto-rows>? / <columns>
-        // 문자열 템플릿 형식은 미구현이라 따옴표가 있으면 건너뛴다(회귀 방지).
-        "grid" if !value_text.contains('"') && !value_text.contains('\'') => {
+        "grid" => {
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             let six = |tr: &str, tc: &str, ta: &str, ar: &str, ac: &str, af: &str| {
@@ -254,9 +253,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return six(&low, &low, &low, &low, &low, &low);
-            }
-            if low == "none" {
-                return six("none", "none", "none", "auto", "auto", "row");
             }
             // auto-flow 쪽 파싱: auto-flow 와 dense(순서 무관) 후 나머지는 auto 트랙.
             let parse_af = |s: &str| -> Option<(bool, String)> {
@@ -284,22 +280,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Some((dense, track))
             };
             let parts = split_top_slash_pub(v);
+            let first_is_af = |s: &str| {
+                s.split_whitespace()
+                    .next()
+                    .map(|t| t.eq_ignore_ascii_case("auto-flow") || t.eq_ignore_ascii_case("dense"))
+                    .unwrap_or(false)
+            };
             if parts.len() == 2 {
                 let (l, r) = (parts[0].trim(), parts[1].trim());
-                let l_af = l.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("auto-flow")).unwrap_or(false)
-                    || l.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("dense")).unwrap_or(false);
-                let r_af = r.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("auto-flow")).unwrap_or(false)
-                    || r.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("dense")).unwrap_or(false);
-                if !l_af && !r_af {
-                    // <rows> / <columns>
-                    if !l.is_empty() && !r.is_empty() && crate::css::grid_template_track_valid(l) && crate::css::grid_template_track_valid(r) {
-                        return six(
-                            &crate::css::grid_template_track_canonical(l),
-                            &crate::css::grid_template_track_canonical(r),
-                            "none", "auto", "auto", "row",
-                        );
-                    }
-                } else if !l_af && r_af {
+                let (l_af, r_af) = (first_is_af(l), first_is_af(r));
+                if !l_af && r_af {
                     // <rows> / auto-flow [dense]? <auto-columns>?  → 방향 column
                     if !l.is_empty() && crate::css::grid_template_track_valid(l) {
                         if let Some((dense, ac)) = parse_af(r) {
@@ -307,6 +297,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                             return six(&crate::css::grid_template_track_canonical(l), "none", "none", "auto", &ac, af);
                         }
                     }
+                    return Vec::new();
                 } else if l_af && !r_af {
                     // auto-flow [dense]? <auto-rows>? / <columns>  → 방향 row
                     if !r.is_empty() && crate::css::grid_template_track_valid(r) {
@@ -315,14 +306,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                             return six("none", &crate::css::grid_template_track_canonical(r), "none", &ar, "auto", af);
                         }
                     }
+                    return Vec::new();
+                } else if l_af && r_af {
+                    return Vec::new(); // 양쪽 auto-flow 는 무효
                 }
             }
-            Vec::new()
+            // 그 외는 <grid-template> 형식(none | rows/cols | 문자열): auto-* 는 초기값.
+            match expand_grid_template_value(v) {
+                Some((r, c, a)) => six(&r, &c, &a, "auto", "auto", "row"),
+                None => Vec::new(),
+            }
         }
-        // grid-template 단축(§CSS Grid): none | <rows> / <columns>.
-        // 문자열 템플릿([names]? <string> <track>? [names]?)+ 형식은 아직 미구현이라
-        // 따옴표가 있으면 이 arm 을 건너뛰어 기존 동작을 유지한다(회귀 방지).
-        "grid-template" if !value_text.contains('"') && !value_text.contains('\'') => {
+        // grid-template 단축(§CSS Grid):
+        //   none | <rows> / <columns>
+        //   | [ <line-names>? <string> <track-size>? <line-names>? ]+ [ / <explicit-track-list> ]?
+        "grid-template" => {
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             let three = |r: &str, c: &str, a: &str| {
@@ -335,25 +333,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return three(&low, &low, &low);
             }
-            if low == "none" {
-                return three("none", "none", "none");
+            match expand_grid_template_value(v) {
+                Some((r, c, a)) => three(&r, &c, &a),
+                None => Vec::new(),
             }
-            let parts = split_top_slash_pub(v);
-            if parts.len() == 2 {
-                let (r, c) = (parts[0].trim(), parts[1].trim());
-                if !r.is_empty()
-                    && !c.is_empty()
-                    && crate::css::grid_template_track_valid(r)
-                    && crate::css::grid_template_track_valid(c)
-                {
-                    return three(
-                        &crate::css::grid_template_track_canonical(r),
-                        &crate::css::grid_template_track_canonical(c),
-                        "none",
-                    );
-                }
-            }
-            Vec::new()
         }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         // z-index: <integer> | auto. 직접 파싱 실패 시 수학 함수(abs/sign/round/…) 평가.
@@ -3363,6 +3346,228 @@ fn split_top_level(text: &str) -> Vec<&str> {
         out.push(&text[st..]);
     }
     out
+}
+
+// grid-template 토큰화: [..] · ".." · (..) 는 한 토큰으로 유지, 그 외 공백 분리.
+fn tokenize_grid_template(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut bracket = false;
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
+                out.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                quote = Some(c);
+                cur.push(c);
+            }
+            '[' => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                bracket = true;
+                cur.push(c);
+            }
+            ']' => {
+                cur.push(c);
+                bracket = false;
+                out.push(std::mem::take(&mut cur));
+            }
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 && !bracket => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// "..." 문자열이면 내부 셀 개수(공백 분리)를 돌려준다. 셀이 0이면 None.
+// 각 셀은 <custom-ident> 또는 하나 이상의 '.'(null 셀).
+fn grid_area_string_cells(tok: &str) -> Option<usize> {
+    let t = tok.trim();
+    let b = t.as_bytes();
+    if b.len() < 2 || (b[0] != b'"' && b[0] != b'\'') || b[b.len() - 1] != b[0] {
+        return None;
+    }
+    let inner = &t[1..t.len() - 1];
+    let cells: Vec<&str> = inner.split_whitespace().collect();
+    if cells.is_empty() {
+        return None;
+    }
+    for cell in &cells {
+        let is_null = cell.chars().all(|c| c == '.');
+        let is_ident = !cell.is_empty() && !is_null && crate::css::is_css_ident(cell);
+        if !is_null && !is_ident {
+            return None;
+        }
+    }
+    Some(cells.len())
+}
+
+// "..." 문자열 캐논: 셀을 공백 하나로 재결합.
+fn grid_area_string_canonical(tok: &str) -> String {
+    let t = tok.trim();
+    let inner = &t[1..t.len() - 1];
+    let cells: Vec<&str> = inner.split_whitespace().collect();
+    format!("\"{}\"", cells.join(" "))
+}
+
+// [..] 이면 내부 문자열(대괄호 제거)을 돌려준다.
+fn grid_bracket_inner(tok: &str) -> Option<&str> {
+    let t = tok.trim();
+    if t.starts_with('[') && t.ends_with(']') {
+        Some(&t[1..t.len() - 1])
+    } else {
+        None
+    }
+}
+
+// grid-template 문자열 템플릿 형식 파싱(§CSS Grid):
+//   [ <line-names>? <string> <track-size>? <line-names>? ]+ [ / <explicit-track-list> ]?
+// (rows, columns, areas) 캐논을 돌려준다. 문법 위반 시 None.
+fn expand_grid_template_strings(template_part: &str, columns_part: Option<&str>) -> Option<(String, String, String)> {
+    let tokens = tokenize_grid_template(template_part);
+    let mut slot_names: Vec<Vec<String>> = vec![Vec::new()];
+    let mut slot_groups: Vec<usize> = vec![0];
+    let mut strings: Vec<String> = Vec::new();
+    let mut tracks: Vec<Option<String>> = Vec::new();
+    let mut just_after_string = false;
+    let mut ncols: Option<usize> = None;
+    for tok in &tokens {
+        if let Some(inner) = grid_bracket_inner(tok) {
+            let idents: Vec<String> = inner.split_whitespace().map(|s| s.to_string()).collect();
+            for id in &idents {
+                if !crate::css::is_css_ident(id) {
+                    return None;
+                }
+            }
+            let cur = slot_names.len() - 1;
+            slot_names[cur].extend(idents);
+            slot_groups[cur] += 1;
+            just_after_string = false;
+        } else if tok.starts_with('"') || tok.starts_with('\'') {
+            let cells = grid_area_string_cells(tok)?;
+            match ncols {
+                Some(n) if n != cells => return None,
+                None => ncols = Some(cells),
+                _ => {}
+            }
+            strings.push(grid_area_string_canonical(tok));
+            tracks.push(None);
+            slot_names.push(Vec::new());
+            slot_groups.push(0);
+            just_after_string = true;
+        } else {
+            // track-size(문자열 뒤에서만, 행마다 하나). none 은 track-size 가 아니다.
+            if !just_after_string {
+                return None;
+            }
+            if tok.eq_ignore_ascii_case("none") || !crate::css::grid_template_track_valid(tok) {
+                return None;
+            }
+            let last = tracks.len() - 1;
+            if tracks[last].is_some() {
+                return None;
+            }
+            tracks[last] = Some(crate::css::grid_template_track_canonical(tok));
+            just_after_string = false;
+        }
+    }
+    if strings.is_empty() {
+        return None;
+    }
+    // line-names 그룹 수 제한: 경계(맨 앞/뒤) ≤1, 문자열 사이 ≤2.
+    let n = slot_names.len();
+    for (i, &gc) in slot_groups.iter().enumerate() {
+        let limit = if i == 0 || i == n - 1 { 1 } else { 2 };
+        if gc > limit {
+            return None;
+        }
+    }
+    // rows 직렬화: L0 T0 L1 T1 ... T(k-1) L(k). 빈 line-names 생략, track 기본 auto.
+    let mut parts: Vec<String> = Vec::new();
+    for i in 0..strings.len() {
+        if !slot_names[i].is_empty() {
+            parts.push(format!("[{}]", slot_names[i].join(" ")));
+        }
+        parts.push(tracks[i].clone().unwrap_or_else(|| "auto".to_string()));
+    }
+    if !slot_names[strings.len()].is_empty() {
+        parts.push(format!("[{}]", slot_names[strings.len()].join(" ")));
+    }
+    let rows = parts.join(" ");
+    let areas = strings.join(" ");
+    let columns = match columns_part {
+        None => "none".to_string(),
+        Some(c) => {
+            // 슬래시 뒤 columns 는 <explicit-track-list> — none 불가.
+            let c = c.trim();
+            if c.is_empty() || c.eq_ignore_ascii_case("none") || !crate::css::grid_template_track_valid(c) {
+                return None;
+            }
+            crate::css::grid_template_track_canonical(c)
+        }
+    };
+    Some((rows, columns, areas))
+}
+
+// grid-template 값(none | rows/cols | 문자열 템플릿) → (rows, columns, areas) 캐논.
+fn expand_grid_template_value(v: &str) -> Option<(String, String, String)> {
+    let low = v.trim().to_ascii_lowercase();
+    if low == "none" {
+        return Some(("none".to_string(), "none".to_string(), "none".to_string()));
+    }
+    let has_string = v.contains('"') || v.contains('\'');
+    let parts = split_top_slash_pub(v);
+    if !has_string {
+        // <rows> / <columns>
+        if parts.len() == 2 {
+            let (r, c) = (parts[0].trim(), parts[1].trim());
+            if !r.is_empty()
+                && !c.is_empty()
+                && crate::css::grid_template_track_valid(r)
+                && crate::css::grid_template_track_valid(c)
+            {
+                return Some((
+                    crate::css::grid_template_track_canonical(r),
+                    crate::css::grid_template_track_canonical(c),
+                    "none".to_string(),
+                ));
+            }
+        }
+        return None;
+    }
+    // 문자열 템플릿(슬래시로 columns 분리 가능, 최대 1개).
+    match parts.len() {
+        1 => expand_grid_template_strings(v, None),
+        2 => expand_grid_template_strings(parts[0].trim(), Some(parts[1].trim())),
+        _ => None,
+    }
 }
 
 // border-image-source 토큰인가: none 또는 <image>(url()/그래디언트/image-set 등).
