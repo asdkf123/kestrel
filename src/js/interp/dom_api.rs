@@ -344,6 +344,27 @@ impl Interp {
         if prop == "scroll-snap-type" && crate::css::scroll_snap_type_valid(raw) {
             return crate::css::scroll_snap_type_canonical(raw);
         }
+        // flex 단축(§CSS Flexbox): grow shrink basis 로 재구성(1→1 1 0%, none→0 0 auto).
+        if prop == "flex" {
+            let low = raw.trim().to_ascii_lowercase();
+            if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                let d = crate::css::expand_decl_pub("flex", raw);
+                if d.len() == 3 {
+                    let get = |n: &str| {
+                        d.iter()
+                            .find(|x| x.name == n)
+                            .map(|x| crate::style::computed_value_string(&x.value))
+                            .unwrap_or_default()
+                    };
+                    return format!(
+                        "{} {} {}",
+                        get("flex-grow"),
+                        get("flex-shrink"),
+                        get("flex-basis")
+                    );
+                }
+            }
+        }
         // scrollbar-gutter(§CSS Overflow): stable both-edges 순서로 캐논.
         if prop == "scrollbar-gutter" {
             let low = raw.trim().to_ascii_lowercase();
@@ -519,6 +540,10 @@ impl Interp {
                     | "scroll-padding-inline-start"
                     | "scroll-padding-inline-end"
                     | "scroll-snap-type"
+                    | "flex"
+                    | "flex-grow"
+                    | "flex-shrink"
+                    | "flex-basis"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

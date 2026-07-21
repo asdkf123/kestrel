@@ -2454,6 +2454,30 @@ pub fn scroll_snap_type_canonical(raw: &str) -> String {
     toks.iter().map(|t| t.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")
 }
 
+// flex-basis 유효성(§CSS Flexbox): content | auto | min/max/fit-content |
+// <length-percentage>(비음수). none·음수·anchor-size·순수숫자 calc 거부.
+pub fn flex_basis_valid(tok: &str) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "auto" | "content" | "min-content" | "max-content" | "fit-content") {
+        return true;
+    }
+    if low.starts_with("fit-content(") && low.ends_with(')') {
+        return true;
+    }
+    if is_math_fn(&low) {
+        // <length-percentage> calc 만 — 각도 없고, 차원(길이/%)이 있어야(순수 수 calc(0) 거부).
+        if low.contains("deg") || low.contains("rad") || low.contains("turn") {
+            return false;
+        }
+        const LU: &[&str] = &[
+            "px", "em", "rem", "ex", "ch", "cap", "ic", "lh", "vw", "vh", "vi", "vb", "vmin",
+            "vmax", "cqw", "cqh", "cqi", "cqb", "cm", "mm", "q", "in", "pt", "pc",
+        ];
+        return low.contains('%') || LU.iter().any(|u| low.contains(u));
+    }
+    is_length_percentage(&low) && !low.starts_with('-')
+}
+
 fn is_math_fn(low: &str) -> bool {
     low.ends_with(')')
         && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
