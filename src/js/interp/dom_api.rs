@@ -316,6 +316,10 @@ impl Interp {
         if prop == "text-transform" && crate::css::text_transform_valid(raw) {
             return crate::css::text_transform_canonical(raw);
         }
+        // text-autospace(§CSS Text 4): ideograph-alpha/numeric/punctuation/삽입 캐논.
+        if prop == "text-autospace" && crate::css::text_autospace_valid(raw) {
+            return crate::css::text_autospace_canonical(raw);
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
@@ -405,6 +409,10 @@ impl Interp {
                     | "text-transform"
                     | "text-wrap-mode"
                     | "text-wrap-style"
+                    | "word-break"
+                    | "text-group-align"
+                    | "hanging-punctuation"
+                    | "text-autospace"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

@@ -2370,6 +2370,123 @@ pub fn text_transform_valid(raw: &str) -> bool {
     true
 }
 
+// hanging-punctuation 유효성(§CSS Text): none | [first || [force-end|allow-end] || last].
+// none 단독, 각 카테고리(first/end/last) 최대 1회, 미인식·중복 거부.
+pub fn hanging_punctuation_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() {
+        return false;
+    }
+    if toks.len() == 1 && toks[0].eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let (mut first, mut end, mut last) = (false, false, false);
+    for t in &toks {
+        match t.to_ascii_lowercase().as_str() {
+            "first" => {
+                if first {
+                    return false;
+                }
+                first = true;
+            }
+            "force-end" | "allow-end" => {
+                if end {
+                    return false;
+                }
+                end = true;
+            }
+            "last" => {
+                if last {
+                    return false;
+                }
+                last = true;
+            }
+            _ => return false, // none 혼합 또는 미인식
+        }
+    }
+    true
+}
+
+// text-autospace 유효성(§CSS Text 4): normal | auto | no-autospace |
+// [ideograph-alpha || ideograph-numeric || punctuation] || [insert | replace].
+pub fn text_autospace_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() {
+        return false;
+    }
+    if toks.len() == 1
+        && matches!(toks[0].to_ascii_lowercase().as_str(), "normal" | "auto" | "no-autospace")
+    {
+        return true;
+    }
+    let (mut alpha, mut numeric, mut punct, mut insertion) = (false, false, false, false);
+    for t in &toks {
+        match t.to_ascii_lowercase().as_str() {
+            "ideograph-alpha" => {
+                if alpha {
+                    return false;
+                }
+                alpha = true;
+            }
+            "ideograph-numeric" => {
+                if numeric {
+                    return false;
+                }
+                numeric = true;
+            }
+            "punctuation" => {
+                if punct {
+                    return false;
+                }
+                punct = true;
+            }
+            "insert" | "replace" => {
+                if insertion {
+                    return false;
+                }
+                insertion = true;
+            }
+            _ => return false, // normal/auto/no-autospace 혼합 또는 미인식
+        }
+    }
+    true
+}
+
+// text-autospace 캐논 직렬화(§CSS Text 4): ideograph-alpha ideograph-numeric
+// punctuation 순서 뒤에 삽입(insert|replace). normal/auto/no-autospace 는 단독.
+pub fn text_autospace_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.len() == 1 {
+        return toks[0].to_ascii_lowercase();
+    }
+    let (mut alpha, mut numeric, mut punct, mut insertion): (bool, bool, bool, Option<String>) =
+        (false, false, false, None);
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        match low.as_str() {
+            "ideograph-alpha" => alpha = true,
+            "ideograph-numeric" => numeric = true,
+            "punctuation" => punct = true,
+            "insert" | "replace" => insertion = Some(low),
+            _ => {}
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    if alpha {
+        out.push("ideograph-alpha".to_string());
+    }
+    if numeric {
+        out.push("ideograph-numeric".to_string());
+    }
+    if punct {
+        out.push("punctuation".to_string());
+    }
+    if let Some(ins) = insertion {
+        out.push(ins);
+    }
+    out.join(" ")
+}
+
 // text-transform 캐논 직렬화(§CSS Text): [case] full-width full-size-kana 순서.
 pub fn text_transform_canonical(raw: &str) -> String {
     let toks = split_top_level(raw);

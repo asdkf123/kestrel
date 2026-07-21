@@ -234,6 +234,58 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // word-break(§CSS Text): normal|keep-all|break-all|break-word|auto-phrase 단일.
+        "word-break" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "normal"
+                    | "keep-all" | "break-all" | "break-word" | "auto-phrase" | "manual"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-group-align(§CSS Text 4): none|start|end|left|right|center 단일.
+        "text-group-align" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none" | "start"
+                    | "end" | "left" | "right" | "center"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // hanging-punctuation(§CSS Text): none | [first || [force-end|allow-end] || last].
+        "hanging-punctuation" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::hanging_punctuation_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-autospace(§CSS Text 4): normal|auto|no-autospace | 스페이싱 그룹 || 삽입.
+        "text-autospace" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::text_autospace_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_autospace_canonical(value_text)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // text-wrap-mode(§CSS Text 4): wrap | nowrap 만. 그 외(auto/normal/balance/
         // pretty/두값 등) 거부. CSS-wide 통과.
         "text-wrap-mode" => {
@@ -736,7 +788,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
         | "font-feature-settings" | "font-variation-settings" | "font-stretch"
         | "font-palette"
-        | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
+        | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
         | "image-orientation" | "math-style" | "math-depth" | "math-shift"
