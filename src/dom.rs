@@ -472,8 +472,11 @@ impl Dom {
     pub fn create_element_ns(&mut self, ns: Option<&str>, qname: &str) -> NodeId {
         self.touch();
         let id = self.nodes.len();
-        let is_html = ns.is_none() || ns == Some(NS_HTML);
-        let tag_name = if is_html { qname.to_ascii_lowercase() } else { qname.to_string() };
+        // createElementNS 는 qualifiedName 의 **대소문자를 보존**한다(§DOM) — HTML
+        // 네임스페이스여도 소문자화하지 않는다. 소문자화는 createElement(비-NS)만.
+        // (tagName getter 가 HTML 네임스페이스 요소를 대문자로 노출한다.)
+        let _ = ns.is_none() || ns == Some(NS_HTML);
+        let tag_name = qname.to_string();
         // "validate and extract"(§DOM 4.9): 첫 콜론 앞이 접두사, 뒤가 localName.
         // 콜론이 없으면 접두사 없음. (검증은 dom_api 의 validate_and_extract 가 선행.)
         let prefix = tag_name.split_once(':').map(|(p, _)| p.to_string());
