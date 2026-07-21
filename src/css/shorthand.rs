@@ -787,8 +787,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
+            // <number [0,∞]>: 엄격(단위·공백·후행점·이중부호·불량지수 거부).
+            let v = value_text.trim();
+            let vlow = v.to_ascii_lowercase();
+            let is_math = vlow.ends_with(')')
+                && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(", "sign(", "abs("].iter().any(|p| vlow.starts_with(p));
+            let strict_num = !v.contains(char::is_whitespace) && !v.ends_with('.') && v.parse::<f32>().is_ok();
             match number_or_math(value_text) {
-                Some(n) if n >= 0.0 => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
+                Some(n) if n >= 0.0 && (is_math || strict_num) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
                 _ => Vec::new(),
             }
         }
@@ -1622,10 +1628,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 단일 키워드 enum(§여러 스펙): 정확한 값 집합으로 검증.
         "resize" | "user-select" | "caption-side" | "table-layout" | "empty-cells"
         | "border-collapse" | "writing-mode" | "unicode-bidi" | "text-orientation"
-        | "direction" => {
+        | "direction" | "scroll-snap-stop" | "scroll-snap-align" => {
             let low = value_text.trim().to_ascii_lowercase();
+            let snap_align_ok = || {
+                let toks: Vec<&str> = low.split_whitespace().collect();
+                !toks.is_empty() && toks.len() <= 2
+                    && toks.iter().all(|t| matches!(*t, "none" | "start" | "end" | "center"))
+            };
             let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || match name {
+                    "scroll-snap-stop" => matches!(low.as_str(), "normal" | "always"),
+                    "scroll-snap-align" => snap_align_ok(),
                     "resize" => matches!(low.as_str(), "none" | "both" | "horizontal" | "vertical" | "block" | "inline"),
                     "user-select" => matches!(low.as_str(), "auto" | "text" | "none" | "contain" | "all"),
                     "caption-side" => matches!(low.as_str(), "top" | "bottom"),
@@ -1850,7 +1863,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
-        | "overscroll-behavior-y" | "scroll-snap-align"
+        | "overscroll-behavior-y"
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
@@ -1871,7 +1884,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
         | "border-inline-end-style" | "mask-image" | "mask-repeat"
         | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
-        | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position" | "scroll-snap-stop"
+        | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
         | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
