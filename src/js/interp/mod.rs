@@ -8457,7 +8457,8 @@ impl Interp {
                 } else if a == "auto" || b == "auto" {
                     return None; // auto ↔ 길이 불일치 → 전체 불연속
                 } else {
-                    comps.push(Self::interp_len_pct(a, b, t)?);
+                    // background-size 길이는 비음수 — 외삽 시 음수는 0 클램프.
+                    comps.push(Self::clamp_nonneg(&Self::interp_len_pct(a, b, t)?));
                 }
             }
             layers.push(comps.join(" "));
