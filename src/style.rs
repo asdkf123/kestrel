@@ -2032,7 +2032,7 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "align-content" | "align-items" | "justify-content" | "justify-items" => "normal",
         "align-self" | "justify-self" => "auto",
         "aspect-ratio" => "auto",
-        "backdrop-filter" | "filter" | "transform" | "clip-path" | "box-shadow"
+        "backdrop-filter" | "filter" | "transform" | "clip-path" | "box-shadow" | "text-shadow"
         | "background-image" | "text-decoration-line" | "text-transform" | "float" | "clear"
         | "max-height" | "max-width" | "grid-template-areas" | "grid-template-columns"
         | "grid-template-rows" | "content" => "none",
