@@ -134,10 +134,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 // 예전엔 이걸 "normal" 로 눌러버려서 `font-weight: inherit` 이 상속을
                 // 끊었다(react.dev 의 리셋 CSS 가 실제로 이걸 쓴다).
                 "inherit" | "unset" | "revert" => return Vec::new(),
-                other => match other.parse::<f32>() {
-                    Ok(n) if (1.0..=1000.0).contains(&n) => n,
-                    _ => return Vec::new(),
-                },
+                other => {
+                    // 평수는 [1,1000] 이어야 유효. calc(…)는 interpret_value 로 평가해
+                    // 범위 밖도 유효(used value 에서 클램프, §CSS Fonts).
+                    if let Ok(n) = other.parse::<f32>() {
+                        if (1.0..=1000.0).contains(&n) {
+                            n
+                        } else {
+                            return Vec::new();
+                        }
+                    } else if let Some(Value::Length(n, _)) = interpret_value(other) {
+                        n.clamp(1.0, 1000.0)
+                    } else {
+                        return Vec::new();
+                    }
+                }
             };
             vec![Declaration {
                 important: false,
