@@ -189,15 +189,23 @@ impl Interp {
         let attr = self.style_attr(id);
         // 뒤 선언 우선. 롱핸드가 직접 없으면 style 속성에 든 단축을 펼쳐 그 롱핸드를
         // 읽는다(§CSSOM: style="place-items: normal left" → el.style.alignItems 은 normal).
-        for (k, v) in style_pairs(&attr).into_iter().rev() {
+        let pairs = style_pairs(&attr);
+        for (k, v) in pairs.iter().rev() {
             if k == prop {
-                return v;
+                return v.clone();
             }
-            let expanded = crate::css::expand_decl_pub(&k, &v);
-            if expanded.iter().any(|d| d.name != k) {
+            let expanded = crate::css::expand_decl_pub(k, v);
+            if expanded.iter().any(|d| d.name != *k) {
                 if let Some(d) = expanded.iter().find(|d| d.name == prop) {
                     return crate::style::computed_value_string(&d.value);
                 }
+            }
+        }
+        // gap 단축은 롱핸드(row-gap/column-gap)에서 재구성(§CSSOM). 직렬화는 style_get 이.
+        if matches!(prop, "gap" | "grid-gap") {
+            let get = |n: &str| pairs.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+            if let (Some(rg), Some(cg)) = (get("row-gap"), get("column-gap")) {
+                return format!("{} {}", rg, cg);
             }
         }
         String::new()
@@ -338,13 +346,28 @@ impl Interp {
         if prop == "contain" && crate::css::contain_valid(raw) {
             return crate::css::contain_canonical(raw);
         }
-        // inset-block/inset-inline·scroll-*-block/inline 단축(§CSSOM): 0→0px, 두 값 같으면 축약.
+        // inset-block/inset-inline·scroll-*-block/inline·gap 단축(§CSSOM): 0→0px, 두 값
+        // 같으면 축약. gap 은 normal 도 그대로(길이 아님) 통과.
         if matches!(
             prop,
             "inset-block" | "inset-inline" | "scroll-margin-block" | "scroll-margin-inline"
-                | "scroll-padding-block" | "scroll-padding-inline"
+                | "scroll-padding-block" | "scroll-padding-inline" | "gap" | "grid-gap"
         ) {
             return crate::css::inset_pair_canonical(raw);
+        }
+        // row-gap/column-gap(§CSS Box Alignment): normal | <length-percentage>. 0→0px.
+        if matches!(prop, "row-gap" | "column-gap" | "grid-row-gap" | "grid-column-gap") {
+            if let Some(v) = crate::css::interpret_value(raw.trim()) {
+                match v {
+                    crate::css::Value::Length(n, _) if n == 0.0 => return "0px".to_string(),
+                    v @ (crate::css::Value::Length(..)
+                    | crate::css::Value::Calc(..)
+                    | crate::css::Value::MinMax(..)) => {
+                        return crate::style::computed_value_string(&v);
+                    }
+                    _ => {}
+                }
+            }
         }
         // scroll-margin/scroll-padding 단축(§CSSOM): TRBL 박스 축약, 0→0px.
         if matches!(prop, "scroll-margin" | "scroll-padding") {

@@ -777,6 +777,15 @@ fn collect_computed_styles(
             m.insert("overflow-block".to_string(), oy);
             m.insert("overflow-inline".to_string(), ox);
         }
+        // row-gap/column-gap 은 비음수(§CSS Box Alignment) — 음수(calc)→0px. 단축(gap)
+        // 재구성 전에 클램프해야 gap 계산값도 올바르다.
+        for key in ["row-gap", "column-gap"] {
+            if let Some(v) = m.get(key) {
+                if v.starts_with('-') {
+                    m.insert(key.to_string(), "0px".to_string());
+                }
+            }
+        }
         // 단축 프로퍼티(gap/margin/border…)의 계산값은 **롱핸드에서 나온다**. 초기값을
         // 그대로 두면 gap: clamp(4px,1vw,8px) 인데 getComputedStyle(el).gap 이 "normal"
         // 이라고 답한다 — 거짓말이다. 어떤 롱핸드로 펼쳐지는지는 확장기에게 물어본다
@@ -905,6 +914,13 @@ fn collect_computed_styles(
             if v.starts_with('-') {
                 m.insert("flex-basis".to_string(), "0px".to_string());
             }
+        }
+        // grid-gap/grid-row-gap/grid-column-gap 은 gap/row-gap/column-gap 의 레거시 별칭.
+        if let (Some(rg), Some(cg)) = (m.get("row-gap").cloned(), m.get("column-gap").cloned()) {
+            m.insert("grid-row-gap".to_string(), rg.clone());
+            m.insert("grid-column-gap".to_string(), cg.clone());
+            let gap = if rg == cg { rg } else { format!("{} {}", rg, cg) };
+            m.insert("grid-gap".to_string(), gap);
         }
         // font-style 계산값: oblique <angle> → 도 접기·클램프, 0deg→normal.
         if let Some(v) = m.get("font-style") {
