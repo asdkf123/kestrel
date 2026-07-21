@@ -1398,16 +1398,19 @@ impl Interp {
                     Value::Null
                 }
             }),
-            "data" => match &dom.get(id).node_type {
-                crate::dom::NodeType::Text(t) => Ok(Value::Str(t.clone())),
-                crate::dom::NodeType::Comment(c) => Ok(Value::Str(c.clone())),
-                crate::dom::NodeType::ProcessingInstruction { data, .. } => {
-                    Ok(Value::Str(data.clone()))
+            "data" => {
+                let cd = match &dom.get(id).node_type {
+                    crate::dom::NodeType::Text(t) => Some(t.clone()),
+                    crate::dom::NodeType::Comment(c) => Some(c.clone()),
+                    crate::dom::NodeType::ProcessingInstruction { data, .. } => Some(data.clone()),
+                    _ => None,
+                };
+                match cd {
+                    Some(s) => Ok(Value::Str(s)),
+                    // 요소(object.data 등)는 URL 반영으로, 없으면 Undefined.
+                    None => Ok(self.reflect_get(id, "data")?.unwrap_or(Value::Undefined)),
                 }
-                crate::dom::NodeType::Element(_) | crate::dom::NodeType::DocumentType { .. } => {
-                    Ok(Value::Undefined)
-                }
-            },
+            }
             "length" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Text(t) => {
                     Ok(Value::Num(t.encode_utf16().count() as f64))
