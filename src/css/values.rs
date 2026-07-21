@@ -2232,6 +2232,48 @@ pub fn normalize_white_space(raw: &str) -> Option<String> {
     )
 }
 
+// text-wrap 단축 캐논(§CSS Text 4): text-wrap-mode(wrap|nowrap) || text-wrap-style
+// (auto|balance|stable|pretty). 직렬화: style 이 auto(기본)면 mode 만, 아니면 style 만
+// (mode 가 wrap 기본일 때) 또는 "mode style". 무효/중복 토큰은 None.
+pub fn normalize_text_wrap(raw: &str) -> Option<String> {
+    let toks: Vec<String> = raw.split_whitespace().map(|s| s.to_ascii_lowercase()).collect();
+    if toks.is_empty() || toks.len() > 2 {
+        return None;
+    }
+    let (mut mode, mut style): (Option<&str>, Option<&str>) = (None, None);
+    for t in &toks {
+        match t.as_str() {
+            "wrap" | "nowrap" => {
+                if mode.is_some() {
+                    return None; // 중복 mode
+                }
+                mode = Some(if t == "wrap" { "wrap" } else { "nowrap" });
+            }
+            "auto" | "balance" | "stable" | "pretty" => {
+                if style.is_some() {
+                    return None; // 중복 style
+                }
+                style = Some(match t.as_str() {
+                    "balance" => "balance",
+                    "stable" => "stable",
+                    "pretty" => "pretty",
+                    _ => "auto",
+                });
+            }
+            _ => return None, // 무효 토큰
+        }
+    }
+    let mode = mode.unwrap_or("wrap");
+    let style = style.unwrap_or("auto");
+    Some(if style == "auto" {
+        mode.to_string()
+    } else if mode == "wrap" {
+        style.to_string()
+    } else {
+        format!("{mode} {style}")
+    })
+}
+
 // hyphenate-limit-chars 계산값 캐논(§CSS Text 4): [auto|<integer>]{1,3}.
 // 각 성분은 auto 또는 정수(calc 는 반올림해 정수로). 후행 중복은 생략(margin 식):
 // c[2]==c[1] 이면 드롭, 이어서 c[1]==c[0] 이면 드롭. 예) "auto auto"→"auto",

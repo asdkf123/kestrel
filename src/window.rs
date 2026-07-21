@@ -355,6 +355,12 @@ fn fill_js_maps(
                 m.insert("hyphenate-limit-chars".to_string(), norm);
             }
         }
+        // text-wrap 단축 계산값: mode || style 캐논(§CSS Text 4).
+        if let Some(tw) = m.get("text-wrap") {
+            if let Some(norm) = crate::css::normalize_text_wrap(tw) {
+                m.insert("text-wrap".to_string(), norm);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

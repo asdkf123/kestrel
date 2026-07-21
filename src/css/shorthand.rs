@@ -189,6 +189,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // text-wrap 단축(§CSS Text 4): text-wrap-mode || text-wrap-style. 캐논 직렬화로
+        // 저장(무효값 거부). CSS-wide 키워드는 통과.
+        "text-wrap" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+            ) {
+                return vec![Declaration { important: false, name: "text-wrap".to_string(), value: Value::Keyword(low) }];
+            }
+            match crate::css::normalize_text_wrap(value_text) {
+                Some(norm) => vec![Declaration { important: false, name: "text-wrap".to_string(), value: Value::Keyword(norm) }],
+                None => Vec::new(),
+            }
+        }
         // white-space 단축(§CSS Text 4): white-space-collapse || text-wrap-mode.
         // normalize_white_space 로 검증·캐논화(무효값 balance 등은 거부→빈 선언).
         // CSS-wide 키워드는 통과(상속 처리는 스타일 계산이 담당).
@@ -480,7 +495,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
-        | "text-decoration-skip-ink" | "line-break" | "text-wrap" | "text-wrap-mode"
+        | "text-decoration-skip-ink" | "line-break" | "text-wrap-mode"
         | "text-wrap-style" | "text-spacing-trim" | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing" | "font-synthesis"
         | "font-synthesis-weight" | "font-synthesis-style" | "font-synthesis-small-caps"

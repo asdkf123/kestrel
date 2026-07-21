@@ -279,6 +279,12 @@ impl Interp {
                 return s;
             }
         }
+        // text-wrap 단축(§CSS Text 4): mode || style 캐논(wrap auto→wrap).
+        if prop == "text-wrap" {
+            if let Some(s) = crate::css::normalize_text_wrap(raw) {
+                return s;
+            }
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
@@ -360,7 +366,7 @@ impl Interp {
             let longhands = crate::css::expand_decl_pub(prop, &text);
             // 검증형 단축(white-space 등)은 확장이 비면 무효값 — CSSOM 규약상 지정 무시
             // (저장 안 함). text-shadow:none 처럼 빈 확장이 정당한 값은 여기 넣지 않는다.
-            let reject_invalid = longhands.is_empty() && matches!(prop, "white-space");
+            let reject_invalid = longhands.is_empty() && matches!(prop, "white-space" | "text-wrap");
             if !reject_invalid {
                 if longhands.iter().any(|d| d.name != prop) {
                     for d in &longhands {
