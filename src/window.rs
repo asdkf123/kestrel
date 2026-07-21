@@ -885,6 +885,18 @@ fn collect_computed_styles(
         if let Some(v) = m.get("contain") {
             m.insert("contain".to_string(), crate::css::contain_computed(v));
         }
+        // flex-flow 계산값: flex-direction + flex-wrap 에서 재구성(기본값 생략).
+        {
+            let dir = m.get("flex-direction").cloned().unwrap_or_else(|| "row".to_string());
+            let wrap = m.get("flex-wrap").cloned().unwrap_or_else(|| "nowrap".to_string());
+            m.insert("flex-flow".to_string(), crate::css::flex_flow_canonical(&format!("{} {}", dir, wrap)));
+        }
+        // flex-basis 는 비음수(§CSS Flexbox) — calc 가 음수로 풀리면 0px 로 클램프.
+        if let Some(v) = m.get("flex-basis") {
+            if v.starts_with('-') {
+                m.insert("flex-basis".to_string(), "0px".to_string());
+            }
+        }
         // font-style 계산값: oblique <angle> → 도 접기·클램프, 0deg→normal.
         if let Some(v) = m.get("font-style") {
             m.insert("font-style".to_string(), crate::css::normalize_font_style(v));

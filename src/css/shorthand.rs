@@ -668,6 +668,31 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // flex-direction/flex-wrap(§CSS Flexbox): 단일 키워드. 미인식·두값 거부.
+        "flex-direction" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "row"
+                    | "row-reverse" | "column" | "column-reverse"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        "flex-wrap" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "nowrap" | "wrap"
+                    | "wrap-reverse"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // flex-basis(§CSS Flexbox): content | <'width'>(auto|<length-percentage 0+>|
         // min/max/fit-content). none·음수·두값·anchor-size 거부.
         "flex-basis" => {

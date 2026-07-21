@@ -109,7 +109,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "perspective", "perspective-origin",
     "box-sizing", "clear", "clip-path", "color", "column-count", "column-gap", "content",
     "direction", "display", "filter", "flex", "flex-basis", "flex-direction",
-    "flex-grow", "flex-shrink", "flex-wrap", "float", "font-family", "font-size",
+    "flex-flow", "flex-grow", "flex-shrink", "flex-wrap", "float", "font-family", "font-size",
     "font-style", "font-weight", "gap", "grid-area", "grid-auto-rows", "grid-column",
     "grid-column-end", "grid-column-start", "grid-row", "grid-row-end", "grid-row-start",
     "grid-template-areas", "grid-template-columns", "grid-template-rows", "height",

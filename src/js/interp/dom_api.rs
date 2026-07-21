@@ -555,6 +555,8 @@ impl Interp {
                     | "flex-shrink"
                     | "flex-basis"
                     | "flex-flow"
+                    | "flex-direction"
+                    | "flex-wrap"
                     | "order"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
