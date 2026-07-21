@@ -346,28 +346,35 @@ impl Interp {
 
     // style.prop = value 쓰기 (빈 값이면 제거)
     pub(super) fn style_set(&mut self, id: crate::dom::NodeId, prop: &str, value: &str) {
+        let text_trimmed = value.trim().to_string();
+        // 검증형 단축(white-space/text-wrap/font-family/font)이 확장이 비면 무효값 —
+        // CSSOM 규약상 지정 자체를 무시한다(기존 값·롱핸드 그대로 유지). 반드시 아래
+        // retain/capture 전에 조기 반환해야 기존 값이 지워지지 않는다.
+        if !text_trimmed.is_empty()
+            && matches!(prop, "white-space" | "text-wrap" | "font-family" | "font")
+            && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
+        {
+            return;
+        }
         // CSS Transitions: transition 걸린 프로퍼티가 바뀌면 이전 계산값→새 값 전이를
         // element_animations 에 등록(getComputedStyle 이 진행률에서 보간). additive.
-        if !prop.starts_with("transition") && !value.trim().is_empty() {
-            self.maybe_capture_transition(id, prop, value.trim());
+        if !prop.starts_with("transition") && !text_trimmed.is_empty() {
+            self.maybe_capture_transition(id, prop, &text_trimmed);
         }
         let attr = self.style_attr(id);
         let mut pairs = style_pairs(&attr);
         pairs.retain(|(k, _)| k != prop);
-        if !value.trim().is_empty() {
+        if !text_trimmed.is_empty() {
             // 인라인 스타일은 **지정값**을 보관한다 (계산값으로 접지 않는다).
             // 예전엔 여기서 computed_value_string 으로 접어서 `el.style.color = "black"`
             // 이 rgb(0, 0, 0) 으로 저장됐다 — 지정값이 통째로 사라졌다.
             // 직렬화는 **읽을 때** serialize_decl 이 한 번만 한다.
-            let text = value.trim().to_string();
+            let text = text_trimmed.clone();
             // transition/animation 등 단축은 인라인 롱핸드로도 펼친다(§CSSOM: el.style
             // 로 단축을 설정하면 롱핸드가 읽힌다). 확장이 자기 자신과 다른 이름을 내면
             // 단축이다. 기존 동명 롱핸드는 교체.
             let longhands = crate::css::expand_decl_pub(prop, &text);
-            // 검증형 단축(white-space 등)은 확장이 비면 무효값 — CSSOM 규약상 지정 무시
-            // (저장 안 함). text-shadow:none 처럼 빈 확장이 정당한 값은 여기 넣지 않는다.
-            let reject_invalid = longhands.is_empty() && matches!(prop, "white-space" | "text-wrap");
-            if !reject_invalid {
+            {
                 if longhands.iter().any(|d| d.name != prop) {
                     for d in &longhands {
                         if d.name == prop {

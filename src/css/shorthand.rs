@@ -460,9 +460,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
-        // @font-face src / font-family: 원문 보존(다중 url()·format() 포함). font-face 파서가 해석.
-        "src" | "font-family" => {
+        // @font-face src: 원문 보존(다중 url()·format() 포함). font-face 파서가 해석.
+        "src" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
+        // font-family: 유효성 검증(무효 식별자 0simple 등은 선언 거부). 원문 보존.
+        "font-family" => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || font_family_valid(v)
+            {
+                vec![Declaration { important: false, name: "font-family".to_string(), value: Value::Keyword(v.to_string()) }]
+            } else {
+                Vec::new()
+            }
         }
         // transform: 함수 목록(translate/scale/rotate/skew/matrix) 원문 보존.
         // 레이아웃이 2D 행렬로 파싱하고, 페인트가 서브트리를 그 행렬로 변환한다.
@@ -756,6 +768,83 @@ fn font_size_keyword(k: &str) -> Option<f32> {
 
 // font 단축: [style|variant|weight|stretch]* size[/line-height] family
 // 시스템 폰트 키워드(caption 등)와 global 키워드는 no-op. size 토큰을 못 찾으면 드롭.
+// CSS 식별자(custom-ident) 유효성(§CSS Syntax). name-start(문자/_/비ASCII) 또는
+// -name-start 로 시작, 이후 name char(문자/숫자/-/_/비ASCII). 숫자·특수문자 시작은 무효.
+// 이스케이프(\)가 있으면 관대하게 유효로 본다(정확한 토큰화는 생략).
+fn is_css_ident(tok: &str) -> bool {
+    if tok.is_empty() {
+        return false;
+    }
+    if tok.contains('\\') {
+        return true; // 이스케이프 — 관대 처리
+    }
+    let name_start = |c: char| c.is_ascii_alphabetic() || c == '_' || (c as u32) >= 0x80;
+    let mut chars = tok.chars();
+    let c0 = chars.next().unwrap();
+    if c0 == '-' {
+        match chars.next() {
+            Some(c) if name_start(c) || c == '-' => {}
+            _ => return false, // "-" 단독, "-3" 등 무효
+        }
+    } else if !name_start(c0) {
+        return false; // 숫자/특수문자 시작 무효
+    }
+    tok.chars()
+        .skip(1)
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || (c as u32) >= 0x80)
+}
+
+// 따옴표 문자열이 하나로 닫히고 그 뒤에 다른 토큰이 없는가('times' new roman 은 무효).
+fn quoted_string_complete(s: &str, q: char) -> bool {
+    let mut it = s.char_indices();
+    it.next(); // 여는 따옴표
+    let mut escaped = false;
+    for (i, c) in it {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if c == q {
+            return s[i + c.len_utf8()..].trim().is_empty();
+        }
+    }
+    false // 안 닫힘
+}
+
+// 콤마 구분 패밀리 하나의 유효성: 단일 따옴표 문자열이거나 유효 식별자 시퀀스.
+// 예약어(CSS-wide 키워드·default)는 **단일 토큰** 패밀리일 때만 무효 — 다중 토큰
+// ("default bongo")에서는 일반 식별자로 유효(§CSS Fonts <family-name>).
+fn single_family_valid(fam: &str) -> bool {
+    let fam = fam.trim();
+    let Some(first) = fam.chars().next() else {
+        return false;
+    };
+    if first == '"' || first == '\'' {
+        return quoted_string_complete(fam, first);
+    }
+    let toks: Vec<&str> = fam.split_whitespace().collect();
+    if toks.len() == 1
+        && matches!(
+            toks[0].to_ascii_lowercase().as_str(),
+            "default" | "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+        )
+    {
+        return false;
+    }
+    !toks.is_empty() && toks.iter().all(|t| is_css_ident(t))
+}
+
+// font-family 값 유효성(§CSS Fonts). 각 콤마 구분 패밀리가 유효해야 한다.
+// 무효면 선언 전체가 파싱 실패(font: 16px 0simple 도 통째로 무효).
+pub(crate) fn font_family_valid(value: &str) -> bool {
+    let fams = split_top_level_commas(value);
+    !fams.is_empty() && fams.iter().all(|f| single_family_valid(f))
+}
+
 fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     let v = value_text.trim();
     if matches!(
@@ -830,12 +919,16 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     if let Some(lh) = sp.next() {
         out.extend(expand_declaration("line-height", lh)); // 무단위→factor, 길이→그대로
     }
-    // family: size 뒤 나머지 전부
+    // family: size 뒤 나머지 전부. 무효 패밀리면 font 단축 전체가 무효(빈 선언).
     if si + 1 < tokens.len() {
+        let family = tokens[si + 1..].join(" ");
+        if !font_family_valid(&family) {
+            return Vec::new();
+        }
         out.push(Declaration {
             important: false,
             name: "font-family".to_string(),
-            value: Value::Keyword(tokens[si + 1..].join(" ")),
+            value: Value::Keyword(family),
         });
     }
     out
