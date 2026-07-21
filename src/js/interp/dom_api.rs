@@ -395,6 +395,12 @@ impl Interp {
                 return if a == j { a } else { format!("{} {}", a, j) };
             }
         }
+        // object-position/background-position(§CSSOM): [수평] [수직] 캐논(1값→center 보충).
+        if matches!(prop, "object-position" | "background-position")
+            && crate::css::position_valid(raw)
+        {
+            return normalize_numbers(&crate::css::position_canonical(raw));
+        }
         // contain-intrinsic-size(§CSS Sizing 4): width + height, 두 그룹 같으면 축약.
         if prop == "contain-intrinsic-size" {
             let d = crate::css::expand_decl_pub(prop, raw);
@@ -650,6 +656,9 @@ impl Interp {
                     | "contain-intrinsic-height"
                     | "contain-intrinsic-inline-size"
                     | "contain-intrinsic-block-size"
+                    | "image-orientation"
+                    | "object-position"
+                    | "background-position"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

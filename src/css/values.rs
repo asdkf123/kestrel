@@ -2581,6 +2581,101 @@ fn is_math_fn(low: &str) -> bool {
             .any(|p| low.starts_with(p))
 }
 
+// <position> 유효성(§CSS Values): object-position/background-position 등. 1/2/4 토큰만
+// (3 토큰은 현행 문법상 무효). lp 있으면 [수평][수직] 순서 엄격, 순수 키워드는 순서 무관.
+pub fn position_valid(raw: &str) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_h = |t: &str| matches!(t, "left" | "right");
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    let is_c = |t: &str| t == "center";
+    let is_lp = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+        }
+        is_length_percentage(t)
+    };
+    match toks.len() {
+        1 => {
+            let t = toks[0].as_str();
+            is_h(t) || is_v(t) || is_c(t) || is_lp(t)
+        }
+        2 => {
+            let (a, b) = (toks[0].as_str(), toks[1].as_str());
+            let a_kw = is_h(a) || is_v(a) || is_c(a);
+            let b_kw = is_h(b) || is_v(b) || is_c(b);
+            if a_kw && b_kw {
+                // 순수 키워드 쌍: 서로 다른 축(수평/수직)으로 배정 가능해야.
+                let (a_h, a_v) = (is_h(a) || is_c(a), is_v(a) || is_c(a));
+                let (b_h, b_v) = (is_h(b) || is_c(b), is_v(b) || is_c(b));
+                (a_h && b_v) || (a_v && b_h)
+            } else {
+                // lp 포함: [수평 or lp] [수직 or lp] 순서 고정.
+                (is_h(a) || is_c(a) || is_lp(a)) && (is_v(b) || is_c(b) || is_lp(b))
+            }
+        }
+        4 => {
+            // 두 그룹 [모서리 lp][모서리 lp], 하나는 수평(left|right) 하나는 수직(top|bottom).
+            let g1_h = is_h(&toks[0]) && is_lp(&toks[1]);
+            let g1_v = is_v(&toks[0]) && is_lp(&toks[1]);
+            let g2_h = is_h(&toks[2]) && is_lp(&toks[3]);
+            let g2_v = is_v(&toks[2]) && is_lp(&toks[3]);
+            (g1_h && g2_v) || (g1_v && g2_h)
+        }
+        _ => false,
+    }
+}
+
+// <position> 지정값 캐논 직렬화(§CSSOM): [수평] [수직] 순서로, 1값은 빠진 축에 center.
+// 키워드는 유지(퍼센트 변환은 계산값 몫). 유효한 값만 넣는다고 가정.
+pub fn position_canonical(raw: &str) -> String {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_h = |t: &str| matches!(t, "left" | "right");
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    let is_kw = |t: &str| is_h(t) || is_v(t) || t == "center";
+    match toks.len() {
+        1 => {
+            let t = &toks[0];
+            if is_v(t) {
+                format!("center {}", t)
+            } else {
+                format!("{} center", t)
+            }
+        }
+        2 => {
+            let (a, b) = (toks[0].as_str(), toks[1].as_str());
+            if is_kw(a) && is_kw(b) {
+                let h = if is_h(a) {
+                    a
+                } else if is_h(b) {
+                    b
+                } else {
+                    "center"
+                };
+                let v = if is_v(a) {
+                    a
+                } else if is_v(b) {
+                    b
+                } else {
+                    "center"
+                };
+                format!("{} {}", h, v)
+            } else {
+                format!("{} {}", a, b) // lp 포함: 이미 [수평][수직] 순서
+            }
+        }
+        4 => {
+            let g1 = format!("{} {}", toks[0], toks[1]);
+            let g2 = format!("{} {}", toks[2], toks[3]);
+            if is_h(&toks[0]) {
+                format!("{} {}", g1, g2)
+            } else {
+                format!("{} {}", g2, g1)
+            }
+        }
+        _ => raw.trim().to_ascii_lowercase(),
+    }
+}
+
 // contain-intrinsic-size 값 유효성(§CSS Sizing 4): [ auto? [ none | <length> ] ]{1,max}.
 // 길이만(퍼센트 없음), 비음수. legacy·%·음수·초과 그룹 거부.
 pub fn contain_intrinsic_valid(raw: &str, max_groups: usize) -> bool {

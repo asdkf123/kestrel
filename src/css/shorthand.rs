@@ -717,6 +717,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             return Vec::new();
         }
+        // image-orientation(§CSS Images 3): from-image | none 만(각도/flip 형태는 폐기).
+        "image-orientation" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "from-image" | "none"
+            ) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            return Vec::new();
+        }
         // aspect-ratio(§CSS Sizing): auto || <ratio>. 무효(auto/, 단위, 음수, 공백구분) 거부.
         "aspect-ratio" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1194,7 +1205,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
-        | "image-orientation" | "math-style" | "math-depth" | "math-shift"
+        | "math-style" | "math-depth" | "math-shift"
         // 8차: 순수 키워드 롱핸드.
         | "view-transition-name" | "anchor-name"
         // 9차: 개별 변환 프로퍼티(값 원문 보존 — scale: 1.5 2, rotate: 45deg 등).
@@ -1344,8 +1355,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "background" => background_shorthand(value_text),
         // background-position/object-position: 다중 토큰("center top" 등) 원문 보존,
         // paint 가 파싱. (position 계열은 축별 다값이라 interpret_value 로 못 담음)
+        // background-position/object-position(§CSS Values): <position> 검증. CSS-wide 통과.
         "background-position" | "object-position" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::position_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
         }
         // clip-path/backdrop-filter: 함수 표기 원문 보존, paint 가 파싱.
         "clip-path" | "backdrop-filter" => {
