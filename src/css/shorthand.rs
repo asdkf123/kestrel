@@ -647,15 +647,27 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // order: 정수(음수 가능). 단위 없는 수다.
         // order(§CSS Flexbox): <integer>. 비정수(123.45)·auto·다값 거부.
-        "order" => match number_or_math(value_text) {
-            Some(n) if n.fract() == 0.0 && n.is_finite() => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
-            _ => Vec::new(),
-        },
+        "order" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: "order".to_string(), value: Value::Keyword(low) }];
+            }
+            match number_or_math(value_text) {
+                Some(n) if n.fract() == 0.0 && n.is_finite() => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
+                _ => Vec::new(),
+            }
+        }
         // flex-grow/flex-shrink: <number [0,∞]>(단위 없음). 음수·미인식 거부.
-        "flex-grow" | "flex-shrink" => match number_or_math(value_text) {
-            Some(n) if n >= 0.0 => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
-            _ => Vec::new(),
-        },
+        "flex-grow" | "flex-shrink" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            match number_or_math(value_text) {
+                Some(n) if n >= 0.0 => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
+                _ => Vec::new(),
+            }
+        }
         // flex-basis(§CSS Flexbox): content | <'width'>(auto|<length-percentage 0+>|
         // min/max/fit-content). none·음수·두값·anchor-size 거부.
         "flex-basis" => {

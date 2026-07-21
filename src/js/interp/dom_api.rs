@@ -174,6 +174,7 @@ impl Interp {
     // 조용히 틀렸다 (setProperty 로 쓴 값은 정규화하면서 읽기만 원문이라 앞뒤가
     // 맞지 않기까지 했다).
     pub(super) fn style_get(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
+        let prop = canonical_css_name(prop);
         let raw = self.style_get_raw(id, prop);
         if raw.is_empty() {
             return raw;
@@ -184,6 +185,7 @@ impl Interp {
     // 인라인 지정값을 정규화(serialize_decl) 없이 원문 그대로. cubic-bezier 인자
     // 정밀도 등 직렬화가 접는 정보가 필요할 때(전이 easing 캡처).
     pub(super) fn style_get_raw(&mut self, id: crate::dom::NodeId, prop: &str) -> String {
+        let prop = canonical_css_name(prop);
         let attr = self.style_attr(id);
         style_pairs(&attr)
             .into_iter()
@@ -471,6 +473,7 @@ impl Interp {
 
     // style.prop = value 쓰기 (빈 값이면 제거)
     pub(super) fn style_set(&mut self, id: crate::dom::NodeId, prop: &str, value: &str) {
+        let prop = canonical_css_name(prop);
         let text_trimmed = value.trim().to_string();
         // 검증형 단축(white-space/text-wrap/font-family/font)이 확장이 비면 무효값 —
         // CSSOM 규약상 지정 자체를 무시한다(기존 값·롱핸드 그대로 유지). 반드시 아래
@@ -554,6 +557,7 @@ impl Interp {
                     | "flex-flow"
                     | "order"
             )
+            && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
             return;
@@ -2011,6 +2015,26 @@ fn serialize_font_family(raw: &str) -> String {
 }
 
 // 공백으로 나뉜 각 토큰이 모두 유효한 CSS 식별자인가(비어있지 않아야 함).
+// -webkit- 레거시 이름 별칭(§CSS Flexbox 1 부록). 별칭으로 설정/조회해도 캐논 이름으로
+// 저장·직렬화한다(단축 확장이 아니라 이름 별칭이라 var() 도 그대로 보존).
+fn canonical_css_name(prop: &str) -> &str {
+    match prop {
+        "-webkit-align-content" => "align-content",
+        "-webkit-align-items" => "align-items",
+        "-webkit-align-self" => "align-self",
+        "-webkit-flex" => "flex",
+        "-webkit-flex-basis" => "flex-basis",
+        "-webkit-flex-direction" => "flex-direction",
+        "-webkit-flex-flow" => "flex-flow",
+        "-webkit-flex-grow" => "flex-grow",
+        "-webkit-flex-shrink" => "flex-shrink",
+        "-webkit-flex-wrap" => "flex-wrap",
+        "-webkit-justify-content" => "justify-content",
+        "-webkit-order" => "order",
+        other => other,
+    }
+}
+
 fn is_css_ident_sequence(s: &str) -> bool {
     let toks: Vec<&str> = s.split(' ').collect();
     !s.is_empty() && toks.iter().all(|t| is_css_ident(t))
