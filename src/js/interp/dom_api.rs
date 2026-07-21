@@ -211,6 +211,12 @@ impl Interp {
                 return s;
             }
         }
+        // relative-color(rgb(from ...)) 지정값 캐논: rgba→rgb, origin 키워드 소문자 등.
+        if rl.contains("(from ") {
+            if let Some(s) = crate::css::normalize_relative_color(raw) {
+                return s;
+            }
+        }
         // color(<space> ...) 지정값 캐논: 채널 %→0-1, alpha 1 생략(§CSS Color 4).
         if rl.starts_with("color(") {
             if let Some(s) = crate::css::normalize_color_function(raw) {

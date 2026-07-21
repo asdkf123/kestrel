@@ -2160,6 +2160,62 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     Some((rgba, serial.into_boxed_str()))
 }
 
+// relative-color(rgb(from <origin> ...)) 지정값 캐논(§CSS Color 5): 레거시 함수명
+// rgba→rgb/hsla→hsl, origin 키워드 소문자화(currentColor→currentcolor), origin 이 색
+// 함수면 재귀 정규화. 채널 표현은 유지.
+pub fn normalize_relative_color(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    let open = t.find('(')?;
+    let close = t.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let func = t[..open].to_ascii_lowercase();
+    if !matches!(
+        func.as_str(),
+        "rgb" | "rgba" | "hsl" | "hsla" | "hwb" | "lab" | "lch" | "oklab" | "oklch" | "color"
+    ) {
+        return None;
+    }
+    let inner = t[open + 1..close].trim();
+    if inner.len() < 5 || !inner[..5].eq_ignore_ascii_case("from ") {
+        return None;
+    }
+    let rest = inner[5..].trim();
+    // origin = 최상위 첫 토큰(괄호 그룹 포함). 나머지 = 채널.
+    let b = rest.as_bytes();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            c if c.is_ascii_whitespace() && depth == 0 => break,
+            _ => {}
+        }
+        i += 1;
+    }
+    let origin = rest[..i].trim();
+    let channels = rest[i..].trim();
+    if origin.is_empty() || channels.is_empty() {
+        return None;
+    }
+    let origin_canon = if origin.contains('(') {
+        normalize_relative_color(origin)
+            .or_else(|| normalize_color_function(origin))
+            .or_else(|| normalize_lab_like(origin))
+            .or_else(|| normalize_color_mix(origin))
+            .unwrap_or_else(|| origin.to_string())
+    } else {
+        origin.to_ascii_lowercase()
+    };
+    let cfunc = match func.as_str() {
+        "rgba" => "rgb",
+        "hsla" => "hsl",
+        f => f,
+    };
+    Some(format!("{cfunc}(from {origin_canon} {channels})"))
+}
+
 // color-mix 지정값 캐논 직렬화(§CSS Color 5): 퍼센트를 색 뒤로, inner 색 정규화
 // (키워드 유지, 함수→rgb), 기본 50%(한쪽만) 생략. 파싱 불가는 None.
 // color(<space> c1 c2 c3 [/ a]) 지정값 캐논 직렬화(§CSS Color 4). 채널 %→0-1 수,
