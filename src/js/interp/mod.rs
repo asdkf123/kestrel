@@ -9600,13 +9600,24 @@ impl Interp {
         if let (Some(crate::css::Value::Color(a)), Some(crate::css::Value::Color(b))) =
             (crate::css::interpret_value(f), crate::css::interpret_value(g))
         {
-            let ch = |x: u8, y: u8| lerp(x as f32, y as f32).round().clamp(0.0, 255.0) as u8;
-            let (r, gg, bl) = (ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
-            let al = lerp(a.a as f32, b.a as f32).round().clamp(0.0, 255.0) as u8;
+            // 색 보간은 **알파 프리멀티플라이드**(§CSS Color 4). 프리멀티플라이드
+            // 채널을 lerp 하고 결과 알파로 나눠 되돌린다. 알파=0 이면 RGB=0(투명 검정).
+            let (fa, ta) = (a.a as f32 / 255.0, b.a as f32 / 255.0);
+            let al_f = (lerp(fa, ta)).clamp(0.0, 1.0);
+            let pm = |fc: u8, tc: u8| -> u8 {
+                let p = lerp(fc as f32 * fa, tc as f32 * ta);
+                if al_f > 1e-6 {
+                    (p / al_f).round().clamp(0.0, 255.0) as u8
+                } else {
+                    0
+                }
+            };
+            let (r, gg, bl) = (pm(a.r, b.r), pm(a.g, b.g), pm(a.b, b.b));
+            let al = (al_f * 255.0).round() as u8;
             if al == 255 {
                 return Some(format!("rgb({}, {}, {})", r, gg, bl));
             }
-            let af = crate::style::num_css((al as f32 / 255.0 * 100.0).round() / 100.0);
+            let af = crate::style::num_css((al_f * 100.0).round() / 100.0);
             return Some(format!("rgba({}, {}, {}, {})", r, gg, bl, af));
         }
         None
