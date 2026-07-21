@@ -431,6 +431,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift"
         // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
         | "font-feature-settings" | "font-variation-settings" | "font-stretch"
+        // font-style: normal/italic/oblique [<angle>] — 2토큰(oblique 10deg) 원문 보존.
+        | "font-style"
         | "font-size-adjust" | "font-palette" | "text-decoration-thickness"
         | "hanging-punctuation" | "text-autospace" | "text-size-adjust"
         | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"

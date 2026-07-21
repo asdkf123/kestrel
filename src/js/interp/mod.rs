@@ -9131,6 +9131,30 @@ impl Interp {
                 return Some(format!("{}", v as i64));
             }
         }
+        // font-style: normal/oblique[/각도] 는 각도(normal=0deg)를 보간. 끝점(eased 0/1)은
+        // 키워드 원형 유지. italic 이 섞이면 불연속(아래 generic).
+        if dash_prop == "font-style" {
+            let ang = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                if s == "normal" || s == "oblique" {
+                    Some(0.0)
+                } else if let Some(r) = s.strip_prefix("oblique ") {
+                    crate::style::angle_token_deg(r.trim())
+                } else {
+                    None
+                }
+            };
+            if let (Some(fa), Some(ta)) = (ang(from), ang(to)) {
+                if eased == 0.0 {
+                    return Some(from.to_string());
+                }
+                if eased == 1.0 {
+                    return Some(to.to_string());
+                }
+                let a = fa + (ta - fa) * eased;
+                return Some(format!("oblique {}deg", crate::style::num_css(a)));
+            }
+        }
         // font-stretch: normal/named 키워드를 %로 변환해 보간(§CSS Fonts, 계산값도 %).
         if dash_prop == "font-stretch" {
             let kw = |s: &str| -> String {
