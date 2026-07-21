@@ -2038,19 +2038,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-bottom" => border_shorthand(&["bottom"], value_text),
         "border-left" => border_shorthand(&["left"], value_text),
         "font" => font_shorthand(value_text),
-        // color(§CSS Color): <color>. CSS-wide 통과, 그 외는 색으로 파싱(무효 rgb 등 거부).
+        // color(§CSS Color): <color>. CSS-wide 통과, 그 외는 실제 색만 수용(무효 명명/
+        // 숫자/키워드 거부). 계산 불가하지만 문법 유효한 색 함수는 지정값 보존.
         "color" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
-            match interpret_value(value_text.trim()) {
-                Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
-                // 계산 불가하지만 문법 유효한 색 함수(calc/currentcolor 등)는 지정값 보존.
-                None if crate::css::color_syntax_valid(value_text.trim()) => {
-                    vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            let v = value_text.trim();
+            match interpret_value(v) {
+                // 색(또는 색으로 해석되는 키워드)만 수용. Length/일반 Keyword 는 거부.
+                Some(value @ (Value::Color(..) | Value::ColorFn(..))) => {
+                    vec![Declaration { important: false, name: name.to_string(), value }]
                 }
-                None => Vec::new(),
+                Some(Value::Keyword(k)) if crate::css::single_color_valid(&k) => {
+                    vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(k) }]
+                }
+                _ if crate::css::single_color_valid(v) || crate::css::color_syntax_valid(v) => {
+                    vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v.to_string()) }]
+                }
+                _ => Vec::new(),
             }
         }
         _ => match interpret_value(value_text) {
