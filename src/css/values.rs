@@ -2481,11 +2481,15 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
         (Some(a), None) => (a / 100.0, 1.0 - a / 100.0, 1.0),
         (None, Some(b)) => (1.0 - b / 100.0, b / 100.0, 1.0),
         (Some(a), Some(b)) => {
-            let sum = a + b;
-            if sum <= 0.0 {
-                return None;
+            if a < 0.0 || b < 0.0 {
+                return None; // 음수 퍼센트는 무효(§CSS Color 5)
             }
-            (a / sum, b / sum, if sum < 100.0 { sum / 100.0 } else { 1.0 })
+            let sum = a + b;
+            if sum == 0.0 {
+                (0.5, 0.5, 0.0) // 합 0: 균등 혼합에 alpha 0(투명) — 무효 아님
+            } else {
+                (a / sum, b / sum, if sum < 100.0 { sum / 100.0 } else { 1.0 })
+            }
         }
     };
     // 성분별 none 운반: 한쪽만 none 이면 상대값으로, 둘 다면 결과 none.
