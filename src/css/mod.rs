@@ -74,6 +74,7 @@ pub(crate) use values::image_resolution_valid;
 pub(crate) use values::{view_transition_class_valid, view_transition_name_valid};
 pub(crate) use values::{color_scheme_valid, overscroll_valid};
 pub(crate) use values::mask_composite_valid;
+pub(crate) use values::is_css_ident;
 pub(crate) use values::{
     border_spacing_valid, outline_color_valid, outline_style_valid, outline_valid,
     text_combine_upright_valid,

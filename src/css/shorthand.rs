@@ -1658,6 +1658,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // size(§CSS Page): @page 서술자 — 요소 스타일 프로퍼티가 아니므로 모든 값 무효.
+        "size" => Vec::new(),
+        // page(§CSS Page): auto | <custom-ident>(default/CSS-wide 제외, 단일).
+        "page" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks: Vec<&str> = value_text.split_whitespace().collect();
+            let ok = toks.len() == 1
+                && (low == "auto" || (low != "default" && crate::css::is_css_ident(toks[0])));
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // mask-composite(§CSS Masking): [add|subtract|intersect|exclude]# 콤마 목록.
         "mask-composite" => {
             let low = value_text.trim().to_ascii_lowercase();

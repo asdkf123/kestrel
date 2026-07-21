@@ -943,6 +943,8 @@ impl Interp {
                     | "block-step-insert"
                     | "block-step-size"
                     | "mask-composite"
+                    | "size"
+                    | "page"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
