@@ -938,6 +938,10 @@ impl Interp {
                     | "overscroll-behavior-inline"
                     | "overscroll-behavior-block"
                     | "forced-color-adjust"
+                    | "block-step-align"
+                    | "block-step-round"
+                    | "block-step-insert"
+                    | "block-step-size"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

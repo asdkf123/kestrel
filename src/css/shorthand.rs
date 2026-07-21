@@ -1658,6 +1658,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // block-step-size(§CSS Rhythm): none | <length [0,∞]>(퍼센트 불가).
+        "block-step-size" => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none")
+                || (!low.ends_with('%') && split_top_level(v).len() == 1 && crate::css::nonneg_lp_valid(v));
+            if ok {
+                let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(low));
+                vec![Declaration { important: false, name: name.to_string(), value }]
+            } else {
+                Vec::new()
+            }
+        }
         // color-scheme·overscroll-behavior·forced-color-adjust(§여러 스펙) 검증.
         "color-scheme" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "overscroll-behavior-inline" | "overscroll-behavior-block"
@@ -1697,7 +1710,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-collapse" | "writing-mode" | "unicode-bidi" | "text-orientation"
         | "direction" | "scroll-snap-stop" | "scroll-snap-align"
         | "alignment-baseline" | "dominant-baseline"
-        | "ruby-position" | "ruby-align" | "ruby-overhang" | "ruby-merge" => {
+        | "ruby-position" | "ruby-align" | "ruby-overhang" | "ruby-merge"
+        | "block-step-align" | "block-step-round" | "block-step-insert" => {
             let low = value_text.trim().to_ascii_lowercase();
             let snap_align_ok = || {
                 let toks: Vec<&str> = low.split_whitespace().collect();
@@ -1724,6 +1738,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     "ruby-align" => matches!(low.as_str(), "start" | "center" | "space-between" | "space-around"),
                     "ruby-overhang" => matches!(low.as_str(), "auto" | "none" | "spaces"),
                     "ruby-merge" => matches!(low.as_str(), "separate" | "merge" | "auto"),
+                    "block-step-align" => matches!(low.as_str(), "auto" | "center" | "start" | "end"),
+                    "block-step-round" => matches!(low.as_str(), "up" | "down" | "nearest"),
+                    "block-step-insert" => matches!(low.as_str(), "margin-box" | "padding-box" | "content-box"),
                     _ => false,
                 };
             if ok {
