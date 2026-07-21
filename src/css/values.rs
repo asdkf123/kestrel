@@ -4032,6 +4032,12 @@ pub fn nonneg_length_percentage(t: &str) -> bool {
     is_math_fn(&low) || is_length_percentage(t)
 }
 
+// margin 값(§CSS Box): auto | <length-percentage>(부호 무관) | calc.
+pub fn margin_value_valid(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    low == "auto" || is_math_fn(&low) || is_length_percentage(t)
+}
+
 // 부호 없는 <flex>("3fr", "0fr"). 음수 거부.
 fn nonneg_flex(t: &str) -> bool {
     let low = t.trim().to_ascii_lowercase();

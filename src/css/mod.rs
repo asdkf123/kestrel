@@ -87,6 +87,7 @@ pub(crate) use values::{
     shape_image_threshold_valid,
 };
 pub(crate) use values::nonneg_length_percentage as nonneg_lp_valid;
+pub(crate) use values::margin_value_valid;
 pub(crate) use values::{
     block_ellipsis_valid, max_lines_canonical, max_lines_valid, text_overflow_valid,
     webkit_line_clamp_valid,

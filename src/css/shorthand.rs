@@ -149,7 +149,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         _ => {}
     }
     match name {
-        "margin" | "padding" => box_shorthand(name, "", value_text),
+        "margin" | "padding" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                let toks = split_top_level(value_text.trim());
+                let is_margin = name == "margin";
+                let ok = !toks.is_empty() && toks.len() <= 4
+                    && toks.iter().all(|t| if is_margin { crate::css::margin_value_valid(t) } else { crate::css::nonneg_lp_valid(t) });
+                if !ok {
+                    return Vec::new();
+                }
+                // 유효하나 box_shorthand 가 계산 못하는 calc 는 지정값 보존.
+                let expanded = box_shorthand(name, "", value_text);
+                if expanded.is_empty() {
+                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                }
+                return expanded;
+            }
+            box_shorthand(name, "", value_text)
+        }
         "border-width" => box_shorthand("border", "-width", value_text),
         "border-color" => box_shorthand("border", "-color", value_text),
         "border-style" => box_shorthand("border", "-style", value_text),
@@ -2178,6 +2196,24 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-bottom" => border_shorthand(&["bottom"], value_text),
         "border-left" => border_shorthand(&["left"], value_text),
         "font" => font_shorthand(value_text),
+        // padding/margin 롱핸드(§CSS Box): padding 은 <length-percentage [0,∞]>,
+        // margin 은 <length-percentage> | auto. 단일 값. 유효는 Value 저장(레이아웃 불변).
+        "padding-top" | "padding-right" | "padding-bottom" | "padding-left"
+        | "margin-top" | "margin-right" | "margin-bottom" | "margin-left" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let is_margin = name.starts_with("margin");
+            let toks = split_top_level(value_text.trim());
+            let ok = toks.len() == 1
+                && if is_margin { crate::css::margin_value_valid(toks[0]) } else { crate::css::nonneg_lp_valid(toks[0]) };
+            if !ok {
+                return Vec::new();
+            }
+            let v = interpret_value(toks[0]).unwrap_or_else(|| Value::Keyword(value_text.trim().to_string()));
+            vec![Declaration { important: false, name: name.to_string(), value: v }]
+        }
         // color(§CSS Color): <color>. CSS-wide 통과, 그 외는 실제 색만 수용(무효 명명/
         // 숫자/키워드 거부). 계산 불가하지만 문법 유효한 색 함수는 지정값 보존.
         "color" => {
