@@ -843,6 +843,13 @@ impl Interp {
                     | "background-position-y"
                     | "color"
                     | "opacity"
+                    | "animation-name"
+                    | "animation-duration"
+                    | "animation-delay"
+                    | "animation-iteration-count"
+                    | "animation-direction"
+                    | "animation-fill-mode"
+                    | "animation-play-state"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

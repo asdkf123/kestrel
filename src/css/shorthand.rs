@@ -1606,6 +1606,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // animation 롱핸드(§CSS Animations): 콤마 목록. 검증 후 원문 보존.
+        "animation-name" | "animation-duration" | "animation-delay"
+        | "animation-iteration-count" | "animation-direction" | "animation-fill-mode"
+        | "animation-play-state" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::animation_longhand_valid(name, value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // text-decoration-skip-ink(§CSS Text Decor 4): auto | none | all.
         "text-decoration-skip-ink" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1760,9 +1773,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // transition/animation 롱핸드: 원문 보존(애니메이션은 미구현이지만 계산값은
         // 정규화해 돌려준다 — collect_computed_styles 가 시간(ms→s)·목록 간격을 정규화).
         "transition-behavior"
-        | "animation-name" | "animation-duration" | "animation-delay"
-        | "animation-iteration-count"
-        | "animation-direction" | "animation-fill-mode" | "animation-play-state"
         | "animation-composition" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }

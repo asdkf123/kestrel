@@ -4931,6 +4931,86 @@ pub fn list_style_image_valid(raw: &str) -> bool {
         || low.starts_with("image(")
 }
 
+// <time>: 수 + s|ms. allow_neg=false 면 음수 거부. calc 허용.
+fn is_time(t: &str, allow_neg: bool) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if is_math_fn(&low) {
+        return true;
+    }
+    let num = if let Some(n) = low.strip_suffix("ms") {
+        n
+    } else if let Some(n) = low.strip_suffix('s') {
+        n
+    } else {
+        return false;
+    };
+    matches!(num.trim().parse::<f64>(), Ok(v) if v.is_finite() && (allow_neg || v >= 0.0))
+}
+
+// animation 콤마 목록 검증: 각 항목 item_ok, CSS-wide 키워드는 항목으로 무효.
+fn anim_list(raw: &str, item_ok: fn(&str) -> bool) -> bool {
+    let t = raw.trim();
+    if t.starts_with(',') || t.ends_with(',') {
+        return false;
+    }
+    let items = split_top_commas(raw);
+    !items.is_empty()
+        && items.iter().all(|it| {
+            let s = it.trim();
+            !matches!(
+                s.to_ascii_lowercase().as_str(),
+                "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+            ) && item_ok(s)
+        })
+}
+
+fn anim_name_item(s: &str) -> bool {
+    let low = s.to_ascii_lowercase();
+    if low == "none" {
+        return true;
+    }
+    // <string>: 빈 문자열 제외.
+    if is_css_string(s) {
+        return s.len() > 2;
+    }
+    s.split_whitespace().count() == 1 && low != "default" && is_css_ident(s)
+}
+fn anim_duration_item(s: &str) -> bool {
+    s.eq_ignore_ascii_case("auto") || is_time(s, false)
+}
+fn anim_delay_item(s: &str) -> bool {
+    is_time(s, true)
+}
+fn anim_iter_item(s: &str) -> bool {
+    let low = s.to_ascii_lowercase();
+    low == "infinite"
+        || is_math_fn(&low)
+        || matches!(low.parse::<f64>(), Ok(v) if v.is_finite() && v >= 0.0)
+}
+fn anim_direction_item(s: &str) -> bool {
+    matches!(s.to_ascii_lowercase().as_str(), "normal" | "reverse" | "alternate" | "alternate-reverse")
+}
+fn anim_fill_item(s: &str) -> bool {
+    matches!(s.to_ascii_lowercase().as_str(), "none" | "forwards" | "backwards" | "both")
+}
+fn anim_playstate_item(s: &str) -> bool {
+    matches!(s.to_ascii_lowercase().as_str(), "running" | "paused")
+}
+
+// animation 롱핸드 검증(§CSS Animations): 프로퍼티별 콤마 목록.
+pub fn animation_longhand_valid(name: &str, raw: &str) -> bool {
+    match name {
+        "animation-name" => anim_list(raw, anim_name_item),
+        "animation-duration" => anim_list(raw, anim_duration_item),
+        "animation-delay" => anim_list(raw, anim_delay_item),
+        "animation-iteration-count" => anim_list(raw, anim_iter_item),
+        "animation-direction" => anim_list(raw, anim_direction_item),
+        "animation-fill-mode" => anim_list(raw, anim_fill_item),
+        "animation-play-state" => anim_list(raw, anim_playstate_item),
+        _ => false,
+    }
+}
+
 // will-change(§CSS Will Change): auto | [ scroll-position | contents | <custom-ident> ]#.
 // custom-ident 는 CSS-wide·default·will-change·none·all·auto 제외. 항목당 단일 토큰.
 pub fn will_change_valid(raw: &str) -> bool {

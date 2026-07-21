@@ -69,6 +69,7 @@ pub(crate) use values::{
 };
 pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::will_change_valid;
+pub(crate) use values::animation_longhand_valid;
 pub(crate) use values::color_syntax_valid;
 pub(crate) use values::{content_canonical, content_valid};
 pub(crate) use values::{
