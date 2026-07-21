@@ -874,6 +874,16 @@ impl Interp {
             lines.push(String::new());
             return;
         }
+        // 스크립트류·대체/임베디드 요소의 내용은 innerText 에 기여하지 않는다(§HTML
+        // "rendered text collection"). textarea 는 값이 별도, iframe/video/canvas 등은
+        // 대체 요소. select 는 옵션 텍스트가 포함되므로 제외하지 않는다.
+        if matches!(
+            tag.as_str(),
+            "script" | "style" | "template" | "noscript" | "iframe" | "video" | "audio"
+                | "canvas" | "embed" | "object" | "textarea"
+        ) {
+            return;
+        }
         // 블록 레벨이면 앞뒤로 줄을 나눈다
         let block = matches!(
             disp.as_str(),
