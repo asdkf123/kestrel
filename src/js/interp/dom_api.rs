@@ -1106,7 +1106,18 @@ impl Interp {
             // element.style/classList → 속성에 대한 라이브 프록시
             "style" => Ok(Value::Style(id)),
             "classList" => Ok(Value::ClassList(id)),
-            "textContent" => Ok(Value::Str(dom.text_content(id))),
+            // textContent(§DOM): CharacterData(Text/Comment/PI)는 자신의 데이터,
+            // Document·DocumentType 은 null, Element·DocumentFragment 는 하위 텍스트 연결.
+            "textContent" => match &dom.get(id).node_type {
+                crate::dom::NodeType::Text(t) => Ok(Value::Str(t.clone())),
+                crate::dom::NodeType::Comment(c) => Ok(Value::Str(c.clone())),
+                crate::dom::NodeType::ProcessingInstruction { data, .. } => {
+                    Ok(Value::Str(data.clone()))
+                }
+                crate::dom::NodeType::DocumentType { .. } => Ok(Value::Null),
+                crate::dom::NodeType::Element(e) if e.tag_name == "#document" => Ok(Value::Null),
+                _ => Ok(Value::Str(dom.text_content(id))),
+            },
             "innerHTML" => Ok(Value::Str(dom.inner_html(id))),
             "outerHTML" => Ok(Value::Str(dom.outer_html(id))),
             // value: <select> 는 선택된 option 의 값, <option> 은 value 속성 없으면 텍스트,
@@ -1490,7 +1501,14 @@ impl Interp {
         let dom = self.dom_arena()?;
         match key {
             "textContent" => {
-                dom.set_text_content(id, text);
+                // textContent 는 nullable(DOMString?) — null/undefined 는 "" 로 취급해
+                // 자식을 모두 제거(텍스트 노드도 안 만듦). 그 외는 ToString.
+                let t = if matches!(value, Value::Null | Value::Undefined) {
+                    String::new()
+                } else {
+                    text
+                };
+                dom.set_text_content(id, t);
                 Ok(())
             }
             // 문자 데이터 대입 (§4.9). 요소에 대한 nodeValue 대입은 무시 (표준).

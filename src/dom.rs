@@ -875,11 +875,15 @@ impl Dom {
             });
             return;
         }
+        // "string replace all"(§DOM): 빈 문자열이면 텍스트 노드를 **만들지 않는다**
+        // (자식만 제거). 예전엔 빈 텍스트 노드를 붙여 childNodes.length 가 1 이었다.
         self.clear_children(id);
-        let t = self.create_text(text);
-        self.nodes[t].parent = Some(id);
-        self.nodes[id].children.push(t);
-        self.record_child(id, vec![t], Vec::new(), None, None);
+        if !text.is_empty() {
+            let t = self.create_text(text);
+            self.nodes[t].parent = Some(id);
+            self.nodes[id].children.push(t);
+            self.record_child(id, vec![t], Vec::new(), None, None);
+        }
     }
 
     pub fn clear_children(&mut self, id: NodeId) {
