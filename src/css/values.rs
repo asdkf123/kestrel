@@ -2581,6 +2581,57 @@ fn is_math_fn(low: &str) -> bool {
             .any(|p| low.starts_with(p))
 }
 
+// aspect-ratio 유효성(§CSS Sizing): auto || <ratio>. <ratio>=<number 0+> [/ <number 0+>].
+pub fn aspect_ratio_valid(raw: &str) -> bool {
+    let norm = raw.replace('/', " / ");
+    let mut toks: Vec<&str> = norm.split_whitespace().collect();
+    let auto_count = toks.iter().filter(|t| t.eq_ignore_ascii_case("auto")).count();
+    if auto_count > 1 {
+        return false;
+    }
+    if auto_count == 1 {
+        if toks.first().map_or(false, |t| t.eq_ignore_ascii_case("auto")) {
+            toks.remove(0);
+        } else if toks.last().map_or(false, |t| t.eq_ignore_ascii_case("auto")) {
+            toks.pop();
+        } else {
+            return false; // auto 는 양끝만
+        }
+    }
+    if toks.is_empty() {
+        return auto_count == 1; // "auto" 단독
+    }
+    let is_num = |t: &str| t.parse::<f64>().map(|v| v.is_finite() && v >= 0.0).unwrap_or(false);
+    match toks.len() {
+        1 => is_num(toks[0]),
+        3 => toks[1] == "/" && is_num(toks[0]) && is_num(toks[2]),
+        _ => false,
+    }
+}
+
+// aspect-ratio 캐논 직렬화(§CSS Sizing): auto 앞으로, <ratio> 는 "a / b"(단일수→"n / 1").
+pub fn aspect_ratio_canonical(raw: &str) -> String {
+    let norm = raw.replace('/', " / ");
+    let mut toks: Vec<String> = norm.split_whitespace().map(|t| t.to_ascii_lowercase()).collect();
+    let has_auto = toks.iter().any(|t| t == "auto");
+    toks.retain(|t| t != "auto");
+    let ratio = match toks.len() {
+        0 => String::new(),
+        1 => format!("{} / 1", toks[0]),
+        3 => format!("{} / {}", toks[0], toks[2]),
+        _ => return raw.trim().to_ascii_lowercase(),
+    };
+    if has_auto {
+        if ratio.is_empty() {
+            "auto".to_string()
+        } else {
+            format!("auto {}", ratio)
+        }
+    } else {
+        ratio
+    }
+}
+
 // 크기 프로퍼티 값 유효성(§CSS Sizing): [auto|none|<length-percentage 0+>|min-content|
 // max-content|fit-content|fit-content()]. allow_none: max-*, allow_auto: width/min-*.
 pub fn size_valid(tok: &str, allow_none: bool, allow_auto: bool) -> bool {

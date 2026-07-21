@@ -668,6 +668,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // aspect-ratio(§CSS Sizing): auto || <ratio>. 무효(auto/, 단위, 음수, 공백구분) 거부.
+        "aspect-ratio" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::aspect_ratio_valid(value_text) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::aspect_ratio_canonical(value_text)) }];
+            }
+            return Vec::new();
+        }
         // 크기 프로퍼티(§CSS Sizing): auto|none|<length-percentage 0+>|min/max/fit-content.
         // width/height/min-* 는 auto, max-* 는 none. 유효값은 interpret_value 저장(레이아웃 불변).
         "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height" => {

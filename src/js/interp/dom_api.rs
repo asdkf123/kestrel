@@ -395,6 +395,10 @@ impl Interp {
                 return if a == j { a } else { format!("{} {}", a, j) };
             }
         }
+        // aspect-ratio(§CSS Sizing): auto 앞, <ratio> "a / b" 캐논.
+        if prop == "aspect-ratio" && crate::css::aspect_ratio_valid(raw) {
+            return crate::css::aspect_ratio_canonical(raw);
+        }
         // flex-flow(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저.
         if prop == "flex-flow" {
             let low = raw.trim().to_ascii_lowercase();
@@ -631,6 +635,7 @@ impl Interp {
                     | "min-height"
                     | "max-width"
                     | "max-height"
+                    | "aspect-ratio"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
