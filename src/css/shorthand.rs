@@ -194,6 +194,39 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // cursor(§CSS UI): [<url> [<x> <y>]?,]* <keyword>. 검증만(원문 보존). 무효
+        // (잘못된 키워드/gradient 이미지/lengths 좌표 등) 거부. CSS-wide 통과.
+        "cursor" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: "cursor".to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::cursor_valid(value_text) {
+                vec![Declaration { important: false, name: "cursor".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // box-sizing(§CSS Sizing): content-box | border-box 만. 그 외(auto/fill-box/
+        // margin-box/두값 등) 거부. CSS-wide 통과.
+        "box-sizing" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "content-box"
+                    | "border-box"
+                    | "inherit"
+                    | "initial"
+                    | "unset"
+                    | "revert"
+                    | "revert-layer"
+            ) {
+                vec![Declaration { important: false, name: "box-sizing".to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // caret-color(§CSS UI): [ auto | <color> ]{1,2}. 무효 거부. 단일 <color>는
         // Color 로 저장(기존 색 보간 경로 유지 — 회귀 방지), 단일 auto/currentcolor 와
         // 두값 폼은 원문 Keyword(window 가 currentColor 해석). CSS-wide 통과.

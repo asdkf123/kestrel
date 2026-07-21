@@ -49,6 +49,7 @@ pub(crate) use values::normalize_font_stretch;
 pub(crate) use values::normalize_font_size_adjust;
 pub(crate) use values::caret_color_valid;
 pub(crate) use values::caret_color_computed;
+pub(crate) use values::cursor_valid;
 pub(crate) use values::normalize_hyphenate_limit_chars;
 pub(crate) use values::normalize_text_decoration_line;
 pub(crate) use values::resolve_gradient_computed;

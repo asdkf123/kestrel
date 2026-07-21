@@ -2232,6 +2232,59 @@ pub fn normalize_white_space(raw: &str) -> Option<String> {
     )
 }
 
+// cursor 키워드(§CSS UI). 마지막 폴백은 반드시 이 중 하나.
+const CURSOR_KEYWORDS: &[&str] = &[
+    "auto", "default", "none", "context-menu", "help", "pointer", "progress", "wait",
+    "cell", "crosshair", "text", "vertical-text", "alias", "copy", "move", "no-drop",
+    "not-allowed", "grab", "grabbing", "e-resize", "n-resize", "ne-resize", "nw-resize",
+    "s-resize", "se-resize", "sw-resize", "w-resize", "ew-resize", "ns-resize",
+    "nesw-resize", "nwse-resize", "col-resize", "row-resize", "all-scroll", "zoom-in",
+    "zoom-out",
+];
+
+// cursor 유효성(§CSS UI): [ <url> [<x> <y>]? ,]* <keyword>. url 만 이미지(gradient/
+// light-dark 불가), 좌표는 <number> 2개, 마지막은 필수 키워드.
+pub fn cursor_valid(raw: &str) -> bool {
+    let parts = split_top_commas(raw);
+    let Some((last, heads)) = parts.split_last() else {
+        return false;
+    };
+    if !CURSOR_KEYWORDS.contains(&last.trim().to_ascii_lowercase().as_str()) {
+        return false;
+    }
+    for p in heads {
+        let toks = split_top_level(p.trim());
+        // 이미지는 url() 또는 **유효한** gradient(§CSS Images). linear-gradient(red)
+        // 처럼 스톱 하나뿐인 무효 gradient 나 light-dark() 로 감싼 것은 거부(gradient
+        // 함수로 **시작**해야 — contains 면 light-dark(...gradient...) 가 새어 나온다).
+        let img_ok = toks.first().is_some_and(|u| {
+            let ul = u.to_ascii_lowercase();
+            if ul.starts_with("url(") && u.ends_with(')') {
+                return true;
+            }
+            const GRADS: [&str; 6] = [
+                "linear-gradient(", "radial-gradient(", "conic-gradient(",
+                "repeating-linear-gradient(", "repeating-radial-gradient(",
+                "repeating-conic-gradient(",
+            ];
+            GRADS.iter().any(|g| ul.starts_with(g)) && gradient_valid(u)
+        });
+        if !img_ok {
+            return false;
+        }
+        match toks.len() {
+            1 => {} // url 만
+            3 => {
+                if toks[1].parse::<f32>().is_err() || toks[2].parse::<f32>().is_err() {
+                    return false; // 좌표는 <number> 2개(1px/3% 등 무효)
+                }
+            }
+            _ => return false, // 좌표 1개/3개 등 무효
+        }
+    }
+    true
+}
+
 // caret-color 성분이 auto 또는 유효 <color> 인가.
 fn caret_color_component_ok(t: &str) -> bool {
     t.eq_ignore_ascii_case("auto")
