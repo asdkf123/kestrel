@@ -66,6 +66,8 @@ pub(crate) use values::single_transition_property_valid;
 pub(crate) use values::font_variant_valid;
 pub(crate) use values::font_style_valid;
 pub(crate) use values::normalize_font_style;
+pub(crate) use values::text_transform_valid;
+pub(crate) use values::text_transform_canonical;
 pub(crate) use values::timing_function_canonical;
 pub(crate) use values::cursor_valid;
 pub(crate) use values::normalize_hyphenate_limit_chars;

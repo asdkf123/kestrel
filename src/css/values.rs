@@ -2330,6 +2330,66 @@ pub fn time_list_valid(raw: &str, allow_negative: bool) -> bool {
     })
 }
 
+// text-transform 유효성(§CSS Text): none | [capitalize|uppercase|lowercase] ||
+// full-width || full-size-kana, 또는 math-auto 단독. 카테고리 중복·혼합 거부.
+pub fn text_transform_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() {
+        return false;
+    }
+    if toks.len() == 1 {
+        let low = toks[0].to_ascii_lowercase();
+        if matches!(low.as_str(), "none" | "math-auto") {
+            return true;
+        }
+    }
+    let (mut has_case, mut has_fw, mut has_kana) = (false, false, false);
+    for t in &toks {
+        match t.to_ascii_lowercase().as_str() {
+            "capitalize" | "uppercase" | "lowercase" => {
+                if has_case {
+                    return false;
+                }
+                has_case = true;
+            }
+            "full-width" => {
+                if has_fw {
+                    return false;
+                }
+                has_fw = true;
+            }
+            "full-size-kana" => {
+                if has_kana {
+                    return false;
+                }
+                has_kana = true;
+            }
+            _ => return false, // none/math-auto 를 다른 토큰과 함께, 또는 미인식
+        }
+    }
+    true
+}
+
+// text-transform 캐논 직렬화(§CSS Text): [case] full-width full-size-kana 순서.
+pub fn text_transform_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.len() == 1 {
+        return toks[0].to_ascii_lowercase();
+    }
+    let (mut case, mut fw, mut kana): (Option<String>, Option<String>, Option<String>) =
+        (None, None, None);
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        match low.as_str() {
+            "capitalize" | "uppercase" | "lowercase" => case = Some(low),
+            "full-width" => fw = Some(low),
+            "full-size-kana" => kana = Some(low),
+            _ => {}
+        }
+    }
+    [case, fw, kana].into_iter().flatten().collect::<Vec<_>>().join(" ")
+}
+
 // <angle> 를 도(deg)로 파싱: 수 + deg|rad|grad|turn. 단위 없으면 None(0 도 무효).
 fn parse_angle_deg(s: &str) -> Option<f64> {
     let low = s.trim().to_ascii_lowercase();

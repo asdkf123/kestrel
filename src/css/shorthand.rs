@@ -234,6 +234,46 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // text-wrap-mode(§CSS Text 4): wrap | nowrap 만. 그 외(auto/normal/balance/
+        // pretty/두값 등) 거부. CSS-wide 통과.
+        "text-wrap-mode" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "wrap" | "nowrap"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-wrap-style(§CSS Text 4): auto | balance | stable | pretty 만.
+        "text-wrap-style" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "balance"
+                    | "stable" | "pretty"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-transform(§CSS Text): none | [capitalize|uppercase|lowercase] || full-width
+        // || full-size-kana, 또는 math-auto 단독. 카테고리 중복·none/math-auto 혼합 거부.
+        "text-transform" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::text_transform_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_transform_canonical(value_text)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // font-style(§CSS Fonts): normal | italic | oblique [<angle -90~90deg>]. italic+
         // 각도, 범위밖·단위없는·잘못된 각도, oblique 뒤 잉여 토큰 거부. CSS-wide 통과.
         "font-style" => {
@@ -666,8 +706,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
-        | "text-decoration-skip-ink" | "line-break" | "text-wrap-mode"
-        | "text-wrap-style" | "text-spacing-trim" | "ruby-position" | "ruby-align"
+        | "text-decoration-skip-ink" | "line-break"
+        | "text-spacing-trim" | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing" | "font-synthesis"
         | "font-synthesis-weight" | "font-synthesis-style" | "font-synthesis-small-caps"
         | "font-synthesis-position"
