@@ -5150,6 +5150,48 @@ pub fn color_scheme_valid(raw: &str) -> bool {
     true
 }
 
+// hyphenate-limit-chars(§CSS Text 4): [ auto | <integer> ]{1,3}.
+pub fn hyphenate_limit_chars_valid(raw: &str) -> bool {
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    !toks.is_empty()
+        && toks.len() <= 3
+        && toks.iter().all(|t| t.eq_ignore_ascii_case("auto") || t.parse::<i64>().is_ok())
+}
+
+// hyphenate-limit-chars 캐논: 뒤 값이 앞 값과 같으면 생략(auto auto→auto, 5 2 2→5 2).
+pub fn hyphenate_limit_chars_canonical(raw: &str) -> String {
+    let mut toks: Vec<String> = raw.split_whitespace().map(|s| s.to_ascii_lowercase()).collect();
+    if toks.len() == 3 && toks[2] == toks[1] {
+        toks.pop();
+    }
+    if toks.len() == 2 && toks[1] == toks[0] {
+        toks.pop();
+    }
+    toks.join(" ")
+}
+
+// text-indent(§CSS Text): <length-percentage> && hanging? && each-line?.
+pub fn text_indent_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw.trim());
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let (mut lp, mut hang, mut each) = (0u32, 0u32, 0u32);
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        if low == "hanging" {
+            hang += 1;
+        } else if low == "each-line" {
+            each += 1;
+        } else if is_math_fn(&low) || is_length_percentage(t) {
+            lp += 1;
+        } else {
+            return false;
+        }
+    }
+    lp == 1 && hang <= 1 && each <= 1
+}
+
 // mask-composite(§CSS Masking): [ add | subtract | intersect | exclude ]#(콤마 목록).
 pub fn mask_composite_valid(raw: &str) -> bool {
     let t = raw.trim();

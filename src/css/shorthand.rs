@@ -270,33 +270,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // Length 로(레이아웃이 읽음), hanging/each-line 키워드가 있어도 유효(계산값은 길이
         // 근사 — 키워드 별도 저장 안 함). 애니메이션 from/to 는 원문 문자열이라 interp 가
         // hanging 을 보존한다.
+        // text-indent(§CSS Text): <length-percentage> && hanging? && each-line?.
         "text-indent" => {
             let vt = value_text.trim().to_ascii_lowercase();
-            // CSS 전역 키워드: inherit/unset/revert 는 선언 없음(상속 적용), initial=0px.
             if matches!(vt.as_str(), "inherit" | "unset" | "revert" | "revert-layer") {
                 return Vec::new();
             }
             if vt == "initial" {
-                return vec![Declaration {
-                    important: false,
-                    name: "text-indent".to_string(),
-                    value: Value::Length(0.0, Unit::Px),
-                }];
+                return vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Length(0.0, Unit::Px) }];
             }
+            if !crate::css::text_indent_valid(value_text) {
+                return Vec::new();
+            }
+            // 계산 가능한 길이는 Length(레이아웃), calc 등 계산 불가·키워드 조합은 지정값 보존.
             let toks: Vec<&str> = split_top_level(value_text.trim());
-            let kw_ok = toks.iter().all(|t| {
-                matches!(*t, "hanging" | "each-line")
-                    || matches!(interpret_value(t), Some(Value::Length(..)))
-            });
             let len = toks
                 .iter()
-                .find(|t| !matches!(**t, "hanging" | "each-line"))
+                .find(|t| !matches!(t.to_ascii_lowercase().as_str(), "hanging" | "each-line"))
                 .and_then(|t| interpret_value(t));
             match len {
-                Some(v @ Value::Length(..)) if kw_ok => {
+                Some(v @ Value::Length(..)) if toks.len() == 1 => {
                     vec![Declaration { important: false, name: "text-indent".to_string(), value: v }]
                 }
-                _ => Vec::new(),
+                _ => vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Keyword(value_text.trim().to_string()) }],
             }
         }
         // cursor(§CSS UI): [<url> [<x> <y>]?,]* <keyword>. 검증만(원문 보존). 무효
@@ -1686,6 +1682,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // hyphenate-limit-chars(§CSS Text 4): [auto|<integer>]{1,3}. 축약 캐논.
+        "hyphenate-limit-chars" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::hyphenate_limit_chars_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::hyphenate_limit_chars_canonical(value_text)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // letter-spacing(§CSS Text): normal | <length>. tab-size: <number 0+> | <length 0+>.
         // hyphenate-character: auto | <string>.
         "letter-spacing" | "tab-size" | "hyphenate-character" => {
@@ -2091,8 +2099,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
         | "shape-outside"
-        // hyphenate-limit-chars 원문 보존.
-        | "hyphenate-limit-chars"
         | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
