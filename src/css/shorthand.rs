@@ -1396,6 +1396,37 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // 단일 키워드 enum 프로퍼티: 정확한 값 집합으로 검증(무효·다값 거부).
+        "float" | "clear" | "visibility" | "break-before" | "break-after" | "break-inside"
+        | "box-decoration-break" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || match name {
+                    "float" => matches!(low.as_str(), "none" | "left" | "right" | "inline-start" | "inline-end" | "top" | "bottom" | "start" | "end"),
+                    "clear" => matches!(low.as_str(), "none" | "left" | "right" | "both" | "inline-start" | "inline-end"),
+                    "visibility" => matches!(low.as_str(), "visible" | "hidden" | "collapse"),
+                    "break-before" | "break-after" => matches!(low.as_str(), "auto" | "avoid" | "avoid-page" | "page" | "left" | "right" | "recto" | "verso" | "avoid-column" | "column" | "avoid-region" | "region"),
+                    "break-inside" => matches!(low.as_str(), "auto" | "avoid" | "avoid-page" | "avoid-column" | "avoid-region"),
+                    "box-decoration-break" => matches!(low.as_str(), "slice" | "clone"),
+                    _ => false,
+                };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // text-underline-position(§CSS Text Decor): auto | [from-font|under] || [left|right].
+        "text-underline-position" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::text_underline_position_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // text-decoration-skip-ink(§CSS Text Decor 4): auto | none | all.
         "text-decoration-skip-ink" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1561,10 +1592,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
         "appearance" | "-webkit-appearance" | "user-select" | "-webkit-user-select"
         | "resize" | "pointer-events" | "touch-action" | "hyphens" | "writing-mode"
-        | "text-orientation" | "image-rendering" | "isolation" | "box-decoration-break"
+        | "text-orientation" | "image-rendering" | "isolation"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
         | "background-clip" | "background-origin" | "overflow-anchor" | "scroll-behavior"
-        | "text-decoration-style" | "text-underline-position"
+        | "text-decoration-style"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "scroll-snap-align"
@@ -1580,8 +1611,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "hyphenate-character" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
-        | "grid-auto-flow" | "break-before" | "break-after"
-        | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
+        | "grid-auto-flow"
+        | "page-break-before" | "page-break-after" | "page-break-inside"
         | "caret-shape"
         | "unicode-bidi" | "border-image-repeat"
         // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.

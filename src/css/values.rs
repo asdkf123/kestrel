@@ -4264,6 +4264,43 @@ pub fn text_decoration_skip_spaces_valid(raw: &str) -> bool {
     true
 }
 
+// text-underline-position(§CSS Text Decor): auto | [from-font|under] || [left|right].
+pub fn text_underline_position_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 2 {
+        return false;
+    }
+    let (mut a, mut b) = (0u32, 0u32);
+    for t in toks {
+        match t {
+            "from-font" | "under" => a += 1,
+            "left" | "right" => b += 1,
+            _ => return false,
+        }
+    }
+    a <= 1 && b <= 1 && a + b >= 1
+}
+
+// text-underline-position 캐논: [from-font|under] 먼저, [left|right] 나중.
+pub fn text_underline_position_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return "auto".to_string();
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    let mut out: Vec<&str> = Vec::new();
+    for grp in [["from-font", "under"], ["left", "right"]] {
+        if let Some(t) = grp.iter().find(|k| toks.contains(k)) {
+            out.push(t);
+        }
+    }
+    out.join(" ")
+}
+
 // widows/orphans(§CSS Fragmentation): <integer [1,∞]>.
 pub fn positive_integer_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();

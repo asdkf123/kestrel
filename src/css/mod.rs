@@ -71,6 +71,7 @@ pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::will_change_valid;
 pub(crate) use values::{
     positive_integer_valid, text_decoration_line_valid, text_decoration_skip_spaces_valid,
+    text_underline_position_canonical, text_underline_position_valid,
 };
 pub(crate) use values::{
     column_count_valid, column_rule_canonical, column_rule_valid, column_rule_width_valid,

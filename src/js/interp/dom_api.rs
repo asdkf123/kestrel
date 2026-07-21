@@ -456,6 +456,10 @@ impl Interp {
         if prop == "column-rule" && crate::css::column_rule_valid(raw) {
             return crate::css::column_rule_canonical(raw);
         }
+        // text-underline-position(§CSS Text Decor): [from-font|under] 먼저 캐논.
+        if prop == "text-underline-position" && crate::css::text_underline_position_valid(raw) {
+            return crate::css::text_underline_position_canonical(raw);
+        }
         // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
         if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
             let allow_reversed = prop == "counter-reset";
@@ -778,6 +782,14 @@ impl Interp {
                     | "text-decoration-skip-spaces"
                     | "widows"
                     | "orphans"
+                    | "float"
+                    | "clear"
+                    | "visibility"
+                    | "break-before"
+                    | "break-after"
+                    | "break-inside"
+                    | "box-decoration-break"
+                    | "text-underline-position"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
