@@ -1315,23 +1315,38 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // line-height: 단위 없는 수(1.5)는 배수(Lh)로 저장해 상속 시 factor 그대로 —
         // 각 요소가 자기 font-size 를 곱한다(CSS2 §10.8). 퍼센트(150%)는 요소 font-size
         // 기준 길이로 확정돼 그 길이가 상속되므로 em 으로 저장. normal/길이단위는 그대로.
+        // line-height(§CSS Inline): normal | none | <number [0,∞]> | <length-percentage [0,∞]>.
         "line-height" => {
             let v = value_text.trim();
-            if v == "normal" {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword("normal".to_string()) }];
+            let low = v.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if matches!(low.as_str(), "normal" | "none") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if split_top_level(v).len() != 1 {
+                return Vec::new();
             }
             if let Some(pct) = v.strip_suffix('%') {
-                if let Ok(n) = pct.trim().parse::<f32>() {
-                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }];
-                }
+                return match pct.trim().parse::<f32>() {
+                    Ok(n) if n >= 0.0 => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }],
+                    _ => Vec::new(),
+                };
             }
             if let Ok(n) = v.parse::<f32>() {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Lh) }];
+                return if n >= 0.0 {
+                    vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Lh) }]
+                } else {
+                    Vec::new()
+                };
             }
-            match interpret_value(v) {
-                Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
-                None => Vec::new(),
+            // 비음수 길이 또는 calc.
+            if crate::css::nonneg_lp_valid(v) {
+                let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()));
+                return vec![Declaration { important: false, name: name.to_string(), value }];
             }
+            Vec::new()
         }
         // text-decoration[-line]: line 키워드 + 색 추출 (style/thickness 는 미사용).
         // none/키워드 없음 → "none". 인라인 레이아웃이 밑줄/취소선/윗줄로 그린다.
