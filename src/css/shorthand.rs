@@ -211,6 +211,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Declaration { important: false, name: "border-radius".to_string(), value: tl },
             ]
         }
+        // border-image 단축(§CSS Backgrounds):
+        //   <source> || <slice> [ / <width> | / <width>? / <outset> ]? || <repeat>
+        "border-image" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let names = [
+                "border-image-source",
+                "border-image-slice",
+                "border-image-width",
+                "border-image-outset",
+                "border-image-repeat",
+            ];
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return names
+                    .iter()
+                    .map(|n| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) })
+                    .collect();
+            }
+            expand_border_image(value_text.trim()).unwrap_or_default()
+        }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         // z-index: <integer> | auto. 직접 파싱 실패 시 수학 함수(abs/sign/round/…) 평가.
         "z-index" if value_text.trim().eq_ignore_ascii_case("auto") => {
@@ -3186,6 +3205,174 @@ fn split_top_level(text: &str) -> Vec<&str> {
         out.push(&text[st..]);
     }
     out
+}
+
+// border-image-source 토큰인가: none 또는 <image>(url()/그래디언트/image-set 등).
+fn is_bi_image_token(t: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    if low == "none" {
+        return true;
+    }
+    if !low.ends_with(')') {
+        return false;
+    }
+    const IMG_FNS: &[&str] = &[
+        "url(", "src(", "image(", "image-set(", "-webkit-image-set(", "cross-fade(",
+        "-webkit-cross-fade(", "element(", "paint(", "linear-gradient(", "radial-gradient(",
+        "conic-gradient(", "repeating-linear-gradient(", "repeating-radial-gradient(",
+        "repeating-conic-gradient(", "-webkit-linear-gradient(", "-webkit-radial-gradient(",
+        "-webkit-repeating-linear-gradient(", "-webkit-repeating-radial-gradient(",
+        "-webkit-gradient(", "-moz-linear-gradient(", "-o-linear-gradient(",
+    ];
+    IMG_FNS.iter().any(|f| low.starts_with(f))
+}
+
+fn is_bi_repeat_kw(t: &str) -> bool {
+    matches!(t.to_ascii_lowercase().as_str(), "stretch" | "repeat" | "round" | "space")
+}
+
+// border-image 단축을 5개 롱핸드로 전개(§CSS Backgrounds). 문법 위반 시 None.
+// source/repeat 는 B(slice-group) 바깥에서 앞뒤로만 등장하고 각각 한 번씩 연속.
+fn expand_border_image(value: &str) -> Option<Vec<Declaration>> {
+    let segs = split_top_slash_pub(value);
+    let ns = segs.len();
+    if ns == 0 || ns > 3 {
+        return None;
+    }
+
+    let mut source: Option<String> = None;
+    let mut repeat_toks: Vec<String> = Vec::new();
+    let mut repeat_side: Option<bool> = None; // false=앞, true=뒤
+
+    // seg0 앞쪽에서 source/repeat 벗겨내기.
+    let mut s0: Vec<String> = split_top_level(&segs[0]).iter().map(|s| s.to_string()).collect();
+    while let Some(first) = s0.first().cloned() {
+        if source.is_none() && is_bi_image_token(&first) {
+            source = Some(first);
+            s0.remove(0);
+        } else if is_bi_repeat_kw(&first) && repeat_toks.len() < 2 {
+            if repeat_side == Some(true) {
+                return None; // 뒤에서 이미 집음 → 비연속
+            }
+            repeat_side = Some(false);
+            repeat_toks.push(first);
+            s0.remove(0);
+        } else {
+            break;
+        }
+    }
+    // 슬래시가 없으면(ns==1) seg0 뒤쪽에서도 벗겨낸다.
+    if ns == 1 {
+        while let Some(last) = s0.last().cloned() {
+            if source.is_none() && is_bi_image_token(&last) {
+                source = Some(last);
+                s0.pop();
+            } else if is_bi_repeat_kw(&last) && repeat_toks.len() < 2 {
+                if repeat_side == Some(false) && !repeat_toks.is_empty() {
+                    return None; // 앞에서 이미 집음 → 비연속
+                }
+                repeat_side = Some(true);
+                repeat_toks.push(last);
+                s0.pop();
+            } else {
+                break;
+            }
+        }
+    }
+    let slice_toks = s0;
+
+    // width/outset 세그먼트 확정, 마지막 세그먼트 뒤쪽에서 source/repeat 벗겨내기.
+    let mut width_seg: Option<Vec<String>> = None;
+    let mut outset_seg: Option<Vec<String>> = None;
+    if ns >= 2 {
+        let mut last: Vec<String> = split_top_level(&segs[ns - 1]).iter().map(|s| s.to_string()).collect();
+        while let Some(lt) = last.last().cloned() {
+            if source.is_none() && is_bi_image_token(&lt) {
+                source = Some(lt);
+                last.pop();
+            } else if is_bi_repeat_kw(&lt) && repeat_toks.len() < 2 {
+                if repeat_side == Some(false) && !repeat_toks.is_empty() {
+                    return None;
+                }
+                repeat_side = Some(true);
+                repeat_toks.push(lt);
+                last.pop();
+            } else {
+                break;
+            }
+        }
+        if ns == 2 {
+            width_seg = Some(last);
+        } else {
+            outset_seg = Some(last);
+            width_seg = Some(split_top_level(&segs[1]).iter().map(|s| s.to_string()).collect());
+        }
+    }
+
+    // 최소 한 컴포넌트는 있어야 한다.
+    if source.is_none() && repeat_toks.is_empty() && slice_toks.is_empty() && ns == 1 {
+        return None;
+    }
+
+    // slice.
+    let slice_str = if slice_toks.is_empty() {
+        if ns > 1 {
+            return None; // '/ width' 앞에 slice 필수
+        }
+        "100%".to_string()
+    } else {
+        let joined = slice_toks.join(" ");
+        if !crate::css::border_image_slice_valid(&joined) {
+            return None;
+        }
+        crate::css::border_image_slice_canonical(&joined)
+    };
+    // width.
+    let width_str = match &width_seg {
+        None => "1".to_string(),
+        Some(w) if w.is_empty() => "1".to_string(),
+        Some(w) => {
+            let joined = w.join(" ");
+            if !crate::css::border_image_width_valid(&joined) {
+                return None;
+            }
+            crate::css::border_image_box_canonical(&joined)
+        }
+    };
+    // outset.
+    let outset_str = match &outset_seg {
+        None => "0".to_string(),
+        Some(o) if o.is_empty() => return None, // 둘째 슬래시 뒤 outset 필수
+        Some(o) => {
+            let joined = o.join(" ");
+            if !crate::css::border_image_outset_valid(&joined) {
+                return None;
+            }
+            crate::css::border_image_box_canonical(&joined)
+        }
+    };
+    // repeat.
+    let repeat_str = if repeat_toks.is_empty() {
+        "stretch".to_string()
+    } else {
+        if repeat_side == Some(true) {
+            repeat_toks.reverse();
+        }
+        let joined = repeat_toks.join(" ");
+        if !crate::css::border_image_repeat_valid(&joined) {
+            return None;
+        }
+        crate::css::border_image_repeat_canonical(&joined)
+    };
+    let source_str = source.unwrap_or_else(|| "none".to_string());
+
+    Some(vec![
+        Declaration { important: false, name: "border-image-source".to_string(), value: Value::Keyword(source_str) },
+        Declaration { important: false, name: "border-image-slice".to_string(), value: Value::Keyword(slice_str) },
+        Declaration { important: false, name: "border-image-width".to_string(), value: Value::Keyword(width_str) },
+        Declaration { important: false, name: "border-image-outset".to_string(), value: Value::Keyword(outset_str) },
+        Declaration { important: false, name: "border-image-repeat".to_string(), value: Value::Keyword(repeat_str) },
+    ])
 }
 
 // 괄호 밖 '/' 로 분리 (grid-row/column/area 의 grid-line 구분).

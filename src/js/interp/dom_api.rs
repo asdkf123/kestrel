@@ -859,6 +859,7 @@ impl Interp {
                     | "border-top-right-radius"
                     | "border-bottom-left-radius"
                     | "border-bottom-right-radius"
+                    | "border-image"
                     | "border-image-repeat"
                     | "border-image-outset"
                     | "border-image-width"
