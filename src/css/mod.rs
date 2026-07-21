@@ -69,8 +69,9 @@ pub(crate) use values::{
 };
 pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::{
-    column_count_valid, column_rule_width_valid, column_width_valid, columns_canonical,
-    columns_expand, columns_valid,
+    column_count_valid, column_rule_canonical, column_rule_valid, column_rule_width_valid,
+    column_width_valid, columns_canonical, columns_expand, columns_valid, is_line_style,
+    single_color_valid,
 };
 pub(crate) use values::{
     font_stretch_valid, font_synthesis_canonical, font_synthesis_valid,

@@ -452,6 +452,10 @@ impl Interp {
                 return crate::css::columns_canonical(&w, &c);
             }
         }
+        // column-rule(§CSS Multicol): 초기값 성분 생략 캐논.
+        if prop == "column-rule" && crate::css::column_rule_valid(raw) {
+            return crate::css::column_rule_canonical(raw);
+        }
         // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
         if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
             let allow_reversed = prop == "counter-reset";
@@ -763,6 +767,11 @@ impl Interp {
                     | "column-width"
                     | "column-rule-width"
                     | "columns"
+                    | "column-span"
+                    | "column-fill"
+                    | "column-rule-style"
+                    | "column-rule-color"
+                    | "column-rule"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

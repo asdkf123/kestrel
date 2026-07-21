@@ -1384,6 +1384,49 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // column-span/fill/rule-style/rule-color(§CSS Multicol): 단순 검증.
+        "column-span" | "column-fill" | "column-rule-style" | "column-rule-color" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "column-span" && matches!(low.as_str(), "none" | "all"))
+                || (name == "column-fill" && matches!(low.as_str(), "auto" | "balance" | "balance-all"))
+                || (name == "column-rule-style" && crate::css::is_line_style(value_text))
+                || (name == "column-rule-color" && crate::css::single_color_valid(value_text));
+            if ok {
+                // 색은 원문 보존(대소문자·함수), 그 외 키워드는 소문자.
+                let v = if name == "column-rule-color" { value_text.trim().to_string() } else { low };
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // column-rule 단축(§CSS Multicol): <line-width> || <line-style> || <color> →
+        // 세 롱핸드로 전개.
+        "column-rule" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let d = |n: &str, v: String| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v) };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![d("column-rule-width", low.clone()), d("column-rule-style", low.clone()), d("column-rule-color", low)];
+            }
+            if !crate::css::column_rule_valid(value_text) {
+                return Vec::new();
+            }
+            let (mut width, mut style, mut color) = (None, None, None);
+            for tok in split_top_level(value_text) {
+                if crate::css::is_line_style(&tok) {
+                    style = Some(tok.to_ascii_lowercase());
+                } else if crate::css::column_rule_width_valid(&tok) {
+                    width = Some(tok.to_ascii_lowercase());
+                } else {
+                    color = Some(tok.to_string());
+                }
+            }
+            vec![
+                d("column-rule-width", width.unwrap_or_else(|| "medium".to_string())),
+                d("column-rule-style", style.unwrap_or_else(|| "none".to_string())),
+                d("column-rule-color", color.unwrap_or_else(|| "currentcolor".to_string())),
+            ]
+        }
         // columns 단축(§CSS Multicol): column-width/column-count 로 전개.
         "columns" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1485,7 +1528,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow" | "break-before" | "break-after"
         | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
-        | "column-span" | "column-fill" | "column-rule-style" | "caret-shape"
+        | "caret-shape"
         | "unicode-bidi" | "border-image-repeat"
         // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
@@ -1540,9 +1583,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             vec![Declaration { important: false, name: name.to_string(), value }]
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
-        // 키워드로 보존. column-rule-color 도 색.
+        // 키워드로 보존.
         "fill" | "stroke" | "stop-color" | "flood-color" | "lighting-color"
-        | "column-rule-color" | "text-emphasis-color"
+        | "text-emphasis-color"
         | "-webkit-text-fill-color" | "-webkit-text-stroke-color"
         | "border-block-start-color" | "border-block-end-color"
         | "border-inline-start-color" | "border-inline-end-color" => {

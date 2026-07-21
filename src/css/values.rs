@@ -4217,6 +4217,80 @@ fn nonneg_length(t: &str) -> bool {
     is_length_percentage(t)
 }
 
+// <line-style>(§CSS Backgrounds): border/rule 스타일 키워드.
+pub fn is_line_style(t: &str) -> bool {
+    matches!(
+        t.trim().to_ascii_lowercase().as_str(),
+        "none" | "hidden" | "dotted" | "dashed" | "solid" | "double" | "groove" | "ridge"
+            | "inset" | "outset"
+    )
+}
+
+// 단일 <color>(§CSS Color): currentcolor/transparent/명명·hex·함수 색. auto 제외.
+pub fn single_color_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.len() != 1 {
+        return false;
+    }
+    let t = toks[0].trim();
+    t.eq_ignore_ascii_case("currentcolor")
+        || t.eq_ignore_ascii_case("transparent")
+        || matches!(interpret_value(t), Some(Value::Color(_)) | Some(Value::ColorFn(..)))
+}
+
+// column-rule 단축(§CSS Multicol): <line-width> || <line-style> || <color>. 각 최대 1개.
+pub fn column_rule_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let (mut w, mut s, mut c) = (0u32, 0u32, 0u32);
+    for t in &toks {
+        if is_line_style(t) {
+            s += 1;
+        } else if column_rule_width_valid(t) {
+            w += 1;
+        } else if single_color_valid(t) {
+            c += 1;
+        } else {
+            return false;
+        }
+    }
+    w <= 1 && s <= 1 && c <= 1
+}
+
+// column-rule 캐논: 초기값(width medium, style none, color currentcolor) 성분 생략.
+// 모두 초기값이면 "medium".
+pub fn column_rule_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    let (mut width, mut style, mut color) =
+        ("medium".to_string(), "none".to_string(), "currentcolor".to_string());
+    for t in &toks {
+        if is_line_style(t) {
+            style = t.to_ascii_lowercase();
+        } else if column_rule_width_valid(t) {
+            width = t.to_ascii_lowercase();
+        } else {
+            color = t.to_string();
+        }
+    }
+    let mut parts = Vec::new();
+    if width != "medium" {
+        parts.push(width);
+    }
+    if !style.eq_ignore_ascii_case("none") {
+        parts.push(style);
+    }
+    if !color.eq_ignore_ascii_case("currentcolor") {
+        parts.push(color);
+    }
+    if parts.is_empty() {
+        "medium".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 // column-count(§CSS Multicol): auto | <integer [1,∞]>.
 pub fn column_count_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();
