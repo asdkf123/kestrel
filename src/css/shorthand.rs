@@ -161,6 +161,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 근사 — 키워드 별도 저장 안 함). 애니메이션 from/to 는 원문 문자열이라 interp 가
         // hanging 을 보존한다.
         "text-indent" => {
+            let vt = value_text.trim().to_ascii_lowercase();
+            // CSS 전역 키워드: inherit/unset/revert 는 선언 없음(상속 적용), initial=0px.
+            if matches!(vt.as_str(), "inherit" | "unset" | "revert" | "revert-layer") {
+                return Vec::new();
+            }
+            if vt == "initial" {
+                return vec![Declaration {
+                    important: false,
+                    name: "text-indent".to_string(),
+                    value: Value::Length(0.0, Unit::Px),
+                }];
+            }
             let toks: Vec<&str> = split_top_level(value_text.trim());
             let kw_ok = toks.iter().all(|t| {
                 matches!(*t, "hanging" | "each-line")
