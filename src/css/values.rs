@@ -2906,6 +2906,40 @@ pub fn contain_intrinsic_valid(raw: &str, max_groups: usize) -> bool {
     i == toks.len() && groups >= 1
 }
 
+// rotate 프로퍼티 유효성(§CSS Transforms 2): none | <angle> | [x|y|z|<number>{3}] && <angle>.
+pub fn rotate_valid(raw: &str) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    if toks.len() == 1 && toks[0] == "none" {
+        return true;
+    }
+    let is_angle = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains('%'));
+        }
+        parse_angle_deg(t).is_some()
+    };
+    let is_num = |t: &str| {
+        if is_math_fn(t) {
+            return true;
+        }
+        t.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+    };
+    let (mut angles, mut axes, mut nums) = (0, 0, 0);
+    for t in &toks {
+        if is_angle(t) {
+            angles += 1;
+        } else if matches!(t.as_str(), "x" | "y" | "z") {
+            axes += 1;
+        } else if is_num(t) {
+            nums += 1;
+        } else {
+            return false;
+        }
+    }
+    // 각도 정확히 1개 필요. 축은 없거나(각도만), x/y/z 하나, 또는 수 3개.
+    angles == 1 && ((axes == 0 && nums == 0) || (axes == 1 && nums == 0) || (axes == 0 && nums == 3))
+}
+
 // aspect-ratio 유효성(§CSS Sizing): auto || <ratio>. <ratio>=<number 0+> [/ <number 0+>].
 pub fn aspect_ratio_valid(raw: &str) -> bool {
     let norm = raw.replace('/', " / ");
