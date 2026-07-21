@@ -9174,6 +9174,28 @@ impl Interp {
                 return Some(format!("oblique {}deg", crate::style::num_css(a)));
             }
         }
+        // text-indent: <length-percentage> [hanging] [each-line]. 길이만 보간, 키워드 유지.
+        if dash_prop == "text-indent" {
+            let split = |s: &str| -> (Vec<String>, Vec<String>) {
+                let (mut len, mut kw) = (Vec::new(), Vec::new());
+                for t in s.split_whitespace() {
+                    if matches!(t, "hanging" | "each-line") {
+                        kw.push(t.to_string());
+                    } else {
+                        len.push(t.to_string());
+                    }
+                }
+                (len, kw)
+            };
+            let (fl, fk) = split(from);
+            let (tl, tk) = split(to);
+            if fk == tk && fl.len() == 1 && tl.len() == 1 {
+                // 길이만 보간(hanging/each-line 은 계산값에서 생략 — Length 저장과 일관).
+                if let Some(v) = Self::interp_css_value(&fl[0], &tl[0], eased) {
+                    return Some(v);
+                }
+            }
+        }
         // font-size: px/절대 키워드(large 등)를 px 로 해석해 보간(비음수). em/rem 은 이미
         // resolve_font_units 로 px. %/그 외는 아래 generic.
         if dash_prop == "font-size" {

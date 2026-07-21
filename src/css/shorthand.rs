@@ -156,6 +156,27 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 value: Value::Length(n, Unit::Number),
             }]
         }
+        // text-indent: <length-percentage> && hanging? && each-line?. 길이 토큰을 파싱해
+        // Length 로(레이아웃이 읽음), hanging/each-line 키워드가 있어도 유효(계산값은 길이
+        // 근사 — 키워드 별도 저장 안 함). 애니메이션 from/to 는 원문 문자열이라 interp 가
+        // hanging 을 보존한다.
+        "text-indent" => {
+            let toks: Vec<&str> = split_top_level(value_text.trim());
+            let kw_ok = toks.iter().all(|t| {
+                matches!(*t, "hanging" | "each-line")
+                    || matches!(interpret_value(t), Some(Value::Length(..)))
+            });
+            let len = toks
+                .iter()
+                .find(|t| !matches!(**t, "hanging" | "each-line"))
+                .and_then(|t| interpret_value(t));
+            match len {
+                Some(v @ Value::Length(..)) if kw_ok => {
+                    vec![Declaration { important: false, name: "text-indent".to_string(), value: v }]
+                }
+                _ => Vec::new(),
+            }
+        }
         // order: 정수(음수 가능). 단위 없는 수다.
         "order" => match number_or_math(value_text) {
             Some(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
