@@ -7852,6 +7852,7 @@ impl Interp {
         // transform 행렬화용 박스 크기(rotate/scale 엔 무의미, translate% 에만 필요).
         let (bw, bh) = self.elem_border_wh(id);
         let cc = self.elem_color(id);
+        let (fs, rfs) = self.elem_font_sizes(id);
         // element.animate / CSS transition 스냅샷 우선.
         if let Some(anims) = self.element_animations.get(&id) {
             let mut result = None;
@@ -7863,7 +7864,9 @@ impl Interp {
                     let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
                     let progress = (ct / duration).clamp(0.0, 1.0) as f32;
                     let eased = Self::eval_easing(easing, progress);
-                    if let Some(v) = Self::interp_prop(dash_prop, from, to, eased, bw, bh, &cc) {
+                    let from = Self::resolve_font_units(from, fs, rfs);
+                    let to = Self::resolve_font_units(to, fs, rfs);
+                    if let Some(v) = Self::interp_prop(dash_prop, &from, &to, eased, bw, bh, &cc) {
                         result = Some(v);
                     }
                 }
@@ -9192,6 +9195,49 @@ impl Interp {
     // 값으로 보간. 명시적 0%/100% 프레임이 둘 다 있을 때만(neutral 은 정적 렌더에 맡김).
     // transform/transform-origin 의 % 해석 기준 = 요소 border-box. layout_rects 는
     // inline-block 등에서 인라인 조각 합집합이라 부정확 — layout_metrics(정확) 우선.
+    // (요소 font-size, 루트 font-size) px. em/rem 해석용. 계산값 font-size 는 이미 px.
+    fn elem_font_sizes(&self, id: crate::dom::NodeId) -> (f32, f32) {
+        let get_fs = |nid: crate::dom::NodeId| -> Option<f32> {
+            self.computed_styles
+                .get(&nid)
+                .and_then(|m| m.get("font-size"))
+                .and_then(|v| v.strip_suffix("px"))
+                .and_then(|n| n.trim().parse::<f32>().ok())
+        };
+        let fs = get_fs(id).unwrap_or(16.0);
+        let root_fs = if let Some(p) = self.dom {
+            let mut cur = id;
+            while let Some(par) = unsafe { (*p).get(cur).parent } {
+                cur = par;
+            }
+            get_fs(cur).unwrap_or(16.0)
+        } else {
+            16.0
+        };
+        (fs, root_fs)
+    }
+
+    // 값 문자열의 최상위 em/rem/ex/ch 토큰을 px 로 해석(애니메이션 계산값은 px). 괄호
+    // 안(calc 등)은 손대지 않는다. rem 을 em 보다 먼저 검사(rem 도 em 으로 끝난다).
+    fn resolve_font_units(s: &str, fs: f32, root_fs: f32) -> String {
+        Self::split_top_ws(s)
+            .iter()
+            .map(|tok| {
+                let conv = |suf: &str, scale: f32| -> Option<String> {
+                    tok.strip_suffix(suf)
+                        .and_then(|n| n.parse::<f32>().ok())
+                        .map(|v| format!("{}px", crate::style::num_css(v * scale)))
+                };
+                conv("rem", root_fs)
+                    .or_else(|| conv("em", fs))
+                    .or_else(|| conv("ex", fs * 0.5))
+                    .or_else(|| conv("ch", fs * 0.5))
+                    .unwrap_or_else(|| (*tok).to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     // 요소의 color 계산값(box-shadow 등 currentColor 해석용). 없으면 검정.
     fn elem_color(&self, id: crate::dom::NodeId) -> String {
         self.computed_styles
@@ -9282,6 +9328,9 @@ impl Interp {
         let eased = Self::eval_easing(&easing, progress);
         let (bw, bh) = self.elem_border_wh(id);
         let cc = self.elem_color(id);
+        let (fs, rfs) = self.elem_font_sizes(id);
+        let from = Self::resolve_font_units(&from, fs, rfs);
+        let to = Self::resolve_font_units(&to, fs, rfs);
         Self::interp_prop(dash_prop, &from, &to, eased, bw, bh, &cc)
     }
 
