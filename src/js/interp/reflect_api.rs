@@ -90,19 +90,22 @@ impl Interp {
                 // 기본값이 명시되지 않았으면 빈 문자열.
                 // <input>.type 이 "text" 로 나오는 게 바로 이 규칙이다 — 빈 문자열을
                 // 주면 `if (input.type === 'text')` 같은 흔한 검사가 조용히 거짓이 된다.
+                // nullable enum(DOMString?, 예: crossOrigin)은 missing 기본값이 없고
+                // invalid 기본값이 있다 — 없으면 null. 비-nullable(dir 등)은 missing 없으면 "".
+                let nullable = spec.missing.is_none() && spec.invalid.is_some();
                 match raw {
-                    None => Value::Str(spec.missing.unwrap_or("").to_string()),
+                    None => match spec.missing {
+                        Some(m) => Value::Str(m.to_string()),
+                        None if nullable => Value::Null,
+                        None => Value::Str(String::new()),
+                    },
                     Some(s) => {
                         let lower = s.to_ascii_lowercase();
                         if spec.keywords.iter().any(|k| *k == lower) {
                             Value::Str(lower)
-                        } else if s.is_empty() {
-                            // 빈 값도 "없음" 취급 (표준: missing value default)
-                            Value::Str(spec.missing.unwrap_or("").to_string())
                         } else {
-                            Value::Str(
-                                spec.invalid.or(spec.missing).unwrap_or("").to_string(),
-                            )
+                            // 키워드 아님(빈 값 포함): invalid value default → missing → "".
+                            Value::Str(spec.invalid.or(spec.missing).unwrap_or("").to_string())
                         }
                     }
                 }
