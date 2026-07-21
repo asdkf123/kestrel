@@ -9165,7 +9165,14 @@ impl Interp {
             } else {
                 eased >= 0.5
             };
-            return Some(if to_side { to.to_string() } else { from.to_string() });
+            let chosen = if to_side { to } else { from };
+            // 불연속 플립도 **계산값**이어야 한다: 색 키워드(green/currentcolor 아닌
+            // 명명색·#hex)는 rgb() 로 접는다. auto↔green 같은 discrete 색 전이에서
+            // 원문 "green" 대신 "rgb(0, 128, 0)" 을 돌려준다.
+            if let Some(crate::css::Value::Color(c)) = crate::css::interpret_value(chosen) {
+                return Some(crate::style::computed_value_string(&crate::css::Value::Color(c)));
+            }
+            return Some(chosen.to_string());
         }
         None
     }
@@ -9426,14 +9433,42 @@ impl Interp {
     }
 
     // CSS 값 보간(from→to, t). px 길이/%/수/색(rgb) lerp. 그 외 타입은 None(불연속).
+    // 최상위(괄호 밖) 공백으로 토큰 분할. 괄호 안 공백은 유지(rgb(1, 2, 3) 한 토큰).
+    fn split_top_ws(s: &str) -> Vec<&str> {
+        let b = s.as_bytes();
+        let (mut out, mut depth, mut start, mut in_tok) = (Vec::new(), 0i32, 0usize, false);
+        for i in 0..b.len() {
+            match b[i] {
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            if b[i].is_ascii_whitespace() && depth == 0 {
+                if in_tok {
+                    out.push(&s[start..i]);
+                    in_tok = false;
+                }
+            } else if !in_tok {
+                start = i;
+                in_tok = true;
+            }
+        }
+        if in_tok {
+            out.push(&s[start..]);
+        }
+        out
+    }
+
     fn interp_css_value(from: &str, to: &str, t: f32) -> Option<String> {
         let f = from.trim();
         let g = to.trim();
         let lerp = |a: f32, b: f32| a + (b - a) * t;
         // 다중값(공백 구분, 괄호 밖): 토큰 개수 같으면 각 토큰 보간(margin/background-
-        // position/border-radius 등). 단일 토큰이면 아래 스칼라 경로로.
-        let ft: Vec<&str> = f.split_whitespace().collect();
-        let gt: Vec<&str> = g.split_whitespace().collect();
+        // position/border-radius 등). 단일 토큰이면 아래 스칼라 경로로. 괄호 안 공백은
+        // 쪼개지 않는다 — rgb(255, 255, 0) 같은 색/함수를 한 토큰으로 유지(안 그러면
+        // ["rgb(255,","255,","0)"] 로 깨져 색 보간이 통째로 실패했다).
+        let ft: Vec<&str> = Self::split_top_ws(f);
+        let gt: Vec<&str> = Self::split_top_ws(g);
         if ft.len() > 1 && ft.len() == gt.len() {
             // 동일 토큰(fill/auto 같은 키워드)은 그대로 유지 — 보간 불가여도 안 깨진다.
             let parts: Option<Vec<String>> = ft

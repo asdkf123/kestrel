@@ -1104,6 +1104,9 @@ const INHERITED: &[&str] = &[
     "hyphens",
     "text-align-last",
     "text-justify",
+    // CSS UI: caret-color/accent-color 는 상속 속성(§CSS-UI-4). unset 이 inherit 처럼.
+    "caret-color",
+    "accent-color",
 ];
 
 // 상속 속성인지(unset 이 inherit 처럼 동작할지) 판정. 롱핸드 기준.
