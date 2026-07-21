@@ -9174,6 +9174,33 @@ impl Interp {
                 return Some(format!("oblique {}deg", crate::style::num_css(a)));
             }
         }
+        // hyphenate-limit-chars: [auto|<integer>]{1,3}. 각 값을 정수로 보간(반올림).
+        // auto 는 같으면 유지, auto↔정수는 불연속.
+        if dash_prop == "hyphenate-limit-chars" {
+            let fa: Vec<&str> = from.split_whitespace().collect();
+            let ta: Vec<&str> = to.split_whitespace().collect();
+            if fa.len() == ta.len() && !fa.is_empty() {
+                let parts: Option<Vec<String>> = fa
+                    .iter()
+                    .zip(&ta)
+                    .map(|(a, b)| {
+                        if a == b {
+                            Some((*a).to_string())
+                        } else {
+                            match (a.parse::<f32>(), b.parse::<f32>()) {
+                                (Ok(x), Ok(y)) => {
+                                    Some(format!("{}", (x + (y - x) * eased).round() as i64))
+                                }
+                                _ => None,
+                            }
+                        }
+                    })
+                    .collect();
+                if let Some(p) = parts {
+                    return Some(p.join(" "));
+                }
+            }
+        }
         // text-indent: <length-percentage> [hanging] [each-line]. 길이만 보간, 키워드 유지.
         if dash_prop == "text-indent" {
             let split = |s: &str| -> (Vec<String>, Vec<String>) {
