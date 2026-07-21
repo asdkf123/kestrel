@@ -921,9 +921,77 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             ]
         }
         // grid 트랙/영역 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
-        "grid-template-columns" | "grid-template-rows" | "grid-template-areas" | "grid-area"
-        | "grid-column" | "grid-row" => {
+        "grid-template-columns" | "grid-template-rows" | "grid-template-areas" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
+        }
+        // grid-row/grid-column(§CSS Grid): <grid-line> [/ <grid-line>]?.
+        // start = 첫 줄, end = 둘째 줄. 슬래시 없으면 첫 줄이 순수 custom-ident 면
+        // 복사, 아니면 auto.
+        "grid-row" | "grid-column" => {
+            let axis = name.strip_prefix("grid-").unwrap();
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { important: false, name: format!("grid-{axis}-start"), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: format!("grid-{axis}-end"), value: Value::Keyword(low) },
+                ];
+            }
+            if !crate::css::grid_line_shorthand_valid(value_text) {
+                return Vec::new();
+            }
+            let parts = split_top_slash_pub(value_text);
+            let start = crate::css::grid_line_canonical(parts[0].trim());
+            let end = match parts.get(1) {
+                Some(p) => crate::css::grid_line_canonical(p.trim()),
+                None if grid_line_is_bare_ident(&start) => start.clone(),
+                None => "auto".to_string(),
+            };
+            let d = |n: String, v: String| Declaration { important: false, name: n, value: Value::Keyword(v) };
+            vec![d(format!("grid-{axis}-start"), start), d(format!("grid-{axis}-end"), end)]
+        }
+        // grid-line 롱핸드(§CSS Grid): 단일 <grid-line> 검증 + 캐논.
+        "grid-row-start" | "grid-row-end" | "grid-column-start" | "grid-column-end" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::grid_line_valid(value_text.trim()) {
+                return Vec::new();
+            }
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::grid_line_canonical(value_text.trim())) }]
+        }
+        // grid-area(§CSS Grid): <grid-line> [/ <grid-line>]{0,3} →
+        // row-start / column-start / row-end / column-end.
+        "grid-area" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                let d = |n: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) };
+                return vec![d("grid-row-start"), d("grid-column-start"), d("grid-row-end"), d("grid-column-end")];
+            }
+            if !crate::css::grid_area_valid(value_text) {
+                return Vec::new();
+            }
+            let parts: Vec<String> = split_top_slash_pub(value_text)
+                .iter()
+                .map(|p| crate::css::grid_line_canonical(p.trim()))
+                .collect();
+            let row_start = parts[0].clone();
+            let col_start = parts.get(1).cloned().unwrap_or_else(|| {
+                if grid_line_is_bare_ident(&row_start) { row_start.clone() } else { "auto".to_string() }
+            });
+            let row_end = parts.get(2).cloned().unwrap_or_else(|| {
+                if grid_line_is_bare_ident(&row_start) { row_start.clone() } else { "auto".to_string() }
+            });
+            let col_end = parts.get(3).cloned().unwrap_or_else(|| {
+                if grid_line_is_bare_ident(&col_start) { col_start.clone() } else { "auto".to_string() }
+            });
+            let d = |n: &str, v: String| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v) };
+            vec![
+                d("grid-row-start", row_start),
+                d("grid-column-start", col_start),
+                d("grid-row-end", row_end),
+                d("grid-column-end", col_end),
+            ]
         }
         // place-* 단축: <align> [<justify>] → align-*/justify-* longhand
         // place-items/place-content/place-self(§CSS Box Alignment): <align> <justify>?.
@@ -2190,6 +2258,33 @@ fn split_top_level(text: &str) -> Vec<&str> {
         out.push(&text[st..]);
     }
     out
+}
+
+// 괄호 밖 '/' 로 분리 (grid-row/column/area 의 grid-line 구분).
+fn split_top_slash_pub(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in text.chars() {
+        match c {
+            '(' => { depth += 1; cur.push(c); }
+            ')' => { depth -= 1; cur.push(c); }
+            '/' if depth == 0 => { out.push(cur.trim().to_string()); cur.clear(); }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
+// grid-line 이 순수 <custom-ident> 인가(정수·span·auto 아님).
+// 단축에서 슬래시 생략 시 반대편으로 복사할지 판단.
+fn grid_line_is_bare_ident(line: &str) -> bool {
+    let toks: Vec<&str> = line.split_whitespace().collect();
+    toks.len() == 1
+        && toks[0].parse::<i64>().is_err()
+        && !toks[0].eq_ignore_ascii_case("auto")
+        && !toks[0].eq_ignore_ascii_case("span")
 }
 
 // 괄호 밖 콤마로만 분리 (background 의 레이어, font-family 목록 등).

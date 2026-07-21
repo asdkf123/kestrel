@@ -698,6 +698,13 @@ impl Interp {
                     | "corner-block-end-shape"
                     | "corner-inline-start-shape"
                     | "corner-inline-end-shape"
+                    | "grid-row"
+                    | "grid-column"
+                    | "grid-area"
+                    | "grid-row-start"
+                    | "grid-row-end"
+                    | "grid-column-start"
+                    | "grid-column-end"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

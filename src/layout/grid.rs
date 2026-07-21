@@ -573,7 +573,9 @@ impl<'a> LayoutBox<'a> {
         // 각 아이템의 영역 배치 결정 + 폭에 맞춰 측정
         let mut placed: Vec<Option<(usize, usize, usize, usize)>> = vec![None; self.children.len()];
         for i in 0..self.children.len() {
-            let name = match self.children[i].styled_node.value("grid-area") {
+            // grid-area: <name> 는 네 롱핸드를 모두 <name> 으로 전개하므로
+            // 이름 배치는 grid-row-start 에서 읽는다(named area 는 boxes 키와만 매치).
+            let name = match self.children[i].styled_node.value("grid-row-start") {
                 Some(Value::Keyword(s)) => s.trim().to_string(),
                 _ => String::new(),
             };

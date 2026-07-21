@@ -63,6 +63,9 @@ pub(crate) use values::transition_property_valid;
 pub(crate) use values::transition_property_canonical;
 pub(crate) use values::time_list_valid;
 pub(crate) use values::single_transition_property_valid;
+pub(crate) use values::{
+    grid_area_valid, grid_line_canonical, grid_line_shorthand_valid, grid_line_valid,
+};
 pub(crate) use values::font_variant_valid;
 pub(crate) use values::font_style_valid;
 pub(crate) use values::normalize_font_style;

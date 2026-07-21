@@ -3878,6 +3878,153 @@ pub fn single_transition_property_valid(t: &str) -> bool {
     ) && is_css_ident(t)
 }
 
+// <grid-line> 의 custom-ident: span/auto/CSS-wide/default 제외한 유효 식별자.
+fn grid_ident_valid(t: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    !matches!(
+        low.as_str(),
+        "span" | "auto" | "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "default"
+    ) && is_css_ident(t)
+}
+
+// 단일 <grid-line>(§CSS Grid): auto | <custom-ident> |
+// [<integer≠0> && <custom-ident>?] | [span && [<integer≥1> || <custom-ident>]].
+// span 형에서 span 은 맨 앞 또는 맨 뒤여야 하고(중간이면 int/ident 를 가르므로 무효),
+// 정수·ident 단위는 연속이어야 한다("2 span first" 무효, "2 i span" 유효).
+pub fn grid_line_valid(s: &str) -> bool {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let is_span = |t: &str| t.eq_ignore_ascii_case("span");
+    let spans: Vec<usize> = toks.iter().enumerate().filter(|(_, t)| is_span(t)).map(|(i, _)| i).collect();
+    if !spans.is_empty() {
+        // span 정확히 한 번, 맨 앞 또는 맨 뒤. 나머지는 정수(≥1) 0~1 + ident 0~1, 최소 하나.
+        if spans.len() != 1 {
+            return false;
+        }
+        let sp = spans[0];
+        if sp != 0 && sp != toks.len() - 1 {
+            return false;
+        }
+        let rest: Vec<&str> = toks.iter().enumerate().filter(|(i, _)| *i != sp).map(|(_, t)| *t).collect();
+        if rest.is_empty() {
+            return false;
+        }
+        let (mut ints, mut idents) = (0, 0);
+        for t in &rest {
+            if let Ok(n) = t.parse::<i64>() {
+                if n < 1 {
+                    return false;
+                }
+                ints += 1;
+            } else if grid_ident_valid(t) {
+                idents += 1;
+            } else {
+                return false;
+            }
+        }
+        return ints <= 1 && idents <= 1;
+    }
+    // span 없는 형.
+    match toks.len() {
+        1 => {
+            if toks[0].eq_ignore_ascii_case("auto") {
+                return true;
+            }
+            if let Ok(n) = toks[0].parse::<i64>() {
+                return n != 0;
+            }
+            grid_ident_valid(toks[0])
+        }
+        2 => {
+            // <integer≠0> 하나 + <custom-ident> 하나, 순서 무관.
+            let a = toks[0].parse::<i64>().ok();
+            let b = toks[1].parse::<i64>().ok();
+            match (a, b) {
+                (Some(n), None) => n != 0 && grid_ident_valid(toks[1]),
+                (None, Some(n)) => n != 0 && grid_ident_valid(toks[0]),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+// <grid-line> 캐논: span → <integer> → <custom-ident> 순, 정수의 '+' 부호·선행 0 제거.
+pub fn grid_line_canonical(s: &str) -> String {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    let (mut span, mut auto) = (false, false);
+    let (mut int_tok, mut ident_tok): (Option<String>, Option<String>) = (None, None);
+    for t in &toks {
+        if t.eq_ignore_ascii_case("span") {
+            span = true;
+        } else if t.eq_ignore_ascii_case("auto") {
+            auto = true;
+        } else if let Ok(n) = t.parse::<i64>() {
+            int_tok = Some(n.to_string());
+        } else {
+            ident_tok = Some((*t).to_string());
+        }
+    }
+    if auto {
+        return "auto".to_string();
+    }
+    // span 형에서 정수 1 이 ident 와 함께면 기본값이라 생략("span 1 two" → "span two").
+    if span && int_tok.as_deref() == Some("1") && ident_tok.is_some() {
+        int_tok = None;
+    }
+    let mut parts = Vec::new();
+    if span {
+        parts.push("span".to_string());
+    }
+    if let Some(i) = int_tok {
+        parts.push(i);
+    }
+    if let Some(id) = ident_tok {
+        parts.push(id);
+    }
+    parts.join(" ")
+}
+
+// grid-row/grid-column 단축(§CSS Grid): <grid-line> [/ <grid-line>]?.
+pub fn grid_line_shorthand_valid(raw: &str) -> bool {
+    let parts: Vec<String> = split_top_slash(raw);
+    !parts.is_empty() && parts.len() <= 2 && parts.iter().all(|p| grid_line_valid(p.trim()))
+}
+
+// grid-area 단축(§CSS Grid): <grid-line> [/ <grid-line>]{0,3}.
+pub fn grid_area_valid(raw: &str) -> bool {
+    let parts: Vec<String> = split_top_slash(raw);
+    !parts.is_empty() && parts.len() <= 4 && parts.iter().all(|p| grid_line_valid(p.trim()))
+}
+
+// 최상위 '/' 분리(함수 괄호 안쪽 슬래시는 보존).
+fn split_top_slash(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            '/' if depth == 0 => {
+                out.push(cur.trim().to_string());
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
 // transition-property 캐논 직렬화: all 키워드만 소문자화, custom-ident 는 대소문자 보존.
 pub fn transition_property_canonical(raw: &str) -> String {
     let whole = raw.trim();

@@ -803,6 +803,26 @@ fn collect_computed_styles(
             if vals.iter().any(|v| v.is_empty()) {
                 continue;
             }
+            // grid-row/grid-column(§CSS Grid): 최단 직렬화. end 가 생략 가능하면
+            // start 만; end==auto 이고 start 가 순수 ident 가 아니거나, end==start 이고
+            // start 가 순수 ident 면 생략. 아니면 "start / end".
+            if *prop == "grid-row" || *prop == "grid-column" {
+                let (start, end) = (&vals[0], &vals[1]);
+                let bare_ident = |s: &str| {
+                    let t: Vec<&str> = s.split_whitespace().collect();
+                    t.len() == 1
+                        && t[0].parse::<i64>().is_err()
+                        && !t[0].eq_ignore_ascii_case("auto")
+                        && !t[0].eq_ignore_ascii_case("span")
+                };
+                let joined = if (end == "auto" && !bare_ident(start)) || (end == start && bare_ident(start)) {
+                    start.clone()
+                } else {
+                    format!("{} / {}", start, end)
+                };
+                shorthand_vals.push((prop.to_string(), joined));
+                continue;
+            }
             // TRBL 박스 단축(margin/padding/inset/scroll-*)은 CSSOM 규칙대로 1~4 값 축약:
             // 전부 같으면 1, top==bottom&&right==left 면 2, right==left 면 3, 아니면 4.
             let is_trbl = longs.len() == 4
