@@ -2285,6 +2285,95 @@ pub fn cursor_valid(raw: &str) -> bool {
     true
 }
 
+// <easing-function> 하나가 유효한가(§CSS Easing). keyword/cubic-bezier/steps/linear().
+fn single_easing_valid(s: &str) -> bool {
+    let low = s.trim().to_ascii_lowercase();
+    if matches!(
+        low.as_str(),
+        "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | "step-start" | "step-end"
+    ) {
+        return true;
+    }
+    if let Some(inner) = low.strip_prefix("cubic-bezier(").and_then(|x| x.strip_suffix(')')) {
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return false;
+        }
+        let nums: Option<Vec<f64>> = parts
+            .iter()
+            .map(|p| p.trim().parse::<f64>().ok().filter(|v| v.is_finite()))
+            .collect();
+        return match nums {
+            Some(n) => (0.0..=1.0).contains(&n[0]) && (0.0..=1.0).contains(&n[2]),
+            None => false,
+        };
+    }
+    if let Some(inner) = low.strip_prefix("steps(").and_then(|x| x.strip_suffix(')')) {
+        let parts: Vec<&str> = inner.split(',').map(|p| p.trim()).collect();
+        if parts.is_empty() || parts.len() > 2 {
+            return false;
+        }
+        // 첫 인자는 정수 또는 함수(sibling-index()/calc() 등 — 값을 파스타임에 알 수
+        // 없어 관대). 함수는 알파벳으로 시작하고 괄호가 있어야("2()" 같은 건 무효).
+        let n = match parts[0].parse::<i64>() {
+            Ok(v) => v,
+            Err(_)
+                if parts[0].starts_with(|c: char| c.is_ascii_alphabetic())
+                    && parts[0].ends_with(')')
+                    && parts[0].contains('(') =>
+            {
+                1
+            }
+            Err(_) => return false,
+        };
+        return match parts.get(1).copied() {
+            None | Some("start") | Some("end") | Some("jump-start") | Some("jump-end")
+            | Some("jump-both") => n >= 1,
+            Some("jump-none") => n >= 2, // jump-none 은 최소 2
+            _ => false,
+        };
+    }
+    // linear(...) (CSS Easing 2) 는 관대하게 유효로(내부 점 파싱 생략).
+    low.starts_with("linear(") && low.ends_with(')')
+}
+
+// <easing-function> 하나의 캐논 직렬화(§CSS Easing): step-start→steps(1, start),
+// step-end→steps(1), steps 의 기본 위치(end/jump-end) 생략.
+fn single_easing_canonical(s: &str) -> String {
+    let low = s.trim().to_ascii_lowercase();
+    match low.as_str() {
+        "step-start" => "steps(1, start)".to_string(),
+        "step-end" => "steps(1)".to_string(),
+        _ => {
+            if let Some(inner) = low.strip_prefix("steps(").and_then(|x| x.strip_suffix(')')) {
+                let parts: Vec<&str> = inner.split(',').map(|p| p.trim()).collect();
+                let n = parts.first().copied().unwrap_or("1");
+                match parts.get(1).copied() {
+                    None | Some("end") | Some("jump-end") => format!("steps({})", n),
+                    Some(pos) => format!("steps({}, {})", n, pos),
+                }
+            } else {
+                low
+            }
+        }
+    }
+}
+
+// transition/animation-timing-function 캐논 직렬화(콤마 구분 목록).
+pub fn timing_function_canonical(raw: &str) -> String {
+    split_top_commas(raw)
+        .iter()
+        .map(|f| single_easing_canonical(f))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// transition/animation-timing-function 유효성: 콤마 구분 <easing-function> 목록.
+pub fn timing_function_valid(raw: &str) -> bool {
+    let fns = split_top_commas(raw);
+    !fns.is_empty() && fns.iter().all(|f| single_easing_valid(f))
+}
+
 // caret-color 성분이 auto 또는 유효 <color> 인가.
 fn caret_color_component_ok(t: &str) -> bool {
     t.eq_ignore_ascii_case("auto")

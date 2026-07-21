@@ -301,6 +301,13 @@ impl Interp {
                 return s;
             }
         }
+        // transition/animation-timing-function(§CSS Easing): step-start→steps(1, start),
+        // steps 기본 위치 생략 등 캐논 직렬화.
+        if matches!(prop, "transition-timing-function" | "animation-timing-function") {
+            if crate::css::timing_function_valid(raw) {
+                return crate::css::timing_function_canonical(raw);
+            }
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
@@ -379,6 +386,8 @@ impl Interp {
                     | "cursor"
                     | "field-sizing"
                     | "box-shadow"
+                    | "transition-timing-function"
+                    | "animation-timing-function"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
