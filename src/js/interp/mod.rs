@@ -9131,6 +9131,25 @@ impl Interp {
                 return Some(format!("{}", v as i64));
             }
         }
+        // font-variation-settings/font-feature-settings: 축/태그 이름은 계산값에서
+        // 작은따옴표('test'). 큰따옴표를 작은따옴표로 바꾼 뒤 성분별(태그 유지, 수 보간).
+        if matches!(dash_prop, "font-variation-settings" | "font-feature-settings") {
+            let f = from.replace('"', "'");
+            let t = to.replace('"', "'");
+            // 쉼표로 축 분리 → 각 축(태그 유지, 수 보간) → ", " 재결합.
+            let fa: Vec<&str> = f.split(',').map(|s| s.trim()).collect();
+            let ta: Vec<&str> = t.split(',').map(|s| s.trim()).collect();
+            if fa.len() == ta.len() {
+                let parts: Option<Vec<String>> = fa
+                    .iter()
+                    .zip(&ta)
+                    .map(|(a, b)| Self::interp_css_value(a, b, eased))
+                    .collect();
+                if let Some(p) = parts {
+                    return Some(p.join(", "));
+                }
+            }
+        }
         // font-style: normal/oblique[/각도] 는 각도(normal=0deg)를 보간. 끝점(eased 0/1)은
         // 키워드 원형 유지. italic 이 섞이면 불연속(아래 generic).
         if dash_prop == "font-style" {

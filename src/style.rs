@@ -1107,6 +1107,19 @@ const INHERITED: &[&str] = &[
     // CSS UI: caret-color/accent-color 는 상속 속성(§CSS-UI-4). unset 이 inherit 처럼.
     "caret-color",
     "accent-color",
+    // CSS Fonts: 이 폰트 속성들도 상속(§CSS Fonts 4).
+    "font-feature-settings",
+    "font-variation-settings",
+    "font-language-override",
+    "font-optical-sizing",
+    "font-variant-caps",
+    "font-variant-ligatures",
+    "font-variant-numeric",
+    "font-variant-east-asian",
+    "font-variant-alternates",
+    "font-variant-position",
+    "font-stretch",
+    "font-synthesis",
 ];
 
 // 상속 속성인지(unset 이 inherit 처럼 동작할지) 판정. 롱핸드 기준.
