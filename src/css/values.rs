@@ -2404,6 +2404,135 @@ pub fn text_transform_valid(raw: &str) -> bool {
     true
 }
 
+// display 를 (outside, inside, list-item) 으로 파싱(§CSS Display 3 다값 문법).
+// 각 카테고리 최대 1회, list-item 은 inside 가 flow|flow-root 일 때만. 무효면 None.
+fn parse_display(raw: &str) -> Option<(Option<String>, Option<String>, bool)> {
+    const OUTSIDE: [&str; 3] = ["block", "inline", "run-in"];
+    const INSIDE: [&str; 7] = ["flow", "flow-root", "table", "flex", "grid", "ruby", "math"];
+    let toks = split_top_level(raw);
+    if toks.is_empty() {
+        return None;
+    }
+    let (mut out, mut ins, mut li) = (None, None, false);
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        if OUTSIDE.contains(&low.as_str()) {
+            if out.is_some() {
+                return None;
+            }
+            out = Some(low);
+        } else if INSIDE.contains(&low.as_str()) {
+            if ins.is_some() {
+                return None;
+            }
+            ins = Some(low);
+        } else if low == "list-item" {
+            if li {
+                return None;
+            }
+            li = true;
+        } else {
+            return None; // 단일 전용 키워드나 미인식 토큰이 다값에 섞임
+        }
+    }
+    if li {
+        if let Some(i) = &ins {
+            if i != "flow" && i != "flow-root" {
+                return None; // list-item 은 flow|flow-root 하고만 결합
+            }
+        }
+    }
+    if out.is_none() && ins.is_none() && !li {
+        return None;
+    }
+    Some((out, ins, li))
+}
+
+// display 단일 전용 키워드(§CSS Display): box/legacy/internal.
+const DISPLAY_SINGLE: [&str; 18] = [
+    "none", "contents", "inline-block", "inline-table", "inline-flex", "inline-grid",
+    "table-row-group", "table-header-group", "table-footer-group", "table-row",
+    "table-column-group", "table-column", "table-cell", "table-caption", "ruby-base",
+    "ruby-text", "ruby-base-container", "ruby-text-container",
+];
+
+// display 유효성(§CSS Display 3).
+pub fn display_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    DISPLAY_SINGLE.contains(&low.as_str()) || parse_display(raw).is_some()
+}
+
+// display 캐논 직렬화(§CSS Display 3): flow→block, 다값→레거시 단일 또는 캐논 두값.
+// 지정값·계산값이 같은 규칙을 쓴다.
+pub fn display_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if DISPLAY_SINGLE.contains(&low.as_str()) {
+        return low;
+    }
+    let Some((out, ins, li)) = parse_display(raw) else {
+        return low;
+    };
+    if li {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(o) = &out {
+            if o != "block" {
+                parts.push(o.clone());
+            }
+        }
+        if let Some(i) = &ins {
+            if i != "flow" {
+                parts.push(i.clone());
+            }
+        }
+        parts.push("list-item".to_string());
+        return parts.join(" ");
+    }
+    match (out.as_deref(), ins.as_deref()) {
+        (Some(o), None) => o.to_string(),
+        (None, Some("flow")) => "block".to_string(),
+        (None, Some(i)) => i.to_string(),
+        (Some(o), Some("flow")) => o.to_string(),
+        (Some("block"), Some("flow-root")) => "flow-root".to_string(),
+        (Some("block"), Some("flex")) => "flex".to_string(),
+        (Some("block"), Some("grid")) => "grid".to_string(),
+        (Some("block"), Some("table")) => "table".to_string(),
+        (Some("inline"), Some("flow-root")) => "inline-block".to_string(),
+        (Some("inline"), Some("flex")) => "inline-flex".to_string(),
+        (Some("inline"), Some("grid")) => "inline-grid".to_string(),
+        (Some("inline"), Some("table")) => "inline-table".to_string(),
+        // ruby 의 기본 outside 는 inline — inline 은 생략, block/run-in 은 유지.
+        (Some("inline"), Some("ruby")) => "ruby".to_string(),
+        (Some(o), Some(i)) => format!("{} {}", o, i),
+        (None, None) => low,
+    }
+}
+
+// display 블록화(§CSS Display 2.7): float 걸리거나 절대/고정 위치인 요소의 계산
+// display 는 inline-* 가 block-* 로 바뀐다.
+pub fn blockify_display(d: &str) -> String {
+    let d = d.trim();
+    // 레이아웃 내부 상자(table-*/ruby-* internal)는 블록화 시 block.
+    if matches!(
+        d,
+        "table-row-group" | "table-header-group" | "table-footer-group" | "table-row"
+            | "table-column-group" | "table-column" | "table-cell" | "table-caption"
+            | "ruby-base" | "ruby-text" | "ruby-base-container" | "ruby-text-container"
+    ) {
+        return "block".to_string();
+    }
+    match d {
+        "inline" => "block",
+        "inline-block" => "block",
+        "inline-table" => "table",
+        "inline-flex" => "flex",
+        "inline-grid" => "grid",
+        "run-in" => "block",
+        "inline ruby" => "block ruby",
+        other => other,
+    }
+    .to_string()
+}
+
 // hanging-punctuation 유효성(§CSS Text): none | [first || [force-end|allow-end] || last].
 // none 단독, 각 카테고리(first/end/last) 최대 1회, 미인식·중복 거부.
 pub fn hanging_punctuation_valid(raw: &str) -> bool {

@@ -1018,7 +1018,7 @@ fn platform_globals_exist_and_work() {
     assert!(prelude_bool("CSS.supports('display','grid')"));
     assert!(prelude_bool("CSS.supports('position','sticky')"), "구현했으므로 참");
     assert!(
-        !prelude_bool("CSS.supports('display','table-cell')"),
+        !prelude_bool("CSS.supports('display','flow-root')"),
         "미구현 값은 거짓 (한 엔진 한 답)"
     );
 }

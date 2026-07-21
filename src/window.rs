@@ -808,6 +808,18 @@ fn collect_computed_styles(
                 );
             }
         }
+        // display 블록화(§CSS Display 2.7): float 또는 절대/고정 위치면 inline-*→block-*.
+        {
+            let floated = m.get("float").map(|f| f != "none").unwrap_or(false);
+            let out_of_flow = matches!(m.get("position").map(String::as_str), Some("absolute") | Some("fixed"));
+            if floated || out_of_flow {
+                if let Some(d) = m.get("display") {
+                    if d != "none" && d != "contents" {
+                        m.insert("display".to_string(), crate::css::blockify_display(d));
+                    }
+                }
+            }
+        }
         // font-style 계산값: oblique <angle> → 도 접기·클램프, 0deg→normal.
         if let Some(v) = m.get("font-style") {
             m.insert("font-style".to_string(), crate::css::normalize_font_style(v));

@@ -262,6 +262,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             Vec::new()
         }
+        // display(§CSS Display 3): 다값 문법 검증 + 캐논 직렬화(flow→block, 두값→레거시).
+        // 저장은 캐논 형태(레이아웃이 레거시 단일 키워드를 이해). CSS-wide 통과.
+        "display" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::display_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::display_canonical(value_text)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // interactivity(§CSS UI 4): auto | inert 만.
         "interactivity" => {
             let low = value_text.trim().to_ascii_lowercase();

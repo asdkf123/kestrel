@@ -301,9 +301,13 @@ const UNSUPPORTED_VALUES: &[&str] = &["subgrid", "masonry"];
 fn enum_values(prop: &str) -> Option<&'static [&'static str]> {
     Some(match prop {
         // style.rs StyledNode::display()
+        // 실제로 레이아웃하는 값만(§honest, style.rs display_specified 참고). table 계열은
+        // layout_table 이 키워드를 직접 봐 렌더하므로 포함. flow-root/list-item/ruby/run-in/
+        // math 는 아직 전용 레이아웃이 없어(block 폴백) 제외 — 못 그리는 걸 지원한다 하지 않음.
         "display" => &[
             "block", "inline", "inline-block", "flex", "inline-flex", "grid", "inline-grid",
-            "none", "contents",
+            "none", "contents", "table", "inline-table", "table-row", "table-cell",
+            "table-row-group", "table-header-group", "table-footer-group", "table-caption",
         ],
         // layout/mod.rs LayoutBox::position()
         "position" => &["static", "relative", "absolute", "fixed", "sticky"],
@@ -514,10 +518,11 @@ mod tests {
         assert!(supports_condition("(position: fixed)"));
         assert!(!supports_condition("(position: running)"), "미구현 값은 거짓");
 
-        // display: 우리가 실제로 레이아웃하는 값만 참
+        // display: 우리가 실제로 레이아웃하는 값만 참. table 계열은 layout_table 이 렌더하므로
+        // 참, flow-root/list-item 은 아직 전용 레이아웃이 없어(block 폴백) 거짓.
         assert!(supports_condition("(display: contents)"));
         assert!(supports_condition("(display: grid)"));
-        assert!(!supports_condition("(display: table-cell)"));
+        assert!(supports_condition("(display: table-cell)"));
         assert!(!supports_condition("(display: flow-root)"));
         assert!(!supports_condition("(display: list-item)"));
 
@@ -554,8 +559,8 @@ mod tests {
         // @supports (prop: value !important) 은 플래그를 무시하고 값만 본다 (CSS Cond §2.1).
         assert!(supports_condition("(display: block !important)"));
         assert!(supports_condition("(color: red !important)"));
-        // 값 자체가 미구현이면 !important 여도 거짓
-        assert!(!supports_condition("(display: table-cell !important)"));
+        // 값 자체가 미구현이면 !important 여도 거짓(flow-root 는 전용 레이아웃 없음)
+        assert!(!supports_condition("(display: flow-root !important)"));
     }
 
     #[test]

@@ -320,6 +320,10 @@ impl Interp {
         if prop == "text-autospace" && crate::css::text_autospace_valid(raw) {
             return crate::css::text_autospace_canonical(raw);
         }
+        // display(§CSS Display 3): flow→block, 두값→레거시 단일 캐논(지정값도 동일).
+        if prop == "display" && crate::css::display_valid(raw) {
+            return crate::css::display_canonical(raw);
+        }
         // outline-offset(§CSS UI): <length> 캐논(0 → 0px).
         if prop == "outline-offset" {
             if let Some(v) = crate::css::interpret_value(raw.trim()) {
@@ -429,6 +433,7 @@ impl Interp {
                     | "text-autospace"
                     | "text-spacing-trim"
                     | "outline-offset"
+                    | "display"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
