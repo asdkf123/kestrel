@@ -401,6 +401,10 @@ impl Interp {
         {
             return normalize_numbers(&crate::css::position_canonical(raw));
         }
+        // transform-origin(§CSSOM): [수평] [수직] [z] 캐논.
+        if prop == "transform-origin" && crate::css::transform_origin_valid(raw) {
+            return normalize_numbers(&crate::css::transform_origin_canonical(raw));
+        }
         // background-position(§CSSOM): <bg-position># — 레이어마다 캐논(3값 포함).
         if prop == "background-position" {
             return normalize_numbers(&crate::css::bg_position_list_canonical(raw));
@@ -670,6 +674,7 @@ impl Interp {
                     | "mask-position"
                     | "perspective-origin"
                     | "rotate"
+                    | "transform-origin"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

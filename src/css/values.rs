@@ -2906,6 +2906,71 @@ pub fn contain_intrinsic_valid(raw: &str, max_groups: usize) -> bool {
     i == toks.len() && groups >= 1
 }
 
+// transform-origin 의 수평/수직 2값이 유효한가(모서리+오프셋 형태 없음, 순수 h&&v).
+fn to_pos2_valid(a: &str, b: &str) -> bool {
+    let is_h = |t: &str| matches!(t, "left" | "right");
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    let is_lp = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+        }
+        is_length_percentage(t)
+    };
+    let a_kw = is_h(a) || is_v(a) || a == "center";
+    let b_kw = is_h(b) || is_v(b) || b == "center";
+    if a_kw && b_kw {
+        let (a_h, a_v) = (is_h(a) || a == "center", is_v(a) || a == "center");
+        let (b_h, b_v) = (is_h(b) || b == "center", is_v(b) || b == "center");
+        (a_h && b_v) || (a_v && b_h)
+    } else {
+        (is_h(a) || a == "center" || is_lp(a)) && (is_v(b) || b == "center" || is_lp(b))
+    }
+}
+
+// transform-origin 유효성(§CSS Transforms): [<position 2값>] <length>?(z 오프셋).
+pub fn transform_origin_valid(raw: &str) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_lp = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+        }
+        is_length_percentage(t)
+    };
+    let is_len = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn") || t.contains('%'));
+        }
+        !t.ends_with('%') && is_length_percentage(t)
+    };
+    match toks.len() {
+        1 => {
+            let t = toks[0].as_str();
+            matches!(t, "left" | "right" | "top" | "bottom" | "center") || is_lp(t)
+        }
+        2 => to_pos2_valid(&toks[0], &toks[1]),
+        3 => to_pos2_valid(&toks[0], &toks[1]) && is_len(&toks[2]),
+        _ => false,
+    }
+}
+
+// transform-origin 캐논 직렬화: [수평] [수직] (1값→center 보충), z 오프셋 유지.
+pub fn transform_origin_canonical(raw: &str) -> String {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    match toks.len() {
+        1 => {
+            if is_v(&toks[0]) {
+                format!("center {}", toks[0])
+            } else {
+                format!("{} center", toks[0])
+            }
+        }
+        2 => position_canonical(raw),
+        3 => format!("{} {}", position_canonical(&format!("{} {}", toks[0], toks[1])), toks[2]),
+        _ => raw.trim().to_ascii_lowercase(),
+    }
+}
+
 // rotate 프로퍼티 유효성(§CSS Transforms 2): none | <angle> | [x|y|z|<number>{3}] && <angle>.
 pub fn rotate_valid(raw: &str) -> bool {
     let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();

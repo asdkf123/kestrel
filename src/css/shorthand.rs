@@ -1287,7 +1287,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
         // 일반 값 파서는 다중 토큰을 파싱하지 못해 None 을 돌려주고, 그러면 선언이
         // 통째로 사라져서 **항상 중심 기준 회전**이 되어 버린다. 원문을 보존한다.
+        // transform-origin(§CSS Transforms): <position 2값> <length>?. 검증 후 원문 보존.
         "transform-origin" | "-webkit-transform-origin" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::transform_origin_valid(value_text) {
+                return Vec::new();
+            }
             vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // perspective-origin: 다중 토큰 원문 보존(계산값은 resolve_origin 이 px 로).
