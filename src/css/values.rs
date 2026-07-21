@@ -2454,6 +2454,62 @@ pub fn scroll_snap_type_canonical(raw: &str) -> String {
     toks.iter().map(|t| t.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")
 }
 
+// 정렬 위치 키워드인가(§CSS Box Alignment). is_content 면 content-position, 아니면
+// self-position(self-start/end 추가). allow_lr 이면 left/right 도.
+fn is_align_position(t: &str, is_content: bool, allow_lr: bool) -> bool {
+    matches!(t, "center" | "start" | "end" | "flex-start" | "flex-end")
+        || (!is_content && matches!(t, "self-start" | "self-end"))
+        || (allow_lr && matches!(t, "left" | "right"))
+}
+
+// 정렬 프로퍼티 유효성(§CSS Box Alignment). is_content: content 축(distribution 허용),
+// allow_auto: self, allow_lr: justify, allow_legacy: justify-items.
+pub fn alignment_valid(
+    raw: &str,
+    is_content: bool,
+    allow_auto: bool,
+    allow_lr: bool,
+    allow_legacy: bool,
+    allow_baseline: bool,
+) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    match toks.len() {
+        1 => {
+            let t = toks[0].as_str();
+            match t {
+                "normal" | "stretch" => true,
+                "baseline" => allow_baseline,
+                "auto" => allow_auto,
+                "space-between" | "space-around" | "space-evenly" => is_content,
+                "legacy" => allow_legacy,
+                _ => is_align_position(t, is_content, allow_lr),
+            }
+        }
+        2 => {
+            let (a, b) = (toks[0].as_str(), toks[1].as_str());
+            // [first|last] baseline
+            if allow_baseline && matches!(a, "first" | "last") && b == "baseline" {
+                return true;
+            }
+            // <overflow-position> <position>
+            if matches!(a, "safe" | "unsafe") && is_align_position(b, is_content, allow_lr) {
+                return true;
+            }
+            // justify-items: legacy && [left|right|center] (순서 무관)
+            if allow_legacy {
+                if a == "legacy" && matches!(b, "left" | "right" | "center") {
+                    return true;
+                }
+                if b == "legacy" && matches!(a, "left" | "right" | "center") {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 // flex-flow 캐논 직렬화(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저. 둘 다
 // 기본이면 "row".
 pub fn flex_flow_canonical(raw: &str) -> String {

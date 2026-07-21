@@ -558,6 +558,12 @@ impl Interp {
                     | "flex-direction"
                     | "flex-wrap"
                     | "order"
+                    | "align-content"
+                    | "justify-content"
+                    | "align-items"
+                    | "justify-items"
+                    | "align-self"
+                    | "justify-self"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

@@ -668,6 +668,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // 정렬 프로퍼티(§CSS Box Alignment): 축(content/self)·auto·left·right·legacy 별 문법.
+        "align-content" => return align_arm(name, value_text, true, false, false, false, true),
+        "justify-content" => return align_arm(name, value_text, true, false, true, false, false),
+        "align-items" => return align_arm(name, value_text, false, false, false, false, true),
+        "justify-items" => return align_arm(name, value_text, false, false, true, true, true),
+        "align-self" => return align_arm(name, value_text, false, true, false, false, true),
+        "justify-self" => return align_arm(name, value_text, false, true, true, false, true),
         // flex-direction/flex-wrap(§CSS Flexbox): 단일 키워드. 미인식·두값 거부.
         "flex-direction" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1531,6 +1538,27 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
 }
 
 // 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
+// 정렬 프로퍼티 arm(§CSS Box Alignment): CSS-wide 통과, 문법 검증 후 원문(소문자) 보존.
+fn align_arm(
+    name: &str,
+    value_text: &str,
+    is_content: bool,
+    allow_auto: bool,
+    allow_lr: bool,
+    allow_legacy: bool,
+    allow_baseline: bool,
+) -> Vec<Declaration> {
+    let low = value_text.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+    }
+    if crate::css::alignment_valid(value_text, is_content, allow_auto, allow_lr, allow_legacy, allow_baseline) {
+        vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+    } else {
+        Vec::new()
+    }
+}
+
 // scroll-margin/scroll-padding 한 변(§CSS Scroll Snap). is_padding 이면 auto|
 // <length-percentage> 비음수, 아니면 <length>. 무효면 빈 선언.
 fn scroll_side(name: &str, value_text: &str, is_padding: bool) -> Vec<Declaration> {
