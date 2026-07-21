@@ -803,6 +803,13 @@ fn collect_computed_styles(
             if vals.iter().any(|v| v.is_empty()) {
                 continue;
             }
+            // columns(§CSS Multicol): 롱핸드에서 [width if not auto] [count if not auto].
+            if *prop == "columns" {
+                let w = m.get("column-width").map(|s| s.as_str()).unwrap_or("auto");
+                let c = m.get("column-count").map(|s| s.as_str()).unwrap_or("auto");
+                shorthand_vals.push((prop.to_string(), crate::css::columns_canonical(w, c)));
+                continue;
+            }
             // font-synthesis(§CSS Fonts 4): 롱핸드에서 슬롯 키워드 재구성.
             if *prop == "font-synthesis" {
                 let get = |n: &str| m.get(n).map(|s| s.as_str()).unwrap_or("none");

@@ -1371,6 +1371,31 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None => Vec::new(),
             }
         }
+        // multicol(§CSS Multicol): column-count/width/rule-width 검증 + columns 전개.
+        "column-count" | "column-width" | "column-rule-width" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "column-count" && crate::css::column_count_valid(value_text))
+                || (name == "column-width" && crate::css::column_width_valid(value_text))
+                || (name == "column-rule-width" && crate::css::column_rule_width_valid(value_text));
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // columns 단축(§CSS Multicol): column-width/column-count 로 전개.
+        "columns" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let d = |n: &str, v: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v.to_string()) };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![d("column-width", &low), d("column-count", &low)];
+            }
+            match crate::css::columns_expand(value_text) {
+                Some((w, c)) => vec![d("column-width", &w), d("column-count", &c)],
+                None => Vec::new(),
+            }
+        }
         // counter-increment/reset/set(§CSS Lists 3): none | [ <custom-ident> <integer>? ]+.
         // counter-reset 만 reversed() 허용. 검증 + 기본 정수 추가 캐논(increment 1, 나머지 0).
         "counter-reset" | "counter-increment" | "counter-set" => {
@@ -1462,7 +1487,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
         | "column-span" | "column-fill" | "column-rule-style" | "caret-shape"
         | "unicode-bidi" | "border-image-repeat"
-        | "column-width"
         // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
         | "border-inline-end-style" | "mask-image" | "mask-repeat"

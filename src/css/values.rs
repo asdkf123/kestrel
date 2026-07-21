@@ -4202,6 +4202,90 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// 부호 없는 <length>(퍼센트 불가, 음수 불가). calc 는 파스 타임 허용.
+fn nonneg_length(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if low.starts_with('-') {
+        return false;
+    }
+    if is_math_fn(&low) {
+        return true;
+    }
+    if low.ends_with('%') {
+        return false;
+    }
+    is_length_percentage(t)
+}
+
+// column-count(§CSS Multicol): auto | <integer [1,∞]>.
+pub fn column_count_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    low == "auto" || is_math_fn(&low) || matches!(low.parse::<i64>(), Ok(n) if n >= 1)
+}
+
+// column-width(§CSS Multicol): auto | <length [0,∞]>.
+pub fn column_width_valid(raw: &str) -> bool {
+    raw.trim().eq_ignore_ascii_case("auto") || nonneg_length(raw)
+}
+
+// column-rule-width(§CSS Multicol): <line-width> = thin|medium|thick | <length [0,∞]>.
+pub fn column_rule_width_valid(raw: &str) -> bool {
+    matches!(raw.trim().to_ascii_lowercase().as_str(), "thin" | "medium" | "thick")
+        || nonneg_length(raw)
+}
+
+// columns 단축(§CSS Multicol): <'column-width'> || <'column-count'>. width/count 로 배정.
+pub fn columns_expand(raw: &str) -> Option<(String, String)> {
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    let is_w = |t: &str| column_width_valid(t);
+    let is_c = |t: &str| column_count_valid(t);
+    match toks.as_slice() {
+        [a] => {
+            if is_w(a) && is_c(a) {
+                Some(("auto".to_string(), "auto".to_string()))
+            } else if is_w(a) {
+                Some((a.to_string(), "auto".to_string()))
+            } else if is_c(a) {
+                Some(("auto".to_string(), a.to_string()))
+            } else {
+                None
+            }
+        }
+        [a, b] => {
+            if is_w(a) && is_c(b) {
+                Some((a.to_string(), b.to_string()))
+            } else if is_c(a) && is_w(b) {
+                Some((b.to_string(), a.to_string()))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn columns_valid(raw: &str) -> bool {
+    columns_expand(raw).is_some()
+}
+
+// columns 캐논: [width if not auto] [count if not auto], 둘 다 auto 면 "auto".
+// 길이 0 은 0px 로 직렬화.
+pub fn columns_canonical(width: &str, count: &str) -> String {
+    let mut parts = Vec::new();
+    if !width.eq_ignore_ascii_case("auto") {
+        let w = if width.trim() == "0" { "0px".to_string() } else { width.to_string() };
+        parts.push(w);
+    }
+    if !count.eq_ignore_ascii_case("auto") {
+        parts.push(count.to_string());
+    }
+    if parts.is_empty() {
+        "auto".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 // counter-increment/reset/set(§CSS Lists 3): none | [ <custom-ident> <integer>? ]+.
 // counter-reset 는 reversed(<custom-ident>) 도 허용. 이스케이프·괄호(calc) 존중.
 

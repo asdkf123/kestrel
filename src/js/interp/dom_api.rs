@@ -446,6 +446,12 @@ impl Interp {
         if prop == "font-synthesis" && crate::css::font_synthesis_valid(raw) {
             return crate::css::font_synthesis_canonical(raw);
         }
+        // columns(§CSS Multicol): [width if not auto] [count if not auto] 캐논.
+        if prop == "columns" {
+            if let Some((w, c)) = crate::css::columns_expand(raw) {
+                return crate::css::columns_canonical(&w, &c);
+            }
+        }
         // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
         if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
             let allow_reversed = prop == "counter-reset";
@@ -753,6 +759,10 @@ impl Interp {
                     | "counter-increment"
                     | "counter-reset"
                     | "counter-set"
+                    | "column-count"
+                    | "column-width"
+                    | "column-rule-width"
+                    | "columns"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
