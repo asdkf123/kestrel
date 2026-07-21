@@ -1438,9 +1438,140 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     out
 }
 
+// box-shadow 성분이 유효 <length> 인가(px/em 등, 0, calc-무-%). %·단위없는 수(0 제외)는 무효.
+fn is_shadow_length(t: &str) -> bool {
+    if t.trim() == "0" {
+        return true;
+    }
+    match interpret_value(t) {
+        Some(Value::Length(_, u)) => !matches!(u, Unit::Percent | Unit::Number),
+        Some(Value::Calc(c)) => c.pct == 0.0, // calc 는 % 없어야
+        Some(Value::MinMax(..)) => true,
+        _ => false,
+    }
+}
+fn is_shadow_color(t: &str) -> bool {
+    t.eq_ignore_ascii_case("currentcolor")
+        || matches!(interpret_value(t), Some(Value::Color(_)) | Some(Value::ColorFn(..)))
+}
+
+// 그림자 길이의 부호 계수(음수 판정용). calc/함수는 부호 불명(사용값에서 clamp) → None.
+fn shadow_length_val(t: &str) -> Option<f32> {
+    let tl = t.trim();
+    if tl == "0" {
+        return Some(0.0);
+    }
+    if tl.contains('(') {
+        return None; // calc(-1px) 등은 파스타임 음수여도 유효(사용값 clamp)
+    }
+    match interpret_value(t) {
+        Some(Value::Length(v, _)) => Some(v),
+        _ => None,
+    }
+}
+
+// box-shadow 그림자 하나: inset? && <length>{2,4} && <color>?. 길이는 **연속** 2~4개,
+// inset/color 는 각 1개 이하, blur(3번째)는 음수 불가(§CSS Backgrounds 3).
+fn single_shadow_valid(s: &str) -> bool {
+    let (mut inset, mut color) = (0u32, 0u32);
+    let mut runs: Vec<Vec<Option<f32>>> = Vec::new();
+    let mut cur: Vec<Option<f32>> = Vec::new();
+    for tok in split_top_level(s) {
+        if tok.eq_ignore_ascii_case("inset") {
+            inset += 1;
+            if !cur.is_empty() {
+                runs.push(std::mem::take(&mut cur));
+            }
+        } else if is_shadow_length(tok) {
+            cur.push(shadow_length_val(tok));
+        } else if is_shadow_color(tok) {
+            color += 1;
+            if !cur.is_empty() {
+                runs.push(std::mem::take(&mut cur));
+            }
+        } else {
+            return false; // 알 수 없는 토큰
+        }
+    }
+    if !cur.is_empty() {
+        runs.push(cur);
+    }
+    if !(inset <= 1 && color <= 1 && runs.len() == 1) {
+        return false;
+    }
+    let run = &runs[0];
+    if !(2..=4).contains(&run.len()) {
+        return false;
+    }
+    // blur(index 2)는 음수 불가.
+    !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
+}
+
+// box-shadow 지정값 캐논 직렬화: 그림자마다 <color> <lengths> <inset> 순(color 먼저,
+// inset 끝). 길이는 0→0px 등 정규화, 색 키워드는 유지(§CSS Backgrounds 직렬화).
+pub(crate) fn box_shadow_canonical(value: &str) -> Option<String> {
+    let v = value.trim();
+    if v.eq_ignore_ascii_case("none") {
+        return Some("none".to_string());
+    }
+    if !box_shadow_valid(v) {
+        return None;
+    }
+    let mut shadows = Vec::new();
+    for shadow in split_top_level_commas(v) {
+        let (mut color, mut inset) = (None, false);
+        let mut lengths = Vec::new();
+        for tok in split_top_level(shadow.trim()) {
+            if tok.eq_ignore_ascii_case("inset") {
+                inset = true;
+            } else if is_shadow_length(tok) {
+                // calc/함수는 원문 유지(재직렬화가 항 순서를 바꿈). 단순 길이만 정규화(0→0px).
+                let norm = if tok.contains('(') {
+                    tok.to_string()
+                } else {
+                    interpret_value(tok)
+                        .map(|val| crate::style::computed_value_string(&val))
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| tok.to_string())
+                };
+                lengths.push(norm);
+            } else if is_shadow_color(tok) {
+                color = Some(tok.to_string());
+            }
+        }
+        let mut parts = Vec::new();
+        if let Some(c) = color {
+            parts.push(c);
+        }
+        parts.extend(lengths);
+        if inset {
+            parts.push("inset".to_string());
+        }
+        shadows.push(parts.join(" "));
+    }
+    Some(shadows.join(", "))
+}
+
+// box-shadow 값 유효성: none | <shadow>#. 무효면 선언 거부.
+pub(crate) fn box_shadow_valid(value: &str) -> bool {
+    let v = value.trim();
+    if v.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let shadows = split_top_level_commas(v);
+    !shadows.is_empty() && shadows.iter().all(|s| single_shadow_valid(s.trim()))
+}
+
 // `box-shadow: [inset] <dx> <dy> [blur] [spread] <color>` 를 커스텀 longhand 로 확장.
 // 다중 그림자는 첫 번째만. paint 가 이 longhand 를 읽는다.
 fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
+    // 무효값 거부(§CSS Backgrounds). none 은 아래에서 빈 longhand + 원문 보존.
+    let low = value_text.trim().to_ascii_lowercase();
+    if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+        && !box_shadow_valid(value_text)
+    {
+        return Vec::new();
+    }
     // 최상위(괄호 밖) 첫 콤마까지가 첫 그림자 — rgba(...) 안의 콤마는 보존.
     let mut depth = 0i32;
     let mut end = value_text.len();
