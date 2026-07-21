@@ -454,6 +454,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-top-style" | "border-right-style" | "border-bottom-style"
         | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
+        // border-*-radius 코너 롱핸드는 <length-percentage>{1,2}(수평 [수직]) — 원문 보존해
+        // 2값(타원 코너)도 유효하게. CSS.supports/합성이 이를 필요로 한다.
+        | "border-top-left-radius" | "border-top-right-radius" | "border-bottom-left-radius"
+        | "border-bottom-right-radius"
         | "background-position-x" | "background-position-y" | "shape-outside"
         | "word-space-transform" | "view-transition-class" | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
