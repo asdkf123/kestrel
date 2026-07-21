@@ -4597,6 +4597,158 @@ pub fn list_style_type_canonical(raw: &str) -> String {
     format!("symbols({})", out.join(" "))
 }
 
+// ===== content(§CSS Content 3) 검증 =====
+
+// 따옴표·괄호를 존중해 최상위 '/' 분리.
+fn split_slash_qp(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '(' | '[' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            '/' if depth == 0 => {
+                out.push(cur.trim().to_string());
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
+// content 의 <custom-ident>(카운터 이름): 이스케이프 포함 허용.
+fn content_ident_ok(t: &str) -> bool {
+    !t.is_empty() && (t.contains('\\') || is_css_ident(t))
+}
+
+// counter()/counters() 유효성.
+fn counter_fn_valid(t: &str) -> bool {
+    if let Some(a) = fn_args(t, "counter(") {
+        return (a.len() == 1 || a.len() == 2)
+            && content_ident_ok(&a[0])
+            && (a.len() == 1 || content_ident_ok(&a[1]));
+    }
+    if let Some(a) = fn_args(t, "counters(") {
+        return (a.len() == 2 || a.len() == 3)
+            && content_ident_ok(&a[0])
+            && is_css_string(&a[1])
+            && (a.len() == 2 || content_ident_ok(&a[2]));
+    }
+    false
+}
+
+// content-list 토큰 유효성.
+fn content_token_valid(t: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    if is_css_string(t) {
+        return true;
+    }
+    if matches!(low.as_str(), "open-quote" | "close-quote" | "no-open-quote" | "no-close-quote") {
+        return true;
+    }
+    if counter_fn_valid(t) {
+        return true;
+    }
+    if low.starts_with("url(") && t.ends_with(')') {
+        return true;
+    }
+    // attr( <이름> ... ): 빈 attr() 은 무효.
+    if let Some(a) = fn_args(t, "attr(") {
+        return !a.is_empty() && !a[0].trim().is_empty();
+    }
+    // 이미지(gradient/image-set 등).
+    let is_gradient = [
+        "linear-gradient(",
+        "radial-gradient(",
+        "conic-gradient(",
+        "repeating-linear-gradient(",
+        "repeating-radial-gradient(",
+        "repeating-conic-gradient(",
+    ]
+    .iter()
+    .any(|p| low.starts_with(p));
+    (is_gradient && gradient_valid(t)) || low.starts_with("image-set(") || low.starts_with("cross-fade(")
+}
+
+// content(§CSS Content 3): normal | none | <content-list> [ / <alt-text> ]?.
+// alt-text = [ <string> | <counter> ]+.
+pub fn content_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "normal" | "none") {
+        return true;
+    }
+    let parts = split_slash_qp(raw.trim());
+    if parts.is_empty() || parts.len() > 2 {
+        return false;
+    }
+    let main_toks = split_top_tokens(parts[0].trim());
+    if main_toks.is_empty() || !main_toks.iter().all(|t| content_token_valid(t)) {
+        return false;
+    }
+    if parts.len() == 2 {
+        let alt = split_top_tokens(parts[1].trim());
+        if alt.is_empty() || !alt.iter().all(|t| is_css_string(t) || counter_fn_valid(t)) {
+            return false;
+        }
+    }
+    true
+}
+
+// content 캐논: counter()/counters() 의 기본 스타일(decimal) 생략.
+pub fn content_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "normal" | "none") {
+        return low;
+    }
+    split_slash_qp(raw.trim())
+        .iter()
+        .map(|part| {
+            split_top_tokens(part.trim())
+                .iter()
+                .map(|t| canon_counter_token(t))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+fn canon_counter_token(t: &str) -> String {
+    // counter(name, decimal) → counter(name); counters(name, s, decimal) → counters(name, s).
+    if let Some(a) = fn_args(t, "counter(") {
+        if a.len() == 2 && a[1].trim().eq_ignore_ascii_case("decimal") {
+            return format!("counter({})", a[0].trim());
+        }
+    }
+    if let Some(a) = fn_args(t, "counters(") {
+        if a.len() == 3 && a[2].trim().eq_ignore_ascii_case("decimal") {
+            return format!("counters({}, {})", a[0].trim(), a[1].trim());
+        }
+    }
+    t.trim().to_string()
+}
+
 // list-style 단축(§CSS Lists): <position> || <image> || <type>. 각 슬롯 최대 1개,
 // none 은 type/image 빈 슬롯을 채운다. 무효 키워드·슬롯 초과 거부.
 pub fn list_style_valid(raw: &str) -> bool {

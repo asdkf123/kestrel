@@ -1362,6 +1362,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // (\2022 등)를 해석. none/normal/attr()/counter() 는 원문 Keyword 로(생성 판단은 style).
         "content" => {
             let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            // 검증: 무효면 지정 무시(마커/생성 콘텐츠 소비자는 유효값만 unquote 유지).
+            if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                && !crate::css::content_valid(v)
+            {
+                return Vec::new();
+            }
             let unquoted = if v.len() >= 2
                 && ((v.starts_with('"') && v.ends_with('"'))
                     || (v.starts_with('\'') && v.ends_with('\'')))
