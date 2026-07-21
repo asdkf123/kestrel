@@ -367,6 +367,7 @@ impl Interp {
                     | "caret-color"
                     | "box-sizing"
                     | "cursor"
+                    | "field-sizing"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

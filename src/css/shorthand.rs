@@ -208,6 +208,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // field-sizing(§CSS UI): fixed | content 만. 그 외 거부. CSS-wide 통과.
+        "field-sizing" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "fixed" | "content" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+            ) {
+                vec![Declaration { important: false, name: "field-sizing".to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // box-sizing(§CSS Sizing): content-box | border-box 만. 그 외(auto/fill-box/
         // margin-box/두값 등) 거부. CSS-wide 통과.
         "box-sizing" => {
@@ -621,7 +633,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
         | "image-orientation" | "math-style" | "math-depth" | "math-shift"
         // 8차: 순수 키워드 롱핸드.
-        | "view-transition-name" | "anchor-name" | "field-sizing"
+        | "view-transition-name" | "anchor-name"
         // 9차: 개별 변환 프로퍼티(값 원문 보존 — scale: 1.5 2, rotate: 45deg 등).
         | "scale" | "rotate" | "translate"
         // 10차: corner-shape(round/scoop/bevel/superellipse() 등 — 원문 보존).
