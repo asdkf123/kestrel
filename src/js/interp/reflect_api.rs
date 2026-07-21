@@ -71,10 +71,11 @@ impl Interp {
                 None => Value::Null,
             },
             Reflect::Url => {
-                // 없으면 빈 문자열, 있으면 문서 기준 URL 로 절대화 (표준)
+                // 없거나 빈 값이면 빈 문자열(빈 값은 base 로 절대화하지 않는다, §HTML URL
+                // 반영 getter), 있으면 문서 기준 URL 로 절대화.
                 match raw {
-                    None => Value::Str(String::new()),
-                    Some(u) => Value::Str(self.absolute_url(&u)),
+                    Some(u) if !u.is_empty() => Value::Str(self.absolute_url(&u)),
+                    _ => Value::Str(String::new()),
                 }
             }
             Reflect::Enum => {
