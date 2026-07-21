@@ -4202,6 +4202,59 @@ pub fn grid_template_track_valid(raw: &str) -> bool {
     track_seq_valid(&comps, has_auto, true, &mut auto_seen)
 }
 
+// font-synthesis(§CSS Fonts 4): none | [ weight || [style|oblique-only] || small-caps
+// || position ]. style 과 oblique-only 는 같은 슬롯(상호배타). 각 슬롯 최대 1회.
+pub fn font_synthesis_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "none" {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() {
+        return false;
+    }
+    let (mut w, mut s, mut sc, mut p) = (0u32, 0u32, 0u32, 0u32);
+    for t in toks {
+        match t {
+            "weight" => w += 1,
+            "style" | "oblique-only" => s += 1,
+            "small-caps" => sc += 1,
+            "position" => p += 1,
+            _ => return false,
+        }
+    }
+    w <= 1 && s <= 1 && sc <= 1 && p <= 1
+}
+
+// font-synthesis 캐논: 슬롯 순서 weight → style|oblique-only → small-caps → position.
+pub fn font_synthesis_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "none" {
+        return "none".to_string();
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    let mut out = Vec::new();
+    if toks.contains(&"weight") {
+        out.push("weight");
+    }
+    if toks.contains(&"style") {
+        out.push("style");
+    } else if toks.contains(&"oblique-only") {
+        out.push("oblique-only");
+    }
+    if toks.contains(&"small-caps") {
+        out.push("small-caps");
+    }
+    if toks.contains(&"position") {
+        out.push("position");
+    }
+    if out.is_empty() {
+        "none".to_string()
+    } else {
+        out.join(" ")
+    }
+}
+
 // font-variant-emoji(§CSS Fonts 4): normal | text | emoji | unicode.
 pub fn font_variant_emoji_valid(raw: &str) -> bool {
     matches!(raw.trim().to_ascii_lowercase().as_str(), "normal" | "text" | "emoji" | "unicode")

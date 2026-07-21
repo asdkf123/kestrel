@@ -803,6 +803,28 @@ fn collect_computed_styles(
             if vals.iter().any(|v| v.is_empty()) {
                 continue;
             }
+            // font-synthesis(§CSS Fonts 4): 롱핸드에서 슬롯 키워드 재구성.
+            if *prop == "font-synthesis" {
+                let get = |n: &str| m.get(n).map(|s| s.as_str()).unwrap_or("none");
+                let mut parts: Vec<&str> = Vec::new();
+                if get("font-synthesis-weight") == "auto" {
+                    parts.push("weight");
+                }
+                match get("font-synthesis-style") {
+                    "auto" => parts.push("style"),
+                    "oblique-only" => parts.push("oblique-only"),
+                    _ => {}
+                }
+                if get("font-synthesis-small-caps") == "auto" {
+                    parts.push("small-caps");
+                }
+                if get("font-synthesis-position") == "auto" {
+                    parts.push("position");
+                }
+                let joined = if parts.is_empty() { "none".to_string() } else { parts.join(" ") };
+                shorthand_vals.push((prop.to_string(), joined));
+                continue;
+            }
             // grid-row/grid-column(§CSS Grid): 최단 직렬화. end 가 생략 가능하면
             // start 만; end==auto 이고 start 가 순수 ident 가 아니거나, end==start 이고
             // start 가 순수 ident 면 생략. 아니면 "start / end".

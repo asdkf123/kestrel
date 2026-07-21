@@ -442,6 +442,10 @@ impl Interp {
         if prop == "font-variation-settings" && crate::css::font_variation_settings_valid(raw) {
             return crate::css::font_variation_settings_canonical(raw);
         }
+        // font-synthesis(§CSS Fonts 4): 슬롯 순서 캐논.
+        if prop == "font-synthesis" && crate::css::font_synthesis_valid(raw) {
+            return crate::css::font_synthesis_canonical(raw);
+        }
         // flex-flow(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저.
         if prop == "flex-flow" {
             let low = raw.trim().to_ascii_lowercase();
@@ -723,6 +727,11 @@ impl Interp {
                     | "font-width"
                     | "font-variant-emoji"
                     | "font-variation-settings"
+                    | "font-synthesis"
+                    | "font-synthesis-weight"
+                    | "font-synthesis-style"
+                    | "font-synthesis-small-caps"
+                    | "font-synthesis-position"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

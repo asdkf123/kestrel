@@ -625,6 +625,53 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-synthesis 롱핸드(§CSS Fonts 4): weight/small-caps/position 은 auto|none,
+        // style 은 auto|none|oblique-only. 단일 키워드.
+        "font-synthesis-weight" | "font-synthesis-small-caps" | "font-synthesis-position"
+        | "font-synthesis-style" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "auto" | "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "font-synthesis-style" && low == "oblique-only");
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // font-synthesis(§CSS Fonts 4): none | [ weight || [style|oblique-only] ||
+        // small-caps || position ] → 네 롱핸드로 전개.
+        "font-synthesis" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let d = |n: &str, v: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v.to_string()) };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    d("font-synthesis-weight", &low),
+                    d("font-synthesis-style", &low),
+                    d("font-synthesis-small-caps", &low),
+                    d("font-synthesis-position", &low),
+                ];
+            }
+            if !crate::css::font_synthesis_valid(value_text) {
+                return Vec::new();
+            }
+            let toks: Vec<&str> = low.split_whitespace().collect();
+            let weight = if toks.contains(&"weight") { "auto" } else { "none" };
+            let style = if toks.contains(&"style") {
+                "auto"
+            } else if toks.contains(&"oblique-only") {
+                "oblique-only"
+            } else {
+                "none"
+            };
+            let small_caps = if toks.contains(&"small-caps") { "auto" } else { "none" };
+            let position = if toks.contains(&"position") { "auto" } else { "none" };
+            vec![
+                d("font-synthesis-weight", weight),
+                d("font-synthesis-style", style),
+                d("font-synthesis-small-caps", small_caps),
+                d("font-synthesis-position", position),
+            ]
+        }
         // font-variant-emoji(§CSS Fonts 4): normal | text | emoji | unicode.
         "font-variant-emoji" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1371,9 +1418,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
         | "text-decoration-skip-ink" | "line-break"
         | "ruby-position" | "ruby-align"
-        | "white-space-collapse" | "font-optical-sizing" | "font-synthesis"
-        | "font-synthesis-weight" | "font-synthesis-style" | "font-synthesis-small-caps"
-        | "font-synthesis-position"
+        | "white-space-collapse" | "font-optical-sizing"
         | "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
         | "font-variant-position" | "font-variant-alternates" | "font-language-override"
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
