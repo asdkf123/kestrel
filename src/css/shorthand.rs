@@ -1658,10 +1658,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // baseline-shift(§CSS Inline/SVG): sub|super|top|center|bottom | <length-percentage>.
+        "baseline-shift" => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "sub" | "super" | "top" | "center" | "bottom" | "baseline") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if split_top_level(v).len() != 1 {
+                return Vec::new();
+            }
+            // margin_value_valid = auto|calc|<length-percentage>; auto 제외.
+            if crate::css::margin_value_valid(v) && low != "auto" {
+                let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()));
+                vec![Declaration { important: false, name: name.to_string(), value }]
+            } else {
+                Vec::new()
+            }
+        }
         // 단일 키워드 enum(§여러 스펙): 정확한 값 집합으로 검증.
         "resize" | "user-select" | "caption-side" | "table-layout" | "empty-cells"
         | "border-collapse" | "writing-mode" | "unicode-bidi" | "text-orientation"
-        | "direction" | "scroll-snap-stop" | "scroll-snap-align" => {
+        | "direction" | "scroll-snap-stop" | "scroll-snap-align"
+        | "alignment-baseline" | "dominant-baseline" => {
             let low = value_text.trim().to_ascii_lowercase();
             let snap_align_ok = || {
                 let toks: Vec<&str> = low.split_whitespace().collect();
@@ -1682,6 +1701,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     "unicode-bidi" => matches!(low.as_str(), "normal" | "embed" | "isolate" | "bidi-override" | "isolate-override" | "plaintext"),
                     "text-orientation" => matches!(low.as_str(), "mixed" | "upright" | "sideways"),
                     "direction" => matches!(low.as_str(), "ltr" | "rtl"),
+                    "alignment-baseline" => matches!(low.as_str(), "baseline" | "text-bottom" | "alphabetic" | "ideographic" | "middle" | "central" | "mathematical" | "hanging" | "text-top"),
+                    "dominant-baseline" => matches!(low.as_str(), "auto" | "text-bottom" | "alphabetic" | "ideographic" | "middle" | "central" | "mathematical" | "hanging" | "text-top"),
                     _ => false,
                 };
             if ok {
@@ -1933,9 +1954,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
         | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
         | "stroke-dasharray" | "stroke-miterlimit" | "clip-rule" | "fill-rule"
-        | "paint-order" | "vector-effect" | "dominant-baseline" | "text-anchor"
+        | "paint-order" | "vector-effect" | "text-anchor"
         | "shape-rendering" | "color-interpolation" | "color-interpolation-filters"
-        | "marker-start" | "marker-mid" | "marker-end" | "baseline-shift"
+        | "marker-start" | "marker-mid" | "marker-end"
         // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티(수/목록/함수 원문 보존).
         | "font-feature-settings"
         | "font-palette"

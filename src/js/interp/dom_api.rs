@@ -924,6 +924,9 @@ impl Interp {
                     | "padding-inline-start"
                     | "padding-inline-end"
                     | "line-height"
+                    | "alignment-baseline"
+                    | "dominant-baseline"
+                    | "baseline-shift"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
