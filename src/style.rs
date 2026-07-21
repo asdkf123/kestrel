@@ -3009,6 +3009,7 @@ mod tests {
             tag_name: "div".into(),
             attributes: [("data-x".to_string(), "abc".to_string())].into_iter().collect(),
             namespace: None,
+            prefix: None,
         };
         assert_eq!(resolve_attr("attr(data-x)", &e), "abc");
         assert_eq!(resolve_attr("attr(data-missing, \"fb\")", &e), "fb");

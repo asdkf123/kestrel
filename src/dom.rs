@@ -104,6 +104,10 @@ pub struct ElementData {
     // 예전엔 아예 없어서 createElementNS 가 네임스페이스를 **버렸다** —
     // SVG 의 <linearGradient> 를 만들어도 소문자 html 요소가 됐다.
     pub namespace: Option<String>,
+    // 접두사 (DOM §4.9). createElementNS 의 "validate and extract" 만 설정한다.
+    // HTML createElement 는 접두사가 없고 콜론 포함 전체가 localName 이다
+    // (createElement("foo:bar") → localName "foo:bar"). None = 접두사 없음.
+    pub prefix: Option<String>,
 }
 
 pub const NS_HTML: &str = "http://www.w3.org/1999/xhtml";
@@ -115,18 +119,22 @@ impl ElementData {
     // 필드가 늘어도 테스트가 안 깨지도록.
     #[cfg(test)]
     pub fn html(tag: &str, attributes: AttrMap) -> ElementData {
-        ElementData { tag_name: tag.to_string(), attributes, namespace: None }
+        ElementData { tag_name: tag.to_string(), attributes, namespace: None, prefix: None }
     }
 
     pub fn ns(&self) -> &str {
         self.namespace.as_deref().unwrap_or(NS_HTML)
     }
-    // 로컬 이름 (접두사를 뗀 부분)
+    // 로컬 이름. 접두사가 있으면(createElementNS) 접두사를 뗀 부분, 없으면(HTML
+    // createElement·파서) 콜론 포함 전체 tag_name 이 localName 이다(§DOM 4.9).
     pub fn local_name(&self) -> &str {
-        self.tag_name.rsplit(':').next().unwrap_or(&self.tag_name)
+        match &self.prefix {
+            Some(p) if self.tag_name.len() > p.len() + 1 => &self.tag_name[p.len() + 1..],
+            _ => &self.tag_name,
+        }
     }
     pub fn prefix(&self) -> Option<&str> {
-        self.tag_name.split_once(':').map(|(p, _)| p)
+        self.prefix.as_deref()
     }
 }
 
@@ -140,7 +148,7 @@ pub fn text(data: String) -> Node {
 pub fn elem(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
     Node {
         children,
-        node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None }),
+        node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None, prefix: None }),
     }
 }
 
@@ -451,7 +459,8 @@ impl Dom {
             node_type: NodeType::Element(ElementData {
                 tag_name: tag.to_ascii_lowercase(),
                 attributes: AttrMap::new(),
-                namespace: None, // HTML 네임스페이스
+                namespace: None,  // HTML 네임스페이스
+                prefix: None,     // HTML createElement 는 접두사 없음(콜론도 localName)
             }),
         });
         id
@@ -464,14 +473,18 @@ impl Dom {
         self.touch();
         let id = self.nodes.len();
         let is_html = ns.is_none() || ns == Some(NS_HTML);
+        let tag_name = if is_html { qname.to_ascii_lowercase() } else { qname.to_string() };
+        // "validate and extract"(§DOM 4.9): 첫 콜론 앞이 접두사, 뒤가 localName.
+        // 콜론이 없으면 접두사 없음. (검증은 dom_api 의 validate_and_extract 가 선행.)
+        let prefix = tag_name.split_once(':').map(|(p, _)| p.to_string());
         self.nodes.push(NodeData {
             parent: None,
             children: Vec::new(),
             node_type: NodeType::Element(ElementData {
-                // HTML 네임스페이스면 소문자로 정규화 (표준), 그 외는 원문 유지
-                tag_name: if is_html { qname.to_ascii_lowercase() } else { qname.to_string() },
+                tag_name,
                 attributes: AttrMap::new(),
                 namespace: ns.filter(|n| *n != NS_HTML).map(|n| n.to_string()),
+                prefix,
             }),
         });
         id

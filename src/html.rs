@@ -95,7 +95,7 @@ fn parse_document(source: String) -> Node {
 }
 
 fn elem_node(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
-    Node { children, node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None }) }
+    Node { children, node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None, prefix: None }) }
 }
 
 // ── 토큰 ────────────────────────────────────────────────────────────
@@ -369,6 +369,7 @@ impl Sink {
                     tag_name: "#document".to_string(),
                     attributes: AttrMap::new(),
                     namespace: None,
+                    prefix: None,
                 }),
                 children: vec![],
                 parent: None,
@@ -387,7 +388,7 @@ impl Sink {
     fn new_element(&mut self, name: &str, attrs: AttrMap) -> usize {
         let id = self.nodes.len();
         self.nodes.push(SinkNode {
-            node_type: NodeType::Element(ElementData { tag_name: name.to_string(), attributes: attrs, namespace: None }),
+            node_type: NodeType::Element(ElementData { tag_name: name.to_string(), attributes: attrs, namespace: None, prefix: None }),
             children: vec![],
             parent: None,
         });
