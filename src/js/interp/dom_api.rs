@@ -273,6 +273,12 @@ impl Interp {
                 return s;
             }
         }
+        // hyphenate-limit-chars(§CSS Text 4): 후행 중복 성분 생략(5 2 2→5 2).
+        if prop == "hyphenate-limit-chars" {
+            if let Some(s) = crate::css::normalize_hyphenate_limit_chars(raw) {
+                return s;
+            }
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".

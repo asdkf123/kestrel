@@ -2231,6 +2231,39 @@ pub fn normalize_white_space(raw: &str) -> Option<String> {
     )
 }
 
+// hyphenate-limit-chars 계산값 캐논(§CSS Text 4): [auto|<integer>]{1,3}.
+// 각 성분은 auto 또는 정수(calc 는 반올림해 정수로). 후행 중복은 생략(margin 식):
+// c[2]==c[1] 이면 드롭, 이어서 c[1]==c[0] 이면 드롭. 예) "auto auto"→"auto",
+// "5 2 calc(3.1)"→"5 2 3", "auto 2 2"→"auto 2". 확장은 하지 않는다(지정 개수 유지).
+pub fn normalize_hyphenate_limit_chars(raw: &str) -> Option<String> {
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 3 {
+        return None;
+    }
+    let mut comps: Vec<String> = Vec::new();
+    for t in &toks {
+        if t.eq_ignore_ascii_case("auto") {
+            comps.push("auto".to_string());
+        } else if let Ok(n) = t.parse::<f32>() {
+            comps.push(format!("{}", n.round() as i64));
+        } else if let Some(Value::Length(n, Unit::Number)) =
+            interpret_value(t).or_else(|| eval_calc(t))
+        {
+            comps.push(format!("{}", n.round() as i64));
+        } else {
+            return None;
+        }
+    }
+    // 후행 중복 생략.
+    if comps.len() == 3 && comps[2] == comps[1] {
+        comps.pop();
+    }
+    if comps.len() == 2 && comps[1] == comps[0] {
+        comps.pop();
+    }
+    Some(comps.join(" "))
+}
+
 // relative-color(rgb(from <origin> ...)) 지정값 캐논(§CSS Color 5): 레거시 함수명
 // rgba→rgb/hsla→hsl, origin 키워드 소문자화(currentColor→currentcolor), origin 이 색
 // 함수면 재귀 정규화. 채널 표현은 유지.

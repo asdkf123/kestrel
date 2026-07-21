@@ -9190,30 +9190,45 @@ impl Interp {
                 return Some(format!("oblique {}deg", crate::style::num_css(a)));
             }
         }
-        // hyphenate-limit-chars: [auto|<integer>]{1,3}. 각 값을 정수로 보간(반올림).
-        // auto 는 같으면 유지, auto↔정수는 불연속.
+        // hyphenate-limit-chars: [auto|<integer>]{1,3}. 3 컴포넌트로 확장 후 각 값을
+        // 정수로 보간(반올림), 후행 중복은 생략해 직렬화(margin 식). auto 는 같으면 유지,
+        // auto↔정수는 불연속. 확장: [a]→[a auto auto], [a b]→[a b b], [a b c]→그대로.
         if dash_prop == "hyphenate-limit-chars" {
-            let fa: Vec<&str> = from.split_whitespace().collect();
-            let ta: Vec<&str> = to.split_whitespace().collect();
-            if fa.len() == ta.len() && !fa.is_empty() {
-                let parts: Option<Vec<String>> = fa
+            let expand = |s: &str| -> Option<[String; 3]> {
+                let v: Vec<String> = s.split_whitespace().map(|x| x.to_string()).collect();
+                match v.len() {
+                    1 => Some([v[0].clone(), "auto".into(), "auto".into()]),
+                    2 => Some([v[0].clone(), v[1].clone(), v[1].clone()]),
+                    3 => Some([v[0].clone(), v[1].clone(), v[2].clone()]),
+                    _ => None,
+                }
+            };
+            if let (Some(fe), Some(te)) = (expand(from), expand(to)) {
+                let comp: Option<Vec<String>> = fe
                     .iter()
-                    .zip(&ta)
+                    .zip(&te)
                     .map(|(a, b)| {
                         if a == b {
-                            Some((*a).to_string())
+                            Some(a.clone())
                         } else {
                             match (a.parse::<f32>(), b.parse::<f32>()) {
                                 (Ok(x), Ok(y)) => {
                                     Some(format!("{}", (x + (y - x) * eased).round() as i64))
                                 }
-                                _ => None,
+                                _ => None, // auto↔정수 불연속
                             }
                         }
                     })
                     .collect();
-                if let Some(p) = parts {
-                    return Some(p.join(" "));
+                if let Some(mut out) = comp {
+                    // 후행 중복 생략: c[2]==c[1] 이면 드롭, 이어서 c[1]==c[0] 이면 드롭.
+                    if out[2] == out[1] {
+                        out.pop();
+                        if out[1] == out[0] {
+                            out.pop();
+                        }
+                    }
+                    return Some(out.join(" "));
                 }
             }
         }

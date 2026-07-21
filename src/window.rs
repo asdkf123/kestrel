@@ -349,6 +349,12 @@ fn fill_js_maps(
                 m.insert("white-space".to_string(), norm);
             }
         }
+        // hyphenate-limit-chars 계산값: calc→정수, 후행 중복 생략(§CSS Text 4).
+        if let Some(hlc) = m.get("hyphenate-limit-chars") {
+            if let Some(norm) = crate::css::normalize_hyphenate_limit_chars(hlc) {
+                m.insert("hyphenate-limit-chars".to_string(), norm);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [
