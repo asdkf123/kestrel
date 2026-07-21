@@ -829,6 +829,7 @@ impl Interp {
                     | "max-lines"
                     | "block-ellipsis"
                     | "-webkit-line-clamp"
+                    | "line-clamp"
                     | "position"
                     | "z-index"
                     | "list-style-position"

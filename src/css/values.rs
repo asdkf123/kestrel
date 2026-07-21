@@ -4329,6 +4329,34 @@ pub fn max_lines_canonical(raw: &str) -> String {
     out.join(" ")
 }
 
+// line-clamp(§CSS Overflow 4): none | [ <integer [1,∞]> || <ellipsis> ].
+// ellipsis = auto | ellipsis | no-ellipsis | <string>. none 은 단독만.
+pub fn line_clamp_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let toks = split_ws_quotes(t);
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let (mut ints, mut ell, mut legacy) = (0u32, 0u32, 0u32);
+    for tok in &toks {
+        let tl = tok.to_ascii_lowercase();
+        if matches!(tl.as_str(), "auto" | "ellipsis" | "no-ellipsis") || is_css_string(tok) {
+            ell += 1;
+        } else if tl == "-webkit-legacy" {
+            legacy += 1;
+        } else if matches!(tok.parse::<i64>(), Ok(n) if n >= 1) {
+            ints += 1;
+        } else {
+            return false;
+        }
+    }
+    // -webkit-legacy 단독은 무효(정수나 ellipsis 필요).
+    ints <= 1 && ell <= 1 && legacy <= 1 && ints + ell >= 1
+}
+
 // block-ellipsis(§CSS Overflow 4): no-ellipsis | ellipsis | <string>. 단일 토큰.
 pub fn block_ellipsis_valid(raw: &str) -> bool {
     let toks = split_ws_quotes(raw.trim());

@@ -95,8 +95,8 @@ pub(crate) use values::{
 pub(crate) use values::nonneg_length_percentage as nonneg_lp_valid;
 pub(crate) use values::margin_value_valid;
 pub(crate) use values::{
-    block_ellipsis_valid, max_lines_canonical, max_lines_valid, text_overflow_valid,
-    webkit_line_clamp_valid,
+    block_ellipsis_valid, line_clamp_valid, max_lines_canonical, max_lines_valid,
+    text_overflow_valid, webkit_line_clamp_valid,
 };
 pub(crate) use values::{
     positive_integer_valid, text_decoration_inset_canonical, text_decoration_inset_valid,
