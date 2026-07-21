@@ -2160,6 +2160,24 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     Some((rgba, serial.into_boxed_str()))
 }
 
+// text-decoration-line 캐논: 표준 순서(underline overline line-through blink)로 재정렬.
+// none/전역키워드/그 외는 None(호출부가 원문 유지). 중복/무효 키워드도 None.
+pub fn normalize_text_decoration_line(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    let order = ["underline", "overline", "line-through", "blink", "spelling-error", "grammar-error"];
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.len() < 2 || !toks.iter().all(|t| order.contains(t)) {
+        return None; // 단일값/none/무효는 그대로
+    }
+    // 중복 금지.
+    let mut seen = std::collections::HashSet::new();
+    if !toks.iter().all(|t| seen.insert(*t)) {
+        return None;
+    }
+    let out: Vec<&str> = order.iter().copied().filter(|o| toks.contains(o)).collect();
+    Some(out.join(" "))
+}
+
 // white-space 단축(§CSS Text 4) 캐논: <white-space-collapse> || <text-wrap-mode> 를
 // 표준 키워드로(collapse+wrap→normal, preserve+nowrap→pre 등). 컴포넌트/키워드 모두 받음.
 pub fn normalize_white_space(raw: &str) -> Option<String> {

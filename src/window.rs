@@ -308,6 +308,12 @@ fn fill_js_maps(
                 m.insert("transition".to_string(), crate::style::normalize_transition(tr));
             }
         }
+        // text-decoration-line 계산값: 표준 순서 재정렬.
+        if let Some(tdl) = m.get("text-decoration-line") {
+            if let Some(norm) = crate::css::normalize_text_decoration_line(tdl) {
+                m.insert("text-decoration-line".to_string(), norm);
+            }
+        }
         // white-space 계산값: collapse+wrap→normal 등 표준 키워드(§CSS Text 4).
         if let Some(ws) = m.get("white-space") {
             if let Some(norm) = crate::css::normalize_white_space(ws) {

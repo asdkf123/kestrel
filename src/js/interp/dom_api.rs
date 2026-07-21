@@ -261,6 +261,12 @@ impl Interp {
         if prop == "transition" {
             return crate::style::normalize_transition(raw);
         }
+        // text-decoration-line 캐논 순서 재정렬.
+        if prop == "text-decoration-line" {
+            if let Some(s) = crate::css::normalize_text_decoration_line(raw) {
+                return s;
+            }
+        }
         // white-space 단축(§CSS Text 4): collapse+wrap→normal 등 표준 키워드로.
         if prop == "white-space" {
             if let Some(s) = crate::css::normalize_white_space(raw) {
