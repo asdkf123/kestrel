@@ -217,6 +217,7 @@ pub enum Native {
     EventStopProp,
     GetElementsByClass,
     GetElementsByTag,
+    GetElementsByName,
     GetElementsByTagNS,
     MapCtor,
     SetCtor,

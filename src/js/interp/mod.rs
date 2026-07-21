@@ -644,6 +644,7 @@ impl Interp {
         document
             .insert("getElementsByClassName".to_string(), Value::Native(Native::GetElementsByClass));
         document.insert("getElementsByTagName".to_string(), Value::Native(Native::GetElementsByTag));
+        document.insert("getElementsByName".to_string(), Value::Native(Native::GetElementsByName));
         document.insert("getElementsByTagNameNS".to_string(), Value::Native(Native::GetElementsByTagNS));
         document.insert("createProcessingInstruction".to_string(), Value::Native(Native::CreateProcessingInstruction));
         // 라이브 접근자: document.body/head/documentElement → DOM 요소 핸들
@@ -7265,6 +7266,7 @@ impl Interp {
                     "querySelectorAll" => Some(Native::QuerySelectorAll),
                     "getElementsByClassName" => Some(Native::GetElementsByClass),
                     "getElementsByTagName" => Some(Native::GetElementsByTag),
+                    "getElementsByName" => Some(Native::GetElementsByName),
                     "getElementsByTagNameNS" => Some(Native::GetElementsByTagNS),
                     "getBoundingClientRect" => Some(Native::GetBoundingClientRect),
                     "scrollIntoView" => Some(Native::ScrollIntoView),

@@ -4863,6 +4863,7 @@ impl Interp {
                     ("createAttributeNS", Native::CreateAttributeNS),
                     ("getElementsByTagName", Native::GetElementsByTag),
                     ("getElementsByTagNameNS", Native::GetElementsByTagNS),
+                    ("getElementsByName", Native::GetElementsByName),
                 ] {
                     d.insert(k.to_string(), Value::Native(n));
                 }
@@ -6363,6 +6364,26 @@ impl Interp {
                 let root = scope.unwrap_or(dom.root);
                 let mut out = Vec::new();
                 collect_elements(dom, root, scope.is_some(), &query, by_class, &mut out);
+                Ok(self.make_collection(out))
+            }
+            // document.getElementsByName(name) — name 속성이 일치하는 요소를 문서 순서로
+            // 수집(§HTML). 문서 전체 대상.
+            Native::GetElementsByName => {
+                let name = args.first().map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                let mut out = Vec::new();
+                let mut stack = vec![dom.root];
+                while let Some(id) = stack.pop() {
+                    if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
+                        if e.attributes.get("name").map(|v| *v == name).unwrap_or(false) {
+                            out.push(Value::Dom(id));
+                        }
+                    }
+                    // 자식을 역순으로 쌓아 pop 순서가 문서 순서(preorder)가 되게.
+                    for c in dom.get(id).children.iter().rev() {
+                        stack.push(*c);
+                    }
+                }
                 Ok(self.make_collection(out))
             }
             // getElementsByTagNameNS(namespace, localName) — §4.5. "*" 는 와일드카드,
