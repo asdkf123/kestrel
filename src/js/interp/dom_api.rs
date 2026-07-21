@@ -865,6 +865,12 @@ impl Interp {
                     | "unicode-bidi"
                     | "text-orientation"
                     | "direction"
+                    | "outline"
+                    | "outline-width"
+                    | "outline-style"
+                    | "outline-color"
+                    | "border-spacing"
+                    | "text-combine-upright"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

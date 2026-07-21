@@ -1283,15 +1283,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             out
         }
         // border-spacing: <h> [<v>]. 두 값 원문 보존 (레이아웃이 이미 두 값을 읽는다).
-        "border-spacing" => {
-            let toks = split_top_level(value_text);
-            if toks.len() >= 2 {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
-            }
-            interpret_value(value_text)
-                .map(|v| vec![Declaration { important: false, name: name.to_string(), value: v }])
-                .unwrap_or_default()
-        }
         // background-size: cover | contain | [<length-percentage> | auto]{1,2}. 다중 토큰
         // 원문 보존 (페인트가 파싱). 예전엔 "50% 25%" 가 사라져 auto 로 그려졌다.
         "background-size" => {
@@ -1606,6 +1597,28 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // outline 롱핸드·border-spacing·text-combine-upright(§CSS UI/Tables/Writing).
+        "outline-width" | "outline-style" | "outline-color" | "border-spacing"
+        | "text-combine-upright" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "outline-width" && crate::css::column_rule_width_valid(value_text))
+                || (name == "outline-style" && crate::css::outline_style_valid(value_text))
+                || (name == "outline-color" && crate::css::outline_color_valid(value_text))
+                || (name == "border-spacing" && crate::css::border_spacing_valid(value_text))
+                || (name == "text-combine-upright" && crate::css::text_combine_upright_valid(value_text));
+            if ok {
+                // 색은 Value 파싱, 그 외는 원문 보존.
+                let val = if name == "outline-color" && !matches!(low.as_str(), "auto" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                    interpret_value(value_text.trim()).unwrap_or_else(|| Value::Keyword(low.clone()))
+                } else {
+                    Value::Keyword(value_text.trim().to_string())
+                };
+                vec![Declaration { important: false, name: name.to_string(), value: val }]
+            } else {
+                Vec::new()
+            }
+        }
         // 단일 키워드 enum(§여러 스펙): 정확한 값 집합으로 검증.
         "resize" | "user-select" | "caption-side" | "table-layout" | "empty-cells"
         | "border-collapse" | "writing-mode" | "unicode-bidi" | "text-orientation"
@@ -1841,7 +1854,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
-        | "text-emphasis-style" | "text-combine-upright"
+        | "text-emphasis-style"
         | "line-break"
         | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing"
@@ -2067,6 +2080,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 단축은 모든 longhand 를 **리셋**(미지정은 초기값 medium/none/invert)한다.
         "outline" => {
             let low = value_text.trim().to_ascii_lowercase();
+            if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                && !crate::css::outline_valid(value_text)
+            {
+                return Vec::new();
+            }
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
                 return vec![

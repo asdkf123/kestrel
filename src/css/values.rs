@@ -5107,6 +5107,67 @@ pub fn will_change_valid(raw: &str) -> bool {
     })
 }
 
+// outline-style(§CSS UI): auto | <line-style> (단, hidden 제외).
+pub fn outline_style_valid(t: &str) -> bool {
+    matches!(
+        t.trim().to_ascii_lowercase().as_str(),
+        "auto" | "none" | "dotted" | "dashed" | "solid" | "double" | "groove" | "ridge"
+            | "inset" | "outset"
+    )
+}
+
+// outline-color(§CSS UI): <color> | auto (invert 없음).
+pub fn outline_color_valid(raw: &str) -> bool {
+    raw.trim().eq_ignore_ascii_case("auto") || single_color_valid(raw)
+}
+
+// outline 단축(§CSS UI): <color|auto> || <outline-style> || <line-width>. 각 최대 1개.
+pub fn outline_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let (mut w, mut s, mut c) = (0u32, 0u32, 0u32);
+    for t in &toks {
+        if outline_style_valid(t) {
+            s += 1;
+        } else if column_rule_width_valid(t) {
+            w += 1;
+        } else if single_color_valid(t) {
+            c += 1;
+        } else {
+            return false;
+        }
+    }
+    w <= 1 && s <= 1 && c <= 1
+}
+
+// border-spacing(§CSS Tables): <length [0,∞]>{1,2}(퍼센트 불가).
+pub fn border_spacing_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    !toks.is_empty()
+        && toks.len() <= 2
+        && toks.iter().all(|t| {
+            let low = t.to_ascii_lowercase();
+            if low.starts_with('-') || low.ends_with('%') {
+                return false;
+            }
+            is_math_fn(&low) || is_length_percentage(t)
+        })
+}
+
+// text-combine-upright(§CSS Writing Modes): none | all | [ digits <integer [2,4]>? ].
+pub fn text_combine_upright_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "none" | "all" | "digits") {
+        return true;
+    }
+    if let Some(n) = low.strip_prefix("digits ") {
+        return matches!(n.trim().parse::<i64>(), Ok(v) if (2..=4).contains(&v));
+    }
+    false
+}
+
 // <line-style>(§CSS Backgrounds): border/rule 스타일 키워드.
 pub fn is_line_style(t: &str) -> bool {
     matches!(
