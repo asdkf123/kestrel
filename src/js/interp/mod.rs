@@ -9131,6 +9131,27 @@ impl Interp {
                 return Some(format!("{}", v as i64));
             }
         }
+        // font-stretch: normal/named 키워드를 %로 변환해 보간(§CSS Fonts, 계산값도 %).
+        if dash_prop == "font-stretch" {
+            let kw = |s: &str| -> String {
+                match s {
+                    "ultra-condensed" => "50%",
+                    "extra-condensed" => "62.5%",
+                    "condensed" => "75%",
+                    "semi-condensed" => "87.5%",
+                    "normal" => "100%",
+                    "semi-expanded" => "112.5%",
+                    "expanded" => "125%",
+                    "extra-expanded" => "150%",
+                    "ultra-expanded" => "200%",
+                    other => other,
+                }
+                .to_string()
+            };
+            if let Some(v) = Self::interp_css_value(&kw(from), &kw(to), eased) {
+                return Some(Self::clamp_nonneg(&v));
+            }
+        }
         // letter-spacing/word-spacing 의 normal 은 0 처럼 보간한다. 단 정확한 끝점
         // (eased 0/1)에서는 키워드(normal)를 그대로 둔다(계산값이 normal 로 직렬화).
         if matches!(dash_prop, "letter-spacing" | "word-spacing")
@@ -9174,7 +9195,8 @@ impl Interp {
                     | "border-left-width" | "outline-width" | "border-image-width"
                     | "border-image-outset" | "column-width" | "column-gap" | "row-gap"
                     | "flex-basis" | "column-rule-width" | "border-spacing" | "perspective"
-                    | "border-image-slice" | "tab-size" | "shape-margin"
+                    | "border-image-slice" | "tab-size" | "shape-margin" | "font-stretch"
+                    | "font-size" | "font-size-adjust" | "line-height"
             ) {
                 return Some(Self::clamp_nonneg(&v));
             }
