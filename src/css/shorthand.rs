@@ -1609,7 +1609,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // animation 롱핸드(§CSS Animations): 콤마 목록. 검증 후 원문 보존.
         "animation-name" | "animation-duration" | "animation-delay"
         | "animation-iteration-count" | "animation-direction" | "animation-fill-mode"
-        | "animation-play-state" => {
+        | "animation-play-state" | "animation-range-start" | "animation-range-end" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::animation_longhand_valid(name, value_text)

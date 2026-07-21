@@ -4996,6 +4996,25 @@ fn anim_fill_item(s: &str) -> bool {
 fn anim_playstate_item(s: &str) -> bool {
     matches!(s.to_ascii_lowercase().as_str(), "running" | "paused")
 }
+// animation-range-start/end 항목: normal | <lp> | <range-name> <lp>?.
+fn anim_range_item(s: &str) -> bool {
+    if s.eq_ignore_ascii_case("normal") {
+        return true;
+    }
+    let is_name = |t: &str| {
+        matches!(
+            t.to_ascii_lowercase().as_str(),
+            "cover" | "contain" | "entry" | "exit" | "entry-crossing" | "exit-crossing"
+        )
+    };
+    let is_lp = |t: &str| is_math_fn(&t.to_ascii_lowercase()) || is_length_percentage(t);
+    let toks = split_top_level(s);
+    match toks.len() {
+        1 => is_name(&toks[0]) || is_lp(&toks[0]),
+        2 => is_name(&toks[0]) && is_lp(&toks[1]),
+        _ => false,
+    }
+}
 
 // animation 롱핸드 검증(§CSS Animations): 프로퍼티별 콤마 목록.
 pub fn animation_longhand_valid(name: &str, raw: &str) -> bool {
@@ -5007,6 +5026,7 @@ pub fn animation_longhand_valid(name: &str, raw: &str) -> bool {
         "animation-direction" => anim_list(raw, anim_direction_item),
         "animation-fill-mode" => anim_list(raw, anim_fill_item),
         "animation-play-state" => anim_list(raw, anim_playstate_item),
+        "animation-range-start" | "animation-range-end" => anim_list(raw, anim_range_item),
         _ => false,
     }
 }

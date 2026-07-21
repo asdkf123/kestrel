@@ -850,6 +850,8 @@ impl Interp {
                     | "animation-direction"
                     | "animation-fill-mode"
                     | "animation-play-state"
+                    | "animation-range-start"
+                    | "animation-range-end"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
