@@ -1991,8 +1991,13 @@ impl<'a> LayoutBox<'a> {
         };
         if let Some(Length(h, Px)) = self.styled_node.value("height") {
             self.dimensions.content.height = (h - vextra).max(0.0);
-        } else if let Some(Length(ratio, Px)) = self.styled_node.value("aspect-ratio") {
-            // aspect-ratio: 명시 height 없을 때 content 높이 = 폭 / 비율
+        } else if let Some(ratio) = self
+            .styled_node
+            .value("aspect-ratio")
+            .and_then(|v| parse_aspect_ratio(&v))
+        {
+            // aspect-ratio: 명시 height 없을 때 content 높이 = 폭 / 비율. 값은 캐논 문자열
+            // "a / b"(또는 "auto a / b") 형태로 저장돼 있어 여기서 비율로 파싱한다.
             if ratio > 0.0 && self.dimensions.content.width > 0.0 {
                 self.dimensions.content.height = self.dimensions.content.width / ratio;
             }
@@ -2016,6 +2021,21 @@ impl<'a> LayoutBox<'a> {
 }
 
 
+
+// aspect-ratio 캐논 값("a / b" 또는 "auto a / b")에서 비율 a/b 를 뽑는다. auto 단독·
+// 파싱 실패는 None.
+fn parse_aspect_ratio(v: &Value) -> Option<f32> {
+    let Value::Keyword(s) = v else { return None };
+    let nums: Vec<f32> = s
+        .split(|c| c == '/' || c == ' ')
+        .filter_map(|t| t.trim().parse::<f32>().ok())
+        .collect();
+    match nums.as_slice() {
+        [a, b] if *b != 0.0 => Some(a / b),
+        [a] if *a != 0.0 => Some(*a),
+        _ => None,
+    }
+}
 
 fn box_tag<'a>(b: &'a LayoutBox) -> &'a str {
     match &b.styled_node.node.node_type {
