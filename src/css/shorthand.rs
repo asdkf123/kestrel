@@ -1021,37 +1021,64 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    // size 앞: style/weight (variant/stretch 는 근사 무시)
+    // size 앞 접두(§CSS Fonts font 단축): style || variant(small-caps) || weight ||
+    // stretch, 각 성분 최대 1회, normal 은 채움값. 미인식 토큰·중복 성분·접두 5개 이상은
+    // 단축 전체를 무효로 한다. variant/stretch 는 근사상 선언은 생략하되 검증은 한다.
+    let is_weight = |l: &str| {
+        matches!(l, "bold" | "bolder" | "lighter")
+            || l.parse::<f32>().map(|n| (1.0..=1000.0).contains(&n)).unwrap_or(false)
+    };
+    let is_stretch = |l: &str| {
+        matches!(
+            l,
+            "ultra-condensed" | "extra-condensed" | "condensed" | "semi-condensed"
+                | "semi-expanded" | "expanded" | "extra-expanded" | "ultra-expanded"
+        )
+    };
+    if tokens[..si].len() > 4 {
+        return Vec::new();
+    }
+    let (mut has_style, mut has_variant, mut has_weight, mut has_stretch) =
+        (false, false, false, false);
     for t in &tokens[..si] {
         let tl = t.to_ascii_lowercase();
-        match tl.as_str() {
-            "italic" | "oblique" => out.push(Declaration {
+        if tl == "normal" {
+            continue; // 채움값 — 카테고리 안 잡음
+        } else if tl == "italic" || tl == "oblique" {
+            if has_style {
+                return Vec::new();
+            }
+            has_style = true;
+            out.push(Declaration {
                 important: false,
                 name: "font-style".to_string(),
                 value: Value::Keyword("italic".to_string()),
-            }),
-            "bold" => out.push(Declaration {
-                important: false,
-                name: "font-weight".to_string(),
-                value: Value::Length(700.0, Unit::Number),
-            }),
-            // bolder/lighter 는 상대 키워드(부모 기준) — 키워드로 보존.
-            "bolder" | "lighter" => out.push(Declaration {
-                important: false,
-                name: "font-weight".to_string(),
-                value: Value::Keyword(tl.clone()),
-            }),
-            _ => {
-                if let Ok(n) = tl.parse::<f32>() {
-                    if (1.0..=1000.0).contains(&n) {
-                        out.push(Declaration {
-                            important: false,
-                            name: "font-weight".to_string(),
-                            value: Value::Length(n, Unit::Number),
-                        });
-                    }
-                }
+            });
+        } else if tl == "small-caps" {
+            if has_variant {
+                return Vec::new();
             }
+            has_variant = true;
+        } else if is_weight(&tl) {
+            if has_weight {
+                return Vec::new();
+            }
+            has_weight = true;
+            let wv = if tl == "bold" {
+                Value::Length(700.0, Unit::Number)
+            } else if tl == "bolder" || tl == "lighter" {
+                Value::Keyword(tl.clone())
+            } else {
+                Value::Length(tl.parse::<f32>().unwrap_or(400.0), Unit::Number)
+            };
+            out.push(Declaration { important: false, name: "font-weight".to_string(), value: wv });
+        } else if is_stretch(&tl) {
+            if has_stretch {
+                return Vec::new();
+            }
+            has_stretch = true;
+        } else {
+            return Vec::new(); // 미인식 토큰(oldstyle-nums 등) → 무효
         }
     }
     // size[/line-height]
@@ -1074,18 +1101,19 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     if let Some(lh) = sp.next() {
         out.extend(expand_declaration("line-height", lh)); // 무단위→factor, 길이→그대로
     }
-    // family: size 뒤 나머지 전부. 무효 패밀리면 font 단축 전체가 무효(빈 선언).
-    if si + 1 < tokens.len() {
-        let family = tokens[si + 1..].join(" ");
-        if !font_family_valid(&family) {
-            return Vec::new();
-        }
-        out.push(Declaration {
-            important: false,
-            name: "font-family".to_string(),
-            value: Value::Keyword(family),
-        });
+    // family 필수(§CSS Fonts): size 뒤 나머지 전부. 없거나 무효면 단축 전체가 무효.
+    if si + 1 >= tokens.len() {
+        return Vec::new();
     }
+    let family = tokens[si + 1..].join(" ");
+    if !font_family_valid(&family) {
+        return Vec::new();
+    }
+    out.push(Declaration {
+        important: false,
+        name: "font-family".to_string(),
+        value: Value::Keyword(family),
+    });
     out
 }
 
