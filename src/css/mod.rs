@@ -75,6 +75,7 @@ pub(crate) use values::{
 };
 pub(crate) use values::{
     positive_integer_valid, text_decoration_line_valid, text_decoration_skip_spaces_valid,
+    text_emphasis_position_canonical, text_emphasis_position_valid,
     text_underline_position_canonical, text_underline_position_valid,
 };
 pub(crate) use values::{

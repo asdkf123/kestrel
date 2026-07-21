@@ -464,6 +464,10 @@ impl Interp {
         if prop == "max-lines" && crate::css::max_lines_valid(raw) {
             return crate::css::max_lines_canonical(raw);
         }
+        // text-emphasis-position(§CSS Text Decor): 기본값 right 생략 캐논.
+        if prop == "text-emphasis-position" && crate::css::text_emphasis_position_valid(raw) {
+            return crate::css::text_emphasis_position_canonical(raw);
+        }
         // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
         if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
             let allow_reversed = prop == "counter-reset";
@@ -794,6 +798,9 @@ impl Interp {
                     | "break-inside"
                     | "box-decoration-break"
                     | "text-underline-position"
+                    | "text-decoration-style"
+                    | "text-decoration-color"
+                    | "text-emphasis-position"
                     | "text-overflow"
                     | "continue"
                     | "max-lines"

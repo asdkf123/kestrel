@@ -4365,6 +4365,48 @@ pub fn text_decoration_skip_spaces_valid(raw: &str) -> bool {
     true
 }
 
+// text-emphasis-position(§CSS Text Decor): auto | [ over | under ] || [ right | left ].
+pub fn text_emphasis_position_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 2 {
+        return false;
+    }
+    let (mut ou, mut rl) = (0u32, 0u32);
+    for t in toks {
+        match t {
+            "over" | "under" => ou += 1,
+            "right" | "left" => rl += 1,
+            _ => return false,
+        }
+    }
+    ou <= 1 && rl <= 1 && ou + rl >= 1
+}
+
+// text-emphasis-position 캐논: [over|under] 먼저, left 는 유지, 기본값 right 는 생략.
+pub fn text_emphasis_position_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return "auto".to_string();
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    let mut out: Vec<&str> = Vec::new();
+    if let Some(t) = ["over", "under"].iter().find(|k| toks.contains(k)) {
+        out.push(t);
+    }
+    if toks.contains(&"left") {
+        out.push("left");
+    }
+    if out.is_empty() {
+        low.clone()
+    } else {
+        out.join(" ")
+    }
+}
+
 // text-underline-position(§CSS Text Decor): auto | [from-font|under] || [left|right].
 pub fn text_underline_position_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();

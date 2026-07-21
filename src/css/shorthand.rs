@@ -1444,6 +1444,30 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
         }
+        // text-decoration-style/color·text-emphasis-position(§CSS Text Decor) 검증.
+        "text-decoration-style" | "text-decoration-color" | "text-emphasis-position" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "text-decoration-style" => matches!(low.as_str(), "solid" | "double" | "dotted" | "dashed" | "wavy"),
+                "text-decoration-color" => crate::css::single_color_valid(value_text),
+                "text-emphasis-position" => crate::css::text_emphasis_position_valid(value_text),
+                _ => false,
+            };
+            if !ok {
+                return Vec::new();
+            }
+            // 색은 Value 로 파싱(페인트 소비자 유지), position 은 캐논, style 은 소문자.
+            let val = match name {
+                "text-decoration-color" => interpret_value(value_text.trim())
+                    .unwrap_or_else(|| Value::Keyword(value_text.trim().to_string())),
+                "text-emphasis-position" => Value::Keyword(crate::css::text_emphasis_position_canonical(value_text)),
+                _ => Value::Keyword(low),
+            };
+            vec![Declaration { important: false, name: name.to_string(), value: val }]
+        }
         // text-underline-position(§CSS Text Decor): auto | [from-font|under] || [left|right].
         "text-underline-position" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1623,14 +1647,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-orientation" | "image-rendering" | "isolation"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
         | "background-clip" | "background-origin" | "overflow-anchor" | "scroll-behavior"
-        | "text-decoration-style"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "scroll-snap-align"
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
-        | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
+        | "text-emphasis-style" | "text-combine-upright"
         | "line-break"
         | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing"
