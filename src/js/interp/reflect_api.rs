@@ -174,7 +174,7 @@ impl Interp {
         key: &str,
         value: &Value,
     ) -> Result<bool, String> {
-        let (attr, kind, missing) = {
+        let (attr, kind, missing, invalid) = {
             let dom = self.dom_arena()?;
             let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else {
                 return Ok(false);
@@ -183,10 +183,21 @@ impl Interp {
             let Some(spec) = lookup(&tag, key) else {
                 return Ok(false);
             };
-            (spec.attr, spec.kind, spec.missing)
+            (spec.attr, spec.kind, spec.missing, spec.invalid)
         };
         if matches!(kind, Reflect::TokenList) {
             return Ok(false);
+        }
+        // nullable enum(crossOrigin 등, missing 없고 invalid 있음)에 null/undefined 대입은
+        // 콘텐츠 속성을 제거한다(§Web IDL DOMString? reflect).
+        if matches!(kind, Reflect::Enum)
+            && missing.is_none()
+            && invalid.is_some()
+            && matches!(value, Value::Null | Value::Undefined)
+        {
+            let dom = self.dom_arena()?;
+            dom.remove_attr(id, attr);
+            return Ok(true);
         }
         // 문자열/URL/열거·비-null NullableString 은 **먼저** ToString 강제변환한다(객체의
         // toString/valueOf 호출). dom 을 빌리기 전에 해야 &mut self 충돌이 없다.
