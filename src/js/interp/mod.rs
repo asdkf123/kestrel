@@ -8117,6 +8117,18 @@ impl Interp {
 
     // 위치(background-position/object-position) 보간: 최상위 쉼표 레이어별, 공백
     // 컴포넌트별 length-percentage 보간(혼합 단위 → calc). 레이어 수가 다르면 반복.
+    // 리스트 보간 레이어 수 = 두 리스트 길이의 최소공배수(각자 순환).
+    fn lcm_len(a: usize, b: usize) -> usize {
+        if a == 0 || b == 0 {
+            return a.max(b);
+        }
+        let (mut x, mut y) = (a, b);
+        while y != 0 {
+            (x, y) = (y, x % y);
+        }
+        a / x * b
+    }
+
     fn interp_position(from: &str, to: &str, t: f32) -> Option<String> {
         let split_commas = |s: &str| -> Vec<String> {
             let mut out = Vec::new();
@@ -8144,7 +8156,8 @@ impl Interp {
         if fl.is_empty() || tl.is_empty() {
             return None;
         }
-        let n = fl.len().max(tl.len());
+        // 레이어 수가 다르면 **최소공배수**만큼(각자 순환) — §CSS Backgrounds 리스트 보간.
+        let n = Self::lcm_len(fl.len(), tl.len());
         let mut layers = Vec::with_capacity(n);
         for i in 0..n {
             let (fh, fv) = Self::resolve_position_layer(fl[i % fl.len()].trim())?;
@@ -8256,7 +8269,7 @@ impl Interp {
         if fl.is_empty() || tl.is_empty() {
             return None;
         }
-        let n = fl.len().max(tl.len());
+        let n = Self::lcm_len(fl.len(), tl.len());
         let mut layers = Vec::with_capacity(n);
         for i in 0..n {
             let fv = axis_val(fl[i % fl.len()].trim())?;
@@ -8432,7 +8445,7 @@ impl Interp {
         if fl.is_empty() || tl.is_empty() {
             return None;
         }
-        let n = fl.len().max(tl.len());
+        let n = Self::lcm_len(fl.len(), tl.len());
         let mut layers = Vec::with_capacity(n);
         for i in 0..n {
             let fa = fl[i % fl.len()].trim();
