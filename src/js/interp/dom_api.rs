@@ -436,6 +436,15 @@ impl Interp {
         // CSS 전역 키워드(initial/inherit/unset) 해석.
         let from = self.resolve_wide_keyword(id, prop, &from);
         let to = self.resolve_wide_keyword(id, prop, new_value);
+        // em/rem 을 px 로 해석 — 안 그러면 불연속 판정(interp_css_value 가 em 보간 못함)이
+        // 부드러운 길이 전이를 불연속으로 오판해 캡처를 스킵한다(text-decoration-thickness
+        // 1em→0em 등). transform 은 raw 각도 유지가 필요하므로 제외.
+        let (from, to) = if prop == "transform" {
+            (from, to)
+        } else {
+            let (fs, rfs) = self.elem_font_sizes(id);
+            (Self::resolve_font_units(&from, fs, rfs), Self::resolve_font_units(&to, fs, rfs))
+        };
         if from.is_empty() || from == to {
             return;
         }
