@@ -3014,7 +3014,10 @@ pub fn scale_valid(raw: &str) -> bool {
     }
     toks.iter().all(|t| {
         if is_math_fn(t) {
-            return calc_dimensionless(t);
+            // 명백한 단순 차원 calc(길이/각도/시간)만 거부. sign()/comparison 등이 타입을
+            // 바꿔 무차원이 될 수 있어(§CSS Values calc 타입) 함수 든 calc 는 관대히 수용.
+            let simple = !t.contains('(') || t.matches('(').count() == 1;
+            return !(simple && !calc_dimensionless(t));
         }
         if let Some(n) = t.strip_suffix('%') {
             return n.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false);
