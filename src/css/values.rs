@@ -4885,12 +4885,6 @@ pub fn background_clip_canonical(raw: &str) -> String {
         .join(", ")
 }
 
-// z-index(§CSS 2): auto | <integer>(부호 무관).
-pub fn z_index_valid(raw: &str) -> bool {
-    let low = raw.trim().to_ascii_lowercase();
-    low == "auto" || is_math_fn(&low) || low.parse::<i64>().is_ok()
-}
-
 // shape-image-threshold(§CSS Shapes): <number> | <percentage>.
 pub fn shape_image_threshold_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();
@@ -5079,9 +5073,6 @@ pub fn columns_expand(raw: &str) -> Option<(String, String)> {
     }
 }
 
-pub fn columns_valid(raw: &str) -> bool {
-    columns_expand(raw).is_some()
-}
 
 // columns 캐논: [width if not auto] [count if not auto], 둘 다 auto 면 "auto".
 // 길이 0 은 0px 로 직렬화.

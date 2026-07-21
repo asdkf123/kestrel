@@ -77,7 +77,7 @@ pub(crate) use values::{
 };
 pub(crate) use values::{
     list_style_image_valid, list_style_type_canonical, list_style_type_valid, list_style_valid,
-    shape_image_threshold_valid, z_index_valid,
+    shape_image_threshold_valid,
 };
 pub(crate) use values::nonneg_length_percentage as nonneg_lp_valid;
 pub(crate) use values::{
@@ -92,7 +92,7 @@ pub(crate) use values::{
 };
 pub(crate) use values::{
     column_count_valid, column_rule_canonical, column_rule_valid, column_rule_width_valid,
-    column_width_valid, columns_canonical, columns_expand, columns_valid, is_line_style,
+    column_width_valid, columns_canonical, columns_expand, is_line_style,
     single_color_valid,
 };
 pub(crate) use values::{
@@ -124,7 +124,6 @@ pub(crate) use values::contain_intrinsic_valid;
 pub(crate) use values::position_valid;
 pub(crate) use values::rotate_valid;
 pub(crate) use values::scale_valid;
-pub(crate) use values::corner_shape_value_valid;
 pub(crate) use values::corner_shape_list_valid;
 pub(crate) use values::corner_shape_canonical;
 pub(crate) use values::translate_valid;
@@ -134,7 +133,6 @@ pub(crate) use values::position_canonical;
 pub(crate) use values::position_computed;
 pub(crate) use values::mask_position_canonical;
 pub(crate) use values::bg_position_valid;
-pub(crate) use values::bg_position_canonical;
 pub(crate) use values::bg_position_list_canonical;
 pub(crate) use values::scroll_padding_valid;
 pub(crate) use values::box_canonical;
