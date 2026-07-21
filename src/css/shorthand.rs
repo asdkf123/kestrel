@@ -1008,10 +1008,13 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     }
     let tokens: Vec<&str> = split_top_level(v);
     // size 토큰: '/' 앞부분이 길이거나 크기 키워드(larger/smaller 포함)인 첫 토큰
+    // font-size 는 <length-percentage>(calc/min/max/clamp 포함) | 절대·상대 키워드.
     let is_size = |t: &str| {
         let head = t.split('/').next().unwrap_or(t);
-        matches!(interpret_value(head), Some(Value::Length(..)))
-            || font_size_keyword(head).is_some()
+        matches!(
+            interpret_value(head),
+            Some(Value::Length(..)) | Some(Value::Calc(..)) | Some(Value::MinMax(..))
+        ) || font_size_keyword(head).is_some()
             || matches!(head.to_ascii_lowercase().as_str(), "larger" | "smaller")
     };
     let Some(si) = tokens.iter().position(|t| is_size(t)) else {
@@ -1055,7 +1058,7 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut sp = tokens[si].splitn(2, '/');
     let size = sp.next().unwrap_or(tokens[si]);
     let size_val = match interpret_value(size) {
-        Some(v @ Value::Length(..)) => Some(v),
+        Some(v @ (Value::Length(..) | Value::Calc(..) | Value::MinMax(..))) => Some(v),
         _ => {
             let sl = size.to_ascii_lowercase();
             if matches!(sl.as_str(), "larger" | "smaller") {
