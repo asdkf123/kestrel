@@ -395,8 +395,10 @@ impl Interp {
                 return if a == j { a } else { format!("{} {}", a, j) };
             }
         }
-        // object-position(§CSSOM): [수평] [수직] 캐논(1값→center 보충).
-        if prop == "object-position" && crate::css::position_valid(raw) {
+        // object-position/perspective-origin(§CSSOM): [수평] [수직] 캐논(1값→center 보충).
+        if matches!(prop, "object-position" | "perspective-origin")
+            && crate::css::position_valid(raw)
+        {
             return normalize_numbers(&crate::css::position_canonical(raw));
         }
         // background-position(§CSSOM): <bg-position># — 레이어마다 캐논(3값 포함).
@@ -666,6 +668,7 @@ impl Interp {
                     | "object-position"
                     | "background-position"
                     | "mask-position"
+                    | "perspective-origin"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

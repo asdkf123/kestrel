@@ -1279,7 +1279,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // perspective-origin: 다중 토큰 원문 보존(계산값은 resolve_origin 이 px 로).
+        // perspective-origin(§CSS Transforms): <position>. 검증 후 원문 보존(캐논은 직렬화).
         "perspective-origin" | "-webkit-perspective-origin" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: "perspective-origin".to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::position_valid(value_text) {
+                return Vec::new();
+            }
             vec![Declaration { important: false, name: "perspective-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
