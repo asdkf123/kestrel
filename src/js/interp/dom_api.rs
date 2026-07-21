@@ -217,6 +217,14 @@ impl Interp {
                 return s;
             }
         }
+        // lab/lch/oklab/oklch 지정값 캐논(§CSS Color 4).
+        if rl.starts_with("lab(") || rl.starts_with("lch(") || rl.starts_with("oklab(")
+            || rl.starts_with("oklch(")
+        {
+            if let Some(s) = crate::css::normalize_lab_like(raw) {
+                return s;
+            }
+        }
         // content 의 단일 문자열 토큰은 CSSOM 문자열 직렬화 — 항상 큰따옴표로(§CSSOM
         // "serialize a string"). content: 'x' 도 "x" 가 된다.
         if prop == "content" {

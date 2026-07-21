@@ -2209,6 +2209,128 @@ pub fn normalize_color_function(raw: &str) -> Option<String> {
     ))
 }
 
+// 색 함수 인자 토큰화: 최상위 공백으로 분리, 최상위 '/'(alpha 구분)는 독립 토큰,
+// 괄호 안(calc 등)은 통째로 유지. "20 calc(50%) 0.5 / 1" → [20, calc(50%), 0.5, /, 1].
+fn color_tokens(inner: &str) -> Vec<String> {
+    let (mut out, mut depth, mut cur) = (Vec::new(), 0i32, String::new());
+    for c in inner.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            '/' if depth == 0 => {
+                if !cur.trim().is_empty() {
+                    out.push(cur.trim().to_string());
+                }
+                cur.clear();
+                out.push("/".to_string());
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.trim().is_empty() {
+                    out.push(cur.trim().to_string());
+                }
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+// lab()/lch()/oklab()/oklch() 지정값 캐논 직렬화(§CSS Color 4). L 은 [0,max] 클램프,
+// % 는 각 채널 범위로(lab a/b=±125, oklab=±0.4, lch/oklch C=150/0.4). lch/oklch 의 C 는
+// ≥0 클램프, H 는 각도→도(number). alpha [0,1] 클램프·1 생략. none 유지.
+pub fn normalize_lab_like(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if !t.ends_with(')') {
+        return None;
+    }
+    let low = t.to_ascii_lowercase();
+    // (이름, L 최대, 중간채널 퍼센트당 스케일, lch 계열인지)
+    let (name, l_max, mid_scale, is_lch) = if low.starts_with("lab(") {
+        ("lab", 100.0, 1.25, false)
+    } else if low.starts_with("lch(") {
+        ("lch", 100.0, 1.5, true)
+    } else if low.starts_with("oklab(") {
+        ("oklab", 1.0, 0.004, false)
+    } else if low.starts_with("oklch(") {
+        ("oklch", 1.0, 0.004, true)
+    } else {
+        return None;
+    };
+    let inner = &t[name.len() + 1..t.len() - 1];
+    let toks = color_tokens(inner);
+    if toks.len() < 3 {
+        return None;
+    }
+    let nc = crate::style::num_css;
+    // 채널 정규화: none 유지, calc 은 수로 평가되면 calc(<수>) 아니면 원문 유지(% 등
+    // 문맥 의존), % 는 pct_factor 배, 그 외 수. clamp 있으면 적용.
+    let norm = |tok: &str, pct_factor: f32, clamp: Option<(f32, f32)>| -> Option<String> {
+        if tok.eq_ignore_ascii_case("none") {
+            return Some("none".to_string());
+        }
+        let clip = |v: f32| clamp.map_or(v, |(lo, hi)| v.clamp(lo, hi));
+        let low = tok.to_ascii_lowercase();
+        if low.starts_with("calc(") && tok.ends_with(')') {
+            // calc 결과는 지정값에서 클램프하지 않는다(clamp 는 used-value 시점).
+            return match eval_calc_number(&tok[5..tok.len() - 1]) {
+                Some(n) => Some(format!("calc({})", nc(n))),
+                None => Some(tok.to_string()), // % 등 문맥 의존 calc 은 원문 유지
+            };
+        }
+        let v = if let Some(p) = tok.strip_suffix('%') {
+            p.parse::<f32>().ok()? * pct_factor
+        } else {
+            tok.parse::<f32>().ok()?
+        };
+        Some(nc(clip(v)))
+    };
+    // L: % → pct/100*max, [0,max] 클램프.
+    let l = norm(toks[0].as_str(), l_max / 100.0, Some((0.0, l_max)))?;
+    // 채널1: a(lab/oklab) 또는 C(lch/oklch, ≥0 클램프). % → pct*mid_scale.
+    let c1 = norm(
+        toks[1].as_str(),
+        mid_scale,
+        if is_lch { Some((0.0, f32::INFINITY)) } else { None },
+    )?;
+    // 채널2: b(lab/oklab, % → pct*mid_scale) 또는 H(lch/oklch, 각도→도).
+    let c2 = if is_lch {
+        let s = &toks[2];
+        if s.eq_ignore_ascii_case("none") {
+            "none".to_string()
+        } else if s.to_ascii_lowercase().starts_with("calc(") {
+            norm(s.as_str(), 1.0, None)?
+        } else {
+            nc(crate::style::angle_token_deg(s).or_else(|| s.parse::<f32>().ok())?)
+        }
+    } else {
+        norm(toks[2].as_str(), mid_scale, None)?
+    };
+    // alpha: "/" 뒤. [0,1] 클램프, 1 생략, none 유지.
+    let alpha_part = match toks.iter().position(|x| x == "/").and_then(|p| toks.get(p + 1)) {
+        None => String::new(),
+        Some(a) if a.eq_ignore_ascii_case("none") => " / none".to_string(),
+        Some(a) => {
+            let an = norm(a.as_str(), 0.01, Some((0.0, 1.0)))?;
+            if an == "1" {
+                String::new()
+            } else {
+                format!(" / {an}")
+            }
+        }
+    };
+    Some(format!("{}({} {} {}{})", name, l, c1, c2, alpha_part))
+}
+
 pub fn normalize_color_mix(raw: &str) -> Option<String> {
     let low = raw.trim().to_ascii_lowercase();
     if !low.starts_with("color-mix(") || !low.ends_with(')') {
