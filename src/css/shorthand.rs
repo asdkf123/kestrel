@@ -1680,7 +1680,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "resize" | "user-select" | "caption-side" | "table-layout" | "empty-cells"
         | "border-collapse" | "writing-mode" | "unicode-bidi" | "text-orientation"
         | "direction" | "scroll-snap-stop" | "scroll-snap-align"
-        | "alignment-baseline" | "dominant-baseline" => {
+        | "alignment-baseline" | "dominant-baseline"
+        | "ruby-position" | "ruby-align" | "ruby-overhang" | "ruby-merge" => {
             let low = value_text.trim().to_ascii_lowercase();
             let snap_align_ok = || {
                 let toks: Vec<&str> = low.split_whitespace().collect();
@@ -1703,6 +1704,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     "direction" => matches!(low.as_str(), "ltr" | "rtl"),
                     "alignment-baseline" => matches!(low.as_str(), "baseline" | "text-bottom" | "alphabetic" | "ideographic" | "middle" | "central" | "mathematical" | "hanging" | "text-top"),
                     "dominant-baseline" => matches!(low.as_str(), "auto" | "text-bottom" | "alphabetic" | "ideographic" | "middle" | "central" | "mathematical" | "hanging" | "text-top"),
+                    "ruby-position" => matches!(low.as_str(), "over" | "under" | "inter-character" | "alternate"),
+                    "ruby-align" => matches!(low.as_str(), "start" | "center" | "space-between" | "space-around"),
+                    "ruby-overhang" => matches!(low.as_str(), "auto" | "none" | "spaces"),
+                    "ruby-merge" => matches!(low.as_str(), "separate" | "merge" | "auto"),
                     _ => false,
                 };
             if ok {
@@ -1935,7 +1940,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
         | "line-break"
-        | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing"
         | "font-variant-ligatures"
         | "font-variant-position" | "font-language-override"

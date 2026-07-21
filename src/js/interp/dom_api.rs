@@ -927,6 +927,10 @@ impl Interp {
                     | "alignment-baseline"
                     | "dominant-baseline"
                     | "baseline-shift"
+                    | "ruby-position"
+                    | "ruby-align"
+                    | "ruby-overhang"
+                    | "ruby-merge"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
