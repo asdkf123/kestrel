@@ -100,7 +100,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "background-size", "border-bottom-width", "border-collapse",
     "border-color", "border-left-width", "border-radius",
     "border-right-width", "border-spacing", "border-style",
-    "border-top-color", "border-top-width", "border-width", "bottom", "box-shadow",
+    "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
+    "border-top-width", "border-width", "bottom", "box-shadow",
     // 컨테이너 쿼리 (레이아웃 후 두 번째 스타일 패스로 실제 평가한다)
     "container", "container-name", "container-type",
     // 마스크 (그라디언트/이미지의 알파로 서브트리를 곱한다)
@@ -489,8 +490,9 @@ mod tests {
         // 예전엔 "선언이 파싱되면 지원" 이라 미구현 기능도 참이었다(거짓말).
         // 사이트가 우리가 못 그리는 모던 레이아웃을 내보내 렌더가 깨진다.
         assert!(supports_condition("(container-type: inline-size)"), "이제 진짜로 지원한다");
+        // border-*-color 는 4면 모두 페인트가 읽어 그리므로 지원한다(§CSS Backgrounds).
+        assert!(supports_condition("(border-left-color: red)"));
         // 엔진이 해석하지 않는 프로퍼티 → 거짓
-        assert!(!supports_condition("(border-left-color: red)"));
         assert!(!supports_condition("(unknown-prop: 1px)"));
         // and 중 하나라도 미지원이면 거짓 (subgrid 는 아직 없다)
         assert!(!supports_condition("(display: grid) and (grid-template-columns: subgrid)"));

@@ -3721,28 +3721,107 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
 
 // `border[-side]: <width> <style> <color>` 단축값(임의 순서, 일부 생략 가능)을
 // 지정한 변들의 width/style/color longhand 로 확장한다.
+// <line-width>: thin|medium|thick | <length [0,∞]>.
+fn is_line_width_tok(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "thin" | "medium" | "thick") {
+        return true;
+    }
+    match interpret_value(t) {
+        Some(Value::Length(n, _)) => n >= 0.0,
+        Some(Value::Calc(..)) | Some(Value::MinMax(..)) => true,
+        _ => false,
+    }
+}
+
+// <line-style>(§CSS Backgrounds): none|hidden|dotted|dashed|solid|double|groove|ridge|inset|outset.
+fn is_line_style_tok(t: &str) -> bool {
+    matches!(
+        t.trim().to_ascii_lowercase().as_str(),
+        "none" | "hidden" | "dotted" | "dashed" | "solid" | "double" | "groove" | "ridge"
+            | "inset" | "outset"
+    )
+}
+
+// border 단축(§CSS Backgrounds): <line-width> || <line-style> || <color>.
+// 각 컴포넌트 최대 1회, 분류 불가/중복 토큰이 있으면 선언 전체 거부.
+// 생략된 컴포넌트는 초기값(width medium, style none, color currentcolor)으로 채운다.
+// 전체 border(4면)는 border-image 롱핸드도 초기값으로 리셋한다.
 fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
-    let (mut width, mut style, mut color) = (None, None, None);
+    let kw = |name: &str, v: &str| Declaration {
+        important: false,
+        name: name.to_string(),
+        value: Value::Keyword(v.to_string()),
+    };
+    let low = value_text.trim().to_ascii_lowercase();
+    let reset_bi = |out: &mut Vec<Declaration>, v: &str| {
+        if sides.len() == 4 {
+            let bi: [(&str, &str); 5] = [
+                ("border-image-source", if v.is_empty() { "none" } else { v }),
+                ("border-image-slice", if v.is_empty() { "100%" } else { v }),
+                ("border-image-width", if v.is_empty() { "1" } else { v }),
+                ("border-image-outset", if v.is_empty() { "0" } else { v }),
+                ("border-image-repeat", if v.is_empty() { "stretch" } else { v }),
+            ];
+            for (p, val) in bi {
+                out.push(kw(p, val));
+            }
+        }
+    };
+    // CSS 전역 키워드: 모든 롱핸드를 그대로 편다(border-image 포함).
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        let mut out = Vec::new();
+        for &side in sides {
+            out.push(kw(&format!("border-{}-width", side), &low));
+            out.push(kw(&format!("border-{}-style", side), &low));
+            out.push(kw(&format!("border-{}-color", side), &low));
+        }
+        reset_bi(&mut out, &low);
+        return out;
+    }
+
+    let (mut width, mut style, mut color): (Option<String>, Option<String>, Option<String>) =
+        (None, None, None);
     for tok in split_top_level(value_text) {
-        match interpret_value(tok) {
-            Some(v @ Value::Length(..)) => width = Some(v),
-            Some(v @ Value::Color(..)) => color = Some(v),
-            Some(Value::Keyword(k)) => style = Some(Value::Keyword(k)),
-            _ => {}
+        if width.is_none() && is_line_width_tok(tok) {
+            width = Some(tok.to_string());
+        } else if style.is_none() && is_line_style_tok(tok) {
+            style = Some(tok.to_string());
+        } else if color.is_none() && crate::css::single_color_valid(tok) {
+            color = Some(tok.to_string());
+        } else {
+            return Vec::new(); // 분류 불가/중복 → 선언 무효
         }
     }
+    if width.is_none() && style.is_none() && color.is_none() {
+        return Vec::new();
+    }
+    let wv = width.as_deref().unwrap_or("medium");
+    let sv = style.as_deref().unwrap_or("none");
+    let cv = color.as_deref().unwrap_or("currentcolor");
+    // 레이아웃/페인트가 읽는 계산값 경로는 타입된 Value 를 요구한다:
+    //  - width: <length> 는 Length(레이아웃이 폭으로 읽음), thin/medium/thick 은 Keyword.
+    //  - color: 실제 색은 Color/ColorFn(페인트 get_color), currentcolor 는 Keyword(후단 치환).
+    let width_val = |v: &str| -> Value {
+        if matches!(v.to_ascii_lowercase().as_str(), "thin" | "medium" | "thick") {
+            Value::Keyword(v.to_string())
+        } else {
+            interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()))
+        }
+    };
+    let color_val = |v: &str| -> Value {
+        match interpret_value(v) {
+            Some(c @ (Value::Color(_) | Value::ColorFn(..))) => c,
+            _ => Value::Keyword(v.to_string()),
+        }
+    };
     let mut out = Vec::new();
     for &side in sides {
-        if let Some(w) = &width {
-            out.push(Declaration { important: false, name: format!("border-{}-width", side), value: w.clone() });
-        }
-        if let Some(s) = &style {
-            out.push(Declaration { important: false, name: format!("border-{}-style", side), value: s.clone() });
-        }
-        if let Some(c) = &color {
-            out.push(Declaration { important: false, name: format!("border-{}-color", side), value: c.clone() });
-        }
+        out.push(Declaration { important: false, name: format!("border-{}-width", side), value: width_val(wv) });
+        out.push(kw(&format!("border-{}-style", side), sv));
+        out.push(Declaration { important: false, name: format!("border-{}-color", side), value: color_val(cv) });
     }
+    reset_bi(&mut out, "");
     out
 }
 
