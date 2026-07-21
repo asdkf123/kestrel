@@ -69,6 +69,8 @@ pub(crate) use values::{
 };
 pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::will_change_valid;
+pub(crate) use values::{list_style_image_valid, shape_image_threshold_valid, z_index_valid};
+pub(crate) use values::nonneg_length_percentage as nonneg_lp_valid;
 pub(crate) use values::{
     block_ellipsis_valid, max_lines_canonical, max_lines_valid, text_overflow_valid,
     webkit_line_clamp_valid,

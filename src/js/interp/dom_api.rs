@@ -806,6 +806,12 @@ impl Interp {
                     | "max-lines"
                     | "block-ellipsis"
                     | "-webkit-line-clamp"
+                    | "position"
+                    | "z-index"
+                    | "list-style-position"
+                    | "list-style-image"
+                    | "shape-margin"
+                    | "shape-image-threshold"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

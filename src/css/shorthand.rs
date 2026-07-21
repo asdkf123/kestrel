@@ -184,10 +184,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "z-index" if value_text.trim().eq_ignore_ascii_case("auto") => {
             vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Keyword("auto".to_string()) }]
         }
-        "z-index" => match number_or_math(value_text) {
+        // <integer> 만(소수 거부). 괄호가 있으면 calc 등 수학 함수로 평가.
+        "z-index" if value_text.trim().parse::<i64>().is_ok() => {
+            let n = value_text.trim().parse::<i64>().unwrap() as f32;
+            vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }]
+        }
+        "z-index" if value_text.contains('(') => match number_or_math(value_text) {
             Some(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
+        "z-index" => Vec::new(),
         // font-weight 의 계산값은 수다(CSS Fonts §2.2). bold=700, normal=400.
         // 예전엔 "bold"/"normal" 키워드로 정규화해서 getComputedStyle 이 "bold" 를
         // 돌려줬다(표준은 "700"). 렌더는 600 이상을 굵게 그린다(폰트가 2종뿐).
@@ -1416,6 +1422,33 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // position/list-style-position/shape-margin/shape-image-threshold/
+        // list-style-image(§여러 스펙): 단순 검증.
+        "position" | "list-style-position" | "shape-margin" | "shape-image-threshold"
+        | "list-style-image" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "position" => matches!(low.as_str(), "static" | "relative" | "absolute" | "fixed" | "sticky"),
+                "list-style-position" => matches!(low.as_str(), "inside" | "outside"),
+                "shape-margin" => crate::css::nonneg_lp_valid(value_text),
+                "shape-image-threshold" => crate::css::shape_image_threshold_valid(value_text),
+                "list-style-image" => crate::css::list_style_image_valid(value_text),
+                _ => false,
+            };
+            if !ok {
+                return Vec::new();
+            }
+            // 이미지·길이 등은 원문 보존, 키워드는 소문자.
+            let v = if matches!(name, "shape-margin" | "shape-image-threshold" | "list-style-image") {
+                value_text.trim().to_string()
+            } else {
+                low
+            };
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+        }
         // css-overflow 계열: text-overflow/continue/max-lines/block-ellipsis/
         // -webkit-line-clamp 검증.
         "text-overflow" | "continue" | "max-lines" | "block-ellipsis" | "-webkit-line-clamp" => {
@@ -1659,7 +1692,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "white-space-collapse" | "font-optical-sizing"
         | "font-variant-ligatures"
         | "font-variant-position" | "font-language-override"
-        | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
+        | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "hyphenate-character" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"

@@ -4003,7 +4003,7 @@ pub fn grid_area_valid(raw: &str) -> bool {
 
 // 부호 없는 <length-percentage>(음수 리터럴 거부). calc 등 수식은 파스 타임 허용
 // (범위 검사는 계산값 시점, calc(-0.5em+10px) 도 유효).
-fn nonneg_length_percentage(t: &str) -> bool {
+pub fn nonneg_length_percentage(t: &str) -> bool {
     let low = t.trim().to_ascii_lowercase();
     if low.starts_with('-') {
         return false;
@@ -4448,6 +4448,52 @@ pub fn text_underline_position_canonical(raw: &str) -> String {
 pub fn positive_integer_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();
     is_math_fn(&low) || matches!(low.parse::<i64>(), Ok(n) if n >= 1)
+}
+
+// z-index(§CSS 2): auto | <integer>(부호 무관).
+pub fn z_index_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    low == "auto" || is_math_fn(&low) || low.parse::<i64>().is_ok()
+}
+
+// shape-image-threshold(§CSS Shapes): <number> | <percentage>.
+pub fn shape_image_threshold_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if is_math_fn(&low) {
+        return true;
+    }
+    if let Some(n) = low.strip_suffix('%') {
+        return n.trim().parse::<f64>().map(|v| v.is_finite()).unwrap_or(false);
+    }
+    low.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+}
+
+// list-style-image(§CSS Lists): none | <image>. 단일 이미지(url/gradient/image-set 등).
+pub fn list_style_image_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    if split_top_level(t).len() != 1 {
+        return false;
+    }
+    let low = t.to_ascii_lowercase();
+    let is_gradient = [
+        "linear-gradient(",
+        "radial-gradient(",
+        "conic-gradient(",
+        "repeating-linear-gradient(",
+        "repeating-radial-gradient(",
+        "repeating-conic-gradient(",
+    ]
+    .iter()
+    .any(|p| low.starts_with(p));
+    (low.starts_with("url(") && low.ends_with(')'))
+        || (is_gradient && gradient_valid(t))
+        || low.starts_with("image-set(")
+        || low.starts_with("-webkit-image-set(")
+        || low.starts_with("cross-fade(")
+        || low.starts_with("image(")
 }
 
 // will-change(§CSS Will Change): auto | [ scroll-position | contents | <custom-ident> ]#.
