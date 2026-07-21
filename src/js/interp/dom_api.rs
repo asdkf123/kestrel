@@ -393,6 +393,8 @@ impl Interp {
                     | "transition-timing-function"
                     | "animation-timing-function"
                     | "transition-property"
+                    | "transition-duration"
+                    | "transition-delay"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

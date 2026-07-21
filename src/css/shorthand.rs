@@ -248,6 +248,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // transition-duration/delay(§CSS Transitions): <time>#. duration 은 음수 거부,
+        // delay 는 음수 허용. 단위 없는 0/infinite/공백구분 목록 거부. CSS-wide 통과.
+        "transition-duration" | "transition-delay" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let allow_neg = name == "transition-delay";
+            if crate::css::time_list_valid(value_text, allow_neg) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // box-sizing(§CSS Sizing): content-box | border-box 만. 그 외(auto/fill-box/
         // margin-box/두값 등) 거부. CSS-wide 통과.
         "box-sizing" => {
@@ -600,8 +615,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // transition/animation 롱핸드: 원문 보존(애니메이션은 미구현이지만 계산값은
         // 정규화해 돌려준다 — collect_computed_styles 가 시간(ms→s)·목록 간격을 정규화).
-        "transition-duration" | "transition-delay"
-        | "transition-behavior"
+        "transition-behavior"
         | "animation-name" | "animation-duration" | "animation-delay"
         | "animation-iteration-count"
         | "animation-direction" | "animation-fill-mode" | "animation-play-state"

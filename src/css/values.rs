@@ -2285,6 +2285,51 @@ pub fn cursor_valid(raw: &str) -> bool {
     true
 }
 
+// <time> 하나를 파싱: <number> 뒤에 s|ms 단위(대소문자 무시). 단위 없는 0 도 무효.
+// inf/nan(Rust 파서가 받는) 은 is_finite 로 거른다. 값(부호 판단용)을 돌려준다.
+fn parse_time_value(s: &str) -> Option<f64> {
+    let low = s.trim().to_ascii_lowercase();
+    let num = if let Some(n) = low.strip_suffix("ms") {
+        n
+    } else if let Some(n) = low.strip_suffix('s') {
+        n
+    } else {
+        return None;
+    };
+    if num.is_empty() {
+        return None;
+    }
+    let v: f64 = num.parse().ok()?;
+    if v.is_finite() {
+        Some(v)
+    } else {
+        None
+    }
+}
+
+// <time># 목록 유효성(§CSS Transitions). allow_negative=false 면 duration(≥0), true 면 delay.
+pub fn time_list_valid(raw: &str, allow_negative: bool) -> bool {
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|item| {
+        let low = item.trim().to_ascii_lowercase();
+        // calc/min/max/clamp 등 수학함수는 구문상 유효(값은 사용시 결정, 음수 클램프도 사용시).
+        if low.ends_with(')')
+            && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
+                .iter()
+                .any(|p| low.starts_with(p))
+        {
+            return true;
+        }
+        match parse_time_value(item) {
+            Some(v) => allow_negative || v >= 0.0,
+            None => false,
+        }
+    })
+}
+
 // transition-property 유효성(§CSS Transitions): none | <custom-ident>#.
 // 각 항목은 유효 식별자(all 포함)이고 none/CSS-wide 키워드/default 는 항목이 될 수 없다.
 pub fn transition_property_valid(raw: &str) -> bool {
