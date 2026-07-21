@@ -395,11 +395,13 @@ impl Interp {
                 return if a == j { a } else { format!("{} {}", a, j) };
             }
         }
-        // object-position/background-position(§CSSOM): [수평] [수직] 캐논(1값→center 보충).
-        if matches!(prop, "object-position" | "background-position")
-            && crate::css::position_valid(raw)
-        {
+        // object-position(§CSSOM): [수평] [수직] 캐논(1값→center 보충).
+        if prop == "object-position" && crate::css::position_valid(raw) {
             return normalize_numbers(&crate::css::position_canonical(raw));
+        }
+        // background-position(§CSSOM): <bg-position># — 레이어마다 캐논(3값 포함).
+        if prop == "background-position" {
+            return normalize_numbers(&crate::css::bg_position_list_canonical(raw));
         }
         // mask-position(§CSS Masking): <position># — 레이어마다 캐논.
         if prop == "mask-position" {

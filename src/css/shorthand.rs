@@ -1367,13 +1367,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "background" => background_shorthand(value_text),
         // background-position/object-position: 다중 토큰("center top" 등) 원문 보존,
         // paint 가 파싱. (position 계열은 축별 다값이라 interpret_value 로 못 담음)
-        // background-position/object-position(§CSS Values): <position> 검증. CSS-wide 통과.
-        "background-position" | "object-position" => {
+        // object-position(§CSS Values): <position>(3값 불가). CSS-wide 통과.
+        "object-position" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::position_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // background-position(§CSS Backgrounds): <bg-position>#(3값 허용, 콤마 목록).
+        "background-position" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let layers = split_top_level_commas(value_text);
+            if !layers.is_empty() && layers.iter().all(|l| crate::css::bg_position_valid(l)) {
                 vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()

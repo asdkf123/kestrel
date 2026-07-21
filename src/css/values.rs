@@ -2714,6 +2714,118 @@ pub fn position_computed(raw: &str) -> String {
     format!("{} {}", pos_axis_computed(&h), pos_axis_computed(&v))
 }
 
+// <bg-position> 지정값 캐논(§CSSOM): 1/2/4 는 position_canonical, 3값은 성분 파싱해
+// [H성분] [V성분] 순서로(모서리+오프셋 유지).
+pub fn bg_position_canonical(raw: &str) -> String {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    if toks.len() != 3 {
+        return position_canonical(raw);
+    }
+    let is_h = |t: &str| matches!(t, "left" | "right");
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    let is_lp = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+        }
+        is_length_percentage(t)
+    };
+    let mut comps: Vec<(u8, String)> = Vec::new();
+    let mut i = 0;
+    while i < 3 {
+        let t = toks[i].as_str();
+        if t == "center" {
+            comps.push((2, "center".to_string()));
+            i += 1;
+        } else if is_h(t) || is_v(t) {
+            let axis = if is_h(t) { 0 } else { 1 };
+            let mut s = t.to_string();
+            i += 1;
+            if i < 3 && is_lp(&toks[i]) {
+                s = format!("{} {}", t, toks[i]);
+                i += 1;
+            }
+            comps.push((axis, s));
+        } else {
+            return raw.trim().to_ascii_lowercase();
+        }
+    }
+    if comps.len() != 2 {
+        return raw.trim().to_ascii_lowercase();
+    }
+    // H 성분·V 성분 배정.
+    let (h, v) = if comps[0].0 == 0 {
+        (&comps[0].1, &comps[1].1)
+    } else if comps[1].0 == 0 {
+        (&comps[1].1, &comps[0].1)
+    } else if comps[0].0 == 1 {
+        (&comps[1].1, &comps[0].1)
+    } else {
+        (&comps[0].1, &comps[1].1)
+    };
+    format!("{} {}", h, v)
+}
+
+// background-position 캐논(§CSSOM): <bg-position># — 레이어마다 bg_position_canonical.
+pub fn bg_position_list_canonical(raw: &str) -> String {
+    split_top_commas(raw)
+        .iter()
+        .map(|l| {
+            if bg_position_valid(l) {
+                bg_position_canonical(l)
+            } else {
+                l.trim().to_ascii_lowercase()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// <bg-position> 유효성(§CSS Backgrounds): <position> 에 3값 모서리+오프셋 형태를 더 허용.
+// object-position(<position>, 3값 불가)과 달리 background-position 은 3값도 유효.
+pub fn bg_position_valid(raw: &str) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_h = |t: &str| matches!(t, "left" | "right");
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    let is_lp = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+        }
+        is_length_percentage(t)
+    };
+    let n = toks.len();
+    if n <= 2 || n == 4 {
+        return position_valid(raw); // 1/2/4 는 <position> 과 동일
+    }
+    if n != 3 {
+        return false;
+    }
+    // 3값: 두 성분(center | [left|right|top|bottom] <lp>?), 서로 다른 축(H/V) 배정.
+    let mut i = 0;
+    let mut axes: Vec<u8> = Vec::new();
+    while i < n && axes.len() < 2 {
+        let t = toks[i].as_str();
+        if t == "center" {
+            axes.push(2);
+            i += 1;
+        } else if is_h(t) {
+            i += 1;
+            if i < n && is_lp(&toks[i]) {
+                i += 1;
+            }
+            axes.push(0);
+        } else if is_v(t) {
+            i += 1;
+            if i < n && is_lp(&toks[i]) {
+                i += 1;
+            }
+            axes.push(1);
+        } else {
+            return false; // 3값 형태엔 벌거벗은 <lp> 불가
+        }
+    }
+    i == n && axes.len() == 2 && !(axes[0] == 0 && axes[1] == 0) && !(axes[0] == 1 && axes[1] == 1)
+}
+
 // <position> 지정값 캐논 직렬화(§CSSOM): [수평] [수직] 순서로, 1값은 빠진 축에 center.
 // 키워드는 유지(퍼센트 변환은 계산값 몫). 유효한 값만 넣는다고 가정.
 pub fn position_canonical(raw: &str) -> String {
