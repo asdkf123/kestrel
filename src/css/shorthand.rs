@@ -657,10 +657,12 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
         return Vec::new();
     }
     let tokens: Vec<&str> = split_top_level(v);
-    // size 토큰: '/' 앞부분이 길이거나 크기 키워드인 첫 토큰
+    // size 토큰: '/' 앞부분이 길이거나 크기 키워드(larger/smaller 포함)인 첫 토큰
     let is_size = |t: &str| {
         let head = t.split('/').next().unwrap_or(t);
-        matches!(interpret_value(head), Some(Value::Length(..))) || font_size_keyword(head).is_some()
+        matches!(interpret_value(head), Some(Value::Length(..)))
+            || font_size_keyword(head).is_some()
+            || matches!(head.to_ascii_lowercase().as_str(), "larger" | "smaller")
     };
     let Some(si) = tokens.iter().position(|t| is_size(t)) else {
         return Vec::new();
@@ -675,10 +677,16 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
                 name: "font-style".to_string(),
                 value: Value::Keyword("italic".to_string()),
             }),
-            "bold" | "bolder" => out.push(Declaration {
+            "bold" => out.push(Declaration {
                 important: false,
                 name: "font-weight".to_string(),
                 value: Value::Length(700.0, Unit::Number),
+            }),
+            // bolder/lighter 는 상대 키워드(부모 기준) — 키워드로 보존.
+            "bolder" | "lighter" => out.push(Declaration {
+                important: false,
+                name: "font-weight".to_string(),
+                value: Value::Keyword(tl.clone()),
             }),
             _ => {
                 if let Ok(n) = tl.parse::<f32>() {
@@ -698,7 +706,14 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     let size = sp.next().unwrap_or(tokens[si]);
     let size_val = match interpret_value(size) {
         Some(v @ Value::Length(..)) => Some(v),
-        _ => font_size_keyword(size).map(|px| Value::Length(px, Unit::Px)),
+        _ => {
+            let sl = size.to_ascii_lowercase();
+            if matches!(sl.as_str(), "larger" | "smaller") {
+                Some(Value::Keyword(sl)) // 상대 크기 키워드 보존
+            } else {
+                font_size_keyword(size).map(|px| Value::Length(px, Unit::Px))
+            }
+        }
     };
     if let Some(sv) = size_val {
         out.push(Declaration { important: false, name: "font-size".to_string(), value: sv });
