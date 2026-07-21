@@ -2478,8 +2478,19 @@ fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
     // 퍼센트 정규화(§CSS Color 5).
     let (w1, w2, alpha_mul) = match (p1, p2) {
         (None, None) => (0.5, 0.5, 1.0),
-        (Some(a), None) => (a / 100.0, 1.0 - a / 100.0, 1.0),
-        (None, Some(b)) => (1.0 - b / 100.0, b / 100.0, 1.0),
+        // 단일 퍼센트 p: 나머지는 100-p 이므로 p 는 [0,100] 이어야 유효(§CSS Color 5).
+        (Some(a), None) => {
+            if !(0.0..=100.0).contains(&a) {
+                return None;
+            }
+            (a / 100.0, 1.0 - a / 100.0, 1.0)
+        }
+        (None, Some(b)) => {
+            if !(0.0..=100.0).contains(&b) {
+                return None;
+            }
+            (1.0 - b / 100.0, b / 100.0, 1.0)
+        }
         (Some(a), Some(b)) => {
             if a < 0.0 || b < 0.0 {
                 return None; // 음수 퍼센트는 무효(§CSS Color 5)
