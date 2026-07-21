@@ -234,6 +234,34 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // outline-offset(§CSS UI): <length> 단일(calc 포함). %·auto·단위없는 비영·
+        // 두값·키워드 거부. CSS-wide 통과.
+        "outline-offset" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = split_top_level(value_text.trim());
+            if toks.len() == 1 {
+                match interpret_value(toks[0]) {
+                    Some(Value::Length(n, u)) => {
+                        // % 는 <length> 아님, 단위없는 수는 0 만 허용(0→0px 로 캐논화).
+                        if u == Unit::Number && n == 0.0 {
+                            return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(0.0, Unit::Px) }];
+                        }
+                        if u != Unit::Percent && u != Unit::Number {
+                            return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, u) }];
+                        }
+                    }
+                    Some(v @ (Value::Calc(..) | Value::MinMax(..))) => {
+                        return vec![Declaration { important: false, name: name.to_string(), value: v }];
+                    }
+                    _ => {}
+                }
+            }
+            Vec::new()
+        }
         // interactivity(§CSS UI 4): auto | inert 만.
         "interactivity" => {
             let low = value_text.trim().to_ascii_lowercase();

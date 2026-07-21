@@ -320,6 +320,20 @@ impl Interp {
         if prop == "text-autospace" && crate::css::text_autospace_valid(raw) {
             return crate::css::text_autospace_canonical(raw);
         }
+        // outline-offset(§CSS UI): <length> 캐논(0 → 0px).
+        if prop == "outline-offset" {
+            if let Some(v) = crate::css::interpret_value(raw.trim()) {
+                match v {
+                    crate::css::Value::Length(n, _) if n == 0.0 => return "0px".to_string(),
+                    v @ (crate::css::Value::Length(..)
+                    | crate::css::Value::Calc(..)
+                    | crate::css::Value::MinMax(..)) => {
+                        return crate::style::computed_value_string(&v);
+                    }
+                    _ => {}
+                }
+            }
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".
@@ -414,6 +428,7 @@ impl Interp {
                     | "hanging-punctuation"
                     | "text-autospace"
                     | "text-spacing-trim"
+                    | "outline-offset"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
