@@ -4931,6 +4931,55 @@ pub fn list_style_image_valid(raw: &str) -> bool {
         || low.starts_with("image(")
 }
 
+// <resolution>: 수 + dppx|dpcm|dpi|x. calc 허용.
+fn is_resolution(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if is_math_fn(&low) {
+        return true;
+    }
+    for u in ["dppx", "dpcm", "dpi", "x"] {
+        if let Some(n) = low.strip_suffix(u) {
+            return n.trim().parse::<f64>().map(|v| v.is_finite()).unwrap_or(false);
+        }
+    }
+    false
+}
+
+// image-resolution(§CSS Images 4): [ from-image || <resolution> ] && snap?.
+// snap 은 맨 앞이나 맨 뒤(from-image 와 resolution 사이를 가르면 무효).
+pub fn image_resolution_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw.trim());
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let (mut from, mut res) = (0u32, 0u32);
+    let mut snap: Option<usize> = None;
+    for (i, t) in toks.iter().enumerate() {
+        let low = t.to_ascii_lowercase();
+        if low == "from-image" {
+            from += 1;
+        } else if low == "snap" {
+            if snap.is_some() {
+                return false;
+            }
+            snap = Some(i);
+        } else if is_resolution(t) {
+            res += 1;
+        } else {
+            return false;
+        }
+    }
+    if from > 1 || res > 1 || from + res == 0 {
+        return false;
+    }
+    if let Some(sp) = snap {
+        if sp != 0 && sp != toks.len() - 1 {
+            return false;
+        }
+    }
+    true
+}
+
 // <time>: 수 + s|ms. allow_neg=false 면 음수 거부. calc 허용.
 fn is_time(t: &str, allow_neg: bool) -> bool {
     let low = t.trim().to_ascii_lowercase();

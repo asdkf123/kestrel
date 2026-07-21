@@ -1606,6 +1606,32 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // object-fit/image-rendering/image-resolution(§CSS Images) 검증.
+        "object-fit" | "image-rendering" | "image-resolution" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            // object-fit: fill | none | [ [contain|cover] || scale-down ].
+            let object_fit_ok = || {
+                let toks: Vec<&str> = low.split_whitespace().collect();
+                match toks.as_slice() {
+                    [a] => matches!(*a, "fill" | "none" | "contain" | "cover" | "scale-down"),
+                    [a, b] => {
+                        let cc = |t: &str| matches!(t, "contain" | "cover");
+                        (cc(a) && *b == "scale-down") || (*a == "scale-down" && cc(b))
+                    }
+                    _ => false,
+                }
+            };
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "object-fit" && object_fit_ok())
+                || (name == "image-rendering" && matches!(low.as_str(), "auto" | "smooth" | "high-quality" | "crisp-edges" | "pixelated"))
+                || (name == "image-resolution" && crate::css::image_resolution_valid(value_text));
+            if ok {
+                let v = if name == "image-resolution" { value_text.trim().to_string() } else { low };
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+            } else {
+                Vec::new()
+            }
+        }
         // animation 롱핸드(§CSS Animations): 콤마 목록. 검증 후 원문 보존.
         "animation-name" | "animation-duration" | "animation-delay"
         | "animation-iteration-count" | "animation-direction" | "animation-fill-mode"
@@ -1781,7 +1807,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
         "appearance" | "-webkit-appearance" | "user-select" | "-webkit-user-select"
         | "resize" | "pointer-events" | "touch-action" | "hyphens" | "writing-mode"
-        | "text-orientation" | "image-rendering" | "isolation"
+        | "text-orientation" | "isolation"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
