@@ -9217,25 +9217,32 @@ impl Interp {
                 }
             }
         }
-        // text-indent: <length-percentage> [hanging] [each-line]. 길이만 보간, 키워드 유지.
+        // text-indent: <length-percentage> [hanging] [each-line]. 계산값은 길이만
+        // (hanging/each-line 은 Chrome 미지원 — 저장·직렬화에서 생략, Length 저장과 일관).
+        // 키워드 집합이 같으면(순서 무관) 길이 부드럽게 보간, 다르면 불연속(길이만).
         if dash_prop == "text-indent" {
-            let split = |s: &str| -> (Vec<String>, Vec<String>) {
-                let (mut len, mut kw) = (Vec::new(), Vec::new());
+            let split = |s: &str| -> (Option<String>, Vec<String>) {
+                let (mut len, mut kw) = (None, Vec::new());
                 for t in s.split_whitespace() {
                     if matches!(t, "hanging" | "each-line") {
                         kw.push(t.to_string());
-                    } else {
-                        len.push(t.to_string());
+                    } else if len.is_none() {
+                        len = Some(t.to_string());
                     }
                 }
+                kw.sort(); // 집합 비교(each-line hanging == hanging each-line)
                 (len, kw)
             };
             let (fl, fk) = split(from);
             let (tl, tk) = split(to);
-            if fk == tk && fl.len() == 1 && tl.len() == 1 {
-                // 길이만 보간(hanging/each-line 은 계산값에서 생략 — Length 저장과 일관).
-                if let Some(v) = Self::interp_css_value(&fl[0], &tl[0], eased) {
-                    return Some(v);
+            if let (Some(fl), Some(tl)) = (fl, tl) {
+                if fk == tk {
+                    if let Some(v) = Self::interp_css_value(&fl, &tl, eased) {
+                        return Some(v);
+                    }
+                } else {
+                    // 키워드 집합 불일치 → 불연속. 계산값은 길이만.
+                    return Some(if eased < 0.5 { fl } else { tl });
                 }
             }
         }
