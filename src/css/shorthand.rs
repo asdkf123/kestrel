@@ -668,6 +668,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // 크기 프로퍼티(§CSS Sizing): auto|none|<length-percentage 0+>|min/max/fit-content.
+        // width/height/min-* 는 auto, max-* 는 none. 유효값은 interpret_value 저장(레이아웃 불변).
+        "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let is_max = name.starts_with("max-");
+            let toks = split_top_level(value_text.trim());
+            if toks.len() != 1 || !crate::css::size_valid(toks[0], is_max, !is_max) {
+                return Vec::new();
+            }
+            let v = match interpret_value(toks[0]) {
+                Some(Value::Length(n, Unit::Number)) if n == 0.0 => Value::Length(0.0, Unit::Px),
+                Some(other) => other,
+                None => Value::Keyword(low),
+            };
+            return vec![Declaration { important: false, name: name.to_string(), value: v }];
+        }
         // 정렬 프로퍼티(§CSS Box Alignment): 축(content/self)·auto·left·right·legacy 별 문법.
         "align-content" => return align_arm(name, value_text, true, false, false, false, true),
         "justify-content" => return align_arm(name, value_text, true, false, true, false, false),

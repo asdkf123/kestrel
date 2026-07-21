@@ -447,6 +447,9 @@ impl Interp {
             prop,
             "outline-offset" | "top" | "right" | "bottom" | "left" | "inset-block-start"
                 | "inset-block-end" | "inset-inline-start" | "inset-inline-end"
+        ) || matches!(
+            prop,
+            "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height"
         ) || (prop.starts_with("scroll-margin-") || prop.starts_with("scroll-padding-"))
         {
             if let Some(v) = crate::css::interpret_value(raw.trim()) {
@@ -622,6 +625,12 @@ impl Interp {
                     | "grid-gap"
                     | "grid-row-gap"
                     | "grid-column-gap"
+                    | "width"
+                    | "height"
+                    | "min-width"
+                    | "min-height"
+                    | "max-width"
+                    | "max-height"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

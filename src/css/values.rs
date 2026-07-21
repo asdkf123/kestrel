@@ -2581,6 +2581,31 @@ fn is_math_fn(low: &str) -> bool {
             .any(|p| low.starts_with(p))
 }
 
+// 크기 프로퍼티 값 유효성(§CSS Sizing): [auto|none|<length-percentage 0+>|min-content|
+// max-content|fit-content|fit-content()]. allow_none: max-*, allow_auto: width/min-*.
+pub fn size_valid(tok: &str, allow_none: bool, allow_auto: bool) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return allow_auto;
+    }
+    if low == "none" {
+        return allow_none;
+    }
+    if matches!(low.as_str(), "min-content" | "max-content" | "fit-content"
+        | "-webkit-min-content" | "-webkit-max-content" | "-webkit-fit-content"
+        | "stretch" | "-webkit-fill-available" | "fit-content")
+    {
+        return true;
+    }
+    if low.starts_with("fit-content(") && low.ends_with(')') {
+        return true;
+    }
+    if is_math_fn(&low) {
+        return !(low.contains("deg") || low.contains("rad") || low.contains("turn"));
+    }
+    is_length_percentage(&low) && !low.starts_with('-')
+}
+
 // row-gap/column-gap 값(§CSS Box Alignment): normal | <length-percentage>(비음수).
 pub fn gap_value_valid(tok: &str) -> bool {
     let low = tok.trim().to_ascii_lowercase();
