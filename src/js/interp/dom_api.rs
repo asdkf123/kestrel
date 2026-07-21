@@ -332,6 +332,15 @@ impl Interp {
         if matches!(prop, "inset-block" | "inset-inline") {
             return crate::css::inset_pair_canonical(raw);
         }
+        // overflow 단축(§CSSOM): 두 값이 같으면 하나로 축약(visible visible→visible).
+        if prop == "overflow" {
+            let parts: Vec<String> =
+                raw.split_whitespace().map(|s| s.to_ascii_lowercase()).collect();
+            if parts.len() == 2 && parts[0] == parts[1] {
+                return parts[0].clone();
+            }
+            return parts.join(" ");
+        }
         // outline-offset·top/right/bottom/left·inset 논리 롱핸드: <length-percentage>
         // 캐논(0 → 0px). auto/CSS-wide 는 아래 일반 경로로.
         if matches!(
@@ -459,6 +468,11 @@ impl Interp {
                     | "inset-block-end"
                     | "inset-inline-start"
                     | "inset-inline-end"
+                    | "overflow"
+                    | "overflow-x"
+                    | "overflow-y"
+                    | "overflow-block"
+                    | "overflow-inline"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

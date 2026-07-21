@@ -733,6 +733,26 @@ fn collect_computed_styles(
         for (k, v) in &node.specified_values {
             m.insert(k.clone(), crate::style::computed_value_string(v));
         }
+        // overflow 계산값(§CSS Overflow 3): 한 축이 스크롤(auto/scroll/hidden)인데 다른
+        // 축이 visible 이면 그 visible 은 auto 로 계산된다. 단축 재구성 전에 적용해야
+        // overflow 단축이 올바로 축약된다(auto visible → auto).
+        {
+            let ox = m.get("overflow-x").cloned().unwrap_or_default();
+            let oy = m.get("overflow-y").cloned().unwrap_or_default();
+            let scrolls = |v: &str| matches!(v, "auto" | "scroll" | "hidden");
+            if ox == "visible" && scrolls(&oy) {
+                m.insert("overflow-x".to_string(), "auto".to_string());
+            } else if oy == "visible" && scrolls(&ox) {
+                m.insert("overflow-y".to_string(), "auto".to_string());
+            }
+        }
+        // overflow-block/overflow-inline(논리) 계산값: 수평 쓰기모드 기준 물리축 값.
+        {
+            let oy = m.get("overflow-y").cloned().unwrap_or_else(|| "visible".to_string());
+            let ox = m.get("overflow-x").cloned().unwrap_or_else(|| "visible".to_string());
+            m.insert("overflow-block".to_string(), oy);
+            m.insert("overflow-inline".to_string(), ox);
+        }
         // 단축 프로퍼티(gap/margin/border…)의 계산값은 **롱핸드에서 나온다**. 초기값을
         // 그대로 두면 gap: clamp(4px,1vw,8px) 인데 getComputedStyle(el).gap 이 "normal"
         // 이라고 답한다 — 거짓말이다. 어떤 롱핸드로 펼쳐지는지는 확장기에게 물어본다

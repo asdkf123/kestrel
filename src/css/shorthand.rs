@@ -656,16 +656,47 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             out
         }
         // overflow: <x> [<y>] (CSS Overflow §3). 두 값이면 선언이 사라져 visible 이 됐다.
-        "overflow" => {
-            let toks = split_top_level(value_text);
-            let Some(x) = toks.first().copied() else { return Vec::new() };
-            match toks.get(1).copied() {
-                None => vec![Declaration { important: false, name: "overflow".to_string(), value: Value::Keyword(x.to_string()) }],
-                Some(y) => vec![
-                    Declaration { important: false, name: "overflow-x".to_string(), value: Value::Keyword(x.to_string()) },
-                    Declaration { important: false, name: "overflow-y".to_string(), value: Value::Keyword(y.to_string()) },
-                ],
+        // overflow-x/overflow-y(§CSS Overflow): 단일 키워드만. 두값·미인식 거부.
+        // overflow-block/inline 은 논리 프로퍼티 — 수평 쓰기모드 기준 물리축에 매핑.
+        "overflow-x" | "overflow-y" | "overflow-block" | "overflow-inline" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let phys = match name {
+                "overflow-block" => "overflow-y",
+                "overflow-inline" => "overflow-x",
+                other => other,
+            };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
             }
+            if matches!(low.as_str(), "visible" | "hidden" | "clip" | "scroll" | "auto") {
+                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+            }
+            return Vec::new();
+        }
+        // overflow 단축(§CSS Overflow): overflow-x || overflow-y. 단일값은 양축에.
+        // 유효 키워드(visible|hidden|clip|scroll|auto)만, 그 외·3값 이상 거부.
+        "overflow" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![
+                    Declaration { important: false, name: "overflow-x".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "overflow-y".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            let toks = split_top_level(value_text.trim());
+            let valid =
+                |t: &str| matches!(t.to_ascii_lowercase().as_str(), "visible" | "hidden" | "clip" | "scroll" | "auto");
+            let (x, y) = match toks.as_slice() {
+                [a] if valid(a) => (a.to_ascii_lowercase(), a.to_ascii_lowercase()),
+                [a, b] if valid(a) && valid(b) => (a.to_ascii_lowercase(), b.to_ascii_lowercase()),
+                _ => return Vec::new(),
+            };
+            vec![
+                Declaration { important: false, name: "overflow-x".to_string(), value: Value::Keyword(x) },
+                Declaration { important: false, name: "overflow-y".to_string(), value: Value::Keyword(y) },
+            ]
         }
         // flex-flow: <flex-direction> || <flex-wrap> (순서 무관). 아예 미구현이었다.
         "flex-flow" => {
@@ -2033,9 +2064,10 @@ mod tests {
         let d = expand_declaration("overflow", "hidden auto");
         assert!(matches!(find(&d, "overflow-x"), Some(Value::Keyword(k)) if k == "hidden"));
         assert!(matches!(find(&d, "overflow-y"), Some(Value::Keyword(k)) if k == "auto"));
-        // 한 값이면 overflow 그대로 (소비자가 세 이름을 다 본다)
+        // 한 값이면 양축(overflow-x/overflow-y)에 펼친다(§CSS Overflow 단축).
         let d1 = expand_declaration("overflow", "hidden");
-        assert!(matches!(find(&d1, "overflow"), Some(Value::Keyword(k)) if k == "hidden"));
+        assert!(matches!(find(&d1, "overflow-x"), Some(Value::Keyword(k)) if k == "hidden"));
+        assert!(matches!(find(&d1, "overflow-y"), Some(Value::Keyword(k)) if k == "hidden"));
 
         // gap: <row> [<column>]
         let g = expand_declaration("gap", "10px 20px");
