@@ -1742,6 +1742,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // perspective(§CSS Transforms 2): none | <length [0,∞]>(퍼센트 불가).
+        "perspective" => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none")
+                || (!low.ends_with('%') && split_top_level(v).len() == 1 && crate::css::nonneg_lp_valid(v));
+            if ok {
+                let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(low));
+                vec![Declaration { important: false, name: name.to_string(), value }]
+            } else {
+                Vec::new()
+            }
+        }
         // block-step-size(§CSS Rhythm): none | <length [0,∞]>(퍼센트 불가).
         "block-step-size" => {
             let v = value_text.trim();
@@ -1797,7 +1810,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "ruby-position" | "ruby-align" | "ruby-overhang" | "ruby-merge"
         | "block-step-align" | "block-step-round" | "block-step-insert"
         | "text-align" | "text-align-last" | "text-align-all" | "line-break" | "word-wrap"
-        | "overflow-wrap" | "white-space-collapse" => {
+        | "overflow-wrap" | "white-space-collapse"
+        | "font-kerning" | "font-variant-caps" | "font-variant-position" | "font-optical-sizing"
+        | "transform-box" | "backface-visibility" => {
             let low = value_text.trim().to_ascii_lowercase();
             let snap_align_ok = || {
                 let toks: Vec<&str> = low.split_whitespace().collect();
@@ -1827,6 +1842,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     "block-step-align" => matches!(low.as_str(), "auto" | "center" | "start" | "end"),
                     "block-step-round" => matches!(low.as_str(), "up" | "down" | "nearest"),
                     "block-step-insert" => matches!(low.as_str(), "margin-box" | "padding-box" | "content-box"),
+                    "font-kerning" => matches!(low.as_str(), "auto" | "normal" | "none"),
+                    "font-variant-caps" => matches!(low.as_str(), "normal" | "small-caps" | "all-small-caps" | "petite-caps" | "all-petite-caps" | "unicase" | "titling-caps"),
+                    "font-variant-position" => matches!(low.as_str(), "normal" | "sub" | "super"),
+                    "font-optical-sizing" => matches!(low.as_str(), "auto" | "none"),
+                    "transform-box" => matches!(low.as_str(), "content-box" | "border-box" | "fill-box" | "stroke-box" | "view-box"),
+                    "backface-visibility" => matches!(low.as_str(), "visible" | "hidden"),
                     "text-align" => matches!(low.as_str(), "start" | "end" | "left" | "right" | "center" | "justify" | "match-parent" | "justify-all"),
                     "text-align-last" => matches!(low.as_str(), "auto" | "start" | "end" | "left" | "right" | "center" | "justify" | "match-parent"),
                     "text-align-all" => matches!(low.as_str(), "start" | "end" | "left" | "right" | "center" | "justify" | "match-parent"),
@@ -2057,14 +2078,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "isolation"
         | "background-attachment"
         | "overflow-anchor" | "scroll-behavior"
-        | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
-        | "background-blend-mode" | "font-kerning" | "font-variant-caps"
+        | "content-visibility" | "transform-style"
+        | "background-blend-mode"
         | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
-        | "font-optical-sizing"
         | "font-variant-ligatures"
-        | "font-variant-position" | "font-language-override"
+        | "font-language-override"
         | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
