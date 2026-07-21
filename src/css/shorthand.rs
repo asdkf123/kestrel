@@ -789,27 +789,48 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
+        // outline = <outline-width> || <outline-style> || <outline-color>. width 키워드
+        // (thin/medium/thick)와 style 키워드(none/solid/…)를 구분하고 invert 는 색으로.
+        // 단축은 모든 longhand 를 **리셋**(미지정은 초기값 medium/none/invert)한다.
         "outline" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![
+                    Declaration { important: false, name: "outline-width".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "outline-style".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "outline-color".to_string(), value: Value::Keyword(low) },
+                ];
+            }
             let (mut width, mut style, mut color) = (None, None, None);
             for tok in split_top_level(value_text) {
-                match interpret_value(tok) {
-                    Some(v @ Value::Length(..)) => width = Some(v),
-                    Some(v @ Value::Color(..)) => color = Some(v),
-                    Some(Value::Keyword(k)) => style = Some(Value::Keyword(k)),
-                    _ => {}
+                let tl = tok.to_ascii_lowercase();
+                if matches!(tl.as_str(), "thin" | "medium" | "thick") {
+                    width = Some(Value::Keyword(tl));
+                } else if matches!(
+                    tl.as_str(),
+                    "none" | "solid" | "dotted" | "dashed" | "double" | "groove" | "ridge"
+                        | "inset" | "outset" | "auto"
+                ) {
+                    style = Some(Value::Keyword(tl));
+                } else if tl == "invert" {
+                    color = Some(Value::Keyword("invert".to_string()));
+                } else {
+                    match interpret_value(tok) {
+                        Some(v @ Value::Length(..)) => width = Some(v),
+                        Some(v @ (Value::Color(..) | Value::ColorFn(..))) => color = Some(v),
+                        _ => {}
+                    }
                 }
             }
-            let mut out = Vec::new();
-            if let Some(w) = width {
-                out.push(Declaration { important: false, name: "outline-width".to_string(), value: w });
-            }
-            if let Some(s) = style {
-                out.push(Declaration { important: false, name: "outline-style".to_string(), value: s });
-            }
-            if let Some(c) = color {
-                out.push(Declaration { important: false, name: "outline-color".to_string(), value: c });
-            }
-            out
+            vec![
+                Declaration { important: false, name: "outline-width".to_string(),
+                    value: width.unwrap_or_else(|| Value::Keyword("medium".to_string())) },
+                Declaration { important: false, name: "outline-style".to_string(),
+                    value: style.unwrap_or_else(|| Value::Keyword("none".to_string())) },
+                Declaration { important: false, name: "outline-color".to_string(),
+                    value: color.unwrap_or_else(|| Value::Keyword("invert".to_string())) },
+            ]
         }
         "border-top" => border_shorthand(&["top"], value_text),
         "border-right" => border_shorthand(&["right"], value_text),

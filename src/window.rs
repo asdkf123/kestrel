@@ -390,6 +390,19 @@ fn fill_js_maps(
                 m.insert("caret-color".to_string(), norm);
             }
         }
+        // outline 단축 계산값 재조립(getComputedStyle): <width> <style> <color>(border
+        // 순서, §CSS UI 4). width 가 medium 이면 style=none 일 때 "medium", 그 외 "3px".
+        {
+            let style = m.get("outline-style").cloned().unwrap_or_else(|| "none".into());
+            let width = m.get("outline-width").cloned().unwrap_or_else(|| "medium".into());
+            let color = m.get("outline-color").cloned().unwrap_or_else(|| "invert".into());
+            let width_disp = if width == "medium" {
+                if style == "none" { "medium".to_string() } else { "3px".to_string() }
+            } else {
+                width
+            };
+            m.insert("outline".to_string(), format!("{} {} {}", width_disp, style, color));
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [
