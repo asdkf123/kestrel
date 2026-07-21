@@ -2471,18 +2471,27 @@ fn split_mix_part(s: &str) -> (String, Option<f32>) {
 fn parse_color_mix(text: &str) -> Option<(Color, Box<str>)> {
     let inner = func_inner(text)?;
     let parts = split_top_commas(inner);
-    if parts.len() != 3 {
-        return None;
-    }
-    let spec = parts[0].trim().to_ascii_lowercase();
-    let mut toks = spec.split_whitespace();
-    if toks.next() != Some("in") {
-        return None;
-    }
-    let space = toks.next()?.to_string();
-    let hue_method = toks.next().unwrap_or("shorter").to_string();
-    let (cs1, p1) = split_mix_part(&parts[1]);
-    let (cs2, p2) = split_mix_part(&parts[2]);
+    let first_lower = parts.first().map(|p| p.trim().to_ascii_lowercase()).unwrap_or_default();
+    // 보간법(in <space> [<hue>])은 선택 — 생략하면 기본 oklab(§CSS Color 5).
+    let (space, hue_method, cs1_raw, cs2_raw) = if first_lower == "in"
+        || first_lower.starts_with("in ")
+    {
+        if parts.len() != 3 {
+            return None;
+        }
+        let mut toks = first_lower.split_whitespace();
+        toks.next(); // "in"
+        let space = toks.next()?.to_string();
+        let hue_method = toks.next().unwrap_or("shorter").to_string();
+        (space, hue_method, parts[1].clone(), parts[2].clone())
+    } else {
+        if parts.len() != 2 {
+            return None; // 단일색/다중색 color-mix 는 미구현
+        }
+        ("oklab".to_string(), "shorter".to_string(), parts[0].clone(), parts[1].clone())
+    };
+    let (cs1, p1) = split_mix_part(&cs1_raw);
+    let (cs2, p2) = split_mix_part(&cs2_raw);
     let (mut c1, ao1) = color_coords_none(&space, &cs1)?;
     let (mut c2, ao2) = color_coords_none(&space, &cs2)?;
     // 퍼센트 정규화(§CSS Color 5).
