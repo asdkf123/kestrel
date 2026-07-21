@@ -16,6 +16,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         if lower.starts_with(f) && lower[f.len()..].starts_with('(') {
             if let Some(inr) = func_inner(&lower) {
                 if inr.trim_start().starts_with("from ") {
+                    if !relative_color_valid(f, &lower) {
+                        return None;
+                    }
                     return parse_relative_color(f, &lower).map(|(c, s)| Value::ColorFn(c, s));
                 }
             }
@@ -6818,10 +6821,116 @@ fn color_mix_arg_valid(s: &str) -> bool {
         || matches!(interpret_value(c.trim()), Some(Value::Color(_)) | Some(Value::ColorFn(..)))
 }
 
+// 상대 색의 원본 색이 유효한가(명명/hex/함수/currentcolor/transparent).
+fn rel_origin_valid(c: &str) -> bool {
+    let cl = c.trim().to_ascii_lowercase();
+    cl == "currentcolor"
+        || cl == "transparent"
+        || color_syntax_valid(c.trim())
+        || matches!(interpret_value(c.trim()), Some(Value::Color(_)) | Some(Value::ColorFn(..)))
+}
+
+// 상대 색 채널 토큰: 채널 키워드 | number | (hue 면 angle, 아니면 percentage) | none | calc.
+fn rel_channel_valid(tok: &str, kw: &[&str], is_hue: bool) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if kw.contains(&low.as_str()) {
+        return true;
+    }
+    if col_is_num(tok) || col_is_none(tok) || col_is_calc(tok) {
+        return true;
+    }
+    if is_hue {
+        col_is_angle(tok)
+    } else {
+        col_is_pct(tok)
+    }
+}
+
+fn valid_color_space_ident(space: &str) -> bool {
+    matches!(
+        space,
+        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "a98-rgb" | "prophoto-rgb"
+            | "rec2020" | "xyz" | "xyz-d50" | "xyz-d65"
+    ) || space.starts_with("--")
+}
+
+// 상대 색 검증(§CSS Color 5): <func>(from <origin> <ch>{3} [/ <alpha>]?). color() 는
+// from <origin> <colorspace> <ch>{3}. 채널 키워드는 함수별. hue 채널은 퍼센트 불가.
+pub fn relative_color_valid(func: &str, lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    let low_inner = inner.to_ascii_lowercase();
+    if !low_inner.starts_with("from ") || top_level_has(&inner, ',') {
+        return false;
+    }
+    let after = inner[5..].trim();
+    let slash = split_top_slash(after);
+    if slash.is_empty() || slash.len() > 2 {
+        return false;
+    }
+    let main = split_top_level(slash[0].trim());
+    let kw: &[&str];
+    let hue_pos: Option<usize>;
+    let channels: &[String];
+    if func == "color" {
+        // from <origin> <colorspace> <ch>{3}. 채널 키워드는 색공간별(rgb→r/g/b, xyz→x/y/z).
+        if main.len() != 5 || !rel_origin_valid(&main[0]) {
+            return false;
+        }
+        let space = main[1].to_ascii_lowercase();
+        if !valid_color_space_ident(&space) {
+            return false;
+        }
+        kw = if space.starts_with("xyz") { &["x", "y", "z", "alpha"] } else { &["r", "g", "b", "alpha"] };
+        hue_pos = None;
+        channels = &main[2..5];
+    } else {
+        let (k, h): (&[&str], Option<usize>) = match func {
+            "rgb" | "rgba" => (&["r", "g", "b", "alpha"], None),
+            "hsl" | "hsla" => (&["h", "s", "l", "alpha"], Some(0)),
+            "hwb" => (&["h", "w", "b", "alpha"], Some(0)),
+            "lab" | "oklab" => (&["l", "a", "b", "alpha"], None),
+            "lch" | "oklch" => (&["l", "c", "h", "alpha"], Some(2)),
+            _ => return false,
+        };
+        kw = k;
+        hue_pos = h;
+        if main.len() != 4 || !rel_origin_valid(&main[0]) {
+            return false;
+        }
+        channels = &main[1..4];
+    }
+    for (i, c) in channels.iter().enumerate() {
+        if !rel_channel_valid(c, kw, hue_pos == Some(i)) {
+            return false;
+        }
+    }
+    if slash.len() == 2 {
+        let a = slash[1].trim();
+        if a.is_empty() || !rel_channel_valid(a, kw, false) {
+            return false;
+        }
+    }
+    true
+}
+
 // 색 함수 문법 유효성 디스패처(계산 가능 여부와 무관, 파싱 유효성만).
 // interpret_value 가 계산 실패로 None 을 줘도, 문법이 유효하면 지정값을 보존한다.
 pub fn color_syntax_valid(raw: &str) -> bool {
     let lower = raw.trim().to_ascii_lowercase();
+    // 상대 색: <func>(from ...).
+    for f in ["rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color"] {
+        if lower.starts_with(f) && lower[f.len()..].starts_with('(') {
+            if let Some(inr) = func_inner(&lower) {
+                if inr.trim_start().starts_with("from ") {
+                    return relative_color_valid(f, &lower);
+                }
+            }
+            break;
+        }
+    }
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
         return rgb_valid(&lower);
     }
