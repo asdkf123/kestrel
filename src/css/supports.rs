@@ -133,6 +133,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "animation-fill-mode", "animation-play-state", "animation-composition",
     // UI/인터랙션/표/스크롤 키워드 프로퍼티 — 실제 CSS 프로퍼티라 계산값 노출.
     "cursor", "appearance", "user-select", "resize", "pointer-events", "touch-action",
+    "interactivity",
     "hyphens", "hyphenate-limit-chars", "hyphenate-character", "writing-mode", "text-orientation", "image-rendering", "isolation",
     "box-decoration-break", "caption-side", "empty-cells", "table-layout",
     "background-attachment", "background-clip", "background-origin", "overflow-anchor",

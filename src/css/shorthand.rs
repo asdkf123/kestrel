@@ -234,6 +234,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // interactivity(§CSS UI 4): auto | inert 만.
+        "interactivity" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "inert"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // text-spacing-trim(§CSS Text 4): 단일 키워드. none/두값/allow-end/trim-auto 거부.
         "text-spacing-trim" => {
             let low = value_text.trim().to_ascii_lowercase();
