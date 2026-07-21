@@ -5107,6 +5107,33 @@ pub fn will_change_valid(raw: &str) -> bool {
     })
 }
 
+// view-transition custom-ident: none/default/CSS-wide 제외 유효 식별자.
+fn vt_ident_ok(t: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    !matches!(
+        low.as_str(),
+        "none" | "default" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+    ) && is_css_ident(t)
+}
+
+// view-transition-name(§CSS View Transitions): none | <custom-ident>(단일).
+pub fn view_transition_name_valid(raw: &str) -> bool {
+    if raw.trim().eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    toks.len() == 1 && vt_ident_ok(toks[0])
+}
+
+// view-transition-class(§CSS View Transitions): none | <custom-ident>+(공백 목록).
+pub fn view_transition_class_valid(raw: &str) -> bool {
+    if raw.trim().eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    !toks.is_empty() && toks.iter().all(|t| vt_ident_ok(t))
+}
+
 // outline-style(§CSS UI): auto | <line-style> (단, hidden 제외).
 pub fn outline_style_valid(t: &str) -> bool {
     matches!(

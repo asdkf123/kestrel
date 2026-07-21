@@ -1657,6 +1657,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // view-transition-name/class(§CSS View Transitions): custom-ident 검증.
+        "view-transition-name" | "view-transition-class" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "view-transition-name" && crate::css::view_transition_name_valid(value_text))
+                || (name == "view-transition-class" && crate::css::view_transition_class_valid(value_text))
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // object-fit/image-rendering/image-resolution(§CSS Images) 검증.
         "object-fit" | "image-rendering" | "image-resolution" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1900,7 +1912,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
         | "math-style" | "math-depth" | "math-shift"
         // 8차: 순수 키워드 롱핸드.
-        | "view-transition-name" | "anchor-name"
+        | "anchor-name"
         // 9차: 개별 변환(translate 는 아래 arm 에서 검증; scale 도).
         // 11차: border-image 롱핸드(원문 보존 — none/url/gradient/수치 목록).
         | "border-image-source" | "border-image-slice" | "border-image-width"
@@ -1912,7 +1924,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "shape-outside"
         // hyphenate-limit-chars/character 원문 보존.
         | "hyphenate-limit-chars" | "hyphenate-character"
-        | "word-space-transform" | "view-transition-class" | "text-box-trim"
+        | "word-space-transform" | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
