@@ -49,7 +49,11 @@ impl Interp {
     ) -> Result<(), String> {
         let bad: Option<(&'static str, &'static str)> = {
             let dom = self.dom_arena()?;
-            if node == parent || dom.ancestors(parent).contains(&node) {
+            // §pre-insert 유효성 1단계: parent 는 Document/DocumentFragment/Element 여야
+            // 한다. Text/Comment/PI/DocumentType(잎 노드)엔 자식을 넣을 수 없다.
+            if !matches!(dom.get(parent).node_type, crate::dom::NodeType::Element(_)) {
+                Some(("HierarchyRequestError", "The parent node cannot have children"))
+            } else if node == parent || dom.ancestors(parent).contains(&node) {
                 Some(("HierarchyRequestError", "The new child is an ancestor of the parent"))
             } else if let Some(r) = reference {
                 if dom.get(r).parent != Some(parent) {

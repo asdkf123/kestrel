@@ -7663,22 +7663,30 @@ impl Interp {
                 let root = dom.root;
                 Ok(find_tag(dom, root, tag).map(Value::Dom).unwrap_or(Value::Null))
             }
-            // parent.insertBefore(newNode, referenceNode)
-            Native::InsertBefore => match (recv, args.first()) {
-                (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
-                    let (parent, child) = (parent, *child);
-                    let reference = match args.get(1) {
-                        Some(Value::Dom(r)) => Some(*r),
-                        _ => None,
-                    };
-                    // §4.2.3: 순환/잘못된 reference 는 DOMException.
-                    self.ensure_pre_insert_valid(parent, child, reference)?;
-                    let dom = self.dom_arena()?;
-                    dom.insert_before(parent, child, reference);
-                    Ok(Value::Dom(child))
-                }
-                _ => Err("insertBefore 는 요소 인자가 필요".to_string()),
-            },
+            // parent.insertBefore(newNode, referenceNode) — WebIDL: node 는 Node 필수,
+            // child 는 Node? 필수 인자. 타입/개수 위반은 TypeError.
+            Native::InsertBefore => {
+                let Some(Value::Dom(parent)) = recv else {
+                    return Err(self.throw_error("TypeError", "insertBefore: 수신자가 노드가 아니다"));
+                };
+                let child = match args.first() {
+                    Some(Value::Dom(c)) => *c,
+                    _ => return Err(self.throw_error("TypeError", "insertBefore: 첫 인자가 Node 가 아니다")),
+                };
+                // reference 인자는 필수(§WebIDL). 없으면 TypeError, null/undefined 는 None,
+                // Node 는 그 노드, 그 외(문자열 등)는 TypeError.
+                let reference = match args.get(1) {
+                    None => return Err(self.throw_error("TypeError", "insertBefore: 인자가 부족하다")),
+                    Some(Value::Dom(r)) => Some(*r),
+                    Some(Value::Null) | Some(Value::Undefined) => None,
+                    _ => return Err(self.throw_error("TypeError", "insertBefore: 두 번째 인자가 Node·null 이 아니다")),
+                };
+                // §4.2.3: 잎 parent/순환/잘못된 reference 는 DOMException.
+                self.ensure_pre_insert_valid(parent, child, reference)?;
+                let dom = self.dom_arena()?;
+                dom.insert_before(parent, child, reference);
+                Ok(Value::Dom(child))
+            }
             Native::Matches => {
                 let sel = args.first().map(to_display).unwrap_or_default();
                 match recv {
@@ -8006,24 +8014,28 @@ impl Interp {
                 m.insert("height".to_string(), Value::Num(h as f64));
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
             }
-            Native::AppendChild => match (recv, args.first()) {
-                (Some(Value::Dom(parent)), Some(Value::Dom(child))) => {
-                    let (parent, child) = (parent, *child);
-                    // §4.2.3: node 가 parent 의 조상(자기 포함)이면 순환 → HierarchyRequestError.
-                    self.ensure_pre_insert_valid(parent, child, None)?;
-                    let dom = self.dom_arena()?;
-                    // DocumentFragment 는 자신이 아니라 자식들을 옮긴다
-                    if is_fragment(dom, child) {
-                        for c in dom.get(child).children.clone() {
-                            dom.append_child(parent, c);
-                        }
-                    } else {
-                        dom.append_child(parent, child);
+            // parent.appendChild(node) — WebIDL: node 는 Node 필수. 아니면 TypeError.
+            Native::AppendChild => {
+                let Some(Value::Dom(parent)) = recv else {
+                    return Err(self.throw_error("TypeError", "appendChild: 수신자가 노드가 아니다"));
+                };
+                let child = match args.first() {
+                    Some(Value::Dom(c)) => *c,
+                    _ => return Err(self.throw_error("TypeError", "appendChild: 인자가 Node 가 아니다")),
+                };
+                // §4.2.3: 잎 parent/순환은 HierarchyRequestError.
+                self.ensure_pre_insert_valid(parent, child, None)?;
+                let dom = self.dom_arena()?;
+                // DocumentFragment 는 자신이 아니라 자식들을 옮긴다
+                if is_fragment(dom, child) {
+                    for c in dom.get(child).children.clone() {
+                        dom.append_child(parent, c);
                     }
-                    Ok(Value::Dom(child))
+                } else {
+                    dom.append_child(parent, child);
                 }
-                _ => Err("appendChild 는 요소 인자가 필요".to_string()),
-            },
+                Ok(Value::Dom(child))
+            }
             // ParentNode/ChildNode 삽입 (append/prepend/before/after/replaceWith).
             // 가변 인자, 문자열은 텍스트 노드로. append/prepend 는 recv 가 부모,
             // before/after/replaceWith 는 recv 의 부모에 삽입.
