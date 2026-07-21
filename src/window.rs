@@ -390,18 +390,28 @@ fn fill_js_maps(
                 m.insert("caret-color".to_string(), norm);
             }
         }
+        // outline-width 계산값(§CSS UI): thin/medium/thick→1/3/5px, 음수는 0px.
+        if let Some(ow) = m.get("outline-width").cloned() {
+            let resolved = match ow.as_str() {
+                "thin" => Some(1.0),
+                "medium" => Some(3.0),
+                "thick" => Some(5.0),
+                s => s
+                    .strip_suffix("px")
+                    .and_then(|n| n.parse::<f32>().ok())
+                    .map(|n| n.max(0.0)),
+            };
+            if let Some(p) = resolved {
+                m.insert("outline-width".to_string(), format!("{}px", crate::style::num_css(p)));
+            }
+        }
         // outline 단축 계산값 재조립(getComputedStyle): <width> <style> <color>(border
-        // 순서, §CSS UI 4). width 가 medium 이면 style=none 일 때 "medium", 그 외 "3px".
+        // 순서, §CSS UI 4). outline-width 는 위에서 이미 캐논화됐다.
         {
             let style = m.get("outline-style").cloned().unwrap_or_else(|| "none".into());
             let width = m.get("outline-width").cloned().unwrap_or_else(|| "medium".into());
             let color = m.get("outline-color").cloned().unwrap_or_else(|| "invert".into());
-            let width_disp = if width == "medium" {
-                if style == "none" { "medium".to_string() } else { "3px".to_string() }
-            } else {
-                width
-            };
-            m.insert("outline".to_string(), format!("{} {} {}", width_disp, style, color));
+            m.insert("outline".to_string(), format!("{} {} {}", width, style, color));
         }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
