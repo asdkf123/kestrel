@@ -68,6 +68,7 @@ pub(crate) use values::{
     grid_line_valid, grid_template_track_canonical, grid_template_track_valid,
 };
 pub(crate) use values::{counter_list_canonical, counter_list_valid};
+pub(crate) use values::will_change_valid;
 pub(crate) use values::{
     column_count_valid, column_rule_canonical, column_rule_valid, column_rule_width_valid,
     column_width_valid, columns_canonical, columns_expand, columns_valid, is_line_style,

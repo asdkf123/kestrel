@@ -4217,6 +4217,33 @@ fn nonneg_length(t: &str) -> bool {
     is_length_percentage(t)
 }
 
+// will-change(§CSS Will Change): auto | [ scroll-position | contents | <custom-ident> ]#.
+// custom-ident 는 CSS-wide·default·will-change·none·all·auto 제외. 항목당 단일 토큰.
+pub fn will_change_valid(raw: &str) -> bool {
+    if raw.trim().eq_ignore_ascii_case("auto") {
+        return true;
+    }
+    let items = split_top_commas(raw);
+    if items.is_empty() || raw.trim().starts_with(',') || raw.trim().ends_with(',') {
+        return false;
+    }
+    items.iter().all(|item| {
+        let t = item.trim();
+        if t.split_whitespace().count() != 1 {
+            return false;
+        }
+        let tl = t.to_ascii_lowercase();
+        if matches!(
+            tl.as_str(),
+            "auto" | "none" | "all" | "will-change" | "default" | "initial" | "inherit"
+                | "unset" | "revert" | "revert-layer" | "revert-rule"
+        ) {
+            return false;
+        }
+        tl == "scroll-position" || tl == "contents" || is_css_ident(t)
+    })
+}
+
 // <line-style>(§CSS Backgrounds): border/rule 스타일 키워드.
 pub fn is_line_style(t: &str) -> bool {
     matches!(

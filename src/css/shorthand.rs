@@ -1384,6 +1384,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // will-change(§CSS Will Change): auto | [scroll-position|contents|<custom-ident>]#.
+        "will-change" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::will_change_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // column-span/fill/rule-style/rule-color(§CSS Multicol): 단순 검증.
         "column-span" | "column-fill" | "column-rule-style" | "column-rule-color" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1510,7 +1521,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-orientation" | "image-rendering" | "isolation" | "box-decoration-break"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
         | "background-clip" | "background-origin" | "overflow-anchor" | "scroll-behavior"
-        | "text-decoration-style" | "text-underline-position" | "will-change"
+        | "text-decoration-style" | "text-underline-position"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "scroll-snap-align"
