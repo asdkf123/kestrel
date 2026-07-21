@@ -234,6 +234,42 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             expand_border_image(value_text.trim()).unwrap_or_default()
         }
+        // grid-template 단축(§CSS Grid): none | <rows> / <columns>.
+        // 문자열 템플릿([names]? <string> <track>? [names]?)+ 형식은 아직 미구현이라
+        // 따옴표가 있으면 이 arm 을 건너뛰어 기존 동작을 유지한다(회귀 방지).
+        "grid-template" if !value_text.contains('"') && !value_text.contains('\'') => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            let three = |r: &str, c: &str, a: &str| {
+                vec![
+                    Declaration { important: false, name: "grid-template-rows".to_string(), value: Value::Keyword(r.to_string()) },
+                    Declaration { important: false, name: "grid-template-columns".to_string(), value: Value::Keyword(c.to_string()) },
+                    Declaration { important: false, name: "grid-template-areas".to_string(), value: Value::Keyword(a.to_string()) },
+                ]
+            };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return three(&low, &low, &low);
+            }
+            if low == "none" {
+                return three("none", "none", "none");
+            }
+            let parts = split_top_slash_pub(v);
+            if parts.len() == 2 {
+                let (r, c) = (parts[0].trim(), parts[1].trim());
+                if !r.is_empty()
+                    && !c.is_empty()
+                    && crate::css::grid_template_track_valid(r)
+                    && crate::css::grid_template_track_valid(c)
+                {
+                    return three(
+                        &crate::css::grid_template_track_canonical(r),
+                        &crate::css::grid_template_track_canonical(c),
+                        "none",
+                    );
+                }
+            }
+            Vec::new()
+        }
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         // z-index: <integer> | auto. 직접 파싱 실패 시 수학 함수(abs/sign/round/…) 평가.
         "z-index" if value_text.trim().eq_ignore_ascii_case("auto") => {

@@ -867,6 +867,7 @@ impl Interp {
                     | "border-width"
                     | "border-style"
                     | "border-color"
+                    | "grid-template"
                     | "border-image"
                     | "border-image-repeat"
                     | "border-image-outset"
