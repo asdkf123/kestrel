@@ -2244,6 +2244,46 @@ const CURSOR_KEYWORDS: &[&str] = &[
 
 // cursor 유효성(§CSS UI): [ <url> [<x> <y>]? ,]* <keyword>. url 만 이미지(gradient/
 // light-dark 불가), 좌표는 <number> 2개, 마지막은 필수 키워드.
+// cursor 의 <image>(§CSS Images 4 / Color 5): url() | 유효 gradient | image-set() |
+// light-dark(A,B)(두 인자 모두 유효 이미지). light-dark(linear-gradient(red),…) 처럼
+// 내부가 무효면 거부하도록 재귀 검증한다.
+fn cursor_image_ok(u: &str) -> bool {
+    let u = u.trim();
+    let ul = u.to_ascii_lowercase();
+    if ul.starts_with("url(") && u.ends_with(')') {
+        return true;
+    }
+    const GRADS: [&str; 6] = [
+        "linear-gradient(", "radial-gradient(", "conic-gradient(",
+        "repeating-linear-gradient(", "repeating-radial-gradient(",
+        "repeating-conic-gradient(",
+    ];
+    if GRADS.iter().any(|g| ul.starts_with(g)) {
+        return u.ends_with(')') && gradient_valid(u);
+    }
+    if (ul.starts_with("image-set(") || ul.starts_with("-webkit-image-set(")) && u.ends_with(')') {
+        // image-set(<item>#) — 각 항목은 <string>|<image> 로 시작(뒤에 resolution/type).
+        let open = u.find('(').unwrap_or(0);
+        let inner = &u[open + 1..u.len() - 1];
+        let items = split_top_commas(inner);
+        return !items.is_empty()
+            && items.iter().all(|it| {
+                let t = it.trim();
+                let tl = t.to_ascii_lowercase();
+                t.starts_with('"')
+                    || t.starts_with('\'')
+                    || tl.starts_with("url(")
+                    || GRADS.iter().any(|g| tl.starts_with(g))
+            });
+    }
+    if ul.starts_with("light-dark(") && u.ends_with(')') {
+        let inner = &u["light-dark(".len()..u.len() - 1];
+        let args = split_top_commas(inner);
+        return args.len() == 2 && args.iter().all(|a| cursor_image_ok(a.trim()));
+    }
+    false
+}
+
 pub fn cursor_valid(raw: &str) -> bool {
     let parts = split_top_commas(raw);
     let Some((last, heads)) = parts.split_last() else {
@@ -2252,30 +2292,24 @@ pub fn cursor_valid(raw: &str) -> bool {
     if !CURSOR_KEYWORDS.contains(&last.trim().to_ascii_lowercase().as_str()) {
         return false;
     }
+    // 핫스팟 좌표는 <number> 2개(calc/math 포함).
+    let coord_ok = |t: &str| -> bool {
+        if t.parse::<f32>().is_ok() {
+            return true;
+        }
+        let low = t.to_ascii_lowercase();
+        low.ends_with(')')
+            && ["calc(", "min(", "max(", "clamp(", "round("].iter().any(|p| low.starts_with(p))
+    };
     for p in heads {
         let toks = split_top_level(p.trim());
-        // 이미지는 url() 또는 **유효한** gradient(§CSS Images). linear-gradient(red)
-        // 처럼 스톱 하나뿐인 무효 gradient 나 light-dark() 로 감싼 것은 거부(gradient
-        // 함수로 **시작**해야 — contains 면 light-dark(...gradient...) 가 새어 나온다).
-        let img_ok = toks.first().is_some_and(|u| {
-            let ul = u.to_ascii_lowercase();
-            if ul.starts_with("url(") && u.ends_with(')') {
-                return true;
-            }
-            const GRADS: [&str; 6] = [
-                "linear-gradient(", "radial-gradient(", "conic-gradient(",
-                "repeating-linear-gradient(", "repeating-radial-gradient(",
-                "repeating-conic-gradient(",
-            ];
-            GRADS.iter().any(|g| ul.starts_with(g)) && gradient_valid(u)
-        });
-        if !img_ok {
+        if !toks.first().is_some_and(|u| cursor_image_ok(u)) {
             return false;
         }
         match toks.len() {
-            1 => {} // url 만
+            1 => {} // 이미지만
             3 => {
-                if toks[1].parse::<f32>().is_err() || toks[2].parse::<f32>().is_err() {
+                if !coord_ok(&toks[1]) || !coord_ok(&toks[2]) {
                     return false; // 좌표는 <number> 2개(1px/3% 등 무효)
                 }
             }
