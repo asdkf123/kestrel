@@ -61,6 +61,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         return parse_color_mix(&lower).map(|(c, s)| Value::ColorFn(c, s));
     }
     if lower.starts_with("color(") {
+        if !color_func_valid(&lower) {
+            return None;
+        }
         return parse_color_func(&lower).map(|(c, s)| Value::ColorFn(c, s));
     }
     if lower.starts_with("calc(") && text.ends_with(')') {
@@ -6752,6 +6755,50 @@ pub fn lab_valid(name: &str, lower: &str) -> bool {
     if parts.len() == 2 {
         let a = parts[1].trim();
         if a.is_empty() || !numlike(a) {
+            return false;
+        }
+    }
+    true
+}
+
+// color() 함수 엄격 검증(§CSS Color 4): color( <colorspace> <channel>{3} [/ <alpha>]? ).
+// colorspace 는 predefined 또는 --custom. 채널은 number|percentage|none|calc(각도 불가).
+pub fn color_func_valid(lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    if inner.is_empty() || top_level_has(&inner, ',') {
+        return false;
+    }
+    let parts = split_top_slash(&inner);
+    if parts.is_empty() || parts.len() > 2 {
+        return false;
+    }
+    let toks = split_top_level(parts[0].trim());
+    if toks.is_empty() {
+        return false;
+    }
+    let space = toks[0].to_ascii_lowercase();
+    let valid_space = matches!(
+        space.as_str(),
+        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "a98-rgb" | "prophoto-rgb"
+            | "rec2020" | "xyz" | "xyz-d50" | "xyz-d65"
+    ) || space.starts_with("--");
+    if !valid_space {
+        return false;
+    }
+    let channels = &toks[1..];
+    if channels.len() != 3 {
+        return false;
+    }
+    let ch_ok = |p: &str| col_is_num(p) || col_is_pct(p) || col_is_none(p) || col_is_calc(p);
+    if channels.iter().any(|p| !ch_ok(p)) {
+        return false;
+    }
+    if parts.len() == 2 {
+        let a = parts[1].trim();
+        if a.is_empty() || !ch_ok(a) {
             return false;
         }
     }
