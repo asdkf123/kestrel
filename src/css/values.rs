@@ -2404,6 +2404,85 @@ pub fn text_transform_valid(raw: &str) -> bool {
     true
 }
 
+// <length-percentage> 토큰인가(§CSS Values 4). 끝의 알파벳 연속을 단위로 보고 길이
+// 단위 표와 대조. 단위 없는 수는 0 만. 각도/시간 등 다른 차원은 거부.
+fn is_length_percentage(tok: &str) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if low.is_empty() {
+        return false;
+    }
+    if let Some(num) = low.strip_suffix('%') {
+        return num.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false);
+    }
+    let unit_len = low.chars().rev().take_while(|c| c.is_ascii_alphabetic()).count();
+    if unit_len == 0 {
+        // 단위 없는 수는 0 만 <length> 로 유효.
+        return low.parse::<f64>().map(|v| v == 0.0).unwrap_or(false);
+    }
+    let (num, unit) = low.split_at(low.len() - unit_len);
+    if num.parse::<f64>().map(|v| !v.is_finite()).unwrap_or(true) {
+        return false;
+    }
+    const LEN_UNITS: &[&str] = &[
+        "px", "em", "rem", "ex", "rex", "cap", "rcap", "ch", "rch", "ic", "ric", "lh", "rlh",
+        "vw", "vh", "vi", "vb", "vmin", "vmax", "svw", "svh", "svi", "svb", "svmin", "svmax",
+        "lvw", "lvh", "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh", "dvi", "dvb", "dvmin",
+        "dvmax", "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax", "cm", "mm", "q", "in", "pt", "pc",
+    ];
+    LEN_UNITS.contains(&unit)
+}
+
+// inset-block/inset-inline 단축 캐논 직렬화(§CSSOM): 각 값 0→0px 캐논, 두 값이 같으면
+// 하나로 축약.
+pub fn inset_pair_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.is_empty() || toks.len() > 2 {
+        return raw.trim().to_string();
+    }
+    let canon = |t: &str| -> String {
+        let low = t.trim().to_ascii_lowercase();
+        if low == "auto" {
+            return "auto".to_string();
+        }
+        // 수학함수는 지정값에서 단순화하지 않고 원문 보존(calc(0px)→0px 로 접지 않음).
+        if low.ends_with(')')
+            && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
+                .iter()
+                .any(|p| low.starts_with(p))
+        {
+            return t.trim().to_string();
+        }
+        match interpret_value(t.trim()) {
+            Some(Value::Length(n, _)) if n == 0.0 => "0px".to_string(),
+            Some(v @ Value::Length(..)) => crate::style::computed_value_string(&v),
+            _ => low,
+        }
+    };
+    let a = canon(&toks[0]);
+    let b = toks.get(1).map(|t| canon(t)).unwrap_or_else(|| a.clone());
+    if a == b {
+        a
+    } else {
+        format!("{} {}", a, b)
+    }
+}
+
+// inset/오프셋 값 유효성(§CSS Position): <length-percentage> | auto(calc 포함).
+// 각도(0deg/calc(20deg))·단위없는 비영(10)·기타 키워드 거부.
+pub fn inset_length_valid(tok: &str) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return true;
+    }
+    if low.ends_with(')')
+        && ["calc(", "min(", "max(", "clamp("].iter().any(|p| low.starts_with(p))
+    {
+        // 수학함수 안에 각도 단위가 있으면 <length-percentage> 아님.
+        return !(low.contains("deg") || low.contains("rad") || low.contains("turn"));
+    }
+    is_length_percentage(&low)
+}
+
 // contain 유효성(§CSS Contain): none | strict | content | [[size|inline-size] ||
 // layout || style || paint]. 단일 특수값 혼합·카테고리 중복·미인식 거부.
 pub fn contain_valid(raw: &str) -> bool {

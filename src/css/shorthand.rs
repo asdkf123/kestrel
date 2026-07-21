@@ -71,6 +71,27 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "padding-block" => return logical_pair("padding-top", "padding-bottom", value_text),
         "inset-inline" => return logical_pair("left", "right", value_text),
         "inset-block" => return logical_pair("top", "bottom", value_text),
+        // top/right/bottom/left(§CSS Position): <length-percentage> | auto. 각도·단위없는
+        // 비영·기타 키워드 거부. 유효값은 interpret_value 로 저장(레이아웃 불변). inset
+        // 논리 프로퍼티가 여기로 매핑되므로 함께 검증된다.
+        "top" | "right" | "bottom" | "left" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = split_top_level(value_text.trim());
+            if toks.len() == 1 && crate::css::inset_length_valid(toks[0]) {
+                let v = match interpret_value(toks[0]) {
+                    // 단위없는 0 은 0px 로 캐논화(§CSSOM).
+                    Some(Value::Length(n, Unit::Number)) if n == 0.0 => Value::Length(0.0, Unit::Px),
+                    Some(other) => other,
+                    None => Value::Keyword(low),
+                };
+                return vec![Declaration { important: false, name: name.to_string(), value: v }];
+            }
+            return Vec::new();
+        }
         // inset 단축: top/right/bottom/left (margin 과 동일 규칙)
         "inset" => {
             let sides = box_shorthand("", "", value_text); // "-top" 등 이름이 "-top" 형태
@@ -1319,10 +1340,29 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
 // 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
 fn logical_pair(start: &str, end: &str, value_text: &str) -> Vec<Declaration> {
     let toks: Vec<&str> = split_top_level(value_text);
-    let s = toks.first().copied().unwrap_or("");
+    // 1~2 값만. CSS-wide 키워드는 단독만(두 값과 혼합 불가). 각 값의 물리 확장이
+    // 비면(무효 값) 단축 전체 무효.
+    if toks.is_empty() || toks.len() > 2 {
+        return Vec::new();
+    }
+    let is_csswide = |t: &str| {
+        matches!(
+            t.to_ascii_lowercase().as_str(),
+            "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+        )
+    };
+    if toks.len() == 2 && (is_csswide(toks[0]) || is_csswide(toks[1])) {
+        return Vec::new();
+    }
+    let s = toks[0];
     let e = toks.get(1).copied().unwrap_or(s);
-    let mut out = expand_declaration(start, s);
-    out.extend(expand_declaration(end, e));
+    let start_exp = expand_declaration(start, s);
+    let end_exp = expand_declaration(end, e);
+    if start_exp.is_empty() || end_exp.is_empty() {
+        return Vec::new();
+    }
+    let mut out = start_exp;
+    out.extend(end_exp);
     out
 }
 

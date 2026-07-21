@@ -75,6 +75,8 @@ pub(crate) use values::blockify_display;
 pub(crate) use values::contain_valid;
 pub(crate) use values::contain_canonical;
 pub(crate) use values::contain_computed;
+pub(crate) use values::inset_length_valid;
+pub(crate) use values::inset_pair_canonical;
 pub(crate) use values::text_autospace_valid;
 pub(crate) use values::text_autospace_canonical;
 pub(crate) use values::timing_function_canonical;

@@ -328,8 +328,17 @@ impl Interp {
         if prop == "contain" && crate::css::contain_valid(raw) {
             return crate::css::contain_canonical(raw);
         }
-        // outline-offset(§CSS UI): <length> 캐논(0 → 0px).
-        if prop == "outline-offset" {
+        // inset-block/inset-inline 단축(§CSSOM): 0→0px, 두 값 같으면 축약.
+        if matches!(prop, "inset-block" | "inset-inline") {
+            return crate::css::inset_pair_canonical(raw);
+        }
+        // outline-offset·top/right/bottom/left·inset 논리 롱핸드: <length-percentage>
+        // 캐논(0 → 0px). auto/CSS-wide 는 아래 일반 경로로.
+        if matches!(
+            prop,
+            "outline-offset" | "top" | "right" | "bottom" | "left" | "inset-block-start"
+                | "inset-block-end" | "inset-inline-start" | "inset-inline-end"
+        ) {
             if let Some(v) = crate::css::interpret_value(raw.trim()) {
                 match v {
                     crate::css::Value::Length(n, _) if n == 0.0 => return "0px".to_string(),
@@ -439,6 +448,17 @@ impl Interp {
                     | "outline-offset"
                     | "display"
                     | "contain"
+                    | "top"
+                    | "right"
+                    | "bottom"
+                    | "left"
+                    | "inset"
+                    | "inset-block"
+                    | "inset-inline"
+                    | "inset-block-start"
+                    | "inset-block-end"
+                    | "inset-inline-start"
+                    | "inset-inline-end"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
