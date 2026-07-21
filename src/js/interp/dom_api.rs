@@ -820,6 +820,7 @@ impl Interp {
                     | "list-style-position"
                     | "list-style-image"
                     | "list-style-type"
+                    | "list-style"
                     | "shape-margin"
                     | "shape-image-threshold"
             )

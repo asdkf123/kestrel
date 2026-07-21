@@ -4597,6 +4597,34 @@ pub fn list_style_type_canonical(raw: &str) -> String {
     format!("symbols({})", out.join(" "))
 }
 
+// list-style 단축(§CSS Lists): <position> || <image> || <type>. 각 슬롯 최대 1개,
+// none 은 type/image 빈 슬롯을 채운다. 무효 키워드·슬롯 초과 거부.
+pub fn list_style_valid(raw: &str) -> bool {
+    let toks = split_top_tokens(raw.trim());
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    let (mut pos, mut typ, mut img, mut none) = (0i32, 0i32, 0i32, 0i32);
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        if matches!(low.as_str(), "inside" | "outside") {
+            pos += 1;
+        } else if low == "none" {
+            none += 1;
+        } else if low != "none" && list_style_image_valid(t) {
+            img += 1;
+        } else if list_style_type_valid(t) {
+            typ += 1;
+        } else {
+            return false;
+        }
+    }
+    if pos > 1 || typ > 1 || img > 1 {
+        return false;
+    }
+    none <= (1 - typ) + (1 - img)
+}
+
 // z-index(§CSS 2): auto | <integer>(부호 무관).
 pub fn z_index_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();

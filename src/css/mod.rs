@@ -70,7 +70,7 @@ pub(crate) use values::{
 pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::will_change_valid;
 pub(crate) use values::{
-    list_style_image_valid, list_style_type_canonical, list_style_type_valid,
+    list_style_image_valid, list_style_type_canonical, list_style_type_valid, list_style_valid,
     shape_image_threshold_valid, z_index_valid,
 };
 pub(crate) use values::nonneg_length_percentage as nonneg_lp_valid;

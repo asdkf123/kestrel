@@ -1871,6 +1871,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border" => border_shorthand(&["top", "right", "bottom", "left"], value_text),
         // list-style 단축 → type/position/image. `list-style: none` 이 마커를 없앤다.
         "list-style" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                && !crate::css::list_style_valid(value_text)
+            {
+                return Vec::new();
+            }
             let mut out = Vec::new();
             for tok in split_top_level(value_text) {
                 match tok {
