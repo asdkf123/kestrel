@@ -1488,6 +1488,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
         }
+        // text-decoration-inset(§CSS Text Decor 4): auto | <length>{1,2}.
+        "text-decoration-inset" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::text_decoration_inset_valid(value_text) {
+                return Vec::new();
+            }
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_decoration_inset_canonical(value_text)) }]
+        }
         // text-decoration-style/color·text-emphasis-position(§CSS Text Decor) 검증.
         "text-decoration-style" | "text-decoration-color" | "text-emphasis-position" => {
             let low = value_text.trim().to_ascii_lowercase();

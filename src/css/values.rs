@@ -4365,6 +4365,35 @@ pub fn text_decoration_skip_spaces_valid(raw: &str) -> bool {
     true
 }
 
+// <length-percentage>(부호 무관). calc 는 파스 타임 허용.
+fn is_length_any_sign(t: &str) -> bool {
+    is_math_fn(&t.trim().to_ascii_lowercase()) || is_length_percentage(t)
+}
+
+// text-decoration-inset(§CSS Text Decor 4): auto | <length-percentage>{1,2}.
+pub fn text_decoration_inset_valid(raw: &str) -> bool {
+    if raw.trim().eq_ignore_ascii_case("auto") {
+        return true;
+    }
+    let toks = split_top_level(raw.trim());
+    !toks.is_empty() && toks.len() <= 2 && toks.iter().all(|t| is_length_any_sign(t))
+}
+
+// text-decoration-inset 캐논: 0→0px, 같은 두 값은 하나로 축약.
+pub fn text_decoration_inset_canonical(raw: &str) -> String {
+    if raw.trim().eq_ignore_ascii_case("auto") {
+        return "auto".to_string();
+    }
+    let toks: Vec<String> = split_top_level(raw.trim())
+        .iter()
+        .map(|t| if t.trim() == "0" { "0px".to_string() } else { t.trim().to_string() })
+        .collect();
+    if toks.len() == 2 && toks[0] == toks[1] {
+        return toks[0].clone();
+    }
+    toks.join(" ")
+}
+
 // text-emphasis-position(§CSS Text Decor): auto | [ over | under ] || [ right | left ].
 pub fn text_emphasis_position_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();

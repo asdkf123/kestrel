@@ -472,6 +472,10 @@ impl Interp {
         if prop == "text-emphasis-position" && crate::css::text_emphasis_position_valid(raw) {
             return crate::css::text_emphasis_position_canonical(raw);
         }
+        // text-decoration-inset(§CSS Text Decor 4): 0→0px, 같은 값 축약.
+        if prop == "text-decoration-inset" && crate::css::text_decoration_inset_valid(raw) {
+            return crate::css::text_decoration_inset_canonical(raw);
+        }
         // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
         if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
             let allow_reversed = prop == "counter-reset";
@@ -805,6 +809,7 @@ impl Interp {
                     | "text-decoration-style"
                     | "text-decoration-color"
                     | "text-emphasis-position"
+                    | "text-decoration-inset"
                     | "text-overflow"
                     | "continue"
                     | "max-lines"
