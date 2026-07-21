@@ -234,6 +234,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // text-spacing-trim(§CSS Text 4): 단일 키워드. none/두값/allow-end/trim-auto 거부.
+        "text-spacing-trim" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "normal"
+                    | "space-all" | "space-first" | "trim-all" | "trim-both" | "trim-start"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // word-break(§CSS Text): normal|keep-all|break-all|break-word|auto-phrase 단일.
         "word-break" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -759,7 +772,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style" | "text-emphasis-position" | "text-combine-upright"
         | "text-decoration-skip-ink" | "line-break"
-        | "text-spacing-trim" | "ruby-position" | "ruby-align"
+        | "ruby-position" | "ruby-align"
         | "white-space-collapse" | "font-optical-sizing" | "font-synthesis"
         | "font-synthesis-weight" | "font-synthesis-style" | "font-synthesis-small-caps"
         | "font-synthesis-position"

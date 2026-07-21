@@ -413,6 +413,7 @@ impl Interp {
                     | "text-group-align"
                     | "hanging-punctuation"
                     | "text-autospace"
+                    | "text-spacing-trim"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
