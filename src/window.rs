@@ -894,6 +894,10 @@ fn collect_computed_styles(
         if let Some(v) = m.get("contain") {
             m.insert("contain".to_string(), crate::css::contain_computed(v));
         }
+        // object-position 계산값(§CSSOM): 키워드→퍼센트, 모서리+오프셋 계산.
+        if let Some(v) = m.get("object-position") {
+            m.insert("object-position".to_string(), crate::css::position_computed(v));
+        }
         // contain-intrinsic-size 계산값: width + height 재구성(같으면 축약), 논리 노출.
         {
             let w = m.get("contain-intrinsic-width").cloned();

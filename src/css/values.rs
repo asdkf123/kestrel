@@ -2625,6 +2625,80 @@ pub fn position_valid(raw: &str) -> bool {
     }
 }
 
+// <position> 한 축(1~2 토큰)을 계산값 퍼센트로. left/top→0%, right/bottom→100%,
+// center→50%, 모서리+오프셋은 시작 기준 그대로, 끝(right/bottom) 기준은 100%-오프셋.
+fn pos_axis_computed(tokens: &[&str]) -> String {
+    match tokens {
+        [t] => match *t {
+            "left" | "top" => "0%".to_string(),
+            "right" | "bottom" => "100%".to_string(),
+            "center" => "50%".to_string(),
+            other => other.to_string(),
+        },
+        [edge, offset] => {
+            let from_start = matches!(*edge, "left" | "top");
+            if from_start {
+                offset.to_string()
+            } else if let Some(pct) = offset.strip_suffix('%').and_then(|n| n.parse::<f64>().ok()) {
+                let r = 100.0 - pct;
+                let r = (r * 1e6).round() / 1e6;
+                format!("{}%", r)
+            } else {
+                format!("calc(100% - {})", offset)
+            }
+        }
+        _ => tokens.join(" "),
+    }
+}
+
+// <position> 계산값(§CSSOM): [수평] [수직] 을 각각 퍼센트/오프셋 계산값으로.
+pub fn position_computed(raw: &str) -> String {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let refs: Vec<&str> = toks.iter().map(|s| s.as_str()).collect();
+    let is_h = |t: &str| matches!(t, "left" | "right");
+    let is_v = |t: &str| matches!(t, "top" | "bottom");
+    let is_kw = |t: &str| is_h(t) || is_v(t) || t == "center";
+    let (h, v): (Vec<&str>, Vec<&str>) = match refs.len() {
+        1 => {
+            if is_v(refs[0]) {
+                (vec!["center"], vec![refs[0]])
+            } else {
+                (vec![refs[0]], vec!["center"])
+            }
+        }
+        2 => {
+            if is_kw(refs[0]) && is_kw(refs[1]) {
+                let h = if is_h(refs[0]) {
+                    refs[0]
+                } else if is_h(refs[1]) {
+                    refs[1]
+                } else {
+                    "center"
+                };
+                let vv = if is_v(refs[0]) {
+                    refs[0]
+                } else if is_v(refs[1]) {
+                    refs[1]
+                } else {
+                    "center"
+                };
+                (vec![h], vec![vv])
+            } else {
+                (vec![refs[0]], vec![refs[1]])
+            }
+        }
+        4 => {
+            if is_h(refs[0]) {
+                (vec![refs[0], refs[1]], vec![refs[2], refs[3]])
+            } else {
+                (vec![refs[2], refs[3]], vec![refs[0], refs[1]])
+            }
+        }
+        _ => return raw.trim().to_ascii_lowercase(),
+    };
+    format!("{} {}", pos_axis_computed(&h), pos_axis_computed(&v))
+}
+
 // <position> 지정값 캐논 직렬화(§CSSOM): [수평] [수직] 순서로, 1값은 빠진 축에 center.
 // 키워드는 유지(퍼센트 변환은 계산값 몫). 유효한 값만 넣는다고 가정.
 pub fn position_canonical(raw: &str) -> String {
