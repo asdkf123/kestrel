@@ -2139,6 +2139,76 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
 
 // color-mix 지정값 캐논 직렬화(§CSS Color 5): 퍼센트를 색 뒤로, inner 색 정규화
 // (키워드 유지, 함수→rgb), 기본 50%(한쪽만) 생략. 파싱 불가는 None.
+// color(<space> c1 c2 c3 [/ a]) 지정값 캐논 직렬화(§CSS Color 4). 채널 %→0-1 수,
+// none 유지, alpha==1 생략, "/" 공백 정규화. 알려진 색공간만.
+pub fn normalize_color_function(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if !t.to_ascii_lowercase().starts_with("color(") || !t.ends_with(')') {
+        return None;
+    }
+    let inner = &t[6..t.len() - 1];
+    let spaced = inner.replace('/', " / ");
+    let toks: Vec<&str> = spaced.split_whitespace().collect();
+    if toks.len() < 4 {
+        return None;
+    }
+    let space = toks[0].to_ascii_lowercase();
+    if !matches!(
+        space.as_str(),
+        "srgb" | "srgb-linear" | "display-p3" | "a98-rgb" | "prophoto-rgb" | "rec2020" | "xyz"
+            | "xyz-d50" | "xyz-d65"
+    ) {
+        return None;
+    }
+    let conv = |s: &str| -> Option<String> {
+        if s.eq_ignore_ascii_case("none") {
+            return Some("none".to_string());
+        }
+        if let Some(p) = s.strip_suffix('%') {
+            return p.parse::<f32>().ok().map(|n| crate::style::num_css(n / 100.0));
+        }
+        s.parse::<f32>().ok().map(crate::style::num_css)
+    };
+    let (mut chans, mut alpha_raw, mut after_slash): (Vec<String>, Option<&str>, bool) =
+        (Vec::new(), None, false);
+    for &tok in &toks[1..] {
+        if tok == "/" {
+            after_slash = true;
+            continue;
+        }
+        if after_slash {
+            alpha_raw = Some(tok); // 알파는 원문 유지(클램프 위해)
+        } else {
+            chans.push(conv(tok)?); // 채널은 클램프 안 함(범위 밖 값 보존)
+        }
+    }
+    if chans.len() != 3 {
+        return None;
+    }
+    // 알파는 [0,1] 로 클램프하고 1 이면 생략(§CSS Color 4). none 은 유지.
+    let alpha_part = match alpha_raw {
+        None => String::new(),
+        Some(a) if a.eq_ignore_ascii_case("none") => " / none".to_string(),
+        Some(a) => {
+            let av = if let Some(p) = a.strip_suffix('%') {
+                p.parse::<f32>().ok()? / 100.0
+            } else {
+                a.parse::<f32>().ok()?
+            };
+            let ac = av.clamp(0.0, 1.0);
+            if ac == 1.0 {
+                String::new()
+            } else {
+                format!(" / {}", crate::style::num_css(ac))
+            }
+        }
+    };
+    Some(format!(
+        "color({} {} {} {}{})",
+        space, chans[0], chans[1], chans[2], alpha_part
+    ))
+}
+
 pub fn normalize_color_mix(raw: &str) -> Option<String> {
     let low = raw.trim().to_ascii_lowercase();
     if !low.starts_with("color-mix(") || !low.ends_with(')') {
