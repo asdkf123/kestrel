@@ -2486,17 +2486,20 @@ pub fn normalize_color_mix(raw: &str) -> Option<String> {
     let c1s = serialize_mix_input_color(&c1)?;
     let c2s = serialize_mix_input_color(&c2)?;
     let is50 = |p: f32| (p - 50.0).abs() < 1e-4;
-    let pct = |p: Option<f32>, other: Option<f32>| -> String {
-        match p {
-            Some(v) if is50(v) && other.is_none() => String::new(),
-            Some(v) => format!(" {}%", csnum(v)),
-            None => String::new(),
-        }
+    // 퍼센트 정규화: 한쪽 생략 시 100-other, 둘 다 생략 시 50/50. 둘 다 50 이면 모두
+    // 생략, 아니면 **둘 다** 표시(§CSS Color 5). A 25%, B → "A 25%, B 75%".
+    let (v1, v2) = match (p1, p2) {
+        (None, None) => (50.0, 50.0),
+        (Some(a), None) => (a, 100.0 - a),
+        (None, Some(b)) => (100.0 - b, b),
+        (Some(a), Some(b)) => (a, b),
     };
-    Some(format!(
-        "color-mix({}, {}{}, {}{})",
-        space, c1s, pct(p1, p2), c2s, pct(p2, p1)
-    ))
+    let (pc1, pc2) = if is50(v1) && is50(v2) {
+        (String::new(), String::new())
+    } else {
+        (format!(" {}%", csnum(v1)), format!(" {}%", csnum(v2)))
+    };
+    Some(format!("color-mix({}, {}{}, {}{})", space, c1s, pc1, c2s, pc2))
 }
 
 // color-mix inner 색을 지정값 형태로. 키워드(식별자)는 그대로, 함수/hex 는 rgb/색공간.
