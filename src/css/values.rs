@@ -58,6 +58,9 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         return parse_hwb(&lower).map(Value::Color);
     }
     if lower.starts_with("color-mix(") {
+        if !color_mix_valid(&lower) {
+            return None;
+        }
         return parse_color_mix(&lower).map(|(c, s)| Value::ColorFn(c, s));
     }
     if lower.starts_with("color(") {
@@ -6703,7 +6706,8 @@ pub fn hsl_valid(lower: &str) -> bool {
         if !(is_hue(&vals[0]) || col_is_none(&vals[0])) {
             return false;
         }
-        let sl_ok = |p: &str| col_is_pct(p) || col_is_calc(p) || col_is_none(p);
+        // modern hsl 의 S·L 은 <percentage> | <number>(§CSS Color 4).
+        let sl_ok = |p: &str| col_is_pct(p) || col_is_num(p) || col_is_calc(p) || col_is_none(p);
         if !sl_ok(&vals[1]) || !sl_ok(&vals[2]) {
             return false;
         }
@@ -6759,6 +6763,142 @@ pub fn lab_valid(name: &str, lower: &str) -> bool {
         }
     }
     true
+}
+
+// <color-interpolation-method>: in <colorspace> [<hue-method> hue]?.
+fn interp_method_valid(s: &str) -> bool {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    if toks.len() < 2 || !toks[0].eq_ignore_ascii_case("in") {
+        return false;
+    }
+    let space = toks[1].to_ascii_lowercase();
+    let polar = matches!(space.as_str(), "hsl" | "hwb" | "lch" | "oklch");
+    let rect = matches!(
+        space.as_str(),
+        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "a98-rgb" | "prophoto-rgb"
+            | "rec2020" | "lab" | "oklab" | "xyz" | "xyz-d50" | "xyz-d65"
+    ) || space.starts_with("--");
+    if !polar && !rect {
+        return false;
+    }
+    match toks.len() {
+        2 => true,
+        4 => {
+            polar
+                && matches!(
+                    toks[2].to_ascii_lowercase().as_str(),
+                    "shorter" | "longer" | "increasing" | "decreasing"
+                )
+                && toks[3].eq_ignore_ascii_case("hue")
+        }
+        _ => false,
+    }
+}
+
+// color-mix 의 [ <color> && <percentage [0,100]>? ] 인자. 퍼센트는 앞뒤 아무 위치.
+fn color_mix_arg_valid(s: &str) -> bool {
+    let toks = split_top_level(s);
+    if toks.is_empty() {
+        return false;
+    }
+    let mut color_toks: Vec<String> = Vec::new();
+    let mut pct = 0;
+    for t in &toks {
+        if let Some(n) = t.strip_suffix('%').and_then(|x| x.trim().parse::<f64>().ok()) {
+            if !(0.0..=100.0).contains(&n) {
+                return false;
+            }
+            pct += 1;
+        } else if is_math_fn(&t.to_ascii_lowercase()) {
+            // calc 퍼센트(파스 타임 허용) — 퍼센트 슬롯으로 간주.
+            pct += 1;
+        } else {
+            color_toks.push(t.clone());
+        }
+    }
+    if pct > 1 || color_toks.is_empty() {
+        return false;
+    }
+    let c = color_toks.join(" ");
+    let cl = c.trim().to_ascii_lowercase();
+    cl == "currentcolor"
+        || cl == "transparent"
+        || color_syntax_valid(c.trim())
+        || matches!(interpret_value(c.trim()), Some(Value::Color(_)) | Some(Value::ColorFn(..)))
+}
+
+// 색 함수 문법 유효성 디스패처(계산 가능 여부와 무관, 파싱 유효성만).
+// interpret_value 가 계산 실패로 None 을 줘도, 문법이 유효하면 지정값을 보존한다.
+pub fn color_syntax_valid(raw: &str) -> bool {
+    let lower = raw.trim().to_ascii_lowercase();
+    if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
+        return rgb_valid(&lower);
+    }
+    if lower.starts_with("hsl(") || lower.starts_with("hsla(") {
+        return hsl_valid(&lower);
+    }
+    for n in ["oklch", "oklab", "lch", "lab"] {
+        if lower.starts_with(n) && lower[n.len()..].starts_with('(') {
+            return lab_valid(n, &lower);
+        }
+    }
+    if lower.starts_with("color-mix(") {
+        return color_mix_valid(&lower);
+    }
+    if lower.starts_with("color(") {
+        return color_func_valid(&lower);
+    }
+    if lower.starts_with("hwb(") {
+        return hwb_valid(&lower);
+    }
+    false
+}
+
+// hwb() 문법 검증(§CSS Color 4): hwb( <hue> <W> <B> [/ <alpha>]? ). 콤마 형 없음.
+pub fn hwb_valid(lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    if inner.is_empty() || top_level_has(&inner, ',') {
+        return false;
+    }
+    let parts = split_top_slash(&inner);
+    if parts.is_empty() || parts.len() > 2 {
+        return false;
+    }
+    let vals = split_top_level(parts[0].trim());
+    if vals.len() != 3 {
+        return false;
+    }
+    let is_hue = |p: &str| col_is_num(p) || col_is_angle(p) || col_is_calc(p) || col_is_none(p);
+    let wb_ok = |p: &str| col_is_pct(p) || col_is_num(p) || col_is_calc(p) || col_is_none(p);
+    if !is_hue(&vals[0]) || !wb_ok(&vals[1]) || !wb_ok(&vals[2]) {
+        return false;
+    }
+    if parts.len() == 2 {
+        let a = parts[1].trim();
+        if a.is_empty() || !wb_ok(a) {
+            return false;
+        }
+    }
+    true
+}
+
+// color-mix() 엄격 검증(§CSS Color 5): color-mix( <method>?, <color-pct>+ ). 메서드는
+// 있으면 맨 앞이어야 하고, 뒤에 색이 하나 이상. 메서드가 없으면 전부 색.
+pub fn color_mix_valid(lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    let parts = split_commas_keep(&inner);
+    if parts.is_empty() {
+        return false;
+    }
+    let has_method = interp_method_valid(parts[0].trim());
+    let colors = if has_method { &parts[1..] } else { &parts[..] };
+    !colors.is_empty() && colors.iter().all(|p| color_mix_arg_valid(p.trim()))
 }
 
 // color() 함수 엄격 검증(§CSS Color 4): color( <colorspace> <channel>{3} [/ <alpha>]? ).

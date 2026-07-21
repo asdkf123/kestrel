@@ -2046,6 +2046,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             match interpret_value(value_text.trim()) {
                 Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
+                // 계산 불가하지만 문법 유효한 색 함수(calc/currentcolor 등)는 지정값 보존.
+                None if crate::css::color_syntax_valid(value_text.trim()) => {
+                    vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                }
                 None => Vec::new(),
             }
         }
