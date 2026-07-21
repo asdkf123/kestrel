@@ -937,9 +937,9 @@ impl Interp {
         match key {
             "offsetWidth" | "clientWidth" | "scrollWidth" | "offsetHeight" | "clientHeight"
             | "scrollHeight" | "offsetLeft" | "clientLeft" | "offsetTop" | "clientTop"
-            | "offsetParent" | "innerText" => {
+            | "offsetParent" | "innerText" | "outerText" => {
                 // 측정 전에 보류된 레이아웃을 흘린다 (CSSOM View: forced layout)
-                // innerText 도 "렌더된 텍스트" 라 렌더 정보가 있어야 한다.
+                // innerText/outerText 도 "렌더된 텍스트" 라 렌더 정보가 있어야 한다.
                 self.ensure_layout();
             }
             _ => {}
@@ -948,7 +948,8 @@ impl Interp {
         // display:none 인 가지, <script>/<style>/<template> 의 내용은 빠지고,
         // 블록 경계에서 줄바꿈이 들어가고, 공백은 접힌다.
         // (예전엔 textContent 별칭이라 스크립트 소스까지 그대로 돌려줬다.)
-        if key == "innerText" {
+        // outerText getter 는 innerText 와 같은 "렌더된 텍스트"를 반환한다(§HTML).
+        if key == "innerText" || key == "outerText" {
             return Ok(Value::Str(self.inner_text(id)));
         }
         // CSSOM View §4 — 셋은 서로 다른 상자다:
