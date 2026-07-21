@@ -1159,6 +1159,30 @@ pub fn is_inherited(prop: &str) -> bool {
     INHERITED.contains(&prop)
 }
 
+// font-weight bolder/lighter 상대 계산(§CSS Fonts 4 §2.2.1). 부모 계산 weight 기준.
+fn bolder_weight(w: f32) -> f32 {
+    if w < 350.0 {
+        400.0
+    } else if w < 550.0 {
+        700.0
+    } else if w < 900.0 {
+        900.0
+    } else {
+        w
+    }
+}
+fn lighter_weight(w: f32) -> f32 {
+    if w < 100.0 {
+        w
+    } else if w < 550.0 {
+        100.0
+    } else if w < 750.0 {
+        400.0
+    } else {
+        700.0
+    }
+}
+
 // 뷰포트 단위(vw/vh/vmin/vmax) 해석용 뷰포트 크기(px).
 #[derive(Clone, Copy)]
 pub struct Viewport {
@@ -2455,6 +2479,28 @@ fn style_node<'a>(
                     _ => None,
                 })
                 .unwrap_or(DEFAULT_FONT_SIZE);
+            // font-weight: bolder/lighter 는 부모 계산 weight 기준 상대값(§CSS Fonts 2.2.1).
+            // 부모 weight 는 이미 수로 계산돼 있다(부모가 먼저 처리됨).
+            if let Some(Value::Keyword(k)) = values.get("font-weight").cloned() {
+                if k == "bolder" || k == "lighter" {
+                    let pw = parent
+                        .and_then(|p| p.get("font-weight"))
+                        .and_then(|v| match v {
+                            Value::Length(n, _) => Some(*n),
+                            _ => None,
+                        })
+                        .unwrap_or(400.0);
+                    let resolved = if k == "bolder" {
+                        bolder_weight(pw)
+                    } else {
+                        lighter_weight(pw)
+                    };
+                    values.insert(
+                        "font-weight".to_string(),
+                        Value::Length(resolved, Unit::Number),
+                    );
+                }
+            }
             // font-size 가 var() 면 em/rem 해석보다 먼저 치환한다(var_props 루프는 이 뒤라 늦음).
             // 커스텀 프로퍼티는 상속되므로 부모 계산값 + 자신 것으로 맵을 만든다.
             if let Some(Value::Var(raw)) = values.get("font-size").cloned() {

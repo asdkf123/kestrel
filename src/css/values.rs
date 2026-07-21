@@ -2232,6 +2232,41 @@ pub fn normalize_white_space(raw: &str) -> Option<String> {
     )
 }
 
+// font-stretch/font-width 계산값 캐논(§CSS Fonts 4): 퍼센트. 키워드는 규정 %로,
+// 퍼센트는 음수 0%로 clamp, calc 는 평가 후 %. ultra-condensed=50% … ultra-expanded=200%.
+pub fn normalize_font_stretch(raw: &str) -> Option<String> {
+    let t = raw.trim().to_ascii_lowercase();
+    let kw = match t.as_str() {
+        "ultra-condensed" => Some(50.0f32),
+        "extra-condensed" => Some(62.5),
+        "condensed" => Some(75.0),
+        "semi-condensed" => Some(87.5),
+        "normal" => Some(100.0),
+        "semi-expanded" => Some(112.5),
+        "expanded" => Some(125.0),
+        "extra-expanded" => Some(150.0),
+        "ultra-expanded" => Some(200.0),
+        _ => None,
+    };
+    if let Some(pct) = kw {
+        return Some(format!("{}%", crate::style::num_css(pct)));
+    }
+    match interpret_value(&t) {
+        Some(Value::Length(n, Unit::Percent)) => {
+            Some(format!("{}%", crate::style::num_css(n.max(0.0))))
+        }
+        Some(Value::Calc(c)) if c.px == 0.0 && !c.has_ctx_units() => {
+            Some(format!("{}%", crate::style::num_css(c.pct.max(0.0))))
+        }
+        // calc(0%)·calc(100%-100%) 은 순 % 가 0 이라 Length(0,Px)로 접힌다 — 원문에
+        // % 가 있으면 % 로 해석(수치는 동일한 0).
+        Some(Value::Length(n, Unit::Px)) if t.contains('%') => {
+            Some(format!("{}%", crate::style::num_css(n.max(0.0))))
+        }
+        _ => None,
+    }
+}
+
 // text-wrap 단축 캐논(§CSS Text 4): text-wrap-mode(wrap|nowrap) || text-wrap-style
 // (auto|balance|stable|pretty). 직렬화: style 이 auto(기본)면 mode 만, 아니면 style 만
 // (mode 가 wrap 기본일 때) 또는 "mode style". 무효/중복 토큰은 None.

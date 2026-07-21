@@ -361,6 +361,20 @@ fn fill_js_maps(
                 m.insert("text-wrap".to_string(), norm);
             }
         }
+        // font-stretch/font-width 계산값: 퍼센트(§CSS Fonts 4). 키워드→%, calc 평가.
+        // font-width 는 font-stretch 의 신명칭 — 같은 값으로 미러링(둘 다 노출).
+        {
+            let fs = m
+                .get("font-stretch")
+                .or_else(|| m.get("font-width"))
+                .cloned();
+            let norm = fs
+                .as_deref()
+                .and_then(crate::css::normalize_font_stretch)
+                .unwrap_or_else(|| "100%".to_string());
+            m.insert("font-stretch".to_string(), norm.clone());
+            m.insert("font-width".to_string(), norm);
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

@@ -126,9 +126,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 돌려줬다(표준은 "700"). 렌더는 600 이상을 굵게 그린다(폰트가 2종뿐).
         "font-weight" => {
             let v = value_text.trim().to_ascii_lowercase();
+            // bolder/lighter 는 부모 계산 weight 기준 상대값 — 키워드로 보존하고
+            // 스타일 계산(style.rs)이 부모 weight 로 해석한다(§CSS Fonts 2.2.1).
+            if matches!(v.as_str(), "bolder" | "lighter") {
+                return vec![Declaration { important: false, name: "font-weight".to_string(), value: Value::Keyword(v) }];
+            }
             let n = match v.as_str() {
-                "bold" | "bolder" => 700.0,
-                "normal" | "lighter" => 400.0,
+                "bold" => 700.0,
+                "normal" => 400.0,
                 "initial" => 400.0,
                 // inherit/unset/revert 는 선언을 남기지 않는다 → 상속이 적용된다.
                 // 예전엔 이걸 "normal" 로 눌러버려서 `font-weight: inherit` 이 상속을
@@ -189,6 +194,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // font-width 는 font-stretch 의 신명칭(§CSS Fonts 4) — 같은 값으로 파싱(별칭).
+        // 계산값 노출은 window 가 font-stretch→font-width 미러링.
+        "font-width" => expand_declaration("font-stretch", value_text),
         // text-wrap 단축(§CSS Text 4): text-wrap-mode || text-wrap-style. 캐논 직렬화로
         // 저장(무효값 거부). CSS-wide 키워드는 통과.
         "text-wrap" => {
