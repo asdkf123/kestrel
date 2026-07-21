@@ -464,6 +464,10 @@ impl Interp {
         if prop == "max-lines" && crate::css::max_lines_valid(raw) {
             return crate::css::max_lines_canonical(raw);
         }
+        // list-style-type(§CSS Lists): symbols() 기본 type 생략 캐논.
+        if prop == "list-style-type" && crate::css::list_style_type_valid(raw) {
+            return crate::css::list_style_type_canonical(raw);
+        }
         // text-emphasis-position(§CSS Text Decor): 기본값 right 생략 캐논.
         if prop == "text-emphasis-position" && crate::css::text_emphasis_position_valid(raw) {
             return crate::css::text_emphasis_position_canonical(raw);
@@ -810,6 +814,7 @@ impl Interp {
                     | "z-index"
                     | "list-style-position"
                     | "list-style-image"
+                    | "list-style-type"
                     | "shape-margin"
                     | "shape-image-threshold"
             )

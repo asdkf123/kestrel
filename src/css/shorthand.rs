@@ -1422,6 +1422,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // list-style-type(§CSS Lists): <counter-style> | <string> | none.
+        "list-style-type" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::list_style_type_valid(value_text) {
+                return Vec::new();
+            }
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::list_style_type_canonical(value_text)) }]
+        }
         // position/list-style-position/shape-margin/shape-image-threshold/
         // list-style-image(§여러 스펙): 단순 검증.
         "position" | "list-style-position" | "shape-margin" | "shape-image-threshold"

@@ -4450,6 +4450,124 @@ pub fn positive_integer_valid(raw: &str) -> bool {
     is_math_fn(&low) || matches!(low.parse::<i64>(), Ok(n) if n >= 1)
 }
 
+// 따옴표·괄호를 존중해 최상위 공백으로 토큰 분리.
+fn split_top_tokens(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// symbols()(§CSS Counter Styles): symbols( <type>? <string>+ ). type 는 맨 앞,
+// alphabetic/numeric 은 문자열 2개 이상. 이미지는 이 구현에서 미지원(문자열만).
+fn symbols_type(t: &str) -> Option<&'static str> {
+    match t.to_ascii_lowercase().as_str() {
+        "cyclic" => Some("cyclic"),
+        "numeric" => Some("numeric"),
+        "alphabetic" => Some("alphabetic"),
+        "symbolic" => Some("symbolic"),
+        "fixed" => Some("fixed"),
+        _ => None,
+    }
+}
+
+fn symbols_valid(tok: &str) -> bool {
+    let t = tok.trim();
+    if !t.to_ascii_lowercase().starts_with("symbols(") || !t.ends_with(')') {
+        return false;
+    }
+    let parts = split_ws_quotes(&t["symbols(".len()..t.len() - 1]);
+    if parts.is_empty() {
+        return false;
+    }
+    let (ty, syms): (&str, &[String]) = match symbols_type(&parts[0]) {
+        Some(ty) => (ty, &parts[1..]),
+        None => ("symbolic", &parts[..]),
+    };
+    if syms.is_empty() || !syms.iter().all(|s| is_css_string(s)) {
+        return false;
+    }
+    !(matches!(ty, "alphabetic" | "numeric") && syms.len() < 2)
+}
+
+// list-style-type(§CSS Lists): <counter-style> | <string> | none.
+// <counter-style> = <counter-style-name>(predefined 또는 custom-ident) | symbols().
+pub fn list_style_type_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let toks = split_top_tokens(t);
+    if toks.len() != 1 {
+        return false;
+    }
+    let tok = &toks[0];
+    if is_css_string(tok) {
+        return true;
+    }
+    if tok.to_ascii_lowercase().starts_with("symbols(") {
+        return symbols_valid(tok);
+    }
+    let low = tok.to_ascii_lowercase();
+    !matches!(low.as_str(), "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+        && is_css_ident(tok)
+}
+
+// list-style-type 캐논: symbols() 의 기본 type(symbolic) 생략.
+pub fn list_style_type_canonical(raw: &str) -> String {
+    let t = raw.trim();
+    if !t.to_ascii_lowercase().starts_with("symbols(") || !t.ends_with(')') {
+        return t.to_string();
+    }
+    let parts = split_ws_quotes(&t["symbols(".len()..t.len() - 1]);
+    let mut out: Vec<String> = Vec::new();
+    let syms = match symbols_type(parts.first().map(|s| s.as_str()).unwrap_or("")) {
+        Some("symbolic") => &parts[1..],
+        Some(ty) => {
+            out.push(ty.to_string());
+            &parts[1..]
+        }
+        None => &parts[..],
+    };
+    for s in syms {
+        out.push(s.clone());
+    }
+    format!("symbols({})", out.join(" "))
+}
+
 // z-index(§CSS 2): auto | <integer>(부호 무관).
 pub fn z_index_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();
