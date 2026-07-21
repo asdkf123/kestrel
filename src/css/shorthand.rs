@@ -1739,7 +1739,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // letter-spacing(§CSS Text): normal | <length>. tab-size: <number 0+> | <length 0+>.
         // hyphenate-character: auto | <string>.
-        "letter-spacing" | "tab-size" | "hyphenate-character" => {
+        "letter-spacing" | "word-spacing" | "tab-size" | "hyphenate-character" => {
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
@@ -1747,7 +1747,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let single = split_top_level(v).len() == 1;
             let ok = single && match name {
-                "letter-spacing" => low == "normal" || crate::css::margin_value_valid(v) && low != "auto",
+                // letter-spacing/word-spacing: normal | <length-percentage>(부호·calc 허용).
+                "letter-spacing" | "word-spacing" => low == "normal" || crate::css::margin_value_valid(v) && low != "auto",
                 "tab-size" => !low.contains('%') && (crate::css::nonneg_lp_valid(v) || v.parse::<f32>().map(|n| n >= 0.0).unwrap_or(false)),
                 "hyphenate-character" => low == "auto" || (v.len() >= 2 && (v.starts_with('"') || v.starts_with('\'')) && v.ends_with(v.chars().next().unwrap())),
                 _ => false,
@@ -1761,6 +1762,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()))
             };
             vec![Declaration { important: false, name: name.to_string(), value }]
+        }
+        // hyphens: none|manual|auto. text-justify: auto|none|inter-word|inter-character.
+        // 단일 키워드만 — 다중 토큰/무효값 거부.
+        "hyphens" | "text-justify" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "hyphens" => matches!(low.as_str(), "none" | "manual" | "auto"),
+                _ => matches!(low.as_str(), "auto" | "none" | "inter-word" | "inter-character"),
+            };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
         }
         // word-space-transform(§CSS Text 4): none | [ space | ideographic-space ] || auto-phrase.
         "word-space-transform" => {
@@ -2168,7 +2186,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 예전엔 interpret_value(키워드) 가 None 이라 선언이 통째로 드롭돼 getComputedStyle
         // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
         "appearance" | "-webkit-appearance" | "-webkit-user-select"
-        | "pointer-events" | "touch-action" | "hyphens"
+        | "pointer-events" | "touch-action"
         | "isolation"
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "transform-style"
@@ -2177,7 +2195,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
         | "quotes" | "scrollbar-width" | "scrollbar-color"
-        | "mask-type" | "text-justify"
+        | "mask-type"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
