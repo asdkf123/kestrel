@@ -2432,6 +2432,28 @@ fn is_length_percentage(tok: &str) -> bool {
     LEN_UNITS.contains(&unit)
 }
 
+// scroll-snap-type 유효성(§CSS Scroll Snap): none | [x|y|block|inline|both]
+// [mandatory|proximity]?. axis 먼저, strictness 나중. 순서 뒤바뀜·중복·none 혼합 거부.
+pub fn scroll_snap_type_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    let is_axis = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "x" | "y" | "block" | "inline" | "both");
+    let is_strict = |t: &str| matches!(t.to_ascii_lowercase().as_str(), "mandatory" | "proximity");
+    match toks.as_slice() {
+        [a] => a.eq_ignore_ascii_case("none") || is_axis(a),
+        [a, b] => is_axis(a) && is_strict(b),
+        _ => false,
+    }
+}
+
+// scroll-snap-type 캐논 직렬화(§CSS Scroll Snap): 기본 strictness(proximity) 생략.
+pub fn scroll_snap_type_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.len() == 2 && toks[1].eq_ignore_ascii_case("proximity") {
+        return toks[0].to_ascii_lowercase();
+    }
+    toks.iter().map(|t| t.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")
+}
+
 fn is_math_fn(low: &str) -> bool {
     low.ends_with(')')
         && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]

@@ -340,6 +340,10 @@ impl Interp {
         if matches!(prop, "scroll-margin" | "scroll-padding") {
             return crate::css::box_canonical(raw);
         }
+        // scroll-snap-type(§CSS Scroll Snap): 기본 strictness(proximity) 생략.
+        if prop == "scroll-snap-type" && crate::css::scroll_snap_type_valid(raw) {
+            return crate::css::scroll_snap_type_canonical(raw);
+        }
         // scrollbar-gutter(§CSS Overflow): stable both-edges 순서로 캐논.
         if prop == "scrollbar-gutter" {
             let low = raw.trim().to_ascii_lowercase();
@@ -514,6 +518,7 @@ impl Interp {
                     | "scroll-padding-block-end"
                     | "scroll-padding-inline-start"
                     | "scroll-padding-inline-end"
+                    | "scroll-snap-type"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

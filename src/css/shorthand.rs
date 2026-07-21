@@ -106,6 +106,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "scroll-padding-left" => return scroll_side(name, value_text, true),
         "scroll-margin" => return scroll_box("scroll-margin", value_text, false),
         "scroll-padding" => return scroll_box("scroll-padding", value_text, true),
+        // scroll-snap-type(§CSS Scroll Snap): none | <axis> [strictness]?.
+        "scroll-snap-type" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::scroll_snap_type_valid(value_text) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::scroll_snap_type_canonical(value_text)) }];
+            }
+            return Vec::new();
+        }
         // top/right/bottom/left(§CSS Position): <length-percentage> | auto. 각도·단위없는
         // 비영·기타 키워드 거부. 유효값은 interpret_value 로 저장(레이아웃 불변). inset
         // 논리 프로퍼티가 여기로 매핑되므로 함께 검증된다.
@@ -946,7 +957,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-decoration-style" | "text-underline-position" | "will-change"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
-        | "overscroll-behavior-y" | "scroll-snap-type" | "scroll-snap-align"
+        | "overscroll-behavior-y" | "scroll-snap-align"
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
         | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.

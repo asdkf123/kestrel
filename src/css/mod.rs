@@ -80,6 +80,8 @@ pub(crate) use values::inset_pair_canonical;
 pub(crate) use values::scroll_margin_valid;
 pub(crate) use values::scroll_padding_valid;
 pub(crate) use values::box_canonical;
+pub(crate) use values::scroll_snap_type_valid;
+pub(crate) use values::scroll_snap_type_canonical;
 pub(crate) use values::text_autospace_valid;
 pub(crate) use values::text_autospace_canonical;
 pub(crate) use values::timing_function_canonical;
