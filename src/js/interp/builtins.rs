@@ -8265,7 +8265,12 @@ impl Interp {
                 Some(Value::Dom(id)) => {
                     let raw = args.first().map(to_display).unwrap_or_default();
                     let name = self.attr_name(id, &raw)?;
-                    let value = args.get(1).map(to_display).unwrap_or_default();
+                    // 값은 ToString 강제변환(§DOM DOMString) — 객체의 toString/valueOf 를
+                    // 호출한다. to_display 는 "[object Object]" 로 눌러 버렸다.
+                    let value = match args.get(1) {
+                        Some(v) => self.to_string_value(v)?,
+                        None => String::new(),
+                    };
                     let dom = self.dom_arena()?;
                     dom.set_attr(id, &name, value);
                     Ok(Value::Undefined)

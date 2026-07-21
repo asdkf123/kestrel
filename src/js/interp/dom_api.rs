@@ -1501,7 +1501,9 @@ impl Interp {
             }
             return Ok(());
         }
-        let text = to_display(&value);
+        // DOMString 반영 속성 대입은 ToString 강제변환(§Web IDL) — 객체의 toString/
+        // valueOf 를 호출한다. to_display 는 "[object Object]" 로 눌러 버렸다.
+        let text = self.to_string_value(&value)?;
         let dom = self.dom_arena()?;
         match key {
             "textContent" => {
