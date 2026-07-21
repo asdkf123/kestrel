@@ -1416,6 +1416,34 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // css-overflow 계열: text-overflow/continue/max-lines/block-ellipsis/
+        // -webkit-line-clamp 검증.
+        "text-overflow" | "continue" | "max-lines" | "block-ellipsis" | "-webkit-line-clamp" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "text-overflow" => crate::css::text_overflow_valid(value_text),
+                "continue" => matches!(low.as_str(), "normal" | "discard" | "collapse" | "-webkit-legacy"),
+                "max-lines" => crate::css::max_lines_valid(value_text),
+                "block-ellipsis" => crate::css::block_ellipsis_valid(value_text),
+                "-webkit-line-clamp" => crate::css::webkit_line_clamp_valid(value_text),
+                _ => false,
+            };
+            if !ok {
+                return Vec::new();
+            }
+            // max-lines 는 정수 먼저 캐논, 나머지는 원문(문자열 대소문자 보존).
+            let v = if name == "max-lines" {
+                crate::css::max_lines_canonical(value_text)
+            } else if name == "text-overflow" || name == "block-ellipsis" {
+                value_text.trim().to_string()
+            } else {
+                low
+            };
+            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+        }
         // text-underline-position(§CSS Text Decor): auto | [from-font|under] || [left|right].
         "text-underline-position" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1631,7 +1659,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "font-feature-settings"
         | "font-palette"
         | "text-size-adjust"
-        | "-webkit-text-size-adjust" | "-webkit-box-orient" | "-webkit-line-clamp"
+        | "-webkit-text-size-adjust" | "-webkit-box-orient"
         | "line-clamp" | "-webkit-box-align" | "-webkit-box-pack" | "zoom"
         | "math-style" | "math-depth" | "math-shift"
         // 8차: 순수 키워드 롱핸드.

@@ -4217,6 +4217,107 @@ fn nonneg_length(t: &str) -> bool {
     is_length_percentage(t)
 }
 
+// <string> 리터럴: 따옴표로 감싸고 같은 따옴표로 닫힘.
+fn is_css_string(t: &str) -> bool {
+    let t = t.trim();
+    let b = t.as_bytes();
+    b.len() >= 2 && (b[0] == b'"' || b[0] == b'\'') && b[b.len() - 1] == b[0]
+}
+
+// 공백 분리하되 따옴표 문자열은 한 토큰으로 유지.
+fn split_ws_quotes(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => {
+                    quote = Some(c);
+                    cur.push(c);
+                }
+                c if c.is_whitespace() => {
+                    if !cur.is_empty() {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                }
+                _ => cur.push(c),
+            },
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// text-overflow(§CSS UI): [ clip | ellipsis | <string> ]{1,2}.
+pub fn text_overflow_valid(raw: &str) -> bool {
+    let toks = split_ws_quotes(raw.trim());
+    if toks.is_empty() || toks.len() > 2 {
+        return false;
+    }
+    toks.iter().all(|t| {
+        let tl = t.to_ascii_lowercase();
+        tl == "clip" || tl == "ellipsis" || is_css_string(t)
+    })
+}
+
+// max-lines(§CSS Overflow 4): [ <integer [1,∞]> || auto ]. 캐논은 정수 먼저.
+pub fn max_lines_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 2 {
+        return false;
+    }
+    let (mut ints, mut autos) = (0u32, 0u32);
+    for t in toks {
+        if t == "auto" {
+            autos += 1;
+        } else if is_math_fn(t) || matches!(t.parse::<i64>(), Ok(n) if n >= 1) {
+            ints += 1;
+        } else {
+            return false;
+        }
+    }
+    ints <= 1 && autos <= 1 && ints + autos >= 1
+}
+
+pub fn max_lines_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    let mut out: Vec<&str> = Vec::new();
+    if let Some(t) = toks.iter().find(|t| **t != "auto") {
+        out.push(t);
+    }
+    if toks.contains(&"auto") {
+        out.push("auto");
+    }
+    out.join(" ")
+}
+
+// block-ellipsis(§CSS Overflow 4): no-ellipsis | ellipsis | <string>. 단일 토큰.
+pub fn block_ellipsis_valid(raw: &str) -> bool {
+    let toks = split_ws_quotes(raw.trim());
+    if toks.len() != 1 {
+        return false;
+    }
+    matches!(toks[0].to_ascii_lowercase().as_str(), "no-ellipsis" | "ellipsis")
+        || is_css_string(&toks[0])
+}
+
+// -webkit-line-clamp / continue 계열 정수: none | <integer [1,∞]>.
+pub fn webkit_line_clamp_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    low == "none" || is_math_fn(&low) || matches!(low.parse::<i64>(), Ok(n) if n >= 1)
+}
+
 // text-decoration-line(§CSS Text Decor): none | spelling-error | grammar-error |
 // [ underline || overline || line-through || blink ]. 단독형은 조합 불가.
 pub fn text_decoration_line_valid(raw: &str) -> bool {

@@ -460,6 +460,10 @@ impl Interp {
         if prop == "text-underline-position" && crate::css::text_underline_position_valid(raw) {
             return crate::css::text_underline_position_canonical(raw);
         }
+        // max-lines(§CSS Overflow 4): 정수 먼저 캐논.
+        if prop == "max-lines" && crate::css::max_lines_valid(raw) {
+            return crate::css::max_lines_canonical(raw);
+        }
         // counter-increment/reset/set(§CSS Lists 3): 기본 정수 추가 캐논.
         if matches!(prop, "counter-increment" | "counter-reset" | "counter-set") {
             let allow_reversed = prop == "counter-reset";
@@ -790,6 +794,11 @@ impl Interp {
                     | "break-inside"
                     | "box-decoration-break"
                     | "text-underline-position"
+                    | "text-overflow"
+                    | "continue"
+                    | "max-lines"
+                    | "block-ellipsis"
+                    | "-webkit-line-clamp"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

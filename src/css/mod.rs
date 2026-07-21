@@ -70,6 +70,10 @@ pub(crate) use values::{
 pub(crate) use values::{counter_list_canonical, counter_list_valid};
 pub(crate) use values::will_change_valid;
 pub(crate) use values::{
+    block_ellipsis_valid, max_lines_canonical, max_lines_valid, text_overflow_valid,
+    webkit_line_clamp_valid,
+};
+pub(crate) use values::{
     positive_integer_valid, text_decoration_line_valid, text_decoration_skip_spaces_valid,
     text_underline_position_canonical, text_underline_position_valid,
 };
