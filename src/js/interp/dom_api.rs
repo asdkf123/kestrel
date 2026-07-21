@@ -430,9 +430,15 @@ impl Interp {
         // 불연속(보간 불가) 값은 transition-behavior:allow-discrete 일 때만 전이한다.
         // 기본(normal)은 전이 없이 to 로 즉시 점프하므로 캡처하지 않는다. transform/
         // scale 등도 interp_prop 이 판정(interp_css_value 는 함수 리스트를 모른다).
+        // 판정: interp 가 None 이거나, 0.25 에서 from 을 그대로 돌려주면(스텝 함수 =
+        // 불연속 플립) 부드러운 보간이 아니다. interp_prop(0.5).is_none() 만으론
+        // 불연속 플립이 Some(to) 를 내 놓쳤다(background-size auto→길이 등).
         let (bw, bh) = self.layout_rects.get(&id).map(|r| (r.2, r.3)).unwrap_or((0.0, 0.0));
         let cc = self.elem_color(id);
-        if Self::interp_prop(prop, &from, &to, 0.5, bw, bh, &cc).is_none() {
+        let smooth = Self::interp_prop(prop, &from, &to, 0.25, bw, bh, &cc)
+            .map(|v| v.trim() != from.trim())
+            .unwrap_or(false);
+        if !smooth {
             let behavior = self.style_get(id, "transition-behavior");
             if !behavior.contains("allow-discrete") {
                 return;
