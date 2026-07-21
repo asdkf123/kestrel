@@ -1559,10 +1559,10 @@ fn place_shorthand(axis: &str, value_text: &str, ap: AlignParams, jp: AlignParam
         }
         let rest = &toks[align_len..];
         let (a_val, j_val) = if rest.is_empty() {
-            if !valid(align, jp) {
-                continue;
-            }
-            (align.join(" "), align.join(" "))
+            // 단일값은 양축에 적용. 단 justify 축에서 무효인 값(place-content 의 baseline)은
+            // start 로 대체된다(§CSS Box Alignment §7).
+            let j = if valid(align, jp) { align.join(" ") } else { "start".to_string() };
+            (align.join(" "), j)
         } else if valid(rest, jp) {
             (align.join(" "), rest.join(" "))
         } else {
