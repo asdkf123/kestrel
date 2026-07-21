@@ -2971,6 +2971,85 @@ pub fn transform_origin_canonical(raw: &str) -> String {
     }
 }
 
+// 계산식이 수/퍼센트만인가(길이/각도/시간 단위 없음). 숫자 뒤에 지수 아닌 알파벳이
+// 오면 단위로 본다(scale 은 <number>|<percentage> 만 허용).
+fn calc_dimensionless(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_digit() || b[i] == b'.' {
+            while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
+                i += 1;
+            }
+            if i < b.len() && (b[i] == b'e' || b[i] == b'E') {
+                let j = i + 1;
+                if j < b.len() && (b[j] == b'+' || b[j] == b'-' || b[j].is_ascii_digit()) {
+                    i += 1;
+                    if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
+                        i += 1;
+                    }
+                    while i < b.len() && b[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                }
+            }
+            if i < b.len() && b[i].is_ascii_alphabetic() {
+                return false; // 숫자 뒤 단위 = 차원 있음
+            }
+        } else {
+            i += 1;
+        }
+    }
+    true
+}
+
+// scale 프로퍼티 유효성(§CSS Transforms 2): none | [<number>|<percentage>]{1,3}.
+pub fn scale_valid(raw: &str) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    if toks.len() == 1 && toks[0] == "none" {
+        return true;
+    }
+    if toks.is_empty() || toks.len() > 3 {
+        return false;
+    }
+    toks.iter().all(|t| {
+        if is_math_fn(t) {
+            return calc_dimensionless(t);
+        }
+        if let Some(n) = t.strip_suffix('%') {
+            return n.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false);
+        }
+        t.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
+    })
+}
+
+// translate 프로퍼티 유효성(§CSS Transforms 2): none | <length-percentage>
+// [<length-percentage> <length>?]?.
+pub fn translate_valid(raw: &str) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    if toks.len() == 1 && toks[0] == "none" {
+        return true;
+    }
+    let is_lp = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+        }
+        is_length_percentage(t)
+    };
+    let is_len = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn") || t.contains('%'));
+        }
+        !t.ends_with('%') && is_length_percentage(t)
+    };
+    match toks.len() {
+        1 => is_lp(&toks[0]),
+        2 => is_lp(&toks[0]) && is_lp(&toks[1]),
+        3 => is_lp(&toks[0]) && is_lp(&toks[1]) && is_len(&toks[2]),
+        _ => false,
+    }
+}
+
 // rotate 프로퍼티 유효성(§CSS Transforms 2): none | <angle> | [x|y|z|<number>{3}] && <angle>.
 pub fn rotate_valid(raw: &str) -> bool {
     let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();

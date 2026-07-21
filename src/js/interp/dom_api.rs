@@ -674,6 +674,8 @@ impl Interp {
                     | "mask-position"
                     | "perspective-origin"
                     | "rotate"
+                    | "scale"
+                    | "translate"
                     | "transform-origin"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")

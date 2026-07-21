@@ -729,6 +729,27 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             return Vec::new();
         }
+        // scale/translate(§CSS Transforms 2): 검증만, 유효값 원문 보존(캐논은 별개).
+        "scale" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::scale_valid(value_text) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+            }
+            return Vec::new();
+        }
+        "translate" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::translate_valid(value_text) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+            }
+            return Vec::new();
+        }
         // rotate(§CSS Transforms 2): none | <angle> | [x|y|z|<number>{3}] && <angle>.
         // 캐논 직렬화(축벡터 단순화)는 별개 — 검증만, 유효값 원문 보존.
         "rotate" => {
@@ -1232,8 +1253,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "math-style" | "math-depth" | "math-shift"
         // 8차: 순수 키워드 롱핸드.
         | "view-transition-name" | "anchor-name"
-        // 9차: 개별 변환 프로퍼티(값 원문 보존 — scale: 1.5 2, translate: 10px 등).
-        | "scale" | "translate"
+        // 9차: 개별 변환(translate 는 아래 arm 에서 검증; scale 도).
         // 10차: corner-shape(round/scoop/bevel/superellipse() 등 — 원문 보존).
         | "corner-shape" | "corner-top-left-shape" | "corner-top-right-shape"
         | "corner-bottom-left-shape" | "corner-bottom-right-shape"
