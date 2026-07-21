@@ -255,6 +255,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                         }
                     } else if let Some(Value::Length(n, _)) = interpret_value(other) {
                         n.clamp(1.0, 1000.0)
+                    } else if other.ends_with(')') && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("].iter().any(|p| other.starts_with(p)) {
+                        // 계산 불가한 calc — 지정값 보존.
+                        return vec![Declaration { important: false, name: "font-weight".to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
                     } else {
                         return Vec::new();
                     }
@@ -1759,6 +1762,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 Vec::new()
             }
+        }
+        // font-size(§CSS Fonts): <absolute-size> | <relative-size> | <length-percentage [0,∞]>.
+        "font-size" => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if matches!(low.as_str(), "xx-small" | "x-small" | "small" | "medium" | "large" | "x-large" | "xx-large" | "xxx-large" | "larger" | "smaller" | "math" | "-webkit-xxx-large") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if split_top_level(v).len() == 1 && crate::css::nonneg_lp_valid(v) {
+                let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()));
+                return vec![Declaration { important: false, name: name.to_string(), value }];
+            }
+            Vec::new()
         }
         // perspective(§CSS Transforms 2): none | <length [0,∞]>(퍼센트 불가).
         "perspective" => {

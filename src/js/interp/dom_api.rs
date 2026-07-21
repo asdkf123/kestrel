@@ -955,6 +955,8 @@ impl Interp {
                     | "perspective"
                     | "font-variant-ligatures"
                     | "font-language-override"
+                    | "font-weight"
+                    | "font-size"
                     | "text-align"
                     | "text-align-last"
                     | "text-align-all"
