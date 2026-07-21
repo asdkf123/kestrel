@@ -9828,6 +9828,39 @@ impl Interp {
     // 개별 transform 프로퍼티 합성(§CSS Transforms 2). scale 은 add=성분별 곱,
     // accumulate=(a-1)+(b-1)+1. 그 외는 add_css_values(같은 단위 수치 합).
     pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        // font-variation-settings/font-feature-settings: 축(태그, 수)별 합산(같은 태그).
+        if matches!(dash, "font-variation-settings" | "font-feature-settings") {
+            let parse = |s: &str| -> Option<Vec<(String, f32)>> {
+                let s = s.replace('"', "'");
+                if s.trim() == "normal" {
+                    return Some(Vec::new());
+                }
+                s.split(',')
+                    .map(|axis| {
+                        let a = axis.trim();
+                        let sp = a.rfind(' ')?;
+                        Some((a[..sp].trim().to_string(), a[sp..].trim().parse::<f32>().ok()?))
+                    })
+                    .collect()
+            };
+            let mut out = parse(base)?;
+            for (tag, n) in parse(kf)? {
+                if let Some(e) = out.iter_mut().find(|(t, _)| *t == tag) {
+                    e.1 += n;
+                } else {
+                    out.push((tag, n));
+                }
+            }
+            if out.is_empty() {
+                return Some("normal".to_string());
+            }
+            return Some(
+                out.iter()
+                    .map(|(t, n)| format!("{} {}", t, crate::style::num_css(*n)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
         // font-size-adjust: [metric] <number>. 같은 metric 이면 수 합산. 기본 metric
         // (ex-height)은 계산값에서 생략.
         if dash == "font-size-adjust" {
