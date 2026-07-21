@@ -100,16 +100,45 @@ impl Interp {
                     }
                 }
             }
-            Reflect::Long => Value::Num(match raw.as_deref().and_then(parse_int) {
-                Some(v) if (-2147483648..=2147483647).contains(&v) => v as f64,
-                _ => 0.0,
-            }),
-            Reflect::UnsignedLong => Value::Num(match raw.as_deref().and_then(parse_int) {
-                Some(v) if (0..=2147483647).contains(&v) => v as f64,
-                _ => 0.0,
-            }),
+            // 수치 반영: 기본값은 표의 missing(§HTML). 기본값이 음수면 "limited to only
+            // non-negative numbers"(maxLength=-1) — 음수/무효는 기본값.
+            Reflect::Long => {
+                let default = spec.missing.and_then(parse_int).unwrap_or(0);
+                let non_negative = default < 0;
+                Value::Num(match raw.as_deref().and_then(parse_int) {
+                    Some(v)
+                        if (-2147483648..=2147483647).contains(&v)
+                            && !(non_negative && v < 0) =>
+                    {
+                        v as f64
+                    }
+                    _ => default as f64,
+                })
+            }
+            // unsigned long: 기본값이 양수면 "limited to only positive numbers"(rows=2,
+            // cols=20, size=20) — 0/음수/무효는 기본값. 아니면 [0,2^31-1].
+            Reflect::UnsignedLong => {
+                let default = spec.missing.and_then(parse_int).unwrap_or(0);
+                let limited_positive = default >= 1;
+                Value::Num(match raw.as_deref().and_then(parse_int) {
+                    Some(v)
+                        if (0..=2147483647).contains(&v)
+                            && !(limited_positive && v < 1) =>
+                    {
+                        v as f64
+                    }
+                    _ => default as f64,
+                })
+            }
+            // double: 기본값은 missing. 기본값이 양수면 "limited to numbers greater than
+            // zero"(progress.max=1) — 0 이하는 기본값.
             Reflect::Double => {
-                Value::Num(raw.as_deref().and_then(parse_double).unwrap_or(0.0))
+                let default = spec.missing.and_then(parse_double).unwrap_or(0.0);
+                let limited_positive = default > 0.0;
+                Value::Num(match raw.as_deref().and_then(parse_double) {
+                    Some(v) if v.is_finite() && !(limited_positive && v <= 0.0) => v,
+                    _ => default,
+                })
             }
             // classList/relList 등은 전용 뷰가 이미 있다 — 여기서 다루지 않는다
             Reflect::TokenList => return Ok(None),
