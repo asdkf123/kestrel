@@ -729,6 +729,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             return Vec::new();
         }
+        // corner-shape 계열(§CSS Borders 4): [<corner-shape-value>]{1,N}. N=4(corner-shape),
+        // 2(변/논리 축 단축), 1(단일 코너 롱핸드). 유효값 원문 보존.
+        "corner-shape"
+        | "corner-top-shape" | "corner-bottom-shape" | "corner-left-shape" | "corner-right-shape"
+        | "corner-block-shape" | "corner-inline-shape"
+        | "corner-top-left-shape" | "corner-top-right-shape" | "corner-bottom-left-shape"
+        | "corner-bottom-right-shape" | "corner-block-start-shape" | "corner-block-end-shape"
+        | "corner-inline-start-shape" | "corner-inline-end-shape" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let max = match name {
+                "corner-shape" => 4,
+                "corner-top-left-shape" | "corner-top-right-shape" | "corner-bottom-left-shape"
+                | "corner-bottom-right-shape" => 1,
+                _ => 2, // 변(top/bottom/left/right)·논리 축·논리 모서리 단축은 2코너.
+            };
+            if crate::css::corner_shape_list_valid(value_text, max) {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::corner_shape_canonical(value_text)) }];
+            }
+            return Vec::new();
+        }
         // scale/translate(§CSS Transforms 2): 검증만, 유효값 원문 보존(캐논은 별개).
         "scale" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1254,13 +1277,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 8차: 순수 키워드 롱핸드.
         | "view-transition-name" | "anchor-name"
         // 9차: 개별 변환(translate 는 아래 arm 에서 검증; scale 도).
-        // 10차: corner-shape(round/scoop/bevel/superellipse() 등 — 원문 보존).
-        | "corner-shape" | "corner-top-left-shape" | "corner-top-right-shape"
-        | "corner-bottom-left-shape" | "corner-bottom-right-shape"
-        | "corner-block-start-shape" | "corner-block-end-shape"
-        | "corner-inline-start-shape" | "corner-inline-end-shape" | "corner-top-shape"
-        | "corner-bottom-shape" | "corner-left-shape" | "corner-right-shape"
-        | "corner-block-shape" | "corner-inline-shape"
         // 11차: border-image 롱핸드(원문 보존 — none/url/gradient/수치 목록).
         | "border-image-source" | "border-image-slice" | "border-image-width"
         | "border-image-outset"

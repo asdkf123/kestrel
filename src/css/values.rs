@@ -3003,6 +3003,65 @@ fn calc_dimensionless(s: &str) -> bool {
     true
 }
 
+// corner-shape 한 값 유효성(§CSS Borders 4): round|scoop|bevel|notch|square|squircle|
+// superellipse(<number>).
+pub fn corner_shape_value_valid(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "round" | "scoop" | "bevel" | "notch" | "square" | "squircle") {
+        return true;
+    }
+    if let Some(inner) = low.strip_prefix("superellipse(").and_then(|x| x.strip_suffix(')')) {
+        let n = inner.trim();
+        // <number>(infinity/-infinity/nan 키워드 포함) 또는 calc. "1 abc"/"8 8"/"," 는 거부.
+        return !n.is_empty() && (n.parse::<f64>().is_ok() || is_math_fn(n));
+    }
+    false
+}
+
+// corner-shape 계열 유효성(§CSS Borders 4): [<corner-shape-value>]{1,max}.
+pub fn corner_shape_list_valid(raw: &str, max: usize) -> bool {
+    let toks = split_top_level(raw);
+    !toks.is_empty() && toks.len() <= max && toks.iter().all(|t| corner_shape_value_valid(t))
+}
+
+// corner-shape 캐논 직렬화: superellipse 인자 공백 정리, TRBL 박스 축약(4→1/2/3).
+pub fn corner_shape_canonical(raw: &str) -> String {
+    let vals: Vec<String> = split_top_level(raw)
+        .iter()
+        .map(|t| {
+            let low = t.to_ascii_lowercase();
+            if let Some(inner) = low.strip_prefix("superellipse(").and_then(|x| x.strip_suffix(')'))
+            {
+                format!("superellipse({})", inner.trim())
+            } else {
+                low
+            }
+        })
+        .collect();
+    match vals.len() {
+        4 => {
+            let (a, b, c, d) = (&vals[0], &vals[1], &vals[2], &vals[3]);
+            if a == b && b == c && c == d {
+                a.clone()
+            } else if a == c && b == d {
+                format!("{} {}", a, b)
+            } else if b == d {
+                format!("{} {} {}", a, b, c)
+            } else {
+                vals.join(" ")
+            }
+        }
+        2 => {
+            if vals[0] == vals[1] {
+                vals[0].clone()
+            } else {
+                vals.join(" ")
+            }
+        }
+        _ => vals.join(" "),
+    }
+}
+
 // scale 프로퍼티 유효성(§CSS Transforms 2): none | [<number>|<percentage>]{1,3}.
 pub fn scale_valid(raw: &str) -> bool {
     let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();

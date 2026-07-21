@@ -422,6 +422,12 @@ impl Interp {
                 return if w == h { w } else { format!("{} {}", w, h) };
             }
         }
+        // corner-shape 계열(§CSS Borders 4): superellipse 인자 공백 정리.
+        if (prop.starts_with("corner-") && prop.ends_with("-shape")) || prop == "corner-shape" {
+            if crate::css::corner_shape_list_valid(raw, 4) {
+                return normalize_numbers(&crate::css::corner_shape_canonical(raw));
+            }
+        }
         // aspect-ratio(§CSS Sizing): auto 앞, <ratio> "a / b" 캐논.
         if prop == "aspect-ratio" && crate::css::aspect_ratio_valid(raw) {
             return crate::css::aspect_ratio_canonical(raw);
@@ -677,6 +683,21 @@ impl Interp {
                     | "scale"
                     | "translate"
                     | "transform-origin"
+                    | "corner-shape"
+                    | "corner-top-shape"
+                    | "corner-bottom-shape"
+                    | "corner-left-shape"
+                    | "corner-right-shape"
+                    | "corner-block-shape"
+                    | "corner-inline-shape"
+                    | "corner-top-left-shape"
+                    | "corner-top-right-shape"
+                    | "corner-bottom-left-shape"
+                    | "corner-bottom-right-shape"
+                    | "corner-block-start-shape"
+                    | "corner-block-end-shape"
+                    | "corner-inline-start-shape"
+                    | "corner-inline-end-shape"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
