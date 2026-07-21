@@ -1331,8 +1331,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // border-spacing: <h> [<v>]. 두 값 원문 보존 (레이아웃이 이미 두 값을 읽는다).
         // background-size: cover | contain | [<length-percentage> | auto]{1,2}. 다중 토큰
         // 원문 보존 (페인트가 파싱). 예전엔 "50% 25%" 가 사라져 auto 로 그려졌다.
-        "background-size" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        // background-size/repeat/attachment: 문법 검증 후 원문 보존(레이어 리스트).
+        "background-size" | "background-repeat" | "background-attachment" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "background-size" => crate::css::background_size_valid(t),
+                "background-repeat" => crate::css::background_repeat_valid(t),
+                _ => crate::css::background_attachment_valid(t),
+            };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
         }
         // line-height: 단위 없는 수(1.5)는 배수(Lh)로 저장해 상속 시 factor 그대로 —
         // 각 요소가 자기 font-size 를 곱한다(CSS2 §10.8). 퍼센트(150%)는 요소 font-size
@@ -2155,7 +2170,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "appearance" | "-webkit-appearance" | "-webkit-user-select"
         | "pointer-events" | "touch-action" | "hyphens"
         | "isolation"
-        | "background-attachment"
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "transform-style"
         | "background-blend-mode"
@@ -2508,7 +2522,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // color(§CSS Color): <color>. CSS-wide 통과, 그 외는 실제 색만 수용(무효 명명/
         // 숫자/키워드 거부). 계산 불가하지만 문법 유효한 색 함수는 지정값 보존.
-        "color" => {
+        // color / background-color: 단일 <color>. none/다중토큰/콤마 거부.
+        "color" | "background-color" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];

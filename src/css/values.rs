@@ -4888,6 +4888,76 @@ fn nonneg_percent(t: &str) -> bool {
         || low.strip_suffix('%').map(|n| n.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)).unwrap_or(false)
 }
 
+// 괄호 밖 최상위 콤마로 레이어 분리(background-* 리스트).
+fn split_commas_top(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in raw.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => {
+                out.push(cur.trim().to_string());
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
+// background-repeat(§CSS Backgrounds): <repeat-style>#.
+// 레이어 = repeat-x | repeat-y | [ repeat|space|round|no-repeat ]{1,2}.
+pub fn background_repeat_valid(raw: &str) -> bool {
+    let layers = split_commas_top(raw);
+    !layers.is_empty() && layers.iter().all(|l| repeat_style_layer_valid(l))
+}
+fn repeat_style_layer_valid(l: &str) -> bool {
+    let toks: Vec<&str> = l.split_whitespace().collect();
+    match toks.len() {
+        1 => matches!(
+            toks[0].to_ascii_lowercase().as_str(),
+            "repeat-x" | "repeat-y" | "repeat" | "space" | "round" | "no-repeat"
+        ),
+        2 => toks
+            .iter()
+            .all(|t| matches!(t.to_ascii_lowercase().as_str(), "repeat" | "space" | "round" | "no-repeat")),
+        _ => false,
+    }
+}
+
+// background-size(§CSS Backgrounds): <bg-size>#.
+// 레이어 = [ <length-percentage [0,∞]> | auto ]{1,2} | cover | contain.
+pub fn background_size_valid(raw: &str) -> bool {
+    let layers = split_commas_top(raw);
+    !layers.is_empty() && layers.iter().all(|l| bg_size_layer_valid(l))
+}
+fn bg_size_layer_valid(l: &str) -> bool {
+    let low = l.trim().to_ascii_lowercase();
+    if low == "cover" || low == "contain" {
+        return true;
+    }
+    let toks = split_top_level(l.trim());
+    !toks.is_empty()
+        && toks.len() <= 2
+        && toks.iter().all(|t| t.eq_ignore_ascii_case("auto") || nonneg_length_percentage(t))
+}
+
+// background-attachment(§CSS Backgrounds): [ scroll | fixed | local ]#.
+pub fn background_attachment_valid(raw: &str) -> bool {
+    let layers = split_commas_top(raw);
+    !layers.is_empty()
+        && layers.iter().all(|l| matches!(l.trim().to_ascii_lowercase().as_str(), "scroll" | "fixed" | "local"))
+}
+
 // border-image-repeat(§CSS Backgrounds): [ stretch|repeat|round|space ]{1,2}.
 pub fn border_image_repeat_valid(raw: &str) -> bool {
     let toks: Vec<&str> = raw.split_whitespace().collect();
