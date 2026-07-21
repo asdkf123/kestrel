@@ -2330,6 +2330,77 @@ pub fn time_list_valid(raw: &str, allow_negative: bool) -> bool {
     })
 }
 
+// font-variant 단축 토큰의 하위 카테고리(§CSS Fonts). 같은 카테고리 중복 금지.
+// 함수형 alternates(stylistic() 등)는 함수명으로 분류한다.
+fn font_variant_category(tok: &str) -> Option<&'static str> {
+    let low = tok.to_ascii_lowercase();
+    if let Some(paren) = low.find('(') {
+        if !low.ends_with(')') {
+            return None;
+        }
+        return match &low[..paren] {
+            "stylistic" => Some("alt-stylistic"),
+            "styleset" => Some("alt-styleset"),
+            "character-variant" => Some("alt-charvar"),
+            "swash" => Some("alt-swash"),
+            "ornaments" => Some("alt-ornaments"),
+            "annotation" => Some("alt-annotation"),
+            _ => None,
+        };
+    }
+    match low.as_str() {
+        "common-ligatures" | "no-common-ligatures" => Some("lig-common"),
+        "discretionary-ligatures" | "no-discretionary-ligatures" => Some("lig-disc"),
+        "historical-ligatures" | "no-historical-ligatures" => Some("lig-hist"),
+        "contextual" | "no-contextual" => Some("lig-ctx"),
+        "small-caps" | "all-small-caps" | "petite-caps" | "all-petite-caps" | "unicase"
+        | "titling-caps" => Some("caps"),
+        "lining-nums" | "oldstyle-nums" => Some("num-fig"),
+        "proportional-nums" | "tabular-nums" => Some("num-spc"),
+        "diagonal-fractions" | "stacked-fractions" => Some("num-frac"),
+        "ordinal" => Some("ordinal"),
+        "slashed-zero" => Some("slashed-zero"),
+        "jis78" | "jis83" | "jis90" | "jis04" | "simplified" | "traditional" => Some("ea-variant"),
+        "full-width" | "proportional-width" => Some("ea-width"),
+        "ruby" => Some("ruby"),
+        "sub" | "super" => Some("position"),
+        "historical-forms" => Some("alt-historical"),
+        _ => None,
+    }
+}
+
+// font-variant 단축 유효성(§CSS Fonts). normal/none 은 단독만, 각 하위 카테고리는
+// 최대 1회(충돌·중복 거부), 미인식 토큰 거부.
+pub fn font_variant_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    if toks.is_empty() {
+        return false;
+    }
+    if toks.len() == 1 {
+        let low = toks[0].to_ascii_lowercase();
+        if low == "normal" || low == "none" {
+            return true;
+        }
+    }
+    let mut seen: Vec<&'static str> = Vec::new();
+    for t in &toks {
+        let low = t.to_ascii_lowercase();
+        if low == "normal" || low == "none" {
+            return false; // 다른 토큰과 함께 오면 무효
+        }
+        match font_variant_category(t) {
+            Some(cat) => {
+                if seen.contains(&cat) {
+                    return false; // 같은 카테고리 중복
+                }
+                seen.push(cat);
+            }
+            None => return false, // 미인식 토큰
+        }
+    }
+    true
+}
+
 // transition-property 유효성(§CSS Transitions): none | <custom-ident>#.
 // 각 항목은 유효 식별자(all 포함)이고 none/CSS-wide 키워드/default 는 항목이 될 수 없다.
 pub fn transition_property_valid(raw: &str) -> bool {

@@ -234,6 +234,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-variant 단축(§CSS Fonts): 하위 카테고리 충돌·중복·미인식 토큰 거부.
+        // normal/none 단독만 허용. 유효값은 원문 보존(현행 동작 유지). CSS-wide 통과.
+        "font-variant" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::font_variant_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // transition-property(§CSS Transitions): none | <custom-ident>#. 항목별 유효
         // 식별자 검증(none/CSS-wide/default 항목 거부). CSS-wide 전체값은 통과.
         "transition-property" => {
