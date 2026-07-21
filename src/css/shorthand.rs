@@ -920,9 +920,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Declaration { important: false, name: "flex-basis".to_string(), value: basis },
             ]
         }
-        // grid 트랙/영역 정의는 다중 토큰 → 원문을 Keyword 로 보존, 레이아웃이 파싱.
-        "grid-template-columns" | "grid-template-rows" | "grid-template-areas" => {
+        // grid-template-areas 는 <string>+ 문법 → 원문 보존, 레이아웃이 파싱.
+        "grid-template-areas" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
+        }
+        // grid-template-columns/rows(§CSS Grid): none | <track-list> | <auto-track-list>.
+        // 검증만 하고 유효하면 원문 보존(레이아웃이 파싱). CSS-wide 는 통과.
+        "grid-template-columns" | "grid-template-rows" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::grid_template_track_valid(value_text)
+            {
+                let canon = if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                    low
+                } else {
+                    crate::css::grid_template_track_canonical(value_text)
+                };
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }]
+            } else {
+                Vec::new()
+            }
         }
         // grid-row/grid-column(§CSS Grid): <grid-line> [/ <grid-line>]?.
         // start = 첫 줄, end = 둘째 줄. 슬래시 없으면 첫 줄이 순수 custom-ident 면

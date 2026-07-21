@@ -3999,6 +3999,242 @@ pub fn grid_area_valid(raw: &str) -> bool {
     !parts.is_empty() && parts.len() <= 4 && parts.iter().all(|p| grid_line_valid(p.trim()))
 }
 
+// ===== grid-template-columns/rows: <track-list> | <auto-track-list> 검증 =====
+
+// 부호 없는 <length-percentage>(음수 리터럴 거부). calc 등 수식은 파스 타임 허용
+// (범위 검사는 계산값 시점, calc(-0.5em+10px) 도 유효).
+fn nonneg_length_percentage(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if low.starts_with('-') {
+        return false;
+    }
+    is_math_fn(&low) || is_length_percentage(t)
+}
+
+// 부호 없는 <flex>("3fr", "0fr"). 음수 거부.
+fn nonneg_flex(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    match low.strip_suffix("fr") {
+        Some(num) => num.parse::<f64>().map(|v| v.is_finite() && v >= 0.0).unwrap_or(false),
+        None => false,
+    }
+}
+
+// <track-breadth> = <length-percentage 0+> | <flex 0+> | min-content | max-content | auto
+fn track_breadth_valid(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    matches!(low.as_str(), "min-content" | "max-content" | "auto")
+        || nonneg_flex(t)
+        || nonneg_length_percentage(t)
+}
+
+// <inflexible-breadth> = <length-percentage 0+> | min-content | max-content | auto (flex 제외)
+fn inflexible_breadth_valid(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    matches!(low.as_str(), "min-content" | "max-content" | "auto") || nonneg_length_percentage(t)
+}
+
+// <fixed-breadth> = <length-percentage 0+>
+fn fixed_breadth_valid(t: &str) -> bool {
+    nonneg_length_percentage(t)
+}
+
+// name( ... ) 인자 목록 추출(최상위 콤마 분리). 아니면 None.
+fn fn_args(t: &str, name: &str) -> Option<Vec<String>> {
+    let s = t.trim();
+    if !s.to_ascii_lowercase().starts_with(name) || !s.ends_with(')') {
+        return None;
+    }
+    let inner = &s[name.len()..s.len() - 1];
+    Some(split_top_commas(inner).iter().map(|x| x.trim().to_string()).collect())
+}
+
+// <track-size> = <track-breadth> | minmax(<inflexible-breadth>,<track-breadth>) | fit-content(<lp 0+>)
+fn track_size_valid(t: &str) -> bool {
+    if let Some(a) = fn_args(t, "minmax(") {
+        return a.len() == 2 && inflexible_breadth_valid(&a[0]) && track_breadth_valid(&a[1]);
+    }
+    if let Some(a) = fn_args(t, "fit-content(") {
+        return a.len() == 1 && fixed_breadth_valid(&a[0]);
+    }
+    track_breadth_valid(t)
+}
+
+// <fixed-size> = <fixed-breadth> | minmax(<fixed-breadth>,<track-breadth>)
+//              | minmax(<inflexible-breadth>,<fixed-breadth>). fit-content 은 고정 크기 아님.
+fn fixed_size_valid(t: &str) -> bool {
+    if let Some(a) = fn_args(t, "minmax(") {
+        return a.len() == 2
+            && ((fixed_breadth_valid(&a[0]) && track_breadth_valid(&a[1]))
+                || (inflexible_breadth_valid(&a[0]) && fixed_breadth_valid(&a[1])));
+    }
+    if fn_args(t, "fit-content(").is_some() {
+        return false;
+    }
+    fixed_breadth_valid(t)
+}
+
+// <line-names> = '[' <custom-ident>* ']'. span/auto 예약어 불가. 빈 [] 허용.
+fn line_names_valid(t: &str) -> bool {
+    let s = t.trim();
+    match s.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
+        Some(inner) => inner.split_whitespace().all(grid_ident_valid),
+        None => false,
+    }
+}
+
+// repeat( ... ) 내부 문자열. 아니면 None.
+fn repeat_inner(t: &str) -> Option<String> {
+    let s = t.trim();
+    if s.to_ascii_lowercase().starts_with("repeat(") && s.ends_with(')') {
+        Some(s["repeat(".len()..s.len() - 1].to_string())
+    } else {
+        None
+    }
+}
+
+// 컴포넌트가 auto-repeat(첫 인자 auto-fill|auto-fit)인가.
+fn is_auto_repeat_comp(t: &str) -> bool {
+    match repeat_inner(t) {
+        Some(inner) => {
+            let f = split_top_commas(&inner).first().map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+            f == "auto-fill" || f == "auto-fit"
+        }
+        None => false,
+    }
+}
+
+// 괄호 () 와 대괄호 [] 깊이를 존중해 공백으로 컴포넌트 분리.
+fn split_grid_components(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' | '[' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// [<line-names>? <track>]+ <line-names>? 시퀀스 검증.
+// need_fixed: 트랙이 <fixed-size> 여야(auto-track-list 문맥).
+// allow_repeat: repeat() 허용(top-level 만; repeat 중첩 금지).
+// auto_seen: auto-repeat 누적(전체 목록에 최대 1개).
+fn track_seq_valid(comps: &[String], need_fixed: bool, allow_repeat: bool, auto_seen: &mut u32) -> bool {
+    if comps.is_empty() {
+        return false;
+    }
+    let mut prev_names = false;
+    let mut had_track = false;
+    for c in comps {
+        let cl = c.trim();
+        if cl.starts_with('[') {
+            if !line_names_valid(cl) || prev_names {
+                return false;
+            }
+            prev_names = true;
+            continue;
+        }
+        prev_names = false;
+        if let Some(inner) = repeat_inner(cl) {
+            if !allow_repeat {
+                return false;
+            }
+            let parts = split_top_commas(&inner);
+            if parts.len() < 2 {
+                return false;
+            }
+            let count = parts[0].trim().to_ascii_lowercase();
+            let is_auto = count == "auto-fill" || count == "auto-fit";
+            if is_auto {
+                *auto_seen += 1;
+                if *auto_seen > 1 {
+                    return false;
+                }
+            } else if !matches!(count.parse::<i64>(), Ok(n) if n >= 1) {
+                return false;
+            }
+            let body = split_grid_components(&parts[1..].join(","));
+            if !track_seq_valid(&body, is_auto || need_fixed, false, auto_seen) {
+                return false;
+            }
+            had_track = true;
+        } else {
+            let ok = if need_fixed { fixed_size_valid(cl) } else { track_size_valid(cl) };
+            if !ok {
+                return false;
+            }
+            had_track = true;
+        }
+    }
+    had_track
+}
+
+// grid-template-columns/rows 값(§CSS Grid): none | <track-list> | <auto-track-list>.
+pub fn grid_template_track_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.is_empty() {
+        return false;
+    }
+    if s.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let comps = split_grid_components(s);
+    let has_auto = comps.iter().any(|c| is_auto_repeat_comp(c));
+    let mut auto_seen = 0u32;
+    track_seq_valid(&comps, has_auto, true, &mut auto_seen)
+}
+
+// grid-template-columns/rows 캐논: 빈 [] line-names 제거, repeat 몸통 재귀 정규화.
+pub fn grid_template_track_canonical(raw: &str) -> String {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return "none".to_string();
+    }
+    canon_track_seq(s)
+}
+
+fn canon_track_seq(s: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for c in split_grid_components(s) {
+        let cl = c.trim();
+        if cl.starts_with('[') {
+            // 빈 line-names 는 직렬화에서 생략.
+            let inner = &cl[1..cl.len().saturating_sub(1)];
+            if inner.split_whitespace().next().is_some() {
+                out.push(cl.to_string());
+            }
+        } else if let Some(inner) = repeat_inner(cl) {
+            let parts = split_top_commas(&inner);
+            if parts.len() >= 2 {
+                out.push(format!("repeat({}, {})", parts[0].trim(), canon_track_seq(&parts[1..].join(","))));
+            } else {
+                out.push(cl.to_string());
+            }
+        } else {
+            out.push(cl.to_string());
+        }
+    }
+    out.join(" ")
+}
+
 // 최상위 '/' 분리(함수 괄호 안쪽 슬래시는 보존).
 fn split_top_slash(s: &str) -> Vec<String> {
     let mut out = Vec::new();

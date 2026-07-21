@@ -432,6 +432,12 @@ impl Interp {
         if prop == "aspect-ratio" && crate::css::aspect_ratio_valid(raw) {
             return crate::css::aspect_ratio_canonical(raw);
         }
+        // grid-template-columns/rows(§CSS Grid): 빈 [] line-names 제거.
+        if (prop == "grid-template-columns" || prop == "grid-template-rows")
+            && crate::css::grid_template_track_valid(raw)
+        {
+            return crate::css::grid_template_track_canonical(raw);
+        }
         // flex-flow(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저.
         if prop == "flex-flow" {
             let low = raw.trim().to_ascii_lowercase();
@@ -705,6 +711,8 @@ impl Interp {
                     | "grid-row-end"
                     | "grid-column-start"
                     | "grid-column-end"
+                    | "grid-template-columns"
+                    | "grid-template-rows"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
