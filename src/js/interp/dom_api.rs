@@ -332,6 +332,15 @@ impl Interp {
         if matches!(prop, "inset-block" | "inset-inline") {
             return crate::css::inset_pair_canonical(raw);
         }
+        // scrollbar-gutter(§CSS Overflow): stable both-edges 순서로 캐논.
+        if prop == "scrollbar-gutter" {
+            let low = raw.trim().to_ascii_lowercase();
+            let parts: Vec<&str> = low.split_whitespace().collect();
+            if parts.len() == 2 && parts.contains(&"stable") && parts.contains(&"both-edges") {
+                return "stable both-edges".to_string();
+            }
+            return low;
+        }
         // overflow 단축(§CSSOM): 두 값이 같으면 하나로 축약(visible visible→visible).
         if prop == "overflow" {
             let parts: Vec<String> =
@@ -473,6 +482,7 @@ impl Interp {
                     | "overflow-y"
                     | "overflow-block"
                     | "overflow-inline"
+                    | "scrollbar-gutter"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

@@ -283,6 +283,31 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             Vec::new()
         }
+        // scrollbar-gutter(§CSS Overflow): auto | stable && both-edges?. 순서 무관 입력을
+        // stable 먼저로 캐논화. auto+타값·force·both·길이 등 거부.
+        "scrollbar-gutter" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = split_top_level(value_text.trim());
+            let canon: Option<String> = match toks.as_slice() {
+                [a] if a.eq_ignore_ascii_case("auto") => Some("auto".to_string()),
+                [a] if a.eq_ignore_ascii_case("stable") => Some("stable".to_string()),
+                [a, b]
+                    if (a.eq_ignore_ascii_case("stable") && b.eq_ignore_ascii_case("both-edges"))
+                        || (a.eq_ignore_ascii_case("both-edges") && b.eq_ignore_ascii_case("stable")) =>
+                {
+                    Some("stable both-edges".to_string())
+                }
+                _ => None,
+            };
+            match canon {
+                Some(c) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(c) }],
+                None => Vec::new(),
+            }
+        }
         // contain(§CSS Contain): none|strict|content | [[size|inline-size]||layout||
         // style||paint]. 혼합·중복·미인식 거부. 캐논 순서로 직렬화.
         "contain" => {
@@ -899,7 +924,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "font-variant-ligatures" | "font-variant-numeric" | "font-variant-east-asian"
         | "font-variant-position" | "font-variant-alternates" | "font-language-override"
         | "list-style-position" | "quotes" | "scrollbar-width" | "scrollbar-color"
-        | "scrollbar-gutter" | "mask-type" | "hyphenate-character" | "text-justify"
+        | "mask-type" | "hyphenate-character" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow" | "grid-auto-columns" | "break-before" | "break-after"
         | "break-inside" | "page-break-before" | "page-break-after" | "page-break-inside"
