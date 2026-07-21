@@ -43,6 +43,7 @@ pub(crate) use values::normalize_color_function;
 pub(crate) use values::normalize_lab_like;
 pub(crate) use values::normalize_hsl_hwb;
 pub(crate) use values::normalize_relative_color;
+pub(crate) use values::normalize_white_space;
 pub(crate) use values::resolve_gradient_computed;
 pub(crate) use values::normalize_shape;
 pub(crate) use values::interpret_value;

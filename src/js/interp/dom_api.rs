@@ -261,6 +261,12 @@ impl Interp {
         if prop == "transition" {
             return crate::style::normalize_transition(raw);
         }
+        // white-space 단축(§CSS Text 4): collapse+wrap→normal 등 표준 키워드로.
+        if prop == "white-space" {
+            if let Some(s) = crate::css::normalize_white_space(raw) {
+                return s;
+            }
+        }
         // 개별 변환 프로퍼티 지정값 정규화(§CSS Transforms 2): scale % → 수/축약,
         // rotate 각도 → 도, translate 후행 0. computed 와 같은 규칙(함수형 scale() 과
         // 달리 프로퍼티는 축약한다). scale:100 100→"100", rotate:400grad→"360deg".

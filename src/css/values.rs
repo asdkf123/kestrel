@@ -2160,6 +2160,59 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     Some((rgba, serial.into_boxed_str()))
 }
 
+// white-space 단축(§CSS Text 4) 캐논: <white-space-collapse> || <text-wrap-mode> 를
+// 표준 키워드로(collapse+wrap→normal, preserve+nowrap→pre 등). 컴포넌트/키워드 모두 받음.
+pub fn normalize_white_space(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if low.is_empty() {
+        return None;
+    }
+    // 단일 단축 키워드 → (collapse, wrap) 성분.
+    let (mut collapse, mut wrap) = match low.as_str() {
+        "normal" => ("collapse", "wrap"),
+        "pre" => ("preserve", "nowrap"),
+        "nowrap" => ("collapse", "nowrap"),
+        "pre-wrap" => ("preserve", "wrap"),
+        "pre-line" => ("preserve-breaks", "wrap"),
+        _ => {
+            // 컴포넌트 형태: collapse/preserve/… + wrap/nowrap.
+            let (mut c, mut w) = ("collapse", "wrap");
+            let (mut sc, mut sw) = (false, false);
+            for tok in low.split_whitespace() {
+                match tok {
+                    "collapse" | "preserve" | "preserve-breaks" | "preserve-spaces"
+                    | "break-spaces" => {
+                        c = tok;
+                        sc = true;
+                    }
+                    "wrap" | "nowrap" => {
+                        w = tok;
+                        sw = true;
+                    }
+                    _ => return None,
+                }
+            }
+            if !sc && !sw {
+                return None;
+            }
+            (c, w)
+        }
+    };
+    // 성분 → 표준 키워드(가능하면). 아니면 성분 형태.
+    let _ = (&mut collapse, &mut wrap);
+    Some(
+        match (collapse, wrap) {
+            ("collapse", "wrap") => "normal",
+            ("preserve", "nowrap") => "pre",
+            ("collapse", "nowrap") => "nowrap",
+            ("preserve", "wrap") => "pre-wrap",
+            ("preserve-breaks", "wrap") => "pre-line",
+            _ => return Some(format!("{collapse} {wrap}")),
+        }
+        .to_string(),
+    )
+}
+
 // relative-color(rgb(from <origin> ...)) 지정값 캐논(§CSS Color 5): 레거시 함수명
 // rgba→rgb/hsla→hsl, origin 키워드 소문자화(currentColor→currentcolor), origin 이 색
 // 함수면 재귀 정규화. 채널 표현은 유지.

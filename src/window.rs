@@ -308,6 +308,12 @@ fn fill_js_maps(
                 m.insert("transition".to_string(), crate::style::normalize_transition(tr));
             }
         }
+        // white-space 계산값: collapse+wrap→normal 등 표준 키워드(§CSS Text 4).
+        if let Some(ws) = m.get("white-space") {
+            if let Some(norm) = crate::css::normalize_white_space(ws) {
+                m.insert("white-space".to_string(), norm);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [
