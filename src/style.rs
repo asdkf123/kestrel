@@ -2087,9 +2087,11 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "mask-mode" => "match-source",
         "offset-distance" => "0px",
         "scroll-margin-top" | "scroll-margin-right" | "scroll-margin-bottom"
-        | "scroll-margin-left" => "0px",
+        | "scroll-margin-left" | "scroll-margin-block-start" | "scroll-margin-block-end"
+        | "scroll-margin-inline-start" | "scroll-margin-inline-end" => "0px",
         "scroll-padding-top" | "scroll-padding-right" | "scroll-padding-bottom"
-        | "scroll-padding-left" => "auto",
+        | "scroll-padding-left" | "scroll-padding-block-start" | "scroll-padding-block-end"
+        | "scroll-padding-inline-start" | "scroll-padding-inline-end" => "auto",
         "scroll-snap-stop" => "normal",
         "contain-intrinsic-width" | "contain-intrinsic-height" => "none",
         // 5차: SVG presentation 프로퍼티 초기값(SVG2).

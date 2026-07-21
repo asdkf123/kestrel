@@ -181,6 +181,12 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "offset-anchor", "offset-position", "scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom",
     "scroll-margin-left", "scroll-padding-top", "scroll-padding-right",
     "scroll-padding-bottom", "scroll-padding-left", "scroll-snap-stop", "place-self",
+    // scroll-margin/scroll-padding 단축·논리(§CSS Scroll Snap).
+    "scroll-margin", "scroll-padding",
+    "scroll-margin-block", "scroll-margin-inline", "scroll-padding-block", "scroll-padding-inline",
+    "scroll-margin-block-start", "scroll-margin-block-end", "scroll-margin-inline-start",
+    "scroll-margin-inline-end", "scroll-padding-block-start", "scroll-padding-block-end",
+    "scroll-padding-inline-start", "scroll-padding-inline-end",
     "contain-intrinsic-width", "contain-intrinsic-height",
     // 5차: SVG presentation 프로퍼티(비페인트) — svg/ 및 css 전반에서 대량 테스트.
     "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin",

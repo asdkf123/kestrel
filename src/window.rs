@@ -746,6 +746,30 @@ fn collect_computed_styles(
                 m.insert("overflow-y".to_string(), "auto".to_string());
             }
         }
+        // scroll-padding 은 비음수(§CSS Scroll Snap) — calc 가 음수로 풀리면 0px 로 클램프.
+        for side in ["top", "right", "bottom", "left"] {
+            let key = format!("scroll-padding-{}", side);
+            if let Some(v) = m.get(&key) {
+                if v.starts_with('-') {
+                    m.insert(key, "0px".to_string());
+                }
+            }
+        }
+        // scroll-margin/scroll-padding 논리 롱핸드(논리) 계산값: 수평 쓰기모드 기준 물리축.
+        for (logical, physical) in [
+            ("scroll-margin-block-start", "scroll-margin-top"),
+            ("scroll-margin-block-end", "scroll-margin-bottom"),
+            ("scroll-margin-inline-start", "scroll-margin-left"),
+            ("scroll-margin-inline-end", "scroll-margin-right"),
+            ("scroll-padding-block-start", "scroll-padding-top"),
+            ("scroll-padding-block-end", "scroll-padding-bottom"),
+            ("scroll-padding-inline-start", "scroll-padding-left"),
+            ("scroll-padding-inline-end", "scroll-padding-right"),
+        ] {
+            if let Some(v) = m.get(physical).cloned() {
+                m.insert(logical.to_string(), v);
+            }
+        }
         // overflow-block/overflow-inline(논리) 계산값: 수평 쓰기모드 기준 물리축 값.
         {
             let oy = m.get("overflow-y").cloned().unwrap_or_else(|| "visible".to_string());
@@ -770,8 +794,25 @@ fn collect_computed_styles(
             if vals.iter().any(|v| v.is_empty()) {
                 continue;
             }
-            // 값이 전부 같으면 하나로 (표준 직렬화: gap: 8px, margin: 0px)
-            let joined = if vals.windows(2).all(|w| w[0] == w[1]) {
+            // TRBL 박스 단축(margin/padding/inset/scroll-*)은 CSSOM 규칙대로 1~4 값 축약:
+            // 전부 같으면 1, top==bottom&&right==left 면 2, right==left 면 3, 아니면 4.
+            let is_trbl = longs.len() == 4
+                && longs[0].ends_with("top")
+                && longs[1].ends_with("right")
+                && longs[2].ends_with("bottom")
+                && longs[3].ends_with("left");
+            let joined = if is_trbl {
+                let (t, r, b, l) = (&vals[0], &vals[1], &vals[2], &vals[3]);
+                if t == r && r == b && b == l {
+                    t.clone()
+                } else if t == b && r == l {
+                    format!("{} {}", t, r)
+                } else if r == l {
+                    format!("{} {} {}", t, r, b)
+                } else {
+                    format!("{} {} {} {}", t, r, b, l)
+                }
+            } else if vals.windows(2).all(|w| w[0] == w[1]) {
                 vals[0].clone()
             } else {
                 vals.join(" ")

@@ -328,9 +328,17 @@ impl Interp {
         if prop == "contain" && crate::css::contain_valid(raw) {
             return crate::css::contain_canonical(raw);
         }
-        // inset-block/inset-inline 단축(§CSSOM): 0→0px, 두 값 같으면 축약.
-        if matches!(prop, "inset-block" | "inset-inline") {
+        // inset-block/inset-inline·scroll-*-block/inline 단축(§CSSOM): 0→0px, 두 값 같으면 축약.
+        if matches!(
+            prop,
+            "inset-block" | "inset-inline" | "scroll-margin-block" | "scroll-margin-inline"
+                | "scroll-padding-block" | "scroll-padding-inline"
+        ) {
             return crate::css::inset_pair_canonical(raw);
+        }
+        // scroll-margin/scroll-padding 단축(§CSSOM): TRBL 박스 축약, 0→0px.
+        if matches!(prop, "scroll-margin" | "scroll-padding") {
+            return crate::css::box_canonical(raw);
         }
         // scrollbar-gutter(§CSS Overflow): stable both-edges 순서로 캐논.
         if prop == "scrollbar-gutter" {
@@ -356,7 +364,8 @@ impl Interp {
             prop,
             "outline-offset" | "top" | "right" | "bottom" | "left" | "inset-block-start"
                 | "inset-block-end" | "inset-inline-start" | "inset-inline-end"
-        ) {
+        ) || (prop.starts_with("scroll-margin-") || prop.starts_with("scroll-padding-"))
+        {
             if let Some(v) = crate::css::interpret_value(raw.trim()) {
                 match v {
                     crate::css::Value::Length(n, _) if n == 0.0 => return "0px".to_string(),
@@ -483,6 +492,28 @@ impl Interp {
                     | "overflow-block"
                     | "overflow-inline"
                     | "scrollbar-gutter"
+                    | "scroll-margin"
+                    | "scroll-margin-top"
+                    | "scroll-margin-right"
+                    | "scroll-margin-bottom"
+                    | "scroll-margin-left"
+                    | "scroll-margin-block"
+                    | "scroll-margin-inline"
+                    | "scroll-margin-block-start"
+                    | "scroll-margin-block-end"
+                    | "scroll-margin-inline-start"
+                    | "scroll-margin-inline-end"
+                    | "scroll-padding"
+                    | "scroll-padding-top"
+                    | "scroll-padding-right"
+                    | "scroll-padding-bottom"
+                    | "scroll-padding-left"
+                    | "scroll-padding-block"
+                    | "scroll-padding-inline"
+                    | "scroll-padding-block-start"
+                    | "scroll-padding-block-end"
+                    | "scroll-padding-inline-start"
+                    | "scroll-padding-inline-end"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

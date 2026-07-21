@@ -71,6 +71,41 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "padding-block" => return logical_pair("padding-top", "padding-bottom", value_text),
         "inset-inline" => return logical_pair("left", "right", value_text),
         "inset-block" => return logical_pair("top", "bottom", value_text),
+        // scroll-margin/scroll-padding 논리 → 물리(수평 쓰기모드 기준).
+        "scroll-margin-block-start" => return expand_declaration("scroll-margin-top", value_text),
+        "scroll-margin-block-end" => return expand_declaration("scroll-margin-bottom", value_text),
+        "scroll-margin-inline-start" => return expand_declaration("scroll-margin-left", value_text),
+        "scroll-margin-inline-end" => return expand_declaration("scroll-margin-right", value_text),
+        "scroll-margin-block" => {
+            return logical_pair("scroll-margin-top", "scroll-margin-bottom", value_text)
+        }
+        "scroll-margin-inline" => {
+            return logical_pair("scroll-margin-left", "scroll-margin-right", value_text)
+        }
+        "scroll-padding-block-start" => {
+            return expand_declaration("scroll-padding-top", value_text)
+        }
+        "scroll-padding-block-end" => {
+            return expand_declaration("scroll-padding-bottom", value_text)
+        }
+        "scroll-padding-inline-start" => {
+            return expand_declaration("scroll-padding-left", value_text)
+        }
+        "scroll-padding-inline-end" => {
+            return expand_declaration("scroll-padding-right", value_text)
+        }
+        "scroll-padding-block" => {
+            return logical_pair("scroll-padding-top", "scroll-padding-bottom", value_text)
+        }
+        "scroll-padding-inline" => {
+            return logical_pair("scroll-padding-left", "scroll-padding-right", value_text)
+        }
+        "scroll-margin-top" | "scroll-margin-right" | "scroll-margin-bottom"
+        | "scroll-margin-left" => return scroll_side(name, value_text, false),
+        "scroll-padding-top" | "scroll-padding-right" | "scroll-padding-bottom"
+        | "scroll-padding-left" => return scroll_side(name, value_text, true),
+        "scroll-margin" => return scroll_box("scroll-margin", value_text, false),
+        "scroll-padding" => return scroll_box("scroll-padding", value_text, true),
         // top/right/bottom/left(§CSS Position): <length-percentage> | auto. 각도·단위없는
         // 비영·기타 키워드 거부. 유효값은 interpret_value 로 저장(레이아웃 불변). inset
         // 논리 프로퍼티가 여기로 매핑되므로 함께 검증된다.
@@ -1394,6 +1429,67 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
 }
 
 // 논리 양방향 속성(margin-inline 등) → 두 물리 속성. 1값=양쪽, 2값=start/end.
+// scroll-margin/scroll-padding 한 변(§CSS Scroll Snap). is_padding 이면 auto|
+// <length-percentage> 비음수, 아니면 <length>. 무효면 빈 선언.
+fn scroll_side(name: &str, value_text: &str, is_padding: bool) -> Vec<Declaration> {
+    let low = value_text.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+    }
+    let toks = split_top_level(value_text.trim());
+    if toks.len() != 1 {
+        return Vec::new();
+    }
+    let ok = if is_padding {
+        crate::css::scroll_padding_valid(toks[0])
+    } else {
+        crate::css::scroll_margin_valid(toks[0])
+    };
+    if !ok {
+        return Vec::new();
+    }
+    let v = if toks[0].eq_ignore_ascii_case("auto") {
+        Value::Keyword("auto".to_string())
+    } else {
+        match interpret_value(toks[0]) {
+            Some(Value::Length(n, Unit::Number)) if n == 0.0 => Value::Length(0.0, Unit::Px),
+            Some(other) => other,
+            None => Value::Keyword(low),
+        }
+    };
+    vec![Declaration { important: false, name: name.to_string(), value: v }]
+}
+
+// scroll-margin/scroll-padding 단축(§CSS Scroll Snap): 1~4 값 → 네 변.
+fn scroll_box(prefix: &str, value_text: &str, is_padding: bool) -> Vec<Declaration> {
+    let low = value_text.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return ["top", "right", "bottom", "left"]
+            .iter()
+            .map(|s| Declaration { important: false, name: format!("{}-{}", prefix, s), value: Value::Keyword(low.clone()) })
+            .collect();
+    }
+    let toks = split_top_level(value_text.trim());
+    if toks.is_empty() || toks.len() > 4 {
+        return Vec::new();
+    }
+    let sides: [&str; 4] = match toks.len() {
+        1 => [toks[0], toks[0], toks[0], toks[0]],
+        2 => [toks[0], toks[1], toks[0], toks[1]],
+        3 => [toks[0], toks[1], toks[2], toks[1]],
+        _ => [toks[0], toks[1], toks[2], toks[3]],
+    };
+    let mut out = Vec::new();
+    for (name_side, val) in ["top", "right", "bottom", "left"].iter().zip(sides.iter()) {
+        let decls = scroll_side(&format!("{}-{}", prefix, name_side), val, is_padding);
+        if decls.is_empty() {
+            return Vec::new(); // 한 변이라도 무효면 단축 전체 무효
+        }
+        out.extend(decls);
+    }
+    out
+}
+
 fn logical_pair(start: &str, end: &str, value_text: &str) -> Vec<Declaration> {
     let toks: Vec<&str> = split_top_level(value_text);
     // 1~2 값만. CSS-wide 키워드는 단독만(두 값과 혼합 불가). 각 값의 물리 확장이

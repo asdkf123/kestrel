@@ -2432,6 +2432,78 @@ fn is_length_percentage(tok: &str) -> bool {
     LEN_UNITS.contains(&unit)
 }
 
+fn is_math_fn(low: &str) -> bool {
+    low.ends_with(')')
+        && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
+            .iter()
+            .any(|p| low.starts_with(p))
+}
+
+// scroll-margin 값(§CSS Scroll Snap): <length>(부호 무관, % 없음, auto 없음).
+pub fn scroll_margin_valid(tok: &str) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return false;
+    }
+    if is_math_fn(&low) {
+        // <length> calc 만 — 각도·퍼센트 없음.
+        return !(low.contains("deg") || low.contains("rad") || low.contains("turn") || low.contains('%'));
+    }
+    !low.ends_with('%') && is_length_percentage(&low)
+}
+
+// scroll-padding 값(§CSS Scroll Snap): auto | <length-percentage>(비음수).
+pub fn scroll_padding_valid(tok: &str) -> bool {
+    let low = tok.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return true;
+    }
+    if is_math_fn(&low) {
+        return !(low.contains("deg") || low.contains("rad") || low.contains("turn") || low.contains("auto"));
+    }
+    is_length_percentage(&low) && !low.starts_with('-')
+}
+
+// 한 값(길이/auto/calc)을 CSSOM 캐논으로: 0→0px, calc 원문 보존, auto 유지.
+fn box_token_canonical(t: &str) -> String {
+    let low = t.trim().to_ascii_lowercase();
+    if low == "auto" {
+        return "auto".to_string();
+    }
+    if is_math_fn(&low) {
+        return t.trim().to_string();
+    }
+    match interpret_value(t.trim()) {
+        Some(Value::Length(n, _)) if n == 0.0 => "0px".to_string(),
+        Some(v @ Value::Length(..)) => crate::style::computed_value_string(&v),
+        _ => low,
+    }
+}
+
+// TRBL 박스 단축 캐논 직렬화(§CSSOM): 1~4 값을 캐논화 후 표준 축약(1/2/3/4).
+pub fn box_canonical(raw: &str) -> String {
+    let toks = split_top_level(raw);
+    if toks.is_empty() || toks.len() > 4 {
+        return raw.trim().to_string();
+    }
+    let c: Vec<String> = toks.iter().map(|t| box_token_canonical(t)).collect();
+    let (t, r, b, l) = match c.len() {
+        1 => (&c[0], &c[0], &c[0], &c[0]),
+        2 => (&c[0], &c[1], &c[0], &c[1]),
+        3 => (&c[0], &c[1], &c[2], &c[1]),
+        _ => (&c[0], &c[1], &c[2], &c[3]),
+    };
+    if t == r && r == b && b == l {
+        t.clone()
+    } else if t == b && r == l {
+        format!("{} {}", t, r)
+    } else if r == l {
+        format!("{} {} {}", t, r, b)
+    } else {
+        format!("{} {} {} {}", t, r, b, l)
+    }
+}
+
 // inset-block/inset-inline 단축 캐논 직렬화(§CSSOM): 각 값 0→0px 캐논, 두 값이 같으면
 // 하나로 축약.
 pub fn inset_pair_canonical(raw: &str) -> String {
