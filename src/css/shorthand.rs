@@ -234,6 +234,91 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             expand_border_image(value_text.trim()).unwrap_or_default()
         }
+        // grid 단축(§CSS Grid):
+        //   <grid-template>
+        //   | <rows> / [ auto-flow && dense? ] <auto-columns>?
+        //   | [ auto-flow && dense? ] <auto-rows>? / <columns>
+        // 문자열 템플릿 형식은 미구현이라 따옴표가 있으면 건너뛴다(회귀 방지).
+        "grid" if !value_text.contains('"') && !value_text.contains('\'') => {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            let six = |tr: &str, tc: &str, ta: &str, ar: &str, ac: &str, af: &str| {
+                vec![
+                    Declaration { important: false, name: "grid-template-rows".to_string(), value: Value::Keyword(tr.to_string()) },
+                    Declaration { important: false, name: "grid-template-columns".to_string(), value: Value::Keyword(tc.to_string()) },
+                    Declaration { important: false, name: "grid-template-areas".to_string(), value: Value::Keyword(ta.to_string()) },
+                    Declaration { important: false, name: "grid-auto-rows".to_string(), value: Value::Keyword(ar.to_string()) },
+                    Declaration { important: false, name: "grid-auto-columns".to_string(), value: Value::Keyword(ac.to_string()) },
+                    Declaration { important: false, name: "grid-auto-flow".to_string(), value: Value::Keyword(af.to_string()) },
+                ]
+            };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return six(&low, &low, &low, &low, &low, &low);
+            }
+            if low == "none" {
+                return six("none", "none", "none", "auto", "auto", "row");
+            }
+            // auto-flow 쪽 파싱: auto-flow 와 dense(순서 무관) 후 나머지는 auto 트랙.
+            let parse_af = |s: &str| -> Option<(bool, String)> {
+                let toks = split_top_level(s);
+                let (mut has_af, mut dense, mut i) = (false, false, 0usize);
+                while i < toks.len() {
+                    match toks[i].to_ascii_lowercase().as_str() {
+                        "auto-flow" if !has_af => has_af = true,
+                        "dense" if !dense => dense = true,
+                        _ => break,
+                    }
+                    i += 1;
+                }
+                if !has_af {
+                    return None;
+                }
+                let rest = toks[i..].join(" ");
+                let track = if rest.trim().is_empty() {
+                    "auto".to_string()
+                } else if crate::css::grid_auto_track_valid(rest.trim()) {
+                    rest.trim().to_string()
+                } else {
+                    return None;
+                };
+                Some((dense, track))
+            };
+            let parts = split_top_slash_pub(v);
+            if parts.len() == 2 {
+                let (l, r) = (parts[0].trim(), parts[1].trim());
+                let l_af = l.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("auto-flow")).unwrap_or(false)
+                    || l.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("dense")).unwrap_or(false);
+                let r_af = r.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("auto-flow")).unwrap_or(false)
+                    || r.split_whitespace().next().map(|t| t.eq_ignore_ascii_case("dense")).unwrap_or(false);
+                if !l_af && !r_af {
+                    // <rows> / <columns>
+                    if !l.is_empty() && !r.is_empty() && crate::css::grid_template_track_valid(l) && crate::css::grid_template_track_valid(r) {
+                        return six(
+                            &crate::css::grid_template_track_canonical(l),
+                            &crate::css::grid_template_track_canonical(r),
+                            "none", "auto", "auto", "row",
+                        );
+                    }
+                } else if !l_af && r_af {
+                    // <rows> / auto-flow [dense]? <auto-columns>?  → 방향 column
+                    if !l.is_empty() && crate::css::grid_template_track_valid(l) {
+                        if let Some((dense, ac)) = parse_af(r) {
+                            let af = if dense { "column dense" } else { "column" };
+                            return six(&crate::css::grid_template_track_canonical(l), "none", "none", "auto", &ac, af);
+                        }
+                    }
+                } else if l_af && !r_af {
+                    // auto-flow [dense]? <auto-rows>? / <columns>  → 방향 row
+                    if !r.is_empty() && crate::css::grid_template_track_valid(r) {
+                        if let Some((dense, ar)) = parse_af(l) {
+                            let af = if dense { "dense" } else { "row" };
+                            return six("none", &crate::css::grid_template_track_canonical(r), "none", &ar, "auto", af);
+                        }
+                    }
+                }
+            }
+            Vec::new()
+        }
         // grid-template 단축(§CSS Grid): none | <rows> / <columns>.
         // 문자열 템플릿([names]? <string> <track>? [names]?)+ 형식은 아직 미구현이라
         // 따옴표가 있으면 이 arm 을 건너뛰어 기존 동작을 유지한다(회귀 방지).
