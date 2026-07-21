@@ -155,6 +155,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-style" => box_shorthand("border", "-style", value_text),
         // border-radius: 1~4 값 → 네 모서리 longhand. 슬래시 뒤 세로 반경은 근사로 무시.
         "border-radius" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                let d = |n: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) };
+                return vec![
+                    d("border-top-left-radius"),
+                    d("border-top-right-radius"),
+                    d("border-bottom-right-radius"),
+                    d("border-bottom-left-radius"),
+                    d("border-radius"),
+                ];
+            }
+            if !crate::css::border_radius_valid(value_text) {
+                return Vec::new();
+            }
             let hpart = value_text.split('/').next().unwrap_or(value_text);
             let toks: Vec<Value> = split_top_level(hpart)
                 .into_iter()
@@ -1429,6 +1443,30 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // border-*-radius 코너 롱핸드(§CSS Backgrounds): <lp [0,∞]>{1,2}. 검증 후 원문 보존.
+        "border-top-left-radius" | "border-top-right-radius" | "border-bottom-left-radius"
+        | "border-bottom-right-radius" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::border_corner_radius_valid(value_text)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // background-clip/origin(§CSS Backgrounds): <box># 목록.
+        "background-clip" | "background-origin" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "background-clip" && crate::css::background_clip_valid(value_text))
+                || (name == "background-origin" && crate::css::box_list_valid(value_text, &["border-box", "padding-box", "content-box"]));
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // list-style-type(§CSS Lists): <counter-style> | <string> | none.
         "list-style-type" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1708,7 +1746,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "resize" | "pointer-events" | "touch-action" | "hyphens" | "writing-mode"
         | "text-orientation" | "image-rendering" | "isolation"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
-        | "background-clip" | "background-origin" | "overflow-anchor" | "scroll-behavior"
+        | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "scroll-snap-align"
@@ -1757,10 +1795,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-top-style" | "border-right-style" | "border-bottom-style"
         | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
-        // border-*-radius 코너 롱핸드는 <length-percentage>{1,2}(수평 [수직]) — 원문 보존해
-        // 2값(타원 코너)도 유효하게. CSS.supports/합성이 이를 필요로 한다.
-        | "border-top-left-radius" | "border-top-right-radius" | "border-bottom-left-radius"
-        | "border-bottom-right-radius"
         | "background-position-x" | "background-position-y" | "shape-outside"
         // hyphenate-limit-chars/character 원문 보존.
         | "hyphenate-limit-chars" | "hyphenate-character"

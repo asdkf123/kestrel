@@ -4777,6 +4777,78 @@ pub fn list_style_valid(raw: &str) -> bool {
     none <= (1 - typ) + (1 - img)
 }
 
+// border-radius(§CSS Backgrounds): <lp [0,∞]>{1,4} [ / <lp [0,∞]>{1,4} ]?.
+pub fn border_radius_valid(raw: &str) -> bool {
+    let parts = split_top_slash(raw);
+    if parts.is_empty() || parts.len() > 2 {
+        return false;
+    }
+    parts.iter().all(|p| {
+        let toks = split_top_level(p.trim());
+        !toks.is_empty() && toks.len() <= 4 && toks.iter().all(|t| nonneg_length_percentage(t))
+    })
+}
+
+// border-*-radius 코너 롱핸드: <lp [0,∞]>{1,2}(슬래시 불가).
+pub fn border_corner_radius_valid(raw: &str) -> bool {
+    if raw.contains('/') {
+        return false;
+    }
+    let toks = split_top_level(raw.trim());
+    !toks.is_empty() && toks.len() <= 2 && toks.iter().all(|t| nonneg_length_percentage(t))
+}
+
+// background-origin 등 <box># 목록 검증(콤마 목록, 각 항목이 허용 박스 하나).
+pub fn box_list_valid(raw: &str, boxes: &[&str]) -> bool {
+    let items = split_top_commas(raw);
+    !items.is_empty()
+        && items.iter().all(|it| boxes.contains(&it.trim().to_ascii_lowercase().as_str()))
+}
+
+// background-clip(§CSS Backgrounds 4): [ <visual-box> || text ]#. 각 항목은 박스와
+// text 를 조합 가능("border-area text").
+pub fn background_clip_valid(raw: &str) -> bool {
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|it| {
+        let toks: Vec<&str> = it.split_whitespace().collect();
+        if toks.is_empty() || toks.len() > 2 {
+            return false;
+        }
+        let (mut vbox, mut text) = (0u32, 0u32);
+        for t in toks {
+            match t.to_ascii_lowercase().as_str() {
+                "border-box" | "padding-box" | "content-box" | "border-area" => vbox += 1,
+                "text" => text += 1,
+                _ => return false,
+            }
+        }
+        vbox <= 1 && text <= 1 && vbox + text >= 1
+    })
+}
+
+// background-clip 캐논: 각 항목에서 visual-box 를 text 앞에 둔다.
+pub fn background_clip_canonical(raw: &str) -> String {
+    split_top_commas(raw)
+        .iter()
+        .map(|it| {
+            let low = it.trim().to_ascii_lowercase();
+            let toks: Vec<&str> = low.split_whitespace().collect();
+            let mut out: Vec<&str> = Vec::new();
+            if let Some(b) = toks.iter().find(|t| **t != "text") {
+                out.push(b);
+            }
+            if toks.contains(&"text") {
+                out.push("text");
+            }
+            out.join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // z-index(§CSS 2): auto | <integer>(부호 무관).
 pub fn z_index_valid(raw: &str) -> bool {
     let low = raw.trim().to_ascii_lowercase();

@@ -472,6 +472,10 @@ impl Interp {
         if prop == "content" && crate::css::content_valid(raw) {
             return crate::css::content_canonical(raw);
         }
+        // background-clip(§CSS Backgrounds 4): visual-box 를 text 앞에 캐논.
+        if prop == "background-clip" && crate::css::background_clip_valid(raw) {
+            return crate::css::background_clip_canonical(raw);
+        }
         // text-emphasis-position(§CSS Text Decor): 기본값 right 생략 캐논.
         if prop == "text-emphasis-position" && crate::css::text_emphasis_position_valid(raw) {
             return crate::css::text_emphasis_position_canonical(raw);
@@ -828,6 +832,13 @@ impl Interp {
                     | "shape-margin"
                     | "shape-image-threshold"
                     | "content"
+                    | "border-radius"
+                    | "border-top-left-radius"
+                    | "border-top-right-radius"
+                    | "border-bottom-left-radius"
+                    | "border-bottom-right-radius"
+                    | "background-clip"
+                    | "background-origin"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
