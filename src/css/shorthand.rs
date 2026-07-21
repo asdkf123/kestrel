@@ -583,7 +583,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 키워드 값 프로퍼티(계산값 = 지정 키워드): UI/인터랙션/표/스크롤 등. 원문 보존.
         // 예전엔 interpret_value(키워드) 가 None 이라 선언이 통째로 드롭돼 getComputedStyle
         // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
-        "cursor" | "appearance" | "-webkit-appearance" | "user-select" | "-webkit-user-select"
+        "appearance" | "-webkit-appearance" | "user-select" | "-webkit-user-select"
         | "resize" | "pointer-events" | "touch-action" | "hyphens" | "writing-mode"
         | "text-orientation" | "image-rendering" | "isolation" | "box-decoration-break"
         | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"

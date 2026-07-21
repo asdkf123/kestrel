@@ -124,18 +124,27 @@ impl Interp {
         key: &str,
         value: &Value,
     ) -> Result<bool, String> {
-        let dom = self.dom_arena()?;
-        let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else {
-            return Ok(false);
+        let (attr, kind) = {
+            let dom = self.dom_arena()?;
+            let crate::dom::NodeType::Element(e) = &dom.get(id).node_type else {
+                return Ok(false);
+            };
+            let tag = e.tag_name.clone();
+            let Some(spec) = lookup(&tag, key) else {
+                return Ok(false);
+            };
+            (spec.attr, spec.kind)
         };
-        let tag = e.tag_name.clone();
-        let Some(spec) = lookup(&tag, key) else {
-            return Ok(false);
-        };
-        let (attr, kind) = (spec.attr, spec.kind);
         if matches!(kind, Reflect::TokenList) {
             return Ok(false);
         }
+        // 문자열/URL/열거·비-null NullableString 은 **먼저** ToString 강제변환한다(객체의
+        // toString/valueOf 호출). dom 을 빌리기 전에 해야 &mut self 충돌이 없다.
+        let str_val = match kind {
+            Reflect::Bool | Reflect::Long | Reflect::UnsignedLong | Reflect::Double => None,
+            Reflect::NullableString if matches!(value, Value::Null | Value::Undefined) => None,
+            _ => Some(self.to_string_value(value)?),
+        };
         let dom = self.dom_arena()?;
         match kind {
             // 불리언: true → 빈 값으로 속성 추가, false → 제거 (표준)
@@ -161,12 +170,12 @@ impl Interp {
                 if matches!(value, Value::Null | Value::Undefined) {
                     dom.remove_attr(id, attr);
                 } else {
-                    dom.set_attr(id, attr, to_display(value));
+                    dom.set_attr(id, attr, str_val.unwrap());
                 }
             }
             // 문자열/URL/열거: 그대로 문자열로 (URL 은 **절대화하지 않는다** — 표준은
             // 콘텐츠 속성에 준 값을 그대로 넣고, 읽을 때 절대화한다)
-            _ => dom.set_attr(id, attr, to_display(value)),
+            _ => dom.set_attr(id, attr, str_val.unwrap()),
         }
         Ok(true)
     }
