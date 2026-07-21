@@ -168,9 +168,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             box_shorthand(name, "", value_text)
         }
-        "border-width" => box_shorthand("border", "-width", value_text),
-        "border-color" => box_shorthand("border", "-color", value_text),
-        "border-style" => box_shorthand("border", "-style", value_text),
+        // border-width/style/color: 각각 <line-width>/<line-style>/<color> {1,4}.
+        // 토큰 유형을 검증해 auto/none(width)/5값/음수/콤마를 거부한다.
+        "border-width" => validated_box_shorthand("border", "-width", value_text, is_line_width_tok),
+        "border-style" => validated_box_shorthand("border", "-style", value_text, is_line_style_tok),
+        "border-color" => {
+            validated_box_shorthand("border", "-color", value_text, |t| crate::css::single_color_valid(t))
+        }
         // border-radius: 1~4 값 → 네 모서리 longhand. 슬래시 뒤 세로 반경은 근사로 무시.
         "border-radius" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -3823,6 +3827,26 @@ fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
     }
     reset_bi(&mut out, "");
     out
+}
+
+// 유형 검증이 붙은 박스 단축(border-width/style/color): 토큰이 1~4개이고
+// 전부 valid 면 box_shorthand 로 확장, 아니면 선언 무효(Vec::new()).
+// CSS 전역 키워드는 그대로 4면에 편다.
+fn validated_box_shorthand(
+    prefix: &str,
+    suffix: &str,
+    value_text: &str,
+    valid: impl Fn(&str) -> bool,
+) -> Vec<Declaration> {
+    let low = value_text.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return box_shorthand(prefix, suffix, value_text);
+    }
+    let toks = split_top_level(value_text.trim());
+    if toks.is_empty() || toks.len() > 4 || !toks.iter().all(|t| valid(t)) {
+        return Vec::new();
+    }
+    box_shorthand(prefix, suffix, value_text)
 }
 
 // CSS 박스 단축값(1~4개)을 top/right/bottom/left longhand 로 확장.
