@@ -189,6 +189,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // white-space 단축(§CSS Text 4): white-space-collapse || text-wrap-mode.
+        // normalize_white_space 로 검증·캐논화(무효값 balance 등은 거부→빈 선언).
+        // CSS-wide 키워드는 통과(상속 처리는 스타일 계산이 담당).
+        "white-space" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "initial" | "inherit" | "unset" | "revert" | "revert-layer"
+            ) {
+                return vec![Declaration { important: false, name: "white-space".to_string(), value: Value::Keyword(low) }];
+            }
+            match crate::css::normalize_white_space(value_text) {
+                Some(norm) => vec![Declaration { important: false, name: "white-space".to_string(), value: Value::Keyword(norm) }],
+                None => Vec::new(),
+            }
+        }
         // order: 정수(음수 가능). 단위 없는 수다.
         "order" => match number_or_math(value_text) {
             Some(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],

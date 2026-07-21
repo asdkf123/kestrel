@@ -2225,6 +2225,7 @@ pub fn normalize_white_space(raw: &str) -> Option<String> {
             ("collapse", "nowrap") => "nowrap",
             ("preserve", "wrap") => "pre-wrap",
             ("preserve-breaks", "wrap") => "pre-line",
+            ("break-spaces", "wrap") => "break-spaces",
             _ => return Some(format!("{collapse} {wrap}")),
         }
         .to_string(),

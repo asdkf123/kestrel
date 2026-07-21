@@ -358,17 +358,22 @@ impl Interp {
             // 로 단축을 설정하면 롱핸드가 읽힌다). 확장이 자기 자신과 다른 이름을 내면
             // 단축이다. 기존 동명 롱핸드는 교체.
             let longhands = crate::css::expand_decl_pub(prop, &text);
-            if longhands.iter().any(|d| d.name != prop) {
-                for d in &longhands {
-                    if d.name == prop {
-                        continue;
+            // 검증형 단축(white-space 등)은 확장이 비면 무효값 — CSSOM 규약상 지정 무시
+            // (저장 안 함). text-shadow:none 처럼 빈 확장이 정당한 값은 여기 넣지 않는다.
+            let reject_invalid = longhands.is_empty() && matches!(prop, "white-space");
+            if !reject_invalid {
+                if longhands.iter().any(|d| d.name != prop) {
+                    for d in &longhands {
+                        if d.name == prop {
+                            continue;
+                        }
+                        let lv = crate::style::computed_value_string(&d.value);
+                        pairs.retain(|(k, _)| k != &d.name);
+                        pairs.push((d.name.clone(), lv));
                     }
-                    let lv = crate::style::computed_value_string(&d.value);
-                    pairs.retain(|(k, _)| k != &d.name);
-                    pairs.push((d.name.clone(), lv));
                 }
+                pairs.push((prop.to_string(), text));
             }
-            pairs.push((prop.to_string(), text));
         }
         let s = style_serialize(&pairs);
         self.set_style_attr(id, s);
