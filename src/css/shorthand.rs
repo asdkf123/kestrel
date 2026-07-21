@@ -1455,6 +1455,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // background-position-x/y(§CSS Backgrounds 3): [center|<edge> <lp>?|<lp>]#.
+        "background-position-x" | "background-position-y" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let edges: &[&str] = if name == "background-position-x" {
+                &["left", "right", "x-start", "x-end"]
+            } else {
+                &["top", "bottom", "y-start", "y-end"]
+            };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || crate::css::bg_position_axis_valid(value_text, edges)
+            {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // background-clip/origin(§CSS Backgrounds): <box># 목록.
         "background-clip" | "background-origin" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1795,7 +1811,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-top-style" | "border-right-style" | "border-bottom-style"
         | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
-        | "background-position-x" | "background-position-y" | "shape-outside"
+        | "shape-outside"
         // hyphenate-limit-chars/character 원문 보존.
         | "hyphenate-limit-chars" | "hyphenate-character"
         | "word-space-transform" | "view-transition-class" | "text-box-trim"

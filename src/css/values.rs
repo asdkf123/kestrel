@@ -4777,6 +4777,27 @@ pub fn list_style_valid(raw: &str) -> bool {
     none <= (1 - typ) + (1 - img)
 }
 
+// background-position-x/y(§CSS Backgrounds 3): [ center | [ <edge>? <lp>? ]! ]#.
+// 각 항목은 center | <edge> [<lp>]? | <lp>. edge 는 축별 키워드.
+pub fn bg_position_axis_valid(raw: &str, edges: &[&str]) -> bool {
+    let is_lp = |t: &str| is_math_fn(&t.to_ascii_lowercase()) || is_length_percentage(t);
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|it| {
+        let toks = split_top_level(it.trim());
+        match toks.len() {
+            1 => {
+                let low = toks[0].to_ascii_lowercase();
+                low == "center" || edges.contains(&low.as_str()) || is_lp(&toks[0])
+            }
+            2 => edges.contains(&toks[0].to_ascii_lowercase().as_str()) && is_lp(&toks[1]),
+            _ => false,
+        }
+    })
+}
+
 // border-radius(§CSS Backgrounds): <lp [0,∞]>{1,4} [ / <lp [0,∞]>{1,4} ]?.
 pub fn border_radius_valid(raw: &str) -> bool {
     let parts = split_top_slash(raw);
