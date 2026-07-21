@@ -1606,6 +1606,31 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // 단일 키워드 enum(§여러 스펙): 정확한 값 집합으로 검증.
+        "resize" | "user-select" | "caption-side" | "table-layout" | "empty-cells"
+        | "border-collapse" | "writing-mode" | "unicode-bidi" | "text-orientation"
+        | "direction" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || match name {
+                    "resize" => matches!(low.as_str(), "none" | "both" | "horizontal" | "vertical" | "block" | "inline"),
+                    "user-select" => matches!(low.as_str(), "auto" | "text" | "none" | "contain" | "all"),
+                    "caption-side" => matches!(low.as_str(), "top" | "bottom"),
+                    "table-layout" => matches!(low.as_str(), "auto" | "fixed"),
+                    "empty-cells" => matches!(low.as_str(), "show" | "hide"),
+                    "border-collapse" => matches!(low.as_str(), "separate" | "collapse"),
+                    "writing-mode" => matches!(low.as_str(), "horizontal-tb" | "vertical-rl" | "vertical-lr" | "sideways-rl" | "sideways-lr"),
+                    "unicode-bidi" => matches!(low.as_str(), "normal" | "embed" | "isolate" | "bidi-override" | "isolate-override" | "plaintext"),
+                    "text-orientation" => matches!(low.as_str(), "mixed" | "upright" | "sideways"),
+                    "direction" => matches!(low.as_str(), "ltr" | "rtl"),
+                    _ => false,
+                };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // object-fit/image-rendering/image-resolution(§CSS Images) 검증.
         "object-fit" | "image-rendering" | "image-resolution" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -1805,10 +1830,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 키워드 값 프로퍼티(계산값 = 지정 키워드): UI/인터랙션/표/스크롤 등. 원문 보존.
         // 예전엔 interpret_value(키워드) 가 None 이라 선언이 통째로 드롭돼 getComputedStyle
         // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
-        "appearance" | "-webkit-appearance" | "user-select" | "-webkit-user-select"
-        | "resize" | "pointer-events" | "touch-action" | "hyphens" | "writing-mode"
-        | "text-orientation" | "isolation"
-        | "caption-side" | "empty-cells" | "table-layout" | "background-attachment"
+        "appearance" | "-webkit-appearance" | "-webkit-user-select"
+        | "pointer-events" | "touch-action" | "hyphens"
+        | "isolation"
+        | "background-attachment"
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
         | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
@@ -1828,7 +1853,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
         | "caret-shape"
-        | "unicode-bidi" | "border-image-repeat"
+        | "border-image-repeat"
         // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
         | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
         | "border-inline-end-style" | "mask-image" | "mask-repeat"

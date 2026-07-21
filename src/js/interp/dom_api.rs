@@ -855,6 +855,16 @@ impl Interp {
                     | "object-fit"
                     | "image-rendering"
                     | "image-resolution"
+                    | "resize"
+                    | "user-select"
+                    | "caption-side"
+                    | "table-layout"
+                    | "empty-cells"
+                    | "border-collapse"
+                    | "writing-mode"
+                    | "unicode-bidi"
+                    | "text-orientation"
+                    | "direction"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
