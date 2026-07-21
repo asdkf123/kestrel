@@ -1257,6 +1257,18 @@ fn transition_shorthand(value_text: &str) -> Vec<Declaration> {
         value: Value::Keyword(val),
     };
     let vt = value_text.trim();
+    // CSS-wide 키워드는 단축 전체에 적용 — 다섯 롱핸드에 그대로 전파.
+    let low = vt.to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return vec![
+            kw("transition-property", low.clone()),
+            kw("transition-duration", low.clone()),
+            kw("transition-timing-function", low.clone()),
+            kw("transition-delay", low.clone()),
+            kw("transition-behavior", low.clone()),
+            kw("transition", low),
+        ];
+    }
     let is_time = |s: &str| -> bool {
         if let Some(n) = s.strip_suffix("ms") {
             n.parse::<f32>().is_ok()
@@ -1292,18 +1304,37 @@ fn transition_shorthand(value_text: &str) -> Vec<Declaration> {
             Option<String>,
             Option<String>,
         ) = (None, vec![], None, None);
+        // 레이어당 각 성분은 최대 1회(시간은 최대 2회: duration, delay). 초과·미인식
+        // 토큰·잘못된 프로퍼티 ident 는 단축 전체를 무효로 만든다(§CSS Transitions).
         for tok in split_top_level(part.trim()) {
             let tl = tok.to_ascii_lowercase();
             if is_time(&tl) {
+                if times.len() >= 2 {
+                    return Vec::new();
+                }
                 times.push(tok.to_string());
             } else if is_timing(&tl) {
+                if tf.is_some() {
+                    return Vec::new();
+                }
                 tf = Some(tok.to_string());
-            } else if tl == "allow-discrete" {
-                beh = Some("allow-discrete".to_string());
-            } else if tl == "normal" {
-                beh = Some("normal".to_string());
+            } else if tl == "allow-discrete" || tl == "normal" {
+                if beh.is_some() {
+                    return Vec::new();
+                }
+                beh = Some(tl);
             } else {
+                // 프로퍼티는 레이어당 하나, 유효 <single-transition-property> 여야 한다.
+                if prop.is_some() || !crate::css::single_transition_property_valid(tok) {
+                    return Vec::new();
+                }
                 prop = Some(tok.to_string());
+            }
+        }
+        // 첫 시간은 duration(음수 불가), 둘째는 delay(음수 허용).
+        if let Some(d) = times.first() {
+            if d.trim().starts_with('-') {
+                return Vec::new();
             }
         }
         props.push(prop.unwrap_or_else(|| "all".to_string()));

@@ -395,6 +395,7 @@ impl Interp {
                     | "transition-property"
                     | "transition-duration"
                     | "transition-delay"
+                    | "transition"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

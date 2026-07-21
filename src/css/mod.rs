@@ -53,6 +53,7 @@ pub(crate) use values::timing_function_valid;
 pub(crate) use values::transition_property_valid;
 pub(crate) use values::transition_property_canonical;
 pub(crate) use values::time_list_valid;
+pub(crate) use values::single_transition_property_valid;
 pub(crate) use values::timing_function_canonical;
 pub(crate) use values::cursor_valid;
 pub(crate) use values::normalize_hyphenate_limit_chars;

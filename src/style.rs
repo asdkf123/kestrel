@@ -1622,7 +1622,12 @@ pub fn normalize_transition(raw: &str) -> String {
         let delay = times.get(1).cloned().unwrap_or_else(|| "0s".to_string());
         let tf = tf.unwrap_or_else(|| "ease".to_string());
         let beh = beh.unwrap_or_else(|| "normal".to_string());
-        let mut s = vec![prop.unwrap_or_else(|| "all".to_string())];
+        // property=all 은 생략(§CSSOM 단축 직렬화). 모든 성분이 기본이면 "all" 만.
+        let mut s: Vec<String> = Vec::new();
+        let prop = prop.unwrap_or_else(|| "all".to_string());
+        if !prop.eq_ignore_ascii_case("all") {
+            s.push(prop);
+        }
         if dur != "0s" || delay != "0s" {
             s.push(dur);
         }
@@ -1634,6 +1639,9 @@ pub fn normalize_transition(raw: &str) -> String {
         }
         if beh != "normal" {
             s.push(beh);
+        }
+        if s.is_empty() {
+            s.push("all".to_string());
         }
         out.push(s.join(" "));
     }

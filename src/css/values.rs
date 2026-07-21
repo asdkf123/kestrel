@@ -2341,24 +2341,27 @@ pub fn transition_property_valid(raw: &str) -> bool {
     if items.is_empty() {
         return false;
     }
-    let is_ident = |s: &str| {
-        let mut ch = s.chars();
-        let start = |c: char| c.is_ascii_alphabetic() || c == '-' || c == '_' || (c as u32) >= 0x80;
-        match ch.next() {
-            Some(c0) if start(c0) => {}
-            _ => return false,
-        }
-        s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || (c as u32) >= 0x80)
-    };
-    items.iter().all(|item| {
-        let t = item.trim();
-        let low = t.to_ascii_lowercase();
-        !matches!(
-            low.as_str(),
-            "none" | "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "default"
-        ) && is_ident(t)
-    })
+    items.iter().all(|item| single_transition_property_valid(item.trim()))
+}
+
+// CSS 식별자 형태인가: 시작은 letter/-/_/비ASCII, 이후 alnum/-/_/비ASCII.
+pub fn is_css_ident(s: &str) -> bool {
+    let start = |c: char| c.is_ascii_alphabetic() || c == '-' || c == '_' || (c as u32) >= 0x80;
+    match s.chars().next() {
+        Some(c0) if start(c0) => {}
+        _ => return false,
+    }
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || (c as u32) >= 0x80)
+}
+
+// <single-transition-property>: all 포함 유효 custom-ident. none/CSS-wide/default 제외.
+pub fn single_transition_property_valid(t: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    !matches!(
+        low.as_str(),
+        "none" | "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "default"
+    ) && is_css_ident(t)
 }
 
 // transition-property 캐논 직렬화: all 키워드만 소문자화, custom-ident 는 대소문자 보존.
