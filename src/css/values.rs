@@ -2232,6 +2232,52 @@ pub fn normalize_white_space(raw: &str) -> Option<String> {
     )
 }
 
+// caret-color 성분이 auto 또는 유효 <color> 인가.
+fn caret_color_component_ok(t: &str) -> bool {
+    t.eq_ignore_ascii_case("auto")
+        || t.eq_ignore_ascii_case("currentcolor")
+        || matches!(interpret_value(t), Some(Value::Color(_)) | Some(Value::ColorFn(..)))
+}
+
+// caret-color 유효성(§CSS UI): [ auto | <color> ]{1,2}. 괄호 인식 분리로 1~2 성분,
+// 각 성분이 auto/currentcolor/<color>. none/invert/50%/3값/콤마 등은 무효.
+pub fn caret_color_valid(raw: &str) -> bool {
+    let toks = split_top_level(raw);
+    (1..=2).contains(&toks.len()) && toks.iter().all(|t| caret_color_component_ok(t))
+}
+
+// caret-color 계산값(§CSS UI): 각 성분을 rgb 로 해석(auto/currentcolor→요소 color).
+// 두 값이고 둘째가 auto 면 첫째만 직렬화. cc 는 요소 계산 color("rgb(...)").
+pub fn caret_color_computed(raw: &str, cc: &str) -> Option<String> {
+    let toks = split_top_level(raw);
+    let resolve = |t: &str| -> Option<String> {
+        if t.eq_ignore_ascii_case("auto") || t.eq_ignore_ascii_case("currentcolor") {
+            Some(cc.to_string())
+        } else {
+            match interpret_value(t) {
+                Some(v @ (Value::Color(_) | Value::ColorFn(..))) => {
+                    Some(crate::style::computed_value_string(&v))
+                }
+                _ => None,
+            }
+        }
+    };
+    match toks.len() {
+        // 단일 값은 여기서 재조립하지 않는다(None) — 단일 color 는 이미 Color 저장이라
+        // 계산값이 맞고, 단일 auto 를 여기서 rgb 로 접으면 보간의 auto→color 불연속
+        // 경로(auto 계산값 기대)가 깨진다. 두값 폼만 currentColor 해석 후 재조립.
+        2 => {
+            let first = resolve(&toks[0])?;
+            if toks[1].eq_ignore_ascii_case("auto") {
+                Some(first) // 둘째 auto 는 생략
+            } else {
+                Some(format!("{} {}", first, resolve(&toks[1])?))
+            }
+        }
+        _ => None,
+    }
+}
+
 // font-stretch/font-width 계산값 캐논(§CSS Fonts 4): 퍼센트. 키워드는 규정 %로,
 // 퍼센트는 음수 0%로 clamp, calc 는 평가 후 %. ultra-condensed=50% … ultra-expanded=200%.
 pub fn normalize_font_stretch(raw: &str) -> Option<String> {

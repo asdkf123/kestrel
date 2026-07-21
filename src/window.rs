@@ -381,6 +381,15 @@ fn fill_js_maps(
                 m.insert("font-size-adjust".to_string(), norm);
             }
         }
+        // caret-color 두값 폼 계산값 재조립: [<color> <color>] 를 rgb 로(auto/currentcolor
+        // →요소 color), 둘째 auto 는 생략(§CSS UI). 단일 값은 caret_color_computed 가
+        // None 이라 여기서 안 바꾼다(보간 경로 보존).
+        if let Some(ccv) = m.get("caret-color").cloned() {
+            let cur = m.get("color").cloned().unwrap_or_else(|| "rgb(0, 0, 0)".into());
+            if let Some(norm) = crate::css::caret_color_computed(&ccv, &cur) {
+                m.insert("caret-color".to_string(), norm);
+            }
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

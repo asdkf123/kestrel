@@ -194,6 +194,29 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // caret-color(§CSS UI): [ auto | <color> ]{1,2}. 무효 거부. 단일 <color>는
+        // Color 로 저장(기존 색 보간 경로 유지 — 회귀 방지), 단일 auto/currentcolor 와
+        // 두값 폼은 원문 Keyword(window 가 currentColor 해석). CSS-wide 통과.
+        "caret-color" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: "caret-color".to_string(), value: Value::Keyword(low) }];
+            }
+            if !crate::css::caret_color_valid(value_text) {
+                return Vec::new();
+            }
+            let toks = split_top_level(value_text.trim());
+            let value = if toks.len() == 1 {
+                match interpret_value(toks[0]) {
+                    Some(v @ (Value::Color(_) | Value::ColorFn(..))) => v,
+                    _ => Value::Keyword(value_text.trim().to_string()),
+                }
+            } else {
+                Value::Keyword(value_text.trim().to_string())
+            };
+            vec![Declaration { important: false, name: "caret-color".to_string(), value }]
+        }
         // font-size-adjust(§CSS Fonts 5): none | [metric]? [from-font | <number>].
         // 검증·캐논(기본 ex-height 생략, calc 평가). 무효 거부. CSS-wide 통과.
         "font-size-adjust" => {

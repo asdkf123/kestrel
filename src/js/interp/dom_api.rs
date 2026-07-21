@@ -359,7 +359,12 @@ impl Interp {
         if !text_trimmed.is_empty()
             && matches!(
                 prop,
-                "white-space" | "text-wrap" | "font-family" | "font" | "font-size-adjust"
+                "white-space"
+                    | "text-wrap"
+                    | "font-family"
+                    | "font"
+                    | "font-size-adjust"
+                    | "caret-color"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {
