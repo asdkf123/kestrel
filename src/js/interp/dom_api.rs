@@ -344,6 +344,13 @@ impl Interp {
         if prop == "scroll-snap-type" && crate::css::scroll_snap_type_valid(raw) {
             return crate::css::scroll_snap_type_canonical(raw);
         }
+        // flex-flow(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저.
+        if prop == "flex-flow" {
+            let low = raw.trim().to_ascii_lowercase();
+            if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return crate::css::flex_flow_canonical(raw);
+            }
+        }
         // flex 단축(§CSS Flexbox): grow shrink basis 로 재구성(1→1 1 0%, none→0 0 auto).
         if prop == "flex" {
             let low = raw.trim().to_ascii_lowercase();
@@ -544,6 +551,8 @@ impl Interp {
                     | "flex-grow"
                     | "flex-shrink"
                     | "flex-basis"
+                    | "flex-flow"
+                    | "order"
             )
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()
         {

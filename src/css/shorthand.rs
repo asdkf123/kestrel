@@ -646,8 +646,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
         }
         // order: 정수(음수 가능). 단위 없는 수다.
+        // order(§CSS Flexbox): <integer>. 비정수(123.45)·auto·다값 거부.
         "order" => match number_or_math(value_text) {
-            Some(n) => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
+            Some(n) if n.fract() == 0.0 && n.is_finite() => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
         // flex-grow/flex-shrink: <number [0,∞]>(단위 없음). 음수·미인식 거부.
@@ -796,17 +797,44 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             ]
         }
         // flex-flow: <flex-direction> || <flex-wrap> (순서 무관). 아예 미구현이었다.
+        // flex-flow(§CSS Flexbox): <flex-direction> || <flex-wrap>. 각 최대 1회, 미인식·
+        // 중복 거부. flex-direction/flex-wrap 롱핸드로 전개.
         "flex-flow" => {
-            let mut out = Vec::new();
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { important: false, name: "flex-direction".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "flex-wrap".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            let (mut dir, mut wrap): (Option<String>, Option<String>) = (None, None);
             for t in split_top_level(value_text) {
                 let lower = t.to_ascii_lowercase();
                 match lower.as_str() {
-                    "row" | "row-reverse" | "column" | "column-reverse" => out.push(Declaration {
-                        important: false, name: "flex-direction".to_string(), value: Value::Keyword(lower) }),
-                    "nowrap" | "wrap" | "wrap-reverse" => out.push(Declaration {
-                        important: false, name: "flex-wrap".to_string(), value: Value::Keyword(lower) }),
-                    _ => {}
+                    "row" | "row-reverse" | "column" | "column-reverse" => {
+                        if dir.is_some() {
+                            return Vec::new();
+                        }
+                        dir = Some(lower);
+                    }
+                    "nowrap" | "wrap" | "wrap-reverse" => {
+                        if wrap.is_some() {
+                            return Vec::new();
+                        }
+                        wrap = Some(lower);
+                    }
+                    _ => return Vec::new(),
                 }
+            }
+            if dir.is_none() && wrap.is_none() {
+                return Vec::new();
+            }
+            let mut out = Vec::new();
+            if let Some(d) = dir {
+                out.push(Declaration { important: false, name: "flex-direction".to_string(), value: Value::Keyword(d) });
+            }
+            if let Some(w) = wrap {
+                out.push(Declaration { important: false, name: "flex-wrap".to_string(), value: Value::Keyword(w) });
             }
             out
         }

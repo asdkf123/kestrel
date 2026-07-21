@@ -2454,6 +2454,36 @@ pub fn scroll_snap_type_canonical(raw: &str) -> String {
     toks.iter().map(|t| t.to_ascii_lowercase()).collect::<Vec<_>>().join(" ")
 }
 
+// flex-flow 캐논 직렬화(§CSS Flexbox): 기본값(row/nowrap) 생략, 방향 먼저. 둘 다
+// 기본이면 "row".
+pub fn flex_flow_canonical(raw: &str) -> String {
+    let (mut dir, mut wrap): (Option<String>, Option<String>) = (None, None);
+    for t in split_top_level(raw) {
+        let low = t.to_ascii_lowercase();
+        match low.as_str() {
+            "row" | "row-reverse" | "column" | "column-reverse" => dir = Some(low),
+            "nowrap" | "wrap" | "wrap-reverse" => wrap = Some(low),
+            _ => {}
+        }
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(d) = dir {
+        if d != "row" {
+            parts.push(d);
+        }
+    }
+    if let Some(w) = wrap {
+        if w != "nowrap" {
+            parts.push(w);
+        }
+    }
+    if parts.is_empty() {
+        "row".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
 // flex-basis 유효성(§CSS Flexbox): content | auto | min/max/fit-content |
 // <length-percentage>(비음수). none·음수·anchor-size·순수숫자 calc 거부.
 pub fn flex_basis_valid(tok: &str) -> bool {
