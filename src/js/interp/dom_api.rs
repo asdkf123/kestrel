@@ -931,6 +931,13 @@ impl Interp {
                     | "ruby-align"
                     | "ruby-overhang"
                     | "ruby-merge"
+                    | "color-scheme"
+                    | "overscroll-behavior"
+                    | "overscroll-behavior-x"
+                    | "overscroll-behavior-y"
+                    | "overscroll-behavior-inline"
+                    | "overscroll-behavior-block"
+                    | "forced-color-adjust"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

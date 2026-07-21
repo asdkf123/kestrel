@@ -1658,6 +1658,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // color-scheme·overscroll-behavior·forced-color-adjust(§여러 스펙) 검증.
+        "color-scheme" | "overscroll-behavior" | "overscroll-behavior-x"
+        | "overscroll-behavior-y" | "overscroll-behavior-inline" | "overscroll-behavior-block"
+        | "forced-color-adjust" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "color-scheme" && crate::css::color_scheme_valid(value_text))
+                || (name == "overscroll-behavior" && crate::css::overscroll_valid(value_text, false))
+                || (matches!(name, "overscroll-behavior-x" | "overscroll-behavior-y" | "overscroll-behavior-inline" | "overscroll-behavior-block") && crate::css::overscroll_valid(value_text, true))
+                || (name == "forced-color-adjust" && matches!(low.as_str(), "auto" | "none" | "preserve-parent-color"));
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // baseline-shift(§CSS Inline/SVG): sub|super|top|center|bottom | <length-percentage>.
         "baseline-shift" => {
             let v = value_text.trim();
@@ -1933,10 +1949,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "background-attachment"
         | "overflow-anchor" | "scroll-behavior"
         | "content-visibility" | "backface-visibility" | "transform-style" | "transform-box"
-        | "text-align-last" | "overscroll-behavior" | "overscroll-behavior-x"
-        | "overscroll-behavior-y"
+        | "text-align-last"
         | "background-blend-mode" | "font-kerning" | "font-variant-caps"
-        | "text-rendering" | "color-scheme" | "forced-color-adjust" | "print-color-adjust"
+        | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
         | "line-break"

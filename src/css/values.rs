@@ -5113,6 +5113,55 @@ pub fn will_change_valid(raw: &str) -> bool {
     })
 }
 
+// color-scheme(§CSS Color Adjust): normal | [ light | dark | <custom-ident> ]+ && only?.
+// only 최대 1회, normal·CSS-wide·콤마 불가, 스킴 하나 이상.
+pub fn color_scheme_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if low == "normal" {
+        return true;
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() {
+        return false;
+    }
+    let (mut only, mut schemes) = (0u32, 0u32);
+    let mut only_pos = None;
+    for (i, t) in toks.iter().enumerate() {
+        if *t == "only" {
+            only += 1;
+            only_pos = Some(i);
+        } else if matches!(*t, "normal" | "default" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+            return false;
+        } else if is_css_ident(t) {
+            schemes += 1;
+        } else {
+            return false;
+        }
+    }
+    if only > 1 || schemes < 1 {
+        return false;
+    }
+    // only 는 맨 앞이나 맨 뒤(사이에 오면 무효).
+    if let Some(p) = only_pos {
+        if p != 0 && p != toks.len() - 1 {
+            return false;
+        }
+    }
+    true
+}
+
+// overscroll-behavior 값: contain | none | auto | chain.
+fn overscroll_kw(t: &str) -> bool {
+    matches!(t.to_ascii_lowercase().as_str(), "contain" | "none" | "auto" | "chain")
+}
+
+// overscroll-behavior 단축: [contain|none|auto|chain]{1,2}. x/y 는 단일.
+pub fn overscroll_valid(raw: &str, single: bool) -> bool {
+    let toks: Vec<&str> = raw.split_whitespace().collect();
+    let max = if single { 1 } else { 2 };
+    !toks.is_empty() && toks.len() <= max && toks.iter().all(|t| overscroll_kw(t))
+}
+
 // view-transition custom-ident: none/default/CSS-wide 제외 유효 식별자.
 fn vt_ident_ok(t: &str) -> bool {
     let low = t.to_ascii_lowercase();
