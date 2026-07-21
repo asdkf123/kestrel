@@ -336,15 +336,28 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // text-decoration[-line]: line 키워드 + 색 추출 (style/thickness 는 미사용).
         // none/키워드 없음 → "none". 인라인 레이아웃이 밑줄/취소선/윗줄로 그린다.
         "text-decoration" | "text-decoration-line" => {
+            let is_shorthand = name == "text-decoration";
             let mut lines: Vec<&str> = Vec::new();
+            let mut style: Option<&str> = None;
             let mut color: Option<Value> = None;
+            let mut thickness: Option<String> = None;
             for t in split_top_level(value_text) {
-                if matches!(t, "underline" | "overline" | "line-through") {
+                if matches!(t, "underline" | "overline" | "line-through" | "blink") {
                     lines.push(t);
-                } else if matches!(t, "solid" | "double" | "dotted" | "dashed" | "wavy" | "none") {
-                    // style 키워드 / none 은 line 판정에 영향 없음 (none 은 lines 비우기)
-                } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
-                    color = Some(v);
+                } else if is_shorthand
+                    && matches!(t, "solid" | "double" | "dotted" | "dashed" | "wavy")
+                {
+                    style = Some(t);
+                } else if is_shorthand && matches!(t, "auto" | "from-font") {
+                    thickness = Some(t.to_string());
+                } else if t == "none" {
+                    // none 은 line 비움
+                } else if is_shorthand {
+                    match interpret_value(t) {
+                        Some(v @ Value::Color(..)) => color = Some(v),
+                        Some(Value::Length(..)) => thickness = Some(t.to_string()),
+                        _ => {}
+                    }
                 }
             }
             let joined = lines.join(" ");
@@ -352,8 +365,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 name: "text-decoration-line".to_string(),
                 value: Value::Keyword(if joined.is_empty() { "none".to_string() } else { joined }),
             }];
-            if let Some(c) = color {
-                out.push(Declaration { important: false, name: "text-decoration-color".to_string(), value: c });
+            // 단축은 나머지 longhand 를 **항상** 출력(리셋). 미지정은 초기값.
+            if is_shorthand {
+                out.push(Declaration { important: false, name: "text-decoration-style".to_string(), value: Value::Keyword(style.unwrap_or("solid").to_string()) });
+                out.push(Declaration { important: false, name: "text-decoration-color".to_string(),
+                    value: color.unwrap_or_else(|| Value::Keyword("currentcolor".to_string())) });
+                out.push(Declaration { important: false, name: "text-decoration-thickness".to_string(),
+                    value: Value::Keyword(thickness.unwrap_or_else(|| "auto".to_string())) });
             }
             out
         }

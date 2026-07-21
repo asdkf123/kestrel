@@ -314,6 +314,35 @@ fn fill_js_maps(
                 m.insert("text-decoration-line".to_string(), norm);
             }
         }
+        // text-decoration 단축 계산값 재조립(getComputedStyle 노출). 표준 순서
+        // line, thickness, style, color 로 초기값(none/auto/solid/currentcolor)은
+        // 생략. 전부 초기값이면 "none". §CSS Text Decoration L4.
+        {
+            let line = m.get("text-decoration-line").cloned().unwrap_or_else(|| "none".into());
+            let thickness = m.get("text-decoration-thickness").cloned().unwrap_or_else(|| "auto".into());
+            let style = m.get("text-decoration-style").cloned().unwrap_or_else(|| "solid".into());
+            let tdc = m.get("text-decoration-color").cloned();
+            let col = m.get("color").cloned();
+            let mut parts: Vec<String> = Vec::new();
+            if line != "none" {
+                parts.push(line);
+            }
+            if thickness != "auto" {
+                parts.push(thickness);
+            }
+            if style != "solid" {
+                parts.push(style);
+            }
+            if let Some(c) = tdc {
+                if Some(&c) != col.as_ref() && c != "currentcolor" {
+                    parts.push(c);
+                }
+            }
+            if parts.is_empty() {
+                parts.push("none".to_string());
+            }
+            m.insert("text-decoration".to_string(), parts.join(" "));
+        }
         // white-space 계산값: collapse+wrap→normal 등 표준 키워드(§CSS Text 4).
         if let Some(ws) = m.get("white-space") {
             if let Some(norm) = crate::css::normalize_white_space(ws) {
