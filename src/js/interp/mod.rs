@@ -8381,7 +8381,10 @@ impl Interp {
             let mut s = color;
             let n = if spread { 4 } else { 3 };
             for i in 0..n {
-                s.push_str(&format!(" {}px", crate::style::num_css(la[i] + (lb[i] - la[i]) * t)));
+                let v = la[i] + (lb[i] - la[i]) * t;
+                // blur 반경(인덱스 2)은 비음수 — 외삽 시 음수는 0 으로 클램프(§CSS).
+                let v = if i == 2 { v.max(0.0) } else { v };
+                s.push_str(&format!(" {}px", crate::style::num_css(v)));
             }
             if ia && spread {
                 s.push_str(" inset");
