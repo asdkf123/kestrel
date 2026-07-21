@@ -885,6 +885,15 @@ fn collect_computed_styles(
         if let Some(v) = m.get("contain") {
             m.insert("contain".to_string(), crate::css::contain_computed(v));
         }
+        // place-items/place-content/place-self 계산값: align + justify 재구성(같으면 축약).
+        for axis in ["items", "content", "self"] {
+            let a = m.get(&format!("align-{}", axis)).cloned();
+            let j = m.get(&format!("justify-{}", axis)).cloned();
+            if let (Some(a), Some(j)) = (a, j) {
+                let v = if a == j { a } else { format!("{} {}", a, j) };
+                m.insert(format!("place-{}", axis), v);
+            }
+        }
         // flex-flow 계산값: flex-direction + flex-wrap 에서 재구성(기본값 생략).
         {
             let dir = m.get("flex-direction").cloned().unwrap_or_else(|| "row".to_string());

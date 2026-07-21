@@ -181,6 +181,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "offset-anchor", "offset-position", "scroll-margin-top", "scroll-margin-right", "scroll-margin-bottom",
     "scroll-margin-left", "scroll-padding-top", "scroll-padding-right",
     "scroll-padding-bottom", "scroll-padding-left", "scroll-snap-stop", "place-self",
+    "place-items", "place-content",
     // scroll-margin/scroll-padding 단축·논리(§CSS Scroll Snap).
     "scroll-margin", "scroll-padding",
     "scroll-margin-block", "scroll-margin-inline", "scroll-padding-block", "scroll-padding-inline",
