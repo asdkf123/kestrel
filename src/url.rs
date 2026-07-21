@@ -4,6 +4,9 @@ pub struct Url {
     pub host: String,
     pub port: u16,
     pub path: String,
+    // # 뒤 프래그먼트(없으면 빈 문자열). 예전엔 아예 버려서 URL 반영 getter 가
+    // "a/b#x" 를 "a/b" 로 잘랐다.
+    pub fragment: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -63,11 +66,15 @@ impl Url {
             "https" => 443,
             _ => return Err(UrlError::UnsupportedScheme),
         };
+        // 프래그먼트를 먼저 떼어 보관한다(authority/path 에서 제외).
+        let (rest, fragment) = match rest.split_once('#') {
+            Some((r, f)) => (r, f.to_string()),
+            None => (rest, String::new()),
+        };
         let (authority, path) = match rest.find('/') {
             Some(i) => (&rest[..i], rest[i..].to_string()),
             None => (rest, "/".to_string()),
         };
-        let path = path.split('#').next().unwrap_or("/").to_string();
         let (host, port) = match authority.rsplit_once(':') {
             Some((h, p)) => {
                 let port = p.parse::<u16>().map_err(|_| UrlError::NoHost)?;
@@ -78,30 +85,31 @@ impl Url {
         if host.is_empty() {
             return Err(UrlError::NoHost);
         }
-        Ok(Url { scheme, host, port, path })
+        Ok(Url { scheme, host, port, path, fragment })
     }
 
-    /// 상대/절대 href 를 이 URL 기준으로 해석한다.
+    /// 상대/절대 href 를 이 URL 기준으로 해석한다. 프래그먼트(#x)를 보존한다.
     pub fn join(&self, href: &str) -> Option<Url> {
-        if href.starts_with("http://") || href.starts_with("https://") {
-            Url::parse(href).ok()
+        // href 의 프래그먼트를 분리(있으면 결과 프래그먼트로, 없으면 상대 결과는 무프래그먼트).
+        let (body, frag) = match href.split_once('#') {
+            Some((b, f)) => (b, Some(f.to_string())),
+            None => (href, None),
+        };
+        let mut result = if href.starts_with("http://") || href.starts_with("https://") {
+            Url::parse(href).ok()?
         } else if let Some(rest) = href.strip_prefix("//") {
-            // 프로토콜 상대 (//host/path)
-            Url::parse(&format!("{}://{}", self.scheme, rest)).ok()
-        } else if href.starts_with('/') {
-            let p = href.split('#').next().unwrap_or("/");
-            Some(self.with_path(&normalize_with_query(p)))
-        } else {
-            // 프래그먼트만(#x) → 기준 URL 그대로 (RFC 3986 §5.3)
-            let no_frag = href.split('#').next().unwrap_or("");
-            if no_frag.is_empty() {
-                return Some(self.clone());
-            }
+            // 프로토콜 상대 (//host/path) — parse 가 프래그먼트도 처리.
+            Url::parse(&format!("{}://{}", self.scheme, rest)).ok()?
+        } else if body.starts_with('/') {
+            self.with_path(&normalize_with_query(body))
+        } else if body.is_empty() {
+            // 프래그먼트만(#x) → 기준 URL (RFC 3986 §5.3)
+            self.clone()
+        } else if let Some(q) = body.strip_prefix('?') {
             // 쿼리만(?x) → 기준 경로 + 새 쿼리
-            if let Some(q) = no_frag.strip_prefix('?') {
-                let base_path = self.path.split('?').next().unwrap_or("/");
-                return Some(self.with_path(&format!("{}?{}", base_path, q)));
-            }
+            let base_path = self.path.split('?').next().unwrap_or("/");
+            self.with_path(&format!("{}?{}", base_path, q))
+        } else {
             // 현재 경로의 디렉터리 기준 상대 → dot 세그먼트 해소
             let base_path = self.path.split('?').next().unwrap_or("/");
             let mut dir = base_path.to_string();
@@ -109,9 +117,12 @@ impl Url {
                 Some(i) => dir.truncate(i + 1),
                 None => dir = "/".to_string(),
             }
-            dir.push_str(no_frag);
-            Some(self.with_path(&normalize_with_query(&dir)))
-        }
+            dir.push_str(body);
+            self.with_path(&normalize_with_query(&dir))
+        };
+        // href 에 # 가 있으면 그 프래그먼트(빈 것 포함), 없으면 무프래그먼트.
+        result.fragment = frag.unwrap_or_default();
+        Some(result)
     }
 
     fn with_path(&self, path: &str) -> Url {
@@ -120,16 +131,22 @@ impl Url {
             host: self.host.clone(),
             port: self.port,
             path: path.to_string(),
+            fragment: String::new(),
         }
     }
 
     pub fn as_string(&self) -> String {
         let default_port = (self.scheme == "http" && self.port == 80)
             || (self.scheme == "https" && self.port == 443);
-        if default_port {
-            format!("{}://{}{}", self.scheme, self.host, self.path)
+        let frag = if self.fragment.is_empty() {
+            String::new()
         } else {
-            format!("{}://{}:{}{}", self.scheme, self.host, self.port, self.path)
+            format!("#{}", self.fragment)
+        };
+        if default_port {
+            format!("{}://{}{}{}", self.scheme, self.host, self.path, frag)
+        } else {
+            format!("{}://{}:{}{}{}", self.scheme, self.host, self.port, self.path, frag)
         }
     }
 }
