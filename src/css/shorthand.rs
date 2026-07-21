@@ -1910,9 +1910,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "page-break-before" | "page-break-after" | "page-break-inside"
         | "caret-shape"
         | "border-image-repeat"
-        // 4차 배치: logical border-style, mask, offset, scroll-snap-stop, place-self.
-        | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
-        | "border-inline-end-style" | "mask-image" | "mask-repeat"
+        // 4차 배치: mask, offset, scroll-snap-stop, place-self.
+        | "mask-image" | "mask-repeat"
         | "mask-size" | "mask-origin" | "mask-clip" | "mask-composite" | "mask-mode"
         | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
@@ -1968,6 +1967,31 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Value::Keyword(value_text.trim().to_string()),
             };
             vec![Declaration { important: false, name: name.to_string(), value }]
+        }
+        // border-*-width/style 논리(§CSS Logical): 롱핸드 단일, -{block,inline}- 쌍은 {1,2}.
+        "border-block-start-width" | "border-block-end-width" | "border-inline-start-width"
+        | "border-inline-end-width" | "border-block-width" | "border-inline-width"
+        | "border-block-start-style" | "border-block-end-style" | "border-inline-start-style"
+        | "border-inline-end-style" | "border-block-style" | "border-inline-style" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let is_style = name.ends_with("-style");
+            let is_pair = name == "border-block-width" || name == "border-inline-width"
+                || name == "border-block-style" || name == "border-inline-style";
+            let toks = split_top_level(value_text.trim());
+            let item_ok = |t: &str| if is_style { crate::css::is_line_style(t) } else { crate::css::column_rule_width_valid(t) };
+            let ok = if is_pair {
+                !toks.is_empty() && toks.len() <= 2 && toks.iter().all(|t| item_ok(t))
+            } else {
+                toks.len() == 1 && item_ok(toks[0])
+            };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
         }
         // border-*-color 논리 롱핸드(§CSS Logical): 단일 <color>. border-{block,inline}
         // -color 는 <color>{1,2}. 검증 후 색은 Value, 무효는 거부.
