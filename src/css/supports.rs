@@ -189,7 +189,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "scroll-margin-block-start", "scroll-margin-block-end", "scroll-margin-inline-start",
     "scroll-margin-inline-end", "scroll-padding-block-start", "scroll-padding-block-end",
     "scroll-padding-inline-start", "scroll-padding-inline-end",
-    "contain-intrinsic-width", "contain-intrinsic-height",
+    "contain-intrinsic-width", "contain-intrinsic-height", "contain-intrinsic-size",
+    "contain-intrinsic-inline-size", "contain-intrinsic-block-size",
     // 5차: SVG presentation 프로퍼티(비페인트) — svg/ 및 css 전반에서 대량 테스트.
     "fill-opacity", "stroke-opacity", "stroke-width", "stroke-linecap", "stroke-linejoin",
     "stroke-dasharray", "stroke-dashoffset", "stroke-miterlimit", "clip-rule", "fill-rule",

@@ -395,6 +395,15 @@ impl Interp {
                 return if a == j { a } else { format!("{} {}", a, j) };
             }
         }
+        // contain-intrinsic-size(§CSS Sizing 4): width + height, 두 그룹 같으면 축약.
+        if prop == "contain-intrinsic-size" {
+            let d = crate::css::expand_decl_pub(prop, raw);
+            if d.len() == 2 {
+                let w = crate::style::computed_value_string(&d[0].value);
+                let h = crate::style::computed_value_string(&d[1].value);
+                return if w == h { w } else { format!("{} {}", w, h) };
+            }
+        }
         // aspect-ratio(§CSS Sizing): auto 앞, <ratio> "a / b" 캐논.
         if prop == "aspect-ratio" && crate::css::aspect_ratio_valid(raw) {
             return crate::css::aspect_ratio_canonical(raw);
@@ -636,6 +645,11 @@ impl Interp {
                     | "max-width"
                     | "max-height"
                     | "aspect-ratio"
+                    | "contain-intrinsic-size"
+                    | "contain-intrinsic-width"
+                    | "contain-intrinsic-height"
+                    | "contain-intrinsic-inline-size"
+                    | "contain-intrinsic-block-size"
             )
             && !text_trimmed.to_ascii_lowercase().contains("var(")
             && crate::css::expand_decl_pub(prop, &text_trimmed).is_empty()

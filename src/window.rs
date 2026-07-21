@@ -894,6 +894,17 @@ fn collect_computed_styles(
         if let Some(v) = m.get("contain") {
             m.insert("contain".to_string(), crate::css::contain_computed(v));
         }
+        // contain-intrinsic-size 계산값: width + height 재구성(같으면 축약), 논리 노출.
+        {
+            let w = m.get("contain-intrinsic-width").cloned();
+            let h = m.get("contain-intrinsic-height").cloned();
+            if let (Some(w), Some(h)) = (w, h) {
+                m.insert("contain-intrinsic-inline-size".to_string(), w.clone());
+                m.insert("contain-intrinsic-block-size".to_string(), h.clone());
+                let v = if w == h { w } else { format!("{} {}", w, h) };
+                m.insert("contain-intrinsic-size".to_string(), v);
+            }
+        }
         // place-items/place-content/place-self 계산값: align + justify 재구성(같으면 축약).
         for axis in ["items", "content", "self"] {
             let a = m.get(&format!("align-{}", axis)).cloned();

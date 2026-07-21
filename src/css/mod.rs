@@ -82,6 +82,7 @@ pub(crate) use values::gap_value_valid;
 pub(crate) use values::size_valid;
 pub(crate) use values::aspect_ratio_valid;
 pub(crate) use values::aspect_ratio_canonical;
+pub(crate) use values::contain_intrinsic_valid;
 pub(crate) use values::scroll_padding_valid;
 pub(crate) use values::box_canonical;
 pub(crate) use values::scroll_snap_type_valid;

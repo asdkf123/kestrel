@@ -668,6 +668,55 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => Vec::new(),
             }
         }
+        // contain-intrinsic-size(§CSS Sizing 4): [auto? [none|<length>]]{1,2} → width/height.
+        "contain-intrinsic-size" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { important: false, name: "contain-intrinsic-width".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "contain-intrinsic-height".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            if !crate::css::contain_intrinsic_valid(value_text, 2) {
+                return Vec::new();
+            }
+            // 그룹 분할: 각 그룹 = auto? (none|<length>).
+            let toks: Vec<&str> = split_top_level(value_text.trim());
+            let mut groups: Vec<String> = Vec::new();
+            let mut i = 0;
+            while i < toks.len() {
+                let mut g = String::new();
+                if toks[i].eq_ignore_ascii_case("auto") {
+                    g.push_str("auto ");
+                    i += 1;
+                }
+                g.push_str(toks[i]);
+                i += 1;
+                groups.push(g);
+            }
+            let w = groups[0].clone();
+            let h = groups.get(1).cloned().unwrap_or_else(|| w.clone());
+            return vec![
+                Declaration { important: false, name: "contain-intrinsic-width".to_string(), value: Value::Keyword(w) },
+                Declaration { important: false, name: "contain-intrinsic-height".to_string(), value: Value::Keyword(h) },
+            ];
+        }
+        "contain-intrinsic-width" | "contain-intrinsic-height"
+        | "contain-intrinsic-inline-size" | "contain-intrinsic-block-size" => {
+            let phys = match name {
+                "contain-intrinsic-inline-size" => "contain-intrinsic-width",
+                "contain-intrinsic-block-size" => "contain-intrinsic-height",
+                other => other,
+            };
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::contain_intrinsic_valid(value_text, 1) {
+                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+            }
+            return Vec::new();
+        }
         // aspect-ratio(§CSS Sizing): auto || <ratio>. 무효(auto/, 단위, 음수, 공백구분) 거부.
         "aspect-ratio" => {
             let low = value_text.trim().to_ascii_lowercase();

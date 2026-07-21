@@ -2581,6 +2581,35 @@ fn is_math_fn(low: &str) -> bool {
             .any(|p| low.starts_with(p))
 }
 
+// contain-intrinsic-size 값 유효성(§CSS Sizing 4): [ auto? [ none | <length> ] ]{1,max}.
+// 길이만(퍼센트 없음), 비음수. legacy·%·음수·초과 그룹 거부.
+pub fn contain_intrinsic_valid(raw: &str, max_groups: usize) -> bool {
+    let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
+    let is_len = |t: &str| {
+        if is_math_fn(t) {
+            return !(t.contains("deg") || t.contains("rad") || t.contains("turn") || t.contains('%'));
+        }
+        !t.ends_with('%') && is_length_percentage(t) && !t.starts_with('-')
+    };
+    let mut i = 0;
+    let mut groups = 0;
+    while i < toks.len() && groups < max_groups {
+        if toks[i] == "auto" {
+            i += 1;
+            if i >= toks.len() {
+                return false; // auto 뒤엔 none|<length> 필수
+            }
+        }
+        if toks[i] == "none" || is_len(&toks[i]) {
+            i += 1;
+            groups += 1;
+        } else {
+            return false;
+        }
+    }
+    i == toks.len() && groups >= 1
+}
+
 // aspect-ratio 유효성(§CSS Sizing): auto || <ratio>. <ratio>=<number 0+> [/ <number 0+>].
 pub fn aspect_ratio_valid(raw: &str) -> bool {
     let norm = raw.replace('/', " / ");
