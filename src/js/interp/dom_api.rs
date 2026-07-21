@@ -953,6 +953,8 @@ impl Interp {
                     | "transform-box"
                     | "backface-visibility"
                     | "perspective"
+                    | "font-variant-ligatures"
+                    | "font-language-override"
                     | "text-align"
                     | "text-align-last"
                     | "text-align-all"

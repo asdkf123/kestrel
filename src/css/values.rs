@@ -5730,6 +5730,37 @@ pub fn font_variant_east_asian_canonical(raw: &str) -> String {
     variant_group_canonical(raw, EAST_ASIAN_GROUPS, EAST_ASIAN_SINGLES)
 }
 
+// font-variant-ligatures(§CSS Fonts 4): normal | none | 그룹형.
+pub fn font_variant_ligatures_valid(raw: &str) -> bool {
+    if raw.trim().eq_ignore_ascii_case("none") {
+        return true;
+    }
+    variant_group_valid(
+        raw,
+        &[
+            &["common-ligatures", "no-common-ligatures"],
+            &["discretionary-ligatures", "no-discretionary-ligatures"],
+            &["historical-ligatures", "no-historical-ligatures"],
+            &["contextual", "no-contextual"],
+        ],
+        &[],
+    )
+}
+
+// font-language-override(§CSS Fonts 4): normal | <string>(1~4 ASCII 0x20~0x7E).
+pub fn font_language_override_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("normal") {
+        return true;
+    }
+    if !is_css_string(t) {
+        return false;
+    }
+    let inner = &t[1..t.len() - 1];
+    let n = inner.chars().count();
+    (1..=4).contains(&n) && inner.chars().all(|c| ('\u{20}'..='\u{7e}').contains(&c))
+}
+
 // font-variant-numeric(§CSS Fonts 4).
 pub fn font_variant_numeric_valid(raw: &str) -> bool {
     variant_group_valid(raw, NUMERIC_GROUPS, NUMERIC_SINGLES)

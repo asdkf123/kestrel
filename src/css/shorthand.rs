@@ -1742,6 +1742,24 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // font-variant-ligatures·font-language-override(§CSS Fonts 4) 검증.
+        "font-variant-ligatures" | "font-language-override" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+                || (name == "font-variant-ligatures" && crate::css::font_variant_ligatures_valid(value_text))
+                || (name == "font-language-override" && crate::css::font_language_override_valid(value_text));
+            if ok {
+                // 문자열은 대소문자 보존, 그 외 소문자.
+                let v = if name == "font-language-override" && !matches!(low.as_str(), "normal" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                    value_text.trim().to_string()
+                } else {
+                    low
+                };
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+            } else {
+                Vec::new()
+            }
+        }
         // perspective(§CSS Transforms 2): none | <length [0,∞]>(퍼센트 불가).
         "perspective" => {
             let v = value_text.trim();
@@ -2083,8 +2101,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
-        | "font-variant-ligatures"
-        | "font-language-override"
         | "quotes" | "scrollbar-width" | "scrollbar-color"
         | "mask-type" | "text-justify"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
