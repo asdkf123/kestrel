@@ -4670,17 +4670,26 @@ fn content_ident_ok(t: &str) -> bool {
 }
 
 // counter()/counters() 유효성.
+// counter()/counters() 의 스타일 인자: <counter-style-name>(none/default/CSS-wide 제외).
+fn counter_style_arg_ok(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    !matches!(
+        low.as_str(),
+        "none" | "default" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+    ) && content_ident_ok(t)
+}
+
 fn counter_fn_valid(t: &str) -> bool {
     if let Some(a) = fn_args(t, "counter(") {
         return (a.len() == 1 || a.len() == 2)
             && content_ident_ok(&a[0])
-            && (a.len() == 1 || content_ident_ok(&a[1]));
+            && (a.len() == 1 || counter_style_arg_ok(&a[1]));
     }
     if let Some(a) = fn_args(t, "counters(") {
         return (a.len() == 2 || a.len() == 3)
             && content_ident_ok(&a[0])
             && is_css_string(&a[1])
-            && (a.len() == 2 || content_ident_ok(&a[2]));
+            && (a.len() == 2 || counter_style_arg_ok(&a[2]));
     }
     false
 }
