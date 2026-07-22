@@ -895,6 +895,7 @@ impl Interp {
                     | "background-origin"
                     | "background-position-x"
                     | "background-position-y"
+                    | "background"
                     | "background-color"
                     | "background-repeat"
                     | "background-size"

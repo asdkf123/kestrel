@@ -3995,6 +3995,15 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     // CSS 문법상 색은 마지막 레이어에만 올 수 있으므로, 이미지/반복/크기는 첫 레이어,
     // 색은 마지막 레이어에서 찾는다. (우리는 레이어 1장만 그린다)
     let layers = split_top_level_commas(value_text);
+    // background-color 는 마지막 레이어에만 올 수 있다(§CSS Backgrounds). 그 외 레이어에
+    // 색 토큰이 있으면 무효.
+    if layers.len() > 1 {
+        for lyr in &layers[..layers.len() - 1] {
+            if split_top_level(lyr).iter().any(|t| matches!(interpret_value(t.trim()), Some(Value::Color(_)))) {
+                return Vec::new();
+            }
+        }
+    }
     let first = layers.first().cloned().unwrap_or_default();
     let last = layers.last().cloned().unwrap_or_default();
     let has_gradient = value_text.contains("gradient(");
