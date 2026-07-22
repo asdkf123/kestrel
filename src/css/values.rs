@@ -6249,6 +6249,9 @@ fn canon_track_seq(s: &str) -> String {
             } else {
                 out.push(cl.to_string());
             }
+        } else if cl == "0" {
+            // 무단위 0 트랙은 <length> 0 → 0px 로 캐논(§CSSOM).
+            out.push("0px".to_string());
         } else {
             out.push(cl.to_string());
         }

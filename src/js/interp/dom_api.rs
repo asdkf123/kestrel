@@ -350,6 +350,11 @@ impl Interp {
         if prop == "grid-template" {
             return crate::css::grid_template_canonical(raw);
         }
+        // grid 단축(§CSSOM): template 형식은 위와 같고, auto-flow 형식은 auto-flow 를
+        // dense 앞으로 정렬한다.
+        if prop == "grid" {
+            return crate::css::grid_canonical(raw);
+        }
         // border-image-repeat(§CSS Backgrounds): 두 값 같으면 하나로 축약.
         if prop == "border-image-repeat" && crate::css::border_image_repeat_valid(raw) {
             return crate::css::border_image_repeat_canonical(raw);

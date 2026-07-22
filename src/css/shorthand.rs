@@ -3611,6 +3611,53 @@ pub(crate) fn grid_template_canonical(raw: &str) -> String {
     s
 }
 
+// grid 단축의 캐논 직렬화(§CSSOM). auto-flow 형식은 auto-flow 를 dense 앞으로
+// 정렬하고, 그 외(template 형식)는 grid_template_canonical 에 위임한다.
+pub(crate) fn grid_canonical(raw: &str) -> String {
+    let v = raw.trim();
+    let parts = split_top_slash_pub(v);
+    if parts.len() == 2 {
+        let first_af = |s: &str| {
+            s.split_whitespace()
+                .next()
+                .map(|t| t.eq_ignore_ascii_case("auto-flow") || t.eq_ignore_ascii_case("dense"))
+                .unwrap_or(false)
+        };
+        let (l, r) = (parts[0].trim(), parts[1].trim());
+        let parse_af = |s: &str| -> Option<(bool, String)> {
+            let toks = split_top_level(s);
+            let (mut has_af, mut dense, mut i) = (false, false, 0usize);
+            while i < toks.len() {
+                match toks[i].to_ascii_lowercase().as_str() {
+                    "auto-flow" if !has_af => has_af = true,
+                    "dense" if !dense => dense = true,
+                    _ => break,
+                }
+                i += 1;
+            }
+            if !has_af {
+                return None;
+            }
+            Some((dense, toks[i..].join(" ")))
+        };
+        let af_str = |dense: bool, track: &str| {
+            let d = if dense { " dense" } else { "" };
+            let t = if track.trim().is_empty() { String::new() } else { format!(" {}", track.trim()) };
+            format!("auto-flow{d}{t}")
+        };
+        if first_af(l) && !first_af(r) {
+            if let Some((dense, ar)) = parse_af(l) {
+                return format!("{} / {}", af_str(dense, &ar), crate::css::grid_template_track_canonical(r));
+            }
+        } else if first_af(r) && !first_af(l) {
+            if let Some((dense, ac)) = parse_af(r) {
+                return format!("{} / {}", crate::css::grid_template_track_canonical(l), af_str(dense, &ac));
+            }
+        }
+    }
+    grid_template_canonical(v)
+}
+
 // border-image-source 토큰인가: none 또는 <image>(url()/그래디언트/image-set 등).
 fn is_bi_image_token(t: &str) -> bool {
     let low = t.to_ascii_lowercase();
