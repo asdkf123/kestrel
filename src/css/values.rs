@@ -1085,6 +1085,19 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     } else {
         return false;
     };
+    // prefix 의 "at <position>"(radial/conic)는 유효한 <position>이어야 한다
+    // (3값 형식·잘못된 축 배치 거부). "at" 앞의 shape/size 는 기존 느슨 검사 유지.
+    if start == 1 {
+        let ptoks = split_top_level(first);
+        if let Some(ap) = ptoks.iter().position(|t| t.eq_ignore_ascii_case("at")) {
+            // 위치는 "at" 뒤부터 "in"(색보간법) 전까지.
+            let rest = &ptoks[ap + 1..];
+            let end = rest.iter().position(|t| t.eq_ignore_ascii_case("in")).unwrap_or(rest.len());
+            if !bs_position_valid(&rest[..end]) {
+                return false;
+            }
+        }
+    }
     // color-stop-list: 색 스톱과 color hint(위치 단독)가 번갈아 온다. hint 는 첫/끝에
     // 올 수 없고 연속될 수 없다. 색 스톱은 위치를 최대 2개까지(색 + pos1 [pos2]).
     let list = &segs[start..];
@@ -4997,18 +5010,24 @@ fn bs_position_valid(toks: &[String]) -> bool {
         }
         2 => {
             let (a, b) = (toks[0].to_ascii_lowercase(), toks[1].to_ascii_lowercase());
-            let ok = |kw: &str, orig: &str| is_kw(kw) || bs_lp(orig);
-            if !ok(&a, &toks[0]) || !ok(&b, &toks[1]) {
+            let (a_kw, b_kw) = (is_kw(&a), is_kw(&b));
+            let (a_lp, b_lp) = (bs_lp(&toks[0]), bs_lp(&toks[1]));
+            if !(a_kw || a_lp) || !(b_kw || b_lp) {
                 return false;
             }
-            // 같은 축 키워드 둘(left right / top bottom)은 무효.
-            if is_kw(&a) && is_kw(&b) {
+            if a_kw && b_kw {
+                // 키워드 둘: 같은 축(left right / top bottom)은 무효, 순서는 자유.
                 let (xa, xb) = (axis(&a), axis(&b));
-                if xa != 2 && xb != 2 && xa == xb {
-                    return false;
-                }
+                xa == 2 || xb == 2 || xa != xb
+            } else if a_kw {
+                // 키워드+길이: 첫 슬롯 키워드는 가로 계열(left/right/center)만.
+                matches!(a.as_str(), "left" | "right" | "center")
+            } else if b_kw {
+                // 길이+키워드: 둘째 슬롯 키워드는 세로 계열(top/bottom/center)만.
+                matches!(b.as_str(), "top" | "bottom" | "center")
+            } else {
+                true // 길이 둘
             }
-            true
         }
         4 => {
             // [kw <lp>] [kw <lp>] — 키워드 두 축, 각 뒤에 오프셋.
