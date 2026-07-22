@@ -3939,6 +3939,8 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut image = None;
     let mut color = None;
     let mut repeat = None;
+    let mut attachment: Option<String> = None;
+    let mut boxes: Vec<String> = Vec::new();
     let mut size_tokens: Vec<String> = Vec::new();
     let mut pos_tokens: Vec<String> = Vec::new();
 
@@ -4002,36 +4004,42 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
             pos_tokens.push(t.to_string());
         } else if t.ends_with('%') || t.trim_end_matches("px").parse::<f32>().is_ok() {
             pos_tokens.push(t.to_string()); // 길이/퍼센트 위치
-        } else if matches!(
-            t,
-            "scroll" | "fixed" | "local" | "border-box" | "padding-box" | "content-box" | "none"
-        ) {
-            // attachment/origin 키워드 → 무시
+        } else if matches!(t, "scroll" | "fixed" | "local") {
+            attachment = Some(t.to_string());
+        } else if matches!(t, "border-box" | "padding-box" | "content-box") {
+            boxes.push(t.to_string());
+        } else if t == "none" {
+            // image none — 명시적 none(기본값이라 별도 저장 불필요).
         } else if let Some(v @ Value::Color(..)) = interpret_value(t) {
             color = Some(v);
         }
     }
-    if let Some(v) = image {
-        out.push(Declaration { important: false, name: "background-image".to_string(), value: v });
-    }
-    if let Some(v) = color {
-        out.push(Declaration { important: false, name: "background-color".to_string(), value: v });
-    }
-    if let Some(v) = repeat {
-        out.push(Declaration { important: false, name: "background-repeat".to_string(), value: v });
-    }
-    if !size_tokens.is_empty() {
-        out.push(Declaration { important: false,
-            name: "background-size".to_string(),
-            value: Value::Keyword(size_tokens.join(" ")),
-        });
-    }
-    if !pos_tokens.is_empty() {
-        out.push(Declaration { important: false,
-            name: "background-position".to_string(),
-            value: Value::Keyword(pos_tokens.join(" ")),
-        });
-    }
+    // 단축은 모든 롱핸드를 리셋한다 — 생략된 것은 초기값으로 채운다(§CSS Backgrounds).
+    // origin/clip: 박스 하나면 둘 다, 둘이면 첫째=origin 둘째=clip. 없으면 각 초기값.
+    let kw = |name: &str, v: String| Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) };
+    out.push(Declaration {
+        important: false,
+        name: "background-image".to_string(),
+        value: image.unwrap_or_else(|| Value::Keyword("none".to_string())),
+    });
+    out.push(kw("background-position", if pos_tokens.is_empty() { "0% 0%".to_string() } else { pos_tokens.join(" ") }));
+    out.push(kw("background-size", if size_tokens.is_empty() { "auto".to_string() } else { size_tokens.join(" ") }));
+    out.push(Declaration {
+        important: false,
+        name: "background-repeat".to_string(),
+        value: repeat.unwrap_or_else(|| Value::Keyword("repeat".to_string())),
+    });
+    out.push(kw("background-attachment", attachment.unwrap_or_else(|| "scroll".to_string())));
+    out.push(kw("background-origin", boxes.first().cloned().unwrap_or_else(|| "padding-box".to_string())));
+    out.push(kw(
+        "background-clip",
+        boxes.get(1).or_else(|| boxes.first()).cloned().unwrap_or_else(|| "border-box".to_string()),
+    ));
+    out.push(Declaration {
+        important: false,
+        name: "background-color".to_string(),
+        value: color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 0 })),
+    });
     out
 }
 
@@ -4621,6 +4629,7 @@ mod tests {
             matches!(find(&d, "background-repeat"), Some(Value::Keyword(k)) if k == "repeat-x"),
             "repeat-x"
         );
-        assert!(find(&d, "background-size").is_none(), "size 없음");
+        // 단축은 생략된 롱핸드도 초기값으로 리셋한다(§CSS Backgrounds): size=auto.
+        assert!(matches!(find(&d, "background-size"), Some(Value::Keyword(k)) if k == "auto"), "size 초기값 auto");
     }
 }
