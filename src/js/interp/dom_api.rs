@@ -346,6 +346,10 @@ impl Interp {
         if prop == "contain" && crate::css::contain_valid(raw) {
             return crate::css::contain_canonical(raw);
         }
+        // border-radius 단축(§CSSOM): H/V 박스 축약, V==H 면 "/ V" 생략.
+        if matches!(prop, "border-radius" | "-webkit-border-radius") && crate::css::border_radius_valid(raw) {
+            return crate::css::border_radius_canonical(raw);
+        }
         // grid-template 단축(§CSSOM): none/none→none, 빈 [] 생략, 기본 auto 트랙 생략.
         if prop == "grid-template" {
             return crate::css::grid_template_canonical(raw);

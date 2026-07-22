@@ -5566,6 +5566,32 @@ fn box_collapse_tokens(toks: &[String]) -> Vec<String> {
     }
 }
 
+// border-radius 단축 캐논 직렬화(§CSSOM): H / V 각각 박스 축약, V==H 면 "/ V" 생략.
+// 무단위 0 → 0px.
+pub fn border_radius_canonical(raw: &str) -> String {
+    let norm = |seg: &str| -> Vec<String> {
+        let toks: Vec<String> = split_top_level(seg.trim())
+            .iter()
+            .map(|t| if t.trim() == "0" { "0px".to_string() } else { t.trim().to_string() })
+            .collect();
+        box_collapse_tokens(&toks)
+    };
+    let slash = split_top_slash(raw.trim());
+    let h = norm(&slash[0]);
+    if h.is_empty() {
+        return raw.trim().to_string();
+    }
+    if slash.len() < 2 {
+        return h.join(" ");
+    }
+    let v = norm(&slash[1]);
+    if h == v {
+        h.join(" ")
+    } else {
+        format!("{} / {}", h.join(" "), v.join(" "))
+    }
+}
+
 // border-image-repeat 캐논: 키워드 소문자화 후 두 값이 같으면 하나로.
 pub fn border_image_repeat_canonical(raw: &str) -> String {
     let toks: Vec<String> = raw.split_whitespace().map(|s| s.to_ascii_lowercase()).collect();
