@@ -3570,6 +3570,47 @@ fn expand_grid_template_value(v: &str) -> Option<(String, String, String)> {
     }
 }
 
+// grid-template 단축의 캐논 직렬화(§CSSOM). 지정값을 최소 형태로:
+//  none / none → none, 빈 [] 생략, 문자열 형식은 기본 auto 트랙 생략.
+pub(crate) fn grid_template_canonical(raw: &str) -> String {
+    let (rows, cols, areas) = match expand_grid_template_value(raw.trim()) {
+        Some(t) => t,
+        None => return raw.trim().to_string(),
+    };
+    if areas == "none" {
+        if rows == "none" && cols == "none" {
+            return "none".to_string();
+        }
+        return format!("{rows} / {cols}");
+    }
+    // 문자열 형식: rows 의 라인네임/트랙 사이에 area 문자열을 끼워 넣는다.
+    let strings: Vec<String> = tokenize_grid_template(&areas)
+        .into_iter()
+        .filter(|t| t.starts_with('"') || t.starts_with('\''))
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut si = 0usize;
+    for tok in tokenize_grid_template(&rows) {
+        if tok.starts_with('[') {
+            out.push(tok);
+        } else {
+            // 트랙 앞에 해당 행의 문자열을 넣고, 기본 auto 트랙은 생략.
+            if si < strings.len() {
+                out.push(strings[si].clone());
+                si += 1;
+            }
+            if !tok.eq_ignore_ascii_case("auto") {
+                out.push(tok);
+            }
+        }
+    }
+    let mut s = out.join(" ");
+    if cols != "none" {
+        s = format!("{s} / {cols}");
+    }
+    s
+}
+
 // border-image-source 토큰인가: none 또는 <image>(url()/그래디언트/image-set 등).
 fn is_bi_image_token(t: &str) -> bool {
     let low = t.to_ascii_lowercase();

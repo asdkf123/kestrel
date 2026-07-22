@@ -346,6 +346,10 @@ impl Interp {
         if prop == "contain" && crate::css::contain_valid(raw) {
             return crate::css::contain_canonical(raw);
         }
+        // grid-template 단축(§CSSOM): none/none→none, 빈 [] 생략, 기본 auto 트랙 생략.
+        if prop == "grid-template" {
+            return crate::css::grid_template_canonical(raw);
+        }
         // border-image-repeat(§CSS Backgrounds): 두 값 같으면 하나로 축약.
         if prop == "border-image-repeat" && crate::css::border_image_repeat_valid(raw) {
             return crate::css::border_image_repeat_canonical(raw);
