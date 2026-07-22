@@ -2478,11 +2478,19 @@ pub fn scroll_snap_type_canonical(raw: &str) -> String {
 // 정렬 값 캐논 직렬화(§CSS Box Alignment): 기본 "first" 생략(first baseline→baseline).
 pub fn alignment_canonical(raw: &str) -> String {
     let low = raw.trim().to_ascii_lowercase();
-    if low == "first baseline" {
-        "baseline".to_string()
-    } else {
-        low
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    // first baseline → baseline
+    if toks.len() == 2 && toks[0] == "first" && toks[1] == "baseline" {
+        return "baseline".to_string();
     }
+    // justify-items 의 legacy && [left|right|center]: legacy 를 앞으로(§CSS Box Alignment).
+    if toks.len() == 2 && toks.contains(&"legacy") {
+        let other = toks.iter().copied().find(|&t| t != "legacy").unwrap_or("");
+        if matches!(other, "left" | "right" | "center") {
+            return format!("legacy {other}");
+        }
+    }
+    low
 }
 
 // 정렬 위치 키워드인가(§CSS Box Alignment). is_content 면 content-position, 아니면
