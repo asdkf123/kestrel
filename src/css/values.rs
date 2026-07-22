@@ -1089,12 +1089,27 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     // (3값 형식·잘못된 축 배치 거부). "at" 앞의 shape/size 는 기존 느슨 검사 유지.
     if start == 1 {
         let ptoks = split_top_level(first);
-        if let Some(ap) = ptoks.iter().position(|t| t.eq_ignore_ascii_case("at")) {
+        let at_pos = ptoks.iter().position(|t| t.eq_ignore_ascii_case("at"));
+        if let Some(ap) = at_pos {
             // 위치는 "at" 뒤부터 "in"(색보간법) 전까지.
             let rest = &ptoks[ap + 1..];
             let end = rest.iter().position(|t| t.eq_ignore_ascii_case("in")).unwrap_or(rest.len());
             if !bs_position_valid(&rest[..end]) {
                 return false;
+            }
+        }
+        // radial-gradient 의 <size>(원/타원 반지름)는 비음수여야 한다(§CSS Images).
+        // "at" 앞(없으면 "in" 앞)의 길이/퍼센트 토큰이 음수면 거부.
+        let is_radial =
+            lower.starts_with("radial-gradient(") || lower.starts_with("repeating-radial-gradient(");
+        if is_radial {
+            let upto = at_pos
+                .or_else(|| ptoks.iter().position(|t| t.eq_ignore_ascii_case("in")))
+                .unwrap_or(ptoks.len());
+            for t in &ptoks[..upto] {
+                if t.trim().starts_with('-') && is_length_percentage(t) {
+                    return false;
+                }
             }
         }
         // "in <color-interpolation-method>"(§CSS Color 4): in 뒤는 반드시 색공간,
