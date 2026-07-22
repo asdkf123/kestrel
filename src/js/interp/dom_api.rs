@@ -993,6 +993,7 @@ impl Interp {
                     | "clip-rule"
                     | "fill-rule"
                     | "clip-path"
+                    | "clip"
                     | "shape-outside"
                     | "size"
                     | "page"

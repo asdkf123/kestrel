@@ -2598,6 +2598,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "backdrop-filter" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // clip(레거시): auto | rect(...). 검증 후 원문 보존.
+        "clip" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::clip_valid(t) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // shape-outside: none | <image> | [ <basic-shape> || <shape-box> ]. 검증 후 원문 보존.
         "shape-outside" => {
             let t = value_text.trim();

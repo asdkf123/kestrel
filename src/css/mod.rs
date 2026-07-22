@@ -87,7 +87,7 @@ pub(crate) use values::{content_canonical, content_valid};
 pub(crate) use values::{
     background_attachment_valid, background_clip_canonical, background_clip_valid,
     background_repeat_valid, background_size_valid, basic_shape_valid, bg_position_axis_valid,
-    clip_path_valid, shape_outside_valid,
+    clip_path_valid, clip_valid, shape_outside_valid,
     border_corner_radius_valid, border_image_box_canonical, border_image_outset_valid,
     border_image_repeat_canonical, border_image_repeat_valid, border_image_slice_canonical,
     border_image_slice_valid, border_image_width_valid, border_radius_valid, box_list_valid,

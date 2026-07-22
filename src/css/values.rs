@@ -5203,6 +5203,36 @@ pub fn basic_shape_valid(raw: &str) -> bool {
     }
 }
 
+// clip(레거시, §CSS Masking): auto | rect(<len-or-auto>{4}). 퍼센트 불가, 부호 허용.
+// 콤마 또는 공백 구분(혼용 불가).
+pub fn clip_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("auto") {
+        return true;
+    }
+    let low = s.to_ascii_lowercase();
+    if !low.starts_with("rect(") || !low.ends_with(')') {
+        return false;
+    }
+    let inner = s[5..s.len() - 1].trim();
+    let parts: Vec<String> = if inner.contains(',') {
+        inner.split(',').map(|p| p.trim().to_string()).collect()
+    } else {
+        inner.split_whitespace().map(|p| p.to_string()).collect()
+    };
+    if parts.len() != 4 {
+        return false;
+    }
+    let is_clip_len = |t: &str| {
+        let l = t.to_ascii_lowercase();
+        if l.ends_with('%') {
+            return false;
+        }
+        is_length_percentage(t) || is_math_fn(&l)
+    };
+    parts.iter().all(|p| p.eq_ignore_ascii_case("auto") || is_clip_len(p))
+}
+
 fn is_geometry_box(t: &str) -> bool {
     matches!(
         t.to_ascii_lowercase().as_str(),
