@@ -4966,6 +4966,271 @@ pub fn background_attachment_valid(raw: &str) -> bool {
         && layers.iter().all(|l| matches!(l.trim().to_ascii_lowercase().as_str(), "scroll" | "fixed" | "local"))
 }
 
+// ── <basic-shape>(§CSS Shapes) ─────────────────────────────────────────────
+fn bs_lp(t: &str) -> bool {
+    // <length-percentage>(부호 허용, calc). 무단위는 0 만.
+    is_length_percentage(t) || is_math_fn(&t.to_ascii_lowercase())
+}
+fn bs_nonneg_lp(t: &str) -> bool {
+    if t.trim().starts_with('-') {
+        return false;
+    }
+    is_length_percentage(t) || is_math_fn(&t.to_ascii_lowercase())
+}
+// <position>: 1~4 토큰(키워드 left/right/center/top/bottom 또는 lp).
+fn bs_position_valid(toks: &[String]) -> bool {
+    if toks.is_empty() || toks.len() > 4 {
+        return false;
+    }
+    toks.iter().all(|t| {
+        let l = t.to_ascii_lowercase();
+        matches!(l.as_str(), "left" | "right" | "center" | "top" | "bottom") || bs_lp(t)
+    })
+}
+// inset()/xywh()/rect() 의 [round <border-radius>] 꼬리 검증.
+fn bs_round_tail(radii: &[String]) -> bool {
+    !radii.is_empty() && border_radius_valid(&radii.join(" "))
+}
+fn inset_shape_valid(inner: &str) -> bool {
+    let toks = split_top_level(inner);
+    if toks.is_empty() {
+        return false;
+    }
+    let rp = toks.iter().position(|t| t.eq_ignore_ascii_case("round"));
+    let (coords, radii) = match rp {
+        Some(p) => (&toks[..p], Some(&toks[p + 1..])),
+        None => (&toks[..], None),
+    };
+    if coords.is_empty() || coords.len() > 4 || !coords.iter().all(|t| bs_lp(t)) {
+        return false;
+    }
+    match radii {
+        None => true,
+        Some(r) => bs_round_tail(r),
+    }
+}
+fn circle_shape_valid(inner: &str) -> bool {
+    if inner.is_empty() {
+        return true;
+    }
+    let toks = split_top_level(inner);
+    let ap = toks.iter().position(|t| t.eq_ignore_ascii_case("at"));
+    let (radius, pos) = match ap {
+        Some(p) => (&toks[..p], Some(&toks[p + 1..])),
+        None => (&toks[..], None),
+    };
+    if radius.len() > 1 {
+        return false;
+    }
+    if let Some(r) = radius.first() {
+        let l = r.to_ascii_lowercase();
+        if !(l == "closest-side" || l == "farthest-side" || bs_nonneg_lp(r)) {
+            return false;
+        }
+    }
+    match pos {
+        Some(p) => bs_position_valid(p),
+        None => true,
+    }
+}
+fn ellipse_shape_valid(inner: &str) -> bool {
+    if inner.is_empty() {
+        return true;
+    }
+    let toks = split_top_level(inner);
+    let ap = toks.iter().position(|t| t.eq_ignore_ascii_case("at"));
+    let (radii, pos) = match ap {
+        Some(p) => (&toks[..p], Some(&toks[p + 1..])),
+        None => (&toks[..], None),
+    };
+    if radii.len() != 0 && radii.len() != 2 {
+        return false;
+    }
+    for r in radii {
+        let l = r.to_ascii_lowercase();
+        if !(l == "closest-side" || l == "farthest-side" || bs_nonneg_lp(r)) {
+            return false;
+        }
+    }
+    match pos {
+        Some(p) => bs_position_valid(p),
+        None => true,
+    }
+}
+fn polygon_point_valid(s: &str) -> bool {
+    let toks = split_top_level(s);
+    toks.len() == 2 && toks.iter().all(|t| bs_lp(t))
+}
+fn polygon_prelude_valid(ftoks: &[String]) -> bool {
+    // [ <fill-rule> ]? [ round <length> ]?  (순서 고정).
+    let mut i = 0;
+    if i < ftoks.len() && matches!(ftoks[i].to_ascii_lowercase().as_str(), "nonzero" | "evenodd") {
+        i += 1;
+    }
+    if i < ftoks.len() && ftoks[i].eq_ignore_ascii_case("round") {
+        i += 1;
+        if i >= ftoks.len() || !nonneg_length_only(&ftoks[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    i == ftoks.len()
+}
+fn polygon_shape_valid(inner: &str) -> bool {
+    let segs = split_top_level_commas_local(inner);
+    if segs.is_empty() {
+        return false;
+    }
+    let ftoks = split_top_level(&segs[0]);
+    let has_prelude = ftoks
+        .iter()
+        .any(|t| matches!(t.to_ascii_lowercase().as_str(), "nonzero" | "evenodd" | "round"));
+    if has_prelude {
+        if !polygon_prelude_valid(&ftoks) {
+            return false;
+        }
+        let pts = &segs[1..];
+        !pts.is_empty() && pts.iter().all(|s| polygon_point_valid(s))
+    } else {
+        segs.iter().all(|s| polygon_point_valid(s))
+    }
+}
+fn path_shape_valid(inner: &str) -> bool {
+    let inner = inner.trim();
+    let is_path_str = |t: &str| is_css_string(t) && !t[1..t.len().saturating_sub(1)].trim().is_empty();
+    if inner.starts_with('"') || inner.starts_with('\'') {
+        return is_path_str(inner);
+    }
+    // [ <fill-rule> , ]? <string> — fill-rule 앞엔 콤마·따옴표가 없다.
+    if let Some(ci) = inner.find(',') {
+        let fr = inner[..ci].trim();
+        let st = inner[ci + 1..].trim();
+        return matches!(fr.to_ascii_lowercase().as_str(), "nonzero" | "evenodd") && is_path_str(st);
+    }
+    false
+}
+fn xywh_shape_valid(inner: &str) -> bool {
+    let toks = split_top_level(inner);
+    let rp = toks.iter().position(|t| t.eq_ignore_ascii_case("round"));
+    let (coords, radii) = match rp {
+        Some(p) => (&toks[..p], Some(&toks[p + 1..])),
+        None => (&toks[..], None),
+    };
+    if coords.len() != 4 || !coords.iter().all(|t| bs_lp(t)) {
+        return false;
+    }
+    match radii {
+        None => true,
+        Some(r) => bs_round_tail(r),
+    }
+}
+fn rect_shape_valid(inner: &str) -> bool {
+    let toks = split_top_level(inner);
+    let rp = toks.iter().position(|t| t.eq_ignore_ascii_case("round"));
+    let (coords, radii) = match rp {
+        Some(p) => (&toks[..p], Some(&toks[p + 1..])),
+        None => (&toks[..], None),
+    };
+    if coords.len() != 4 || !coords.iter().all(|t| t.eq_ignore_ascii_case("auto") || bs_lp(t)) {
+        return false;
+    }
+    match radii {
+        None => true,
+        Some(r) => bs_round_tail(r),
+    }
+}
+
+// <basic-shape> 함수 하나(inset/circle/ellipse/polygon/path/xywh/rect) 검증.
+pub fn basic_shape_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if !s.ends_with(')') {
+        return false;
+    }
+    let Some(open) = s.find('(') else { return false };
+    let name = s[..open].trim().to_ascii_lowercase();
+    let inner = s[open + 1..s.len() - 1].trim();
+    match name.as_str() {
+        "inset" => inset_shape_valid(inner),
+        "circle" => circle_shape_valid(inner),
+        "ellipse" => ellipse_shape_valid(inner),
+        "polygon" => polygon_shape_valid(inner),
+        "path" => path_shape_valid(inner),
+        "xywh" => xywh_shape_valid(inner),
+        "rect" => rect_shape_valid(inner),
+        _ => false,
+    }
+}
+
+fn is_geometry_box(t: &str) -> bool {
+    matches!(
+        t.to_ascii_lowercase().as_str(),
+        "margin-box" | "border-box" | "padding-box" | "content-box" | "fill-box" | "stroke-box" | "view-box"
+    )
+}
+
+// clip-path(§CSS Masking): none | <url> | [ <basic-shape> || <geometry-box> ].
+pub fn clip_path_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let low = s.to_ascii_lowercase();
+    if low.starts_with("url(") && low.ends_with(')') {
+        return true;
+    }
+    let comps = split_top_level(s);
+    let (mut shapes, mut boxes) = (0u32, 0u32);
+    for c in &comps {
+        if is_geometry_box(c) {
+            boxes += 1;
+        } else if c.ends_with(')') && basic_shape_valid(c) {
+            shapes += 1;
+        } else {
+            return false;
+        }
+    }
+    shapes <= 1 && boxes <= 1 && shapes + boxes >= 1
+}
+
+// 따옴표를 존중하는 최상위 콤마 분리(path 문자열 내부 콤마 보존).
+fn split_top_level_commas_local(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut quote: Option<char> = None;
+    let mut cur = String::new();
+    for c in s.chars() {
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => {
+                    quote = Some(c);
+                    cur.push(c);
+                }
+                '(' => {
+                    depth += 1;
+                    cur.push(c);
+                }
+                ')' => {
+                    depth -= 1;
+                    cur.push(c);
+                }
+                ',' if depth == 0 => {
+                    out.push(cur.trim().to_string());
+                    cur.clear();
+                }
+                _ => cur.push(c),
+            },
+        }
+    }
+    out.push(cur.trim().to_string());
+    out
+}
+
 // border-image-repeat(§CSS Backgrounds): [ stretch|repeat|round|space ]{1,2}.
 pub fn border_image_repeat_valid(raw: &str) -> bool {
     let toks: Vec<&str> = raw.split_whitespace().collect();

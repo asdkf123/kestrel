@@ -2583,7 +2583,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
         }
         // clip-path/backdrop-filter: 함수 표기 원문 보존, paint 가 파싱.
-        "clip-path" | "backdrop-filter" => {
+        // clip-path: none | <url> | [ <basic-shape> || <geometry-box> ]. 검증 후 원문 보존.
+        "clip-path" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::clip_path_valid(t) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        "backdrop-filter" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)

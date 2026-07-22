@@ -992,6 +992,7 @@ impl Interp {
                     | "mask-size"
                     | "clip-rule"
                     | "fill-rule"
+                    | "clip-path"
                     | "size"
                     | "page"
                     | "font-kerning"
