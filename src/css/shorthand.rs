@@ -2598,6 +2598,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "backdrop-filter" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // all(§CSS Cascade): CSS 전역 키워드만(initial|inherit|unset|revert|revert-layer).
+        "all" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "initial" | "inherit" | "unset" | "revert" | "revert-layer") {
+                vec![Declaration { important: false, name: "all".to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // clip(레거시): auto | rect(...). 검증 후 원문 보존.
         "clip" => {
             let t = value_text.trim();
@@ -3222,23 +3231,49 @@ fn animation_shorthand(value_text: &str) -> Vec<Declaration> {
         let (mut name, mut times, mut tf, mut iter, mut dir, mut fill, mut state): (
             Option<String>, Vec<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
         ) = (None, vec![], None, None, None, None, None);
+        // 각 컴포넌트는 레이어당 최대 1회 — 중복이면 선언 전체 무효(§CSS Animations).
         for tok in split_top_level(part.trim()) {
             let tl = tok.to_ascii_lowercase();
             if is_time(&tl) {
+                if times.len() >= 2 {
+                    return Vec::new(); // 시간값은 duration/delay 둘까지
+                }
                 times.push(tok.to_string());
             } else if is_timing(&tl) {
+                if tf.is_some() {
+                    return Vec::new();
+                }
                 tf = Some(tok.to_string());
             } else if tl == "infinite" || tl.parse::<f32>().is_ok() {
+                if iter.is_some() {
+                    return Vec::new();
+                }
                 iter = Some(tok.to_string());
             } else if matches!(tl.as_str(), "normal" | "reverse" | "alternate" | "alternate-reverse") {
+                if dir.is_some() {
+                    return Vec::new();
+                }
                 dir = Some(tl.clone());
             } else if matches!(tl.as_str(), "forwards" | "backwards" | "both") {
+                if fill.is_some() {
+                    return Vec::new();
+                }
                 fill = Some(tl.clone());
             } else if matches!(tl.as_str(), "running" | "paused") {
+                if state.is_some() {
+                    return Vec::new();
+                }
                 state = Some(tl.clone());
             } else {
+                if name.is_some() {
+                    return Vec::new(); // 이름(custom-ident)은 레이어당 하나
+                }
                 name = Some(tok.to_string());
             }
+        }
+        // animation-duration(첫 시간값)은 음수 불가(delay 는 음수 허용).
+        if times.first().map(|d| d.trim().starts_with('-')).unwrap_or(false) {
+            return Vec::new();
         }
         names.push(name.unwrap_or_else(|| "none".to_string()));
         // animation-duration 초기값은 auto(§CSS Animations 2, 스크롤 구동).
