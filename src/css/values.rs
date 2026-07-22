@@ -5369,6 +5369,15 @@ pub fn shape_outside_valid(raw: &str) -> bool {
     shapes <= 1 && boxes <= 1 && shapes + boxes >= 1
 }
 
+// border-image-source(§CSS Backgrounds): none | <image>. 단일 값(최상위 콤마 불가).
+pub fn border_image_source_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    split_top_level_commas_local(t).len() == 1 && t.ends_with(')')
+}
+
 // background-image 레이어 구조 검증: 각 레이어는 none 또는 <image>(함수).
 // auto 같은 bare 키워드·빈 레이어 거부(gradient/cross-fade 내부는 별도 검증기).
 pub fn background_image_layers_valid(raw: &str) -> bool {

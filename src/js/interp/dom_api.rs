@@ -886,6 +886,7 @@ impl Interp {
                     | "grid"
                     | "grid-template"
                     | "border-image"
+                    | "border-image-source"
                     | "border-image-repeat"
                     | "border-image-outset"
                     | "border-image-width"

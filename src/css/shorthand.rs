@@ -2339,8 +2339,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 8차: 순수 키워드 롱핸드.
         | "anchor-name"
         // 9차: 개별 변환(translate 는 아래 arm 에서 검증; scale 도).
-        // 11차: border-image-source(원문 보존 — none/url/gradient).
-        | "border-image-source"
         // 개별 border-*-style(solid/dashed 등 키워드).
         | "border-top-style" | "border-right-style" | "border-bottom-style"
         | "border-left-style"
@@ -2603,6 +2601,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "initial" | "inherit" | "unset" | "revert" | "revert-layer") {
                 vec![Declaration { important: false, name: "all".to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // border-image-source: none | <image>. 단일 값(콤마 불가), auto 거부.
+        "border-image-source" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::border_image_source_valid(t) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
