@@ -1436,19 +1436,36 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // background-size: cover | contain | [<length-percentage> | auto]{1,2}. 다중 토큰
         // 원문 보존 (페인트가 파싱). 예전엔 "50% 25%" 가 사라져 auto 로 그려졌다.
         // background-size/repeat/attachment: 문법 검증 후 원문 보존(레이어 리스트).
-        "background-size" | "background-repeat" | "background-attachment" => {
+        // mask-repeat/mask-size 는 background 와 문법 동일(<repeat-style># / <bg-size>#).
+        "background-size" | "background-repeat" | "background-attachment" | "mask-repeat" | "mask-size" => {
             let t = value_text.trim();
             let low = t.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
-                "background-size" => crate::css::background_size_valid(t),
-                "background-repeat" => crate::css::background_repeat_valid(t),
+                "background-size" | "mask-size" => crate::css::background_size_valid(t),
+                "background-repeat" | "mask-repeat" => crate::css::background_repeat_valid(t),
                 _ => crate::css::background_attachment_valid(t),
             };
             if ok {
                 vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // mask-type: luminance|alpha. clip-rule/fill-rule: nonzero|evenodd. 단일 키워드.
+        "mask-type" | "clip-rule" | "fill-rule" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "mask-type" => matches!(low.as_str(), "luminance" | "alpha"),
+                _ => matches!(low.as_str(), "nonzero" | "evenodd"),
+            };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2299,19 +2316,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
         | "quotes" | "scrollbar-width" | "scrollbar-color"
-        | "mask-type"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
         | "caret-shape"
         // 4차 배치: mask, offset, scroll-snap-stop, place-self.
-        | "mask-image" | "mask-repeat"
-        | "mask-size" | "mask-origin" | "mask-clip" | "mask-mode"
+        | "mask-image"
+        | "mask-origin" | "mask-clip" | "mask-mode"
         | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
         | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
-        | "stroke-dasharray" | "stroke-miterlimit" | "clip-rule" | "fill-rule"
+        | "stroke-dasharray" | "stroke-miterlimit"
         | "paint-order" | "vector-effect" | "text-anchor"
         | "shape-rendering" | "color-interpolation" | "color-interpolation-filters"
         | "marker-start" | "marker-mid" | "marker-end"
