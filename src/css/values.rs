@@ -1097,6 +1097,32 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
                 return false;
             }
         }
+        // "in <color-interpolation-method>"(§CSS Color 4): in 뒤는 반드시 색공간,
+        // 극좌표만 [<hue-method> hue]. 색보간법이 방향보다 먼저 올 수 있으므로 phrase
+        // 경계(색공간 뒤 hue-method+hue 유무)를 잡아 그만큼만 검증한다.
+        if let Some(ip) = ptoks.iter().position(|t| t.eq_ignore_ascii_case("in")) {
+            let after = &ptoks[ip + 1..];
+            if after.is_empty() {
+                return false;
+            }
+            let is_hue_method = |t: &str| {
+                matches!(t.to_ascii_lowercase().as_str(), "shorter" | "longer" | "increasing" | "decreasing")
+            };
+            // 색공간 뒤 토큰이 hue-method 면 반드시 "hue" 가 뒤따라야 한다(4토큰), 아니면 색공간만(2토큰).
+            let mlen = if after.len() >= 2 && is_hue_method(&after[1]) {
+                if after.len() >= 3 && after[2].eq_ignore_ascii_case("hue") {
+                    3
+                } else {
+                    return false;
+                }
+            } else {
+                1
+            };
+            let method = format!("in {}", after[..mlen].join(" "));
+            if !interp_method_valid(&method) {
+                return false;
+            }
+        }
     }
     // color-stop-list: 색 스톱과 color hint(위치 단독)가 번갈아 온다. hint 는 첫/끝에
     // 올 수 없고 연속될 수 없다. 색 스톱은 위치를 최대 2개까지(색 + pos1 [pos2]).
