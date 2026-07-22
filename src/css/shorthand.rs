@@ -2345,7 +2345,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-top-style" | "border-right-style" | "border-bottom-style"
         | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
-        | "shape-outside"
         | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
@@ -2598,6 +2597,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         "backdrop-filter" => {
             vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
+        // shape-outside: none | <image> | [ <basic-shape> || <shape-box> ]. 검증 후 원문 보존.
+        "shape-outside" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::shape_outside_valid(t) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
         }
         // outline: <width> <style> <color> (균일 링, 레이아웃 영향 없음)
         // outline = <outline-width> || <outline-style> || <outline-color>. width 키워드

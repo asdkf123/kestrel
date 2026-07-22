@@ -4977,15 +4977,50 @@ fn bs_nonneg_lp(t: &str) -> bool {
     }
     is_length_percentage(t) || is_math_fn(&t.to_ascii_lowercase())
 }
-// <position>: 1~4 토큰(키워드 left/right/center/top/bottom 또는 lp).
+// <position>(§CSS Values 4): 1·2·4 값만(3값 형식은 <bg-position> 전용이라 무효).
 fn bs_position_valid(toks: &[String]) -> bool {
-    if toks.is_empty() || toks.len() > 4 {
-        return false;
+    let is_kw = |k: &str| matches!(k, "left" | "right" | "center" | "top" | "bottom");
+    // 축: left/right=0, top/bottom=1, center=2(양축 가능).
+    let axis = |k: &str| {
+        if matches!(k, "left" | "right") {
+            0i32
+        } else if matches!(k, "top" | "bottom") {
+            1
+        } else {
+            2
+        }
+    };
+    match toks.len() {
+        1 => {
+            let l = toks[0].to_ascii_lowercase();
+            is_kw(&l) || bs_lp(&toks[0])
+        }
+        2 => {
+            let (a, b) = (toks[0].to_ascii_lowercase(), toks[1].to_ascii_lowercase());
+            let ok = |kw: &str, orig: &str| is_kw(kw) || bs_lp(orig);
+            if !ok(&a, &toks[0]) || !ok(&b, &toks[1]) {
+                return false;
+            }
+            // 같은 축 키워드 둘(left right / top bottom)은 무효.
+            if is_kw(&a) && is_kw(&b) {
+                let (xa, xb) = (axis(&a), axis(&b));
+                if xa != 2 && xb != 2 && xa == xb {
+                    return false;
+                }
+            }
+            true
+        }
+        4 => {
+            // [kw <lp>] [kw <lp>] — 키워드 두 축, 각 뒤에 오프셋.
+            let (k0, k2) = (toks[0].to_ascii_lowercase(), toks[2].to_ascii_lowercase());
+            if !is_kw(&k0) || !is_kw(&k2) || !bs_lp(&toks[1]) || !bs_lp(&toks[3]) {
+                return false;
+            }
+            let (x0, x2) = (axis(&k0), axis(&k2));
+            x0 == 2 || x2 == 2 || x0 != x2
+        }
+        _ => false,
     }
-    toks.iter().all(|t| {
-        let l = t.to_ascii_lowercase();
-        matches!(l.as_str(), "left" | "right" | "center" | "top" | "bottom") || bs_lp(t)
-    })
 }
 // inset()/xywh()/rect() 의 [round <border-radius>] 꼬리 검증.
 fn bs_round_tail(radii: &[String]) -> bool {
@@ -5097,7 +5132,14 @@ fn polygon_shape_valid(inner: &str) -> bool {
 }
 fn path_shape_valid(inner: &str) -> bool {
     let inner = inner.trim();
-    let is_path_str = |t: &str| is_css_string(t) && !t[1..t.len().saturating_sub(1)].trim().is_empty();
+    // <string> 은 비어있지 않고 SVG path data(moveto M/m 로 시작)여야 한다.
+    let is_path_str = |t: &str| {
+        if !is_css_string(t) {
+            return false;
+        }
+        let d = t[1..t.len() - 1].trim();
+        d.starts_with('M') || d.starts_with('m')
+    };
     if inner.starts_with('"') || inner.starts_with('\'') {
         return is_path_str(inner);
     }
@@ -5188,6 +5230,51 @@ pub fn clip_path_valid(raw: &str) -> bool {
         } else {
             return false;
         }
+    }
+    shapes <= 1 && boxes <= 1 && shapes + boxes >= 1
+}
+
+fn is_shape_image_component(c: &str) -> bool {
+    let low = c.to_ascii_lowercase();
+    if !low.ends_with(')') {
+        return false;
+    }
+    const IMG: &[&str] = &[
+        "url(", "src(", "image(", "image-set(", "-webkit-image-set(", "cross-fade(",
+        "-webkit-cross-fade(", "element(", "paint(", "linear-gradient(", "radial-gradient(",
+        "conic-gradient(", "repeating-linear-gradient(", "repeating-radial-gradient(",
+        "repeating-conic-gradient(", "-webkit-linear-gradient(", "-webkit-radial-gradient(",
+        "-webkit-gradient(",
+    ];
+    IMG.iter().any(|p| low.starts_with(p))
+}
+
+// shape-outside(§CSS Shapes): none | <image> | [ <basic-shape> || <shape-box> ].
+// shape-box = margin-box|border-box|padding-box|content-box. shape() 는 미구현이라
+// 구조만 보고 느슨히 수용(유효 shape() 를 거부하지 않기 위함).
+pub fn shape_outside_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let comps = split_top_level(s);
+    let (mut shapes, mut boxes, mut images) = (0u32, 0u32, 0u32);
+    for c in &comps {
+        let low = c.to_ascii_lowercase();
+        if matches!(low.as_str(), "margin-box" | "border-box" | "padding-box" | "content-box") {
+            boxes += 1;
+        } else if is_shape_image_component(c) {
+            images += 1;
+        } else if low.starts_with("shape(") && low.ends_with(')') {
+            shapes += 1;
+        } else if c.ends_with(')') && basic_shape_valid(c) {
+            shapes += 1;
+        } else {
+            return false;
+        }
+    }
+    if images > 0 {
+        return images == 1 && shapes == 0 && boxes == 0;
     }
     shapes <= 1 && boxes <= 1 && shapes + boxes >= 1
 }
