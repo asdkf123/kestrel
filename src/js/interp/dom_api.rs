@@ -621,13 +621,20 @@ impl Interp {
                 return String::new()
             }
             // background-image gradient 지정값: 보간 재정렬 + 색 정규화(키워드 유지).
-            "background-image" | "-webkit-background-image"
-                if raw.contains("gradient(") =>
-            {
-                if !crate::css::gradient_valid(raw) {
-                    return String::new(); // 무효 gradient → 거부
+            // background-image 지정값: 레이어 구조 + gradient/cross-fade 문법 검증.
+            "background-image" | "-webkit-background-image" => {
+                if !crate::css::background_image_layers_valid(raw) {
+                    return String::new(); // none/이미지 아닌 레이어(auto 등) 거부
                 }
-                return crate::css::normalize_gradient_serial(raw, false);
+                if raw.contains("gradient(") {
+                    if !crate::css::gradient_valid(raw) {
+                        return String::new();
+                    }
+                    return crate::css::normalize_gradient_serial(raw, false);
+                }
+                if rl.contains("cross-fade(") && !crate::css::cross_fade_valid(raw) {
+                    return String::new();
+                }
             }
             _ => {}
         }

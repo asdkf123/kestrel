@@ -5369,6 +5369,77 @@ pub fn shape_outside_valid(raw: &str) -> bool {
     shapes <= 1 && boxes <= 1 && shapes + boxes >= 1
 }
 
+// background-image 레이어 구조 검증: 각 레이어는 none 또는 <image>(함수).
+// auto 같은 bare 키워드·빈 레이어 거부(gradient/cross-fade 내부는 별도 검증기).
+pub fn background_image_layers_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    let low = t.to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return true;
+    }
+    let layers = split_top_level_commas_local(t);
+    if layers.is_empty() {
+        return false;
+    }
+    layers.iter().all(|l| {
+        let ll = l.trim().to_ascii_lowercase();
+        ll == "none" || (!ll.is_empty() && ll.ends_with(')'))
+    })
+}
+
+// cross-fade(§CSS Images 4): cross-fade( [ <percentage [0,100]>? && <image|color> ]# ).
+// cross-fade() 만 판단하고 그 외 값은 통과(다른 검증기가 처리).
+pub fn cross_fade_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    let low = t.to_ascii_lowercase();
+    if !low.starts_with("cross-fade(") || !t.ends_with(')') {
+        return true;
+    }
+    let inner = &t["cross-fade(".len()..t.len() - 1];
+    let items = split_top_level_commas_local(inner);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|it| cf_image_valid(it))
+}
+fn cf_image_valid(it: &str) -> bool {
+    let toks = split_top_level(it.trim());
+    if toks.is_empty() {
+        return false;
+    }
+    let (mut pct, mut img) = (0u32, 0u32);
+    for t in &toks {
+        if is_pct_0_100(t) {
+            pct += 1;
+        } else if single_color_valid(t) || is_cf_image(t) {
+            img += 1;
+        } else {
+            return false;
+        }
+    }
+    img == 1 && pct <= 1
+}
+fn is_pct_0_100(t: &str) -> bool {
+    t.trim()
+        .strip_suffix('%')
+        .and_then(|n| n.trim().parse::<f64>().ok())
+        .map(|v| (0.0..=100.0).contains(&v))
+        .unwrap_or(false)
+}
+fn is_cf_image(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if low == "none" {
+        return true;
+    }
+    low.ends_with(')')
+        && (low.starts_with("url(")
+            || low.contains("gradient(")
+            || low.starts_with("cross-fade(")
+            || low.starts_with("image-set(")
+            || low.starts_with("image(")
+            || low.starts_with("-webkit-"))
+}
+
 // 따옴표를 존중하는 최상위 콤마 분리(path 문자열 내부 콤마 보존).
 fn split_top_level_commas_local(s: &str) -> Vec<String> {
     let mut out = Vec::new();
