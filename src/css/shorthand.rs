@@ -1454,6 +1454,35 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // text-fit(§CSS Text 4): none | [grow|shrink] [consistent|per-line|per-line-all]?
+        // <percentage>?.
+        "text-fit" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks: Vec<&str> = low.split_whitespace().collect();
+            let ok = (|| {
+                if toks.is_empty() || !matches!(toks[0], "grow" | "shrink") {
+                    return false;
+                }
+                let mut i = 1;
+                if i < toks.len() && matches!(toks[i], "consistent" | "per-line" | "per-line-all") {
+                    i += 1;
+                }
+                if i < toks.len()
+                    && toks[i].strip_suffix('%').map(|n| n.parse::<f64>().is_ok()).unwrap_or(false)
+                {
+                    i += 1;
+                }
+                i == toks.len()
+            })();
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // scroll-axis-lock/scroll-target-group: auto|none. scroll-marker-group:
         // none|before|after(§CSS Overflow). 단일 키워드.
         "scroll-axis-lock" | "scroll-target-group" | "scroll-marker-group" => {

@@ -1009,6 +1009,7 @@ impl Interp {
                     | "scroll-axis-lock"
                     | "scroll-target-group"
                     | "scroll-marker-group"
+                    | "text-fit"
                     | "clip-path"
                     | "clip"
                     | "all"
