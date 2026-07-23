@@ -1454,13 +1454,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
-        // scroll-axis-lock/scroll-target-group(§CSS Overflow): auto | none. 단일 키워드.
-        "scroll-axis-lock" | "scroll-target-group" => {
+        // scroll-axis-lock/scroll-target-group: auto|none. scroll-marker-group:
+        // none|before|after(§CSS Overflow). 단일 키워드.
+        "scroll-axis-lock" | "scroll-target-group" | "scroll-marker-group" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
-            if matches!(low.as_str(), "auto" | "none") {
+            let ok = match name {
+                "scroll-marker-group" => matches!(low.as_str(), "none" | "before" | "after"),
+                _ => matches!(low.as_str(), "auto" | "none"),
+            };
+            if ok {
                 vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()

@@ -1008,6 +1008,7 @@ impl Interp {
                     | "fill-rule"
                     | "scroll-axis-lock"
                     | "scroll-target-group"
+                    | "scroll-marker-group"
                     | "clip-path"
                     | "clip"
                     | "all"
