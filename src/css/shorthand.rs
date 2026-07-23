@@ -1454,6 +1454,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // scroll-axis-lock/scroll-target-group(§CSS Overflow): auto | none. 단일 키워드.
+        "scroll-axis-lock" | "scroll-target-group" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if matches!(low.as_str(), "auto" | "none") {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // mask-type: luminance|alpha. clip-rule/fill-rule: nonzero|evenodd. 단일 키워드.
         "mask-type" | "clip-rule" | "fill-rule" => {
             let low = value_text.trim().to_ascii_lowercase();
