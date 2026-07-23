@@ -746,6 +746,30 @@ fn collect_computed_styles(
                 m.insert("overflow-y".to_string(), "auto".to_string());
             }
         }
+        // background-repeat/mask-repeat 계산값(§CSS Backgrounds): 레이어별 2값을 축약한다.
+        // "repeat repeat"→"repeat", "repeat no-repeat"→"repeat-x", "no-repeat repeat"→"repeat-y".
+        for key in ["background-repeat", "mask-repeat"] {
+            if let Some(v) = m.get(key).cloned() {
+                let canon = v
+                    .split(',')
+                    .map(|layer| {
+                        let t: Vec<&str> = layer.split_whitespace().collect();
+                        if t.len() == 2 {
+                            match (t[0], t[1]) {
+                                (a, b) if a == b => a.to_string(),
+                                ("repeat", "no-repeat") => "repeat-x".to_string(),
+                                ("no-repeat", "repeat") => "repeat-y".to_string(),
+                                _ => format!("{} {}", t[0], t[1]),
+                            }
+                        } else {
+                            t.join(" ")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                m.insert(key.to_string(), canon);
+            }
+        }
         // scroll-padding 은 비음수(§CSS Scroll Snap) — calc 가 음수로 풀리면 0px 로 클램프.
         for side in ["top", "right", "bottom", "left"] {
             let key = format!("scroll-padding-{}", side);
@@ -852,13 +876,15 @@ fn collect_computed_styles(
                 shorthand_vals.push((prop.to_string(), joined));
                 continue;
             }
-            // TRBL 박스 단축(margin/padding/inset/scroll-*)은 CSSOM 규칙대로 1~4 값 축약:
-            // 전부 같으면 1, top==bottom&&right==left 면 2, right==left 면 3, 아니면 4.
+            // TRBL 박스 단축(margin/padding/inset/scroll-*/border-style·width·color)은
+            // CSSOM 규칙대로 1~4 값 축약: 전부 같으면 1, top==bottom&&right==left 면 2,
+            // right==left 면 3, 아니면 4.
             let is_trbl = longs.len() == 4
-                && longs[0].ends_with("top")
-                && longs[1].ends_with("right")
-                && longs[2].ends_with("bottom")
-                && longs[3].ends_with("left");
+                && ((longs[0].ends_with("top")
+                    && longs[1].ends_with("right")
+                    && longs[2].ends_with("bottom")
+                    && longs[3].ends_with("left"))
+                    || matches!(*prop, "border-style" | "border-width" | "border-color"));
             let joined = if is_trbl {
                 let (t, r, b, l) = (&vals[0], &vals[1], &vals[2], &vals[3]);
                 if t == r && r == b && b == l {
