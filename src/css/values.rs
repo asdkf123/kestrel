@@ -6386,6 +6386,109 @@ fn rect_shape_valid(inner: &str) -> bool {
 }
 
 // <basic-shape> 함수 하나(inset/circle/ellipse/polygon/path/xywh/rect) 검증.
+// ray() 함수(§CSS Motion Path): ray( <angle> && <ray-size>? && contain? && [at <position>]? ).
+// angle 필수(정확히 1), size/contain 각 ≤1, 순서 자유, at 뒤는 <position>.
+pub fn ray_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    let low = s.to_ascii_lowercase();
+    if !low.starts_with("ray(") || !s.ends_with(')') {
+        return false;
+    }
+    let inner = s[4..s.len() - 1].trim();
+    if inner.is_empty() {
+        return false;
+    }
+    let toks = split_top_level(inner);
+    let is_angle = |t: &str| t == "0" || math_angle_valid(t);
+    let is_size = |t: &str| {
+        matches!(
+            t,
+            "closest-side" | "closest-corner" | "farthest-side" | "farthest-corner" | "sides"
+        )
+    };
+    // <angle> && <ray-size>? && contain? && [at <position>]? — 순서 자유(&&). at 뒤
+    // 위치 성분은 다음 ray 키워드(size/contain/angle) 전까지 수집.
+    let (mut angle, mut size, mut contain) = (0u32, 0u32, 0u32);
+    let (mut has_at, mut pos_toks): (bool, Vec<String>) = (false, Vec::new());
+    let mut i = 0;
+    while i < toks.len() {
+        let tl = toks[i].to_ascii_lowercase();
+        if tl == "at" {
+            has_at = true;
+            i += 1;
+            while i < toks.len() {
+                let pt = toks[i].to_ascii_lowercase();
+                if is_size(&pt) || pt == "contain" || is_angle(&pt) {
+                    break;
+                }
+                pos_toks.push(toks[i].clone());
+                i += 1;
+            }
+            continue;
+        }
+        if is_size(&tl) {
+            size += 1;
+        } else if tl == "contain" {
+            contain += 1;
+        } else if is_angle(&tl) {
+            angle += 1;
+        } else {
+            return false;
+        }
+        i += 1;
+    }
+    if angle != 1 || size > 1 || contain > 1 {
+        return false;
+    }
+    if has_at {
+        return !pos_toks.is_empty() && position_valid(&pos_toks.join(" "));
+    }
+    true
+}
+
+// offset-path(§CSS Motion Path): none | <url> | <ray()> | [<basic-shape> || <coord-box>].
+pub fn offset_path_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let low = s.to_ascii_lowercase();
+    if low.starts_with("url(") && s.ends_with(')') {
+        return true;
+    }
+    // [<ray()|<basic-shape>|shape()> || <coord-box>] — 도형·박스 각 최대 1, 순서 자유.
+    let comps = split_top_level(s);
+    if comps.is_empty() {
+        return false;
+    }
+    let (mut shapes, mut boxes) = (0u32, 0u32);
+    for c in &comps {
+        let cl = c.to_ascii_lowercase();
+        if matches!(
+            cl.as_str(),
+            "content-box" | "padding-box" | "border-box" | "margin-box" | "fill-box"
+                | "stroke-box" | "view-box"
+        ) {
+            boxes += 1;
+        } else if cl.starts_with("ray(") {
+            if !ray_valid(c) {
+                return false;
+            }
+            shapes += 1;
+        } else if cl.starts_with("shape(") {
+            if !shape_func_valid(c) {
+                return false;
+            }
+            shapes += 1;
+        } else if c.ends_with(')') && basic_shape_valid(c) {
+            shapes += 1;
+        } else {
+            return false;
+        }
+    }
+    shapes <= 1 && boxes <= 1 && shapes + boxes >= 1
+}
+
 // shape() 함수(§CSS Shapes 2) 구조 검증. 좌표/제어점 내용은 관대(soundness — 유효식
 // 거부 안 함), 구조적 무효만 거부: 구획(콤마) 구분, 명령 키워드, 빈 인자(선두/후행
 // 콤마), arc 플래그 중복(cw+ccw/large+small), hline/vline 의 위치 키워드.
@@ -10578,6 +10681,43 @@ mod tests {
             "shape(from 20px, 40px, line to 20px, 30px)",    // 좌표 내 콤마
         ] {
             assert!(!shape_func_valid(v), "should reject shape: {v}");
+        }
+        // offset-path — 유효(회귀 방지).
+        for v in [
+            "none",
+            "circle()",
+            "circle(100px at 50% 50%)",
+            "ellipse(closest-side closest-side at 10% 20%)",
+            "inset(0px 1px 2% 3em)",
+            "inset(0px round 0 1px)",
+            "polygon(1px 2px, 3em 4em)",
+            "polygon(round 1px, 1% 2%)",
+            "ray(0deg)",
+            "ray(-720deg sides)",
+            "ray(0.25turn closest-corner contain)",
+            "ray(0deg at center center contain)",
+            "ray(0deg sides at center center)",
+            "ray(0deg) stroke-box",
+            "content-box ellipse(50% 60% at 50% 50%)",
+            "inset(10% 20% 30% 40%) border-box",
+            "border-box",
+            "url(#path)",
+            "shape(from 0px 0px, line to 10px 10px)",
+        ] {
+            assert!(offset_path_valid(v), "should accept offset-path: {v}");
+        }
+        // offset-path — 무효.
+        for v in [
+            "ray()",                 // angle 없음
+            "ray(sides)",            // angle 없음
+            "ray(0deg 90deg)",       // angle 2개
+            "ray(0deg sides sides)", // size 2개
+            "ray(0px)",              // 길이(각도 아님)
+            "auto",
+            "content-box content-box", // box 2개
+            "circle() ellipse()",    // shape 2개
+        ] {
+            assert!(!offset_path_valid(v), "should reject offset-path: {v}");
         }
         // transform 함수 리스트 — 무효.
         for v in [

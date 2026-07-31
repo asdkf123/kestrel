@@ -827,6 +827,7 @@ impl Interp {
                     | "scroll-initial-target"
                     | "transform"
                     | "-webkit-transform"
+                    | "offset-path"
                     | "contain"
                     | "top"
                     | "right"

@@ -627,6 +627,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // offset-path(§CSS Motion Path): none | <url> | <ray()> | [<basic-shape> || <coord-box>].
+        "offset-path" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::offset_path_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // interpolate-size(§CSS Values 5): numeric-only | allow-keywords.
         "interpolate-size" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -2767,7 +2779,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 4차 배치: mask, offset, scroll-snap-stop, place-self.
         | "mask-image"
         | "mask-origin" | "mask-clip" | "mask-mode"
-        | "offset-path" | "offset-rotate" | "offset-anchor" | "offset-position"
+        | "offset-rotate" | "offset-anchor" | "offset-position"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
         | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
