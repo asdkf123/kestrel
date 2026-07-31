@@ -2641,15 +2641,9 @@ pub fn flex_basis_valid(tok: &str) -> bool {
         return true;
     }
     if is_math_fn(&low) {
-        // <length-percentage> calc 만 — 각도 없고, 차원(길이/%)이 있어야(순수 수 calc(0) 거부).
-        if low.contains("deg") || low.contains("rad") || low.contains("turn") {
-            return false;
-        }
-        const LU: &[&str] = &[
-            "px", "em", "rem", "ex", "ch", "cap", "ic", "lh", "vw", "vh", "vi", "vb", "vmin",
-            "vmax", "cqw", "cqh", "cqi", "cqb", "cm", "mm", "q", "in", "pt", "pc",
-        ];
-        return low.contains('%') || LU.iter().any(|u| low.contains(u));
+        // <length-percentage> calc 만 — 결과 차원 타입 검사(§CSS Values 4). 각도·순수
+        // 수 calc(0)·주파수 등 거부.
+        return math_length_valid(&low, true);
     }
     is_length_percentage(&low) && !low.starts_with('-')
 }
