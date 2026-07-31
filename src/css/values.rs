@@ -6257,7 +6257,11 @@ fn circle_shape_valid(inner: &str) -> bool {
     }
     if let Some(r) = radius.first() {
         let l = r.to_ascii_lowercase();
-        if !(l == "closest-side" || l == "farthest-side" || bs_nonneg_lp(r)) {
+        if !(matches!(
+            l.as_str(),
+            "closest-side" | "farthest-side" | "closest-corner" | "farthest-corner"
+        ) || bs_nonneg_lp(r))
+        {
             return false;
         }
     }
@@ -6281,7 +6285,11 @@ fn ellipse_shape_valid(inner: &str) -> bool {
     }
     for r in radii {
         let l = r.to_ascii_lowercase();
-        if !(l == "closest-side" || l == "farthest-side" || bs_nonneg_lp(r)) {
+        if !(matches!(
+            l.as_str(),
+            "closest-side" | "farthest-side" | "closest-corner" | "farthest-corner"
+        ) || bs_nonneg_lp(r))
+        {
             return false;
         }
     }
