@@ -48,12 +48,11 @@
   거부는 함수별 시그니처 추가가 필요(후속). 중첩 calc 곱셈("calc(2)*calc(50px)") 순수-호출 판정 버그
   수정 포함.
 
-  **알려진 한계 — percent 를 length 로 하드코딩**: `mdim_of` 는 `%` 를 항상 length 축으로 접는다. 그래서
-  **angle-percentage**(conic-gradient 스톱/`from` 각도, 여기서 100%=360deg) 문맥의 `calc(90deg + 50%)`
-  같은 각도-퍼센트 혼합을 표현 못 하고 Bad 로 판정한다. 현재는 conic 스톱을 관대 처리(각도·%·수학함수 수용,
-  길이만 거부)로 회귀를 피했다. 근본 해결은 `mdim` 에 **문맥별 percent 차원**(length/angle/time...)을 넘겨
-  `%` 를 해당 축으로 통합하는 것 — 이러면 conic 각도-퍼센트도 정확히 검사되고 `calc(50% + 0)`(각도-% 에
-  수 혼합) 같은 무효도 잡힌다.
+  **문맥별 percent 차원(해결됨)**: `mdim_of(expr, pct: PctAxis)` 로 `%` 가 접히는 축(Len/Ang/Bare)을
+  문맥에서 넘긴다. length-percentage 는 Len, **angle-percentage**(conic-gradient 스톱/힌트/`from` 각도,
+  100%=360deg)는 Ang, `<number>|<percentage>` 는 Len(퍼센트를 len:1 로 두어 수와 구별). `math_angle_pct_valid`
+  가 conic 을 정확히 검사한다: `calc(90deg + 50%)` 유효, `calc(50% + 0)`(수 혼합)·`10px`(길이) 무효. conic
+  스톱 관대 편법은 제거됐고, 기존 진입점은 전부 Len 로 두어 동작 불변(회귀 0).
 
 ## 우선순위(권장)
 
