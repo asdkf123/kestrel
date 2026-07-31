@@ -3282,6 +3282,22 @@ pub(crate) fn math_time_valid(text: &str) -> bool {
     }
 }
 
+// 수/퍼센트 문맥 수학 함수 유효성(opacity 등 <number>|<percentage>): 결과가 순수
+// 수(모든 축 0, % 없음) 또는 순수 퍼센트(len 1·% 플래그, 다른 축 없음)여야.
+pub(crate) fn math_number_valid(text: &str) -> bool {
+    match mdim_of(text) {
+        MTy::Wild => true,
+        MTy::D(d) => {
+            let axes_zero =
+                d.len == 0 && d.ang == 0 && d.time == 0 && d.freq == 0 && d.res == 0 && d.flex == 0;
+            let pure_number = axes_zero && !d.pct;
+            let pure_percent = d.pct && d.is_axis(|m| m.len);
+            pure_number || pure_percent
+        }
+        MTy::Bad => false,
+    }
+}
+
 // <position> 유효성(§CSS Values): object-position/background-position 등. 1/2/4 토큰만
 // (3 토큰은 현행 문법상 무효). lp 있으면 [수평][수직] 순서 엄격, 순수 키워드는 순서 무관.
 pub fn position_valid(raw: &str) -> bool {

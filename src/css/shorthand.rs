@@ -1957,8 +1957,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     name: "opacity".to_string(),
                     value: Value::Length(op.clamp(0.0, 1.0), Unit::Number),
                 }],
-                // 순수 수·퍼센트·수학함수만 유효(단위·키워드·다값·malformed 수학 거부).
-                None if super::values::math_function_valid(&low)
+                // 순수 수·퍼센트·수학함수만 유효(단위·키워드·다값·malformed·타입 불일치
+                // 거부). 수학함수는 결과가 <number>|<percentage> 인지 타입 검사.
+                None if (super::values::math_function_valid(&low)
+                    && super::values::math_number_valid(&low))
                     || v.strip_suffix('%').map(|p| p.trim().parse::<f64>().is_ok()).unwrap_or(false) => {
                     vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(v.to_string()) }]
                 }
