@@ -4783,9 +4783,13 @@ mod tests {
             "anchor-size(--foo width, height)", // bare 키워드 fallback
             "anchor-size(, 10px)",           // 선행 콤마
             "anchor-size(--foo width, anchor-size(bar width))", // 무효 중첩(bar)
+            "anchor-size(--foo width, anchor(--bar top))", // anchor() 는 fallback 불가(inset 전용)
         ] {
             assert_eq!(canon(bad), "", "무효여야: {}", bad);
         }
+        // 자기 자신 중첩만 허용.
+        assert_eq!(canon("anchor-size(--foo width, anchor-size(--bar block))"),
+                   "anchor-size(--foo width, anchor-size(--bar block))");
         // anchor-size 는 sizing 뿐 아니라 inset/margin 에서도 유효, padding 은 불가(§).
         let kw = |p: &str, v: &str| match find(&expand_declaration(p, v), p) {
             Some(Value::Keyword(k)) => k.clone(),
@@ -4829,8 +4833,12 @@ mod tests {
             "anchor(2 * 20%)",          // 다중 토큰
             "anchor(--foo top, 1)",     // fallback 단위없는 1
             "anchor(--foo top, bottom)", // bare 키워드 fallback
+            "anchor(--foo top, anchor-size(--bar width))", // anchor-size() 는 fallback 불가
         ] {
             assert_eq!(kw("top", bad), "", "무효여야: {}", bad);
         }
+        // 자기 자신 중첩만 허용.
+        assert_eq!(kw("top", "anchor(--foo top, anchor(--bar bottom))"),
+                   "anchor(--foo top, anchor(--bar bottom))");
     }
 }

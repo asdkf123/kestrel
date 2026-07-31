@@ -227,6 +227,18 @@ impl Interp {
         if rl.starts_with("image-set(") || rl.starts_with("-webkit-image-set(") {
             return crate::css::normalize_image_set(raw);
         }
+        // anchor-size()/anchor() 지정값 캐논(§css-anchor-1): name-first 순서, size/side
+        // 소문자, fallback 재귀. 세터가 raw 저장이라 여기서 캐논 직렬화(flip-order 등).
+        if rl.starts_with("anchor-size(") {
+            if let Some(s) = crate::css::anchor_size_canonical(raw) {
+                return s;
+            }
+        }
+        if rl.starts_with("anchor(") {
+            if let Some(s) = crate::css::anchor_canonical(raw) {
+                return s;
+            }
+        }
         // color-mix 지정값 캐논 직렬화(퍼센트 위치, inner 색, 기본 50% 생략).
         if rl.starts_with("color-mix(") {
             if let Some(s) = crate::css::normalize_color_mix(raw) {

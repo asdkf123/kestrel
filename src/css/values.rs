@@ -3335,7 +3335,8 @@ pub fn anchor_size_canonical(value: &str) -> Option<String> {
     }
     canon.push_str(&size);
     if parts.len() == 2 {
-        let fb = anchor_fallback_canonical(parts[1].trim())?;
+        // anchor-size() 는 anchor-size() 만 중첩 허용(anchor() 는 inset 전용이라 불가).
+        let fb = anchor_fallback_canonical(parts[1].trim(), true, false)?;
         canon.push_str(", ");
         canon.push_str(&fb);
     }
@@ -3343,18 +3344,20 @@ pub fn anchor_size_canonical(value: &str) -> Option<String> {
     Some(canon)
 }
 
-// anchor()/anchor-size() 의 fallback: 단일 <length-percentage> | 수학함수 |
-// 중첩 anchor()/anchor-size(). 그 외(빈값/다중값/시간·각 단위/bare 키워드/무효 중첩)는 거부.
-fn anchor_fallback_canonical(fb: &str) -> Option<String> {
+// anchor()/anchor-size() 의 fallback: 단일 <length-percentage> | 수학함수 | **자기 자신**의
+// 중첩. anchor-size() 는 anchor-size() 만, anchor() 는 anchor() 만 중첩 허용한다 —
+// anchor() 는 inset 전용이라 sizing 문맥의 anchor-size() fallback 이 될 수 없고, 그 역도
+// 유효값 목록에 없다(§css-anchor-1). 빈값/다중값/시간단위/bare 키워드/무효 중첩은 거부.
+fn anchor_fallback_canonical(fb: &str, allow_anchor_size: bool, allow_anchor: bool) -> Option<String> {
     if fb.is_empty() || split_top_level(fb).len() != 1 {
         return None;
     }
     let low = fb.to_ascii_lowercase();
     if low.starts_with("anchor-size(") {
-        return anchor_size_canonical(fb);
+        return if allow_anchor_size { anchor_size_canonical(fb) } else { None };
     }
     if low.starts_with("anchor(") {
-        return anchor_canonical(fb);
+        return if allow_anchor { anchor_canonical(fb) } else { None };
     }
     if is_math_fn(&low) {
         return Some(fb.trim().to_string());
@@ -3424,7 +3427,8 @@ pub fn anchor_canonical(value: &str) -> Option<String> {
     }
     canon.push_str(&side);
     if parts.len() == 2 {
-        let fb = anchor_fallback_canonical(parts[1].trim())?;
+        // anchor() 는 anchor() 만 중첩 허용(유효값 목록 기준).
+        let fb = anchor_fallback_canonical(parts[1].trim(), false, true)?;
         canon.push_str(", ");
         canon.push_str(&fb);
     }
