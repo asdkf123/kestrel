@@ -1056,9 +1056,23 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
         !toks.is_empty()
             && matches!(interpret_value(&toks[0]), Some(Value::Color(_) | Value::ColorFn(..)))
     };
+    // conic 스톱/힌트는 <angle-percentage>(% 가 각도), 그 외는 <length-percentage>.
+    let is_conic_grad =
+        lower.starts_with("conic-gradient(") || lower.starts_with("repeating-conic-gradient(");
     let is_position = |seg: &str| {
         let toks = split_top_level(seg);
-        toks.len() == 1 && matches!(interpret_value(&toks[0]), Some(Value::Length(..)))
+        if toks.len() != 1 {
+            return false;
+        }
+        let t = toks[0].trim();
+        if t == "0" {
+            return true;
+        }
+        if is_conic_grad {
+            math_angle_pct_valid(t)
+        } else {
+            math_length_valid(t, true)
+        }
     };
     let is_angle = |t: &str| {
         ["deg", "rad", "grad", "turn"]
@@ -1141,21 +1155,18 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     }
     // color-stop-list: 색 스톱과 color hint(위치 단독)가 번갈아 온다. hint 는 첫/끝에
     // 올 수 없고 연속될 수 없다. 색 스톱은 위치를 최대 2개까지(색 + pos1 [pos2]).
-    // 스톱 위치 타입: conic 은 <angle>|<percentage>, 그 외는 <length-percentage>.
-    // calc 는 결과 차원을 검사한다(§CSS Values 4) — "calc(50% + 30deg)"(%+각도 혼합)
-    // 같은 타입 불일치를 거부.
-    let is_conic =
-        lower.starts_with("conic-gradient(") || lower.starts_with("repeating-conic-gradient(");
+    // 스톱 위치 타입: conic 은 <angle-percentage>, 그 외는 <length-percentage>. calc 는
+    // 결과 차원을 검사한다(§CSS Values 4) — "calc(50% + 30deg)"(%+각도 혼합) 같은 타입
+    // 불일치를 거부.
     let stop_pos_ok = |t: &str| {
         let t = t.trim();
         if t == "0" {
             return true; // 단위 없는 0 은 유효한 위치(0px/0deg)
         }
-        if is_conic {
-            // <angle-percentage>: % 가 각도로 해석돼 calc(90deg + 50%) 도 유효하다.
-            // mdim 해석기는 % 를 길이로 접어 각도-퍼센트 혼합을 표현 못 하므로, conic 은
-            // 관대하게 각도·퍼센트·수학함수를 수용하고 길이 단위 위치만 거부한다.
-            math_angle_valid(t) || t.ends_with('%') || is_math_fn(t)
+        if is_conic_grad {
+            // <angle-percentage>(100%=360deg): % 를 angle 축으로 접어 calc(90deg + 50%)
+            // 는 유효, calc(50% + 0)(각도-% 에 수 혼합)은 무효로 정확히 검사한다.
+            math_angle_pct_valid(t)
         } else {
             // <length-percentage>: 각도 혼합(calc(50% + 30deg)) 등 타입 불일치 거부.
             math_length_valid(t, true)
@@ -2983,7 +2994,17 @@ fn mdim_div(a: MTy, b: MTy) -> MTy {
 }
 
 // 값 토큰 하나(부호+수+단위 또는 %)를 차원 타입으로. 미지 단위 → Bad.
-fn mdim_classify(tok: &str) -> MTy {
+// percent(%)가 접히는 문맥 차원. §CSS Values 4 에서 % 는 문맥의 차원으로 해석된다:
+// length-percentage 는 length, angle-percentage(conic 등)는 angle, <number>|<percentage>
+// (opacity)는 자기 자신(Bare).
+#[derive(Clone, Copy, PartialEq)]
+enum PctAxis {
+    Len,
+    Ang,
+    Bare,
+}
+
+fn mdim_classify(tok: &str, pct: PctAxis) -> MTy {
     let low = tok.trim().to_ascii_lowercase();
     let low = low.strip_prefix(['+', '-']).unwrap_or(&low);
     if low.is_empty() {
@@ -2995,7 +3016,12 @@ fn mdim_classify(tok: &str) -> MTy {
     }
     if let Some(num) = low.strip_suffix('%') {
         return if num.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false) {
-            MTy::D(MDim { len: 1, pct: true, ..MDim::num() })
+            // % 를 문맥 차원으로 접는다(Bare 면 축 없이 pct 플래그만).
+            match pct {
+                PctAxis::Len => MTy::D(MDim { len: 1, pct: true, ..MDim::num() }),
+                PctAxis::Ang => MTy::D(MDim { ang: 1, pct: true, ..MDim::num() }),
+                PctAxis::Bare => MTy::D(MDim { pct: true, ..MDim::num() }),
+            }
         } else {
             MTy::Bad
         };
@@ -3057,13 +3083,13 @@ fn mdim_func_has_edge_comma(text: &str) -> bool {
 }
 
 // 여러 인자가 같은 축(타입)인지 확인하고 통합 타입을 낸다(min/max/clamp/round/mod/rem).
-fn mdim_same(args: &[String]) -> MTy {
+fn mdim_same(args: &[String], pct: PctAxis) -> MTy {
     let mut acc: Option<MTy> = None;
     for a in args {
         if a.eq_ignore_ascii_case("none") {
             continue; // clamp(none, …) 등: 경계 생략
         }
-        let ty = mdim_of(a);
+        let ty = mdim_of(a, pct);
         acc = Some(match acc {
             None => ty,
             Some(prev) => mdim_add(prev, ty), // add 규칙 = 축 일치 요구
@@ -3072,8 +3098,9 @@ fn mdim_same(args: &[String]) -> MTy {
     acc.unwrap_or(MTy::Bad)
 }
 
-// 표현식(문자열) → 차원 타입. calc 문법의 +,-,*,/ 와 함수를 재귀 해석.
-fn mdim_of(expr: &str) -> MTy {
+// 표현식(문자열) → 차원 타입. calc 문법의 +,-,*,/ 와 함수를 재귀 해석. pct 는 % 가
+// 접히는 문맥 차원.
+fn mdim_of(expr: &str, pct: PctAxis) -> MTy {
     let t = expr.trim();
     if t.is_empty() {
         return MTy::Bad;
@@ -3116,28 +3143,28 @@ fn mdim_of(expr: &str) -> MTy {
                         if args.len() != 1 {
                             MTy::Bad
                         } else {
-                            mdim_of(&args[0])
+                            mdim_of(&args[0], pct)
                         }
                     }
                     "min" | "max" => {
                         if args.is_empty() {
                             MTy::Bad
                         } else {
-                            mdim_same(&args)
+                            mdim_same(&args, pct)
                         }
                     }
                     "clamp" => {
                         if args.len() != 3 {
                             MTy::Bad
                         } else {
-                            mdim_same(&args)
+                            mdim_same(&args, pct)
                         }
                     }
                     "mod" | "rem" => {
                         if args.len() != 2 {
                             MTy::Bad
                         } else {
-                            mdim_same(&args)
+                            mdim_same(&args, pct)
                         }
                     }
                     "round" => {
@@ -3159,29 +3186,29 @@ fn mdim_of(expr: &str) -> MTy {
                         if vals.len() != 2 {
                             MTy::Bad
                         } else {
-                            mdim_same(&vals)
+                            mdim_same(&vals, pct)
                         }
                     }
                     "abs" => {
                         if args.len() != 1 {
                             MTy::Bad
                         } else {
-                            mdim_of(&args[0])
+                            mdim_of(&args[0], pct)
                         }
                     }
                     "sign" => {
-                        if args.len() != 1 || matches!(mdim_of(&args[0]), MTy::Bad) {
+                        if args.len() != 1 || matches!(mdim_of(&args[0], pct), MTy::Bad) {
                             MTy::Bad
                         } else {
                             MTy::D(MDim::num())
                         }
                     }
-                    // sin/cos/tan: 인자 1개, 각도 또는 수. 결과는 수.
+                    // sin/cos/tan: 인자 1개, 각도 또는 수(% 는 문맥 없음 → Bare). 결과는 수.
                     "sin" | "cos" | "tan" => {
                         if args.len() != 1 {
                             MTy::Bad
                         } else {
-                            match mdim_of(&args[0]) {
+                            match mdim_of(&args[0], PctAxis::Bare) {
                                 MTy::Wild => MTy::D(MDim::num()),
                                 MTy::D(d) if d.is_number_or_angle() => MTy::D(MDim::num()),
                                 _ => MTy::Bad,
@@ -3193,7 +3220,7 @@ fn mdim_of(expr: &str) -> MTy {
                         if args.len() != 1 {
                             MTy::Bad
                         } else {
-                            match mdim_of(&args[0]) {
+                            match mdim_of(&args[0], PctAxis::Bare) {
                                 MTy::Wild => MTy::D(MDim { ang: 1, ..MDim::num() }),
                                 MTy::D(d) if d.is_pure_number() => {
                                     MTy::D(MDim { ang: 1, ..MDim::num() })
@@ -3204,7 +3231,7 @@ fn mdim_of(expr: &str) -> MTy {
                     }
                     // atan2: 인자 2개, 같은 타입. 결과는 각도.
                     "atan2" => {
-                        if args.len() != 2 || matches!(mdim_same(&args), MTy::Bad) {
+                        if args.len() != 2 || matches!(mdim_same(&args, PctAxis::Bare), MTy::Bad) {
                             MTy::Bad
                         } else {
                             MTy::D(MDim { ang: 1, ..MDim::num() })
@@ -3219,7 +3246,7 @@ fn mdim_of(expr: &str) -> MTy {
     // 산술 표현식: char 기반 재귀 하강(+,- 최상위 / *,/ 그다음).
     let chars: Vec<char> = t.chars().collect();
     let mut p = 0usize;
-    let ty = mdim_expr_chars(&chars, &mut p);
+    let ty = mdim_expr_chars(&chars, &mut p, pct);
     skip_ws(&chars, &mut p);
     if p != chars.len() {
         return MTy::Bad;
@@ -3227,8 +3254,8 @@ fn mdim_of(expr: &str) -> MTy {
     ty
 }
 
-fn mdim_expr_chars(t: &[char], p: &mut usize) -> MTy {
-    let mut acc = mdim_term_chars(t, p);
+fn mdim_expr_chars(t: &[char], p: &mut usize, pct: PctAxis) -> MTy {
+    let mut acc = mdim_term_chars(t, p, pct);
     loop {
         skip_ws(t, p);
         let op = match t.get(*p) {
@@ -3241,14 +3268,14 @@ fn mdim_expr_chars(t: &[char], p: &mut usize) -> MTy {
             return MTy::Bad;
         }
         *p += 1;
-        let rhs = mdim_term_chars(t, p);
+        let rhs = mdim_term_chars(t, p, pct);
         let _ = op;
         acc = mdim_add(acc, rhs);
     }
     acc
 }
-fn mdim_term_chars(t: &[char], p: &mut usize) -> MTy {
-    let mut acc = mdim_factor_chars(t, p);
+fn mdim_term_chars(t: &[char], p: &mut usize, pct: PctAxis) -> MTy {
+    let mut acc = mdim_factor_chars(t, p, pct);
     loop {
         skip_ws(t, p);
         let op = match t.get(*p) {
@@ -3257,12 +3284,12 @@ fn mdim_term_chars(t: &[char], p: &mut usize) -> MTy {
             _ => break,
         };
         *p += 1;
-        let rhs = mdim_factor_chars(t, p);
+        let rhs = mdim_factor_chars(t, p, pct);
         acc = if op == '*' { mdim_mul(acc, rhs) } else { mdim_div(acc, rhs) };
     }
     acc
 }
-fn mdim_factor_chars(t: &[char], p: &mut usize) -> MTy {
+fn mdim_factor_chars(t: &[char], p: &mut usize, pct: PctAxis) -> MTy {
     skip_ws(t, p);
     // 괄호 그룹.
     if t.get(*p) == Some(&'(') {
@@ -3288,7 +3315,7 @@ fn mdim_factor_chars(t: &[char], p: &mut usize) -> MTy {
         }
         let inner: String = t[start + 1..k - 1].iter().collect();
         *p = k;
-        return mdim_of(&inner);
+        return mdim_of(&inner, pct);
     }
     // 함수 호출: 이름 뒤 '('.
     if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
@@ -3319,12 +3346,12 @@ fn mdim_factor_chars(t: &[char], p: &mut usize) -> MTy {
             }
             let sub: String = t[nstart..k].iter().collect();
             *p = k;
-            return mdim_of(&sub);
+            return mdim_of(&sub, pct);
         }
         // 상수 키워드(e/pi/infinity/nan) 또는 미지 식별자.
         let name: String = t[nstart..j].iter().collect();
         *p = j;
-        return mdim_classify(&name);
+        return mdim_classify(&name, pct);
     }
     // 값 토큰(부호+수+단위/%).
     let start = *p;
@@ -3348,23 +3375,33 @@ fn mdim_factor_chars(t: &[char], p: &mut usize) -> MTy {
         return MTy::Bad;
     }
     let tok: String = t[start..*p].iter().collect();
-    mdim_classify(&tok)
+    mdim_classify(&tok, pct)
 }
 
 // 길이 문맥 수학 함수 유효성: 결과가 <length>(allow_pct 면 <length-percentage>).
 pub(crate) fn math_length_valid(text: &str, allow_pct: bool) -> bool {
-    match mdim_of(text) {
+    match mdim_of(text, PctAxis::Len) {
         MTy::Wild => true, // 해석 불가(var 등)는 관대 수용
         MTy::D(d) => d.is_axis(|m| m.len) && (allow_pct || !d.pct),
         MTy::Bad => false,
     }
 }
 
-// 시간 문맥 수학 함수 유효성: 결과가 <time>.
+// 시간 문맥 수학 함수 유효성: 결과가 <time>(% 없음).
 pub(crate) fn math_time_valid(text: &str) -> bool {
-    match mdim_of(text) {
+    match mdim_of(text, PctAxis::Len) {
         MTy::Wild => true,
         MTy::D(d) => d.is_axis(|m| m.time) && !d.pct,
+        MTy::Bad => false,
+    }
+}
+
+// 각도-퍼센트 문맥(conic-gradient 스톱/from 각도): 결과가 <angle>|<percentage>(100%=360deg).
+// % 를 angle 축으로 접어 calc(90deg + 50%) 를 유효로, calc(50% + 0)(수 혼합)을 무효로 잡는다.
+pub(crate) fn math_angle_pct_valid(text: &str) -> bool {
+    match mdim_of(text, PctAxis::Ang) {
+        MTy::Wild => true,
+        MTy::D(d) => d.is_axis(|m| m.ang),
         MTy::Bad => false,
     }
 }
@@ -3423,16 +3460,16 @@ pub fn transform_valid(raw: &str) -> bool {
 
 // 순수 수 문맥 수학 함수 유효성(font-weight 등 <number>, % 불가): 결과가 순수 수.
 pub(crate) fn math_number_only_valid(text: &str) -> bool {
-    match mdim_of(text) {
+    match mdim_of(text, PctAxis::Len) {
         MTy::Wild => true,
         MTy::D(d) => d.is_pure_number(),
         MTy::Bad => false,
     }
 }
 
-// 각도 문맥 수학 함수 유효성(rotate/skew 등 <angle>): 결과가 <angle>.
+// 각도 문맥 수학 함수 유효성(rotate/skew 등 <angle>, % 없음): 결과가 <angle>.
 pub(crate) fn math_angle_valid(text: &str) -> bool {
-    match mdim_of(text) {
+    match mdim_of(text, PctAxis::Len) {
         MTy::Wild => true,
         MTy::D(d) => d.is_axis(|m| m.ang) && !d.pct,
         MTy::Bad => false,
@@ -3442,7 +3479,7 @@ pub(crate) fn math_angle_valid(text: &str) -> bool {
 // 수/퍼센트 문맥 수학 함수 유효성(opacity 등 <number>|<percentage>): 결과가 순수
 // 수(모든 축 0, % 없음) 또는 순수 퍼센트(len 1·% 플래그, 다른 축 없음)여야.
 pub(crate) fn math_number_valid(text: &str) -> bool {
-    match mdim_of(text) {
+    match mdim_of(text, PctAxis::Len) {
         MTy::Wild => true,
         MTy::D(d) => {
             let axes_zero =
@@ -10685,6 +10722,18 @@ mod tests {
         ] {
             assert!(transform_valid(v), "should accept transform: {v}");
         }
+        // angle-percentage(conic 스톱): % 가 각도로 접혀 각도-% 혼합 유효, 수 혼합 무효.
+        assert!(math_angle_pct_valid("50%"));
+        assert!(math_angle_pct_valid("30deg"));
+        assert!(math_angle_pct_valid("calc(90deg + 50%)"));
+        assert!(math_angle_pct_valid("calc(100% - 45deg)"));
+        assert!(!math_angle_pct_valid("10px")); // 길이(각도-% 아님)
+        assert!(!math_angle_pct_valid("calc(50% + 0)")); // 각도-% 에 수 혼합
+        assert!(!math_angle_pct_valid("calc(1s + 50%)")); // 시간 혼합
+        // rotate 등 순수 <angle> 은 % 거부(문맥 Len-fold 유지).
+        assert!(math_angle_valid("45deg"));
+        assert!(!math_angle_valid("50%"));
+        assert!(!math_angle_valid("calc(90deg + 50%)"));
         // shape() 함수 — 유효(회귀 방지).
         for v in [
             "shape(from 0px 0px, line to 10px 10px)",
