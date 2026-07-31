@@ -1104,6 +1104,20 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     if start == 1 {
         let ptoks = split_top_level(first);
         let at_pos = ptoks.iter().position(|t| t.eq_ignore_ascii_case("at"));
+        // conic 의 "from <angle>": <angle> 은 순수 각도(% 불가). "at"/"in" 전까지 검증.
+        if is_conic_grad {
+            if let Some(fp) = ptoks.iter().position(|t| t.eq_ignore_ascii_case("from")) {
+                let rest = &ptoks[fp + 1..];
+                let end = rest
+                    .iter()
+                    .position(|t| matches!(t.to_ascii_lowercase().as_str(), "at" | "in"))
+                    .unwrap_or(rest.len());
+                let a = rest.first().map(|t| t.trim()).unwrap_or("");
+                if end != 1 || !(a == "0" || math_angle_valid(a)) {
+                    return false;
+                }
+            }
+        }
         if let Some(ap) = at_pos {
             // 위치는 "at" 뒤부터 "in"(색보간법) 전까지.
             let rest = &ptoks[ap + 1..];
