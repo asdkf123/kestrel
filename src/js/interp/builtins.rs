@@ -5590,6 +5590,13 @@ impl Interp {
                         // 활성 애니메이션(element.animate / transition)이 이 프로퍼티를
                         // 다루면 currentTime 에서 보간한 값 — 멤버 접근(.top)과 동일하게
                         // getPropertyValue('top') 경로에도 주입한다.
+                        // border-radius 는 롱핸드 재조립 우선(세로 반경 보존, .borderRadius
+                        // 멤버 접근과 동일 규칙 — animated_value 가 tl 폴백을 먼저 잡지 않게).
+                        if name == "border-radius" {
+                            if let Some(sh) = self.computed_shorthand_animated(*id, &name) {
+                                return Ok(Value::Str(sh));
+                            }
+                        }
                         if let Some(interp) = self.animated_value(*id, &name) {
                             Value::Str(interp)
                         } else if let Some(sh) = self.computed_shorthand_animated(*id, &name) {
