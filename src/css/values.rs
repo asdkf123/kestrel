@@ -7033,6 +7033,11 @@ pub fn clip_path_valid(raw: &str) -> bool {
     for c in &comps {
         if is_geometry_box(c) {
             boxes += 1;
+        } else if c.to_ascii_lowercase().starts_with("shape(") {
+            if !shape_func_valid(c) {
+                return false;
+            }
+            shapes += 1;
         } else if c.ends_with(')') && basic_shape_valid(c) {
             shapes += 1;
         } else {
