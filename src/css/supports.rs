@@ -201,7 +201,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     // 6차: font/text/webkit-box/math/misc 키워드 프로퍼티.
     "font-feature-settings", "font-variation-settings", "font-stretch", "font-width", "font-size-adjust",
     "font-palette", "text-decoration-thickness", "hanging-punctuation",
-    "text-autospace", "text-size-adjust", "-webkit-text-size-adjust", "-webkit-box-orient",
+    "text-autospace", "text-fit", "text-size-adjust", "-webkit-text-size-adjust", "-webkit-box-orient",
     "-webkit-line-clamp", "line-clamp", "-webkit-box-align", "-webkit-box-pack", "zoom",
     "image-orientation", "math-style", "math-depth", "math-shift",
     // 8차: 순수 키워드 롱핸드(paint 핸들러 없음 — 게이트 안전).

@@ -710,6 +710,52 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             ],
             None => Vec::new(),
         },
+        // text-fit(§CSS Text 4): none | [grow|shrink] || [consistent|per-line|per-line-all]
+        // || <percentage>. 계산값은 기본 consistent 생략. grow|shrink 필수(none 제외).
+        "text-fit" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+                return vec![Declaration { important: false, name: "text-fit".to_string(), value: Value::Keyword(low) }];
+            }
+            // 순차 문법: [grow|shrink] [consistent|per-line|per-line-all]? <percentage>?.
+            let toks: Vec<&str> = low.split_whitespace().collect();
+            let mut i = 0usize;
+            let mode = match toks.first() {
+                Some(&("grow" | "shrink")) => {
+                    i += 1;
+                    toks[0]
+                }
+                _ => return Vec::new(),
+            };
+            let mut line: Option<&str> = None;
+            if matches!(toks.get(i), Some(&("consistent" | "per-line" | "per-line-all"))) {
+                line = Some(toks[i]);
+                i += 1;
+            }
+            let mut pct: Option<String> = None;
+            if let Some(t) = toks.get(i) {
+                match t.strip_suffix('%') {
+                    Some(p) if p.parse::<f32>().is_ok() => {
+                        pct = Some(t.to_string());
+                        i += 1;
+                    }
+                    _ => {}
+                }
+            }
+            if i != toks.len() {
+                return Vec::new(); // 남은/잘못된 순서 토큰
+            }
+            let mut parts: Vec<String> = vec![mode.to_string()];
+            if let Some(l) = line {
+                if l != "consistent" {
+                    parts.push(l.to_string());
+                }
+            }
+            if let Some(p) = pct {
+                parts.push(p);
+            }
+            vec![Declaration { important: false, name: "text-fit".to_string(), value: Value::Keyword(parts.join(" ")) }]
+        }
         // text-wrap-mode(§CSS Text 4): wrap | nowrap 만. 그 외(auto/normal/balance/
         // pretty/두값 등) 거부. CSS-wide 통과.
         "text-wrap-mode" => {

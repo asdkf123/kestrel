@@ -2117,6 +2117,7 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "font-size-adjust" | "hanging-punctuation" | "-webkit-line-clamp"
         | "line-clamp" => "none",
         "font-palette" | "text-autospace" => "normal",
+        "text-fit" => "none",
         "text-decoration-thickness" | "text-size-adjust" | "-webkit-text-size-adjust" => "auto",
         "-webkit-box-orient" => "horizontal",
         "-webkit-box-align" => "stretch",

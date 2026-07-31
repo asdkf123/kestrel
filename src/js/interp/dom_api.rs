@@ -737,6 +737,7 @@ impl Interp {
                     | "text-autospace"
                     | "text-spacing-trim"
                     | "text-spacing"
+                    | "text-fit"
                     | "outline-offset"
                     | "display"
                     | "contain"
