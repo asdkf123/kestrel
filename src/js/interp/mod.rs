@@ -8586,12 +8586,15 @@ impl Interp {
                 }
             }
             2 => {
-                // "H V" 또는 키워드 쌍. top/bottom 이 먼저 오면 뒤집힌 순서.
+                // "H V" 또는 키워드 쌍. top/bottom 이 먼저 오면 뒤집힌 순서. center 도
+                // 키워드라 50% 로 변환해야 한다(안 그러면 interp_len_pct 가 실패).
+                let is_kw =
+                    |t: &str| is_h(t) || is_v(t) || t.eq_ignore_ascii_case("center");
                 if is_v(toks[0]) || is_h(toks[1]) {
                     Some((edge_val(toks[1], None)?, edge_val(toks[0], None)?))
                 } else {
-                    let h = if is_h(toks[0]) { edge_val(toks[0], None)? } else { toks[0].to_string() };
-                    let v = if is_v(toks[1]) { edge_val(toks[1], None)? } else { toks[1].to_string() };
+                    let h = if is_kw(toks[0]) { edge_val(toks[0], None)? } else { toks[0].to_string() };
+                    let v = if is_kw(toks[1]) { edge_val(toks[1], None)? } else { toks[1].to_string() };
                     Some((h, v))
                 }
             }
