@@ -8158,6 +8158,7 @@ impl Interp {
         // calc 항 순서는 FROM 값의 단위를 따른다((1-t)·from + t·to 순). from 이 순수 px
         // 면 px 먼저(border-radius: 10px→100% ⇒ "calc(4px + 60%)"), 순수 % 면 % 먼저
         // (position: 10%→480px ⇒ "calc(0% + 480px)"). Chrome 계산값 형식과 일치.
+        // (background-position edge-offset 은 px 먼저를 기대하나 property별 규칙이라 미해결.)
         let px_first = fpx.is_some() && fpct.is_none();
         Some(match (has_px, has_pct) {
             // 0 항 접기(text-decoration-thickness/offset): px 가 0 이면 % 만(둘 다 0 이면
