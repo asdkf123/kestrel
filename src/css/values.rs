@@ -2897,6 +2897,20 @@ impl MDim {
                 .sum::<i32>()
                 == 1
     }
+    // 순수 수(모든 축 0, % 없음).
+    fn is_pure_number(&self) -> bool {
+        self.len == 0
+            && self.ang == 0
+            && self.time == 0
+            && self.freq == 0
+            && self.res == 0
+            && self.flex == 0
+            && !self.pct
+    }
+    // 수 또는 각도(삼각함수 sin/cos/tan 인자).
+    fn is_number_or_angle(&self) -> bool {
+        self.is_pure_number() || self.is_axis(|m| m.ang)
+    }
 }
 #[derive(Clone, Copy)]
 enum MTy {
@@ -3120,9 +3134,47 @@ fn mdim_of(expr: &str) -> MTy {
                             mdim_of(&args[0])
                         }
                     }
-                    "sign" => MTy::D(MDim::num()),
-                    "sin" | "cos" | "tan" => MTy::D(MDim::num()),
-                    "asin" | "acos" | "atan" | "atan2" => MTy::D(MDim { ang: 1, ..MDim::num() }),
+                    "sign" => {
+                        if args.len() != 1 || matches!(mdim_of(&args[0]), MTy::Bad) {
+                            MTy::Bad
+                        } else {
+                            MTy::D(MDim::num())
+                        }
+                    }
+                    // sin/cos/tan: 인자 1개, 각도 또는 수. 결과는 수.
+                    "sin" | "cos" | "tan" => {
+                        if args.len() != 1 {
+                            MTy::Bad
+                        } else {
+                            match mdim_of(&args[0]) {
+                                MTy::Wild => MTy::D(MDim::num()),
+                                MTy::D(d) if d.is_number_or_angle() => MTy::D(MDim::num()),
+                                _ => MTy::Bad,
+                            }
+                        }
+                    }
+                    // asin/acos/atan: 인자 1개, 순수 수. 결과는 각도.
+                    "asin" | "acos" | "atan" => {
+                        if args.len() != 1 {
+                            MTy::Bad
+                        } else {
+                            match mdim_of(&args[0]) {
+                                MTy::Wild => MTy::D(MDim { ang: 1, ..MDim::num() }),
+                                MTy::D(d) if d.is_pure_number() => {
+                                    MTy::D(MDim { ang: 1, ..MDim::num() })
+                                }
+                                _ => MTy::Bad,
+                            }
+                        }
+                    }
+                    // atan2: 인자 2개, 같은 타입. 결과는 각도.
+                    "atan2" => {
+                        if args.len() != 2 || matches!(mdim_same(&args), MTy::Bad) {
+                            MTy::Bad
+                        } else {
+                            MTy::D(MDim { ang: 1, ..MDim::num() })
+                        }
+                    }
                     // sqrt/pow/log/exp/hypot·var/env/attr·progress/calc-size 등: 관대(Wild).
                     _ => MTy::Wild,
                 };
@@ -3278,6 +3330,67 @@ pub(crate) fn math_time_valid(text: &str) -> bool {
     match mdim_of(text) {
         MTy::Wild => true,
         MTy::D(d) => d.is_axis(|m| m.time) && !d.pct,
+        MTy::Bad => false,
+    }
+}
+
+// transform(§CSS Transforms) 함수 리스트 유효성. 각 함수의 인자 개수·타입을 검증.
+// 미지 함수명은 관대 수용(신규 함수 대비, soundness — 유효식을 거부하지 않음).
+pub fn transform_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let funcs = split_top_level(t);
+    if funcs.is_empty() {
+        return false;
+    }
+    // 인자 타입 검사기: 단위 없는 0 은 어느 차원이든 허용.
+    let ang = |a: &str| a.trim() == "0" || math_angle_valid(a.trim());
+    let len = |a: &str, pct: bool| a.trim() == "0" || math_length_valid(a.trim(), pct);
+    let num = |a: &str| math_number_valid(a.trim());
+    for f in &funcs {
+        let f = f.trim();
+        if !f.ends_with(')') {
+            return false;
+        }
+        let Some(open) = f.find('(') else { return false };
+        let name = f[..open].trim().to_ascii_lowercase();
+        let inner = f[open + 1..f.len() - 1].trim();
+        let args: Vec<String> = split_top_commas(inner).iter().map(|a| a.trim().to_string()).collect();
+        if args.iter().any(|a| a.is_empty()) {
+            return false;
+        }
+        let ok = match name.as_str() {
+            "translate" => (args.len() == 1 || args.len() == 2) && args.iter().all(|a| len(a, true)),
+            "translatex" | "translatey" => args.len() == 1 && len(&args[0], true),
+            "translatez" => args.len() == 1 && len(&args[0], false),
+            "translate3d" => args.len() == 3 && len(&args[0], true) && len(&args[1], true) && len(&args[2], false),
+            "scale" => (args.len() == 1 || args.len() == 2) && args.iter().all(|a| num(a)),
+            "scalex" | "scaley" | "scalez" => args.len() == 1 && num(&args[0]),
+            "scale3d" => args.len() == 3 && args.iter().all(|a| num(a)),
+            "rotate" | "rotatex" | "rotatey" | "rotatez" => args.len() == 1 && ang(&args[0]),
+            "rotate3d" => args.len() == 4 && num(&args[0]) && num(&args[1]) && num(&args[2]) && ang(&args[3]),
+            "skew" => (args.len() == 1 || args.len() == 2) && args.iter().all(|a| ang(a)),
+            "skewx" | "skewy" => args.len() == 1 && ang(&args[0]),
+            "matrix" => args.len() == 6 && args.iter().all(|a| num(a)),
+            "matrix3d" => args.len() == 16 && args.iter().all(|a| num(a)),
+            "perspective" => args.len() == 1 && (args[0].eq_ignore_ascii_case("none") || len(&args[0], false)),
+            // 미지 함수: 관대 수용.
+            _ => true,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+// 각도 문맥 수학 함수 유효성(rotate/skew 등 <angle>): 결과가 <angle>.
+pub(crate) fn math_angle_valid(text: &str) -> bool {
+    match mdim_of(text) {
+        MTy::Wild => true,
+        MTy::D(d) => d.is_axis(|m| m.ang) && !d.pct,
         MTy::Bad => false,
     }
 }
@@ -10296,6 +10409,75 @@ mod tests {
         assert!(math_time_valid("max(1s, 2s)"));
         assert!(!math_time_valid("max(1px)"));
         assert!(!math_time_valid("calc(1s * 1s)"));
+        // 각도 문맥 + 삼각함수 인자 검증.
+        for v in [
+            "calc(45deg + 1turn)",
+            "max(45deg, 90deg)",
+            "acos(0.5)",
+            "asin(1)",
+            "atan(1)",
+            "atan2(1, 2)",
+            "calc(1deg * sin(45deg))", // sin→number, deg*num=deg
+            "acos(1 + 1)",
+        ] {
+            assert!(math_angle_valid(v), "should accept angle: {v}");
+        }
+        for v in [
+            "acos()",           // 인자 없음
+            "acos(1deg)",       // acos 는 수 인자(각도 아님)
+            "asin(90px)",       // 길이 인자
+            "acos(1dag)",       // 미지 단위
+            "acos(1deg - 0.5rad)", // 각도 인자(수 아님)
+            "acos(1deg 2deg)",  // 연산자 없는 2값
+            "atan2(1)",         // 인자 1개
+            "max(0px)",         // 길이(각도 아님)
+            "max(45deg, 1s)",   // 축 불일치
+        ] {
+            assert!(!math_angle_valid(v), "should reject angle: {v}");
+        }
+        // transform 함수 리스트 — 유효(회귀 방지가 핵심).
+        for v in [
+            "none",
+            "rotate(45deg)",
+            "rotate(0)",
+            "rotate(1turn)",
+            "translate(10px)",
+            "translate(10px, 20%)",
+            "translateX(10px)",
+            "translateZ(5px)",
+            "translate3d(10px, 20%, 5px)",
+            "scale(2)",
+            "scale(2, 0.5)",
+            "scale(50%)",
+            "scaleX(1.5)",
+            "rotate(45deg) translate(10px, 20px)",
+            "matrix(1, 0, 0, 1, 0, 0)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "skew(10deg, 20deg)",
+            "skewX(10deg)",
+            "perspective(500px)",
+            "perspective(none)",
+            "rotate3d(1, 1, 1, 45deg)",
+            "translate(calc(10px + 5%))",
+            "rotate(calc(45deg * 2))",
+            "rotate(acos(0.5))",
+        ] {
+            assert!(transform_valid(v), "should accept transform: {v}");
+        }
+        // transform 함수 리스트 — 무효.
+        for v in [
+            "perspective(1000)",    // 단위 없는 수(길이 아님)
+            "rotate(acos())",
+            "rotate(acos(1deg))",   // acos 는 수 인자
+            "rotate(asin(90px))",
+            "rotate(max(0px))",     // 길이(각도 아님)
+            "translate(10deg)",     // 각도(길이 아님)
+            "scale(10px)",          // 길이(수 아님)
+            "rotate(45deg, 90deg)", // 인자 2개
+            "matrix(1, 2, 3)",      // 인자 6개 아님
+        ] {
+            assert!(!transform_valid(v), "should reject transform: {v}");
+        }
     }
 
     #[test]

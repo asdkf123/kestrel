@@ -154,6 +154,7 @@ pub(crate) use values::corner_shape_canonical;
 pub(crate) use values::translate_valid;
 pub(crate) use values::transform_origin_valid;
 pub(crate) use values::transform_origin_canonical;
+pub(crate) use values::transform_valid;
 pub(crate) use values::position_canonical;
 pub(crate) use values::position_computed;
 pub(crate) use values::mask_position_canonical;

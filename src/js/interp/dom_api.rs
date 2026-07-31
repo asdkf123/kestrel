@@ -825,6 +825,8 @@ impl Interp {
                     | "grid-template-areas"
                     | "interpolate-size"
                     | "scroll-initial-target"
+                    | "transform"
+                    | "-webkit-transform"
                     | "contain"
                     | "top"
                     | "right"

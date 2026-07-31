@@ -2710,8 +2710,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // transform: 함수 목록(translate/scale/rotate/skew/matrix) 원문 보존.
         // 레이아웃이 2D 행렬로 파싱하고, 페인트가 서브트리를 그 행렬로 변환한다.
+        // transform(§CSS Transforms): none | <transform-function>+. 함수별 인자 개수·
+        // 타입 검증(미지 함수는 관대). 유효하면 원문 보존(레이아웃이 파싱).
         "transform" | "-webkit-transform" => {
-            vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::transform_valid(value_text) {
+                vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
         }
         // transition/animation 롱핸드: 원문 보존(애니메이션은 미구현이지만 계산값은
         // 정규화해 돌려준다 — collect_computed_styles 가 시간(ms→s)·목록 간격을 정규화).
