@@ -9113,6 +9113,30 @@ impl Interp {
     // 일반 다중값/스칼라, 불연속 플립(display 특수)을 한곳에서 처리.
     #[allow(clippy::too_many_arguments)]
     fn interp_prop(dash_prop: &str, from: &str, to: &str, eased: f32, w: f32, h: f32, cc: &str) -> Option<String> {
+        // border-*-radius 코너는 "h" 또는 "h v" 다. 한쪽만 세로가 있으면(토큰 수 불일치)
+        // 단일값을 "v v" 로 펼쳐 토큰 수를 맞춘 뒤 보간한다(§CSS Backgrounds). 음수는 0.
+        if matches!(
+            dash_prop,
+            "border-top-left-radius"
+                | "border-top-right-radius"
+                | "border-bottom-right-radius"
+                | "border-bottom-left-radius"
+        ) {
+            let ft = Self::split_top_ws(from);
+            let gt = Self::split_top_ws(to);
+            if ft.len() != gt.len() && !ft.is_empty() && !gt.is_empty() {
+                let exp = |t: &[&str]| {
+                    if t.len() == 1 {
+                        format!("{} {}", t[0], t[0])
+                    } else {
+                        t.join(" ")
+                    }
+                };
+                if let Some(v) = Self::interp_css_value(&exp(&ft), &exp(&gt), eased) {
+                    return Some(Self::clamp_nonneg(&v));
+                }
+            }
+        }
         // transform 매칭 리스트 보간(rotate/translate/scale 함수별 인자 보간 → 행렬).
         if dash_prop == "transform" {
             if let Some(v) = Self::interp_transform(from, to, eased, w, h) {
