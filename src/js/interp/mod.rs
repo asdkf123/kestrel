@@ -9404,6 +9404,8 @@ impl Interp {
                     | "flex-basis" | "column-rule-width" | "border-spacing" | "perspective"
                     | "border-image-slice" | "tab-size" | "shape-margin" | "font-stretch"
                     | "font-size" | "font-size-adjust" | "line-height"
+                    | "border-radius" | "border-top-left-radius" | "border-top-right-radius"
+                    | "border-bottom-right-radius" | "border-bottom-left-radius"
             ) {
                 return Some(Self::clamp_nonneg(&v));
             }
