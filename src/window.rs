@@ -746,6 +746,10 @@ fn collect_computed_styles(
                 m.insert("overflow-y".to_string(), "auto".to_string());
             }
         }
+        // background-clip 계산값(§CSS Backgrounds): 레이어별 box 를 앞, text 를 뒤로 캐논.
+        if let Some(v) = m.get("background-clip").cloned() {
+            m.insert("background-clip".to_string(), crate::css::background_clip_canonical(&v));
+        }
         // background-repeat/mask-repeat 계산값(§CSS Backgrounds): 레이어별 2값을 축약한다.
         // "repeat repeat"→"repeat", "repeat no-repeat"→"repeat-x", "no-repeat repeat"→"repeat-y".
         for key in ["background-repeat", "mask-repeat"] {
