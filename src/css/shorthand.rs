@@ -2767,10 +2767,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "animation" | "-webkit-animation" => animation_shorthand(value_text),
         // text-shadow: <dx> <dy> [blur] <color> (단일 그림자). 상속 속성. paint 가 글리프 뒤에 그림.
         "text-shadow" => {
-            if value_text.trim() == "none" {
+            let v = value_text.trim();
+            let low = v.to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+            ) {
+                return vec![Declaration { important: false, name: "text-shadow".to_string(), value: Value::Keyword(low) }];
+            }
+            // §CSS Text Decor 문법 검증(inset·spread 없음, 길이 2~3, blur 음수·% 불가).
+            // 무효면 거부. 유효값은 아래에서 항상 원문을 보존한다.
+            if !text_shadow_valid(v) {
                 return Vec::new();
             }
-            // 첫 최상위 콤마까지가 첫 그림자
+            // 첫 최상위 콤마까지가 첫 그림자 — paint 용 px 길이·색 추출(calc/em 은
+            // 추출 실패해도 원문 보존으로 computed/보간이 처리).
             let mut depth = 0i32;
             let mut end = value_text.len();
             for (i, c) in value_text.char_indices() {
@@ -2793,21 +2804,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     _ => {}
                 }
             }
-            if lens.len() < 2 {
-                return Vec::new();
-            }
-            let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
             let px = |v: f32| Value::Length(v, Unit::Px);
-            vec![
-                Declaration { important: false, name: "text-shadow-x".to_string(), value: px(lens[0]) },
-                Declaration { important: false, name: "text-shadow-y".to_string(), value: px(lens[1]) },
-                Declaration { important: false, name: "text-shadow-color".to_string(), value: color },
-                // 전체 원문 보존 — getComputedStyle 이 캐논 직렬화(색 우선)하고 보간에 쓴다.
-                Declaration { important: false,
-                    name: "text-shadow".to_string(),
-                    value: Value::Keyword(value_text.trim().to_string()),
-                },
-            ]
+            let mut decls = Vec::new();
+            if lens.len() >= 2 {
+                let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
+                decls.push(Declaration { important: false, name: "text-shadow-x".to_string(), value: px(lens[0]) });
+                decls.push(Declaration { important: false, name: "text-shadow-y".to_string(), value: px(lens[1]) });
+                decls.push(Declaration { important: false, name: "text-shadow-color".to_string(), value: color });
+            }
+            // 전체 원문 보존 — getComputedStyle 이 캐논 직렬화(색 우선)하고 보간에 쓴다.
+            decls.push(Declaration { important: false, name: "text-shadow".to_string(), value: Value::Keyword(v.to_string()) });
+            decls
         }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
         "box-shadow" => box_shadow_shorthand(value_text),
@@ -4649,6 +4656,89 @@ fn single_shadow_valid(s: &str) -> bool {
     }
     // blur(index 2)는 음수 불가.
     !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
+}
+
+// 단일 text-shadow 유효성: <color>? && <length>{2,3}. box-shadow 와 달리 inset·
+// spread(4번째 길이) 없음, 길이는 정확히 2~3개(연속), blur(3번째) 음수 불가, % 불가.
+fn single_text_shadow_valid(s: &str) -> bool {
+    let mut color = 0u32;
+    let mut runs: Vec<Vec<Option<f32>>> = Vec::new();
+    let mut cur: Vec<Option<f32>> = Vec::new();
+    for tok in split_top_level(s) {
+        if tok.eq_ignore_ascii_case("inset") {
+            return false; // text-shadow 는 inset 없음
+        } else if is_shadow_length(tok) {
+            cur.push(shadow_length_val(tok));
+        } else if is_shadow_color(tok) {
+            color += 1;
+            if !cur.is_empty() {
+                runs.push(std::mem::take(&mut cur));
+            }
+        } else {
+            return false; // 알 수 없는 토큰
+        }
+    }
+    if !cur.is_empty() {
+        runs.push(cur);
+    }
+    if !(color <= 1 && runs.len() == 1) {
+        return false;
+    }
+    let run = &runs[0];
+    if !(2..=3).contains(&run.len()) {
+        return false;
+    }
+    // blur(index 2)는 음수 불가.
+    !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
+}
+
+// text-shadow 지정값 캐논 직렬화: 그림자마다 <color> <lengths> 순(색 먼저). 길이는
+// 0→0px 정규화, 색 키워드 유지. box-shadow 와 달리 inset 없음.
+pub(crate) fn text_shadow_canonical(value: &str) -> Option<String> {
+    let v = value.trim();
+    if v.eq_ignore_ascii_case("none") {
+        return Some("none".to_string());
+    }
+    if !text_shadow_valid(v) {
+        return None;
+    }
+    let mut shadows = Vec::new();
+    for shadow in split_top_level_commas(v) {
+        let mut color = None;
+        let mut lengths = Vec::new();
+        for tok in split_top_level(shadow.trim()) {
+            if is_shadow_length(tok) {
+                let norm = if tok.contains('(') {
+                    tok.to_string()
+                } else {
+                    interpret_value(tok)
+                        .map(|val| crate::style::computed_value_string(&val))
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| tok.to_string())
+                };
+                lengths.push(norm);
+            } else if is_shadow_color(tok) {
+                color = Some(tok.to_string());
+            }
+        }
+        let mut parts = Vec::new();
+        if let Some(c) = color {
+            parts.push(c);
+        }
+        parts.extend(lengths);
+        shadows.push(parts.join(" "));
+    }
+    Some(shadows.join(", "))
+}
+
+// text-shadow 값 유효성: none | <shadow-t>#. 무효면 선언 거부.
+pub(crate) fn text_shadow_valid(value: &str) -> bool {
+    let v = value.trim();
+    if v.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    let shadows = split_top_level_commas(v);
+    !shadows.is_empty() && shadows.iter().all(|s| single_text_shadow_valid(s.trim()))
 }
 
 // box-shadow 지정값 캐논 직렬화: 그림자마다 <color> <lengths> <inset> 순(color 먼저,

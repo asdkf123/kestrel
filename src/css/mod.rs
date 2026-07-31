@@ -178,6 +178,7 @@ pub(crate) use values::normalize_shape;
 pub(crate) use values::interpret_value;
 pub(crate) use shorthand::expand_declaration as expand_decl_pub;
 pub(crate) use shorthand::box_shadow_canonical;
+pub(crate) use shorthand::text_shadow_canonical;
 pub(crate) use shorthand::font_size_keyword;
 pub(crate) use shorthand::{text_spacing_from_parts, text_spacing_parse};
 pub(crate) use shorthand::overflow_clip_margin_canonical;

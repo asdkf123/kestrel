@@ -386,6 +386,12 @@ impl Interp {
                 return s;
             }
         }
+        // text-shadow(§CSS Text Decor): 그림자마다 <color> <lengths> 순 캐논(색 먼저).
+        if prop == "text-shadow" {
+            if let Some(s) = crate::css::text_shadow_canonical(raw) {
+                return s;
+            }
+        }
         // transition/animation-timing-function(§CSS Easing): step-start→steps(1, start),
         // steps 기본 위치 생략 등 캐논 직렬화.
         if matches!(prop, "transition-timing-function" | "animation-timing-function") {
@@ -780,6 +786,7 @@ impl Interp {
                     | "caret-animation"
                     | "text-decoration-thickness"
                     | "text-underline-offset"
+                    | "text-shadow"
                     | "contain"
                     | "top"
                     | "right"
