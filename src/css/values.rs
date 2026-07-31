@@ -948,6 +948,21 @@ pub(crate) fn normalize_shape(text: &str) -> String {
             None => format!("{}({})", func, coords),
         };
     }
+    // shape(): 좌표의 단위 없는 0 → 0px(명령·키워드는 "0" 이 아니라 영향 없음).
+    if lower.starts_with("shape(") {
+        let inner = text[text.find('(').unwrap() + 1..text.len() - 1].trim();
+        let segs: Vec<String> = split_top_commas(inner)
+            .iter()
+            .map(|seg| {
+                split_top_level(seg.trim())
+                    .iter()
+                    .map(|t| if t.trim() == "0" { "0px".to_string() } else { t.clone() })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        return format!("shape({})", segs.join(", "));
+    }
     // polygon(): fill-rule nonzero(기본) 생략, round 전부-0 생략, 각 점 좌표 0→0px.
     if lower.starts_with("polygon(") {
         let c0 = |t: &str| if t.trim() == "0" { "0px".to_string() } else { t.to_string() };

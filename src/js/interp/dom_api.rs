@@ -710,7 +710,8 @@ impl Interp {
                 || rl.starts_with("rect(")
                 || rl.starts_with("xywh(")
                 || rl.starts_with("polygon(")
-                || rl.starts_with("path("))
+                || rl.starts_with("path(")
+                || rl.starts_with("shape("))
         {
             return crate::css::normalize_shape(raw);
         }
