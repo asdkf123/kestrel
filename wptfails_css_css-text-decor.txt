@@ -97,13 +97,6 @@ css/css-text-decor/parsing/text-emphasis-style-computed-vertical-lr.html	FAIL	Pr
 css/css-text-decor/parsing/text-emphasis-style-computed.html	FAIL	Property textU+2demphasisU+2dstyle value 'filled circle'	assert_equals: expected "circle" but got "filled circle"
 css/css-text-decor/parsing/text-emphasis-style-computed.html	FAIL	Property textU+2demphasisU+2dstyle value 'filled'	assert_equals: expected "circle" but got "filled"
 css/css-text-decor/parsing/text-emphasis-style-computed.html	FAIL	Property textU+2demphasisU+2dstyle value 'open'	assert_equals: expected "open circle" but got "open"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "otto" should not set the property value	assert_equals: expected "" but got "otto"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "asdlflj" should not set the property value	assert_equals: expected "" but got "asdlflj"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "U+2d10" should not set the property value	assert_equals: expected "" but got "U+2d10"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "60002020" should not set the property value	assert_equals: expected "" but got "60002020"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "!@#$%^&" should not set the property value	assert_equals: expected "" but got "!@#$%^&"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "10e2" should not set the property value	assert_equals: expected "" but got "1000"
-css/css-text-decor/text-decoration-thickness-invalid.html	FAIL	e.style['textU+2ddecorationU+2dthickness'] = "from font" should not set the property value	assert_equals: expected "" but got "from font"
 css/css-text-decor/text-shadow/parsing/text-shadow-computed.html	FAIL	Property textU+2dshadow value 'none'	assert_true: 'none' is a supported value for textU+2dshadow. expected true got false
 css/css-text-decor/text-shadow/parsing/text-shadow-computed.html	FAIL	Property textU+2dshadow value 'calc(0.5em + 10px) calc(0.5em + 10px) calc(0.5em + 10px)'	assert_true: 'calc(0.5em + 10px) calc(0.5em + 10px) calc(0.5em + 10px)' is a supported value for textU+2dshadow. expected true got false
 css/css-text-decor/text-shadow/parsing/text-shadow-computed.html	FAIL	Property textU+2dshadow value 'calc(U+2d0.5em + 10px) calc(U+2d0.5em + 10px) calc(U+2d0.5em + 10px)'	assert_true: 'calc(U+2d0.5em + 10px) calc(U+2d0.5em + 10px) calc(U+2d0.5em + 10px)' is a supported value for textU+2dshadow. expected true got false
@@ -116,11 +109,3 @@ css/css-text-decor/text-shadow/parsing/text-shadow-invalid.html	FAIL	e.style['te
 css/css-text-decor/text-shadow/parsing/text-shadow-invalid.html	FAIL	e.style['textU+2dshadow'] = "10px 20% 30px" should not set the property value	assert_equals: expected "" but got "10px 20% 30px"
 css/css-text-decor/text-shadow/parsing/text-shadow-invalid.html	FAIL	e.style['textU+2dshadow'] = "lime 10px 20px 30%" should not set the property value	assert_equals: expected "" but got "lime 10px 20px 30%"
 css/css-text-decor/text-shadow/parsing/text-shadow-valid.html	FAIL	e.style['textU+2dshadow'] = "10px 20px 30px lime" should set the property value	assert_equals: serialization should be canonical expected "lime 10px 20px 30px" but got "10px 20px 30px lime"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "fromU+2dfont" should not set the property value	assert_equals: expected "" but got "fromU+2dfont"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "otto" should not set the property value	assert_equals: expected "" but got "otto"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "asdlflj" should not set the property value	assert_equals: expected "" but got "asdlflj"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "U+2d10" should not set the property value	assert_equals: expected "" but got "U+2d10"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "60002020" should not set the property value	assert_equals: expected "" but got "60002020"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "!@#$%^&" should not set the property value	assert_equals: expected "" but got "!@#$%^&"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "10e2" should not set the property value	assert_equals: expected "" but got "1000"
-css/css-text-decor/text-underline-offset-invalid.html	FAIL	e.style['textU+2dunderlineU+2doffset'] = "from font" should not set the property value	assert_equals: expected "" but got "from font"

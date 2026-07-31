@@ -2649,11 +2649,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // (키워드로 보존하면 resolve_units 가 건너뛰어 "2em"/"calc(...)" 원문이 남는다).
         "text-decoration-thickness" | "text-underline-offset" => {
             let t = value_text.trim();
-            let value = match interpret_value(t) {
-                Some(v @ (Value::Length(..) | Value::Calc(_) | Value::MinMax(..))) => v,
-                _ => Value::Keyword(t.to_string()), // auto/from-font/CSS-wide 키워드
-            };
-            vec![Declaration { important: false, name: name.to_string(), value }]
+            let low = t.to_ascii_lowercase();
+            let kw_ok = matches!(
+                low.as_str(),
+                "auto" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+            ) || (name == "text-decoration-thickness" && low == "from-font");
+            if kw_ok {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            // <length-percentage>: 단위 있는 길이·퍼센트·calc 만. 단위없는 수는 0 만
+            // 허용(§CSS unitless zero), 정크 키워드·다중값은 거부.
+            match interpret_value(t) {
+                Some(Value::Length(n, Unit::Number)) if n == 0.0 => {
+                    vec![Declaration { important: false, name: name.to_string(), value: Value::Length(0.0, Unit::Px) }]
+                }
+                Some(Value::Length(_, Unit::Number)) => Vec::new(),
+                Some(v @ (Value::Length(..) | Value::Calc(_) | Value::MinMax(..))) => {
+                    vec![Declaration { important: false, name: name.to_string(), value: v }]
+                }
+                _ => Vec::new(),
+            }
         }
         // SVG 페인트/색 프로퍼티: <color> 는 색으로(계산값 rgb()), none/url()/context-* 는
         // 키워드로 보존.

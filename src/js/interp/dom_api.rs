@@ -778,6 +778,8 @@ impl Interp {
                     | "input-security"
                     | "overlay"
                     | "caret-animation"
+                    | "text-decoration-thickness"
+                    | "text-underline-offset"
                     | "contain"
                     | "top"
                     | "right"
