@@ -6483,7 +6483,8 @@ pub fn ray_valid(raw: &str) -> bool {
         return false;
     }
     let toks = split_top_level(inner);
-    let is_angle = |t: &str| t == "0" || math_angle_valid(t);
+    // ray 의 <angle> 은 단위 필수(bare 0 무효, "ray(0 sides)" 거부).
+    let is_angle = |t: &str| math_angle_valid(t);
     let is_size = |t: &str| {
         matches!(
             t,
@@ -6598,18 +6599,29 @@ pub fn shape_func_valid(raw: &str) -> bool {
             return false;
         }
         if i == 0 {
-            // [<fill-rule>]? from <coords…> — coords 안에 명령 키워드가 있으면 콤마 누락.
+            // [<fill-rule>]? from <coord-pair> — coords 안에 명령 키워드가 있으면 콤마 누락.
+            // 좌표쌍은 최소 2토큰(x,y).
             let idx = if matches!(toks[0].as_str(), "nonzero" | "evenodd") { 1 } else { 0 };
             if toks.get(idx).map(|s| s.as_str()) != Some("from") {
                 return false;
             }
-            if toks.len() <= idx + 1 || toks[idx + 1..].iter().any(|t| CMDS.contains(&t.as_str())) {
+            if toks.len() < idx + 3 || toks[idx + 1..].iter().any(|t| CMDS.contains(&t.as_str())) {
                 return false;
             }
         } else {
             let cmd = toks[0].as_str();
             if !CMDS.contains(&cmd) {
                 return false;
+            }
+            if cmd == "close" {
+                if toks.len() != 1 {
+                    return false; // close 는 인자 없음
+                }
+            } else {
+                // 방향 명령은 <by-to>(by|to)가 두 번째 토큰.
+                if !matches!(toks.get(1).map(|s| s.as_str()), Some("by") | Some("to")) {
+                    return false;
+                }
             }
             if cmd == "arc" {
                 let cnt = |k: &str| toks.iter().filter(|t| t.as_str() == k).count();
@@ -6626,7 +6638,8 @@ pub fn shape_func_valid(raw: &str) -> bool {
             }
         }
     }
-    true
+    // from 만 있고 명령이 없으면 무효(최소 1개 명령).
+    segs.len() >= 2
 }
 
 pub fn basic_shape_valid(raw: &str) -> bool {
@@ -10775,9 +10788,15 @@ mod tests {
             "shape(from 20px 40px, move to 20px 30px, hline to top)",  // hline 위치값
             "shape(from 20px 40px, move to 20px 30px, vline to left)", // vline 위치값
             "shape(from 20px, 40px, line to 20px, 30px)",    // 좌표 내 콤마
+            "shape(from 0px 10px)",                          // 명령 없음
+            "shape(from 0px)",                               // from 좌표 1개
+            "shape(from 0px 0px, close path)",               // close 인자
+            "shape(from 10px 10px, hline byy 10px)",         // by/to 아님
+            "shape(from 10px 10px, smooth via 10rem)",       // by/to 아님
         ] {
             assert!(!shape_func_valid(v), "should reject shape: {v}");
         }
+        assert!(!ray_valid("ray(0 sides)")); // bare 0 각도
         // offset-path — 유효(회귀 방지).
         for v in [
             "none",
