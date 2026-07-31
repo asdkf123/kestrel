@@ -127,6 +127,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
+            // anchor-size()/anchor()(§css-anchor-1): inset 프로퍼티에서 유효.
+            if toks.len() == 1 {
+                if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
+                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
+                }
+            }
             if toks.len() == 1 && crate::css::inset_length_valid(toks[0]) {
                 let v = match interpret_value(toks[0]) {
                     // 단위없는 0 은 0px 로 캐논화(§CSSOM).
@@ -2760,6 +2766,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let is_margin = name.starts_with("margin");
             let toks = split_top_level(value_text.trim());
+            // anchor-size()(§css-anchor-1): margin 에서 유효(padding 은 아님).
+            if is_margin && toks.len() == 1 {
+                if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
+                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
+                }
+            }
             let ok = toks.len() == 1
                 && if is_margin { crate::css::margin_value_valid(toks[0]) } else { crate::css::nonneg_lp_valid(toks[0]) };
             if !ok {
@@ -4772,5 +4784,16 @@ mod tests {
         ] {
             assert_eq!(canon(bad), "", "무효여야: {}", bad);
         }
+        // anchor-size 는 sizing 뿐 아니라 inset/margin 에서도 유효, padding 은 불가(§).
+        let kw = |p: &str, v: &str| match find(&expand_declaration(p, v), p) {
+            Some(Value::Keyword(k)) => k.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(kw("top", "anchor-size(width)"), "anchor-size(width)");
+        assert_eq!(kw("left", "anchor-size(--foo width)"), "anchor-size(--foo width)");
+        assert_eq!(kw("margin-left", "anchor-size(width --foo)"), "anchor-size(--foo width)");
+        assert_eq!(kw("margin-top", "anchor-size(height)"), "anchor-size(height)");
+        // padding 은 anchor-size 거부(§: sizing/inset/margin 만).
+        assert_eq!(kw("padding-left", "anchor-size(--foo width)"), "");
     }
 }
