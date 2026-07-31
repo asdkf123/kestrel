@@ -857,24 +857,38 @@ pub(crate) fn normalize_shape(text: &str) -> String {
     if !text.ends_with(')') {
         return text.to_string();
     }
-    // inset()/rect()/xywh(): border-radius "round <h> / <v>" 에서 h==v 면 "/ v" 생략.
+    // inset()/rect()/xywh(): 각 길이 토큰 0→0px, border-radius "round <h> / <v>" 에서
+    // h==v 면 "/ v" 생략.
     if lower.starts_with("inset(") || lower.starts_with("rect(") || lower.starts_with("xywh(") {
+        // 단위 없는 0 → 0px(auto·%·calc·단위 길이는 원문).
+        let c0 = |t: &str| if t.trim() == "0" { "0px".to_string() } else { t.to_string() };
         let open = text.find('(').unwrap();
         let func = text[..open].to_ascii_lowercase();
         let inner = text[open + 1..text.len() - 1].trim();
         let low_inner = inner.to_ascii_lowercase();
-        if let Some(ri) = low_inner.find(" round ") {
-            let before = inner[..ri].trim();
-            let radius = inner[ri + " round ".len()..].trim();
-            if let Some((h, v)) = radius.split_once('/') {
-                let hv: Vec<&str> = h.split_whitespace().collect();
-                let vv: Vec<&str> = v.split_whitespace().collect();
+        let (before, radius) = match low_inner.find(" round ") {
+            Some(ri) => (inner[..ri].trim(), Some(inner[ri + " round ".len()..].trim())),
+            None => (inner, None),
+        };
+        let coords: String =
+            split_top_level(before).iter().map(|t| c0(t)).collect::<Vec<_>>().join(" ");
+        let round = radius.map(|r| {
+            if let Some((h, v)) = r.split_once('/') {
+                let hv: Vec<String> = h.split_whitespace().map(c0).collect();
+                let vv: Vec<String> = v.split_whitespace().map(c0).collect();
                 if hv == vv {
-                    return format!("{}({} round {})", func, before, h.trim());
+                    hv.join(" ")
+                } else {
+                    format!("{} / {}", hv.join(" "), vv.join(" "))
                 }
+            } else {
+                r.split_whitespace().map(c0).collect::<Vec<_>>().join(" ")
             }
-        }
-        return text.to_string();
+        });
+        return match round {
+            Some(r) => format!("{}({} round {})", func, coords, r),
+            None => format!("{}({})", func, coords),
+        };
     }
     if !(lower.starts_with("circle(") || lower.starts_with("ellipse(")) {
         return text.to_string();
