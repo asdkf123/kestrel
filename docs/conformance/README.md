@@ -67,6 +67,11 @@
 > scroll-initial-target, transform(함수 타입 검사), opacity/font-weight(calc 타입), offset-path/ray(), shape() 구조,
 > circle/ellipse radial-extent — 다수는 CSSOM 캐논 직렬화 포함.
 >
+> **중요(교차 게이트)**: 새 프로퍼티 검증 arm 을 추가하면 반드시 `is_known_property`(`src/css/supports.rs`)에도
+> 등록할 것. 없으면 `CSS.supports(prop, val)` 가 false 를 반환하고 getComputedStyle 열거에서 빠져, "should
+> not set unrelated longhands"(CSS.supports 단언) 등 **연쇄 테스트가 대량 막힌다**. animation-range 는 이
+> 등록만으로 css-animations +86 이었다.
+>
 > **남은 큰 서브시스템**(각각 집중 작업 필요, 요행 없이 정밀 스펙 준수):
 > 1. basic-shape 캐논 직렬화(circle/ellipse/inset/polygon round 0 생략 등 — shape-outside/clip-path/offset-path 공통 "serialization" validfail 다수)
 > 2. background-image: gradient(color/conic calc 타입, `calc(50%+30deg)` 거부), image-set()/image(), url() modifier(cross-origin/integrity/referrer-policy)
