@@ -2854,6 +2854,410 @@ fn is_math_fn(low: &str) -> bool {
     math_function_valid(low)
 }
 
+// ── calc 차원 타입 검사(§CSS Values 4 §10 type checking) ──────────────────
+// 수학 함수(calc/min/max/clamp/…)의 결과 차원을 해석해 프로퍼티 기대 타입과 대조.
+// 예전엔 size_valid 가 contains("deg") 같은 편법으로만 걸러 max(0Hz)/max(0fr)/
+// calc(1/2px)/max(0)(수) 같은 타입 불일치를 통과시켰다. 이 해석기는 절대 유효
+// 표현식을 거부하지 않도록 미지 함수(var/env/trig 외)·attr 은 Wild(허용)로 둔다.
+//
+// MDim: 차원 지수 벡터. percent 는 length 로 접어 len 에 반영하고 pct 플래그로
+// "% 포함 여부"만 따로 추적한다(length-only 프로퍼티에서 % 거부용). number=전부 0.
+#[derive(Clone, Copy)]
+struct MDim {
+    len: i32,
+    ang: i32,
+    time: i32,
+    freq: i32,
+    res: i32,
+    flex: i32,
+    pct: bool,
+}
+impl MDim {
+    fn num() -> Self {
+        MDim { len: 0, ang: 0, time: 0, freq: 0, res: 0, flex: 0, pct: false }
+    }
+    fn axes_eq(&self, o: &Self) -> bool {
+        self.len == o.len
+            && self.ang == o.ang
+            && self.time == o.time
+            && self.freq == o.freq
+            && self.res == o.res
+            && self.flex == o.flex
+    }
+    // 단일 축 지수 1, 나머지 0 인지.
+    fn is_axis(&self, sel: fn(&MDim) -> i32) -> bool {
+        sel(self) == 1
+            && [self.len, self.ang, self.time, self.freq, self.res, self.flex]
+                .iter()
+                .sum::<i32>()
+                == 1
+    }
+}
+#[derive(Clone, Copy)]
+enum MTy {
+    Bad,          // 타입 불일치/malformed
+    Wild,         // 해석 불가(var/env/attr/미지 함수) — 무엇과도 호환
+    D(MDim),
+}
+
+fn mdim_add(a: MTy, b: MTy) -> MTy {
+    match (a, b) {
+        (MTy::Bad, _) | (_, MTy::Bad) => MTy::Bad,
+        (MTy::Wild, x) | (x, MTy::Wild) => x, // Wild 는 상대 타입을 채택(관대)
+        (MTy::D(x), MTy::D(y)) => {
+            if x.axes_eq(&y) {
+                MTy::D(MDim { pct: x.pct || y.pct, ..x })
+            } else {
+                MTy::Bad
+            }
+        }
+    }
+}
+fn mdim_mul(a: MTy, b: MTy) -> MTy {
+    match (a, b) {
+        (MTy::Bad, _) | (_, MTy::Bad) => MTy::Bad,
+        (MTy::Wild, _) | (_, MTy::Wild) => MTy::Wild,
+        (MTy::D(x), MTy::D(y)) => MTy::D(MDim {
+            len: x.len + y.len,
+            ang: x.ang + y.ang,
+            time: x.time + y.time,
+            freq: x.freq + y.freq,
+            res: x.res + y.res,
+            flex: x.flex + y.flex,
+            pct: x.pct || y.pct,
+        }),
+    }
+}
+fn mdim_div(a: MTy, b: MTy) -> MTy {
+    match (a, b) {
+        (MTy::Bad, _) | (_, MTy::Bad) => MTy::Bad,
+        (MTy::Wild, _) | (_, MTy::Wild) => MTy::Wild,
+        (MTy::D(x), MTy::D(y)) => MTy::D(MDim {
+            len: x.len - y.len,
+            ang: x.ang - y.ang,
+            time: x.time - y.time,
+            freq: x.freq - y.freq,
+            res: x.res - y.res,
+            flex: x.flex - y.flex,
+            pct: x.pct || y.pct,
+        }),
+    }
+}
+
+// 값 토큰 하나(부호+수+단위 또는 %)를 차원 타입으로. 미지 단위 → Bad.
+fn mdim_classify(tok: &str) -> MTy {
+    let low = tok.trim().to_ascii_lowercase();
+    let low = low.strip_prefix(['+', '-']).unwrap_or(&low);
+    if low.is_empty() {
+        return MTy::Bad;
+    }
+    // 상수(§CSS Values): e / pi / infinity / nan → 수.
+    if matches!(low, "e" | "pi" | "infinity" | "nan") {
+        return MTy::D(MDim::num());
+    }
+    if let Some(num) = low.strip_suffix('%') {
+        return if num.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false) {
+            MTy::D(MDim { len: 1, pct: true, ..MDim::num() })
+        } else {
+            MTy::Bad
+        };
+    }
+    // 순수 수?
+    if low.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false) {
+        return MTy::D(MDim::num());
+    }
+    let unit_len = low.chars().rev().take_while(|c| c.is_ascii_alphabetic()).count();
+    if unit_len == 0 {
+        return MTy::Bad;
+    }
+    let (num, unit) = low.split_at(low.len() - unit_len);
+    if num.parse::<f64>().map(|v| !v.is_finite()).unwrap_or(true) {
+        return MTy::Bad;
+    }
+    const LEN_UNITS: &[&str] = &[
+        "px", "em", "rem", "ex", "rex", "cap", "rcap", "ch", "rch", "ic", "ric", "lh", "rlh", "vw",
+        "vh", "vi", "vb", "vmin", "vmax", "svw", "svh", "svi", "svb", "svmin", "svmax", "lvw",
+        "lvh", "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh", "dvi", "dvb", "dvmin", "dvmax", "cqw",
+        "cqh", "cqi", "cqb", "cqmin", "cqmax", "cm", "mm", "q", "in", "pt", "pc",
+    ];
+    if LEN_UNITS.contains(&unit) {
+        return MTy::D(MDim { len: 1, ..MDim::num() });
+    }
+    match unit {
+        "deg" | "grad" | "rad" | "turn" => MTy::D(MDim { ang: 1, ..MDim::num() }),
+        "s" | "ms" => MTy::D(MDim { time: 1, ..MDim::num() }),
+        "hz" | "khz" => MTy::D(MDim { freq: 1, ..MDim::num() }),
+        "dpi" | "dpcm" | "dppx" | "x" => MTy::D(MDim { res: 1, ..MDim::num() }),
+        "fr" => MTy::D(MDim { flex: 1, ..MDim::num() }),
+        _ => MTy::Bad,
+    }
+}
+
+// 균형 괄호로 함수 인자 문자열(바깥 괄호 안)을 얻는다. name(...) 형식 가정.
+fn mdim_func_args(text: &str) -> Option<(String, Vec<String>)> {
+    let t = text.trim();
+    if !t.ends_with(')') {
+        return None;
+    }
+    let open = t.find('(')?;
+    let name = t[..open].trim().to_ascii_lowercase();
+    let inner = t[open + 1..t.len() - 1].trim();
+    Some((name, split_top_commas(inner).iter().map(|a| a.trim().to_string()).collect()))
+}
+
+// 여러 인자가 같은 축(타입)인지 확인하고 통합 타입을 낸다(min/max/clamp/round/mod/rem).
+fn mdim_same(args: &[String]) -> MTy {
+    let mut acc: Option<MTy> = None;
+    for a in args {
+        if a.eq_ignore_ascii_case("none") {
+            continue; // clamp(none, …) 등: 경계 생략
+        }
+        let ty = mdim_of(a);
+        acc = Some(match acc {
+            None => ty,
+            Some(prev) => mdim_add(prev, ty), // add 규칙 = 축 일치 요구
+        });
+    }
+    acc.unwrap_or(MTy::Bad)
+}
+
+// 표현식(문자열) → 차원 타입. calc 문법의 +,-,*,/ 와 함수를 재귀 해석.
+fn mdim_of(expr: &str) -> MTy {
+    let t = expr.trim();
+    if t.is_empty() {
+        return MTy::Bad;
+    }
+    // 함수 호출 전체?
+    if t.ends_with(')') {
+        if let Some((name, args)) = mdim_func_args(t) {
+            // 이 텍스트가 순수 함수 호출인지(앞부분이 name( 로 시작) 확인 —
+            // "1px * max(..)" 같은 건 아래 char 파서로.
+            let is_pure_call = t
+                .find('(')
+                .map(|o| t[..o].chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+                .unwrap_or(false)
+                && !t[..t.find('(').unwrap()].is_empty();
+            if is_pure_call {
+                return match name.as_str() {
+                    "calc" => {
+                        if args.len() != 1 {
+                            MTy::Bad
+                        } else {
+                            mdim_of(&args[0])
+                        }
+                    }
+                    "min" | "max" => {
+                        if args.is_empty() {
+                            MTy::Bad
+                        } else {
+                            mdim_same(&args)
+                        }
+                    }
+                    "clamp" => {
+                        if args.len() != 3 {
+                            MTy::Bad
+                        } else {
+                            mdim_same(&args)
+                        }
+                    }
+                    "mod" | "rem" => {
+                        if args.len() != 2 {
+                            MTy::Bad
+                        } else {
+                            mdim_same(&args)
+                        }
+                    }
+                    "round" => {
+                        // round(<strategy>?, a, b): 첫 인자가 전략 키워드면 건너뛴다.
+                        let vals: Vec<String> = if args
+                            .first()
+                            .map(|a| {
+                                matches!(
+                                    a.to_ascii_lowercase().as_str(),
+                                    "nearest" | "up" | "down" | "to-zero"
+                                )
+                            })
+                            .unwrap_or(false)
+                        {
+                            args[1..].to_vec()
+                        } else {
+                            args.clone()
+                        };
+                        if vals.len() != 2 {
+                            MTy::Bad
+                        } else {
+                            mdim_same(&vals)
+                        }
+                    }
+                    "abs" => {
+                        if args.len() != 1 {
+                            MTy::Bad
+                        } else {
+                            mdim_of(&args[0])
+                        }
+                    }
+                    "sign" => MTy::D(MDim::num()),
+                    "sin" | "cos" | "tan" => MTy::D(MDim::num()),
+                    "asin" | "acos" | "atan" | "atan2" => MTy::D(MDim { ang: 1, ..MDim::num() }),
+                    // sqrt/pow/log/exp/hypot·var/env/attr·progress/calc-size 등: 관대(Wild).
+                    _ => MTy::Wild,
+                };
+            }
+        }
+    }
+    // 산술 표현식: char 기반 재귀 하강(+,- 최상위 / *,/ 그다음).
+    let chars: Vec<char> = t.chars().collect();
+    let mut p = 0usize;
+    let ty = mdim_expr_chars(&chars, &mut p);
+    skip_ws(&chars, &mut p);
+    if p != chars.len() {
+        return MTy::Bad;
+    }
+    ty
+}
+
+fn mdim_expr_chars(t: &[char], p: &mut usize) -> MTy {
+    let mut acc = mdim_term_chars(t, p);
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('+') => '+',
+            Some('-') => '-',
+            _ => break,
+        };
+        // '+'/'-' 는 앞뒤 공백 필수(CSS). 뒤 공백 확인.
+        if t.get(*p + 1).map(|c| !c.is_whitespace()).unwrap_or(true) {
+            return MTy::Bad;
+        }
+        *p += 1;
+        let rhs = mdim_term_chars(t, p);
+        let _ = op;
+        acc = mdim_add(acc, rhs);
+    }
+    acc
+}
+fn mdim_term_chars(t: &[char], p: &mut usize) -> MTy {
+    let mut acc = mdim_factor_chars(t, p);
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('*') => '*',
+            Some('/') => '/',
+            _ => break,
+        };
+        *p += 1;
+        let rhs = mdim_factor_chars(t, p);
+        acc = if op == '*' { mdim_mul(acc, rhs) } else { mdim_div(acc, rhs) };
+    }
+    acc
+}
+fn mdim_factor_chars(t: &[char], p: &mut usize) -> MTy {
+    skip_ws(t, p);
+    // 괄호 그룹.
+    if t.get(*p) == Some(&'(') {
+        let start = *p;
+        let mut depth = 0i32;
+        let mut k = *p;
+        while k < t.len() {
+            match t[k] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        k += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        if depth != 0 {
+            return MTy::Bad;
+        }
+        let inner: String = t[start + 1..k - 1].iter().collect();
+        *p = k;
+        return mdim_of(&inner);
+    }
+    // 함수 호출: 이름 뒤 '('.
+    if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        let nstart = *p;
+        let mut j = *p;
+        while j < t.len() && (t[j].is_ascii_alphabetic() || t[j] == '-') {
+            j += 1;
+        }
+        if t.get(j) == Some(&'(') {
+            let mut depth = 0i32;
+            let mut k = j;
+            while k < t.len() {
+                match t[k] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            k += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+            if depth != 0 {
+                return MTy::Bad;
+            }
+            let sub: String = t[nstart..k].iter().collect();
+            *p = k;
+            return mdim_of(&sub);
+        }
+        // 상수 키워드(e/pi/infinity/nan) 또는 미지 식별자.
+        let name: String = t[nstart..j].iter().collect();
+        *p = j;
+        return mdim_classify(&name);
+    }
+    // 값 토큰(부호+수+단위/%).
+    let start = *p;
+    if matches!(t.get(*p), Some('+') | Some('-')) {
+        *p += 1;
+    }
+    while *p < t.len() {
+        let c = t[*p];
+        if c.is_ascii_alphanumeric() || c == '.' || c == '%' {
+            *p += 1;
+        } else if (c == '+' || c == '-')
+            && *p > start
+            && matches!(t[*p - 1], 'e' | 'E')
+        {
+            *p += 1; // 지수 부호
+        } else {
+            break;
+        }
+    }
+    if *p == start {
+        return MTy::Bad;
+    }
+    let tok: String = t[start..*p].iter().collect();
+    mdim_classify(&tok)
+}
+
+// 길이 문맥 수학 함수 유효성: 결과가 <length>(allow_pct 면 <length-percentage>).
+pub(crate) fn math_length_valid(text: &str, allow_pct: bool) -> bool {
+    match mdim_of(text) {
+        MTy::Wild => true, // 해석 불가(var 등)는 관대 수용
+        MTy::D(d) => d.is_axis(|m| m.len) && (allow_pct || !d.pct),
+        MTy::Bad => false,
+    }
+}
+
+// 시간 문맥 수학 함수 유효성: 결과가 <time>.
+pub(crate) fn math_time_valid(text: &str) -> bool {
+    match mdim_of(text) {
+        MTy::Wild => true,
+        MTy::D(d) => d.is_axis(|m| m.time) && !d.pct,
+        MTy::Bad => false,
+    }
+}
+
 // <position> 유효성(§CSS Values): object-position/background-position 등. 1/2/4 토큰만
 // (3 토큰은 현행 문법상 무효). lp 있으면 [수평][수직] 순서 엄격, 순수 키워드는 순서 무관.
 pub fn position_valid(raw: &str) -> bool {
@@ -3863,7 +4267,9 @@ pub fn size_valid(tok: &str, allow_none: bool, allow_auto: bool) -> bool {
         return true;
     }
     if is_math_fn(&low) {
-        return !(low.contains("deg") || low.contains("rad") || low.contains("turn"));
+        // 결과가 <length-percentage> 여야(§CSS Values 4 타입 검사). max(0Hz)/
+        // calc(1/2px)/max(0)(수) 등 타입 불일치 거부.
+        return math_length_valid(&low, true);
     }
     is_length_percentage(&low) && !low.starts_with('-')
 }
@@ -4650,13 +5056,13 @@ pub fn nonneg_length_percentage(t: &str) -> bool {
     if low.starts_with('-') {
         return false;
     }
-    is_math_fn(&low) || is_length_percentage(t)
+    (is_math_fn(&low) && math_length_valid(&low, true)) || is_length_percentage(t)
 }
 
 // margin 값(§CSS Box): auto | <length-percentage>(부호 무관) | calc.
 pub fn margin_value_valid(t: &str) -> bool {
     let low = t.trim().to_ascii_lowercase();
-    low == "auto" || is_math_fn(&low) || is_length_percentage(t)
+    low == "auto" || (is_math_fn(&low) && math_length_valid(&low, true)) || is_length_percentage(t)
 }
 
 // 부호 없는 <flex>("3fr", "0fr"). 음수 거부.
@@ -4857,7 +5263,8 @@ fn nonneg_length(t: &str) -> bool {
         return false;
     }
     if is_math_fn(&low) {
-        return true;
+        // <length> 전용(% 불가) 문맥의 calc 타입 검사.
+        return math_length_valid(&low, false);
     }
     if low.ends_with('%') {
         return false;
@@ -9792,6 +10199,58 @@ mod tests {
             Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => c,
             other => panic!("expected color, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn math_length_type_checking() {
+        // 유효한 길이 문맥 calc — 반드시 수용(회귀 방지가 핵심).
+        for v in [
+            "calc(1px + 1em)",
+            "calc(100% - 20px)",
+            "calc(100% - 20px + 1rem)",
+            "min(10px, 20px)",
+            "max(1em, 2vw, 3%)",
+            "clamp(10px, 5%, 20px)",
+            "calc(1px * 2)",
+            "calc(2 * 1px)",
+            "calc(100% / 3)",
+            "calc((1px + 1px) * 2)",
+            "calc(10px + calc(5px * 2))",
+            "min(calc(1px + 1%), 2em)",
+            "calc(1px * sin(45deg))", // sin→number, len*num=len
+            "calc(var(--x) + 1px)",   // var→wild → 수용
+            "round(nearest, 10px, 2px)",
+            "calc(1px)",
+            "abs(-5px)",
+        ] {
+            assert!(math_length_valid(v, true), "should accept length: {v}");
+        }
+        // 무효한 타입/차원 — 반드시 거부.
+        for v in [
+            "max(0Hz)",
+            "max(0deg)",
+            "max(0s)",
+            "max(0fr)",
+            "max(0dpi)",
+            "max(0)",             // 수(number)는 <length> 아님
+            "calc(1 / 2px)",      // len^-1
+            "calc(1% * 1% * 1%)", // len^3(% 는 len 으로 접힘)
+            "calc(1px * 1px)",    // len^2
+            "max(1%, 0)",         // 타입 불일치(len vs num)
+            "max(1px, 0s)",       // 타입 불일치
+            "calc(1px + 1s)",     // 축 불일치
+        ] {
+            assert!(!math_length_valid(v, true), "should reject: {v}");
+        }
+        // length-only 문맥(border-width): % 거부.
+        assert!(math_length_valid("max(1px, 2px)", false));
+        assert!(!math_length_valid("max(0%)", false));
+        assert!(math_length_valid("max(0%)", true));
+        // 시간 문맥.
+        assert!(math_time_valid("calc(1s + 500ms)"));
+        assert!(math_time_valid("max(1s, 2s)"));
+        assert!(!math_time_valid("max(1px)"));
+        assert!(!math_time_valid("calc(1s * 1s)"));
     }
 
     #[test]

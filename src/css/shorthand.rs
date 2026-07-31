@@ -5039,9 +5039,12 @@ fn is_line_width_tok(t: &str) -> bool {
     if matches!(low.as_str(), "thin" | "medium" | "thick") {
         return true;
     }
+    // <line-width> = <length>(% 불가). 수학 함수는 결과가 <length> 인지 타입 검사.
+    if super::values::math_function_valid(&low) {
+        return super::values::math_length_valid(&low, false);
+    }
     match interpret_value(t) {
-        Some(Value::Length(n, _)) => n >= 0.0,
-        Some(Value::Calc(..)) | Some(Value::MinMax(..)) => true,
+        Some(Value::Length(n, u)) => n >= 0.0 && u != Unit::Percent,
         _ => false,
     }
 }

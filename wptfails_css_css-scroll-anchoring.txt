@@ -1,0 +1,71 @@
+css/css-scroll-anchoring/abspos-containing-block-outside-scroller.html	FAIL	AbsU+2dpos descendant with containing block outside the scroller.	assert_equals: expected 50 but got 25
+css/css-scroll-anchoring/abspos-contributes-to-static-parent-bounds.html	FAIL	AbsU+2dpos with zeroU+2dheight static parent.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/abspos-in-multicol-001.html	FAIL	Anchoring with text wrapping changes.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/abspos-in-multicol-002.html	FAIL	Anchoring with text wrapping changes.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/abspos-in-multicol-003.html	FAIL	Anchoring with text wrapping changes.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/after-scrollable-range-shrinkage-002.html	FAIL	Scroll anchoring properly works after scrollable range shrinkage	assert_equals: expected 800 but got 4000
+css/css-scroll-anchoring/after-scrollable-range-shrinkage-004.html	FAIL	Scroll anchoring properly works after scrollable range shrinkage	assert_equals: expected 800 but got 4000
+css/css-scroll-anchoring/ancestor-change-heuristic.html	FAIL	Ancestor changes in document scroller.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/ancestor-change-heuristic.html	FAIL	Ancestor changes in scrollable <div>.	assert_equals: expected 200 but got 150
+css/css-scroll-anchoring/anchor-inside-iframe.html	FAIL	Scroll anchoring in an iframe.	iframeWindow.addEventListener(…) — iframeWindow 이(가) undefined
+css/css-scroll-anchoring/anchor-updates-after-explicit-scroll.html	FAIL	Anchor node recomputed after an explicit scroll occurs.	assert_equals: expected 600 but got 500
+css/css-scroll-anchoring/anchoring-with-bounds-clamping-div.html	FAIL	Anchoring combined with scroll bounds clamping in a <div>.	assert_equals: expected 100 but got 1600
+css/css-scroll-anchoring/anchoring-with-bounds-clamping.html	FAIL	Anchoring combined with scroll bounds clamping in the document.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/anonymous-block-box.html	FAIL	Anchor selection descent into anonymous block boxes.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/basic.html	FAIL	Minimal scroll anchoring example.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/clipped-scrollers-skipped.html	FAIL	Anchor selection with nested scrollers.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/contain-paint-offscreen-container.html	FAIL	Contain: style paint container offscreen.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/descend-into-container-with-float.html	FAIL	ZeroU+2dheight container with float.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/descend-into-container-with-overflow.html	FAIL	ZeroU+2dheight container with visible overflow.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/device-pixel-adjustment.html	FAIL	Test that scroll anchor adjustments can happen by a sub deviceU+2dpixel amount.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/editable-scroll-anchor.html	FAIL	Scroll anchoring is suppressed during editing in a textarea	promise_test: Unhandled rejection with value: object "TypeError: setSelectionRange(…) — textarea.setSelectionRange 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/editable-scroll-anchor.html	FAIL	Scroll anchoring is suppressed during editing in a contenteditable element	assert_equals: expected (number) 426 but got (undefined) undefined
+css/css-scroll-anchoring/exclude-fixed-position.html	FAIL	FixedU+2dposition header.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/exclude-inline.html	FAIL	excludeU+2dinline	document.scrollingElement.scrollTop — document.scrollingElement 이(가) undefined (읽을 수 없음)
+css/css-scroll-anchoring/exclude-sticky.html	FAIL	StickyU+2dpositioned headers shouldn't be chosen as scroll anchors (we should use 'content' instead)	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/focus-prioritized.html	FAIL	Anchor selection prioritized focused element.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/focused-element-in-excluded-subtree.html	FAIL	Ensure there is no scroll anchoring adjustment in the main frame.	promise_test: Unhandled rejection with value: object "TypeError: scrollBy(…) — scroller.scrollBy 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/focused-element-nested-anchor.html	FAIL	Ensure there is no scroll anchoring adjustment in the main frame.	promise_test: Unhandled rejection with value: object "TypeError: scrollBy(…) — scroller.scrollBy 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/focused-element-outside-scroller.html	FAIL	Ensure there is no scroll anchoring adjustment in subscroller.	promise_test: Unhandled rejection with value: object "TypeError: scrollBy(…) — scroller.scrollBy 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/fragment-scrolling-anchors.html	FAIL	Verify scroll anchoring interaction with fragment scrolls	assert_equals: expected 1010 but got 0
+css/css-scroll-anchoring/heuristic-with-offset-update-from-scroll-event-listener.html	FAIL	Positioned ancestors with dynamic changes to offsets trigger scroll suppressions.	Test timed out
+css/css-scroll-anchoring/history-restore-anchors.html	FAIL	Verify scroll anchoring interaction with history restoration	open(…) — window.open 이(가) undefined (함수 아님, 수신자=object)
+css/css-scroll-anchoring/image-001.html	FAIL	Anchor selection can select images	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/inline-block-002.html	FAIL	Anchor selection can select empty inlineU+2dblocks	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/inline-block.html	FAIL	Anchor selection descent into inline blocks.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/multicol-fragmented-anchor.html	FAIL	An element in a fragmented div should be able to be selected as an anchor node.	assert_equals: expected 20 but got 10
+css/css-scroll-anchoring/negative-layout-overflow.html	FAIL	Anchor selection accounts for negative positioning.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/opt-out-dynamic-scroller.html	FAIL	Dynamically styling 'overflowU+2danchor: none' on the scroller element should prevent scroll anchoring	assert_equals: expected 150 but got 100
+css/css-scroll-anchoring/opt-out-dynamic.html	FAIL	Dynamically styling 'overflowU+2danchor: none' on the anchor node should prevent scroll anchoring	assert_equals: expected 150 but got 100
+css/css-scroll-anchoring/opt-out.html	FAIL	Disabled on document, enabled on div.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/opt-out.html	FAIL	Enabled on document, disabled on div.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/parsing/overflow-anchor-invalid.html	FAIL	e.style['overflowU+2danchor'] = "all" should not set the property value	assert_equals: expected "" but got "all"
+css/css-scroll-anchoring/parsing/overflow-anchor-invalid.html	FAIL	e.style['overflowU+2danchor'] = "auto none" should not set the property value	assert_equals: expected "" but got "auto none"
+css/css-scroll-anchoring/position-change-heuristic-display-none-change.html	FAIL	Scroll offset doesn't change when an element goes back and forth to display: none	
+css/css-scroll-anchoring/position-change-heuristic-display-none-to-abspos-change.html	FAIL	Scroll offset doesn't get stuck in infinite scroll events when an element goes back and forth to display: none while changing abspos style	
+css/css-scroll-anchoring/position-change-heuristic-ib-split.html	FAIL	Scroll offset adjustments are correctly suppressed when changing the position of an inline	
+css/css-scroll-anchoring/position-change-heuristic-in-nested-scroll-box.html	FAIL	Position changes in document scroller.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/position-change-heuristic-in-nested-scroll-box.html	FAIL	Position changes in scrollable <div>.	assert_equals: expected 225 but got 200
+css/css-scroll-anchoring/position-change-heuristic.html	FAIL	Position changes in document scroller.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/position-change-heuristic.html	FAIL	Position changes in scrollable <div>.	assert_equals: expected 225 but got 200
+css/css-scroll-anchoring/reading-scroll-forces-anchoring.html	FAIL	Reading scroll position forces scroll anchoring adjustment.	Test timed out
+css/css-scroll-anchoring/scroll-anchoring-editing-content-change.html	FAIL	contenteditable: scroll anchoring preserves anchor position after typing and content removal above	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/scroll-anchoring-editing-content-change.html	FAIL	textarea: scroll anchoring preserves anchor position after typing and content removal above	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/scroll-anchoring-editing-content-change.html	FAIL	input: scroll anchoring preserves anchor position after typing and content removal above	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
+css/css-scroll-anchoring/scroll-padding-affects-anchoring.html	FAIL	scroll anchoring accounts for scrollU+2dpadding	assert_equals: Shouldn't anchor to #changer, since it's covered by scrollU+2dpadding expected 150 but got 50
+css/css-scroll-anchoring/shadow-dom-subscroller.html	FAIL	Ensure there is no scroll anchoring adjustment in the main frame.	promise_test: Unhandled rejection with value: object "TypeError: document.scrollingElement.scrollBy(…) — document.scrollingElement 이(가) undefined"
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	Horizontal LTR.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	Horizontal RTL.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	VerticalU+2dLR LTR.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	VerticalU+2dLR RTL.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	VerticalU+2dRL LTR.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	VerticalU+2dRL RTL.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	SidewaysU+2dLR LTR.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	SidewaysU+2dLR RTL.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	SidewaysU+2dRL LTR.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/start-edge-in-block-layout-direction.html	FAIL	SidewaysU+2dRL RTL.	Cannot set properties of undefined (setting 'scrollLeft')
+css/css-scroll-anchoring/subtree-exclusion.html	FAIL	Subtree exclusion with overflowU+2danchor.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/text-anchor-in-vertical-rl.html	FAIL	Line at edge of scrollport shouldn't jump visually when content is inserted before	assert_equals: expected U+2d400 but got U+2d300
+css/css-scroll-anchoring/wrapped-text.html	FAIL	Anchoring with text wrapping changes.	Cannot set properties of undefined (setting 'scrollTop')
+css/css-scroll-anchoring/zero-scroll-offset-001.html	FAIL	Scroll anchoring suppressed when scroll offset is zero.	Test timed out
+css/css-scroll-anchoring/zero-scroll-offset-002.html	FAIL	Scroll anchoring suppressed when scroll offset is zero.	Test timed out
