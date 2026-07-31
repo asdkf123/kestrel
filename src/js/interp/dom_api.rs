@@ -392,6 +392,12 @@ impl Interp {
                 return s;
             }
         }
+        // text-decoration 단축(§CSSOM): 초기값 생략, line→thickness→style→color 순 캐논.
+        if prop == "text-decoration" {
+            if let Some(s) = crate::css::text_decoration_canonical(raw) {
+                return s;
+            }
+        }
         // transition/animation-timing-function(§CSS Easing): step-start→steps(1, start),
         // steps 기본 위치 생략 등 캐논 직렬화.
         if matches!(prop, "transition-timing-function" | "animation-timing-function") {

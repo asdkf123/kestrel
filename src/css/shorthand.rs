@@ -4761,6 +4761,107 @@ fn single_text_shadow_valid(s: &str) -> bool {
     !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
 }
 
+// text-decoration 단축 지정값 캐논 직렬화(§CSSOM serialize a shorthand): 초기값
+// (line none·thickness auto·style solid·color currentcolor)은 생략, 순서는 line →
+// thickness → style → color, line 키워드는 캐논 순(underline overline line-through
+// blink)으로 재정렬. 전부 초기값이면 "none". 색 이름은 유지(hex→rgb).
+pub(crate) fn text_decoration_canonical(raw: &str) -> Option<String> {
+    let v = raw.trim();
+    let low_all = v.to_ascii_lowercase();
+    if matches!(low_all.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return Some(low_all);
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut style: Option<String> = None;
+    let mut color: Option<String> = None;
+    let mut thickness: Option<String> = None;
+    let (mut style_seen, mut color_seen, mut thick_seen, mut none_seen) = (0u32, 0u32, 0u32, 0u32);
+    let mut line_idx: Vec<usize> = Vec::new();
+    for (i, &t) in split_top_level(v).iter().enumerate() {
+        let tl = t.to_ascii_lowercase();
+        if matches!(tl.as_str(), "underline" | "overline" | "line-through" | "blink") {
+            if lines.iter().any(|l| l == &tl) {
+                return None;
+            }
+            line_idx.push(i);
+            lines.push(tl);
+        } else if matches!(tl.as_str(), "solid" | "double" | "dotted" | "dashed" | "wavy") {
+            style_seen += 1;
+            style = Some(tl);
+        } else if matches!(tl.as_str(), "auto" | "from-font") {
+            thick_seen += 1;
+            thickness = Some(tl);
+        } else if tl == "none" {
+            none_seen += 1;
+        } else if crate::css::single_color_valid(t) {
+            color_seen += 1;
+            // 이름 색은 유지, hex/함수는 rgb()/rgba() 로 접는다.
+            let canon = if t.chars().all(|c| c.is_ascii_alphabetic()) {
+                tl.clone()
+            } else {
+                interpret_value(t)
+                    .map(|val| crate::style::computed_value_string(&val))
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| t.to_string())
+            };
+            color = Some(canon);
+        } else {
+            match interpret_value(t) {
+                Some(Value::Length(..)) | Some(Value::Calc(_)) | Some(Value::MinMax(..)) => {
+                    thick_seen += 1;
+                    thickness = Some(t.to_string());
+                }
+                _ => return None,
+            }
+        }
+    }
+    if style_seen > 1 || color_seen > 1 || thick_seen > 1 || none_seen > 1 {
+        return None;
+    }
+    if none_seen >= 1 && !lines.is_empty() {
+        return None;
+    }
+    if let (Some(&first), Some(&last)) = (line_idx.first(), line_idx.last()) {
+        if last - first + 1 != line_idx.len() {
+            return None;
+        }
+    }
+    const ORDER: [&str; 4] = ["underline", "overline", "line-through", "blink"];
+    let lines_sorted: Vec<&str> = ORDER
+        .iter()
+        .copied()
+        .filter(|o| lines.iter().any(|l| l == o))
+        .collect();
+    let has_other = style.as_deref().is_some_and(|s| s != "solid")
+        || color.as_deref().is_some_and(|c| c != "currentcolor")
+        || thickness.as_deref().is_some_and(|t| t != "auto");
+    let mut parts: Vec<String> = Vec::new();
+    if !lines_sorted.is_empty() {
+        parts.push(lines_sorted.join(" "));
+    } else if !has_other {
+        return Some("none".to_string());
+    }
+    if let Some(t) = thickness {
+        if t != "auto" {
+            parts.push(t);
+        }
+    }
+    if let Some(s) = style {
+        if s != "solid" {
+            parts.push(s);
+        }
+    }
+    if let Some(c) = color {
+        if c != "currentcolor" {
+            parts.push(c);
+        }
+    }
+    if parts.is_empty() {
+        return Some("none".to_string());
+    }
+    Some(parts.join(" "))
+}
+
 // text-shadow 지정값 캐논 직렬화: 그림자마다 <color> <lengths> 순(색 먼저). 길이는
 // 0→0px 정규화, 색 키워드 유지. box-shadow 와 달리 inset 없음.
 pub(crate) fn text_shadow_canonical(value: &str) -> Option<String> {
