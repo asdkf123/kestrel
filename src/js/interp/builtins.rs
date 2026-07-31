@@ -5585,6 +5585,10 @@ impl Interp {
             Native::ComputedGetProperty => {
                 self.ensure_layout();
                 let name = args.first().map(to_display).unwrap_or_default();
+                // 레거시 별칭(-webkit-appearance→appearance)을 캐논 이름으로 — 계산값은
+                // 캐논 키에 저장된다.
+                let name =
+                    crate::js::interp::dom_api::canonical_css_name(&name).to_string();
                 Ok(match &recv {
                     Some(Value::ComputedStyle(id)) => {
                         // 활성 애니메이션(element.animate / transition)이 이 프로퍼티를

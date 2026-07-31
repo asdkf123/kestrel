@@ -6618,7 +6618,9 @@ impl Interp {
                     let names = self.computed_prop_names(id);
                     return Ok(names.get(i).map(|s| Value::Str(s.clone())).unwrap_or(Value::Str(String::new())));
                 }
-                let dashed = camel_to_dashed(key);
+                // 레거시 별칭(-webkit-appearance→appearance 등)을 캐논 이름으로 — 계산값이
+                // 캐논 키에 저장되므로 별칭으로 조회해도 같은 값을 돌려준다.
+                let dashed = crate::js::interp::dom_api::canonical_css_name(&camel_to_dashed(key)).to_string();
                 // border-radius 는 롱핸드 재조립을 우선한다 — el.animate/@keyframes 가 확장 시
                 // border-radius=tl(가로만) 폴백을 애니 프로퍼티로 저장해, animated_value 가
                 // 그걸 먼저 잡으면 세로 반경이 손실된다. 롱핸드가 애니 중이면 세로 포함 재조립,

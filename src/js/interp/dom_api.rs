@@ -699,6 +699,7 @@ impl Interp {
                 prop,
                 "white-space"
                     | "text-wrap"
+                    | "appearance"
                     | "font-family"
                     | "font"
                     | "font-size-adjust"
@@ -2532,7 +2533,7 @@ fn serialize_font_family(raw: &str) -> String {
 // 공백으로 나뉜 각 토큰이 모두 유효한 CSS 식별자인가(비어있지 않아야 함).
 // -webkit- 레거시 이름 별칭(§CSS Flexbox 1 부록). 별칭으로 설정/조회해도 캐논 이름으로
 // 저장·직렬화한다(단축 확장이 아니라 이름 별칭이라 var() 도 그대로 보존).
-fn canonical_css_name(prop: &str) -> &str {
+pub(super) fn canonical_css_name(prop: &str) -> &str {
     match prop {
         "-webkit-align-content" => "align-content",
         "-webkit-align-items" => "align-items",
@@ -2546,6 +2547,7 @@ fn canonical_css_name(prop: &str) -> &str {
         "-webkit-flex-wrap" => "flex-wrap",
         "-webkit-justify-content" => "justify-content",
         "-webkit-order" => "order",
+        "-webkit-appearance" => "appearance",
         other => other,
     }
 }
