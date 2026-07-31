@@ -1805,28 +1805,67 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         "text-decoration" => {
             let is_shorthand = name == "text-decoration";
-            let mut lines: Vec<&str> = Vec::new();
-            let mut style: Option<&str> = None;
+            let mut lines: Vec<String> = Vec::new();
+            let mut line_idx: Vec<usize> = Vec::new();
+            let mut style: Option<String> = None;
             let mut color: Option<Value> = None;
             let mut thickness: Option<String> = None;
-            for t in split_top_level(value_text) {
-                if matches!(t, "underline" | "overline" | "line-through" | "blink") {
-                    lines.push(t);
+            let (mut style_seen, mut color_seen, mut thick_seen, mut none_seen) = (0u32, 0u32, 0u32, 0u32);
+            let mut invalid = false;
+            for (i, &t) in split_top_level(value_text).iter().enumerate() {
+                let tl = t.to_ascii_lowercase();
+                if matches!(tl.as_str(), "underline" | "overline" | "line-through" | "blink") {
+                    if lines.iter().any(|l| l == &tl) {
+                        invalid = true; // 같은 line 키워드 중복
+                    }
+                    line_idx.push(i);
+                    lines.push(tl);
+                } else if matches!(tl.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                    // CSS-wide 키워드: 기존 동작 유지(무시) — 회귀 방지.
                 } else if is_shorthand
-                    && matches!(t, "solid" | "double" | "dotted" | "dashed" | "wavy")
+                    && matches!(tl.as_str(), "solid" | "double" | "dotted" | "dashed" | "wavy")
                 {
-                    style = Some(t);
-                } else if is_shorthand && matches!(t, "auto" | "from-font") {
-                    thickness = Some(t.to_string());
-                } else if t == "none" {
-                    // none 은 line 비움
+                    style_seen += 1;
+                    style = Some(tl);
+                } else if is_shorthand && matches!(tl.as_str(), "auto" | "from-font") {
+                    thick_seen += 1;
+                    thickness = Some(tl);
+                } else if tl == "none" {
+                    none_seen += 1; // none 은 line 비움(다른 line 과 배타)
+                } else if is_shorthand && crate::css::single_color_valid(t) {
+                    // currentcolor/transparent 는 interpret_value 가 Color 로 안 줄 수 있어
+                    // single_color_valid 로 판정하고 키워드로 보존.
+                    color_seen += 1;
+                    color = Some(match interpret_value(t) {
+                        Some(v @ Value::Color(..)) => v,
+                        _ => Value::Keyword(tl.clone()),
+                    });
                 } else if is_shorthand {
                     match interpret_value(t) {
-                        Some(v @ Value::Color(..)) => color = Some(v),
-                        Some(Value::Length(..)) => thickness = Some(t.to_string()),
-                        _ => {}
+                        Some(Value::Length(..)) | Some(Value::Calc(_)) | Some(Value::MinMax(..)) => {
+                            thick_seen += 1;
+                            thickness = Some(t.to_string());
+                        }
+                        _ => invalid = true, // 알 수 없는 토큰
                     }
+                } else {
+                    invalid = true; // longhand line 에 비 line/none 토큰
                 }
+            }
+            // 각 성분 ≤1, none 은 line 과 배타, line 키워드는 연속(중간에 다른 성분 불가).
+            if style_seen > 1 || color_seen > 1 || thick_seen > 1 || none_seen > 1 {
+                invalid = true;
+            }
+            if none_seen >= 1 && !lines.is_empty() {
+                invalid = true;
+            }
+            if let (Some(&first), Some(&last)) = (line_idx.first(), line_idx.last()) {
+                if last - first + 1 != line_idx.len() {
+                    invalid = true; // line 키워드 비연속
+                }
+            }
+            if invalid {
+                return Vec::new();
             }
             let joined = lines.join(" ");
             let mut out = vec![Declaration { important: false,
@@ -1835,7 +1874,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }];
             // 단축은 나머지 longhand 를 **항상** 출력(리셋). 미지정은 초기값.
             if is_shorthand {
-                out.push(Declaration { important: false, name: "text-decoration-style".to_string(), value: Value::Keyword(style.unwrap_or("solid").to_string()) });
+                out.push(Declaration { important: false, name: "text-decoration-style".to_string(), value: Value::Keyword(style.unwrap_or_else(|| "solid".to_string())) });
                 out.push(Declaration { important: false, name: "text-decoration-color".to_string(),
                     value: color.unwrap_or_else(|| Value::Keyword("currentcolor".to_string())) });
                 out.push(Declaration { important: false, name: "text-decoration-thickness".to_string(),

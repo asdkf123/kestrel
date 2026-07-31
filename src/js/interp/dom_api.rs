@@ -789,6 +789,7 @@ impl Interp {
                     | "text-shadow"
                     | "accent-color"
                     | "object-view-box"
+                    | "text-decoration"
                     | "contain"
                     | "top"
                     | "right"
