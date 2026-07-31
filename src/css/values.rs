@@ -890,6 +890,95 @@ pub(crate) fn normalize_shape(text: &str) -> String {
             None => format!("{}({})", func, coords),
         };
     }
+    // polygon(): fill-rule nonzero(기본) 생략, round 전부-0 생략, 각 점 좌표 0→0px.
+    if lower.starts_with("polygon(") {
+        let c0 = |t: &str| if t.trim() == "0" { "0px".to_string() } else { t.to_string() };
+        let inner = text[text.find('(').unwrap() + 1..text.len() - 1].trim();
+        let segs = split_top_level_commas_local(inner);
+        if segs.is_empty() {
+            return text.to_string();
+        }
+        let ftoks = split_top_level(&segs[0]);
+        let has_prelude = ftoks
+            .iter()
+            .any(|t| matches!(t.to_ascii_lowercase().as_str(), "nonzero" | "evenodd" | "round"));
+        let (prelude, points): (Vec<String>, &[String]) = if has_prelude {
+            let mut pre: Vec<String> = Vec::new();
+            let mut i = 0;
+            if ftoks.get(i).map(|t| t.eq_ignore_ascii_case("evenodd")).unwrap_or(false) {
+                pre.push("evenodd".to_string());
+                i += 1;
+            } else if ftoks.get(i).map(|t| t.eq_ignore_ascii_case("nonzero")).unwrap_or(false) {
+                i += 1; // nonzero(기본) 생략
+            }
+            if ftoks.get(i).map(|t| t.eq_ignore_ascii_case("round")).unwrap_or(false) {
+                let radii: Vec<String> = ftoks[i + 1..].iter().map(|t| c0(t)).collect();
+                if !radii.iter().all(|r| r == "0px") {
+                    pre.push("round".to_string());
+                    pre.extend(radii);
+                }
+            }
+            (pre, &segs[1..])
+        } else {
+            (Vec::new(), &segs[..])
+        };
+        let pts: Vec<String> = points
+            .iter()
+            .map(|seg| split_top_level(seg).iter().map(|t| c0(t)).collect::<Vec<_>>().join(" "))
+            .collect();
+        let mut out = String::from("polygon(");
+        if !prelude.is_empty() {
+            out.push_str(&prelude.join(" "));
+            if !pts.is_empty() {
+                out.push_str(", ");
+            }
+        }
+        out.push_str(&pts.join(", "));
+        out.push(')');
+        return out;
+    }
+    // path(): fill-rule nonzero 생략·evenodd 유지, 문자열 겹따옴표.
+    if lower.starts_with("path(") {
+        let inner = text[text.find('(').unwrap() + 1..text.len() - 1].trim();
+        let requote = |s: &str| -> Option<String> {
+            let s = s.trim();
+            let first = s.chars().next()?;
+            if s.len() >= 2 && (first == '"' || first == '\'') && s.ends_with(first) {
+                Some(format!("\"{}\"", &s[1..s.len() - 1]))
+            } else {
+                None
+            }
+        };
+        // 따옴표 밖 최상위 콤마로 fill-rule 분리.
+        let ci = {
+            let mut q: Option<char> = None;
+            let mut found = None;
+            for (i, ch) in inner.char_indices() {
+                match q {
+                    Some(qc) if ch == qc => q = None,
+                    Some(_) => {}
+                    None if ch == '"' || ch == '\'' => q = Some(ch),
+                    None if ch == ',' => {
+                        found = Some(i);
+                        break;
+                    }
+                    None => {}
+                }
+            }
+            found
+        };
+        return match ci {
+            None => requote(inner).map(|s| format!("path({})", s)).unwrap_or_else(|| text.to_string()),
+            Some(c) => {
+                let fr = inner[..c].trim().to_ascii_lowercase();
+                match (fr.as_str(), requote(inner[c + 1..].trim())) {
+                    ("nonzero", Some(s)) => format!("path({})", s),
+                    ("evenodd", Some(s)) => format!("path(evenodd, {})", s),
+                    _ => text.to_string(),
+                }
+            }
+        };
+    }
     if !(lower.starts_with("circle(") || lower.starts_with("ellipse(")) {
         return text.to_string();
     }
