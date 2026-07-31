@@ -3445,7 +3445,7 @@ pub fn position_valid(raw: &str) -> bool {
     let is_c = |t: &str| t == "center";
     let is_lp = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+            return math_length_valid(t, true); // <length-percentage>(§CSS Values 4 타입 검사)
         }
         is_length_percentage(t)
     };
@@ -3596,7 +3596,7 @@ pub fn bg_position_canonical(raw: &str) -> String {
     let is_v = |t: &str| matches!(t, "top" | "bottom");
     let is_lp = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+            return math_length_valid(t, true); // <length-percentage>(§CSS Values 4 타입 검사)
         }
         is_length_percentage(t)
     };
@@ -3659,7 +3659,7 @@ pub fn bg_position_valid(raw: &str) -> bool {
     let is_v = |t: &str| matches!(t, "top" | "bottom");
     let is_lp = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+            return math_length_valid(t, true); // <length-percentage>(§CSS Values 4 타입 검사)
         }
         is_length_percentage(t)
     };
@@ -3754,7 +3754,7 @@ pub fn contain_intrinsic_valid(raw: &str, max_groups: usize) -> bool {
     let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
     let is_len = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn") || t.contains('%'));
+            return math_length_valid(t, false); // <length> 전용(§CSS Values 4 타입 검사)
         }
         !t.ends_with('%') && is_length_percentage(t) && !t.starts_with('-')
     };
@@ -3783,7 +3783,7 @@ fn to_pos2_valid(a: &str, b: &str) -> bool {
     let is_v = |t: &str| matches!(t, "top" | "bottom");
     let is_lp = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+            return math_length_valid(t, true); // <length-percentage>(§CSS Values 4 타입 검사)
         }
         is_length_percentage(t)
     };
@@ -3803,13 +3803,13 @@ pub fn transform_origin_valid(raw: &str) -> bool {
     let toks: Vec<String> = split_top_level(raw).iter().map(|t| t.to_ascii_lowercase()).collect();
     let is_lp = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+            return math_length_valid(t, true); // <length-percentage>(§CSS Values 4 타입 검사)
         }
         is_length_percentage(t)
     };
     let is_len = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn") || t.contains('%'));
+            return math_length_valid(t, false); // <length> 전용(§CSS Values 4 타입 검사)
         }
         !t.ends_with('%') && is_length_percentage(t)
     };
@@ -3965,13 +3965,13 @@ pub fn translate_valid(raw: &str) -> bool {
     }
     let is_lp = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn"));
+            return math_length_valid(t, true); // <length-percentage>(§CSS Values 4 타입 검사)
         }
         is_length_percentage(t)
     };
     let is_len = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains("deg") || t.contains("rad") || t.contains("turn") || t.contains('%'));
+            return math_length_valid(t, false); // <length> 전용(§CSS Values 4 타입 검사)
         }
         !t.ends_with('%') && is_length_percentage(t)
     };
