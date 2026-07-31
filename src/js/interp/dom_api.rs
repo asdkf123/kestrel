@@ -307,6 +307,30 @@ impl Interp {
                 return crate::css::text_spacing_from_parts(&a, &t);
             }
         }
+        // scrollbar-color 지정값 캐논(§CSS Scrollbars): auto 그대로, 두 색은 각각
+        // 명명/currentcolor 는 키워드 유지, hex/함수는 rgb()/rgba() 로 접는다.
+        if prop == "scrollbar-color" {
+            let low = raw.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
+            {
+                return low;
+            }
+            let toks = crate::css::split_ws_depth0(raw);
+            if toks.len() == 2 {
+                let ser = |t: &str| -> Option<String> {
+                    let tt = t.trim();
+                    if tt.chars().all(|c| c.is_ascii_alphabetic()) {
+                        crate::css::single_color_valid(tt).then(|| tt.to_ascii_lowercase())
+                    } else {
+                        crate::css::parse_color(tt)
+                            .map(|c| crate::style::computed_value_string(&crate::css::Value::Color(c)))
+                    }
+                };
+                if let (Some(a), Some(b)) = (ser(&toks[0]), ser(&toks[1])) {
+                    return format!("{} {}", a, b);
+                }
+            }
+        }
         // overflow-clip-margin 지정값 캐논(§CSS Overflow 4): box first, 기본 생략.
         if prop == "overflow-clip-margin" {
             if let Some(c) = crate::css::overflow_clip_margin_canonical(raw) {
@@ -749,6 +773,7 @@ impl Interp {
                     | "display"
                     | "content-visibility"
                     | "scrollbar-width"
+                    | "scrollbar-color"
                     | "contain"
                     | "top"
                     | "right"

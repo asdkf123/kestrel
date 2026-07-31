@@ -637,6 +637,21 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // scrollbar-color(§CSS Scrollbars): auto | <color>{2}. 단일 색·혼합(auto+색)·
+        // 3값은 무효. 직렬화(rgb 접기)는 serialize_decl 에서.
+        "scrollbar-color" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = crate::css::split_ws_depth0(value_text.trim());
+            if toks.len() == 2 && toks.iter().all(|t| crate::css::single_color_valid(t.trim())) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // scrollbar-width(§CSS Scrollbars): auto | thin | none 단일 키워드만.
         "scrollbar-width" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -2560,7 +2575,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
-        | "quotes" | "scrollbar-color"
+        | "quotes"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
