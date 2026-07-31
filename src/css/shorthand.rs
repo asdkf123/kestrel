@@ -624,6 +624,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // content-visibility(§CSS Contain): visible | auto | hidden 단일 키워드만.
+        "content-visibility" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "visible" | "auto"
+                    | "hidden"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // interactivity(§CSS UI 4): auto | inert 만.
         "interactivity" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -2529,7 +2542,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "pointer-events" | "touch-action"
         | "isolation"
         | "overflow-anchor" | "scroll-behavior"
-        | "content-visibility" | "transform-style"
+        | "transform-style"
         | "background-blend-mode"
         | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.

@@ -747,6 +747,7 @@ impl Interp {
                     | "overflow-clip-margin"
                     | "outline-offset"
                     | "display"
+                    | "content-visibility"
                     | "contain"
                     | "top"
                     | "right"
