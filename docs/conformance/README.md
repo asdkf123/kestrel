@@ -294,6 +294,15 @@
 
 > 요약: 현재 kestrel 은 **렌더링 코어(HTML/CSS/DOM) + JS 언어(test262)** 에 집중. 나머지 대부분 영역(네트워킹/워커/저장소/미디어/디바이스/보안 API)은 미구현(0%)이며 이게 "브라우저 완성"까지의 실제 남은 로드맵이다. 우선순위는 렌더링 정확도(css) → 코어 API(events/URL/encoding/console) → 나머지 순으로 잡는다.
 
+## 측정 주의 (러너 과소보고)
+
+일부 WPT 파싱 테스트(예: `selectors/parsing/parse-is-where`, `parse-has` 등)는
+`parsing-testcommon.js` 의 "style 생성 → sheet 참조 → head 에서 제거 → `sheet.insertRule`
+→ `cssRules.length` 확인" 패턴을 쓴다. 헤드리스 러너에서 이 패턴이 하네스 안에서 실패로
+집계되지만, **엔진 자체는 정상**임을 프로브로 확인했다(`:is(div )`·`:is(div + bar)`·
+`:is(:is(div))`·분리 시트 insertRule·50회 반복 모두 통과). 따라서 selectors 등 일부
+영역의 실제 엔진 적합성은 표의 수치보다 높다(러너 아티팩트로 과소보고).
+
 ## 참고
 
 - **미구현 대형**: Temporal (0%, 4,603), Atomics (0%, 389), Intl (5%). 애니메이션/트랜지션 interpolation (css-animations/transitions/motion 등 다수) 은 실행 엔진 미구현.
