@@ -410,6 +410,12 @@ impl Interp {
                 return s;
             }
         }
+        // grid-template-areas(§CSS Grid): 셀 공백 단일화·점 시퀀스→"." 캐논.
+        if prop == "grid-template-areas" {
+            if let Some(s) = crate::css::grid_template_areas_canonical(raw) {
+                return s;
+            }
+        }
         // transition/animation-timing-function(§CSS Easing): step-start→steps(1, start),
         // steps 기본 위치 생략 등 캐논 직렬화.
         if matches!(prop, "transition-timing-function" | "animation-timing-function") {
@@ -816,6 +822,7 @@ impl Interp {
                     | "flex-line-count"
                     | "overflow-anchor"
                     | "grid-auto-flow"
+                    | "grid-template-areas"
                     | "contain"
                     | "top"
                     | "right"

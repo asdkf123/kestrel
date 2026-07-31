@@ -1494,9 +1494,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
         }
         // grid-template-areas 는 <string>+ 문법 → 원문 보존, 레이아웃이 파싱.
-        "grid-template-areas" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.to_string()) }]
-        }
+        // grid-template-areas(§CSS Grid): none | <string>+. 모든 문자열은 같은(0 아닌)
+        // 열 수, 각 셀은 <custom-ident> 또는 null(점만). 빈 문자열·열 불일치·none 혼합·
+        // 비문자열 토큰 거부.
+        "grid-template-areas" => match grid_template_areas_canonical(value_text) {
+            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            None => Vec::new(),
+        },
         // grid-template-columns/rows(§CSS Grid): none | <track-list> | <auto-track-list>.
         // 검증만 하고 유효하면 원문 보존(레이아웃이 파싱). CSS-wide 는 통과.
         "grid-template-columns" | "grid-template-rows" => {
@@ -4811,6 +4815,68 @@ fn single_text_shadow_valid(s: &str) -> bool {
     }
     // blur(index 2)는 음수 불가.
     !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
+}
+
+// grid-template-areas(§CSS Grid) 유효성 + 캐논 직렬화. none | <string>+. 모든 행은
+// 같은(0 아닌) 열 수, 각 셀은 custom-ident 또는 null(점만). 캐논: 셀 공백 단일화,
+// 점 시퀀스→".", 행마다 큰따옴표.
+pub(crate) fn grid_template_areas_canonical(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+        return Some(low);
+    }
+    let chars: Vec<char> = raw.trim().chars().collect();
+    let mut rows: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if chars[i] == '"' || chars[i] == '\'' {
+            let quote = chars[i];
+            i += 1;
+            let start = i;
+            while i < chars.len() && chars[i] != quote {
+                i += 1;
+            }
+            if i >= chars.len() {
+                return None; // 미종료 문자열
+            }
+            rows.push(chars[start..i].iter().collect());
+            i += 1;
+        } else {
+            return None; // 맨 토큰(none/auto 등)
+        }
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    let mut cols: Option<usize> = None;
+    let mut canon_rows: Vec<String> = Vec::new();
+    for r in &rows {
+        let mut cells: Vec<String> = Vec::new();
+        for c in r.split_whitespace() {
+            // 셀: null(점만) 또는 custom-ident(점 불포함).
+            if c.chars().all(|ch| ch == '.') {
+                cells.push(".".to_string());
+            } else if !c.contains('.') {
+                cells.push(c.to_string());
+            } else {
+                return None; // ".a" 등 혼합
+            }
+        }
+        if cells.is_empty() {
+            return None; // 빈 문자열
+        }
+        match cols {
+            None => cols = Some(cells.len()),
+            Some(n) if n != cells.len() => return None,
+            _ => {}
+        }
+        canon_rows.push(format!("\"{}\"", cells.join(" ")));
+    }
+    Some(canon_rows.join(" "))
 }
 
 // grid-auto-flow(§CSS Grid) 유효성 + 캐논 직렬화. [row|column] || dense. row 는

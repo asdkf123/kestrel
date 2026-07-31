@@ -182,6 +182,7 @@ pub(crate) use shorthand::text_shadow_canonical;
 pub(crate) use shorthand::text_decoration_canonical;
 pub(crate) use shorthand::margin_trim_canonical;
 pub(crate) use shorthand::grid_auto_flow_canonical;
+pub(crate) use shorthand::grid_template_areas_canonical;
 pub(crate) use shorthand::font_size_keyword;
 pub(crate) use shorthand::{text_spacing_from_parts, text_spacing_parse};
 pub(crate) use shorthand::overflow_clip_margin_canonical;
