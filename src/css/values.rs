@@ -5822,6 +5822,27 @@ pub fn basic_shape_valid(raw: &str) -> bool {
     }
 }
 
+// object-view-box(§CSS Images 5): none | <basic-shape-rect>. rect 계열(inset/xywh/
+// rect)만 유효 — circle/ellipse/polygon/path 는 무효.
+pub fn object_view_box_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.eq_ignore_ascii_case("none") {
+        return true;
+    }
+    if !s.ends_with(')') {
+        return false;
+    }
+    let Some(open) = s.find('(') else { return false };
+    let name = s[..open].trim().to_ascii_lowercase();
+    let inner = s[open + 1..s.len() - 1].trim();
+    match name.as_str() {
+        "inset" => inset_shape_valid(inner),
+        "xywh" => xywh_shape_valid(inner),
+        "rect" => rect_shape_valid(inner),
+        _ => false,
+    }
+}
+
 // clip(레거시, §CSS Masking): auto | rect(<len-or-auto>{4}). 퍼센트 불가, 부호 허용.
 // 콤마 또는 공백 구분(혼용 불가).
 pub fn clip_valid(raw: &str) -> bool {

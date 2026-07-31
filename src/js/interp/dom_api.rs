@@ -787,6 +787,8 @@ impl Interp {
                     | "text-decoration-thickness"
                     | "text-underline-offset"
                     | "text-shadow"
+                    | "accent-color"
+                    | "object-view-box"
                     | "contain"
                     | "top"
                     | "right"

@@ -637,6 +637,36 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // accent-color(§CSS UI 4): auto | <color>. 다중값·무효 색 거부.
+        "accent-color" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::single_color_valid(value_text.trim()) {
+                // 색은 Value 로 — serialize_decl 이 hex/함수 색을 rgb() 로 접고 명명·
+                // currentcolor 는 키워드로 유지한다.
+                let val = interpret_value(value_text.trim())
+                    .unwrap_or_else(|| Value::Keyword(value_text.trim().to_string()));
+                vec![Declaration { important: false, name: name.to_string(), value: val }]
+            } else {
+                Vec::new()
+            }
+        }
+        // object-view-box(§CSS Images 5): none | <basic-shape-rect>.
+        "object-view-box" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::object_view_box_valid(value_text.trim()) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // 단일 키워드 enum UI 프로퍼티(§CSS UI 4 / §CSS Position). 정해진 키워드만 유효,
         // 그 외(미지 키워드·다중값·따옴표)는 거부. 계산값 = 지정 키워드.
         "caret-shape" | "input-security" | "overlay" | "caret-animation" => {
