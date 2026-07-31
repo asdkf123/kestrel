@@ -1029,8 +1029,8 @@ fn normalize_position(toks: &[String]) -> String {
             }
         }
         2 => {
-            // <x> <y>. y키워드가 먼저면 x/y 뒤집기.
-            if is_y(&toks[0]) {
+            // <x> <y>. y키워드가 먼저이거나 x키워드가 뒤면 뒤집어 x 를 먼저.
+            if is_y(&toks[0]) || is_x(&toks[1]) {
                 format!("{} {}", toks[1], toks[0])
             } else {
                 format!("{} {}", toks[0], toks[1])
