@@ -1242,9 +1242,12 @@ pub(crate) fn normalize_image_set(text: &str) -> String {
         if img.eq_ignore_ascii_case("none") {
             return String::new();
         }
-        // 해상도(있으면): 양수 + x/dppx/dpi/dpcm.
-        if let Some(res) = toks.get(1) {
-            if !image_set_resolution_valid(res) {
+        // 이미지 뒤 첫 토큰(있으면): <resolution> 또는 type(<string>)(§CSS Images 4).
+        // 그 외는 무효(나머지 토큰은 기존대로 관대).
+        if let Some(t) = toks.get(1) {
+            let tl = t.to_ascii_lowercase();
+            let is_type = tl.starts_with("type(") && t.ends_with(')');
+            if !is_type && !image_set_resolution_valid(t) {
                 return String::new();
             }
         }
