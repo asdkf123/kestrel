@@ -837,6 +837,8 @@ impl Interp {
                     | "offset-rotate"
                     | "offset-position"
                     | "offset-anchor"
+                    | "offset-distance"
+                    | "interactivity"
                     | "contain"
                     | "top"
                     | "right"

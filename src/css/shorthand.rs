@@ -645,6 +645,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
             None => Vec::new(),
         },
+        // offset-distance(§CSS Motion Path): <length-percentage>(부호 허용). 각도·키워드 거부.
+        "offset-distance" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = split_top_level(value_text.trim());
+            if toks.len() != 1
+                || !(toks[0] == "0" || super::values::math_length_valid(&toks[0].to_ascii_lowercase(), true))
+            {
+                return Vec::new();
+            }
+            let v = match interpret_value(toks[0]) {
+                Some(Value::Length(n, Unit::Number)) if n == 0.0 => Value::Length(0.0, Unit::Px),
+                Some(other) => other,
+                None => Value::Keyword(value_text.trim().to_string()),
+            };
+            return vec![Declaration { important: false, name: name.to_string(), value: v }];
+        }
         // offset-position(auto|normal|<position>) / offset-anchor(auto|<position>).
         "offset-position" | "offset-anchor" => {
             let low = value_text.trim().to_ascii_lowercase();
