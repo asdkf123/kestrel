@@ -75,10 +75,12 @@
 > 5. animation-range 타임라인 단축(entry/exit 범위 + 캐논 오프셋 생략)
 > 6. mask 단축(<mask-layer>#)
 >
-> **주의(시도 후 되돌림)**: basic-shape 캐논 직렬화(0→0px, nonzero 생략, polygon round-0 생략, path 겹따옴표)를
-> serialize_decl 에 배선했더니 css-shapes 가 -422 회귀했다. 지정값 게터와 계산값 직렬화 경로가 얽혀 있어,
-> 캐논 함수는 자기테스트를 통과해도 실제 값 게터에서 어긋난다. 재작업 시 **el.style(지정값) vs
-> getComputedStyle(계산값) 직렬화를 분리**해서 각 경로의 기대 형태를 정확히 맞춰야 한다(둘은 다르다).
+> **basic-shape 캐논 직렬화(해결됨)**: 지정값(el.style) 직렬화는 `normalize_shape`(serialize_decl 경유),
+> 계산값은 `computed_value_string` 으로 경로가 다르다. 처음엔 별도 canon 을 serialize_decl 에 끼워 넣어
+> 기존 `normalize_shape` 를 가려 -422 회귀했다 → **기존 normalize_shape 를 확장**하는 방식으로 정정:
+> inset/rect/xywh 0→0px·round 전부-0 생략, polygon nonzero/round-0 생략, path SVG data 정규화(공백·콤마·
+> z→Z), circle/ellipse at-위치 x 먼저, shape() 좌표 0→0px. 남은 것은 calc 산술 단순화(`calc(100%/4)`→
+> `calc(25%)`)와 coord-box 처리.
 
 | 서브트리 | 통과 / 전체 | % |
 |---|---|---|
