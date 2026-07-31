@@ -7128,6 +7128,15 @@ pub fn border_image_source_valid(raw: &str) -> bool {
 
 // background-image 레이어 구조 검증: 각 레이어는 none 또는 <image>(함수).
 // auto 같은 bare 키워드·빈 레이어 거부(gradient/cross-fade 내부는 별도 검증기).
+// offset 단축용 <length-percentage>(단위 없는 0·calc 포함) 판정.
+pub fn offset_len_ok(t: &str) -> bool {
+    let low = t.trim().to_ascii_lowercase();
+    if is_math_fn(&low) {
+        return math_length_valid(&low, true);
+    }
+    t.trim() == "0" || is_length_percentage(t)
+}
+
 // animation-range 단축(§scroll-animations): [ <start> <end>? ]#. start/end 각각
 // normal | <length-percentage> | <timeline-range-name> <length-percentage>?. 시간·각도·
 // 색·미지 이름·순서 위반 거부.

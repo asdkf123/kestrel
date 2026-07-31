@@ -677,6 +677,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
             None => Vec::new(),
         },
+        // offset 단축(§CSS Motion Path): position? [path [distance || rotate]?]? [/ anchor]?.
+        "offset" => return offset_shorthand(value_text),
         // offset-distance(§CSS Motion Path): <length-percentage>(부호 허용). 각도·키워드 거부.
         "offset-distance" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -4656,6 +4658,120 @@ fn expand_border_image(value: &str) -> Option<Vec<Declaration>> {
 }
 
 // 괄호 밖 '/' 로 분리 (grid-row/column/area 의 grid-line 구분).
+// offset 단축(§CSS Motion Path) → 5개 롱핸드 전개.
+// [ <offset-position>? [ <offset-path> [ <offset-distance> || <offset-rotate> ]? ]? ]!
+// [ / <offset-anchor> ]?. 기본값: position normal, path none, distance 0px, rotate auto,
+// anchor auto.
+fn offset_shorthand(value_text: &str) -> Vec<Declaration> {
+    let mk = |n: &str, v: String| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v) };
+    let low = value_text.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return ["offset-position", "offset-path", "offset-distance", "offset-rotate", "offset-anchor"]
+            .iter().map(|n| mk(n, low.clone())).collect();
+    }
+    let parts = split_top_slash_pub(value_text);
+    if parts.is_empty() || parts.len() > 2 {
+        return Vec::new();
+    }
+    // anchor(/ 뒤): auto | <position>.
+    let anchor = if parts.len() == 2 {
+        let a = parts[1].trim();
+        if a.eq_ignore_ascii_case("auto") {
+            "auto".to_string()
+        } else if crate::css::position_valid(a) {
+            a.to_string()
+        } else {
+            return Vec::new();
+        }
+    } else {
+        "auto".to_string()
+    };
+    let toks = split_top_level(parts[0].trim());
+    if toks.is_empty() {
+        return Vec::new();
+    }
+    let is_path_ind = |t: &str| {
+        let tl = t.to_ascii_lowercase();
+        tl == "none"
+            || (tl.ends_with(')')
+                && ["ray(", "path(", "url(", "circle(", "ellipse(", "inset(", "polygon(",
+                    "xywh(", "rect(", "shape(", "src("]
+                    .iter().any(|p| tl.starts_with(p)))
+    };
+    let is_pos_comp = |t: &str| {
+        matches!(
+            t.to_ascii_lowercase().as_str(),
+            "left" | "right" | "top" | "bottom" | "center" | "auto" | "normal"
+        ) || crate::css::offset_len_ok(t)
+    };
+    // position: 선두 위치 성분(경로 지시자 전까지). offset-position 은 auto|normal|<position>.
+    let mut i = 0;
+    while i < toks.len() && !is_path_ind(toks[i]) && is_pos_comp(toks[i]) {
+        i += 1;
+    }
+    let position = if i == 0 {
+        "normal".to_string()
+    } else {
+        let p = toks[..i].join(" ");
+        if !(p.eq_ignore_ascii_case("auto") || p.eq_ignore_ascii_case("normal") || crate::css::position_valid(&p)) {
+            return Vec::new();
+        }
+        p
+    };
+    let (mut path, mut dist, mut rot) = ("none".to_string(), "0px".to_string(), "auto".to_string());
+    if i < toks.len() {
+        if !is_path_ind(toks[i]) {
+            return Vec::new();
+        }
+        path = toks[i].to_string();
+        i += 1;
+        if !path.eq_ignore_ascii_case("none") && !crate::css::offset_path_valid(&path) {
+            return Vec::new();
+        }
+        // distance || rotate (순서 자유).
+        let (mut nd, mut nkw, mut nang) = (0u32, 0u32, 0u32);
+        let mut rot_kw: Option<String> = None;
+        let mut rot_ang: Option<String> = None;
+        while i < toks.len() {
+            let t = &toks[i];
+            let tl = t.to_ascii_lowercase();
+            if matches!(tl.as_str(), "auto" | "reverse") {
+                nkw += 1;
+                rot_kw = Some(tl);
+            } else if super::values::math_angle_valid(t) {
+                nang += 1;
+                rot_ang = Some(t.to_string());
+            } else if crate::css::offset_len_ok(t) {
+                nd += 1;
+                dist = t.to_string();
+            } else {
+                return Vec::new();
+            }
+            i += 1;
+        }
+        if nd > 1 || nkw > 1 || nang > 1 {
+            return Vec::new();
+        }
+        if nkw + nang > 0 {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(k) = rot_kw {
+                parts.push(k);
+            }
+            if let Some(a) = rot_ang {
+                parts.push(a);
+            }
+            rot = parts.join(" ");
+        }
+    }
+    vec![
+        mk("offset-position", position),
+        mk("offset-path", path),
+        mk("offset-distance", dist),
+        mk("offset-rotate", rot),
+        mk("offset-anchor", anchor),
+    ]
+}
+
 fn split_top_slash_pub(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0i32;
