@@ -851,6 +851,58 @@ fn parse_color_stops(parts: &[String]) -> Option<Vec<(Color, crate::css::StopPos
 // x-part 먼저, 빠진 축은 center, 값은 원문 유지(cm/키워드 해석 안 함). circle(at
 // 50cm)→"circle(at 50cm center)", circle(at top 50% left 50cm)→"...(at left 50cm
 // top 50%)". inset/polygon/path 및 "at" 없는 경우는 원문.
+// SVG path data 정규화(§CSSOM path() 직렬화): 명령·수 사이 단일 공백, 콤마 제거,
+// close(z)는 대문자 Z. 명령 대소문자(절대/상대)는 유지.
+fn svg_path_normalize(d: &str) -> String {
+    let chars: Vec<char> = d.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() || c == ',' {
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_alphabetic() {
+            out.push(if c == 'z' || c == 'Z' { "Z".to_string() } else { c.to_string() });
+            i += 1;
+            continue;
+        }
+        // 수: 부호 + 정수부/소수부(점 1개) + 지수부.
+        let start = i;
+        if chars[i] == '+' || chars[i] == '-' {
+            i += 1;
+        }
+        let mut seen_dot = false;
+        while i < chars.len() {
+            let ch = chars[i];
+            if ch.is_ascii_digit() {
+                i += 1;
+            } else if ch == '.' && !seen_dot {
+                seen_dot = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+            i += 1;
+            if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                i += 1;
+            }
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        if i > start {
+            out.push(chars[start..i].iter().collect());
+        } else {
+            i += 1; // 알 수 없는 문자 건너뜀
+        }
+    }
+    out.join(" ")
+}
+
 pub(crate) fn normalize_shape(text: &str) -> String {
     let text = text.trim();
     let lower = text.to_ascii_lowercase();
@@ -950,7 +1002,8 @@ pub(crate) fn normalize_shape(text: &str) -> String {
             let s = s.trim();
             let first = s.chars().next()?;
             if s.len() >= 2 && (first == '"' || first == '\'') && s.ends_with(first) {
-                Some(format!("\"{}\"", &s[1..s.len() - 1]))
+                // 문자열 내부 SVG path data 도 정규화(공백·콤마·close 대문자).
+                Some(format!("\"{}\"", svg_path_normalize(&s[1..s.len() - 1])))
             } else {
                 None
             }
