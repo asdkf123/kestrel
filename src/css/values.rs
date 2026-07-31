@@ -2932,7 +2932,13 @@ fn pos_axis_computed(tokens: &[&str]) -> String {
                 let r = (r * 1e6).round() / 1e6;
                 format!("{}%", r)
             } else {
-                format!("calc(100% - {})", offset)
+                // 100% - offset 을 px 먼저 calc 로: "calc(-20px + 100%)"(Chrome 계산값·
+                // 보간 경로와 일치). offset 부호를 뒤집어 앞에 둔다.
+                let neg = match offset.strip_prefix('-') {
+                    Some(r) => r.to_string(),
+                    None => format!("-{}", offset),
+                };
+                format!("calc({} + 100%)", neg)
             }
         }
         _ => tokens.join(" "),
