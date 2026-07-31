@@ -438,6 +438,56 @@ fn fill_js_maps(
                 m.insert("line-height".to_string(), px(factor * fs));
             }
         }
+        // font 단축 계산값 재조립(getComputedStyle().font, §CSS Fonts §font-prop):
+        // style variant weight stretch size[/line-height] family. 기본값(normal/400/100%)
+        // 은 생략한다. stretch 계산값(%)은 font 단축이 표현 가능한 명명 키워드로 역매핑하며,
+        // 명명 % 가 아니면 font 로 표현 불가라 노출하지 않는다. 개별 longhand 설정과 동일한
+        // 계산값을 내도록 하여 round-trip 을 보장한다(line-height px 확정 이후에 조립).
+        {
+            let stretch_kw = match m.get("font-stretch").map(|s| s.as_str()) {
+                Some("50%") => Some("ultra-condensed"),
+                Some("62.5%") => Some("extra-condensed"),
+                Some("75%") => Some("condensed"),
+                Some("87.5%") => Some("semi-condensed"),
+                Some("100%") | None => Some("normal"),
+                Some("112.5%") => Some("semi-expanded"),
+                Some("125%") => Some("expanded"),
+                Some("150%") => Some("extra-expanded"),
+                Some("200%") => Some("ultra-expanded"),
+                _ => None,
+            };
+            let family = m.get("font-family").cloned().unwrap_or_default();
+            if let Some(stretch_kw) = stretch_kw {
+                if !family.is_empty() {
+                    let style = m.get("font-style").cloned().unwrap_or_else(|| "normal".into());
+                    let scaps =
+                        m.get("font-variant-caps").map(|s| s == "small-caps").unwrap_or(false);
+                    let weight = m.get("font-weight").cloned().unwrap_or_else(|| "400".into());
+                    let size = m.get("font-size").cloned().unwrap_or_else(|| "16px".into());
+                    let lh = m.get("line-height").cloned().unwrap_or_else(|| "normal".into());
+                    let mut parts: Vec<String> = Vec::new();
+                    if style != "normal" {
+                        parts.push(style);
+                    }
+                    if scaps {
+                        parts.push("small-caps".to_string());
+                    }
+                    if weight != "400" && weight != "normal" {
+                        parts.push(weight);
+                    }
+                    if stretch_kw != "normal" {
+                        parts.push(stretch_kw.to_string());
+                    }
+                    parts.push(if lh == "normal" {
+                        size
+                    } else {
+                        format!("{} / {}", size, lh)
+                    });
+                    parts.push(family);
+                    m.insert("font".to_string(), parts.join(" "));
+                }
+            }
+        }
     }
 }
 

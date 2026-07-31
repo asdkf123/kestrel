@@ -61,7 +61,8 @@ impl Interp {
             // 단축은 계산값 열거에서 제외 — 단 text-decoration 은 Chrome 이 계산값에
             // 노출하는 단축이라 포함(재조립됨). \0-접두 내부 키도 제외.
             .filter(|k| {
-                (!sh.contains_key(k.as_str()) || k.as_str() == "text-decoration")
+                (!sh.contains_key(k.as_str())
+                    || matches!(k.as_str(), "text-decoration" | "font"))
                     && !k.starts_with('\u{0}')
             })
             .cloned()

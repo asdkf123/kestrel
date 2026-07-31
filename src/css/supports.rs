@@ -242,9 +242,9 @@ fn longhand_supported(prop: &str) -> bool {
 // getComputedStyle 뷰의 HasProperty('X' in cs) 판정용 — 엔진이 아는 CSS 속성명인가.
 // (대시 형태로 정규화된 이름을 받는다. §CSSOM: 지원 속성은 선언 뷰에 존재한다.)
 pub(crate) fn is_known_property(name: &str) -> bool {
-    // text-decoration 은 계산값에 노출되는 단축(getComputedStyle 의 'text-decoration'
-    // in cs 게이트) — longhand 집합엔 없지만 알려진 프로퍼티다.
-    longhand_supported(name) || name == "text-decoration"
+    // text-decoration/font 은 계산값에 노출되는 단축(getComputedStyle 의 'font' /
+    // 'text-decoration' in cs 게이트) — longhand 집합엔 없지만 알려진 프로퍼티다.
+    longhand_supported(name) || matches!(name, "text-decoration" | "font")
 }
 
 // 엔진이 실제로 계산하는 값 함수 전부. 여기 없는 함수(color-mix/oklch/lab/env/attr/

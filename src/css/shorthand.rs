@@ -2874,7 +2874,7 @@ fn parse_flex_basis(t: &str) -> Value {
 }
 
 // 절대 크기 키워드 → px (medium=16 기준 스케일, CSS Fonts).
-fn font_size_keyword(k: &str) -> Option<f32> {
+pub(crate) fn font_size_keyword(k: &str) -> Option<f32> {
     Some(match k {
         "xx-small" => 9.6,
         "x-small" => 12.0,
@@ -2992,7 +2992,8 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     let mut out = Vec::new();
     // size 앞 접두(§CSS Fonts font 단축): style || variant(small-caps) || weight ||
     // stretch, 각 성분 최대 1회, normal 은 채움값. 미인식 토큰·중복 성분·접두 5개 이상은
-    // 단축 전체를 무효로 한다. variant/stretch 는 근사상 선언은 생략하되 검증은 한다.
+    // 단축 전체를 무효로 한다. font 단축은 지정 안 된 성분을 초기값으로 리셋하므로
+    // (§CSS Fonts §font-prop) 계산값 round-trip 을 위해 모든 성분을 명시 방출한다.
     let is_weight = |l: &str| {
         matches!(l, "bold" | "bolder" | "lighter")
             || l.parse::<f32>().map(|n| (1.0..=1000.0).contains(&n)).unwrap_or(false)
@@ -3007,76 +3008,130 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     if tokens[..si].len() > 4 {
         return Vec::new();
     }
-    let (mut has_style, mut has_variant, mut has_weight, mut has_stretch) =
-        (false, false, false, false);
+    let mut style_v: Option<Value> = None;
+    let mut variant_scaps = false;
+    let mut weight_v: Option<Value> = None;
+    let mut stretch_v: Option<String> = None;
     for t in &tokens[..si] {
         let tl = t.to_ascii_lowercase();
         if tl == "normal" {
             continue; // 채움값 — 카테고리 안 잡음
         } else if tl == "italic" || tl == "oblique" {
-            if has_style {
+            if style_v.is_some() {
                 return Vec::new();
             }
-            has_style = true;
-            out.push(Declaration {
-                important: false,
-                name: "font-style".to_string(),
-                value: Value::Keyword("italic".to_string()),
-            });
+            style_v = Some(Value::Keyword("italic".to_string()));
         } else if tl == "small-caps" {
-            if has_variant {
+            if variant_scaps {
                 return Vec::new();
             }
-            has_variant = true;
+            variant_scaps = true;
         } else if is_weight(&tl) {
-            if has_weight {
+            if weight_v.is_some() {
                 return Vec::new();
             }
-            has_weight = true;
-            let wv = if tl == "bold" {
+            weight_v = Some(if tl == "bold" {
                 Value::Length(700.0, Unit::Number)
             } else if tl == "bolder" || tl == "lighter" {
                 Value::Keyword(tl.clone())
             } else {
                 Value::Length(tl.parse::<f32>().unwrap_or(400.0), Unit::Number)
-            };
-            out.push(Declaration { important: false, name: "font-weight".to_string(), value: wv });
+            });
         } else if is_stretch(&tl) {
-            if has_stretch {
+            if stretch_v.is_some() {
                 return Vec::new();
             }
-            has_stretch = true;
+            stretch_v = Some(tl.clone());
         } else {
             return Vec::new(); // 미인식 토큰(oldstyle-nums 등) → 무효
         }
     }
-    // size[/line-height]
-    let mut sp = tokens[si].splitn(2, '/');
-    let size = sp.next().unwrap_or(tokens[si]);
-    let size_val = match interpret_value(size) {
+    // size[/line-height] — 슬래시 주변 공백 허용(계산값 round-trip "16px / 1.2").
+    let (size_str, lh_str, family_start): (String, Option<String>, usize) =
+        if let Some(slash) = tokens[si].find('/') {
+            let (a, b) = tokens[si].split_at(slash);
+            let after = &b[1..];
+            if after.is_empty() {
+                (a.to_string(), tokens.get(si + 1).map(|s| s.to_string()), si + 2)
+            } else {
+                (a.to_string(), Some(after.to_string()), si + 1)
+            }
+        } else if tokens.get(si + 1).map_or(false, |t| t.starts_with('/')) {
+            let rest = &tokens[si + 1][1..];
+            if rest.is_empty() {
+                (tokens[si].to_string(), tokens.get(si + 2).map(|s| s.to_string()), si + 3)
+            } else {
+                (tokens[si].to_string(), Some(rest.to_string()), si + 2)
+            }
+        } else {
+            (tokens[si].to_string(), None, si + 1)
+        };
+    let size_val = match interpret_value(&size_str) {
         Some(v @ (Value::Length(..) | Value::Calc(..) | Value::MinMax(..))) => Some(v),
         _ => {
-            let sl = size.to_ascii_lowercase();
+            let sl = size_str.to_ascii_lowercase();
             if matches!(sl.as_str(), "larger" | "smaller") {
                 Some(Value::Keyword(sl)) // 상대 크기 키워드 보존
             } else {
-                font_size_keyword(size).map(|px| Value::Length(px, Unit::Px))
+                font_size_keyword(&size_str).map(|px| Value::Length(px, Unit::Px))
             }
         }
     };
-    if let Some(sv) = size_val {
-        out.push(Declaration { important: false, name: "font-size".to_string(), value: sv });
-    }
-    if let Some(lh) = sp.next() {
-        out.extend(expand_declaration("line-height", lh)); // 무단위→factor, 길이→그대로
-    }
-    // family 필수(§CSS Fonts): size 뒤 나머지 전부. 없거나 무효면 단축 전체가 무효.
-    if si + 1 >= tokens.len() {
+    let Some(size_val) = size_val else {
+        return Vec::new();
+    };
+    // family 필수(§CSS Fonts): size(/line-height) 뒤 나머지 전부. 없거나 무효면 무효.
+    if family_start >= tokens.len() {
         return Vec::new();
     }
-    let family = tokens[si + 1..].join(" ");
+    let family = tokens[family_start..].join(" ");
     if !font_family_valid(&family) {
         return Vec::new();
+    }
+    // line-height 있으면 유효성 검사(무효면 단축 전체 무효).
+    let lh_decls = match &lh_str {
+        Some(lh) => {
+            let d = expand_declaration("line-height", lh); // 무단위→factor, 길이→그대로
+            if d.is_empty() {
+                return Vec::new();
+            }
+            Some(d)
+        }
+        None => None,
+    };
+    // 전체 리셋 방출: 지정 안 된 성분은 초기값(normal → weight 400 등). 계산값
+    // 재조립(getComputedStyle().font)이 개별 longhand 설정과 일치하도록 한다.
+    let kw = |s: &str| Value::Keyword(s.to_string());
+    out.push(Declaration {
+        important: false,
+        name: "font-style".to_string(),
+        value: style_v.unwrap_or_else(|| kw("normal")),
+    });
+    out.push(Declaration {
+        important: false,
+        name: "font-variant-caps".to_string(),
+        value: kw(if variant_scaps { "small-caps" } else { "normal" }),
+    });
+    out.push(Declaration {
+        important: false,
+        name: "font-weight".to_string(),
+        // 미지정 시 초기값 400(수치) — normal 키워드로 두면 계산값이 "normal" 로 새어
+        // font-weight-computed 가 깨진다(계산 font-weight 는 수치, §CSS Fonts).
+        value: weight_v.unwrap_or_else(|| Value::Length(400.0, Unit::Number)),
+    });
+    out.push(Declaration {
+        important: false,
+        name: "font-stretch".to_string(),
+        value: kw(stretch_v.as_deref().unwrap_or("normal")),
+    });
+    out.push(Declaration { important: false, name: "font-size".to_string(), value: size_val });
+    match lh_decls {
+        Some(d) => out.extend(d),
+        None => out.push(Declaration {
+            important: false,
+            name: "line-height".to_string(),
+            value: kw("normal"),
+        }),
     }
     out.push(Declaration {
         important: false,

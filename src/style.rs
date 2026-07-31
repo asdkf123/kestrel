@@ -2596,7 +2596,18 @@ fn style_node<'a>(
                     }
                     crate::css::eval_minmax(kind, &args, parent_fs)
                 }
-                _ => parent_fs, // 미지정/키워드 → 상속
+                // 절대·상대 크기 키워드(§CSS Fonts §font-size). 단축(font)이 파싱 때 쓰는
+                // 것과 같은 테이블로 해석해 longhand·단축 계산값이 일치하도록 한다. larger/
+                // smaller 는 부모 대비 ×1.2 / ÷1.2. 미인식 키워드(inherit 등)는 상속.
+                Some(Value::Keyword(k)) => {
+                    let kl = k.to_ascii_lowercase();
+                    match kl.as_str() {
+                        "larger" => parent_fs * 1.2,
+                        "smaller" => parent_fs / 1.2,
+                        _ => crate::css::font_size_keyword(&kl).unwrap_or(parent_fs),
+                    }
+                }
+                _ => parent_fs, // 미지정/기타 → 상속
             };
             values.insert("font-size".to_string(), Value::Length(fs, Unit::Px));
             // 루트 요소면 이 요소의 계산 font-size 가 자손의 rem 기준이 된다.
