@@ -2838,6 +2838,11 @@ pub(crate) fn math_function_valid(text: &str) -> bool {
     if inner.is_empty() {
         return false;
     }
+    // 선두/후행 최상위 콤마(빈 인자) — split_top_commas 가 후행 빈 세그먼트를 버려
+    // "max(1s, )"/"min(, 1px)" 가 새던 걸 막는다.
+    if inner.starts_with(',') || inner.ends_with(',') {
+        return false;
+    }
     let args = split_top_commas(inner);
     let args: Vec<String> = args.iter().map(|a| a.trim().to_string()).collect();
     if args.iter().any(|a| a.is_empty()) {
