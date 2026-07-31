@@ -9329,7 +9329,8 @@ impl Interp {
         // (hanging/each-line 은 Chrome 미지원 — 저장·직렬화에서 생략, Length 저장과 일관).
         // 키워드 집합이 같으면(순서 무관) 길이 부드럽게 보간, 다르면 불연속(길이만).
         if dash_prop == "text-indent" {
-            let split = |s: &str| -> (Option<String>, Vec<String>) {
+            // (길이, 정렬된 키워드집합[비교용], 원래순서 키워드[출력용])
+            let split = |s: &str| -> (Option<String>, Vec<String>, Vec<String>) {
                 let (mut len, mut kw) = (None, Vec::new());
                 for t in s.split_whitespace() {
                     if matches!(t, "hanging" | "each-line") {
@@ -9338,19 +9339,33 @@ impl Interp {
                         len = Some(t.to_string());
                     }
                 }
-                kw.sort(); // 집합 비교(each-line hanging == hanging each-line)
-                (len, kw)
+                let mut sorted = kw.clone();
+                sorted.sort();
+                (len, sorted, kw)
             };
-            let (fl, fk) = split(from);
-            let (tl, tk) = split(to);
+            let (fl, fk, fko) = split(from);
+            let (tl, tk, tko) = split(to);
+            let suffix = |kw: &[String]| {
+                if kw.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", kw.join(" "))
+                }
+            };
             if let (Some(fl), Some(tl)) = (fl, tl) {
                 if fk == tk {
+                    // 키워드 집합 동일 → 길이 부드럽게 보간하고 키워드는 그대로 유지
+                    // (계산값에 hanging/each-line 보존 — 정적 계산값과 일치).
                     if let Some(v) = Self::interp_css_value(&fl, &tl, eased) {
-                        return Some(v);
+                        return Some(format!("{}{}", v, suffix(&fko)));
                     }
                 } else {
-                    // 키워드 집합 불일치 → 불연속. 계산값은 길이만.
-                    return Some(if eased < 0.5 { fl } else { tl });
+                    // 키워드 집합 불일치 → 불연속. 끝점의 길이+키워드.
+                    return Some(if eased < 0.5 {
+                        format!("{}{}", fl, suffix(&fko))
+                    } else {
+                        format!("{}{}", tl, suffix(&tko))
+                    });
                 }
             }
         }
