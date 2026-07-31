@@ -79,7 +79,7 @@
 | css-break | 452 / 609 | 74.2% |
 | css-ui | 1,390 / 1,888 | 73.6% |
 | css-transforms | 2,886 / 3,969 | 72.7% |
-| css-anchor-position | 9,225 / 12,913 | 71.4% |
+| css-anchor-position | 9,972 / 13,012 | 76.6% |
 | css-ruby | 52 / 73 | 71.2% |
 | css-position | 993 / 1,412 | 70.3% |
 | selectors | 2,872 / 4,118 | 69.7% |
