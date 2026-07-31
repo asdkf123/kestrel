@@ -6619,6 +6619,15 @@ impl Interp {
                     return Ok(names.get(i).map(|s| Value::Str(s.clone())).unwrap_or(Value::Str(String::new())));
                 }
                 let dashed = camel_to_dashed(key);
+                // border-radius 는 롱핸드 재조립을 우선한다 — el.animate/@keyframes 가 확장 시
+                // border-radius=tl(가로만) 폴백을 애니 프로퍼티로 저장해, animated_value 가
+                // 그걸 먼저 잡으면 세로 반경이 손실된다. 롱핸드가 애니 중이면 세로 포함 재조립,
+                // 아니면(트랜지션은 shorthand 저장) None → 아래 animated_value 로 폴백.
+                if dashed == "border-radius" {
+                    if let Some(sh) = self.computed_shorthand_animated(id, &dashed) {
+                        return Ok(Value::Str(sh));
+                    }
+                }
                 // 활성 애니메이션(element.animate)이 이 프로퍼티를 다루면 currentTime 에서
                 // 보간한 값으로 덮어쓴다(애니 있는 요소만 — additive).
                 if let Some(interp) = self.animated_value(id, &dashed) {
@@ -7908,6 +7917,12 @@ impl Interp {
                 "border-left-color",
             ],
             "inset" => &["top", "right", "bottom", "left"],
+            "border-radius" => &[
+                "border-top-left-radius",
+                "border-top-right-radius",
+                "border-bottom-right-radius",
+                "border-bottom-left-radius",
+            ],
             _ => return None,
         };
         let mut any_anim = false;
@@ -7930,6 +7945,29 @@ impl Interp {
         }
         if !any_anim {
             return None; // 애니메이션 없으면 기존 경로에 맡김(동작 불변)
+        }
+        // border-radius: 각 코너가 "h" 또는 "h v"(세로≠가로). 가로/세로 축 분리 재조립
+        // (§CSS Backgrounds). 정적 경로(window.rs)·interp 경로와 동일 형식.
+        if prop == "border-radius" {
+            let mut hs: Vec<String> = Vec::with_capacity(4);
+            let mut vs: Vec<String> = Vec::with_capacity(4);
+            let mut any_v = false;
+            for val in &vals {
+                let mut it = val.split_whitespace();
+                let h = it.next().unwrap_or("").to_string();
+                let vv = it.next().map(|s| s.to_string()).unwrap_or_else(|| h.clone());
+                if vv != h {
+                    any_v = true;
+                }
+                hs.push(h);
+                vs.push(vv);
+            }
+            let hjoin = if hs.windows(2).all(|w| w[0] == w[1]) {
+                hs[0].clone()
+            } else {
+                hs.join(" ")
+            };
+            return Some(if any_v { format!("{} / {}", hjoin, vs.join(" ")) } else { hjoin });
         }
         // [top, right, bottom, left] → 최단 형태.
         let (t, r, b, l) = (&vals[0], &vals[1], &vals[2], &vals[3]);
