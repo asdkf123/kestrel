@@ -903,6 +903,104 @@ fn svg_path_normalize(d: &str) -> String {
     out.join(" ")
 }
 
+// SVG path data 토큰: 명령 문자 또는 수. 정규화·검증 공용.
+fn svg_path_tokens(d: &str) -> Vec<(bool, char)> {
+    // (is_cmd, ch) — is_cmd 이면 ch=명령, 아니면 ch='0'(수 자리표시).
+    let chars: Vec<char> = d.chars().collect();
+    let mut toks = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() || c == ',' {
+            i += 1;
+            continue;
+        }
+        if c.is_ascii_alphabetic() {
+            toks.push((true, c));
+            i += 1;
+            continue;
+        }
+        let start = i;
+        if chars[i] == '+' || chars[i] == '-' {
+            i += 1;
+        }
+        let mut dot = false;
+        while i < chars.len() {
+            let ch = chars[i];
+            if ch.is_ascii_digit() {
+                i += 1;
+            } else if ch == '.' && !dot {
+                dot = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+            i += 1;
+            if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                i += 1;
+            }
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        if i > start {
+            toks.push((false, '0'));
+        } else {
+            i += 1; // 알 수 없는 문자
+        }
+    }
+    toks
+}
+
+// SVG path data 유효성(§SVG path): moveto 로 시작, 각 명령의 인자 개수(반복 가능),
+// A 는 7개. 인자 부족/초과·미지 명령 거부. flag 자리표시(A)는 수로 근사(공백 구분 가정).
+fn svg_path_valid(d: &str) -> bool {
+    let toks = svg_path_tokens(d);
+    if toks.is_empty() || !toks[0].0 || !matches!(toks[0].1, 'M' | 'm') {
+        return false;
+    }
+    let argc = |c: char| -> Option<usize> {
+        match c.to_ascii_lowercase() {
+            'z' => Some(0),
+            'h' | 'v' => Some(1),
+            'm' | 'l' | 't' => Some(2),
+            's' | 'q' => Some(4),
+            'c' => Some(6),
+            'a' => Some(7),
+            _ => None,
+        }
+    };
+    let mut i = 0;
+    while i < toks.len() {
+        if !toks[i].0 {
+            return false; // 수가 명령 없이 나옴
+        }
+        let n = argc(toks[i].1);
+        let Some(n) = n else { return false };
+        i += 1;
+        if n == 0 {
+            continue;
+        }
+        // 최소 한 그룹, 이후 수가 이어지면 추가 그룹(반복).
+        loop {
+            for _ in 0..n {
+                if i < toks.len() && !toks[i].0 {
+                    i += 1;
+                } else {
+                    return false; // 인자 부족
+                }
+            }
+            if i < toks.len() && !toks[i].0 {
+                continue; // 다음 그룹
+            }
+            break;
+        }
+    }
+    true
+}
+
 pub(crate) fn normalize_shape(text: &str) -> String {
     let text = text.trim();
     let lower = text.to_ascii_lowercase();
@@ -6597,7 +6695,8 @@ fn path_shape_valid(inner: &str) -> bool {
             return false;
         }
         let d = t[1..t.len() - 1].trim();
-        d.starts_with('M') || d.starts_with('m')
+        // SVG path data: moveto 로 시작 + 각 명령 인자 개수 유효(A=7 등).
+        svg_path_valid(d)
     };
     if inner.starts_with('"') || inner.starts_with('\'') {
         return is_path_str(inner);
@@ -10996,6 +11095,24 @@ mod tests {
             assert!(!shape_func_valid(v), "should reject shape: {v}");
         }
         assert!(!ray_valid("ray(0 sides)")); // bare 0 각도
+        // SVG path data 검증(유효 — 회귀 방지 핵심).
+        for d in [
+            "M 10 10 h 80 v 80 h -80 Z",
+            "M0,0L100,0L100,100Z",
+            "M0,0C30,60,70,60,100,0",
+            "M0,0Q50,100,100,0",
+            "M0,0A25,25,0,0,1,50,0",
+            "m 10 20 q 30 60 40 50 q 100 70 90 80",
+            "m 20 0 h -100",
+            "M 0 0 L 100 100 M 100 200 L 200 200 Z L 300 300 Z",
+            "m 10 170 h 90 v 30 m 0 0 s 1 2 3 4 z c 9 8 7 6 5 4",
+            "m 10 20 a 10 20 30 1 0 40 50 a 110 120 30 1 1 140 50",
+        ] {
+            assert!(svg_path_valid(d), "should accept path: {d}");
+        }
+        for d in ["M 20 30 A 60 70 80", "M 0 0 L 1", "H 10", "M 0 0 X 1 2", "M 0 0 C 1 2 3"] {
+            assert!(!svg_path_valid(d), "should reject path: {d}");
+        }
         // offset-path — 유효(회귀 방지).
         for v in [
             "none",
