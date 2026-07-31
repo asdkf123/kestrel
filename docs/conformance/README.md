@@ -294,19 +294,16 @@
 
 > 요약: 현재 kestrel 은 **렌더링 코어(HTML/CSS/DOM) + JS 언어(test262)** 에 집중. 나머지 대부분 영역(네트워킹/워커/저장소/미디어/디바이스/보안 API)은 미구현(0%)이며 이게 "브라우저 완성"까지의 실제 남은 로드맵이다. 우선순위는 렌더링 정확도(css) → 코어 API(events/URL/encoding/console) → 나머지 순으로 잡는다.
 
-## 확인된 구체적 버그 (착수 준비됨)
+## 확인된 구체적 버그
 
-세션 조사 중 특성화한, 수정 방법이 명확한 실제 엔진 버그:
-
-- **border-radius 계산값이 vertical 반경을 소실.** `border-radius: 17px 37px 57px 77px /
-  117px 137px 157px 177px` → getComputedStyle `"17px 37px 57px 77px"`(세로 없음),
-  `borderTopLeftRadius` → `"17px"`(마땅히 `"17px 117px"`). 원인: `shorthand.rs` 확장이
-  `value_text.split('/').next()` 로 세로부를 통째로 버리고 longhand 를 단일 `Length(h)` 로만
-  저장. **수정**: (1) 확장이 코너별 (h, v) 파싱 → v≠h 면 longhand 를 `Keyword("h v")` 로
-  저장, (2) `paint.rs` `radius_prop` 이 `Keyword` 의 첫 토큰을 길이로 파싱(레이아웃 불변 —
-  uniform_radius 는 가로 사용), (3) border-radius 단축 계산 재조립이 코너별 v 를 모아
-  `"h1 h2 h3 h4 / v1 v2 v3 v4"` 로(전 코너 v==h 면 `/` 생략). border-radius-interpolation
-  (78) 및 border-radius 계산값 테스트에 영향. interp 경로 출력과 **바이트 일치** 필요.
+- ✅ **[해결] border-radius 계산값의 vertical 반경 소실 + 보간.** getComputedStyle 이
+  세로 반경을 버리던 것을 수정: 확장이 코너별 (h,v) 파싱→v≠h 면 longhand `Keyword("h v")`,
+  `radius_prop` 이 첫 토큰(가로) 사용(레이아웃 불변), 단축 계산 재조립을 가로/세로 축 분리
+  (`window.rs`·`computed_shorthand_animated`, calc 안전 위해 `split_ws_depth0`). 보간까지
+  완결: px↔% → calc(항 순서는 FROM 단위 기준), 음수 0 클램프(calc 내부는 보존), h↔"h v"
+  토큰 정규화, 균일 결과 접기, getPropertyValue 경로도 재조립 우선. **border-radius-
+  interpolation 78→0**, css-backgrounds ~76→78%. (커밋 903cad0·565c2d1·32f06f4·c97d304·
+  7bb889e·692ddad·17eef9a)
 - **box-shadow 가 blur/spread 에 calc()/math 미수용.** `inset 0 0 0 calc(max(10em,20px)/2)
   black` 를 "지원 안 함"으로 거부(box-shadow-interpolation 등). box-shadow 길이 성분 검증에
   수학함수 허용 필요.
