@@ -2031,7 +2031,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let ok = match name {
                 "hyphens" => matches!(low.as_str(), "none" | "manual" | "auto"),
-                _ => matches!(low.as_str(), "auto" | "none" | "inter-word" | "inter-character"),
+                // distribute 는 inter-character 의 레거시 별칭(§CSS Text 3) — 수용.
+                _ => matches!(
+                    low.as_str(),
+                    "auto" | "none" | "inter-word" | "inter-character" | "distribute"
+                ),
             };
             if ok {
                 vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
