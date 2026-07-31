@@ -4903,6 +4903,17 @@ mod tests {
                     "vertical", "start top", "foobar", "start foobar", "none none"] {
             assert_eq!(c(bad), "", "무효여야: {}", bad);
         }
+        // 계산값 remap(§css-anchor-2, 기본 writing-mode): block/inline 논리 → start-end 접힘.
+        let cc = |v: &str| crate::css::position_area_computed(v);
+        assert_eq!(cc("block-start inline-start"), "start");     // 둘 다 start
+        assert_eq!(cc("block-start inline-end"), "start end");
+        assert_eq!(cc("block-start center"), "start center");    // block → 앞
+        assert_eq!(cc("center inline-start"), "center start");   // inline → 뒤
+        assert_eq!(cc("start span-all"), "block-start");         // 역: 첫 슬롯 → block
+        assert_eq!(cc("span-all start"), "inline-start");        // 역: 둘째 슬롯 → inline
+        assert_eq!(cc("self-block-end self-inline-start"), "self-end self-start");
+        assert_eq!(cc("left top"), "left top");                  // 물리 축은 그대로
+        assert_eq!(cc("top"), "top");                            // 단일은 그대로
     }
 
     // anchor()(§css-anchor-1): inset 프로퍼티 전용. anchor-side ∈ 키워드|<percentage>|math.

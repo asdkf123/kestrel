@@ -85,7 +85,9 @@ pub(crate) use values::{
 };
 pub(crate) use values::color_syntax_valid;
 pub(crate) use values::{content_canonical, content_valid};
-pub(crate) use values::{anchor_canonical, anchor_size_canonical, position_area_canonical};
+pub(crate) use values::{
+    anchor_canonical, anchor_size_canonical, position_area_canonical, position_area_computed,
+};
 pub(crate) use values::{
     background_attachment_valid, background_clip_canonical, background_clip_valid,
     background_repeat_valid, background_size_valid, basic_shape_valid, bg_position_axis_valid,

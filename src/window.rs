@@ -750,6 +750,10 @@ fn collect_computed_styles(
         if let Some(v) = m.get("background-clip").cloned() {
             m.insert("background-clip".to_string(), crate::css::background_clip_canonical(&v));
         }
+        // position-area 계산값(§css-anchor-2): block/inline 논리 쌍을 start-end 로 접는다.
+        if let Some(v) = m.get("position-area").cloned() {
+            m.insert("position-area".to_string(), crate::css::position_area_computed(&v));
+        }
         // background-repeat/mask-repeat 계산값(§CSS Backgrounds): 레이어별 2값을 축약한다.
         // "repeat repeat"→"repeat", "repeat no-repeat"→"repeat-x", "no-repeat repeat"→"repeat-y".
         for key in ["background-repeat", "mask-repeat"] {

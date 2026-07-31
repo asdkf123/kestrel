@@ -3555,6 +3555,88 @@ pub fn position_area_canonical(value: &str) -> Option<String> {
     }
 }
 
+// position-area 계산값 remap(§css-anchor-2, 기본 writing-mode): block/inline 논리 축
+// 쌍은 계산 시 start-end 논리 형태로 접힌다. 예: "block-start inline-start" → "start"
+// (둘 다 start), "block-start inline-end" → "start end". 단일 키워드/물리 축/center/
+// span-all 은 그대로. (writing-mode 인식 해석은 별도 — 여기선 기본 horizontal-tb 가정.)
+fn logical_to_startend(kw: &str) -> Option<&'static str> {
+    Some(match kw {
+        "block-start" | "inline-start" => "start",
+        "block-end" | "inline-end" => "end",
+        "span-block-start" | "span-inline-start" => "span-start",
+        "span-block-end" | "span-inline-end" => "span-end",
+        "self-block-start" | "self-inline-start" => "self-start",
+        "self-block-end" | "self-inline-end" => "self-end",
+        "span-self-block-start" | "span-self-inline-start" => "span-self-start",
+        "span-self-block-end" | "span-self-inline-end" => "span-self-end",
+        _ => return None,
+    })
+}
+
+fn pa_is_block_axis(kw: &str) -> bool {
+    kw.contains("block-") // block-*, self-block-*, span-block-*, span-self-block-*
+}
+
+// start-end/self-start-end 키워드를 block/inline 논리형으로 복원(computed): 첫 슬롯→block,
+// 둘째 슬롯→inline. start-end 축 + span-all 계산에 쓴다("start span-all"→"block-start").
+fn startend_to_logical(kw: &str, block: bool) -> Option<String> {
+    let ax = if block { "block" } else { "inline" };
+    Some(match kw {
+        "start" => format!("{}-start", ax),
+        "end" => format!("{}-end", ax),
+        "span-start" => format!("span-{}-start", ax),
+        "span-end" => format!("span-{}-end", ax),
+        "self-start" => format!("self-{}-start", ax),
+        "self-end" => format!("self-{}-end", ax),
+        "span-self-start" => format!("span-self-{}-start", ax),
+        "span-self-end" => format!("span-self-{}-end", ax),
+        _ => return None,
+    })
+}
+
+pub fn position_area_computed(value: &str) -> String {
+    let toks: Vec<&str> = value.split_whitespace().collect();
+    if toks.len() == 2 {
+        // start-end/self-start-end + span-all → 논리형으로 복원(span-all 드롭). start-end 가
+        // 첫 슬롯이면 block, 둘째 슬롯이면 inline.
+        if toks[1] == "span-all" {
+            if let Some(l) = startend_to_logical(toks[0], true) {
+                return l;
+            }
+        }
+        if toks[0] == "span-all" {
+            if let Some(l) = startend_to_logical(toks[1], false) {
+                return l;
+            }
+        }
+        let m0 = logical_to_startend(toks[0]);
+        let m1 = logical_to_startend(toks[1]);
+        let remapped = match (m0, m1) {
+            // 두 토큰 모두 논리 축: 입력 순서 유지(파싱 캐논이 이미 block-first 정렬).
+            (Some(a), Some(b)) => Some(format!("{} {}", a, b)),
+            // 한쪽만 논리(다른쪽 center/span-all): center-slot 규칙으로 순서 — block 축은
+            // start-end 를 앞, inline 축은 뒤.
+            (Some(a), None) => Some(if pa_is_block_axis(toks[0]) {
+                format!("{} {}", a, toks[1])
+            } else {
+                format!("{} {}", toks[1], a)
+            }),
+            (None, Some(b)) => Some(if pa_is_block_axis(toks[1]) {
+                format!("{} {}", b, toks[0])
+            } else {
+                format!("{} {}", toks[0], b)
+            }),
+            (None, None) => None,
+        };
+        if let Some(r) = remapped {
+            if let Some(c) = position_area_canonical(&r) {
+                return c;
+            }
+        }
+    }
+    value.to_string()
+}
+
 // 크기 프로퍼티 값 유효성(§CSS Sizing): [auto|none|<length-percentage 0+>|min-content|
 // max-content|fit-content|fit-content()]. allow_none: max-*, allow_auto: width/min-*.
 pub fn size_valid(tok: &str, allow_none: bool, allow_auto: bool) -> bool {
