@@ -1242,14 +1242,25 @@ pub(crate) fn normalize_image_set(text: &str) -> String {
         if img.eq_ignore_ascii_case("none") {
             return String::new();
         }
-        // 이미지 뒤 첫 토큰(있으면): <resolution> 또는 type(<string>)(§CSS Images 4).
-        // 그 외는 무효(나머지 토큰은 기존대로 관대).
-        if let Some(t) = toks.get(1) {
+        // 이미지 뒤: <resolution> || type(<string>), 각 ≤1(§CSS Images 4). type() 인자는
+        // 단일 <string>. 미지 토큰·중복·이중 url 등 거부.
+        let (mut res_seen, mut type_seen) = (0u32, 0u32);
+        for t in &toks[1..] {
             let tl = t.to_ascii_lowercase();
-            let is_type = tl.starts_with("type(") && t.ends_with(')');
-            if !is_type && !image_set_resolution_valid(t) {
+            if tl.starts_with("type(") && t.ends_with(')') {
+                let arg = t[t.find('(').unwrap() + 1..t.len() - 1].trim();
+                if !is_css_string(arg) {
+                    return String::new(); // type() 인자는 단일 문자열
+                }
+                type_seen += 1;
+            } else if image_set_resolution_valid(t) {
+                res_seen += 1;
+            } else {
                 return String::new();
             }
+        }
+        if res_seen > 1 || type_seen > 1 {
+            return String::new();
         }
     }
     let items: Vec<String> =
