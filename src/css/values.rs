@@ -6565,6 +6565,28 @@ pub fn offset_path_valid(raw: &str) -> bool {
                 return false;
             }
             shapes += 1;
+        } else if cl.starts_with("path(") && c.ends_with(')') {
+            // offset-path 의 path() 는 <fill-rule> 불허(clip-path 와 달리). 따옴표 밖
+            // 최상위 콤마가 있으면 fill-rule 이 있는 것 → 거부.
+            let inner = &c[c.find('(').unwrap() + 1..c.len() - 1];
+            let mut q: Option<char> = None;
+            let mut top_comma = false;
+            for ch in inner.chars() {
+                match q {
+                    Some(qc) if ch == qc => q = None,
+                    Some(_) => {}
+                    None if ch == '"' || ch == '\'' => q = Some(ch),
+                    None if ch == ',' => {
+                        top_comma = true;
+                        break;
+                    }
+                    None => {}
+                }
+            }
+            if top_comma || !basic_shape_valid(c) {
+                return false;
+            }
+            shapes += 1;
         } else if c.ends_with(')') && basic_shape_valid(c) {
             shapes += 1;
         } else {
