@@ -3344,7 +3344,7 @@ pub fn anchor_size_canonical(value: &str) -> Option<String> {
 }
 
 // anchor()/anchor-size() 의 fallback: 단일 <length-percentage> | 수학함수 |
-// 중첩 anchor-size(). 그 외(빈값/다중값/시간·각 단위/bare 키워드/무효 중첩)는 거부.
+// 중첩 anchor()/anchor-size(). 그 외(빈값/다중값/시간·각 단위/bare 키워드/무효 중첩)는 거부.
 fn anchor_fallback_canonical(fb: &str) -> Option<String> {
     if fb.is_empty() || split_top_level(fb).len() != 1 {
         return None;
@@ -3353,6 +3353,9 @@ fn anchor_fallback_canonical(fb: &str) -> Option<String> {
     if low.starts_with("anchor-size(") {
         return anchor_size_canonical(fb);
     }
+    if low.starts_with("anchor(") {
+        return anchor_canonical(fb);
+    }
     if is_math_fn(&low) {
         return Some(fb.trim().to_string());
     }
@@ -3360,6 +3363,73 @@ fn anchor_fallback_canonical(fb: &str) -> Option<String> {
         return Some(low);
     }
     None
+}
+
+// anchor() (§css-anchor-1 #anchor): inset 프로퍼티(top/right/bottom/left, 논리 포함)에서만.
+//   anchor( [ <dashed-ident> || <anchor-side> ] [ , <fallback> ]? )
+// anchor-side ∈ inside|outside|left|right|top|bottom|start|end|self-start|self-end|center
+//   | <percentage> | 수학함수. (길이는 불가 — anchor-size 와 달리 <percentage> 만.)
+// name/side 순서 무관 → 캐논 name-first. 유효하면 캐논 문자열, 아니면 None.
+pub fn anchor_canonical(value: &str) -> Option<String> {
+    let t = value.trim();
+    let tl = t.to_ascii_lowercase();
+    if !tl.starts_with("anchor(") || !t.ends_with(')') {
+        return None;
+    }
+    let inner = &t["anchor(".len()..t.len() - 1]; // dashed-ident 대소문자 보존
+    let it = inner.trim();
+    if it.is_empty() || it.starts_with(',') || it.ends_with(',') {
+        return None;
+    }
+    let parts = split_top_commas(inner);
+    if parts.is_empty() || parts.len() > 2 {
+        return None;
+    }
+    let toks = split_top_level(parts[0].trim());
+    if toks.is_empty() || toks.len() > 2 {
+        return None;
+    }
+    const SIDES: &[&str] = &[
+        "inside", "outside", "left", "right", "top", "bottom", "start", "end",
+        "self-start", "self-end", "center",
+    ];
+    let mut name: Option<String> = None;
+    let mut side: Option<String> = None;
+    for tk in &toks {
+        let low = tk.to_ascii_lowercase();
+        let is_side = SIDES.contains(&low.as_str())
+            || (low.ends_with('%')
+                && low[..low.len() - 1].parse::<f64>().map(|v| v.is_finite()).unwrap_or(false))
+            || is_math_fn(&low);
+        if is_side {
+            if side.is_some() {
+                return None; // side 두 개
+            }
+            // 키워드/퍼센트는 소문자 캐논, 수학함수는 원문 유지.
+            side = Some(if is_math_fn(&low) { tk.to_string() } else { low });
+        } else if tk.starts_with("--") && tk.len() > 2 {
+            if name.is_some() {
+                return None; // name 두 개
+            }
+            name = Some(tk.to_string()); // 대소문자 보존
+        } else {
+            return None; // anchor-side 도 dashed-ident 도 아님
+        }
+    }
+    let side = side?; // side 필수
+    let mut canon = String::from("anchor(");
+    if let Some(n) = &name {
+        canon.push_str(n);
+        canon.push(' ');
+    }
+    canon.push_str(&side);
+    if parts.len() == 2 {
+        let fb = anchor_fallback_canonical(parts[1].trim())?;
+        canon.push_str(", ");
+        canon.push_str(&fb);
+    }
+    canon.push(')');
+    Some(canon)
 }
 
 // 크기 프로퍼티 값 유효성(§CSS Sizing): [auto|none|<length-percentage 0+>|min-content|

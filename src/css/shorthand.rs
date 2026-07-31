@@ -129,7 +129,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let toks = split_top_level(value_text.trim());
             // anchor-size()/anchor()(§css-anchor-1): inset 프로퍼티에서 유효.
             if toks.len() == 1 {
-                if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
+                if let Some(canon) = crate::css::anchor_size_canonical(toks[0])
+                    .or_else(|| crate::css::anchor_canonical(toks[0]))
+                {
                     return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
                 }
             }
@@ -4795,5 +4797,40 @@ mod tests {
         assert_eq!(kw("margin-top", "anchor-size(height)"), "anchor-size(height)");
         // padding 은 anchor-size 거부(§: sizing/inset/margin 만).
         assert_eq!(kw("padding-left", "anchor-size(--foo width)"), "");
+    }
+
+    // anchor()(§css-anchor-1): inset 프로퍼티 전용. anchor-side ∈ 키워드|<percentage>|math.
+    #[test]
+    fn anchor_grammar_on_inset() {
+        let kw = |p: &str, v: &str| match find(&expand_declaration(p, v), p) {
+            Some(Value::Keyword(k)) => k.clone(),
+            _ => String::new(),
+        };
+        // 유효: side 필수(키워드/퍼센트/math), name 선택·순서무관→name-first, fallback.
+        assert_eq!(kw("top", "anchor(top)"), "anchor(top)");
+        assert_eq!(kw("left", "anchor(--foo left)"), "anchor(--foo left)");
+        assert_eq!(kw("bottom", "anchor(right --foo)"), "anchor(--foo right)"); // 순서 뒤집기
+        assert_eq!(kw("top", "anchor(50%)"), "anchor(50%)");
+        assert_eq!(kw("top", "anchor(--foo left, 1px)"), "anchor(--foo left, 1px)");
+        assert_eq!(kw("top", "anchor(--foo left, anchor(--bar right))"),
+                   "anchor(--foo left, anchor(--bar right))"); // 중첩 fallback
+        // inset-only: margin/sizing/padding 에선 거부.
+        assert_eq!(kw("margin-top", "anchor(top)"), "");
+        assert_eq!(kw("height", "anchor(top)"), "");
+        // 무효: 거부.
+        for bad in [
+            "anchor(--foo, top)",       // 콤마가 name/side 사이
+            "anchor(--foo top,)",       // 후행 콤마
+            "anchor(--foo top bottom)", // side 두 개
+            "anchor(foo top)",          // dashed-ident 아님
+            "anchor(--foo height)",     // side 아님(height 는 size)
+            "anchor(--foo 10em)",       // 길이 불가(퍼센트만)
+            "anchor(--foo 100s)",       // 시간
+            "anchor(2 * 20%)",          // 다중 토큰
+            "anchor(--foo top, 1)",     // fallback 단위없는 1
+            "anchor(--foo top, bottom)", // bare 키워드 fallback
+        ] {
+            assert_eq!(kw("top", bad), "", "무효여야: {}", bad);
+        }
     }
 }
