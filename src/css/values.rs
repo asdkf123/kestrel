@@ -6074,7 +6074,9 @@ fn nonneg_length_only(t: &str) -> bool {
     if low.starts_with('-') || low.ends_with('%') {
         return false;
     }
-    is_math_fn(&low) || (is_length_percentage(t) && low.parse::<f64>().is_err())
+    // is_length_percentage 는 단위 없는 수 중 0 만 <length> 로 인정한다. 단위 없는
+    // 비영 수만 추가로 거부(단, 0 은 유효한 길이라 허용).
+    is_math_fn(&low) || (is_length_percentage(t) && (low == "0" || low.parse::<f64>().is_err()))
 }
 // 부호 없는 <percentage>.
 fn nonneg_percent(t: &str) -> bool {
