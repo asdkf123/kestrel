@@ -472,8 +472,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // text-indent(§CSS Text): <length-percentage> && hanging? && each-line?.
         "text-indent" => {
             let vt = value_text.trim().to_ascii_lowercase();
+            // CSS-wide 키워드는 모든 프로퍼티에서 유효 — Keyword 로 보존해 스타일 계산의
+            // wide-keyword 해석(inherit→부모값 등)이 처리하게 한다(예전엔 거부→no-op 이라
+            // text-indent: inherit 가 무시됐다).
             if matches!(vt.as_str(), "inherit" | "unset" | "revert" | "revert-layer") {
-                return Vec::new();
+                return vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Keyword(vt) }];
             }
             if vt == "initial" {
                 return vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Length(0.0, Unit::Px) }];
