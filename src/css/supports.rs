@@ -134,6 +134,9 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "animation-timing-function", "animation-iteration-count", "animation-direction",
     "animation-fill-mode", "animation-play-state", "animation-composition",
     "animation-range", "animation-range-start", "animation-range-end",
+    // 이번 스윕에서 검증 추가한 프로퍼티(CSS.supports·계산값 노출).
+    "input-security", "overlay", "caret-animation", "object-view-box", "margin-trim",
+    "flex-line-count", "interpolate-size", "scroll-initial-target",
     // UI/인터랙션/표/스크롤 키워드 프로퍼티 — 실제 CSS 프로퍼티라 계산값 노출.
     "cursor", "appearance", "user-select", "resize", "pointer-events", "touch-action",
     "interactivity",

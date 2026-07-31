@@ -40,10 +40,8 @@ css/css-flexbox/animation/flex-shrink-interpolation.html	FAIL	CSS Animations: pr
 css/css-flexbox/animation/flex-shrink-interpolation.html	FAIL	CSS Animations: property <flexU+2dshrink> from [0] to [1] at (U+2d0.3) should be [0]	assert_equals: expected "0 " but got "U+2d 0.3 "
 css/css-flexbox/animation/flex-shrink-interpolation.html	FAIL	Web Animations: property <flexU+2dshrink> from [0] to [1] at (U+2d5) should be [0]	assert_equals: expected "0 " but got "U+2d 5 "
 css/css-flexbox/animation/flex-shrink-interpolation.html	FAIL	Web Animations: property <flexU+2dshrink> from [0] to [1] at (U+2d0.3) should be [0]	assert_equals: expected "0 " but got "U+2d 0.3 "
-css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value '1'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
-css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value '2'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
-css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value 'round(up, calc(7/2))'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
-css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value 'calc(NaN)'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
+css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value 'round(up, calc(7/2))'	assert_true: 'round(up, calc(7/2))' is a supported value for flexU+2dlineU+2dcount. expected true got false
+css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value 'calc(NaN)'	assert_equals: expected "1" but got "calc(nan)"
 css/css-flexbox/balance/flex-wrap-computed.html	FAIL	Property flexU+2dwrap value 'balance'	assert_true: 'balance' is a supported value for flexU+2dwrap. expected true got false
 css/css-flexbox/balance/flex-wrap-computed.html	FAIL	Property flexU+2dwrap value 'wrap balance'	assert_true: 'wrap balance' is a supported value for flexU+2dwrap. expected true got false
 css/css-flexbox/balance/flex-wrap-computed.html	FAIL	Property flexU+2dwrap value 'wrapU+2dreverse balance'	assert_true: 'wrapU+2dreverse balance' is a supported value for flexU+2dwrap. expected true got false

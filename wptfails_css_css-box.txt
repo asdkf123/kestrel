@@ -362,8 +362,7 @@ css/css-box/animation/padding-top-composition.html	FAIL	Compositing Web Animatio
 css/css-box/animation/padding-top-composition.html	FAIL	Compositing Web Animations: property <paddingU+2dtop> underlying [10%] from add [100px] to add [20%] at (1.5) should be [calc(U+2d50px + 40%)]	assert_equals: expected "0px " but got "calc ( U+2d 50px + 30 % ) "
 css/css-box/inheritance.html	FAIL	Property marginU+2dbottom does not inherit	assert_equals: expected "10px" but got "0px"
 css/css-box/inheritance.html	FAIL	Property marginU+2dtop does not inherit	assert_equals: expected "10px" but got "0px"
-css/css-box/inheritance.html	FAIL	Property marginU+2dtrim has initial value none	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/inheritance.html	FAIL	Property marginU+2dtrim does not inherit	assert_true: expected true got false
+css/css-box/inheritance.html	FAIL	Property marginU+2dtrim has initial value none	assert_equals: expected "none" but got ""
 css/css-box/margin-trim/computed-margin-values/flexbox-column-style-change-triggers-layout-block-start.html	FAIL	flexbox > item 1	assert_equals:  <item dataU+2dexpectedU+2dmarginU+2dtop="10" dataU+2doffsetU+2dy="18"></item> offsetTop expected 18 but got 10
 css/css-box/margin-trim/computed-margin-values/flexbox-column-style-change-triggers-layout-block-start.html	FAIL	flexbox > item 2	assert_equals:  <item dataU+2dexpectedU+2dmarginU+2dtop="10" dataU+2doffsetU+2dy="78"></item> offsetTop expected 78 but got 60
 css/css-box/parsing/clear-computed.html	FAIL	Property clear value 'inlineU+2dstart'	assert_true: 'inlineU+2dstart' is a supported value for clear. expected true got false
@@ -378,26 +377,10 @@ css/css-box/parsing/margin-computed.html	FAIL	Property marginU+2dtop value '10px
 css/css-box/parsing/margin-computed.html	FAIL	Property marginU+2dright value '20px'	assert_equals: expected "20px" but got "200px"
 css/css-box/parsing/margin-computed.html	FAIL	Property marginU+2dbottom value '30px'	assert_equals: expected "30px" but got "0px"
 css/css-box/parsing/margin-invalid.html	FAIL	e.style['marginU+2dbottomU+2dleft'] = "none" should not set the property value	assert_equals: expected "" but got "none"
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'none'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'block'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inline'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart blockU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dstart inlineU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart inlineU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dstart blockU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dend blockU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dend blockU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart blockU+2dend inlineU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart inlineU+2dstart blockU+2dend inlineU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart blockU+2dend inlineU+2dend inlineU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart blockU+2dend inlineU+2dstart inlineU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dstart blockU+2dend blockU+2dstart inlineU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dstart inlineU+2dend blockU+2dstart blockU+2dend'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
-css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dend blockU+2dend inlineU+2dstart blockU+2dstart'	assert_true: marginU+2dtrim doesn't seem to be supported in the computed style expected true got false
+css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dstart blockU+2dstart'	assert_equals: expected "blockU+2dstart inlineU+2dstart" but got "inlineU+2dstart blockU+2dstart"
+css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dend blockU+2dstart'	assert_equals: expected "blockU+2dstart inlineU+2dend" but got "inlineU+2dend blockU+2dstart"
+css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'inlineU+2dend blockU+2dend'	assert_equals: expected "blockU+2dend inlineU+2dend" but got "inlineU+2dend blockU+2dend"
+css/css-box/parsing/margin-trim-computed.html	FAIL	Property marginU+2dtrim value 'blockU+2dstart blockU+2dend inlineU+2dstart'	assert_equals: expected "blockU+2dstart inlineU+2dstart blockU+2dend" but got "blockU+2dstart blockU+2dend inlineU+2dstart"
 css/css-box/parsing/padding-computed.html	FAIL	Property padding value '10px'	assert_true: padding doesn't seem to be supported in the computed style expected true got false
 css/css-box/parsing/padding-computed.html	FAIL	Property padding value '10px 20px 30px 40px'	assert_true: padding doesn't seem to be supported in the computed style expected true got false
 css/css-box/parsing/padding-computed.html	FAIL	Property padding value '20%'	assert_true: padding doesn't seem to be supported in the computed style expected true got false

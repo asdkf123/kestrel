@@ -77,10 +77,7 @@ css/css-ui/inheritance.html	FAIL	Property navU+2dright does not inherit	assert_t
 css/css-ui/inheritance.html	FAIL	Property navU+2dup has initial value auto	assert_true: navU+2dup doesn't seem to be supported in the computed style expected true got false
 css/css-ui/inheritance.html	FAIL	Property navU+2dup does not inherit	assert_true: expected true got false
 css/css-ui/inheritance.html	FAIL	Property outlineU+2dwidth has initial value 0px	assert_equals: expected "0px" but got "3px"
-css/css-ui/input-security-computed.html	FAIL	Property inputU+2dsecurity value 'initial'	assert_true: inputU+2dsecurity doesn't seem to be supported in the computed style expected true got false
-css/css-ui/input-security-computed.html	FAIL	Property inputU+2dsecurity value 'inherit'	assert_true: inputU+2dsecurity doesn't seem to be supported in the computed style expected true got false
-css/css-ui/input-security-computed.html	FAIL	Property inputU+2dsecurity value 'auto'	assert_true: inputU+2dsecurity doesn't seem to be supported in the computed style expected true got false
-css/css-ui/input-security-computed.html	FAIL	Property inputU+2dsecurity value 'none'	assert_true: inputU+2dsecurity doesn't seem to be supported in the computed style expected true got false
+css/css-ui/input-security-computed.html	FAIL	Property inputU+2dsecurity value 'initial'	assert_equals: expected "auto" but got ""
 css/css-ui/interactivity-inert-all.html	FAIL	The 'all' shorthand should set 'interactivity'	assert_equals: expected "auto" but got "inert"
 css/css-ui/interactivity-inert-animated.html	FAIL	Click event should work for interactivity:auto animation	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
 css/css-ui/interactivity-inert-click.html	FAIL	Click event should work after interactivity change	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
