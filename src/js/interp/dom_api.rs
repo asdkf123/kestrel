@@ -239,6 +239,12 @@ impl Interp {
                 return s;
             }
         }
+        // position-area 지정값 캐논(§css-anchor-2): 축 순서/span-all 드롭/center 슬롯.
+        if prop == "position-area" {
+            if let Some(s) = crate::css::position_area_canonical(raw) {
+                return s;
+            }
+        }
         // color-mix 지정값 캐논 직렬화(퍼센트 위치, inner 색, 기본 50% 생략).
         if rl.starts_with("color-mix(") {
             if let Some(s) = crate::css::normalize_color_mix(raw) {
@@ -724,6 +730,7 @@ impl Interp {
                     | "inset-block-end"
                     | "inset-inline-start"
                     | "inset-inline-end"
+                    | "position-area"
                     | "overflow"
                     | "overflow-x"
                     | "overflow-y"

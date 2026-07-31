@@ -3448,6 +3448,113 @@ pub fn anchor_canonical(value: &str) -> Option<String> {
     Some(canon)
 }
 
+// position-area (§css-anchor-2 #position-area): 2D 그리드 영역. none | <pa-keyword>{1,2}.
+// 각 키워드는 한 축 그룹에 속하고, 두 값은 **호환 축 쌍**에서 하나씩(또는 center/span-all).
+// 캐논: H/block/self-block 축이 앞, V/inline/self-inline 이 뒤. span-all 은 쌍에서 드롭.
+#[derive(PartialEq, Clone, Copy)]
+enum PaAxis {
+    H,
+    V,
+    Inline,
+    Block,
+    SelfInline,
+    SelfBlock,
+    StartEnd,
+    SelfStartEnd,
+    Center,
+    SpanAll,
+}
+
+fn pa_axis(kw: &str) -> Option<PaAxis> {
+    use PaAxis::*;
+    Some(match kw {
+        "left" | "right" | "span-left" | "span-right" | "x-start" | "x-end" | "span-x-start"
+        | "span-x-end" | "self-x-start" | "self-x-end" | "span-self-x-start" | "span-self-x-end" => H,
+        "top" | "bottom" | "span-top" | "span-bottom" | "y-start" | "y-end" | "span-y-start"
+        | "span-y-end" | "self-y-start" | "self-y-end" | "span-self-y-start" | "span-self-y-end" => V,
+        "inline-start" | "inline-end" | "span-inline-start" | "span-inline-end" => Inline,
+        "block-start" | "block-end" | "span-block-start" | "span-block-end" => Block,
+        "self-inline-start" | "self-inline-end" | "span-self-inline-start" | "span-self-inline-end" => {
+            SelfInline
+        }
+        "self-block-start" | "self-block-end" | "span-self-block-start" | "span-self-block-end" => {
+            SelfBlock
+        }
+        "start" | "end" | "span-start" | "span-end" => StartEnd,
+        "self-start" | "self-end" | "span-self-start" | "span-self-end" => SelfStartEnd,
+        "center" => Center,
+        "span-all" => SpanAll,
+        _ => return None,
+    })
+}
+
+pub fn position_area_canonical(value: &str) -> Option<String> {
+    use PaAxis::*;
+    let low = value.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return Some(low);
+    }
+    let toks: Vec<&str> = low.split_whitespace().collect();
+    if toks.is_empty() || toks.len() > 2 {
+        return None;
+    }
+    let a0 = pa_axis(toks[0])?;
+    if toks.len() == 1 {
+        return Some(toks[0].to_string()); // 단일 유효 키워드(none 은 위에서)
+    }
+    let a1 = pa_axis(toks[1])?;
+    let is_dir = |a: PaAxis| matches!(a, StartEnd | SelfStartEnd);
+    // center/span-all 끼리: center center→center, span-all span-all→span-all, 그 외 입력 유지.
+    if matches!(a0, Center | SpanAll) && matches!(a1, Center | SpanAll) {
+        if a0 == a1 {
+            return Some(toks[0].to_string());
+        }
+        return Some(format!("{} {}", toks[0], toks[1]));
+    }
+    // 방향 축(start/end, self-start/end)이 한쪽이면 특수: 같은 그룹끼리(같은 키워드는 단일로
+    // 축약), 또는 center/span-all 과의 조합은 **입력 순서 유지**(span-all 드롭 안 함). 그 외
+    // 비방향 축과는 비호환.
+    if is_dir(a0) || is_dir(a1) {
+        let (dir_a, other_a) = if is_dir(a0) { (a0, a1) } else { (a1, a0) };
+        if other_a == dir_a {
+            // 같은 방향 그룹: 같은 키워드 → 단일, 다르면 입력 순서.
+            if toks[0] == toks[1] {
+                return Some(toks[0].to_string());
+            }
+            return Some(format!("{} {}", toks[0], toks[1]));
+        }
+        if matches!(other_a, Center | SpanAll) {
+            return Some(format!("{} {}", toks[0], toks[1])); // span-all 유지, 입력 순서
+        }
+        return None; // 방향 축 + 비호환
+    }
+    // 이하 비방향 축. 한쪽이 span-all → 드롭.
+    if a0 == SpanAll {
+        return Some(toks[1].to_string());
+    }
+    if a1 == SpanAll {
+        return Some(toks[0].to_string());
+    }
+    // 한쪽이 center → center + 축키워드. H/Block/SelfBlock 앞, V/Inline/SelfInline 뒤.
+    if a0 == Center || a1 == Center {
+        let (axis_tok, axis) = if a0 == Center { (toks[1], a1) } else { (toks[0], a0) };
+        return match axis {
+            H | Block | SelfBlock => Some(format!("{} center", axis_tok)),
+            V | Inline | SelfInline => Some(format!("center {}", axis_tok)),
+            _ => None,
+        };
+    }
+    // 두 축 키워드: 같은 키워드 무효, 호환 축 쌍만(캐논 순서 H/block/self-block 앞).
+    if toks[0] == toks[1] {
+        return None;
+    }
+    match (a0, a1) {
+        (H, V) | (Block, Inline) | (SelfBlock, SelfInline) => Some(format!("{} {}", toks[0], toks[1])),
+        (V, H) | (Inline, Block) | (SelfInline, SelfBlock) => Some(format!("{} {}", toks[1], toks[0])),
+        _ => None, // 비호환 축(같은 축 포함)
+    }
+}
+
 // 크기 프로퍼티 값 유효성(§CSS Sizing): [auto|none|<length-percentage 0+>|min-content|
 // max-content|fit-content|fit-content()]. allow_none: max-*, allow_auto: width/min-*.
 pub fn size_valid(tok: &str, allow_none: bool, allow_auto: bool) -> bool {

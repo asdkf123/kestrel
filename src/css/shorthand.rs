@@ -1777,6 +1777,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // position-area(§css-anchor-2): none | <position-area>{1,2}. 축 호환성 문법 검증 +
+        // 캐논(H/block/self-block 앞, span-all 드롭, center 슬롯). 예전엔 검증 없이 raw 수용.
+        "position-area" => {
+            match crate::css::position_area_canonical(value_text) {
+                Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+                None => Vec::new(),
+            }
+        }
         // list-style-type(§CSS Lists): <counter-style> | <string> | none.
         "list-style-type" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -4859,6 +4867,42 @@ mod tests {
         assert_eq!(kw("margin-top", "anchor-size(height)"), "anchor-size(height)");
         // padding 은 anchor-size 거부(§: sizing/inset/margin 만).
         assert_eq!(kw("padding-left", "anchor-size(--foo width)"), "");
+    }
+
+    // position-area(§css-anchor-2): 2D 축 호환성 문법 + 캐논. 예전엔 검증 전무(raw 수용).
+    #[test]
+    fn position_area_grammar() {
+        let c = |v: &str| match find(&expand_declaration("position-area", v), "position-area") {
+            Some(Value::Keyword(k)) => k.clone(),
+            _ => String::new(),
+        };
+        // 단일 + none
+        assert_eq!(c("none"), "none");
+        assert_eq!(c("center"), "center");
+        assert_eq!(c("span-all"), "span-all");
+        assert_eq!(c("top"), "top");
+        // 호환 축 쌍 캐논(H/block/self-block 앞)
+        assert_eq!(c("top left"), "left top"); // V H → H first
+        assert_eq!(c("left top"), "left top");
+        assert_eq!(c("inline-start block-start"), "block-start inline-start"); // inline block → block first
+        // span-all 드롭(비방향), center 슬롯
+        assert_eq!(c("top span-all"), "top");
+        assert_eq!(c("span-all left"), "left");
+        assert_eq!(c("top center"), "center top"); // V → center 앞
+        assert_eq!(c("left center"), "left center"); // H → 앞
+        assert_eq!(c("center center"), "center");
+        assert_eq!(c("span-all span-all"), "span-all");
+        // 방향 축(start/end): 같은 그룹 유효, 같은 키워드 단일 축약, span-all/center 유지
+        assert_eq!(c("start end"), "start end");
+        assert_eq!(c("start start"), "start");
+        assert_eq!(c("start span-all"), "start span-all"); // 드롭 안 함
+        assert_eq!(c("span-all start"), "span-all start");
+        assert_eq!(c("start center"), "start center"); // 입력 순서
+        // 무효: 같은 축(비방향)/중복/비호환 축/미인식 키워드
+        for bad in ["top top", "top bottom", "left right", "top inline-start",
+                    "vertical", "start top", "foobar", "start foobar", "none none"] {
+            assert_eq!(c(bad), "", "무효여야: {}", bad);
+        }
     }
 
     // anchor()(§css-anchor-1): inset 프로퍼티 전용. anchor-side ∈ 키워드|<percentage>|math.
