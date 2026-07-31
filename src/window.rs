@@ -409,6 +409,14 @@ fn fill_js_maps(
             let color = m.get("outline-color").cloned().unwrap_or_else(|| "invert".into());
             m.insert("outline".to_string(), format!("{} {} {}", width, style, color));
         }
+        // text-spacing 단축 계산값 재조립(§CSS Text 4): text-autospace + text-spacing-trim.
+        // 둘 다 normal→"normal", no-autospace+space-all→"none", auto+auto→"auto",
+        // 그 외는 normal 이 아닌 성분만(autospace 먼저).
+        {
+            let a = m.get("text-autospace").cloned().unwrap_or_else(|| "normal".into());
+            let t = m.get("text-spacing-trim").cloned().unwrap_or_else(|| "normal".into());
+            m.insert("text-spacing".to_string(), crate::css::text_spacing_from_parts(&a, &t));
+        }
         m.insert("width".to_string(), px(d.content.width));
         m.insert("height".to_string(), px(d.content.height));
         for (k, v) in [

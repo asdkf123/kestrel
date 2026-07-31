@@ -701,6 +701,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // text-spacing(§CSS Text 4): normal | none | auto | [<spacing-trim> || <autospace>]
+        // 단축 → text-autospace + text-spacing-trim.
+        "text-spacing" => match text_spacing_parse(value_text) {
+            Some((a, t)) => vec![
+                Declaration { important: false, name: "text-autospace".to_string(), value: Value::Keyword(a) },
+                Declaration { important: false, name: "text-spacing-trim".to_string(), value: Value::Keyword(t) },
+            ],
+            None => Vec::new(),
+        },
         // text-wrap-mode(§CSS Text 4): wrap | nowrap 만. 그 외(auto/normal/balance/
         // pretty/두값 등) 거부. CSS-wide 통과.
         "text-wrap-mode" => {
@@ -2930,6 +2939,77 @@ fn parse_flex_basis(t: &str) -> Value {
 }
 
 // 절대 크기 키워드 → px (medium=16 기준 스케일, CSS Fonts).
+// text-spacing 단축(§CSS Text 4) 파싱 → (autospace, spacing-trim). normal/none/auto 특수,
+// [<spacing-trim> || <autospace>] 2값. 채움 키워드(normal/auto)는 확정 슬롯 배정 후 남은
+// 슬롯(autospace 우선)에. CSS-wide 키워드는 그대로 통과(계산에서 해석).
+pub(crate) fn text_spacing_parse(raw: &str) -> Option<(String, String)> {
+    let low = raw.trim().to_ascii_lowercase();
+    match low.as_str() {
+        "normal" | "initial" => return Some(("normal".into(), "normal".into())),
+        "none" => return Some(("no-autospace".into(), "space-all".into())),
+        "auto" => return Some(("auto".into(), "auto".into())),
+        "inherit" | "unset" | "revert" | "revert-layer" => return Some((low.clone(), low)),
+        _ => {}
+    }
+    let (mut trim, mut autospace): (Option<String>, Option<String>) = (None, None);
+    let mut fills: Vec<String> = Vec::new();
+    for tok in low.split_whitespace() {
+        if matches!(tok, "space-all" | "space-first" | "trim-all" | "trim-both" | "trim-start") {
+            if trim.is_some() {
+                return None;
+            }
+            trim = Some(tok.to_string());
+        } else if tok == "no-autospace" {
+            if autospace.is_some() {
+                return None;
+            }
+            autospace = Some(tok.to_string());
+        } else if tok == "normal" {
+            // 채움은 normal 만 — auto 는 2값 폼에서 무효(standalone 만).
+            fills.push(tok.to_string());
+        } else {
+            return None;
+        }
+    }
+    if trim.is_none() && autospace.is_none() && fills.is_empty() {
+        return None;
+    }
+    for f in fills {
+        if autospace.is_none() {
+            autospace = Some(f);
+        } else if trim.is_none() {
+            trim = Some(f);
+        } else {
+            return None;
+        }
+    }
+    Some((autospace.unwrap_or_else(|| "normal".into()), trim.unwrap_or_else(|| "normal".into())))
+}
+
+// text-spacing 계산·지정값 직렬화(autospace, trim → 캐논). 순서는 <spacing-trim> 먼저.
+pub(crate) fn text_spacing_from_parts(a: &str, t: &str) -> String {
+    if a == "normal" && t == "normal" {
+        "normal".to_string()
+    } else if a == "no-autospace" && t == "space-all" {
+        "none".to_string()
+    } else if a == "auto" && t == "auto" {
+        "auto".to_string()
+    } else {
+        let mut parts: Vec<String> = Vec::new();
+        if t != "normal" {
+            parts.push(t.to_string());
+        }
+        if a != "normal" {
+            parts.push(a.to_string());
+        }
+        if parts.is_empty() {
+            "normal".to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+}
+
 pub(crate) fn font_size_keyword(k: &str) -> Option<f32> {
     Some(match k {
         "xx-small" => 9.6,

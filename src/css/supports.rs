@@ -244,7 +244,7 @@ fn longhand_supported(prop: &str) -> bool {
 pub(crate) fn is_known_property(name: &str) -> bool {
     // text-decoration/font 은 계산값에 노출되는 단축(getComputedStyle 의 'font' /
     // 'text-decoration' in cs 게이트) — longhand 집합엔 없지만 알려진 프로퍼티다.
-    longhand_supported(name) || matches!(name, "text-decoration" | "font")
+    longhand_supported(name) || matches!(name, "text-decoration" | "font" | "text-spacing")
 }
 
 // 엔진이 실제로 계산하는 값 함수 전부. 여기 없는 함수(color-mix/oklch/lab/env/attr/

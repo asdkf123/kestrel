@@ -295,6 +295,18 @@ impl Interp {
                 return format!("url({})", serialize_css_string(&u));
             }
         }
+        // text-spacing 지정값 캐논(§CSS Text 4): normal normal→normal, 순서 trim 먼저,
+        // no-autospace+space-all→none 등. CSS-wide 키워드는 그대로.
+        if prop == "text-spacing" {
+            let low = raw.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+            {
+                return low;
+            }
+            if let Some((a, t)) = crate::css::text_spacing_parse(raw) {
+                return crate::css::text_spacing_from_parts(&a, &t);
+            }
+        }
         // font-family: 각 패밀리가 따옴표 문자열이고 내용이 유효한 식별자 시퀀스면
         // 따옴표를 제거한다(§CSSOM serialize a font-family). 'Lucida Grande' → Lucida Grande.
         if prop == "font-family" {
@@ -724,6 +736,7 @@ impl Interp {
                     | "hanging-punctuation"
                     | "text-autospace"
                     | "text-spacing-trim"
+                    | "text-spacing"
                     | "outline-offset"
                     | "display"
                     | "contain"

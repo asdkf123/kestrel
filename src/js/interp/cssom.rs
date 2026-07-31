@@ -62,7 +62,7 @@ impl Interp {
             // 노출하는 단축이라 포함(재조립됨). \0-접두 내부 키도 제외.
             .filter(|k| {
                 (!sh.contains_key(k.as_str())
-                    || matches!(k.as_str(), "text-decoration" | "font"))
+                    || matches!(k.as_str(), "text-decoration" | "font" | "text-spacing"))
                     && !k.starts_with('\u{0}')
             })
             .cloned()
