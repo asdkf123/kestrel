@@ -823,6 +823,8 @@ impl Interp {
                     | "overflow-anchor"
                     | "grid-auto-flow"
                     | "grid-template-areas"
+                    | "interpolate-size"
+                    | "scroll-initial-target"
                     | "contain"
                     | "top"
                     | "right"

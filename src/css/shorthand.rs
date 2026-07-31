@@ -624,6 +624,31 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // interpolate-size(§CSS Values 5): numeric-only | allow-keywords.
+        "interpolate-size" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "numeric-only"
+                    | "allow-keywords"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // scroll-initial-target(§CSS Scroll Snap): none | nearest.
+        "scroll-initial-target" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none" | "nearest"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // overflow-anchor(§CSS Scroll Anchoring): auto | none 단일 키워드만.
         "overflow-anchor" => {
             let low = value_text.trim().to_ascii_lowercase();
