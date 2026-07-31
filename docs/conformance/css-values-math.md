@@ -32,12 +32,21 @@
 
 `round(10%,1px)` `round(2rem,5px)` `mod(18px,100% / 15)` 등은 파스 타임에 % 를 못 풀어 미해석 → 계산/사용값 시점(레이아웃 폭 확정 후)에 풀어야 한다. calc 의 px+% 혼합 해석 경로와 동일한 미구현 이슈.
 
-## 착수한 것 (검증 대기)
+## 완료
 
-- **malformed round/mod/rem/calc/min/max/clamp 구문 거부**(round-mod-rem-invalid 102): 프로퍼티 검증기가
-  프리픽스만 보고 수용하던 것을 `math_function_valid`(함수명·괄호 균형·빈 인자·시작/끝 단독 연산자·
-  연산자 없는 값 나열) 로 교체. 보수적이라 유효식은 거부하지 않음. `is_math_fn` 중앙 경유.
-  → 빌드/self-test/css-values 재측정으로 회귀 없음 확인 후 커밋.
+- **malformed round/mod/rem/calc/min/max/clamp 구문 거부**(round-mod-rem-invalid): `math_function_valid`
+  (함수명·괄호 균형·빈 인자·선두/후행 콤마·시작/끝 단독 연산자·연산자 없는 값 나열) 로 교체. 커밋됨.
+- **calc 차원 타입 검사**(§CSS Values 4 §10) — `src/css/values.rs` `mdim_of`/`math_length_valid`/
+  `math_time_valid`. 차원 지수 벡터(len/ang/time/freq/res/flex + percent 플래그)로 +,-(축 일치)·*(합)·
+  /(차)·min/max/clamp/round/mod/rem(인자 축 일치)를 재귀 해석. var/env/attr·미지 함수·sqrt/pow/hypot 은
+  Wild(관대 수용)라 유효식은 절대 거부하지 않음(soundness). 길이(size_valid/margin/padding/border-width/
+  inset/scroll-margin/scroll-padding/gap)·시간(transition-delay/duration, animation) 문맥에 배선.
+  → max(0Hz)/calc(1/2px)/max(0)/축 불일치 거부. **이건 검증(accept/reject) 레이어**로, 아래 Unit enum
+  확장(계산값 평가·정규화 직렬화)과는 별개다. 자기테스트 `math_length_type_checking` 로 커버.
+
+  주의: 미지 함수를 Wild 로 두어 calc-size()/progress()/sibling-*() 는 타입 검사를 통과(관대). 이들의
+  거부는 함수별 시그니처 추가가 필요(후속). 중첩 calc 곱셈("calc(2)*calc(50px)") 순수-호출 판정 버그
+  수정 포함.
 
 ## 우선순위(권장)
 
