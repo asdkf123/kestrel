@@ -3294,23 +3294,28 @@ pub fn anchor_size_canonical(value: &str) -> Option<String> {
     }
     let inner = &t["anchor-size(".len()..t.len() - 1]; // dashed-ident 대소문자 보존
     // 선행/후행 콤마(빈 세그먼트)는 무효 — split_top_commas 가 후행 빈칸을 버리므로 먼저 막는다.
+    // 빈 inner("anchor-size()")는 유효 — 아래에서 빈 주부로 처리한다.
     let it = inner.trim();
-    if it.is_empty() || it.starts_with(',') || it.ends_with(',') {
+    if it.starts_with(',') || it.ends_with(',') {
         return None;
     }
+    // 주부: [ <dashed-ident> || <size-keyword> ]? — 전체 optional(빈 것도 유효). 순서 무관,
+    // 캐논 name-first. length-percentage 는 주부의 단독 토큰일 때만 허용(§, 예: anchor-size(10px)).
+    // fallback 은 콤마 뒤(§): <length-percentage> | 수학함수 | 중첩 anchor-size().
     let parts = split_top_commas(inner);
-    if parts.is_empty() || parts.len() > 2 {
+    if parts.len() > 2 {
         return None;
     }
-    // 주부: [ <dashed-ident> || <size-keyword> ] — size 필수, name 선택, 순서 무관.
-    let toks = split_top_level(parts[0].trim());
-    if toks.is_empty() || toks.len() > 2 {
+    let main = parts.first().map(|s| s.trim()).unwrap_or("");
+    let toks = split_top_level(main);
+    if toks.len() > 2 {
         return None;
     }
     const SIZES: &[&str] =
         &["width", "height", "block", "inline", "self-block", "self-inline"];
     let mut name: Option<String> = None;
     let mut size: Option<String> = None;
+    let mut length: Option<String> = None;
     for tk in &toks {
         let low = tk.to_ascii_lowercase();
         if SIZES.contains(&low.as_str()) {
@@ -3323,17 +3328,24 @@ pub fn anchor_size_canonical(value: &str) -> Option<String> {
                 return None; // name 두 개
             }
             name = Some(tk.to_string()); // 대소문자 보존
+        } else if toks.len() == 1 && is_length_percentage(&low) && !low.starts_with('-') {
+            length = Some(low); // length 는 단독 토큰일 때만(name/size 와 못 섞임)
         } else {
-            return None; // size-keyword 도 dashed-ident 도 아님
+            return None; // size-keyword/dashed-ident/(단독)length 아님
         }
     }
-    let size = size?; // size 필수
     let mut canon = String::from("anchor-size(");
+    let mut mparts: Vec<String> = Vec::new();
     if let Some(n) = &name {
-        canon.push_str(n);
-        canon.push(' ');
+        mparts.push(n.clone());
     }
-    canon.push_str(&size);
+    if let Some(s) = &size {
+        mparts.push(s.clone());
+    }
+    if let Some(l) = &length {
+        mparts.push(l.clone());
+    }
+    canon.push_str(&mparts.join(" ")); // 빈 주부면 "" → anchor-size()
     if parts.len() == 2 {
         // anchor-size() 는 anchor-size() 만 중첩 허용(anchor() 는 inset 전용이라 불가).
         let fb = anchor_fallback_canonical(parts[1].trim(), true, false)?;

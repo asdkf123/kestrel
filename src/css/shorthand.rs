@@ -148,6 +148,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // inset 단축: top/right/bottom/left (margin 과 동일 규칙)
         "inset" => {
+            let toks = split_top_level(value_text.trim());
+            // anchor-size()/anchor() 토큰이 있으면 단일변 top arm(검증+캐논)을 per-token
+            // 재사용해 TRBL 확장(box_shorthand 는 interpret_value 라 anchor 를 못 읽음).
+            if !toks.is_empty() && toks.len() <= 4
+                && toks.iter().any(|t| crate::css::anchor_size_canonical(t).is_some()
+                    || crate::css::anchor_canonical(t).is_some())
+            {
+                let mut vals = Vec::new();
+                for t in &toks {
+                    let d = expand_declaration("top", t);
+                    if d.len() != 1 {
+                        return Vec::new();
+                    }
+                    vals.push(d[0].value.clone());
+                }
+                return trbl_decls(["top", "right", "bottom", "left"], &vals);
+            }
             let sides = box_shorthand("", "", value_text); // "-top" 등 이름이 "-top" 형태
             return sides
                 .into_iter()
@@ -162,6 +179,24 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if !matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 let toks = split_top_level(value_text.trim());
                 let is_margin = name == "margin";
+                // anchor-size() 는 margin(단축)에서 유효(padding 은 아님). 토큰이 있으면
+                // margin-top 단일변 arm 재사용해 TRBL 확장. (anchor() 는 margin 무효.)
+                if is_margin && !toks.is_empty() && toks.len() <= 4
+                    && toks.iter().any(|t| crate::css::anchor_size_canonical(t).is_some())
+                {
+                    let mut vals = Vec::new();
+                    for t in &toks {
+                        let d = expand_declaration("margin-top", t);
+                        if d.len() != 1 {
+                            return Vec::new();
+                        }
+                        vals.push(d[0].value.clone());
+                    }
+                    return trbl_decls(
+                        ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+                        &vals,
+                    );
+                }
                 let ok = !toks.is_empty() && toks.len() <= 4
                     && toks.iter().all(|t| if is_margin { crate::css::margin_value_valid(t) } else { crate::css::nonneg_lp_valid(t) });
                 if !ok {
@@ -4482,6 +4517,24 @@ fn validated_box_shorthand(
 // CSS 박스 단축값(1~4개)을 top/right/bottom/left longhand 로 확장.
 // prefix="margin", suffix=""  → margin-top ...
 // prefix="border", suffix="-width" → border-top-width ...
+// 미리 캐논화된 값 리스트를 TRBL 규칙(1→모두, 2→TB/LR, 3→T/LR/B, 4→TRBL)으로
+// 네 side 선언에 배분한다. anchor-size()/anchor() 처럼 interpret_value 로 못 읽는 값을
+// 단일변 arm 에서 이미 검증·캐논한 Value 로 배분할 때 쓴다.
+fn trbl_decls(names: [&str; 4], vals: &[Value]) -> Vec<Declaration> {
+    let idx: [usize; 4] = match vals.len() {
+        1 => [0, 0, 0, 0],
+        2 => [0, 1, 0, 1],
+        3 => [0, 1, 2, 1],
+        4 => [0, 1, 2, 3],
+        _ => return Vec::new(),
+    };
+    names
+        .iter()
+        .zip(idx)
+        .map(|(n, i)| Declaration { important: false, name: n.to_string(), value: vals[i].clone() })
+        .collect()
+}
+
 fn box_shorthand(prefix: &str, suffix: &str, value_text: &str) -> Vec<Declaration> {
     let tokens: Vec<Value> =
         split_top_level(value_text).into_iter().filter_map(interpret_value).collect();
@@ -4768,6 +4821,11 @@ mod tests {
         assert_eq!(canon("anchor-size(width --foo)"), "anchor-size(--foo width)"); // 순서 뒤집기→캐논
         assert_eq!(canon("anchor-size(--foo width, 1px)"), "anchor-size(--foo width, 1px)");
         assert_eq!(canon("anchor-size(self-block)"), "anchor-size(self-block)");
+        // name/size 전체가 optional (§): 빈 것/이름만/길이 단독/이름+fallback.
+        assert_eq!(canon("anchor-size()"), "anchor-size()");
+        assert_eq!(canon("anchor-size(--foo)"), "anchor-size(--foo)");
+        assert_eq!(canon("anchor-size(10px)"), "anchor-size(10px)"); // length 단독
+        assert_eq!(canon("anchor-size(--foo, 10px)"), "anchor-size(--foo, 10px)"); // size 없이 fallback
         assert_eq!(canon("anchor-size(--foo width, anchor-size(--bar inline))"),
                    "anchor-size(--foo width, anchor-size(--bar inline))"); // 중첩 fallback
         // 무효: 거부(빈 문자열).
