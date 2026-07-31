@@ -872,18 +872,24 @@ pub(crate) fn normalize_shape(text: &str) -> String {
         };
         let coords: String =
             split_top_level(before).iter().map(|t| c0(t)).collect::<Vec<_>>().join(" ");
-        let round = radius.map(|r| {
-            if let Some((h, v)) = r.split_once('/') {
+        let round = radius.and_then(|r| {
+            let (rs, all_zero) = if let Some((h, v)) = r.split_once('/') {
                 let hv: Vec<String> = h.split_whitespace().map(c0).collect();
                 let vv: Vec<String> = v.split_whitespace().map(c0).collect();
-                if hv == vv {
+                let az = hv.iter().chain(vv.iter()).all(|t| t == "0px");
+                let s = if hv == vv {
                     hv.join(" ")
                 } else {
                     format!("{} / {}", hv.join(" "), vv.join(" "))
-                }
+                };
+                (s, az)
             } else {
-                r.split_whitespace().map(c0).collect::<Vec<_>>().join(" ")
-            }
+                let rv: Vec<String> = r.split_whitespace().map(c0).collect();
+                let az = rv.iter().all(|t| t == "0px");
+                (rv.join(" "), az)
+            };
+            // 반경이 전부 0 이면 round 절 생략(§CSSOM).
+            if all_zero { None } else { Some(rs) }
         });
         return match round {
             Some(r) => format!("{}({} round {})", func, coords, r),
