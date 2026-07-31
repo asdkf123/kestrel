@@ -1062,6 +1062,10 @@ fn collect_computed_styles(
                 m.insert(key.to_string(), crate::css::position_computed(v));
             }
         }
+        // background-position 계산값(§CSSOM): 콤마 레이어마다 키워드→퍼센트(center→50% 등).
+        if let Some(v) = m.get("background-position") {
+            m.insert("background-position".to_string(), crate::css::background_position_computed(v));
+        }
         // contain-intrinsic-size 계산값: width + height 재구성(같으면 축약), 논리 노출.
         {
             let w = m.get("contain-intrinsic-width").cloned();

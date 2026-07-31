@@ -2987,6 +2987,16 @@ pub fn position_computed(raw: &str) -> String {
     format!("{} {}", pos_axis_computed(&h), pos_axis_computed(&v))
 }
 
+// background-position 계산값(§CSSOM): 콤마 구분 레이어마다 position_computed 적용
+// (center→50%, left/top→0%, right/bottom→100%, 모서리+오프셋→calc).
+pub fn background_position_computed(raw: &str) -> String {
+    split_top_commas(raw)
+        .iter()
+        .map(|l| position_computed(l.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // <bg-position> 지정값 캐논(§CSSOM): 1/2/4 는 position_canonical, 3값은 성분 파싱해
 // [H성분] [V성분] 순서로(모서리+오프셋 유지).
 pub fn bg_position_canonical(raw: &str) -> String {

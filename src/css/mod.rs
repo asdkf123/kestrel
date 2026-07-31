@@ -182,6 +182,7 @@ pub(crate) use shorthand::font_size_keyword;
 pub(crate) use values::normalize_rgb_legacy;
 pub(crate) use values::serialize_selector;
 pub(crate) use values::split_ws_depth0;
+pub(crate) use values::background_position_computed;
 pub(crate) use shorthand::{grid_canonical, grid_template_canonical};
 
 #[derive(Debug, PartialEq, Clone)]
