@@ -2424,10 +2424,10 @@ pub fn time_list_valid(raw: &str, allow_negative: bool) -> bool {
     }
     items.iter().all(|item| {
         let low = item.trim().to_ascii_lowercase();
-        // calc/min/max/clamp 등 수학함수는 구문상 유효(값은 사용시 결정, 음수 클램프도 사용시).
-        // malformed 는 거부(math_function_valid).
+        // calc/min/max/clamp 등 수학함수는 결과가 <time> 여야(§CSS Values 4 타입 검사).
+        // malformed·타입 불일치(min(1mt)/max(1px)/max(0)) 거부. 음수 클램프는 사용시.
         if math_function_valid(&low) {
-            return true;
+            return math_time_valid(&low);
         }
         match parse_time_value(item) {
             Some(v) => allow_negative || v >= 0.0,
@@ -6768,7 +6768,9 @@ pub fn image_resolution_valid(raw: &str) -> bool {
 fn is_time(t: &str, allow_neg: bool) -> bool {
     let low = t.trim().to_ascii_lowercase();
     if is_math_fn(&low) {
-        return true;
+        // 결과가 <time> 여야(§CSS Values 4 타입 검사). max(0Hz)/max(1px)/max(0)(수)
+        // 등 시간 아닌 타입 거부.
+        return math_time_valid(&low);
     }
     let num = if let Some(n) = low.strip_suffix("ms") {
         n
