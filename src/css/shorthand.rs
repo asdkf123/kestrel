@@ -1314,6 +1314,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // 크기 프로퍼티(§CSS Sizing): auto|none|<length-percentage 0+>|min/max/fit-content.
         // width/height/min-* 는 auto, max-* 는 none. 유효값은 interpret_value 저장(레이아웃 불변).
+        // border-*-width 롱핸드(§CSS Backgrounds): <line-width>. thin/medium/thick 또는
+        // <length>(% 불가). 무검증 catch-all 로 새던 max(0Hz)/max()/max(0%) 등을 거부.
+        "border-top-width" | "border-right-width" | "border-bottom-width" | "border-left-width" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let toks = split_top_level(value_text.trim());
+            if toks.len() != 1 || !is_line_width_tok(toks[0]) {
+                return Vec::new();
+            }
+            let v = interpret_value(toks[0]).unwrap_or(Value::Keyword(low));
+            return vec![Declaration { important: false, name: name.to_string(), value: v }];
+        }
         "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
@@ -5036,7 +5050,7 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
 // <line-width>: thin|medium|thick | <length [0,∞]>.
 fn is_line_width_tok(t: &str) -> bool {
     let low = t.trim().to_ascii_lowercase();
-    if matches!(low.as_str(), "thin" | "medium" | "thick") {
+    if matches!(low.as_str(), "thin" | "medium" | "thick" | "hairline") {
         return true;
     }
     // <line-width> = <length>(% 불가). 수학 함수는 결과가 <length> 인지 타입 검사.
