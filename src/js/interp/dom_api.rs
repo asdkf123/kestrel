@@ -807,6 +807,7 @@ impl Interp {
                     | "border-bottom-width"
                     | "border-left-width"
                     | "margin-trim"
+                    | "flex-line-count"
                     | "contain"
                     | "top"
                     | "right"

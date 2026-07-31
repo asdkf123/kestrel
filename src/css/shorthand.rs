@@ -624,6 +624,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // flex-line-count(§CSS Flexbox 자동 밸런싱): <integer [1,∞]>. auto·0·음수·
+        // 소수·키워드 거부.
+        "flex-line-count" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::positive_integer_valid(&low) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // margin-trim(§CSS Box 4): none | <block축>? || <inline축>?. 각 축(block/
         // block-start/block-end 중 1, inline/inline-start/inline-end 중 1) 최대 하나.
         // 축 중복("block block", "block block-start")·미지 토큰·none 혼합 거부.

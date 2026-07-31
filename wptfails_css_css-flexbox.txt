@@ -44,11 +44,6 @@ css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dline
 css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value '2'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
 css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value 'round(up, calc(7/2))'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
 css/css-flexbox/balance/flex-line-count-computed.html	FAIL	Property flexU+2dlineU+2dcount value 'calc(NaN)'	assert_true: flexU+2dlineU+2dcount doesn't seem to be supported in the computed style expected true got false
-css/css-flexbox/balance/flex-line-count-invalid.html	FAIL	e.style['flexU+2dlineU+2dcount'] = "1.5" should not set the property value	assert_equals: expected "" but got "1.5"
-css/css-flexbox/balance/flex-line-count-invalid.html	FAIL	e.style['flexU+2dlineU+2dcount'] = "0" should not set the property value	assert_equals: expected "" but got "0"
-css/css-flexbox/balance/flex-line-count-invalid.html	FAIL	e.style['flexU+2dlineU+2dcount'] = "U+2d1" should not set the property value	assert_equals: expected "" but got "U+2d1"
-css/css-flexbox/balance/flex-line-count-invalid.html	FAIL	e.style['flexU+2dlineU+2dcount'] = "auto" should not set the property value	assert_equals: expected "" but got "auto"
-css/css-flexbox/balance/flex-line-count-invalid.html	FAIL	e.style['flexU+2dlineU+2dcount'] = "wrap" should not set the property value	assert_equals: expected "" but got "wrap"
 css/css-flexbox/balance/flex-wrap-computed.html	FAIL	Property flexU+2dwrap value 'balance'	assert_true: 'balance' is a supported value for flexU+2dwrap. expected true got false
 css/css-flexbox/balance/flex-wrap-computed.html	FAIL	Property flexU+2dwrap value 'wrap balance'	assert_true: 'wrap balance' is a supported value for flexU+2dwrap. expected true got false
 css/css-flexbox/balance/flex-wrap-computed.html	FAIL	Property flexU+2dwrap value 'wrapU+2dreverse balance'	assert_true: 'wrapU+2dreverse balance' is a supported value for flexU+2dwrap. expected true got false
