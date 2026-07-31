@@ -410,6 +410,12 @@ impl Interp {
                 return s;
             }
         }
+        // offset-rotate(§CSS Motion Path): [auto|reverse] 먼저, <angle> 나중 캐논.
+        if prop == "offset-rotate" {
+            if let Some(s) = crate::css::offset_rotate_canonical(raw) {
+                return s;
+            }
+        }
         // grid-template-areas(§CSS Grid): 셀 공백 단일화·점 시퀀스→"." 캐논.
         if prop == "grid-template-areas" {
             if let Some(s) = crate::css::grid_template_areas_canonical(raw) {
@@ -828,6 +834,9 @@ impl Interp {
                     | "transform"
                     | "-webkit-transform"
                     | "offset-path"
+                    | "offset-rotate"
+                    | "offset-position"
+                    | "offset-anchor"
                     | "contain"
                     | "top"
                     | "right"

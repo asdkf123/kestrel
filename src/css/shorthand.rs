@@ -639,6 +639,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // offset-rotate(§CSS Motion Path): [ auto | reverse ] || <angle>. 키워드·각도 각
+        // ≤1, 최소 하나. bare 0(단위 없음)·none·키워드 중복 거부. 캐논: 키워드 먼저.
+        "offset-rotate" => match offset_rotate_canonical(value_text) {
+            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            None => Vec::new(),
+        },
+        // offset-position(auto|normal|<position>) / offset-anchor(auto|<position>).
+        "offset-position" | "offset-anchor" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
+                || (name == "offset-position" && low == "normal")
+            {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::position_valid(value_text.trim()) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // interpolate-size(§CSS Values 5): numeric-only | allow-keywords.
         "interpolate-size" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -2779,7 +2799,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 4차 배치: mask, offset, scroll-snap-stop, place-self.
         | "mask-image"
         | "mask-origin" | "mask-clip" | "mask-mode"
-        | "offset-rotate" | "offset-anchor" | "offset-position"
         | "contain-intrinsic-width" | "contain-intrinsic-height"
         // 5차: SVG presentation 키워드/수/목록 프로퍼티(stroke-width/dashoffset 는 길이).
         | "fill-opacity" | "stroke-opacity" | "stroke-linecap" | "stroke-linejoin"
@@ -4927,6 +4946,41 @@ pub(crate) fn grid_template_areas_canonical(raw: &str) -> Option<String> {
         canon_rows.push(format!("\"{}\"", cells.join(" ")));
     }
     Some(canon_rows.join(" "))
+}
+
+// offset-rotate(§CSS Motion Path) 유효성 + 캐논. [auto|reverse] || <angle>. 키워드·
+// 각도 각 ≤1, 최소 하나. 캐논: 키워드 먼저, 각도 나중.
+pub(crate) fn offset_rotate_canonical(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return Some(low);
+    }
+    let toks = split_top_level(raw.trim());
+    let (mut kw, mut ang) = (None::<String>, None::<String>);
+    let (mut nkw, mut nang) = (0u32, 0u32);
+    for t in &toks {
+        let tl = t.to_ascii_lowercase();
+        if matches!(tl.as_str(), "auto" | "reverse") {
+            nkw += 1;
+            kw = Some(tl);
+        } else if super::values::math_angle_valid(t) {
+            nang += 1;
+            ang = Some(t.to_string());
+        } else {
+            return None;
+        }
+    }
+    if toks.is_empty() || nkw > 1 || nang > 1 {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(k) = kw {
+        parts.push(k);
+    }
+    if let Some(a) = ang {
+        parts.push(a);
+    }
+    Some(parts.join(" "))
 }
 
 // grid-auto-flow(§CSS Grid) 유효성 + 캐논 직렬화. [row|column] || dense. row 는
