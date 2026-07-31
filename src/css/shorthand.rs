@@ -4290,7 +4290,14 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
 
 // box-shadow 성분이 유효 <length> 인가(px/em 등, 0, calc-무-%). %·단위없는 수(0 제외)는 무효.
 fn is_shadow_length(t: &str) -> bool {
-    if t.trim() == "0" {
+    let t = t.trim();
+    if t == "0" {
+        return true;
+    }
+    // 수학함수(calc/min/max/clamp/…)는 구문상 유효 — interpret_value 가 중첩 max·나눗셈
+    // (calc(max(10em,20px)/2))을 평가 못 해도 <length> 문맥이면 수용한다(값은 사용시 결정).
+    // shadow 는 <length> 라 % 가 있으면 무효.
+    if !t.contains('%') && super::values::math_function_valid(t) {
         return true;
     }
     match interpret_value(t) {
