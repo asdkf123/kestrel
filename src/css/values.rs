@@ -6941,6 +6941,14 @@ pub fn shape_func_valid(raw: &str) -> bool {
                     return false;
                 }
             }
+            // curve 는 제어점 도입자 "with" 필수. smooth 는 제어점 있으면(좌표쌍 뒤
+            // 토큰이 더 있으면) "with" 로 시작해야("via" 등 거부).
+            if cmd == "curve" && !toks.iter().any(|t| t == "with") {
+                return false;
+            }
+            if cmd == "smooth" && toks.len() > 4 && toks.get(4).map(|s| s.as_str()) != Some("with") {
+                return false;
+            }
             if (cmd == "hline" || cmd == "vline")
                 && toks
                     .iter()
