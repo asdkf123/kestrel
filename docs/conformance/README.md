@@ -58,6 +58,23 @@
 
 ## CSS (WPT, 서브트리별, 통과율 내림차순)
 
+> **값 파싱 검증 스윕 진행중**(아래 표는 2026-07-31 측정, 이후 갱신분 미반영). 최근 작업:
+> **calc 차원 타입 검사기**(`mdim_of`, [css-values-math.md](css-values-math.md)) 구현으로 길이/시간/수/각도 문맥의
+> 타입 불일치(`max(0Hz)`/`calc(1/2px)`/축 불일치)를 원리적으로 거부. 값 검증기의 `contains("deg")` 편법 전부 제거.
+> **검증 추가·강화된 프로퍼티**: content-visibility, scrollbar-width/color, caret-shape/input-security/overlay/
+> caret-animation, accent-color, object-view-box, text-decoration(+thickness/offset), text-shadow, border-\*-width,
+> margin-trim, flex-line-count, overflow-anchor, grid-auto-flow, grid-template-areas, interpolate-size,
+> scroll-initial-target, transform(함수 타입 검사), opacity/font-weight(calc 타입), offset-path/ray(), shape() 구조,
+> circle/ellipse radial-extent — 다수는 CSSOM 캐논 직렬화 포함.
+>
+> **남은 큰 서브시스템**(각각 집중 작업 필요, 요행 없이 정밀 스펙 준수):
+> 1. basic-shape 캐논 직렬화(circle/ellipse/inset/polygon round 0 생략 등 — shape-outside/clip-path/offset-path 공통 "serialization" validfail 다수)
+> 2. background-image: gradient(color/conic calc 타입, `calc(50%+30deg)` 거부), image-set()/image(), url() modifier(cross-origin/integrity/referrer-policy)
+> 3. color: 상대색 `color(from … calc(r + 1%) …)` 채널 calc
+> 4. corner-shape 조합 프로퍼티(corner-top-left 등): shape || radius, 스펙 뉘앙스("scoop" 단독 무효 등) 확인 필요
+> 5. animation-range 타임라인 단축(entry/exit 범위 + 캐논 오프셋 생략)
+> 6. mask 단축(<mask-layer>#)
+
 | 서브트리 | 통과 / 전체 | % |
 |---|---|---|
 | css-device-adapt | 1 / 1 | 100.0% |
