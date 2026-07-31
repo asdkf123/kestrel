@@ -234,28 +234,54 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if !crate::css::border_radius_valid(value_text) {
                 return Vec::new();
             }
-            let hpart = value_text.split('/').next().unwrap_or(value_text);
-            let toks: Vec<Value> = split_top_level(hpart)
-                .into_iter()
-                .filter_map(interpret_value)
-                .filter(|v| matches!(v, Value::Length(..)))
-                .collect();
-            if toks.is_empty() {
+            // h / v 두 축을 각각 4 코너로 확장(§CSS Backgrounds). v 축 없으면 h 를 그대로.
+            let mut sp = value_text.splitn(2, '/');
+            let hpart = sp.next().unwrap_or("");
+            let vpart = sp.next();
+            let parse4 = |part: &str| -> Option<[Value; 4]> {
+                let t: Vec<Value> = split_top_level(part)
+                    .into_iter()
+                    .filter_map(interpret_value)
+                    .filter(|v| matches!(v, Value::Length(..)))
+                    .collect();
+                if t.is_empty() {
+                    return None;
+                }
+                Some(match t.len() {
+                    1 => [t[0].clone(), t[0].clone(), t[0].clone(), t[0].clone()],
+                    2 => [t[0].clone(), t[1].clone(), t[0].clone(), t[1].clone()],
+                    3 => [t[0].clone(), t[1].clone(), t[2].clone(), t[1].clone()],
+                    _ => [t[0].clone(), t[1].clone(), t[2].clone(), t[3].clone()],
+                })
+            };
+            let Some(h4) = parse4(hpart) else {
                 return Vec::new();
-            }
-            let (tl, tr, br, bl) = match toks.len() {
-                1 => (toks[0].clone(), toks[0].clone(), toks[0].clone(), toks[0].clone()),
-                2 => (toks[0].clone(), toks[1].clone(), toks[0].clone(), toks[1].clone()),
-                3 => (toks[0].clone(), toks[1].clone(), toks[2].clone(), toks[1].clone()),
-                _ => (toks[0].clone(), toks[1].clone(), toks[2].clone(), toks[3].clone()),
+            };
+            let v4 = match vpart {
+                Some(vp) => match parse4(vp) {
+                    Some(v) => v,
+                    None => return Vec::new(),
+                },
+                None => h4.clone(),
+            };
+            // 코너 값: 가로==세로 면 단일 Length(레이아웃·계산 기존대로), 다르면 "h v" Keyword
+            // (세로 반경 보존 — getComputedStyle 이 "17px 117px" 로 답하도록).
+            let corner = |h: &Value, v: &Value| -> Value {
+                let hs = crate::style::computed_value_string(h);
+                let vs = crate::style::computed_value_string(v);
+                if hs == vs {
+                    h.clone()
+                } else {
+                    Value::Keyword(format!("{} {}", hs, vs))
+                }
             };
             vec![
-                Declaration { important: false, name: "border-top-left-radius".to_string(), value: tl.clone() },
-                Declaration { important: false, name: "border-top-right-radius".to_string(), value: tr },
-                Declaration { important: false, name: "border-bottom-right-radius".to_string(), value: br },
-                Declaration { important: false, name: "border-bottom-left-radius".to_string(), value: bl },
-                // box-shadow 등 균일 근사용으로 border-radius 도 남긴다 (첫 값).
-                Declaration { important: false, name: "border-radius".to_string(), value: tl },
+                Declaration { important: false, name: "border-top-left-radius".to_string(), value: corner(&h4[0], &v4[0]) },
+                Declaration { important: false, name: "border-top-right-radius".to_string(), value: corner(&h4[1], &v4[1]) },
+                Declaration { important: false, name: "border-bottom-right-radius".to_string(), value: corner(&h4[2], &v4[2]) },
+                Declaration { important: false, name: "border-bottom-left-radius".to_string(), value: corner(&h4[3], &v4[3]) },
+                // box-shadow 등 균일 근사용으로 border-radius 도 남긴다 (첫 코너의 가로).
+                Declaration { important: false, name: "border-radius".to_string(), value: h4[0].clone() },
             ]
         }
         // border-image 단축(§CSS Backgrounds):

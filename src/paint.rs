@@ -1118,6 +1118,17 @@ fn radius_prop(lb: &LayoutBox, name: &str, short: f32) -> Option<f32> {
     match lb.styled_node.value(name) {
         Some(Value::Length(v, crate::css::Unit::Px)) => Some(v.max(0.0)),
         Some(Value::Length(v, crate::css::Unit::Percent)) => Some(v / 100.0 * short),
+        // "h v" 2D 반경(세로≠가로)은 가로(첫 토큰)를 쓴다 — 균일 근사 렌더링 유지.
+        Some(Value::Keyword(s)) => {
+            let first = s.split_whitespace().next().unwrap_or("");
+            if let Some(p) = first.strip_suffix("px") {
+                p.parse::<f32>().ok().map(|v| v.max(0.0))
+            } else if let Some(p) = first.strip_suffix('%') {
+                p.parse::<f32>().ok().map(|v| v / 100.0 * short)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }

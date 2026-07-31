@@ -934,6 +934,33 @@ fn collect_computed_styles(
                 shorthand_vals.push((prop.to_string(), joined));
                 continue;
             }
+            // border-radius(§CSS Backgrounds): 각 코너가 "h" 또는 "h v" 다. 가로/세로 축으로
+            // 분리해 "h1 h2 h3 h4 [/ v1 v2 v3 v4]" 로 재조립(전 코너 세로==가로 면 / 생략).
+            // 축약은 안 한다 — 애니메이션 보간 경로(interp_css_value, 토큰 1:1)와 바이트 일치.
+            if *prop == "border-radius" {
+                let mut hs: Vec<String> = Vec::with_capacity(4);
+                let mut vs: Vec<String> = Vec::with_capacity(4);
+                let mut any_v = false;
+                for val in &vals {
+                    let mut it = val.split_whitespace();
+                    let h = it.next().unwrap_or("").to_string();
+                    let vv = it.next().map(|s| s.to_string()).unwrap_or_else(|| h.clone());
+                    if vv != h {
+                        any_v = true;
+                    }
+                    hs.push(h);
+                    vs.push(vv);
+                }
+                let hjoin = if hs.windows(2).all(|w| w[0] == w[1]) {
+                    hs[0].clone()
+                } else {
+                    hs.join(" ")
+                };
+                let joined =
+                    if any_v { format!("{} / {}", hjoin, vs.join(" ")) } else { hjoin };
+                shorthand_vals.push((prop.to_string(), joined));
+                continue;
+            }
             // TRBL 박스 단축(margin/padding/inset/scroll-*/border-style·width·color)은
             // CSSOM 규칙대로 1~4 값 축약: 전부 같으면 1, top==bottom&&right==left 면 2,
             // right==left 면 3, 아니면 4.
