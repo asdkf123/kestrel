@@ -1,4 +1,3 @@
-css/css-backgrounds/parsing/background-clip-computed.html	FAIL	Property backgroundU+2dclip value 'text borderU+2darea'	assert_equals: expected "borderU+2darea text" but got "text borderU+2darea"
 css/css-backgrounds/parsing/background-color-valid.html	FAIL	e.style['backgroundU+2dcolor'] = "currentColor" should set the property value	assert_equals: serialization should be canonical expected "currentcolor" but got "currentColor"
 css/css-backgrounds/parsing/background-computed.html	FAIL	Property backgroundU+2dpositionU+2dx value '0.5em'	assert_equals: expected "20px" but got "0.5em"
 css/css-backgrounds/parsing/background-computed.html	FAIL	Property backgroundU+2dpositionU+2dx value 'center, left, right'	assert_equals: expected "50%, 0%, 100%" but got "center, left, right"

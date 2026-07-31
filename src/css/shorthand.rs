@@ -1090,6 +1090,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let is_max = name.starts_with("max-");
             let toks = split_top_level(value_text.trim());
+            // anchor-size()(§css-anchor-1): sizing 프로퍼티에서 유효. 캐논 직렬화로 저장.
+            if toks.len() == 1 {
+                if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
+                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
+                }
+            }
             if toks.len() != 1 || !crate::css::size_valid(toks[0], is_max, !is_max) {
                 return Vec::new();
             }
@@ -4732,5 +4738,39 @@ mod tests {
         );
         // 단축은 생략된 롱핸드도 초기값으로 리셋한다(§CSS Backgrounds): size=auto.
         assert!(matches!(find(&d, "background-size"), Some(Value::Keyword(k)) if k == "auto"), "size 초기값 auto");
+    }
+
+    // anchor-size()(§css-anchor-1): sizing 프로퍼티에서 문법 검증 + name-first 캐논.
+    // 예전엔 is_length_percentage 관대 수용으로 일부만 우연히 통과(요행)했다.
+    #[test]
+    fn anchor_size_grammar_on_sizing() {
+        let canon = |v: &str| match find(&expand_declaration("width", v), "width") {
+            Some(Value::Keyword(k)) => k.clone(),
+            _ => String::new(),
+        };
+        // 유효: name 선택, size 필수, 순서 무관(캐논은 name-first), fallback.
+        assert_eq!(canon("anchor-size(width)"), "anchor-size(width)");
+        assert_eq!(canon("anchor-size(--foo width)"), "anchor-size(--foo width)");
+        assert_eq!(canon("anchor-size(width --foo)"), "anchor-size(--foo width)"); // 순서 뒤집기→캐논
+        assert_eq!(canon("anchor-size(--foo width, 1px)"), "anchor-size(--foo width, 1px)");
+        assert_eq!(canon("anchor-size(self-block)"), "anchor-size(self-block)");
+        assert_eq!(canon("anchor-size(--foo width, anchor-size(--bar inline))"),
+                   "anchor-size(--foo width, anchor-size(--bar inline))"); // 중첩 fallback
+        // 무효: 거부(빈 문자열).
+        for bad in [
+            "anchor-size(--foo, width)",     // 콤마가 name/size 사이
+            "anchor-size(--foo width,)",     // 후행 콤마
+            "anchor-size(--foo width height)", // size 두 개
+            "anchor-size(foo width)",        // dashed-ident 아님
+            "anchor-size(--foo top)",        // size-keyword 아님
+            "anchor-size(--foo 50%)",        // 첫부분에 길이 불가
+            "anchor-size(--foo width, 1)",   // fallback 단위없는 1
+            "anchor-size(--foo width, 100s)", // 시간 단위
+            "anchor-size(--foo width, height)", // bare 키워드 fallback
+            "anchor-size(, 10px)",           // 선행 콤마
+            "anchor-size(--foo width, anchor-size(bar width))", // 무효 중첩(bar)
+        ] {
+            assert_eq!(canon(bad), "", "무효여야: {}", bad);
+        }
     }
 }

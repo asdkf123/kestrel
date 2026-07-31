@@ -3280,6 +3280,88 @@ pub fn aspect_ratio_canonical(raw: &str) -> String {
     }
 }
 
+// anchor-size() (§css-anchor-1 #anchor-size): sizing/inset/margin 프로퍼티에서만 유효.
+//   anchor-size( [ <dashed-ident> || <size-keyword> ] [ , <fallback> ]? )
+// size-keyword ∈ width|height|block|inline|self-block|self-inline. name/size 순서는
+// 무관하나 캐논은 name-first. fallback ∈ <length-percentage> | 수학함수 | 중첩
+// anchor-size(). 유효하면 캐논 문자열, 아니면 None. (예전엔 문법 없이 is_length_percentage
+// 의 관대 수용에 기대 일부만 우연히 통과 — 요행이었다.)
+pub fn anchor_size_canonical(value: &str) -> Option<String> {
+    let t = value.trim();
+    let tl = t.to_ascii_lowercase();
+    if !tl.starts_with("anchor-size(") || !t.ends_with(')') {
+        return None;
+    }
+    let inner = &t["anchor-size(".len()..t.len() - 1]; // dashed-ident 대소문자 보존
+    // 선행/후행 콤마(빈 세그먼트)는 무효 — split_top_commas 가 후행 빈칸을 버리므로 먼저 막는다.
+    let it = inner.trim();
+    if it.is_empty() || it.starts_with(',') || it.ends_with(',') {
+        return None;
+    }
+    let parts = split_top_commas(inner);
+    if parts.is_empty() || parts.len() > 2 {
+        return None;
+    }
+    // 주부: [ <dashed-ident> || <size-keyword> ] — size 필수, name 선택, 순서 무관.
+    let toks = split_top_level(parts[0].trim());
+    if toks.is_empty() || toks.len() > 2 {
+        return None;
+    }
+    const SIZES: &[&str] =
+        &["width", "height", "block", "inline", "self-block", "self-inline"];
+    let mut name: Option<String> = None;
+    let mut size: Option<String> = None;
+    for tk in &toks {
+        let low = tk.to_ascii_lowercase();
+        if SIZES.contains(&low.as_str()) {
+            if size.is_some() {
+                return None; // size 두 개
+            }
+            size = Some(low);
+        } else if tk.starts_with("--") && tk.len() > 2 {
+            if name.is_some() {
+                return None; // name 두 개
+            }
+            name = Some(tk.to_string()); // 대소문자 보존
+        } else {
+            return None; // size-keyword 도 dashed-ident 도 아님
+        }
+    }
+    let size = size?; // size 필수
+    let mut canon = String::from("anchor-size(");
+    if let Some(n) = &name {
+        canon.push_str(n);
+        canon.push(' ');
+    }
+    canon.push_str(&size);
+    if parts.len() == 2 {
+        let fb = anchor_fallback_canonical(parts[1].trim())?;
+        canon.push_str(", ");
+        canon.push_str(&fb);
+    }
+    canon.push(')');
+    Some(canon)
+}
+
+// anchor()/anchor-size() 의 fallback: 단일 <length-percentage> | 수학함수 |
+// 중첩 anchor-size(). 그 외(빈값/다중값/시간·각 단위/bare 키워드/무효 중첩)는 거부.
+fn anchor_fallback_canonical(fb: &str) -> Option<String> {
+    if fb.is_empty() || split_top_level(fb).len() != 1 {
+        return None;
+    }
+    let low = fb.to_ascii_lowercase();
+    if low.starts_with("anchor-size(") {
+        return anchor_size_canonical(fb);
+    }
+    if is_math_fn(&low) {
+        return Some(fb.trim().to_string());
+    }
+    if is_length_percentage(&low) && !low.starts_with('-') {
+        return Some(low);
+    }
+    None
+}
+
 // 크기 프로퍼티 값 유효성(§CSS Sizing): [auto|none|<length-percentage 0+>|min-content|
 // max-content|fit-content|fit-content()]. allow_none: max-*, allow_auto: width/min-*.
 pub fn size_valid(tok: &str, allow_none: bool, allow_auto: bool) -> bool {
