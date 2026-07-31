@@ -624,6 +624,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // margin-trim(§CSS Box 4): none | <block축>? || <inline축>?. 각 축(block/
+        // block-start/block-end 중 1, inline/inline-start/inline-end 중 1) 최대 하나.
+        // 축 중복("block block", "block block-start")·미지 토큰·none 혼합 거부.
+        "margin-trim" => match margin_trim_canonical(value_text) {
+            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            None => Vec::new(),
+        },
         // content-visibility(§CSS Contain): visible | auto | hidden 단일 키워드만.
         "content-visibility" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -4773,6 +4780,69 @@ fn single_text_shadow_valid(s: &str) -> bool {
     }
     // blur(index 2)는 음수 불가.
     !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
+}
+
+// margin-trim(§CSS Box 4) 유효성 + 캐논 직렬화. none | (block||inline) |
+// (block-start||block-end||inline-start||inline-end). 축약/엣지 혼합·중복·미지 거부.
+// CSSOM 캐논: block-start+block-end→block, inline 짝→inline, block 성분 먼저.
+pub(crate) fn margin_trim_canonical(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+        return Some(low);
+    }
+    let toks = split_top_level(&low);
+    let (mut b, mut bs, mut be, mut i, mut is, mut ie) =
+        (false, false, false, false, false, false);
+    let dup = |flag: &mut bool| -> bool {
+        if *flag {
+            false
+        } else {
+            *flag = true;
+            true
+        }
+    };
+    for t in &toks {
+        let good = match *t {
+            "block" => dup(&mut b),
+            "block-start" => dup(&mut bs),
+            "block-end" => dup(&mut be),
+            "inline" => dup(&mut i),
+            "inline-start" => dup(&mut is),
+            "inline-end" => dup(&mut ie),
+            _ => false,
+        };
+        if !good {
+            return None;
+        }
+    }
+    let has_sh = b || i;
+    let has_edge = bs || be || is || ie;
+    if toks.is_empty() || (has_sh && has_edge) {
+        return None;
+    }
+    // 축약형(block/inline) 입력은 입력 순서 보존.
+    if has_sh {
+        return Some(toks.join(" "));
+    }
+    // 엣지형: 존재하는 모든 축이 완전(양끝)일 때만 축약 키워드로 접고 block 먼저.
+    // 하나라도 부분 축이면 입력 순서 그대로.
+    let block_present = bs || be;
+    let inline_present = is || ie;
+    let block_full = bs && be;
+    let inline_full = is && ie;
+    let collapsible = (!block_present || block_full) && (!inline_present || inline_full);
+    if collapsible {
+        let mut parts: Vec<&str> = Vec::new();
+        if block_present {
+            parts.push("block");
+        }
+        if inline_present {
+            parts.push("inline");
+        }
+        Some(parts.join(" "))
+    } else {
+        Some(toks.join(" "))
+    }
 }
 
 // text-decoration 단축 지정값 캐논 직렬화(§CSSOM serialize a shorthand): 초기값

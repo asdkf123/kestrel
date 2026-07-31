@@ -398,6 +398,12 @@ impl Interp {
                 return s;
             }
         }
+        // margin-trim(§CSS Box 4): 엣지 짝→축약(block-start+block-end→block) 캐논.
+        if prop == "margin-trim" {
+            if let Some(s) = crate::css::margin_trim_canonical(raw) {
+                return s;
+            }
+        }
         // transition/animation-timing-function(§CSS Easing): step-start→steps(1, start),
         // steps 기본 위치 생략 등 캐논 직렬화.
         if matches!(prop, "transition-timing-function" | "animation-timing-function") {
@@ -800,6 +806,7 @@ impl Interp {
                     | "border-right-width"
                     | "border-bottom-width"
                     | "border-left-width"
+                    | "margin-trim"
                     | "contain"
                     | "top"
                     | "right"

@@ -1,0 +1,672 @@
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Transitions: property <tabU+2dsize> from [0] to [10] at (U+2d0.3) should be [0]	assert_equals: expected "0px " but got "0 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Transitions: property <tabU+2dsize> from [0] to [10] at (0) should be [0]	assert_equals: expected "0px " but got "0 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Transitions with transition: all: property <tabU+2dsize> from [0] to [10] at (U+2d0.3) should be [0]	assert_equals: expected "0px " but got "0 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Transitions with transition: all: property <tabU+2dsize> from [0] to [10] at (0) should be [0]	assert_equals: expected "0px " but got "0 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Animations: property <tabU+2dsize> from [0] to [10] at (0.3) should be [3]	assert_equals: expected "3 " but got "0px "
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Animations: property <tabU+2dsize> from [0] to [10] at (0.6) should be [6]	assert_equals: expected "6 " but got "10 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	CSS Animations: property <tabU+2dsize> from [0] to [10] at (1.5) should be [15]	assert_equals: expected "15 " but got "10 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	Web Animations: property <tabU+2dsize> from [0] to [10] at (U+2d0.3) should be [0]	assert_equals: expected "0px " but got "0 "
+css/css-text/animations/tab-size-interpolation.html	FAIL	Web Animations: property <tabU+2dsize> from [0] to [10] at (0) should be [0]	assert_equals: expected "0px " but got "0 "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (U+2d0.3) should be [calc(100% + 20px)]	assert_equals: expected "calc ( 100 % + 20px ) " but got "20px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (0) should be [calc(100% + 50px)]	assert_equals: expected "calc ( 100 % + 50px ) " but got "50px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (0.3) should be [calc(100% + 80px)]	assert_equals: expected "calc ( 100 % + 80px ) " but got "80px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (0.6) should be [calc(100% + 110px)]	assert_equals: expected "calc ( 100 % + 110px ) " but got "110px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (1) should be [calc(100% + 150px)]	assert_equals: expected "calc ( 100 % + 150px ) " but got "150px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (1.5) should be [calc(100% + 200px)]	assert_equals: expected "calc ( 100 % + 200px ) " but got "200px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (U+2d0.3) should be [calc(100% + 20px)]	assert_equals: expected "calc ( 100 % + 20px ) " but got "20px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (0) should be [calc(100% + 50px)]	assert_equals: expected "calc ( 100 % + 50px ) " but got "50px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (0.3) should be [calc(100% + 80px)]	assert_equals: expected "calc ( 100 % + 80px ) " but got "80px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (0.6) should be [calc(100% + 110px)]	assert_equals: expected "calc ( 100 % + 110px ) " but got "110px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (1) should be [calc(100% + 150px)]	assert_equals: expected "calc ( 100 % + 150px ) " but got "150px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [100%] from add [50px] to add [150px] at (1.5) should be [calc(100% + 200px)]	assert_equals: expected "calc ( 100 % + 200px ) " but got "200px "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (U+2d0.3) should be [20px hanging eachU+2dline]	assert_equals: expected "20px hanging each U+2d line " but got "20px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (0) should be [50px hanging eachU+2dline]	assert_equals: expected "50px hanging each U+2d line " but got "50px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (0.3) should be [80px hanging eachU+2dline]	assert_equals: expected "80px hanging each U+2d line " but got "80px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (0.6) should be [110px hanging eachU+2dline]	assert_equals: expected "110px hanging each U+2d line " but got "110px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (1) should be [150px hanging eachU+2dline]	assert_equals: expected "150px hanging each U+2d line " but got "150px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (1.5) should be [200px hanging eachU+2dline]	assert_equals: expected "200px hanging each U+2d line " but got "200px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (U+2d0.3) should be [20px hanging eachU+2dline]	assert_equals: expected "20px hanging each U+2d line " but got "20px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (0) should be [50px hanging eachU+2dline]	assert_equals: expected "50px hanging each U+2d line " but got "50px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (0.3) should be [80px hanging eachU+2dline]	assert_equals: expected "80px hanging each U+2d line " but got "80px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (0.6) should be [110px hanging eachU+2dline]	assert_equals: expected "110px hanging each U+2d line " but got "110px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (1) should be [150px hanging eachU+2dline]	assert_equals: expected "150px hanging each U+2d line " but got "150px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px] from add [50px eachU+2dline hanging] to replace [150px hanging eachU+2dline] at (1.5) should be [200px hanging eachU+2dline]	assert_equals: expected "200px hanging each U+2d line " but got "200px each U+2d line hanging "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px eachU+2dline] from add [50px eachU+2dline] to replace [150px hanging] at (U+2d0.3) should be [300px eachU+2dline]	assert_equals: expected "300px each U+2d line " but got "50px each U+2d line "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px eachU+2dline] from add [50px eachU+2dline] to replace [150px hanging] at (0) should be [300px eachU+2dline]	assert_equals: expected "300px each U+2d line " but got "50px each U+2d line "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing CSS Animations: property <textU+2dindent> underlying [250px eachU+2dline] from add [50px eachU+2dline] to replace [150px hanging] at (0.3) should be [300px eachU+2dline]	assert_equals: expected "300px each U+2d line " but got "50px each U+2d line "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px eachU+2dline] from add [50px eachU+2dline] to replace [150px hanging] at (U+2d0.3) should be [300px eachU+2dline]	assert_equals: expected "300px each U+2d line " but got "50px each U+2d line "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px eachU+2dline] from add [50px eachU+2dline] to replace [150px hanging] at (0) should be [300px eachU+2dline]	assert_equals: expected "300px each U+2d line " but got "50px each U+2d line "
+css/css-text/animations/text-indent-composition.html	FAIL	Compositing Web Animations: property <textU+2dindent> underlying [250px eachU+2dline] from add [50px eachU+2dline] to replace [150px hanging] at (0.3) should be [300px eachU+2dline]	assert_equals: expected "300px each U+2d line " but got "50px each U+2d line "
+css/css-text/animations/text-indent-interpolation.html	FAIL	CSS Transitions: property <textU+2dindent> from [0px hanging] to [50px hanging] at (0) should be [0 hanging]	assert_equals: expected "0 hanging " but got "0px hanging "
+css/css-text/animations/text-indent-interpolation.html	FAIL	CSS Transitions with transition: all: property <textU+2dindent> from [0px hanging] to [50px hanging] at (0) should be [0 hanging]	assert_equals: expected "0 hanging " but got "0px hanging "
+css/css-text/animations/text-indent-interpolation.html	FAIL	CSS Animations: property <textU+2dindent> from [0px hanging] to [50px hanging] at (0) should be [0 hanging]	assert_equals: expected "0 hanging " but got "0px hanging "
+css/css-text/animations/text-indent-interpolation.html	FAIL	Web Animations: property <textU+2dindent> from [0px hanging] to [50px hanging] at (0) should be [0 hanging]	assert_equals: expected "0 hanging " but got "0px hanging "
+css/css-text/animations/text-indent-interpolation.html	FAIL	CSS Transitions: property <textU+2dindent> from [0px hanging eachU+2dline] to [50px eachU+2dline hanging] at (0) should be [0 hanging eachU+2dline]	assert_equals: expected "0 hanging each U+2d line " but got "0px hanging each U+2d line "
+css/css-text/animations/text-indent-interpolation.html	FAIL	CSS Transitions with transition: all: property <textU+2dindent> from [0px hanging eachU+2dline] to [50px eachU+2dline hanging] at (0) should be [0 hanging eachU+2dline]	assert_equals: expected "0 hanging each U+2d line " but got "0px hanging each U+2d line "
+css/css-text/animations/text-indent-interpolation.html	FAIL	CSS Animations: property <textU+2dindent> from [0px hanging eachU+2dline] to [50px eachU+2dline hanging] at (0) should be [0 hanging eachU+2dline]	assert_equals: expected "0 hanging each U+2d line " but got "0px hanging each U+2d line "
+css/css-text/animations/text-indent-interpolation.html	FAIL	Web Animations: property <textU+2dindent> from [0px hanging eachU+2dline] to [50px eachU+2dline hanging] at (0) should be [0 hanging eachU+2dline]	assert_equals: expected "0 hanging each U+2d line " but got "0px hanging each U+2d line "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	CSS Transitions: property <wordU+2dspacing> from [initial] to [20px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	CSS Transitions with transition: all: property <wordU+2dspacing> from [initial] to [20px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	CSS Animations: property <wordU+2dspacing> from [initial] to [20px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	Web Animations: property <wordU+2dspacing> from [initial] to [20px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	CSS Transitions: property <wordU+2dspacing> from [normal] to [10px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	CSS Transitions with transition: all: property <wordU+2dspacing> from [normal] to [10px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	CSS Animations: property <wordU+2dspacing> from [normal] to [10px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/animations/word-spacing-interpolation.html	FAIL	Web Animations: property <wordU+2dspacing> from [normal] to [10px] at (0) should be [0px]	assert_equals: expected "0px " but got "normal "
+css/css-text/i18n/css3-text-line-break-baspglwj-002.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-002.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-002.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-002.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-016.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-016.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-016.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-016.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-017.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-017.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-017.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-017.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-018.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-018.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-018.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-018.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-019.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-019.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-019.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-019.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-020.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-020.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-020.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-020.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-021.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-021.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-021.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-021.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-022.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-022.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-022.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-022.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-023.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-023.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-023.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-023.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-024.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-024.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-024.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-024.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-025.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-025.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-025.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-025.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-026.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-026.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-026.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-026.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-030.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-030.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-030.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-030.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-031.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-031.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-031.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-031.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-032.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-032.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-032.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-032.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-033.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-033.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-033.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-033.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-034.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-034.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-034.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-034.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-035.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-035.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-035.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-035.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-036.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-036.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-036.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-036.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-037.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-037.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-037.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-037.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-038.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-038.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-038.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-038.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-039.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-039.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-039.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-039.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-040.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-040.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-040.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-040.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-041.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-041.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-041.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-041.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-042.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-042.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-042.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-042.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-043.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-043.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-043.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-043.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-044.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-044.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-044.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-044.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-045.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-045.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-045.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-045.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-046.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-046.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-046.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-046.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-047.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-047.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-047.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-047.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-048.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-048.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-048.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-048.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-049.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-049.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-049.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-049.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-050.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-050.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-050.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-050.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-051.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-051.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-051.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-051.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-052.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-052.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-052.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-052.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-060.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-060.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-060.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-060.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-061.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-061.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-061.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-061.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-062.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-062.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-062.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-062.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-063.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-063.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-063.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-063.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-064.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-064.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-064.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-064.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-065.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-065.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-065.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-065.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-066.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-066.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-066.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-066.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-067.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-067.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-067.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-067.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-068.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-068.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-068.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-068.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-069.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-069.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-069.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-069.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-070.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-070.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-070.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-070.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-071.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-071.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-071.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-071.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-072.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-072.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-072.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-072.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-073.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-073.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-073.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-073.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-074.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-074.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-074.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-074.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-075.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-075.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-075.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-075.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-076.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-076.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-076.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-076.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-077.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-077.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-077.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-077.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-078.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-078.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-078.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-078.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-080.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-080.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-080.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-080.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-081.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-081.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-081.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-081.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-082.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-082.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-082.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-082.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-083.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-083.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-083.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-083.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-084.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-084.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-084.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-084.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-085.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-085.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-085.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-085.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-086.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-086.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-086.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-086.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-090.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-090.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-090.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-090.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-091.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-091.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-091.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-091.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-092.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-092.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-092.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-092.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-093.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-093.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-093.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-093.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-095.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-095.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-095.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-095.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-096.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-096.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-096.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-096.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-097.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-097.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-097.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-097.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-098.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-098.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-098.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-098.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-099.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-099.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-099.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-099.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-100.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-100.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-100.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-100.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-101.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-101.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-101.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-101.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-102.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-102.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-102.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-102.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-103.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-103.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-103.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-103.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-104.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-104.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-104.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-104.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-105.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-105.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-105.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-105.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-106.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-106.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-106.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-106.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-107.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-107.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-107.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-107.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-108.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-108.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-108.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-108.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-109.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-109.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-109.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-109.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-110.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-110.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-110.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-110.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-111.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-111.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-111.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-111.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-112.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-112.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-112.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-112.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-113.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-113.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-113.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-113.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-114.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-114.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-114.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-114.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-115.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-115.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-115.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-115.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-116.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-116.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-116.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-116.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-117.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-117.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-117.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-117.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-118.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-118.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-118.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-118.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-120.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-120.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-120.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-120.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-121.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-121.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-121.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-121.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-124.html	FAIL	whiteU+2dspace:normal	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-124.html	FAIL	whiteU+2dspace:preU+2dline	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-124.html	FAIL	whiteU+2dspace:preU+2dwrap	assert_true: expected true got false
+css/css-text/i18n/css3-text-line-break-baspglwj-124.html	FAIL	whiteU+2dspace:breakU+2dspaces	assert_true: expected true got false
+css/css-text/inheritance.html	FAIL	Property hangingU+2dpunctuation inherits	assert_equals: expected "first last" but got "none"
+css/css-text/inheritance.html	FAIL	Property lineU+2dbreak inherits	assert_equals: expected "strict" but got "auto"
+css/css-text/inheritance.html	FAIL	Property textU+2dalignU+2dall has initial value start	assert_true: textU+2dalignU+2dall doesn't seem to be supported in the computed style expected true got false
+css/css-text/inheritance.html	FAIL	Property textU+2dalignU+2dall inherits	assert_true: textU+2dalignU+2dall doesn't seem to be supported in the computed style expected true got false
+css/css-text/inheritance.html	FAIL	Property textU+2dfit inherits	assert_equals: expected "grow" but got "none"
+css/css-text/inheritance.html	FAIL	Property textU+2dwrap inherits	assert_equals: expected "nowrap" but got "wrap"
+css/css-text/inheritance.html	FAIL	Property textU+2dwrapU+2dmode inherits	assert_equals: expected "nowrap" but got "wrap"
+css/css-text/inheritance.html	FAIL	Property textU+2dwrapU+2dstyle inherits	assert_equals: expected "balance" but got "auto"
+css/css-text/inheritance.html	FAIL	Property whiteU+2dspaceU+2dcollapse inherits	assert_equals: expected "preserve" but got "collapse"
+css/css-text/inheritance.html	FAIL	Property wordU+2dspacing has initial value 0px	assert_equals: expected "0px" but got "normal"
+css/css-text/line-breaking/line-breaking-028.html	FAIL	U+0x1680 (BA) and U+0x0021 (EX)	assert_true: expected true got false
+css/css-text/line-breaking/line-breaking-028.html	FAIL	U+0x2009 (BA) and U+0x0021 (EX)	assert_true: expected true got false
+css/css-text/line-breaking/line-breaking-028.html	FAIL	U+0x205F (BA) and U+0x0021 (EX)	assert_true: expected true got false
+css/css-text/line-breaking/line-breaking-atomic-nowrap-001.html	FAIL	CSS Text Test: Check atomic inline+NBSP quirk does not apply if nowrap	assert_equals: expected 1 but got 3
+css/css-text/line-breaking/line-breaking-atomic-nowrap-001.html	FAIL	CSS Text Test: Check atomic inline+NBSP quirk does not apply if nowrap 1	assert_equals: expected 1 but got 3
+css/css-text/line-breaking/line-breaking-atomic-nowrap-001.html	FAIL	CSS Text Test: Check atomic inline+NBSP quirk does not apply if nowrap 2	assert_equals: expected 1 but got 3
+css/css-text/line-breaking/line-breaking-atomic-nowrap-001.html	FAIL	CSS Text Test: Check atomic inline+NBSP quirk does not apply if nowrap 3	assert_equals: expected 1 but got 3
+css/css-text/overflow-wrap/word-wrap-alias.html	FAIL	wordU+2dwrap should be defined as an alias of overflowU+2dwrap	assert_equals: Only overflowU+2dwrap should appear when serializing the declaration. expected "overflowU+2dwrap: breakU+2dword;" but got "wordU+2dwrap: breakU+2dword; overflowU+2dwrap: breakU+2dword;"
+css/css-text/overflow-wrap/word-wrap-alias.html	FAIL	wordU+2dwrap is a legacy name alias for overflowU+2dwrap	assert_equals: wordU+2dwrap is an alias for overflowU+2dwrap expected "inherit" but got ""
+css/css-text/parsing/hyphenate-character-computed.html	FAIL	Property hyphenateU+2dcharacter value '"\1400"'	assert_equals: expected "\"᐀\"" but got "\"\\1400\""
+css/css-text/parsing/hyphenate-character-valid.html	FAIL	e.style['hyphenateU+2dcharacter'] = "\"\\1400\"" should set the property value	assert_equals: serialization should be canonical expected "\"᐀\"" but got "\"\\1400\""
+css/css-text/parsing/hyphenate-limit-chars-computed.html	FAIL	Property hyphenateU+2dlimitU+2dchars value '5 2 calc(3.1)'	assert_true: '5 2 calc(3.1)' is a supported value for hyphenateU+2dlimitU+2dchars. expected true got false
+css/css-text/parsing/letter-spacing-computed.html	FAIL	Property letterU+2dspacing value '0px'	assert_equals: expected "normal" but got "0px"
+css/css-text/parsing/letter-spacing-computed.html	FAIL	Property letterU+2dspacing value 'calc(10px U+2d (5% + 10%)'	assert_true: 'calc(10px U+2d (5% + 10%)' is a supported value for letterU+2dspacing. expected true got false
+css/css-text/parsing/letter-spacing-valid.html	FAIL	e.style['letterU+2dspacing'] = "0" should set the property value	assert_equals: serialization should be canonical expected "0px" but got "0"
+css/css-text/parsing/letter-spacing-valid.html	FAIL	e.style['letterU+2dspacing'] = "calc(2ch U+2d 30%)" should set the property value	assert_equals: serialization should be canonical expected "calc(U+2d30% + 2ch)" but got "calc(2ch U+2d 30%)"
+css/css-text/parsing/tab-size-computed.html	FAIL	Property tabU+2dsize value '0'	assert_equals: expected "0" but got "0px"
+css/css-text/parsing/tab-size-computed.html	FAIL	Property tabU+2dsize value 'calc(10 + (sign(2cqw U+2d 10px) * 5))'	assert_true: 'calc(10 + (sign(2cqw U+2d 10px) * 5))' is a supported value for tabU+2dsize. expected true got false
+css/css-text/parsing/tab-size-computed.html	FAIL	Property tabU+2dsize value 'calc(10px U+2d 0.5em)'	assert_equals: expected "0px" but got "U+2d10px"
+css/css-text/parsing/tab-size-computed.html	FAIL	Property tabU+2dsize value 'calc(10px + (sign(2cqw U+2d 10px) * 5px))'	assert_equals: expected "5px" but got "calc(10px + (sign(2cqw U+2d 10px) * 5px))"
+css/css-text/parsing/text-align-computed.html	FAIL	Property textU+2dalign value 'matchU+2dparent'	assert_equals: expected "center" but got "matchU+2dparent"
+css/css-text/parsing/text-indent-computed.html	FAIL	Property textU+2dindent value 'calc(10px U+2d 0.5em)'	assert_equals: expected "U+2d10px" but got "calc(10px U+2d 0.5em)"
+css/css-text/parsing/text-indent-computed.html	FAIL	Property textU+2dindent value 'eachU+2dline hanging calc(10px + 0.5em)'	assert_equals: expected "30px hanging eachU+2dline" but got "eachU+2dline hanging calc(10px + 0.5em)"
+css/css-text/parsing/text-indent-valid.html	FAIL	e.style['textU+2dindent'] = "hanging calc(50% + 60px)" should set the property value	assert_equals: serialization should be canonical expected "calc(50% + 60px) hanging" but got "hanging calc(50% + 60px)"
+css/css-text/parsing/text-indent-valid.html	FAIL	e.style['textU+2dindent'] = "eachU+2dline 10px" should set the property value	assert_equals: serialization should be canonical expected "10px eachU+2dline" but got "eachU+2dline 10px"
+css/css-text/parsing/text-indent-valid.html	FAIL	e.style['textU+2dindent'] = "hanging 20% eachU+2dline" should set the property value	assert_equals: serialization should be canonical expected "20% hanging eachU+2dline" but got "hanging 20% eachU+2dline"
+css/css-text/parsing/text-indent-valid.html	FAIL	e.style['textU+2dindent'] = "eachU+2dline hanging calc(2em + 3ex)" should set the property value	assert_equals: serialization should be canonical expected "calc(2em + 3ex) hanging eachU+2dline" but got "eachU+2dline hanging calc(2em + 3ex)"
+css/css-text/parsing/text-indent-valid.html	FAIL	e.style['textU+2dindent'] = "calc(50% + 60px) eachU+2dline hanging" should set the property value	assert_equals: serialization should be canonical expected "calc(50% + 60px) hanging eachU+2dline" but got "calc(50% + 60px) eachU+2dline hanging"
+css/css-text/parsing/text-justify-computed-legacy.html	FAIL	Property textU+2djustify value 'distribute'	assert_equals: expected "interU+2dcharacter" but got "distribute"
+css/css-text/parsing/white-space-shorthand-text-wrap.html	FAIL	`whiteU+2dspace` should overwrite previous `textU+2dwrapU+2dmode: nowrap`	assert_equals: expected "balance" but got "nowrap balance"
+css/css-text/parsing/white-space-shorthand-text-wrap.html	FAIL	`whiteU+2dspace` should overwrite `textU+2dwrapU+2dmode` on the parent	assert_equals: expected "balance" but got "wrap"
+css/css-text/parsing/word-spacing-computed.html	FAIL	Property wordU+2dspacing value 'normal'	assert_equals: expected "0px" but got "normal"
+css/css-text/parsing/word-spacing-computed.html	FAIL	Property wordU+2dspacing value 'calc(10px U+2d (5% + 10%)'	assert_true: 'calc(10px U+2d (5% + 10%)' is a supported value for wordU+2dspacing. expected true got false
+css/css-text/parsing/word-spacing-valid.html	FAIL	e.style['wordU+2dspacing'] = "0" should set the property value	assert_equals: serialization should be canonical expected "0px" but got "0"
+css/css-text/parsing/word-spacing-valid.html	FAIL	e.style['wordU+2dspacing'] = "calc(2ch U+2d 30%)" should set the property value	assert_equals: serialization should be canonical expected "calc(U+2d30% + 2ch)" but got "calc(2ch U+2d 30%)"
+css/css-text/tab-size/tab-size.html	FAIL	Test tabU+2dsize measurements	assert_approx_equals: expected 60 +/U+2d 0.02 but got 0
+css/css-text/text-align/text-align-match-parent-002.html	FAIL	CSS Text Test: textU+2dalign U+2d computed value for matchU+2dparent on the root element	assert_equals: expected "start" but got "matchU+2dparent"
+css/css-text/text-fit/hittest.html	FAIL	Text selection by a pointer device should work correctly	promise_test: Unhandled rejection with value: object "Error: action_sequence() is not implemented by testdriverU+2dvendor.js"
+css/css-text/text-fit/line-height.html	FAIL	lineU+2dheight:normal should be scaled	assert_greater_than: expected a number greater than 16 but got 16
+css/css-text/text-fit/line-height.html	FAIL	lineU+2dheight:<number> should be scaled	assert_greater_than: expected a number greater than 25.600000381469727 but got 25.600000381469727
+css/css-text/text-fit/text-autospace.html	FAIL	"textU+2dautospace" and "consistent" work fine	assert_approx_equals: The last letter aligns with the right edge expected 399 +/U+2d 1 but got 104.140625
+css/css-text/text-fit/text-autospace.html	FAIL	"textU+2dautospace" and "perU+2dlineU+2dall" work fine	assert_approx_equals: The last letter aligns with the right edge expected 399 +/U+2d 1 but got 104.140625
+css/css-text/text-fit/text-spacing-trim-fit-width.html	FAIL	[consistent] Check that textU+2dspacingU+2dtrim: trimU+2dstart scales larger than none because of trimmed start margin	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.ready — document.fonts 이(가) undefined (읽을 수 없음)"
+css/css-text/text-fit/text-spacing-trim-fit-width.html	FAIL	[perU+2dlineU+2dall] Check that textU+2dspacingU+2dtrim: trimU+2dstart scales larger than none because of trimmed start margin	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.ready — document.fonts 이(가) undefined (읽을 수 없음)"
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'A' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'B' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'C' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'D' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'E' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'F' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'G' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'H' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'I' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'J' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'K' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'L' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'M' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'N' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'O' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'P' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Q' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'R' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'S' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'T' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'U' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'V' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'W' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'X' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Y' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Z' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'a' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'b' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'c' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'd' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'e' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'f' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'g' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'h' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'i' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'j' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'k' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'l' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'm' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'n' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'o' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'p' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'q' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'r' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 's' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 't' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'u' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'v' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'w' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'x' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'y' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'z' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ı' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ȷ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Α' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Β' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Γ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Δ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ε' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ζ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Η' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Θ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ι' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Κ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Λ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Μ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ν' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ξ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ο' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Π' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ρ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Σ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Τ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Υ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Φ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Χ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ψ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'Ω' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'α' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'β' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'γ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'δ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ε' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ζ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'η' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'θ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ι' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'κ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'λ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'μ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ν' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ξ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ο' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'π' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ρ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ς' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'σ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'τ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'υ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'φ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'χ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ψ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ω' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϑ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϕ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϖ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϰ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϱ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϴ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto 'ϵ' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto '∂' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/math/text-transform-math-auto-003.html	FAIL	Selection.toString() for mathU+2dauto '∇' returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-capitalize-036.html	FAIL	textU+2dtransform: capitalize test for 'hello world'	assert_equals: innerText for 'hello world' should be 'Hello World' expected "Hello World" but got "hello world"
+css/css-text/text-transform/text-transform-capitalize-036.html	FAIL	textU+2dtransform: capitalize test for 'fooU+2dbar'	assert_equals: innerText for 'fooU+2dbar' should be 'FooU+2dBar' expected "FooU+2dBar" but got "fooU+2dbar"
+css/css-text/text-transform/text-transform-capitalize-036.html	FAIL	textU+2dtransform: capitalize test for "john's apple"	assert_equals: innerText for "john's apple" should be "John's Apple" expected "John's Apple" but got "john's apple"
+css/css-text/text-transform/text-transform-capitalize-036.html	FAIL	textU+2dtransform: capitalize test for nested elements	assert_equals: innerText for nested 'hello <span>world</span>' should be 'Hello World' expected "Hello World" but got "hello world"
+css/css-text/text-transform/text-transform-capitalize-036.html	FAIL	textU+2dtransform: capitalize test for underscore	assert_equals: innerText for 'foo_bar' should be 'Foo_bar' expected "Foo_bar" but got "foo_bar"
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ぁ' (U+3041) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ぃ' (U+3043) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ぅ' (U+3045) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ぇ' (U+3047) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ぉ' (U+3049) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'っ' (U+3063) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ゃ' (U+3083) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ゅ' (U+3085) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ょ' (U+3087) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ゎ' (U+308E) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ゕ' (U+3095) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ゖ' (U+3096) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ァ' (U+30A1) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ィ' (U+30A3) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ゥ' (U+30A5) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ェ' (U+30A7) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ォ' (U+30A9) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ッ' (U+30C3) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ャ' (U+30E3) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ュ' (U+30E5) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ョ' (U+30E7) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ヮ' (U+30EE) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ヵ' (U+30F5) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ヶ' (U+30F6) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇰ' (U+31F0) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇱ' (U+31F1) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇲ' (U+31F2) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇳ' (U+31F3) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇴ' (U+31F4) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇵ' (U+31F5) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇶ' (U+31F6) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇷ' (U+31F7) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇸ' (U+31F8) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇹ' (U+31F9) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇺ' (U+31FA) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇻ' (U+31FB) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇼ' (U+31FC) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇽ' (U+31FD) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇾ' (U+31FE) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ㇿ' (U+31FF) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｧ' (U+FF67) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｨ' (U+FF68) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｩ' (U+FF69) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｪ' (U+FF6A) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｫ' (U+FF6B) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｬ' (U+FF6C) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｭ' (U+FF6D) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｮ' (U+FF6E) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana 'ｯ' (U+FF6F) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛄲' (U+1B132) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅐' (U+1B150) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅑' (U+1B151) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅒' (U+1B152) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅕' (U+1B155) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅤' (U+1B164) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅥' (U+1B165) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅦' (U+1B166) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-full-size-kana-009.html	FAIL	Selection.toString() for fullU+2dsizeU+2dkana '𛅧' (U+1B167) returns the transformed character.	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/text-transform/text-transform-upperlower-107.html	FAIL	Selection.toString() for 'ß' with textU+2dtransform: uppercase	setBaseAndExtent(…) — window.getSelection().setBaseAndExtent 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/white-space/pre-line-br-with-whitespace-child-crash.html	FAIL	Modifying data of a text child of a root br element with preU+2dline should not crash.	appendChild(…) — document.appendChild 이(가) undefined (함수 아님, 수신자=object)
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLO 2	assert_equals: expected 103.15234375 but got 107.59765625
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLO 3	assert_equals: expected 103.15234375 but got 107.59765625
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLO 4	assert_equals: expected 103.15234375 but got 107.59765625
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLO 5	assert_equals: expected 103.15234375 but got 107.59765625
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLE 2	assert_equals: expected 100.4921875 but got 104.9375
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLE 3	assert_equals: expected 100.4921875 but got 104.9375
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLE 4	assert_equals: expected 100.4921875 but got 104.9375
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLE 5	assert_equals: expected 100.4921875 but got 104.9375
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLI 1	assert_equals: expected 139.1875 but got 169.609375
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLI 2	assert_equals: expected 91.15234375 but got 126.01953125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLI 3	assert_equals: expected 91.15234375 but got 126.01953125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLI 4	assert_equals: expected 91.15234375 but got 126.01953125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLI 5	assert_equals: expected 91.15234375 but got 126.01953125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLM 2	assert_equals: expected 108.44921875 but got 112.89453125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLM 3	assert_equals: expected 108.44921875 but got 112.89453125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLM 4	assert_equals: expected 108.44921875 but got 112.89453125
+css/css-text/white-space/white-space-collapse-002.html	FAIL	RLM 5	assert_equals: expected 108.44921875 but got 112.89453125
+css/css-text/word-spacing/word-spacing-computed-001.html	FAIL	testing wordU+2dspacing: normal	assert_equals: expected "0px" but got "normal"
