@@ -6384,6 +6384,62 @@ fn rect_shape_valid(inner: &str) -> bool {
 }
 
 // <basic-shape> 함수 하나(inset/circle/ellipse/polygon/path/xywh/rect) 검증.
+// shape() 함수(§CSS Shapes 2) 구조 검증. 좌표/제어점 내용은 관대(soundness — 유효식
+// 거부 안 함), 구조적 무효만 거부: 구획(콤마) 구분, 명령 키워드, 빈 인자(선두/후행
+// 콤마), arc 플래그 중복(cw+ccw/large+small), hline/vline 의 위치 키워드.
+pub fn shape_func_valid(raw: &str) -> bool {
+    let s = raw.trim();
+    let low = s.to_ascii_lowercase();
+    if !low.starts_with("shape(") || !s.ends_with(')') {
+        return false;
+    }
+    let inner = s[6..s.len() - 1].trim();
+    if inner.is_empty() || inner.starts_with(',') || inner.ends_with(',') {
+        return false;
+    }
+    let segs = split_top_commas(inner);
+    if segs.is_empty() || segs.iter().any(|g| g.trim().is_empty()) {
+        return false;
+    }
+    const CMDS: &[&str] = &["move", "line", "hline", "vline", "curve", "smooth", "arc", "close"];
+    for (i, seg) in segs.iter().enumerate() {
+        let toks: Vec<String> =
+            split_top_level(seg.trim()).iter().map(|t| t.to_ascii_lowercase()).collect();
+        if toks.is_empty() {
+            return false;
+        }
+        if i == 0 {
+            // [<fill-rule>]? from <coords…> — coords 안에 명령 키워드가 있으면 콤마 누락.
+            let idx = if matches!(toks[0].as_str(), "nonzero" | "evenodd") { 1 } else { 0 };
+            if toks.get(idx).map(|s| s.as_str()) != Some("from") {
+                return false;
+            }
+            if toks.len() <= idx + 1 || toks[idx + 1..].iter().any(|t| CMDS.contains(&t.as_str())) {
+                return false;
+            }
+        } else {
+            let cmd = toks[0].as_str();
+            if !CMDS.contains(&cmd) {
+                return false;
+            }
+            if cmd == "arc" {
+                let cnt = |k: &str| toks.iter().filter(|t| t.as_str() == k).count();
+                if cnt("cw") + cnt("ccw") > 1 || cnt("large") + cnt("small") > 1 {
+                    return false;
+                }
+            }
+            if (cmd == "hline" || cmd == "vline")
+                && toks
+                    .iter()
+                    .any(|t| matches!(t.as_str(), "top" | "bottom" | "left" | "right" | "center"))
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub fn basic_shape_valid(raw: &str) -> bool {
     let s = raw.trim();
     if !s.ends_with(')') {
@@ -6518,6 +6574,9 @@ pub fn shape_outside_valid(raw: &str) -> bool {
         } else if is_shape_image_component(c) {
             images += 1;
         } else if low.starts_with("shape(") && low.ends_with(')') {
+            if !shape_func_valid(c) {
+                return false;
+            }
             shapes += 1;
         } else if c.ends_with(')') && basic_shape_valid(c) {
             shapes += 1;
@@ -10487,6 +10546,36 @@ mod tests {
             "rotate(acos(0.5))",
         ] {
             assert!(transform_valid(v), "should accept transform: {v}");
+        }
+        // shape() 함수 — 유효(회귀 방지).
+        for v in [
+            "shape(from 0px 0px, line to 10px 10px)",
+            "shape(from 1em 50%, line to 10px 10px)",
+            "shape(from 1ch -50px, line to -10% 12px)",
+            "shape(from 10px 10px, move by 10px 5px, line by 20px 40%, close)",
+            "shape(from 10px 10px, hline by 10px, vline to 5rem)",
+            "shape(from 10px 10px, vline by 5%, hline to 1vw)",
+            "shape(from 10px 10px, curve to 50px 20px with 10rem 1px / 20vh 1ch)",
+            "shape(from 10px 10px, smooth to 50px 20px with 10rem 1%)",
+            "shape(from 10px 10px, arc to 50px 1pt of 10px 10px small rotate 0deg)",
+            "shape(from 10% 1rem, arc to 50px 1pt of 20% cw large rotate 25deg)",
+            "shape(nonzero from 0px 0px, line to 10px 10px)",
+            "shape(from 10px 10px, curve to 50px 20px with 10rem center)",
+        ] {
+            assert!(shape_func_valid(v), "should accept shape: {v}");
+        }
+        // shape() 함수 — 구조적 무효.
+        for v in [
+            "shape(from 20px 40px line to 20px 30px)",       // 콤마 누락
+            "shape(from 20px 40px, line to 20px 30px,)",     // 후행 콤마
+            "shape(from 20px 40px, arc by 20px 20px of 10% 20% cw ccw)", // cw+ccw
+            "shape(from 20px 40px, arc by 20px 20px of 10% 20% small large)", // small+large
+            "shape(from 20px 40px, curve to 20px 20px, using 10px 30px)", // using(비명령)
+            "shape(from 20px 40px, move to 20px 30px, hline to top)",  // hline 위치값
+            "shape(from 20px 40px, move to 20px 30px, vline to left)", // vline 위치값
+            "shape(from 20px, 40px, line to 20px, 30px)",    // 좌표 내 콤마
+        ] {
+            assert!(!shape_func_valid(v), "should reject shape: {v}");
         }
         // transform 함수 리스트 — 무효.
         for v in [
