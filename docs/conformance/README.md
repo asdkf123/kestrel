@@ -111,7 +111,7 @@
 | css-tables | 191 / 557 | 34.3% |
 | filter-effects | 833 / 2,452 | 34.0% |
 | css-borders | 365 / 1,151 | 31.7% |
-| css-values | 2,388 / 7,651 | 31.2% |
+| css-values | 2,604 / 7,769 | 33.5% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions | 879 / 3,086 | 28.5% |
 | fill-stroke | 104 / 371 | 28.0% |
