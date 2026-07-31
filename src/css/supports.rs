@@ -207,6 +207,8 @@ pub(crate) const SUPPORTED: &[&str] = &[
     // 8차: 순수 키워드 롱핸드(paint 핸들러 없음 — 게이트 안전).
     "scroll-snap-type", "scroll-snap-align", "view-transition-name", "anchor-name",
     "field-sizing",
+    // position-area(§css-anchor-2): 계산값을 캐논으로 방출하므로 계산 스타일 노출 정직.
+    "position-area",
     // 9차: transform-origin + 개별 변환 프로퍼티(scale/rotate/translate).
     "transform-origin", "scale", "rotate", "translate",
     // 10차: corner-shape(신규, 코너 렌더 미세조정 — 계산값 노출, 렌더는 기본 모양).
