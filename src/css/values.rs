@@ -7128,6 +7128,134 @@ pub fn border_image_source_valid(raw: &str) -> bool {
 
 // background-image 레이어 구조 검증: 각 레이어는 none 또는 <image>(함수).
 // auto 같은 bare 키워드·빈 레이어 거부(gradient/cross-fade 내부는 별도 검증기).
+// animation-range 단축(§scroll-animations): [ <start> <end>? ]#. start/end 각각
+// normal | <length-percentage> | <timeline-range-name> <length-percentage>?. 시간·각도·
+// 색·미지 이름·순서 위반 거부.
+fn anim_range_is_name(t: &str) -> bool {
+    matches!(
+        t.to_ascii_lowercase().as_str(),
+        "cover" | "contain" | "entry" | "exit" | "entry-crossing" | "exit-crossing"
+    )
+}
+fn anim_range_is_lp(t: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    if is_math_fn(&low) {
+        return math_length_valid(&low, true);
+    }
+    is_length_percentage(t) // "0"·음수·%·단위 길이 포함, 시간/각도/색 제외
+}
+// 토큰에서 range 값 하나(normal | lp | name lp?)를 소비, 다음 인덱스 반환.
+fn anim_range_consume(toks: &[String], i: usize) -> Option<usize> {
+    let t = &toks[i];
+    if t.eq_ignore_ascii_case("normal") {
+        return Some(i + 1);
+    }
+    if anim_range_is_name(t) {
+        let mut j = i + 1;
+        if j < toks.len() && anim_range_is_lp(&toks[j]) {
+            j += 1;
+        }
+        return Some(j);
+    }
+    if anim_range_is_lp(t) {
+        return Some(i + 1);
+    }
+    None
+}
+pub fn animation_range_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return true;
+    }
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|item| {
+        let toks = split_top_level(item.trim());
+        if toks.is_empty() {
+            return false;
+        }
+        let Some(i) = anim_range_consume(&toks, 0) else { return false };
+        if i == toks.len() {
+            return true; // start 만
+        }
+        matches!(anim_range_consume(&toks, i), Some(j) if j == toks.len()) // start end
+    })
+}
+
+// animation-range 단축 → (start-list, end-list) 전개. 각 애니메이션(콤마)에서 start
+// [end] 를 분리, end 미지정은 normal. 무효면 None.
+pub fn animation_range_expand(raw: &str) -> Option<(String, String)> {
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return None;
+    }
+    let (mut starts, mut ends) = (Vec::new(), Vec::new());
+    for item in &items {
+        let toks = split_top_level(item.trim());
+        if toks.is_empty() {
+            return None;
+        }
+        let i = anim_range_consume(&toks, 0)?;
+        starts.push(toks[..i].join(" "));
+        if i == toks.len() {
+            ends.push("normal".to_string());
+        } else {
+            let j = anim_range_consume(&toks, i)?;
+            if j != toks.len() {
+                return None;
+            }
+            ends.push(toks[i..j].join(" "));
+        }
+    }
+    Some((starts.join(", "), ends.join(", ")))
+}
+
+// animation-range 값 하나 캐논: "<name> <offset>" 에서 기본 오프셋 생략(start 는 0%,
+// end 는 100%). "cover 0%"(start)→"cover", "cover 100%"(end)→"cover". normal·bare
+// lp·비기본 오프셋은 유지.
+fn anim_range_value_canon(item: &str, is_end: bool) -> String {
+    let toks = split_top_level(item.trim());
+    if toks.len() == 2 && anim_range_is_name(&toks[0]) {
+        let off = toks[1].trim().to_ascii_lowercase();
+        let default = if is_end { "100%" } else { "0%" };
+        if off == default {
+            return toks[0].clone();
+        }
+    }
+    toks.join(" ")
+}
+// animation-range-start/end 롱핸드 값 캐논(콤마 목록 각 항목).
+pub fn animation_range_longhand_canonical(raw: &str, is_end: bool) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return low;
+    }
+    split_top_commas(raw)
+        .iter()
+        .map(|item| anim_range_value_canon(item, is_end))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// animation-range-start/end 롱핸드: <single-value># (start+end 아님). 각 항목은 range
+// 값 하나(normal | lp | name lp?)로 끝나야 한다("contain contain" 은 롱핸드 무효).
+pub fn animation_range_longhand_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return true;
+    }
+    let items = split_top_commas(raw);
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|item| {
+        let toks = split_top_level(item.trim());
+        !toks.is_empty() && matches!(anim_range_consume(&toks, 0), Some(j) if j == toks.len())
+    })
+}
+
 // mask 단축(§CSS Masking): <mask-layer># 의 성분 개수 검증(sound — 유효값 거부 안 함).
 // 각 레이어에서 compositing-operator·masking-mode·image 는 ≤1, geometry-box(no-clip
 // 포함)는 ≤2(origin+clip), "/"(position/size 구분)는 ≤1. position/repeat/size 내용은
@@ -11193,6 +11321,21 @@ mod tests {
             assert!(!shape_func_valid(v), "should reject shape: {v}");
         }
         assert!(!ray_valid("ray(0 sides)")); // bare 0 각도
+        // animation-range 문법.
+        for v in [
+            "normal", "normal normal", "cover", "entry, exit", "0% 100%",
+            "entry 0% entry 100%", "cover 50%", "cover 0px", "120%", "0",
+            "cover -42%", "contain calc(10px + 10%)", "exit 1%, cover 2%, contain 0%",
+            "normal cover 0%", "cover 50% exit 0%", "normal exit 50%",
+        ] {
+            assert!(animation_range_valid(v), "should accept animation-range: {v}");
+        }
+        for v in [
+            "1s", "-1s", "1s 2s", "1s / 2s", "#ff0000", "red", "thing", "thing 0%",
+            "0s entry 50%", "1s 2s 3s", "peek 50%", "none", "cover 50% enter 50%",
+        ] {
+            assert!(!animation_range_valid(v), "should reject animation-range: {v}");
+        }
         // SVG path data 검증(유효 — 회귀 방지 핵심).
         for d in [
             "M 10 10 h 80 v 80 h -80 Z",

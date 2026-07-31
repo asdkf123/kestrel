@@ -639,6 +639,38 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // animation-range 단축/롱핸드(§scroll-animations): normal | <length-percentage> |
+        // <range-name> <length-percentage>?. 단축은 start [end]. 시간·색·미지 이름 거부.
+        "animation-range" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { important: false, name: "animation-range-start".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { important: false, name: "animation-range-end".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            // 단축은 start/end 롱핸드로 전개(§CSSOM — 관련 롱핸드만 설정). 기본 오프셋
+            // 캐논(start 0%, end 100% 생략).
+            match crate::css::animation_range_expand(value_text) {
+                Some((start, end)) => vec![
+                    Declaration { important: false, name: "animation-range-start".to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(&start, false)) },
+                    Declaration { important: false, name: "animation-range-end".to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(&end, true)) },
+                ],
+                None => Vec::new(),
+            }
+        }
+        "animation-range-start" | "animation-range-end" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::animation_range_longhand_valid(value_text) {
+                let is_end = name == "animation-range-end";
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(value_text, is_end)) }]
+            } else {
+                Vec::new()
+            }
+        }
         // offset-rotate(§CSS Motion Path): [ auto | reverse ] || <angle>. 키워드·각도 각
         // ≤1, 최소 하나. bare 0(단위 없음)·none·키워드 중복 거부. 캐논: 키워드 먼저.
         "offset-rotate" => match offset_rotate_canonical(value_text) {

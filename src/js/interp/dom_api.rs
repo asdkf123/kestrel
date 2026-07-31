@@ -410,6 +410,30 @@ impl Interp {
                 return s;
             }
         }
+        // animation-range 단축(§scroll-animations): start/end 캐논(기본 오프셋 생략),
+        // 애니메이션마다 "start end"(end 가 normal 이면 생략).
+        if prop == "animation-range" {
+            if let Some((start, end)) = crate::css::animation_range_expand(raw) {
+                let cs = crate::css::animation_range_longhand_canonical(&start, false);
+                let ce = crate::css::animation_range_longhand_canonical(&end, true);
+                let starts: Vec<&str> = cs.split(',').map(|s| s.trim()).collect();
+                let ends: Vec<&str> = ce.split(',').map(|s| s.trim()).collect();
+                if starts.len() == ends.len() {
+                    let anims: Vec<String> = starts
+                        .iter()
+                        .zip(ends.iter())
+                        .map(|(s, e)| {
+                            if *e == "normal" {
+                                s.to_string()
+                            } else {
+                                format!("{} {}", s, e)
+                            }
+                        })
+                        .collect();
+                    return anims.join(", ");
+                }
+            }
+        }
         // offset-rotate(§CSS Motion Path): [auto|reverse] 먼저, <angle> 나중 캐논.
         if prop == "offset-rotate" {
             if let Some(s) = crate::css::offset_rotate_canonical(raw) {
@@ -847,6 +871,9 @@ impl Interp {
                     | "offset-anchor"
                     | "offset-distance"
                     | "interactivity"
+                    | "animation-range"
+                    | "animation-range-start"
+                    | "animation-range-end"
                     | "contain"
                     | "top"
                     | "right"
