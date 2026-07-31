@@ -3035,13 +3035,32 @@ fn mdim_of(expr: &str) -> MTy {
     // 함수 호출 전체?
     if t.ends_with(')') {
         if let Some((name, args)) = mdim_func_args(t) {
-            // 이 텍스트가 순수 함수 호출인지(앞부분이 name( 로 시작) 확인 —
-            // "1px * max(..)" 같은 건 아래 char 파서로.
-            let is_pure_call = t
-                .find('(')
-                .map(|o| t[..o].chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
-                .unwrap_or(false)
-                && !t[..t.find('(').unwrap()].is_empty();
+            // 이 텍스트가 순수 함수 호출인지 확인: 이름(비어있지 않음)이 식별자이고,
+            // 첫 '(' 의 짝 ')' 가 문자열 끝이어야 한다. "calc(2) * calc(50px)" 처럼
+            // 첫 호출 뒤에 내용이 더 있으면 아래 char 파서로(곱셈 등).
+            let chars: Vec<char> = t.chars().collect();
+            let open = t.find('(').unwrap_or(0);
+            let name_ok = open > 0
+                && t[..open].chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+            let call_spans_all = {
+                let mut depth = 0i32;
+                let mut end = None;
+                for (i, &c) in chars.iter().enumerate().skip(open) {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = Some(i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                end == Some(chars.len() - 1)
+            };
+            let is_pure_call = name_ok && call_spans_all;
             if is_pure_call {
                 return match name.as_str() {
                     "calc" => {
@@ -4286,7 +4305,7 @@ pub fn gap_value_valid(tok: &str) -> bool {
         return true;
     }
     if is_math_fn(&low) {
-        return !(low.contains("deg") || low.contains("rad") || low.contains("turn"));
+        return math_length_valid(&low, true);
     }
     is_length_percentage(&low) && !low.starts_with('-')
 }
@@ -4298,8 +4317,8 @@ pub fn scroll_margin_valid(tok: &str) -> bool {
         return false;
     }
     if is_math_fn(&low) {
-        // <length> calc 만 — 각도·퍼센트 없음.
-        return !(low.contains("deg") || low.contains("rad") || low.contains("turn") || low.contains('%'));
+        // <length> calc 만(§CSS Values 4 타입 검사) — 각도·퍼센트 등 거부.
+        return math_length_valid(&low, false);
     }
     !low.ends_with('%') && is_length_percentage(&low)
 }
@@ -4311,7 +4330,7 @@ pub fn scroll_padding_valid(tok: &str) -> bool {
         return true;
     }
     if is_math_fn(&low) {
-        return !(low.contains("deg") || low.contains("rad") || low.contains("turn") || low.contains("auto"));
+        return math_length_valid(&low, true);
     }
     is_length_percentage(&low) && !low.starts_with('-')
 }
@@ -4394,11 +4413,9 @@ pub fn inset_length_valid(tok: &str) -> bool {
     if low == "auto" {
         return true;
     }
-    if low.ends_with(')')
-        && ["calc(", "min(", "max(", "clamp("].iter().any(|p| low.starts_with(p))
-    {
-        // 수학함수 안에 각도 단위가 있으면 <length-percentage> 아님.
-        return !(low.contains("deg") || low.contains("rad") || low.contains("turn"));
+    if is_math_fn(&low) {
+        // 결과가 <length-percentage> 여야(§CSS Values 4 타입 검사).
+        return math_length_valid(&low, true);
     }
     is_length_percentage(&low)
 }
@@ -10229,6 +10246,11 @@ mod tests {
             "round(nearest, 10px, 2px)",
             "calc(1px)",
             "abs(-5px)",
+            "calc(2em + 3ex)",
+            "calc(20px + calc(80px))",
+            "calc(calc(100px))",
+            "calc(calc(150px*2/3))",
+            "calc(calc(2) * calc(50px))",
         ] {
             assert!(math_length_valid(v, true), "should accept length: {v}");
         }
