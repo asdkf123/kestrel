@@ -748,6 +748,7 @@ impl Interp {
                     | "outline-offset"
                     | "display"
                     | "content-visibility"
+                    | "scrollbar-width"
                     | "contain"
                     | "top"
                     | "right"

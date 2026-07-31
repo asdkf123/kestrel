@@ -637,6 +637,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // scrollbar-width(§CSS Scrollbars): auto | thin | none 단일 키워드만.
+        "scrollbar-width" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "thin"
+                    | "none"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // interactivity(§CSS UI 4): auto | inert 만.
         "interactivity" => {
             let low = value_text.trim().to_ascii_lowercase();
@@ -2547,7 +2560,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-rendering" | "print-color-adjust"
         // 2차 배치: text/font-variant/ruby/scrollbar/list 등 키워드 프로퍼티.
         | "text-emphasis-style"
-        | "quotes" | "scrollbar-width" | "scrollbar-color"
+        | "quotes" | "scrollbar-color"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
