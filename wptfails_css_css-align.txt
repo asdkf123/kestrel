@@ -1,0 +1,90 @@
+css/css-align/baseline-of-single-axis-scroll-container.html	FAIL	horizontal writing mode	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.ready — document.fonts 이(가) undefined (읽을 수 없음)"
+css/css-align/baseline-of-single-axis-scroll-container.html	FAIL	vertical writing mode	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.ready — document.fonts 이(가) undefined (읽을 수 없음)"
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:block should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:flow should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:flowU+2droot should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:inlineU+2dblock should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:listU+2ditem should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:flowU+2droot listU+2ditem should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-display-coverage.html	FAIL	display:tableU+2dcaption should support alignU+2dcontent	assert_equals: expected 20 but got 0
+css/css-align/blocks/align-content-block-simple-height-change.html	FAIL	Updating a container height should align the content again	assert_equals: expected 70 but got 0
+css/css-align/blocks/align-content-table-cell.html	FAIL	verticalU+2dalign:top and alignU+2dcontent:start are equivalent	assert_equals: The first cell content top expected 0 but got 50
+css/css-align/blocks/align-content-table-cell.html	FAIL	verticalU+2dalign:middle and `alignU+2dcontent:unsafe center` are equivalent	assert_equals: The first cell content top expected 0 but got 50
+css/css-align/blocks/align-content-table-cell.html	FAIL	verticalU+2dalign:bottom and `alignU+2dcontent:unsafe end` are equivalent	assert_equals: The first cell content top expected 0 but got 50
+css/css-align/blocks/align-content-table-cell.html	FAIL	verticalU+2dalign:baseline and alignU+2dcontent:baseline are equivalent	assert_equals: The first cell content top expected 0 but got 50
+css/css-align/blocks/align-content-table-cell.html	FAIL	verticalU+2dalign:middle and `alignU+2dcontent:safe center` are equivalent if the container is tall	assert_equals: The first cell content top expected 0 but got 50
+css/css-align/blocks/align-content-table-cell.html	FAIL	verticalU+2dalign:bottom and `alignU+2dcontent:safe end` are equivalent if the container is tall	assert_equals: The first cell content top expected 0 but got 50
+css/css-align/blocks/align-content-table-cell.html	FAIL	`alignU+2dcontent:safe center` is equivalent to `unsafe center` even if the specified `height` is short	assert_equals: The first cell content top expected 0 but got 10
+css/css-align/blocks/justify-self-block-in-inline.html	FAIL	.blockU+2dinU+2dinline 1	assert_equals:  <div style="background: orange; height: 50px;" class="blockU+2dinU+2dinline" dataU+2dexpectedU+2dwidth="200">     blockU+2dinU+2dinline   </div> width expected 200 but got 998
+css/css-align/blocks/justify-self-text-align-2.html	FAIL	.item 1	assert_equals:  <div class="container">   <div class="item" style="justifyU+2dself: normal;" dataU+2doffsetU+2dx="100">     normal   </div>   <div class="item" style="justifyU+2dself: auto;" dataU+2doffsetU+2dx="50">     auto   </div>   <div class="item" style="justifyU+2dself: left;" dataU+2doffsetU+2dx="0">     left   </div> </div> offsetLeft expected 100 but got 0
+css/css-align/blocks/justify-self-text-align-2.html	FAIL	.item 2	assert_equals:  <div class="container">   <div class="item" style="justifyU+2dself: normal;" dataU+2doffsetU+2dx="100">     normal   </div>   <div class="item" style="justifyU+2dself: auto;" dataU+2doffsetU+2dx="50">     auto   </div>   <div class="item" style="justifyU+2dself: left;" dataU+2doffsetU+2dx="0">     left   </div> </div> offsetLeft expected 50 but got 0
+css/css-align/content-distribution/default-overflow-alignment-single-axis-scroll-container.html	FAIL	.item 1	assert_equals:  <div class="item" dataU+2doffsetU+2dx="U+2d50" dataU+2doffsetU+2dy="U+2d50" dataU+2dexpectedU+2dwidth="200" dataU+2dexpectedU+2dheight="200"></div> offsetLeft expected U+2d50 but got 0
+css/css-align/content-distribution/default-overflow-alignment-single-axis-scroll-container.html	FAIL	.item 2	assert_equals:  <div class="item" dataU+2doffsetU+2dx="U+2d50" dataU+2doffsetU+2dy="U+2d50" dataU+2dexpectedU+2dwidth="200" dataU+2dexpectedU+2dheight="200"></div> offsetLeft expected U+2d50 but got 0
+css/css-align/content-distribution/default-overflow-alignment-single-axis-scroll-container.html	FAIL	.item 3	assert_equals:  <div class="item" dataU+2doffsetU+2dx="U+2d50" dataU+2doffsetU+2dy="U+2d50" dataU+2dexpectedU+2dwidth="200" dataU+2dexpectedU+2dheight="200"></div> offsetLeft expected U+2d50 but got 0
+css/css-align/content-distribution/default-overflow-alignment-single-axis-scroll-container.html	FAIL	.item 4	assert_equals:  <div class="item" dataU+2doffsetU+2dx="U+2d50" dataU+2doffsetU+2dy="U+2d50" dataU+2dexpectedU+2dwidth="200" dataU+2dexpectedU+2dheight="200"></div> offsetLeft expected U+2d50 but got 0
+css/css-align/default-alignment/justify-items-legacy-001.html	FAIL	legacy value for justifyU+2ditems	assert_equals: default justifyU+2ditems resolves to the parent justifyU+2ditems value if legacy expected "legacy center" but got "normal"
+css/css-align/default-alignment/parse-justify-items-006.html	FAIL	Test the value justifyU+2ditems: legacy left	assert_equals: justifyU+2ditems computed style is not what is should. expected "legacy left" but got "normal"
+css/css-align/default-alignment/parse-justify-items-006.html	FAIL	Test the value justifyU+2ditems: legacy center	assert_equals: justifyU+2ditems computed style is not what is should. expected "legacy center" but got "normal"
+css/css-align/default-alignment/parse-justify-items-006.html	FAIL	Test the value justifyU+2ditems: legacy right	assert_equals: justifyU+2ditems computed style is not what is should. expected "legacy right" but got "normal"
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"alignContent":"center","shorthand":"center normal"}	assert_equals: expected "center normal" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifyContent":"safe start","shorthand":"normal safe start"}	assert_equals: expected "normal safe start" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifyContent":"unsafe start","shorthand":["normal unsafe start"]}	assert_in_array: value "" not in array ["normal unsafe start"]
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"alignContent":"start","justifyContent":"end","shorthand":"start end"}	assert_equals: expected "start end" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"alignItems":"center","shorthand":"center legacy"}	assert_equals: expected "center legacy" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"alignItems":"baseline","shorthand":"baseline legacy"}	assert_equals: expected "baseline legacy" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifyItems":"safe start","shorthand":"normal safe start"}	assert_equals: expected "normal safe start" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifyItems":"unsafe start","shorthand":["normal unsafe start"]}	assert_in_array: value "" not in array ["normal unsafe start"]
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifyItems":"stretch","shorthand":"normal stretch"}	assert_equals: expected "normal stretch" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifyItems":"left legacy","shorthand":"normal legacy left"}	assert_equals: expected "normal legacy left" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"alignItems":"stretch","justifyItems":"end","shorthand":"stretch end"}	assert_equals: expected "stretch end" but got ""
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"justifySelf":"unsafe start","shorthand":["auto start","auto unsafe start"]}	assert_in_array: value "" not in array ["auto start", "auto unsafe start"]
+css/css-align/default-alignment/shorthand-serialization-001.html	FAIL	test shorthand serialization {"alignSelf":"baseline","justifySelf":"last baseline","shorthand":"baseline last baseline"}	assert_equals: expected "baseline last baseline" but got ""
+css/css-align/gaps/gap-animation-001.html	FAIL	gap is interpolable	assert_equals: expected "50px" but got "100px"
+css/css-align/gaps/gap-animation-004.html	FAIL	gap is interpolable	assert_equals: expected "150px 300px" but got "200px 400px"
+css/css-align/gaps/gap-parsing-002.html	FAIL	'rowU+2dgap: normal; columnU+2dgap: normal;' is serialized to 'gap: normal;'	assert_equals: expected "gap: normal;" but got "rowU+2dgap: normal; columnU+2dgap: normal;"
+css/css-align/gaps/gap-parsing-002.html	FAIL	'rowU+2dgap: 10px; columnU+2dgap: 10px;' is serialized to 'gap: 10px;'	assert_equals: expected "gap: 10px;" but got "rowU+2dgap: 10px; columnU+2dgap: 10px;"
+css/css-align/gaps/gap-parsing-002.html	FAIL	'rowU+2dgap: 10px; columnU+2dgap: normal;' is serialized to 'gap: 10px normal;'	assert_equals: expected "gap: 10px normal;" but got "rowU+2dgap: 10px; columnU+2dgap: normal;"
+css/css-align/gaps/gap-parsing-002.html	FAIL	'columnU+2dgap: normal; rowU+2dgap: 10px;' is serialized to 'gap: 10px normal;'	assert_equals: expected "gap: 10px normal;" but got "columnU+2dgap: normal; rowU+2dgap: 10px;"
+css/css-align/gaps/legacy-gap-aliases-001.html	FAIL	gridU+2drowU+2dgap is a legacy name alias for rowU+2dgap	assert_equals: declarations serialize using new name rowU+2dgap expected "rowU+2dgap: inherit;" but got "rowU+2dgap: inherit; gridU+2drowU+2dgap: inherit;"
+css/css-align/gaps/legacy-gap-aliases-001.html	FAIL	gridU+2dcolumnU+2dgap is a legacy name alias for columnU+2dgap	assert_equals: declarations serialize using new name columnU+2dgap expected "columnU+2dgap: inherit;" but got "columnU+2dgap: inherit; gridU+2dcolumnU+2dgap: inherit;"
+css/css-align/gaps/legacy-gap-aliases-001.html	FAIL	gridU+2dgap is a legacy name alias for gap	assert_equals: declarations serialize using new name gap expected "gap: inherit;" but got "rowU+2dgap: inherit; columnU+2dgap: inherit; gridU+2dgap: inherit;"
+css/css-align/inheritance.html	FAIL	Property justifyU+2ditems has initial value legacy center	assert_equals: expected "legacy center" but got "normal"
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: normal	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: normal; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: start	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: start; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: unsafe start	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: unsafe start; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: safe start	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: safe start; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: flexU+2dstart	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: flexU+2dstart; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: spaceU+2dbetween	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: spaceU+2dbetween; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: stretch	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: stretch; contain: size	assert_equals: expected 10 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: center	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: center; contain: size	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: unsafe center	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: unsafe center; contain: size	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: safe center	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: safe center; contain: size	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: spaceU+2daround	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: spaceU+2daround; contain: size	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: spaceU+2devenly	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: spaceU+2devenly; contain: size	assert_equals: expected 30 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: end	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: end; contain: size	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: unsafe end	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: unsafe end; contain: size	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: safe end	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: safe end; contain: size	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: flexU+2dend	assert_equals: expected 60 but got 0
+css/css-align/multicol/align-content-multicol.html	FAIL	alignU+2dcontent: flexU+2dend; contain: size	assert_equals: expected 60 but got 0
+css/css-align/parsing/column-gap-valid.html	FAIL	e.style['columnU+2dgap'] = "calc(2em + 3ex)" should set the property value	assert_not_equals: property should be set got disallowed value ""
+css/css-align/parsing/grid-column-gap-valid.html	FAIL	e.style['gridU+2dcolumnU+2dgap'] = "calc(2em + 3ex)" should set the property value	assert_not_equals: property should be set got disallowed value ""
+css/css-align/parsing/grid-gap-shorthand.html	FAIL	e.style['gap'] = "normal calc(20% + 10px)" should set gridU+2dcolumnU+2dgap	assert_equals: gridU+2dcolumnU+2dgap should be canonical expected "calc(20% + 10px)" but got ""
+css/css-align/parsing/grid-gap-shorthand.html	FAIL	e.style['gap'] = "normal calc(20% + 10px)" should set gridU+2drowU+2dgap	assert_equals: gridU+2drowU+2dgap should be canonical expected "normal" but got ""
+css/css-align/parsing/justify-items-computed.html	FAIL	Property justifyU+2ditems value 'legacy'	assert_equals: expected "normal" but got "legacy"
+css/css-align/parsing/justify-items-computed.html	FAIL	justifyU+2ditems legacy depends on inherited value	assert_equals: expected "legacy left" but got "legacy"
+css/css-align/parsing/place-items-computed.html	FAIL	Property placeU+2ditems value 'flexU+2dend legacy'	assert_equals: expected "flexU+2dend legacy center" but got "flexU+2dend legacy"

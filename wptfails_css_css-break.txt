@@ -1,0 +1,157 @@
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [unset] to [20] at (0.7) should be [23]	assert_equals: expected "23 " but got "15 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [unset] to [20] at (0.7) should be [23]	assert_equals: expected "23 " but got "15 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [unset] to [20] at (0.7) should be [23]	assert_equals: expected "23 " but got "15 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [unset] to [20] at (0.7) should be [23]	assert_equals: expected "23 " but got "15 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions: property <orphans> from [10] to [1] at (1.5) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Transitions with transition: all: property <orphans> from [10] to [1] at (1.5) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/orphans-interpolation.html	FAIL	CSS Animations: property <orphans> from [10] to [1] at (1.5) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/orphans-interpolation.html	FAIL	Web Animations: property <orphans> from [10] to [1] at (1.5) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from neutral to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from neutral to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from neutral to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from neutral to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from neutral to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from neutral to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from neutral to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from neutral to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [initial] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [initial] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [initial] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [initial] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [initial] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [initial] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [initial] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [initial] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [initial] to [20] at (U+2d0.5) should be [1]	assert_equals: expected "1 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (U+2d3) should be [60]	assert_equals: expected "60 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (U+2d2.5) should be [55]	assert_equals: expected "55 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (0.6) should be [24]	assert_equals: expected "24 " but got "13 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (U+2d3) should be [60]	assert_equals: expected "60 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (U+2d2.5) should be [55]	assert_equals: expected "55 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (0.6) should be [24]	assert_equals: expected "24 " but got "13 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (U+2d3) should be [60]	assert_equals: expected "60 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (U+2d2.5) should be [55]	assert_equals: expected "55 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (0.6) should be [24]	assert_equals: expected "24 " but got "13 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (U+2d3) should be [60]	assert_equals: expected "60 " but got "U+2d 52 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (U+2d2.5) should be [55]	assert_equals: expected "55 " but got "U+2d 43 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (U+2d0.5) should be [35]	assert_equals: expected "35 " but got "U+2d 7 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (0) should be [30]	assert_equals: expected "30 " but got "2 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (0.3) should be [27]	assert_equals: expected "27 " but got "7 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (0.6) should be [24]	assert_equals: expected "24 " but got "13 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [unset] to [20] at (1.5) should be [15]	assert_equals: expected "15 " but got "29 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [10] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [10] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [10] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [10] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [10] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [10] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [10] to [20] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 20 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [10] to [20] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 15 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [2] to [4] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions: property <widows> from [2] to [4] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 3 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [2] to [4] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Transitions with transition: all: property <widows> from [2] to [4] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 3 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [2] to [4] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/widows-interpolation.html	FAIL	CSS Animations: property <widows> from [2] to [4] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 3 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [2] to [4] at (U+2d3) should be [1]	assert_equals: expected "1 " but got "U+2d 4 "
+css/css-break/animation/widows-interpolation.html	FAIL	Web Animations: property <widows> from [2] to [4] at (U+2d2.5) should be [1]	assert_equals: expected "1 " but got "U+2d 3 "
+css/css-break/block-end-aligned-abspos.html	FAIL	[dataU+2doffsetU+2dy] 1	assert_equals:  <div id="abspos" dataU+2doffsetU+2dy="80" dataU+2dexpectedU+2dheight="120">       <div style="margin:50px 0;" dataU+2doffsetU+2dy="50"></div>       <div dataU+2doffsetU+2dy="110"></div>     </div> offsetTop expected 80 but got U+2d120
+css/css-break/block-end-aligned-abspos.html	FAIL	[dataU+2doffsetU+2dy] 2	assert_equals:  <div style="margin:50px 0;" dataU+2doffsetU+2dy="50"></div> offsetTop expected 80 but got U+2d120
+css/css-break/block-end-aligned-abspos.html	FAIL	[dataU+2doffsetU+2dy] 3	assert_equals:  <div dataU+2doffsetU+2dy="110"></div> offsetTop expected 80 but got U+2d120
+css/css-break/hit-test-hidden-overflow.html	FAIL	above first block	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-hidden-overflow.html	FAIL	first block	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-hidden-overflow.html	FAIL	second block	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-hidden-overflow.html	FAIL	below first block	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed-inline.html	FAIL	First x	
+css/css-break/hit-test-transformed-inline.html	FAIL	First child	
+css/css-break/hit-test-transformed-inline.html	FAIL	Second child	
+css/css-break/hit-test-transformed-inline.html	FAIL	Last x	
+css/css-break/hit-test-transformed.html	FAIL	before	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	between before and transform	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target1	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target1 overflow	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	top gap in column 2	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target1 in column 2 top	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target1 in column 2 bottom	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target2 in column 2	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target2 in column 2 overflow	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	top gap in column 3	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target2 in column 3 top	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target2 in column 3 bottom	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	top gap in column 4	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target2 in column 4 top	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	target2 in column 4 bottom	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	after	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/hit-test-transformed.html	FAIL	below	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/inheritance.html	FAIL	Property orphans inherits	assert_equals: expected "3" but got "2"
+css/css-break/inheritance.html	FAIL	Property widows inherits	assert_equals: expected "3" but got "2"
+css/css-break/inline-with-float-003.html	FAIL	Hit first inlineU+2dblock	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/inline-with-float-003.html	FAIL	Hit second inlineU+2dblock	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/inline-with-float-003.html	FAIL	Hit first float fragment	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/inline-with-float-003.html	FAIL	Hit second float fragment	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/inline-with-float-003.html	FAIL	Hit third float fragment	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/inline-with-float-003.html	FAIL	Hit third inlineU+2dblock	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/out-of-flow-in-multicolumn-108.html	FAIL	Overflowing and clipped content doesn't fragment	assert_equals: expected 80 but got 0
+css/css-break/overflow-clip-007.html	FAIL	Overflowing and clipped content doesn't fragment	assert_equals: expected 80 but got 0
+css/css-break/page-break-important.html	FAIL	CSS Break: !important flag parsing	assert_equals: expected "always" but got "always !important"
+css/css-break/page-break-legacy-shorthands.html	FAIL	Legacy values of the shorthands work as expected	assert_equals: expected "page" but got ""
+css/css-break/page-break-legacy-shorthands.html	FAIL	New values work on the new longhands, but serialize to the empty string in the legacy shorthands	assert_equals: expected "" but got "always"
+css/css-break/page-break-legacy-shorthands.html	FAIL	New values of the break longhands don't work on legacy shorthands	assert_equals: expected "" but got "page"
+css/css-break/page-break-legacy-shorthands.html	FAIL	Legacy shorthands really never appear on cssText, even when there are variable references	assert_equals: expected "" but got "column"
+css/css-break/page-break-legacy-shorthands.html	FAIL	pageU+2dbreakU+2dbefore is a legacy name alias for breakU+2dbefore	assert_equals: pageU+2dbreakU+2dbefore is an alias for breakU+2dbefore expected "inherit" but got ""
+css/css-break/page-break-legacy-shorthands.html	FAIL	pageU+2dbreakU+2dafter is a legacy name alias for breakU+2dafter	assert_equals: pageU+2dbreakU+2dafter is an alias for breakU+2dafter expected "inherit" but got ""
+css/css-break/page-break-legacy-shorthands.html	FAIL	pageU+2dbreakU+2dinside is a legacy name alias for breakU+2dinside	assert_equals: pageU+2dbreakU+2dinside is an alias for breakU+2dinside expected "inherit" but got ""
+css/css-break/parsing/orphans-computed.html	FAIL	Property orphans value 'calc(1 + 234)'	assert_equals: expected "235" but got "calc(1 + 234)"
+css/css-break/parsing/widows-computed.html	FAIL	Property widows value 'calc(1 + 234)'	assert_equals: expected "235" but got "calc(1 + 234)"
+css/css-break/relpos-inline-hit-testing.html	FAIL	line1	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/relpos-inline-hit-testing.html	FAIL	line2	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/relpos-inline-hit-testing.html	FAIL	line3	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/relpos-inline-hit-testing.html	FAIL	line4	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/relpos-inline-hit-testing.html	FAIL	Above line1	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/relpos-inline-hit-testing.html	FAIL	Below line4	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/relpos-inline-hit-testing.html	FAIL	line1 before offsetting	elementFromPoint(…) — document.elementFromPoint 이(가) undefined (함수 아님, 수신자=object)
+css/css-break/table/border-spacing.html	FAIL	Table with border spacing	assert_equals: expected 10 but got U+2d100
+css/css-break/table/table-parts-offsetheight.html	FAIL	table	assert_equals: expected 70 but got 120
+css/css-break/table/table-parts-offsetheight.html	FAIL	colgroup	assert_equals: expected 70 but got 0
+css/css-break/table/table-parts-offsetheight.html	FAIL	col	assert_equals: expected 70 but got 0
+css/css-break/table/table-parts-offsetheight.html	FAIL	rowgroup	assert_equals: expected 70 but got 0
+css/css-break/table/table-parts-offsetheight.html	FAIL	row	assert_equals: expected 70 but got 100
+css/css-break/table/table-parts-offsetheight.html	FAIL	cell	assert_equals: expected 70 but got 100
+css/css-break/table/table-parts-offsetheight.html	FAIL	content	assert_equals: expected 70 but got 100
+css/css-break/transform-010.html	FAIL	Changing a transformed element should update overflow area.	assert_equals: expected 400 but got 300
+css/css-break/transform-011.html	FAIL	Rotating 180 degrees with transform origin at the center	assert_equals: expected 100 but got 500

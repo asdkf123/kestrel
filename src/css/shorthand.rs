@@ -637,6 +637,28 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // 단일 키워드 enum UI 프로퍼티(§CSS UI 4 / §CSS Position). 정해진 키워드만 유효,
+        // 그 외(미지 키워드·다중값·따옴표)는 거부. 계산값 = 지정 키워드.
+        "caret-shape" | "input-security" | "overlay" | "caret-animation" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let wide = matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+            );
+            let ok = wide
+                || match name {
+                    "caret-shape" => matches!(low.as_str(), "auto" | "bar" | "block" | "underscore"),
+                    "input-security" => matches!(low.as_str(), "auto" | "none"),
+                    "overlay" => matches!(low.as_str(), "none" | "auto"),
+                    "caret-animation" => matches!(low.as_str(), "auto" | "manual"),
+                    _ => false,
+                };
+            if ok {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
         // scrollbar-color(§CSS Scrollbars): auto | <color>{2}. 단일 색·혼합(auto+색)·
         // 3값은 무효. 직렬화(rgb 접기)는 serialize_decl 에서.
         "scrollbar-color" => {
@@ -2579,7 +2601,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
         | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
-        | "caret-shape"
         // 4차 배치: mask, offset, scroll-snap-stop, place-self.
         | "mask-image"
         | "mask-origin" | "mask-clip" | "mask-mode"

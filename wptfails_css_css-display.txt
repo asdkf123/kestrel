@@ -1,0 +1,97 @@
+css/css-display/animations/display-interpolation-none.html	FAIL	CSS Transitions: property <display> from [none] to [flex] at (U+2d0.3) should be [flex]	assert_equals: expected "flex " but got "none "
+css/css-display/animations/display-interpolation-none.html	FAIL	CSS Transitions: property <display> from [none] to [flex] at (0) should be [flex]	assert_equals: expected "flex " but got "none "
+css/css-display/display-contents-blockify-dynamic.html	FAIL	Dynamic changes to `display` causing blockification of children are handled correctly	assert_equals: Grid child should get blockified expected "block" but got "inline"
+css/css-display/display-contents-blockify-dynamic.html	FAIL	Dynamic changes to `display` from `grid` to `block` should cause children to get deU+2dblockified despite being children of `display: contents` elements	assert_equals: Item should have been blockified expected "block" but got "inlineU+2dblock"
+css/css-display/display-contents-blockify-dynamic.html	FAIL	Dynamic changes to `display` from `block` to `grid` should cause children to get blockified despite being children of `display: contents` elements	assert_equals: Item should get blockified expected "block" but got "inlineU+2dblock"
+css/css-display/display-contents-computed-style.html	FAIL	display:contents is blockified for root elements	assert_equals: expected "block" but got "contents"
+css/css-display/display-contents-focusable-001.html	FAIL	element with display:contents is focusable	assert_equals: e is now focused (style) expected "testU+2dfocused" but got "testU+2dnotU+2dfocused"
+css/css-display/display-contents-pseudo-click-target.html	FAIL	Clicking a display: contents pseudoU+2delement targets that element	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
+css/css-display/display-first-letter-001.html	FAIL	display of firstU+2dletter	assert_equals: expected "inline" but got "block"
+css/css-display/display-first-line-001.html	FAIL	display of firstU+2dline	assert_equals: expected "inline" but got "block"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <div style="display: math;">	assert_equals: expected "inline" but got "math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <div style="display: inline math;">	assert_equals: expected "inline" but got "inline math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <div style="display: math inline;">	assert_equals: expected "inline" but got "inline math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <div style="display: block math;">	assert_equals: expected "block" but got "block math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <div style="display: math block;">	assert_equals: expected "block" but got "block math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <svg style="display: math;">	assert_equals: expected "inline" but got "math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <svg style="display: inline math;">	assert_equals: expected "inline" but got "inline math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <svg style="display: math inline;">	assert_equals: expected "inline" but got "inline math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <svg style="display: block math;">	assert_equals: expected "block" but got "block math"
+css/css-display/display-math-on-non-mathml-elements.html	FAIL	computed display on <svg style="display: math block;">	assert_equals: expected "block" but got "block math"
+css/css-display/display-math-on-pseudo-elements-001.html	FAIL	computed display on ::before and ::after for <math class="block">	assert_equals: expected "block" but got "inline"
+css/css-display/display-math-on-pseudo-elements-001.html	FAIL	computed display on ::before and ::after for <mrow class="block">	assert_equals: expected "block" but got "inline"
+css/css-display/display-math-on-pseudo-elements-001.html	FAIL	computed display on ::before and ::after for <div class="inline">	assert_equals: expected "inline" but got "block"
+css/css-display/display-with-float-dynamic.html	FAIL	computed style for float	assert_equals: expected "left" but got "none"
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem'	assert_true: 'listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'tableU+2dcolumnU+2dgroup'	assert_true: 'tableU+2dcolumnU+2dgroup' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'tableU+2dcolumn'	assert_true: 'tableU+2dcolumn' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din'	assert_true: 'runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot'	assert_true: 'flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'ruby'	assert_true: 'ruby' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'rubyU+2dbase'	assert_true: 'rubyU+2dbase' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'rubyU+2dtext'	assert_true: 'rubyU+2dtext' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow listU+2ditem'	assert_true: 'flow listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flow'	assert_true: 'listU+2ditem flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot listU+2ditem'	assert_true: 'flowU+2droot listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flowU+2droot'	assert_true: 'listU+2ditem flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot block'	assert_true: 'flowU+2droot block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block flowU+2droot'	assert_true: 'block flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block ruby'	assert_true: 'block ruby' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'ruby block'	assert_true: 'ruby block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block listU+2ditem'	assert_true: 'block listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem block'	assert_true: 'listU+2ditem block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow block listU+2ditem'	assert_true: 'flow block listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block flow listU+2ditem'	assert_true: 'block flow listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow listU+2ditem block'	assert_true: 'flow listU+2ditem block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block listU+2ditem flow'	assert_true: 'block listU+2ditem flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem block flow'	assert_true: 'listU+2ditem block flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flow block'	assert_true: 'listU+2ditem flow block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot block listU+2ditem'	assert_true: 'flowU+2droot block listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block flowU+2droot listU+2ditem'	assert_true: 'block flowU+2droot listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot listU+2ditem block'	assert_true: 'flowU+2droot listU+2ditem block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'block listU+2ditem flowU+2droot'	assert_true: 'block listU+2ditem flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem block flowU+2droot'	assert_true: 'listU+2ditem block flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flowU+2droot block'	assert_true: 'listU+2ditem flowU+2droot block' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'inline ruby'	assert_true: 'inline ruby' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'ruby inline'	assert_true: 'ruby inline' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'inline listU+2ditem'	assert_true: 'inline listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem inline'	assert_true: 'listU+2ditem inline' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow inline listU+2ditem'	assert_true: 'flow inline listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'inline flow listU+2ditem'	assert_true: 'inline flow listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow listU+2ditem inline'	assert_true: 'flow listU+2ditem inline' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'inline listU+2ditem flow'	assert_true: 'inline listU+2ditem flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem inline flow'	assert_true: 'listU+2ditem inline flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flow inline'	assert_true: 'listU+2ditem flow inline' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot inline listU+2ditem'	assert_true: 'flowU+2droot inline listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'inline flowU+2droot listU+2ditem'	assert_true: 'inline flowU+2droot listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot listU+2ditem inline'	assert_true: 'flowU+2droot listU+2ditem inline' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'inline listU+2ditem flowU+2droot'	assert_true: 'inline listU+2ditem flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem inline flowU+2droot'	assert_true: 'listU+2ditem inline flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flowU+2droot inline'	assert_true: 'listU+2ditem flowU+2droot inline' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din flow'	assert_true: 'runU+2din flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow runU+2din'	assert_true: 'flow runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot runU+2din'	assert_true: 'flowU+2droot runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din flowU+2droot'	assert_true: 'runU+2din flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flex runU+2din'	assert_true: 'flex runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din flex'	assert_true: 'runU+2din flex' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'grid runU+2din'	assert_true: 'grid runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din grid'	assert_true: 'runU+2din grid' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'table runU+2din'	assert_true: 'table runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din table'	assert_true: 'runU+2din table' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din ruby'	assert_true: 'runU+2din ruby' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'ruby runU+2din'	assert_true: 'ruby runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din listU+2ditem'	assert_true: 'runU+2din listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem runU+2din'	assert_true: 'listU+2ditem runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow runU+2din listU+2ditem'	assert_true: 'flow runU+2din listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din flow listU+2ditem'	assert_true: 'runU+2din flow listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flow listU+2ditem runU+2din'	assert_true: 'flow listU+2ditem runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din listU+2ditem flow'	assert_true: 'runU+2din listU+2ditem flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem runU+2din flow'	assert_true: 'listU+2ditem runU+2din flow' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flow runU+2din'	assert_true: 'listU+2ditem flow runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot runU+2din listU+2ditem'	assert_true: 'flowU+2droot runU+2din listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din flowU+2droot listU+2ditem'	assert_true: 'runU+2din flowU+2droot listU+2ditem' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'flowU+2droot listU+2ditem runU+2din'	assert_true: 'flowU+2droot listU+2ditem runU+2din' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'runU+2din listU+2ditem flowU+2droot'	assert_true: 'runU+2din listU+2ditem flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem runU+2din flowU+2droot'	assert_true: 'listU+2ditem runU+2din flowU+2droot' is a supported value for display. expected true got false
+css/css-display/parsing/display-computed.html	FAIL	Property display value 'listU+2ditem flowU+2droot runU+2din'	assert_true: 'listU+2ditem flowU+2droot runU+2din' is a supported value for display. expected true got false
+css/css-display/textarea-display.html	FAIL	textarea has inline block display	assert_equals: expected "inlineU+2dblock" but got "block"
