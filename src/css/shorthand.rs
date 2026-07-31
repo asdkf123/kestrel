@@ -1696,8 +1696,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     name: "opacity".to_string(),
                     value: Value::Length(op.clamp(0.0, 1.0), Unit::Number),
                 }],
-                // 순수 수·퍼센트·수학함수만 유효(단위·키워드·다값 거부).
-                None if (low.ends_with(')') && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("].iter().any(|p| low.starts_with(p)))
+                // 순수 수·퍼센트·수학함수만 유효(단위·키워드·다값·malformed 수학 거부).
+                None if super::values::math_function_valid(&low)
                     || v.strip_suffix('%').map(|p| p.trim().parse::<f64>().is_ok()).unwrap_or(false) => {
                     vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(v.to_string()) }]
                 }

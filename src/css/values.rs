@@ -2425,11 +2425,8 @@ pub fn time_list_valid(raw: &str, allow_negative: bool) -> bool {
     items.iter().all(|item| {
         let low = item.trim().to_ascii_lowercase();
         // calc/min/max/clamp 등 수학함수는 구문상 유효(값은 사용시 결정, 음수 클램프도 사용시).
-        if low.ends_with(')')
-            && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
-                .iter()
-                .any(|p| low.starts_with(p))
-        {
+        // malformed 는 거부(math_function_valid).
+        if math_function_valid(&low) {
             return true;
         }
         match parse_time_value(item) {
@@ -2657,11 +2654,204 @@ pub fn flex_basis_valid(tok: &str) -> bool {
     is_length_percentage(&low) && !low.starts_with('-')
 }
 
+// 공백(괄호 depth 0)으로 토큰 분할 — 괄호 안 공백은 유지. 수학식 구문 검증용.
+fn split_ws_depth0(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let b = s.as_bytes();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for i in 0..b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b' ' | b'\t' | b'\n' | b'\r' | 0x0c if depth == 0 => {
+                if start < i {
+                    out.push(&s[start..i]);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
+// 수학 인자의 타입 분류(§CSS Values 4). Unit enum 에 각도/시간 등이 없어 접미사
+// 문자열로 분류한다(검증 전용 — 계산엔 안 씀). Percent 는 Length 와 호환 클래스로 본다
+// (length-percentage 문맥). Unknown 은 중첩식/함수 등 — 타입 검사에서 허용.
+#[derive(PartialEq, Clone, Copy)]
+enum MKind {
+    Number,
+    LengthPct, // <length> | <percentage>
+    Angle,
+    Time,
+    Freq,
+    Resolution,
+    Flex,
+    Unknown,
+    Invalid,
+}
+
+fn is_rounding_strategy(s: &str) -> bool {
+    matches!(s.trim().to_ascii_lowercase().as_str(), "nearest" | "up" | "down" | "to-zero")
+}
+
+// 단일 수학 인자의 타입. 식(연산자/공백/괄호 포함)은 Unknown(허용). 단일 토큰만 접미사로
+// 분류하며, 미지 단위·비수치 식별자는 Invalid.
+fn arg_kind(seg: &str) -> MKind {
+    let e = seg.trim();
+    if e.is_empty() {
+        return MKind::Invalid;
+    }
+    let toks = split_ws_depth0(e);
+    if toks.len() != 1 || e.contains('(') {
+        return MKind::Unknown; // 식/중첩 함수 → 타입 검사 생략(허용)
+    }
+    let t = e.trim_start_matches(['+', '-']);
+    let low = t.to_ascii_lowercase();
+    if low.is_empty() {
+        return MKind::Invalid;
+    }
+    if matches!(low.as_str(), "e" | "pi" | "infinity" | "-infinity" | "nan") {
+        return MKind::Number;
+    }
+    if low.parse::<f64>().is_ok() {
+        return MKind::Number;
+    }
+    if let Some(p) = low.strip_suffix('%') {
+        return if p.parse::<f64>().is_ok() { MKind::LengthPct } else { MKind::Invalid };
+    }
+    let unit_start = low.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(low.len());
+    let (num, unit) = low.split_at(unit_start);
+    if num.parse::<f64>().is_err() {
+        return MKind::Invalid;
+    }
+    match unit {
+        "px" | "em" | "rem" | "ex" | "rex" | "cap" | "rcap" | "ch" | "rch" | "ic" | "ric"
+        | "lh" | "rlh" | "vw" | "vh" | "vi" | "vb" | "vmin" | "vmax" | "svw" | "svh" | "svi"
+        | "svb" | "svmin" | "svmax" | "lvw" | "lvh" | "lvi" | "lvb" | "lvmin" | "lvmax"
+        | "dvw" | "dvh" | "dvi" | "dvb" | "dvmin" | "dvmax" | "cqw" | "cqh" | "cqi" | "cqb"
+        | "cqmin" | "cqmax" | "cm" | "mm" | "q" | "in" | "pt" | "pc" => MKind::LengthPct,
+        "deg" | "grad" | "rad" | "turn" => MKind::Angle,
+        "s" | "ms" => MKind::Time,
+        "hz" | "khz" => MKind::Freq,
+        "dpi" | "dpcm" | "dppx" | "x" => MKind::Resolution,
+        "fr" => MKind::Flex,
+        _ => MKind::Invalid,
+    }
+}
+
+// round()/mod()/rem() 문법(§CSS Values 4 §10). round 는 [strategy,] A, B / mod·rem 은 A, B.
+// 값 인자 정확히 2개, 두 인자 타입 호환(Percent~Length), Flex/Invalid·개수 오류 거부.
+fn round_family_valid(name: &str, args: &[String]) -> bool {
+    let strat = name == "round" && args.first().is_some_and(|a| is_rounding_strategy(a));
+    let vals: &[String] = if strat { &args[1..] } else { args };
+    if vals.len() != 2 {
+        return false;
+    }
+    if !vals.iter().all(|a| math_expr_valid(a.trim())) {
+        return false;
+    }
+    let (k1, k2) = (arg_kind(&vals[0]), arg_kind(&vals[1]));
+    match (k1, k2) {
+        (MKind::Invalid, _) | (_, MKind::Invalid) => false,
+        (MKind::Flex, _) | (_, MKind::Flex) => false,
+        (MKind::Unknown, _) | (_, MKind::Unknown) => true,
+        (a, b) => a == b,
+    }
+}
+
+// calc-sum 한 조각의 보수적 구문 검증(§CSS Values 4). 빈 식·시작/끝의 단독 이항
+// 연산자(1 +, / 2)·연산자 없이 공백으로만 나열된 순수 값(1 2, 1px 2px) 을 무효로
+// 본다. 중첩 산술 함수(calc(round(0px)) 등)는 재귀로 검증한다. 그 외 유효식은 통과.
+fn math_expr_valid(expr: &str) -> bool {
+    let e = expr.trim();
+    if e.is_empty() {
+        return false;
+    }
+    let toks = split_ws_depth0(e);
+    if toks.is_empty() {
+        return false;
+    }
+    let is_op = |s: &str| matches!(s, "+" | "-" | "*" | "/");
+    if is_op(toks[0]) || is_op(toks[toks.len() - 1]) {
+        return false;
+    }
+    // 연산자 하나 없이 순수 값이 공백으로 여러 개 나열되면 무효(calc 는 값 사이 연산자 필수).
+    let all_plain =
+        toks.iter().all(|t| t.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '%'));
+    if toks.len() >= 2 && all_plain {
+        return false;
+    }
+    // 중첩 산술 함수·괄호 그룹 재귀 검증(무효 전파). var/env/attr/삼각 등은 허용.
+    for tk in &toks {
+        let inner_tok = tk.trim_start_matches(['+', '-']);
+        if inner_tok.starts_with('(') && inner_tok.ends_with(')') && inner_tok.len() >= 2 {
+            if !math_expr_valid(&inner_tok[1..inner_tok.len() - 1]) {
+                return false;
+            }
+        } else if let Some(op) = inner_tok.find('(') {
+            let nm = inner_tok[..op].to_ascii_lowercase();
+            if matches!(nm.as_str(), "calc" | "min" | "max" | "clamp" | "round" | "mod" | "rem")
+                && !math_function_valid(inner_tok)
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+// 산술 수학 함수(calc/min/max/clamp/round/mod/rem)의 구문 유효성. 예전엔 프리픽스만
+// 보고 수용해 round()/round(,)/round(1 2)/round(1 + )/round(0px,0s) 같은 malformed 도
+// 통과했다. 함수명·괄호 균형·인자·연산자·round 계열 문법(개수/strategy/타입)을 검증한다.
+pub(crate) fn math_function_valid(text: &str) -> bool {
+    let t = text.trim();
+    if !t.ends_with(')') {
+        return false;
+    }
+    let Some(open) = t.find('(') else {
+        return false;
+    };
+    let name = t[..open].trim().to_ascii_lowercase();
+    if !matches!(name.as_str(), "calc" | "min" | "max" | "clamp" | "round" | "mod" | "rem") {
+        return false;
+    }
+    let mut depth = 0i32;
+    for c in t.chars() {
+        if c == '(' {
+            depth += 1;
+        } else if c == ')' {
+            depth -= 1;
+            if depth < 0 {
+                return false;
+            }
+        }
+    }
+    if depth != 0 {
+        return false;
+    }
+    let inner = t[open + 1..t.len() - 1].trim();
+    if inner.is_empty() {
+        return false;
+    }
+    let args = split_top_commas(inner);
+    let args: Vec<String> = args.iter().map(|a| a.trim().to_string()).collect();
+    if args.iter().any(|a| a.is_empty()) {
+        return false; // 빈 인자(round(,) round(1, ) round(1,,2))
+    }
+    match name.as_str() {
+        "round" | "mod" | "rem" => round_family_valid(&name, &args),
+        // calc 는 인자 1개, min/max 는 1개 이상, clamp 는 3개(또는 none 포함). 구조만 검증.
+        _ => args.iter().all(|a| math_expr_valid(a)),
+    }
+}
+
 fn is_math_fn(low: &str) -> bool {
-    low.ends_with(')')
-        && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
-            .iter()
-            .any(|p| low.starts_with(p))
+    math_function_valid(low)
 }
 
 // <position> 유효성(§CSS Values): object-position/background-position 등. 1/2/4 토큰만
@@ -3752,11 +3942,7 @@ pub fn inset_pair_canonical(raw: &str) -> String {
             return "auto".to_string();
         }
         // 수학함수는 지정값에서 단순화하지 않고 원문 보존(calc(0px)→0px 로 접지 않음).
-        if low.ends_with(')')
-            && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("]
-                .iter()
-                .any(|p| low.starts_with(p))
-        {
+        if math_function_valid(&low) {
             return t.trim().to_string();
         }
         match interpret_value(t.trim()) {
