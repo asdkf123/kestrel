@@ -139,6 +139,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "hyphens", "hyphenate-limit-chars", "hyphenate-character", "writing-mode", "text-orientation", "image-rendering", "isolation",
     "box-decoration-break", "caption-side", "empty-cells", "table-layout",
     "background-attachment", "background-clip", "background-origin", "overflow-anchor",
+    "overflow-clip-margin",
     "scroll-behavior", "text-decoration-style", "text-underline-position", "will-change",
     "contain", "content-visibility", "backface-visibility", "transform-style",
     "transform-box", "text-align-last", "overscroll-behavior-x", "overscroll-behavior-y",

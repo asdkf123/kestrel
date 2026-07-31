@@ -2170,7 +2170,8 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         | "grid-row-end" | "min-height" | "min-width" | "height" | "width" | "top" | "right"
         | "bottom" | "left" | "flex-basis" => "auto",
         "border-collapse" => "separate",
-        "border-radius" | "border-spacing" | "outline-offset" | "text-indent" => "0px",
+        "border-radius" | "border-spacing" | "outline-offset" | "text-indent"
+        | "overflow-clip-margin" => "0px",
         "border-style" | "outline-style" => "none",
         "border-top-width" | "border-right-width" | "border-bottom-width"
         | "border-left-width" | "border-width" | "outline-width" => "medium", // = 3px

@@ -756,6 +756,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             vec![Declaration { important: false, name: "text-fit".to_string(), value: Value::Keyword(parts.join(" ")) }]
         }
+        // overflow-clip-margin(§CSS Overflow 4): <visual-box> || <length [0,∞]>.
+        "overflow-clip-margin" => match overflow_clip_margin_canonical(value_text) {
+            Some(c) => vec![Declaration { important: false, name: "overflow-clip-margin".to_string(), value: Value::Keyword(c) }],
+            None => Vec::new(),
+        },
         // text-wrap-mode(§CSS Text 4): wrap | nowrap 만. 그 외(auto/normal/balance/
         // pretty/두값 등) 거부. CSS-wide 통과.
         "text-wrap-mode" => {
@@ -3054,6 +3059,55 @@ pub(crate) fn text_spacing_from_parts(a: &str, t: &str) -> String {
             parts.join(" ")
         }
     }
+}
+
+// overflow-clip-margin(§CSS Overflow 4): <visual-box> || <length [0,∞]> 캐논.
+// 기본 box=padding-box(생략), length=0px. box first, box 있으면 0 length 생략,
+// box 없으면 length. calc/min/max 원문 보존. 무효면 None.
+pub(crate) fn overflow_clip_margin_canonical(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return Some(low);
+    }
+    let (mut boxv, mut len): (Option<String>, Option<String>) = (None, None);
+    for tok in split_top_level(&low) {
+        let t = tok.trim();
+        if matches!(t, "content-box" | "padding-box" | "border-box") {
+            if boxv.is_some() {
+                return None;
+            }
+            boxv = Some(t.to_string());
+        } else {
+            if len.is_some() {
+                return None;
+            }
+            match interpret_value(t) {
+                Some(v @ Value::Length(n, u)) if !matches!(u, Unit::Percent) && n >= 0.0 => {
+                    len = Some(crate::style::computed_value_string(&v));
+                }
+                // calc 는 % 없어야(overflow-clip-margin 은 <length>, % 무효).
+                Some(Value::Calc(c)) if c.pct == 0.0 => {
+                    len = Some(t.to_string());
+                }
+                Some(Value::MinMax(..)) => {
+                    len = Some(t.to_string());
+                }
+                _ => return None,
+            }
+        }
+    }
+    if boxv.is_none() && len.is_none() {
+        return None;
+    }
+    let b = boxv.unwrap_or_else(|| "padding-box".to_string());
+    let l = len.unwrap_or_else(|| "0px".to_string());
+    Some(if b == "padding-box" {
+        l
+    } else if l == "0px" {
+        b
+    } else {
+        format!("{} {}", b, l)
+    })
 }
 
 pub(crate) fn font_size_keyword(k: &str) -> Option<f32> {

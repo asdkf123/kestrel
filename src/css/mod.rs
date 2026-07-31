@@ -180,6 +180,7 @@ pub(crate) use shorthand::expand_declaration as expand_decl_pub;
 pub(crate) use shorthand::box_shadow_canonical;
 pub(crate) use shorthand::font_size_keyword;
 pub(crate) use shorthand::{text_spacing_from_parts, text_spacing_parse};
+pub(crate) use shorthand::overflow_clip_margin_canonical;
 pub(crate) use values::normalize_rgb_legacy;
 pub(crate) use values::serialize_selector;
 pub(crate) use values::split_ws_depth0;

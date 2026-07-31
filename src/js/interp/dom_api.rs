@@ -307,6 +307,12 @@ impl Interp {
                 return crate::css::text_spacing_from_parts(&a, &t);
             }
         }
+        // overflow-clip-margin 지정값 캐논(§CSS Overflow 4): box first, 기본 생략.
+        if prop == "overflow-clip-margin" {
+            if let Some(c) = crate::css::overflow_clip_margin_canonical(raw) {
+                return c;
+            }
+        }
         // font-family: 각 패밀리가 따옴표 문자열이고 내용이 유효한 식별자 시퀀스면
         // 따옴표를 제거한다(§CSSOM serialize a font-family). 'Lucida Grande' → Lucida Grande.
         if prop == "font-family" {
@@ -738,6 +744,7 @@ impl Interp {
                     | "text-spacing-trim"
                     | "text-spacing"
                     | "text-fit"
+                    | "overflow-clip-margin"
                     | "outline-offset"
                     | "display"
                     | "contain"
