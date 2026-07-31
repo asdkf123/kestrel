@@ -2435,7 +2435,24 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 키워드 값 프로퍼티(계산값 = 지정 키워드): UI/인터랙션/표/스크롤 등. 원문 보존.
         // 예전엔 interpret_value(키워드) 가 None 이라 선언이 통째로 드롭돼 getComputedStyle
         // 에 안 나왔다(cursor/user-select/appearance 등 실제 프로퍼티가 통째로 사라짐).
-        "appearance" | "-webkit-appearance" | "-webkit-user-select"
+        // appearance(§CSS UI 4 + compat): 정해진 키워드만 유효(none/auto/textfield/
+        // menulist-button/button/checkbox/listbox/menulist/meter/progress-bar/radio/
+        // searchfield/textarea). bogus-button 등 미지 키워드는 거부.
+        "appearance" | "-webkit-appearance" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "none" | "auto" | "textfield" | "menulist-button" | "button" | "checkbox"
+                    | "listbox" | "menulist" | "meter" | "progress-bar" | "radio"
+                    | "searchfield" | "textarea" | "inherit" | "initial" | "unset" | "revert"
+                    | "revert-layer"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        "-webkit-user-select"
         | "pointer-events" | "touch-action"
         | "isolation"
         | "overflow-anchor" | "scroll-behavior"

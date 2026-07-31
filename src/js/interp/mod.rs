@@ -7140,7 +7140,10 @@ impl Interp {
                     "getPropertyValue" => Ok(Value::Native(Native::StyleGetProperty)),
                     "removeProperty" => Ok(Value::Native(Native::StyleRemoveProperty)),
                     _ => {
-                        let prop = camel_to_kebab(key);
+                        // setter(style_set)와 동일한 camel_to_dashed 로 매핑해야 소문자 벤더
+                        // 접두(webkitAppearance→-webkit-appearance)가 저장 키와 일치한다.
+                        // camel_to_kebab 은 소문자선두 접두에 대시를 안 붙여 "" 를 돌려줬다.
+                        let prop = camel_to_dashed(key);
                         Ok(Value::Str(self.style_get(id, &prop)))
                     }
                 }
