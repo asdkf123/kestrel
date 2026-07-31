@@ -12223,6 +12223,27 @@ impl Interp {
                         }
                         Ok(())
                     }
+                    // rule.selectorText = '.foo' → 선택자를 실제로 바꾼다(§CSSOM
+                    // CSSStyleRule). 새 값이 유효한 선택자 리스트면 파싱해 교체하고 리스타일,
+                    // 무효면 아무것도 안 한다(no-op — 규격상 조용히 무시).
+                    Value::CssRule(si, ri) => {
+                        if key == "selectorText" {
+                            let text = to_display(&value);
+                            if let Some(sels) = crate::css::parse_selector_list(&text) {
+                                if let Some(sheets) = self.sheets() {
+                                    if let Some(r) = sheets
+                                        .get_mut(si)
+                                        .and_then(|e| e.sheet.rules.get_mut(ri))
+                                    {
+                                        r.selectors = sels;
+                                        r.selector_text = text;
+                                    }
+                                }
+                                self.css_epoch += 1;
+                            }
+                        }
+                        Ok(())
+                    }
                     // attr.value = x → 소유 요소의 속성을 실제로 바꾼다
                     Value::Attr(id, name) => {
                         if matches!(key.as_str(), "value" | "nodeValue" | "textContent") {
