@@ -6360,7 +6360,12 @@ fn xywh_shape_valid(inner: &str) -> bool {
         Some(p) => (&toks[..p], Some(&toks[p + 1..])),
         None => (&toks[..], None),
     };
+    // x,y 는 임의 <length-percentage>, width,height 는 <length-percentage [0,∞]>
+    // (음수 리터럴 거부; calc 는 부호 정적 판단 불가라 허용).
     if coords.len() != 4 || !coords.iter().all(|t| bs_lp(t)) {
+        return false;
+    }
+    if coords[2].trim().starts_with('-') || coords[3].trim().starts_with('-') {
         return false;
     }
     match radii {
