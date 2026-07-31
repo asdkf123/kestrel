@@ -436,10 +436,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "bold" => 700.0,
                 "normal" => 400.0,
                 "initial" => 400.0,
-                // inherit/unset/revert 는 선언을 남기지 않는다 → 상속이 적용된다.
-                // 예전엔 이걸 "normal" 로 눌러버려서 `font-weight: inherit` 이 상속을
-                // 끊었다(react.dev 의 리셋 CSS 가 실제로 이걸 쓴다).
-                "inherit" | "unset" | "revert" => return Vec::new(),
+                // CSS-wide 키워드는 Keyword 로 보존 → 스타일 계산의 wide-keyword 해석이
+                // 부모값으로 override 한다(요소가 자기 font-weight 를 가져도 inherit 이
+                // 이긴다). 예전엔 Vec::new 라 자기 선언이 있으면 override 못 했다.
+                "inherit" | "unset" | "revert" | "revert-layer" => {
+                    return vec![Declaration {
+                        important: false,
+                        name: "font-weight".to_string(),
+                        value: Value::Keyword(v.clone()),
+                    }];
+                }
                 other => {
                     // 평수는 [1,1000] 이어야 유효. calc(…)는 interpret_value 로 평가해
                     // 범위 밖도 유효(used value 에서 클램프, §CSS Fonts).
