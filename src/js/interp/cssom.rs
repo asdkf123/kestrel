@@ -123,7 +123,7 @@ impl Interp {
                         self.sheets()
                             .and_then(|s| s.get(si))
                             .and_then(|s| s.sheet.rules.get(ri))
-                            .map(|r| r.selector_text.clone())
+                            .map(|r| crate::css::serialize_selector(&r.selector_text))
                             .unwrap_or_default(),
                     )),
                     "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),

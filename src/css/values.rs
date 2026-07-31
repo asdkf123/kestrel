@@ -8989,6 +8989,179 @@ pub(crate) fn normalize_rgb_legacy(text: &str) -> Option<String> {
     }
 }
 
+// An+B 마이크로문법(§CSS Syntax §9) 캐논화: even→2n, odd→2n+1, "3n - 0"→"3n",
+// "2n+0"→"2n", 계수 1/-1 은 n/-n. 공백을 모두 제거하고 (a,b) 로 파싱해 재직렬화한다.
+fn canonicalize_nth(arg: &str) -> Option<String> {
+    let s: String = arg.chars().filter(|c| !c.is_whitespace()).collect();
+    let low = s.to_ascii_lowercase();
+    let (a, b): (i64, i64) = if low == "even" {
+        (2, 0)
+    } else if low == "odd" {
+        (2, 1)
+    } else if let Some(np) = low.find('n') {
+        let a = match &low[..np] {
+            "" | "+" => 1,
+            "-" => -1,
+            x => x.parse::<i64>().ok()?,
+        };
+        let rest = &low[np + 1..];
+        let b = if rest.is_empty() { 0 } else { rest.parse::<i64>().ok()? };
+        (a, b)
+    } else {
+        (0, low.parse::<i64>().ok()?)
+    };
+    Some(if a == 0 {
+        b.to_string()
+    } else {
+        let coef = if a == 1 {
+            "n".to_string()
+        } else if a == -1 {
+            "-n".to_string()
+        } else {
+            format!("{}n", a)
+        };
+        if b == 0 {
+            coef
+        } else if b > 0 {
+            format!("{}+{}", coef, b)
+        } else {
+            format!("{}-{}", coef, -b)
+        }
+    })
+}
+
+fn canon_pseudo_arg(name: &str, arg: &str) -> String {
+    match name {
+        "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" | "nth-col"
+        | "nth-last-col" => {
+            let lower = arg.to_ascii_lowercase();
+            if let Some(ofp) = lower.find(" of ") {
+                let nth = &arg[..ofp];
+                let sel = &arg[ofp + 4..];
+                match canonicalize_nth(nth) {
+                    Some(c) => format!("{} of {}", c, serialize_selector(sel)),
+                    None => arg.trim().to_string(),
+                }
+            } else {
+                canonicalize_nth(arg).unwrap_or_else(|| arg.trim().to_string())
+            }
+        }
+        // 선택자 리스트 인자: 재귀 직렬화(내부 공백 정규화).
+        "not" | "is" | "where" | "has" | "matches" => serialize_selector(arg.trim()),
+        // 그 외(lang/dir/host 등): 앞뒤 공백만 제거.
+        _ => arg.trim().to_string(),
+    }
+}
+
+// CSSOM "serialize a selector"(§CSSOM)의 일부: 함수형 pseudo-class 인자의 공백을
+// 정규화하고 An+B 를 캐논화한다. 타입/클래스/id/결합자/속성선택자/문자열은 원문 그대로
+// 둔다(ASCII 구분자만 바이트 스캔 — UTF-8 안전). 세터가 원문 저장이라 getter 에서 캐논.
+pub(crate) fn serialize_selector(raw: &str) -> String {
+    let s = raw.trim();
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    let mut copy_from = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                let q = b[i];
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if b[i] == q {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'[' => {
+                i += 1;
+                while i < b.len() && b[i] != b']' {
+                    if b[i] == b'"' || b[i] == b'\'' {
+                        let q = b[i];
+                        i += 1;
+                        while i < b.len() {
+                            if b[i] == b'\\' {
+                                i += 2;
+                                continue;
+                            }
+                            if b[i] == q {
+                                i += 1;
+                                break;
+                            }
+                            i += 1;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                if i < b.len() {
+                    i += 1;
+                }
+            }
+            b':' => {
+                let mut j = i + 1;
+                while j < b.len() && b[j] == b':' {
+                    j += 1;
+                }
+                let name_start = j;
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-') {
+                    j += 1;
+                }
+                if j > name_start && j < b.len() && b[j] == b'(' {
+                    let mut depth = 0i32;
+                    let mut k = j;
+                    while k < b.len() {
+                        match b[k] {
+                            b'(' => depth += 1,
+                            b')' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            b'"' | b'\'' => {
+                                let q = b[k];
+                                k += 1;
+                                while k < b.len() {
+                                    if b[k] == b'\\' {
+                                        k += 2;
+                                        continue;
+                                    }
+                                    if b[k] == q {
+                                        break;
+                                    }
+                                    k += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                        k += 1;
+                    }
+                    if k < b.len() {
+                        out.push_str(&s[copy_from..j + 1]);
+                        let name = s[name_start..j].to_ascii_lowercase();
+                        out.push_str(&canon_pseudo_arg(&name, &s[j + 1..k]));
+                        out.push(')');
+                        i = k + 1;
+                        copy_from = i;
+                        continue;
+                    }
+                }
+                i = j;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&s[copy_from..]);
+    out
+}
+
 // hsl()/hwb() 에 none 채널이 있으면 계산값은 hsl()/hwb() 형태로 none 을 보존한다
 // (§CSS Color 4, rgb 와 달리 색공간 형태 유지). ColorFn(none→0 fallback + none 보존
 // serial). serial 은 normalize_hsl_hwb 재사용. none 없으면 None → 레거시 경로.
