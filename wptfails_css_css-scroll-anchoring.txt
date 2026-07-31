@@ -39,8 +39,6 @@ css/css-scroll-anchoring/opt-out-dynamic-scroller.html	FAIL	Dynamically styling 
 css/css-scroll-anchoring/opt-out-dynamic.html	FAIL	Dynamically styling 'overflowU+2danchor: none' on the anchor node should prevent scroll anchoring	assert_equals: expected 150 but got 100
 css/css-scroll-anchoring/opt-out.html	FAIL	Disabled on document, enabled on div.	Cannot set properties of undefined (setting 'scrollTop')
 css/css-scroll-anchoring/opt-out.html	FAIL	Enabled on document, disabled on div.	Cannot set properties of undefined (setting 'scrollTop')
-css/css-scroll-anchoring/parsing/overflow-anchor-invalid.html	FAIL	e.style['overflowU+2danchor'] = "all" should not set the property value	assert_equals: expected "" but got "all"
-css/css-scroll-anchoring/parsing/overflow-anchor-invalid.html	FAIL	e.style['overflowU+2danchor'] = "auto none" should not set the property value	assert_equals: expected "" but got "auto none"
 css/css-scroll-anchoring/position-change-heuristic-display-none-change.html	FAIL	Scroll offset doesn't change when an element goes back and forth to display: none	
 css/css-scroll-anchoring/position-change-heuristic-display-none-to-abspos-change.html	FAIL	Scroll offset doesn't get stuck in infinite scroll events when an element goes back and forth to display: none while changing abspos style	
 css/css-scroll-anchoring/position-change-heuristic-ib-split.html	FAIL	Scroll offset adjustments are correctly suppressed when changing the position of an inline	

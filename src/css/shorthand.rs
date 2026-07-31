@@ -624,6 +624,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Vec::new()
             }
         }
+        // overflow-anchor(§CSS Scroll Anchoring): auto | none 단일 키워드만.
+        "overflow-anchor" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "none"
+            ) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        // grid-auto-flow(§CSS Grid): [row | column] || dense. row(초기값) 생략 캐논.
+        "grid-auto-flow" => match grid_auto_flow_canonical(value_text) {
+            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            None => Vec::new(),
+        },
         // flex-line-count(§CSS Flexbox 자동 밸런싱): <integer [1,∞]>. auto·0·음수·
         // 소수·키워드 거부.
         "flex-line-count" => {
@@ -2696,7 +2713,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "-webkit-user-select"
         | "pointer-events" | "touch-action"
         | "isolation"
-        | "overflow-anchor" | "scroll-behavior"
+        | "scroll-behavior"
         | "transform-style"
         | "background-blend-mode"
         | "text-rendering" | "print-color-adjust"
@@ -2704,7 +2721,6 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-emphasis-style"
         | "quotes"
         // 3차 배치: grid/break/column/bidi 등 키워드 프로퍼티.
-        | "grid-auto-flow"
         | "page-break-before" | "page-break-after" | "page-break-inside"
         // 4차 배치: mask, offset, scroll-snap-stop, place-self.
         | "mask-image"
@@ -4795,6 +4811,50 @@ fn single_text_shadow_valid(s: &str) -> bool {
     }
     // blur(index 2)는 음수 불가.
     !matches!(run.get(2), Some(Some(b)) if *b < 0.0)
+}
+
+// grid-auto-flow(§CSS Grid) 유효성 + 캐논 직렬화. [row|column] || dense. row 는
+// 초기값이라 dense 와 함께면 생략, direction 먼저.
+pub(crate) fn grid_auto_flow_canonical(raw: &str) -> Option<String> {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return Some(low);
+    }
+    let toks = split_top_level(&low);
+    let (mut dir, mut dense) = (0u32, 0u32);
+    let (mut has_row, mut has_col, mut has_dense) = (false, false, false);
+    for t in &toks {
+        match *t {
+            "row" => {
+                dir += 1;
+                has_row = true;
+            }
+            "column" => {
+                dir += 1;
+                has_col = true;
+            }
+            "dense" => {
+                dense += 1;
+                has_dense = true;
+            }
+            _ => return None,
+        }
+    }
+    if toks.is_empty() || dir > 1 || dense > 1 {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    if has_col {
+        parts.push("column");
+        if has_dense {
+            parts.push("dense");
+        }
+    } else if has_dense {
+        parts.push("dense"); // row(초기값) 생략
+    } else if has_row {
+        parts.push("row");
+    }
+    Some(parts.join(" "))
 }
 
 // margin-trim(§CSS Box 4) 유효성 + 캐논 직렬화. none | (block||inline) |

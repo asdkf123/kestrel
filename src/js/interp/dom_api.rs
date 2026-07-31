@@ -404,6 +404,12 @@ impl Interp {
                 return s;
             }
         }
+        // grid-auto-flow(§CSS Grid): row(초기값) 생략, direction 먼저 캐논.
+        if prop == "grid-auto-flow" {
+            if let Some(s) = crate::css::grid_auto_flow_canonical(raw) {
+                return s;
+            }
+        }
         // transition/animation-timing-function(§CSS Easing): step-start→steps(1, start),
         // steps 기본 위치 생략 등 캐논 직렬화.
         if matches!(prop, "transition-timing-function" | "animation-timing-function") {
@@ -808,6 +814,8 @@ impl Interp {
                     | "border-left-width"
                     | "margin-trim"
                     | "flex-line-count"
+                    | "overflow-anchor"
+                    | "grid-auto-flow"
                     | "contain"
                     | "top"
                     | "right"
