@@ -8080,6 +8080,12 @@ impl Interp {
 
     // 다중값의 각 수치 토큰을 0 이상으로 클램프(비음수 프로퍼티 외삽용).
     fn clamp_nonneg(v: &str) -> String {
+        // calc()/min()/max() 내부 항은 음수여도 클램프하지 않는다 — 계산값은 음수 항을
+        // 보존하고(§CSS Values), 클램프는 사용값(레이아웃)에서 일어난다. calc(13px + -30%)
+        // 의 -30% 를 0% 로 바꾸면 안 된다.
+        if v.contains('(') {
+            return v.to_string();
+        }
         v.split_whitespace()
             .map(|tok| {
                 let (num, unit) = {
@@ -9133,7 +9139,14 @@ impl Interp {
                     }
                 };
                 if let Some(v) = Self::interp_css_value(&exp(&ft), &exp(&gt), eased) {
-                    return Some(Self::clamp_nonneg(&v));
+                    let v = Self::clamp_nonneg(&v);
+                    // 결과가 "X X"(가로==세로) 면 단일값으로 접는다.
+                    let tk = Self::split_top_ws(&v);
+                    return Some(if tk.len() == 2 && tk[0] == tk[1] {
+                        tk[0].to_string()
+                    } else {
+                        v
+                    });
                 }
             }
         }
