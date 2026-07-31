@@ -277,6 +277,13 @@ impl Interp {
                 return s;
             }
         }
+        // rgb/rgba 지정값에 none 채널: 레거시 rgb(none→0)/rgba 캐논(§CSSOM). none 없는
+        // rgb 는 기존 경로가 처리하므로 여기서 위임(None) — 회귀 없음.
+        if rl.starts_with("rgb(") || rl.starts_with("rgba(") {
+            if let Some(s) = crate::css::normalize_rgb_legacy(raw) {
+                return s;
+            }
+        }
         // content 의 단일 문자열 토큰은 CSSOM 문자열 직렬화 — 항상 큰따옴표로(§CSSOM
         // "serialize a string"). content: 'x' 도 "x" 가 된다.
         if prop == "content" {

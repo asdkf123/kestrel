@@ -179,6 +179,7 @@ pub(crate) use values::interpret_value;
 pub(crate) use shorthand::expand_declaration as expand_decl_pub;
 pub(crate) use shorthand::box_shadow_canonical;
 pub(crate) use shorthand::font_size_keyword;
+pub(crate) use values::normalize_rgb_legacy;
 pub(crate) use shorthand::{grid_canonical, grid_template_canonical};
 
 #[derive(Debug, PartialEq, Clone)]

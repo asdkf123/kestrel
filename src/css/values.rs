@@ -8932,6 +8932,63 @@ fn parse_rgb_none(text: &str) -> Option<Value> {
     Some(Value::ColorFn(Color { r, g, b, a: au }, serial.into_boxed_str()))
 }
 
+// rgb()/rgba() 에 none 채널이 있을 때의 **지정값** 레거시 직렬화(§CSSOM serialize a
+// color). none→0, %→반올림(0-255), 정수 반올림·클램프. alpha 가 1 이면 rgb(), 아니면
+// rgba(). none 없는 rgb 는 기존 경로가 처리하므로 None 으로 위임한다. (계산값은 none 을
+// color(srgb ...) 로 보존 — parse_rgb_none, 이 함수는 el.style 지정값 전용.)
+pub(crate) fn normalize_rgb_legacy(text: &str) -> Option<String> {
+    let low = text.trim().to_ascii_lowercase();
+    if !(low.starts_with("rgb(") || low.starts_with("rgba(")) || !low.ends_with(')') {
+        return None;
+    }
+    if !low.contains("none") || low.contains("(from ") {
+        return None; // none 없음/relative-color → 기존 경로 위임
+    }
+    if !rgb_valid(&low) {
+        return None;
+    }
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    let parts = color_parts(&text[open + 1..close]);
+    if parts.len() != 3 && parts.len() != 4 {
+        return None;
+    }
+    let is_none = |s: &str| s.trim().eq_ignore_ascii_case("none");
+    let chan = |s: &str| -> Option<u8> {
+        let s = s.trim();
+        if is_none(s) {
+            return Some(0);
+        }
+        let v = if let Some(p) = s.strip_suffix('%') {
+            p.trim().parse::<f32>().ok()? / 100.0 * 255.0
+        } else {
+            s.parse::<f32>().ok()?
+        };
+        Some(v.round().clamp(0.0, 255.0) as u8)
+    };
+    let r = chan(&parts[0])?;
+    let g = chan(&parts[1])?;
+    let b = chan(&parts[2])?;
+    let alpha = match parts.get(3) {
+        None => 1.0f32,
+        Some(s) if is_none(s) => 0.0,
+        Some(s) => {
+            let s = s.trim();
+            let a = if let Some(p) = s.strip_suffix('%') {
+                p.trim().parse::<f32>().ok()? / 100.0
+            } else {
+                s.parse::<f32>().ok()?
+            };
+            a.clamp(0.0, 1.0)
+        }
+    };
+    if (alpha - 1.0).abs() < 1e-9 {
+        Some(format!("rgb({}, {}, {})", r, g, b))
+    } else {
+        Some(format!("rgba({}, {}, {}, {})", r, g, b, crate::style::num_css(alpha)))
+    }
+}
+
 // hsl()/hwb() 에 none 채널이 있으면 계산값은 hsl()/hwb() 형태로 none 을 보존한다
 // (§CSS Color 4, rgb 와 달리 색공간 형태 유지). ColorFn(none→0 fallback + none 보존
 // serial). serial 은 normalize_hsl_hwb 재사용. none 없으면 None → 레거시 경로.
