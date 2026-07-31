@@ -7953,9 +7953,10 @@ impl Interp {
             let mut vs: Vec<String> = Vec::with_capacity(4);
             let mut any_v = false;
             for val in &vals {
-                let mut it = val.split_whitespace();
-                let h = it.next().unwrap_or("").to_string();
-                let vv = it.next().map(|s| s.to_string()).unwrap_or_else(|| h.clone());
+                // 코너는 "h" 또는 "h v" — calc() 처럼 공백 포함 가능하므로 괄호 depth 0 분할.
+                let toks = crate::css::split_ws_depth0(val);
+                let h = toks.first().copied().unwrap_or("").to_string();
+                let vv = toks.get(1).map(|s| s.to_string()).unwrap_or_else(|| h.clone());
                 if vv != h {
                     any_v = true;
                 }
@@ -8148,6 +8149,10 @@ impl Interp {
         let (has_px, px) = lerp_opt(fpx, tpx);
         let (has_pct, pct) = lerp_opt(fpct, tpct);
         let nc = crate::style::num_css;
+        // calc 항 순서는 FROM 값의 단위를 따른다((1-t)·from + t·to 순). from 이 순수 px
+        // 면 px 먼저(border-radius: 10px→100% ⇒ "calc(4px + 60%)"), 순수 % 면 % 먼저
+        // (position: 10%→480px ⇒ "calc(0% + 480px)"). Chrome 계산값 형식과 일치.
+        let px_first = fpx.is_some() && fpct.is_none();
         Some(match (has_px, has_pct) {
             // 0 항 접기(text-decoration-thickness/offset): px 가 0 이면 % 만(둘 다 0 이면
             // "0%"), px≠0 이고 % 가 0 이면 px 만. 정적 계산값과 형태를 맞춘다.
@@ -8156,6 +8161,7 @@ impl Interp {
             // px 항이 0 이면 % 만(calc(0% + 0px)→0%). % 는 0 이어도 유지(§ Chrome 은
             // calc(0% + 480px) 처럼 % 항을 남긴다). px≠0 이면 calc.
             (true, true) if px.abs() < 1e-6 => format!("{}%", nc(pct)),
+            (true, true) if px_first => format!("calc({}px + {}%)", nc(px), nc(pct)),
             (true, true) => {
                 let sign = if px < 0.0 { "-" } else { "+" };
                 format!("calc({}% {} {}px)", nc(pct), sign, nc(px.abs()))
@@ -9844,6 +9850,15 @@ impl Interp {
             g.strip_suffix('%').and_then(|x| x.trim().parse::<f32>().ok()),
         ) {
             return Some(format!("{}%", crate::style::num_css(lerp(a, b))));
+        }
+        // px ↔ % (또는 calc 혼합): calc() 로 보간(§CSS Values). 순수 px/% 는 위에서
+        // 처리됐으므로 여기 도달하는 length-percentage 는 단위 혼합이다.
+        if (f.ends_with('%') || f.ends_with("px") || f.starts_with("calc("))
+            && (g.ends_with('%') || g.ends_with("px") || g.starts_with("calc("))
+        {
+            if let Some(v) = Self::interp_len_pct(f, g, t, false) {
+                return Some(v);
+            }
         }
         // <number>
         if let (Ok(a), Ok(b)) = (f.parse::<f32>(), g.parse::<f32>()) {

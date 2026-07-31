@@ -942,9 +942,11 @@ fn collect_computed_styles(
                 let mut vs: Vec<String> = Vec::with_capacity(4);
                 let mut any_v = false;
                 for val in &vals {
-                    let mut it = val.split_whitespace();
-                    let h = it.next().unwrap_or("").to_string();
-                    let vv = it.next().map(|s| s.to_string()).unwrap_or_else(|| h.clone());
+                    // 코너는 "h" 또는 "h v" — h/v 는 calc() 처럼 공백을 포함할 수 있으므로
+                    // 괄호 depth 0 에서만 분할한다(split_whitespace 는 calc 를 깬다).
+                    let toks = crate::css::split_ws_depth0(val);
+                    let h = toks.first().copied().unwrap_or("").to_string();
+                    let vv = toks.get(1).map(|s| s.to_string()).unwrap_or_else(|| h.clone());
                     if vv != h {
                         any_v = true;
                     }

@@ -2655,7 +2655,7 @@ pub fn flex_basis_valid(tok: &str) -> bool {
 }
 
 // 공백(괄호 depth 0)으로 토큰 분할 — 괄호 안 공백은 유지. 수학식 구문 검증용.
-fn split_ws_depth0(s: &str) -> Vec<&str> {
+pub(crate) fn split_ws_depth0(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let b = s.as_bytes();
     let mut depth = 0i32;
