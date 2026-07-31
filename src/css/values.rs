@@ -7198,9 +7198,10 @@ pub fn animation_range_expand(raw: &str) -> Option<(String, String)> {
             return None;
         }
         let i = anim_range_consume(&toks, 0)?;
-        starts.push(toks[..i].join(" "));
+        let start = toks[..i].join(" ");
         if i == toks.len() {
-            ends.push("normal".to_string());
+            // end 생략 시 start 와 동일(§scroll-animations 단축).
+            ends.push(start.clone());
         } else {
             let j = anim_range_consume(&toks, i)?;
             if j != toks.len() {
@@ -7208,6 +7209,7 @@ pub fn animation_range_expand(raw: &str) -> Option<(String, String)> {
             }
             ends.push(toks[i..j].join(" "));
         }
+        starts.push(start);
     }
     Some((starts.join(", "), ends.join(", ")))
 }

@@ -133,6 +133,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "animation-name", "animation-duration", "animation-delay",
     "animation-timing-function", "animation-iteration-count", "animation-direction",
     "animation-fill-mode", "animation-play-state", "animation-composition",
+    "animation-range", "animation-range-start", "animation-range-end",
     // UI/인터랙션/표/스크롤 키워드 프로퍼티 — 실제 CSS 프로퍼티라 계산값 노출.
     "cursor", "appearance", "user-select", "resize", "pointer-events", "touch-action",
     "interactivity",

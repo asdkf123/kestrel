@@ -423,7 +423,8 @@ impl Interp {
                         .iter()
                         .zip(ends.iter())
                         .map(|(s, e)| {
-                            if *e == "normal" {
+                            // end 가 start 와 같으면 단일값으로 축약("cover cover"→"cover").
+                            if e == s {
                                 s.to_string()
                             } else {
                                 format!("{} {}", s, e)
