@@ -732,6 +732,11 @@ impl Interp {
             }
             // background-image gradient 지정값: 보간 재정렬 + 색 정규화(키워드 유지).
             // background-image 지정값: 레이어 구조 + gradient/cross-fade 문법 검증.
+            "mask" | "-webkit-mask" => {
+                if !crate::css::mask_shorthand_valid(raw) {
+                    return String::new(); // 성분 개수 위반(add intersect 등) 거부
+                }
+            }
             "background-image" | "-webkit-background-image" => {
                 if !crate::css::background_image_layers_valid(raw) {
                     return String::new(); // none/이미지 아닌 레이어(auto 등) 거부

@@ -7128,6 +7128,62 @@ pub fn border_image_source_valid(raw: &str) -> bool {
 
 // background-image 레이어 구조 검증: 각 레이어는 none 또는 <image>(함수).
 // auto 같은 bare 키워드·빈 레이어 거부(gradient/cross-fade 내부는 별도 검증기).
+// mask 단축(§CSS Masking): <mask-layer># 의 성분 개수 검증(sound — 유효값 거부 안 함).
+// 각 레이어에서 compositing-operator·masking-mode·image 는 ≤1, geometry-box(no-clip
+// 포함)는 ≤2(origin+clip), "/"(position/size 구분)는 ≤1. position/repeat/size 내용은
+// 관대(개수 위반만 거부).
+pub fn mask_shorthand_valid(raw: &str) -> bool {
+    let t = raw.trim();
+    let low = t.to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+        return true;
+    }
+    let layers = split_top_level_commas_local(t);
+    if layers.is_empty() {
+        return false;
+    }
+    for layer in &layers {
+        let toks = split_top_level(layer.trim());
+        if toks.is_empty() {
+            return false;
+        }
+        let (mut comp, mut mode, mut boxes, mut slash, mut img) = (0u32, 0u32, 0u32, 0u32, 0u32);
+        for tk in &toks {
+            let tl = tk.to_ascii_lowercase();
+            if tl == "/" {
+                slash += 1;
+            } else if matches!(tl.as_str(), "add" | "subtract" | "intersect" | "exclude") {
+                comp += 1;
+            } else if matches!(tl.as_str(), "alpha" | "luminance" | "match-source") {
+                mode += 1;
+            } else if matches!(
+                tl.as_str(),
+                "content-box" | "padding-box" | "border-box" | "margin-box" | "fill-box"
+                    | "stroke-box" | "view-box" | "no-clip"
+            ) {
+                boxes += 1;
+            } else if tl == "none"
+                || (tl.ends_with(')')
+                    && (tl.starts_with("url(")
+                        || tl.starts_with("src(")
+                        || tl.contains("gradient(")
+                        || tl.starts_with("image(")
+                        || tl.starts_with("image-set(")
+                        || tl.starts_with("-webkit-image-set(")
+                        || tl.starts_with("cross-fade(")
+                        || tl.starts_with("element(")))
+            {
+                img += 1;
+            }
+            // position/repeat/size/길이 등은 세지 않음(관대).
+        }
+        if comp > 1 || mode > 1 || boxes > 2 || slash > 1 || img > 1 {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn background_image_layers_valid(raw: &str) -> bool {
     let t = raw.trim();
     let low = t.to_ascii_lowercase();
