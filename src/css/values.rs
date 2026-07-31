@@ -7131,8 +7131,23 @@ pub fn background_image_layers_valid(raw: &str) -> bool {
         return false;
     }
     layers.iter().all(|l| {
-        let ll = l.trim().to_ascii_lowercase();
-        ll == "none" || (!ll.is_empty() && ll.ends_with(')'))
+        let lt = l.trim();
+        let ll = lt.to_ascii_lowercase();
+        if ll == "none" {
+            return true;
+        }
+        if ll.is_empty() || !ll.ends_with(')') {
+            return false;
+        }
+        // image()(§CSS Images): image( <color> ) 단일 색만. image(none)/image(notacolor)/
+        // image(url(...))/image(red, blue) 등 거부. image-set 은 별개(위 검증).
+        if ll.starts_with("image(") {
+            let inner = lt[lt.find('(').unwrap() + 1..lt.len() - 1].trim();
+            // <color> 단일. single_color_valid 가 못 받는 light-dark() 도 색이라 허용.
+            return single_color_valid(inner)
+                || (inner.to_ascii_lowercase().starts_with("light-dark(") && inner.ends_with(')'));
+        }
+        true
     })
 }
 
