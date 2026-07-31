@@ -162,6 +162,138 @@
 |---|---|---|
 | html (전체) | 64,058 / 85,181 | 75.2% |
 
+## WPT 전 영역 로드맵 (브라우저 완성 기준)
+
+> kestrel 목표는 **완전한 브라우저**다. 위 css/dom/html/JS 는 현재 러너가 실제로 돌리는 영역이고,
+> 아래는 WPT 전체(약 210만 서브테스트)를 구성하는 **나머지 영역** 전부다. 브라우저로서 지원해야 하지만
+> 아직 kestrel 이 손대지 않았거나 러너 범위 밖이라 미측정인 것들. 상태는 정직하게 3단계로 표기한다.
+>
+> - ✅ **측정됨** — 러너가 실제 실행, 위 표에 수치 있음
+> - ◐ **미측정** — kestrel 에 부분 인프라가 있을 수 있으나 러너 미연결(수치 없음, 0% 아님)
+> - ✗ **미구현(0%)** — 해당 API/서브시스템 자체가 kestrel 에 없음 → 측정해도 0% 예상
+
+### 렌더링 · 레이아웃
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| css/* (77개 서브트리) | ✅ 측정됨 57.8% | 위 CSS 표 |
+| svg | ✗ 미구현(0%) | SVG 렌더 파이프라인 없음 |
+| 2dcontext / html canvas | ✗ 미구현(0%) | Canvas 2D 컨텍스트 없음 |
+| quirks | ◐ 미측정 | 쿼크 모드 일부 파싱만 |
+| web-animations | ✗ 미구현(0%) | 애니메이션 실행 엔진 없음(interpolation 미구현) |
+
+### DOM · HTML 코어 · 파싱
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| dom | ✅ 측정됨 58.5% | 위 DOM 표 |
+| html | ✅ 측정됨 75.2% | 위 HTML 표 |
+| domparsing (innerHTML/XML직렬화) | ◐ 미측정 | innerHTML 경로는 존재 |
+| shadow-dom | ✗ 미구현(0%) | 섀도우 트리/슬롯 없음 |
+| custom-elements | ✗ 미구현(0%) | CE 업그레이드/reactions 없음 |
+| domxpath | ✗ 미구현(0%) | XPath 평가기 없음 |
+
+### 이벤트 · 입력
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| uievents | ◐ 미측정 | 기본 이벤트 디스패치만 |
+| pointerevents / touch-events | ✗ 미구현(0%) | 포인터/터치 이벤트 모델 없음 |
+| input-events / editing / selection | ✗ 미구현(0%) | contenteditable/execCommand 없음 |
+| clipboard-apis | ✗ 미구현(0%) | |
+| pointerlock / fullscreen / gamepad | ✗ 미구현(0%) | |
+
+### 스크립팅 · 실행
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| test262 (JS 언어/빌트인) | ✅ 측정됨 75.0% | 위 JS 표 (WPT js/ 대신 test262 사용) |
+| wasm / WebAssembly | ✗ 미구현(0%) | Wasm 실행기 없음 |
+| workers (Web/Shared) | ✗ 미구현(0%) | 워커 스레드/글로벌 없음 |
+| service-workers | ✗ 미구현(0%) | SW 등록/fetch 가로채기 없음 |
+| web-locks | ✗ 미구현(0%) | |
+
+### 네트워킹
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| fetch (Fetch API) | ✗ 미구현(0%) | 렌더용 HTTP 클라이언트는 있으나 JS `fetch()` 미노출 |
+| xhr (XMLHttpRequest) | ✗ 미구현(0%) | |
+| websockets / webrtc / webtransport | ✗ 미구현(0%) | |
+| eventsource / beacon | ✗ 미구현(0%) | |
+| content-security-policy / cors / mixed-content | ✗ 미구현(0%) | |
+| cookies / cookie-store | ✗ 미구현(0%) | |
+| referrer-policy / upgrade-insecure-requests | ✗ 미구현(0%) | |
+
+### 저장소
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| web-storage (local/sessionStorage) | ✗ 미구현(0%) | |
+| IndexedDB | ✗ 미구현(0%) | |
+| storage / quota / storage-access-api | ✗ 미구현(0%) | |
+| FileAPI / file-system-access / entries-api | ✗ 미구현(0%) | |
+
+### 미디어 · 그래픽
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| webaudio | ✗ 미구현(0%) | |
+| webgpu | ✗ 미구현(0%) | |
+| media-source / mediacapture-* / encrypted-media | ✗ 미구현(0%) | |
+| webcodecs / webvtt / imagebitmap | ✗ 미구현(0%) | |
+
+### 타이밍 · 성능 · 관찰자
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| hr-time | ◐ 미측정 | `performance.now` 일부 |
+| *-timing (resource/navigation/user/paint/event/element) | ✗ 미구현(0%) | 성능 타임라인 없음 |
+| intersection-observer / resize-observer | ✗ 미구현(0%) | |
+| mutation-events | ◐ 미측정 | MutationObserver 여부 확인 필요 |
+| requestidlecallback / page-visibility / visual-viewport | ✗ 미구현(0%) | |
+
+### 보안 · 암호
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| WebCryptoAPI | ✗ 미구현(0%) | |
+| webauthn / credential-management | ✗ 미구현(0%) | |
+| permissions / permissions-policy / trusted-types | ✗ 미구현(0%) | |
+| secure-contexts / subresource-integrity | ✗ 미구현(0%) | |
+
+### 국제화 · 인코딩 · URL
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| intl402 (test262) | ✅ 측정됨 5.3% | Intl 거의 미구현 |
+| url / URL | ◐ 미측정 | 내비게이션용 URL 파서는 존재 |
+| encoding | ◐ 미측정 | UTF-8 디코딩 경로 존재 |
+| i18n | ✗ 미구현(0%) | |
+
+### 디바이스 · 센서
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| geolocation / sensors / generic-sensor | ✗ 미구현(0%) | |
+| battery-status / vibration / device-memory | ✗ 미구현(0%) | |
+| screen-orientation / screen-wake-lock | ✗ 미구현(0%) | |
+| webhid / webusb / web-bluetooth / webnfc / serial / webxr | ✗ 미구현(0%) | |
+
+### 기타 플랫폼 API
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| console | ◐ 미측정 | `console.log` 등 존재 |
+| streams / compression | ✗ 미구현(0%) | |
+| notifications / push-api / payment-request | ✗ 미구현(0%) | |
+| background-fetch / background-sync | ✗ 미구현(0%) | |
+| web-share / broadcastchannel / channel-messaging | ✗ 미구현(0%) | |
+| webdriver / accname / wai-aria (접근성) | ✗ 미구현(0%) | |
+| picture-in-picture / portals / fenced-frame | ✗ 미구현(0%) | |
+
+> 요약: 현재 kestrel 은 **렌더링 코어(HTML/CSS/DOM) + JS 언어(test262)** 에 집중. 나머지 대부분 영역(네트워킹/워커/저장소/미디어/디바이스/보안 API)은 미구현(0%)이며 이게 "브라우저 완성"까지의 실제 남은 로드맵이다. 우선순위는 렌더링 정확도(css) → 코어 API(events/URL/encoding/console) → 나머지 순으로 잡는다.
+
 ## 참고
 
 - **미구현 대형**: Temporal (0%, 4,603), Atomics (0%, 389), Intl (5%). 애니메이션/트랜지션 interpolation (css-animations/transitions/motion 등 다수) 은 실행 엔진 미구현.
