@@ -9064,6 +9064,17 @@ pub(crate) fn serialize_selector(raw: &str) -> String {
     let mut copy_from = 0usize;
     while i < b.len() {
         match b[i] {
+            // CSS 주석은 selectorText 직렬화에서 제거(§CSSOM). 문자열/속성 안의 "/*" 는
+            // 아래 arm 들이 먼저 소비하므로 여기 도달하지 않는다.
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                out.push_str(&s[copy_from..i]);
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = if i + 1 < b.len() { i + 2 } else { b.len() };
+                copy_from = i;
+            }
             b'"' | b'\'' => {
                 let q = b[i];
                 i += 1;
@@ -9159,6 +9170,9 @@ pub(crate) fn serialize_selector(raw: &str) -> String {
         }
     }
     out.push_str(&s[copy_from..]);
+    // 주석 제거로 남을 수 있는 후행 공백 정리.
+    let n = out.trim_end().len();
+    out.truncate(n);
     out
 }
 
