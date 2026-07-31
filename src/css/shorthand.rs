@@ -455,11 +455,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                         } else {
                             return Vec::new();
                         }
-                    } else if let Some(Value::Length(n, _)) = interpret_value(other) {
-                        n.clamp(1.0, 1000.0)
-                    } else if other.ends_with(')') && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem("].iter().any(|p| other.starts_with(p)) {
-                        // 계산 불가한 calc — 지정값 보존.
-                        return vec![Declaration { important: false, name: "font-weight".to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                    } else if other.ends_with(')') && other.contains('(') {
+                        // 수학 함수 — 결과가 순수 <number> 여야(길이/%/각도 거부). 계산
+                        // 불가여도 지정값 보존(used value 에서 클램프).
+                        if super::values::math_number_only_valid(other) {
+                            return vec![Declaration { important: false, name: "font-weight".to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                        } else {
+                            return Vec::new();
+                        }
                     } else {
                         return Vec::new();
                     }

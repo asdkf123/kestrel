@@ -3024,6 +3024,19 @@ fn mdim_func_args(text: &str) -> Option<(String, Vec<String>)> {
     Some((name, split_top_commas(inner).iter().map(|a| a.trim().to_string()).collect()))
 }
 
+// 함수 인자 문자열에 선두/후행 최상위 콤마(빈 인자)가 있는지 — split_top_commas 가
+// 후행 빈 세그먼트를 버려 "abs(1, )" 가 새는 걸 mdim 에서 직접 걸러낸다.
+fn mdim_func_has_edge_comma(text: &str) -> bool {
+    let t = text.trim();
+    if let Some(open) = t.find('(') {
+        if t.ends_with(')') {
+            let inner = t[open + 1..t.len() - 1].trim();
+            return inner.starts_with(',') || inner.ends_with(',');
+        }
+    }
+    false
+}
+
 // 여러 인자가 같은 축(타입)인지 확인하고 통합 타입을 낸다(min/max/clamp/round/mod/rem).
 fn mdim_same(args: &[String]) -> MTy {
     let mut acc: Option<MTy> = None;
@@ -3076,6 +3089,9 @@ fn mdim_of(expr: &str) -> MTy {
             };
             let is_pure_call = name_ok && call_spans_all;
             if is_pure_call {
+                if mdim_func_has_edge_comma(t) {
+                    return MTy::Bad; // 선두/후행 콤마(빈 인자)
+                }
                 return match name.as_str() {
                     "calc" => {
                         if args.len() != 1 {
@@ -3384,6 +3400,15 @@ pub fn transform_valid(raw: &str) -> bool {
         }
     }
     true
+}
+
+// 순수 수 문맥 수학 함수 유효성(font-weight 등 <number>, % 불가): 결과가 순수 수.
+pub(crate) fn math_number_only_valid(text: &str) -> bool {
+    match mdim_of(text) {
+        MTy::Wild => true,
+        MTy::D(d) => d.is_pure_number(),
+        MTy::Bad => false,
+    }
 }
 
 // 각도 문맥 수학 함수 유효성(rotate/skew 등 <angle>): 결과가 <angle>.
