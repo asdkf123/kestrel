@@ -1141,6 +1141,26 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
     }
     // color-stop-list: 색 스톱과 color hint(위치 단독)가 번갈아 온다. hint 는 첫/끝에
     // 올 수 없고 연속될 수 없다. 색 스톱은 위치를 최대 2개까지(색 + pos1 [pos2]).
+    // 스톱 위치 타입: conic 은 <angle>|<percentage>, 그 외는 <length-percentage>.
+    // calc 는 결과 차원을 검사한다(§CSS Values 4) — "calc(50% + 30deg)"(%+각도 혼합)
+    // 같은 타입 불일치를 거부.
+    let is_conic =
+        lower.starts_with("conic-gradient(") || lower.starts_with("repeating-conic-gradient(");
+    let stop_pos_ok = |t: &str| {
+        let t = t.trim();
+        if t == "0" {
+            return true; // 단위 없는 0 은 유효한 위치(0px/0deg)
+        }
+        if is_conic {
+            // <angle-percentage>: % 가 각도로 해석돼 calc(90deg + 50%) 도 유효하다.
+            // mdim 해석기는 % 를 길이로 접어 각도-퍼센트 혼합을 표현 못 하므로, conic 은
+            // 관대하게 각도·퍼센트·수학함수를 수용하고 길이 단위 위치만 거부한다.
+            math_angle_valid(t) || t.ends_with('%') || is_math_fn(t)
+        } else {
+            // <length-percentage>: 각도 혼합(calc(50% + 30deg)) 등 타입 불일치 거부.
+            math_length_valid(t, true)
+        }
+    };
     let list = &segs[start..];
     let mut stops = 0;
     let mut prev_was_hint = false;
@@ -1149,8 +1169,13 @@ pub(crate) fn gradient_valid(text: &str) -> bool {
         if is_color(seg) {
             stops += 1;
             prev_was_hint = false;
-            if split_top_level(seg).len() > 3 {
+            let toks = split_top_level(seg);
+            if toks.len() > 3 {
                 return false; // 색 + 위치 2개 초과
+            }
+            // 색 뒤 위치 토큰들은 유효한 스톱 위치여야 한다.
+            if !toks[1..].iter().all(|t| stop_pos_ok(t)) {
+                return false;
             }
         } else if is_position(seg) {
             if i == 0 || i + 1 == list.len() || prev_was_hint {
