@@ -12710,8 +12710,94 @@ fn canon_pseudo_arg(name: &str, arg: &str) -> String {
 // CSSOM "serialize a selector"(§CSSOM)의 일부: 함수형 pseudo-class 인자의 공백을
 // 정규화하고 An+B 를 캐논화한다. 타입/클래스/id/결합자/속성선택자/문자열은 원문 그대로
 // 둔다(ASCII 구분자만 바이트 스캔 — UTF-8 안전). 세터가 원문 저장이라 getter 에서 캐논.
+// §CSSOM serialize a selector: 컴파운드에서 유일하지 않은 universal 타입 선택자(*)는
+// 생략한다(*.c → .c, *#i → #i, *:hover → :hover). 단독 * 는 유지. 네임스페이스
+// 접두(*|·ns|)는 건드리지 않는다(별도 @namespace 처리 필요). 속성/문자열/의사-인자
+// 안의 * 는 컴파운드 시작이 아니므로 영향 없다.
+fn drop_lone_universal(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    let mut compound_start = true;
+    while i < chars.len() {
+        let c = chars[i];
+        if compound_start && c == '*' {
+            if matches!(chars.get(i + 1), Some('.') | Some('#') | Some(':') | Some('[')) {
+                i += 1; // universal 생략
+                compound_start = false;
+                continue;
+            }
+        }
+        match c {
+            '>' | '+' | '~' | ',' | ' ' | '\t' | '\n' => {
+                out.push(c);
+                i += 1;
+                compound_start = true;
+            }
+            '[' => {
+                while i < chars.len() {
+                    out.push(chars[i]);
+                    let done = chars[i] == ']';
+                    i += 1;
+                    if done {
+                        break;
+                    }
+                }
+                compound_start = false;
+            }
+            '"' | '\'' => {
+                out.push(c);
+                i += 1;
+                while i < chars.len() {
+                    out.push(chars[i]);
+                    if chars[i] == '\\' {
+                        i += 1;
+                        if i < chars.len() {
+                            out.push(chars[i]);
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    let done = chars[i] == c;
+                    i += 1;
+                    if done {
+                        break;
+                    }
+                }
+                compound_start = false;
+            }
+            '(' => {
+                let mut depth = 0i32;
+                while i < chars.len() {
+                    let cc = chars[i];
+                    out.push(cc);
+                    i += 1;
+                    match cc {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                compound_start = false;
+            }
+            _ => {
+                compound_start = false;
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 pub(crate) fn serialize_selector(raw: &str) -> String {
-    let s = raw.trim();
+    let normalized = drop_lone_universal(raw.trim());
+    let s = normalized.as_str();
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let mut i = 0usize;
