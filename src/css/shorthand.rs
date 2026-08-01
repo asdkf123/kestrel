@@ -10,9 +10,10 @@ fn number_or_math(s: &str) -> Option<f32> {
         return Some(n);
     }
     // 순수 <number> 수학식(min/max/clamp/sign/round/abs/삼각/…)을 §CSS Values 4 §10
-    // 대로 평가한다(부호있는 0·infinity·NaN 포함). 유한값만 수용(정수/수 프로퍼티에
-    // inf/NaN 저장 방지). 길이·퍼센트가 섞이면 None 이라 아래 경로로 넘어간다.
-    if let Some(v) = crate::css::eval_math_number(s) {
+    // 대로 평가한다(부호있는 0·infinity·NaN 포함). 차원이 상쇄돼 수가 되는 식
+    // (10em / 1em = 10, 110px / 10px = 11, typed arithmetic)도 포함. 유한값만 수용
+    // (정수/수 프로퍼티에 inf/NaN 저장 방지). 해석 불가는 아래 경로로.
+    if let Some(v) = crate::css::eval_number_canceling(s) {
         if v.is_finite() {
             return Some(v as f32);
         }

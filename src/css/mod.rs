@@ -46,6 +46,7 @@ use values::valid_identifier_char;
 pub(crate) use values::eval_calc_number;
 pub(crate) use values::flatten_nested_calc;
 pub(crate) use values::eval_math_number;
+pub(crate) use values::eval_number_canceling;
 pub(crate) use values::eval_math_angle_deg;
 pub(crate) use values::eval_math_time_s;
 pub use values::calc_size_valid;

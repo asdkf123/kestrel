@@ -1330,6 +1330,71 @@ fn canon_flat_calc(inner: &str) -> Option<String> {
     Some(out)
 }
 
+// 차원이 상쇄돼 순수 <number>가 되는 식(10em / 1em = 10, 110px / 10px = 11)을
+// 평가한다. mdim 이 순수 수라고 확인한 경우에만, 단일 단위를 벗겨 eval_math_number
+// 로 계산한다(여러 단위·문맥단위 혼합은 None — 레이아웃 필요). z-index/order 등
+// 정수 프로퍼티의 typed arithmetic 용.
+pub(crate) fn eval_number_canceling(s: &str) -> Option<f64> {
+    if !math_number_only_valid(s) {
+        return None; // 결과가 순수 수가 아니면 대상 아님
+    }
+    if let Some(n) = eval_math_number(s) {
+        return Some(n); // 이미 순수 수
+    }
+    // 단위 수집(수 뒤 알파벳/%). 정확히 하나면 벗겨 평가.
+    let chars: Vec<char> = s.chars().collect();
+    let mut units: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+                let save = i;
+                i += 1;
+                if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                    i += 1;
+                }
+                if i < chars.len() && chars[i].is_ascii_digit() {
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                } else {
+                    i = save;
+                }
+            }
+            let us = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            if i > us {
+                units.push(chars[us..i].iter().collect::<String>().to_ascii_lowercase());
+            } else if i < chars.len() && chars[i] == '%' {
+                units.push("%".to_string());
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    units.sort();
+    units.dedup();
+    if units.len() != 1 {
+        return None;
+    }
+    let u = &units[0];
+    let stripped: String = if u == "%" {
+        s.replace('%', "")
+    } else {
+        // 단어 경계 없이 replace 해도 단위는 수 뒤에만 오므로 안전(함수명은 수 뒤 아님).
+        s.to_ascii_lowercase().replace(u.as_str(), "")
+    };
+    eval_math_number(&stripped)
+}
+
 // 단일 단위 길이 math(clamp/min/max/round/mod/rem/abs/calc)를 평가해 "Nunit" 로.
 // 식에 단위가 정확히 하나(또는 %)일 때만 — 그 단위를 벗겨 eval_math_number 로 수
 // 평가 후 재부착. 여러 단위·문맥 단위 혼합·비유한은 None(원문 유지).
@@ -13176,6 +13241,12 @@ mod tests {
         assert_eq!(cc("calc(clamp(1px, 2px, 3px))").as_deref(), Some("calc(2px)"));
         assert_eq!(cc("clamp(1px, 2em, 3px)"), None); // 다중 단위 → 원문
         assert_eq!(cc("clamp(0.1, 0.5, 0.9)"), None); // 순수 수(길이 아님)
+        // 차원 상쇄 → 수(typed arithmetic).
+        assert_eq!(eval_number_canceling("calc(10em / 1em)"), Some(10.0));
+        assert_eq!(eval_number_canceling("calc(110px / 10px)"), Some(11.0));
+        assert_eq!(eval_number_canceling("calc(1 + 2)"), Some(3.0)); // 순수 수
+        assert_eq!(eval_number_canceling("calc(10em)"), None); // 길이(상쇄 아님)
+        assert_eq!(eval_number_canceling("calc(10px / 1em)"), None); // 혼합 단위(레이아웃)
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");
