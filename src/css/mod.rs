@@ -381,6 +381,9 @@ pub struct ImportData {
 pub struct Rule {
     // @import 규칙이면 데이터. CSSImportRule CSSOM 노출용(스타일 로드는 별개, styleSheet=null).
     pub at_import: Option<ImportData>,
+    // @page 규칙이면 정규화된 페이지 선택자(빈 문자열 = @page {}). CSSPageRule CSSOM 노출용.
+    // declarations 에 페이지 박스 선언을 보관(레이아웃엔 미반영, CSSOM/직렬화만).
+    pub at_page: Option<String>,
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
     // 이 규칙이 속한 @layer 이름 (없으면 레이어 밖).
@@ -969,7 +972,7 @@ pub fn parse_one_nested_rule(text: &str, parent_sel: &str, viewport_width: f32) 
             at_media: None,
             at_custom_media: None,
             at_supports: None,
-            at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
+            at_container: None, at_scope: None, at_import: None, at_page: None,            nested: Vec::new(),
         });
     }
     // 규칙 하나만 유효할 때. (여러 개거나 0개면 insertRule 규격상 하나가 아님 → None.)
@@ -2121,6 +2124,53 @@ pub fn parse_scope_prelude(head: &str) -> Option<(Option<String>, Option<String>
     }
 }
 
+// @page 선택자 파싱·정규화(§CSS Paged Media, §CSSOM CSSPageRule.selectorText).
+// 문법: [<page-name>]? (:<pseudo-page>)* — 이름과 pseudo 는 공백 없이 인접해야 한다.
+// pseudo ∈ {first,left,right,blank}(대소문자 무시 → 소문자로 정규화). 빈 문자열은
+// 유효(선택자 없음). 공백 삽입·무효 pseudo·빈 이름 등은 None(무효).
+pub fn parse_page_selector(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Some(String::new());
+    }
+    // trim 후 내부 공백이 있으면 무효('named :first', ':first :left').
+    if s.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let is_name_start = |c: char| c.is_ascii_alphabetic() || c == '_' || c == '-' || (c as u32) >= 0x80;
+    let is_name_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-' || (c as u32) >= 0x80;
+    let mut rest = s;
+    let mut out = String::new();
+    // 선택적 페이지 이름(CSS 식별자). ':' 로 시작하면 이름 없음.
+    if !rest.starts_with(':') {
+        let end = rest.find(':').unwrap_or(rest.len());
+        let name = &rest[..end];
+        let mut chars = name.chars();
+        match chars.next() {
+            Some(c0) if is_name_start(c0) => {}
+            _ => return None,
+        }
+        if chars.any(|c| !is_name_char(c)) {
+            return None;
+        }
+        out.push_str(name);
+        rest = &rest[end..];
+    }
+    // pseudo-page 시퀀스 (':' 로 인접 연결).
+    while !rest.is_empty() {
+        rest = &rest[1..]; // ':' 소비
+        let end = rest.find(':').unwrap_or(rest.len());
+        let pseudo = rest[..end].to_ascii_lowercase();
+        if !matches!(pseudo.as_str(), "first" | "left" | "right" | "blank") {
+            return None;
+        }
+        out.push(':');
+        out.push_str(&pseudo);
+        rest = &rest[end..];
+    }
+    Some(out)
+}
+
 // @import 프렐류드 파싱(§CSS Cascade): `<url> [layer|layer(name)]? [supports(cond)]?
 // [media]?`. 순서 고정. 무효(url 없음)면 None. url/layer/supports/media 추출.
 pub fn parse_import_prelude(s: &str) -> Option<ImportData> {
@@ -2347,6 +2397,10 @@ impl Parser {
                     } else {
                         self.skip_to_semicolon();
                     }
+                } else if ident == "page" {
+                    if let Some(r) = self.parse_page() {
+                        rules.push(r);
+                    }
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -2402,7 +2456,7 @@ impl Parser {
             at_media: Some(cond),
             at_custom_media: None,
             at_supports: None,
-            at_container: None, at_scope: None, at_import: None,            nested: inner,
+            at_container: None, at_scope: None, at_import: None, at_page: None,            nested: inner,
         }]
     }
 
@@ -2542,7 +2596,7 @@ impl Parser {
             at_supports: None,
             at_container: Some(head.trim().to_string()),
             at_scope: None,
-            at_import: None,            nested: inner,
+            at_import: None, at_page: None,            nested: inner,
         }]
     }
 
@@ -2603,7 +2657,7 @@ impl Parser {
             at_supports: None,
             at_container: None,
             at_scope: Some((root, limit)),
-            at_import: None,            nested: inner,
+            at_import: None, at_page: None,            nested: inner,
         }]
     }
 
@@ -2654,7 +2708,7 @@ impl Parser {
             at_media: None,
             at_custom_media: None,
             at_supports: Some(cond.trim().to_string()),
-            at_container: None, at_scope: None, at_import: None,            nested: inner,
+            at_container: None, at_scope: None, at_import: None, at_page: None,            nested: inner,
         }]
     }
 
@@ -2828,6 +2882,39 @@ impl Parser {
             at_custom_media: None,
             at_supports: None,
             at_container: None,
+            at_scope: None, at_page: None,
+            nested: Vec::new(),
+        })
+    }
+
+    // '@page <page-selector>? { <declarations> }' (§CSS Paged Media). CSSPageRule 노출용.
+    // 선택자는 정규화해 at_page 에 보관(무효면 규칙 드롭). 선언은 그대로 보관(레이아웃엔
+    // 미반영 — 우리 엔진은 페이지 박스 미구현이라 CSSOM/직렬화만).
+    fn parse_page(&mut self) -> Option<Rule> {
+        let prelude = self.consume_while(|c| c != '{' && c != ';' && c != '}');
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return None;
+        }
+        self.consume_char(); // '{'
+        let declarations = self.parse_declarations();
+        let sel = crate::css::parse_page_selector(prelude.trim())?;
+        Some(Rule {
+            at_import: None,
+            at_page: Some(sel),
+            selectors: Vec::new(),
+            declarations,
+            selector_text: String::new(),
+            ua: false,
+            layer: None,
+            container: None,
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+            at_supports: None,
+            at_container: None,
             at_scope: None,
             nested: Vec::new(),
         })
@@ -2878,7 +2965,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: Some((name.to_string(), serialized)),
-            at_supports: None, at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None, at_import: None, at_page: None,            nested: Vec::new(),
         })
     }
 
@@ -2980,7 +3067,7 @@ impl Parser {
             at_property: Some((name, reg)),
             at_media: None,
             at_custom_media: None,
-            at_supports: None, at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None, at_import: None, at_page: None,            nested: Vec::new(),
         })
     }
 
@@ -3074,7 +3161,7 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                    at_supports: None, at_container: None, at_scope: None, at_import: None,                    nested,
+                    at_supports: None, at_container: None, at_scope: None, at_import: None, at_page: None,                    nested,
                 })
             }
             None => {
@@ -3105,7 +3192,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: None,
-            at_supports: None, at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None, at_import: None, at_page: None,            nested: Vec::new(),
         };
         loop {
             self.consume_whitespace();
@@ -3171,7 +3258,7 @@ impl Parser {
                             at_custom_media: None,
                             at_supports,
                             at_container: None,
-                            at_scope: None, at_import: None,                            nested: cont,
+                            at_scope: None, at_import: None, at_page: None,                            nested: cont,
                         });
                         seen_nested = true;
                     } else {
@@ -3207,7 +3294,7 @@ impl Parser {
                                 at_property: None,
                                 at_media: None,
                                 at_custom_media: None,
-                                at_supports: None, at_container: None, at_scope: None, at_import: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
+                                at_supports: None, at_container: None, at_scope: None, at_import: None, at_page: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
                             });
                         }
                         seen_nested = true;

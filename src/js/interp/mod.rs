@@ -12429,6 +12429,36 @@ impl Interp {
                     // 무효면 아무것도 안 한다(no-op — 규격상 조용히 무시).
                     Value::CssRule(si, ri, np) => {
                         if key == "selectorText" {
+                            // @page 규칙(CSSPageRule)은 페이지 선택자 문법으로 파싱·정규화한다
+                            // (무효면 no-op — §CSSOM). 스타일 규칙과 파서가 다르므로 먼저 분기.
+                            let is_page = self
+                                .sheets()
+                                .and_then(|sheets| {
+                                    cssom::resolve_nested(
+                                        sheets.get(si).and_then(|e| e.sheet.rules.get(ri)),
+                                        &np,
+                                    )
+                                    .map(|r| r.at_page.is_some())
+                                })
+                                .unwrap_or(false);
+                            if is_page {
+                                if let Some(norm) =
+                                    crate::css::parse_page_selector(&to_display(&value))
+                                {
+                                    if let Some(sheets) = self.sheets() {
+                                        if let Some(r) = cssom::resolve_nested_mut(
+                                            sheets
+                                                .get_mut(si)
+                                                .and_then(|e| e.sheet.rules.get_mut(ri)),
+                                            &np[..],
+                                        ) {
+                                            r.at_page = Some(norm);
+                                        }
+                                    }
+                                    self.css_epoch += 1;
+                                }
+                                return Ok(());
+                            }
                             // §CSS Syntax 입력 전처리(NULL→U+FFFD·개행 정규화)를 저장
                             // 원문에도 적용 — selectorText 게터가 전처리된 값을 직렬화한다.
                             let text = crate::css::preprocess_input(&to_display(&value));

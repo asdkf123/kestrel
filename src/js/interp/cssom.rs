@@ -65,6 +65,19 @@ fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     if let Some(imp) = &rule.at_import {
         return import_css_text(imp);
     }
+    // @page 규칙: `@page <sel>? { <decls> }`(선택자 없으면 `@page { }`).
+    if let Some(sel) = &rule.at_page {
+        let prelude = if sel.is_empty() {
+            String::from("@page")
+        } else {
+            format!("@page {}", sel)
+        };
+        return if dl.is_empty() {
+            format!("{} {{ }}", prelude)
+        } else {
+            format!("{} {{ {} }}", prelude, dl)
+        };
+    }
     // @scope 규칙: `@scope (root) to (limit) {\n  <내부>\n}`(root/limit 없으면 생략).
     if let Some((root, limit)) = &rule.at_scope {
         let mut prelude = String::from("@scope");
@@ -551,6 +564,23 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @page 규칙(CSSPageRule §CSSOM). selectorText/style/type=6.
+                let atp = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                    .and_then(|r| r.at_page.clone());
+                if let Some(sel) = atp {
+                    return match key {
+                        "selectorText" => Ok(Value::Str(sel)),
+                        "type" => Ok(Value::Num(6.0)), // PAGE_RULE
+                        "style" => Ok(Value::RuleStyle(si, ri, std::rc::Rc::new(np.clone()))),
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 // @scope 규칙(CSSScopeRule §CSS Cascade 6). start=root, end=limit.
                 let ats = self
                     .sheets()
@@ -814,7 +844,7 @@ impl Interp {
                 at_custom_media: None,
                 at_supports,
                 at_container: None,
-                at_scope: None, at_import: None,                nested,
+                at_scope: None, at_import: None, at_page: None,                nested,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };
