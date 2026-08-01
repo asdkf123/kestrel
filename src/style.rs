@@ -2908,10 +2908,13 @@ fn style_node<'a>(
                         resolve_units(&mut cv, fs, root_fs, vp);
                         cv
                     };
-                    // 계산값 시점 무효(§Properties & Values API): 상속 프로퍼티는 상속값
-                    // (부모 계산값), 비상속은 초기값(없으면 제거).
+                    // 계산값 시점 무효(§Properties & Values API): universal(*) 프로퍼티는
+                    // guaranteed-invalid → 빈 문자열(제거). 그 외 타입 프로퍼티는 상속
+                    // 프로퍼티면 상속값(부모 계산값), 비상속이면 초기값(없으면 제거).
                     let out: Option<Value> = if valid {
                         Some(compute(resolved))
+                    } else if reg.syntax.trim() == "*" {
+                        None
                     } else if reg.inherits {
                         match parent.and_then(|p| p.get(k)) {
                             Some(pv) => Some(pv.clone()),
