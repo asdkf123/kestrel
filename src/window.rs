@@ -135,6 +135,11 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
                 sheet.merge(e.sheet.clone());
             }
         }
+        // JS CSS.registerProperty() 로 등록된 프로퍼티도 @property 레지스트리에 합친다
+        // (getComputedStyle 이 타입 계산값을 내도록). 스타일시트 @property 가 우선.
+        for (name, reg) in &js.registered_properties {
+            sheet.at_properties.entry(name.clone()).or_insert_with(|| reg.clone());
+        }
         js.css_applied_epoch = js.css_epoch;
     }
     let (sheet, fonts, img_map, pseudo) =

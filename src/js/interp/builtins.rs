@@ -5224,7 +5224,7 @@ impl Interp {
             // CSS.registerProperty({name, syntax, initialValue?, inherits}) — §Properties
             // & Values API. syntax·initialValue 유효성 검사 후 등록. 무효면 예외.
             Native::CssRegisterProperty => {
-                let (name, syntax, initial) = {
+                let (name, syntax, initial, inherits) = {
                     let Some(Value::Obj(o)) = args.first() else {
                         return Err("TypeError: registerProperty expects an object".to_string());
                     };
@@ -5236,7 +5236,8 @@ impl Interp {
                     );
                     let initial =
                         ob.get("initialValue").map(|v| crate::css::strip_comments(&to_display(v)));
-                    (name, syntax, initial)
+                    let inherits = ob.get("inherits").map(to_bool).unwrap_or(false);
+                    (name, syntax, initial, inherits)
                 };
                 // registerProperty 는 WebIDL DOMException(SyntaxError, code 12)을 던진다
                 // (JS SyntaxError 아님). 무효 name/syntax/값 → SyntaxError DOMException.
@@ -5246,12 +5247,22 @@ impl Interp {
                 if !crate::css::register_property_valid(&syntax, initial.as_deref()) {
                     return Err(self.throw_dom("SyntaxError", "invalid property definition"));
                 }
-                if !self.registered_properties.insert(name.clone()) {
+                if self.registered_properties.contains_key(&name) {
                     return Err(self.throw_dom(
                         "InvalidModificationError",
                         format!("'{}' already registered", name),
                     ));
                 }
+                self.registered_properties.insert(
+                    name.clone(),
+                    crate::css::PropertyReg {
+                        syntax: syntax.trim().to_string(),
+                        inherits,
+                        initial: initial.map(|s| s.trim().to_string()),
+                    },
+                );
+                // JS 등록은 style 계산에 반영돼야 한다(getComputedStyle 타입 계산값).
+                self.css_epoch = self.css_epoch.wrapping_add(1);
                 Ok(Value::Undefined)
             }
             // new DOMParser() → parseFromString 을 가진 객체
