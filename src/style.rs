@@ -2835,6 +2835,13 @@ fn style_node<'a>(
             // 프로퍼티는 순환 멤버의 계산값(등록=초기값)을 참조할 수 있다.
             let cycle = crate::css::find_var_cycles(&custom);
             let mut sub_map = custom.clone();
+            // 이미 typed 로 확정된 커스텀 프로퍼티(상속된 등록 프로퍼티 등)도 계산값
+            // 문자열로 sub_map 에 넣어 다른 프로퍼티가 var() 로 참조할 수 있게 한다.
+            for (k, v) in values.iter() {
+                if k.starts_with("--") && !matches!(v, Value::Keyword(_)) {
+                    sub_map.insert(k.clone(), computed_value_string(v));
+                }
+            }
             for name in &cycle {
                 if let Some(reg) = at_properties.get(name) {
                     let init_val = reg.initial.as_deref().map(|iv| {
@@ -2892,19 +2899,26 @@ fn style_node<'a>(
                     };
                     let valid = !resolved.contains("var(")
                         && crate::css::value_matches_syntax(&reg.syntax, &resolved);
-                    let src = if valid { Some(resolved) } else { reg.initial.clone() };
-                    let out = match src {
-                        Some(val) => {
-                            let mut cv = crate::css::registered_computed_value(
-                                &reg.syntax, &val, fs, root_fs, vp, &current_color, line_height_px,
-                            )
-                            .unwrap_or(Value::Keyword(val));
-                            // em/vw 등을 px 로 확정한다 — sub_map 에 넣을 계산값 문자열이
-                            // 절대화되어야 다른 프로퍼티가 참조 시 계산값을 얻는다.
-                            resolve_units(&mut cv, fs, root_fs, vp);
-                            Some(cv)
+                    // 지정값 val 을 typed 계산값으로(em/vw 등 px 절대화 포함).
+                    let compute = |val: String| -> Value {
+                        let mut cv = crate::css::registered_computed_value(
+                            &reg.syntax, &val, fs, root_fs, vp, &current_color, line_height_px,
+                        )
+                        .unwrap_or(Value::Keyword(val));
+                        resolve_units(&mut cv, fs, root_fs, vp);
+                        cv
+                    };
+                    // 계산값 시점 무효(§Properties & Values API): 상속 프로퍼티는 상속값
+                    // (부모 계산값), 비상속은 초기값(없으면 제거).
+                    let out: Option<Value> = if valid {
+                        Some(compute(resolved))
+                    } else if reg.inherits {
+                        match parent.and_then(|p| p.get(k)) {
+                            Some(pv) => Some(pv.clone()),
+                            None => reg.initial.clone().map(compute),
                         }
-                        None => None,
+                    } else {
+                        reg.initial.clone().map(compute)
                     };
                     let new_str = out.as_ref().map(computed_value_string);
                     if new_str.as_deref() != sub_map.get(k).map(|s| s.as_str()) {
