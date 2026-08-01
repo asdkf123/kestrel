@@ -43,13 +43,32 @@ fn is_empty_nested_decls(r: &crate::css::Rule) -> bool {
 fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     let dl = decls_line(rule);
     // @media / @supports / @container 그룹 규칙: `@<kw> <cond> {\n  <내부>\n}`.
-    if let Some((kw, cond)) = rule
+    if let Some((kw, cond_raw)) = rule
         .at_media
         .as_ref()
         .map(|c| ("@media", c))
         .or_else(|| rule.at_supports.as_ref().map(|c| ("@supports", c)))
         .or_else(|| rule.at_container.as_ref().map(|c| ("@container", c)))
     {
+        // @container 프렐류드는 캐논 직렬화(이름 + 캐논 조건). @media/@supports 는 원문.
+        let cond_owned;
+        let cond: &str = if kw == "@container" {
+            let (name, query) = match cond_raw.find('(') {
+                Some(i) => (cond_raw[..i].trim(), cond_raw[i..].trim()),
+                None => (cond_raw.trim(), ""),
+            };
+            let cq = crate::css::canon_container_condition(query);
+            cond_owned = if name.is_empty() {
+                cq
+            } else if cq.is_empty() {
+                name.to_string()
+            } else {
+                format!("{} {}", name, cq)
+            };
+            &cond_owned
+        } else {
+            cond_raw
+        };
         let children: Vec<String> = rule
             .nested
             .iter()
@@ -379,10 +398,12 @@ impl Interp {
                     .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                     .and_then(|r| r.at_container.clone());
                 if let Some(head) = atcont {
-                    let (cname, cquery) = match head.find('(') {
+                    let (cname, craw) = match head.find('(') {
                         Some(i) => (head[..i].trim().to_string(), head[i..].trim().to_string()),
                         None => (head.trim().to_string(), String::new()),
                     };
+                    // conditionText/containerQuery 는 캐논 직렬화(소문자·공백 정규화).
+                    let cquery = crate::css::canon_container_condition(&craw);
                     return match key {
                         "conditionText" | "containerQuery" => Ok(Value::Str(cquery)),
                         "containerName" => Ok(Value::Str(cname)),

@@ -19,6 +19,95 @@ pub(crate) fn container_matches(cond: &str, cw: f32, ch: f32) -> bool {
     eval_condition(&normalized, cw, ch).unwrap_or(false)
 }
 
+// @container 조건 conditionText 캐논 직렬화(§CSSOM): 소문자 특성명·keyword, 공백
+// 정규화, `:` 뒤 한 칸, 비교연산자 주위 한 칸. 값은 보존(단위 소문자는 그대로 둠).
+pub(crate) fn canon_container_condition(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    let ors = split_top_kw(s, "or");
+    if ors.len() > 1 {
+        return ors.iter().map(|p| canon_container_condition(p)).collect::<Vec<_>>().join(" or ");
+    }
+    let ands = split_top_kw(s, "and");
+    if ands.len() > 1 {
+        return ands.iter().map(|p| canon_container_condition(p)).collect::<Vec<_>>().join(" and ");
+    }
+    if let Some(rest) = s.strip_prefix("not ") {
+        return format!("not {}", canon_container_condition(rest.trim()));
+    }
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = s[1..s.len() - 1].trim();
+        let nested = inner.starts_with('(')
+            || inner.starts_with("not ")
+            || split_top_kw(inner, "and").len() > 1
+            || split_top_kw(inner, "or").len() > 1;
+        if nested {
+            return format!("({})", canon_container_condition(inner));
+        }
+        return format!("({})", canon_feature(inner));
+    }
+    s.to_string()
+}
+
+// 특성 하나를 캐논 직렬화. `name` | `name: value` | 범위(`a op name op b`).
+fn canon_feature(f: &str) -> String {
+    let f = f.trim();
+    if f.contains('<') || f.contains('>') || (f.contains('=') && !f.contains(':')) {
+        // 범위: 비교연산자 기준으로 조각내 " op " 로 재결합. 특성명(알파벳 시작)만 소문자.
+        let mut out = String::new();
+        let bytes = f.as_bytes();
+        let mut i = 0usize;
+        let mut token = String::new();
+        let flush = |tok: &str, out: &mut String| {
+            let t = tok.trim();
+            if t.is_empty() {
+                return;
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            // 특성명(알파벳 시작)은 소문자, 값(숫자 시작)은 원문.
+            if t.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
+                out.push_str(&t.to_ascii_lowercase());
+            } else {
+                out.push_str(t);
+            }
+        };
+        while i < bytes.len() {
+            let two = if i + 1 < bytes.len() { &f[i..i + 2] } else { "" };
+            if two == "<=" || two == ">=" {
+                flush(&token, &mut out);
+                token.clear();
+                out.push(' ');
+                out.push_str(two);
+                i += 2;
+                continue;
+            }
+            match bytes[i] {
+                b'<' | b'>' | b'=' => {
+                    flush(&token, &mut out);
+                    token.clear();
+                    out.push(' ');
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+                _ => {
+                    token.push(bytes[i] as char);
+                    i += 1;
+                }
+            }
+        }
+        flush(&token, &mut out);
+        return out;
+    }
+    if let Some((n, v)) = f.split_once(':') {
+        return format!("{}: {}", n.trim().to_ascii_lowercase(), v.trim());
+    }
+    f.to_ascii_lowercase()
+}
+
 // @container 프렐류드(`[name]? <condition>`)가 문법적으로 유효한가(§CSS Containment 3).
 // 평가(크기 매칭)와 별개로 문법만 본다 — 미지 특성(color)도 문법상 유효(true), 미디어
 // 타입(screen)·bare 단어·혼방향 범위·잘못된 이름은 무효(false → 규칙 드롭).

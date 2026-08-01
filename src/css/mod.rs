@@ -3,7 +3,10 @@ mod shorthand;
 mod supports;
 mod values;
 
-pub(crate) use media::{container_matches, media_matches, media_matches_vp};
+pub(crate) use media::{
+    canon_container_condition, container_matches, container_query_valid, media_matches,
+    media_matches_vp,
+};
 pub(crate) use supports::SUPPORTED;
 
 // 단축(shorthand) → 롱핸드 이름들. 확장기에게 직접 물어본다 — 프로퍼티마다 목록을 손으로
@@ -2328,7 +2331,7 @@ impl Parser {
         self.cur_container = prev.clone();
         // 프렐류드가 문법적으로 무효면(미디어 타입·bare 단어·혼방향 범위·잘못된 이름) 규칙을
         // 통째로 버린다(§CSS Containment 3 — 무효 @container 는 파싱 실패).
-        if !crate::css::media::container_query_valid(head.trim()) {
+        if !crate::css::container_query_valid(head.trim()) {
             return Vec::new();
         }
         // @container 를 CSSContainerRule 컨테이너로 보존(§CSSOM). 내부 규칙엔 이미 container
