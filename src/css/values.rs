@@ -11439,12 +11439,13 @@ pub fn normalize_color_function(raw: &str) -> Option<String> {
         return None;
     }
     let inner = &t[6..t.len() - 1];
-    let spaced = inner.replace('/', " / ");
-    let toks: Vec<&str> = spaced.split_whitespace().collect();
-    if toks.len() < 4 {
+    // 괄호 균형 분할(calc(0.5 + 1) 은 한 토큰, calc(-150% / 3) 의 내부 '/' 도 보존).
+    // color_parts 는 depth 0 의 공백·콤마·'/' 로 나눈다 → [space, c1, c2, c3, (alpha)].
+    let parts = color_parts(inner);
+    if parts.len() < 4 || parts.len() > 5 {
         return None;
     }
-    let space = toks[0].to_ascii_lowercase();
+    let space = parts[0].to_ascii_lowercase();
     if !matches!(
         space.as_str(),
         "srgb" | "srgb-linear" | "display-p3" | "a98-rgb" | "prophoto-rgb" | "rec2020" | "xyz"
@@ -11452,35 +11453,31 @@ pub fn normalize_color_function(raw: &str) -> Option<String> {
     ) {
         return None;
     }
+    // 채널 캐논: none 유지, calc 등 math 는 canon_calc_serialize 로 단순화(calc 형태 유지,
+    // % 는 calc 안에서 % 로 남는다), bare % → 0-1, bare 수 → 그대로. 캐논 불가 math 는
+    // 원문 유지(전체 bail 방지).
     let conv = |s: &str| -> Option<String> {
+        let s = s.trim();
         if s.eq_ignore_ascii_case("none") {
             return Some("none".to_string());
+        }
+        if is_math_fn(&s.to_ascii_lowercase()) {
+            return Some(canon_calc_serialize(s).unwrap_or_else(|| s.to_string()));
         }
         if let Some(p) = s.strip_suffix('%') {
             return p.parse::<f32>().ok().map(|n| crate::style::num_css(n / 100.0));
         }
         s.parse::<f32>().ok().map(crate::style::num_css)
     };
-    let (mut chans, mut alpha_raw, mut after_slash): (Vec<String>, Option<&str>, bool) =
-        (Vec::new(), None, false);
-    for &tok in &toks[1..] {
-        if tok == "/" {
-            after_slash = true;
-            continue;
-        }
-        if after_slash {
-            alpha_raw = Some(tok); // 알파는 원문 유지(클램프 위해)
-        } else {
-            chans.push(conv(tok)?); // 채널은 클램프 안 함(범위 밖 값 보존)
-        }
-    }
-    if chans.len() != 3 {
-        return None;
-    }
-    // 알파는 [0,1] 로 클램프하고 1 이면 생략(§CSS Color 4). none 은 유지.
-    let alpha_part = match alpha_raw {
+    let chans: Vec<String> = parts[1..4].iter().map(|c| conv(c)).collect::<Option<_>>()?;
+    // 알파: none 유지, calc 등 math 는 캐논화(클램프·생략 안 함), bare 수/% 는 [0,1]
+    // 클램프 후 1 이면 생략(§CSS Color 4).
+    let alpha_part = match parts.get(4) {
         None => String::new(),
         Some(a) if a.eq_ignore_ascii_case("none") => " / none".to_string(),
+        Some(a) if is_math_fn(&a.to_ascii_lowercase()) => {
+            format!(" / {}", canon_calc_serialize(a).unwrap_or_else(|| a.to_string()))
+        }
         Some(a) => {
             let av = if let Some(p) = a.strip_suffix('%') {
                 p.parse::<f32>().ok()? / 100.0

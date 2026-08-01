@@ -71,6 +71,12 @@
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
 > - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **css-color +32 (color-function)**: `color(<space> …)` 지정값 직렬화가 성분 안 calc 를
+>   캐논화. 예전엔 `split_whitespace` 로 나눠 `calc(0.5 + 1)` 의 내부 공백에서 깨지고 `/`
+>   치환이 calc 내부 `/` 를 망가뜨려 통째로 bail(원문 반환)했다. 이제 괄호 균형 `color_parts`
+>   로 나누고 각 math 성분을 `canon_calc_serialize`(calc 형태 유지, `calc(0.5+1)`→`calc(1.5)`,
+>   `calc(0/0)`→`calc(NaN)`)로 캐논화. 비-calc 성분은 기존 로직 그대로 → 회귀 0. 남은 실패는
+>   calc 곱셈 피연산자 재정렬(`sign()*10%`→`10%*sign()`)뿐(canon_calc 심화 규칙).
 > - **dom nodes +25 (createElementNS +16 등)**: 요소 네임스페이스 인코딩 수정. 예전엔
 >   `namespace: None` 이 **HTML 과 null 네임스페이스를 둘 다** 뜻해, `createElementNS(null,"foo")`
 >   가 HTML 요소처럼 tagName 대문자화·namespaceURI=HTML 로 나왔다. 이제 None=null-ns,
@@ -134,7 +140,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 7,930 / 9,399 | 84.4% |
+| css-color | 7,962 / 9,399 | 84.7% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
