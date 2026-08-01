@@ -2326,6 +2326,11 @@ impl Parser {
             }
         }
         self.cur_container = prev.clone();
+        // 프렐류드가 문법적으로 무효면(미디어 타입·bare 단어·혼방향 범위·잘못된 이름) 규칙을
+        // 통째로 버린다(§CSS Containment 3 — 무효 @container 는 파싱 실패).
+        if !crate::css::media::container_query_valid(head.trim()) {
+            return Vec::new();
+        }
         // @container 를 CSSContainerRule 컨테이너로 보존(§CSSOM). 내부 규칙엔 이미 container
         // 태그가 붙어(cur_container) per-element 로 ContainerMap 평가되므로, build_with flatten
         // 은 이 컨테이너의 .nested 를 항상 펼친다(조건 게이팅은 태그가 담당). 컨테이너 규칙

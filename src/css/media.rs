@@ -19,6 +19,104 @@ pub(crate) fn container_matches(cond: &str, cw: f32, ch: f32) -> bool {
     eval_condition(&normalized, cw, ch).unwrap_or(false)
 }
 
+// @container 프렐류드(`[name]? <condition>`)가 문법적으로 유효한가(§CSS Containment 3).
+// 평가(크기 매칭)와 별개로 문법만 본다 — 미지 특성(color)도 문법상 유효(true), 미디어
+// 타입(screen)·bare 단어·혼방향 범위·잘못된 이름은 무효(false → 규칙 드롭).
+pub(crate) fn container_query_valid(head: &str) -> bool {
+    let h = head.trim().to_ascii_lowercase();
+    let (name, cond) = split_container_head(&h);
+    if !name.is_empty() && !valid_container_ident(name) {
+        return false;
+    }
+    if cond.trim().is_empty() {
+        // 이름만(`@container name {}`) → 유효. 이름도 없고 조건도 없으면 무효.
+        return !name.is_empty();
+    }
+    container_condition_valid(cond)
+}
+
+fn valid_container_ident(t: &str) -> bool {
+    !t.is_empty()
+        && !matches!(t, "and" | "or" | "not" | "none" | "default")
+        && t.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_' || c == '-').unwrap_or(false)
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn split_container_head(h: &str) -> (&str, &str) {
+    let h = h.trim();
+    if h.starts_with('(') || h.starts_with("not ") || h.starts_with("not(") {
+        return ("", h);
+    }
+    let end = h.find(|c: char| c.is_whitespace() || c == '(').unwrap_or(h.len());
+    // 첫 토큰 뒤가 바로 '(' 면 함수(style(…) 등) — 이름 아님.
+    if h[end..].starts_with('(') {
+        return ("", h);
+    }
+    (h[..end].trim(), h[end..].trim())
+}
+
+fn container_condition_valid(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    let ors = split_top_kw(s, "or");
+    if ors.len() > 1 {
+        return ors.iter().all(|p| container_condition_valid(p));
+    }
+    let ands = split_top_kw(s, "and");
+    if ands.len() > 1 {
+        return ands.iter().all(|p| container_condition_valid(p));
+    }
+    if let Some(rest) = s.strip_prefix("not ") {
+        return container_condition_valid(rest.trim());
+    }
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = s[1..s.len() - 1].trim();
+        let nested = inner.starts_with('(')
+            || inner.starts_with("not ")
+            || split_top_kw(inner, "and").len() > 1
+            || split_top_kw(inner, "or").len() > 1;
+        if nested {
+            return container_condition_valid(inner);
+        }
+        return container_feature_valid(inner);
+    }
+    // ident(…) 형태 = general-enclosed 함수(style()/scroll-state()) → 문법상 유효.
+    if let Some(p) = s.find('(') {
+        if s.ends_with(')') && s[..p].chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && p > 0 {
+            return true;
+        }
+    }
+    false // bare 단어(미디어 타입 등) → 무효.
+}
+
+// ( ) 안의 특성 하나가 유효 문법인가. boolean `width` | `name: value` | 범위(단방향).
+fn container_feature_valid(inner: &str) -> bool {
+    let f = inner.trim();
+    if f.is_empty() {
+        return false;
+    }
+    let has_lt = f.contains('<');
+    let has_gt = f.contains('>');
+    if has_lt || has_gt || (f.contains('=') && !f.contains(':')) {
+        // 범위: 혼방향(< 와 > 동시) 무효. `100px < width < 200px`(둘 다 <) 유효.
+        if has_lt && has_gt {
+            return false;
+        }
+        // 이름 토큰이 하나는 있어야(양쪽 값 사이 특성명).
+        return f
+            .split(|c: char| c == '<' || c == '>' || c == '=' || c.is_whitespace())
+            .any(|t| !t.is_empty() && t.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false));
+    }
+    if let Some((n, v)) = f.split_once(':') {
+        return !n.trim().is_empty() && !v.trim().is_empty();
+    }
+    // boolean 특성: 식별자.
+    f.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
+        && f.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 // 최상위(괄호 밖) 키워드(" and "/" or ")로 조건을 나눈다. 나눔이 없으면 원본 하나.
 fn split_top_kw(s: &str, kw: &str) -> Vec<String> {
     let bytes = s.as_bytes();
