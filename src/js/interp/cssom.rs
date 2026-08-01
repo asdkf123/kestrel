@@ -5,31 +5,75 @@ use super::*;
 
 // CSS Nesting 중첩 규칙(.nested)을 읽기용 CSSOM 객체로 materialize(재귀). selectorText·
 // cssText·type·cssRules 를 노출한다(라이브 mutation·instanceof 은 별도 addressing 필요).
-fn materialize_rule(rule: &crate::css::Rule) -> Value {
-    let sel = crate::css::serialize_selector(&rule.selector_text);
-    let decls: Vec<String> = rule
-        .declarations
+// 규칙의 선언들을 `name: value;` 한 줄 목록으로.
+fn decls_line(rule: &crate::css::Rule) -> String {
+    rule.declarations
         .iter()
         .map(|d| {
             let imp = if d.important { " !important" } else { "" };
             format!("{}: {}{};", d.name, crate::style::computed_value_string(&d.value), imp)
         })
-        .collect();
-    let inner = decls.join(" ");
-    let css_text = if inner.is_empty() {
-        format!("{} {{ }}", sel)
-    } else {
-        format!("{} {{ {} }}", sel, inner)
-    };
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+// §CSSOM «serialize a CSS rule» + CSS Nesting. 재귀적으로 cssText 를 만든다.
+//  - CSSStyleRule (중첩 없음): `sel { decls }` 한 줄. 비면 `sel { }`.
+//  - CSSStyleRule (중첩 있음): `sel {\n  <자체 선언 한 줄>\n  <중첩 규칙들>\n}` 여러 줄.
+//  - CSSMediaRule: `@media <cond> {\n  <내부 규칙들>\n}`. 내부 없으면 `@media <cond> {\n}`.
+//  - CSSNestedDeclarations (selector_text 가 빈 문자열): 선언만 `decls` (셀렉터·중괄호 없음).
+// 들여쓰기는 자식 cssText 앞에 "  " 를 붙이는 방식(첫 줄만 밀림 = 비누적) — 스펙 출력과 일치.
+fn serialize_rule_full(rule: &crate::css::Rule) -> String {
+    let dl = decls_line(rule);
+    if let Some(cond) = &rule.at_media {
+        let children: Vec<String> = rule.nested.iter().map(serialize_rule_full).collect();
+        if children.is_empty() {
+            return format!("@media {} {{\n}}", cond);
+        }
+        let body = children.iter().map(|c| format!("  {}", c)).collect::<Vec<_>>().join("\n");
+        return format!("@media {} {{\n{}\n}}", cond, body);
+    }
+    if rule.selector_text.is_empty() {
+        // CSSNestedDeclarations: 선언만.
+        return dl;
+    }
+    let sel = crate::css::serialize_selector(&rule.selector_text);
+    if rule.nested.is_empty() {
+        return if dl.is_empty() {
+            format!("{} {{ }}", sel)
+        } else {
+            format!("{} {{ {} }}", sel, dl)
+        };
+    }
+    // 중첩 규칙이 있는 스타일 규칙: 여러 줄. 자체 선언(있으면) 한 줄 + 중첩 규칙들.
+    let mut items: Vec<String> = Vec::new();
+    if !dl.is_empty() {
+        items.push(dl);
+    }
+    items.extend(rule.nested.iter().map(serialize_rule_full));
+    let body = items.iter().map(|c| format!("  {}", c)).collect::<Vec<_>>().join("\n");
+    format!("{} {{\n{}\n}}", sel, body)
+}
+
+fn materialize_rule(rule: &crate::css::Rule) -> Value {
+    let css_text = serialize_rule_full(rule);
     let children: Vec<Value> = rule.nested.iter().map(materialize_rule).collect();
     let child_arr = ArrayObj::new(children);
     child_arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
     let mut m = ObjMap::new();
-    m.insert("selectorText".to_string(), Value::Str(sel));
     m.insert("cssText".to_string(), Value::Str(css_text));
-    m.insert("type".to_string(), Value::Num(1.0));
     m.insert("cssRules".to_string(), Value::Arr(child_arr));
     m.insert("length".to_string(), Value::Num(rule.nested.len() as f64));
+    if let Some(cond) = &rule.at_media {
+        // CSSMediaRule(type 4): conditionText/media 노출, selectorText 없음.
+        m.insert("type".to_string(), Value::Num(4.0));
+        m.insert("conditionText".to_string(), Value::Str(cond.clone()));
+        m.insert("media".to_string(), Value::Str(cond.clone()));
+    } else {
+        let sel = crate::css::serialize_selector(&rule.selector_text);
+        m.insert("selectorText".to_string(), Value::Str(sel));
+        m.insert("type".to_string(), Value::Num(1.0));
+    }
     Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m)))
 }
 
@@ -58,24 +102,7 @@ impl Interp {
         let Some(rule) = sheets.get(si).and_then(|s| s.sheet.rules.get(ri)) else {
             return String::new();
         };
-        let decls: Vec<String> = rule
-            .declarations
-            .iter()
-            .map(|d| {
-                let imp = if d.important { " !important" } else { "" };
-                format!(
-                    "{}: {}{};",
-                    d.name,
-                    crate::style::computed_value_string(&d.value),
-                    imp
-                )
-            })
-            .collect();
-        if decls.is_empty() {
-            format!("{} {{ }}", rule.selector_text)
-        } else {
-            format!("{} {{ {} }}", rule.selector_text, decls.join(" "))
-        }
+        serialize_rule_full(rule)
     }
 
     // 계산 스타일의 열거 가능한 프로퍼티 이름 목록(대시 표기, 정렬).
@@ -201,12 +228,26 @@ impl Interp {
                         }
                         "conditionText" => Ok(Value::Str(cond)),
                         "type" => Ok(Value::Num(4.0)), // MEDIA_RULE
-                        "cssText" => Ok(Value::Str(format!("@media {} {{ }}", cond))),
-                        "cssRules" => {
-                            let arr = ArrayObj::new(Vec::new());
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),
+                        // 내부 규칙(.nested)을 CSSMediaRule.cssRules 로 노출(읽기용 materialize).
+                        "cssRules" | "rules" => {
+                            let children: Vec<Value> = self
+                                .sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| s.sheet.rules.get(ri))
+                                .map(|r| r.nested.iter().map(materialize_rule).collect())
+                                .unwrap_or_default();
+                            let arr = ArrayObj::new(children);
                             arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
                             Ok(Value::Arr(arr))
                         }
+                        "length" => Ok(Value::Num(
+                            self.sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| s.sheet.rules.get(ri))
+                                .map(|r| r.nested.len() as f64)
+                                .unwrap_or(0.0),
+                        )),
                         "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
                         "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
                         "parentStyleSheet" => Ok(Value::Sheet(si)),
@@ -369,8 +410,21 @@ impl Interp {
         // 를 만들어 삽입한다(조건만 보관; 빈 selectors 라 cascade 는 자연히 건너뛴다).
         let trimmed = text.trim_start();
         if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("@media") {
-            let query = trimmed[6..].split('{').next().unwrap_or("").trim().to_string();
+            // `@media <query> { <내부 규칙들> }` → CSSMediaRule 컨테이너. 내부 규칙은
+            // 첫 '{' 와 짝 '}' 사이를 파싱해 .nested 에 계층으로 보관(매칭은 flatten 이
+            // at_media 컨테이너를 건너뛰므로 무영향; CSSOM 직렬화·cssRules 만 노출).
+            let after = &trimmed[6..];
+            let (query, inner_text) = match after.find('{') {
+                Some(b) => {
+                    let q = after[..b].trim().to_string();
+                    let rest = &after[b + 1..];
+                    let inner = rest.rfind('}').map(|e| &rest[..e]).unwrap_or(rest);
+                    (q, inner.to_string())
+                }
+                None => (after.trim().to_string(), String::new()),
+            };
             let media = crate::css::serialize_media_query_list(&query);
+            let nested = crate::css::parse_viewport(inner_text, vw).rules;
             let rule = crate::css::Rule {
                 selectors: Vec::new(),
                 declarations: Vec::new(),
@@ -381,7 +435,7 @@ impl Interp {
                 at_property: None,
                 at_media: Some(media),
                 at_custom_media: None,
-                nested: Vec::new(),
+                nested,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };

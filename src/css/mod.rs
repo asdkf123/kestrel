@@ -2601,10 +2601,13 @@ impl Parser {
         let mut nested: Vec<Rule> = Vec::new();
         let mut pending: Vec<Declaration> = Vec::new(); // 중첩 규칙 뒤에 쌓인 선언
         let mut seen_nested = false;
+        // CSSNestedDeclarations: 중첩 규칙 뒤(또는 @media 안)에 나온 맨선언 묶음.
+        // 매칭은 selectors(부모 셀렉터)로 하되, CSSOM selector_text 는 빈 문자열로 둬서
+        // 직렬화 시 셀렉터·중괄호 없이 선언만 나오게 한다(§CSS Nesting CSSNestedDeclarations).
         let mk_decl_rule = |this: &Self, decls: Vec<Declaration>| Rule {
             selectors: parse_selector_list(parent_sel).unwrap_or_default(),
             declarations: decls,
-            selector_text: parent_sel.to_string(),
+            selector_text: String::new(),
             ua: false,
             layer: this.cur_layer.clone(),
             container: this.cur_container.clone(),
@@ -2621,7 +2624,50 @@ impl Parser {
                     self.consume_char();
                     break;
                 }
-                Some('@') => self.skip_at_rule(),
+                Some('@') => {
+                    // 중첩 @media → 컨테이너 규칙(조건은 at_media, 내부 규칙은 .nested).
+                    // flatten 은 조건부라 매칭 대상에서 제외(현행 드롭과 동일 = 렌더 무변경).
+                    // CSSOM(CSSMediaRule.cssRules)만 노출. @supports 는 전용 필드 필요 → 후속.
+                    if self.input[self.pos..].to_ascii_lowercase().starts_with("@media") {
+                        self.consume_char(); // '@'
+                        for _ in 0..5 {
+                            self.consume_char();
+                        } // 'media'
+                        let cond_raw = self.consume_while(|c| c != '{' && c != '}' && c != ';');
+                        if self.peek() != Some('{') {
+                            if self.peek() == Some(';') {
+                                self.consume_char();
+                            }
+                            continue;
+                        }
+                        self.consume_char(); // '{'
+                        if !pending.is_empty() {
+                            nested.push(mk_decl_rule(self, std::mem::take(&mut pending)));
+                        }
+                        let (idecls, inested) = self.parse_style_body(parent_sel);
+                        let mut cont: Vec<Rule> = Vec::new();
+                        if !idecls.is_empty() {
+                            cont.push(mk_decl_rule(self, idecls));
+                        }
+                        cont.extend(inested);
+                        let cond = crate::css::values::serialize_media_query_list(cond_raw.trim());
+                        nested.push(Rule {
+                            selectors: Vec::new(),
+                            declarations: Vec::new(),
+                            selector_text: format!("@media {}", cond),
+                            ua: false,
+                            layer: self.cur_layer.clone(),
+                            container: self.cur_container.clone(),
+                            at_property: None,
+                            at_media: Some(cond),
+                            at_custom_media: None,
+                            nested: cont,
+                        });
+                        seen_nested = true;
+                    } else {
+                        self.skip_at_rule();
+                    }
+                }
                 _ => {
                     if self.peek_is_nested_rule() {
                         // 쌓인 선언을 이 중첩 규칙 앞의 nested-declarations 규칙으로 flush.
