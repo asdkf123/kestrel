@@ -6412,6 +6412,29 @@ impl Interp {
                         | "parentRule"
                 ) || crate::css::is_known_property(&camel_to_dashed(key))
             }
+            // CSSOM 플랫폼 객체(CSSStyleSheet/CSSRule 계열/CSSStyleDeclaration of a rule):
+            // 인터페이스 속성·메서드·CSSRule 타입 상수 + Object.prototype 상속 메서드가
+            // HasProperty(`in`)다(§WebIDL). 예전엔 arm 이 없어 전부 false → assert_idl_attribute
+            // 의 `"prop" in obj` 가 실패했다. 속성 union 은 관대(특정 규칙 타입에 없는
+            // 속성도 true)하지만 idlharness 는 인터페이스가 가진 속성만 조회한다.
+            Value::Sheet(_) | Value::CssRule(_, _, _) | Value::RuleStyle(_, _, _) => {
+                matches!(
+                    key,
+                    "type" | "cssText" | "parentRule" | "parentStyleSheet" | "selectorText"
+                        | "style" | "cssRules" | "rules" | "conditionText" | "media" | "href"
+                        | "styleSheet" | "layerName" | "supportsText" | "name" | "keyText"
+                        | "start" | "end" | "containerName" | "containerQuery" | "syntax"
+                        | "inherits" | "initialValue" | "length"
+                        | "insertRule" | "deleteRule" | "removeRule" | "addRule" | "item"
+                        | "getPropertyValue" | "setProperty" | "removeProperty"
+                        | "getPropertyPriority" | "replace" | "replaceSync"
+                        | "ownerRule" | "ownerNode" | "title" | "disabled"
+                        | "STYLE_RULE" | "CHARSET_RULE" | "IMPORT_RULE" | "MEDIA_RULE"
+                        | "FONT_FACE_RULE" | "PAGE_RULE" | "KEYFRAMES_RULE" | "KEYFRAME_RULE"
+                        | "MARGIN_RULE" | "NAMESPACE_RULE" | "SUPPORTS_RULE"
+                        | "COUNTER_STYLE_RULE" | "FONT_FEATURE_VALUES_RULE"
+                ) || (!is_internal_key(key) && self.proto_method("Object", key).is_some())
+            }
             _ => false,
         }
     }

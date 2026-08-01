@@ -7,6 +7,26 @@ use super::*;
 // cssText·type·cssRules 를 노출한다(라이브 mutation·instanceof 은 별도 addressing 필요).
 // 규칙의 선언들을 `name: value;` 한 줄 목록으로. CSSOM cssText 는 지정값(specified)이므로
 // raw 가 있으면 그것을(예: `red`), 없으면(단축 확장 등) computed 직렬화로 폴백.
+// CSSRule 인터페이스의 타입 상수(§CSSOM). 모든 CSSRule 계열 인스턴스에서 읽을 수 있다.
+fn css_rule_type_constant(key: &str) -> Option<f64> {
+    Some(match key {
+        "STYLE_RULE" => 1.0,
+        "CHARSET_RULE" => 2.0,
+        "IMPORT_RULE" => 3.0,
+        "MEDIA_RULE" => 4.0,
+        "FONT_FACE_RULE" => 5.0,
+        "PAGE_RULE" => 6.0,
+        "KEYFRAMES_RULE" => 7.0,
+        "KEYFRAME_RULE" => 8.0,
+        "MARGIN_RULE" => 9.0,
+        "NAMESPACE_RULE" => 10.0,
+        "COUNTER_STYLE_RULE" => 11.0,
+        "SUPPORTS_RULE" => 12.0,
+        "FONT_FEATURE_VALUES_RULE" => 14.0,
+        _ => return None,
+    })
+}
+
 fn decls_line(rule: &crate::css::Rule) -> String {
     // §CSSOM «serialize a CSS declaration block»: 마지막-우선 dedup 후, 롱핸드 전체가
     // 같은 importance 로 있으면 무손실 단축으로 재조립(overflow/margin/inset/gap/
@@ -320,6 +340,20 @@ impl Interp {
     }
 
     pub(super) fn cssom_get(&mut self, recv: &Value, key: &str) -> Result<Value, String> {
+        // CSSRule 타입 상수(§CSSOM CSSRule.STYLE_RULE 등)는 모든 CSSRule 계열에서 접근.
+        if matches!(recv, Value::CssRule(..)) {
+            if let Some(n) = css_rule_type_constant(key) {
+                return Ok(Value::Num(n));
+            }
+        }
+        // Object.prototype.hasOwnProperty 는 모든 CSSOM 플랫폼 객체에서 접근 가능
+        // (§WebIDL: [[Prototype]] 체인 끝 = Object.prototype). assert_idl_attribute 가
+        // `"hasOwnProperty" in obj` 와 `obj.hasOwnProperty(p)` 를 쓴다.
+        if key == "hasOwnProperty"
+            && matches!(recv, Value::Sheet(_) | Value::CssRule(..) | Value::RuleStyle(..))
+        {
+            return Ok(Value::Native(Native::HasOwnProperty));
+        }
         match recv {
             // CSSStyleSheet
             Value::Sheet(si) => {
