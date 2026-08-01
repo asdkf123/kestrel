@@ -4273,6 +4273,27 @@ pub fn corner_single_valid(raw: &str) -> bool {
     nshape == 1 && (1..=2).contains(&nradius)
 }
 
+// corner/corner-top 등 단축(§CSS Borders 4): 단일 코너 값을 "/"로 1~max 개 구분(코너별
+// 배정, border-* 처럼). 각 그룹은 [<corner-shape> && <lp>{1,2}] | normal.
+pub fn corner_slash_valid(raw: &str, max: usize) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return true;
+    }
+    // "/" 최상위 분리(각 그룹 안엔 "/" 없음). 각 그룹은 단일 코너 값.
+    let toks = split_top_level(raw.trim());
+    let mut groups: Vec<Vec<String>> = vec![Vec::new()];
+    for t in toks {
+        if t == "/" {
+            groups.push(Vec::new());
+        } else {
+            groups.last_mut().unwrap().push(t);
+        }
+    }
+    groups.len() <= max
+        && groups.iter().all(|grp| !grp.is_empty() && corner_single_valid(&grp.join(" ")))
+}
+
 // corner-shape 계열 유효성(§CSS Borders 4): [<corner-shape-value>]{1,max}.
 pub fn corner_shape_list_valid(raw: &str, max: usize) -> bool {
     let toks = split_top_level(raw);

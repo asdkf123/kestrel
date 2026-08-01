@@ -1384,6 +1384,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             return Vec::new();
         }
+        // corner 단축 계열(§CSS Borders 4): 단일 코너 값을 "/"로 구분. corner/corners=4,
+        // 변(top/bottom/left/right)·축(block/inline)=2.
+        "corner" | "corners"
+        | "corner-top" | "corner-bottom" | "corner-left" | "corner-right"
+        | "corner-block" | "corner-inline" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let max = if matches!(name, "corner" | "corners") { 4 } else { 2 };
+            if crate::css::corner_slash_valid(value_text, max) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // 단일 코너(§CSS Borders 4): normal | [<corner-shape> && <length-percentage>{1,2}].
         "corner-top-left" | "corner-top-right" | "corner-bottom-left" | "corner-bottom-right" => {
             let low = value_text.trim().to_ascii_lowercase();
