@@ -11890,7 +11890,15 @@ pub fn normalize_color_mix(raw: &str) -> Option<String> {
     } else {
         (format!(" {}%", csnum(v1)), format!(" {}%", csnum(v2)))
     };
-    Some(format!("color-mix({}, {}{}, {}{})", space, c1s, pc1, c2s, pc2))
+    // 기본 보간 색공간 oklab 은 직렬화에서 생략한다(§CSS Color 5 — color-mix 의 기본
+    // 색공간). 그 외 공간(srgb/hsl/lch/…)은 유지. 예: color-mix(in oklab, a, b) →
+    // color-mix(a, b).
+    let space_prefix = if space.eq_ignore_ascii_case("in oklab") {
+        String::new()
+    } else {
+        format!("{}, ", space)
+    };
+    Some(format!("color-mix({}{}{}, {}{})", space_prefix, c1s, pc1, c2s, pc2))
 }
 
 // color-mix inner 색을 지정값 형태로. 키워드(식별자)는 그대로, 함수/hex 는 rgb/색공간.
