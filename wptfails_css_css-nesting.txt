@@ -3,73 +3,49 @@ css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules	assert_equ
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 1	assert_throws_dom: function "() => { ss.cssRules[0].insertRule('& .broken {}', 3); }" threw object "TypeError: insertRule(…) — ss.cssRules[..].insertRule 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException IndexSizeError: property "code" is equal to undefined, expected 1
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 2	assert_throws_dom: function "() => { ss.cssRules[0].insertRule('& .broken {}', U+2d1); }" threw object "TypeError: insertRule(…) — ss.cssRules[..].insertRule 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException IndexSizeError: property "code" is equal to undefined, expected 1
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 3	assert_throws_dom: function "() => { ss.cssRules[0].deleteRule(5); }" threw object "TypeError: deleteRule(…) — ss.cssRules[..].deleteRule 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException IndexSizeError: property "code" is equal to undefined, expected 1
-css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 4	ss.cssRules[..].cssRules.2 — ss.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 4	assert_equals: unchanged after noU+2daccess expected ".a {\n  color: red;\n  & .b { color: green; }\n  & .c { color: blue; }\n}" but got ".a { color: rgb(255, 0, 0); }"
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 5	assert_throws_dom: function "() => { ss.cssRules[0].insertRule('% {}'); }" threw object "TypeError: insertRule(…) — ss.cssRules[..].insertRule 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException SyntaxError: property "code" is equal to undefined, expected 12
-css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 6	ss.cssRules[..].cssRules.1 — ss.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 6	assert_equals: expected "& .c { color: blue; }" but got "& .c { color: rgb(0, 0, 255); }"
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 7	insertRule(…) — ss.cssRules[..].insertRule 이(가) undefined (함수 아님, 수신자=object)
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 8	assert_equals: color is changed, new rule is ignored expected ".a {\n  color: olivedrab;\n  & .b { color: green; }\n  & .c { color: blue; }\n}" but got ".a { color: rgb(255, 0, 0); }"
-css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 9	ss.cssRules[..].cssRules.0 — ss.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 9	insertRule(…) — ss.cssRules[..].insertRule 이(가) undefined (함수 아님, 수신자=object)
 css/css-nesting/cssom.html	FAIL	Simple CSSOM manipulation of subrules 10	assert_equals: invalid rule containing ampersand is kept in serialization expected ".a {\n  :is(!& .foo, .b) { color: green; }\n}" but got ".a { }"
 css/css-nesting/cssom.html	FAIL	Mutating the selectorText of outer rule invalidates inner rules	assert_equals: expected "1" but got "auto"
-css/css-nesting/cssom.html	FAIL	Manipulation of nested declarations through CSSOM	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/cssom.html	FAIL	Manipulation of nested declarations through CSSOM	insertRule(…) — rule.insertRule 이(가) undefined (함수 아님, 수신자=object)
 css/css-nesting/invalid-inner-rules.html	FAIL	Simple CSSOM manipulation of subrules	assert_equals: expected "div {\n  @media screen {\n  &.a { color: red; }\n}\n}" but got "div { }"
-css/css-nesting/invalid-inner-rules.html	FAIL	Simple CSSOM manipulation of subrules 1	assert_throws_dom: function "() => { ss.cssRules[0].cssRules[0].insertRule('@fontU+2dface {}', 0); }" threw object "TypeError: ss.cssRules[..].cssRules.0 — ss.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)" that is not a DOMException HierarchyRequestError: property "code" is equal to undefined, expected 3
+css/css-nesting/invalid-inner-rules.html	FAIL	Simple CSSOM manipulation of subrules 1	assert_throws_dom: function "() => { ss.cssRules[0].cssRules[0].insertRule('@fontU+2dface {}', 0); }" threw object "TypeError: ss.cssRules[..].cssRules[..].insertRule(…) — ss.cssRules[..].cssRules[..] 이(가) undefined" that is not a DOMException HierarchyRequestError: property "code" is equal to undefined, expected 3
 css/css-nesting/invalidation-003.html	FAIL	CSS Selectors nested invalidation with :has()	assert_equals: expected "rgb(0, 0, 0)" but got "rgb(0, 128, 0)"
 css/css-nesting/invalidation-004.html	FAIL	CSS Selectors nested invalidation through @media by selectorText	Cannot set properties of undefined (setting 'selectorText')
-css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization (nested grouping rule)	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Trailing declarations	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Mixed declarations	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	CSSNestedDeclarations.style	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Nested group rule	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Nested @scope rule	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Inner rule starting with an ident	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Inserting a CSSNestedDeclaration rule into style rule	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Inserting a CSSNestedDeclaration rule into nested group rule	s.cssRules[..].cssRules.length — s.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization	assert_equals: expected ".a {\n  & { }\n  & { }\n}" but got ".a { }"
+css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization (nested grouping rule)	assert_equals: expected 1 but got 0
+css/css-nesting/nested-declarations-cssom.html	FAIL	Trailing declarations	assert_equals: expected "U+2dU+2dx: 2;" but got ".a { U+2dU+2dx: 2; }"
+css/css-nesting/nested-declarations-cssom.html	FAIL	Mixed declarations	assert_equals: expected "U+2dU+2dd: 1; U+2dU+2de: 1;" but got ".a { U+2dU+2dd: 1; U+2dU+2de: 1; }"
+css/css-nesting/nested-declarations-cssom.html	FAIL	CSSNestedDeclarations.style	CSSNestedDeclarations 은(는) 정의되지 않음
+css/css-nesting/nested-declarations-cssom.html	FAIL	Nested group rule	assert_equals: expected 2 but got 0
+css/css-nesting/nested-declarations-cssom.html	FAIL	Inner rule starting with an ident	assert_equals: expected "width: 100px; height: 200px;" but got "a { width: 100px; height: 200px; }"
+css/css-nesting/nested-declarations-cssom.html	FAIL	Inserting a CSSNestedDeclaration rule into style rule	insertRule(…) — a_rule.insertRule 이(가) undefined (함수 아님, 수신자=object)
+css/css-nesting/nested-declarations-cssom.html	FAIL	Inserting a CSSNestedDeclaration rule into nested group rule	assert_equals: expected 1 but got 0
 css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule into topU+2dlevel @media rule	assert_equals: expected 1 but got 0
-css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule, empty block	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule, all invalid declarations	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule, empty block	assert_throws_dom: function "() => {       a_rule.insertRule('');     }" threw object "TypeError: insertRule(…) — a_rule.insertRule 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException SyntaxError: property "code" is equal to undefined, expected 12
+css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule, all invalid declarations	assert_throws_dom: function "() => {     a_rule.insertRule(`       xwidth: 100px;       xheight: 200px;     `);     }" threw object "TypeError: insertRule(…) — a_rule.insertRule 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException SyntaxError: property "code" is equal to undefined, expected 12
 css/css-nesting/nested-declarations-matching.html	FAIL	Bare declartaion in nested grouping rule can match pseudoU+2delement	assert_equals: expected "PASS" but got ""
-css/css-nesting/nested-declarations-matching.html	FAIL	Nested declarations rule responds to parent selector text change	rules[..].cssRules.length — rules[..].cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/nested-declarations-matching.html	FAIL	Nested declarations rule responds to parent selector text change	assert_equals: expected "& .a1" but got ".a1"
 css/css-nesting/nested-error-recovery.html	FAIL	CSS Nesting: Error recovery 1	assert_equals: expected "1" but got "auto"
-css/css-nesting/nested-rule-cssom-invalidation.html	FAIL	Nested rule responds to parent selector text change	rules[..].cssRules.length — rules[..].cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/nested-rule-cssom-invalidation.html	FAIL	Nested rule responds to parent selector text change	assert_equals: expected "& .a1" but got ".a1"
 css/css-nesting/nesting-layer.html	FAIL	@layer can be nested	assert_equals: expected "1" but got "0"
 css/css-nesting/nesting-revert-rule.html	FAIL	The revertU+2drule keyword can revert to a nested rule	assert_true: expected true got false
 css/css-nesting/nesting-revert-rule.html	FAIL	The revertU+2drule keyword can revert to a CSSNestedDeclarationsRule	assert_true: expected true got false
 css/css-nesting/nesting-revert-rule.html	FAIL	The revertU+2drule keyword can revert from a CSSNestedDeclarationsRule	assert_true: expected true got false
 css/css-nesting/nesting-revert-rule.html	FAIL	The revertU+2drule keyword can revert to scoped declarations	assert_true: expected true got false
-css/css-nesting/parsing.html	FAIL	.foo { & { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &.bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { & .bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { & > .bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { > .bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { > & .bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { + .bar & { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { + .bar, .foo, > .baz { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { .foo { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { .test > & .bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { .foo, .foo & { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { .foo, .bar { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { :is(.bar, .baz) { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &:is(.bar, .baz) { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { :is(.bar, &.baz) { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &:is(.bar, &.baz) { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { div& { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	INVALID: .foo { &div { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { .class& { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &.class { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { [attr]& { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &[attr] { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { #id& { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &#id { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { :hover& { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &:hover { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { :is(div)& { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { &:is(div) { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { & .bar & .baz & .qux { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { && { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo { & > section, & > article { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/parsing.html	FAIL	.foo, .bar { & + .baz, &.qux { color: green; }}	rule.cssRules.length — rule.cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/parsing.html	FAIL	.foo { > .bar { color: green; }}	assert_equals: Inner rule's selector should be "& > .bar". expected "& > .bar" but got "> .bar"
+css/css-nesting/parsing.html	FAIL	.foo { > & .bar { color: green; }}	assert_equals: Inner rule should exist. expected 1 but got 0
+css/css-nesting/parsing.html	FAIL	.foo { + .bar & { color: green; }}	assert_equals: Inner rule should exist. expected 1 but got 0
+css/css-nesting/parsing.html	FAIL	.foo { + .bar, .foo, > .baz { color: green; }}	assert_equals: Inner rule's selector should be "& + .bar, & .foo, & > .baz". expected "& + .bar, & .foo, & > .baz" but got "+ .bar, .foo, > .baz"
+css/css-nesting/parsing.html	FAIL	.foo { .foo { color: green; }}	assert_equals: Inner rule's selector should be "& .foo". expected "& .foo" but got ".foo"
+css/css-nesting/parsing.html	FAIL	.foo { .foo, .foo & { color: green; }}	assert_equals: Inner rule's selector should be "& .foo, .foo &". expected "& .foo, .foo &" but got ".foo, .foo &"
+css/css-nesting/parsing.html	FAIL	.foo { .foo, .bar { color: green; }}	assert_equals: Inner rule's selector should be "& .foo, & .bar". expected "& .foo, & .bar" but got ".foo, .bar"
+css/css-nesting/parsing.html	FAIL	.foo { :is(.bar, .baz) { color: green; }}	assert_equals: Inner rule's selector should be "& :is(.bar, .baz)". expected "& :is(.bar, .baz)" but got ":is(.bar, .baz)"
+css/css-nesting/parsing.html	FAIL	INVALID: .foo { &div { color: green; }}	assert_equals: Inner rule should not exist. expected 0 but got 1
 css/css-nesting/serialize-group-rules-with-decls.html	FAIL	Declarations are serialized on one line, rules on two.	assert_equals: Declarations are serialized on one line, rules on two. expected "@media screen {\n  div { color: red; backgroundU+2dcolor: green; }\n}" but got "@media screen { }"
 css/css-nesting/serialize-group-rules-with-decls.html	FAIL	Mixed declarations/rules are on two lines.	assert_equals: Mixed declarations/rules are on two lines. expected "div {\n  @media screen {\n  color: red; backgroundU+2dcolor: green;\n}\n}" but got "div { }"
 css/css-nesting/serialize-group-rules-with-decls.html	FAIL	Implicit rule is serialized	assert_equals: Implicit rule is serialized expected "div {\n  @supports selector(&) {\n  color: red; backgroundU+2dcolor: green;\n}\n  &:hover { color: navy; }\n}" but got "div { }"

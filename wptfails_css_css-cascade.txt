@@ -15,9 +15,9 @@ css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (> .b) is valid	assert
 css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (+ .b) is valid	assert_equals: expected 1 but got 0
 css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (~ .b) is valid	assert_equals: expected 1 but got 0
 css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest created by string valid	assert_equals: expected 1 but got 0
-css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope created by string valid	r.cssRules.length — r.cssRules 이(가) undefined (읽을 수 없음)
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope created by string valid	assert_equals: expected 1 but got 0
 css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest,@media screen created by string valid	assert_equals: expected 1 but got 0
-css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope,@media screen created by string valid	r.cssRules.length — r.cssRules 이(가) undefined (읽을 수 없음)
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope,@media screen created by string valid	assert_equals: expected 1 but got 0
 css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest created by insertRule valid	규칙을 파싱할 수 없다
 css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope created by insertRule valid	insertRule(…) — current.insertRule 이(가) undefined (함수 아님, 수신자=object)
 css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest,@media screen created by insertRule valid	규칙을 파싱할 수 없다

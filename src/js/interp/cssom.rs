@@ -3,6 +3,36 @@
 // 스냅샷을 복사하면 insertRule 이 화면에 반영되지 않는다.
 use super::*;
 
+// CSS Nesting 중첩 규칙(.nested)을 읽기용 CSSOM 객체로 materialize(재귀). selectorText·
+// cssText·type·cssRules 를 노출한다(라이브 mutation·instanceof 은 별도 addressing 필요).
+fn materialize_rule(rule: &crate::css::Rule) -> Value {
+    let sel = crate::css::serialize_selector(&rule.selector_text);
+    let decls: Vec<String> = rule
+        .declarations
+        .iter()
+        .map(|d| {
+            let imp = if d.important { " !important" } else { "" };
+            format!("{}: {}{};", d.name, crate::style::computed_value_string(&d.value), imp)
+        })
+        .collect();
+    let inner = decls.join(" ");
+    let css_text = if inner.is_empty() {
+        format!("{} {{ }}", sel)
+    } else {
+        format!("{} {{ {} }}", sel, inner)
+    };
+    let children: Vec<Value> = rule.nested.iter().map(materialize_rule).collect();
+    let child_arr = ArrayObj::new(children);
+    child_arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+    let mut m = ObjMap::new();
+    m.insert("selectorText".to_string(), Value::Str(sel));
+    m.insert("cssText".to_string(), Value::Str(css_text));
+    m.insert("type".to_string(), Value::Num(1.0));
+    m.insert("cssRules".to_string(), Value::Arr(child_arr));
+    m.insert("length".to_string(), Value::Num(rule.nested.len() as f64));
+    Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m)))
+}
+
 impl Interp {
     // 시트 목록 (렌더 파이프라인이 소유). 스크립트 실행 동안에만 유효한 포인터다.
     pub(super) fn sheets(&mut self) -> Option<&mut Vec<crate::css::SheetEntry>> {
@@ -237,6 +267,25 @@ impl Interp {
                     "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),
                     "style" => Ok(Value::RuleStyle(si, ri)),
                     "type" => Ok(Value::Num(1.0)), // STYLE_RULE
+                    // CSS Nesting: 중첩 규칙(.nested)을 cssRules 로 노출(읽기용 materialize).
+                    "cssRules" | "rules" => {
+                        let children: Vec<Value> = self
+                            .sheets()
+                            .and_then(|s| s.get(si))
+                            .and_then(|s| s.sheet.rules.get(ri))
+                            .map(|r| r.nested.iter().map(materialize_rule).collect())
+                            .unwrap_or_default();
+                        let arr = ArrayObj::new(children);
+                        arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+                        Ok(Value::Arr(arr))
+                    }
+                    "length" => Ok(Value::Num(
+                        self.sheets()
+                            .and_then(|s| s.get(si))
+                            .and_then(|s| s.sheet.rules.get(ri))
+                            .map(|r| r.nested.len() as f64)
+                            .unwrap_or(0.0),
+                    )),
                     "parentStyleSheet" => Ok(Value::Sheet(si)),
                     "parentRule" => Ok(Value::Null),
                     _ => Ok(Value::Undefined),

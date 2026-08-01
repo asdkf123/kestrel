@@ -2642,7 +2642,9 @@ impl Parser {
                             nested.push(Rule {
                                 selectors: sels,
                                 declarations: cdecls,
-                                selector_text: desugared,
+                                // CSSOM selectorText 는 원본 상대 선택자(& .b). 매칭은 위
+                                // selectors(desugared)로 하므로 무영향.
+                                selector_text: nsel.trim().to_string(),
                                 ua: false,
                                 layer: self.cur_layer.clone(),
                                 container: self.cur_container.clone(),
