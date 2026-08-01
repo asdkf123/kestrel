@@ -69,6 +69,7 @@ pub(crate) use values::{animation_range_valid, animation_range_longhand_valid, a
 pub(crate) use values::normalize_image_set;
 pub(crate) use values::normalize_color_mix;
 pub(crate) use values::normalize_color_function;
+pub(crate) use values::normalize_color_layers;
 pub(crate) use values::normalize_lab_like;
 pub(crate) use values::normalize_hsl_hwb;
 pub(crate) use values::normalize_relative_color;

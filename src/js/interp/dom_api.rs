@@ -608,6 +608,12 @@ impl Interp {
                 return s;
             }
         }
+        // color-layers(): 블렌드 모드 normal 생략 + 각 색 계산색 직렬화(§CSS Color 6).
+        if rl.starts_with("color-layers(") {
+            if let Some(s) = crate::css::normalize_color_layers(raw) {
+                return s;
+            }
+        }
         // lab/lch/oklab/oklch 지정값 캐논(§CSS Color 4).
         if rl.starts_with("lab(") || rl.starts_with("lch(") || rl.starts_with("oklab(")
             || rl.starts_with("oklch(")

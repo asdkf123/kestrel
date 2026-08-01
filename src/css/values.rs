@@ -69,6 +69,13 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         }
         return parse_color_mix(&lower).map(|(c, s)| Value::ColorFn(c, s));
     }
+    // color-layers(): 파싱 유효성은 normalize 성공으로 판정(§CSS Color 6). 렌더 색은
+    // 레이어 합성이라 여기선 캐논 직렬화만 확정하고 Color 근사는 자리표시(파싱 테스트는
+    // 지정값 직렬화만 검사).
+    if lower.starts_with("color-layers(") {
+        return normalize_color_layers(text)
+            .map(|s| Value::ColorFn(crate::css::Color { r: 0, g: 0, b: 0, a: 255 }, s.into_boxed_str()));
+    }
     if lower.starts_with("color(") {
         if !color_func_valid(&lower) {
             return None;
@@ -11436,6 +11443,56 @@ pub fn normalize_relative_color(raw: &str) -> Option<String> {
 // (키워드 유지, 함수→rgb), 기본 50%(한쪽만) 생략. 파싱 불가는 None.
 // color(<space> c1 c2 c3 [/ a]) 지정값 캐논 직렬화(§CSS Color 4). 채널 %→0-1 수,
 // none 유지, alpha==1 생략, "/" 공백 정규화. 알려진 색공간만.
+// color-layers([<blend-mode>,]? <color>#) — CSS Color 6. 선택 블렌드 모드(기본 normal
+// 은 직렬화에서 생략) + 콤마 구분 색 목록(1개 이상). 각 색은 계산색으로 직렬화한다.
+pub fn normalize_color_layers(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if !t.to_ascii_lowercase().starts_with("color-layers(") || !t.ends_with(')') {
+        return None;
+    }
+    let inner = t["color-layers(".len()..t.len() - 1].trim();
+    // 선행/후행/빈 콤마는 무효(color-layers(red, blue, ) 등).
+    if inner.is_empty() || inner.starts_with(',') || inner.ends_with(',') {
+        return None;
+    }
+    let parts = split_top_commas(inner);
+    if parts.is_empty() || parts.iter().any(|p| p.trim().is_empty()) {
+        return None;
+    }
+    const BLEND: [&str; 16] = [
+        "normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge",
+        "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue",
+        "saturation", "color", "luminosity",
+    ];
+    let first = parts[0].trim().to_ascii_lowercase();
+    // 첫 성분이 블렌드 모드 키워드면 모드(뒤에 색이 하나 이상 있어야 함). 아니면 전부 색.
+    let (mode, colors_in): (Option<String>, &[String]) =
+        if BLEND.contains(&first.as_str()) && parts.len() >= 2 {
+            (Some(first), &parts[1..])
+        } else {
+            (None, &parts[..])
+        };
+    if colors_in.is_empty() {
+        return None;
+    }
+    // 각 레이어는 유효한 <color> 여야 한다(임의 ident 거부 — color-layers(custom-ident,…)
+    // 는 무효). currentcolor/transparent/명명색/시스템색/색함수만 허용.
+    let mut colors: Vec<String> = Vec::with_capacity(colors_in.len());
+    for c in colors_in {
+        let ct = c.trim();
+        if !single_color_valid(ct) {
+            return None;
+        }
+        colors.push(serialize_mix_input_color(ct)?);
+    }
+    // 기본 normal 은 생략(§CSS Color 6 serialize), 그 외 모드는 유지.
+    let prefix = match mode.as_deref() {
+        None | Some("normal") => String::new(),
+        Some(m) => format!("{}, ", m),
+    };
+    Some(format!("color-layers({}{})", prefix, colors.join(", ")))
+}
+
 pub fn normalize_color_function(raw: &str) -> Option<String> {
     let t = raw.trim();
     if !t.to_ascii_lowercase().starts_with("color(") || !t.ends_with(')') {

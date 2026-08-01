@@ -71,6 +71,10 @@
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
 > - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **css-color +136 (color-layers)**: `color-layers([<blend-mode>,]? <color>#)`(§CSS Color 6)
+>   파싱·직렬화 신규 구현. 기본 블렌드 `normal` 생략, 각 레이어 색 검증(임의 ident·후행 콤마
+>   거부)+직렬화. interpret_value/serialize_decl 배선. 남은 실패는 중첩 relative-color/color-mix
+>   를 지정값 형태로 보존(현재 계산색으로 과다 해석).
 > - **css-color +25 (color-mix)**: `color-mix()` 직렬화가 기본 hue 보간법 `shorter hue` 를 생략
 >   (§CSS Color 5 — `in hsl shorter hue` → `in hsl`). longer/increasing/decreasing 은 유지.
 > - **css-color +139 (relative-color)**: `rgb(from <origin> …)` 등 상대색의 origin 을 계산색으로
@@ -147,7 +151,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 8,167 / 9,399 | 86.9% |
+| css-color | 8,303 / 9,399 | 88.3% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
