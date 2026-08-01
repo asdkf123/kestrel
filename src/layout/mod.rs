@@ -1071,14 +1071,24 @@ impl<'a> LayoutBox<'a> {
                 // 기하에서 유도한다 — 컨테이닝 블록 가장자리부터 마진 박스 가장자리까지.
                 // auto 여도 실제 쓰인 거리가 나온다 (표준이 그렇게 정의한다).
                 let mb = child.dimensions.margin_box();
-                // over-constrained 축(양쪽 inset + 크기가 모두 지정)은 계산값을 쓴다 (CSSOM).
-                let h_over = has_left && has_right && !width_auto;
-                let v_over = has_top && has_bottom && !height_auto;
-                if !h_over {
+                // 한 축의 양쪽 inset 이 모두 non-auto 면 resolved value 는 각 면을 컨테이닝
+                // 블록 기준으로 절대화한 **계산값**이다(§CSSOM resolved-value). 크기가 auto 라
+                // 박스가 정확히 늘어나면 used == 계산값이라 결과가 같고, over-constrained(크기
+                // 지정) 나 음수 크기 clamp 시엔 계산값이 정답이라 이 분기가 필요하다. 한쪽이
+                // auto 면 그 축은 기하 used value (컨테이닝 블록 가장자리→마진 박스 가장자리).
+                let h_over = has_left && has_right;
+                let v_over = has_top && has_bottom;
+                if h_over {
+                    child.used_insets[3] = child.offset_len("left", cbw);
+                    child.used_insets[1] = child.offset_len("right", cbw);
+                } else {
                     child.used_insets[3] = Some(mb.x - cb.x);
                     child.used_insets[1] = Some((cb.x + cb.width) - (mb.x + mb.width));
                 }
-                if !v_over {
+                if v_over {
+                    child.used_insets[0] = child.offset_len("top", cbh);
+                    child.used_insets[2] = child.offset_len("bottom", cbh);
+                } else {
                     child.used_insets[0] = Some(mb.y - cb.y);
                     child.used_insets[2] = Some((cb.y + cb.height) - (mb.y + mb.height));
                 }
