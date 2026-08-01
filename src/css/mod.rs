@@ -1152,6 +1152,15 @@ pub(crate) fn registered_computed_value(
     {
         return None;
     }
+    // 키워드 대안(tomato | plum | <color>)이 값과 정확히 일치하면 키워드 그대로 유지
+    // (계산값 = 키워드, <color>로 rgb 변환하지 않음). 대안 우선순위.
+    let vtrim = value.trim();
+    for alt in syntax.split('|') {
+        let a = alt.trim().trim_end_matches(['+', '#']).trim();
+        if !a.starts_with('<') && a != "*" && a == vtrim {
+            return Some(Value::Keyword(vtrim.to_string()));
+        }
+    }
     // 리스트(+ 공백 / # 콤마)면 항목별 계산 후 문자열로 재조합(getComputedStyle 직렬화).
     let is_list_plus = low.contains(">+");
     let is_list_hash = low.contains(">#");

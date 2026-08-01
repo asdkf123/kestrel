@@ -379,7 +379,6 @@ css/css-properties-values-api/registered-property-computation.html	FAIL	<color> 
 css/css-properties-values-api/registered-property-computation.html	FAIL	<color> values are computed correctly [lightU+2ddark(currentcolor, red)]	assert_equals: expected "rgb(0, 0, 255)" but got "lightU+2ddark(currentcolor, red)"
 css/css-properties-values-api/registered-property-computation.html	FAIL	<color> values are computed correctly [lightU+2ddark(lime, red)]	assert_equals: expected "rgb(0, 255, 0)" but got "lightU+2ddark(lime, red)"
 css/css-properties-values-api/registered-property-computation.html	FAIL	<color> values are computed correctly [color(from currentcolor srgb b g r)]	assert_equals: expected "color(srgb 1 0 0)" but got "color(from currentcolor srgb b g r)"
-css/css-properties-values-api/registered-property-computation.html	FAIL	tomato | plum | <color> values are computed correctly [plum]	assert_equals: expected "plum" but got "rgb(221, 160, 221)"
 css/css-properties-values-api/registered-property-cssom.html	FAIL	Formerly valid values are still readable from inline styles but are computed as the unset value	assert_equals: expected "0px" but got "5"
 css/css-properties-values-api/registered-property-cssom.html	FAIL	Stylesheets can be modified by CSSOM	assert_equals: expected "0px" but got "banana"
 css/css-properties-values-api/registered-property-dependency-through-fallback.html	FAIL	registered color resolves through a var() fallback	assert_equals: expected "linearU+2dgradient(rgb(0, 0, 255))" but got "none"
