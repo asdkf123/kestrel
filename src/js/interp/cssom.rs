@@ -67,6 +67,27 @@ fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     format!("{} {{\n{}\n}}", sel, body)
 }
 
+// 중첩경로(np)를 따라 최상위 규칙에서 실제 규칙으로 내려간다. np 가 비면 top 자신 →
+// 기존 최상위 주소지정과 동일(안전 가법). 각 인덱스는 .nested 의 위치.
+pub(super) fn resolve_nested<'a>(top: Option<&'a crate::css::Rule>, np: &[usize]) -> Option<&'a crate::css::Rule> {
+    let mut cur = top?;
+    for &i in np {
+        cur = cur.nested.get(i)?;
+    }
+    Some(cur)
+}
+
+pub(super) fn resolve_nested_mut<'a>(
+    top: Option<&'a mut crate::css::Rule>,
+    np: &[usize],
+) -> Option<&'a mut crate::css::Rule> {
+    let mut cur = top?;
+    for &i in np {
+        cur = cur.nested.get_mut(i)?;
+    }
+    Some(cur)
+}
+
 fn materialize_rule(rule: &crate::css::Rule) -> Value {
     let css_text = serialize_rule_full(rule);
     let children: Vec<Value> = rule.nested.iter().map(materialize_rule).collect();
@@ -112,10 +133,11 @@ impl Interp {
         }
     }
 
-    // 규칙 하나를 CSS 문법으로 직렬화 (cssText)
-    fn rule_css_text(&mut self, si: usize, ri: usize) -> String {
+    // 규칙 하나를 CSS 문법으로 직렬화 (cssText). np 로 중첩 규칙 주소지정(비면 최상위).
+    fn rule_css_text(&mut self, si: usize, ri: usize, np: &[usize]) -> String {
         let Some(sheets) = self.sheets() else { return String::new() };
-        let Some(rule) = sheets.get(si).and_then(|s| s.sheet.rules.get(ri)) else {
+        let Some(rule) = resolve_nested(sheets.get(si).and_then(|s| s.sheet.rules.get(ri)), np)
+        else {
             return String::new();
         };
         serialize_rule_full(rule)
@@ -156,8 +178,9 @@ impl Interp {
                             .and_then(|s| s.get(si))
                             .map(|s| s.sheet.rules.len())
                             .unwrap_or(0);
-                        let list: Vec<Value> =
-                            (0..n).map(|ri| Value::CssRule(si, ri)).collect();
+                        let list: Vec<Value> = (0..n)
+                            .map(|ri| Value::CssRule(si, ri, std::rc::Rc::new(Vec::new())))
+                            .collect();
                         let arr = ArrayObj::new(list);
                         arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
                         Ok(Value::Arr(arr))
@@ -190,14 +213,15 @@ impl Interp {
                     _ => Ok(Value::Undefined),
                 }
             }
-            // CSSStyleRule / CSSPropertyRule
-            Value::CssRule(si, ri) => {
-                let (si, ri) = (*si, *ri);
+            // CSSStyleRule / CSSPropertyRule (np 비면 최상위, 아니면 중첩 규칙 주소지정)
+            Value::CssRule(si, ri, np) => {
+                // Rc 내부 Vec 를 로컬로 한 번 복제 → 이하 코드는 &[usize] 로 다룬다.
+                let (si, ri, np) = (*si, *ri, (**np).clone());
                 // @property 규칙(CSSPropertyRule §Properties & Values API) 전용 속성.
                 let atp = self
                     .sheets()
                     .and_then(|s| s.get(si))
-                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                     .and_then(|r| r.at_property.clone());
                 if let Some((name, reg)) = atp {
                     return match key {
@@ -229,7 +253,7 @@ impl Interp {
                 let atm = self
                     .sheets()
                     .and_then(|s| s.get(si))
-                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                     .and_then(|r| r.at_media.clone());
                 if let Some(cond) = atm {
                     return match key {
@@ -244,13 +268,13 @@ impl Interp {
                         }
                         "conditionText" => Ok(Value::Str(cond)),
                         "type" => Ok(Value::Num(4.0)), // MEDIA_RULE
-                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
                         // 내부 규칙(.nested)을 CSSMediaRule.cssRules 로 노출(읽기용 materialize).
                         "cssRules" | "rules" => {
                             let children: Vec<Value> = self
                                 .sheets()
                                 .and_then(|s| s.get(si))
-                                .and_then(|s| s.sheet.rules.get(ri))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                                 .map(|r| r.nested.iter().map(materialize_rule).collect())
                                 .unwrap_or_default();
                             let arr = ArrayObj::new(children);
@@ -260,7 +284,7 @@ impl Interp {
                         "length" => Ok(Value::Num(
                             self.sheets()
                                 .and_then(|s| s.get(si))
-                                .and_then(|s| s.sheet.rules.get(ri))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                                 .map(|r| r.nested.len() as f64)
                                 .unwrap_or(0.0),
                         )),
@@ -276,18 +300,18 @@ impl Interp {
                 let ats = self
                     .sheets()
                     .and_then(|s| s.get(si))
-                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                     .and_then(|r| r.at_supports.clone());
                 if let Some(cond) = ats {
                     return match key {
                         "conditionText" => Ok(Value::Str(cond)),
                         "type" => Ok(Value::Num(12.0)), // SUPPORTS_RULE
-                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
                         "cssRules" | "rules" => {
                             let children: Vec<Value> = self
                                 .sheets()
                                 .and_then(|s| s.get(si))
-                                .and_then(|s| s.sheet.rules.get(ri))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                                 .map(|r| r.nested.iter().map(materialize_rule).collect())
                                 .unwrap_or_default();
                             let arr = ArrayObj::new(children);
@@ -297,7 +321,7 @@ impl Interp {
                         "length" => Ok(Value::Num(
                             self.sheets()
                                 .and_then(|s| s.get(si))
-                                .and_then(|s| s.sheet.rules.get(ri))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                                 .map(|r| r.nested.len() as f64)
                                 .unwrap_or(0.0),
                         )),
@@ -312,7 +336,7 @@ impl Interp {
                 let atc = self
                     .sheets()
                     .and_then(|s| s.get(si))
-                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                     .and_then(|r| r.at_custom_media.clone());
                 if let Some((name, cond)) = atc {
                     return match key {
@@ -348,7 +372,7 @@ impl Interp {
                             .and_then(|s| s.get(si))
                             .and_then(|s| {
                                 let sh = &s.sheet;
-                                sh.rules.get(ri).map(|r| {
+                                resolve_nested(sh.rules.get(ri), &np).map(|r| {
                                     crate::css::serialize_selector_ns(
                                         &r.selector_text,
                                         sh.default_namespace.as_deref(),
@@ -358,30 +382,44 @@ impl Interp {
                             })
                             .unwrap_or_default(),
                     )),
-                    "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),
-                    "style" => Ok(Value::RuleStyle(si, ri)),
+                    "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
+                    // 중첩 규칙의 .style 은 아직 라이브 주소지정 안 함(RuleStyle 은 최상위 전용) →
+                    // 최상위(np 빈)일 때만 RuleStyle, 중첩은 Phase 2(RuleStyle 에 np 필요).
+                    "style" if np.is_empty() => Ok(Value::RuleStyle(si, ri)),
                     "type" => Ok(Value::Num(1.0)), // STYLE_RULE
-                    // CSS Nesting: 중첩 규칙(.nested)을 cssRules 로 노출(읽기용 materialize).
+                    // CSS Nesting: 중첩 규칙(.nested)을 cssRules 로 라이브 노출(np+[i] 주소).
                     "cssRules" | "rules" => {
-                        let children: Vec<Value> = self
+                        let cnt = self
                             .sheets()
                             .and_then(|s| s.get(si))
-                            .and_then(|s| s.sheet.rules.get(ri))
-                            .map(|r| r.nested.iter().map(materialize_rule).collect())
-                            .unwrap_or_default();
-                        let arr = ArrayObj::new(children);
+                            .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                            .map(|r| r.nested.len())
+                            .unwrap_or(0);
+                        let list: Vec<Value> = (0..cnt)
+                            .map(|i| {
+                                let mut p = np.clone();
+                                p.push(i);
+                                Value::CssRule(si, ri, std::rc::Rc::new(p))
+                            })
+                            .collect();
+                        let arr = ArrayObj::new(list);
                         arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
                         Ok(Value::Arr(arr))
                     }
                     "length" => Ok(Value::Num(
                         self.sheets()
                             .and_then(|s| s.get(si))
-                            .and_then(|s| s.sheet.rules.get(ri))
+                            .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
                             .map(|r| r.nested.len() as f64)
                             .unwrap_or(0.0),
                     )),
                     "parentStyleSheet" => Ok(Value::Sheet(si)),
-                    "parentRule" => Ok(Value::Null),
+                    // 중첩 규칙의 parentRule 은 상위 규칙(np 마지막 인덱스 제거). 최상위는 null.
+                    "parentRule" => Ok(if np.is_empty() {
+                        Value::Null
+                    } else {
+                        Value::CssRule(si, ri, std::rc::Rc::new(np[..np.len() - 1].to_vec()))
+                    }),
                     _ => Ok(Value::Undefined),
                 }
             }
@@ -390,7 +428,7 @@ impl Interp {
                 let (si, ri) = (*si, *ri);
                 match key {
                     "cssText" => {
-                        let t = self.rule_css_text(si, ri);
+                        let t = self.rule_css_text(si, ri, &[]);
                         // "sel { decls }" 에서 선언부만
                         let inner = t
                             .split_once('{')
@@ -409,7 +447,7 @@ impl Interp {
                     "setProperty" => Ok(Value::Native(Native::RuleStyleSet)),
                     "removeProperty" => Ok(Value::Native(Native::RuleStyleRemove)),
                     "item" => Ok(Value::Native(Native::RuleStyleItem)),
-                    "parentRule" => Ok(Value::CssRule(si, ri)),
+                    "parentRule" => Ok(Value::CssRule(si, ri, std::rc::Rc::new(Vec::new()))),
                     _ => {
                         // 인덱스 접근: style[0] → 프로퍼티 이름 (표준)
                         if let Ok(i) = key.parse::<usize>() {

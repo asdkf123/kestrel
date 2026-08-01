@@ -116,9 +116,14 @@ pub enum Value {
     // 요소에 반영되지 않았고 ownerElement 도 없었다 (조용히 아무 일도 안 함).
     Attr(crate::dom::NodeId, String),
     // CSSOM (§CSSOM 6): 스타일시트와 규칙에 대한 살아 있는 뷰.
-    // Sheet(시트 인덱스) / CssRule(시트, 규칙) / RuleStyle(시트, 규칙)
+    // Sheet(시트 인덱스) / CssRule(시트, 최상위규칙, 중첩경로) / RuleStyle(시트, 규칙)
+    // 중첩경로(np)는 최상위 규칙 아래 .nested 인덱스 열. 비면 최상위 규칙 자신 →
+    // 기존 동작과 증명적으로 동일(안전 가법). 비지 않으면 CSS Nesting 중첩 규칙을 라이브 주소지정.
     Sheet(usize),
-    CssRule(usize, usize),
+    // np(중첩경로)는 Rc 로 감싼다 — Value enum 크기를 안 키우려고(Vec 직접 넣으면
+    // enum 이 커져 JS 프레임당 네이티브 스택이 깊어지고, 깊은 재귀가 JS RangeError 가드
+    // 전에 네이티브 오버플로를 낸다). Rc<Vec> 는 8바이트 포인터 하나.
+    CssRule(usize, usize, std::rc::Rc<Vec<usize>>),
     RuleStyle(usize, usize),
     // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
     Proxy(Rc<(Value, Value)>),
@@ -480,7 +485,7 @@ impl std::fmt::Debug for Value {
             Value::Style(id) => write!(f, "[style {:?}]", id),
             Value::Attr(id, n) => write!(f, "[attr {} of {:?}]", n, id),
             Value::Sheet(i) => write!(f, "[object CSSStyleSheet #{}]", i),
-            Value::CssRule(s, r) => write!(f, "[object CSSStyleRule {}:{}]", s, r),
+            Value::CssRule(s, r, np) => write!(f, "[object CSSStyleRule {}:{}:{:?}]", s, r, np),
             Value::RuleStyle(s, r) => write!(f, "[object CSSStyleDeclaration {}:{}]", s, r),
             Value::Dataset(id) => write!(f, "[dataset {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),

@@ -848,7 +848,7 @@ impl Interp {
             | Value::Dom(_)
             | Value::Attr(_, _)
             | Value::Sheet(_)
-            | Value::CssRule(_, _)
+            | Value::CssRule(_, _, _)
             | Value::RuleStyle(_, _)
             | Value::Class(_)
             | Value::Bound(_)
@@ -6131,12 +6131,12 @@ impl Interp {
                         vec!["Attr", "Node", "EventTarget"]
                     }
                     Some(Value::Sheet(_)) => vec!["CSSStyleSheet", "StyleSheet"],
-                    Some(Value::CssRule(si, ri)) => {
-                        // @property 규칙은 CSSPropertyRule, 그 외는 CSSStyleRule.
+                    Some(Value::CssRule(si, ri, np)) => {
+                        // @property 규칙은 CSSPropertyRule, 그 외는 CSSStyleRule. np 로 중첩 해석.
                         let kind = self
                             .sheets()
                             .and_then(|s| s.get(*si))
-                            .and_then(|s| s.sheet.rules.get(*ri))
+                            .and_then(|s| super::cssom::resolve_nested(s.sheet.rules.get(*ri), &np[..]))
                             .map(|r| {
                                 if r.at_property.is_some() {
                                     "CSSPropertyRule"
@@ -6144,6 +6144,8 @@ impl Interp {
                                     "CSSCustomMediaRule"
                                 } else if r.at_media.is_some() {
                                     "CSSMediaRule"
+                                } else if r.at_supports.is_some() {
+                                    "CSSSupportsRule"
                                 } else {
                                     "CSSStyleRule"
                                 }

@@ -6579,7 +6579,7 @@ impl Interp {
                 Value::Dom(_)
                     | Value::Attr(_, _)
                     | Value::Sheet(_)
-                    | Value::CssRule(_, _)
+                    | Value::CssRule(_, _, _)
                     | Value::RuleStyle(_, _)
                     | Value::Style(_)
                     | Value::ComputedStyle(_)
@@ -7116,7 +7116,7 @@ impl Interp {
                 self.exotic_proto_get(proto, key, recv)
             }
             // CSSOM: 시트/규칙/규칙스타일
-            Value::Sheet(_) | Value::CssRule(_, _) | Value::RuleStyle(_, _) => {
+            Value::Sheet(_) | Value::CssRule(_, _, _) | Value::RuleStyle(_, _) => {
                 self.cssom_get(recv, key)
             }
             // Attr 노드 읽기 (§4.9.2). 소유 요소의 속성을 실시간으로 본다.
@@ -12380,17 +12380,18 @@ impl Interp {
                     // rule.selectorText = '.foo' → 선택자를 실제로 바꾼다(§CSSOM
                     // CSSStyleRule). 새 값이 유효한 선택자 리스트면 파싱해 교체하고 리스타일,
                     // 무효면 아무것도 안 한다(no-op — 규격상 조용히 무시).
-                    Value::CssRule(si, ri) => {
+                    Value::CssRule(si, ri, np) => {
                         if key == "selectorText" {
                             // §CSS Syntax 입력 전처리(NULL→U+FFFD·개행 정규화)를 저장
                             // 원문에도 적용 — selectorText 게터가 전처리된 값을 직렬화한다.
+                            // np 로 중첩 규칙까지 주소지정(중첩 규칙의 selectorText 변경 지원).
                             let text = crate::css::preprocess_input(&to_display(&value));
                             if let Some(sels) = crate::css::parse_selector_list(&text) {
                                 if let Some(sheets) = self.sheets() {
-                                    if let Some(r) = sheets
-                                        .get_mut(si)
-                                        .and_then(|e| e.sheet.rules.get_mut(ri))
-                                    {
+                                    if let Some(r) = cssom::resolve_nested_mut(
+                                        sheets.get_mut(si).and_then(|e| e.sheet.rules.get_mut(ri)),
+                                        &np[..],
+                                    ) {
                                         r.selectors = sels;
                                         r.selector_text = text;
                                     }
