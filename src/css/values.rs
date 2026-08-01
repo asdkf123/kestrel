@@ -11417,6 +11417,9 @@ pub fn normalize_relative_color(raw: &str) -> Option<String> {
             .or_else(|| normalize_color_function(origin))
             .or_else(|| normalize_lab_like(origin))
             .or_else(|| normalize_color_mix(origin))
+            // 레거시 rgb()/hsl()/hwb() origin 은 위 정규화기가 못 다룬다 — 색으로 파싱해
+            // 계산값(rgb()/rgba() 등)으로 직렬화한다(§CSS Color 5: origin 은 계산색).
+            .or_else(|| serialize_mix_input_color(origin))
             .unwrap_or_else(|| origin.to_string())
     } else {
         origin.to_ascii_lowercase()

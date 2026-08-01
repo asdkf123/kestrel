@@ -71,6 +71,11 @@
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
 > - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **css-color +139 (relative-color)**: `rgb(from <origin> …)` 등 상대색의 origin 을 계산색으로
+>   직렬화. 예전엔 origin 정규화 체인이 normalize_relative_color/color_function/lab_like/color_mix
+>   만 시도해 레거시 `rgb(20%,40%,60%,80%)`/`hsl(120deg …)` origin 을 못 다뤄 원문을 냈다. 이제
+>   `serialize_mix_input_color` 폴백으로 색 파싱→계산색(`rgba(51, 102, 153, 0.8)` 등)으로 직렬화.
+>   남은 실패는 채널 calc 재정렬(`calc(g*2)`→`calc(2*g)`)·none-origin 엣지.
 > - **css-color +32 (color-function)**: `color(<space> …)` 지정값 직렬화가 성분 안 calc 를
 >   캐논화. 예전엔 `split_whitespace` 로 나눠 `calc(0.5 + 1)` 의 내부 공백에서 깨지고 `/`
 >   치환이 calc 내부 `/` 를 망가뜨려 통째로 bail(원문 반환)했다. 이제 괄호 균형 `color_parts`
@@ -140,7 +145,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 7,962 / 9,399 | 84.7% |
+| css-color | 8,101 / 9,399 | 86.2% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
