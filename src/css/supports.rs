@@ -26,8 +26,15 @@ pub(crate) fn supports_condition(cond: &str) -> bool {
             || strip_not(inner).is_some()
             || split_on_kw(inner, "and").is_some()
             || split_on_kw(inner, "or").is_some();
-        if !nested && inner.contains(':') {
-            return declaration_supported(inner);
+        if !nested {
+            // 함수형 조건(selector()/font-tech()/font-format())을 선언 판정보다 먼저 본다.
+            // selector(a::before) 처럼 내부에 ':' 가 있어도 선언으로 오인하면 안 된다.
+            if let Some(r) = functional_supports(inner) {
+                return r;
+            }
+            if inner.contains(':') {
+                return declaration_supported(inner);
+            }
         }
         return supports_condition(inner);
     }
@@ -41,17 +48,16 @@ pub(crate) fn supports_condition(cond: &str) -> bool {
 // @supports 의 함수형 조건. 처리 대상이면 Some(결과), 아니면 None(비함수형).
 fn functional_supports(c: &str) -> Option<bool> {
     let lower = c.to_ascii_lowercase();
-    // selector(<complex-selector>): 셀렉터가 파싱되면(엔진이 매칭하는 표준 문법) 지원.
+    // selector(<complex-selector>): §CSS Conditional 4. 지원 판정은 **엄격** 파싱이다 —
+    // 구조가 유효하고(단일 복합 선택자) 모든 pseudo-class/element 가 알려진 것이어야
+    // 한다. :is/:where/:has 가 매칭 시엔 forgiving 이지만 supports 에선 인자 안의 미지
+    // pseudo(:foo)도 무효로 본다(CSS-supports-L4).
     if let Some(rest) = lower.strip_prefix("selector(") {
         if !rest.ends_with(')') {
             return Some(false);
         }
         let inner = c["selector(".len()..c.len() - 1].trim();
-        return Some(
-            crate::css::parse_selector_list(inner)
-                .map(|l| !l.is_empty())
-                .unwrap_or(false),
-        );
+        return Some(strict_selector_supported(inner));
     }
     // font-tech(<font-tech>): 알려진 폰트 기술 식별자만 참.
     if let Some(rest) = lower.strip_prefix("font-tech(") {
@@ -68,6 +74,141 @@ fn functional_supports(c: &str) -> Option<bool> {
         return Some(FONT_FORMATS.contains(&rest[..rest.len() - 1].trim()));
     }
     None
+}
+
+// selector() 지원 판정(엄격): 구조가 유효하고 모든 pseudo-class/element 가 알려진
+// 것이어야 한다(§CSS Conditional 4). 단일 복합 선택자만(top-level 콤마 무효).
+fn strict_selector_supported(sel: &str) -> bool {
+    let sel = sel.trim();
+    if sel.is_empty() {
+        return false;
+    }
+    // 구조 유효성(결합자·괄호·An+B 등)은 파서로. 파싱 실패면 미지원.
+    // selector() 는 단일 <complex-selector> — top-level 콤마(리스트)는 무효.
+    match crate::css::parse_selector_list(sel) {
+        Some(l) if l.len() == 1 => {}
+        _ => return false,
+    }
+    // 모든 pseudo(:name / ::name)를 스캔해 알려진 것인지 검사(중첩 :is/:has 안까지).
+    all_pseudos_known(sel)
+}
+
+// 문자열의 모든 pseudo-class/element 이름을 훑어 알려진 것인지 검사한다. [attr]·문자열
+// 안의 ':' 는 건너뛴다. 미지 pseudo 하나라도 있으면 false.
+fn all_pseudos_known(sel: &str) -> bool {
+    let b: Vec<char> = sel.chars().collect();
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            '[' => {
+                // 속성 선택자 — ']' 까지 건너뜀(문자열 내부 포함).
+                i += 1;
+                while i < b.len() && b[i] != ']' {
+                    if b[i] == '"' || b[i] == '\'' {
+                        let q = b[i];
+                        i += 1;
+                        while i < b.len() && b[i] != q {
+                            if b[i] == '\\' { i += 1; }
+                            i += 1;
+                        }
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            '"' | '\'' => {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    if b[i] == '\\' { i += 1; }
+                    i += 1;
+                }
+                i += 1;
+            }
+            ':' => {
+                i += 1;
+                let double = i < b.len() && b[i] == ':';
+                if double {
+                    i += 1;
+                }
+                // 이름 수집(ident: -,_,알파넘,비ASCII).
+                let start = i;
+                while i < b.len()
+                    && (b[i].is_ascii_alphanumeric() || b[i] == '-' || b[i] == '_' || (b[i] as u32) >= 0x80)
+                {
+                    i += 1;
+                }
+                let name: String = b[start..i].iter().collect::<String>().to_ascii_lowercase();
+                if name.is_empty() {
+                    return false;
+                }
+                if double {
+                    if !pseudo_element_known(&name) {
+                        return false;
+                    }
+                } else if !pseudo_class_known(&name) {
+                    return false;
+                }
+                // 인자를 요구하는 함수형 pseudo 가 빈 괄호면 무효(§Selectors:
+                // :has()/:is()/:where()/:not()/::picker() 등 인자 필수). 다음 문자가
+                // '(' 이고 공백을 건너뛴 뒤 바로 ')' 면 빈 인자.
+                let requires_arg = matches!(
+                    name.as_str(),
+                    "has" | "is" | "where" | "not" | "nth-child" | "nth-last-child"
+                        | "nth-of-type" | "nth-last-of-type" | "lang" | "dir" | "host-context"
+                        | "state" | "nth-col" | "nth-last-col" | "picker" | "part" | "slotted"
+                        | "highlight" | "view-transition-group" | "view-transition-image-pair"
+                        | "view-transition-old" | "view-transition-new"
+                );
+                if requires_arg && i < b.len() && b[i] == '(' {
+                    let mut j = i + 1;
+                    while j < b.len() && b[j].is_whitespace() {
+                        j += 1;
+                    }
+                    if j < b.len() && b[j] == ')' {
+                        return false; // 빈 인자
+                    }
+                }
+                // 함수형 인자 안의 pseudo 도 같은 스캔으로 검사된다(중첩 :is(:foo) 포함).
+            }
+            _ => i += 1,
+        }
+    }
+    true
+}
+
+fn pseudo_class_known(name: &str) -> bool {
+    matches!(
+        name,
+        "hover" | "focus" | "focus-within" | "focus-visible" | "active" | "visited"
+            | "link" | "any-link" | "target" | "target-within" | "root" | "empty"
+            | "first-child" | "last-child" | "only-child" | "first-of-type"
+            | "last-of-type" | "only-of-type" | "nth-child" | "nth-last-child"
+            | "nth-of-type" | "nth-last-of-type" | "not" | "is" | "matches" | "where"
+            | "has" | "checked" | "disabled" | "enabled" | "required" | "optional"
+            | "read-only" | "read-write" | "placeholder-shown" | "default" | "valid"
+            | "invalid" | "in-range" | "out-of-range" | "indeterminate" | "lang" | "dir"
+            | "scope" | "host" | "host-context" | "defined" | "fullscreen" | "modal"
+            | "popover-open" | "autofill" | "user-valid" | "user-invalid" | "playing"
+            | "paused" | "muted" | "seeking" | "buffering" | "stalled" | "current"
+            | "past" | "future" | "first" | "left" | "right" | "blank" | "open"
+            | "closed" | "picture-in-picture" | "state" | "nth-col" | "nth-last-col"
+            | "local-link" | "read-only-input"
+    )
+}
+
+fn pseudo_element_known(name: &str) -> bool {
+    matches!(
+        name,
+        "before" | "after" | "first-line" | "first-letter" | "selection" | "backdrop"
+            | "marker" | "placeholder" | "file-selector-button" | "grammar-error"
+            | "spelling-error" | "target-text" | "cue" | "cue-region" | "details-content"
+            | "search-text" | "checkmark" | "picker-icon" | "scroll-marker"
+            | "scroll-marker-group" | "scroll-button" | "column" | "view-transition"
+            | "view-transition-group" | "view-transition-image-pair" | "view-transition-old"
+            | "view-transition-new" | "highlight" | "part" | "slotted" | "picker"
+            | "first-line-inline"
+    )
 }
 
 // CSS Fonts §11.1 <font-tech> 값. 대소문자 무시(호출측이 소문자로 넘긴다).
