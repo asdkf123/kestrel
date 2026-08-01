@@ -939,6 +939,60 @@ fn split_top_kw<'a>(s: &'a str, kw: &str) -> Vec<&'a str> {
     out
 }
 
+// style() 쿼리 평가: 불리언(and/or/not/괄호) + style-feature 리프. 리프는
+// --name(존재) 또는 --name: value(값 일치, initial=미설정/빈값, 미해석 var=불일치).
+fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>) -> Option<bool> {
+    let q = q.trim();
+    let ors = split_top_kw(q, " or ");
+    if ors.len() > 1 {
+        let mut any = false;
+        for o in ors {
+            match eval_style_query(o, custom)? {
+                true => any = true,
+                false => {}
+            }
+        }
+        return Some(any);
+    }
+    let ands = split_top_kw(q, " and ");
+    if ands.len() > 1 {
+        let mut all = true;
+        for a in ands {
+            if !eval_style_query(a, custom)? {
+                all = false;
+            }
+        }
+        return Some(all);
+    }
+    let low = q.to_ascii_lowercase();
+    if low.starts_with("not ") {
+        return eval_style_query(q[4..].trim(), custom).map(|b| !b);
+    }
+    if q.starts_with('(') && q.ends_with(')') {
+        return eval_style_query(&q[1..q.len() - 1], custom);
+    }
+    // 리프: --name 또는 --name: value.
+    let (name, expected) = match split_top_by(q, ':').as_slice() {
+        [n] => (n.trim().to_string(), None),
+        [n, v] => (n.trim().to_string(), Some(v.trim().to_string())),
+        _ => return None,
+    };
+    Some(match expected {
+        None => custom.contains_key(&name),
+        Some(exp) => {
+            let exp = exp.trim();
+            let cur = custom.get(&name).map(|s| s.trim());
+            if exp.eq_ignore_ascii_case("initial") {
+                matches!(cur, None | Some("")) || cur == Some("initial")
+            } else if exp.contains("var(") {
+                false
+            } else {
+                cur.map(|v| v.eq_ignore_ascii_case(exp)).unwrap_or(false)
+            }
+        }
+    })
+}
+
 // if() 조건 평가(§CSS Values 5). 불리언(and/or/not/괄호) + 리프(style/supports).
 // media() 는 viewport 필요 → None(호출부가 원문 유지). custom: 계산된 커스텀 프로퍼티.
 fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<bool> {
@@ -1001,33 +1055,27 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
             return eval_if_condition(inner, custom, vw, vh);
         }
     }
-    // style(<query>).
+    // style(<query>) — 내부 불리언(and/or/not/괄호) + style-feature 리프.
     if low.starts_with("style(") {
         let inner = c.get(6..c.len().checked_sub(1)?)?;
-        let (name, expected) = match split_top_by(inner, ':').as_slice() {
-            [n] => (n.trim().to_string(), None),
-            [n, v] => (n.trim().to_string(), Some(v.trim().to_string())),
-            _ => return None,
-        };
-        return Some(match expected {
-            None => custom.contains_key(&name),
-            Some(exp) => {
-                let exp = exp.trim();
-                let cur = custom.get(&name).map(|s| s.trim());
-                if exp.eq_ignore_ascii_case("initial") {
-                    matches!(cur, None | Some("")) || cur == Some("initial")
-                } else if exp.contains("var(") {
-                    false
-                } else {
-                    cur.map(|v| v.eq_ignore_ascii_case(exp)).unwrap_or(false)
-                }
-            }
-        });
+        return eval_style_query(inner.trim(), custom);
     }
     // supports(<condition>): 기존 @supports 평가기 재사용(and/or/not·선언·선택자).
+    // bare 선언(display: table-cell)은 괄호로 감싼다(평가기는 (decl) 형태 기대).
     if low.starts_with("supports(") {
         let inner = c.get(9..c.len().checked_sub(1)?)?.trim();
-        return Some(supports::supports_condition(inner));
+        let il = inner.to_ascii_lowercase();
+        let wrapped = if inner.starts_with('(')
+            || il.starts_with("not ")
+            || il.starts_with("selector(")
+        {
+            inner.to_string()
+        } else if inner.contains(':') {
+            format!("({})", inner) // bare 선언
+        } else {
+            inner.to_string() // 값 없는 프로퍼티 등 → 평가기가 false
+        };
+        return Some(supports::supports_condition(&wrapped));
     }
     // media(<query>): 기존 미디어 평가기 재사용. bare feature(min-width: 1px)는
     // 괄호로 감싼다(media_matches 는 (feature: value) 형태를 기대).
