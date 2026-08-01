@@ -6190,6 +6190,13 @@ impl Interp {
             // CSSOM 메서드. 수신자가 시트면 최상위, CSSStyleRule/그룹규칙이면 그 규칙의
             // .nested 에 대해 삽입/삭제(§CSSOM CSSGroupingRule, CSS Nesting).
             Native::SheetInsertRule => {
+                // rule 인자 필수(WebIDL) — 없으면 TypeError(SyntaxError 아님).
+                if args.is_empty() {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Failed to execute 'insertRule': 1 argument required, but only 0 present.".to_string(),
+                    ));
+                }
                 let text = args.first().map(to_display).unwrap_or_default();
                 // index 는 WebIDL unsigned long(ToUint32): -1 → 4294967295 → 범위 밖.
                 let idx = args.get(1).map(to_num).unwrap_or(0.0) as i64 as u32 as usize;
@@ -6202,6 +6209,14 @@ impl Interp {
                 }
             }
             Native::SheetDeleteRule => {
+                // index 인자 필수(WebIDL) — 없으면 TypeError. 단 레거시 removeRule 은
+                // 인자 없으면 0 을 쓴다(§CSSOM legacy) → RemoveRule 로 별도 처리.
+                if args.is_empty() && matches!(n, Native::SheetDeleteRule) {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Failed to execute 'deleteRule': 1 argument required, but only 0 present.".to_string(),
+                    ));
+                }
                 let idx = args.first().map(to_num).unwrap_or(0.0) as i64 as u32 as usize;
                 match recv {
                     Some(Value::Sheet(si)) => self.sheet_delete_rule(si, idx),
@@ -6210,6 +6225,34 @@ impl Interp {
                     }
                     _ => Ok(Value::Undefined),
                 }
+            }
+            // 레거시 removeRule(index=0): deleteRule 과 같되 인자 없으면 0(throw 안 함).
+            Native::SheetRemoveRule => {
+                let idx = args.first().map(to_num).unwrap_or(0.0) as i64 as u32 as usize;
+                if let Some(Value::Sheet(si)) = recv {
+                    return self.sheet_delete_rule(si, idx).map(|_| Value::Undefined);
+                }
+                Ok(Value::Undefined)
+            }
+            // 레거시 addRule(selector="undefined", style="undefined", index=length):
+            // `selector { style }` 를 삽입하고 -1 을 돌려준다(§CSSOM). 빈 style 은 규칙만.
+            Native::SheetAddRule => {
+                let Some(Value::Sheet(si)) = recv else { return Ok(Value::Num(-1.0)) };
+                let selector = args.first().map(to_display).unwrap_or_else(|| "undefined".to_string());
+                let style = args.get(1).map(to_display).unwrap_or_else(|| "undefined".to_string());
+                let len = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .map(|s| s.sheet.rules.len())
+                    .unwrap_or(0);
+                // index 생략 시 끝에 추가(§CSSOM addRule). 범위 밖은 IndexSizeError.
+                let idx = match args.get(2) {
+                    Some(v) => to_num(v) as i64 as u32 as usize,
+                    None => len,
+                };
+                let text = format!("{} {{ {} }}", selector, style);
+                self.sheet_insert_rule(si, &text, idx)?;
+                Ok(Value::Num(-1.0))
             }
             Native::RuleStyleGet => {
                 let Some(Value::RuleStyle(si, ri, np)) = recv else { return Ok(Value::Str(String::new())) };

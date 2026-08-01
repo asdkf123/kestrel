@@ -268,6 +268,8 @@ pub enum Native {
     AttachShadow,
     InsertAdjacentHTML,
     SetHtmlUnsafe,
+    SheetRemoveRule,
+    SheetAddRule,
     InsertAdjacentElement,
     ScrollTo,
     ScrollBy,

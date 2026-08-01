@@ -348,7 +348,10 @@ impl Interp {
                     "title" | "parentStyleSheet" | "ownerRule" => Ok(Value::Null),
                     "media" => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
                     "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
-                    "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                    "deleteRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                    // 레거시(§CSSOM): removeRule(index=0), addRule(sel, style, index=length).
+                    "removeRule" => Ok(Value::Native(Native::SheetRemoveRule)),
+                    "addRule" => Ok(Value::Native(Native::SheetAddRule)),
                     "replaceSync" => Ok(Value::Native(Native::SheetReplaceSync)),
                     "replace" => Ok(Value::Native(Native::SheetReplace)),
                     _ => Ok(Value::Undefined),
@@ -811,6 +814,15 @@ impl Interp {
     }
 
     pub(super) fn sheet_insert_rule(&mut self, si: usize, text: &str, index: usize) -> Result<Value, String> {
+        // index 가 규칙 수보다 크면 IndexSizeError(§CSSOM insertRule step 3).
+        let cur_len = self
+            .sheets()
+            .and_then(|s| s.get(si))
+            .map(|s| s.sheet.rules.len())
+            .unwrap_or(0);
+        if index > cur_len {
+            return Err(self.throw_dom("IndexSizeError", "규칙 인덱스가 범위를 벗어남"));
+        }
         let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
         // @media/@supports 는 파스시점 flatten 되어 규칙이 안 남는다 → CSSOM CSSMediaRule/
         // CSSSupportsRule 컨테이너를 만들어 삽입한다(조건만 보관; 빈 selectors 라 cascade 는
