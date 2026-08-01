@@ -396,6 +396,9 @@ pub struct Rule {
     // ContainerMap 으로 평가)이라, build_with flatten 은 이 컨테이너의 .nested 를 항상
     // 펼친다(조건 게이팅은 태그가 담당).
     pub at_container: Option<String>,
+    // @scope 규칙이면 (root 선택자, limit 선택자). CSSOM CSSScopeRule 노출용. 스코프 제한
+    // 매칭은 미구현이라 flatten 이 .nested 를 매칭에서 제외(현행 드롭과 동일 = 렌더 무변경).
+    pub at_scope: Option<(Option<String>, Option<String>)>,
     // CSS Nesting 중첩 규칙(desugar 후). CSSOM CSSStyleRule.cssRules 노출용이자, 캐스케이드
     // 인덱스가 flatten 해 매칭에 쓴다. 선택자는 이미 부모 기준으로 desugar 되어 있다.
     pub nested: Vec<Rule>,
@@ -953,7 +956,7 @@ pub fn parse_one_nested_rule(text: &str, parent_sel: &str, viewport_width: f32) 
             at_media: None,
             at_custom_media: None,
             at_supports: None,
-            at_container: None,            nested: Vec::new(),
+            at_container: None, at_scope: None,            nested: Vec::new(),
         });
     }
     // 규칙 하나만 유효할 때. (여러 개거나 0개면 insertRule 규격상 하나가 아님 → None.)
@@ -2010,6 +2013,96 @@ pub fn nest_canonical_selector(nsel: &str) -> String {
         .join(", ")
 }
 
+// @scope 프렐류드 검증+파싱(§CSS Cascade 6): "", "(root)", "(root) to (limit)",
+// "to (limit)". 최상위 (...) 그룹을 추출하고 그 사이/앞의 텍스트가 (공백+선택적 "to")
+// 뿐인지 확인. root/limit 선택자는 비지 않고 유효(pseudo-element ::·<> 무효)해야.
+// 무효면 None(호출부가 규칙 드롭). "" → Some((None,None)).
+pub fn parse_scope_prelude(head: &str) -> Option<(Option<String>, Option<String>)> {
+    let h = head.trim();
+    if h.is_empty() {
+        return Some((None, None));
+    }
+    // 최상위 (...) 그룹 추출 (start, inner).
+    let bytes = h.as_bytes();
+    let mut groups: Vec<(usize, usize)> = Vec::new(); // (open idx, close idx)
+    let mut depth = 0i32;
+    let mut open = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => {
+                if depth == 0 {
+                    open = i;
+                }
+                depth += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    groups.push((open, i));
+                } else if depth < 0 {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 || groups.is_empty() || groups.len() > 2 {
+        return None;
+    }
+    // 그룹 사이/앞뒤 비그룹 텍스트는 공백 또는 "to" 만 허용.
+    let mut prev_end = 0usize;
+    let mut gap_tokens: Vec<String> = Vec::new();
+    for &(o, c) in &groups {
+        gap_tokens.push(h[prev_end..o].trim().to_string());
+        prev_end = c + 1;
+    }
+    gap_tokens.push(h[prev_end..].trim().to_string());
+    // 각 갭은 "" 또는 "to".
+    if gap_tokens.iter().any(|g| !g.is_empty() && g != "to") {
+        return None;
+    }
+    let sel_ok = |inner: &str| -> bool {
+        let s = inner.trim();
+        !s.is_empty() && !s.contains("::") && parse_selector_list(s).is_some()
+    };
+    let inner_of = |idx: usize| h[groups[idx].0 + 1..groups[idx].1].trim().to_string();
+    match groups.len() {
+        1 => {
+            let inner = inner_of(0);
+            if !sel_ok(&inner) {
+                return None;
+            }
+            // 그룹 앞에 "to" 면 limit, 아니면 root.
+            if gap_tokens[0] == "to" {
+                // "to (limit)" — 뒤 갭은 비어야.
+                if gap_tokens[1].is_empty() {
+                    Some((None, Some(inner)))
+                } else {
+                    None
+                }
+            } else if gap_tokens[1].is_empty() {
+                Some((Some(inner), None))
+            } else {
+                None // "(root) to" 처럼 limit 그룹 없음 → 무효
+            }
+        }
+        _ => {
+            // 2그룹: 사이 갭이 "to" 여야, 앞뒤 갭 비어야.
+            if gap_tokens[0].is_empty() && gap_tokens[1] == "to" && gap_tokens[2].is_empty() {
+                let r = inner_of(0);
+                let l = inner_of(1);
+                if sel_ok(&r) && sel_ok(&l) {
+                    Some((Some(r), Some(l)))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    }
+}
+
 pub fn desugar_nested(nested: &str, parent: &str) -> String {
     // 부모 선택자가 없으면(최상위 @media/@supports 안의 규칙) 상대화하지 않는다 —
     // 그 안의 스타일 규칙은 절대 선택자다(@media 는 중첩상 투명). 원문 그대로.
@@ -2146,6 +2239,8 @@ impl Parser {
                     rules.extend(self.parse_layer());
                 } else if ident == "container" {
                     rules.extend(self.parse_container());
+                } else if ident == "scope" {
+                    rules.extend(self.parse_scope());
                 } else if ident == "property" {
                     if let Some(r) = self.parse_property_rule() {
                         rules.push(r);
@@ -2211,7 +2306,7 @@ impl Parser {
             at_media: Some(cond),
             at_custom_media: None,
             at_supports: None,
-            at_container: None,            nested: inner,
+            at_container: None, at_scope: None,            nested: inner,
         }]
     }
 
@@ -2350,6 +2445,68 @@ impl Parser {
             at_custom_media: None,
             at_supports: None,
             at_container: Some(head.trim().to_string()),
+            at_scope: None,
+            nested: inner,
+        }]
+    }
+
+    // '@scope [(<root>)]? [to (<limit>)]? { rules }' → CSSScopeRule 컨테이너(§CSS Cascade 6).
+    // root/limit 선택자를 보관. 스코프 제한 매칭은 미구현 → 내부 규칙은 .nested 에 담되
+    // flatten 이 매칭 제외(CSSOM 노출만; 현행 드롭과 동일 = 렌더 무변경).
+    fn parse_scope(&mut self) -> Vec<Rule> {
+        let head = self.consume_while(|c| c != '{' && c != ';' && c != '}').trim().to_string();
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return Vec::new();
+        }
+        self.consume_char(); // '{'
+        let mut inner = Vec::new();
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                Some('@') => {
+                    self.consume_char();
+                    let id = self.parse_identifier().to_ascii_lowercase();
+                    match id.as_str() {
+                        "media" => inner.extend(self.parse_media_block()),
+                        "supports" => inner.extend(self.parse_supports_block()),
+                        "container" => inner.extend(self.parse_container()),
+                        "layer" => inner.extend(self.parse_layer()),
+                        "scope" => inner.extend(self.parse_scope()),
+                        _ => self.skip_at_rule(),
+                    }
+                }
+                _ => {
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
+                }
+            }
+        }
+        // 프렐류드 검증. 무효면 규칙 통째로 드롭(§CSS Cascade 6).
+        let Some((root, limit)) = parse_scope_prelude(&head) else {
+            return Vec::new();
+        };
+        vec![Rule {
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            selector_text: String::new(),
+            ua: false,
+            layer: self.cur_layer.clone(),
+            container: self.cur_container.clone(),
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+            at_supports: None,
+            at_container: None,
+            at_scope: Some((root, limit)),
             nested: inner,
         }]
     }
@@ -2401,7 +2558,7 @@ impl Parser {
             at_media: None,
             at_custom_media: None,
             at_supports: Some(cond.trim().to_string()),
-            at_container: None,            nested: inner,
+            at_container: None, at_scope: None,            nested: inner,
         }]
     }
 
@@ -2599,7 +2756,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: Some((name.to_string(), serialized)),
-            at_supports: None, at_container: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None,            nested: Vec::new(),
         })
     }
 
@@ -2701,7 +2858,7 @@ impl Parser {
             at_property: Some((name, reg)),
             at_media: None,
             at_custom_media: None,
-            at_supports: None, at_container: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None,            nested: Vec::new(),
         })
     }
 
@@ -2795,7 +2952,7 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                    at_supports: None, at_container: None,                    nested,
+                    at_supports: None, at_container: None, at_scope: None,                    nested,
                 })
             }
             None => {
@@ -2826,7 +2983,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: None,
-            at_supports: None, at_container: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None,            nested: Vec::new(),
         };
         loop {
             self.consume_whitespace();
@@ -2892,7 +3049,7 @@ impl Parser {
                             at_custom_media: None,
                             at_supports,
                             at_container: None,
-                            nested: cont,
+                            at_scope: None,                            nested: cont,
                         });
                         seen_nested = true;
                     } else {
@@ -2928,7 +3085,7 @@ impl Parser {
                                 at_property: None,
                                 at_media: None,
                                 at_custom_media: None,
-                                at_supports: None, at_container: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
+                                at_supports: None, at_container: None, at_scope: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
                             });
                         }
                         seen_nested = true;

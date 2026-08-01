@@ -42,6 +42,27 @@ fn is_empty_nested_decls(r: &crate::css::Rule) -> bool {
 
 fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     let dl = decls_line(rule);
+    // @scope 규칙: `@scope (root) to (limit) {\n  <내부>\n}`(root/limit 없으면 생략).
+    if let Some((root, limit)) = &rule.at_scope {
+        let mut prelude = String::from("@scope");
+        if let Some(r) = root {
+            prelude.push_str(&format!(" ({})", r));
+        }
+        if let Some(l) = limit {
+            prelude.push_str(&format!(" to ({})", l));
+        }
+        let children: Vec<String> = rule
+            .nested
+            .iter()
+            .filter(|r| !is_empty_nested_decls(r))
+            .map(serialize_rule_full)
+            .collect();
+        if children.is_empty() {
+            return format!("{} {{\n}}", prelude);
+        }
+        let body = children.iter().map(|c| format!("  {}", c)).collect::<Vec<_>>().join("\n");
+        return format!("{} {{\n{}\n}}", prelude, body);
+    }
     // @media / @supports / @container 그룹 규칙: `@<kw> <cond> {\n  <내부>\n}`.
     if let Some((kw, cond_raw)) = rule
         .at_media
@@ -441,6 +462,50 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @scope 규칙(CSSScopeRule §CSS Cascade 6). start=root, end=limit.
+                let ats = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                    .and_then(|r| r.at_scope.clone());
+                if let Some((root, limit)) = ats {
+                    return match key {
+                        "start" => Ok(root.map(Value::Str).unwrap_or(Value::Null)),
+                        "end" => Ok(limit.map(Value::Str).unwrap_or(Value::Null)),
+                        "type" => Ok(Value::Num(0.0)), // 신규 규칙은 0
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
+                        "cssRules" | "rules" => {
+                            let cnt = self
+                                .sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                                .map(|r| r.nested.len())
+                                .unwrap_or(0);
+                            let children: Vec<Value> = (0..cnt)
+                                .map(|i| {
+                                    let mut p = np.clone();
+                                    p.push(i);
+                                    Value::CssRule(si, ri, std::rc::Rc::new(p))
+                                })
+                                .collect();
+                            let arr = ArrayObj::new(children);
+                            arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+                            Ok(Value::Arr(arr))
+                        }
+                        "length" => Ok(Value::Num(
+                            self.sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                                .map(|r| r.nested.len() as f64)
+                                .unwrap_or(0.0),
+                        )),
+                        "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
+                        "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 // @custom-media 규칙(CSSCustomMediaRule §Media Queries 5) 전용 속성.
                 let atc = self
                     .sheets()
@@ -660,7 +725,7 @@ impl Interp {
                 at_custom_media: None,
                 at_supports,
                 at_container: None,
-                nested,
+                at_scope: None,                nested,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };

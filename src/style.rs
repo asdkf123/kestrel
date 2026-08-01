@@ -665,10 +665,15 @@ impl<'a> RuleIndex<'a> {
                 // 중첩 @media/@supports 컨테이너: 조건이 맞을 때만 내부 규칙을 매칭에 펼친다
                 // (§CSS Nesting — 조건부 그룹 규칙도 중첩 규칙처럼 적용된다). 일반 중첩 규칙은
                 // 항상 펼친다(조건 없음). CSSOM 은 별도로 .nested 계층을 그대로 노출한다.
-                let include = match (&r.at_media, &r.at_supports) {
-                    (Some(q), _) => crate::css::media_matches_vp(q, vw, vh),
-                    (_, Some(c)) => crate::css::supports_condition(c),
-                    _ => true,
+                let include = if r.at_scope.is_some() {
+                    // @scope 스코프 제한 매칭 미구현 → 내부 규칙 미적용(CSSOM 보존만).
+                    false
+                } else {
+                    match (&r.at_media, &r.at_supports) {
+                        (Some(q), _) => crate::css::media_matches_vp(q, vw, vh),
+                        (_, Some(c)) => crate::css::supports_condition(c),
+                        _ => true,
+                    }
                 };
                 if include {
                     flatten(&r.nested, out, vw, vh);
