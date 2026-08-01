@@ -1523,6 +1523,22 @@ fn norm_transform_arg(func: &str, a: &str) -> String {
         if let Some(d) = angle_token_deg(a) {
             return format!("{}deg", num_css(d));
         }
+        // 각도 수학 함수 → calc(Ndeg)(지정값). rotate3d 축 성분(맨수)은 위에서 처리.
+        if func != "rotate3d" && a.contains('(') {
+            if let Some(d) = crate::css::eval_math_angle_deg(a) {
+                if !d.is_finite() {
+                    let nn = if d.is_nan() {
+                        "NaN"
+                    } else if d > 0.0 {
+                        "infinity"
+                    } else {
+                        "-infinity"
+                    };
+                    return format!("calc({} * 1deg)", nn);
+                }
+                return format!("calc({}deg)", num_css(d as f32));
+            }
+        }
     }
     a.to_string()
 }
