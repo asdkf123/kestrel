@@ -897,6 +897,29 @@ fn num_factor(t: &[char], p: &mut usize) -> Option<f64> {
 
 // 각도식 → 라디안(f64). 삼각함수 인자 전용. deg/grad/turn/rad 리터럴 또는 순수 수
 // (라디안). 산술(계산식)도 허용하되 단위 혼합은 num_* 가 걸러 단순 리터럴만 정확.
+// 단일 차원 리터럴(1s, -1ms, 1deg, 10px, 50% …)의 부호붙은 계수. 단위·퍼센트가
+// 붙어 있어야 한다(순수 수는 호출부가 eval_math_number 로 먼저 처리). sign() 전용.
+fn dim_literal_value(s: &str) -> Option<f64> {
+    let s = s.trim();
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
+    let ds = i;
+    while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+        i += 1;
+    }
+    if i == ds {
+        return None;
+    }
+    let unit = &s[i..];
+    if unit.is_empty() || !(unit.chars().all(|c| c.is_ascii_alphabetic()) || unit == "%") {
+        return None;
+    }
+    s[..i].parse::<f64>().ok()
+}
+
 fn num_angle_rad(s: &str) -> Option<f64> {
     if let Some(r) = parse_angle_rad(s.trim()) {
         return Some(r);
@@ -993,7 +1016,11 @@ fn num_func_eval(name: &str, inner: &str) -> Option<f64> {
             if raw_args.len() != 1 {
                 return None;
             }
-            let x = eval_math_number(&raw_args[0])?;
+            // sign 은 인자 차원과 무관하게 <number>(부호)다. 순수 수·각도식·단일 차원
+            // 리터럴(1s/1deg/10px …)의 부호를 낸다.
+            let x = eval_math_number(&raw_args[0])
+                .or_else(|| eval_math_angle_deg(&raw_args[0]))
+                .or_else(|| dim_literal_value(&raw_args[0]))?;
             Some(if x.is_nan() {
                 f64::NAN
             } else if x > 0.0 {
