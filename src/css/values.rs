@@ -5973,7 +5973,11 @@ pub fn corner_shape_canonical(raw: &str) -> String {
             let low = t.to_ascii_lowercase();
             if let Some(inner) = low.strip_prefix("superellipse(").and_then(|x| x.strip_suffix(')'))
             {
-                format!("superellipse({})", inner.trim())
+                let arg = inner.trim();
+                // calc/math 인자는 캐논 단순화(§CSS Values): superellipse(calc(0.5 * 4))→
+                // superellipse(calc(2)). 순수 수는 그대로.
+                let canon = canon_calc_serialize(arg).unwrap_or_else(|| arg.to_string());
+                format!("superellipse({})", canon)
             } else {
                 low
             }
