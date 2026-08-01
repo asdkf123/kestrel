@@ -130,13 +130,17 @@ impl Interp {
                         "syntax" => Ok(Value::Str(reg.syntax)), // 따옴표 없는 문자열
                         "inherits" => Ok(Value::Bool(reg.inherits)),
                         "initialValue" => Ok(Value::Str(reg.initial.clone().unwrap_or_default())),
-                        "cssText" => Ok(Value::Str(format!(
-                            "@property {} {{ syntax: \"{}\"; inherits: {}; initial-value: {}; }}",
-                            name,
-                            reg.syntax,
-                            reg.inherits,
-                            reg.initial.clone().unwrap_or_default()
-                        ))),
+                        "cssText" => {
+                            // initial-value 는 없으면 생략(§CSSOM serialize).
+                            let init = match &reg.initial {
+                                Some(v) => format!(" initial-value: {};", v),
+                                None => String::new(),
+                            };
+                            Ok(Value::Str(format!(
+                                "@property {} {{ syntax: \"{}\"; inherits: {};{} }}",
+                                name, reg.syntax, reg.inherits, init
+                            )))
+                        }
                         "parentStyleSheet" => Ok(Value::Sheet(si)),
                         "parentRule" => Ok(Value::Null),
                         _ => Ok(Value::Undefined),
