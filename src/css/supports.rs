@@ -98,9 +98,25 @@ fn strict_selector_supported(sel: &str) -> bool {
 fn all_pseudos_known(sel: &str) -> bool {
     let b: Vec<char> = sel.chars().collect();
     let mut i = 0usize;
+    // 괄호 스택: true = logical pseudo-class(:is/:where/:has/:not/:host/:host-context)의
+    // 인자 안. 그 안에서는 pseudo-element(::x)가 무효다(§Selectors: 논리 결합 인자는
+    // pseudo-element 를 포함할 수 없다 — non-forgiving supports 판정).
+    let mut paren_stack: Vec<bool> = Vec::new();
+    let mut pending_logical = false;
     while i < b.len() {
         match b[i] {
+            '(' => {
+                paren_stack.push(pending_logical);
+                pending_logical = false;
+                i += 1;
+            }
+            ')' => {
+                paren_stack.pop();
+                pending_logical = false;
+                i += 1;
+            }
             '[' => {
+                pending_logical = false;
                 // 속성 선택자 — ']' 까지 건너뜀(문자열 내부 포함).
                 i += 1;
                 while i < b.len() && b[i] != ']' {
@@ -117,6 +133,7 @@ fn all_pseudos_known(sel: &str) -> bool {
                 i += 1;
             }
             '"' | '\'' => {
+                pending_logical = false;
                 let q = b[i];
                 i += 1;
                 while i < b.len() && b[i] != q {
@@ -130,6 +147,10 @@ fn all_pseudos_known(sel: &str) -> bool {
                 let double = i < b.len() && b[i] == ':';
                 if double {
                     i += 1;
+                }
+                // logical pseudo-class 인자 안의 pseudo-element 는 무효.
+                if double && paren_stack.iter().any(|&x| x) {
+                    return false;
                 }
                 // 이름 수집(ident: -,_,알파넘,비ASCII).
                 let start = i;
@@ -149,6 +170,12 @@ fn all_pseudos_known(sel: &str) -> bool {
                 } else if !pseudo_class_known(&name) {
                     return false;
                 }
+                // 다음 '(' 가 logical pseudo-class 인자인지 표시(그 안의 pseudo-element 금지).
+                pending_logical = !double
+                    && matches!(
+                        name.as_str(),
+                        "is" | "where" | "has" | "not" | "matches" | "host" | "host-context"
+                    );
                 // 인자를 요구하는 함수형 pseudo 가 빈 괄호면 무효(§Selectors:
                 // :has()/:is()/:where()/:not()/::picker() 등 인자 필수). 다음 문자가
                 // '(' 이고 공백을 건너뛴 뒤 바로 ')' 면 빈 인자.
@@ -171,7 +198,10 @@ fn all_pseudos_known(sel: &str) -> bool {
                 }
                 // 함수형 인자 안의 pseudo 도 같은 스캔으로 검사된다(중첩 :is(:foo) 포함).
             }
-            _ => i += 1,
+            _ => {
+                pending_logical = false;
+                i += 1;
+            }
         }
     }
     true
