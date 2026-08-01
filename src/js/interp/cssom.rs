@@ -29,6 +29,17 @@ fn decls_line(rule: &crate::css::Rule) -> String {
 //  - CSSMediaRule: `@media <cond> {\n  <내부 규칙들>\n}`. 내부 없으면 `@media <cond> {\n}`.
 //  - CSSNestedDeclarations (selector_text 가 빈 문자열): 선언만 `decls` (셀렉터·중괄호 없음).
 // 들여쓰기는 자식 cssText 앞에 "  " 를 붙이는 방식(첫 줄만 밀림 = 비누적) — 스펙 출력과 일치.
+// 빈 CSSNestedDeclarations(선언 없는 맨선언 규칙)는 직렬화에서 생략한다(§CSSOM
+// serialize a CSS rule). cssRules 목록엔 여전히 존재하지만 cssText 엔 안 나온다.
+fn is_empty_nested_decls(r: &crate::css::Rule) -> bool {
+    r.selector_text.is_empty()
+        && r.at_media.is_none()
+        && r.at_supports.is_none()
+        && r.at_property.is_none()
+        && r.at_custom_media.is_none()
+        && r.declarations.is_empty()
+}
+
 fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     let dl = decls_line(rule);
     // @media / @supports 그룹 규칙: `@<kw> <cond> {\n  <내부>\n}`(비면 `{\n}`).
@@ -38,7 +49,12 @@ fn serialize_rule_full(rule: &crate::css::Rule) -> String {
         .map(|c| ("@media", c))
         .or_else(|| rule.at_supports.as_ref().map(|c| ("@supports", c)))
     {
-        let children: Vec<String> = rule.nested.iter().map(serialize_rule_full).collect();
+        let children: Vec<String> = rule
+            .nested
+            .iter()
+            .filter(|r| !is_empty_nested_decls(r))
+            .map(serialize_rule_full)
+            .collect();
         if children.is_empty() {
             return format!("{} {} {{\n}}", kw, cond);
         }
@@ -62,7 +78,12 @@ fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     if !dl.is_empty() {
         items.push(dl);
     }
-    items.extend(rule.nested.iter().map(serialize_rule_full));
+    items.extend(
+        rule.nested
+            .iter()
+            .filter(|r| !is_empty_nested_decls(r))
+            .map(serialize_rule_full),
+    );
     let body = items.iter().map(|c| format!("  {}", c)).collect::<Vec<_>>().join("\n");
     format!("{} {{\n{}\n}}", sel, body)
 }
@@ -271,12 +292,21 @@ impl Interp {
                         "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
                         // 내부 규칙(.nested)을 CSSMediaRule.cssRules 로 노출(읽기용 materialize).
                         "cssRules" | "rules" => {
-                            let children: Vec<Value> = self
+                            let cnt = self
                                 .sheets()
                                 .and_then(|s| s.get(si))
                                 .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
-                                .map(|r| r.nested.iter().map(materialize_rule).collect())
-                                .unwrap_or_default();
+                                .map(|r| r.nested.len())
+                                .unwrap_or(0);
+                            // 라이브 CssRule(np+[i]) — 내부 규칙 mutation(.style=·insertRule)이
+                            // 실제 규칙에 반영되도록(materialize 읽기용 객체는 반영 안 됨).
+                            let children: Vec<Value> = (0..cnt)
+                                .map(|i| {
+                                    let mut p = np.clone();
+                                    p.push(i);
+                                    Value::CssRule(si, ri, std::rc::Rc::new(p))
+                                })
+                                .collect();
                             let arr = ArrayObj::new(children);
                             arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
                             Ok(Value::Arr(arr))
@@ -308,12 +338,21 @@ impl Interp {
                         "type" => Ok(Value::Num(12.0)), // SUPPORTS_RULE
                         "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
                         "cssRules" | "rules" => {
-                            let children: Vec<Value> = self
+                            let cnt = self
                                 .sheets()
                                 .and_then(|s| s.get(si))
                                 .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
-                                .map(|r| r.nested.iter().map(materialize_rule).collect())
-                                .unwrap_or_default();
+                                .map(|r| r.nested.len())
+                                .unwrap_or(0);
+                            // 라이브 CssRule(np+[i]) — 내부 규칙 mutation(.style=·insertRule)이
+                            // 실제 규칙에 반영되도록(materialize 읽기용 객체는 반영 안 됨).
+                            let children: Vec<Value> = (0..cnt)
+                                .map(|i| {
+                                    let mut p = np.clone();
+                                    p.push(i);
+                                    Value::CssRule(si, ri, std::rc::Rc::new(p))
+                                })
+                                .collect();
                             let arr = ArrayObj::new(children);
                             arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
                             Ok(Value::Arr(arr))
