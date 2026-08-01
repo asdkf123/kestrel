@@ -1737,6 +1737,7 @@ impl Parser {
         }
         let mut syntax = String::new();
         let mut inherits = false;
+        let mut inherits_present = false;
         let mut initial: Option<String> = None;
         for desc in body.split(';') {
             if let Some(ci) = desc.find(':') {
@@ -1744,14 +1745,18 @@ impl Parser {
                 let val = desc[ci + 1..].trim();
                 match key.as_str() {
                     "syntax" => syntax = val.trim_matches(|c| c == '"' || c == '\'').to_string(),
-                    "inherits" => inherits = val.eq_ignore_ascii_case("true"),
+                    "inherits" => {
+                        inherits = val.eq_ignore_ascii_case("true");
+                        inherits_present = true;
+                    }
                     "initial-value" => initial = Some(val.to_string()),
                     _ => {}
                 }
             }
         }
-        if syntax.is_empty() {
-            return None; // syntax 필수
+        // syntax·inherits descriptor 는 필수(§Properties & Values API). 없으면 무효.
+        if syntax.is_empty() || !inherits_present {
+            return None;
         }
         // syntax·initialValue 유효성(§Properties & Values API). 무효면 규칙 드롭
         // (등록 안 됨). 비-* syntax 는 initial-value 필수.

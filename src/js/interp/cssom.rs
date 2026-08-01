@@ -129,7 +129,11 @@ impl Interp {
                         "name" => Ok(Value::Str(name)),
                         "syntax" => Ok(Value::Str(reg.syntax)), // 따옴표 없는 문자열
                         "inherits" => Ok(Value::Bool(reg.inherits)),
-                        "initialValue" => Ok(Value::Str(reg.initial.clone().unwrap_or_default())),
+                        // initialValue 는 없으면 null(빈 문자열 아님).
+                        "initialValue" => {
+                            Ok(reg.initial.clone().map(Value::Str).unwrap_or(Value::Null))
+                        }
+                        "type" => Ok(Value::Num(0.0)), // CSSRule.type (CSSPropertyRule 은 0)
                         "cssText" => {
                             // initial-value 는 없으면 생략(§CSSOM serialize).
                             let init = match &reg.initial {
