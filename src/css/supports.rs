@@ -130,7 +130,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     // 파싱·직렬화한다 — 실제 CSS 프로퍼티이므로 getComputedStyle·CSS.supports 에 노출.
     "transition-property", "transition-duration", "transition-delay",
     "transition-timing-function", "transition-behavior",
-    "animation-name", "animation-duration", "animation-delay",
+    "animation", "animation-name", "animation-duration", "animation-delay",
     "animation-timing-function", "animation-iteration-count", "animation-direction",
     "animation-fill-mode", "animation-play-state", "animation-composition",
     "animation-range", "animation-range-start", "animation-range-end",
