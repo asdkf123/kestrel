@@ -2415,7 +2415,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let ok = single && match name {
                 // letter-spacing/word-spacing: normal | <length-percentage>(부호·calc 허용).
                 "letter-spacing" | "word-spacing" => low == "normal" || crate::css::margin_value_valid(v) && low != "auto",
-                "tab-size" => !low.contains('%') && (crate::css::nonneg_lp_valid(v) || v.parse::<f32>().map(|n| n >= 0.0).unwrap_or(false)),
+                // <number 0+> | <length 0+>(% 불가). 순수 수 수학식(calc(2*3)=6)도 수용.
+                "tab-size" => !low.contains('%') && (crate::css::nonneg_lp_valid(v)
+                    || v.parse::<f32>().map(|n| n >= 0.0).unwrap_or(false)
+                    || crate::css::eval_math_number(v).map(|x| x.is_finite() && x >= 0.0).unwrap_or(false)),
                 "hyphenate-character" => low == "auto" || (v.len() >= 2 && (v.starts_with('"') || v.starts_with('\'')) && v.ends_with(v.chars().next().unwrap())),
                 _ => false,
             };
@@ -2424,6 +2427,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let value = if name == "hyphenate-character" || low == "normal" || low == "auto" {
                 Value::Keyword(v.to_string())
+            } else if name == "tab-size" {
+                // 순수 수 수학식이면 계산값(수)으로, 아니면 길이 해석.
+                match crate::css::eval_math_number(v).filter(|x| x.is_finite()) {
+                    Some(x) => Value::Length((x as f32).max(0.0), Unit::Number),
+                    None => interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string())),
+                }
             } else {
                 interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()))
             };
