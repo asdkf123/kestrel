@@ -124,7 +124,7 @@
 | mediaqueries | 272 / 308 | 88.3% |
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
-| cssom | 2,960 / 3,437 | 86.1% |
+| cssom | 2,963 / 3,437 | 86.2% |
 | css-color | 7,930 / 9,399 | 84.4% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
