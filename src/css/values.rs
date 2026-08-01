@@ -3597,16 +3597,29 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
         } else {
             Some(1.0)
         };
+        // hsl/hwb 의 퍼센트 채널(s/l, w/b): bare 수도 퍼센트다(§CSS Color 4: 100→100%).
+        // 0-1 fraction 으로 정규화해 % 형과 일치시킨다(예전엔 "30"→30, "30%"→0.3 로 불일치).
+        let pct_frac = |s: &str| -> Option<Comp> {
+            let t = s.trim();
+            if t.eq_ignore_ascii_case("none") {
+                return Some(Comp::None);
+            }
+            let num = t.strip_suffix('%').unwrap_or(t);
+            if let Ok(n) = num.parse::<f32>() {
+                return Some(Comp::Val(n / 100.0));
+            }
+            parse_comp(t, 1.0) // calc 등은 기존 경로
+        };
         let (c0, c1, c2) = match space {
             "hsl" => (
                 comp_opt(parse_comp_angle(&p[0])?),
-                comp_opt(parse_comp(&p[1], 1.0)?),
-                comp_opt(parse_comp(&p[2], 1.0)?),
+                comp_opt(pct_frac(&p[1])?),
+                comp_opt(pct_frac(&p[2])?),
             ),
             "hwb" => (
                 comp_opt(parse_comp_angle(&p[0])?),
-                comp_opt(parse_comp(&p[1], 1.0)?),
-                comp_opt(parse_comp(&p[2], 1.0)?),
+                comp_opt(pct_frac(&p[1])?),
+                comp_opt(pct_frac(&p[2])?),
             ),
             "oklab" => (
                 comp_opt(parse_comp(&p[0], 1.0)?),
