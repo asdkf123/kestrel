@@ -223,6 +223,61 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Declaration { raw: String::new(), important: false, name: "container-type".to_string(), value: Value::Keyword(type_val) },
             ];
         }
+        // corner-shape 단축(§CSS Borders 4): 코너별 corner-*-*-shape 롱핸드로 전개.
+        // corner-shape=4코너(TL TR BR BL, border-radius식 1/2/3/4값), 엣지 단축=2코너.
+        "corner-shape"
+        | "corner-top-shape"
+        | "corner-bottom-shape"
+        | "corner-left-shape"
+        | "corner-right-shape" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            let corners: &[&str] = match name {
+                "corner-top-shape" => &["corner-top-left-shape", "corner-top-right-shape"],
+                "corner-bottom-shape" => &["corner-bottom-left-shape", "corner-bottom-right-shape"],
+                "corner-left-shape" => &["corner-top-left-shape", "corner-bottom-left-shape"],
+                "corner-right-shape" => &["corner-top-right-shape", "corner-bottom-right-shape"],
+                _ => &[
+                    "corner-top-left-shape",
+                    "corner-top-right-shape",
+                    "corner-bottom-right-shape",
+                    "corner-bottom-left-shape",
+                ],
+            };
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return corners
+                    .iter()
+                    .map(|c| Declaration { raw: String::new(), important: false, name: c.to_string(), value: Value::Keyword(low.clone()) })
+                    .collect();
+            }
+            let n = corners.len();
+            if !crate::css::corner_shape_list_valid(value_text.trim(), n) {
+                return Vec::new();
+            }
+            let cv: Vec<String> = split_top_level(value_text.trim())
+                .iter()
+                .map(|t| crate::css::corner_shape_canonical(t))
+                .collect();
+            // 코너별 값 분배(border-radius 식). 2코너: 1→둘 다, 2→[0][1]. 4코너: 1/2/3/4값.
+            let vals: Vec<String> = if n == 2 {
+                if cv.len() == 1 {
+                    vec![cv[0].clone(), cv[0].clone()]
+                } else {
+                    vec![cv[0].clone(), cv[1].clone()]
+                }
+            } else {
+                match cv.len() {
+                    1 => vec![cv[0].clone(), cv[0].clone(), cv[0].clone(), cv[0].clone()],
+                    2 => vec![cv[0].clone(), cv[1].clone(), cv[0].clone(), cv[1].clone()],
+                    3 => vec![cv[0].clone(), cv[1].clone(), cv[2].clone(), cv[1].clone()],
+                    _ => vec![cv[0].clone(), cv[1].clone(), cv[2].clone(), cv[3].clone()],
+                }
+            };
+            return corners
+                .iter()
+                .zip(vals)
+                .map(|(c, v)| Declaration { raw: String::new(), important: false, name: c.to_string(), value: Value::Keyword(v) })
+                .collect();
+        }
         // top/right/bottom/left(§CSS Position): <length-percentage> | auto. 각도·단위없는
         // 비영·기타 키워드 거부. 유효값은 interpret_value 로 저장(레이아웃 불변). inset
         // 논리 프로퍼티가 여기로 매핑되므로 함께 검증된다.
