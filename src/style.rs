@@ -649,25 +649,34 @@ impl<'a> RuleIndex<'a> {
     }
 
     fn build(sheet: &'a Stylesheet) -> RuleIndex<'a> {
-        RuleIndex::build_with(sheet, ContainerMap::new())
+        let vp = Viewport::default();
+        RuleIndex::build_with(sheet, ContainerMap::new(), vp.w, vp.h)
     }
 
-    fn build_with(sheet: &'a Stylesheet, containers: ContainerMap) -> RuleIndex<'a> {
+    fn build_with(sheet: &'a Stylesheet, containers: ContainerMap, vw: f32, vh: f32) -> RuleIndex<'a> {
         // 중첩 규칙(.nested)을 소스 순서로 펼친 참조 목록. 부모 다음에 자식들이 온다
         // (플랫 desugar 와 동일한 캐스케이드 순서 → 렌더 무변경). CSSOM 은 계층 유지.
-        fn flatten<'b>(rules: &'b [Rule], out: &mut Vec<&'b Rule>) {
+        fn flatten<'b>(rules: &'b [Rule], out: &mut Vec<&'b Rule>, vw: f32, vh: f32) {
             for r in rules {
                 out.push(r);
-                // at_media/at_supports 컨테이너(중첩 @media/@supports)의 .nested 는 조건부라
-                // 여기서 매칭 대상으로 펼치지 않는다(조건 미평가 → 잘못된 무조건 적용 방지).
-                // CSSOM 은 계층(.nested)으로 노출. 현행 드롭 동작과 동일 = 렌더 무변경.
-                if r.at_media.is_none() && r.at_supports.is_none() && !r.nested.is_empty() {
-                    flatten(&r.nested, out);
+                if r.nested.is_empty() {
+                    continue;
+                }
+                // 중첩 @media/@supports 컨테이너: 조건이 맞을 때만 내부 규칙을 매칭에 펼친다
+                // (§CSS Nesting — 조건부 그룹 규칙도 중첩 규칙처럼 적용된다). 일반 중첩 규칙은
+                // 항상 펼친다(조건 없음). CSSOM 은 별도로 .nested 계층을 그대로 노출한다.
+                let include = match (&r.at_media, &r.at_supports) {
+                    (Some(q), _) => crate::css::media_matches_vp(q, vw, vh),
+                    (_, Some(c)) => crate::css::supports_condition(c),
+                    _ => true,
+                };
+                if include {
+                    flatten(&r.nested, out, vw, vh);
                 }
             }
         }
         let mut flat: Vec<&Rule> = Vec::new();
-        flatten(&sheet.rules, &mut flat);
+        flatten(&sheet.rules, &mut flat, vw, vh);
         let mut idx = RuleIndex {
             containers,
             rules: flat,
@@ -1306,7 +1315,7 @@ pub fn style_tree_containers<'a>(
     pseudo: &PseudoStyles,
     containers: ContainerMap,
 ) -> StyledNode<'a> {
-    let index = RuleIndex::build_with(stylesheet, containers);
+    let index = RuleIndex::build_with(stylesheet, containers, vp.w, vp.h);
     let mut ancestors: Vec<&ElementData> = Vec::new();
     style_node(dom, dom.root, &index, &mut ancestors, &mut Vec::new(), None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, &stylesheet.at_properties, DEFAULT_FONT_SIZE)
 }

@@ -12411,6 +12411,9 @@ impl Interp {
                                     ) {
                                         r.selectors = sels;
                                         r.selector_text = text;
+                                        // 부모가 바뀌었으니 자손 중첩 규칙을 새 선택자 기준으로
+                                        // 재desugar(§CSS Nesting selectorText 변경 무효화).
+                                        crate::css::redesugar_nested_rules(r, &desugared);
                                     }
                                 }
                                 self.css_epoch += 1;

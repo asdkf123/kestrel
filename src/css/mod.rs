@@ -1906,6 +1906,27 @@ pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String
 // CSS Nesting desugar: 중첩 선택자를 부모 기준 절대 선택자로. & 는 :is(부모)로
 // 치환하고, & 가 없으면 자손 결합자로 부모를 앞에 붙인다(§CSS Nesting). 콤마 목록은
 // 항목별로. 부모 특이도를 :is() 로 보존.
+// 외부 규칙의 selector 가 바뀌면(CSSOM selectorText 세터) 자손 중첩 규칙의 매칭용
+// selectors 를 새 부모 기준으로 재desugar 한다(§CSS Nesting — `&` 는 부모 규칙 selector 를
+// 가리키므로 부모가 바뀌면 함께 바뀐다). parent_effective 는 이 규칙의 새 매칭 선택자.
+// @media/@supports 컨테이너는 중첩상 투명 → 자식은 같은 부모 기준. selector_text(원본
+// 상대)는 그대로 두고 selectors(desugared)만 갱신한다.
+pub fn redesugar_nested_rules(rule: &mut Rule, parent_effective: &str) {
+    for child in &mut rule.nested {
+        if child.at_media.is_some() || child.at_supports.is_some() {
+            redesugar_nested_rules(child, parent_effective);
+        } else if child.selector_text.is_empty() {
+            // CSSNestedDeclarations — 부모 선택자로 매칭.
+            child.selectors = parse_selector_list(parent_effective).unwrap_or_default();
+            redesugar_nested_rules(child, parent_effective);
+        } else {
+            let desug = desugar_nested(&child.selector_text, parent_effective);
+            child.selectors = parse_selector_list(&desug).unwrap_or_default();
+            redesugar_nested_rules(child, &desug);
+        }
+    }
+}
+
 pub fn desugar_nested(nested: &str, parent: &str) -> String {
     let is_parent = format!(":is({})", parent.trim());
     split_top_commas_str(nested)
