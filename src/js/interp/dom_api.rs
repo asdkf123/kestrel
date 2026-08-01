@@ -145,16 +145,120 @@ impl Interp {
     // 끝 세미콜론이 없고("color: red") 값도 정규화되지 않았다.
     pub(super) fn css_text(&mut self, id: crate::dom::NodeId) -> String {
         let attr = self.style_attr(id);
-        let mut out: Vec<String> = Vec::new();
+        // 선언 수집(이름 소문자 → (직렬화 값, important)). 마지막 우선, 순서 보존.
+        let mut order: Vec<String> = Vec::new();
+        let mut map: std::collections::HashMap<String, (String, bool)> =
+            std::collections::HashMap::new();
         for (prop, raw) in style_pairs(&attr) {
             let name = prop.to_ascii_lowercase();
-            let val = Self::serialize_decl(&name, &raw);
+            let lower = raw.to_ascii_lowercase();
+            let (base, important) = match lower.rfind("!important") {
+                Some(idx) if raw[idx + "!important".len()..].trim().is_empty() => {
+                    (raw[..idx].trim_end().to_string(), true)
+                }
+                _ => (raw.clone(), false),
+            };
+            let val = Self::serialize_decl(&name, &base);
             if val.is_empty() {
                 continue;
             }
-            out.push(format!("{}: {};", name, val));
+            if !map.contains_key(&name) {
+                order.push(name.clone());
+            }
+            map.insert(name, (val, important));
         }
-        out.join(" ")
+        Self::reassemble_shorthands(&mut order, &mut map);
+        order
+            .iter()
+            .filter_map(|n| {
+                map.get(n).map(|(v, imp)| {
+                    format!("{}: {}{};", n, v, if *imp { " !important" } else { "" })
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    // §CSSOM serialize a declaration block: 롱핸드 전체가 같은 importance 로 존재하면
+    // 무손실 단축으로 재조립한다. 여기선 box(4-value)·2-value 축약형만 다룬다(border 등
+    // currentcolor/none 기본값이 얽힌 단축은 제외).
+    fn reassemble_shorthands(
+        order: &mut Vec<String>,
+        map: &mut std::collections::HashMap<String, (String, bool)>,
+    ) {
+        let fold_box = |v: &[String]| -> String {
+            let (t, r, b, l) = (&v[0], &v[1], &v[2], &v[3]);
+            if l == r && t == b && r == t {
+                t.clone()
+            } else if l == r && t == b {
+                format!("{} {}", t, r)
+            } else if l == r {
+                format!("{} {} {}", t, r, b)
+            } else {
+                format!("{} {} {} {}", t, r, b, l)
+            }
+        };
+        let box_sh: &[(&str, [&str; 4])] = &[
+            ("margin", ["margin-top", "margin-right", "margin-bottom", "margin-left"]),
+            ("padding", ["padding-top", "padding-right", "padding-bottom", "padding-left"]),
+            ("inset", ["top", "right", "bottom", "left"]),
+        ];
+        let two_sh: &[(&str, [&str; 2])] = &[
+            ("overflow", ["overflow-x", "overflow-y"]),
+            ("overscroll-behavior", ["overscroll-behavior-x", "overscroll-behavior-y"]),
+            ("gap", ["row-gap", "column-gap"]),
+            ("place-items", ["align-items", "justify-items"]),
+            ("place-self", ["align-self", "justify-self"]),
+            ("place-content", ["align-content", "justify-content"]),
+        ];
+        let mut sh_at_first: std::collections::HashMap<String, (String, String, bool)> =
+            std::collections::HashMap::new();
+        let mut consumed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let same_imp = |lh: &[&str], map: &std::collections::HashMap<String, (String, bool)>| {
+            let imps: Vec<bool> = lh.iter().map(|p| map[*p].1).collect();
+            imps.iter().all(|&x| x == imps[0])
+        };
+        for (sh, lh) in box_sh {
+            if lh.iter().all(|p| map.contains_key(*p) && !consumed.contains(*p)) && same_imp(lh, map)
+            {
+                let vals: Vec<String> = lh.iter().map(|p| map[*p].0.clone()).collect();
+                let imp = map[lh[0]].1;
+                let first = order.iter().find(|n| lh.contains(&n.as_str())).unwrap().clone();
+                sh_at_first.insert(first, (sh.to_string(), fold_box(&vals), imp));
+                for p in lh.iter() {
+                    consumed.insert(p.to_string());
+                }
+            }
+        }
+        for (sh, lh) in two_sh {
+            if lh.iter().all(|p| map.contains_key(*p) && !consumed.contains(*p)) && same_imp(lh, map)
+            {
+                let x = map[lh[0]].0.clone();
+                let y = map[lh[1]].0.clone();
+                let imp = map[lh[0]].1;
+                let folded = if x == y { x.clone() } else { format!("{} {}", x, y) };
+                let first = order.iter().find(|n| lh.contains(&n.as_str())).unwrap().clone();
+                sh_at_first.insert(first, (sh.to_string(), folded, imp));
+                for p in lh.iter() {
+                    consumed.insert(p.to_string());
+                }
+            }
+        }
+        if sh_at_first.is_empty() {
+            return;
+        }
+        let mut new_order = Vec::new();
+        for n in order.iter() {
+            if let Some((sh, val, imp)) = sh_at_first.get(n) {
+                new_order.push(sh.clone());
+                map.insert(sh.clone(), (val.clone(), *imp));
+            } else if consumed.contains(n) {
+                map.remove(n);
+            } else {
+                new_order.push(n.clone());
+            }
+        }
+        *order = new_order;
     }
 
     pub(super) fn set_style_attr(&mut self, id: crate::dom::NodeId, value: String) {
