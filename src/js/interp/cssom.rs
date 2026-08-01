@@ -193,12 +193,22 @@ impl Interp {
                 if let Some((name, cond)) = atc {
                     return match key {
                         "name" => Ok(Value::Str(name)),
-                        "media" => {
+                        // .query: true/false 는 불리언, 그 외는 MediaList(mediaText/length/item).
+                        "query" => {
+                            if cond.eq_ignore_ascii_case("true") {
+                                return Ok(Value::Bool(true));
+                            }
+                            if cond.eq_ignore_ascii_case("false") {
+                                return Ok(Value::Bool(false));
+                            }
                             let mut m = ObjMap::new();
                             m.insert("mediaText".to_string(), Value::Str(cond.clone()));
                             m.insert("length".to_string(), Value::Num(
                                 if cond.is_empty() { 0.0 } else { cond.split(", ").count() as f64 },
                             ));
+                            m.insert("item".to_string(), Value::Native(Native::Noop));
+                            m.insert("appendMedium".to_string(), Value::Native(Native::Noop));
+                            m.insert("deleteMedium".to_string(), Value::Native(Native::Noop));
                             Ok(Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m))))
                         }
                         "type" => Ok(Value::Num(0.0)),

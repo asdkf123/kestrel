@@ -2259,15 +2259,17 @@ impl Parser {
         }
         let body = body.trim();
         // 이름: 첫 공백 전까지. dashed-ident(--…) 여야. 이름과 쿼리 사이 공백 필수라
-        // '--query(' 처럼 붙으면 이름에 '(' 가 섞여 무효가 된다.
-        let sp = body.find(char::is_whitespace)?;
-        let name = &body[..sp];
-        let query = body[sp..].trim();
+        // '--query(' 처럼 붙으면 이름에 '(' 가 섞여 무효가 된다. 쿼리 없이 이름만인
+        // '@custom-media --empty' 도 유효(빈 쿼리).
+        let (name, query) = match body.find(char::is_whitespace) {
+            Some(sp) => (&body[..sp], body[sp..].trim()),
+            None => (body, ""),
+        };
         // dashed-ident: '--' 로 시작하고 이후는 ident 문자만('--' 자체도 허용).
         if !name.starts_with("--") || name[2..].chars().any(|c| !valid_identifier_char(c)) {
             return None;
         }
-        if !values::custom_media_query_valid(query) {
+        if !query.is_empty() && !values::custom_media_query_valid(query) {
             return None;
         }
         let serialized = if query.eq_ignore_ascii_case("true") || query.eq_ignore_ascii_case("false")

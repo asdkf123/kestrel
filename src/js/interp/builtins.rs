@@ -6133,16 +6133,30 @@ impl Interp {
                     Some(Value::Sheet(_)) => vec!["CSSStyleSheet", "StyleSheet"],
                     Some(Value::CssRule(si, ri)) => {
                         // @property 규칙은 CSSPropertyRule, 그 외는 CSSStyleRule.
-                        let is_prop = self
+                        let kind = self
                             .sheets()
                             .and_then(|s| s.get(*si))
                             .and_then(|s| s.sheet.rules.get(*ri))
-                            .map(|r| r.at_property.is_some())
-                            .unwrap_or(false);
-                        if is_prop {
-                            vec!["CSSPropertyRule", "CSSRule"]
-                        } else {
-                            vec!["CSSStyleRule", "CSSRule"]
+                            .map(|r| {
+                                if r.at_property.is_some() {
+                                    "CSSPropertyRule"
+                                } else if r.at_custom_media.is_some() {
+                                    "CSSCustomMediaRule"
+                                } else if r.at_media.is_some() {
+                                    "CSSMediaRule"
+                                } else {
+                                    "CSSStyleRule"
+                                }
+                            })
+                            .unwrap_or("CSSStyleRule");
+                        // CSSMediaRule/CSSCustomMediaRule 은 CSSConditionRule/CSSGroupingRule 도 상속.
+                        match kind {
+                            "CSSMediaRule" => {
+                                vec!["CSSMediaRule", "CSSConditionRule", "CSSGroupingRule", "CSSRule"]
+                            }
+                            "CSSCustomMediaRule" => vec!["CSSCustomMediaRule", "CSSRule"],
+                            "CSSPropertyRule" => vec!["CSSPropertyRule", "CSSRule"],
+                            _ => vec!["CSSStyleRule", "CSSRule"],
                         }
                     }
                     Some(Value::RuleStyle(_, _))

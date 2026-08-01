@@ -13688,9 +13688,9 @@ pub fn custom_media_query_valid(q: &str) -> bool {
 
 // 단일 미디어 쿼리 문법: [not|only]? (<type> | (feature)) (and|or (feature))*.
 fn one_media_query_grammar_valid(q: &str) -> bool {
-    // 토큰화: 워드 또는 (그룹). 균형 안 맞으면 무효.
+    // 최상위 토큰화: 워드(Some(소문자)) 또는 그룹(None). 그룹 내부 단어는 포함 안 함.
     let chars: Vec<char> = q.chars().collect();
-    let mut toks: Vec<bool> = Vec::new(); // true = 그룹, false = 워드
+    let mut toks: Vec<Option<String>> = Vec::new();
     let mut i = 0usize;
     while i < chars.len() {
         if chars[i].is_whitespace() {
@@ -13716,64 +13716,45 @@ fn one_media_query_grammar_valid(q: &str) -> bool {
                 i += 1;
             }
             if !closed {
-                return false; // 미닫힌 괄호 → 무효.
+                return false; // 미닫힌 괄호.
             }
-            toks.push(true);
+            toks.push(None); // 그룹
         } else if chars[i] == ')' {
             return false; // 떠도는 닫는 괄호.
         } else {
+            let s = i;
             while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' && chars[i] != ')'
             {
                 i += 1;
             }
-            toks.push(false);
+            toks.push(Some(chars[s..i].iter().collect::<String>().to_ascii_lowercase()));
         }
     }
     if toks.is_empty() {
         return false;
     }
-    // 워드 값을 다시 수집(연결자 판별용).
-    let words: Vec<String> = q
-        .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_ascii_lowercase())
-        .collect();
-    // 상태 머신: 워드/그룹 순회.
-    let mut wi = 0usize; // words 인덱스
-    let mut ti = 0usize; // toks 인덱스
+    let mut ti = 0usize;
     // [not|only]?
-    if ti < toks.len() && !toks[ti] && matches!(words[wi].as_str(), "not" | "only") {
+    if matches!(toks[ti].as_deref(), Some("not") | Some("only")) {
         ti += 1;
-        wi += 1;
     }
     if ti >= toks.len() {
-        return false; // not/only 뒤에 아무것도 없음.
+        return false;
     }
-    // <type>(워드) 또는 (그룹)
-    if toks[ti] {
-        ti += 1; // 그룹
-    } else {
-        // 미디어 타입 워드(and/or 는 타입이 아님).
-        if matches!(words[wi].as_str(), "and" | "or") {
-            return false;
-        }
-        ti += 1;
-        wi += 1;
+    // <type>(워드, and/or 아님) 또는 (그룹)
+    match toks[ti].as_deref() {
+        None => ti += 1,                            // 그룹
+        Some("and") | Some("or") => return false,   // 연결자는 타입 아님
+        Some(_) => ti += 1,                         // 미디어 타입
     }
     // (and|or (그룹))*
     while ti < toks.len() {
-        // 연결자 워드
-        if toks[ti] {
-            return false; // 그룹 앞에 연결자 없음.
+        match toks[ti].as_deref() {
+            Some("and") | Some("or") => ti += 1,
+            _ => return false, // 연결자 아님
         }
-        if !matches!(words[wi].as_str(), "and" | "or") {
-            return false;
-        }
-        ti += 1;
-        wi += 1;
-        // 그룹
-        if ti >= toks.len() || !toks[ti] {
-            return false;
+        if ti >= toks.len() || toks[ti].is_some() {
+            return false; // 연결자 뒤엔 그룹이 와야
         }
         ti += 1;
     }

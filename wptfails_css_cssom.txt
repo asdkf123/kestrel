@@ -2,7 +2,7 @@ css/cssom/CSS-namespace-object-class-string.html	FAIL	@@toStringTag exists on th
 css/cssom/CSS-namespace-object-class-string.html	FAIL	Object.prototype.toString applied to the namespace object	assert_equals: expected "[object CSS]" but got "[object Object]"
 css/cssom/CSS-namespace-object-class-string.html	FAIL	Object.prototype.toString applied after modifying the namespace object's @@toStringTag	assert_own_property: Precondition: @@toStringTag on the namespace object expected property symbol "Symbol(Symbol.toStringTag)" missing
 css/cssom/CSS-namespace-object-class-string.html	FAIL	Object.prototype.toString applied after deleting @@toStringTag	assert_own_property: Precondition: @@toStringTag on the namespace object expected property symbol "Symbol(Symbol.toStringTag)" missing
-css/cssom/CSSConditionRule-conditionText.html	FAIL	CSSConditionRule.conditionText	CSSConditionRule 은(는) 정의되지 않음
+css/cssom/CSSConditionRule-conditionText.html	FAIL	CSSConditionRule.conditionText	assert_true: expected true got false
 css/cssom/CSSCounterStyleRule.html	FAIL	CSSCounterStyleRule.cssText doesn't serialize with newlines	rule.cssText — rule 이(가) undefined (읽을 수 없음)
 css/cssom/CSSFontFaceRule.html	FAIL	CSSFontFaceRule.cssText doesn't serialize with newlines	rule.cssText — rule 이(가) undefined (읽을 수 없음)
 css/cssom/CSSFontFeatureValuesRule.html	FAIL	CSSFontFeatureValuesRule is correctly parsed and accessible via CSSOM.	규칙을 파싱할 수 없다
