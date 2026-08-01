@@ -1050,6 +1050,24 @@ impl<'a> LayoutBox<'a> {
                         - child.offset_val("right", cbw)
                         - bp;
                     child.dimensions.content.width = w.max(0.0);
+                } else if width_auto {
+                    // 양쪽 inset 이 다 지정되지 않은 auto 폭 abspos 는 흐름 폭(CB 채움)이 아니라
+                    // shrink-to-fit 이다(§10.3.7): min(max-content, available). used_width 가
+                    // 내용 선호 폭(≈max-content)이고, available 은 지정된 한쪽 inset·마진·
+                    // 보더·패딩을 뺀 여유. 빈 박스면 0 이라 좌/우 used inset 이 CB 폭에 맞게
+                    // 나온다(예: left:auto;right:4px → left = CBw - 4 - 0).
+                    let bp = child.dimensions.border_box().width - child.dimensions.content.width;
+                    let ml = child.specified_margin("margin-left", cbw);
+                    let mr = child.specified_margin("margin-right", cbw);
+                    let inset = if has_left {
+                        child.offset_val("left", cbw)
+                    } else if has_right {
+                        child.offset_val("right", cbw)
+                    } else {
+                        0.0
+                    };
+                    let avail = (cb.width - inset - ml - mr - bp).max(0.0);
+                    child.dimensions.content.width = child.used_width.min(avail).max(0.0);
                 }
                 if has_top && has_bottom && height_auto {
                     let bp = child.dimensions.border_box().height - child.dimensions.content.height;
