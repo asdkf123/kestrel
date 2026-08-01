@@ -212,6 +212,7 @@ pub struct Interp {
     // attachShadow 를 부른 요소들. 우리는 섀도 트리를 따로 두지 않고 요소 자신을
     // 섀도 루트로 돌려준다 — 콘텐츠는 실제로 렌더되지만 스타일 격리는 없다(문서화된 근사).
     shadow_hosts: std::collections::HashSet<crate::dom::NodeId>,
+    registered_properties: std::collections::HashSet<String>,
     // 스크립트가 요청한 스크롤 위치(px). 호스트가 렌더에 반영한다.
     pub scroll_x: f32,
     pub scroll_y: f32,
@@ -856,6 +857,7 @@ impl Interp {
         let mut css_ns = ObjMap::new();
         css_ns.insert("supports".to_string(), Value::Native(Native::CssSupports));
         css_ns.insert("escape".to_string(), Value::Native(Native::CssEscape));
+        css_ns.insert("registerProperty".to_string(), Value::Native(Native::CssRegisterProperty));
         env_declare(&global, "CSS", Value::Obj(Rc::new(RefCell::new(css_ns))));
         // 전역 생성자 스텁 (instanceof 판별 + 정적 메서드)
         let mut object_ns = ObjMap::new();
@@ -1537,6 +1539,7 @@ impl Interp {
             handlers: Vec::new(),
             mutation_scheduled: false,
             shadow_hosts: std::collections::HashSet::new(),
+            registered_properties: std::collections::HashSet::new(),
             scroll_x: 0.0,
             scroll_y: 0.0,
             active_element: None,

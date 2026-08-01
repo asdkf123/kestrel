@@ -5221,6 +5221,27 @@ impl Interp {
                 };
                 Ok(Value::Bool(crate::css::supports_condition(&cond)))
             }
+            // CSS.registerProperty({name, syntax, initialValue?, inherits}) — §Properties
+            // & Values API. syntax·initialValue 유효성 검사 후 등록. 무효면 예외.
+            Native::CssRegisterProperty => {
+                let Some(Value::Obj(o)) = args.first() else {
+                    return Err("TypeError: registerProperty expects an object".to_string());
+                };
+                let ob = o.borrow();
+                let name = ob.get("name").map(to_display).unwrap_or_default();
+                let syntax = ob.get("syntax").map(to_display).unwrap_or_default();
+                let initial = ob.get("initialValue").map(|v| to_display(v));
+                if !name.starts_with("--") || name.len() < 3 {
+                    return Err(format!("SyntaxError: invalid custom property name '{}'", name));
+                }
+                if !crate::css::register_property_valid(&syntax, initial.as_deref()) {
+                    return Err("SyntaxError: invalid property definition".to_string());
+                }
+                if !self.registered_properties.insert(name.clone()) {
+                    return Err(format!("InvalidModificationError: '{}' already registered", name));
+                }
+                Ok(Value::Undefined)
+            }
             // new DOMParser() → parseFromString 을 가진 객체
             Native::DomParserCtor => {
                 let mut m = ObjMap::new();

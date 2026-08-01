@@ -258,6 +258,7 @@ pub enum Native {
     DynamicImport,
     QueueMicrotask,
     CssSupports,
+    CssRegisterProperty,
     ElementAnimate,
     GetAttributeNames,
     HasAttributes,

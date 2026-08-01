@@ -9855,6 +9855,140 @@ pub fn is_line_style(t: &str) -> bool {
 }
 
 // 단일 <color>(§CSS Color): currentcolor/transparent/명명·hex·함수 색. auto 제외.
+// @property / CSS.registerProperty 의 syntax 문자열 유효성 + initial 값이 그 syntax
+// 에 맞는지(§CSS Properties & Values API §supported-syntax-strings). 검증만.
+pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
+    let s = syntax.trim();
+    if s.is_empty() {
+        return false;
+    }
+    // 범용 '*': 어떤 initial 도 OK(있으면), 없어도 OK.
+    if s == "*" {
+        return true;
+    }
+    // '|' 로 대안 분리. 각 대안은 <type>|ident 에 +/# 승수.
+    let alts: Vec<&str> = s.split('|').map(|a| a.trim()).collect();
+    if alts.iter().any(|a| a.is_empty()) {
+        return false;
+    }
+    // syntax 자체 유효성 검사.
+    for a in &alts {
+        if !syntax_component_valid(a) {
+            return false;
+        }
+    }
+    // initial 이 있으면 어느 대안엔 맞아야(비-* syntax 는 initial 필수).
+    match initial {
+        None => false, // 비-* 는 initial-value 필수
+        Some(v) => {
+            let v = v.trim();
+            if v.is_empty() {
+                return false;
+            }
+            alts.iter().any(|a| syntax_alt_matches(a, v))
+        }
+    }
+}
+
+// 한 대안(<type>|ident + 선택적 +/#)의 syntax 문법 유효성.
+fn syntax_component_valid(alt: &str) -> bool {
+    let comp = alt.trim_end_matches(['+', '#']).trim();
+    if comp.starts_with('<') && comp.ends_with('>') {
+        matches!(
+            &comp[1..comp.len() - 1],
+            "length" | "number" | "percentage" | "length-percentage" | "color" | "image"
+                | "url" | "integer" | "angle" | "time" | "resolution" | "transform-function"
+                | "transform-list" | "custom-ident" | "string"
+        )
+    } else {
+        // custom-ident 키워드(--dashed 포함). CSS-wide 키워드·default 는 불가.
+        syntax_ident_valid(comp)
+    }
+}
+
+fn syntax_ident_valid(id: &str) -> bool {
+    if id.is_empty() {
+        return false;
+    }
+    let low = id.to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "none") {
+        // none 은 실제로 유효한 custom-ident 지만 여기선 키워드 문맥. 표준상 default 만
+        // 예약. none 허용.
+        if low == "none" {
+            // none 은 허용.
+        } else {
+            return false;
+        }
+    }
+    let mut chars = id.chars();
+    let first = chars.next().unwrap();
+    // 첫 글자: 알파/_/- (dashed ident). 나머지: 영숫자/_/-.
+    (first.is_ascii_alphabetic() || first == '_' || first == '-')
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+// initial 값 v 가 대안 alt(<type>|ident, +/# 승수)에 맞는가.
+fn syntax_alt_matches(alt: &str, v: &str) -> bool {
+    let (comp, multi) = if let Some(c) = alt.strip_suffix('+') {
+        (c.trim(), '+')
+    } else if let Some(c) = alt.strip_suffix('#') {
+        (c.trim(), '#')
+    } else {
+        (alt, ' ')
+    };
+    let items: Vec<String> = match multi {
+        '+' => split_top_level(v).iter().map(|s| s.to_string()).collect(),
+        '#' => split_top_commas(v).iter().map(|s| s.trim().to_string()).collect(),
+        _ => vec![v.to_string()],
+    };
+    if items.is_empty() {
+        return false;
+    }
+    items.iter().all(|it| syntax_type_matches(comp, it.trim()))
+}
+
+// 단일 값 it 이 컴포넌트 comp(<type> 또는 keyword)에 맞는가.
+fn syntax_type_matches(comp: &str, it: &str) -> bool {
+    if comp.starts_with('<') && comp.ends_with('>') {
+        let ty = &comp[1..comp.len() - 1];
+        match ty {
+            "length" => it == "0" || math_length_valid(it, false),
+            "length-percentage" => it == "0" || math_length_valid(it, true),
+            "percentage" => math_number_valid(it) && it.contains('%'),
+            "number" => it.parse::<f64>().is_ok() || math_number_only_valid(it),
+            "integer" => {
+                it.parse::<i64>().is_ok()
+                    || (it.contains('(') && math_number_only_valid(it))
+            }
+            "color" => single_color_valid(it),
+            "angle" => it == "0" || math_angle_valid(it),
+            "time" => math_time_valid(it),
+            "resolution" => {
+                let low = it.to_ascii_lowercase();
+                ["dppx", "dpi", "dpcm", "x"].iter().any(|u| {
+                    low.strip_suffix(u)
+                        .map(|n| n.trim().parse::<f64>().is_ok())
+                        .unwrap_or(false)
+                })
+            }
+            "url" => it.to_ascii_lowercase().starts_with("url("),
+            "image" => {
+                let low = it.to_ascii_lowercase();
+                low.starts_with("url(")
+                    || low.contains("gradient(")
+                    || low.starts_with("image(")
+                    || low.starts_with("image-set(")
+            }
+            "custom-ident" => syntax_ident_valid(it),
+            "string" => it.starts_with('"') || it.starts_with('\''),
+            "transform-function" | "transform-list" => transform_valid(it) && it != "none",
+            _ => false,
+        }
+    } else {
+        it.eq_ignore_ascii_case(comp)
+    }
+}
+
 pub fn single_color_valid(raw: &str) -> bool {
     let toks = split_top_level(raw);
     if toks.len() != 1 {
