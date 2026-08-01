@@ -378,6 +378,19 @@ impl Interp {
                 return format!("{} {}", rg, cg);
             }
         }
+        // overflow / overscroll-behavior 두-값 단축: 두 롱핸드가 다 있으면 재구성(§CSSOM,
+        // gap 과 동일 방식 — 같으면 한 값, 다르면 "x y"). 다른 프로퍼티엔 영향 없음.
+        for (sh, x, y) in [
+            ("overflow", "overflow-x", "overflow-y"),
+            ("overscroll-behavior", "overscroll-behavior-x", "overscroll-behavior-y"),
+        ] {
+            if prop == sh {
+                let get = |n: &str| pairs.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+                if let (Some(vx), Some(vy)) = (get(x), get(y)) {
+                    return if vx == vy { vx } else { format!("{} {}", vx, vy) };
+                }
+            }
+        }
         String::new()
     }
 
@@ -1466,6 +1479,17 @@ impl Interp {
         let attr = self.style_attr(id);
         let mut pairs = style_pairs(&attr);
         pairs.retain(|(k, _)| k != prop);
+        // 단축을 지우거나 재설정하면 그 롱핸드도 함께 지운다(§CSSOM removeProperty/
+        // setProperty: 단축은 롱핸드로 저장되므로). 롱핸드 이름은 임의 유효값(initial,
+        // 모든 프로퍼티에 유효)으로 확장해 얻는다. 롱핸드면 확장이 자기 자신뿐이라 무영향.
+        let longhand_names: Vec<String> = crate::css::expand_decl_pub(prop, "initial")
+            .into_iter()
+            .map(|d| d.name)
+            .filter(|n| n != prop)
+            .collect();
+        if !longhand_names.is_empty() {
+            pairs.retain(|(k, _)| !longhand_names.contains(k));
+        }
         if !text_trimmed.is_empty() {
             // 인라인 스타일은 **지정값**을 보관한다 (계산값으로 접지 않는다).
             // 예전엔 여기서 computed_value_string 으로 접어서 `el.style.color = "black"`
