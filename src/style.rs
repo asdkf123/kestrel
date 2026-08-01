@@ -2852,6 +2852,17 @@ fn style_node<'a>(
                 Some(Value::Keyword(s)) => s.clone(),
                 _ => "rgb(0, 0, 0)".to_string(),
             };
+            // lh 단위 해석용 계산 line-height(px). 없으면 normal(1.2×fs) 근사.
+            let line_height_px: f32 = match values.get("line-height") {
+                Some(Value::Length(n, Unit::Px)) => *n,
+                Some(Value::Length(n, _)) => *n * fs,
+                Some(Value::Keyword(s)) => match crate::css::interpret_value(s.trim()) {
+                    Some(Value::Length(n, Unit::Px)) => n,
+                    Some(Value::Length(n, Unit::Number)) => n * fs,
+                    _ => fs * 1.2,
+                },
+                _ => fs * 1.2,
+            };
             let reg_updates: Vec<(String, Value)> = values
                 .iter()
                 .filter_map(|(k, v)| {
@@ -2875,7 +2886,7 @@ fn style_node<'a>(
                             s.clone()
                         };
                         crate::css::registered_computed_value(
-                            &reg.syntax, &resolved, fs, root_fs, vp, &current_color,
+                            &reg.syntax, &resolved, fs, root_fs, vp, &current_color, line_height_px,
                         )
                         .map(|tv| (k.clone(), tv))
                     } else {

@@ -1147,6 +1147,7 @@ pub(crate) fn registered_computed_value(
     root_fs: f32,
     vp: crate::style::Viewport,
     current_color: &str,
+    line_height: f32,
 ) -> Option<Value> {
     let low = syntax.to_ascii_lowercase();
     let has = |t: &str| low.contains(t);
@@ -1191,8 +1192,10 @@ pub(crate) fn registered_computed_value(
         return resolve_color_computed(value.trim(), current_color);
     }
     // <length*> 도 typed(문맥 해석·px 확정), 그 외는 정규화 문자열.
+    // lh/rlh 는 interpret_value 가 모르는 단위 → line-height 로 미리 px 화.
     if has("<length") || has("<percentage") {
-        return interpret_value(value.trim());
+        let v = resolve_lh_units(value.trim(), line_height, root_fs);
+        return interpret_value(&v);
     }
     computed_scalar_string(&low, value.trim(), fs, root_fs, vp).map(Value::Keyword)
 }
@@ -1232,6 +1235,46 @@ fn substitute_currentcolor(v: &str, cc: &str) -> String {
         if matches {
             out.push_str(cc);
             i = end;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+// 문자열 안의 lh/rlh 길이 단위만 line-height 기준 px 로 치환한다(interpret_value 가
+// 모르는 단위). em/rem/% 등 나머지는 그대로 둔다(기존 계산 경로가 처리).
+fn resolve_lh_units(v: &str, line_height: f32, root_fs: f32) -> String {
+    let chars: Vec<char> = v.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
+            let ns = i;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            let num: f32 = chars[ns..i].iter().collect::<String>().parse().unwrap_or(0.0);
+            let us = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            let unit = chars[us..i].iter().collect::<String>().to_ascii_lowercase();
+            match unit.as_str() {
+                "lh" => {
+                    out.push_str(&crate::style::num_css(num * line_height));
+                    out.push_str("px");
+                }
+                "rlh" => {
+                    // rlh = 루트 line-height. 근사: root_fs × normal(1.2).
+                    out.push_str(&crate::style::num_css(num * root_fs * 1.2));
+                    out.push_str("px");
+                }
+                _ => out.push_str(&chars[ns..i].iter().collect::<String>()),
+            }
         } else {
             out.push(chars[i]);
             i += 1;

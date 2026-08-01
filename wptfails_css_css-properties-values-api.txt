@@ -314,7 +314,6 @@ css/css-properties-values-api/registered-properties-inheritance.html	FAIL	FontU+
 css/css-properties-values-api/registered-properties-inheritance.html	FAIL	Calc expressions are resolved before inheritance	assert_equals: expected "20px" but got "var(U+2dU+2dcalcU+2dlength)"
 css/css-properties-values-api/registered-property-change-style-001.html	FAIL	New registered property declaration	assert_equals: Inherited value expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
 css/css-properties-values-api/registered-property-change-style-001.html	FAIL	Registered property overrides a previous declaration 	assert_equals: Resolved value expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
-css/css-properties-values-api/registered-property-computation.html	FAIL	<length> values are computed correctly [10lh]	assert_equals: expected "200px" but got "10lh"
 css/css-properties-values-api/registered-property-cssom.html	FAIL	Formerly valid values are still readable from inline styles but are computed as the unset value	assert_equals: expected "0px" but got "5"
 css/css-properties-values-api/registered-property-cssom.html	FAIL	Stylesheets can be modified by CSSOM	assert_equals: expected "0px" but got "banana"
 css/css-properties-values-api/registered-property-dependency-through-fallback.html	FAIL	registered color resolves through a var() fallback	assert_equals: expected "linearU+2dgradient(rgb(0, 0, 255))" but got "none"
@@ -351,7 +350,7 @@ css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with lh units are de
 css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with em units may be used	assert_equals: expected "0px" but got "16px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with ex units may be used	assert_approx_equals: unexpected value of fontU+2dsize expected 16 +/U+2d 0.1 but got 0
 css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with ch units may be used	assert_equals: expected "0px" but got "16px"
-css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with lh units may be used	assert_equals: expected "0px" but got "4lh"
+css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with lh units may be used	assert_equals: expected "0px" but got "normal"
 css/css-properties-values-api/url-resolution.html	FAIL	Unregistered property resolves against document (URL token)	Invalid URL: undefined
 css/css-properties-values-api/url-resolution.html	FAIL	Unregistered property resolves against document (URL function)	Invalid URL: undefined
 css/css-properties-values-api/url-resolution.html	FAIL	Multiple (registered) var reference resolve against respective sheets (URL token)	Unknown url format: url("http://localhost:8940/css/css-properties-values-api/support/main/foo.jpg)
