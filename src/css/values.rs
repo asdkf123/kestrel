@@ -9995,25 +9995,48 @@ fn syntax_component_valid(alt: &str) -> bool {
     }
 }
 
+// CSS 이스케이프 디코드(§CSS Syntax): \<hex>{1,6}(공백?) → 코드포인트, \<char> → char.
+fn css_unescape(s: &str) -> String {
+    let mut out = String::new();
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let mut hex = String::new();
+        while hex.len() < 6 && it.peek().map(|c| c.is_ascii_hexdigit()).unwrap_or(false) {
+            hex.push(it.next().unwrap());
+        }
+        if !hex.is_empty() {
+            if it.peek() == Some(&' ') {
+                it.next(); // 후행 공백 하나 소비
+            }
+            if let Some(cp) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                out.push(cp);
+            }
+        } else if let Some(nc) = it.next() {
+            out.push(nc); // 리터럴 이스케이프
+        }
+    }
+    out
+}
+
 fn syntax_ident_valid(id: &str) -> bool {
     if id.is_empty() {
         return false;
     }
+    let id = css_unescape(id); // 이스케이프 디코드 후 검사
     let low = id.to_ascii_lowercase();
-    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "none") {
-        // none 은 실제로 유효한 custom-ident 지만 여기선 키워드 문맥. 표준상 default 만
-        // 예약. none 허용.
-        if low == "none" {
-            // none 은 허용.
-        } else {
-            return false;
-        }
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default") {
+        return false; // CSS-wide 키워드·default 예약
     }
+    let is_name_char = |c: char| c.is_alphanumeric() || c == '_' || c == '-' || !c.is_ascii();
     let mut chars = id.chars();
     let first = chars.next().unwrap();
-    // 첫 글자: 알파/_/- (dashed ident). 나머지: 영숫자/_/-.
-    (first.is_ascii_alphabetic() || first == '_' || first == '-')
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    // 첫 글자: 알파/_/-/비ASCII. 나머지: name char.
+    (first.is_alphabetic() || first == '_' || first == '-' || !first.is_ascii())
+        && id.chars().all(is_name_char)
 }
 
 // initial 값 v 가 대안 alt(<type>|ident, +/# 승수)에 맞는가.
@@ -10074,7 +10097,8 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
             _ => false,
         }
     } else {
-        it.eq_ignore_ascii_case(comp)
+        // 키워드 매칭: 양쪽 이스케이프 디코드 후 비교(banan\61 == banana).
+        css_unescape(it).eq_ignore_ascii_case(&css_unescape(comp))
     }
 }
 
