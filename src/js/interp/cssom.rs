@@ -621,19 +621,34 @@ impl Interp {
         index: usize,
     ) -> Result<Value, String> {
         let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
-        let (parent_sel, len) = {
+        let (parent_sel, len, is_group) = {
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             match resolve_nested(sheets.get(si).and_then(|s| s.sheet.rules.get(ri)), np) {
-                Some(r) => (r.selector_text.clone(), r.nested.len()),
+                Some(r) => (
+                    r.selector_text.clone(),
+                    r.nested.len(),
+                    r.at_media.is_some() || r.at_supports.is_some(),
+                ),
                 None => return Ok(Value::Num(0.0)),
             }
         };
         if index > len {
             return Err(self.throw_dom("IndexSizeError", "규칙 인덱스가 범위를 벗어남"));
         }
+        // 대상이 중첩 선언(CSSNestedDeclarations)을 담을 수 있는 문맥인가(§CSS Nesting):
+        // 스타일 규칙(selector 있음)이거나, 스타일 규칙 안에 중첩된 그룹 규칙(np 비지 않음).
+        // 최상위 @media/@supports 나 시트에는 맨선언을 넣을 수 없다.
+        let nesting_context = if is_group { !np.is_empty() } else { !parent_sel.is_empty() };
         let Some(newrule) = crate::css::parse_one_nested_rule(text, &parent_sel, vw) else {
             return Err(self.throw_dom("SyntaxError", "규칙을 파싱할 수 없다"));
         };
+        // 파싱 결과가 맨선언(CSSNestedDeclarations)이면: 문맥이 아니거나 선언이 비면(빈 블록·
+        // 전부 무효) SyntaxError.
+        let is_bare_decls =
+            newrule.selector_text.is_empty() && newrule.at_media.is_none() && newrule.at_supports.is_none();
+        if is_bare_decls && (!nesting_context || newrule.declarations.is_empty()) {
+            return Err(self.throw_dom("SyntaxError", "이 문맥에 맨선언을 넣을 수 없다"));
+        }
         let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
         if let Some(r) = resolve_nested_mut(
             sheets.get_mut(si).and_then(|s| s.sheet.rules.get_mut(ri)),

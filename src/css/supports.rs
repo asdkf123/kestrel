@@ -472,16 +472,19 @@ mod tests {
 
     #[test]
     fn supports_at_rule_gates_rules_in_stylesheet() {
-        // 지원되는 조건 → 내부 규칙 포함
+        // @supports 는 CSSSupportsRule 컨테이너로 보존(§CSSOM). 매칭은 build_with 가 조건 평가.
         let ss = crate::css::parse(
             "@supports (display: grid) { .a { color: #ff0000; } }".to_string(),
         );
-        assert_eq!(ss.rules.len(), 1, "지원 조건이면 규칙 포함");
-        // 지원 안 되는 조건 → 내부 규칙 제외
+        assert_eq!(ss.rules.len(), 1);
+        assert!(supports_condition(ss.rules[0].at_supports.as_ref().unwrap()), "지원 조건 매칭");
+        assert!(ss.rules[0].nested.iter().any(|r| r.declarations.iter().any(|d| d.name == "color")));
+        // 지원 안 되는 조건 → 컨테이너는 남되 조건 불일치.
         let ss2 = crate::css::parse(
             "@supports not (display: grid) { .a { color: #ff0000; } }".to_string(),
         );
-        assert_eq!(ss2.rules.len(), 0, "미지원 조건이면 규칙 제외");
+        assert_eq!(ss2.rules.len(), 1);
+        assert!(!supports_condition(ss2.rules[0].at_supports.as_ref().unwrap()), "미지원 조건 불일치");
     }
 
     #[test]

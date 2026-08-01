@@ -2129,11 +2129,23 @@ impl Parser {
                 }
             }
         }
-        if media_matches(&query, self.viewport_width) {
-            inner
-        } else {
-            Vec::new()
-        }
+        // 최상위 @media 를 CSSMediaRule 컨테이너로 보존(§CSSOM). 매칭은 RuleIndex.build_with
+        // 의 flatten 이 조건을 뷰포트로 평가해 결정한다(중첩 @media 와 동일한 통일 경로) —
+        // 예전엔 파스시점 flatten 이라 CSSOM 에서 @media 규칙이 사라졌다.
+        let cond = crate::css::values::serialize_media_query_list(query.trim());
+        vec![Rule {
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            selector_text: String::new(),
+            ua: false,
+            layer: self.cur_layer.clone(),
+            container: self.cur_container.clone(),
+            at_property: None,
+            at_media: Some(cond),
+            at_custom_media: None,
+            at_supports: None,
+            nested: inner,
+        }]
     }
 
     // '@layer a, b;'  (순서만 선언)  또는  '@layer name { rules }'  또는  '@layer { rules }'.
@@ -2287,11 +2299,21 @@ impl Parser {
                 }
             }
         }
-        if supports_condition(cond.trim()) {
-            inner
-        } else {
-            Vec::new()
-        }
+        // 최상위 @supports 를 CSSSupportsRule 컨테이너로 보존(§CSSOM). 매칭은 build_with
+        // flatten 이 조건을 평가(supports_condition). @media 와 통일 경로.
+        vec![Rule {
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            selector_text: String::new(),
+            ua: false,
+            layer: self.cur_layer.clone(),
+            container: self.cur_container.clone(),
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+            at_supports: Some(cond.trim().to_string()),
+            nested: inner,
+        }]
     }
 
     // '@font-face { font-family: ...; src: url(...) ...; }' → FontFace.
@@ -3668,19 +3690,28 @@ mod tests {
             "@media (min-width: 768px) { p { color: #ff0000; } } div { width: 5px; }".to_string(),
             1000.0,
         );
-        assert_eq!(ss.rules.len(), 2);
-        assert!(ss.rules.iter().any(|r| r.declarations.iter().any(|d| d.name == "color")));
+        // @media 는 CSSMediaRule 컨테이너로 보존(§CSSOM). 매칭은 build_with 가 조건 평가.
+        assert_eq!(ss.rules.len(), 2); // @media 컨테이너 + div
+        let media = ss.rules.iter().find(|r| r.at_media.is_some()).expect("@media 컨테이너");
+        assert!(media_matches(media.at_media.as_ref().unwrap(), 1000.0), "1000px 매칭");
+        assert!(media.nested.iter().any(|r| r.declarations.iter().any(|d| d.name == "color")));
     }
 
     #[test]
     fn media_min_width_excluded_when_viewport_too_narrow() {
-        // 뷰포트 600 → min-width:768 불일치 → 내부 규칙 드롭
+        // 뷰포트 600 → min-width:768 불일치. 컨테이너는 CSSOM 에 남되 조건 매칭 실패.
         let ss = parse_viewport(
             "@media (min-width: 768px) { p { color: #ff0000; } } div { width: 5px; }".to_string(),
             600.0,
         );
-        assert_eq!(ss.rules.len(), 1);
-        assert_eq!(ss.rules[0].declarations[0].name, "width");
+        assert_eq!(ss.rules.len(), 2); // @media 컨테이너 + div
+        let media = ss.rules.iter().find(|r| r.at_media.is_some()).expect("@media 컨테이너");
+        assert!(!media_matches(media.at_media.as_ref().unwrap(), 600.0), "600px 불일치");
+        // 최상위 div 규칙은 그대로.
+        assert!(ss
+            .rules
+            .iter()
+            .any(|r| r.at_media.is_none() && r.declarations.iter().any(|d| d.name == "width")));
     }
 
     #[test]
@@ -3719,17 +3750,22 @@ mod tests {
                 .to_string(),
             1000.0,
         );
-        assert_eq!(ss.rules.len(), 1, "dark 블록 드롭 → p 규칙만");
+        // @media 컨테이너 보존 + p. dark 조건은 헤드리스(light)에서 불일치.
+        assert_eq!(ss.rules.len(), 2);
+        let media = ss.rules.iter().find(|r| r.at_media.is_some()).expect("@media 컨테이너");
+        assert!(!media_matches(media.at_media.as_ref().unwrap(), 1000.0), "dark 불일치");
     }
 
     #[test]
     fn media_max_width_and_print() {
-        // max-width:600 은 뷰포트 500 에서 매칭
+        // max-width:600 은 뷰포트 500 에서 매칭. @media 는 컨테이너로 보존.
         let ss = parse_viewport("@media (max-width: 600px) { p { width: 1px; } }".to_string(), 500.0);
         assert_eq!(ss.rules.len(), 1);
-        // print 전용은 화면(어떤 폭이든)에서 제외
+        assert!(media_matches(ss.rules[0].at_media.as_ref().unwrap(), 500.0), "max-width:600 @500 매칭");
+        // print 전용은 화면(어떤 폭이든)에서 불일치.
         let ss2 = parse_viewport("@media print { p { width: 1px; } }".to_string(), 1000.0);
-        assert_eq!(ss2.rules.len(), 0);
+        assert_eq!(ss2.rules.len(), 1);
+        assert!(!media_matches(ss2.rules[0].at_media.as_ref().unwrap(), 1000.0), "print 불일치");
     }
 
     #[test]
