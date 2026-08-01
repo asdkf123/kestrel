@@ -9862,9 +9862,13 @@ pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
     if s.is_empty() {
         return false;
     }
-    // 범용 '*': 어떤 initial 도 OK(있으면), 없어도 OK.
+    // 범용 '*': initial 은 선택. 있으면 유효한 커스텀 프로퍼티 값이어야(§CSS Syntax:
+    // CSS-wide 키워드·불균형 괄호/따옴표·top-level !/; 는 무효).
     if s == "*" {
-        return true;
+        return match initial {
+            None => true,
+            Some(v) => valid_any_value(v),
+        };
     }
     // '|' 로 대안 분리. 각 대안은 <type>|ident 에 +/# 승수.
     let alts: Vec<&str> = s.split('|').map(|a| a.trim()).collect();
@@ -9888,6 +9892,61 @@ pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
             alts.iter().any(|a| syntax_alt_matches(a, v))
         }
     }
+}
+
+// '*' syntax 의 initial 값 유효성(유효한 커스텀 프로퍼티 값 = 균형 잡힌 토큰 시퀀스).
+// CSS-wide 키워드·불균형 괄호[]{}·불균형 따옴표·top-level !/; 를 거부한다.
+fn valid_any_value(v: &str) -> bool {
+    let t = v.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let low = t.to_ascii_lowercase();
+    if matches!(low.as_str(), "initial" | "inherit" | "unset" | "revert" | "revert-layer") {
+        return false;
+    }
+    let mut paren = 0i32;
+    let mut brack = 0i32;
+    let mut brace = 0i32;
+    let mut quote: Option<char> = None;
+    let mut prev = ' ';
+    for c in t.chars() {
+        if let Some(q) = quote {
+            if c == q && prev != '\\' {
+                quote = None;
+            }
+            prev = c;
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '(' => paren += 1,
+            ')' => {
+                paren -= 1;
+                if paren < 0 {
+                    return false;
+                }
+            }
+            '[' => brack += 1,
+            ']' => {
+                brack -= 1;
+                if brack < 0 {
+                    return false;
+                }
+            }
+            '{' => brace += 1,
+            '}' => {
+                brace -= 1;
+                if brace < 0 {
+                    return false;
+                }
+            }
+            '!' | ';' if paren == 0 && brack == 0 && brace == 0 => return false,
+            _ => {}
+        }
+        prev = c;
+    }
+    paren == 0 && brack == 0 && brace == 0 && quote.is_none()
 }
 
 // 한 대안(<type>|ident + 선택적 +/#)의 syntax 문법 유효성. 엄격:
