@@ -6171,17 +6171,29 @@ impl Interp {
                     chain.into_iter().map(|s| Value::Str(s.to_string())).collect(),
                 )))
             }
-            // CSSOM 메서드
+            // CSSOM 메서드. 수신자가 시트면 최상위, CSSStyleRule/그룹규칙이면 그 규칙의
+            // .nested 에 대해 삽입/삭제(§CSSOM CSSGroupingRule, CSS Nesting).
             Native::SheetInsertRule => {
-                let Some(Value::Sheet(si)) = recv else { return Ok(Value::Num(0.0)) };
                 let text = args.first().map(to_display).unwrap_or_default();
-                let idx = args.get(1).map(to_num).unwrap_or(0.0).max(0.0) as usize;
-                self.sheet_insert_rule(si, &text, idx)
+                // index 는 WebIDL unsigned long(ToUint32): -1 → 4294967295 → 범위 밖.
+                let idx = args.get(1).map(to_num).unwrap_or(0.0) as i64 as u32 as usize;
+                match recv {
+                    Some(Value::Sheet(si)) => self.sheet_insert_rule(si, &text, idx),
+                    Some(Value::CssRule(si, ri, np)) => {
+                        self.rule_insert_nested(si, ri, &np, &text, idx)
+                    }
+                    _ => Ok(Value::Num(0.0)),
+                }
             }
             Native::SheetDeleteRule => {
-                let Some(Value::Sheet(si)) = recv else { return Ok(Value::Undefined) };
-                let idx = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
-                self.sheet_delete_rule(si, idx)
+                let idx = args.first().map(to_num).unwrap_or(0.0) as i64 as u32 as usize;
+                match recv {
+                    Some(Value::Sheet(si)) => self.sheet_delete_rule(si, idx),
+                    Some(Value::CssRule(si, ri, np)) => {
+                        self.rule_delete_nested(si, ri, &np, idx)
+                    }
+                    _ => Ok(Value::Undefined),
+                }
             }
             Native::RuleStyleGet => {
                 let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };

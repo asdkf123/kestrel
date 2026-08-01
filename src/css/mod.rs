@@ -858,6 +858,49 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
     }
 }
 
+// CSSOM insertRule 이 중첩 규칙(부모 style rule 의 .nested)에 넣을 규칙 하나를 파싱한다.
+// parent_sel 기준으로 desugar. `& .x { … }`/중첩 @media/맨선언(CSSNestedDeclarations)을
+// 처리한다. 파싱 결과가 규칙 하나가 아니면(무효 선택자 등) None → 호출부가 SyntaxError.
+pub fn parse_one_nested_rule(text: &str, parent_sel: &str, viewport_width: f32) -> Option<Rule> {
+    let mut parser = Parser {
+        pos: 0,
+        input: strip_comments(&preprocess_input(text)),
+        viewport_width,
+        font_faces: Vec::new(),
+        keyframes: std::collections::HashMap::new(),
+        keyframes_ft: std::collections::HashMap::new(),
+        layers: Vec::new(),
+        cur_container: None,
+        cur_layer: None,
+        anon_count: 0,
+        at_properties: std::collections::HashMap::new(),
+        default_namespace: None,
+        namespaces: std::collections::HashMap::new(),
+    };
+    let (decls, mut nested) = parser.parse_style_body(parent_sel);
+    // 맨선언만 있으면 CSSNestedDeclarations(빈 selector_text)로.
+    if nested.is_empty() && !decls.is_empty() {
+        return Some(Rule {
+            selectors: parse_selector_list(parent_sel).unwrap_or_default(),
+            declarations: decls,
+            selector_text: String::new(),
+            ua: false,
+            layer: None,
+            container: None,
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+            at_supports: None,
+            nested: Vec::new(),
+        });
+    }
+    // 규칙 하나만 유효할 때. (여러 개거나 0개면 insertRule 규격상 하나가 아님 → None.)
+    if nested.len() == 1 {
+        return nested.pop();
+    }
+    None
+}
+
 // 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
 // 캐스케이드에서 어떤 선택자보다 높은 우선순위 (스타일 적용 시 마지막에 얹음).
 // nth 인자 파싱: §CSS Syntax An+B 미세문법을 **엄격히**(공백 규칙 포함). 무효면

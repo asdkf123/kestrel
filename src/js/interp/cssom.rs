@@ -420,6 +420,10 @@ impl Interp {
                     } else {
                         Value::CssRule(si, ri, std::rc::Rc::new(np[..np.len() - 1].to_vec()))
                     }),
+                    // CSSStyleRule 은 CSSGroupingRule(§CSS Nesting) → insert/deleteRule 로
+                    // 중첩 규칙(.nested)을 조작한다(수신자가 CssRule 이면 네이티브가 np 처리).
+                    "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
+                    "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
                     _ => Ok(Value::Undefined),
                 }
             }
@@ -561,6 +565,70 @@ impl Interp {
         entry.sheet.rules.insert(idx, rule);
         self.css_epoch += 1;
         Ok(Value::Num(idx as f64))
+    }
+
+    // CSSGroupingRule.insertRule — 규칙(np 로 주소지정)의 .nested 에 파싱한 규칙을 삽입.
+    // 부모 selector_text 기준 desugar. 인덱스 초과 → IndexSizeError, 무효 규칙 → SyntaxError.
+    pub(super) fn rule_insert_nested(
+        &mut self,
+        si: usize,
+        ri: usize,
+        np: &[usize],
+        text: &str,
+        index: usize,
+    ) -> Result<Value, String> {
+        let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
+        let (parent_sel, len) = {
+            let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
+            match resolve_nested(sheets.get(si).and_then(|s| s.sheet.rules.get(ri)), np) {
+                Some(r) => (r.selector_text.clone(), r.nested.len()),
+                None => return Ok(Value::Num(0.0)),
+            }
+        };
+        if index > len {
+            return Err(self.throw_dom("IndexSizeError", "규칙 인덱스가 범위를 벗어남"));
+        }
+        let Some(newrule) = crate::css::parse_one_nested_rule(text, &parent_sel, vw) else {
+            return Err(self.throw_dom("SyntaxError", "규칙을 파싱할 수 없다"));
+        };
+        let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
+        if let Some(r) = resolve_nested_mut(
+            sheets.get_mut(si).and_then(|s| s.sheet.rules.get_mut(ri)),
+            np,
+        ) {
+            let idx = index.min(r.nested.len());
+            r.nested.insert(idx, newrule);
+        }
+        self.css_epoch += 1;
+        Ok(Value::Num(index as f64))
+    }
+
+    // CSSGroupingRule.deleteRule — 규칙(np)의 .nested 에서 index 규칙 제거. 초과 → IndexSizeError.
+    pub(super) fn rule_delete_nested(
+        &mut self,
+        si: usize,
+        ri: usize,
+        np: &[usize],
+        index: usize,
+    ) -> Result<Value, String> {
+        let ok = {
+            let Some(sheets) = self.sheets() else { return Ok(Value::Undefined) };
+            match resolve_nested_mut(
+                sheets.get_mut(si).and_then(|s| s.sheet.rules.get_mut(ri)),
+                np,
+            ) {
+                Some(r) if index < r.nested.len() => {
+                    r.nested.remove(index);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !ok {
+            return Err(self.throw_dom("IndexSizeError", "규칙 인덱스가 범위를 벗어남"));
+        }
+        self.css_epoch += 1;
+        Ok(Value::Undefined)
     }
 
     pub(super) fn sheet_delete_rule(&mut self, si: usize, index: usize) -> Result<Value, String> {
