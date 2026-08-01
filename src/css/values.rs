@@ -3645,6 +3645,37 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
             }
         }
     }
+    // srgb 공간 + 레거시 rgb()/rgba() origin 은 같은 공간이므로 채널 none 을 보존한다
+    // (§CSS Color 5: rgb(from rgb(none none none) r g b) → color(srgb none none none)).
+    // hsl/hwb origin 은 교차 공간 변환이라 none 이 유지되지 않는다(아래 폴백).
+    if space == "srgb" && (low.starts_with("rgb(") || low.starts_with("rgba(")) {
+        if let Some(p) = func_inner(&low).map(color_parts) {
+            if p.len() == 3 || p.len() == 4 {
+                // 채널: none→None, %→/100, 0-255 수→/255. 파싱 불가(calc 등)는 None 반환
+                // 해 아래 폴백으로(현행 동작 유지).
+                let ch = |s: &str| -> Option<Option<f32>> {
+                    let t = s.trim();
+                    if t.eq_ignore_ascii_case("none") {
+                        return Some(None);
+                    }
+                    if let Some(pc) = t.strip_suffix('%') {
+                        return pc.trim().parse::<f32>().ok().map(|n| Some(n / 100.0));
+                    }
+                    t.parse::<f32>().ok().map(|n| Some(n / 255.0))
+                };
+                if let (Some(a), Some(b), Some(c)) = (ch(&p[0]), ch(&p[1]), ch(&p[2])) {
+                    let alpha = if p.len() == 4 {
+                        parse_alpha(Some(&p[3])).map(comp_opt)
+                    } else {
+                        Some(Some(1.0))
+                    };
+                    if let Some(al) = alpha {
+                        return Some(([a, b, c], al));
+                    }
+                }
+            }
+        }
+    }
     // 교차 공간: sRGB 를 거쳐 변환(none 없음).
     let f = srgb_float_of(&low)?;
     let co = srgb_to_space(space, f[0], f[1], f[2])?;
