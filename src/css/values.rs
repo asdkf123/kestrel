@@ -1481,6 +1481,23 @@ pub fn canon_calc_serialize(raw: &str) -> Option<String> {
         }
         return None;
     }
+    // 단일 인자 min()/max() 은 그 인자와 동등(§CSS Values, 파스 타임 단순화).
+    // 지정값 직렬화도 min(1% + 1px)→calc(1% + 1px), min(.1)→calc(0.1) 로 언랩한다.
+    for f in ["min(", "max("] {
+        if low.starts_with(f) && whole_call(t, f) {
+            let inner = &t[f.len()..t.len() - 1];
+            let parts = split_top_commas(inner);
+            if parts.len() == 1 {
+                let arg = parts[0].trim();
+                if let Some(s) = canon_flat_calc(arg) {
+                    return Some(format!("calc({})", s));
+                }
+                if let Some(s) = canon_length_math(arg) {
+                    return Some(format!("calc({})", s));
+                }
+            }
+        }
+    }
     // 벌거벗은 clamp/min/max/round/mod/rem/abs(단일 단위 길이) → calc(Nunit).
     for f in ["clamp(", "min(", "max(", "round(", "mod(", "rem(", "abs("] {
         if low.starts_with(f) && whole_call(t, f) {
