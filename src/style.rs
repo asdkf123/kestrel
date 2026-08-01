@@ -2801,6 +2801,26 @@ fn style_node<'a>(
                     _ => None,
                 })
                 .collect();
+            // 커스텀 프로퍼티 자신의 값 안 var() 해석(§Variables). 커스텀 프로퍼티는
+            // 항상 Keyword 로 저장돼 아래 var_props(Value::Var) 루프가 놓친다. 계산값은
+            // 치환된 값이므로 여기서 직접 치환한다. 미해석(정의 안 됨·fallback 없음·순환)
+            // 이면 무효 → 계산값 빈 문자열(제거). 등록 프로퍼티의 타입 계산값은 이후
+            // reg_updates 가 확정. custom 맵은 원문이라 substitute_var 가 전이적으로 해석.
+            let custom_var: Vec<(String, String)> = values
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Keyword(s) if k.starts_with("--") && s.contains("var(") => {
+                        Some((k.clone(), s.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (k, raw) in custom_var {
+                values.remove(&k);
+                for decl in crate::css::resolve_var(&k, &raw, &custom) {
+                    values.insert(decl.name, decl.value);
+                }
+            }
             let var_props: Vec<(String, String)> = values
                 .iter()
                 .filter_map(|(k, v)| match v {
@@ -2863,39 +2883,54 @@ fn style_node<'a>(
                 },
                 _ => fs * 1.2,
             };
-            let reg_updates: Vec<(String, Value)> = values
+            let reg_updates: Vec<(String, Option<Value>)> = values
                 .iter()
                 .filter_map(|(k, v)| {
                     if !k.starts_with("--") {
                         return None;
                     }
                     let reg = at_properties.get(k)?;
-                    if let Value::Keyword(s) = v {
-                        // 커스텀 프로퍼티는 항상 Keyword 로 저장돼 var_props 루프가 놓친다.
-                        // 등록 프로퍼티 값 안의 var() 를 계산된 커스텀 맵으로 먼저 치환한다.
-                        let resolved = if s.contains("var(") {
-                            crate::css::resolve_var(k, s, &custom)
-                                .into_iter()
-                                .find(|d| &d.name == k)
-                                .and_then(|d| match d.value {
-                                    Value::Keyword(r) => Some(r),
-                                    _ => None,
-                                })
-                                .unwrap_or_else(|| s.clone())
-                        } else {
-                            s.clone()
-                        };
-                        crate::css::registered_computed_value(
-                            &reg.syntax, &resolved, fs, root_fs, vp, &current_color, line_height_px,
-                        )
-                        .map(|tv| (k.clone(), tv))
+                    let Value::Keyword(s) = v else { return None };
+                    // 커스텀 프로퍼티는 항상 Keyword 로 저장돼 var_props 루프가 놓친다.
+                    // 등록 프로퍼티 값 안의 var() 를 계산된 커스텀 맵으로 먼저 치환한다.
+                    let resolved = if s.contains("var(") {
+                        crate::css::resolve_var(k, s, &custom)
+                            .into_iter()
+                            .find(|d| &d.name == k)
+                            .and_then(|d| match d.value {
+                                Value::Keyword(r) => Some(r),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| s.clone())
                     } else {
-                        None
-                    }
+                        s.clone()
+                    };
+                    // 계산값 시점 검증(§Properties & Values API): 치환 결과가 syntax 에
+                    // 맞지 않거나 미해석 var 이면 무효 → 초기값(없으면 빈 문자열=제거).
+                    let valid = !resolved.contains("var(")
+                        && crate::css::value_matches_syntax(&reg.syntax, &resolved);
+                    let src = if valid { Some(resolved) } else { reg.initial.clone() };
+                    let out = match src {
+                        Some(val) => Some(
+                            crate::css::registered_computed_value(
+                                &reg.syntax, &val, fs, root_fs, vp, &current_color, line_height_px,
+                            )
+                            .unwrap_or(Value::Keyword(val)),
+                        ),
+                        None => None,
+                    };
+                    Some((k.clone(), out))
                 })
                 .collect();
             for (k, tv) in reg_updates {
-                values.insert(k, tv);
+                match tv {
+                    Some(v) => {
+                        values.insert(k, v);
+                    }
+                    None => {
+                        values.remove(&k);
+                    }
+                }
             }
             // font-size 외 속성의 em/rem 을 px 로 확정한다 (computed value).
             // em 은 요소 자신의 font-size(fs), rem 은 루트 기준(DEFAULT_FONT_SIZE).

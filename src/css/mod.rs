@@ -53,6 +53,7 @@ pub use values::calc_size_valid;
 pub use values::calc_size_canonical;
 pub use values::canon_calc_serialize;
 pub use values::register_property_valid;
+pub use values::value_matches_syntax;
 pub(crate) use values::normalize_gradient_serial;
 pub(crate) use values::gradient_valid;
 pub(crate) use values::{background_image_layers_valid, border_image_source_valid, cross_fade_valid};

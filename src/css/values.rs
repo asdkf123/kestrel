@@ -9893,7 +9893,7 @@ pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
             if v.to_ascii_lowercase().contains("var(") || v.to_ascii_lowercase().contains("env(") {
                 return false;
             }
-            alts.iter().any(|a| syntax_alt_matches(a, v))
+            alts.iter().any(|a| syntax_alt_matches(a, v, true))
         }
     }
 }
@@ -10044,7 +10044,7 @@ fn syntax_ident_valid(id: &str) -> bool {
 }
 
 // initial 값 v 가 대안 alt(<type>|ident, +/# 승수)에 맞는가.
-fn syntax_alt_matches(alt: &str, v: &str) -> bool {
+fn syntax_alt_matches(alt: &str, v: &str, require_independent: bool) -> bool {
     let (comp, multi) = if let Some(c) = alt.strip_suffix('+') {
         (c.trim(), '+')
     } else if let Some(c) = alt.strip_suffix('#') {
@@ -10060,7 +10060,19 @@ fn syntax_alt_matches(alt: &str, v: &str) -> bool {
     if items.is_empty() {
         return false;
     }
-    items.iter().all(|it| syntax_type_matches(comp, it.trim()))
+    items.iter().all(|it| syntax_type_matches(comp, it.trim(), require_independent))
+}
+
+// 값 value 가 등록 syntax 에 맞는가(계산값 시점 검증 — 계산 독립성은 요구하지 않음:
+// 10em 도 유효한 <length> 다). syntax 불일치 시 프로퍼티는 계산값 시점 무효가 되어
+// 초기값/상속값으로 대체된다. universal '*' 은 비지 않은 토큰 스트림이면 유효.
+pub fn value_matches_syntax(syntax: &str, value: &str) -> bool {
+    let s = syntax.trim();
+    let v = value.trim();
+    if s == "*" {
+        return !v.is_empty();
+    }
+    s.split('|').map(|a| a.trim()).any(|a| syntax_alt_matches(a, v, false))
 }
 
 // @property initial 길이가 계산 독립적인가(절대 단위 px/cm/mm/in/pt/pc/q·순수 수만).
@@ -10154,14 +10166,16 @@ fn transform_initial_independent(v: &str) -> bool {
     true
 }
 
-// 단일 값 it 이 컴포넌트 comp(<type> 또는 keyword)에 맞는가.
-fn syntax_type_matches(comp: &str, it: &str) -> bool {
+// 단일 값 it 이 컴포넌트 comp(<type> 또는 keyword)에 맞는가. require_independent 는
+// 초기값 검증 시 true(계산 독립적 단위만 허용); 계산값 시점 검증 시 false(em 등 허용).
+fn syntax_type_matches(comp: &str, it: &str, require_independent: bool) -> bool {
+    let indep = |v: &str| !require_independent || independent_length(v);
     if comp.starts_with('<') && comp.ends_with('>') {
         let ty = &comp[1..comp.len() - 1];
         match ty {
-            "length" => (it == "0" || math_length_valid(it, false)) && independent_length(it),
+            "length" => (it == "0" || math_length_valid(it, false)) && indep(it),
             "length-percentage" => {
-                (it == "0" || math_length_valid(it, true)) && independent_length(it)
+                (it == "0" || math_length_valid(it, true)) && indep(it)
             }
             "percentage" => math_number_valid(it) && it.contains('%'),
             "number" => it.parse::<f64>().is_ok() || math_number_only_valid(it),
@@ -10169,7 +10183,7 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
                 it.parse::<i64>().is_ok()
                     || (it.contains('(') && math_number_only_valid(it))
             }
-            "color" => single_color_valid(it),
+            "color" => color_value_matches(it, require_independent),
             "angle" => math_angle_valid(it) && it != "0", // 단위 없는 0 은 <angle> 아님
             "time" => math_time_valid(it),
             "resolution" => {
@@ -10178,7 +10192,8 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
                     low.strip_suffix(u)
                         .map(|n| n.trim().parse::<f64>().map(|f| f >= 0.0).unwrap_or(false))
                         .unwrap_or(false)
-                })
+                }) || (low.starts_with("calc(")
+                    && ["dppx", "dpi", "dpcm", "x"].iter().any(|u| low.contains(u)))
             }
             "url" => it.to_ascii_lowercase().starts_with("url("),
             "image" => {
@@ -10198,7 +10213,9 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
                     && !it[1..it.len() - 1].contains(b[0] as char)
             }
             "transform-function" | "transform-list" => {
-                transform_valid(it) && it != "none" && transform_initial_independent(it)
+                transform_valid(it)
+                    && it != "none"
+                    && (!require_independent || transform_initial_independent(it))
             }
             _ => false,
         }
@@ -10207,6 +10224,46 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
         // 디코드 후 정확히 일치해야(foo != Foo, banan\61 == banana).
         css_unescape(it) == css_unescape(comp)
     }
+}
+
+// <color> 값 매칭. 계산값 시점(require_independent=false)에는 currentcolor 와
+// light-dark(A,B)(color-scheme 로 하나 선택)도 유효한 색이다. 초기값 검증
+// (require_independent=true)에는 계산 독립적이어야 하므로 currentcolor/light-dark 불가.
+fn color_value_matches(it: &str, require_independent: bool) -> bool {
+    let t = it.trim();
+    let low = t.to_ascii_lowercase();
+    if !require_independent {
+        if low.starts_with("light-dark(") && t.ends_with(')') {
+            let inner = &t["light-dark(".len()..t.len() - 1];
+            let args = split_top_commas(inner);
+            return args.len() == 2 && args.iter().all(|a| color_value_matches(a.trim(), false));
+        }
+        // 함수 안 currentcolor(color-mix/relative)를 임의 색으로 치환해 검사.
+        if low.contains("currentcolor") {
+            let sub = replace_ci(t, "currentcolor", "black");
+            return single_color_valid(&sub);
+        }
+    }
+    single_color_valid(t)
+}
+
+// 대소문자 무시 부분문자열 치환(ASCII 토큰용). ASCII 소문자화는 바이트 길이를 보존한다.
+fn replace_ci(s: &str, from: &str, to: &str) -> String {
+    let low = s.to_ascii_lowercase();
+    let fl = from.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < s.len() {
+        if low[i..].starts_with(&fl) {
+            out.push_str(to);
+            i += from.len();
+        } else {
+            let ch = s[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
 }
 
 pub fn single_color_valid(raw: &str) -> bool {
