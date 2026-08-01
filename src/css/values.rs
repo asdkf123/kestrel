@@ -692,12 +692,13 @@ fn scalar_func_eval(name: &str, inner: &str) -> Option<(f64, SKind)> {
         "acos" => Some((eval_math_number(raw_args.first()?)?.acos().to_degrees(), SKind::Ang)),
         "atan" => Some((eval_math_number(raw_args.first()?)?.atan().to_degrees(), SKind::Ang)),
         "atan2" => {
+            // 두 인자는 같은 차원(수/각도/시간). 비율이 무차원이라 결과는 각도.
+            // atan2(1s, 1000ms)=45deg, atan2(37.32, 10)=75deg.
             if raw_args.len() != 2 {
                 return None;
             }
-            let a = eval_math_number(&raw_args[0])?;
-            let b = eval_math_number(&raw_args[1])?;
-            Some((a.atan2(b).to_degrees(), SKind::Ang))
+            let (v, _k) = scalar_same(&raw_args)?;
+            Some((v[0].atan2(v[1]).to_degrees(), SKind::Ang))
         }
         // 삼각/부호/지수 계열은 순수 수 결과 → number 평가기로.
         "sin" | "cos" | "tan" | "sign" | "sqrt" | "exp" | "pow" | "log" | "progress" => {
