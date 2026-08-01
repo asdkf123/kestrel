@@ -1024,6 +1024,14 @@ fn split_top_kw<'a>(s: &'a str, kw: &str) -> Vec<&'a str> {
 // style() 값 동등성(§CSS Values 5: 계산값 비교). 등록 custom prop 은 계산값으로
 // 비교되므로 calc(1 + 2)와 3, calc(1px + 2px)와 3px 가 같다. 둘 다 수면 수 비교,
 // 아니면 calc 캐논/문자열 비교(대소문자 무시).
+// 값을 색으로 해석해 비교 키(rgba u8)로. 색이 아니면 None.
+fn color_key(v: &str) -> Option<(u8, u8, u8, u8)> {
+    match values::interpret_value(v.trim()) {
+        Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => Some((c.r, c.g, c.b, c.a)),
+        _ => None,
+    }
+}
+
 fn if_values_equal(a: &str, b: &str) -> bool {
     let a = a.trim();
     let b = b.trim();
@@ -1032,6 +1040,10 @@ fn if_values_equal(a: &str, b: &str) -> bool {
     }
     if let (Some(x), Some(y)) = (values::eval_math_number(a), values::eval_math_number(b)) {
         return (x - y).abs() < 1e-9 || (x.is_nan() && y.is_nan());
+    }
+    // 색: 계산값 동등성(green == #008000 == rgb(0,128,0)). 둘 다 색으로 해석되면 비교.
+    if let (Some(ca), Some(cb)) = (color_key(a), color_key(b)) {
+        return ca == cb;
     }
     // 길이 등: calc 로 감싸 캐논화하면 "3px" 와 "calc(1px + 2px)" 가 같은 "calc(3px)".
     let norm = |s: &str| {
@@ -1044,13 +1056,13 @@ fn if_values_equal(a: &str, b: &str) -> bool {
 
 // style() 쿼리 평가: 불리언(and/or/not/괄호) + style-feature 리프. 리프는
 // --name(존재) 또는 --name: value(값 일치, initial=미설정/빈값, 미해석 var=불일치).
-fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>) -> Option<bool> {
+fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>, fs: f32) -> Option<bool> {
     let q = q.trim();
     let ors = split_top_kw(q, " or ");
     if ors.len() > 1 {
         let mut any = false;
         for o in ors {
-            match eval_style_query(o, custom)? {
+            match eval_style_query(o, custom, fs)? {
                 true => any = true,
                 false => {}
             }
@@ -1061,7 +1073,7 @@ fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>)
     if ands.len() > 1 {
         let mut all = true;
         for a in ands {
-            if !eval_style_query(a, custom)? {
+            if !eval_style_query(a, custom, fs)? {
                 all = false;
             }
         }
@@ -1069,10 +1081,32 @@ fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>)
     }
     let low = q.to_ascii_lowercase();
     if low.starts_with("not ") {
-        return eval_style_query(q[4..].trim(), custom).map(|b| !b);
+        return eval_style_query(q[4..].trim(), custom, fs).map(|b| !b);
     }
     if q.starts_with('(') && q.ends_with(')') {
-        return eval_style_query(&q[1..q.len() - 1], custom);
+        return eval_style_query(&q[1..q.len() - 1], custom, fs);
+    }
+    // 범위 비교(§CSS Conditional 5): style(A op B) — >, >=, <, <=, =. 양변을 정준
+    // 스칼라(같은 차원)로 해석해 비교. 피연산자가 --prop 이면 계산값으로 치환.
+    for (op, cmp) in [(">=", 0u8), ("<=", 1), (">", 2), ("<", 3), ("=", 4)] {
+        if let Some(pos) = find_top_op(q, op) {
+            let l = q[..pos].trim();
+            let r = q[pos + op.len()..].trim();
+            let lv = style_operand_scalar(l, custom, fs)?;
+            let rv = style_operand_scalar(r, custom, fs)?;
+            // 같은 차원끼리만 비교.
+            if lv.1 != rv.1 {
+                return Some(false);
+            }
+            let (a, b) = (lv.0, rv.0);
+            return Some(match cmp {
+                0 => a >= b,
+                1 => a <= b,
+                2 => a > b,
+                3 => a < b,
+                _ => (a - b).abs() < 1e-9,
+            });
+        }
     }
     // 리프: --name 또는 --name: value.
     let (name, expected) = match split_top_by(q, ':').as_slice() {
@@ -1096,9 +1130,127 @@ fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>)
     })
 }
 
+// style() 범위 비교의 피연산자를 정준 스칼라 (수치, 차원종류)로. --prop 이면 계산값
+// (custom)로 치환한 뒤 해석. 차원종류: 0=수, 1=각도(deg), 2=시간(s), 3=길이(px),
+// 4=해상도(dppx), 5=퍼센트.
+fn style_operand_scalar(
+    operand: &str,
+    custom: &std::collections::HashMap<String, String>,
+    fs: f32,
+) -> Option<(f64, u8)> {
+    let t = operand.trim();
+    let resolved = if t.starts_with("--") {
+        custom.get(t).map(|s| s.trim().to_string())?
+    } else {
+        t.to_string()
+    };
+    style_scalar(&resolved, fs)
+}
+
+// 단일 dimensioned 값을 정준 스칼라로. calc 도 각도/시간/수는 기존 평가기 사용.
+fn style_scalar(v: &str, fs: f32) -> Option<(f64, u8)> {
+    let t = v.trim();
+    let low = t.to_ascii_lowercase();
+    // 퍼센트.
+    if let Some(n) = low.strip_suffix('%') {
+        if let Ok(x) = n.trim().parse::<f64>() {
+            return Some((x, 5));
+        }
+    }
+    // 해상도.
+    for (u, f) in [("dppx", 1.0), ("x", 1.0), ("dpi", 1.0 / 96.0), ("dpcm", 2.54 / 96.0)] {
+        if let Some(n) = low.strip_suffix(u) {
+            if let Ok(x) = n.trim().parse::<f64>() {
+                return Some((x * f, 4));
+            }
+        }
+    }
+    // 시간(s/ms). eval_math_time_s 는 s 로 정규화.
+    if low.ends_with("ms") || low.ends_with('s') {
+        if let Some(s) = values::eval_math_time_s(t) {
+            return Some((s, 2));
+        }
+    }
+    // 각도(deg/rad/grad/turn) → deg.
+    if low.ends_with("deg") || low.ends_with("rad") || low.ends_with("grad") || low.ends_with("turn")
+    {
+        if let Some(d) = values::eval_math_angle_deg(t) {
+            return Some((d, 1));
+        }
+    }
+    // 길이 → px(문맥 단위 em/ex/ch 는 fs 기준).
+    if let Some(px) = style_len_px(&low, fs) {
+        return Some((px, 3));
+    }
+    // 순수 수(calc 포함).
+    if let Some(n) = values::eval_math_number(t) {
+        return Some((n, 0));
+    }
+    None
+}
+
+// 단일 <length> 리터럴 → px. 상대 단위(em/ex/ch)는 fs 기준, 뷰포트 단위는 미지원.
+fn style_len_px(low: &str, fs: f32) -> Option<f64> {
+    let fs = fs as f64;
+    for (u, f) in [
+        ("px", 1.0),
+        ("rem", 16.0),
+        ("rlh", 16.0 * 1.2),
+        ("em", fs),
+        ("lh", fs * 1.2),
+        ("ex", fs * 0.5),
+        ("cap", fs * 0.7),
+        ("ch", fs * 0.5),
+        ("ic", fs),
+        ("cm", 96.0 / 2.54),
+        ("mm", 96.0 / 25.4),
+        ("q", 96.0 / 25.4 / 4.0),
+        ("in", 96.0),
+        ("pt", 96.0 / 72.0),
+        ("pc", 16.0),
+    ] {
+        if let Some(n) = low.strip_suffix(u) {
+            if let Ok(x) = n.trim().parse::<f64>() {
+                return Some(x * f);
+            }
+        }
+    }
+    None
+}
+
+// 문자열 s 에서 최상위(괄호 밖) 연산자 op 의 위치. 부등호 안 겹침(>= 먼저 시도)에
+// 주의. '=' 는 앞뒤가 다른 부등호 문자가 아닐 때만(>=,<= 는 별도 처리).
+fn find_top_op(s: &str, op: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0usize;
+    while i + op.len() <= bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && &s[i..i + op.len()] == op {
+            // '=' 단독은 >=,<= 의 일부가 아니어야.
+            if op == "=" && (i > 0 && (bytes[i - 1] == b'>' || bytes[i - 1] == b'<')) {
+                i += 1;
+                continue;
+            }
+            // '>' '<' 는 뒤가 '=' 이면 >=,<= 라 건너뜀(별도 op 로 이미 시도됨).
+            if (op == ">" || op == "<") && i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                i += 1;
+                continue;
+            }
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
 // if() 조건 평가(§CSS Values 5). 불리언(and/or/not/괄호) + 리프(style/supports).
 // media() 는 viewport 필요 → None(호출부가 원문 유지). custom: 계산된 커스텀 프로퍼티.
-fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<bool> {
+fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32, fs: f32) -> Option<bool> {
     let c = cond.trim();
     if c.eq_ignore_ascii_case("else") {
         return Some(true);
@@ -1108,7 +1260,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
     if ors.len() > 1 {
         let mut any = false;
         for o in ors {
-            match eval_if_condition(o, custom, vw, vh) {
+            match eval_if_condition(o, custom, vw, vh, fs) {
                 Some(true) => any = true,
                 Some(false) => {}
                 None => return None,
@@ -1121,7 +1273,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
     if ands.len() > 1 {
         let mut all = true;
         for a in ands {
-            match eval_if_condition(a, custom, vw, vh) {
+            match eval_if_condition(a, custom, vw, vh, fs) {
                 Some(true) => {}
                 Some(false) => all = false,
                 None => return None,
@@ -1132,7 +1284,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
     // not.
     let low = c.to_ascii_lowercase();
     if let Some(rest) = low.strip_prefix("not ").map(|_| c[4..].trim()) {
-        return eval_if_condition(rest, custom, vw, vh).map(|b| !b);
+        return eval_if_condition(rest, custom, vw, vh, fs).map(|b| !b);
     }
     // 괄호 그룹: 전체가 (…) 하나면 벗겨 재귀.
     if c.starts_with('(') && c.ends_with(')') {
@@ -1155,13 +1307,13 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
             let _ = k;
         }
         if ok && d == 0 {
-            return eval_if_condition(inner, custom, vw, vh);
+            return eval_if_condition(inner, custom, vw, vh, fs);
         }
     }
     // style(<query>) — 내부 불리언(and/or/not/괄호) + style-feature 리프.
     if low.starts_with("style(") {
         let inner = c.get(6..c.len().checked_sub(1)?)?;
-        return eval_style_query(inner.trim(), custom);
+        return eval_style_query(inner.trim(), custom, fs);
     }
     // supports(<condition>): 기존 @supports 평가기 재사용(and/or/not·선언·선택자).
     // bare 선언(display: table-cell)은 괄호로 감싼다(평가기는 (decl) 형태 기대).
@@ -1573,7 +1725,7 @@ fn unescape_css_string(s: &str) -> String {
     out
 }
 
-pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<String> {
+pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32, fs: f32) -> Option<String> {
     let t = raw.trim();
     let low = t.to_ascii_lowercase();
     if !low.starts_with("if(") || !t.ends_with(')') {
@@ -1612,7 +1764,7 @@ pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String
         // value 는 첫 ':' 이후 전체(값 안의 ':' 보존).
         let val_start = cond.len() + 1;
         let value = &clause[val_start..];
-        match eval_if_condition(cond, custom, vw, vh) {
+        match eval_if_condition(cond, custom, vw, vh, fs) {
             Some(true) => return Some(value.trim_start().to_string()),
             Some(false) => saw_known = true,
             None => return None, // 미지원 조건 → 통째 미해석
