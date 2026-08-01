@@ -354,6 +354,8 @@ pub struct Rule {
     // UA(브라우저 기본) 스타일에서 온 규칙인가. `revert` 는 저자 선언을 되돌려
     // UA 원점 값으로 계산해야 하므로 원점을 구분해야 한다 (CSS Cascade §6.2).
     pub ua: bool,
+    // @property 규칙이면 (이름, 등록정보). CSSOM CSSPropertyRule 노출용. 셀렉터 규칙은 None.
+    pub at_property: Option<(String, PropertyReg)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1444,7 +1446,9 @@ impl Parser {
                 } else if ident == "container" {
                     rules.extend(self.parse_container());
                 } else if ident == "property" {
-                    self.parse_property_rule();
+                    if let Some(r) = self.parse_property_rule() {
+                        rules.push(r);
+                    }
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -1698,13 +1702,13 @@ impl Parser {
 
     // '@property --name { syntax: "<t>"; inherits: true|false; initial-value: v; }'
     // (§CSS Properties & Values API). 등록 정보를 at_properties 에 보관한다.
-    fn parse_property_rule(&mut self) {
+    fn parse_property_rule(&mut self) -> Option<Rule> {
         let name = self.consume_while(|c| c != '{' && c != ';' && c != '}').trim().to_string();
         if self.peek() != Some('{') {
             if self.peek() == Some(';') {
                 self.consume_char();
             }
-            return;
+            return None;
         }
         self.consume_char(); // '{'
         // 블록 원문 소비(균형 '}'). descriptor 는 프로퍼티 문법이 아니라 원문으로 읽는다
@@ -1729,7 +1733,7 @@ impl Parser {
             }
         }
         if !name.starts_with("--") {
-            return;
+            return None;
         }
         let mut syntax = String::new();
         let mut inherits = false;
@@ -1747,9 +1751,24 @@ impl Parser {
             }
         }
         if syntax.is_empty() {
-            return; // syntax 필수
+            return None; // syntax 필수
         }
-        self.at_properties.insert(name, PropertyReg { syntax, inherits, initial });
+        // syntax·initialValue 유효성(§Properties & Values API). 무효면 규칙 드롭
+        // (등록 안 됨). 비-* syntax 는 initial-value 필수.
+        if !values::register_property_valid(&syntax, initial.as_deref()) {
+            return None;
+        }
+        let reg = PropertyReg { syntax, inherits, initial };
+        self.at_properties.insert(name.clone(), reg.clone());
+        Some(Rule {
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            selector_text: String::new(),
+            ua: false,
+            layer: self.cur_layer.clone(),
+            container: self.cur_container.clone(),
+            at_property: Some((name, reg)),
+        })
     }
 
     // '@keyframes name { 0%{...} 100%{...} }' — 최종(100%/to) 프레임 선언만 보관.
@@ -1837,6 +1856,7 @@ impl Parser {
                     ua: false,
                     layer: self.cur_layer.clone(),
                     container: self.cur_container.clone(),
+                    at_property: None,
                 })
             }
             None => {

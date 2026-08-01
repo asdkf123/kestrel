@@ -254,6 +254,7 @@ css/css-properties-values-api/at-property-cssom.html	FAIL	Rule for U+2dU+2dvalid
 css/css-properties-values-api/at-property-cssom.html	FAIL	Rule for U+2dU+2dvalidU+2dwhitespace returns expected value for CSSPropertyRule.initialValue	assert_true: expected true got false
 css/css-properties-values-api/at-property-cssom.html	FAIL	Rule for U+2dU+2dvALId returns expected value for CSSPropertyRule.initialValue	assert_true: expected true got false
 css/css-properties-values-api/at-property-cssom.html	FAIL	Rule for U+2dU+2dnoU+2dinitialU+2duniversalU+2dvalue returns expected value for CSSPropertyRule.initialValue	assert_true: expected true got false
+css/css-properties-values-api/at-property-optional-initial-value.html	FAIL	@property with empty initialU+2dvalue should use space character	assert_equals: backgroundU+2dcolor should be green when @property has empty initialU+2dvalue expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
 css/css-properties-values-api/at-property-typedom.html	FAIL	Properties declared with @property reify correctly	computedStyleMap(…) — div.computedStyleMap 이(가) undefined (함수 아님, 수신자=object)
 css/css-properties-values-api/at-property-typedom.html	FAIL	ReU+2ddeclaring a property with a different type affects reification	computedStyleMap(…) — div.computedStyleMap 이(가) undefined (함수 아님, 수신자=object)
 css/css-properties-values-api/at-property-viewport-units-dynamic.html	FAIL	@property: viewport units in initial value (dynamic)	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
@@ -281,24 +282,15 @@ css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvi is 40px
 css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvb is 20px	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
 css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvmin is 20px	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
 css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvmax is 40px	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["<color>"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["<color> | none"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["<color># | <image> | none"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["foo | <length>#"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["foo | bar | baz"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["notasyntax"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["*"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for [" * "]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["* "]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for [" * "]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' returns expected value for ["red"]	rule.syntax — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' returns expected value for [10px]	rule.initialValue — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' returns expected value for [rgb(1, 2, 3)]	rule.initialValue — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' returns expected value for [red]	rule.initialValue — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' returns expected value for [foo]	rule.initialValue — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' returns expected value for [foo(){}]	rule.initialValue — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' returns expected value for [true]	rule.inherits — rule 이(가) undefined (읽을 수 없음)
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' returns expected value for [false]	rule.inherits — rule 이(가) undefined (읽을 수 없음)
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' makes the @property rule invalid for [<color>]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' makes the @property rule invalid for [foo | bar]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' makes the @property rule invalid for [var(U+2dU+2dx)]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [none]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [0]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [1]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for ["true"]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for ["false"]	assert_true: expected true got false
+css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [calc(0)]	assert_true: expected true got false
 css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>, 'foo bar', false]	assert_equals: expected "\"foo bar\"" but got "'foo bar'"
 css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>,  'foo bar' , false]	assert_equals: expected "\"foo bar\"" but got "'foo bar'"
 css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>, '"foo" bar', false]	assert_equals: expected "\"\\\"foo\\\" bar\"" but got "'\"foo\" bar'"
@@ -310,28 +302,16 @@ css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>+ | <s
 css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string># | <string>+, 'foo', 'bar', false]	assert_equals: expected "\"foo\", \"bar\"" but got "'foo', 'bar'"
 css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string># | <string>+, 'foo', 'bar' , false]	assert_equals: expected "\"foo\", \"bar\"" but got "'foo', 'bar'"
 css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string># | <string>+, "foo", 'bar', false]	assert_equals: expected "\"foo\", \"bar\"" but got "\"foo\", 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<string>, 1px, false]	assert_equals: expected "" but got "1px"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<string>, foo, false]	assert_equals: expected "" but got "foo"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<string>, calc(1 + 2), false]	assert_equals: expected "" but got "calc(1 + 2)"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<string>, rgb(255, 99, 71), false]	assert_equals: expected "" but got "rgb(255, 99, 71)"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<string>, 'foo' 2px, false]	assert_equals: expected "" but got "'foo' 2px"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [undefined, green, false]	assert_equals: expected "" but got "green"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<color>, green, undefined]	assert_equals: expected "" but got "rgb(0, 128, 0)"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<gandalf>, grey, false]	assert_equals: expected "" but got "grey"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [gandalf, grey, false]	assert_equals: expected "" but got "grey"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<color>, notacolor, false]	assert_equals: expected "" but got "notacolor"
-css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<length>, 10em, false]	assert_equals: expected "" but got "160px"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dfunction>, translateX(1em), false]	assert_equals: expected "" but got "translateX(16px)"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dfunction>, translateY(1lh), false]	assert_equals: expected "" but got "translateY(16px)"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dlist>, rotate(10deg) translateX(1em), false]	assert_equals: expected "" but got "rotate(10deg) translateX(16px)"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dlist>, rotate(10deg) translateY(1lh), false]	assert_equals: expected "" but got "rotate(10deg) translateY(16px)"
-css/css-properties-values-api/at-property.html	FAIL	NonU+2duniversal registration are invalid without an initial value	assert_equals: expected "calc(1px + 1px)" but got "2px"
 css/css-properties-values-api/determine-registration.html	FAIL	CSS.registerProperty wins over @property	assert_equals: expected "rgb(0, 128, 0)" but got "2px"
 css/css-properties-values-api/determine-registration.html	FAIL	@property later in document order wins	assert_equals: expected "6" but got "3px"
 css/css-properties-values-api/determine-registration.html	FAIL	@property later in document order wins (overridding definition with inherits=true)	assert_equals: expected "20px" but got "10px"
 css/css-properties-values-api/determine-registration.html	FAIL	@property later in document order wins (overridding definition with inherits=false)	assert_equals: expected "20px" but got "10px"
 css/css-properties-values-api/determine-registration.html	FAIL	Invalid @property rule (missing inherits descriptor) does not overwrite previous valid rule	assert_equals: expected "1px" but got "rgb(0, 128, 0)"
-css/css-properties-values-api/determine-registration.html	FAIL	Invalid @property rule (missing initialU+2dvalue) does not overwrite previous valid rule	assert_equals: expected "1px" but got ""
 css/css-properties-values-api/get-computed-style-enumeration.html	FAIL	Custom properties specified on the node exposed when enumerating computed style.	assert_equals: expected (string) "50px" but got (undefined) undefined
 css/css-properties-values-api/get-computed-style-enumeration.html	FAIL	Inherited custom properties specified on the parent exposed when enumerating computed style.	assert_equals: expected (string) "parentU+2dA" but got (undefined) undefined
 css/css-properties-values-api/get-computed-style-enumeration.html	FAIL	Unspecified properties with initial values exposed when enumerating computed style.	assert_equals: expected (string) "20px" but got (undefined) undefined

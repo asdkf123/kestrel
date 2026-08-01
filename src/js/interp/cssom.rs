@@ -115,9 +115,33 @@ impl Interp {
                     _ => Ok(Value::Undefined),
                 }
             }
-            // CSSStyleRule
+            // CSSStyleRule / CSSPropertyRule
             Value::CssRule(si, ri) => {
                 let (si, ri) = (*si, *ri);
+                // @property 규칙(CSSPropertyRule §Properties & Values API) 전용 속성.
+                let atp = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|r| r.at_property.clone());
+                if let Some((name, reg)) = atp {
+                    return match key {
+                        "name" => Ok(Value::Str(name)),
+                        "syntax" => Ok(Value::Str(reg.syntax)), // 따옴표 없는 문자열
+                        "inherits" => Ok(Value::Bool(reg.inherits)),
+                        "initialValue" => Ok(Value::Str(reg.initial.clone().unwrap_or_default())),
+                        "cssText" => Ok(Value::Str(format!(
+                            "@property {} {{ syntax: \"{}\"; inherits: {}; initial-value: {}; }}",
+                            name,
+                            reg.syntax,
+                            reg.inherits,
+                            reg.initial.clone().unwrap_or_default()
+                        ))),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 match key {
                     "selectorText" => Ok(Value::Str(
                         self.sheets()
