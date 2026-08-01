@@ -3567,6 +3567,16 @@ fn comp_opt(c: Comp) -> Option<f32> {
 // sRGB 를 거쳐 변환한다(이 경우 none 은 소실 — 교차 공간의 analogous 는 근사).
 fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<f32>)> {
     let low = cs.trim().to_ascii_lowercase();
+    // 상대색 입력(rgb(from …) 등)은 먼저 계산해 그 계산색(serial, none 보존)으로 좌표를
+    // 뽑는다 — 예전엔 srgb_float_of 폴백에서 채널 none 이 0 으로 소실됐다(§CSS Color 5:
+    // color-mix/상대색 origin 의 none 성분은 보간에서 다른 색 값으로 대체돼야 한다).
+    if low.contains("(from ") {
+        if let Some(Value::ColorFn(_, serial)) = interpret_value(&low) {
+            if serial.as_ref() != low.as_str() {
+                return color_coords_none(space, &serial);
+            }
+        }
+    }
     // 같은 공간 함수면 성분을 none 보존해 직접.
     let direct = match space {
         "hsl" => low.starts_with("hsl(") || low.starts_with("hsla("),
