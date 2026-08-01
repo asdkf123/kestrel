@@ -7225,6 +7225,84 @@ pub fn border_image_source_valid(raw: &str) -> bool {
 
 // background-image 레이어 구조 검증: 각 레이어는 none 또는 <image>(함수).
 // auto 같은 bare 키워드·빈 레이어 거부(gradient/cross-fade 내부는 별도 검증기).
+// 중복 중첩 calc 평탄화(§CSS Values 4): calc() 의 내용이 정확히 또 하나의 calc(…)
+// 이면 바깥 한 겹을 벗긴다(calc(calc(X)) ≡ calc(X)). 의미 불변이라 안전. 문자열 어디의
+// calc 든 처리(재귀). var()/다른 함수는 건드리지 않는다.
+pub fn flatten_nested_calc(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        // "calc(" 시작(단어 경계: 앞이 식별자 문자가 아님).
+        let is_calc_start = chars[i].eq_ignore_ascii_case(&'c')
+            && i + 5 <= chars.len()
+            && chars[i..i + 5].iter().collect::<String>().eq_ignore_ascii_case("calc(")
+            && (i == 0 || !(chars[i - 1].is_ascii_alphanumeric() || chars[i - 1] == '-'));
+        if !is_calc_start {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        // 균형 괄호로 calc(...) 끝 찾기.
+        let open = i + 4;
+        let mut depth = 0i32;
+        let mut k = open;
+        while k < chars.len() {
+            match chars[k] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        if depth != 0 || k >= chars.len() {
+            // 불균형 — 원문 유지.
+            out.push_str(&chars[i..].iter().collect::<String>());
+            break;
+        }
+        let inner: String = chars[open + 1..k].iter().collect();
+        let inner_flat = flatten_nested_calc(inner.trim());
+        // 내용이 정확히 calc(...) 한 개면 바깥 벗김.
+        let il = inner_flat.trim();
+        let is_single_calc = il.to_ascii_lowercase().starts_with("calc(")
+            && il.ends_with(')')
+            && {
+                // 첫 '(' 의 짝이 끝인지(즉 calc(...) 하나로 전체를 감쌈).
+                let ic: Vec<char> = il.chars().collect();
+                let mut d = 0i32;
+                let mut end = 0;
+                for (j, &c) in ic.iter().enumerate().skip(4) {
+                    match c {
+                        '(' => d += 1,
+                        ')' => {
+                            d -= 1;
+                            if d == 0 {
+                                end = j;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                end == ic.len() - 1
+            };
+        if is_single_calc {
+            out.push_str(il); // 바깥 calc 벗김
+        } else {
+            out.push_str("calc(");
+            out.push_str(&inner_flat);
+            out.push(')');
+        }
+        i = k + 1;
+    }
+    out
+}
+
 // offset 단축용 <length-percentage>(단위 없는 0·calc 포함) 판정.
 pub fn offset_len_ok(t: &str) -> bool {
     let low = t.trim().to_ascii_lowercase();
@@ -11429,6 +11507,14 @@ mod tests {
             assert!(!shape_func_valid(v), "should reject shape: {v}");
         }
         assert!(!ray_valid("ray(0 sides)")); // bare 0 각도
+        // 중첩 calc 평탄화(안전 — 의미 불변).
+        assert_eq!(flatten_nested_calc("calc(calc(0px + clamp(1px, 1em, 1vh)))"), "calc(0px + clamp(1px, 1em, 1vh))");
+        assert_eq!(flatten_nested_calc("calc(calc(10px)) solid pink"), "calc(10px) solid pink");
+        assert_eq!(flatten_nested_calc("calc(calc(calc(1px)))"), "calc(1px)");
+        assert_eq!(flatten_nested_calc("calc(1px + 2px)"), "calc(1px + 2px)"); // 불변
+        assert_eq!(flatten_nested_calc("calc(1px + calc(2px * 3))"), "calc(1px + calc(2px * 3))"); // 부분 아님 — 유지
+        assert_eq!(flatten_nested_calc("10px"), "10px"); // calc 아님
+        assert_eq!(flatten_nested_calc("var(--x)"), "var(--x)"); // 다른 함수
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");

@@ -221,6 +221,14 @@ impl Interp {
     // (파싱된 값으로 전부 직렬화하면 이 모두가 계산값으로 접혀 버린다 — 실제로 그랬다.)
     pub(super) fn serialize_decl(prop: &str, raw: &str) -> String {
         let raw = raw.trim();
+        // 중복 중첩 calc 평탄화(calc(calc(X)) ≡ calc(X)). calc 가 둘 이상일 때만.
+        let raw_flat;
+        let raw = if raw.matches("calc(").count() >= 2 {
+            raw_flat = crate::css::flatten_nested_calc(raw);
+            raw_flat.as_str()
+        } else {
+            raw
+        };
         // image-set() 은 어느 이미지 프로퍼티에서든(background-image/content/
         // border-image-source/mask-image 등) 캐논 직렬화한다(§CSS Images 4).
         let rl = raw.to_ascii_lowercase();
