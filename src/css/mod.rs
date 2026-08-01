@@ -1148,7 +1148,7 @@ pub(crate) fn registered_computed_value(
     let low = syntax.to_ascii_lowercase();
     let has = |t: &str| low.contains(t);
     if !(has("<length") || has("<number") || has("<angle") || has("<time")
-        || has("<percentage") || has("<integer") || has("<resolution"))
+        || has("<percentage") || has("<integer") || has("<resolution") || has("<color"))
     {
         return None;
     }
@@ -1168,8 +1168,8 @@ pub(crate) fn registered_computed_value(
             .collect();
         return parts.map(|p| Value::Keyword(p.join(sep)));
     }
-    // 단일 값. <length*> 는 typed(문맥 단위 해석 필요), 그 외는 정규화 문자열.
-    if has("<length") || has("<percentage") {
+    // 단일 값. <length*>/<color> 는 typed(문맥 해석·rgb 직렬화), 그 외는 정규화 문자열.
+    if has("<length") || has("<percentage") || has("<color") {
         return interpret_value(value.trim());
     }
     computed_scalar_string(&low, value.trim(), fs, root_fs, vp).map(Value::Keyword)
