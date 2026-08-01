@@ -1949,6 +1949,11 @@ pub fn nest_canonical_selector(nsel: &str) -> String {
 }
 
 pub fn desugar_nested(nested: &str, parent: &str) -> String {
+    // 부모 선택자가 없으면(최상위 @media/@supports 안의 규칙) 상대화하지 않는다 —
+    // 그 안의 스타일 규칙은 절대 선택자다(@media 는 중첩상 투명). 원문 그대로.
+    if parent.trim().is_empty() {
+        return nested.trim().to_string();
+    }
     let is_parent = format!(":is({})", parent.trim());
     split_top_commas_str(nested)
         .iter()

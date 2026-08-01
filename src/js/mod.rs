@@ -1203,6 +1203,21 @@ for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   chain('CSSPropertyRule', 'CSSRule');
   chain('CSSNestedDeclarations', 'CSSRule');
 })();
+// CSSRule 타입 상수(§CSSOM CSSRule). 생성자와 프로토타입 양쪽에 노출 —
+// 테스트/코드가 `rule.type === CSSRule.MEDIA_RULE` 로 비교한다(예전엔 상수가
+// undefined 라 항상 실패).
+if (window.CSSRule) {
+  var __ruleConsts = {
+    STYLE_RULE: 1, CHARSET_RULE: 2, IMPORT_RULE: 3, MEDIA_RULE: 4,
+    FONT_FACE_RULE: 5, PAGE_RULE: 6, KEYFRAMES_RULE: 7, KEYFRAME_RULE: 8,
+    MARGIN_RULE: 9, NAMESPACE_RULE: 10, COUNTER_STYLE_RULE: 11, SUPPORTS_RULE: 12,
+    FONT_FEATURE_VALUES_RULE: 14
+  };
+  for (var __rk in __ruleConsts) {
+    CSSRule[__rk] = __ruleConsts[__rk];
+    if (CSSRule.prototype) CSSRule.prototype[__rk] = __ruleConsts[__rk];
+  }
+}
 // Text/Comment 는 **생성 가능한** 생성자다 (DOM §4.10/§4.8): new Text(data),
 // new Comment(data). document.createTextNode/createComment 로 분리 노드를 만든다.
 // 인자는 DOMString (undefined → ""). instanceof 는 브랜드 체인으로 판별.
