@@ -13638,7 +13638,8 @@ pub fn serialize_media_query_list(input: &str) -> String {
                 depth -= 1;
                 cur.push(c);
             }
-            ',' if depth == 0 => parts.push(std::mem::take(&mut cur)),
+            // 떠도는 ')' 로 depth 가 음수가 될 수 있으므로 <=0 에서 분할.
+            ',' if depth <= 0 => parts.push(std::mem::take(&mut cur)),
             _ => cur.push(c),
         }
     }
@@ -13727,7 +13728,8 @@ fn serialize_mf_value(v: &str) -> String {
     if !low.contains("calc(") && !low.contains('(') {
         if let Some(si) = v.find('/') {
             let (a, b) = (v[..si].trim(), v[si + 1..].trim());
-            if !a.is_empty() && !b.is_empty() {
+            // <ratio> 는 양쪽이 수(정수/실수)일 때만. active/none 같은 건 비율 아님.
+            if a.parse::<f64>().is_ok() && b.parse::<f64>().is_ok() {
                 return format!("{} / {}", a, b);
             }
         }

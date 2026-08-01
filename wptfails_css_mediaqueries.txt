@@ -45,8 +45,6 @@ css/mediaqueries/dynamic-range.html	FAIL	Should be parseable: '(dynamicU+2drange
 css/mediaqueries/dynamic-range.html	FAIL	Should be parseable: '(videoU+2ddynamicU+2drange: 0)'	규칙을 파싱할 수 없다
 css/mediaqueries/dynamic-range.html	FAIL	Should be parseable: '(videoU+2ddynamicU+2drange: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/dynamic-range.html	FAIL	Should be parseable: '(videoU+2ddynamicU+2drange: invalid)'	규칙을 파싱할 수 없다
-css/mediaqueries/dynamic-range.html	FAIL	Check that dynamicU+2drange evaluates to false in the boolean context	assert_false: expected false got true
-css/mediaqueries/dynamic-range.html	FAIL	Check that videoU+2ddynamicU+2drange evaluates to false in the boolean context	assert_false: expected false got true
 css/mediaqueries/forced-colors.html	FAIL	Should be known: '(forcedU+2dcolors)'	규칙을 파싱할 수 없다
 css/mediaqueries/forced-colors.html	FAIL	Should be known: '(forcedU+2dcolors: none)'	규칙을 파싱할 수 없다
 css/mediaqueries/forced-colors.html	FAIL	Should be known: '(forcedU+2dcolors: active)'	규칙을 파싱할 수 없다
@@ -55,8 +53,7 @@ css/mediaqueries/forced-colors.html	FAIL	Should be parseable: '(forcedU+2dcolors
 css/mediaqueries/forced-colors.html	FAIL	Should be parseable: '(forcedU+2dcolors: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/forced-colors.html	FAIL	Should be parseable: '(forcedU+2dcolors: active 0)'	규칙을 파싱할 수 없다
 css/mediaqueries/forced-colors.html	FAIL	Should be parseable: '(forcedU+2dcolors: none active)'	규칙을 파싱할 수 없다
-css/mediaqueries/forced-colors.html	FAIL	Should be parseable: '(forcedU+2dcolors: active/none)'	assert_true: Can parse with JS expected true got false
-css/mediaqueries/forced-colors.html	FAIL	Check that none evaluates to false in the boolean context	assert_equals: expected false but got true
+css/mediaqueries/forced-colors.html	FAIL	Should be parseable: '(forcedU+2dcolors: active/none)'	규칙을 파싱할 수 없다
 css/mediaqueries/inverted-colors.html	FAIL	Should be known: '(invertedU+2dcolors)'	규칙을 파싱할 수 없다
 css/mediaqueries/inverted-colors.html	FAIL	Should be known: '(invertedU+2dcolors: none)'	규칙을 파싱할 수 없다
 css/mediaqueries/inverted-colors.html	FAIL	Should be known: '(invertedU+2dcolors: inverted)'	규칙을 파싱할 수 없다
@@ -64,9 +61,7 @@ css/mediaqueries/inverted-colors.html	FAIL	Should be parseable: '(invertedU+2dco
 css/mediaqueries/inverted-colors.html	FAIL	Should be parseable: '(invertedU+2dcolors: noU+2dpreference)'	규칙을 파싱할 수 없다
 css/mediaqueries/inverted-colors.html	FAIL	Should be parseable: '(invertedU+2dcolors: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/inverted-colors.html	FAIL	Should be parseable: '(invertedU+2dcolors: none inverted)'	규칙을 파싱할 수 없다
-css/mediaqueries/inverted-colors.html	FAIL	Should be parseable: '(invertedU+2dcolors: none/inverted)'	assert_true: Can parse with JS expected true got false
-css/mediaqueries/inverted-colors.html	FAIL	Check that none evaluates to false in the boolean context	assert_equals: expected true but got false
-css/mediaqueries/match-media-parsing.html	FAIL	Test parsing '  color ), ( color' with matchMedia	assert_equals: expected "not all, (color)" but got "not all"
+css/mediaqueries/inverted-colors.html	FAIL	Should be parseable: '(invertedU+2dcolors: none/inverted)'	규칙을 파싱할 수 없다
 css/mediaqueries/media-query-matches-in-iframe.html	FAIL	matchMedia('(maxU+2dwidth: 150px)').matches should update immediately	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument — iframe 이(가) undefined (읽을 수 없음)"
 css/mediaqueries/media-query-matches-in-iframe.html	FAIL	matchMedia('(width: 100px)').matches should update immediately	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument — iframe 이(가) undefined (읽을 수 없음)"
 css/mediaqueries/media-query-matches-in-iframe.html	FAIL	matchMedia('(orientation: portrait)').matches should update immediately	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument — iframe 이(가) undefined (읽을 수 없음)"
@@ -119,7 +114,7 @@ css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+
 css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+2dcolorU+2dscheme: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+2dcolorU+2dscheme: dark 0)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+2dcolorU+2dscheme: dark light)'	규칙을 파싱할 수 없다
-css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+2dcolorU+2dscheme: light/dark)'	assert_true: Can parse with JS expected true got false
+css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+2dcolorU+2dscheme: light/dark)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-color-scheme.html	FAIL	Should be parseable: '(prefersU+2dcolorU+2dscheme: noU+2dpreference)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-contrast.html	FAIL	Should be known: '(prefersU+2dcontrast)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-contrast.html	FAIL	Should be known: '(prefersU+2dcontrast: noU+2dpreference)'	규칙을 파싱할 수 없다
@@ -136,7 +131,6 @@ css/mediaqueries/prefers-contrast.html	FAIL	Should be parseable: '(prefersU+2dde
 css/mediaqueries/prefers-contrast.html	FAIL	Should be parseable: '(prefersU+2dcontrast: high)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-contrast.html	FAIL	Should be parseable: '(prefersU+2dcontrast: low)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-contrast.html	FAIL	Should be parseable: '(prefersU+2dcontrast: forced)'	규칙을 파싱할 수 없다
-css/mediaqueries/prefers-contrast.html	FAIL	Check boolean context evaluation.	assert_equals: expected false but got true
 css/mediaqueries/prefers-reduced-data.html	FAIL	Should be known: '(prefersU+2dreducedU+2ddata)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-data.html	FAIL	Should be known: '(prefersU+2dreducedU+2ddata: noU+2dpreference)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-data.html	FAIL	Should be known: '(prefersU+2dreducedU+2ddata: reduce)'	규칙을 파싱할 수 없다
@@ -145,8 +139,7 @@ css/mediaqueries/prefers-reduced-data.html	FAIL	Should be parseable: '(prefersU+
 css/mediaqueries/prefers-reduced-data.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2ddata: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-data.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2ddata: noU+2dpreference reduce)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-data.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2ddata: reduced)'	규칙을 파싱할 수 없다
-css/mediaqueries/prefers-reduced-data.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2ddata: noU+2dpreference/reduce)'	assert_true: Can parse with JS expected true got false
-css/mediaqueries/prefers-reduced-data.html	FAIL	Check that noU+2dpreference evaluates to false in the boolean context	assert_equals: expected false but got true
+css/mediaqueries/prefers-reduced-data.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2ddata: noU+2dpreference/reduce)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be known: '(prefersU+2dreducedU+2dmotion)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be known: '(prefersU+2dreducedU+2dmotion: noU+2dpreference)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be known: '(prefersU+2dreducedU+2dmotion: reduce)'	규칙을 파싱할 수 없다
@@ -155,8 +148,7 @@ css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be parseable: '(prefers
 css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dmotion: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dmotion: noU+2dpreference reduce)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dmotion: reduced)'	규칙을 파싱할 수 없다
-css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dmotion: noU+2dpreference/reduce)'	assert_true: Can parse with JS expected true got false
-css/mediaqueries/prefers-reduced-motion.html	FAIL	Check that noU+2dpreference evaluates to false in the boolean context	assert_equals: expected false but got true
+css/mediaqueries/prefers-reduced-motion.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dmotion: noU+2dpreference/reduce)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be known: '(prefersU+2dreducedU+2dtransparency)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be known: '(prefersU+2dreducedU+2dtransparency: noU+2dpreference)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be known: '(prefersU+2dreducedU+2dtransparency: reduce)'	규칙을 파싱할 수 없다
@@ -165,8 +157,7 @@ css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be parseable: '(p
 css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dtransparency: 10px)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dtransparency: noU+2dpreference reduce)'	규칙을 파싱할 수 없다
 css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dtransparency: reduced)'	규칙을 파싱할 수 없다
-css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dtransparency: noU+2dpreference/reduce)'	assert_true: Can parse with JS expected true got false
-css/mediaqueries/prefers-reduced-transparency.html	FAIL	Check that noU+2dpreference evaluates to false in the boolean context	assert_equals: expected false but got true
+css/mediaqueries/prefers-reduced-transparency.html	FAIL	Should be parseable: '(prefersU+2dreducedU+2dtransparency: noU+2dpreference/reduce)'	규칙을 파싱할 수 없다
 css/mediaqueries/relative-units-005.html	FAIL	ex unit in media queries should match initial font	assert_true: expected true got false
 css/mediaqueries/relative-units-005.html	FAIL	ch unit in media queries should match initial font	assert_true: expected true got false
 css/mediaqueries/relative-units-005.html	FAIL	ic unit in media queries should match initial font	assert_true: expected true got false

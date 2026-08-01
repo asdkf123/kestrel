@@ -129,6 +129,7 @@ fn feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
         "dynamic-range" => Some((&["standard", "high"], "standard")),
         "video-dynamic-range" => Some((&["standard", "high"], "standard")),
         "color-gamut" => Some((&["srgb", "p3", "rec2020"], "srgb")),
+        "inverted-colors" => Some((&["none", "inverted"], "none")),
         "display-mode" => Some((
             &[
                 "fullscreen",
@@ -148,7 +149,9 @@ fn feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
     };
     if let Some((valid, want)) = discrete {
         return match value {
-            None => Some(true), // 부울 컨텍스트: 알려진 이산 특성은 존재.
+            // 부울 컨텍스트: 특성의 사용값이 "false 등가"(none/no-preference/standard)면
+            // 거짓, 아니면 참(§Media Queries boolean context).
+            None => Some(!matches!(want, "none" | "no-preference" | "standard")),
             Some(v) => {
                 if !valid.contains(&v) {
                     None // 무효 값 → 쿼리 무효.
