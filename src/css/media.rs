@@ -12,8 +12,113 @@ pub(crate) fn container_matches(cond: &str, cw: f32, ch: f32) -> bool {
     if c.is_empty() {
         return true; // 조건 없는 @container (이름만) → 컨테이너가 있으면 매칭
     }
-    let normalized = c.replace("inline-size", "width").replace("block-size", "height");
-    media_matches_vp(&normalized, cw, ch)
+    // 컨테이너 쿼리 조건 문법(§CSS Containment 3): not/and/or·중첩 괄호·범위(<,>,=)·
+    // size 특성. inline-size/block-size 를 width/height 로 정규화(컨테이너 기준).
+    let normalized = c.to_ascii_lowercase().replace("inline-size", "width").replace("block-size", "height");
+    // style()·scroll-state() 등 크기 외 쿼리는 미지원 → 불일치(unknown → false).
+    eval_condition(&normalized, cw, ch).unwrap_or(false)
+}
+
+// 최상위(괄호 밖) 키워드(" and "/" or ")로 조건을 나눈다. 나눔이 없으면 원본 하나.
+fn split_top_kw(s: &str, kw: &str) -> Vec<String> {
+    let bytes = s.as_bytes();
+    let pat = format!(" {} ", kw);
+    let pb = pat.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {
+                if depth == 0 && i + pb.len() <= bytes.len() && &bytes[i..i + pb.len()] == pb {
+                    out.push(s[start..i].trim().to_string());
+                    i += pb.len();
+                    start = i;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out.push(s[start..].trim().to_string());
+    out
+}
+
+// 미디어/컨테이너 쿼리 조건을 재귀 평가(§Media Queries 4 / CSS Containment 3).
+// not/and/or(불리언, or 최저 우선), 중첩 괄호, 잎은 feature_matches(범위 포함).
+// None = unknown(무효 특성·값) — 부정으로도 참 안 됨.
+fn eval_condition(s: &str, vw: f32, vh: f32) -> Option<bool> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // 최상위 or (최저 우선) → 어느 하나 참이면 참.
+    let ors = split_top_kw(s, "or");
+    if ors.len() > 1 {
+        let mut acc = Some(false);
+        for p in &ors {
+            acc = match (acc, eval_condition(p, vw, vh)) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (None, _) | (_, None) => None,
+                _ => Some(false),
+            };
+        }
+        return acc;
+    }
+    // 최상위 and → 모두 참이어야 참.
+    let ands = split_top_kw(s, "and");
+    if ands.len() > 1 {
+        let mut acc = Some(true);
+        for p in &ands {
+            acc = match (acc, eval_condition(p, vw, vh)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (None, _) | (_, None) => None,
+                _ => Some(true),
+            };
+        }
+        return acc;
+    }
+    // not <조건>
+    if let Some(rest) = s.strip_prefix("not ") {
+        return eval_condition(rest.trim(), vw, vh).map(|b| !b);
+    }
+    // ( … ) — 안이 중첩 조건이면 재귀, 아니면 특성.
+    if s.starts_with('(') && s.ends_with(')') {
+        let inner = s[1..s.len() - 1].trim();
+        let nested = inner.starts_with('(')
+            || inner.starts_with("not ")
+            || split_top_kw(inner, "and").len() > 1
+            || split_top_kw(inner, "or").len() > 1;
+        if nested {
+            return eval_condition(inner, vw, vh);
+        }
+        // 컨테이너 쿼리는 size 특성(width/height/aspect-ratio/orientation)만 유효.
+        // 그 외(color/resolution/grid…)는 unknown → None(§CSS Containment 3).
+        if !container_feature_known(inner) {
+            return None;
+        }
+        return feature_matches(inner, vw, vh);
+    }
+    // 괄호 없는 잎(관용).
+    if !container_feature_known(s) {
+        return None;
+    }
+    feature_matches(s, vw, vh)
+}
+
+// 컨테이너 쿼리에서 유효한 size 특성인가(width/height/aspect-ratio/orientation,
+// min-/max- 포함). inline-size/block-size 는 호출 전 width/height 로 정규화됨.
+fn container_feature_known(feat: &str) -> bool {
+    let name = feat
+        .split(|c: char| c == ':' || c == '<' || c == '>' || c == '=' || c.is_whitespace())
+        .map(|t| t.trim())
+        .find(|t| !t.is_empty() && t.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false));
+    let Some(name) = name else { return false };
+    let base = name.strip_prefix("min-").or_else(|| name.strip_prefix("max-")).unwrap_or(name);
+    matches!(base, "width" | "height" | "aspect-ratio" | "orientation")
 }
 
 pub(crate) fn media_matches(query: &str, vw: f32) -> bool {
