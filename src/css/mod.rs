@@ -3,7 +3,7 @@ mod shorthand;
 mod supports;
 mod values;
 
-pub(crate) use media::{container_matches, media_feature_valid, media_matches, media_matches_vp};
+pub(crate) use media::{container_matches, media_matches, media_matches_vp};
 pub(crate) use supports::SUPPORTED;
 
 // 단축(shorthand) → 롱핸드 이름들. 확장기에게 직접 물어본다 — 프로퍼티마다 목록을 손으로

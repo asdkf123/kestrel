@@ -13685,21 +13685,11 @@ fn serialize_one_media_query(q: &str) -> String {
                 }
                 i += 1;
             }
+            // 직렬화는 문법만 본다(§CSSOM): 미지 특성/무효 값이라도 문법이 맞으면
+            // 그대로 직렬화한다("not all" 아님). known↔unknown 구별은 매칭(feature_matches)
+            // 에서만 — (display-mode: 0) 은 파싱 가능하나 매칭엔 unknown.
             let inner: String = chars[start + 1..end.min(chars.len())].iter().collect();
-            let inner_t = inner.trim();
-            // 단순 특성(중첩 괄호·불리언 없음)은 유효성 검사 — 미지 특성/무효 값이면
-            // 쿼리 전체가 "not all". 복합/불리언은 여기선 통과(과잉 무효화 방지).
-            let low = inner_t.to_ascii_lowercase();
-            let simple = !inner_t.contains('(')
-                && !low.contains(" and ")
-                && !low.contains(" or ")
-                && !low.starts_with("not ")
-                && !inner_t.contains('<')
-                && !inner_t.contains('>');
-            if simple && !crate::css::media_feature_valid(inner_t) {
-                return "not all".to_string();
-            }
-            tokens.push(serialize_media_feature(inner_t));
+            tokens.push(serialize_media_feature(inner.trim()));
         } else if c == ')' {
             return "not all".to_string(); // 떠도는 닫는 괄호 → 무효.
         } else {
