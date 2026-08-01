@@ -152,7 +152,7 @@
 | css-grid | 2,156 / 3,567 | 60.4% |
 | css-env | 5 / 9 | 55.6% |
 | css-box | 529 / 957 | 55.3% |
-| css-cascade | 417 / 717 | 58.2% |
+| css-cascade | 423 / 717 | 59.0% |
 | css-animations | 574 / 1,059 | 54.2% |
 | css-contain | 194 / 360 | 53.9% |
 | css-variables | 272 / 511 | 53.2% |
