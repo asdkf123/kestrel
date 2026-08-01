@@ -31,13 +31,19 @@ fn decls_line(rule: &crate::css::Rule) -> String {
 // 들여쓰기는 자식 cssText 앞에 "  " 를 붙이는 방식(첫 줄만 밀림 = 비누적) — 스펙 출력과 일치.
 fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     let dl = decls_line(rule);
-    if let Some(cond) = &rule.at_media {
+    // @media / @supports 그룹 규칙: `@<kw> <cond> {\n  <내부>\n}`(비면 `{\n}`).
+    if let Some((kw, cond)) = rule
+        .at_media
+        .as_ref()
+        .map(|c| ("@media", c))
+        .or_else(|| rule.at_supports.as_ref().map(|c| ("@supports", c)))
+    {
         let children: Vec<String> = rule.nested.iter().map(serialize_rule_full).collect();
         if children.is_empty() {
-            return format!("@media {} {{\n}}", cond);
+            return format!("{} {} {{\n}}", kw, cond);
         }
         let body = children.iter().map(|c| format!("  {}", c)).collect::<Vec<_>>().join("\n");
-        return format!("@media {} {{\n{}\n}}", cond, body);
+        return format!("{} {} {{\n{}\n}}", kw, cond, body);
     }
     if rule.selector_text.is_empty() {
         // CSSNestedDeclarations: 선언만.
@@ -75,6 +81,10 @@ fn materialize_rule(rule: &crate::css::Rule) -> Value {
         m.insert("type".to_string(), Value::Num(4.0));
         m.insert("conditionText".to_string(), Value::Str(cond.clone()));
         m.insert("media".to_string(), Value::Str(cond.clone()));
+    } else if let Some(cond) = &rule.at_supports {
+        // CSSSupportsRule(type 12): conditionText 노출, selectorText 없음.
+        m.insert("type".to_string(), Value::Num(12.0));
+        m.insert("conditionText".to_string(), Value::Str(cond.clone()));
     } else {
         let sel = crate::css::serialize_selector(&rule.selector_text);
         m.insert("selectorText".to_string(), Value::Str(sel));
@@ -261,6 +271,43 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @supports 규칙(CSSSupportsRule §CSSOM) 전용 속성. at_media 와 동일한
+                // 컨테이너 모델(조건은 conditionText, 내부 규칙은 .nested → cssRules).
+                let ats = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|r| r.at_supports.clone());
+                if let Some(cond) = ats {
+                    return match key {
+                        "conditionText" => Ok(Value::Str(cond)),
+                        "type" => Ok(Value::Num(12.0)), // SUPPORTS_RULE
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),
+                        "cssRules" | "rules" => {
+                            let children: Vec<Value> = self
+                                .sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| s.sheet.rules.get(ri))
+                                .map(|r| r.nested.iter().map(materialize_rule).collect())
+                                .unwrap_or_default();
+                            let arr = ArrayObj::new(children);
+                            arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+                            Ok(Value::Arr(arr))
+                        }
+                        "length" => Ok(Value::Num(
+                            self.sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| s.sheet.rules.get(ri))
+                                .map(|r| r.nested.len() as f64)
+                                .unwrap_or(0.0),
+                        )),
+                        "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
+                        "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 // @custom-media 규칙(CSSCustomMediaRule §Media Queries 5) 전용 속성.
                 let atc = self
                     .sheets()
@@ -412,25 +459,40 @@ impl Interp {
 
     pub(super) fn sheet_insert_rule(&mut self, si: usize, text: &str, index: usize) -> Result<Value, String> {
         let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
-        // @media 는 파스시점 flatten 되어 규칙이 안 남는다 → CSSOM CSSMediaRule 로 컨테이너
-        // 를 만들어 삽입한다(조건만 보관; 빈 selectors 라 cascade 는 자연히 건너뛴다).
+        // @media/@supports 는 파스시점 flatten 되어 규칙이 안 남는다 → CSSOM CSSMediaRule/
+        // CSSSupportsRule 컨테이너를 만들어 삽입한다(조건만 보관; 빈 selectors 라 cascade 는
+        // 자연히 건너뛴다). 내부 규칙은 첫 '{' 와 짝 '}' 사이를 파싱해 .nested 에 보관.
         let trimmed = text.trim_start();
-        if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("@media") {
-            // `@media <query> { <내부 규칙들> }` → CSSMediaRule 컨테이너. 내부 규칙은
-            // 첫 '{' 와 짝 '}' 사이를 파싱해 .nested 에 계층으로 보관(매칭은 flatten 이
-            // at_media 컨테이너를 건너뛰므로 무영향; CSSOM 직렬화·cssRules 만 노출).
-            let after = &trimmed[6..];
-            let (query, inner_text) = match after.find('{') {
+        let low = trimmed.to_ascii_lowercase();
+        let grouping = if low.starts_with("@media") {
+            Some(("@media", 6))
+        } else if low.starts_with("@supports") {
+            Some(("@supports", 9))
+        } else {
+            None
+        };
+        if let Some((kw, kwlen)) = grouping {
+            let after = &trimmed[kwlen..];
+            let (cond_raw, inner_text) = match after.find('{') {
                 Some(b) => {
-                    let q = after[..b].trim().to_string();
+                    let c = after[..b].trim().to_string();
                     let rest = &after[b + 1..];
                     let inner = rest.rfind('}').map(|e| &rest[..e]).unwrap_or(rest);
-                    (q, inner.to_string())
+                    (c, inner.to_string())
                 }
                 None => (after.trim().to_string(), String::new()),
             };
-            let media = crate::css::serialize_media_query_list(&query);
+            let cond = if kw == "@media" {
+                crate::css::serialize_media_query_list(&cond_raw)
+            } else {
+                cond_raw
+            };
             let nested = crate::css::parse_viewport(inner_text, vw).rules;
+            let (at_media, at_supports) = if kw == "@media" {
+                (Some(cond), None)
+            } else {
+                (None, Some(cond))
+            };
             let rule = crate::css::Rule {
                 selectors: Vec::new(),
                 declarations: Vec::new(),
@@ -439,8 +501,9 @@ impl Interp {
                 selector_text: String::new(),
                 ua: false,
                 at_property: None,
-                at_media: Some(media),
+                at_media,
                 at_custom_media: None,
+                at_supports,
                 nested,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };

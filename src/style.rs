@@ -658,10 +658,10 @@ impl<'a> RuleIndex<'a> {
         fn flatten<'b>(rules: &'b [Rule], out: &mut Vec<&'b Rule>) {
             for r in rules {
                 out.push(r);
-                // at_media 컨테이너(중첩 @media)의 .nested 는 미디어 조건부라 여기서
-                // 매칭 대상으로 펼치지 않는다(뷰포트 미평가 상태 → 잘못된 무조건 적용 방지).
+                // at_media/at_supports 컨테이너(중첩 @media/@supports)의 .nested 는 조건부라
+                // 여기서 매칭 대상으로 펼치지 않는다(조건 미평가 → 잘못된 무조건 적용 방지).
                 // CSSOM 은 계층(.nested)으로 노출. 현행 드롭 동작과 동일 = 렌더 무변경.
-                if r.at_media.is_none() && !r.nested.is_empty() {
+                if r.at_media.is_none() && r.at_supports.is_none() && !r.nested.is_empty() {
                     flatten(&r.nested, out);
                 }
             }

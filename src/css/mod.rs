@@ -378,6 +378,9 @@ pub struct Rule {
     pub at_media: Option<String>,
     // @custom-media 규칙이면 (이름, 직렬화된 쿼리). CSSOM CSSCustomMediaRule 노출용.
     pub at_custom_media: Option<(String, String)>,
+    // @supports 규칙이면 조건 텍스트. CSSOM CSSSupportsRule 노출용(at_media 와 같은
+    // 컨테이너 모델; flatten 이 매칭에서 제외, .nested 로 내부 규칙 보관).
+    pub at_supports: Option<String>,
     // CSS Nesting 중첩 규칙(desugar 후). CSSOM CSSStyleRule.cssRules 노출용이자, 캐스케이드
     // 인덱스가 flatten 해 매칭에 쓴다. 선택자는 이미 부모 기준으로 desugar 되어 있다.
     pub nested: Vec<Rule>,
@@ -2391,7 +2394,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: Some((name.to_string(), serialized)),
-            nested: Vec::new(),
+            at_supports: None,            nested: Vec::new(),
         })
     }
 
@@ -2493,7 +2496,7 @@ impl Parser {
             at_property: Some((name, reg)),
             at_media: None,
             at_custom_media: None,
-            nested: Vec::new(),
+            at_supports: None,            nested: Vec::new(),
         })
     }
 
@@ -2587,7 +2590,7 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                    nested,
+                    at_supports: None,                    nested,
                 })
             }
             None => {
@@ -2618,7 +2621,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: None,
-            nested: Vec::new(),
+            at_supports: None,            nested: Vec::new(),
         };
         loop {
             self.consume_whitespace();
@@ -2629,14 +2632,21 @@ impl Parser {
                     break;
                 }
                 Some('@') => {
-                    // 중첩 @media → 컨테이너 규칙(조건은 at_media, 내부 규칙은 .nested).
+                    // 중첩 @media/@supports → 컨테이너 규칙(조건 보관, 내부 규칙은 .nested).
                     // flatten 은 조건부라 매칭 대상에서 제외(현행 드롭과 동일 = 렌더 무변경).
-                    // CSSOM(CSSMediaRule.cssRules)만 노출. @supports 는 전용 필드 필요 → 후속.
-                    if self.input[self.pos..].to_ascii_lowercase().starts_with("@media") {
-                        self.consume_char(); // '@'
-                        for _ in 0..5 {
+                    // CSSOM(CSSMediaRule/CSSSupportsRule.cssRules) 노출.
+                    let low = self.input[self.pos..].to_ascii_lowercase();
+                    let kind = if low.starts_with("@media") {
+                        Some(("@media", 6))
+                    } else if low.starts_with("@supports") {
+                        Some(("@supports", 9))
+                    } else {
+                        None
+                    };
+                    if let Some((kw, kwlen)) = kind {
+                        for _ in 0..kwlen {
                             self.consume_char();
-                        } // 'media'
+                        }
                         let cond_raw = self.consume_while(|c| c != '{' && c != '}' && c != ';');
                         if self.peek() != Some('{') {
                             if self.peek() == Some(';') {
@@ -2654,17 +2664,28 @@ impl Parser {
                             cont.push(mk_decl_rule(self, idecls));
                         }
                         cont.extend(inested);
-                        let cond = crate::css::values::serialize_media_query_list(cond_raw.trim());
+                        // @media 조건은 미디어쿼리 캐논, @supports 조건은 원문 유지(트림).
+                        let cond = if kw == "@media" {
+                            crate::css::values::serialize_media_query_list(cond_raw.trim())
+                        } else {
+                            cond_raw.trim().to_string()
+                        };
+                        let (at_media, at_supports) = if kw == "@media" {
+                            (Some(cond.clone()), None)
+                        } else {
+                            (None, Some(cond.clone()))
+                        };
                         nested.push(Rule {
                             selectors: Vec::new(),
                             declarations: Vec::new(),
-                            selector_text: format!("@media {}", cond),
+                            selector_text: format!("{} {}", kw, cond),
                             ua: false,
                             layer: self.cur_layer.clone(),
                             container: self.cur_container.clone(),
                             at_property: None,
-                            at_media: Some(cond),
+                            at_media,
                             at_custom_media: None,
+                            at_supports,
                             nested: cont,
                         });
                         seen_nested = true;
@@ -2701,7 +2722,7 @@ impl Parser {
                                 at_property: None,
                                 at_media: None,
                                 at_custom_media: None,
-                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
+                                at_supports: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
                             });
                         }
                         seen_nested = true;
