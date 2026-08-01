@@ -837,6 +837,11 @@ impl Interp {
 
     // style.prop = value 쓰기 (빈 값이면 제거)
     pub(super) fn style_set(&mut self, id: crate::dom::NodeId, prop: &str, value: &str) {
+        // CSS 주석 /* … */ 은 값 어디서든 제거된다(§CSS Syntax). el.style 세터 경로는
+        // 스타일시트 파서를 안 거쳐 지금까지 주석이 남아 clamp(1px /*x*/, …) 등이
+        // 무효로 처리됐다. 문자열 안은 strip_comments 가 보존한다.
+        let value_nc = crate::css::strip_comments(value);
+        let value = value_nc.as_str();
         let prop = canonical_css_name(prop);
         let text_trimmed = value.trim().to_string();
         // 검증형 단축(white-space/text-wrap/font-family/font)이 확장이 비면 무효값 —
