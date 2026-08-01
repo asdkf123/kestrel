@@ -134,7 +134,7 @@
 | css-backgrounds | 3,788 / 4,914 | 77.1% |
 | css-anchor-position | 9,972 / 13,012 | 76.6% |
 | css-position | 1,078 / 1,412 | 76.3% |
-| selectors | 3,137 / 4,118 | 76.2% |
+| selectors | 3,143 / 4,118 | 76.3% |
 | css-viewport | 369 / 490 | 75.3% |
 | css-display | 287 / 384 | 74.7% |
 | css-break | 452 / 609 | 74.2% |
