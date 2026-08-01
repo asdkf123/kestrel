@@ -8,16 +8,30 @@ use super::*;
 // 규칙의 선언들을 `name: value;` 한 줄 목록으로. CSSOM cssText 는 지정값(specified)이므로
 // raw 가 있으면 그것을(예: `red`), 없으면(단축 확장 등) computed 직렬화로 폴백.
 fn decls_line(rule: &crate::css::Rule) -> String {
-    rule.declarations
+    // §CSSOM «serialize a CSS declaration block»: 마지막-우선 dedup 후, 롱핸드 전체가
+    // 같은 importance 로 있으면 무손실 단축으로 재조립(overflow/margin/inset/gap/
+    // place-* 등). 인라인 스타일 cssText 와 동일 로직을 공유해 규칙 style.cssText 도
+    // 단축으로 접힌다(reassemble 목록에 없는 flex 등은 그대로 롱핸드 유지).
+    let mut order: Vec<String> = Vec::new();
+    let mut map: std::collections::HashMap<String, (String, bool)> = std::collections::HashMap::new();
+    for d in &rule.declarations {
+        let v = if d.raw.is_empty() {
+            crate::style::computed_value_string(&d.value)
+        } else {
+            d.raw.clone()
+        };
+        if !map.contains_key(&d.name) {
+            order.push(d.name.clone());
+        }
+        map.insert(d.name.clone(), (v, d.important));
+    }
+    crate::js::interp::Interp::reassemble_shorthands(&mut order, &mut map);
+    order
         .iter()
-        .map(|d| {
-            let imp = if d.important { " !important" } else { "" };
-            let v = if d.raw.is_empty() {
-                crate::style::computed_value_string(&d.value)
-            } else {
-                d.raw.clone()
-            };
-            format!("{}: {}{};", d.name, v, imp)
+        .filter_map(|n| {
+            map.get(n).map(|(v, imp)| {
+                format!("{}: {}{};", n, v, if *imp { " !important" } else { "" })
+            })
         })
         .collect::<Vec<_>>()
         .join(" ")

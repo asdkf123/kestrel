@@ -182,7 +182,7 @@ impl Interp {
     // §CSSOM serialize a declaration block: 롱핸드 전체가 같은 importance 로 존재하면
     // 무손실 단축으로 재조립한다. 여기선 box(4-value)·2-value 축약형만 다룬다(border 등
     // currentcolor/none 기본값이 얽힌 단축은 제외).
-    fn reassemble_shorthands(
+    pub(crate) fn reassemble_shorthands(
         order: &mut Vec<String>,
         map: &mut std::collections::HashMap<String, (String, bool)>,
     ) {
