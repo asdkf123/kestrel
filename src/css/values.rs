@@ -3474,6 +3474,16 @@ fn parse_comp(s: &str, pct_base: f32) -> Option<Comp> {
     }
     if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') {
         let inner = &s[5..s.len() - 1];
+        // 순수 수식(%·단위 없음)은 eval_math_number 로 먼저 평가한다 — eval_calc(calc_expr)
+        // 는 트리그(sin/cos/asin 등)를 못 다뤄 상대색 채널 calc((sin(l)+1)*50) 이 0 으로
+        // 근사됐다. eval_math_number 는 §CSS Values 4 §10 수학 함수를 모두 평가한다.
+        if !inner.contains('%') {
+            if let Some(v) = eval_math_number(inner) {
+                if v.is_finite() {
+                    return Some(Comp::Val(v as f32));
+                }
+            }
+        }
         let n = match eval_calc(inner) {
             // 결과가 퍼센트면 채널 기준(pct_base)으로 환산(rgb 는 255, lab L 은 100 등).
             Some(Value::Length(n, Unit::Percent)) if n.is_finite() => n / 100.0 * pct_base,
