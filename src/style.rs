@@ -1884,11 +1884,10 @@ fn eval_number_token(t: &str) -> Option<f32> {
     if let Ok(x) = t.parse::<f32>() {
         return Some(x);
     }
-    // 순수 <number> 수학식(clamp/round/sign/cos/…) 계산값 평가. 유한값만.
+    // 순수 <number> 수학식(clamp/round/sign/cos/…) 계산값 평가. 비유한(±inf/NaN)도
+    // 그대로 돌려 호출부가 calc(infinity)/calc(NaN) 로 직렬화하게 한다.
     if let Some(x) = crate::css::eval_math_number(t) {
-        if x.is_finite() {
-            return Some(x as f32);
-        }
+        return Some(x as f32);
     }
     match crate::css::interpret_value(t) {
         Some(Value::Length(x, Unit::Number)) => Some(x),
@@ -1913,16 +1912,30 @@ pub fn normalize_scale(v: &str) -> String {
             None => return v.to_string(), // 파싱 실패 시 원문 보존
         }
     }
-    let f = num_css;
+    // 비유한 수는 §CSS Values 4 대로 calc(infinity)/calc(-infinity)/calc(NaN).
+    let f = |n: f32| -> String {
+        if n.is_nan() {
+            "calc(NaN)".to_string()
+        } else if n.is_infinite() {
+            if n > 0.0 { "calc(infinity)".to_string() } else { "calc(-infinity)".to_string() }
+        } else {
+            num_css(n)
+        }
+    };
     let x = nums[0];
-    let y = nums.get(1).copied().unwrap_or(x);
-    let z = nums.get(2).copied().unwrap_or(1.0);
-    if nums.len() == 3 && z != 1.0 {
-        format!("{} {} {}", f(x), f(y), f(z))
-    } else if y != x {
-        format!("{} {}", f(x), f(y))
-    } else {
-        f(x)
+    match nums.len() {
+        1 => f(x),
+        _ => {
+            let y = nums[1];
+            let z = nums.get(2).copied().unwrap_or(1.0);
+            if nums.len() == 3 && z != 1.0 {
+                format!("{} {} {}", f(x), f(y), f(z))
+            } else if y != x {
+                format!("{} {}", f(x), f(y))
+            } else {
+                f(x)
+            }
+        }
     }
 }
 
