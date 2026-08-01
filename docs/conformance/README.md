@@ -125,7 +125,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | css-color | 7,930 / 9,399 | 84.4% |
-| cssom | 2,880 / 3,437 | 83.8% |
+| cssom | 2,889 / 3,437 | 84.1% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,136 / 2,602 | 82.1% |
