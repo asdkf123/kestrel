@@ -72,13 +72,18 @@
 > not set unrelated longhands"(CSS.supports 단언) 등 **연쇄 테스트가 대량 막힌다**. animation-range 는 이
 > 등록만으로 css-animations +86 이었다.
 >
-> **남은 큰 서브시스템**(각각 집중 작업 필요, 요행 없이 정밀 스펙 준수):
-> 1. basic-shape 캐논 직렬화(circle/ellipse/inset/polygon round 0 생략 등 — shape-outside/clip-path/offset-path 공통 "serialization" validfail 다수)
-> 2. background-image: gradient(color/conic calc 타입, `calc(50%+30deg)` 거부), image-set()/image(), url() modifier(cross-origin/integrity/referrer-policy)
-> 3. color: 상대색 `color(from … calc(r + 1%) …)` 채널 calc
-> 4. corner-shape 조합 프로퍼티(corner-top-left 등): shape || radius, 스펙 뉘앙스("scoop" 단독 무효 등) 확인 필요
-> 5. animation-range 타임라인 단축(entry/exit 범위 + 캐논 오프셋 생략)
-> 6. mask 단축(<mask-layer>#)
+> **추가 완료(이후 세션)**: basic-shape 캐논 직렬화(normalize_shape 확장 — 아래), SVG path data 검증(A=7 등),
+> clip-path shape(), gradient 스톱/from calc 타입, image-set 옵션/image(`<color>`) 검증, mask 단축(성분 개수),
+> animation-range(검증+전개+캐논), offset 단축(전개)+offset-\* 롱핸드, corner-shape 조합(단일 코너·변·축·논리 —
+> shape && radius{1,2} 문법, 전체 테스트로 확정), is_known_property 게이트에 검증분 전부 등록.
+>
+> **남은 큰 서브시스템**(각각 깊은 파서/정밀 스펙 필요):
+> 1. color 상대색 `color(from … calc(r + 1%) …)` 채널 calc 타입(깊은 색 파서, r/g/b/x 채널=수 키워드)
+> 2. calc 산술 단순화(`calc(100%/4)`→`calc(25%)`, `calc(100+100)`→`calc(200)` — 직렬화 시 상수 접기)
+> 3. 미지 프로퍼티 거부: el.style 의 catch-all 이 미지 프로퍼티(`corners` 등)를 수용 — CSSOM 상 no-op 이어야.
+>    완전한 프로퍼티 레지스트리 필요(현 SUPPORTED 는 불완전 → 그대로 쓰면 실제 프로퍼티 회귀).
+> 4. 중첩 image-set/image(image-set(...)), url() request modifier(escaped-space url 회귀 주의)
+> 5. basic-shape 나머지: calc 산술 단순화, coord-box 처리, text-decoration/animation-range 잔여 캐논
 >
 > **basic-shape 캐논 직렬화(해결됨)**: 지정값(el.style) 직렬화는 `normalize_shape`(serialize_decl 경유),
 > 계산값은 `computed_value_string` 으로 경로가 다르다. 처음엔 별도 canon 을 serialize_decl 에 끼워 넣어
