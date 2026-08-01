@@ -607,7 +607,9 @@ fn match_rule<'a>(
 // 요소마다 전체 규칙을 훑는 대신 해당 요소의 id/class/tag 버킷 후보만 확인 →
 // O(요소×규칙) 에서 O(요소×후보) 로. build 는 스타일당 1회.
 struct RuleIndex<'a> {
-    rules: &'a [Rule],
+    // 시트의 규칙을 flatten 한 참조 목록(중첩 규칙 .nested 를 소스 순서로 펼침).
+    // 위치 인덱스(by_id/class/tag)가 이 목록을 가리킨다.
+    rules: Vec<&'a Rule>,
     by_id: HashMap<String, Vec<usize>>,
     by_class: HashMap<String, Vec<usize>>,
     by_tag: HashMap<String, Vec<usize>>,
@@ -651,9 +653,21 @@ impl<'a> RuleIndex<'a> {
     }
 
     fn build_with(sheet: &'a Stylesheet, containers: ContainerMap) -> RuleIndex<'a> {
+        // 중첩 규칙(.nested)을 소스 순서로 펼친 참조 목록. 부모 다음에 자식들이 온다
+        // (플랫 desugar 와 동일한 캐스케이드 순서 → 렌더 무변경). CSSOM 은 계층 유지.
+        fn flatten<'b>(rules: &'b [Rule], out: &mut Vec<&'b Rule>) {
+            for r in rules {
+                out.push(r);
+                if !r.nested.is_empty() {
+                    flatten(&r.nested, out);
+                }
+            }
+        }
+        let mut flat: Vec<&Rule> = Vec::new();
+        flatten(&sheet.rules, &mut flat);
         let mut idx = RuleIndex {
             containers,
-            rules: &sheet.rules,
+            rules: flat,
             by_id: HashMap::new(),
             by_class: HashMap::new(),
             by_tag: HashMap::new(),
@@ -665,7 +679,8 @@ impl<'a> RuleIndex<'a> {
                 .map(|(i, n)| (n.clone(), i as u32 + 1))
                 .collect(),
         };
-        for (i, rule) in sheet.rules.iter().enumerate() {
+        for i in 0..idx.rules.len() {
+            let rule = idx.rules[i];
             for selector in &rule.selectors {
                 // 자손 체인은 대상(가장 오른쪽) 선택자 키로 버킷팅
                 let s = selector.subject();
@@ -720,7 +735,7 @@ fn pseudo_specified_values(
     let mut rules: Vec<MatchedRule> = index
         .candidate_indices(elem)
         .into_iter()
-        .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, &index.rules[i], Some(which)))
+        .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, index.rules[i], Some(which)))
         .collect();
     rules.sort_by_key(|&(spec, rule)| index.cascade_key(rule, spec, false));
     // 일반 선언 먼저, 그다음 important (important 가 특이도 무관하게 이긴다)
@@ -995,7 +1010,7 @@ fn specified_values(
             None => true,
             Some((name, cond)) => container_ok(index, sib, name, cond),
         })
-        .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, &index.rules[i], None))
+        .filter_map(|i| match_rule(elem, ancestors, anc_pos, sib, index.rules[i], None))
         .collect();
     // 오름차순 (레이어 순위, 특이도), 안정 정렬 → 동일 순위는 문서 순서 유지 (뒤 규칙이 이김)
     rules.sort_by_key(|&(spec, rule)| index.cascade_key(rule, spec, false));

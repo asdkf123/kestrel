@@ -16,23 +16,23 @@ css/css-nesting/invalid-inner-rules.html	FAIL	Simple CSSOM manipulation of subru
 css/css-nesting/invalid-inner-rules.html	FAIL	Simple CSSOM manipulation of subrules 1	assert_throws_dom: function "() => { ss.cssRules[0].cssRules[0].insertRule('@fontU+2dface {}', 0); }" threw object "TypeError: ss.cssRules[..].cssRules.0 — ss.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)" that is not a DOMException HierarchyRequestError: property "code" is equal to undefined, expected 3
 css/css-nesting/invalidation-003.html	FAIL	CSS Selectors nested invalidation with :has()	assert_equals: expected "rgb(0, 0, 0)" but got "rgb(0, 128, 0)"
 css/css-nesting/invalidation-004.html	FAIL	CSS Selectors nested invalidation through @media by selectorText	Cannot set properties of undefined (setting 'selectorText')
-css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization	assert_equals: expected 1 but got 5
+css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom-whitespace.html	FAIL	Empty CSSNestedDeclarations do not affect outer serialization (nested grouping rule)	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Trailing declarations	assert_equals: expected 1 but got 3
-css/css-nesting/nested-declarations-cssom.html	FAIL	Mixed declarations	assert_equals: expected 1 but got 7
-css/css-nesting/nested-declarations-cssom.html	FAIL	CSSNestedDeclarations.style	assert_equals: expected 1 but got 3
+css/css-nesting/nested-declarations-cssom.html	FAIL	Trailing declarations	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/nested-declarations-cssom.html	FAIL	Mixed declarations	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
+css/css-nesting/nested-declarations-cssom.html	FAIL	CSSNestedDeclarations.style	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom.html	FAIL	Nested group rule	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom.html	FAIL	Nested @scope rule	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
-css/css-nesting/nested-declarations-cssom.html	FAIL	Inner rule starting with an ident	assert_equals: expected 1 but got 5
+css/css-nesting/nested-declarations-cssom.html	FAIL	Inner rule starting with an ident	outer.cssRules.length — outer.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom.html	FAIL	Inserting a CSSNestedDeclaration rule into style rule	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom.html	FAIL	Inserting a CSSNestedDeclaration rule into nested group rule	s.cssRules[..].cssRules.length — s.cssRules[..].cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule into topU+2dlevel @media rule	assert_equals: expected 1 but got 0
 css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule, empty block	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-cssom.html	FAIL	Attempting to insert a CSSNestedDeclaration rule, all invalid declarations	a_rule.cssRules.length — a_rule.cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-declarations-matching.html	FAIL	Bare declartaion in nested grouping rule can match pseudoU+2delement	assert_equals: expected "PASS" but got ""
-css/css-nesting/nested-declarations-matching.html	FAIL	Nested declarations rule responds to parent selector text change	assert_equals: expected 1 but got 5
+css/css-nesting/nested-declarations-matching.html	FAIL	Nested declarations rule responds to parent selector text change	rules[..].cssRules.length — rules[..].cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nested-error-recovery.html	FAIL	CSS Nesting: Error recovery 1	assert_equals: expected "1" but got "auto"
-css/css-nesting/nested-rule-cssom-invalidation.html	FAIL	Nested rule responds to parent selector text change	assert_equals: expected 1 but got 3
+css/css-nesting/nested-rule-cssom-invalidation.html	FAIL	Nested rule responds to parent selector text change	rules[..].cssRules.length — rules[..].cssRules 이(가) undefined (읽을 수 없음)
 css/css-nesting/nesting-layer.html	FAIL	@layer can be nested	assert_equals: expected "1" but got "0"
 css/css-nesting/nesting-revert-rule.html	FAIL	The revertU+2drule keyword can revert to a nested rule	assert_true: expected true got false
 css/css-nesting/nesting-revert-rule.html	FAIL	The revertU+2drule keyword can revert to a CSSNestedDeclarationsRule	assert_true: expected true got false

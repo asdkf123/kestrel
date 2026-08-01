@@ -378,6 +378,9 @@ pub struct Rule {
     pub at_media: Option<String>,
     // @custom-media 규칙이면 (이름, 직렬화된 쿼리). CSSOM CSSCustomMediaRule 노출용.
     pub at_custom_media: Option<(String, String)>,
+    // CSS Nesting 중첩 규칙(desugar 후). CSSOM CSSStyleRule.cssRules 노출용이자, 캐스케이드
+    // 인덱스가 flatten 해 매칭에 쓴다. 선택자는 이미 부모 기준으로 desugar 되어 있다.
+    pub nested: Vec<Rule>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1990,7 +1993,9 @@ impl Parser {
                 }
                 continue;
             }
-            rules.extend(self.parse_rule());
+            if let Some(r) = self.parse_rule() {
+                rules.push(r);
+            }
         }
         rules
     }
@@ -2017,7 +2022,9 @@ impl Parser {
                 }
                 Some('@') => self.skip_at_rule(), // 중첩 @rule 은 스킵
                 _ => {
-                    inner.extend(self.parse_rule());
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
                 }
             }
         }
@@ -2086,7 +2093,9 @@ impl Parser {
                     }
                 }
                 _ => {
-                    inner.extend(self.parse_rule());
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
                 }
             }
         }
@@ -2133,7 +2142,9 @@ impl Parser {
                     }
                 }
                 _ => {
-                    inner.extend(self.parse_rule());
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
                 }
             }
         }
@@ -2169,7 +2180,9 @@ impl Parser {
                 }
                 Some('@') => self.skip_at_rule(),
                 _ => {
-                    inner.extend(self.parse_rule());
+                    if let Some(r) = self.parse_rule() {
+                        inner.push(r);
+                    }
                 }
             }
         }
@@ -2374,6 +2387,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: Some((name.to_string(), serialized)),
+            nested: Vec::new(),
         })
     }
 
@@ -2475,6 +2489,7 @@ impl Parser {
             at_property: Some((name, reg)),
             at_media: None,
             at_custom_media: None,
+            nested: Vec::new(),
         })
     }
 
@@ -2546,9 +2561,10 @@ impl Parser {
         }
     }
 
-    // 스타일 규칙 파싱. CSS Nesting(§CSS Nesting)을 파스시점에 desugar 해 flat 규칙들로
-    // 낸다 — 부모 규칙 + 중첩 규칙(선택자를 :is(부모)로 desugar). 반환은 Vec(부모 먼저).
-    fn parse_rule(&mut self) -> Vec<Rule> {
+    // 스타일 규칙 파싱. CSS Nesting(§CSS Nesting)의 중첩 규칙은 desugar 해 부모의 .nested
+    // 에 계층적으로 담는다(선택자는 :is(부모) 로 desugar). CSSOM 은 .nested 를 cssRules 로
+    // 노출하고, 캐스케이드 인덱스는 이를 flatten 해 매칭한다(렌더는 flat 시퀀스 동일).
+    fn parse_rule(&mut self) -> Option<Rule> {
         let sel_start = self.pos;
         match self.parse_selectors() {
             Some(selectors) => {
@@ -2557,8 +2573,7 @@ impl Parser {
                     .trim()
                     .to_string();
                 let (declarations, nested) = self.parse_style_body(&selector_text);
-                let mut out = Vec::with_capacity(1 + nested.len());
-                out.push(Rule {
+                Some(Rule {
                     selectors,
                     declarations,
                     selector_text,
@@ -2568,13 +2583,12 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                });
-                out.extend(nested);
-                out
+                    nested,
+                })
             }
             None => {
                 self.skip_to_block_end();
-                Vec::new()
+                None
             }
         }
     }
@@ -2597,6 +2611,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: None,
+            nested: Vec::new(),
         };
         loop {
             self.consume_whitespace();
@@ -2634,9 +2649,9 @@ impl Parser {
                                 at_property: None,
                                 at_media: None,
                                 at_custom_media: None,
+                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
                             });
                         }
-                        nested.extend(cnested);
                         seen_nested = true;
                     } else {
                         let d = self.parse_declaration();

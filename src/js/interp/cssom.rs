@@ -332,6 +332,7 @@ impl Interp {
                 at_property: None,
                 at_media: Some(media),
                 at_custom_media: None,
+                nested: Vec::new(),
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };
