@@ -1906,7 +1906,7 @@ pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String
 // CSS Nesting desugar: 중첩 선택자를 부모 기준 절대 선택자로. & 는 :is(부모)로
 // 치환하고, & 가 없으면 자손 결합자로 부모를 앞에 붙인다(§CSS Nesting). 콤마 목록은
 // 항목별로. 부모 특이도를 :is() 로 보존.
-fn desugar_nested(nested: &str, parent: &str) -> String {
+pub fn desugar_nested(nested: &str, parent: &str) -> String {
     let is_parent = format!(":is({})", parent.trim());
     split_top_commas_str(nested)
         .iter()

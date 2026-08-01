@@ -12384,9 +12384,26 @@ impl Interp {
                         if key == "selectorText" {
                             // §CSS Syntax 입력 전처리(NULL→U+FFFD·개행 정규화)를 저장
                             // 원문에도 적용 — selectorText 게터가 전처리된 값을 직렬화한다.
-                            // np 로 중첩 규칙까지 주소지정(중첩 규칙의 selectorText 변경 지원).
                             let text = crate::css::preprocess_input(&to_display(&value));
-                            if let Some(sels) = crate::css::parse_selector_list(&text) {
+                            // 중첩 규칙(np 비지 않음)은 부모 selector 기준으로 desugar 해서
+                            // 매칭용 selectors 를 만든다(`div &`·`& .a` 등). selector_text 엔
+                            // 원본(상대)을 저장해 CSSOM 게터가 그대로 돌려준다. 최상위는 그대로.
+                            let desugared = if np.is_empty() {
+                                text.clone()
+                            } else {
+                                let parent_sel = self.sheets().and_then(|sheets| {
+                                    cssom::resolve_nested(
+                                        sheets.get(si).and_then(|e| e.sheet.rules.get(ri)),
+                                        &np[..np.len() - 1],
+                                    )
+                                    .map(|p| p.selector_text.clone())
+                                });
+                                match parent_sel {
+                                    Some(ps) => crate::css::desugar_nested(&text, &ps),
+                                    None => return Ok(()),
+                                }
+                            };
+                            if let Some(sels) = crate::css::parse_selector_list(&desugared) {
                                 if let Some(sheets) = self.sheets() {
                                     if let Some(r) = cssom::resolve_nested_mut(
                                         sheets.get_mut(si).and_then(|e| e.sheet.rules.get_mut(ri)),
