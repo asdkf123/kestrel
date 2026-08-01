@@ -1884,6 +1884,12 @@ fn eval_number_token(t: &str) -> Option<f32> {
     if let Ok(x) = t.parse::<f32>() {
         return Some(x);
     }
+    // 순수 <number> 수학식(clamp/round/sign/cos/…) 계산값 평가. 유한값만.
+    if let Some(x) = crate::css::eval_math_number(t) {
+        if x.is_finite() {
+            return Some(x as f32);
+        }
+    }
     match crate::css::interpret_value(t) {
         Some(Value::Length(x, Unit::Number)) => Some(x),
         Some(Value::Length(x, Unit::Percent)) => Some(x / 100.0),
