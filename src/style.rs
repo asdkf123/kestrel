@@ -2799,6 +2799,15 @@ fn style_node<'a>(
                     values.insert(decl.name, decl.value);
                 }
             }
+            // content 의 attr(name) → 요소 속성값(계산값, §CSS Values 5). var 해석 뒤에
+            // 처리해 속성값 안의 문자열/var()을 그대로 보존한다(content:"…" 와 같은 저장형).
+            let content_attr = match values.get("content") {
+                Some(Value::Keyword(c)) if c.contains("attr(") => Some(resolve_attr(c, elem)),
+                _ => None,
+            };
+            if let Some(r) = content_attr {
+                values.insert("content".to_string(), Value::Keyword(r));
+            }
             // font-size 외 속성의 em/rem 을 px 로 확정한다 (computed value).
             // em 은 요소 자신의 font-size(fs), rem 은 루트 기준(DEFAULT_FONT_SIZE).
             // 퍼센트는 레이아웃(calculate_width)이 컨테이닝 블록 폭 기준으로 해석하므로 보존.
