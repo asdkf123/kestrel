@@ -4433,10 +4433,10 @@ pub fn scale_valid(raw: &str) -> bool {
     }
     toks.iter().all(|t| {
         if is_math_fn(t) {
-            // 명백한 단순 차원 calc(길이/각도/시간)만 거부. sign()/comparison 등이 타입을
-            // 바꿔 무차원이 될 수 있어(§CSS Values calc 타입) 함수 든 calc 는 관대히 수용.
-            let simple = !t.contains('(') || t.matches('(').count() == 1;
-            return !(simple && !calc_dimensionless(t));
+            // scale 인자는 <number>|<percentage>. mdim_of 가 cos(0deg)→수, sign(…)→수
+            // 처럼 타입을 정확히 해석하므로 그 결과가 순수 수/퍼센트인지로 판정한다
+            // (§CSS Values 4 §10). var/env 등 해석 불가는 관대 수용(Wild).
+            return math_number_valid(t);
         }
         if let Some(n) = t.strip_suffix('%') {
             return n.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false);
@@ -4480,13 +4480,13 @@ pub fn rotate_valid(raw: &str) -> bool {
     }
     let is_angle = |t: &str| {
         if is_math_fn(t) {
-            return !(t.contains('%'));
+            return math_angle_valid(t); // <angle>(§CSS Values 4 타입 검사, % 없음)
         }
         parse_angle_deg(t).is_some()
     };
     let is_num = |t: &str| {
         if is_math_fn(t) {
-            return true;
+            return math_number_only_valid(t); // 축 성분은 순수 <number>
         }
         t.parse::<f64>().map(|v| v.is_finite()).unwrap_or(false)
     };
