@@ -143,14 +143,21 @@ impl Interp {
     // 만들어 공백으로 잇는다(각 선언 끝에 세미콜론 — 마지막도 포함). 프로퍼티 이름은
     // 소문자, 값은 serialize_decl 로 정규화. 예전엔 style 속성 원문을 그대로 줘서
     // 끝 세미콜론이 없고("color: red") 값도 정규화되지 않았다.
-    pub(super) fn css_text(&mut self, id: crate::dom::NodeId) -> String {
+    // 인라인 스타일 선언 블록을 (순서, 이름→(직렬화값, important)) 로 수집한다(§CSSOM
+    // serialize a declaration block). 마지막-우선 dedup, 단축 재조립. css_text 와
+    // length/index/item(style_property_names)이 공유한다 — 일관된 프로퍼티 목록.
+    // 커스텀 프로퍼티(--*)는 대소문자를 보존하고 값은 원문 그대로(서술자 정규화 안 함).
+    fn style_decls(
+        &mut self,
+        id: crate::dom::NodeId,
+    ) -> (Vec<String>, std::collections::HashMap<String, (String, bool)>) {
         let attr = self.style_attr(id);
-        // 선언 수집(이름 소문자 → (직렬화 값, important)). 마지막 우선, 순서 보존.
         let mut order: Vec<String> = Vec::new();
         let mut map: std::collections::HashMap<String, (String, bool)> =
             std::collections::HashMap::new();
         for (prop, raw) in style_pairs(&attr) {
-            let name = prop.to_ascii_lowercase();
+            let is_custom = prop.starts_with("--");
+            let name = if is_custom { prop.clone() } else { prop.to_ascii_lowercase() };
             let lower = raw.to_ascii_lowercase();
             let (base, important) = match lower.rfind("!important") {
                 Some(idx) if raw[idx + "!important".len()..].trim().is_empty() => {
@@ -158,8 +165,13 @@ impl Interp {
                 }
                 _ => (raw.clone(), false),
             };
-            let val = Self::serialize_decl(&name, &base);
-            if val.is_empty() {
+            // 커스텀 프로퍼티 값은 그대로(임의 토큰 스트림), 일반은 정규 직렬화.
+            let val = if is_custom {
+                base.trim().to_string()
+            } else {
+                Self::serialize_decl(&name, &base)
+            };
+            if val.is_empty() && !is_custom {
                 continue;
             }
             if !map.contains_key(&name) {
@@ -168,6 +180,17 @@ impl Interp {
             map.insert(name, (val, important));
         }
         Self::reassemble_shorthands(&mut order, &mut map);
+        (order, map)
+    }
+
+    // CSSStyleDeclaration 의 순서 있는 프로퍼티 이름 목록(length/item/인덱스 게터용).
+    pub(super) fn style_property_names(&mut self, id: crate::dom::NodeId) -> Vec<String> {
+        let (order, map) = self.style_decls(id);
+        order.into_iter().filter(|n| map.contains_key(n)).collect()
+    }
+
+    pub(super) fn css_text(&mut self, id: crate::dom::NodeId) -> String {
+        let (order, map) = self.style_decls(id);
         order
             .iter()
             .filter_map(|n| {

@@ -154,6 +154,7 @@ pub enum Native {
     StyleSetProperty,
     StyleGetProperty,
     StyleRemoveProperty,
+    StyleItem,
     ClassAdd,
     ClassRemove,
     ClassToggle,

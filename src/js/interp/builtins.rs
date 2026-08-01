@@ -6399,6 +6399,17 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
+            // CSSStyleDeclaration.item(i) — i 번째 프로퍼티 이름(대시). 범위 밖은 빈 문자열.
+            Native::StyleItem => {
+                let Some(Value::Style(id)) = recv else { return Ok(Value::Str(String::new())) };
+                let i = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
+                Ok(self
+                    .style_property_names(id)
+                    .get(i)
+                    .cloned()
+                    .map(Value::Str)
+                    .unwrap_or(Value::Str(String::new())))
+            }
             // DOMTokenList (§7.1). 토큰 검증 → 순서 보존 → update steps.
             // 예전엔 검증이 없었고(빈 토큰/공백 든 토큰을 조용히 통과), add 가 기존
             // 토큰을 지웠다 다시 붙여 **순서를 바꿨다**. toggle 의 force 규칙도 틀렸다.

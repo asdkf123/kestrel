@@ -7218,7 +7218,19 @@ impl Interp {
                     "setProperty" => Ok(Value::Native(Native::StyleSetProperty)),
                     "getPropertyValue" => Ok(Value::Native(Native::StyleGetProperty)),
                     "removeProperty" => Ok(Value::Native(Native::StyleRemoveProperty)),
+                    "item" => Ok(Value::Native(Native::StyleItem)),
+                    // CSSStyleDeclaration.length / 인덱스 게터(§CSSOM): 선언 블록의
+                    // 프로퍼티 개수와 i 번째 프로퍼티 이름(대시, 커스텀 프로퍼티 포함).
+                    "length" => Ok(Value::Num(self.style_property_names(id).len() as f64)),
                     _ => {
+                        if let Ok(i) = key.parse::<usize>() {
+                            return Ok(self
+                                .style_property_names(id)
+                                .get(i)
+                                .cloned()
+                                .map(Value::Str)
+                                .unwrap_or(Value::Str(String::new())));
+                        }
                         // setter(style_set)와 동일한 camel_to_dashed 로 매핑해야 소문자 벤더
                         // 접두(webkitAppearance→-webkit-appearance)가 저장 키와 일치한다.
                         // camel_to_kebab 은 소문자선두 접두에 대시를 안 붙여 "" 를 돌려줬다.
