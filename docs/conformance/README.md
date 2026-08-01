@@ -124,7 +124,7 @@
 | mediaqueries | 272 / 308 | 88.3% |
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
-| cssom | 2,920 / 3,437 | 85.0% |
+| cssom | 2,942 / 3,437 | 85.6% |
 | css-color | 7,930 / 9,399 | 84.4% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
@@ -148,7 +148,7 @@
 | css-scroll-snap | 458 / 690 | 66.4% |
 | css-properties-values-api | 611 / 923 | 66.2% |
 | css-shapes | 3,336 / 5,093 | 65.5% |
-| css-cascade | 457 / 717 | 63.7% |
+| css-cascade | 458 / 717 | 63.9% |
 | css-multicol | 850 / 1,356 | 62.7% |
 | css-grid | 2,156 / 3,567 | 60.4% |
 | css-env | 5 / 9 | 55.6% |
