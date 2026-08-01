@@ -416,15 +416,171 @@ fn cmp_resolution_opt(bound: Bound, v: &str) -> Option<bool> {
 // 길이 → px. px/단위없음, em/rem(초기 16px 기준), pt 지원. 그 외 None.
 fn parse_len(s: &str) -> Option<f32> {
     let s = s.trim();
+    let low = s.to_ascii_lowercase();
+    // calc()/min()/max()/clamp() 및 괄호 수식은 소형 평가기로(컨테이너 쿼리 값, em=16px).
+    if low.starts_with("calc(")
+        || low.starts_with("min(")
+        || low.starts_with("max(")
+        || low.starts_with("clamp(")
+        || s.starts_with('(')
+    {
+        return eval_len_expr(s);
+    }
+    parse_simple_len(s)
+}
+
+fn parse_simple_len(s: &str) -> Option<f32> {
+    let s = s.trim();
     let num: String =
         s.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
     let n = num.parse::<f32>().ok()?;
-    match s[num.len()..].trim() {
+    match s[num.len()..].trim().to_ascii_lowercase().as_str() {
         "px" | "" => Some(n),
         "em" | "rem" => Some(n * ROOT_FS),
         "pt" => Some(n * 96.0 / 72.0),
         _ => None,
     }
+}
+
+// 컨테이너 쿼리 길이 수식 평가기(px 반환, em/rem=16px). calc/min/max/clamp + 사칙.
+fn eval_len_expr(s: &str) -> Option<f32> {
+    let s = s.trim();
+    let low = s.to_ascii_lowercase();
+    for (name, ln) in [("calc(", 5usize), ("min(", 4), ("max(", 4), ("clamp(", 6)] {
+        if low.starts_with(name) && s.ends_with(')') {
+            let inner = &s[ln..s.len() - 1];
+            let args: Vec<&str> = split_top_commas(inner);
+            return match name {
+                "calc(" => eval_len_add(inner),
+                "min(" => args.iter().map(|a| eval_len_expr(a)).collect::<Option<Vec<_>>>().map(|v| v.into_iter().fold(f32::INFINITY, f32::min)),
+                "max(" => args.iter().map(|a| eval_len_expr(a)).collect::<Option<Vec<_>>>().map(|v| v.into_iter().fold(f32::NEG_INFINITY, f32::max)),
+                _ => {
+                    // clamp(min, val, max)
+                    if args.len() != 3 {
+                        return None;
+                    }
+                    let a = eval_len_expr(args[0])?;
+                    let b = eval_len_expr(args[1])?;
+                    let c = eval_len_expr(args[2])?;
+                    Some(b.clamp(a, c))
+                }
+            };
+        }
+    }
+    if s.starts_with('(') && s.ends_with(')') {
+        return eval_len_add(&s[1..s.len() - 1]);
+    }
+    parse_simple_len(s)
+}
+
+// 최상위 " + "/" - " 로 나눠 항을 더한다(§CSS calc — +/- 는 공백 필수).
+fn eval_len_add(s: &str) -> Option<f32> {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut total = 0.0f32;
+    let mut sign = 1.0f32;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'+' | b'-'
+                if depth == 0
+                    && i > 0
+                    && bytes[i - 1] == b' '
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b' ' =>
+            {
+                total += sign * eval_len_mul(&s[start..i])?;
+                sign = if bytes[i] == b'+' { 1.0 } else { -1.0 };
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    total += sign * eval_len_mul(&s[start..])?;
+    Some(total)
+}
+
+// 항: 최상위 '*'/'/' 로 곱/나눔.
+fn eval_len_mul(s: &str) -> Option<f32> {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut acc = 1.0f32;
+    let mut op = b'*';
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let mut first = true;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b'*' | b'/' if depth == 0 => {
+                let v = eval_len_factor(&s[start..i])?;
+                acc = if first {
+                    v
+                } else if op == b'*' {
+                    acc * v
+                } else {
+                    acc / v
+                };
+                first = false;
+                op = bytes[i];
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let v = eval_len_factor(&s[start..])?;
+    Some(if first {
+        v
+    } else if op == b'*' {
+        acc * v
+    } else {
+        acc / v
+    })
+}
+
+// 인자: 괄호/함수 → 재귀, 순수 수(계수) 또는 길이.
+fn eval_len_factor(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if s.starts_with('(')
+        || s.to_ascii_lowercase().starts_with("calc(")
+        || s.to_ascii_lowercase().starts_with("min(")
+        || s.to_ascii_lowercase().starts_with("max(")
+        || s.to_ascii_lowercase().starts_with("clamp(")
+    {
+        return eval_len_expr(s);
+    }
+    // 순수 수(단위 없는 계수) 또는 길이.
+    if let Ok(n) = s.parse::<f32>() {
+        return Some(n);
+    }
+    parse_simple_len(s)
+}
+
+// 최상위 콤마 분할(괄호 존중).
+fn split_top_commas(s: &str) -> Vec<&str> {
+    let bytes = s.as_bytes();
+    let mut depth = 0i32;
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            b',' if depth == 0 => {
+                out.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(s[start..].trim());
+    out
 }
 
 // 종횡비 값: "16/9" 또는 "1.5" (단일 수). 파싱 실패면 None.
@@ -462,6 +618,18 @@ fn range_feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
             _ => 0, // '='
         }
     };
+    // 유효 비교 연산자만(<,<=,>,>=,=). 그 외(==, => 등)는 무효 문법 → unknown(None).
+    let valid_op = |op: &str| matches!(op, "<" | "<=" | ">" | ">=" | "=");
+    if let Some(op) = left_op {
+        if !valid_op(op) {
+            return None;
+        }
+    }
+    if let Some(op) = right_op {
+        if !valid_op(op) {
+            return None;
+        }
+    }
     if let (Some(l), Some(r)) = (left_op, right_op) {
         if dir(l) == 0 || dir(r) == 0 || dir(l) != dir(r) {
             return None; // 혼방향·'=' 이중 경계 → 무효 문법
