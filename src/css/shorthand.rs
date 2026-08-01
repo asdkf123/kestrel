@@ -1522,6 +1522,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let is_max = name.starts_with("max-");
             let toks = split_top_level(value_text.trim());
+            // calc-size()(§CSS Values 5): sizing 프로퍼티에서 유효. auto basis 는 max-*
+            // 에선 무효(max-* 는 auto 를 안 받는다). 캐논 직렬화로 저장.
+            if toks.len() == 1 && low.starts_with("calc-size(") {
+                if crate::css::calc_size_valid(toks[0], !is_max, false) {
+                    return vec![Declaration { important: false, name: name.to_string(),
+                        value: Value::Keyword(crate::css::calc_size_canonical(toks[0])) }];
+                }
+                return Vec::new();
+            }
             // anchor-size()(§css-anchor-1): sizing 프로퍼티에서 유효. 캐논 직렬화로 저장.
             if toks.len() == 1 {
                 if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
@@ -1578,6 +1587,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
+            // calc-size()(§CSS Values 5): flex-basis 에서 유효(auto·content basis 허용).
+            if toks.len() == 1 && low.starts_with("calc-size(") {
+                if crate::css::calc_size_valid(toks[0], true, true) {
+                    return vec![Declaration { important: false, name: name.to_string(),
+                        value: Value::Keyword(crate::css::calc_size_canonical(toks[0])) }];
+                }
+                return Vec::new();
+            }
             if toks.len() == 1 && crate::css::flex_basis_valid(toks[0]) {
                 return vec![Declaration { important: false, name: name.to_string(), value: parse_flex_basis(&low) }];
             }

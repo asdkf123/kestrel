@@ -929,6 +929,144 @@ fn num_factor(t: &[char], p: &mut usize) -> Option<f64> {
 
 // 각도식 → 라디안(f64). 삼각함수 인자 전용. deg/grad/turn/rad 리터럴 또는 순수 수
 // (라디안). 산술(계산식)도 허용하되 단위 혼합은 num_* 가 걸러 단순 리터럴만 정확.
+// ── calc-size()(§CSS Values 5) ──────────────────────────────────────────────
+// calc-size(<basis>, <calc-sum>). basis = auto(프로퍼티가 auto 허용 시)|min-content|
+// max-content|fit-content|stretch|any|중첩 calc-size|<calc-sum>(size·키워드 없음).
+// 2nd arg = <calc-sum>. size 키워드는 basis!=any 일 때만. 내재 키워드·중첩 calc-size
+// 금지. calc()/min/max 등 다른 수학 함수 안에는 calc-size 를 넣을 수 없다(그건 mdim
+// 이 Bad 로 거부).
+
+// 식별자가 단어 경계로 등장하는지(size, auto 등).
+fn word_present(low: &str, word: &str) -> bool {
+    let bytes = low.as_bytes();
+    let wb = word.as_bytes();
+    let mut i = 0;
+    while let Some(pos) = low[i..].find(word) {
+        let s = i + pos;
+        let e = s + wb.len();
+        let before_ok = s == 0 || !is_ident_char(bytes[s - 1]);
+        let after_ok = e == bytes.len() || !is_ident_char(bytes[e]);
+        if before_ok && after_ok {
+            return true;
+        }
+        i = s + 1;
+    }
+    false
+}
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
+}
+
+// 내재 크기 키워드가 (단어 경계로) 들어있는지.
+fn sum_has_size_keyword(low: &str) -> bool {
+    ["auto", "min-content", "max-content", "fit-content", "stretch", "none", "any"]
+        .iter()
+        .any(|k| word_present(low, k))
+}
+
+// <calc-sum>(2nd arg 또는 basis 의 calc-sum) 유효성. size 는 allow_size 일 때만.
+// 중첩 calc-size·내재 키워드 금지. size→1px 치환 후 <length-percentage> 타입 검사.
+fn calc_sum_size_valid(s: &str, allow_size: bool) -> bool {
+    let low = s.trim().to_ascii_lowercase();
+    if low.is_empty() || low.contains("calc-size(") {
+        return false;
+    }
+    if sum_has_size_keyword(&low) {
+        return false; // fit-content/auto/any 등은 calc-sum 에 못 온다
+    }
+    let has_size = word_present(&low, "size");
+    if has_size && !allow_size {
+        return false;
+    }
+    // size 를 길이로 치환해 <length-percentage> 수학식으로 검증.
+    let sub = low.replace("size", "1px");
+    math_length_valid(&sub, true)
+}
+
+pub fn calc_size_valid(value: &str, allow_auto: bool, allow_content: bool) -> bool {
+    let v = value.trim();
+    let low = v.to_ascii_lowercase();
+    if !low.starts_with("calc-size(") || !v.ends_with(')') {
+        return false;
+    }
+    // 전체가 calc-size(...) 하나인지(첫 '(' 의 짝이 끝).
+    let ic: Vec<char> = v.chars().collect();
+    let mut d = 0i32;
+    let mut end = 0usize;
+    for (j, &c) in ic.iter().enumerate().skip(9) {
+        match c {
+            '(' => d += 1,
+            ')' => {
+                d -= 1;
+                if d == 0 {
+                    end = j;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if end != ic.len() - 1 {
+        return false;
+    }
+    let inner = &v[10..v.len() - 1];
+    let args = split_top_commas(inner);
+    if args.len() != 2 {
+        return false;
+    }
+    let basis = args[0].trim();
+    let sum = args[1].trim();
+    let basis_low = basis.to_ascii_lowercase();
+    let basis_is_any = basis_low == "any";
+    let basis_ok = match basis_low.as_str() {
+        "auto" => allow_auto,
+        "content" => allow_content, // flex-basis 등에서만
+        "min-content" | "max-content" | "fit-content" | "stretch" | "any" => true,
+        "none" => false,
+        _ => {
+            if basis_low.starts_with("calc-size(") {
+                calc_size_valid(basis, allow_auto, allow_content) // 중첩 calc-size
+            } else {
+                calc_sum_size_valid(basis, false) // basis 의 calc-sum: size 불가
+            }
+        }
+    };
+    if !basis_ok {
+        return false;
+    }
+    // 2nd arg: size 는 basis!=any 일 때만.
+    calc_sum_size_valid(sum, !basis_is_any)
+}
+
+// calc-size() 캐논 직렬화. basis 키워드 소문자화, ", " 구분, 중첩 재귀. 내부
+// <calc-sum> 캐논(size*2→2*size 등)은 미구현 — 트림만(입력이 캐논이면 그대로).
+pub fn calc_size_canonical(value: &str) -> String {
+    let v = value.trim();
+    let low = v.to_ascii_lowercase();
+    if !low.starts_with("calc-size(") || !v.ends_with(')') {
+        return v.to_string();
+    }
+    let inner = &v[10..v.len() - 1];
+    let args = split_top_commas(inner);
+    if args.len() != 2 {
+        return v.to_string();
+    }
+    let basis = args[0].trim();
+    let sum = args[1].trim();
+    let basis_low = basis.to_ascii_lowercase();
+    let basis_out = if matches!(
+        basis_low.as_str(),
+        "auto" | "min-content" | "max-content" | "fit-content" | "stretch" | "any"
+    ) {
+        basis_low
+    } else if basis_low.starts_with("calc-size(") {
+        calc_size_canonical(basis)
+    } else {
+        basis.to_string()
+    };
+    format!("calc-size({}, {})", basis_out, sum)
+}
+
 // 단일 차원 리터럴(1s, -1ms, 1deg, 10px, 50% …)의 부호붙은 계수. 단위·퍼센트가
 // 붙어 있어야 한다(순수 수는 호출부가 eval_math_number 로 먼저 처리). sign() 전용.
 fn dim_literal_value(s: &str) -> Option<f64> {
@@ -4248,6 +4386,12 @@ fn mdim_same(args: &[String], pct: PctAxis) -> MTy {
 fn mdim_of(expr: &str, pct: PctAxis) -> MTy {
     let t = expr.trim();
     if t.is_empty() {
+        return MTy::Bad;
+    }
+    // calc-size()(§CSS Values 5)는 다른 수학 함수(calc/min/max/…) 안에 올 수 없다.
+    // 최상위 calc-size 는 프로퍼티 검증기가 calc_size_valid 로 따로 처리하므로, 여기
+    // (수학식 타입 검사)에 calc-size 가 보이면 중첩된 것 → 무효.
+    if t.to_ascii_lowercase().contains("calc-size(") {
         return MTy::Bad;
     }
     // 함수 호출 전체?
