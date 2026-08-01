@@ -3368,7 +3368,9 @@ fn chan_val(s: &str) -> Option<u8> {
     if let Some(p) = s.strip_suffix('%') {
         return Some((p.trim().parse::<f32>().ok()? / 100.0 * 255.0).clamp(0.0, 255.0).round() as u8);
     }
-    Some(s.parse::<f32>().ok()?.clamp(0.0, 255.0) as u8)
+    // 채널은 가장 가까운 정수로 반올림한다(§CSS Color 4) — 예전엔 `as u8` 로 잘라
+    // rgb(2.5, 3.4, 4.6) 이 rgb(2, 3, 4)(잘림) 였다. 올바르게는 rgb(3, 3, 5).
+    Some(s.parse::<f32>().ok()?.clamp(0.0, 255.0).round() as u8)
 }
 
 fn alpha_val(s: &str) -> Option<u8> {
