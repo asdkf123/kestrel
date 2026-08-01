@@ -1198,7 +1198,7 @@ impl Default for Viewport {
 
 // em/rem/vw 등 문맥 단위를 px 로 확정 (재귀: min/max/clamp 인자도). %는 레이아웃까지 보존.
 // em 은 요소 font-size(fs), rem 은 루트 요소 font-size(root_fs) 기준.
-fn resolve_units(v: &mut Value, fs: f32, root_fs: f32, vp: Viewport) {
+pub(crate) fn resolve_units(v: &mut Value, fs: f32, root_fs: f32, vp: Viewport) {
     match v {
         Value::Length(n, unit) => match unit {
             Unit::Em => *v = Value::Length(*n * fs, Unit::Px),
@@ -2848,7 +2848,8 @@ fn style_node<'a>(
                     }
                     let reg = at_properties.get(k)?;
                     if let Value::Keyword(s) = v {
-                        crate::css::registered_computed_value(&reg.syntax, s).map(|tv| (k.clone(), tv))
+                        crate::css::registered_computed_value(&reg.syntax, s, fs, root_fs, vp)
+                            .map(|tv| (k.clone(), tv))
                     } else {
                         None
                     }

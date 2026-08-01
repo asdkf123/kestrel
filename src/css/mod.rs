@@ -1138,7 +1138,13 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
 // <length*> 는 typed Value(resolve_units 가 em/vw→px), <time> ms→s, <resolution>
 // →dppx, <number>/<integer> calc 평가, <angle> →deg. <type>+/# 리스트는 항목별.
 // 문자열/custom-ident/* 등은 None(원문 유지).
-pub(crate) fn registered_computed_value(syntax: &str, value: &str) -> Option<Value> {
+pub(crate) fn registered_computed_value(
+    syntax: &str,
+    value: &str,
+    fs: f32,
+    root_fs: f32,
+    vp: crate::style::Viewport,
+) -> Option<Value> {
     let low = syntax.to_ascii_lowercase();
     let has = |t: &str| low.contains(t);
     if !(has("<length") || has("<number") || has("<angle") || has("<time")
@@ -1158,7 +1164,7 @@ pub(crate) fn registered_computed_value(syntax: &str, value: &str) -> Option<Val
         let sep = if is_list_hash { ", " } else { " " };
         let parts: Option<Vec<String>> = items
             .iter()
-            .map(|it| computed_scalar_string(&low, it.trim()))
+            .map(|it| computed_scalar_string(&low, it.trim(), fs, root_fs, vp))
             .collect();
         return parts.map(|p| Value::Keyword(p.join(sep)));
     }
@@ -1166,12 +1172,28 @@ pub(crate) fn registered_computed_value(syntax: &str, value: &str) -> Option<Val
     if has("<length") || has("<percentage") {
         return interpret_value(value.trim());
     }
-    computed_scalar_string(&low, value.trim()).map(Value::Keyword)
+    computed_scalar_string(&low, value.trim(), fs, root_fs, vp).map(Value::Keyword)
 }
 
-// 한 스칼라 값을 syntax 타입에 맞춰 계산·정규화한 문자열. length 는 여기선 원문
-// (문맥 단위는 상위에서 typed 로 처리). 실패 시 None.
-fn computed_scalar_string(syntax_low: &str, v: &str) -> Option<String> {
+// 길이 문자열을 계산값(px, % 보존)으로. interpret_value + resolve_units 재사용.
+fn computed_length_string(v: &str, fs: f32, root_fs: f32, vp: crate::style::Viewport) -> String {
+    match interpret_value(v) {
+        Some(mut val) => {
+            crate::style::resolve_units(&mut val, fs, root_fs, vp);
+            crate::style::computed_value_string(&val)
+        }
+        None => v.to_string(),
+    }
+}
+
+// 한 스칼라 값을 syntax 타입에 맞춰 계산·정규화한 문자열. 실패 시 None.
+fn computed_scalar_string(
+    syntax_low: &str,
+    v: &str,
+    fs: f32,
+    root_fs: f32,
+    vp: crate::style::Viewport,
+) -> Option<String> {
     let has = |t: &str| syntax_low.contains(t);
     let numf = |n: f64| crate::style::num_css(n as f32);
     if has("<time") {
@@ -1220,9 +1242,9 @@ fn computed_scalar_string(syntax_low: &str, v: &str) -> Option<String> {
             }
         }
     }
-    // length 는 원문(문맥 단위는 typed 경로에서). 여기 리스트 length 항목은 절대만 근사.
+    // length: interpret + resolve_units 로 계산값(em/vw→px, % 보존).
     if has("<length") {
-        return Some(v.to_string());
+        return Some(computed_length_string(v, fs, root_fs, vp));
     }
     None
 }
