@@ -1147,6 +1147,10 @@ pub(crate) fn registered_computed_value(
 ) -> Option<Value> {
     let low = syntax.to_ascii_lowercase();
     let has = |t: &str| low.contains(t);
+    // <transform-function>/<transform-list>: 함수 구조 보존, 내부 상대 길이만 px 로.
+    if has("<transform") {
+        return Some(Value::Keyword(resolve_lengths_in_string(value.trim(), fs, root_fs, vp)));
+    }
     if !(has("<length") || has("<number") || has("<angle") || has("<time")
         || has("<percentage") || has("<integer") || has("<resolution") || has("<color"))
     {
@@ -1182,6 +1186,66 @@ pub(crate) fn registered_computed_value(
         return interpret_value(value.trim());
     }
     computed_scalar_string(&low, value.trim(), fs, root_fs, vp).map(Value::Keyword)
+}
+
+// 문자열 안의 상대 길이 단위(수 뒤 em/rem/ex/ch/vw/vh/vmin/vmax/lh 등)를 px 로 치환
+// 한다(calc·transform 함수 인자 안 포함). 절대 단위·%·수는 그대로. transform 계산값
+// 처럼 문맥 단위만 확정하고 구조는 보존해야 할 때 쓴다.
+fn resolve_lengths_in_string(v: &str, fs: f32, root_fs: f32, vp: crate::style::Viewport) -> String {
+    let chars: Vec<char> = v.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
+            let ns = i;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+                let save = i;
+                i += 1;
+                if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                    i += 1;
+                }
+                if i < chars.len() && chars[i].is_ascii_digit() {
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                } else {
+                    i = save;
+                }
+            }
+            let num: f32 = chars[ns..i].iter().collect::<String>().parse().unwrap_or(0.0);
+            let us = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            let unit = chars[us..i].iter().collect::<String>().to_ascii_lowercase();
+            let px = match unit.as_str() {
+                "em" | "lh" => Some(num * fs),
+                "rem" | "rlh" => Some(num * root_fs),
+                "ex" | "ch" | "cap" | "ic" => Some(num * fs * 0.5),
+                "vw" | "vi" => Some(num / 100.0 * vp.w),
+                "vh" | "vb" => Some(num / 100.0 * vp.h),
+                "vmin" => Some(num / 100.0 * vp.w.min(vp.h)),
+                "vmax" => Some(num / 100.0 * vp.w.max(vp.h)),
+                _ => None, // px·%·절대·미지 단위는 그대로
+            };
+            match px {
+                Some(p) => {
+                    out.push_str(&crate::style::num_css(p));
+                    out.push_str("px");
+                }
+                None => out.push_str(&chars[ns..i].iter().collect::<String>()),
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 // 길이 문자열을 계산값(px, % 보존)으로. interpret_value + resolve_units 재사용.
