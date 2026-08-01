@@ -10063,13 +10063,59 @@ fn syntax_alt_matches(alt: &str, v: &str) -> bool {
     items.iter().all(|it| syntax_type_matches(comp, it.trim()))
 }
 
+// @property initial 길이가 계산 독립적인가(절대 단위 px/cm/mm/in/pt/pc/q·순수 수만).
+// em/rem/vw/%·ex/ch/lh 등 문맥 의존 단위가 있으면 false. calc 안 단위도 스캔한다.
+fn independent_length(v: &str) -> bool {
+    let chars: Vec<char> = v.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+                let save = i;
+                i += 1;
+                if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                    i += 1;
+                }
+                if i < chars.len() && chars[i].is_ascii_digit() {
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                } else {
+                    i = save;
+                }
+            }
+            let us = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            if i > us {
+                let u = chars[us..i].iter().collect::<String>().to_ascii_lowercase();
+                if !matches!(u.as_str(), "px" | "cm" | "mm" | "in" | "pt" | "pc" | "q") {
+                    return false; // 상대/미지 길이 단위(em/rem/vw/ex/…)
+                }
+            }
+            // % 는 계산 독립적(사용 시점 해결) — 허용.
+        } else {
+            i += 1;
+        }
+    }
+    true
+}
+
 // 단일 값 it 이 컴포넌트 comp(<type> 또는 keyword)에 맞는가.
 fn syntax_type_matches(comp: &str, it: &str) -> bool {
     if comp.starts_with('<') && comp.ends_with('>') {
         let ty = &comp[1..comp.len() - 1];
         match ty {
-            "length" => it == "0" || math_length_valid(it, false),
-            "length-percentage" => it == "0" || math_length_valid(it, true),
+            "length" => (it == "0" || math_length_valid(it, false)) && independent_length(it),
+            "length-percentage" => {
+                (it == "0" || math_length_valid(it, true)) && independent_length(it)
+            }
             "percentage" => math_number_valid(it) && it.contains('%'),
             "number" => it.parse::<f64>().is_ok() || math_number_only_valid(it),
             "integer" => {
