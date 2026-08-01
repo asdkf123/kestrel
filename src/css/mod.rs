@@ -368,6 +368,103 @@ pub fn parse_unicode_range(s: &str) -> Vec<(u32, u32)> {
     out
 }
 
+// CSS 주석(/* */)을 **빈 문자열**로 제거(문자열 리터럴 안은 보존). urange 처럼
+// 주석이 토큰을 분리하지 않는 문맥용(공유 strip_comments 는 공백으로 치환).
+fn remove_comments_empty(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let mut quote: Option<char> = None;
+    while let Some(c) = chars.next() {
+        if let Some(q) = quote {
+            out.push(c);
+            if c == q {
+                quote = None;
+            }
+        } else if c == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut prev = ' ';
+            for cc in chars.by_ref() {
+                if prev == '*' && cc == '/' {
+                    break;
+                }
+                prev = cc;
+            }
+        } else {
+            if c == '"' || c == '\'' {
+                quote = Some(c);
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
+// <urange> 하나(U+ 뒤 부분, 소문자)를 엄격 파싱해 (start,end)로. 무효면 None.
+// 형식(§CSS Syntax urange): <hex>{1,6} | <hex>{0,5}<?>{1,6}(총 ≤6, ? 후행만) |
+// <hex>{1,6}-<hex>{1,6}. 공백·비hex·초과 길이·잘못된 ? 위치는 무효.
+fn parse_one_urange(rest: &str) -> Option<(u32, u32)> {
+    if rest.is_empty() {
+        return None;
+    }
+    if let Some((a, b)) = rest.split_once('-') {
+        if a.is_empty() || b.is_empty() || a.len() > 6 || b.len() > 6 {
+            return None;
+        }
+        if !a.bytes().all(|c| c.is_ascii_hexdigit()) || !b.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        Some((u32::from_str_radix(a, 16).ok()?, u32::from_str_radix(b, 16).ok()?))
+    } else if let Some(qpos) = rest.find('?') {
+        if rest.len() > 6 {
+            return None;
+        }
+        let (hex, qs) = rest.split_at(qpos);
+        if !qs.bytes().all(|c| c == b'?') || !hex.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let lo = format!("{}{}", hex, "0".repeat(qs.len()));
+        let hi = format!("{}{}", hex, "f".repeat(qs.len()));
+        Some((u32::from_str_radix(&lo, 16).ok()?, u32::from_str_radix(&hi, 16).ok()?))
+    } else {
+        if rest.len() > 6 || !rest.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let v = u32::from_str_radix(rest, 16).ok()?;
+        Some((v, v))
+    }
+}
+
+// unicode-range 프로퍼티 값의 엄격 검증 + 캐논 직렬화(§CSSOM). 콤마로 나눈 각
+// <urange> 가 유효해야 하며(하나라도 무효면 전체 무효 → None), 각 구간을
+// `U+START` 또는 `U+START-END`(대문자 hex, 선행 0 없음)로 직렬화한다.
+pub fn unicode_range_canonical(s: &str) -> Option<String> {
+    // urange 는 특수 토큰화: 주석은 **분리 없이** 제거된다(`u/**/+a` = `u+a`). 공유
+    // strip_comments 는 공백으로 치환하므로(그러면 `u + a` = 무효) 여기선 빈 문자열로
+    // 제거한다. 실제 공백은 남겨 `U + a`(무효)와 구분한다.
+    let s = &remove_comments_empty(s);
+    let mut out = Vec::new();
+    let mut any = false;
+    for part in s.split(',') {
+        any = true;
+        let p = part.trim();
+        let low = p.to_ascii_lowercase();
+        let rest = low.strip_prefix("u+")?; // "u +"/"u+ " 등은 여기서 걸러진다
+        let (start, end) = parse_one_urange(rest)?;
+        if start > end || end > 0x10FFFF {
+            return None;
+        }
+        if start == end {
+            out.push(format!("U+{:X}", start));
+        } else {
+            out.push(format!("U+{:X}-{:X}", start, end));
+        }
+    }
+    if !any {
+        return None;
+    }
+    Some(out.join(", "))
+}
+
 // @import 규칙 데이터(§CSS Cascade, CSSImportRule). layer: None=layer 없음,
 // Some(None)=bare `layer`, Some(Some(name))=`layer(name)`. supports: supports() 조건 원문.
 #[derive(Debug, PartialEq, Clone)]

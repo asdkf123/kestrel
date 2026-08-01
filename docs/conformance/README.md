@@ -70,7 +70,11 @@
 >   @import HierarchyRequestError), **container-type/name/container 파싱·검증**, **@container 쿼리
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
-> - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→72.1%, css-syntax 18.9→68.7%**(이전 세션 포함).
+> - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **css-syntax +78 (68.7→87.1%)**: `unicode-range` 프로퍼티 `<urange>` 엄격 검증+캐논 직렬화
+>   (`U+a?`→`U+A0-AF`, 7자리·잘못된 `?` 위치·비hex·`>10FFFF` 무효). urange 특수 토큰화(주석은
+>   분리 없이 제거 — 공유 strip_comments 의 공백 치환과 달리 빈 문자열 제거). CSSOM setProperty
+>   무효 값은 **no-op**(이전 값 유지) — 기존엔 무효 값이 선언을 지웠음.
 > - **회귀 함정(기록)**: @container 를 컨테이너화하면 has_containers()가 최상위만 스캔해 ContainerMap
 >   미구축→매칭 붕괴(재귀+at_container 검사 필수). 컨테이너 쿼리 평가기는 미디어 평가기와 분리(mediaqueries
 >   무위험). Value enum 크기 키우면 JS 재귀 가드 전 네이티브 스택 오버플로(np 는 Rc).
@@ -143,7 +147,7 @@
 | css-transforms | 2,886 / 3,969 | 72.7% |
 | css-ruby | 52 / 73 | 71.2% |
 | css-sizing | 2,237 / 3,212 | 69.6% |
-| css-syntax | 294 / 428 | 68.7% |
+| css-syntax | 373 / 428 | 87.1% |
 | css-text | 2,078 / 3,029 | 68.6% |
 | css-scroll-snap | 458 / 690 | 66.4% |
 | css-properties-values-api | 611 / 923 | 66.2% |

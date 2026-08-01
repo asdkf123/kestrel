@@ -74,10 +74,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
     if value_text.contains("var(") {
         return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Var(value_text.to_string()) }];
     }
+    // unicode-range: <urange>+ 를 엄격 검증하고 캐논 직렬화한다(§CSS Syntax urange,
+    // §CSSOM). 무효면 선언을 버린다(setProperty 무효 → 이전 값 유지 / @font-face 는
+    // 초기값 U+0-10FFFF = 전체 커버로 폴백). CSS 전역 키워드는 원문 보존.
+    if name == "unicode-range" {
+        let v = value_text.trim();
+        if matches!(v.to_ascii_lowercase().as_str(),
+            "inherit" | "initial" | "unset" | "revert" | "revert-layer")
+        {
+            return vec![Declaration { raw: String::new(), important: false,
+                name: name.to_string(), value: Value::Keyword(v.to_string()) }];
+        }
+        return match crate::css::unicode_range_canonical(v) {
+            Some(canon) => vec![Declaration { raw: String::new(), important: false,
+                name: name.to_string(), value: Value::Keyword(canon) }],
+            None => Vec::new(),
+        };
+    }
     // @font-face 디스크립터: 값이 프로퍼티 문법이 아니다 (U+0-7F 는 색도 길이도 아니다).
     // 해석기에 넘기면 None → **선언이 통째로 버려진다**. 원문을 보존한다.
-    // (unicode-range 를 잃으면 서브셋 폰트를 전부 받게 된다 — 1240개를 받고 있었다)
-    if matches!(name, "unicode-range" | "src" | "font-display" | "size-adjust" | "ascent-override"
+    if matches!(name, "src" | "font-display" | "size-adjust" | "ascent-override"
         | "descent-override" | "line-gap-override")
     {
         return vec![Declaration { raw: String::new(),

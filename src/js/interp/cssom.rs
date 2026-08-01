@@ -829,10 +829,22 @@ impl Interp {
 
     // style.setProperty / style.prop = v — 규칙(np 로 중첩 주소지정)의 선언을 실제로 바꾼다.
     pub(super) fn rule_set_prop(&mut self, si: usize, ri: usize, np: &[usize], prop: &str, val: &str) {
-        // 값 파싱은 인라인 스타일과 같은 경로를 쓴다 (규칙이 두 벌이 되면 반드시 어긋난다)
-        let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, val.trim()))
-            .into_iter()
-            .find(|d| d.name == prop);
+        let val_t = val.trim();
+        // 값 파싱은 인라인 스타일과 같은 경로를 쓴다 (규칙이 두 벌이 되면 반드시 어긋난다).
+        // unicode-range 는 주석이 토큰을 분리하지 않아야 하므로(§CSS Syntax urange) 공유
+        // strip_comments(공백 치환)를 거치는 parse_inline_style 대신 raw 로 직접 검증한다.
+        let parsed = if prop == "unicode-range" {
+            crate::css::expand_decl_pub(prop, val_t).into_iter().next()
+        } else {
+            crate::css::parse_inline_style(&format!("{}: {}", prop, val_t))
+                .into_iter()
+                .find(|d| d.name == prop)
+        };
+        // 무효 값(비어있지 않은데 파싱 실패) → no-op: 기존 값을 유지한다(§CSSOM
+        // setProperty). 빈 값(""=removeProperty)만 실제 제거를 수행한다.
+        if parsed.is_none() && !val_t.is_empty() {
+            return;
+        }
         if let Some(sheets) = self.sheets() {
             if let Some(rule) = resolve_nested_mut(
                 sheets.get_mut(si).and_then(|s| s.sheet.rules.get_mut(ri)),
