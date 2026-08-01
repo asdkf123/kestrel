@@ -5221,7 +5221,14 @@ impl Interp {
                             format!("({})", c)
                         }
                     }
-                    _ => format!("({}: {})", to_display(&args[0]), to_display(&args[1])),
+                    // 값 어디서든 CSS 주석은 토큰화에서 제거된다(§CSS Syntax) — @supports
+                    // 규칙은 파서가 이미 제거하지만 CSS.supports(prop, value)의 raw JS
+                    // 문자열은 여기서 제거해야 `rgb(/* R */0, …)` 가 지원으로 판정된다.
+                    _ => format!(
+                        "({}: {})",
+                        to_display(&args[0]),
+                        crate::css::strip_comments(&to_display(&args[1]))
+                    ),
                 };
                 Ok(Value::Bool(crate::css::supports_condition(&cond)))
             }
