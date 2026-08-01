@@ -819,6 +819,72 @@ fn collect_computed_styles(
         if let Some(v) = m.get("position-area").cloned() {
             m.insert("position-area".to_string(), crate::css::position_area_computed(&v));
         }
+        // corner-*-shape 계산값(§CSS Borders 4): 키워드를 superellipse() 로 해석.
+        // round=superellipse(1), scoop=(-1), bevel=(0), notch=(-infinity), square=(infinity),
+        // squircle=(2). superellipse(N) 는 그대로. getComputedStyle 전용(지정값은 키워드 유지).
+        {
+            let map_kw = |t: &str| -> String {
+                match t {
+                    "round" => "superellipse(1)".to_string(),
+                    "scoop" => "superellipse(-1)".to_string(),
+                    "bevel" => "superellipse(0)".to_string(),
+                    "notch" => "superellipse(-infinity)".to_string(),
+                    "square" => "superellipse(infinity)".to_string(),
+                    "squircle" => "superellipse(2)".to_string(),
+                    other => other.to_string(),
+                }
+            };
+            for corner in [
+                "corner-top-left-shape",
+                "corner-top-right-shape",
+                "corner-bottom-right-shape",
+                "corner-bottom-left-shape",
+            ] {
+                if let Some(v) = m.get(corner).cloned() {
+                    let mapped = v
+                        .split_whitespace()
+                        .map(map_kw)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    m.insert(corner.to_string(), mapped);
+                }
+            }
+            // 4 코너(TL TR BR BL) 값을 먼저 로컬로 읽는다(이후 insert 와 대여 충돌 방지).
+            let tl = m.get("corner-top-left-shape").cloned();
+            let tr = m.get("corner-top-right-shape").cloned();
+            let br = m.get("corner-bottom-right-shape").cloned();
+            let bl = m.get("corner-bottom-left-shape").cloned();
+            // corner-shape 단축 계산값: box 축약(4→1/2/3).
+            if let (Some(a), Some(b), Some(c), Some(d)) = (&tl, &tr, &br, &bl) {
+                let folded = if a == b && b == c && c == d {
+                    a.clone()
+                } else if a == c && b == d {
+                    format!("{} {}", a, b)
+                } else if b == d {
+                    format!("{} {} {}", a, b, c)
+                } else {
+                    format!("{} {} {} {}", a, b, c, d)
+                };
+                m.insert("corner-shape".to_string(), folded);
+            }
+            // 엣지 단축 계산값: 2 코너 축약(같으면 1값). 좌→우 / 상→하.
+            let fold2 = |x: &Option<String>, y: &Option<String>| -> Option<String> {
+                match (x, y) {
+                    (Some(a), Some(b)) => Some(if a == b { a.clone() } else { format!("{} {}", a, b) }),
+                    _ => None,
+                }
+            };
+            for (sh, v) in [
+                ("corner-top-shape", fold2(&tl, &tr)),
+                ("corner-bottom-shape", fold2(&bl, &br)),
+                ("corner-left-shape", fold2(&tl, &bl)),
+                ("corner-right-shape", fold2(&tr, &br)),
+            ] {
+                if let Some(val) = v {
+                    m.insert(sh.to_string(), val);
+                }
+            }
+        }
         // background-repeat/mask-repeat 계산값(§CSS Backgrounds): 레이어별 2값을 축약한다.
         // "repeat repeat"→"repeat", "repeat no-repeat"→"repeat-x", "no-repeat repeat"→"repeat-y".
         for key in ["background-repeat", "mask-repeat"] {
