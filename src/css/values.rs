@@ -789,7 +789,12 @@ fn css_mod(a: f64, b: f64) -> f64 {
         return a;
     }
     let r = a - b * (a / b).floor();
-    r
+    // 결과가 0 이면 부호는 제수 b 를 따른다(mod(-1,-1) = -0 → 1/sign = -inf).
+    if r == 0.0 {
+        0.0f64.copysign(b)
+    } else {
+        r
+    }
 }
 fn css_rem(a: f64, b: f64) -> f64 {
     if b == 0.0 || a.is_infinite() {
@@ -798,7 +803,13 @@ fn css_rem(a: f64, b: f64) -> f64 {
     if b.is_infinite() {
         return a;
     }
-    a - b * (a / b).trunc()
+    let r = a - b * (a / b).trunc();
+    // 결과가 0 이면 부호는 피제수 a 를 따른다(rem(-1,-1) = -0).
+    if r == 0.0 {
+        0.0f64.copysign(a)
+    } else {
+        r
+    }
 }
 
 // calc() 내부 식을 순수 수(단위 무시)로 평가. transition 시간 정규화 등에 쓴다.
@@ -11953,6 +11964,10 @@ mod tests {
         assert_eq!(ev("round(up, 3, 10)"), Some(10.0));
         assert_eq!(ev("round(down, 7, 10)"), Some(0.0));
         assert_eq!(ev("mod(rem(1,18)* -1, 5)"), Some(4.0));
+        // mod/rem 부호있는 0(signed-zero.html): 결과 0 의 부호로 1/sign 이 ±inf.
+        assert_eq!(ev("clamp(-1, 1 / sign(mod(-1, -1)), 1)"), Some(-1.0)); // mod=-0
+        assert_eq!(ev("clamp(-1, 1 / sign(rem(-1, -1)), 1)"), Some(-1.0)); // rem=-0
+        assert_eq!(ev("clamp(-1, 1 / sign(mod(1, 1)), 1)"), Some(1.0)); // mod=+0
         // 부호있는 0 · infinity(signed-zero.html 핵심).
         assert_eq!(ev("clamp(-1, 1 / sign(calc(-0)), 1)"), Some(-1.0));
         assert_eq!(ev("clamp(-1, 1 / sign(calc(0)), 1)"), Some(1.0));
