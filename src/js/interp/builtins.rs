@@ -5616,7 +5616,11 @@ impl Interp {
                 let matches = crate::css::media_matches_vp(&q, vw, vh);
                 let mut m = ObjMap::new();
                 m.insert("matches".to_string(), Value::Bool(matches));
-                m.insert("media".to_string(), Value::Str(q));
+                // .media 는 직렬화된 미디어 쿼리 리스트(§CSSOM).
+                m.insert(
+                    "media".to_string(),
+                    Value::Str(crate::css::serialize_media_query_list(&q)),
+                );
                 m.insert("onchange".to_string(), Value::Null);
                 for k in ["addListener", "removeListener", "addEventListener", "removeEventListener"]
                 {

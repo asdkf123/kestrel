@@ -13617,6 +13617,136 @@ pub(crate) fn valid_identifier_char(c: char) -> bool {
     matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_') || (c as u32) >= 0x80
 }
 
+// §CSSOM serialize a media query list. 빈 입력→""; 최상위 콤마로 쿼리 분할; 각
+// 쿼리를 정규화(트림·소문자 타입/기능·괄호 내부 트림·미닫힌 괄호 닫기·값 정규화),
+// 무효(떠도는 ')'·빈 쿼리)는 "not all"; ", " 로 결합.
+pub fn serialize_media_query_list(input: &str) -> String {
+    if input.trim().is_empty() {
+        return String::new();
+    }
+    // 최상위(괄호 밖) 콤마 분할.
+    let mut parts: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in input.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    parts
+        .iter()
+        .map(|p| serialize_one_media_query(p.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn serialize_one_media_query(q: &str) -> String {
+    let q = q.trim();
+    if q.is_empty() {
+        return "not all".to_string();
+    }
+    let chars: Vec<char> = q.chars().collect();
+    let mut tokens: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if c == '(' {
+            // 균형 ')' 또는 EOF(자동 닫힘)까지.
+            let mut d = 0i32;
+            let start = i;
+            let mut end = chars.len();
+            while i < chars.len() {
+                match chars[i] {
+                    '(' => d += 1,
+                    ')' => {
+                        d -= 1;
+                        if d == 0 {
+                            end = i;
+                            i += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let inner: String = chars[start + 1..end.min(chars.len())].iter().collect();
+            tokens.push(serialize_media_feature(inner.trim()));
+        } else if c == ')' {
+            return "not all".to_string(); // 떠도는 닫는 괄호 → 무효.
+        } else {
+            // ident/워드(미디어 타입·and/or/not/only).
+            let s = i;
+            while i < chars.len()
+                && !chars[i].is_whitespace()
+                && chars[i] != '('
+                && chars[i] != ')'
+            {
+                i += 1;
+            }
+            let w: String = chars[s..i].iter().collect();
+            tokens.push(w.to_ascii_lowercase());
+        }
+    }
+    if tokens.is_empty() {
+        return "not all".to_string();
+    }
+    tokens.join(" ")
+}
+
+// (feature) 또는 (feature: value) 를 정규화. 이름 소문자, 값 트림+정규화.
+fn serialize_media_feature(inner: &str) -> String {
+    if let Some(ci) = inner.find(':') {
+        let name = inner[..ci].trim().to_ascii_lowercase();
+        let val = inner[ci + 1..].trim();
+        format!("({}: {})", name, serialize_mf_value(val))
+    } else {
+        format!("({})", inner.trim().to_ascii_lowercase())
+    }
+}
+
+// 미디어 기능 값 정규화: aspect-ratio 등 <ratio> 는 '/' 둘레 공백, resolution calc 는
+// x→dppx + 평가. 그 외는 그대로.
+fn serialize_mf_value(v: &str) -> String {
+    let low = v.to_ascii_lowercase();
+    // <ratio>: N/M → N / M (공백). calc/함수 안 '/' 는 제외(괄호 깊이 0에서만).
+    if !low.contains("calc(") && !low.contains('(') {
+        if let Some(si) = v.find('/') {
+            let (a, b) = (v[..si].trim(), v[si + 1..].trim());
+            if !a.is_empty() && !b.is_empty() {
+                return format!("{} / {}", a, b);
+            }
+        }
+    }
+    // resolution calc: x → dppx, 상수 폴딩.
+    if low.starts_with("calc(") && v.ends_with(')') {
+        let body = &v[5..v.len() - 1];
+        // x 단위를 dppx 로 (경계: 숫자 뒤 x). 간단히 " x"/숫자x 치환은 위험하니 토큰 평가.
+        if low.contains('x') || low.contains("dppx") || low.contains("dpi") || low.contains("dpcm")
+        {
+            let norm = body.replace("dppx", "").replace('x', "");
+            if let Some(n) = eval_math_number(&norm) {
+                return format!("calc({}dppx)", crate::style::num_css(n as f32));
+            }
+        }
+    }
+    v.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
