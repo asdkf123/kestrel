@@ -240,9 +240,13 @@ impl Interp {
         if rl.starts_with("calc-size(") {
             return crate::css::calc_size_canonical(raw);
         }
-        // 일반 calc() 평탄 합 캐논 직렬화(§CSS Values 4 §10.13): 단위별 결합·정렬
-        // (수 → % → 단위 알파벳순)·절대단위 px. 복잡식(함수/그룹)은 None → 원문 유지.
-        if rl.starts_with("calc(") {
+        // calc()/clamp()/min()/max()/round()/… 캐논 직렬화(§CSS Values 4 §10.13):
+        // 평탄 합은 단위별 결합·정렬(수 → % → 단위 알파벳순)·절대단위 px, 단일 단위
+        // clamp/min/max 는 평가(clamp(1px,2px,3px)→calc(2px)). 복잡식은 None → 원문.
+        if matches!(
+            rl.split('(').next().unwrap_or(""),
+            "calc" | "clamp" | "min" | "max" | "round" | "mod" | "rem" | "abs"
+        ) {
             if let Some(s) = crate::css::canon_calc_serialize(raw) {
                 return s;
             }

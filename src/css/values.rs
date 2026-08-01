@@ -1305,36 +1305,166 @@ fn canon_flat_calc(inner: &str) -> Option<String> {
     Some(out)
 }
 
-// calc(<평탄 합>) 하나를 캐논 직렬화. 전체가 calc(...) 하나이고 평탄 합일 때만
-// Some. 그 외(다중 calc·함수·중첩)는 None → 호출부가 원문 유지.
-pub fn canon_calc_serialize(raw: &str) -> Option<String> {
-    let t = raw.trim();
-    let low = t.to_ascii_lowercase();
-    if !low.starts_with("calc(") || !t.ends_with(')') {
+// 단일 단위 길이 math(clamp/min/max/round/mod/rem/abs/calc)를 평가해 "Nunit" 로.
+// 식에 단위가 정확히 하나(또는 %)일 때만 — 그 단위를 벗겨 eval_math_number 로 수
+// 평가 후 재부착. 여러 단위·문맥 단위 혼합·비유한은 None(원문 유지).
+fn canon_length_math(expr: &str) -> Option<String> {
+    // 차원 유효성 게이트: 결과가 <length-percentage>인 식만(1px*2px 같은 length² 배제).
+    if !math_length_valid(expr, true) {
         return None;
     }
-    // 첫 '(' 의 짝이 끝인지(전체가 calc(...) 하나).
+    // 수 뒤 단위 토큰 수집(스캔). 지수 e 는 제외.
+    let chars: Vec<char> = expr.chars().collect();
+    let mut units: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        // 수 리터럴 시작?
+        if chars[i].is_ascii_digit() || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
+            // 수 부분 소비.
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            // 지수부.
+            if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+                let save = i;
+                i += 1;
+                if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                    i += 1;
+                }
+                if i < chars.len() && chars[i].is_ascii_digit() {
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                } else {
+                    i = save;
+                }
+            }
+            // 단위(알파벳) 또는 %.
+            let us = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            if i > us {
+                units.push(chars[us..i].iter().collect::<String>().to_ascii_lowercase());
+            } else if i < chars.len() && chars[i] == '%' {
+                units.push("%".to_string());
+                i += 1;
+            } else {
+                units.push(String::new()); // 순수 수
+            }
+        } else {
+            i += 1;
+        }
+    }
+    // 비-빈 단위의 유일 집합.
+    let mut set: Vec<&String> = units.iter().filter(|u| !u.is_empty()).collect();
+    set.sort();
+    set.dedup();
+    if set.len() != 1 {
+        return None; // 단위 0(순수 수) 또는 다중 → 별도/원문
+    }
+    let u = set[0].clone();
+    // 그 단위 토큰만 제거(수 뒤에서만). 재스캔.
+    let mut stripped = String::new();
+    let mut j = 0usize;
+    while j < chars.len() {
+        if chars[j].is_ascii_digit() || (chars[j] == '.' && j + 1 < chars.len() && chars[j + 1].is_ascii_digit()) {
+            let ns = j;
+            while j < chars.len() && (chars[j].is_ascii_digit() || chars[j] == '.') {
+                j += 1;
+            }
+            if j < chars.len() && (chars[j] == 'e' || chars[j] == 'E') {
+                let save = j;
+                j += 1;
+                if j < chars.len() && (chars[j] == '+' || chars[j] == '-') {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j].is_ascii_digit() {
+                    while j < chars.len() && chars[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                } else {
+                    j = save;
+                }
+            }
+            stripped.push_str(&chars[ns..j].iter().collect::<String>());
+            // 단위 스킵.
+            if u == "%" {
+                if j < chars.len() && chars[j] == '%' {
+                    j += 1;
+                }
+            } else {
+                let us = j;
+                while j < chars.len() && chars[j].is_ascii_alphabetic() {
+                    j += 1;
+                }
+                let tok: String = chars[us..j].iter().collect::<String>().to_ascii_lowercase();
+                if tok != u {
+                    // 다른 알파벳(함수명 등) — 되돌려 그대로.
+                    stripped.push_str(&chars[us..j].iter().collect::<String>());
+                }
+            }
+        } else {
+            stripped.push(chars[j]);
+            j += 1;
+        }
+    }
+    let n = eval_math_number(&stripped)?;
+    if !n.is_finite() {
+        return None;
+    }
+    Some(format!("{}{}", canon_coeff(n), u))
+}
+
+// calc(<평탄 합>) 하나를 캐논 직렬화. 전체가 calc(...) 하나이고 평탄 합일 때만
+// Some. 그 외(다중 calc·함수·중첩)는 None → 호출부가 원문 유지.
+// 전체가 함수 name(...) 하나인지(첫 '(' 의 짝이 끝). name 은 소문자.
+fn whole_call(t: &str, name: &str) -> bool {
+    let low = t.to_ascii_lowercase();
+    if !low.starts_with(name) || !t.ends_with(')') {
+        return false;
+    }
     let ic: Vec<char> = t.chars().collect();
+    let open = name.len() - 1; // name 은 "calc(" 처럼 '(' 포함
     let mut d = 0i32;
-    let mut end = 0usize;
-    for (j, &c) in ic.iter().enumerate().skip(4) {
+    for (j, &c) in ic.iter().enumerate().skip(open) {
         match c {
             '(' => d += 1,
             ')' => {
                 d -= 1;
                 if d == 0 {
-                    end = j;
-                    break;
+                    return j == ic.len() - 1;
                 }
             }
             _ => {}
         }
     }
-    if end != ic.len() - 1 {
+    false
+}
+
+pub fn canon_calc_serialize(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    let low = t.to_ascii_lowercase();
+    // calc(<평탄 합>) → 캐논, 아니면 calc(<단일단위 math>) → 평가.
+    if whole_call(t, "calc(") {
+        let inner = &t[5..t.len() - 1];
+        if let Some(s) = canon_flat_calc(inner) {
+            return Some(format!("calc({})", s));
+        }
+        if let Some(s) = canon_length_math(inner) {
+            return Some(format!("calc({})", s));
+        }
         return None;
     }
-    let inner = &t[5..t.len() - 1];
-    canon_flat_calc(inner).map(|s| format!("calc({})", s))
+    // 벌거벗은 clamp/min/max/round/mod/rem/abs(단일 단위 길이) → calc(Nunit).
+    for f in ["clamp(", "min(", "max(", "round(", "mod(", "rem(", "abs("] {
+        if low.starts_with(f) && whole_call(t, f) {
+            if let Some(s) = canon_length_math(t) {
+                return Some(format!("calc({})", s));
+            }
+        }
+    }
+    None
 }
 
 // 곱셈 항 → (크기, 단위). 수 인자는 계수로 접고 비수(수+단위) 하나만 허용. 단위는
@@ -12991,11 +13121,19 @@ mod tests {
         assert_eq!(cc("calc(2 * 3px)").as_deref(), Some("calc(6px)"));
         assert_eq!(cc("calc(2in)").as_deref(), Some("calc(192px)"));
         assert_eq!(cc("calc(1px + 3% + 2px)").as_deref(), Some("calc(3% + 3px)"));
-        // 복잡식은 None(원문 유지).
-        assert_eq!(cc("calc(min(1px, 2px))"), None);
-        assert_eq!(cc("calc(1px * 2px)"), None); // 단위*단위
-        assert_eq!(cc("calc((1px + 2px) * 3)"), None); // 그룹
+        // min/max/clamp 는 단일 단위면 평가(아래 별도 확인).
+        assert_eq!(cc("calc(min(1px, 2px))").as_deref(), Some("calc(1px)"));
+        assert_eq!(cc("calc(1px * 2px)"), None); // 단위*단위(length²) 무효 → 원문
+        assert_eq!(cc("calc((1px + 2px) * 3)").as_deref(), Some("calc(9px)")); // 그룹도 평가
         assert_eq!(cc("10px"), None); // calc 아님
+        // 단일 단위 clamp/min/max 평가.
+        assert_eq!(cc("clamp(1px, 2px, 3px)").as_deref(), Some("calc(2px)"));
+        assert_eq!(cc("clamp(1px, 2px, clamp(2px, 3px, 4px))").as_deref(), Some("calc(2px)"));
+        assert_eq!(cc("min(3em, 5em)").as_deref(), Some("calc(3em)"));
+        assert_eq!(cc("max(3%, 5%)").as_deref(), Some("calc(5%)"));
+        assert_eq!(cc("calc(clamp(1px, 2px, 3px))").as_deref(), Some("calc(2px)"));
+        assert_eq!(cc("clamp(1px, 2em, 3px)"), None); // 다중 단위 → 원문
+        assert_eq!(cc("clamp(0.1, 0.5, 0.9)"), None); // 순수 수(길이 아님)
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");
