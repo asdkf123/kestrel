@@ -3741,9 +3741,12 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
     // 교차 공간: sRGB 를 거쳐 변환(none 없음).
     let f = srgb_float_of(&low)?;
     let co = srgb_to_space(space, f[0], f[1], f[2])?;
-    // lch/oklch 로 변환 시 chroma 0(achromatic)이면 hue 는 정의되지 않음 → None
-    // (§CSS Color 4). color-mix(in lch, …, black) 등에서 both-none → 결과 hue none.
-    let hue = if matches!(space, "lch" | "oklch") && co[1].abs() < 1e-6 {
+    // lch/oklch 로 변환 시 achromatic(회색축: r==g==b)이면 chroma 0, hue 는 정의되지
+    // 않음 → None(§CSS Color 4). srgb→lab 변환 float 오차로 chroma 가 정확히 0 이 안 될
+    // 수 있으므로 srgb 레벨에서 정확 판정한다(white/gray/black 은 채널이 정확히 같다).
+    // color-mix(in lch, white, blue) → white hue none → blue hue 채택.
+    let achromatic = f[0] == f[1] && f[1] == f[2];
+    let hue = if matches!(space, "lch" | "oklch") && achromatic {
         None
     } else {
         Some(co[2])
