@@ -1172,6 +1172,7 @@ var __kIfaceNames = [
   'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
   'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSPropertyRule', 'CSSStyleDeclaration',
   'CSSMediaRule', 'CSSSupportsRule', 'CSSCustomMediaRule', 'CSSConditionRule', 'CSSGroupingRule',
+  'CSSNestedDeclarations',
   'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot',
   'ProcessingInstruction', 'DocumentType'
 ];
@@ -1200,6 +1201,7 @@ for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   chain('CSSMediaRule', 'CSSConditionRule');
   chain('CSSSupportsRule', 'CSSConditionRule');
   chain('CSSPropertyRule', 'CSSRule');
+  chain('CSSNestedDeclarations', 'CSSRule');
 })();
 // Text/Comment 는 **생성 가능한** 생성자다 (DOM §4.10/§4.8): new Text(data),
 // new Comment(data). document.createTextNode/createComment 로 분리 노드를 만든다.

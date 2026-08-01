@@ -383,9 +383,8 @@ impl Interp {
                             .unwrap_or_default(),
                     )),
                     "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
-                    // 중첩 규칙의 .style 은 아직 라이브 주소지정 안 함(RuleStyle 은 최상위 전용) →
-                    // 최상위(np 빈)일 때만 RuleStyle, 중첩은 Phase 2(RuleStyle 에 np 필요).
-                    "style" if np.is_empty() => Ok(Value::RuleStyle(si, ri)),
+                    // 규칙의 .style(CSSStyleDeclaration). np 로 중첩 규칙까지 주소지정.
+                    "style" => Ok(Value::RuleStyle(si, ri, std::rc::Rc::new(np.clone()))),
                     "type" => Ok(Value::Num(1.0)), // STYLE_RULE
                     // CSS Nesting: 중첩 규칙(.nested)을 cssRules 로 라이브 노출(np+[i] 주소).
                     "cssRules" | "rules" => {
@@ -428,11 +427,11 @@ impl Interp {
                 }
             }
             // 규칙의 CSSStyleDeclaration
-            Value::RuleStyle(si, ri) => {
-                let (si, ri) = (*si, *ri);
+            Value::RuleStyle(si, ri, np) => {
+                let (si, ri, np) = (*si, *ri, (**np).clone());
                 match key {
                     "cssText" => {
-                        let t = self.rule_css_text(si, ri, &[]);
+                        let t = self.rule_css_text(si, ri, &np);
                         // "sel { decls }" 에서 선언부만
                         let inner = t
                             .split_once('{')
@@ -441,31 +440,32 @@ impl Interp {
                         Ok(Value::Str(inner))
                     }
                     "length" => Ok(Value::Num(
-                        self.sheets()
-                            .and_then(|s| s.get(si))
-                            .and_then(|s| s.sheet.rules.get(ri))
-                            .map(|r| r.declarations.len() as f64)
-                            .unwrap_or(0.0),
+                        resolve_nested(
+                            self.sheets().and_then(|s| s.get(si)).and_then(|s| s.sheet.rules.get(ri)),
+                            &np,
+                        )
+                        .map(|r| r.declarations.len() as f64)
+                        .unwrap_or(0.0),
                     )),
                     "getPropertyValue" => Ok(Value::Native(Native::RuleStyleGet)),
                     "setProperty" => Ok(Value::Native(Native::RuleStyleSet)),
                     "removeProperty" => Ok(Value::Native(Native::RuleStyleRemove)),
                     "item" => Ok(Value::Native(Native::RuleStyleItem)),
-                    "parentRule" => Ok(Value::CssRule(si, ri, std::rc::Rc::new(Vec::new()))),
+                    "parentRule" => Ok(Value::CssRule(si, ri, std::rc::Rc::new(np.clone()))),
                     _ => {
                         // 인덱스 접근: style[0] → 프로퍼티 이름 (표준)
                         if let Ok(i) = key.parse::<usize>() {
-                            return Ok(self
-                                .sheets()
-                                .and_then(|s| s.get(si))
-                                .and_then(|s| s.sheet.rules.get(ri))
-                                .and_then(|r| r.declarations.get(i))
-                                .map(|d| Value::Str(d.name.clone()))
-                                .unwrap_or(Value::Undefined));
+                            return Ok(resolve_nested(
+                                self.sheets().and_then(|s| s.get(si)).and_then(|s| s.sheet.rules.get(ri)),
+                                &np,
+                            )
+                            .and_then(|r| r.declarations.get(i))
+                            .map(|d| Value::Str(d.name.clone()))
+                            .unwrap_or(Value::Undefined));
                         }
                         // camelCase 프로퍼티 접근: style.backgroundColor
                         let prop = camel_to_dashed(key);
-                        Ok(Value::Str(self.rule_prop(si, ri, &prop)))
+                        Ok(Value::Str(self.rule_prop(si, ri, &np, &prop)))
                     }
                 }
             }
@@ -473,23 +473,27 @@ impl Interp {
         }
     }
 
-    pub(super) fn rule_prop(&mut self, si: usize, ri: usize, prop: &str) -> String {
-        self.sheets()
-            .and_then(|s| s.get(si))
-            .and_then(|s| s.sheet.rules.get(ri))
-            .and_then(|r| r.declarations.iter().find(|d| d.name == prop))
-            .map(|d| crate::style::computed_value_string(&d.value))
-            .unwrap_or_default()
+    pub(super) fn rule_prop(&mut self, si: usize, ri: usize, np: &[usize], prop: &str) -> String {
+        resolve_nested(
+            self.sheets().and_then(|s| s.get(si)).and_then(|s| s.sheet.rules.get(ri)),
+            np,
+        )
+        .and_then(|r| r.declarations.iter().find(|d| d.name == prop))
+        .map(|d| crate::style::computed_value_string(&d.value))
+        .unwrap_or_default()
     }
 
-    // style.setProperty / style.prop = v — 규칙의 선언을 실제로 바꾼다.
-    pub(super) fn rule_set_prop(&mut self, si: usize, ri: usize, prop: &str, val: &str) {
+    // style.setProperty / style.prop = v — 규칙(np 로 중첩 주소지정)의 선언을 실제로 바꾼다.
+    pub(super) fn rule_set_prop(&mut self, si: usize, ri: usize, np: &[usize], prop: &str, val: &str) {
         // 값 파싱은 인라인 스타일과 같은 경로를 쓴다 (규칙이 두 벌이 되면 반드시 어긋난다)
         let parsed = crate::css::parse_inline_style(&format!("{}: {}", prop, val.trim()))
             .into_iter()
             .find(|d| d.name == prop);
         if let Some(sheets) = self.sheets() {
-            if let Some(rule) = sheets.get_mut(si).and_then(|s| s.sheet.rules.get_mut(ri)) {
+            if let Some(rule) = resolve_nested_mut(
+                sheets.get_mut(si).and_then(|s| s.sheet.rules.get_mut(ri)),
+                np,
+            ) {
                 rule.declarations.retain(|d| d.name != prop);
                 if let Some(d) = parsed {
                     rule.declarations.push(d);

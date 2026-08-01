@@ -1008,7 +1008,7 @@ pub(super) fn to_display(v: &Value) -> String {
         Value::Attr(_, _) | Value::DetachedAttr(_) => "[object Attr]".to_string(),
         Value::Sheet(_) => "[object CSSStyleSheet]".to_string(),
         Value::CssRule(_, _, _) => "[object CSSStyleRule]".to_string(),
-        Value::RuleStyle(_, _) => "[object CSSStyleDeclaration]".to_string(),
+        Value::RuleStyle(_, _, _) => "[object CSSStyleDeclaration]".to_string(),
         Value::Dataset(_) => "[object DOMStringMap]".to_string(),
         // classList 를 문자열화하면 class 값 (DOMTokenList.toString)
         Value::ClassList(_) => "[object DOMTokenList]".to_string(),
@@ -1168,7 +1168,7 @@ pub(super) fn strict_eq(a: &Value, b: &Value) -> bool {
         (Value::DetachedAttr(x), Value::DetachedAttr(y)) => Rc::ptr_eq(x, y),
         (Value::Sheet(x), Value::Sheet(y)) => x == y,
         (Value::CssRule(a, x, p), Value::CssRule(b, y, q)) => a == b && x == y && p == q,
-        (Value::RuleStyle(a, x), Value::RuleStyle(b, y)) => a == b && x == y,
+        (Value::RuleStyle(a, x, p), Value::RuleStyle(b, y, q)) => a == b && x == y && p == q,
         (Value::Dataset(x), Value::Dataset(y)) => x == y,
         (Value::ClassList(x), Value::ClassList(y)) => x == y,
         // 심볼 동일성은 고유 key 비교 (Symbol('x')!==Symbol('x'), Symbol.for 은 ===).

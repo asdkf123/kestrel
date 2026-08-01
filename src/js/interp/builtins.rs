@@ -849,7 +849,7 @@ impl Interp {
             | Value::Attr(_, _)
             | Value::Sheet(_)
             | Value::CssRule(_, _, _)
-            | Value::RuleStyle(_, _)
+            | Value::RuleStyle(_, _, _)
             | Value::Class(_)
             | Value::Bound(_)
             | Value::Accessor(_)
@@ -6146,6 +6146,9 @@ impl Interp {
                                     "CSSMediaRule"
                                 } else if r.at_supports.is_some() {
                                     "CSSSupportsRule"
+                                } else if r.selector_text.is_empty() {
+                                    // 빈 selector_text = 중첩 맨선언(§CSS Nesting).
+                                    "CSSNestedDeclarations"
                                 } else {
                                     "CSSStyleRule"
                                 }
@@ -6156,12 +6159,17 @@ impl Interp {
                             "CSSMediaRule" => {
                                 vec!["CSSMediaRule", "CSSConditionRule", "CSSGroupingRule", "CSSRule"]
                             }
+                            "CSSSupportsRule" => {
+                                vec!["CSSSupportsRule", "CSSConditionRule", "CSSGroupingRule", "CSSRule"]
+                            }
                             "CSSCustomMediaRule" => vec!["CSSCustomMediaRule", "CSSRule"],
                             "CSSPropertyRule" => vec!["CSSPropertyRule", "CSSRule"],
-                            _ => vec!["CSSStyleRule", "CSSRule"],
+                            "CSSNestedDeclarations" => vec!["CSSNestedDeclarations", "CSSRule"],
+                            // CSS Nesting: CSSStyleRule 은 CSSGroupingRule 를 상속.
+                            _ => vec!["CSSStyleRule", "CSSGroupingRule", "CSSRule"],
                         }
                     }
-                    Some(Value::RuleStyle(_, _))
+                    Some(Value::RuleStyle(_, _, _))
                     | Some(Value::Style(_))
                     | Some(Value::ComputedStyle(_)) => vec!["CSSStyleDeclaration"],
                     Some(Value::ClassList(_)) => vec!["DOMTokenList"],
@@ -6196,29 +6204,29 @@ impl Interp {
                 }
             }
             Native::RuleStyleGet => {
-                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };
+                let Some(Value::RuleStyle(si, ri, np)) = recv else { return Ok(Value::Str(String::new())) };
                 let prop = args.first().map(to_display).unwrap_or_default();
-                Ok(Value::Str(self.rule_prop(si, ri, &prop)))
+                Ok(Value::Str(self.rule_prop(si, ri, &np, &prop)))
             }
             Native::RuleStyleSet => {
-                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Undefined) };
+                let Some(Value::RuleStyle(si, ri, np)) = recv else { return Ok(Value::Undefined) };
                 let prop = args.first().map(to_display).unwrap_or_default();
                 let val = args.get(1).map(to_display).unwrap_or_default();
-                self.rule_set_prop(si, ri, &prop, &val);
+                self.rule_set_prop(si, ri, &np, &prop, &val);
                 Ok(Value::Undefined)
             }
             Native::RuleStyleRemove => {
-                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };
+                let Some(Value::RuleStyle(si, ri, np)) = recv else { return Ok(Value::Str(String::new())) };
                 let prop = args.first().map(to_display).unwrap_or_default();
-                let old = self.rule_prop(si, ri, &prop);
-                self.rule_set_prop(si, ri, &prop, "");
+                let old = self.rule_prop(si, ri, &np, &prop);
+                self.rule_set_prop(si, ri, &np, &prop, "");
                 Ok(Value::Str(old))
             }
             Native::RuleStyleItem => {
-                let Some(Value::RuleStyle(si, ri)) = recv else { return Ok(Value::Str(String::new())) };
+                let Some(Value::RuleStyle(si, ri, np)) = recv else { return Ok(Value::Str(String::new())) };
                 let i = args.first().map(to_num).unwrap_or(0.0).max(0.0) as usize;
                 let key = i.to_string();
-                self.cssom_get(&Value::RuleStyle(si, ri), &key)
+                self.cssom_get(&Value::RuleStyle(si, ri, np.clone()), &key)
             }
             // cs.item(i) — 계산 스타일의 i 번째 프로퍼티 이름(대시). 범위 밖은 빈 문자열.
             Native::ComputedItem => {

@@ -2289,13 +2289,14 @@ impl Interp {
                 }
                 names
             }
-            Value::RuleStyle(si, ri) => {
-                let (si, ri) = (*si, *ri);
-                self.sheets()
-                    .and_then(|s| s.get(si))
-                    .and_then(|s| s.sheet.rules.get(ri))
-                    .map(|r| r.declarations.iter().map(|d| Value::Str(d.name.clone())).collect())
-                    .unwrap_or_default()
+            Value::RuleStyle(si, ri, np) => {
+                let (si, ri, np) = (*si, *ri, (**np).clone());
+                cssom::resolve_nested(
+                    self.sheets().and_then(|s| s.get(si)).and_then(|s| s.sheet.rules.get(ri)),
+                    &np,
+                )
+                .map(|r| r.declarations.iter().map(|d| Value::Str(d.name.clone())).collect())
+                .unwrap_or_default()
             }
             Value::SetVal(s) => s.borrow().clone(),
             Value::MapVal(m) => m
@@ -4316,7 +4317,7 @@ impl Interp {
                 // 유한한 내장 이터러블(문자열/Set/Map/재료화 반복자)은 재료화해 순회.
                 let finite = matches!(&target,
                     Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_)
-                        | Value::ComputedStyle(_) | Value::Style(_) | Value::RuleStyle(_, _))
+                        | Value::ComputedStyle(_) | Value::Style(_) | Value::RuleStyle(_, _, _))
                     || matches!(&target, Value::Obj(o) if o.borrow().contains_key("\u{0}items"));
                 if !finite {
                     // 반복자 프로토콜(지연): 제너레이터/사용자 [Symbol.iterator] 이터러블/
@@ -6580,7 +6581,7 @@ impl Interp {
                     | Value::Attr(_, _)
                     | Value::Sheet(_)
                     | Value::CssRule(_, _, _)
-                    | Value::RuleStyle(_, _)
+                    | Value::RuleStyle(_, _, _)
                     | Value::Style(_)
                     | Value::ComputedStyle(_)
             ) {
@@ -7116,7 +7117,7 @@ impl Interp {
                 self.exotic_proto_get(proto, key, recv)
             }
             // CSSOM: 시트/규칙/규칙스타일
-            Value::Sheet(_) | Value::CssRule(_, _, _) | Value::RuleStyle(_, _) => {
+            Value::Sheet(_) | Value::CssRule(_, _, _) | Value::RuleStyle(_, _, _) => {
                 self.cssom_get(recv, key)
             }
             // Attr 노드 읽기 (§4.9.2). 소유 요소의 속성을 실시간으로 본다.
@@ -12358,10 +12359,10 @@ impl Interp {
                     }
                     Value::Dom(id) => self.dom_set(id, &key, value),
                     // rule.style.color = 'red' → 규칙의 선언을 실제로 바꾼다
-                    Value::RuleStyle(si, ri) => {
+                    Value::RuleStyle(si, ri, np) => {
                         let text = to_display(&value);
                         let prop = camel_to_dashed(&key);
-                        self.rule_set_prop(si, ri, &prop, &text);
+                        self.rule_set_prop(si, ri, &np[..], &prop, &text);
                         Ok(())
                     }
                     // sheet.disabled = true → 그 시트를 캐스케이드에서 뺀다
@@ -12418,6 +12419,21 @@ impl Interp {
                                 }
                                 self.css_epoch += 1;
                             }
+                        } else if key == "style" {
+                            // rule.style = "…"(§CSSOM [PutForwards=cssText]) → style.cssText 설정.
+                            // 선언 블록만 파싱해 교체(중첩 규칙 텍스트는 무시). 매칭 selectors·
+                            // 중첩 규칙은 불변.
+                            let text = to_display(&value);
+                            let decls = crate::css::parse_inline_style(&text);
+                            if let Some(sheets) = self.sheets() {
+                                if let Some(r) = cssom::resolve_nested_mut(
+                                    sheets.get_mut(si).and_then(|e| e.sheet.rules.get_mut(ri)),
+                                    &np[..],
+                                ) {
+                                    r.declarations = decls;
+                                }
+                            }
+                            self.css_epoch += 1;
                         }
                         Ok(())
                     }

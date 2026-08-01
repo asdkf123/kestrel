@@ -124,7 +124,8 @@ pub enum Value {
     // enum 이 커져 JS 프레임당 네이티브 스택이 깊어지고, 깊은 재귀가 JS RangeError 가드
     // 전에 네이티브 오버플로를 낸다). Rc<Vec> 는 8바이트 포인터 하나.
     CssRule(usize, usize, std::rc::Rc<Vec<usize>>),
-    RuleStyle(usize, usize),
+    // 규칙의 CSSStyleDeclaration. np 로 중첩 규칙의 .style 도 주소지정(CssRule 과 동일).
+    RuleStyle(usize, usize, std::rc::Rc<Vec<usize>>),
     // new Proxy(target, handler) — get/set/has 트랩 지원 (프레임워크 반응성).
     Proxy(Rc<(Value, Value)>),
     // function* 로 만든 지연 제너레이터. 호출 시 즉시 평가하지 않고, next()마다 다음
@@ -486,7 +487,7 @@ impl std::fmt::Debug for Value {
             Value::Attr(id, n) => write!(f, "[attr {} of {:?}]", n, id),
             Value::Sheet(i) => write!(f, "[object CSSStyleSheet #{}]", i),
             Value::CssRule(s, r, np) => write!(f, "[object CSSStyleRule {}:{}:{:?}]", s, r, np),
-            Value::RuleStyle(s, r) => write!(f, "[object CSSStyleDeclaration {}:{}]", s, r),
+            Value::RuleStyle(s, r, _np) => write!(f, "[object CSSStyleDeclaration {}:{}]", s, r),
             Value::Dataset(id) => write!(f, "[dataset {:?}]", id),
             Value::ClassList(id) => write!(f, "[classList {:?}]", id),
             Value::Proxy(_) => write!(f, "[object Proxy]"),
