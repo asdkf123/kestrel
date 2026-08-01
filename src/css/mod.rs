@@ -1146,6 +1146,7 @@ pub(crate) fn registered_computed_value(
     fs: f32,
     root_fs: f32,
     vp: crate::style::Viewport,
+    current_color: &str,
 ) -> Option<Value> {
     let low = syntax.to_ascii_lowercase();
     let has = |t: &str| low.contains(t);
@@ -1183,11 +1184,58 @@ pub(crate) fn registered_computed_value(
             .collect();
         return parts.map(|p| Value::Keyword(p.join(sep)));
     }
-    // 단일 값. <length*>/<color> 는 typed(문맥 해석·rgb 직렬화), 그 외는 정규화 문자열.
-    if has("<length") || has("<percentage") || has("<color") {
+    // 단일 값. <color> 는 currentcolor 해석·light-dark 선택 후 typed(rgb/색함수 직렬화).
+    if has("<color") {
+        return resolve_color_computed(value.trim(), current_color);
+    }
+    // <length*> 도 typed(문맥 해석·px 확정), 그 외는 정규화 문자열.
+    if has("<length") || has("<percentage") {
         return interpret_value(value.trim());
     }
     computed_scalar_string(&low, value.trim(), fs, root_fs, vp).map(Value::Keyword)
+}
+
+// 등록된 <color> 커스텀 프로퍼티의 계산값(§Properties & Values API). currentcolor 를
+// 요소 계산 color 로 치환하고 light-dark(A,B) 는 사용 color-scheme(정적 렌더 기본
+// light)에 따라 A 를 선택한 뒤 interpret_value 로 rgb()/color() 직렬화한다.
+fn resolve_color_computed(value: &str, current_color: &str) -> Option<Value> {
+    let subbed = substitute_currentcolor(value, current_color);
+    let trimmed = subbed.trim();
+    let low = trimmed.to_ascii_lowercase();
+    if low.starts_with("light-dark(") && trimmed.ends_with(')') {
+        let inner = &trimmed["light-dark(".len()..trimmed.len() - 1];
+        let args = values::split_top_commas(inner);
+        if args.len() == 2 {
+            // 기본 color-scheme = light → 첫 인자. currentcolor 는 이미 치환됨.
+            return interpret_value(args[0].trim());
+        }
+    }
+    interpret_value(trimmed)
+}
+
+// "currentcolor" 키워드(대소문자 무시, ident 경계)를 요소 계산 color 문자열로 치환.
+fn substitute_currentcolor(v: &str, cc: &str) -> String {
+    let target = "currentcolor";
+    let chars: Vec<char> = v.chars().collect();
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let prev_ident = i > 0 && is_ident(chars[i - 1]);
+        let end = i + target.len();
+        let matches = !prev_ident
+            && end <= chars.len()
+            && chars[i..end].iter().collect::<String>().eq_ignore_ascii_case(target)
+            && (end == chars.len() || !is_ident(chars[end]));
+        if matches {
+            out.push_str(cc);
+            i = end;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 // 문자열 안의 상대 길이 단위(수 뒤 em/rem/ex/ch/vw/vh/vmin/vmax/lh 등)를 px 로 치환

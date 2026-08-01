@@ -2840,6 +2840,18 @@ fn style_node<'a>(
             // 등록된 타입 커스텀 프로퍼티(<length> 등)는 계산값으로 — Keyword("14em")를
             // typed Value 로 해석해 아래 resolve_units 가 px 로 확정하게 한다(§Properties
             // & Values API: getComputedStyle 은 등록 프로퍼티의 계산값을 낸다).
+            // currentcolor 해석용 요소 계산 color 문자열(등록 <color> 프로퍼티 계산값용).
+            let current_color: String = match values.get("color") {
+                Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => {
+                    if c.a >= 255 {
+                        format!("rgb({}, {}, {})", c.r, c.g, c.b)
+                    } else {
+                        format!("rgba({}, {}, {}, {})", c.r, c.g, c.b, c.a as f32 / 255.0)
+                    }
+                }
+                Some(Value::Keyword(s)) => s.clone(),
+                _ => "rgb(0, 0, 0)".to_string(),
+            };
             let reg_updates: Vec<(String, Value)> = values
                 .iter()
                 .filter_map(|(k, v)| {
@@ -2848,8 +2860,10 @@ fn style_node<'a>(
                     }
                     let reg = at_properties.get(k)?;
                     if let Value::Keyword(s) = v {
-                        crate::css::registered_computed_value(&reg.syntax, s, fs, root_fs, vp)
-                            .map(|tv| (k.clone(), tv))
+                        crate::css::registered_computed_value(
+                            &reg.syntax, s, fs, root_fs, vp, &current_color,
+                        )
+                        .map(|tv| (k.clone(), tv))
                     } else {
                         None
                     }
