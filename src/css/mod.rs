@@ -1158,7 +1158,8 @@ pub(crate) fn registered_computed_value(
         return Some(Value::Keyword(canon_calcs_in_string(&resolved)));
     }
     if !(has("<length") || has("<number") || has("<angle") || has("<time")
-        || has("<percentage") || has("<integer") || has("<resolution") || has("<color"))
+        || has("<percentage") || has("<integer") || has("<resolution") || has("<color")
+        || has("<string"))
     {
         return None;
     }
@@ -1175,12 +1176,15 @@ pub(crate) fn registered_computed_value(
     let is_list_plus = low.contains(">+");
     let is_list_hash = low.contains(">#");
     if is_list_plus || is_list_hash {
-        let items = if is_list_hash {
+        // 대안 syntax(<t>+ | <t>#) 는 값의 최상위 콤마 유무로 리스트 종류를 정한다.
+        let has_commas = values::split_top_commas(value).len() > 1;
+        let use_hash = if is_list_hash && is_list_plus { has_commas } else { is_list_hash };
+        let items = if use_hash {
             values::split_top_commas(value)
         } else {
             values::split_top_level(value)
         };
-        let sep = if is_list_hash { ", " } else { " " };
+        let sep = if use_hash { ", " } else { " " };
         let parts: Option<Vec<String>> = items
             .iter()
             .map(|it| computed_scalar_string(&low, it.trim(), fs, root_fs, vp))
@@ -1454,7 +1458,58 @@ fn computed_scalar_string(
     if has("<length") {
         return Some(computed_length_string(v, fs, root_fs, vp));
     }
+    // <string>: 계산값은 이중따옴표 CSS 문자열 직렬화(§CSSOM).
+    if has("<string") {
+        return Some(serialize_css_string(v.trim()));
+    }
     None
+}
+
+// CSS <string> 계산값 직렬화(§CSSOM serialize a string). 바깥 따옴표를 벗겨 내부를
+// 이스케이프 해제한 뒤 이중따옴표로 재직렬화하며 " 와 \ 를 이스케이프한다.
+fn serialize_css_string(v: &str) -> String {
+    let t = v.trim();
+    let inner = {
+        let mut chars = t.chars();
+        let first = chars.next();
+        if let Some(q @ ('"' | '\'')) = first {
+            if t.len() >= 2 && t.ends_with(q) {
+                let body: String = t[q.len_utf8()..t.len() - q.len_utf8()].to_string();
+                unescape_css_string(&body)
+            } else {
+                t.to_string()
+            }
+        } else {
+            t.to_string()
+        }
+    };
+    let mut out = String::from("\"");
+    for c in inner.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+// CSS 문자열 내부의 백슬래시 이스케이프를 해제(\" → ", \\ → \). 단순형으로 충분
+// (등록 <string> 계산값 재직렬화 전 정규화용).
+fn unescape_css_string(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<String> {
@@ -1869,6 +1924,7 @@ impl Parser {
             return None;
         }
         let mut syntax = String::new();
+        let mut syntax_present = false;
         let mut inherits = false;
         let mut inherits_present = false;
         let mut initial: Option<String> = None;
@@ -1877,10 +1933,28 @@ impl Parser {
                 let key = desc[..ci].trim().to_ascii_lowercase();
                 let val = desc[ci + 1..].trim();
                 match key.as_str() {
-                    "syntax" => syntax = val.trim_matches(|c| c == '"' || c == '\'').to_string(),
+                    "syntax" => {
+                        // syntax descriptor 값은 <string>(따옴표 필수). 따옴표 없는
+                        // <color>·foo|bar 는 무효(규칙 드롭).
+                        if val.len() >= 2
+                            && ((val.starts_with('"') && val.ends_with('"'))
+                                || (val.starts_with('\'') && val.ends_with('\'')))
+                        {
+                            syntax = val[1..val.len() - 1].to_string();
+                            syntax_present = true;
+                        }
+                        // 따옴표 없으면 syntax_present=false → 아래에서 무효 처리
+                    }
                     "inherits" => {
-                        inherits = val.eq_ignore_ascii_case("true");
                         inherits_present = true;
+                        // inherits 값은 정확히 true/false 키워드만. none/0/1/"true"/calc(0) 무효.
+                        if val.eq_ignore_ascii_case("true") {
+                            inherits = true;
+                        } else if val.eq_ignore_ascii_case("false") {
+                            inherits = false;
+                        } else {
+                            return None;
+                        }
                     }
                     "initial-value" => initial = Some(val.to_string()),
                     _ => {}
@@ -1888,7 +1962,11 @@ impl Parser {
             }
         }
         // syntax·inherits descriptor 는 필수(§Properties & Values API). 없으면 무효.
-        if syntax.is_empty() || !inherits_present {
+        if !syntax_present || !inherits_present {
+            return None;
+        }
+        // initial-value 는 계산 독립적이어야 함 — var() 참조 금지(§Properties & Values API).
+        if initial.as_deref().map(|v| v.contains("var(")).unwrap_or(false) {
             return None;
         }
         // syntax·initialValue 유효성(§Properties & Values API). 무효면 규칙 드롭

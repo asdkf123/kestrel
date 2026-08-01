@@ -251,26 +251,6 @@ css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvi is 40px
 css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvb is 20px	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
 css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvmin is 20px	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
 css/css-properties-values-api/at-property-viewport-units.html	FAIL	10dvmax is 40px	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' makes the @property rule invalid for [<color>]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'syntax' makes the @property rule invalid for [foo | bar]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'initialU+2dvalue' makes the @property rule invalid for [var(U+2dU+2dx)]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [none]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [0]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [1]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for ["true"]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for ["false"]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Attribute 'inherits' makes the @property rule invalid for [calc(0)]	assert_true: expected true got false
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>, 'foo bar', false]	assert_equals: expected "\"foo bar\"" but got "'foo bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>,  'foo bar' , false]	assert_equals: expected "\"foo bar\"" but got "'foo bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>, '"foo" bar', false]	assert_equals: expected "\"\\\"foo\\\" bar\"" but got "'\"foo\" bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>+, 'foo' 'bar', false]	assert_equals: expected "\"foo\" \"bar\"" but got "'foo' 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>#, 'foo', 'bar', false]	assert_equals: expected "\"foo\", \"bar\"" but got "'foo', 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>+ | <string>#, 'foo' 'bar', false]	assert_equals: expected "\"foo\" \"bar\"" but got "'foo' 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>+ | <string>#,  'foo' 'bar', false]	assert_equals: expected "\"foo\" \"bar\"" but got "'foo' 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string>+ | <string>#, 'foo' "bar", false]	assert_equals: expected "\"foo\" \"bar\"" but got "'foo' \"bar\""
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string># | <string>+, 'foo', 'bar', false]	assert_equals: expected "\"foo\", \"bar\"" but got "'foo', 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string># | <string>+, 'foo', 'bar' , false]	assert_equals: expected "\"foo\", \"bar\"" but got "'foo', 'bar'"
-css/css-properties-values-api/at-property.html	FAIL	Rule applied [<string># | <string>+, "foo", 'bar', false]	assert_equals: expected "\"foo\", \"bar\"" but got "\"foo\", 'bar'"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dfunction>, translateX(1em), false]	assert_equals: expected "" but got "translateX(16px)"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dfunction>, translateY(1lh), false]	assert_equals: expected "" but got "translateY(16px)"
 css/css-properties-values-api/at-property.html	FAIL	Rule not applied [<transformU+2dlist>, rotate(10deg) translateX(1em), false]	assert_equals: expected "" but got "rotate(10deg) translateX(16px)"
