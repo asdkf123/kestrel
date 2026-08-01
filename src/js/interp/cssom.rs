@@ -635,6 +635,12 @@ impl Interp {
         if index > len {
             return Err(self.throw_dom("IndexSizeError", "규칙 인덱스가 범위를 벗어남"));
         }
+        // 시트 전용 at-rule(@import/@charset/@namespace)은 그룹 규칙 안에 넣을 수 없다 →
+        // HierarchyRequestError(§CSSOM insertRule).
+        let low = text.trim_start().to_ascii_lowercase();
+        if low.starts_with("@import") || low.starts_with("@charset") || low.starts_with("@namespace") {
+            return Err(self.throw_dom("HierarchyRequestError", "이 규칙은 그룹 규칙 안에 넣을 수 없다"));
+        }
         // 대상이 중첩 선언(CSSNestedDeclarations)을 담을 수 있는 문맥인가(§CSS Nesting):
         // 스타일 규칙(selector 있음)이거나, 스타일 규칙 안에 중첩된 그룹 규칙(np 비지 않음).
         // 최상위 @media/@supports 나 시트에는 맨선언을 넣을 수 없다.

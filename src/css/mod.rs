@@ -862,9 +862,56 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
 // parent_sel 기준으로 desugar. `& .x { … }`/중첩 @media/맨선언(CSSNestedDeclarations)을
 // 처리한다. 파싱 결과가 규칙 하나가 아니면(무효 선택자 등) None → 호출부가 SyntaxError.
 pub fn parse_one_nested_rule(text: &str, parent_sel: &str, viewport_width: f32) -> Option<Rule> {
+    let pre = strip_comments(&preprocess_input(text));
+    // §CSSOM insertRule 은 정확히 규칙 하나를 파싱한다 — 규칙 뒤에 비공백이 남으면(후행
+    // garbage·규칙 여러 개) 파스 에러. 첫 최상위 규칙(prelude { 균형중괄호 })의 끝을 찾아
+    // 그 뒤에 내용이 있으면 무효. (최상위 '{' 가 없으면 맨선언 블록 — 이 검사 건너뜀.)
+    {
+        let b = pre.as_bytes();
+        let mut i = 0usize;
+        let mut depth = 0i32;
+        let mut first_close: Option<usize> = None;
+        let mut saw_brace = false;
+        while i < b.len() {
+            match b[i] {
+                b'"' | b'\'' => {
+                    let q = b[i];
+                    i += 1;
+                    while i < b.len() && b[i] != q {
+                        if b[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                b'{' => {
+                    saw_brace = true;
+                    depth += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        first_close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if saw_brace {
+            if let Some(end) = first_close {
+                if !pre[end + 1..].trim().is_empty() {
+                    return None; // 규칙 뒤 후행 garbage → 무효
+                }
+            } else {
+                return None; // 여는 중괄호만 있고 안 닫힘 → 무효
+            }
+        }
+    }
     let mut parser = Parser {
         pos: 0,
-        input: strip_comments(&preprocess_input(text)),
+        input: pre,
         viewport_width,
         font_faces: Vec::new(),
         keyframes: std::collections::HashMap::new(),
