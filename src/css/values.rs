@@ -12831,6 +12831,16 @@ fn normalize_selector_head(
                 compound_start = true;
             }
             '[' => {
+                out.push('[');
+                i += 1;
+                // 속성의 no-namespace 접두('|attr', 뒤가 '|'/'=' 아님)는 삭제([|lang]→
+                // [lang]). *|·ns| 는 유지.
+                if chars.get(i) == Some(&'|')
+                    && chars.get(i + 1) != Some(&'|')
+                    && chars.get(i + 1) != Some(&'=')
+                {
+                    i += 1;
+                }
                 while i < chars.len() {
                     out.push(chars[i]);
                     let done = chars[i] == ']';

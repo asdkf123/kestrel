@@ -2738,6 +2738,32 @@ impl Parser {
     fn parse_attr_selector(&mut self) -> Option<(String, AttrOp, bool)> {
         self.consume_char(); // '['
         self.consume_whitespace();
+        // 속성 네임스페이스 접두(선택): [<ident> | '*']? '|' <attr>. matching 은 로컬
+        // 이름만 쓰므로 접두는 소비만 한다(selector_text 원문 보존). '|=' 연산자와
+        // 구별하려면 '|' 뒤가 '=' 이 아닐 때만 접두로 취급.
+        {
+            let save = self.pos;
+            let had = match self.peek() {
+                Some('*') => {
+                    self.consume_char();
+                    true
+                }
+                Some('|') => true,
+                Some(c) if valid_identifier_char(c) => {
+                    self.parse_identifier();
+                    true
+                }
+                _ => false,
+            };
+            if had
+                && self.peek() == Some('|')
+                && self.input[self.pos..].chars().nth(1) != Some('=')
+            {
+                self.consume_char(); // '|'
+            } else {
+                self.pos = save;
+            }
+        }
         let name = self.parse_identifier().to_ascii_lowercase();
         self.consume_whitespace();
         // 연산자: = ^= $= *= ~= |=
