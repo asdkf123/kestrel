@@ -5313,6 +5313,7 @@ impl Interp {
                         }
                     }
                     self.css_epoch = self.css_epoch.wrapping_add(1);
+                    self.sync_rule_list(si);
                 }
                 if matches!(n, Native::SheetReplace) {
                     let sheet_val = match &recv {

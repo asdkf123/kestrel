@@ -206,6 +206,44 @@ impl Interp {
         Some(unsafe { &mut *ctx.sheets })
     }
 
+    // sheet.cssRules 의 라이브 CSSRuleList. 시트당 하나의 ArrayObj 를 캐시해 항상
+    // 동일 객체를 돌려주고(identity), 현재 규칙 수에 맞춰 items 를 재동기화한다.
+    // insertRule/deleteRule/replace 후 sync_rule_list(si) 를 부르면 이미 넘긴
+    // 참조에도 변경이 반영된다(§CSSOM: cssRules 는 live CSSRuleList).
+    pub(super) fn sheet_rule_list(&mut self, si: usize) -> Value {
+        let n = self
+            .sheets()
+            .and_then(|s| s.get(si))
+            .map(|s| s.sheet.rules.len())
+            .unwrap_or(0);
+        let items: Vec<Value> = (0..n)
+            .map(|ri| Value::CssRule(si, ri, std::rc::Rc::new(Vec::new())))
+            .collect();
+        if let Some(existing) = self.rule_lists.get(&si) {
+            *existing.borrow_mut() = items;
+            existing.materialize_holes();
+            return Value::Arr(existing.clone());
+        }
+        let arr = ArrayObj::new(items);
+        arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+        self.rule_lists.insert(si, arr.clone());
+        Value::Arr(arr)
+    }
+
+    // 시트 재파싱/추가/제거로 인덱스가 흔들렸을 때 라이브 리스트 캐시 전체 무효화.
+    pub fn clear_rule_lists(&mut self) {
+        self.rule_lists.clear();
+    }
+
+    // 시트의 규칙이 바뀐 뒤(insert/delete/replace) 캐시된 라이브 리스트를 갱신한다.
+    // 캐시가 없으면(아직 cssRules 접근 전) 아무것도 하지 않는다.
+    pub(super) fn sync_rule_list(&mut self, si: usize) {
+        if !self.rule_lists.contains_key(&si) {
+            return;
+        }
+        let _ = self.sheet_rule_list(si);
+    }
+
     // CSSOM 을 읽기 전에 시트 목록을 DOM 과 맞춘다. 스크립트가 방금 넣은 <style> 은
     // document.styleSheets 에 **즉시** 보여야 한다 (레이아웃을 기다리지 않는다).
     pub(super) fn sync_sheets(&mut self) {
@@ -215,6 +253,9 @@ impl Interp {
         let base = self.base_url().map(|s| s.to_string());
         if crate::window::sync_style_sheets(dom, sheets, ctx.vw, base.as_deref()) {
             self.css_epoch += 1;
+            // 시트 재파싱·추가·제거로 인덱스/규칙 수가 바뀌었을 수 있다 → 라이브
+            // 리스트 캐시를 비워 다음 접근에서 현재 규칙으로 다시 만든다.
+            self.rule_lists.clear();
         }
     }
 
@@ -257,19 +298,7 @@ impl Interp {
             Value::Sheet(si) => {
                 let si = *si;
                 match key {
-                    "cssRules" | "rules" => {
-                        let n = self
-                            .sheets()
-                            .and_then(|s| s.get(si))
-                            .map(|s| s.sheet.rules.len())
-                            .unwrap_or(0);
-                        let list: Vec<Value> = (0..n)
-                            .map(|ri| Value::CssRule(si, ri, std::rc::Rc::new(Vec::new())))
-                            .collect();
-                        let arr = ArrayObj::new(list);
-                        arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
-                        Ok(Value::Arr(arr))
-                    }
+                    "cssRules" | "rules" => Ok(self.sheet_rule_list(si)),
                     "href" => Ok(self
                         .sheets()
                         .and_then(|s| s.get(si))
@@ -792,6 +821,7 @@ impl Interp {
             let idx = index.min(entry.sheet.rules.len());
             entry.sheet.rules.insert(idx, rule);
             self.css_epoch += 1;
+            self.sync_rule_list(si);
             return Ok(Value::Num(idx as f64));
         }
         let parsed = crate::css::parse_viewport(text.to_string(), vw);
@@ -803,6 +833,7 @@ impl Interp {
         let idx = index.min(entry.sheet.rules.len());
         entry.sheet.rules.insert(idx, rule);
         self.css_epoch += 1;
+        self.sync_rule_list(si);
         Ok(Value::Num(idx as f64))
     }
 
@@ -906,6 +937,7 @@ impl Interp {
             return Err(self.throw_dom("IndexSizeError", "규칙 인덱스가 범위를 벗어남"));
         }
         self.css_epoch += 1;
+        self.sync_rule_list(si);
         Ok(Value::Undefined)
     }
 }

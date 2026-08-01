@@ -238,6 +238,10 @@ pub struct Interp {
     // CSSOM 변경(insertRule/deleteRule/disabled) 세대. 반영된 세대와 다르면 재구성.
     pub css_epoch: u64,
     pub css_applied_epoch: u64,
+    // sheet.cssRules 가 돌려주는 라이브 CSSRuleList (시트 인덱스별). 같은 시트엔
+    // 항상 동일 객체를 반환하고(identity), insertRule/deleteRule/replace 시 items 를
+    // 갱신해 캡처된 참조에도 변경이 반영되게 한다(§CSSOM: 리스트는 live).
+    rule_lists: HashMap<usize, std::rc::Rc<ArrayObj>>,
     // 아래 측정 맵이 반영하고 있는 DOM 버전. dom.version() 과 다르면 다시 레이아웃한다.
     pub layout_version: Option<u64>,
     // 레이아웃 산출 요소 사각형 (NodeId → (x, y, w, h), CSS px). 리빌드 후 호스트가 채움.
@@ -1555,6 +1559,7 @@ impl Interp {
             inline_fns: HashMap::new(),
             css_epoch: 0,
             css_applied_epoch: 0,
+            rule_lists: HashMap::new(),
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),

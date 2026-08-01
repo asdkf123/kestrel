@@ -127,6 +127,11 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
     // 이렇게 한다)가 옛 값을 받았다 — 조용히 틀린 값.
     let sheets = unsafe { &mut *ctx.sheets };
     let dom_changed = sync_style_sheets(dom, sheets, ctx.vw, js.base_url());
+    if dom_changed {
+        // 시트 재파싱·추가·제거로 인덱스/규칙 수가 바뀌었을 수 있다 → cssRules 라이브
+        // 리스트 캐시를 무효화(다음 접근에서 현재 규칙으로 재생성).
+        js.clear_rule_lists();
+    }
     if dom_changed || js.css_epoch != js.css_applied_epoch {
         let sheet = unsafe { &mut *ctx.sheet };
         let base = unsafe { &*ctx.css_base };
