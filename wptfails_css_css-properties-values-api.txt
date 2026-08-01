@@ -264,20 +264,8 @@ css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	Undefined
 css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	SyntaxU+2dincompatible reference results in unsetting the property.	assert_equals: expected "42px" but got "0px"
 css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	SyntaxU+2dincompatible fallback results in unsetting the property.	assert_equals: expected "42px" but got "0px"
 css/css-properties-values-api/property-cascade.html	FAIL	Registering a property does not affect cascade	assert_equals: expected "rgb(1, 1, 1)" but got "rgb(0, 0, 0)"
-css/css-properties-values-api/register-property-sign-mixed-lengths.html	FAIL	syntax:'<length>', initialValue:'calc(15px + (sign(100vh U+2d 10px) * 5px))' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'unmatched opening bracket is valid :(' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'"' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<length>', initialValue:'10vmin' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<percentage> | <length>+', initialValue:'calc(100vh U+2d 10px) 30px' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<string>', initialValue:''foo bar' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<string>', initialValue:'"bar 'baz'' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<string>+ | <string>#', initialValue:''foo' "bar' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<string># | <string>+', initialValue:'"foo", 'bar' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'<image>', initialValue:'lightU+2ddark(none, none)' is valid	invalid property definition
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'([)]' is invalid	assert_throws_dom: function "() => CSS.registerProperty({name: name, syntax: syntax, initialValue: initialValue, inherits: false})" did not throw
+css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'" ' is invalid	assert_throws_dom: function "() => CSS.registerProperty({name: name, syntax: syntax, initialValue: initialValue, inherits: false})" did not throw
 css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'url(moo '')' is invalid	assert_throws_dom: function "() => CSS.registerProperty({name: name, syntax: syntax, initialValue: initialValue, inherits: false})" did not throw
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'var(invalid var ref)' is invalid	assert_throws_dom: function "() => CSS.registerProperty({name: name, syntax: syntax, initialValue: initialValue, inherits: false})" did not throw
-css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'var(U+2dU+2dfoo)' is invalid	assert_throws_dom: function "() => CSS.registerProperty({name: name, syntax: syntax, initialValue: initialValue, inherits: false})" did not throw
 css/css-properties-values-api/register-property.html	FAIL	registerProperty requires a name matching <customU+2dpropertyU+2dname>	invalid property definition
 css/css-properties-values-api/register-property.html	FAIL	registerProperty requires inherits	assert_throws_js: function "() => CSS.registerProperty({name: 'U+2dU+2dinheritU+2dtestU+2d3', syntax: '<length>', initialValue: '0px'})" did not throw
 css/css-properties-values-api/registered-properties-inheritance.html	FAIL	Reference to undefined variable results in inherited value	assert_equals: expected "42px" but got "0px"

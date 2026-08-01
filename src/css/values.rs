@@ -9899,7 +9899,9 @@ pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
 }
 
 // '*' syntax 의 initial 값 유효성(유효한 커스텀 프로퍼티 값 = 균형 잡힌 토큰 시퀀스).
-// CSS-wide 키워드·불균형 괄호[]{}·불균형 따옴표·top-level !/; 를 거부한다.
+// §CSS Syntax 토큰화: 미닫힌 여는 괄호·따옴표는 EOF 에서 자동으로 닫히므로 유효,
+// 미매칭 닫는 괄호·잘못된 중첩(([)])·top-level !/; 는 무효. var()/env() 참조는
+// 계산 독립적이지 않아 initial 값에 불가. CSS-wide 키워드도 거부.
 fn valid_any_value(v: &str) -> bool {
     let t = v.trim();
     if t.is_empty() {
@@ -9909,9 +9911,11 @@ fn valid_any_value(v: &str) -> bool {
     if matches!(low.as_str(), "initial" | "inherit" | "unset" | "revert" | "revert-layer") {
         return false;
     }
-    let mut paren = 0i32;
-    let mut brack = 0i32;
-    let mut brace = 0i32;
+    // var()/env() 참조 금지(계산 독립성).
+    if low.contains("var(") || low.contains("env(") {
+        return false;
+    }
+    let mut stack: Vec<char> = Vec::new();
     let mut quote: Option<char> = None;
     let mut prev = ' ';
     for c in t.chars() {
@@ -9924,33 +9928,22 @@ fn valid_any_value(v: &str) -> bool {
         }
         match c {
             '"' | '\'' => quote = Some(c),
-            '(' => paren += 1,
-            ')' => {
-                paren -= 1;
-                if paren < 0 {
+            '(' => stack.push(')'),
+            '[' => stack.push(']'),
+            '{' => stack.push('}'),
+            ')' | ']' | '}' => {
+                // 닫는 괄호는 가장 최근 여는 괄호와 짝이 맞아야(중첩 순서).
+                if stack.pop() != Some(c) {
                     return false;
                 }
             }
-            '[' => brack += 1,
-            ']' => {
-                brack -= 1;
-                if brack < 0 {
-                    return false;
-                }
-            }
-            '{' => brace += 1,
-            '}' => {
-                brace -= 1;
-                if brace < 0 {
-                    return false;
-                }
-            }
-            '!' | ';' if paren == 0 && brack == 0 && brace == 0 => return false,
+            '!' | ';' if stack.is_empty() => return false,
             _ => {}
         }
         prev = c;
     }
-    paren == 0 && brack == 0 && brace == 0 && quote.is_none()
+    // 미닫힌 여는 괄호·따옴표는 자동 닫힘 → 유효(stack/quote 잔여 허용).
+    true
 }
 
 // 한 대안(<type>|ident + 선택적 +/#)의 syntax 문법 유효성. 엄격:
@@ -10107,8 +10100,18 @@ fn independent_length(v: &str) -> bool {
             }
             if i > us {
                 let u = chars[us..i].iter().collect::<String>().to_ascii_lowercase();
-                if !matches!(u.as_str(), "px" | "cm" | "mm" | "in" | "pt" | "pc" | "q") {
-                    return false; // 상대/미지 길이 단위(em/rem/vw/ex/…)
+                // 절대 단위 + 뷰포트 단위는 계산 독립적(§Properties & Values API:
+                // 뷰포트 단위는 initial 값에 허용). 폰트 상대(em/ex/ch/lh/rem)는 불가.
+                let ok = matches!(u.as_str(), "px" | "cm" | "mm" | "in" | "pt" | "pc" | "q")
+                    || matches!(
+                        u.as_str(),
+                        "vw" | "vh" | "vi" | "vb" | "vmin" | "vmax"
+                            | "svw" | "svh" | "svi" | "svb" | "svmin" | "svmax"
+                            | "lvw" | "lvh" | "lvi" | "lvb" | "lvmin" | "lvmax"
+                            | "dvw" | "dvh" | "dvi" | "dvb" | "dvmin" | "dvmax"
+                    );
+                if !ok {
+                    return false; // 폰트 상대/미지 길이 단위(em/rem/ex/ch/lh/…)
                 }
             }
             // % 는 계산 독립적(사용 시점 해결) — 허용.
@@ -10202,16 +10205,11 @@ fn syntax_type_matches(comp: &str, it: &str, require_independent: bool) -> bool 
                     || low.contains("gradient(")
                     || low.starts_with("image(")
                     || low.starts_with("image-set(")
+                    || (low.starts_with("light-dark(") && low.ends_with(')'))
+                    || (low.starts_with("cross-fade(") && low.ends_with(')'))
             }
             "custom-ident" => syntax_ident_valid(it),
-            "string" => {
-                // 단일 문자열 토큰만(따옴표로 시작·끝, 내부에 닫는 따옴표 없음).
-                let b = it.as_bytes();
-                b.len() >= 2
-                    && (b[0] == b'"' || b[0] == b'\'')
-                    && b[it.len() - 1] == b[0]
-                    && !it[1..it.len() - 1].contains(b[0] as char)
-            }
+            "string" => single_string_valid(it),
             "transform-function" | "transform-list" => {
                 transform_valid(it)
                     && it != "none"
@@ -10223,6 +10221,45 @@ fn syntax_type_matches(comp: &str, it: &str, require_independent: bool) -> bool 
         // 키워드(custom-ident) 매칭: 대소문자 구분(§CSS custom-ident). 양쪽 이스케이프
         // 디코드 후 정확히 일치해야(foo != Foo, banan\61 == banana).
         css_unescape(it) == css_unescape(comp)
+    }
+}
+
+// 단일 CSS <string> 토큰 유효성(§CSS Syntax). 여는 따옴표로 시작하고, 같은 따옴표로
+// 닫히면 그 뒤엔 공백만 허용(단일 토큰). 미닫힘은 EOF 에서 자동 닫힘 → 유효. 문자열
+// 안 개행은 bad-string → 무효. 내부에 반대 따옴표는 허용('a "b" c').
+fn single_string_valid(it: &str) -> bool {
+    let t = it.trim();
+    let chars: Vec<char> = t.chars().collect();
+    if chars.is_empty() {
+        return false;
+    }
+    let q = chars[0];
+    if q != '"' && q != '\'' {
+        return false;
+    }
+    let mut i = 1usize;
+    let mut closed = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' {
+            i += 2; // 이스케이프된 문자 건너뜀
+            continue;
+        }
+        if c == '\n' || c == '\r' {
+            return false; // 개행 → bad-string
+        }
+        if c == q {
+            closed = true;
+            i += 1;
+            break;
+        }
+        i += 1;
+    }
+    if closed {
+        // 닫힌 뒤엔 공백만 허용(단일 문자열 토큰).
+        chars[i..].iter().all(|c| c.is_whitespace())
+    } else {
+        true // 미닫힘 → 자동 닫힘 → 유효
     }
 }
 
