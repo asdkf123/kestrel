@@ -422,6 +422,385 @@ impl CalcVal {
     }
 }
 
+// ── 순수 <number> 수학식 평가(§CSS Values 4 §10) ────────────────────────────
+// 단위 없는 수만 다룬다(각도는 삼각함수 인자 안에서만 허용). NaN/±infinity/부호
+// 있는 0 을 f64 로 그대로 전파한다(1/sign(-0) = -infinity 등). 단위·퍼센트·해석
+// 불가(var 등)·타입 오류(number 문맥의 asin 등 각도 결과)는 None 을 돌려, 호출부가
+// 원문을 유지하거나 거부하도록 한다. calc(min/max/clamp/round/…)를 정수/수 프로퍼티
+// (z-index/order/opacity/scale 등)에서 계산값으로 접는 데 쓴다.
+pub(crate) fn eval_math_number(expr: &str) -> Option<f64> {
+    let chars: Vec<char> = expr.trim().chars().collect();
+    let mut p = 0usize;
+    let v = num_expr(&chars, &mut p)?;
+    skip_ws(&chars, &mut p);
+    if p != chars.len() {
+        return None;
+    }
+    Some(v)
+}
+
+// num_expr = num_term (('+'|'-') num_term)*
+fn num_expr(t: &[char], p: &mut usize) -> Option<f64> {
+    let mut acc = num_term(t, p)?;
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('+') => 1.0,
+            Some('-') => -1.0,
+            _ => break,
+        };
+        *p += 1;
+        let rhs = num_term(t, p)?;
+        acc += op * rhs;
+    }
+    Some(acc)
+}
+
+// num_term = num_factor (('*'|'/') num_factor)*
+fn num_term(t: &[char], p: &mut usize) -> Option<f64> {
+    let mut acc = num_factor(t, p)?;
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('*') => '*',
+            Some('/') => '/',
+            _ => break,
+        };
+        *p += 1;
+        let rhs = num_factor(t, p)?;
+        // f64 나눗셈은 x/0=±inf, 0/0=NaN 를 자연히 낸다(§10 그대로).
+        acc = if op == '*' { acc * rhs } else { acc / rhs };
+    }
+    Some(acc)
+}
+
+// num_factor = '(' num_expr ')' | ident'('…')'(함수/calc) | 상수 | 부호붙은 수
+fn num_factor(t: &[char], p: &mut usize) -> Option<f64> {
+    skip_ws(t, p);
+    // 선행 단항 부호.
+    let mut sign = 1.0f64;
+    while let Some(&c) = t.get(*p) {
+        if c == '+' {
+            *p += 1;
+        } else if c == '-' {
+            sign = -sign;
+            *p += 1;
+        } else {
+            break;
+        }
+        skip_ws(t, p);
+    }
+    // 괄호 그룹.
+    if t.get(*p) == Some(&'(') {
+        *p += 1;
+        let v = num_expr(t, p)?;
+        skip_ws(t, p);
+        if t.get(*p) != Some(&')') {
+            return None;
+        }
+        *p += 1;
+        return Some(sign * v);
+    }
+    // 식별자: 함수 호출 또는 상수.
+    if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        let istart = *p;
+        while t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+            *p += 1;
+        }
+        let ident: String = t[istart..*p].iter().collect::<String>().to_ascii_lowercase();
+        skip_ws(t, p);
+        if t.get(*p) == Some(&'(') {
+            // 균형 괄호로 인자 문자열 잘라내기.
+            let astart = *p + 1;
+            let mut depth = 0i32;
+            let mut k = *p;
+            while k < t.len() {
+                match t[k] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+            if depth != 0 {
+                return None;
+            }
+            let inner: String = t[astart..k].iter().collect();
+            *p = k + 1;
+            let v = num_func_eval(&ident, &inner)?;
+            return Some(sign * v);
+        }
+        // 상수.
+        let c = match ident.as_str() {
+            "pi" => std::f64::consts::PI,
+            "e" => std::f64::consts::E,
+            "infinity" => f64::INFINITY,
+            "nan" => f64::NAN,
+            _ => return None,
+        };
+        return Some(sign * c);
+    }
+    // 수 리터럴(지수표기 허용). 단위가 붙으면 순수 수가 아니므로 None.
+    let nstart = *p;
+    while t.get(*p).is_some_and(|&c| c.is_ascii_digit() || c == '.') {
+        *p += 1;
+    }
+    // 지수부 e[+-]?digits.
+    if t.get(*p).is_some_and(|&c| c == 'e' || c == 'E') {
+        let save = *p;
+        *p += 1;
+        if t.get(*p).is_some_and(|&c| c == '+' || c == '-') {
+            *p += 1;
+        }
+        if t.get(*p).is_some_and(|c| c.is_ascii_digit()) {
+            while t.get(*p).is_some_and(|c| c.is_ascii_digit()) {
+                *p += 1;
+            }
+        } else {
+            *p = save; // e 뒤 숫자 없으면 지수 아님
+        }
+    }
+    if *p == nstart {
+        return None;
+    }
+    // 뒤에 단위 문자가 붙으면 순수 수 아님(길이/각도 등) → None.
+    if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic() || *c == '%') {
+        return None;
+    }
+    let num: f64 = t[nstart..*p].iter().collect::<String>().parse().ok()?;
+    Some(sign * num)
+}
+
+// 각도식 → 라디안(f64). 삼각함수 인자 전용. deg/grad/turn/rad 리터럴 또는 순수 수
+// (라디안). 산술(계산식)도 허용하되 단위 혼합은 num_* 가 걸러 단순 리터럴만 정확.
+fn num_angle_rad(s: &str) -> Option<f64> {
+    if let Some(r) = parse_angle_rad(s.trim()) {
+        return Some(r);
+    }
+    eval_math_number(s) // 단위 없는 수 = 라디안
+}
+
+// 수 결과 수학 함수 평가. 인자는 num_expr(또는 각도). NaN 전파는 §10 규칙대로.
+fn num_func_eval(name: &str, inner: &str) -> Option<f64> {
+    let raw_args: Vec<String> =
+        split_top_commas(inner).iter().map(|a| a.trim().to_string()).collect();
+    if raw_args.iter().any(|a| a.is_empty()) {
+        return None;
+    }
+    let nums = |args: &[String]| -> Option<Vec<f64>> {
+        args.iter().map(|a| eval_math_number(a)).collect()
+    };
+    match name {
+        "calc" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            eval_math_number(&raw_args[0])
+        }
+        "min" => {
+            let v = nums(&raw_args)?;
+            if v.is_empty() {
+                return None;
+            }
+            Some(v.iter().fold(f64::INFINITY, |a, &b| fmin_css(a, b)))
+        }
+        "max" => {
+            let v = nums(&raw_args)?;
+            if v.is_empty() {
+                return None;
+            }
+            Some(v.iter().fold(f64::NEG_INFINITY, |a, &b| fmax_css(a, b)))
+        }
+        "clamp" => {
+            if raw_args.len() != 3 {
+                return None;
+            }
+            // none = 해당 경계 없음(-inf/+inf).
+            let lo = if raw_args[0].eq_ignore_ascii_case("none") {
+                f64::NEG_INFINITY
+            } else {
+                eval_math_number(&raw_args[0])?
+            };
+            let val = eval_math_number(&raw_args[1])?;
+            let hi = if raw_args[2].eq_ignore_ascii_case("none") {
+                f64::INFINITY
+            } else {
+                eval_math_number(&raw_args[2])?
+            };
+            // clamp = max(lo, min(val, hi)) (NaN 전파).
+            Some(fmax_css(lo, fmin_css(val, hi)))
+        }
+        "round" => {
+            // round([strategy,] a, b)
+            let (strat, rest): (&str, &[String]) = if raw_args
+                .first()
+                .is_some_and(|a| is_rounding_strategy(a))
+            {
+                (&raw_args[0].to_ascii_lowercase()[..], &raw_args[1..])
+            } else {
+                ("nearest", &raw_args[..])
+            };
+            if rest.len() != 2 {
+                return None;
+            }
+            let a = eval_math_number(&rest[0])?;
+            let b = eval_math_number(&rest[1])?;
+            Some(css_round(strat, a, b))
+        }
+        "mod" | "rem" => {
+            if raw_args.len() != 2 {
+                return None;
+            }
+            let a = eval_math_number(&raw_args[0])?;
+            let b = eval_math_number(&raw_args[1])?;
+            Some(if name == "mod" { css_mod(a, b) } else { css_rem(a, b) })
+        }
+        "abs" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            Some(eval_math_number(&raw_args[0])?.abs())
+        }
+        "sign" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            let x = eval_math_number(&raw_args[0])?;
+            Some(if x.is_nan() {
+                f64::NAN
+            } else if x > 0.0 {
+                1.0
+            } else if x < 0.0 {
+                -1.0
+            } else {
+                x // ±0 부호 보존(1/sign(-0) = -inf)
+            })
+        }
+        "sin" => Some(num_angle_rad(raw_args.first()?)?.sin()),
+        "cos" => Some(num_angle_rad(raw_args.first()?)?.cos()),
+        "tan" => Some(num_angle_rad(raw_args.first()?)?.tan()),
+        "sqrt" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            Some(eval_math_number(&raw_args[0])?.sqrt())
+        }
+        "exp" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            Some(eval_math_number(&raw_args[0])?.exp())
+        }
+        "pow" => {
+            if raw_args.len() != 2 {
+                return None;
+            }
+            Some(eval_math_number(&raw_args[0])?.powf(eval_math_number(&raw_args[1])?))
+        }
+        "log" => {
+            let v = nums(&raw_args)?;
+            match v.len() {
+                1 => Some(v[0].ln()),
+                2 => Some(v[0].log(v[1])),
+                _ => None,
+            }
+        }
+        "hypot" => {
+            let v = nums(&raw_args)?;
+            if v.is_empty() {
+                return None;
+            }
+            Some(v.iter().map(|x| x * x).sum::<f64>().sqrt())
+        }
+        // asin/acos/atan/atan2 는 <angle> 결과라 순수 수 문맥에선 타입 오류.
+        _ => None,
+    }
+}
+
+// CSS min/max: 인자에 NaN 있으면 NaN 전파(Rust f64::min/max 와 다름).
+fn fmin_css(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.min(b)
+    }
+}
+fn fmax_css(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }
+}
+
+// CSS round(strategy, a, b)(§10). b=0 또는 비유한 → 규칙대로. 부호있는 0 보존.
+fn css_round(strat: &str, a: f64, b: f64) -> f64 {
+    if b == 0.0 {
+        return f64::NAN; // 어느 배수도 0 → NaN
+    }
+    if a.is_infinite() {
+        return f64::NAN; // inf 를 유한 배수로 반올림 → NaN
+    }
+    if b.is_infinite() {
+        // 무한 스텝: nearest/down → 0(부호는 a), up → a>0 이면 +inf 등. 근사: 0 반환.
+        return match strat {
+            "up" => {
+                if a > 0.0 {
+                    f64::INFINITY
+                } else {
+                    0.0 * a.signum()
+                }
+            }
+            "down" => {
+                if a < 0.0 {
+                    f64::NEG_INFINITY
+                } else {
+                    0.0 * a.signum()
+                }
+            }
+            _ => 0.0 * a.signum(),
+        };
+    }
+    let q = a / b;
+    let r = match strat {
+        "up" => q.ceil(),
+        "down" => q.floor(),
+        "to-zero" => q.trunc(),
+        _ => {
+            // nearest: 0.5 는 +무한대 쪽(round half up).
+            (q + 0.5).floor()
+        }
+    };
+    r * b
+}
+
+// CSS mod(a,b): 결과 부호는 b(제수). rem(a,b): 결과 부호는 a(피제수).
+fn css_mod(a: f64, b: f64) -> f64 {
+    if b == 0.0 || a.is_infinite() {
+        return f64::NAN;
+    }
+    if b.is_infinite() {
+        // b 무한: a 와 b 부호 다르면 b, 같으면 a(§10). 근사: a.
+        return a;
+    }
+    let r = a - b * (a / b).floor();
+    r
+}
+fn css_rem(a: f64, b: f64) -> f64 {
+    if b == 0.0 || a.is_infinite() {
+        return f64::NAN;
+    }
+    if b.is_infinite() {
+        return a;
+    }
+    a - b * (a / b).trunc()
+}
+
 // calc() 내부 식을 순수 수(단위 무시)로 평가. transition 시간 정규화 등에 쓴다.
 pub(crate) fn eval_calc_number(inner: &str) -> Option<f32> {
     match eval_calc(inner) {
@@ -11548,6 +11927,53 @@ mod tests {
         assert_eq!(flatten_nested_calc("calc(1px + calc(2px * 3))"), "calc(1px + calc(2px * 3))"); // 부분 아님 — 유지
         assert_eq!(flatten_nested_calc("10px"), "10px"); // calc 아님
         assert_eq!(flatten_nested_calc("var(--x)"), "var(--x)"); // 다른 함수
+    }
+
+    #[test]
+    fn math_number_evaluation() {
+        let ev = |s: &str| eval_math_number(s);
+        // 기본 산술.
+        assert_eq!(ev("1 + 2 * 3"), Some(7.0));
+        assert_eq!(ev("(1 + 2) * 3"), Some(9.0));
+        assert_eq!(ev("calc(10 / 4)"), Some(2.5));
+        // min/max/clamp.
+        assert_eq!(ev("min(1, 2, 3)"), Some(1.0));
+        assert_eq!(ev("max(1, 2, 3)"), Some(3.0));
+        assert_eq!(ev("clamp(0, 5, 3)"), Some(3.0));
+        assert_eq!(ev("clamp(2, 1, 5)"), Some(2.0));
+        assert_eq!(ev("clamp(none, 5, 3)"), Some(3.0));
+        assert_eq!(ev("clamp(2, 5, none)"), Some(5.0));
+        // abs/sign.
+        assert_eq!(ev("abs(-3)"), Some(3.0));
+        assert_eq!(ev("sign(-5)"), Some(-1.0));
+        assert_eq!(ev("sign(5)"), Some(1.0));
+        // round/mod/rem.
+        assert_eq!(ev("round(100, 10)"), Some(100.0));
+        assert_eq!(ev("round(round(100,10)* -1, 10)"), Some(-100.0));
+        assert_eq!(ev("round(up, 3, 10)"), Some(10.0));
+        assert_eq!(ev("round(down, 7, 10)"), Some(0.0));
+        assert_eq!(ev("mod(rem(1,18)* -1, 5)"), Some(4.0));
+        // 부호있는 0 · infinity(signed-zero.html 핵심).
+        assert_eq!(ev("clamp(-1, 1 / sign(calc(-0)), 1)"), Some(-1.0));
+        assert_eq!(ev("clamp(-1, 1 / sign(calc(0)), 1)"), Some(1.0));
+        assert_eq!(ev("clamp(-1, 1 / sign(calc(-0 * -1)), 1)"), Some(1.0));
+        assert_eq!(ev("clamp(-1, 1 / sign(calc(-0 * 1)), 1)"), Some(-1.0));
+        assert_eq!(ev("1 / 0"), Some(f64::INFINITY));
+        assert!(ev("0 / 0").unwrap().is_nan());
+        // 삼각(라디안·각도).
+        assert!((ev("cos(0)").unwrap() - 1.0).abs() < 1e-9);
+        assert!(ev("sin(0)").unwrap().abs() < 1e-9);
+        assert!((ev("cos(0deg)").unwrap() - 1.0).abs() < 1e-9);
+        // 상수.
+        assert!((ev("pi").unwrap() - std::f64::consts::PI).abs() < 1e-9);
+        assert_eq!(ev("infinity"), Some(f64::INFINITY));
+        assert_eq!(ev("-infinity"), Some(f64::NEG_INFINITY));
+        // 순수 수 아님 → None(길이/퍼센트/각도결과/해석불가).
+        assert_eq!(ev("10px"), None);
+        assert_eq!(ev("50%"), None);
+        assert_eq!(ev("asin(1)"), None); // 각도 결과는 number 문맥 타입오류
+        assert_eq!(ev("1 + "), None);
+        assert_eq!(ev("var(--x)"), None);
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");

@@ -9,6 +9,14 @@ fn number_or_math(s: &str) -> Option<f32> {
     if let Ok(n) = s.parse::<f32>() {
         return Some(n);
     }
+    // 순수 <number> 수학식(min/max/clamp/sign/round/abs/삼각/…)을 §CSS Values 4 §10
+    // 대로 평가한다(부호있는 0·infinity·NaN 포함). 유한값만 수용(정수/수 프로퍼티에
+    // inf/NaN 저장 방지). 길이·퍼센트가 섞이면 None 이라 아래 경로로 넘어간다.
+    if let Some(v) = crate::css::eval_math_number(s) {
+        if v.is_finite() {
+            return Some(v as f32);
+        }
+    }
     match interpret_value(s) {
         Some(Value::Length(f, Unit::Number)) => Some(f),
         // calc(2 + 3)/calc(1 / 4) 등 수식은 eval_calc_number 로 수를 추출한다
