@@ -42,12 +42,13 @@ fn is_empty_nested_decls(r: &crate::css::Rule) -> bool {
 
 fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     let dl = decls_line(rule);
-    // @media / @supports 그룹 규칙: `@<kw> <cond> {\n  <내부>\n}`(비면 `{\n}`).
+    // @media / @supports / @container 그룹 규칙: `@<kw> <cond> {\n  <내부>\n}`.
     if let Some((kw, cond)) = rule
         .at_media
         .as_ref()
         .map(|c| ("@media", c))
         .or_else(|| rule.at_supports.as_ref().map(|c| ("@supports", c)))
+        .or_else(|| rule.at_container.as_ref().map(|c| ("@container", c)))
     {
         let children: Vec<String> = rule
             .nested
@@ -371,6 +372,54 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @container 규칙(CSSContainerRule §CSS Containment). head = `[name] (query)`.
+                let atcont = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                    .and_then(|r| r.at_container.clone());
+                if let Some(head) = atcont {
+                    let (cname, cquery) = match head.find('(') {
+                        Some(i) => (head[..i].trim().to_string(), head[i..].trim().to_string()),
+                        None => (head.trim().to_string(), String::new()),
+                    };
+                    return match key {
+                        "conditionText" | "containerQuery" => Ok(Value::Str(cquery)),
+                        "containerName" => Ok(Value::Str(cname)),
+                        "type" => Ok(Value::Num(0.0)), // 신규 규칙은 0
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
+                        "cssRules" | "rules" => {
+                            let cnt = self
+                                .sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                                .map(|r| r.nested.len())
+                                .unwrap_or(0);
+                            let children: Vec<Value> = (0..cnt)
+                                .map(|i| {
+                                    let mut p = np.clone();
+                                    p.push(i);
+                                    Value::CssRule(si, ri, std::rc::Rc::new(p))
+                                })
+                                .collect();
+                            let arr = ArrayObj::new(children);
+                            arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+                            Ok(Value::Arr(arr))
+                        }
+                        "length" => Ok(Value::Num(
+                            self.sheets()
+                                .and_then(|s| s.get(si))
+                                .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                                .map(|r| r.nested.len() as f64)
+                                .unwrap_or(0.0),
+                        )),
+                        "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
+                        "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 // @custom-media 규칙(CSSCustomMediaRule §Media Queries 5) 전용 속성.
                 let atc = self
                     .sheets()
@@ -589,6 +638,7 @@ impl Interp {
                 at_media,
                 at_custom_media: None,
                 at_supports,
+                at_container: None,
                 nested,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };

@@ -275,7 +275,14 @@ impl Stylesheet {
 
     // @container 규칙이 하나라도 있는가 (있을 때만 두 번째 스타일 패스를 돈다)
     pub fn has_containers(&self) -> bool {
-        self.rules.iter().any(|r| r.container.is_some())
+        // @container 규칙은 CSSContainerRule 컨테이너(at_container)로 보존되고 내부 규칙은
+        // .nested 에 container 태그를 달고 있다 → 최상위뿐 아니라 중첩까지 재귀 검사.
+        fn any_container(rules: &[Rule]) -> bool {
+            rules
+                .iter()
+                .any(|r| r.container.is_some() || r.at_container.is_some() || any_container(&r.nested))
+        }
+        any_container(&self.rules)
     }
 
     // 다른 시트를 뒤에 합친다. 규칙뿐 아니라 **레이어 순서와 @font-face/@keyframes 도**
@@ -381,6 +388,11 @@ pub struct Rule {
     // @supports 규칙이면 조건 텍스트. CSSOM CSSSupportsRule 노출용(at_media 와 같은
     // 컨테이너 모델; flatten 이 매칭에서 제외, .nested 로 내부 규칙 보관).
     pub at_supports: Option<String>,
+    // @container 규칙이면 (직렬화된 프렐류드=이름? 조건). CSSOM CSSContainerRule 노출용.
+    // @media/@supports 와 달리 매칭은 per-element(각 내부 규칙의 container 태그를
+    // ContainerMap 으로 평가)이라, build_with flatten 은 이 컨테이너의 .nested 를 항상
+    // 펼친다(조건 게이팅은 태그가 담당).
+    pub at_container: Option<String>,
     // CSS Nesting 중첩 규칙(desugar 후). CSSOM CSSStyleRule.cssRules 노출용이자, 캐스케이드
     // 인덱스가 flatten 해 매칭에 쓴다. 선택자는 이미 부모 기준으로 desugar 되어 있다.
     pub nested: Vec<Rule>,
@@ -938,7 +950,7 @@ pub fn parse_one_nested_rule(text: &str, parent_sel: &str, viewport_width: f32) 
             at_media: None,
             at_custom_media: None,
             at_supports: None,
-            nested: Vec::new(),
+            at_container: None,            nested: Vec::new(),
         });
     }
     // 규칙 하나만 유효할 때. (여러 개거나 0개면 insertRule 규격상 하나가 아님 → None.)
@@ -2196,7 +2208,7 @@ impl Parser {
             at_media: Some(cond),
             at_custom_media: None,
             at_supports: None,
-            nested: inner,
+            at_container: None,            nested: inner,
         }]
     }
 
@@ -2313,8 +2325,25 @@ impl Parser {
                 }
             }
         }
-        self.cur_container = prev;
-        inner
+        self.cur_container = prev.clone();
+        // @container 를 CSSContainerRule 컨테이너로 보존(§CSSOM). 내부 규칙엔 이미 container
+        // 태그가 붙어(cur_container) per-element 로 ContainerMap 평가되므로, build_with flatten
+        // 은 이 컨테이너의 .nested 를 항상 펼친다(조건 게이팅은 태그가 담당). 컨테이너 규칙
+        // 자체의 container 태그는 바깥 문맥(prev).
+        vec![Rule {
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            selector_text: String::new(),
+            ua: false,
+            layer: self.cur_layer.clone(),
+            container: prev,
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+            at_supports: None,
+            at_container: Some(head.trim().to_string()),
+            nested: inner,
+        }]
     }
 
     fn register_layer(&mut self, name: &str) {
@@ -2364,7 +2393,7 @@ impl Parser {
             at_media: None,
             at_custom_media: None,
             at_supports: Some(cond.trim().to_string()),
-            nested: inner,
+            at_container: None,            nested: inner,
         }]
     }
 
@@ -2562,7 +2591,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: Some((name.to_string(), serialized)),
-            at_supports: None,            nested: Vec::new(),
+            at_supports: None, at_container: None,            nested: Vec::new(),
         })
     }
 
@@ -2664,7 +2693,7 @@ impl Parser {
             at_property: Some((name, reg)),
             at_media: None,
             at_custom_media: None,
-            at_supports: None,            nested: Vec::new(),
+            at_supports: None, at_container: None,            nested: Vec::new(),
         })
     }
 
@@ -2758,7 +2787,7 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                    at_supports: None,                    nested,
+                    at_supports: None, at_container: None,                    nested,
                 })
             }
             None => {
@@ -2789,7 +2818,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: None,
-            at_supports: None,            nested: Vec::new(),
+            at_supports: None, at_container: None,            nested: Vec::new(),
         };
         loop {
             self.consume_whitespace();
@@ -2854,6 +2883,7 @@ impl Parser {
                             at_media,
                             at_custom_media: None,
                             at_supports,
+                            at_container: None,
                             nested: cont,
                         });
                         seen_nested = true;
@@ -2890,7 +2920,7 @@ impl Parser {
                                 at_property: None,
                                 at_media: None,
                                 at_custom_media: None,
-                                at_supports: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
+                                at_supports: None, at_container: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
                             });
                         }
                         seen_nested = true;
