@@ -911,42 +911,125 @@ fn split_top_by(s: &str, sep: char) -> Vec<String> {
     out
 }
 
-// if() 의 style() 조건 평가(§CSS Values 5). custom: 요소의 계산된 커스텀 프로퍼티.
-// style(--name) = 존재, style(--name: V) = 값 일치(initial=미설정/빈값). media()/
-// supports() 는 미지원(None 반환해 조건 불성립 취급).
+// 최상위(괄호 밖)에서 키워드(" and "/" or ")로 분리. 대소문자 무시.
+fn split_top_kw<'a>(s: &'a str, kw: &str) -> Vec<&'a str> {
+    let bytes = s.as_bytes();
+    let low = s.to_ascii_lowercase();
+    let kwb = kw.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && low[i..].starts_with(kw) {
+            // kw 앞뒤가 경계인지(공백 포함 kw 라 그대로).
+            out.push(s[start..i].trim());
+            i += kwb.len();
+            start = i;
+            continue;
+        }
+        i += 1;
+    }
+    out.push(s[start..].trim());
+    out
+}
+
+// if() 조건 평가(§CSS Values 5). 불리언(and/or/not/괄호) + 리프(style/supports).
+// media() 는 viewport 필요 → None(호출부가 원문 유지). custom: 계산된 커스텀 프로퍼티.
 fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>) -> Option<bool> {
     let c = cond.trim();
     if c.eq_ignore_ascii_case("else") {
         return Some(true);
     }
+    // or (최하 우선순위).
+    let ors = split_top_kw(c, " or ");
+    if ors.len() > 1 {
+        let mut any = false;
+        for o in ors {
+            match eval_if_condition(o, custom) {
+                Some(true) => any = true,
+                Some(false) => {}
+                None => return None,
+            }
+        }
+        return Some(any);
+    }
+    // and.
+    let ands = split_top_kw(c, " and ");
+    if ands.len() > 1 {
+        let mut all = true;
+        for a in ands {
+            match eval_if_condition(a, custom) {
+                Some(true) => {}
+                Some(false) => all = false,
+                None => return None,
+            }
+        }
+        return Some(all);
+    }
+    // not.
     let low = c.to_ascii_lowercase();
-    if let Some(inner) = low
-        .strip_prefix("style(")
-        .and_then(|_| c.get(6..c.len().checked_sub(1)?))
-    {
-        // inner = "--name" 또는 "--name: value".
+    if let Some(rest) = low.strip_prefix("not ").map(|_| c[4..].trim()) {
+        return eval_if_condition(rest, custom).map(|b| !b);
+    }
+    // 괄호 그룹: 전체가 (…) 하나면 벗겨 재귀.
+    if c.starts_with('(') && c.ends_with(')') {
+        // 균형 확인.
+        let inner = &c[1..c.len() - 1];
+        let mut d = 0i32;
+        let mut ok = true;
+        for (k, ch) in inner.char_indices() {
+            match ch {
+                '(' => d += 1,
+                ')' => {
+                    d -= 1;
+                    if d < 0 {
+                        ok = false;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            let _ = k;
+        }
+        if ok && d == 0 {
+            return eval_if_condition(inner, custom);
+        }
+    }
+    // style(<query>).
+    if low.starts_with("style(") {
+        let inner = c.get(6..c.len().checked_sub(1)?)?;
         let (name, expected) = match split_top_by(inner, ':').as_slice() {
             [n] => (n.trim().to_string(), None),
             [n, v] => (n.trim().to_string(), Some(v.trim().to_string())),
             _ => return None,
         };
         return Some(match expected {
-            None => custom.contains_key(&name), // 존재 여부
+            None => custom.contains_key(&name),
             Some(exp) => {
                 let exp = exp.trim();
                 let cur = custom.get(&name).map(|s| s.trim());
                 if exp.eq_ignore_ascii_case("initial") {
-                    // initial = 미설정 또는 빈 값 또는 "initial".
-                    matches!(cur, None | Some("")) || exp.eq_ignore_ascii_case(cur.unwrap_or(""))
+                    matches!(cur, None | Some("")) || cur == Some("initial")
                 } else if exp.contains("var(") {
-                    false // guaranteed-invalid(미해석 var) → 불일치
+                    false
                 } else {
                     cur.map(|v| v.eq_ignore_ascii_case(exp)).unwrap_or(false)
                 }
             }
         });
     }
-    None // media()/supports() 등 미지원
+    // supports(<condition>): 기존 @supports 평가기 재사용(and/or/not·선언·선택자).
+    if low.starts_with("supports(") {
+        let inner = c.get(9..c.len().checked_sub(1)?)?.trim();
+        return Some(supports::supports_condition(inner));
+    }
+    None // media() 등 미지원
 }
 
 // if() 를 계산 시점에 해석(§CSS Values 5 §if-notation). 첫 참인 조건의 값으로
