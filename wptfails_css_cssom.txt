@@ -43,59 +43,49 @@ css/cssom/CSSStyleRule.html	FAIL	Existence and type of CSSStyleRule attributes	a
 css/cssom/CSSStyleRule.html	FAIL	Assigning to CSSStyleRule.style assigns to cssText; CSSStyleRule.style returns the same object	assert_equals: expected "" but got "marginU+2dtop: 10px; marginU+2dright: 10px; marginU+2dbottom: 10px; marginU+2dleft: 10px; paddingU+2dtop: 0px; paddingU+2dright: 0px; paddingU+2dbottom: 0px; paddingU+2dleft: 0px;"
 css/cssom/CSSStyleRule.html	FAIL	Mutability of CSSStyleRule's style attribute	assert_equals: expected "10px" but got ""
 css/cssom/CSSStyleRule.html	FAIL	CSSStyleRule's style has [PutForwards]	assert_equals: margin expected "15px" but got ""
-css/cssom/CSSStyleSheet-constructable-baseURL.html	FAIL	Constructing sheet with custom base URL ueses that URL for CSS rules	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-baseURL.html	FAIL	Constructing sheet with relative URL adds to the constructor document's base URL	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-baseURL.html	FAIL	Constructing sheet with invalid base URL throws a NotAllowedError	assert_throws_dom: function "() => { new CSSStyleSheet({ baseURL: "https://test:test/"}) }" threw object "TypeError: Illegal constructor" that is not a DOMException NotAllowedError: property "code" is equal to undefined, expected 0
-css/cssom/CSSStyleSheet-constructable-cssRules.html	FAIL	cssRules doesn't change on replace / replaceSync	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
-css/cssom/CSSStyleSheet-constructable-disabled-regular-sheet-insertion.html	FAIL	Shouldn't crash / assert when inserting a stylesheet after there are disabled constructable sheets	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Duplicate stylesheets have the right cascade position in the Document	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Appending duplicate stylesheets yields the correct cascade position in the Document	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Duplicate stylesheets have the right cascade position in the ShadowRoot	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Appending duplicate stylesheets yields the correct cascade position in the ShadowRoot	Illegal constructor
-css/cssom/CSSStyleSheet-constructable-invalidation.html	FAIL	mutating constructed CSSStyleSheet applied to root invalidates styles	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
-css/cssom/CSSStyleSheet-constructable-invalidation.html	FAIL	mutating constructed CSSStyleSheet applied to shadowdom invalidates styles	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
-css/cssom/CSSStyleSheet-constructable-invalidation.html	FAIL	mutating dependent constructed CSSStyleSheet applied to shadowdom invalidates styles	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
-css/cssom/CSSStyleSheet-constructable-replace-cssRules.html	FAIL	cssRules tests (sync: true)	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
-css/cssom/CSSStyleSheet-constructable-replace-cssRules.html	FAIL	cssRules tests (sync: false)	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
-css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html	FAIL	CSSStyleSheet.replaceSync throws NotAllowedError for nonU+2dconstructed sheets	assert_throws_dom: replaceSync on nonU+2dconstructed sheet should throw function "() => sheet.replaceSync(":root { backgroundU+2dcolor: red }")" threw object "TypeError: replaceSync(…) — sheet.replaceSync 이(가) undefined (함수 아님, 수신자=object)" that is not a DOMException NotAllowedError: property "code" is equal to undefined, expected 0
-css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html	FAIL	CSSStyleSheet.replace returns a rejected promise for nonU+2dconstructed sheets	promise_test: Unhandled rejection with value: object "TypeError: replace(…) — sheet.replace 이(가) undefined (함수 아님, 수신자=object)"
-css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html	FAIL	CSSStyleSheet.replace returns a rejected promise for nonU+2dconstructed sheets that have no associated document	promise_test: Unhandled rejection with value: object "TypeError: replace(…) — sheet.replace 이(가) undefined (함수 아님, 수신자=object)"
-css/cssom/CSSStyleSheet-constructable-replace-thenable.html	FAIL	CSSStyleSheet.replace/replaceSync() when stylesheet is a thenable	promise_test: Unhandled rejection with value: object "TypeError: Illegal constructor"
+css/cssom/CSSStyleSheet-constructable-baseURL.html	FAIL	Constructing sheet with invalid base URL throws a NotAllowedError	assert_throws_dom: function "() => { new CSSStyleSheet({ baseURL: "https://test:test/"}) }" did not throw
+css/cssom/CSSStyleSheet-constructable-cssRules.html	FAIL	cssRules doesn't change on replace / replaceSync	assert_equals: Rules should be the same after replaceSync expected [object "[object CSSStyleRule]"] but got []
+css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Duplicate stylesheets have the right cascade position in the Document	assert_equals: duplicate stylesheet should take right position in the cascade expected "1" but got "auto"
+css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Appending duplicate stylesheets yields the correct cascade position in the Document	assert_equals: backmost stylesheet should take precedence expected "0" but got "auto"
+css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Duplicate stylesheets have the right cascade position in the ShadowRoot	assert_equals: duplicate stylesheet should take right position in the cascade expected "1" but got "auto"
+css/cssom/CSSStyleSheet-constructable-duplicate.html	FAIL	Appending duplicate stylesheets yields the correct cascade position in the ShadowRoot	assert_equals: backmost stylesheet should take precedence expected "0" but got "auto"
+css/cssom/CSSStyleSheet-constructable-invalidation.html	FAIL	mutating constructed CSSStyleSheet applied to root invalidates styles	assert_equals: Sheet should apply expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable-invalidation.html	FAIL	mutating constructed CSSStyleSheet applied to shadowdom invalidates styles	assert_equals: Sheet should apply expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable-invalidation.html	FAIL	mutating dependent constructed CSSStyleSheet applied to shadowdom invalidates styles	assert_equals: Sheet should apply expected "rgb(0, 0, 255)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable-replace-cssRules.html	FAIL	cssRules tests (sync: true)	assert_equals: StyleSheet.cssRules is [SameObject] expected [] but got [object "[object CSSStyleRule]"]
+css/cssom/CSSStyleSheet-constructable-replace-cssRules.html	FAIL	cssRules tests (sync: false)	assert_equals: StyleSheet.cssRules is [SameObject] expected [] but got [object "[object CSSStyleRule]"]
+css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html	FAIL	CSSStyleSheet.replaceSync throws NotAllowedError for nonU+2dconstructed sheets	assert_throws_dom: replaceSync on nonU+2dconstructed sheet should throw function "() => sheet.replaceSync(":root { backgroundU+2dcolor: red }")" did not throw
+css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html	FAIL	CSSStyleSheet.replace returns a rejected promise for nonU+2dconstructed sheets	assert_equals: precondition expected "rgb(0, 255, 0)" but got "rgb(255, 0, 0)"
+css/cssom/CSSStyleSheet-constructable-replace-on-regular-sheet.html	FAIL	CSSStyleSheet.replace returns a rejected promise for nonU+2dconstructed sheets that have no associated document	assert_equals: precondition expected "rgb(0, 255, 0)" but got "rgb(255, 0, 0)"
+css/cssom/CSSStyleSheet-constructable-replace-thenable.html	FAIL	CSSStyleSheet.replace/replaceSync() when stylesheet is a thenable	promise_test: Unhandled rejection with value: object "TypeError: Object.defineProperty called on nonU+2dobject"
 css/cssom/CSSStyleSheet-constructable.html	FAIL	document.adoptedStyleSheets should initially have length 0.	document.adoptedStyleSheets.length — document.adoptedStyleSheets 이(가) undefined (읽을 수 없음)
-css/cssom/CSSStyleSheet-constructable.html	FAIL	new CSSStyleSheet produces empty CSSStyleSheet	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	title can be set in the CSSStyleSheet constructor	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace produces Promise<CSSStyleSheet>	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructed style sheets can be applied on document	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructed style sheets can be applied on shadow root	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	ReU+2dattaching shadow host with adopted stylesheets work	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Attaching a shadow root that already has adopted stylesheets work	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	ReU+2dattaching shadow host and updating attributes work	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Changes to constructed stylesheets through CSSOM is reflected	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructed stylesheet can be used and modified in multiple TreeScopes	Illegal constructor
+css/cssom/CSSStyleSheet-constructable.html	FAIL	new CSSStyleSheet produces empty CSSStyleSheet	assert_equals: expected 2 but got 0
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace produces Promise<CSSStyleSheet>	assert_equals: expected 2 but got 0
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructed style sheets can be applied on document	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructed style sheets can be applied on shadow root	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Re-attaching shadow host with adopted stylesheets work	assert_equals: Style applies connected expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Attaching a shadow root that already has adopted stylesheets work	assert_equals: Style applies when connected expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Re-attaching shadow host and updating attributes work	assert_equals: Style applies after adding style expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Changes to constructed stylesheets through CSSOM is reflected	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructed stylesheet can be used and modified in multiple TreeScopes	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
 css/cssom/CSSStyleSheet-constructable.html	FAIL	Stylesheets constructed on the main Document cannot be used in iframes	iframe.contentDocument.body — iframe.contentDocument 이(가) undefined (읽을 수 없음)
 css/cssom/CSSStyleSheet-constructable.html	FAIL	Stylesheet constructed on iframe cannot be used in the main Document	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.body — iframe.contentDocument 이(가) undefined (읽을 수 없음)"
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Adding nonU+2dconstructed stylesheet to AdoptedStyleSheets is not allowed when the owner document of the stylesheet is in the same document tree as the AdoptedStyleSheets	assert_equals: expected "rgb(0, 0, 0)" but got "rgb(255, 0, 0)"
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Adding nonU+2dconstructed stylesheet to AdoptedStyleSheets is not allowed when the owner document of the stylesheet and the AdoptedStyleSheets are in different document trees	iframe.contentDocument.createElement(…) — iframe.contentDocument 이(가) undefined
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync replaces stylesheet text synchronously	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync correctly updates the style of its adopters synchronously	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopted sheets are ordered after nonU+2dadopted sheets in the shadow root	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopted sheets are ordered after nonU+2dadopted sheets in the document	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Inserting an @import rule through insertRule on a constructed stylesheet throws an exception	assert_throws_dom: function "() => { (new CSSStyleSheet).insertRule(import_text) }" threw object "TypeError: Illegal constructor" that is not a DOMException SyntaxError: property "code" is equal to undefined, expected 12
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync should not trigger any loads from @import rules	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace allows, but ignores, import rule inside	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace ignores @import rule but still loads other rules	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync allows, but ignores, import rule inside	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace does not reject on failed imports	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Cloning a shadow host will not clone shadow root, and also adoptedStyleSheets	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Importing a shadow host will not copy shadow root, and also adoptedStyleSheets	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopting a shadow host will empty adoptedStyleSheets if adopting to a different document	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopting a shadow host's ancestor will empty adoptedStyleSheets if adopting to a different document	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Forcing a style update after adding an adopted stylesheet on a disconnected shadow root should not crash.	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Modifying an adopted stylesheet on a disconnected shadow root should not crash.	Illegal constructor
-css/cssom/CSSStyleSheet-constructable.html	FAIL	Constructing a sheet with the default base URL uses the constructor document's base URL for CSS rules	Illegal constructor
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Adding non-constructed stylesheet to AdoptedStyleSheets is not allowed when the owner document of the stylesheet is in the same document tree as the AdoptedStyleSheets	assert_equals: expected "rgb(0, 0, 0)" but got "rgb(255, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Adding non-constructed stylesheet to AdoptedStyleSheets is not allowed when the owner document of the stylesheet and the AdoptedStyleSheets are in different document trees	iframe.contentDocument.createElement(…) — iframe.contentDocument 이(가) undefined
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync replaces stylesheet text synchronously	assert_equals: expected ".red { color: rgb(255, 0, 0); }" but got ".red { color: red; }"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync correctly updates the style of its adopters synchronously	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopted sheets are ordered after non-adopted sheets in the shadow root	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopted sheets are ordered after non-adopted sheets in the document	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replaceSync should not trigger any loads from @import rules	Test timed out
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace allows, but ignores, import rule inside	
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace ignores @import rule but still loads other rules	
+css/cssom/CSSStyleSheet-constructable.html	FAIL	CSSStyleSheet.replace does not reject on failed imports	
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Importing a shadow host will not copy shadow root, and also adoptedStyleSheets	iframe.contentDocument.importNode(…) — iframe.contentDocument 이(가) undefined
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopting a shadow host will empty adoptedStyleSheets if adopting to a different document	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/CSSStyleSheet-constructable.html	FAIL	Adopting a shadow host's ancestor will empty adoptedStyleSheets if adopting to a different document	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
 css/cssom/CSSStyleSheet-modify-after-removal.html	FAIL	Modify sheet from removed iframe	frm.contentDocument.body — frm.contentDocument 이(가) undefined (읽을 수 없음)
 css/cssom/CSSStyleSheet-modify-after-removal.html	FAIL	Modify constructed sheet from removed iframe	frm2.contentWindow.eval(…) — frm2.contentWindow 이(가) undefined
-css/cssom/CSSStyleSheet-template-adoption.html	FAIL	adoptedStyleSheets won't be cleared when adopting into/from <template>s	Illegal constructor
+css/cssom/CSSStyleSheet-template-adoption.html	FAIL	adoptedStyleSheets won't be cleared when adopting into/from <template>s	assert_equals: Sheet should apply expected "rgb(0, 0, 255)" but got "rgb(0, 0, 0)"
 css/cssom/CSSStyleSheet.html	FAIL	insertRule with #bar selector	assert_equals: CSSStyleSheet cssRules attribute after insertRule function expected "#bar { margin: 10px; }" but got "#bar { marginU+2dtop: 10px; marginU+2dright: 10px; marginU+2dbottom: 10px; marginU+2dleft: 10px; }"
 css/cssom/CSSStyleSheet.html	FAIL	insertRule with no argument throws	assert_throws_js: function "function() { styleSheet.insertRule() }" threw object "SyntaxError: 규칙을 파싱할 수 없다" ("SyntaxError") expected instance of function "function () { [native code] }" ("TypeError")
 css/cssom/CSSStyleSheet.html	FAIL	insertRule with index greater than length throws	assert_throws_dom: function "function() {             styleSheet.insertRule("#bar { margin: 10px; }", styleSheet.cssRules.length + 1)         }" did not throw
@@ -123,15 +113,17 @@ css/cssom/HTMLLinkElement-load-event.html	FAIL	Link element load event doesn't b
 css/cssom/HTMLStyleElement-load-event.html	FAIL	style elements fire load events properly	assert_equals: Load event should've fired for all nodes expected 3 but got 0
 css/cssom/MediaList.html	FAIL	CSSOM U+2d MediaList interface	document.styleSheets[..].cssRules[..].media — document.styleSheets[..].cssRules[..] 이(가) undefined (읽을 수 없음)
 css/cssom/MutationObserver-style.html	FAIL	Updating style property with the same value does not trigger an observation callback	assert_equals: times callback called expected 1 but got 2
-css/cssom/StyleSheetList-constructable-shadow-with-style-recalc.html	FAIL	shadowRoot.styleSheets does not include adopted style sheets	Illegal constructor
-css/cssom/StyleSheetList-constructable-shadow.html	FAIL	shadowRoot.styleSheets does not include adopted style sheets	Illegal constructor
-css/cssom/StyleSheetList-constructable-with-style-recalc.html	FAIL	document.styleSheets does not include adopted style sheets	Illegal constructor
-css/cssom/StyleSheetList-constructable.html	FAIL	document.styleSheets does not include adopted style sheets	Illegal constructor
+css/cssom/StyleSheetList-constructable-shadow-with-style-recalc.html	FAIL	shadowRoot.styleSheets does not include adopted style sheets	styleSheets.length — styleSheets 이(가) undefined (읽을 수 없음)
+css/cssom/StyleSheetList-constructable-shadow.html	FAIL	shadowRoot.styleSheets does not include adopted style sheets	styleSheets.length — styleSheets 이(가) undefined (읽을 수 없음)
+css/cssom/StyleSheetList-constructable-with-style-recalc.html	FAIL	document.styleSheets does not include adopted style sheets	assert_equals: expected 1 but got 2
+css/cssom/StyleSheetList-constructable.html	FAIL	document.styleSheets does not include adopted style sheets	assert_equals: expected 1 but got 2
 css/cssom/StyleSheetList.html	FAIL	CSSOM U+2d StyleSheetList interface	assert_equals: [SameObject] StyleSheetList expected (number) 1 but got (undefined) undefined
-css/cssom/adoptedstylesheets-observablearray.html	FAIL	document.adoptedStyleSheets should allow mutation inU+2dplace	Illegal constructor
-css/cssom/adoptedstylesheets-observablearray.html	FAIL	shadowRoot.adoptedStyleSheets should allow mutation inU+2dplace	Illegal constructor
+css/cssom/adoptedstylesheets-modify-array-and-sheet.html	FAIL	Add the two sheets. Text should be red.	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/adoptedstylesheets-modify-array-and-sheet.html	FAIL	Flip the two sheet. Still red.	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 0)"
+css/cssom/adoptedstylesheets-modify-array-and-sheet.html	FAIL	Modify the color declaration. Should now be green.	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/cssom/adoptedstylesheets-observablearray.html	FAIL	document.adoptedStyleSheets should allow mutation inU+2dplace	d.adoptedStyleSheets.length — d.adoptedStyleSheets 이(가) undefined (읽을 수 없음)
+css/cssom/adoptedstylesheets-observablearray.html	FAIL	shadowRoot.adoptedStyleSheets should allow mutation inU+2dplace	d.adoptedStyleSheets.length — d.adoptedStyleSheets 이(가) undefined (읽을 수 없음)
 css/cssom/adoptedstylesheets-observablearray.html	FAIL	adoptedStyleSheets should return true for isArray()	assert_true: expected true got false
-css/cssom/adoptedstylesheets-observablearray.html	FAIL	adoptedStyleSheets should not expose its backing object via prototype	Illegal constructor
 css/cssom/at-namespace.html	FAIL	CSS Test: @namespace in CSSOM is not severely broken	assert_throws_dom: function "function() {     s.sheet.insertRule('@namespace myhtml url("http://www.w3.org/1999/xhtml")', 0);   }" threw object "SyntaxError: 규칙을 파싱할 수 없다" that is not a DOMException InvalidStateError: property "code" is equal to 12, expected 11
 css/cssom/base-uri.html	FAIL	setProperty	assert_true: url("something.png") expected true got false
 css/cssom/base-uri.html	FAIL	KeyframeEffect constructor	promise_test: Unhandled rejection with value: object "ReferenceError: KeyframeEffect 은(는) 정의되지 않음"
@@ -218,10 +210,10 @@ css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	removeProperty('all') remo
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides prior property	assert_equals: expected "revert" but got "50px"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns later 'all' value when it overrides earlier 'all' and properties	assert_equals: expected "unset" but got "50px"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when property overridden after 'all'	assert_equals: expected "" but got "revert"
-css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when single property overridden after 'all' via insertRule	Illegal constructor
-css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides prior property via insertRule	Illegal constructor
-css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns later 'all' value when it overrides earlier 'all' and properties via insertRule	Illegal constructor
-css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when property overridden after 'all' via insertRule	Illegal constructor
+css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when single property overridden after 'all' via insertRule	assert_equals: expected "" but got "revert"
+css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides prior property via insertRule	assert_equals: expected "revert" but got "50px"
+css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns later 'all' value when it overrides earlier 'all' and properties via insertRule	assert_equals: expected "unset" but got "50px"
+css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when property overridden after 'all' via insertRule	assert_equals: expected "100px" but got "50px"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when single property overriden via setProperty	assert_equals: expected "" but got "revert"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	setProperty('all') overrides existing properties and earlier 'all'	assert_equals: expected "unset" but got "50px"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string when property overridden after 'all' via setProperty	assert_equals: expected "" but got "revert"
@@ -229,8 +221,8 @@ css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') re
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides shorthand 'margin'	assert_equals: expected "revert" but got "initial"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string with shorthand 'margin' via setProperty	assert_equals: expected "" but got "revert"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides shorthand 'margin' via setProperty	assert_equals: expected "revert" but got "initial"
-css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string with shorthand 'margin' via insertRule	Illegal constructor
-css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides shorthand 'margin' via insertRule	Illegal constructor
+css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns empty string with shorthand 'margin' via insertRule	assert_equals: expected "initial" but got ""
+css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('all') returns cssU+2dwide keyword when 'all' overrides shorthand 'margin' via insertRule	assert_equals: expected "revert" but got ""
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('margin') returns all's value when 'all' after 'marginU+2dtop'	assert_equals: expected "revert" but got ""
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('margin') returns empty string when some of 'margin's longhands are overridden by 'all'	assert_equals: expected "" but got "revert"
 css/cssom/cssstyledeclaration-all-shorthand.html	FAIL	getPropertyValue('margin') returns serialized string when longhands are after 'all'	assert_equals: expected "10px 20px 30px 40px" but got ""
@@ -928,7 +920,7 @@ css/cssom/serialize-media-rule.html	FAIL	type U+2d no features U+2d negation	ass
 css/cssom/serialize-media-rule.html	FAIL	type U+2d no features U+2d character case normalization	assert_equals: expected "@media speech {\n}" but got "@media speech { }"
 css/cssom/serialize-media-rule.html	FAIL	type U+2d omission of all	assert_equals: expected "@media (color) {\n}" but got "@media all and (color) { }"
 css/cssom/serialize-media-rule.html	FAIL	type U+2d inclusion of negated all	assert_equals: expected "@media not all and (color) {\n}" but got "@media not all and (color) { }"
-css/cssom/serialize-media-rule.html	FAIL	features U+2d character case normalization	assert_equals: expected "@media screen and (color) {\n}" but got "@media not all { }"
+css/cssom/serialize-media-rule.html	FAIL	features U+2d character case normalization	assert_equals: expected "@media screen and (color) {\n}" but got "@media screen and (color) { }"
 css/cssom/serialize-media-rule.html	FAIL	features U+2d preservation of overspecified features	assert_equals: expected "@media print and (maxU+2dwidth: 23px) and (maxU+2dwidth: 45px) {\n}" but got "@media print and (maxU+2dwidth: 23px) and (maxU+2dwidth: 45px) { }"
 css/cssom/serialize-media-rule.html	FAIL	features U+2d no lexicographical sorting	assert_equals: expected "@media screen and (color) and (maxU+2dwidth: 0px) {\n}" but got "@media screen and (color) and (maxU+2dwidth: 0px) { }"
 css/cssom/serialize-media-rule.html	FAIL	media query list	assert_equals: expected "@media screen and (maxU+2dwidth: 0px), screen and (color) {\n}" but got "@media screen and (maxU+2dwidth: 0px), screen and (color) { }"

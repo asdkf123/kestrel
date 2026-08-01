@@ -112,6 +112,8 @@ impl Interp {
                     "media" => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
                     "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
                     "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                    "replaceSync" => Ok(Value::Native(Native::SheetReplaceSync)),
+                    "replace" => Ok(Value::Native(Native::SheetReplace)),
                     _ => Ok(Value::Undefined),
                 }
             }

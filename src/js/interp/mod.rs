@@ -844,6 +844,9 @@ impl Interp {
         env_declare(&global, "scrollBy", Value::Native(Native::ScrollBy));
         // DOMParser — 문자열을 실제 DOM 으로 파싱 (분리된 서브트리라 렌더되지 않는다)
         env_declare(&global, "DOMParser", Value::Native(Native::DomParserCtor));
+        // new CSSStyleSheet() — 구성 가능(constructable) 시트. 프렐류드 스텁 생성자
+        // (Illegal constructor)를 실제 생성자로 덮는다.
+        env_declare(&global, "CSSStyleSheet", Value::Native(Native::CssStyleSheetCtor));
         // 프렐류드의 MutationObserver 가 쌓인 변형 기록을 가져가는 통로
         env_declare(&global, "__kTakeMutations", Value::Native(Native::TakeMutations));
         // 동적 import('m') — 렉서가 import 를 식별자로 내므로 호출식이 된다.
@@ -10873,6 +10876,9 @@ impl Interp {
             }
             Value::Native(Native::DomParserCtor) => {
                 return self.call_native(Native::DomParserCtor, None, args)
+            }
+            Value::Native(Native::CssStyleSheetCtor) => {
+                return self.call_native(Native::CssStyleSheetCtor, None, args)
             }
             // new Promise(executor): pending promise 생성 후 executor(resolve, reject) 동기 실행.
             // executor 가 throw 하면 reject. (동기 모델 — resolve/reject 즉시 정착)

@@ -5274,6 +5274,56 @@ impl Interp {
                 );
                 Ok(Value::Obj(Rc::new(RefCell::new(m))))
             }
+            // new CSSStyleSheet(options?) — 빈 구성 시트를 시트 목록에 추가하고
+            // Value::Sheet 를 돌려준다. constructed=true 라 채택 전엔 렌더에 미적용.
+            Native::CssStyleSheetCtor => {
+                let disabled = match args.first() {
+                    Some(Value::Obj(o)) => {
+                        o.borrow().get("disabled").map(to_bool).unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                let Some(sheets) = self.sheets() else {
+                    return Err("TypeError: no document".to_string());
+                };
+                sheets.push(crate::css::SheetEntry {
+                    href: None,
+                    owner: None,
+                    text: String::new(),
+                    sheet: crate::css::Stylesheet::empty(),
+                    disabled,
+                    constructed: true,
+                });
+                let idx = sheets.len() - 1;
+                Ok(Value::Sheet(idx))
+            }
+            // replaceSync(text) / replace(text): 시트 내용을 파싱해 통째 교체.
+            // replaceSync → undefined, replace → 이행된 Promise(시트).
+            Native::SheetReplaceSync | Native::SheetReplace => {
+                let text = args.first().map(to_display).unwrap_or_default();
+                let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
+                let parsed = crate::css::parse_viewport(text, vw);
+                if let Some(Value::Sheet(si)) = &recv {
+                    let si = *si;
+                    if let Some(sheets) = self.sheets() {
+                        if let Some(e) = sheets.get_mut(si) {
+                            e.sheet = parsed;
+                        }
+                    }
+                    self.css_epoch = self.css_epoch.wrapping_add(1);
+                }
+                if matches!(n, Native::SheetReplace) {
+                    let sheet_val = match &recv {
+                        Some(v) => v.clone(),
+                        None => Value::Undefined,
+                    };
+                    let p = self.new_promise();
+                    self.resolve_promise(&p, sheet_val);
+                    Ok(p)
+                } else {
+                    Ok(Value::Undefined)
+                }
+            }
             // parseFromString(html) → 분리된 <html><body>…</body></html> 서브트리.
             // 부모가 없으니 렌더 트리에 들어가지 않는다. querySelector/body 등이 동작한다.
             Native::DomParserParse => {

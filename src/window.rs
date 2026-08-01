@@ -86,6 +86,7 @@ pub fn sync_style_sheets(
                     text,
                     sheet,
                     disabled: false,
+                    constructed: false,
                 });
                 changed = true;
             }
@@ -131,7 +132,8 @@ pub fn flush_layout(js: &mut crate::js::interp::Interp) {
         let base = unsafe { &*ctx.css_base };
         *sheet = base.clone();
         for e in sheets.iter() {
-            if !e.disabled {
+            // constructed 시트는 채택(adoptedStyleSheets) 전엔 렌더에 적용 안 함.
+            if !e.disabled && !e.constructed {
                 sheet.merge(e.sheet.clone());
             }
         }

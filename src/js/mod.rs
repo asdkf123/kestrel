@@ -1177,6 +1177,15 @@ var __kIfaceNames = [
 for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   var __n = __kIfaceNames[__i];
   if (__n === 'EventTarget2' || __n === 'Node2') continue; // 아래에서 따로
+  // 이미 네이티브 생성자(new CSSStyleSheet 등)로 정의된 인터페이스는 생성자를 보존하고
+  // instanceof(Symbol.hasInstance)만 붙인다 — 스텁으로 덮으면 생성이 불가해진다.
+  var __ex = window[__n];
+  if (typeof __ex === 'function' && !__ex[Symbol.hasInstance]) {
+    (function(nm, fn){
+      fn[Symbol.hasInstance] = function(x){ var c = __kBrand(x); return !!c && c.indexOf(nm) >= 0; };
+    })(__n, __ex);
+    continue;
+  }
   window[__n] = __kMakeIface(__n);
 }
 // Text/Comment 는 **생성 가능한** 생성자다 (DOM §4.10/§4.8): new Text(data),

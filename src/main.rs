@@ -1152,6 +1152,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
                     text: String::new(),
                     sheet: one,
                     disabled: false,
+                    constructed: false,
                 });
             }
             CssSrc::Style(node) => {
@@ -1174,6 +1175,7 @@ fn build_page_once(url: &str) -> Option<(window::Page, Option<String>)> {
                     text,
                     sheet: one,
                     disabled: false,
+                    constructed: false,
                 });
             }
         }

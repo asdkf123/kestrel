@@ -1,27 +1,20 @@
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule true	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule false	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule empty	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule cycle	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule simple	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule multiple media queries	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule change mediaText	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule appendMedium	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule deleteMedium	Illegal constructor
-css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule item	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery (maxU+2dwidth: 30em) is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery (color), (hover) is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery not all and (hover: hover) is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery true is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery false is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2d true is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dfoo/* */(width > 42px) is valid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia query () is invalid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia query (maxU+2dwidth: 30em) is invalid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery(maxU+2dwidth: 30em) is invalid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery(maxU+2dwidth: 30em) ! is invalid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dquery(maxU+2dwidth: 30em) is invalid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery true! is invalid	Illegal constructor
-css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery false true is invalid	Illegal constructor
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule true	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule false	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule empty	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule cycle	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule simple	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule multiple media queries	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule change mediaText	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule appendMedium	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule deleteMedium	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-cssom.html	FAIL	CSSCustomMediaRule item	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery (maxU+2dwidth: 30em) is valid	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery (color), (hover) is valid	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery not all and (hover: hover) is valid	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery true is valid	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dquery false is valid	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2d true is valid	assert_equals: expected 1 but got 0
+css/mediaqueries/at-custom-media-parsing.html	FAIL	@customU+2dmedia U+2dU+2dfoo/* */(width > 42px) is valid	assert_equals: expected 1 but got 0
 css/mediaqueries/media-query-matches-in-iframe.html	FAIL	matchMedia('(maxU+2dwidth: 150px)').matches should update immediately	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument — iframe 이(가) undefined (읽을 수 없음)"
 css/mediaqueries/media-query-matches-in-iframe.html	FAIL	matchMedia('(width: 100px)').matches should update immediately	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument — iframe 이(가) undefined (읽을 수 없음)"
 css/mediaqueries/media-query-matches-in-iframe.html	FAIL	matchMedia('(orientation: portrait)').matches should update immediately	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument — iframe 이(가) undefined (읽을 수 없음)"

@@ -254,6 +254,9 @@ pub struct SheetEntry {
     pub text: String,
     pub sheet: Stylesheet,
     pub disabled: bool,
+    // new CSSStyleSheet() 로 만든 구성(constructable) 시트. adoptedStyleSheets 로
+    // 채택되기 전엔 렌더에 적용되지 않는다(미구현 채택 = 미적용). CSSOM 접근은 가능.
+    pub constructed: bool,
 }
 
 impl Stylesheet {

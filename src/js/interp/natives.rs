@@ -295,6 +295,9 @@ pub enum Native {
     HistoryReplaceState,
     DomParserCtor,
     DomParserParse,
+    CssStyleSheetCtor,
+    SheetReplaceSync,
+    SheetReplace,
     // 이벤트 인터페이스 생성자. 이름을 들고 있어야 프로토타입 체인을 구분한다 —
     // 예전엔 MouseEvent/KeyboardEvent 가 전부 같은 EventCtor 로 "근사" 되어서,
     // new Event('x') instanceof Event 조차 false 였다.
@@ -1072,6 +1075,7 @@ pub fn native_is_constructor(n: &Native) -> bool {
             | UrlCtor
             | XhrCtor
             | DomParserCtor
+            | CssStyleSheetCtor
             | WebSocketCtor
     )
 }
