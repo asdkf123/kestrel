@@ -1119,7 +1119,7 @@ fn collect_computed_styles(
         }
         // scale 프로퍼티 계산값: 퍼센트→수, z=1 생략, y==x 접기.
         if let Some(v) = m.get("scale") {
-            m.insert("scale".to_string(), crate::style::normalize_scale(v));
+            m.insert("scale".to_string(), crate::style::normalize_scale_computed(v));
         }
         // rotate 프로퍼티 계산값: 각도→도, 각도 마지막.
         if let Some(v) = m.get("rotate") {

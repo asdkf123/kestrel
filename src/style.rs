@@ -1981,7 +1981,18 @@ fn eval_number_token(t: &str) -> Option<f32> {
     }
 }
 
+// scale 지정값(el.style) 직렬화. 수학 함수 인자는 calc()로 감싼다(cos(0deg)→
+// "calc(1)"), 리터럴은 "1". 비유한은 calc(NaN)/calc(infinity).
 pub fn normalize_scale(v: &str) -> String {
+    normalize_scale_impl(v, false)
+}
+// scale 계산값 직렬화(getComputedStyle). 수학 함수를 평가해 "1"(calc 래퍼 없음),
+// NaN 은 "0"(§CSS Values 4 계산값 규칙).
+pub fn normalize_scale_computed(v: &str) -> String {
+    normalize_scale_impl(v, true)
+}
+
+fn normalize_scale_impl(v: &str, computed: bool) -> String {
     let v = v.trim();
     if v == "none" || v.is_empty() {
         return v.to_string();
@@ -1991,34 +2002,39 @@ pub fn normalize_scale(v: &str) -> String {
         return v.to_string();
     }
     let mut nums = Vec::with_capacity(toks.len());
+    let mut is_math = Vec::with_capacity(toks.len());
     for t in &toks {
         match eval_number_token(t) {
             Some(x) => nums.push(x),
             None => return v.to_string(), // 파싱 실패 시 원문 보존
         }
+        is_math.push(t.contains('(')); // 수학 함수/calc 인자 여부
     }
-    // 비유한 수는 §CSS Values 4 대로 calc(infinity)/calc(-infinity)/calc(NaN).
-    let f = |n: f32| -> String {
+    // (값, 수학함수여부) → 직렬화. computed 는 평가값(NaN→0), specified 는 수학함수를
+    // calc()로 감싸고 비유한은 calc(NaN)/calc(infinity).
+    let f = |n: f32, m: bool| -> String {
         if n.is_nan() {
-            "calc(NaN)".to_string()
+            if computed { "0".to_string() } else { "calc(NaN)".to_string() }
         } else if n.is_infinite() {
             if n > 0.0 { "calc(infinity)".to_string() } else { "calc(-infinity)".to_string() }
+        } else if m && !computed {
+            format!("calc({})", num_css(n))
         } else {
             num_css(n)
         }
     };
     let x = nums[0];
     match nums.len() {
-        1 => f(x),
+        1 => f(x, is_math[0]),
         _ => {
             let y = nums[1];
             let z = nums.get(2).copied().unwrap_or(1.0);
             if nums.len() == 3 && z != 1.0 {
-                format!("{} {} {}", f(x), f(y), f(z))
+                format!("{} {} {}", f(x, is_math[0]), f(y, is_math[1]), f(z, is_math[2]))
             } else if y != x {
-                format!("{} {}", f(x), f(y))
+                format!("{} {}", f(x, is_math[0]), f(y, is_math[1]))
             } else {
-                f(x)
+                f(x, is_math[0])
             }
         }
     }
