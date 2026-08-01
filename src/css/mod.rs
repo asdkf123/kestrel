@@ -1134,20 +1134,95 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
 // if() 를 계산 시점에 해석(§CSS Values 5 §if-notation). 첫 참인 조건의 값으로
 // 치환한다. 값은 앞 공백만 다듬고 뒤는 보존(테스트 규약). 전체가 if(...) 하나가
 // 아니거나 미지원 조건뿐이면 None(호출부가 원문 유지/드롭).
-// 등록된 커스텀 프로퍼티의 값을 계산 가능한 typed Value 로 해석한다(syntax 에 차원
-// 타입이 있으면). resolve_units 가 em/vw/calc 를 px 로 확정하게 해 getComputedStyle
-// 이 계산값을 낸다. 문자열/custom-ident/* 등은 None(원문 유지).
+// 등록된 커스텀 프로퍼티의 계산값. syntax 에 차원 타입이 있으면 값을 계산·정규화한다:
+// <length*> 는 typed Value(resolve_units 가 em/vw→px), <time> ms→s, <resolution>
+// →dppx, <number>/<integer> calc 평가, <angle> →deg. <type>+/# 리스트는 항목별.
+// 문자열/custom-ident/* 등은 None(원문 유지).
 pub(crate) fn registered_computed_value(syntax: &str, value: &str) -> Option<Value> {
     let low = syntax.to_ascii_lowercase();
-    if low.contains("<length")
-        || low.contains("<number")
-        || low.contains("<angle")
-        || low.contains("<time")
-        || low.contains("<percentage")
-        || low.contains("<integer")
-        || low.contains("<resolution")
+    let has = |t: &str| low.contains(t);
+    if !(has("<length") || has("<number") || has("<angle") || has("<time")
+        || has("<percentage") || has("<integer") || has("<resolution"))
     {
+        return None;
+    }
+    // 리스트(+ 공백 / # 콤마)면 항목별 계산 후 문자열로 재조합(getComputedStyle 직렬화).
+    let is_list_plus = low.contains(">+");
+    let is_list_hash = low.contains(">#");
+    if is_list_plus || is_list_hash {
+        let items = if is_list_hash {
+            values::split_top_commas(value)
+        } else {
+            values::split_top_level(value)
+        };
+        let sep = if is_list_hash { ", " } else { " " };
+        let parts: Option<Vec<String>> = items
+            .iter()
+            .map(|it| computed_scalar_string(&low, it.trim()))
+            .collect();
+        return parts.map(|p| Value::Keyword(p.join(sep)));
+    }
+    // 단일 값. <length*> 는 typed(문맥 단위 해석 필요), 그 외는 정규화 문자열.
+    if has("<length") || has("<percentage") {
         return interpret_value(value.trim());
+    }
+    computed_scalar_string(&low, value.trim()).map(Value::Keyword)
+}
+
+// 한 스칼라 값을 syntax 타입에 맞춰 계산·정규화한 문자열. length 는 여기선 원문
+// (문맥 단위는 상위에서 typed 로 처리). 실패 시 None.
+fn computed_scalar_string(syntax_low: &str, v: &str) -> Option<String> {
+    let has = |t: &str| syntax_low.contains(t);
+    let numf = |n: f64| crate::style::num_css(n as f32);
+    if has("<time") {
+        if let Some(s) = values::eval_math_time_s(v).or_else(|| {
+            // 단일 리터럴.
+            let low = v.to_ascii_lowercase();
+            if let Some(n) = low.strip_suffix("ms") {
+                n.trim().parse::<f64>().ok().map(|x| x / 1000.0)
+            } else if let Some(n) = low.strip_suffix('s') {
+                n.trim().parse::<f64>().ok()
+            } else {
+                None
+            }
+        }) {
+            return Some(format!("{}s", numf(s)));
+        }
+    }
+    if has("<resolution") {
+        let low = v.to_ascii_lowercase();
+        for (u, f) in [("dppx", 1.0), ("x", 1.0), ("dpi", 1.0 / 96.0), ("dpcm", 2.54 / 96.0)] {
+            if let Some(n) = low.strip_suffix(u) {
+                if let Ok(x) = n.trim().parse::<f64>() {
+                    return Some(format!("{}dppx", numf(x * f)));
+                }
+            }
+        }
+        // calc(1dppx + 96dpi): dppx 로 치환 후 수 평가.
+        let sub = low.replace("dppx", "").replace("dpcm", "*0.0264583").replace("dpi", "*0.0104166").replace('x', "");
+        if let Some(n) = values::eval_math_number(&sub) {
+            return Some(format!("{}dppx", numf(n)));
+        }
+    }
+    if has("<number") || has("<integer") {
+        if let Some(n) = values::eval_math_number(v) {
+            let n = if has("<integer") { n.round() } else { n };
+            return Some(numf(n));
+        }
+    }
+    if has("<angle") {
+        if let Some(d) = values::eval_math_angle_deg(v) {
+            return Some(format!("{}deg", numf(d)));
+        }
+        if let Some(n) = v.to_ascii_lowercase().strip_suffix("deg") {
+            if let Ok(x) = n.trim().parse::<f64>() {
+                return Some(format!("{}deg", numf(x)));
+            }
+        }
+    }
+    // length 는 원문(문맥 단위는 typed 경로에서). 여기 리스트 length 항목은 절대만 근사.
+    if has("<length") {
+        return Some(v.to_string());
     }
     None
 }

@@ -3228,7 +3228,7 @@ fn reorder_interp(toks: &[String], default_space: &str) -> String {
 }
 
 // 최상위(괄호 밖) 콤마로 분리
-fn split_top_commas(s: &str) -> Vec<String> {
+pub(crate) fn split_top_commas(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut depth = 0i32;
@@ -3253,7 +3253,7 @@ fn split_top_commas(s: &str) -> Vec<String> {
 }
 
 // 공백으로 최상위 토큰 분리 (색함수 괄호 보존)
-fn split_top_level(s: &str) -> Vec<String> {
+pub(crate) fn split_top_level(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut depth = 0i32;
