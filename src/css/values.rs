@@ -10107,6 +10107,53 @@ fn independent_length(v: &str) -> bool {
     true
 }
 
+// transform 초기값의 계산 독립성(§Properties & Values API). 함수 안 길이는 절대
+// 단위만 허용하고, 각도(deg/rad/grad/turn)와 무단위 수는 허용한다. em/vw/lh 등
+// 상대 단위가 있으면 초기값 무효(등록 실패 → 프로퍼티 미적용).
+fn transform_initial_independent(v: &str) -> bool {
+    let chars: Vec<char> = v.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit()
+            || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit())
+        {
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+                let save = i;
+                i += 1;
+                if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                    i += 1;
+                }
+                if i < chars.len() && chars[i].is_ascii_digit() {
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                } else {
+                    i = save;
+                }
+            }
+            let us = i;
+            while i < chars.len() && chars[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            if i > us {
+                let u = chars[us..i].iter().collect::<String>().to_ascii_lowercase();
+                if !matches!(
+                    u.as_str(),
+                    "px" | "cm" | "mm" | "in" | "pt" | "pc" | "q" | "deg" | "rad" | "grad" | "turn"
+                ) {
+                    return false; // 상대 단위(em/vw/lh/…)
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    true
+}
+
 // 단일 값 it 이 컴포넌트 comp(<type> 또는 keyword)에 맞는가.
 fn syntax_type_matches(comp: &str, it: &str) -> bool {
     if comp.starts_with('<') && comp.ends_with('>') {
@@ -10150,7 +10197,9 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
                     && b[it.len() - 1] == b[0]
                     && !it[1..it.len() - 1].contains(b[0] as char)
             }
-            "transform-function" | "transform-list" => transform_valid(it) && it != "none",
+            "transform-function" | "transform-list" => {
+                transform_valid(it) && it != "none" && transform_initial_independent(it)
+            }
             _ => false,
         }
     } else {
