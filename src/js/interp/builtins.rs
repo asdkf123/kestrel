@@ -4920,7 +4920,7 @@ impl Interp {
                 }
                 Ok(p)
             }
-            Native::GetComputedStyle => Ok(self.get_computed_style(args.first())),
+            Native::GetComputedStyle => Ok(self.get_computed_style(args.first(), args.get(1))),
             // queueMicrotask(fn) — 마이크로태스크 큐에 직접 넣는다.
             Native::QueueMicrotask => {
                 let f = args.into_iter().next().unwrap_or(Value::Undefined);

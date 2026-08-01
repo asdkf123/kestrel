@@ -5764,13 +5764,49 @@ impl Interp {
         }
     }
 
-    pub(super) fn get_computed_style(&mut self, arg: Option<&Value>) -> Value {
+    pub(super) fn get_computed_style(&mut self, arg: Option<&Value>, pseudo: Option<&Value>) -> Value {
         self.ensure_layout();
-        match arg {
-            Some(Value::Dom(id)) => Value::ComputedStyle(*id),
+        let Some(Value::Dom(id)) = arg else {
             // 요소가 아니면 어떤 노드와도 겹치지 않는 센티널 → 빈 뷰.
-            _ => Value::ComputedStyle(usize::MAX),
+            return Value::ComputedStyle(usize::MAX);
+        };
+        let id = *id;
+        // 2번째 인자(pseudoElt) 파싱(§CSSOM getComputedStyle). 빈 문자열/null/생략은
+        // 요소 자신. ::before/::after(레거시 단일 콜론 :before/:after 포함)만 실제
+        // 생성 콘텐츠 합성 노드를 노출하고, 그 외 알려진/미지원/무효 pseudo 는 빈 뷰.
+        let pstr = match pseudo {
+            None | Some(Value::Null) | Some(Value::Undefined) => String::new(),
+            Some(Value::Str(s)) => s.trim().to_string(),
+            Some(other) => to_display(other).trim().to_string(),
+        };
+        // 빈 문자열이거나 콜론으로 시작하지 않으면 pseudo 인자는 무시된다 → 요소 자신
+        // (§CSSOM: 'before'(콜론 없음)·'totallynotapseudo' 등은 요소 스타일).
+        if pstr.is_empty() || !pstr.starts_with(':') {
+            return Value::ComputedStyle(id);
         }
+        let colons = pstr.len() - pstr.trim_start_matches(':').len();
+        let name = pstr.trim_start_matches(':').to_ascii_lowercase();
+        let tag = match name.as_str() {
+            "before" if colons == 1 || colons == 2 => "::before",
+            "after" if colons == 1 || colons == 2 => "::after",
+            // 그 외(알 수 없거나, ::marker/::backdrop 등 박스 미생성, 후행 토큰으로 무효)
+            // 는 빈 CSSStyleDeclaration.
+            _ => return Value::ComputedStyle(usize::MAX),
+        };
+        // 소유 요소의 자식 중 해당 합성 노드(tag "::before"/"::after")를 찾는다.
+        // 생성 콘텐츠가 없으면(content 미지정 등) 합성 노드가 없어 빈 뷰.
+        if let Some(p) = self.dom {
+            let child = unsafe {
+                (*p).get(id).children.iter().copied().find(|&c| {
+                    matches!(&(*p).get(c).node_type,
+                        crate::dom::NodeType::Element(e) if e.tag_name == tag)
+                })
+            };
+            if let Some(c) = child {
+                return Value::ComputedStyle(c);
+            }
+        }
+        Value::ComputedStyle(usize::MAX)
     }
 
     // 전역 생성자(ctor)의 prototype 에서 메서드를 찾는다 (폴리필 조회용).
@@ -7907,6 +7943,11 @@ impl Interp {
 
     // 활성 애니메이션이 dash_prop 을 다루면 currentTime 에서 보간한 계산값(뒤 애니 우선).
     fn animated_value(&self, id: crate::dom::NodeId, dash_prop: &str) -> Option<String> {
+        // 빈 뷰 센티널(getComputedStyle 의 비요소/미지원 pseudo → usize::MAX) 등 범위 밖
+        // id 는 DOM 인덱싱 전에 걸러낸다(elem_* 헬퍼가 dom.get(id) 로 패닉).
+        if self.dom.map(|p| id >= unsafe { (*p).node_count() }).unwrap_or(true) {
+            return None;
+        }
         // transform 행렬화용 박스 크기(rotate/scale 엔 무의미, translate% 에만 필요).
         let (bw, bh) = self.elem_border_wh(id);
         let cc = self.elem_color(id);
@@ -12613,6 +12654,12 @@ impl Interp {
                     Value::Undefined => Err(self.throw_error(
                         "TypeError",
                         format!("Cannot set properties of undefined (setting '{}')", key),
+                    )),
+                    // getComputedStyle 로 얻은 CSSStyleDeclaration 은 읽기 전용 —
+                    // 프로퍼티 대입은 NoModificationAllowedError(§CSSOM, code 7).
+                    Value::ComputedStyle(_) => Err(self.throw_dom(
+                        "NoModificationAllowedError",
+                        "getComputedStyle 로 얻은 CSSStyleDeclaration 은 읽기 전용이다",
                     )),
                     other => Err(format!("{} 에 할당할 수 없음", to_display(&other))),
                 }

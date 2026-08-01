@@ -404,8 +404,7 @@ pub struct Dom {
 }
 
 impl Dom {
-    // 아레나 노드 수 (테스트에서 전체 순회에 쓴다)
-    #[cfg(test)]
+    // 아레나 노드 수 (전체 순회·id 범위 검사에 쓴다)
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
