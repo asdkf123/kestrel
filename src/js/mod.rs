@@ -1171,7 +1171,7 @@ var __kIfaceNames = [
   'HTMLTitleElement', 'HTMLTableRowElement', 'HTMLTrackElement', 'HTMLUListElement',
   'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
   'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSPropertyRule', 'CSSStyleDeclaration',
-  'CSSMediaRule', 'CSSCustomMediaRule', 'CSSConditionRule', 'CSSGroupingRule',
+  'CSSMediaRule', 'CSSSupportsRule', 'CSSCustomMediaRule', 'CSSConditionRule', 'CSSGroupingRule',
   'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot',
   'ProcessingInstruction', 'DocumentType'
 ];
@@ -1189,6 +1189,18 @@ for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   }
   window[__n] = __kMakeIface(__n);
 }
+// CSS 규칙 인터페이스 상속 사슬(§CSSOM): CSSRule ← CSSGroupingRule ← CSSStyleRule,
+// CSSGroupingRule ← CSSConditionRule ← {CSSMediaRule, CSSSupportsRule}, CSSRule ← CSSPropertyRule.
+// (CSSStyleRule.__proto__ === CSSGroupingRule 같은 생성자 상속 판별에 필요.)
+(function(){
+  function chain(child, parent){ if (window[child] && window[parent]) window[child].__proto__ = window[parent]; }
+  chain('CSSGroupingRule', 'CSSRule');
+  chain('CSSStyleRule', 'CSSGroupingRule');
+  chain('CSSConditionRule', 'CSSGroupingRule');
+  chain('CSSMediaRule', 'CSSConditionRule');
+  chain('CSSSupportsRule', 'CSSConditionRule');
+  chain('CSSPropertyRule', 'CSSRule');
+})();
 // Text/Comment 는 **생성 가능한** 생성자다 (DOM §4.10/§4.8): new Text(data),
 // new Comment(data). document.createTextNode/createComment 로 분리 노드를 만든다.
 // 인자는 DOMString (undefined → ""). instanceof 는 브랜드 체인으로 판별.
