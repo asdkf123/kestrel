@@ -259,12 +259,11 @@ css/css-properties-values-api/get-computed-style-enumeration.html	FAIL	Custom pr
 css/css-properties-values-api/get-computed-style-enumeration.html	FAIL	Inherited custom properties specified on the parent exposed when enumerating computed style.	assert_equals: expected (string) "parentU+2dA" but got (undefined) undefined
 css/css-properties-values-api/get-computed-style-enumeration.html	FAIL	Unspecified properties with initial values exposed when enumerating computed style.	assert_equals: expected (string) "20px" but got (undefined) undefined
 css/css-properties-values-api/idlharness.html	FAIL	idl_test setup	promise_test: Unhandled rejection with value: object "Error fetching /interfaces/cssU+2dpropertiesU+2dvaluesU+2dapi.idl."
-css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	Undefined reference results in unsetting the property.	assert_equals: expected "42px" but got ""
+css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	Universal syntax: Undefined reference results in guaranteedU+2dinvalid value.	assert_equals: expected "" but got "0px"
+css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	Undefined reference results in unsetting the property.	assert_equals: expected "42px" but got "0px"
 css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	SyntaxU+2dincompatible reference results in unsetting the property.	assert_equals: expected "42px" but got "0px"
 css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	SyntaxU+2dincompatible fallback results in unsetting the property.	assert_equals: expected "42px" but got "0px"
-css/css-properties-values-api/invalid-at-computed-value-time.html	FAIL	Unsetting inherited properties on the root results in initial value.	assert_equals: expected "0px" but got ""
 css/css-properties-values-api/property-cascade.html	FAIL	Registering a property does not affect cascade	assert_equals: expected "rgb(1, 1, 1)" but got "rgb(0, 0, 0)"
-css/css-properties-values-api/property-cascade.html	FAIL	Registering a property does not affect parsing	assert_equals: expected "rgb(4, 4, 4)" but got "rgb(0, 0, 0)"
 css/css-properties-values-api/register-property-sign-mixed-lengths.html	FAIL	syntax:'<length>', initialValue:'calc(15px + (sign(100vh U+2d 10px) * 5px))' is valid	invalid property definition
 css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'unmatched opening bracket is valid :(' is valid	invalid property definition
 css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'"' is valid	invalid property definition
@@ -281,7 +280,7 @@ css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:
 css/css-properties-values-api/register-property-syntax-parsing.html	FAIL	syntax:'*', initialValue:'var(U+2dU+2dfoo)' is invalid	assert_throws_dom: function "() => CSS.registerProperty({name: name, syntax: syntax, initialValue: initialValue, inherits: false})" did not throw
 css/css-properties-values-api/register-property.html	FAIL	registerProperty requires a name matching <customU+2dpropertyU+2dname>	invalid property definition
 css/css-properties-values-api/register-property.html	FAIL	registerProperty requires inherits	assert_throws_js: function "() => CSS.registerProperty({name: 'U+2dU+2dinheritU+2dtestU+2d3', syntax: '<length>', initialValue: '0px'})" did not throw
-css/css-properties-values-api/registered-properties-inheritance.html	FAIL	Reference to undefined variable results in inherited value	assert_equals: expected "42px" but got ""
+css/css-properties-values-api/registered-properties-inheritance.html	FAIL	Reference to undefined variable results in inherited value	assert_equals: expected "42px" but got "0px"
 css/css-properties-values-api/registered-properties-inheritance.html	FAIL	Reference to syntaxU+2dincompatible variable results in inherited value	assert_equals: expected "42px" but got "0px"
 css/css-properties-values-api/registered-properties-inheritance.html	FAIL	FontU+2drelative units are absolutized before before inheritance	assert_equals: expected "110px" but got ""
 css/css-properties-values-api/registered-properties-inheritance.html	FAIL	Calc expressions are resolved before inheritance	assert_equals: expected "20px" but got ""
@@ -306,19 +305,19 @@ css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with ex units may no
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with ch units may not be referenced from fontU+2dsize	assert_equals: expected "0px" but got "16px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with lh units may not be referenced from fontU+2dsize	assert_equals: expected "0px" but got "16px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with rem units may not be referenced from fontU+2dsize on root element	assert_equals: expected "0px" but got "32px"
-css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with lh units may not be referenced from lineU+2dheight	assert_equals: expected "normal" but got "2lh"
+css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with lh units may not be referenced from lineU+2dheight	assert_equals: expected "normal" but got "26.4px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Fallback may not use fontU+2drelative units	assert_equals: expected "0px" but got "32px"
-css/css-properties-values-api/unit-cycles.html	FAIL	Fallback may not use lineU+2dheightU+2drelative units	assert_equals: expected "normal" but got "2lh"
+css/css-properties-values-api/unit-cycles.html	FAIL	Fallback may not use lineU+2dheightU+2drelative units	assert_equals: expected "normal" but got "26.4px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Fallback not triggered while inside em unit cycle	assert_equals: expected "0px" but got "32px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Fallback not triggered while inside ex unit cycle	assert_equals: expected "0px" but got "16px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Fallback not triggered while inside ch unit cycle	assert_equals: expected "0px" but got "16px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Fallback not triggered while inside rem unit cycle on root element	assert_equals: expected "0px" but got "32px"
-css/css-properties-values-api/unit-cycles.html	FAIL	Fallback not triggered while inside lh unit cycle	assert_equals: expected "normal" but got "2lh"
+css/css-properties-values-api/unit-cycles.html	FAIL	Fallback not triggered while inside lh unit cycle	assert_equals: expected "normal" but got "26.4px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with em units are detected via var references	assert_equals: expected "0px" but got "160px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with ex units are detected via var references	assert_equals: expected "0px" but got "80px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with ch units are detected via var references	assert_equals: expected "0px" but got "80px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with rem units are detected via var references	assert_equals: expected "0px" but got "160px"
-css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with lh units are detected via var references	assert_equals: expected "normal" but got "10lh"
+css/css-properties-values-api/unit-cycles.html	FAIL	Lengths with lh units are detected via var references	assert_equals: expected "normal" but got "132px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with em units may be used	assert_equals: expected "0px" but got "16px"
 css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with ex units may be used	assert_approx_equals: unexpected value of fontU+2dsize expected 16 +/U+2d 0.1 but got 0
 css/css-properties-values-api/unit-cycles.html	FAIL	Inherited lengths with ch units may be used	assert_equals: expected "0px" but got "16px"
@@ -328,17 +327,12 @@ css/css-properties-values-api/url-resolution.html	FAIL	Unregistered property res
 css/css-properties-values-api/url-resolution.html	FAIL	Multiple (registered) var reference resolve against respective sheets (URL token)	Unknown url format: url("http://localhost:8940/css/css-properties-values-api/support/main/foo.jpg)
 css/css-properties-values-api/url-resolution.html	FAIL	Registered UTF16BEU+2dencoded var reference resolve against sheet (URL token)	Unknown url format: none
 css/css-properties-values-api/url-resolution.html	FAIL	Registered UTF16BEU+2dencoded var reference resolve against sheet (URL function)	Unknown url format: none
-css/css-properties-values-api/var-reference-registered-properties-002.html	FAIL	Property dependency tracking across inherited and nonU+2dinherited properties	assert_equals: Should resolve properly: U+2dU+2dunregistered expected "120px" but got "calc(10em + 10px)"
-css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between two registered properties is handled correctly.	assert_equals: expected "1px" but got ""
-css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between a registered properties and an unregistered property is handled correctly.	assert_equals: expected "1px" but got ""
-css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between a two unregistered properties is handled correctly.	assert_equals: expected "30px" but got ""
-css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between a syntax:'*' property and an unregistered property is handled correctly.	assert_equals: expected "meow" but got ""
-css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	Custom properties with universal syntax become guaranteedU+2dinvalid when invalid at computedU+2dvalue time	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
-css/css-properties-values-api/var-reference-registered-properties.html	FAIL	var() references work with registered properties	assert_equals: expected "moo" but got ""
-css/css-properties-values-api/var-reference-registered-properties.html	FAIL	FontU+2drelative units are absolutized when substituting	assert_equals: expected "110px" but got "10em"
-css/css-properties-values-api/var-reference-registered-properties.html	FAIL	Calc expressions are resolved when substituting	assert_equals: expected "120px" but got "calc(10em + 10px)"
-css/css-properties-values-api/var-reference-registered-properties.html	FAIL	Lists with relative units are absolutized when substituting	assert_equals: expected "110px, 120px" but got "10em, calc(10em + 10px)"
-css/css-properties-values-api/var-reference-registered-properties.html	FAIL	Values are absolutized when substituting into properties with universal syntax	assert_equals: expected "100px" but got "10em"
-css/css-properties-values-api/var-reference-registered-properties.html	FAIL	Invalid values for registered properties are serialized as the empty string	assert_equals: expected "" but got "red"
-css/css-properties-values-api/var-reference-unit-cycles.html	FAIL	Registered property invalidated by a nonU+2dcustom cycle uses its initial value	assert_equals: expected "3px" but got "3em"
-css/css-properties-values-api/var-reference-unit-cycles.html	FAIL	Unregistered property invalidated by a nonU+2dcustom cycle uses its fallback	assert_equals: expected "5px" but got "3em"
+css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between two registered properties is handled correctly.	assert_equals: expected "2px" but got "1px"
+css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between a registered properties and an unregistered property is handled correctly.	assert_equals: expected "" but got "1px"
+css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between a two unregistered properties is handled correctly.	assert_equals: expected "30px" but got "1px"
+css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	A var() cycle between a syntax:'*' property and an unregistered property is handled correctly.	assert_equals: expected "" but got "world"
+css/css-properties-values-api/var-reference-registered-properties-cycles.html	FAIL	Custom properties with universal syntax become guaranteedU+2dinvalid when invalid at computedU+2dvalue time	assert_equals: expected "" but got "hello"
+css/css-properties-values-api/var-reference-registered-properties.html	FAIL	Invalid values for registered properties are serialized as the empty string	assert_equals: expected "" but got "0px"
+css/css-properties-values-api/var-reference-registered-properties.html	FAIL	Empty universal custom property can be substituted with var()	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-properties-values-api/var-reference-unit-cycles.html	FAIL	Registered property invalidated by a nonU+2dcustom cycle uses its initial value	assert_equals: expected "3px" but got "144px"
+css/css-properties-values-api/var-reference-unit-cycles.html	FAIL	Unregistered property invalidated by a nonU+2dcustom cycle uses its fallback	assert_equals: expected "5px" but got "144px"

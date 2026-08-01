@@ -2801,65 +2801,6 @@ fn style_node<'a>(
                     _ => None,
                 })
                 .collect();
-            // 커스텀 프로퍼티 자신의 값 안 var() 해석(§Variables). 커스텀 프로퍼티는
-            // 항상 Keyword 로 저장돼 아래 var_props(Value::Var) 루프가 놓친다. 계산값은
-            // 치환된 값이므로 여기서 직접 치환한다. 미해석(정의 안 됨·fallback 없음·순환)
-            // 이면 무효 → 계산값 빈 문자열(제거). 등록 프로퍼티의 타입 계산값은 이후
-            // reg_updates 가 확정. custom 맵은 원문이라 substitute_var 가 전이적으로 해석.
-            let custom_var: Vec<(String, String)> = values
-                .iter()
-                .filter_map(|(k, v)| match v {
-                    Value::Keyword(s) if k.starts_with("--") && s.contains("var(") => {
-                        Some((k.clone(), s.clone()))
-                    }
-                    _ => None,
-                })
-                .collect();
-            for (k, raw) in custom_var {
-                values.remove(&k);
-                for decl in crate::css::resolve_var(&k, &raw, &custom) {
-                    values.insert(decl.name, decl.value);
-                }
-            }
-            let var_props: Vec<(String, String)> = values
-                .iter()
-                .filter_map(|(k, v)| match v {
-                    Value::Var(raw) => Some((k.clone(), raw.clone())),
-                    _ => None,
-                })
-                .collect();
-            for (name, raw) in var_props {
-                values.remove(&name);
-                for decl in crate::css::resolve_var(&name, &raw, &custom) {
-                    values.insert(decl.name, decl.value);
-                }
-            }
-            // content 의 attr(name) → 요소 속성값(계산값, §CSS Values 5). var 해석 뒤에
-            // 처리해 속성값 안의 문자열/var()을 그대로 보존한다(content:"…" 와 같은 저장형).
-            let content_attr = match values.get("content") {
-                Some(Value::Keyword(c)) if c.contains("attr(") => Some(resolve_attr(c, elem)),
-                _ => None,
-            };
-            if let Some(r) = content_attr {
-                values.insert("content".to_string(), Value::Keyword(r));
-            }
-            // if() 계산 시점 해석(§CSS Values 5): style() 조건을 요소의 커스텀 프로퍼티
-            // (custom)로 평가해 첫 참 분기 값으로 치환한다. var 해석 뒤에 처리.
-            let if_updates: Vec<(String, String)> = values
-                .iter()
-                .filter_map(|(k, v)| match v {
-                    Value::Keyword(s) if s.contains("if(") => {
-                        crate::css::substitute_if(s, &custom, vp.w, vp.h).map(|r| (k.clone(), r))
-                    }
-                    _ => None,
-                })
-                .collect();
-            for (k, r) in if_updates {
-                values.insert(k, Value::Keyword(r));
-            }
-            // 등록된 타입 커스텀 프로퍼티(<length> 등)는 계산값으로 — Keyword("14em")를
-            // typed Value 로 해석해 아래 resolve_units 가 px 로 확정하게 한다(§Properties
-            // & Values API: getComputedStyle 은 등록 프로퍼티의 계산값을 낸다).
             // currentcolor 해석용 요소 계산 color 문자열(등록 <color> 프로퍼티 계산값용).
             let current_color: String = match values.get("color") {
                 Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => {
@@ -2883,18 +2824,33 @@ fn style_node<'a>(
                 },
                 _ => fs * 1.2,
             };
-            let reg_updates: Vec<(String, Option<Value>)> = values
+            // 등록된 타입 커스텀 프로퍼티(<length> 등)를 **먼저** 계산값으로 확정한다
+            // (§Properties & Values API). 다른 프로퍼티가 var() 로 참조할 때 등록
+            // 프로퍼티의 계산값(절대화된 값)을 치환해야 하므로 var 해석보다 앞선다.
+            // 등록 프로퍼티끼리 참조(특히 universal)하면 참조 대상의 계산값이 sub_map 에
+            // 채워질 때까지 반복 확정한다(fixpoint). 각 패스는 원 지정값에서 sub_map 으로
+            // var 를 치환해 계산하고, 치환 결과가 syntax 에 맞지 않으면 초기값으로 대체.
+            let reg_names: Vec<(String, crate::css::PropertyReg, String)> = values
                 .iter()
                 .filter_map(|(k, v)| {
                     if !k.starts_with("--") {
                         return None;
                     }
                     let reg = at_properties.get(k)?;
-                    let Value::Keyword(s) = v else { return None };
-                    // 커스텀 프로퍼티는 항상 Keyword 로 저장돼 var_props 루프가 놓친다.
-                    // 등록 프로퍼티 값 안의 var() 를 계산된 커스텀 맵으로 먼저 치환한다.
+                    if let Value::Keyword(s) = v {
+                        Some((k.clone(), reg.clone(), s.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let mut sub_map = custom.clone();
+            let mut reg_result: HashMap<String, Option<Value>> = HashMap::new();
+            for _ in 0..6 {
+                let mut changed = false;
+                for (k, reg, s) in &reg_names {
                     let resolved = if s.contains("var(") {
-                        crate::css::resolve_var(k, s, &custom)
+                        crate::css::resolve_var(k, s, &sub_map)
                             .into_iter()
                             .find(|d| &d.name == k)
                             .and_then(|d| match d.value {
@@ -2905,25 +2861,42 @@ fn style_node<'a>(
                     } else {
                         s.clone()
                     };
-                    // 계산값 시점 검증(§Properties & Values API): 치환 결과가 syntax 에
-                    // 맞지 않거나 미해석 var 이면 무효 → 초기값(없으면 빈 문자열=제거).
                     let valid = !resolved.contains("var(")
                         && crate::css::value_matches_syntax(&reg.syntax, &resolved);
                     let src = if valid { Some(resolved) } else { reg.initial.clone() };
                     let out = match src {
-                        Some(val) => Some(
-                            crate::css::registered_computed_value(
+                        Some(val) => {
+                            let mut cv = crate::css::registered_computed_value(
                                 &reg.syntax, &val, fs, root_fs, vp, &current_color, line_height_px,
                             )
-                            .unwrap_or(Value::Keyword(val)),
-                        ),
+                            .unwrap_or(Value::Keyword(val));
+                            // em/vw 등을 px 로 확정한다 — sub_map 에 넣을 계산값 문자열이
+                            // 절대화되어야 다른 프로퍼티가 참조 시 계산값을 얻는다.
+                            resolve_units(&mut cv, fs, root_fs, vp);
+                            Some(cv)
+                        }
                         None => None,
                     };
-                    Some((k.clone(), out))
-                })
-                .collect();
-            for (k, tv) in reg_updates {
-                match tv {
+                    let new_str = out.as_ref().map(computed_value_string);
+                    if new_str.as_deref() != sub_map.get(k).map(|s| s.as_str()) {
+                        changed = true;
+                    }
+                    match &new_str {
+                        Some(st) => {
+                            sub_map.insert(k.clone(), st.clone());
+                        }
+                        None => {
+                            sub_map.remove(k);
+                        }
+                    }
+                    reg_result.insert(k.clone(), out);
+                }
+                if !changed {
+                    break;
+                }
+            }
+            for (k, out) in reg_result {
+                match out {
                     Some(v) => {
                         values.insert(k, v);
                     }
@@ -2931,6 +2904,60 @@ fn style_node<'a>(
                         values.remove(&k);
                     }
                 }
+            }
+            // 미등록 커스텀 프로퍼티 자신의 값 안 var() 해석(§Variables). 커스텀 프로퍼티는
+            // 항상 Keyword 로 저장돼 아래 var_props(Value::Var) 루프가 놓친다. sub_map(등록
+            // 프로퍼티는 계산값)으로 전이적 치환. 미해석(정의 안 됨·순환)이면 무효 → 제거.
+            let custom_var: Vec<(String, String)> = values
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Keyword(s) if k.starts_with("--") && s.contains("var(") => {
+                        Some((k.clone(), s.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (k, raw) in custom_var {
+                values.remove(&k);
+                for decl in crate::css::resolve_var(&k, &raw, &sub_map) {
+                    values.insert(decl.name, decl.value);
+                }
+            }
+            let var_props: Vec<(String, String)> = values
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Var(raw) => Some((k.clone(), raw.clone())),
+                    _ => None,
+                })
+                .collect();
+            for (name, raw) in var_props {
+                values.remove(&name);
+                for decl in crate::css::resolve_var(&name, &raw, &sub_map) {
+                    values.insert(decl.name, decl.value);
+                }
+            }
+            // content 의 attr(name) → 요소 속성값(계산값, §CSS Values 5). var 해석 뒤에
+            // 처리해 속성값 안의 문자열/var()을 그대로 보존한다(content:"…" 와 같은 저장형).
+            let content_attr = match values.get("content") {
+                Some(Value::Keyword(c)) if c.contains("attr(") => Some(resolve_attr(c, elem)),
+                _ => None,
+            };
+            if let Some(r) = content_attr {
+                values.insert("content".to_string(), Value::Keyword(r));
+            }
+            // if() 계산 시점 해석(§CSS Values 5): style() 조건을 요소의 커스텀 프로퍼티
+            // (계산값 sub_map)로 평가해 첫 참 분기 값으로 치환한다. var 해석 뒤에 처리.
+            let if_updates: Vec<(String, String)> = values
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Keyword(s) if s.contains("if(") => {
+                        crate::css::substitute_if(s, &sub_map, vp.w, vp.h).map(|r| (k.clone(), r))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (k, r) in if_updates {
+                values.insert(k, Value::Keyword(r));
             }
             // font-size 외 속성의 em/rem 을 px 로 확정한다 (computed value).
             // em 은 요소 자신의 font-size(fs), rem 은 루트 기준(DEFAULT_FONT_SIZE).
