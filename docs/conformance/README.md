@@ -150,9 +150,9 @@
 | css-shapes | 3,336 / 5,093 | 65.5% |
 | css-multicol | 850 / 1,356 | 62.7% |
 | css-grid | 2,156 / 3,567 | 60.4% |
+| css-cascade | 430 / 717 | 60.0% |
 | css-env | 5 / 9 | 55.6% |
 | css-box | 529 / 957 | 55.3% |
-| css-cascade | 423 / 717 | 59.0% |
 | css-animations | 574 / 1,059 | 54.2% |
 | css-contain | 194 / 360 | 53.9% |
 | css-variables | 272 / 511 | 53.2% |
