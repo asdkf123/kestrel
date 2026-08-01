@@ -184,6 +184,30 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @custom-media 규칙(CSSCustomMediaRule §Media Queries 5) 전용 속성.
+                let atc = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|r| r.at_custom_media.clone());
+                if let Some((name, cond)) = atc {
+                    return match key {
+                        "name" => Ok(Value::Str(name)),
+                        "media" => {
+                            let mut m = ObjMap::new();
+                            m.insert("mediaText".to_string(), Value::Str(cond.clone()));
+                            m.insert("length".to_string(), Value::Num(
+                                if cond.is_empty() { 0.0 } else { cond.split(", ").count() as f64 },
+                            ));
+                            Ok(Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m))))
+                        }
+                        "type" => Ok(Value::Num(0.0)),
+                        "cssText" => Ok(Value::Str(format!("@custom-media {} {};", name, cond))),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 match key {
                     "selectorText" => Ok(Value::Str(
                         self.sheets()
@@ -297,6 +321,7 @@ impl Interp {
                 ua: false,
                 at_property: None,
                 at_media: Some(media),
+                at_custom_media: None,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };

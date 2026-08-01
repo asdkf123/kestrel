@@ -376,6 +376,8 @@ pub struct Rule {
     // @media 규칙이면 조건 텍스트(직렬화된 미디어 쿼리). CSSOM CSSMediaRule 노출용
     // (insertRule 로 삽입된 @media). 셀렉터 규칙·파스시점 flatten @media 는 None.
     pub at_media: Option<String>,
+    // @custom-media 규칙이면 (이름, 직렬화된 쿼리). CSSOM CSSCustomMediaRule 노출용.
+    pub at_custom_media: Option<(String, String)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -1883,6 +1885,10 @@ impl Parser {
                     }
                 } else if ident == "namespace" {
                     self.parse_namespace_rule();
+                } else if ident == "custom-media" {
+                    if let Some(r) = self.parse_custom_media_rule() {
+                        rules.push(r);
+                    }
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -2237,6 +2243,52 @@ impl Parser {
         }
     }
 
+    // '@custom-media --name <media-query-list | true | false> ;' (§Media Queries 5).
+    // 이름은 dashed-ident(--…), 이름과 쿼리 사이 공백 필수, 쿼리는 유효한 미디어
+    // 쿼리 리스트여야 한다. CSSOM CSSCustomMediaRule 노출용(우리 엔진은 (--name)
+    // 참조 해석은 미구현 — 규칙 보관·검증만).
+    fn parse_custom_media_rule(&mut self) -> Option<Rule> {
+        // 블록 없는 at-rule: ';' 까지가 본문(주석은 이미 strip_comments 로 제거됨).
+        let body = self.consume_while(|c| c != ';' && c != '{' && c != '}');
+        if self.peek() == Some(';') {
+            self.consume_char();
+        } else if self.peek() == Some('{') {
+            // @custom-media 는 블록을 갖지 않는다 → 블록 있으면 무효.
+            self.skip_to_block_end();
+            return None;
+        }
+        let body = body.trim();
+        // 이름: 첫 공백 전까지. dashed-ident(--…) 여야. 이름과 쿼리 사이 공백 필수라
+        // '--query(' 처럼 붙으면 이름에 '(' 가 섞여 무효가 된다.
+        let sp = body.find(char::is_whitespace)?;
+        let name = &body[..sp];
+        let query = body[sp..].trim();
+        // dashed-ident: '--' 로 시작하고 이후는 ident 문자만('--' 자체도 허용).
+        if !name.starts_with("--") || name[2..].chars().any(|c| !valid_identifier_char(c)) {
+            return None;
+        }
+        if !values::custom_media_query_valid(query) {
+            return None;
+        }
+        let serialized = if query.eq_ignore_ascii_case("true") || query.eq_ignore_ascii_case("false")
+        {
+            query.to_ascii_lowercase()
+        } else {
+            values::serialize_media_query_list(query)
+        };
+        Some(Rule {
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            layer: None,
+            container: None,
+            selector_text: String::new(),
+            ua: false,
+            at_property: None,
+            at_media: None,
+            at_custom_media: Some((name.to_string(), serialized)),
+        })
+    }
+
     // '@property --name { syntax: "<t>"; inherits: true|false; initial-value: v; }'
     // (§CSS Properties & Values API). 등록 정보를 at_properties 에 보관한다.
     fn parse_property_rule(&mut self) -> Option<Rule> {
@@ -2334,6 +2386,7 @@ impl Parser {
             container: self.cur_container.clone(),
             at_property: Some((name, reg)),
             at_media: None,
+            at_custom_media: None,
         })
     }
 
@@ -2424,6 +2477,7 @@ impl Parser {
                     container: self.cur_container.clone(),
                     at_property: None,
                     at_media: None,
+                    at_custom_media: None,
                 })
             }
             None => {

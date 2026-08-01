@@ -13651,6 +13651,135 @@ pub fn serialize_media_query_list(input: &str) -> String {
         .join(", ")
 }
 
+// @custom-media 의 쿼리가 유효한가: true/false 또는 유효한 <media-query-list>.
+// 문법만 본다(미지 특성 허용). 떠도는 토큰(false true)·후행 '!' 는 무효.
+pub fn custom_media_query_valid(q: &str) -> bool {
+    let q = q.trim();
+    if q.is_empty() {
+        return false;
+    }
+    if q.eq_ignore_ascii_case("true") || q.eq_ignore_ascii_case("false") {
+        return true;
+    }
+    if q.contains('!') {
+        return false;
+    }
+    // 최상위 콤마로 쿼리 분할(괄호 깊이 인지), 각각 문법 검사.
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    let mut parts: Vec<String> = Vec::new();
+    for c in q.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    parts.iter().all(|p| one_media_query_grammar_valid(p.trim()))
+}
+
+// 단일 미디어 쿼리 문법: [not|only]? (<type> | (feature)) (and|or (feature))*.
+fn one_media_query_grammar_valid(q: &str) -> bool {
+    // 토큰화: 워드 또는 (그룹). 균형 안 맞으면 무효.
+    let chars: Vec<char> = q.chars().collect();
+    let mut toks: Vec<bool> = Vec::new(); // true = 그룹, false = 워드
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if chars[i] == '(' {
+            let mut d = 0i32;
+            let mut closed = false;
+            while i < chars.len() {
+                match chars[i] {
+                    '(' => d += 1,
+                    ')' => {
+                        d -= 1;
+                        if d == 0 {
+                            i += 1;
+                            closed = true;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if !closed {
+                return false; // 미닫힌 괄호 → 무효.
+            }
+            toks.push(true);
+        } else if chars[i] == ')' {
+            return false; // 떠도는 닫는 괄호.
+        } else {
+            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' && chars[i] != ')'
+            {
+                i += 1;
+            }
+            toks.push(false);
+        }
+    }
+    if toks.is_empty() {
+        return false;
+    }
+    // 워드 값을 다시 수집(연결자 판별용).
+    let words: Vec<String> = q
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ')')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+    // 상태 머신: 워드/그룹 순회.
+    let mut wi = 0usize; // words 인덱스
+    let mut ti = 0usize; // toks 인덱스
+    // [not|only]?
+    if ti < toks.len() && !toks[ti] && matches!(words[wi].as_str(), "not" | "only") {
+        ti += 1;
+        wi += 1;
+    }
+    if ti >= toks.len() {
+        return false; // not/only 뒤에 아무것도 없음.
+    }
+    // <type>(워드) 또는 (그룹)
+    if toks[ti] {
+        ti += 1; // 그룹
+    } else {
+        // 미디어 타입 워드(and/or 는 타입이 아님).
+        if matches!(words[wi].as_str(), "and" | "or") {
+            return false;
+        }
+        ti += 1;
+        wi += 1;
+    }
+    // (and|or (그룹))*
+    while ti < toks.len() {
+        // 연결자 워드
+        if toks[ti] {
+            return false; // 그룹 앞에 연결자 없음.
+        }
+        if !matches!(words[wi].as_str(), "and" | "or") {
+            return false;
+        }
+        ti += 1;
+        wi += 1;
+        // 그룹
+        if ti >= toks.len() || !toks[ti] {
+            return false;
+        }
+        ti += 1;
+    }
+    true
+}
+
 fn serialize_one_media_query(q: &str) -> String {
     let q = q.trim();
     if q.is_empty() {
