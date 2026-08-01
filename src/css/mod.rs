@@ -1935,7 +1935,10 @@ pub fn nest_canonical_selector(nsel: &str) -> String {
         .iter()
         .map(|p| {
             let p = p.trim();
-            if p.contains('&') {
+            // 선행 결합자로 시작하면 `&` 가 이미 있어도 앞에 `& ` 를 명시한다
+            // (`> & .bar`→`& > & .bar`, `+ .bar &`→`& + .bar &`).
+            let leading_combinator = p.starts_with(['>', '+', '~']);
+            if p.contains('&') && !leading_combinator {
                 p.to_string()
             } else {
                 format!("& {}", p)
@@ -1951,8 +1954,17 @@ pub fn desugar_nested(nested: &str, parent: &str) -> String {
         .iter()
         .map(|p| {
             let p = p.trim();
+            // 선행 결합자(> + ~)로 시작하는 상대 선택자는 스코프(부모)를 앵커로 앞에 붙인다
+            // — 안 그러면 desugar 결과가 선행 결합자 절대 선택자라 무효(§CSS Nesting).
+            // `+ .bar &`→`:is(P) + .bar :is(P)`, `> .bar`→`:is(P) > .bar`.
+            let leading_combinator = p.starts_with(['>', '+', '~']);
             if p.contains('&') {
-                p.replace('&', &is_parent)
+                let replaced = p.replace('&', &is_parent);
+                if leading_combinator {
+                    format!("{} {}", is_parent, replaced)
+                } else {
+                    replaced
+                }
             } else {
                 format!("{} {}", is_parent, p)
             }
