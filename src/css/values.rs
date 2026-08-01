@@ -11605,8 +11605,8 @@ pub fn normalize_color_function(raw: &str) -> Option<String> {
     let space = parts[0].to_ascii_lowercase();
     if !matches!(
         space.as_str(),
-        "srgb" | "srgb-linear" | "display-p3" | "a98-rgb" | "prophoto-rgb" | "rec2020" | "xyz"
-            | "xyz-d50" | "xyz-d65"
+        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "a98-rgb" | "prophoto-rgb"
+            | "rec2020" | "xyz" | "xyz-d50" | "xyz-d65"
     ) {
         return None;
     }
