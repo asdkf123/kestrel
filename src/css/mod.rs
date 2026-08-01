@@ -2580,9 +2580,24 @@ impl Parser {
     }
 
     // 규칙 본문: 선언 + 중첩 규칙(desugar 후 flat). parent_sel 로 & 를 해석한다.
+    // §CSS Nesting: 중첩 규칙 뒤의 선언은 **그 위치의** 별도 "nested declarations" 규칙
+    // (부모 선택자)이 되어 소스 순서(캐스케이드)를 보존한다.
     fn parse_style_body(&mut self, parent_sel: &str) -> (Vec<Declaration>, Vec<Rule>) {
-        let mut decls = Vec::new();
-        let mut nested = Vec::new();
+        let mut leading = Vec::new();
+        let mut nested: Vec<Rule> = Vec::new();
+        let mut pending: Vec<Declaration> = Vec::new(); // 중첩 규칙 뒤에 쌓인 선언
+        let mut seen_nested = false;
+        let mk_decl_rule = |this: &Self, decls: Vec<Declaration>| Rule {
+            selectors: parse_selector_list(parent_sel).unwrap_or_default(),
+            declarations: decls,
+            selector_text: parent_sel.to_string(),
+            ua: false,
+            layer: this.cur_layer.clone(),
+            container: this.cur_container.clone(),
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+        };
         loop {
             self.consume_whitespace();
             match self.peek() {
@@ -2591,16 +2606,15 @@ impl Parser {
                     self.consume_char();
                     break;
                 }
-                Some('@') => {
-                    // 중첩 @rule(@media 등)은 이 근사 desugar 에선 스킵(별도 작업).
-                    self.skip_at_rule();
-                }
+                Some('@') => self.skip_at_rule(),
                 _ => {
                     if self.peek_is_nested_rule() {
-                        // 중첩 규칙: 선택자(위쪽 { 까지) → desugar → 재귀 파싱.
+                        // 쌓인 선언을 이 중첩 규칙 앞의 nested-declarations 규칙으로 flush.
+                        if !pending.is_empty() {
+                            nested.push(mk_decl_rule(self, std::mem::take(&mut pending)));
+                        }
                         let nsel = self.consume_while(|c| c != '{' && c != '}' && c != ';');
                         if self.peek() != Some('{') {
-                            // 세미콜론 등으로 끝남 → 무효 조각, 버림.
                             if self.peek() == Some(';') {
                                 self.consume_char();
                             }
@@ -2623,13 +2637,22 @@ impl Parser {
                             });
                         }
                         nested.extend(cnested);
+                        seen_nested = true;
                     } else {
-                        decls.extend(self.parse_declaration());
+                        let d = self.parse_declaration();
+                        if seen_nested {
+                            pending.extend(d);
+                        } else {
+                            leading.extend(d);
+                        }
                     }
                 }
             }
         }
-        (decls, nested)
+        if !pending.is_empty() {
+            nested.push(mk_decl_rule(self, pending));
+        }
+        (leading, nested)
     }
 
     // 현재 위치의 문장이 중첩 규칙(selector { … })인가 선언(name: value;)인가.
