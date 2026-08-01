@@ -3837,6 +3837,15 @@ fn mdim_func_has_edge_comma(text: &str) -> bool {
 }
 
 // 여러 인자가 같은 축(타입)인지 확인하고 통합 타입을 낸다(min/max/clamp/round/mod/rem).
+// 인자가 순수 <number>(또는 해석불가 Wild)인지. sqrt/exp/pow/log 인자 타입 검사용.
+fn mdim_is_number(a: &str) -> bool {
+    match mdim_of(a, PctAxis::Bare) {
+        MTy::Wild => true,
+        MTy::D(d) => d.is_pure_number(),
+        MTy::Bad => false,
+    }
+}
+
 fn mdim_same(args: &[String], pct: PctAxis) -> MTy {
     let mut acc: Option<MTy> = None;
     for a in args {
@@ -3991,7 +4000,41 @@ fn mdim_of(expr: &str, pct: PctAxis) -> MTy {
                             MTy::D(MDim { ang: 1, ..MDim::num() })
                         }
                     }
-                    // sqrt/pow/log/exp/hypot·var/env/attr·progress/calc-size 등: 관대(Wild).
+                    // sqrt/exp: 인자 1개 순수 <number> → <number>.
+                    "sqrt" | "exp" => {
+                        if args.len() != 1 || !mdim_is_number(&args[0]) {
+                            MTy::Bad
+                        } else {
+                            MTy::D(MDim::num())
+                        }
+                    }
+                    // pow: 인자 2개 순수 <number> → <number>.
+                    "pow" => {
+                        if args.len() != 2 || !args.iter().all(|a| mdim_is_number(a)) {
+                            MTy::Bad
+                        } else {
+                            MTy::D(MDim::num())
+                        }
+                    }
+                    // log: 1~2개 순수 <number> → <number>.
+                    "log" => {
+                        if !(args.len() == 1 || args.len() == 2)
+                            || !args.iter().all(|a| mdim_is_number(a))
+                        {
+                            MTy::Bad
+                        } else {
+                            MTy::D(MDim::num())
+                        }
+                    }
+                    // hypot: 1개 이상, 인자 타입 동일 → 그 타입 보존(hypot(3px,4px)=5px).
+                    "hypot" => {
+                        if args.is_empty() {
+                            MTy::Bad
+                        } else {
+                            mdim_same(&args, pct)
+                        }
+                    }
+                    // var/env/attr·progress/calc-size 등 미지 함수: 관대(Wild).
                     _ => MTy::Wild,
                 };
             }

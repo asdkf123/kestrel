@@ -276,7 +276,7 @@ css/css-color/parsing/color-computed-contrast-color-function.html	FAIL	Property 
 css/css-color/parsing/color-computed-contrast-color-function.html	FAIL	Property backgroundU+2dcolor value 'contrastU+2dcolor(buttonface)'	assert_true: 'contrastU+2dcolor(buttonface)' is a supported value for backgroundU+2dcolor. expected true got false
 css/css-color/parsing/color-computed-contrast-color-function.html	FAIL	Property backgroundU+2dcolor value 'contrastU+2dcolor(transparent)'	assert_true: 'contrastU+2dcolor(transparent)' is a supported value for backgroundU+2dcolor. expected true got false
 css/css-color/parsing/color-computed-contrast-color-function.html	FAIL	Property backgroundU+2dcolor value 'contrastU+2dcolor(rgba(255, 255, 255, 0.2))'	assert_true: 'contrastU+2dcolor(rgba(255, 255, 255, 0.2))' is a supported value for backgroundU+2dcolor. expected true got false
-css/css-color/parsing/color-computed-hsl.html	FAIL	Property color value 'hsla(210, 0%, 100%, 1)' [HSL/HSLA value should parse and round correctly]	
+css/css-color/parsing/color-computed-hsl.html	FAIL	Property color value 'hsla(180, 87.5%, 75%, 0.2)' [HSL/HSLA value should parse and round correctly]	
 css/css-color/parsing/color-computed-hwb.html	FAIL	Property color value 'hwb(90 50% 0%)' [HWB value should parse and round correctly]	assert_equals: expected "rgb(191, 255, 128)" but got "rgb(192, 255, 128)"
 css/css-color/parsing/color-computed-hwb.html	FAIL	Property color value 'hwb(90 50% 12.5%)' [HWB value should parse and round correctly]	assert_equals: expected "rgb(175, 223, 128)" but got "rgb(176, 223, 128)"
 css/css-color/parsing/color-computed-hwb.html	FAIL	Property color value 'hwb(90 50% 25%)' [HWB value should parse and round correctly]	assert_equals: expected "rgb(159, 191, 128)" but got "rgb(160, 191, 128)"
@@ -528,7 +528,7 @@ css/css-color/parsing/color-computed-relative-color.html	FAIL	Property color val
 css/css-color/parsing/color-computed-relative-color.html	FAIL	Property color value 'hsl(from hsl(200 50 50) h s calc((sin(50) + 2) * 20))'	Colors do not match. Actual:   color(srgb 0 0.4627 0.6941) Expected: color(srgb 0.173763 0.405446 0.521288). Error: assert_array_approx_equals: Numeric parameters are approximately equal. property 0, expected 0.173763 +/U+2d 0.01, expected 0.173763 but got 0
 css/css-color/parsing/color-computed-relative-color.html	FAIL	Property color value 'hsl(from hsl(200 50 50) h s calc((sin(l) + 2) * 20))'	Colors do not match. Actual:   color(srgb 0 0.2706 0.4039) Expected: color(srgb 0.173763 0.405446 0.521288). Error: assert_array_approx_equals: Numeric parameters are approximately equal. property 0, expected 0.173763 +/U+2d 0.01, expected 0.173763 but got 0
 css/css-color/parsing/color-computed-relative-color.html	FAIL	Property backgroundU+2dcolor value 'hsl(from currentColor h s calc((sin(l) + 2) * 20))'	Colors do not match. Actual:   hsl(from currentColor h s calc((sin(l) + 2) * 20)) Expected: color(srgb 0.173763 0.405446 0.521288). Error: assert_array_approx_equals: Numeric parameters are approximately equal. lengths differ, expected 3 got 2
-css/css-color/parsing/color-computed-relative-color.html	FAIL	Property color value 'oklch(from green pow(l, 1) c h)'	assert_true: 'oklch(from green pow(l, 1) c h)' is a supported value for color. expected true got false
+css/css-color/parsing/color-computed-relative-color.html	FAIL	Property color value 'oklch(from green pow(l, 1) c h)'	Colors do not match. Actual:   oklch(from green pow(l, 1) c h) Expected: oklch(0.519752 0.176858 142.4953). Error: assert_array_approx_equals: Numeric parameters are approximately equal. lengths differ, expected 3 got 1
 css/css-color/parsing/color-computed-rgb.html	FAIL	Property color value 'rgb(128 none none)'	assert_equals: expected "color(srgb 0.50196078 none none)" but got "color(srgb 0.50196081 none none)"
 css/css-color/parsing/color-computed-rgb.html	FAIL	Property color value 'rgb(128 none none / none)'	assert_equals: expected "color(srgb 0.50196078 none none / none)" but got "color(srgb 0.50196081 none none / none)"
 css/css-color/parsing/color-computed-rgb.html	FAIL	Property color value 'rgba(128 none none)'	assert_equals: expected "color(srgb 0.50196078 none none)" but got "color(srgb 0.50196081 none none)"
@@ -1361,9 +1361,6 @@ css/css-color/parsing/contrast-color-function-calc-container.html	FAIL	e.style['
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'calc(U+2d50% U+2d 50%)'	assert_equals: expected "0" but got "calc(U+2d50% U+2d 50%)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'calc(25% * 2)'	assert_equals: expected "0.5" but got "calc(25% * 2)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'calc(100% + 100%)'	assert_equals: expected "1" but got "calc(100% + 100%)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'calc(U+2d0.5 U+2d 0.5)'	assert_equals: expected "0" but got "calc(U+2d0.5 U+2d 0.5)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'calc(0.25 * 2)'	assert_equals: expected "0.5" but got "calc(0.25 * 2)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'calc(1 + 1)'	assert_equals: expected "1" but got "calc(1 + 1)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'clamp(50%, 0%, 70%)'	assert_equals: expected "0.5" but got "clamp(50%, 0%, 70%)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'clamp(50%, 80%, 70%)'	assert_equals: expected "0.7" but got "clamp(50%, 80%, 70%)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'clamp(50%, 60%, 70%)'	assert_equals: expected "0.6" but got "clamp(50%, 60%, 70%)"
@@ -1372,14 +1369,6 @@ css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'min(0%,
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'max(50%, 0%)'	assert_equals: expected "0.5" but got "max(50%, 0%)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'max(0%, 50%)'	assert_equals: expected "0.5" but got "max(0%, 50%)"
 css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'min(U+2d40%, 50%)'	assert_equals: expected "0" but got "min(U+2d40%, 50%)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'clamp(0.5, 0, 0.7)'	assert_equals: expected "0.5" but got "clamp(0.5, 0, 0.7)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'clamp(0.5, 0.8, 0.7)'	assert_equals: expected "0.7" but got "clamp(0.5, 0.8, 0.7)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'clamp(0.5, 0.6, 0.7)'	assert_equals: expected "0.6" but got "clamp(0.5, 0.6, 0.7)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'min(0.5, 0)'	assert_equals: expected "0" but got "min(0.5, 0)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'min(0, 0.5)'	assert_equals: expected "0" but got "min(0, 0.5)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'max(0.5, 0)'	assert_equals: expected "0.5" but got "max(0.5, 0)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'max(0, 0.5)'	assert_equals: expected "0.5" but got "max(0, 0.5)"
-css/css-color/parsing/opacity-computed.html	FAIL	Property opacity value 'min(U+2d0.4, 0.5)'	assert_equals: expected "0" but got "min(U+2d0.4, 0.5)"
 css/css-color/parsing/opacity-valid.html	FAIL	e.style['opacity'] = "U+2d100%" should set the property value	assert_equals: serialization should be canonical expected "U+2d1" but got "U+2d100%"
 css/css-color/parsing/opacity-valid.html	FAIL	e.style['opacity'] = "50%" should set the property value	assert_equals: serialization should be canonical expected "0.5" but got "50%"
 css/css-color/parsing/opacity-valid.html	FAIL	e.style['opacity'] = "300%" should set the property value	assert_equals: serialization should be canonical expected "3" but got "300%"

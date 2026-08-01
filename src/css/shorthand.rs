@@ -2133,6 +2133,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None if (super::values::math_function_valid(&low)
                     && super::values::math_number_valid(&low))
                     || v.strip_suffix('%').map(|p| p.trim().parse::<f64>().is_ok()).unwrap_or(false) => {
+                    // 순수 <number> 수학식이면 계산값으로 접는다(calc(2/4)→0.5). %·문맥
+                    // 단위가 섞여 못 접으면 원문 보존.
+                    if let Some(x) = super::values::eval_math_number(&low) {
+                        if x.is_finite() {
+                            return vec![Declaration { important: false, name: "opacity".to_string(),
+                                value: Value::Length((x as f32).clamp(0.0, 1.0), Unit::Number) }];
+                        }
+                    }
                     vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(v.to_string()) }]
                 }
                 None => Vec::new(),
