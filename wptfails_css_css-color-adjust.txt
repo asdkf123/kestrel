@@ -1,0 +1,20 @@
+css/css-color-adjust/inheritance.html	FAIL	Property colorU+2dscheme inherits	assert_equals: expected "light dark" but got "normal"
+css/css-color-adjust/inheritance.html	FAIL	Property colorU+2dadjust has initial value economy	assert_true: colorU+2dadjust doesn't seem to be supported in the computed style expected true got false
+css/css-color-adjust/inheritance.html	FAIL	Property colorU+2dadjust inherits	assert_true: colorU+2dadjust doesn't seem to be supported in the computed style expected true got false
+css/css-color-adjust/inheritance.html	FAIL	Property forcedU+2dcolorU+2dadjust inherits	assert_equals: expected "preserveU+2dparentU+2dcolor" but got "auto"
+css/css-color-adjust/inheritance.html	FAIL	Property printU+2dcolorU+2dadjust has initial value economy	assert_equals: expected "economy" but got "auto"
+css/css-color-adjust/inheritance.html	FAIL	Property printU+2dcolorU+2dadjust inherits	assert_equals: expected "exact" but got "auto"
+css/css-color-adjust/parsing/color-scheme-computed.html	FAIL	Property colorU+2dscheme value 'only light'	assert_equals: expected "light only" but got "only light"
+css/css-color-adjust/parsing/color-scheme-computed.html	FAIL	Property colorU+2dscheme value 'only light dark'	assert_equals: expected "light dark only" but got "only light dark"
+css/css-color-adjust/parsing/color-scheme-valid.html	FAIL	e.style['colorU+2dscheme'] = "only light" should set the property value	assert_equals: serialization should be canonical expected "light only" but got "only light"
+css/css-color-adjust/parsing/color-scheme-valid.html	FAIL	e.style['colorU+2dscheme'] = "only light dark" should set the property value	assert_equals: serialization should be canonical expected "light dark only" but got "only light dark"
+css/css-color-adjust/parsing/color-scheme-valid.html	FAIL	e.style['colorU+2dscheme'] = "only light light" should set the property value	assert_equals: serialization should be canonical expected "light light only" but got "only light light"
+css/css-color-adjust/parsing/color-scheme-valid.html	FAIL	e.style['colorU+2dscheme'] = "only light purple" should set the property value	assert_equals: serialization should be canonical expected "light purple only" but got "only light purple"
+css/css-color-adjust/parsing/color-scheme-valid.html	FAIL	e.style['colorU+2dscheme'] = "only none" should set the property value	assert_equals: serialization should be canonical expected "none only" but got "only none"
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-color-initial-affected-by-color-scheme-property.html	FAIL	Check that color:initial resolves to the intial color for the dark colorU+2dscheme.	assert_not_equals: got disallowed value "rgb(0, 0, 0)"
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-color-initial-affected-by-color-scheme-property.html	FAIL	Check that color:initial resolves to the intial color for the light colorU+2dscheme.	assert_not_equals: got disallowed value "rgb(0, 0, 0)"
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-iframe-dynamic.html	FAIL	Initially, the preferred color-scheme is the same in both documents	
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-iframe-dynamic.html	FAIL	Modify color-scheme <meta>	
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-iframe-dynamic.html	FAIL	Modify iframe color-scheme	
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-iframe-preferred-change-same-origin.html	FAIL	Preferred colorU+2dscheme of sameU+2dorigin iframe document changed through iframe element colorU+2dscheme	promise_test: Unhandled rejection with value: object "TypeError: frm.contentDocument.documentElement — frm.contentDocument 이(가) undefined (읽을 수 없음)"
+css/css-color-adjust/rendering/dark-color-scheme/color-scheme-system-colors.html	FAIL	Check that the system colors are properly affected by the colorU+2dscheme.	assert_not_equals: got disallowed value "rgb(0, 0, 0)"

@@ -12645,43 +12645,112 @@ pub(crate) fn normalize_rgb_legacy(text: &str) -> Option<String> {
 
 // An+B 마이크로문법(§CSS Syntax §9) 캐논화: even→2n, odd→2n+1, "3n - 0"→"3n",
 // "2n+0"→"2n", 계수 1/-1 은 n/-n. 공백을 모두 제거하고 (a,b) 로 파싱해 재직렬화한다.
-fn canonicalize_nth(arg: &str) -> Option<String> {
-    let s: String = arg.chars().filter(|c| !c.is_whitespace()).collect();
-    let low = s.to_ascii_lowercase();
-    let (a, b): (i64, i64) = if low == "even" {
-        (2, 0)
-    } else if low == "odd" {
-        (2, 1)
-    } else if let Some(np) = low.find('n') {
-        let a = match &low[..np] {
-            "" | "+" => 1,
-            "-" => -1,
-            x => x.parse::<i64>().ok()?,
-        };
-        let rest = &low[np + 1..];
-        let b = if rest.is_empty() { 0 } else { rest.parse::<i64>().ok()? };
-        (a, b)
-    } else {
-        (0, low.parse::<i64>().ok()?)
-    };
-    Some(if a == 0 {
-        b.to_string()
-    } else {
-        let coef = if a == 1 {
-            "n".to_string()
-        } else if a == -1 {
-            "-n".to_string()
-        } else {
-            format!("{}n", a)
-        };
-        if b == 0 {
-            coef
-        } else if b > 0 {
-            format!("{}+{}", coef, b)
-        } else {
-            format!("{}-{}", coef, -b)
+// §CSS Syntax An+B 미세문법을 **엄격히** 파싱해 캐논 직렬화. 무효면 None(셀렉터
+// 거부/무효 판정에도 쓰인다). 공백 규칙: A부호는 n 에 인접(+ n 무효), An 과 B부호
+// 사이·B부호와 숫자 사이는 공백 허용, 이중 부호(5n- -5) 무효.
+pub(crate) fn canonicalize_nth(arg: &str) -> Option<String> {
+    parse_anb(arg).map(|(a, b)| fmt_anb(a, b))
+}
+
+// An+B 를 엄격히 파싱해 (a, b) 로. 무효면 None. canonicalize_nth·parse_nth 공용.
+pub(crate) fn parse_anb(arg: &str) -> Option<(i64, i64)> {
+    let low = arg.trim().to_ascii_lowercase();
+    if low == "even" {
+        return Some((2, 0));
+    }
+    if low == "odd" {
+        return Some((2, 1));
+    }
+    let chars: Vec<char> = low.chars().collect();
+    // n 이 없으면 <integer>(B만): [+|-]? digits, 내부 공백/잉여 금지.
+    if !chars.contains(&'n') {
+        return parse_signed_int(&low).map(|b| (0, b));
+    }
+    let mut i = 0usize;
+    // A 부호(선택, n/digits 에 인접).
+    let a_sign: i64 = match chars.first() {
+        Some('+') => {
+            i = 1;
+            1
         }
-    })
+        Some('-') => {
+            i = 1;
+            -1
+        }
+        _ => 1,
+    };
+    // A 계수 digits(선택).
+    let ds = i;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    let a: i64 = if i > ds {
+        a_sign * low[ds..i].parse::<i64>().ok()?
+    } else {
+        a_sign // digits 없으면 ±1
+    };
+    // 'n' 필수(공백이 끼면 여기서 실패 → "+ n" 무효).
+    if chars.get(i) != Some(&'n') {
+        return None;
+    }
+    i += 1;
+    // B 부분(선택): [ws]* (+|-) [ws]* digits, 잉여 금지.
+    let mut j = i;
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    if j >= chars.len() {
+        return Some((a, 0)); // B 없음
+    }
+    let b_sign: i64 = match chars.get(j) {
+        Some('+') => 1,
+        Some('-') => -1,
+        _ => return None, // 부호 없이 숫자 → 무효("n 5")
+    };
+    j += 1;
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    let bs = j;
+    while j < chars.len() && chars[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j == bs || j != chars.len() {
+        return None; // 숫자 없음 또는 잉여(이중 부호 등)
+    }
+    let b = b_sign * low[bs..j].parse::<i64>().ok()?;
+    Some((a, b))
+}
+
+// [+|-]? digits, 내부 공백·잉여 없음. Rust i64 는 선행 '+' 를 안 받으므로 직접 처리.
+fn parse_signed_int(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.chars().any(|c| c.is_whitespace()) {
+        return None;
+    }
+    let t = s.strip_prefix('+').unwrap_or(s);
+    if t.is_empty() || !t.chars().enumerate().all(|(k, c)| c.is_ascii_digit() || (k == 0 && c == '-'))
+    {
+        return None;
+    }
+    t.parse::<i64>().ok()
+}
+
+fn fmt_anb(a: i64, b: i64) -> String {
+    let coef = if a == 1 {
+        "n".to_string()
+    } else if a == -1 {
+        "-n".to_string()
+    } else {
+        format!("{}n", a)
+    };
+    if b == 0 {
+        coef
+    } else if b > 0 {
+        format!("{}+{}", coef, b)
+    } else {
+        format!("{}-{}", coef, -b)
+    }
 }
 
 fn canon_pseudo_arg(name: &str, arg: &str) -> String {

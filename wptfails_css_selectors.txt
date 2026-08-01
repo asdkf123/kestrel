@@ -344,7 +344,6 @@ css/selectors/has-relative-argument.html	FAIL	.x:has(~ .d ~ .e) matches expected
 css/selectors/has-relative-argument.html	FAIL	.x:has(+ .d ~ .e) matches expected elements	assert_equals: expected "d55,d56" but got "d58"
 css/selectors/has-relative-argument.html	FAIL	.y:has(> .g .h) matches expected elements	assert_equals: expected "d63,d71" but got "d65,d73"
 css/selectors/has-relative-argument.html	FAIL	.y:has(.g .h) matches expected elements	assert_equals: expected "d63,d68,d71" but got "d63,d64,d65,d68,d71,d72,d73"
-css/selectors/hash-collision-cssom.html	FAIL	Test string hash collision in bucketing	Illegal constructor
 css/selectors/heading-prefixed.html	FAIL	:heading(1) matches <h:h1> in the HTML namespace	assert_true: :heading(1) matches expected true got false
 css/selectors/heading-prefixed.html	FAIL	:heading(2) matches <h:h2> in the HTML namespace	assert_true: :heading(2) matches expected true got false
 css/selectors/heading-prefixed.html	FAIL	:heading(3) matches <h:h3> in the HTML namespace	assert_true: :heading(3) matches expected true got false
@@ -870,30 +869,6 @@ css/selectors/parsing/invalid-pseudos.html	FAIL	":U+2dwebkitU+2dfullU+2dscreenU+
 css/selectors/parsing/invalid-pseudos.html	FAIL	":U+2dwebkitU+2dfullU+2dscreenU+2ddocument" should be an invalid selector	assert_throws_dom: ":U+2dwebkitU+2dfullU+2dscreenU+2ddocument" should throw in querySelector function "() => document.querySelector(selector)" did not throw
 css/selectors/parsing/invalid-pseudos.html	FAIL	"::U+2dappleU+2dattachmentU+2dcontrolsU+2dcontainer" should be an invalid selector	assert_throws_dom: "::U+2dappleU+2dattachmentU+2dcontrolsU+2dcontainer" should throw in querySelector function "() => document.querySelector(selector)" did not throw
 css/selectors/parsing/invalid-pseudos.html	FAIL	"::U+2dinternalU+2dloadingU+2dautoU+2dfillU+2dbutton" should be an invalid selector	assert_throws_dom: "::U+2dinternalU+2dloadingU+2dautoU+2dfillU+2dbutton" should throw in querySelector function "() => document.querySelector(selector)" did not throw
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dchild(nU+2d 1 2) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dchild(+ 1n) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dchild(  n +12 3) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dchild(  12 n ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dchild(+12 N ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dchild(+ n + 7) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dchild(nU+2d 1 2) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dchild(+ 1n) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dchild(  n +12 3) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dchild(  12 n ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dchild(+12 N ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dchild(+ n + 7) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dofU+2dtype(nU+2d 1 2) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dofU+2dtype(+ 1n) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dofU+2dtype(  n +12 3) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dofU+2dtype(  12 n ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dofU+2dtype(+12 N ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dofU+2dtype(+ n + 7) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dofU+2dtype(nU+2d 1 2) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dofU+2dtype(+ 1n) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dofU+2dtype(  n +12 3) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dofU+2dtype(  12 n ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dofU+2dtype(+12 N ) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
-css/selectors/parsing/parse-anplusb.html	FAIL	:nthU+2dlastU+2dofU+2dtype(+ n + 7) should not parse	assert_equals: expected (undefined) undefined but got (object) object "[object CSSStyleRule]"
 css/selectors/parsing/parse-attribute.html	FAIL	"[att]" should be a valid selector	assert_equals: Sheet should have 1 rule expected 1 but got 0
 css/selectors/parsing/parse-attribute.html	FAIL	"[att=val]" should be a valid selector	assert_equals: Sheet should have 1 rule expected 1 but got 0
 css/selectors/parsing/parse-attribute.html	FAIL	"[att~=val]" should be a valid selector	assert_equals: Sheet should have 1 rule expected 1 but got 0

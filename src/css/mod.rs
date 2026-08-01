@@ -829,26 +829,10 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
 
 // 인라인 style="..." 속성값(선언 블록, 중괄호 없음)을 선언 목록으로 파싱.
 // 캐스케이드에서 어떤 선택자보다 높은 우선순위 (스타일 적용 시 마지막에 얹음).
-// nth 인자 파싱: "2n+1"/"odd"/"even"/"3"/"n"/"-n+3" → (a, b) 의 an+b.
+// nth 인자 파싱: §CSS Syntax An+B 미세문법을 **엄격히**(공백 규칙 포함). 무효면
+// None → :nth-child() 의사가 파싱 실패 → 셀렉터 거부.
 fn parse_nth(s: &str) -> Option<(i32, i32)> {
-    let s: String = s.trim().to_ascii_lowercase().split_whitespace().collect();
-    match s.as_str() {
-        "odd" => return Some((2, 1)),
-        "even" => return Some((2, 0)),
-        _ => {}
-    }
-    if let Some(np) = s.find('n') {
-        let a = match &s[..np] {
-            "" | "+" => 1,
-            "-" => -1,
-            a => a.parse().ok()?,
-        };
-        let b_str = s[np + 1..].trim_start_matches('+');
-        let b = if b_str.is_empty() { 0 } else { b_str.parse().ok()? };
-        Some((a, b))
-    } else {
-        Some((0, s.parse().ok()?))
-    }
+    values::parse_anb(s).map(|(a, b)| (a as i32, b as i32))
 }
 
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {

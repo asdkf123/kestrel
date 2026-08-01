@@ -814,7 +814,7 @@ css/css-conditional/container-queries/style-query-custom-attr-change-named-conta
 css/css-conditional/container-queries/style-query-custom-attr-change.html	FAIL	Initially, container does not match. Target is red.	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
 css/css-conditional/container-queries/style-query-registered-custom-em-change.html	FAIL	Initially, 1em (16px) + 10px evaluates to 26px. Target does not match.	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
 css/css-conditional/container-queries/style-query-registered-custom-rem-change.html	FAIL	Initially, 1rem * 10 evaluates to 160px	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
-css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	FAIL	assert_implements_style_container_queries()	Illegal constructor
+css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	FAIL	assert_implements_style_container_queries()	sheet.cssRules[..].containerQuery — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
 css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	FAIL	rem in container style queries responds to root font size change	assert_equals: color before expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
 css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	FAIL	rlh in container style queries responds to root line height change	assert_equals: color before expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
 css/css-conditional/container-queries/style-query-registered-custom-root-relative-units-change.html	FAIL	vi, vb in container style queries respond to root writing mode change	assert_equals: In horizontalU+2dtb mode, vb doesn't match vw expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
@@ -864,7 +864,7 @@ css/css-conditional/js/CSS-supports-selector-picker.html	FAIL	::pickerU+2dicon p
 css/css-conditional/js/CSS-supports-selector-picker.html	FAIL	::picker(select) pseudoU+2delement is supported	assert_equals: expected true but got false
 css/css-conditional/js/CSS-supports-selector-picker.html	FAIL	::pickerU+2dicon without element is supported	assert_equals: expected true but got false
 css/css-conditional/js/CSS-supports-selector-picker.html	FAIL	::picker(select) without element is supported	assert_equals: expected true but got false
-css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	@media is CSSGroupingRule	CSSGroupingRule 은(는) 정의되지 않음
+css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	@media is CSSGroupingRule	assert_true: @media instanceof CSSGroupingRule expected true got false
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	@media rule type	grouping_rule.type — grouping_rule 이(가) undefined (읽을 수 없음)
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	Empty @media rule length	grouping_rule.cssRules — grouping_rule 이(가) undefined (읽을 수 없음)
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	insertRule of @import into @media	assert_throws_dom: inserting a disallowed rule should throw HIERARCHY_REQUEST_ERR function "function() {                                grouping_rule.insertRule("@import url(foo.css);", 0);                              }" threw object "TypeError: grouping_rule.insertRule(…) — grouping_rule 이(가) undefined" that is not a DOMException HIERARCHY_REQUEST_ERR: property "code" is equal to undefined, expected 3
@@ -881,7 +881,7 @@ css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	insertRule of valid
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	insertRule of valid style rule followed by valid @media into @media	grouping_rule.cssRules — grouping_rule 이(가) undefined (읽을 수 없음)
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	insertRule of two valid style rules into @media	grouping_rule.cssRules — grouping_rule 이(가) undefined (읽을 수 없음)
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	Return value of insertRule into @media	grouping_rule.cssRules — grouping_rule 이(가) undefined (읽을 수 없음)
-css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	@supports is CSSGroupingRule	CSSGroupingRule 은(는) 정의되지 않음
+css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	@supports is CSSGroupingRule	assert_true: @supports instanceof CSSGroupingRule expected true got false
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	@supports rule type	grouping_rule.type — grouping_rule 이(가) undefined (읽을 수 없음)
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	Empty @supports rule length	grouping_rule.cssRules — grouping_rule 이(가) undefined (읽을 수 없음)
 css/css-conditional/js/conditional-CSSGroupingRule.html	FAIL	insertRule of @import into @supports	assert_throws_dom: inserting a disallowed rule should throw HIERARCHY_REQUEST_ERR function "function() {                                grouping_rule.insertRule("@import url(foo.css);", 0);                              }" threw object "TypeError: grouping_rule.insertRule(…) — grouping_rule 이(가) undefined" that is not a DOMException HIERARCHY_REQUEST_ERR: property "code" is equal to undefined, expected 3
