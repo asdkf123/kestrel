@@ -9889,6 +9889,10 @@ pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
             if v.is_empty() {
                 return false;
             }
+            // 등록 initial 값엔 var()/env() 참조 불가(계산 독립적이어야).
+            if v.to_ascii_lowercase().contains("var(") || v.to_ascii_lowercase().contains("env(") {
+                return false;
+            }
             alts.iter().any(|a| syntax_alt_matches(a, v))
         }
     }
@@ -10073,13 +10077,13 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
                     || (it.contains('(') && math_number_only_valid(it))
             }
             "color" => single_color_valid(it),
-            "angle" => it == "0" || math_angle_valid(it),
+            "angle" => math_angle_valid(it) && it != "0", // 단위 없는 0 은 <angle> 아님
             "time" => math_time_valid(it),
             "resolution" => {
                 let low = it.to_ascii_lowercase();
                 ["dppx", "dpi", "dpcm", "x"].iter().any(|u| {
                     low.strip_suffix(u)
-                        .map(|n| n.trim().parse::<f64>().is_ok())
+                        .map(|n| n.trim().parse::<f64>().map(|f| f >= 0.0).unwrap_or(false))
                         .unwrap_or(false)
                 })
             }
@@ -10092,13 +10096,21 @@ fn syntax_type_matches(comp: &str, it: &str) -> bool {
                     || low.starts_with("image-set(")
             }
             "custom-ident" => syntax_ident_valid(it),
-            "string" => it.starts_with('"') || it.starts_with('\''),
+            "string" => {
+                // 단일 문자열 토큰만(따옴표로 시작·끝, 내부에 닫는 따옴표 없음).
+                let b = it.as_bytes();
+                b.len() >= 2
+                    && (b[0] == b'"' || b[0] == b'\'')
+                    && b[it.len() - 1] == b[0]
+                    && !it[1..it.len() - 1].contains(b[0] as char)
+            }
             "transform-function" | "transform-list" => transform_valid(it) && it != "none",
             _ => false,
         }
     } else {
-        // 키워드 매칭: 양쪽 이스케이프 디코드 후 비교(banan\61 == banana).
-        css_unescape(it).eq_ignore_ascii_case(&css_unescape(comp))
+        // 키워드(custom-ident) 매칭: 대소문자 구분(§CSS custom-ident). 양쪽 이스케이프
+        // 디코드 후 정확히 일치해야(foo != Foo, banan\61 == banana).
+        css_unescape(it) == css_unescape(comp)
     }
 }
 
