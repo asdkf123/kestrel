@@ -80,7 +80,9 @@ fn container_condition_valid(s: &str) -> bool {
         if nested {
             return container_condition_valid(inner);
         }
-        return container_feature_valid(inner);
+        // 괄호 안은 <general-enclosed> — 알 수 없는 특성/문법(혼방향 범위·미지 특성)도
+        // 문법상 유효(보존 후 평가에서 unknown). 빈 괄호만 무효.
+        return !inner.is_empty();
     }
     // ident(…) 형태 = general-enclosed 함수(style()/scroll-state()) → 문법상 유효.
     if let Some(p) = s.find('(') {
@@ -89,32 +91,6 @@ fn container_condition_valid(s: &str) -> bool {
         }
     }
     false // bare 단어(미디어 타입 등) → 무효.
-}
-
-// ( ) 안의 특성 하나가 유효 문법인가. boolean `width` | `name: value` | 범위(단방향).
-fn container_feature_valid(inner: &str) -> bool {
-    let f = inner.trim();
-    if f.is_empty() {
-        return false;
-    }
-    let has_lt = f.contains('<');
-    let has_gt = f.contains('>');
-    if has_lt || has_gt || (f.contains('=') && !f.contains(':')) {
-        // 범위: 혼방향(< 와 > 동시) 무효. `100px < width < 200px`(둘 다 <) 유효.
-        if has_lt && has_gt {
-            return false;
-        }
-        // 이름 토큰이 하나는 있어야(양쪽 값 사이 특성명).
-        return f
-            .split(|c: char| c == '<' || c == '>' || c == '=' || c.is_whitespace())
-            .any(|t| !t.is_empty() && t.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false));
-    }
-    if let Some((n, v)) = f.split_once(':') {
-        return !n.trim().is_empty() && !v.trim().is_empty();
-    }
-    // boolean 특성: 식별자.
-    f.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false)
-        && f.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 // 최상위(괄호 밖) 키워드(" and "/" or ")로 조건을 나눈다. 나눔이 없으면 원본 하나.
@@ -286,8 +262,9 @@ fn feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
         let inner = rest.trim().strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(rest);
         return feature_matches(inner.trim(), vw, vh).map(|b| !b);
     }
-    // Level 4 범위형: "width >= 768px", "400px <= width <= 700px"
-    if feat.contains('<') || feat.contains('>') {
+    // Level 4 범위형: "width >= 768px", "400px <= width <= 700px", "width = 100px".
+    // `=` 도 범위 비교(단, `name: value` 의 ':' 와 구분 — ':' 없을 때만).
+    if feat.contains('<') || feat.contains('>') || (feat.contains('=') && !feat.contains(':')) {
         return range_feature_matches(feat, vw, vh);
     }
     let (name, value) = match feat.split_once(':') {
@@ -474,17 +451,31 @@ fn range_feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
         .iter()
         .position(|t| matches!(*t, "width" | "height" | "device-width" | "device-height"))?;
     let actual = if toks[np].contains("height") { vh } else { vw };
-    let mut ok = true;
-    // 왼쪽 경계: len op name  → len op actual
-    if np >= 2 {
-        if let Some(len) = parse_len(toks[np - 2]) {
-            ok = ok && eval_cmp(len, toks[np - 1], actual);
+    // 양쪽 경계가 다 있으면 방향(<계열 vs >계열)이 같아야 유효. 혼방향(`a < w > b`)은
+    // 무효 문법 → unknown(None). '=' 는 어느 쪽과도 안 섞임(단독만 허용).
+    let left_op = if np >= 2 { Some(toks[np - 1]) } else { None };
+    let right_op = if toks.len() >= np + 3 { Some(toks[np + 1]) } else { None };
+    let dir = |op: &str| -> i8 {
+        match op {
+            "<" | "<=" => -1,
+            ">" | ">=" => 1,
+            _ => 0, // '='
+        }
+    };
+    if let (Some(l), Some(r)) = (left_op, right_op) {
+        if dir(l) == 0 || dir(r) == 0 || dir(l) != dir(r) {
+            return None; // 혼방향·'=' 이중 경계 → 무효 문법
         }
     }
-    // 오른쪽 경계: name op len → actual op len
-    if toks.len() >= np + 3 {
+    let mut ok = true;
+    if let Some(op) = left_op {
+        if let Some(len) = parse_len(toks[np - 2]) {
+            ok = ok && eval_cmp(len, op, actual);
+        }
+    }
+    if let Some(op) = right_op {
         if let Some(len) = parse_len(toks[np + 2]) {
-            ok = ok && eval_cmp(actual, toks[np + 1], len);
+            ok = ok && eval_cmp(actual, op, len);
         }
     }
     Some(ok)
