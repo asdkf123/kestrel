@@ -32,9 +32,13 @@ pub(crate) fn media_matches_vp(query: &str, vw: f32, vh: f32) -> bool {
 
 fn one_query_matches(q: &str, vw: f32, vh: f32) -> bool {
     let ql = q.to_ascii_lowercase();
-    let (negate, body) = match ql.trim().strip_prefix("not ") {
+    let ql = ql.trim();
+    if ql.is_empty() {
+        return false; // 빈 쿼리(콤마 사이)는 "not all" — 불일치.
+    }
+    let (negate, body) = match ql.strip_prefix("not ") {
         Some(rest) => (true, rest.trim().to_string()),
-        None => (false, ql.trim().trim_start_matches("only ").trim().to_string()),
+        None => (false, ql.trim_start_matches("only ").trim().to_string()),
     };
     let mut ok = true;
     for cond in body.split(" and ") {
@@ -42,16 +46,22 @@ fn one_query_matches(q: &str, vw: f32, vh: f32) -> bool {
         if cond.is_empty() {
             continue;
         }
-        let pass = if cond.starts_with('(') {
-            // 괄호 한 겹만 벗긴다 ((not (…)) 같은 중첩 유지)
+        // 조건 평가는 Option: None = 무효(미지 특성/무효 값) → 쿼리 전체가 "not all"
+        // 이 되어 부정(not)으로도 참이 될 수 없다(§Media Queries).
+        let pass: Option<bool> = if cond.starts_with('(') {
             let inner = cond.strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(cond);
             feature_matches(inner.trim(), vw, vh)
         } else {
-            matches!(cond, "screen" | "all") // print/기타 타입 불일치
+            // 미디어 타입: screen/all 매칭, 그 외(print 등·미지 타입)는 유효하나 불일치.
+            Some(matches!(cond, "screen" | "all"))
         };
-        ok = ok && pass;
-        if !ok {
-            break;
+        match pass {
+            None => return false, // 무효 → "not all", 부정 무시.
+            Some(false) => {
+                ok = false;
+                break;
+            }
+            Some(true) => {}
         }
     }
     ok != negate
@@ -64,12 +74,13 @@ enum Bound {
     Exact,
 }
 
-// 괄호 안 특성 하나 평가.
-fn feature_matches(feat: &str, vw: f32, vh: f32) -> bool {
-    // 중첩 부정 (not (feature)) — Level 4
+// 괄호 안 특성 하나 평가. None = 무효(미지 특성/무효 값/이산형에 min-max) →
+// 쿼리 "not all". Some(b) = 유효, 헤드리스 기본과 비교한 참/거짓.
+fn feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
+    // 중첩 부정 (not (feature)) — Level 4. 무효의 부정은 여전히 무효(None).
     if let Some(rest) = feat.strip_prefix("not ") {
         let inner = rest.trim().strip_prefix('(').and_then(|s| s.strip_suffix(')')).unwrap_or(rest);
-        return !feature_matches(inner.trim(), vw, vh);
+        return feature_matches(inner.trim(), vw, vh).map(|b| !b);
     }
     // Level 4 범위형: "width >= 768px", "400px <= width <= 700px"
     if feat.contains('<') || feat.contains('>') {
@@ -77,8 +88,11 @@ fn feature_matches(feat: &str, vw: f32, vh: f32) -> bool {
     }
     let (name, value) = match feat.split_once(':') {
         Some((n, v)) => (n.trim(), Some(v.trim())),
-        None => (feat, None),
+        None => (feat.trim(), None),
     };
+    if name.is_empty() {
+        return None;
+    }
     let (bound, base) = if let Some(b) = name.strip_prefix("min-") {
         (Bound::Min, b)
     } else if let Some(b) = name.strip_prefix("max-") {
@@ -86,60 +100,133 @@ fn feature_matches(feat: &str, vw: f32, vh: f32) -> bool {
     } else {
         (Bound::Exact, name)
     };
+    // min-/max- 는 범위형 특성만 허용. 이산형에 붙으면 무효.
+    let is_range = matches!(
+        base,
+        "width" | "height" | "device-width" | "device-height" | "inline-size" | "block-size"
+            | "resolution" | "color" | "color-index" | "monochrome"
+            | "aspect-ratio" | "device-aspect-ratio"
+    );
+    if !matches!(bound, Bound::Exact) && !is_range {
+        return None;
+    }
+    // 이산형(키워드 집합) 특성: (유효 값들, 헤드리스에서 매칭되는 값).
+    let discrete: Option<(&[&str], &str)> = match base {
+        "orientation" => {
+            Some((&["portrait", "landscape"], if vw < vh { "portrait" } else { "landscape" }))
+        }
+        "scan" => Some((&["interlace", "progressive"], "progressive")),
+        "hover" | "any-hover" => Some((&["none", "hover"], "hover")),
+        "pointer" | "any-pointer" => Some((&["none", "coarse", "fine"], "fine")),
+        "prefers-color-scheme" => Some((&["light", "dark"], "light")),
+        "prefers-contrast" => {
+            Some((&["no-preference", "more", "less", "custom"], "no-preference"))
+        }
+        "prefers-reduced-motion" => Some((&["no-preference", "reduce"], "no-preference")),
+        "prefers-reduced-data" => Some((&["no-preference", "reduce"], "no-preference")),
+        "prefers-reduced-transparency" => Some((&["no-preference", "reduce"], "no-preference")),
+        "forced-colors" => Some((&["none", "active"], "none")),
+        "dynamic-range" => Some((&["standard", "high"], "standard")),
+        "video-dynamic-range" => Some((&["standard", "high"], "standard")),
+        "color-gamut" => Some((&["srgb", "p3", "rec2020"], "srgb")),
+        "display-mode" => Some((
+            &[
+                "fullscreen",
+                "standalone",
+                "minimal-ui",
+                "browser",
+                "window-controls-overlay",
+                "picture-in-picture",
+            ],
+            "browser",
+        )),
+        "update" => Some((&["none", "slow", "fast"], "fast")),
+        "scripting" => Some((&["none", "initial-only", "enabled"], "enabled")),
+        "overflow-block" => Some((&["none", "scroll", "paged", "optional-paged"], "scroll")),
+        "overflow-inline" => Some((&["none", "scroll"], "scroll")),
+        _ => None,
+    };
+    if let Some((valid, want)) = discrete {
+        return match value {
+            None => Some(true), // 부울 컨텍스트: 알려진 이산 특성은 존재.
+            Some(v) => {
+                if !valid.contains(&v) {
+                    None // 무효 값 → 쿼리 무효.
+                } else {
+                    Some(v == want)
+                }
+            }
+        };
+    }
+    // 범위형/수치형.
     match base {
-        "width" | "device-width" => cmp_len(bound, value, vw),
-        "height" | "device-height" => cmp_len(bound, value, vh),
-        "orientation" => match value {
-            Some("portrait") => vw < vh,
-            Some("landscape") => vw >= vh,
-            _ => false,
+        "width" | "device-width" | "inline-size" => match value {
+            None => Some(vw > 0.0),
+            Some(v) => parse_len(v).map(|len| cmp_num(bound, vw, len)),
         },
-        "resolution" => cmp_resolution(bound, value),
-        "color" => value.map_or(true, |v| v.parse::<f32>().map(|n| n > 0.0).unwrap_or(false)),
-        "monochrome" => matches!(value, Some("0")),
-        "hover" | "any-hover" => matches!(value, Some("hover")) || value.is_none(),
-        "pointer" | "any-pointer" => matches!(value, Some("fine")) || value.is_none(),
-        "prefers-color-scheme" => match value {
-            Some("light") | None => true,
-            _ => false, // dark 등 → 불일치 (헤드리스=light)
+        "height" | "device-height" | "block-size" => match value {
+            None => Some(vh > 0.0),
+            Some(v) => parse_len(v).map(|len| cmp_num(bound, vh, len)),
         },
-        "prefers-contrast" => matches!(value, Some("no-preference") | None),
-        "prefers-reduced-motion" => !matches!(value, Some("reduce")),
-        "prefers-reduced-data" => !matches!(value, Some("reduce")),
-        "prefers-reduced-transparency" => !matches!(value, Some("reduce")),
-        "display-mode" => matches!(value, Some("browser")) || value.is_none(),
-        "scripting" => matches!(value, Some("enabled")) || value.is_none(),
-        "update" => matches!(value, Some("fast")) || value.is_none(),
-        // 우리 캔버스는 sRGB — p3/rec2020 을 지원한다고 하면 거짓말이다.
-        // (예전엔 값과 무관하게 항상 true 라 넓은 색역 전용 스타일이 잘못 적용됐다)
-        "color-gamut" => matches!(value, Some("srgb") | None),
-        // 실제 뷰포트 비율로 비교한다. 예전엔 항상 true 라
-        // `@media (aspect-ratio: 16/9)` 같은 조건이 무조건 매칭됐다.
+        "resolution" => match value {
+            None => Some(true),
+            Some(v) => cmp_resolution_opt(bound, v),
+        },
+        "grid" => match value {
+            None => Some(false), // 비격자 화면 → 부울 false
+            Some("0") => Some(true),
+            Some("1") => Some(false),
+            Some(_) => None,
+        },
+        // 컬러 화면: 8bit/채널 가정. color-index 는 팔레트 없음 → 0.
+        "color" => match value {
+            None => Some(true),
+            Some(v) => v.parse::<i64>().ok().filter(|n| *n >= 0).map(|n| cmp_num(bound, 8.0, n as f32)),
+        },
+        "color-index" => match value {
+            None => Some(false),
+            Some(v) => v.parse::<i64>().ok().filter(|n| *n >= 0).map(|n| cmp_num(bound, 0.0, n as f32)),
+        },
+        "monochrome" => match value {
+            None => Some(false),
+            Some(v) => v.parse::<i64>().ok().filter(|n| *n >= 0).map(|n| cmp_num(bound, 0.0, n as f32)),
+        },
         "aspect-ratio" | "device-aspect-ratio" => match value {
-            None => true, // 특성 존재 여부만 물음 → 있음
-            Some(v) => match parse_ratio(v) {
-                Some(r) => match bound {
-                    Bound::Min => vw / vh >= r,
-                    Bound::Max => vw / vh <= r,
-                    Bound::Exact => (vw / vh - r).abs() < 0.001,
-                },
-                None => false,
-            },
+            None => Some(true),
+            Some(v) => parse_ratio(v).map(|r| match bound {
+                Bound::Min => vw / vh >= r,
+                Bound::Max => vw / vh <= r,
+                Bound::Exact => (vw / vh - r).abs() < 0.001,
+            }),
         },
-        _ => false, // 미인식 특성 → 불일치 (표준)
+        _ => None, // 미인식 특성 → 무효.
     }
 }
 
-// min-/max-/정확 길이 비교. value 없거나 파싱 실패면 불일치.
-fn cmp_len(bound: Bound, value: Option<&str>, actual: f32) -> bool {
-    let Some(len) = value.and_then(parse_len) else {
-        return false;
-    };
+// 수치 비교: actual op requested. Min → actual>=req, Max → actual<=req, Exact → 근사동일.
+fn cmp_num(bound: Bound, actual: f32, requested: f32) -> bool {
     match bound {
-        Bound::Min => actual >= len,
-        Bound::Max => actual <= len,
-        Bound::Exact => (actual - len).abs() < 0.5,
+        Bound::Min => actual >= requested,
+        Bound::Max => actual <= requested,
+        Bound::Exact => (actual - requested).abs() < 0.5,
     }
+}
+
+// resolution 비교(값 무효면 None). 헤드리스 = 1dppx(96dpi).
+fn cmp_resolution_opt(bound: Bound, v: &str) -> Option<bool> {
+    let num: String = v.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let n = num.parse::<f32>().ok()?;
+    let dppx = match v[num.len()..].trim() {
+        "dppx" | "x" => n,
+        "dpi" => n / 96.0,
+        "dpcm" => n / 37.795,
+        _ => return None,
+    };
+    Some(match bound {
+        Bound::Min => 1.0 >= dppx,
+        Bound::Max => 1.0 <= dppx,
+        Bound::Exact => (1.0 - dppx).abs() < 0.01,
+    })
 }
 
 // 길이 → px. px/단위없음, em/rem(초기 16px 기준), pt 지원. 그 외 None.
@@ -153,28 +240,6 @@ fn parse_len(s: &str) -> Option<f32> {
         "em" | "rem" => Some(n * ROOT_FS),
         "pt" => Some(n * 96.0 / 72.0),
         _ => None,
-    }
-}
-
-// resolution: 헤드리스 = 96dpi(1x). dppx/dpi/dpcm 를 dppx 로 환산해 비교.
-fn cmp_resolution(bound: Bound, value: Option<&str>) -> bool {
-    let Some(v) = value else {
-        return false;
-    };
-    let num: String = v.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-    let Ok(n) = num.parse::<f32>() else {
-        return false;
-    };
-    let dppx = match v[num.len()..].trim() {
-        "dppx" | "x" => n,
-        "dpi" => n / 96.0,
-        "dpcm" => n / 37.795,
-        _ => return false,
-    };
-    match bound {
-        Bound::Min => 1.0 >= dppx,
-        Bound::Max => 1.0 <= dppx,
-        Bound::Exact => (1.0 - dppx).abs() < 0.01,
     }
 }
 
@@ -194,15 +259,13 @@ fn parse_ratio(v: &str) -> Option<f32> {
     }
 }
 
-// "width >= 768px", "400px <= width <= 700px" 등 범위 문법.
-fn range_feature_matches(feat: &str, vw: f32, vh: f32) -> bool {
+// "width >= 768px", "400px <= width <= 700px" 등 범위 문법. width/height 아니면
+// 무효(None).
+fn range_feature_matches(feat: &str, vw: f32, vh: f32) -> Option<bool> {
     let toks: Vec<&str> = feat.split_whitespace().collect();
-    let Some(np) = toks
+    let np = toks
         .iter()
-        .position(|t| matches!(*t, "width" | "height" | "device-width" | "device-height"))
-    else {
-        return false;
-    };
+        .position(|t| matches!(*t, "width" | "height" | "device-width" | "device-height"))?;
     let actual = if toks[np].contains("height") { vh } else { vw };
     let mut ok = true;
     // 왼쪽 경계: len op name  → len op actual
@@ -217,7 +280,7 @@ fn range_feature_matches(feat: &str, vw: f32, vh: f32) -> bool {
             ok = ok && eval_cmp(actual, toks[np + 1], len);
         }
     }
-    ok
+    Some(ok)
 }
 
 fn eval_cmp(a: f32, op: &str, b: f32) -> bool {
