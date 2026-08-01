@@ -140,6 +140,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-top-left", "corner-top-right", "corner-bottom-left", "corner-bottom-right",
     "corner", "corner-top", "corner-bottom", "corner-left", "corner-right",
     "corner-block", "corner-inline",
+    "corner-block-start", "corner-block-end", "corner-inline-start", "corner-inline-end",
     // UI/인터랙션/표/스크롤 키워드 프로퍼티 — 실제 CSS 프로퍼티라 계산값 노출.
     "cursor", "appearance", "user-select", "resize", "pointer-events", "touch-action",
     "interactivity",

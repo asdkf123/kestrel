@@ -1388,7 +1388,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 변(top/bottom/left/right)·축(block/inline)=2.
         "corner"
         | "corner-top" | "corner-bottom" | "corner-left" | "corner-right"
-        | "corner-block" | "corner-inline" => {
+        | "corner-block" | "corner-inline"
+        | "corner-block-start" | "corner-block-end" | "corner-inline-start" | "corner-inline-end" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
