@@ -1226,6 +1226,175 @@ fn canon_calc_sum(sum: &str) -> String {
     out
 }
 
+// 일반 calc() 평탄 합 캐논 직렬화(§CSS Values 4 §10.13). 최상위 +/- 항을 파싱해
+// 단위별로 계수를 합치고, 수 → % → 단위(알파벳순)으로 직렬화한다. 각 항은
+// [<수> *|/]* <수>[<단위>] 형태만(괄호·함수·다중 비수 인자면 None → 호출부가 원문
+// 유지). calc(1px + 2px)→calc(3px), calc(1vw + 3%)→calc(3% + 1vw) 정렬 등.
+fn canon_flat_calc(inner: &str) -> Option<String> {
+    // 최상위 +/- 분리(부호). 첫 항 '+'.
+    let chars: Vec<char> = inner.trim().chars().collect();
+    let mut terms: Vec<(f64, String)> = Vec::new();
+    let mut cur = String::new();
+    let mut sign = 1.0f64;
+    let mut prev_op = true;
+    for &ch in &chars {
+        match ch {
+            '(' => return None, // 그룹 → 복잡, 원문
+            '+' | '-' if !prev_op => {
+                let (m, u) = flat_term(&cur)?;
+                terms.push((sign * m, u));
+                sign = if ch == '+' { 1.0 } else { -1.0 };
+                cur = String::new();
+                prev_op = true;
+            }
+            c if c.is_whitespace() => cur.push(ch),
+            '*' | '/' => {
+                cur.push(ch);
+                prev_op = true;
+            }
+            _ => {
+                cur.push(ch);
+                prev_op = false;
+            }
+        }
+    }
+    let (m, u) = flat_term(&cur)?;
+    terms.push((sign * m, u));
+
+    // 단위별 합산(삽입 순서 유지용 Vec).
+    let mut acc: Vec<(String, f64)> = Vec::new();
+    for (m, u) in terms {
+        if let Some(slot) = acc.iter_mut().find(|(k, _)| *k == u) {
+            slot.1 += m;
+        } else {
+            acc.push((u, m));
+        }
+    }
+    // 정렬: 수("") → % → 단위 알파벳순.
+    acc.sort_by(|a, b| {
+        let rank = |u: &str| -> (u8, String) {
+            if u.is_empty() {
+                (0, String::new())
+            } else if u == "%" {
+                (1, String::new())
+            } else {
+                (2, u.to_string())
+            }
+        };
+        rank(&a.0).cmp(&rank(&b.0))
+    });
+    // 직렬화.
+    let mut out = String::new();
+    for (i, (u, m)) in acc.iter().enumerate() {
+        let mag = *m;
+        if i == 0 {
+            if mag < 0.0 {
+                out.push('-');
+            }
+            out.push_str(&format!("{}{}", canon_coeff(mag.abs()), u));
+        } else {
+            out.push(' ');
+            out.push(if mag < 0.0 { '-' } else { '+' });
+            out.push(' ');
+            out.push_str(&format!("{}{}", canon_coeff(mag.abs()), u));
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+// calc(<평탄 합>) 하나를 캐논 직렬화. 전체가 calc(...) 하나이고 평탄 합일 때만
+// Some. 그 외(다중 calc·함수·중첩)는 None → 호출부가 원문 유지.
+pub fn canon_calc_serialize(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    let low = t.to_ascii_lowercase();
+    if !low.starts_with("calc(") || !t.ends_with(')') {
+        return None;
+    }
+    // 첫 '(' 의 짝이 끝인지(전체가 calc(...) 하나).
+    let ic: Vec<char> = t.chars().collect();
+    let mut d = 0i32;
+    let mut end = 0usize;
+    for (j, &c) in ic.iter().enumerate().skip(4) {
+        match c {
+            '(' => d += 1,
+            ')' => {
+                d -= 1;
+                if d == 0 {
+                    end = j;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if end != ic.len() - 1 {
+        return None;
+    }
+    let inner = &t[5..t.len() - 1];
+    canon_flat_calc(inner).map(|s| format!("calc({})", s))
+}
+
+// 곱셈 항 → (크기, 단위). 수 인자는 계수로 접고 비수(수+단위) 하나만 허용. 단위는
+// 절대→px 정규화. 괄호·함수·다중 비수·퍼센트+단위 혼합이면 None.
+fn flat_term(term: &str) -> Option<(f64, String)> {
+    let t = term.trim();
+    if t.is_empty() || t.contains('(') {
+        return None;
+    }
+    let mut coeff = 1.0f64;
+    let mut unit: Option<String> = None;
+    for (op, f) in split_muldiv_terms(t) {
+        let f = f.trim();
+        if f.is_empty() {
+            return None;
+        }
+        if let Ok(n) = f.parse::<f64>() {
+            coeff = if op == '/' { coeff / n } else { coeff * n };
+            continue;
+        }
+        // 수+단위 리터럴.
+        if unit.is_some() || op == '/' {
+            return None; // 비수 둘 또는 비수 나눗셈 → 복잡
+        }
+        let low = f.to_ascii_lowercase();
+        let (mag, u) = parse_num_unit(&low)?;
+        coeff *= mag;
+        unit = Some(u);
+    }
+    let u = unit.unwrap_or_default();
+    Some((coeff, u))
+}
+
+// "3px"/"50%"/"2in" → (크기, 캐논단위). 절대 길이는 px 로. 순수 수 단위는 "".
+fn parse_num_unit(low: &str) -> Option<(f64, String)> {
+    if let Some(p) = low.strip_suffix('%') {
+        let n: f64 = p.parse().ok()?;
+        return Some((n, "%".to_string()));
+    }
+    let unit_len = low.chars().rev().take_while(|c| c.is_ascii_alphabetic()).count();
+    if unit_len == 0 {
+        let n: f64 = low.parse().ok()?;
+        return Some((n, String::new()));
+    }
+    let (num, unit) = low.split_at(low.len() - unit_len);
+    let n: f64 = num.parse().ok()?;
+    // 절대 단위 → px.
+    let (mag, u) = match unit {
+        "in" => (n * 96.0, "px"),
+        "pc" => (n * 16.0, "px"),
+        "pt" => (n * 96.0 / 72.0, "px"),
+        "cm" => (n * 96.0 / 2.54, "px"),
+        "mm" => (n * 96.0 / 25.4, "px"),
+        "q" => (n * 96.0 / (25.4 * 4.0), "px"),
+        // 상대·기타 단위는 그대로(캐논 단위 아님, 결합만).
+        _ => (n, unit),
+    };
+    Some((mag, u.to_string()))
+}
+
 // calc-size() 캐논 직렬화. basis 키워드 소문자화, ", " 구분, 중첩 재귀. 내부
 // <calc-sum> 캐논(size*2→2*size 등)을 canon_calc_sum 으로 정규화.
 pub fn calc_size_canonical(value: &str) -> String {
@@ -12813,6 +12982,20 @@ mod tests {
         assert_eq!(canon_calc_sum("size"), "size");
         assert_eq!(canon_calc_sum("25em"), "25em");
         assert_eq!(canon_calc_sum("2 * size"), "2 * size");
+        // 일반 calc 평탄 합 캐논(§10.13): 결합·정렬·절대단위 px.
+        let cc = |s: &str| canon_calc_serialize(s);
+        assert_eq!(cc("calc(1px + 2px)").as_deref(), Some("calc(3px)"));
+        assert_eq!(cc("calc(1vw + 3%)").as_deref(), Some("calc(3% + 1vw)"));
+        assert_eq!(cc("calc(50px + 100%)").as_deref(), Some("calc(100% + 50px)"));
+        assert_eq!(cc("calc(1vw + 1em)").as_deref(), Some("calc(1em + 1vw)")); // 알파벳
+        assert_eq!(cc("calc(2 * 3px)").as_deref(), Some("calc(6px)"));
+        assert_eq!(cc("calc(2in)").as_deref(), Some("calc(192px)"));
+        assert_eq!(cc("calc(1px + 3% + 2px)").as_deref(), Some("calc(3% + 3px)"));
+        // 복잡식은 None(원문 유지).
+        assert_eq!(cc("calc(min(1px, 2px))"), None);
+        assert_eq!(cc("calc(1px * 2px)"), None); // 단위*단위
+        assert_eq!(cc("calc((1px + 2px) * 3)"), None); // 그룹
+        assert_eq!(cc("10px"), None); // calc 아님
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");

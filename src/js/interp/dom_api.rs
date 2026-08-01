@@ -240,6 +240,13 @@ impl Interp {
         if rl.starts_with("calc-size(") {
             return crate::css::calc_size_canonical(raw);
         }
+        // 일반 calc() 평탄 합 캐논 직렬화(§CSS Values 4 §10.13): 단위별 결합·정렬
+        // (수 → % → 단위 알파벳순)·절대단위 px. 복잡식(함수/그룹)은 None → 원문 유지.
+        if rl.starts_with("calc(") {
+            if let Some(s) = crate::css::canon_calc_serialize(raw) {
+                return s;
+            }
+        }
         // anchor-size()/anchor() 지정값 캐논(§css-anchor-1): name-first 순서, size/side
         // 소문자, fallback 재귀. 세터가 raw 저장이라 여기서 캐논 직렬화(flip-order 등).
         if rl.starts_with("anchor-size(") {
