@@ -844,6 +844,66 @@ pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
 }
 
 // var() 참조를 커스텀 프로퍼티로 치환 → 재파싱해 확정 선언들을 낸다.
+// 값 문자열 안의 모든 var(--name) 참조 이름을 뽑는다(fallback 안 포함). 순환 감지용
+// 의존 그래프 간선 구성에 쓴다.
+fn var_ref_names(value: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut rest = value;
+    while let Some(p) = rest.find("var(") {
+        let after = &rest[p + 4..];
+        let name: String = after
+            .chars()
+            .take_while(|c| *c != ',' && *c != ')' && *c != '(')
+            .collect();
+        let name = name.trim();
+        if name.starts_with("--") {
+            refs.push(name.to_string());
+        }
+        rest = after;
+    }
+    refs
+}
+
+// var() 순환에 속한 커스텀 프로퍼티 이름 집합(§CSS Variables). 의존 그래프에서
+// 자기 자신으로 되돌아올 수 있는 노드 = 순환 멤버. 순환 멤버는 계산값 시점 무효가
+// 되어 등록 프로퍼티는 초기값, 미등록은 guaranteed-invalid(빈 문자열)로 처리된다.
+pub fn find_var_cycles(
+    custom: &std::collections::HashMap<String, String>,
+) -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+    let edges: std::collections::HashMap<&String, Vec<String>> = custom
+        .iter()
+        .map(|(k, v)| {
+            let ns: Vec<String> = var_ref_names(v)
+                .into_iter()
+                .filter(|r| custom.contains_key(r))
+                .collect();
+            (k, ns)
+        })
+        .collect();
+    let mut in_cycle = HashSet::new();
+    for start in custom.keys() {
+        let mut stack: Vec<&String> = edges.get(start).into_iter().flatten().collect();
+        let mut visited: HashSet<&String> = HashSet::new();
+        let mut found = false;
+        while let Some(n) = stack.pop() {
+            if n == start {
+                found = true;
+                break;
+            }
+            if visited.insert(n) {
+                if let Some(neigh) = edges.get(n) {
+                    stack.extend(neigh.iter());
+                }
+            }
+        }
+        if found {
+            in_cycle.insert(start.clone());
+        }
+    }
+    in_cycle
+}
+
 // custom: 요소의 계산된 커스텀 프로퍼티 맵(--name → 원문 값). 미해석이면 빈 Vec.
 pub(crate) fn resolve_var(
     name: &str,

@@ -2830,10 +2830,40 @@ fn style_node<'a>(
             // 등록 프로퍼티끼리 참조(특히 universal)하면 참조 대상의 계산값이 sub_map 에
             // 채워질 때까지 반복 확정한다(fixpoint). 각 패스는 원 지정값에서 sub_map 으로
             // var 를 치환해 계산하고, 치환 결과가 syntax 에 맞지 않으면 초기값으로 대체.
+            // var() 순환 감지(§CSS Variables): 순환 멤버는 계산값 시점 무효 — 등록
+            // 프로퍼티는 자기 초기값, 미등록은 guaranteed-invalid(빈 문자열). 순환 밖
+            // 프로퍼티는 순환 멤버의 계산값(등록=초기값)을 참조할 수 있다.
+            let cycle = crate::css::find_var_cycles(&custom);
+            let mut sub_map = custom.clone();
+            for name in &cycle {
+                if let Some(reg) = at_properties.get(name) {
+                    let init_val = reg.initial.as_deref().map(|iv| {
+                        let mut cv = crate::css::registered_computed_value(
+                            &reg.syntax, iv, fs, root_fs, vp, &current_color, line_height_px,
+                        )
+                        .unwrap_or(Value::Keyword(iv.to_string()));
+                        resolve_units(&mut cv, fs, root_fs, vp);
+                        cv
+                    });
+                    match init_val {
+                        Some(v) => {
+                            sub_map.insert(name.clone(), computed_value_string(&v));
+                            values.insert(name.clone(), v);
+                        }
+                        None => {
+                            sub_map.remove(name);
+                            values.remove(name);
+                        }
+                    }
+                } else {
+                    sub_map.remove(name);
+                    values.remove(name);
+                }
+            }
             let reg_names: Vec<(String, crate::css::PropertyReg, String)> = values
                 .iter()
                 .filter_map(|(k, v)| {
-                    if !k.starts_with("--") {
+                    if !k.starts_with("--") || cycle.contains(k) {
                         return None;
                     }
                     let reg = at_properties.get(k)?;
@@ -2844,7 +2874,6 @@ fn style_node<'a>(
                     }
                 })
                 .collect();
-            let mut sub_map = custom.clone();
             let mut reg_result: HashMap<String, Option<Value>> = HashMap::new();
             for _ in 0..6 {
                 let mut changed = false;
