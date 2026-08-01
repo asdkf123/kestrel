@@ -1,6 +1,6 @@
 # Kestrel 표준 적합성 현황
 
-측정일: 2026-07-31. 러너: 헤드리스 렌더 + WPT testharness / test262. WPT 는 testharness 기반 서브테스트 기준(reftest·수동 테스트 제외, 하네스 못 돈 파일은 분모에서 빠짐). test262 는 실행분(module/onlyStrict 건너뜀) 기준. % = 통과/전체.
+측정일: 2026-07-31 (CSS 표는 2026-08 CSSOM 스윕분 부분 갱신 — css-nesting/conditional/cssom/mediaqueries/syntax/borders/selectors/values/cascade/properties-values-api/color 행은 최신, 종합(축별) CSS 총계는 미갱신이라 실제보다 과소). 러너: 헤드리스 렌더 + WPT testharness / test262. WPT 는 testharness 기반 서브테스트 기준(reftest·수동 테스트 제외, 하네스 못 돈 파일은 분모에서 빠짐). test262 는 실행분(module/onlyStrict 건너뜀) 기준. % = 통과/전체.
 
 > ⚠️ 이 수치는 **명세 적합성**(파싱/API 정확도)이지 시각적 렌더 완성도가 아니다. 상용 브라우저 대비가 아니라 스펙 스위트 대비 진척도다.
 
@@ -58,7 +58,27 @@
 
 ## CSS (WPT, 서브트리별, 통과율 내림차순)
 
-> **값 파싱 검증 스윕 진행중**(아래 표는 2026-07-31 측정, 이후 갱신분 미반영). 최근 작업:
+> **★2026-08 CSSOM 스윕(조건부/중첩/컨테이너 그룹 규칙)** — 아래 표의 해당 행은 갱신됨,
+> 나머지 행은 2026-07-31 측정(이후 갱신분 미반영, 실제 수치는 대개 더 높음):
+> - **css-nesting 4.3→81.2%**: 중첩 규칙 다중 줄 직렬화, **지정값(specified) 보존**(cssText 는
+>   계산값 아닌 지정값 — Declaration.raw), **라이브 addressing**(CssRule 에 중첩경로 np, insertRule/
+>   deleteRule/selectorText/.style 이 중첩 규칙에 반영), 중첩 @media/@supports 매칭+selectorText
+>   무효화 재desugar, selectorText 캐논화(암시적 & 명시), 선행 결합자 desugar, CSSNestedDeclarations.
+> - **css-conditional 66.6→82.1%**: **최상위 @media/@supports/@container 를 CSSOM 컨테이너로 통일**
+>   (파스시점 flatten 대신 CSSMediaRule/CSSSupportsRule/CSSContainerRule 보존, 매칭은 build_with
+>   flatten 이 조건 평가), CSSRule 타입 상수, 인터페이스 상속 사슬, insertRule 검증(후행 garbage/
+>   @import HierarchyRequestError), **container-type/name/container 파싱·검증**, **@container 쿼리
+>   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
+>   conditionText 캐논 직렬화.
+> - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→72.1%, css-syntax 18.9→68.7%**(이전 세션 포함).
+> - **회귀 함정(기록)**: @container 를 컨테이너화하면 has_containers()가 최상위만 스캔해 ContainerMap
+>   미구축→매칭 붕괴(재귀+at_container 검사 필수). 컨테이너 쿼리 평가기는 미디어 평가기와 분리(mediaqueries
+>   무위험). Value enum 크기 키우면 JS 재귀 가드 전 네이티브 스택 오버플로(np 는 Rc).
+> - **되돌린 시도(회귀 실증)**: style() 스타일 쿼리는 @property 등록 타입 커스텀 프로퍼티의 타입 비교(범위·
+>   calc·단위변환)를 요구 — 문자열 매칭 부분 구현은 fluke 통과분을 깨 net-negative라 되돌림. 전체 feature
+>   의미론 필요.
+>
+> **값 파싱 검증 스윕(이전)**. 최근 작업:
 > **calc 차원 타입 검사기**(`mdim_of`, [css-values-math.md](css-values-math.md)) 구현으로 길이/시간/수/각도 문맥의
 > 타입 불일치(`max(0Hz)`/`calc(1/2px)`/축 불일치)를 원리적으로 거부. 값 검증기의 `contains("deg")` 편법 전부 제거.
 > **검증 추가·강화된 프로퍼티**: content-visibility, scrollbar-width/color, caret-shape/input-security/overlay/
@@ -101,36 +121,42 @@
 | css-text-decor | 1,182 / 1,276 | 92.6% |
 | CSS2 | 592 / 653 | 90.7% |
 | css-images | 3,225 / 3,580 | 90.1% |
+| mediaqueries | 272 / 308 | 88.3% |
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
+| css-color | 7,930 / 9,399 | 84.4% |
 | css-content | 176 / 211 | 83.4% |
-| css-color | 6,924 / 8,314 | 83.3% |
 | css-size-adjust | 170 / 207 | 82.1% |
+| css-conditional | 2,136 / 2,602 | 82.1% |
 | css-flexbox | 1,073 / 1,315 | 81.6% |
+| css-nesting | 95 / 117 | 81.2% |
 | css-backgrounds | 3,788 / 4,914 | 77.1% |
+| css-anchor-position | 9,972 / 13,012 | 76.6% |
 | css-viewport | 369 / 490 | 75.3% |
 | css-display | 287 / 384 | 74.7% |
 | css-break | 452 / 609 | 74.2% |
 | css-ui | 1,390 / 1,888 | 73.6% |
+| css-fonts | 5,571 / 7,565 | 73.6% |
 | css-transforms | 2,886 / 3,969 | 72.7% |
-| css-anchor-position | 9,972 / 13,012 | 76.6% |
+| cssom | 2,493 / 3,437 | 72.5% |
+| selectors | 2,968 / 4,118 | 72.1% |
 | css-ruby | 52 / 73 | 71.2% |
 | css-position | 993 / 1,412 | 70.3% |
-| selectors | 2,872 / 4,118 | 69.7% |
 | css-sizing | 2,237 / 3,212 | 69.6% |
+| css-syntax | 294 / 428 | 68.7% |
 | css-text | 2,078 / 3,029 | 68.6% |
-| cssom | 2,372 / 3,434 | 69.1% |
-| css-fonts | 5,571 / 7,565 | 73.6% |
-| css-conditional | 1,870 / 2,808 | 66.6% |
 | css-scroll-snap | 458 / 690 | 66.4% |
+| css-properties-values-api | 611 / 923 | 66.2% |
 | css-shapes | 3,336 / 5,093 | 65.5% |
 | css-multicol | 850 / 1,356 | 62.7% |
 | css-grid | 2,156 / 3,567 | 60.4% |
 | css-env | 5 / 9 | 55.6% |
 | css-box | 529 / 957 | 55.3% |
+| css-cascade | 391 / 717 | 54.5% |
 | css-animations | 574 / 1,059 | 54.2% |
 | css-contain | 194 / 360 | 53.9% |
 | css-variables | 272 / 511 | 53.2% |
+| css-values | 4,113 / 7,764 | 53.0% |
 | css-writing-modes | 188 / 356 | 52.8% |
 | css-overscroll-behavior | 51 / 97 | 52.6% |
 | css-page | 49 / 97 | 50.5% |
@@ -141,30 +167,24 @@
 | css-rhythm | 72 / 155 | 46.5% |
 | css-inline | 288 / 635 | 45.4% |
 | css-lists | 362 / 852 | 42.5% |
+| css-borders | 457 / 1,151 | 39.7% |
 | css-overflow | 369 / 983 | 37.5% |
 | css-tables | 191 / 557 | 34.3% |
 | filter-effects | 833 / 2,452 | 34.0% |
-| css-borders | 365 / 1,151 | 31.7% |
-| css-values | 2,604 / 7,769 | 33.5% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions | 879 / 3,086 | 28.5% |
 | fill-stroke | 104 / 371 | 28.0% |
 | motion | 1,053 / 3,775 | 27.9% |
 | css-link-params | 6 / 25 | 24.0% |
-| css-cascade | 162 / 717 | 22.6% |
 | css-masking | 831 / 4,312 | 19.3% |
-| css-syntax | 81 / 428 | 18.9% |
 | cssom-view | 300 / 1,827 | 16.4% |
 | css-scroll-anchoring | 13 / 84 | 15.5% |
 | css-pseudo | 77 / 532 | 14.5% |
-| css-properties-values-api | 93 / 744 | 12.5% |
 | css-color-hdr | 13 / 116 | 11.2% |
 | css-shadow | 37 / 347 | 10.7% |
 | css-gaps | 333 / 3,382 | 9.8% |
 | css-mixins | 46 / 492 | 9.3% |
-| mediaqueries | 24 / 308 | 7.8% |
 | css-view-transitions | 54 / 1,208 | 4.5% |
-| css-nesting | 5 / 117 | 4.3% |
 | css-highlight-api | 1 / 41 | 2.4% |
 | geometry | 14 / 672 | 2.1% |
 | css-typed-om | 3 / 306 | 1.0% |
