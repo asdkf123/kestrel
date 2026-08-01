@@ -3645,6 +3645,30 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
         };
         return Some(([c0, c1, c2], alpha));
     }
+    // lab↔lch, oklab↔oklch 는 같은 색공간의 직교/극좌표다 — srgb 왕복(정밀도 손실·gamut
+    // 밖 클램프) 없이 직접 변환한다(§CSS Color 4). lab(0.7 45 30)→lch(0.7 54.08 33.69).
+    {
+        let in_fn = low.split('(').next().unwrap_or("");
+        let same_family = (matches!(space, "lab" | "lch") && matches!(in_fn, "lab" | "lch"))
+            || (matches!(space, "oklab" | "oklch") && matches!(in_fn, "oklab" | "oklch"));
+        if same_family && in_fn != space {
+            if let Some((nc, na)) = color_coords_none(in_fn, cs) {
+                let l = nc[0];
+                let conv = if matches!(space, "lch" | "oklch") {
+                    // 직교(lab)→극(lch): C=hypot(a,b), H=atan2(b,a)°.
+                    let a = nc[1].unwrap_or(0.0);
+                    let b = nc[2].unwrap_or(0.0);
+                    [l, Some((a * a + b * b).sqrt()), Some(b.atan2(a).to_degrees().rem_euclid(360.0))]
+                } else {
+                    // 극(lch)→직교(lab): a=C·cosH, b=C·sinH.
+                    let c = nc[1].unwrap_or(0.0);
+                    let h = nc[2].unwrap_or(0.0).to_radians();
+                    [l, Some(c * h.cos()), Some(c * h.sin())]
+                };
+                return Some((conv, na));
+            }
+        }
+    }
     // color(<space> …) 입력이 보간 공간과 같으면 성분 직접(none 보존, 감마 좌표 그대로).
     if low.starts_with("color(") {
         let p = color_parts(func_inner(&low)?);
