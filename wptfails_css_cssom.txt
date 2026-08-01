@@ -32,8 +32,6 @@ css/cssom/CSSStyleRule-set-selectorText-namespace.html	FAIL	CSSStyleRule: select
 css/cssom/CSSStyleRule-set-selectorText-namespace.html	FAIL	CSSStyleRule: selectorText value: |p| isMatch: false	rule.selectorText — rule 이(가) undefined (읽을 수 없음)
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: Invalid CSS selector: ::gibberish	assert_equals: expected ".style0" but got "::gibberish"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: Invalid CSS selector: :gibberish	assert_equals: expected ".style0" but got ":gibberish"
-css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |ÇĞıİ| isMatch: false	assert_equals: expected "ÇĞıİ" but got ".style0"
-css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |🤓| isMatch: false	assert_equals: expected "🤓" but got ".style0"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: ||div| isMatch: false	assert_equals: expected "rgb(255, 0, 255)" but got "rgb(0, 0, 255)"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |[*|lang]| isMatch: true	assert_equals: expected "[*|lang]" but got ".style0"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |[|lang]| isMatch: true	assert_equals: expected "[lang]" but got ".style0"

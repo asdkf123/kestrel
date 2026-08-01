@@ -13602,7 +13602,9 @@ fn named_color(name: &str) -> Option<Color> {
 }
 
 pub(crate) fn valid_identifier_char(c: char) -> bool {
-    matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_')
+    // §CSS Syntax ident-code-point: ASCII 영숫자·'-'·'_' + 비ASCII(U+0080 이상).
+    // 유니코드 클래스/id/타입 이름(ÇĞ·이모지 등)이 유효한 ident 다.
+    matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_') || (c as u32) >= 0x80
 }
 
 #[cfg(test)]
