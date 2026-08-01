@@ -3490,12 +3490,40 @@ fn round_family_valid(name: &str, args: &[String]) -> bool {
 // calc-sum 한 조각의 보수적 구문 검증(§CSS Values 4). 빈 식·시작/끝의 단독 이항
 // 연산자(1 +, / 2)·연산자 없이 공백으로만 나열된 순수 값(1 2, 1px 2px) 을 무효로
 // 본다. 중첩 산술 함수(calc(round(0px)) 등)는 재귀로 검증한다. 그 외 유효식은 통과.
+// 최상위 `*`/`/` 연산자 둘레에 공백을 넣는다. `round(100,10)* -1` 처럼 연산자가
+// 피연산자에 붙어 있어 공백 토큰화가 `round(100,10)*` 로 오인식하던 것을 바로잡는다.
+// (`+`/`-` 는 CSS 문법상 calc 안에서 반드시 공백으로 둘러싸이므로 대상 아님.)
+fn space_top_muldiv(e: &str) -> String {
+    let mut depth = 0i32;
+    let mut out = String::with_capacity(e.len() + 8);
+    for ch in e.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                out.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                out.push(ch);
+            }
+            '*' | '/' if depth == 0 => {
+                out.push(' ');
+                out.push(ch);
+                out.push(' ');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn math_expr_valid(expr: &str) -> bool {
     let e = expr.trim();
     if e.is_empty() {
         return false;
     }
-    let toks = split_ws_depth0(e);
+    let spaced = space_top_muldiv(e);
+    let toks = split_ws_depth0(&spaced);
     if toks.is_empty() {
         return false;
     }
