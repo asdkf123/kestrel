@@ -11693,7 +11693,18 @@ pub fn normalize_color_mix(raw: &str) -> Option<String> {
     if parts.len() != 3 {
         return None;
     }
-    let space = parts[0].split_whitespace().collect::<Vec<_>>().join(" ");
+    // 보간법 `in <space> [<hue-method> hue]`. 기본 hue-method 인 `shorter` 는 생략한다
+    // (§CSS Color 5 serialize — `in hsl shorter hue` → `in hsl`). longer/increasing/
+    // decreasing 은 유지.
+    let space_toks: Vec<&str> = parts[0].split_whitespace().collect();
+    let space = if space_toks.len() >= 4
+        && space_toks[space_toks.len() - 1] == "hue"
+        && space_toks[space_toks.len() - 2] == "shorter"
+    {
+        space_toks[..space_toks.len() - 2].join(" ")
+    } else {
+        space_toks.join(" ")
+    };
     let (c1, p1) = split_mix_part(&parts[1]);
     let (c2, p2) = split_mix_part(&parts[2]);
     let c1s = serialize_mix_input_color(&c1)?;

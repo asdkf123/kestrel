@@ -71,6 +71,8 @@
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
 > - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **css-color +25 (color-mix)**: `color-mix()` 직렬화가 기본 hue 보간법 `shorter hue` 를 생략
+>   (§CSS Color 5 — `in hsl shorter hue` → `in hsl`). longer/increasing/decreasing 은 유지.
 > - **css-color +139 (relative-color)**: `rgb(from <origin> …)` 등 상대색의 origin 을 계산색으로
 >   직렬화. 예전엔 origin 정규화 체인이 normalize_relative_color/color_function/lab_like/color_mix
 >   만 시도해 레거시 `rgb(20%,40%,60%,80%)`/`hsl(120deg …)` origin 을 못 다뤄 원문을 냈다. 이제
@@ -145,7 +147,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 8,101 / 9,399 | 86.2% |
+| css-color | 8,126 / 9,399 | 86.5% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
