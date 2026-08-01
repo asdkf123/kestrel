@@ -11737,7 +11737,17 @@ fn serialize_mix_input_color(s: &str) -> Option<String> {
     }
     match interpret_value(s) {
         Some(v @ Value::Color(_)) => Some(crate::style::computed_value_string(&v)),
-        Some(Value::ColorFn(_, serial)) => Some(serial.to_string()),
+        Some(Value::ColorFn(c, serial)) => {
+            // srgb 계열(rgb/hsl/hwb)은 none 채널을 0 으로 해석해 계산색 rgb()/rgba() 로
+            // 직렬화한다(§CSS Color 5: mix/relative 입력은 계산색). 광색역(color()/lab/
+            // lch/oklab/oklch)은 자기 형태를 보존한다.
+            let sl = s.trim().to_ascii_lowercase();
+            if sl.starts_with("rgb") || sl.starts_with("hsl") || sl.starts_with("hwb") {
+                Some(crate::style::computed_value_string(&Value::Color(c)))
+            } else {
+                Some(serial.to_string())
+            }
+        }
         _ => None,
     }
 }
