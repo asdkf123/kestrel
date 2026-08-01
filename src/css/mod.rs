@@ -221,6 +221,17 @@ pub struct Stylesheet {
     // @keyframes 이름 → (0%/from 프레임, 100%/to 프레임). CSS 애니메이션 보간용
     // (getComputedStyle 이 진행 중 값을 계산). 정적 렌더는 keyframes(최종)만 쓴다.
     pub keyframes_ft: std::collections::HashMap<String, (Vec<(String, Value)>, Vec<(String, Value)>)>,
+    // @property 등록(§CSS Properties & Values API): 이름 → 등록 정보. 커스텀 프로퍼티
+    // 상속 제어(inherits:false)·초기값·구문에 쓴다.
+    pub at_properties: std::collections::HashMap<String, PropertyReg>,
+}
+
+// @property 규칙의 등록 정보.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropertyReg {
+    pub syntax: String,
+    pub inherits: bool,
+    pub initial: Option<String>,
 }
 
 // CSSOM 의 한 스타일시트 (§CSSOM 6.2 CSSStyleSheet).
@@ -246,6 +257,7 @@ impl Stylesheet {
             font_faces: Vec::new(),
             keyframes: std::collections::HashMap::new(),
             keyframes_ft: std::collections::HashMap::new(),
+            at_properties: std::collections::HashMap::new(),
         }
     }
 
@@ -262,6 +274,9 @@ impl Stylesheet {
             if !self.layers.contains(&l) {
                 self.layers.push(l);
             }
+        }
+        for (k, v) in other.at_properties {
+            self.at_properties.entry(k).or_insert(v);
         }
         self.rules.extend(other.rules);
         self.font_faces.extend(other.font_faces);
@@ -770,6 +785,7 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
         cur_container: None,
         cur_layer: None,
         anon_count: 0,
+        at_properties: std::collections::HashMap::new(),
     };
     let rules = parser.parse_rules();
     Stylesheet {
@@ -778,6 +794,7 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
         font_faces: parser.font_faces,
         keyframes: parser.keyframes,
         keyframes_ft: parser.keyframes_ft,
+        at_properties: parser.at_properties,
     }
 }
 
@@ -817,6 +834,7 @@ pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
         cur_container: None,
         cur_layer: None,
         anon_count: 0,
+        at_properties: std::collections::HashMap::new(),
     };
     parser.parse_declarations()
 }
@@ -939,6 +957,27 @@ fn split_top_kw<'a>(s: &'a str, kw: &str) -> Vec<&'a str> {
     out
 }
 
+// style() 값 동등성(§CSS Values 5: 계산값 비교). 등록 custom prop 은 계산값으로
+// 비교되므로 calc(1 + 2)와 3, calc(1px + 2px)와 3px 가 같다. 둘 다 수면 수 비교,
+// 아니면 calc 캐논/문자열 비교(대소문자 무시).
+fn if_values_equal(a: &str, b: &str) -> bool {
+    let a = a.trim();
+    let b = b.trim();
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    if let (Some(x), Some(y)) = (values::eval_math_number(a), values::eval_math_number(b)) {
+        return (x - y).abs() < 1e-9 || (x.is_nan() && y.is_nan());
+    }
+    // 길이 등: calc 로 감싸 캐논화하면 "3px" 와 "calc(1px + 2px)" 가 같은 "calc(3px)".
+    let norm = |s: &str| {
+        values::canon_calc_serialize(s)
+            .or_else(|| values::canon_calc_serialize(&format!("calc({})", s)))
+            .unwrap_or_else(|| s.to_string())
+    };
+    norm(a).eq_ignore_ascii_case(&norm(b))
+}
+
 // style() 쿼리 평가: 불리언(and/or/not/괄호) + style-feature 리프. 리프는
 // --name(존재) 또는 --name: value(값 일치, initial=미설정/빈값, 미해석 var=불일치).
 fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>) -> Option<bool> {
@@ -987,7 +1026,7 @@ fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>)
             } else if exp.contains("var(") {
                 false
             } else {
-                cur.map(|v| v.eq_ignore_ascii_case(exp)).unwrap_or(false)
+                cur.map(|v| if_values_equal(v, exp)).unwrap_or(false)
             }
         }
     })
@@ -1185,6 +1224,7 @@ struct Parser {
     // 지금 파싱 중인 @layer 블록 이름 (중첩 시 "a.b")
     cur_layer: Option<String>,
     anon_count: usize,
+    at_properties: std::collections::HashMap<String, PropertyReg>,
 }
 
 impl Parser {
@@ -1214,6 +1254,8 @@ impl Parser {
                     rules.extend(self.parse_layer());
                 } else if ident == "container" {
                     rules.extend(self.parse_container());
+                } else if ident == "property" {
+                    self.parse_property_rule();
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -1463,6 +1505,62 @@ impl Parser {
             return None;
         }
         Some(FontFace { family, srcs, unicode_range })
+    }
+
+    // '@property --name { syntax: "<t>"; inherits: true|false; initial-value: v; }'
+    // (§CSS Properties & Values API). 등록 정보를 at_properties 에 보관한다.
+    fn parse_property_rule(&mut self) {
+        let name = self.consume_while(|c| c != '{' && c != ';' && c != '}').trim().to_string();
+        if self.peek() != Some('{') {
+            if self.peek() == Some(';') {
+                self.consume_char();
+            }
+            return;
+        }
+        self.consume_char(); // '{'
+        // 블록 원문 소비(균형 '}'). descriptor 는 프로퍼티 문법이 아니라 원문으로 읽는다
+        // (parse_declarations 는 expand_declaration 이 syntax/inherits 를 드롭한다).
+        let mut depth = 1i32;
+        let mut body = String::new();
+        while let Some(c) = self.peek() {
+            self.consume_char();
+            match c {
+                '{' => {
+                    depth += 1;
+                    body.push(c);
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    body.push(c);
+                }
+                _ => body.push(c),
+            }
+        }
+        if !name.starts_with("--") {
+            return;
+        }
+        let mut syntax = String::new();
+        let mut inherits = false;
+        let mut initial: Option<String> = None;
+        for desc in body.split(';') {
+            if let Some(ci) = desc.find(':') {
+                let key = desc[..ci].trim().to_ascii_lowercase();
+                let val = desc[ci + 1..].trim();
+                match key.as_str() {
+                    "syntax" => syntax = val.trim_matches(|c| c == '"' || c == '\'').to_string(),
+                    "inherits" => inherits = val.eq_ignore_ascii_case("true"),
+                    "initial-value" => initial = Some(val.to_string()),
+                    _ => {}
+                }
+            }
+        }
+        if syntax.is_empty() {
+            return; // syntax 필수
+        }
+        self.at_properties.insert(name, PropertyReg { syntax, inherits, initial });
     }
 
     // '@keyframes name { 0%{...} 100%{...} }' — 최종(100%/to) 프레임 선언만 보관.
@@ -2090,6 +2188,16 @@ mod tests {
     use super::*;
 
     #[test]
+    #[test]
+    fn at_property_parsed_into_registry() {
+        let ss = parse("@property --len { syntax: \"<length>\"; inherits: false; initial-value: 3px; }".to_string());
+        let reg = ss.at_properties.get("--len");
+        assert!(reg.is_some(), "at_properties: {:?}", ss.at_properties.keys().collect::<Vec<_>>());
+        let r = reg.unwrap();
+        assert_eq!(r.inherits, false, "inherits");
+        assert_eq!(r.initial.as_deref(), Some("3px"), "initial");
+    }
+
     fn css_comments_stripped_declarations_survive() {
         // 주석이 섞인 규칙(미압축 CSS)에서 선언이 유실되지 않아야 (mdBook #help 사례)
         let ss = parse(

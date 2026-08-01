@@ -1290,7 +1290,7 @@ pub fn style_tree_containers<'a>(
 ) -> StyledNode<'a> {
     let index = RuleIndex::build_with(stylesheet, containers);
     let mut ancestors: Vec<&ElementData> = Vec::new();
-    style_node(dom, dom.root, &index, &mut ancestors, &mut Vec::new(), None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, DEFAULT_FONT_SIZE)
+    style_node(dom, dom.root, &index, &mut ancestors, &mut Vec::new(), None, &SiblingCtx::default(), vp, pseudo, &stylesheet.keyframes, &stylesheet.at_properties, DEFAULT_FONT_SIZE)
 }
 
 pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
@@ -2588,6 +2588,7 @@ fn style_node<'a>(
     vp: Viewport,
     pseudo: &PseudoStyles,
     keyframes: &std::collections::HashMap<String, Vec<(String, Value)>>,
+    at_properties: &std::collections::HashMap<String, crate::css::PropertyReg>,
     root_fs: f32, // 루트 요소 계산 font-size (rem 해석 기준)
 ) -> StyledNode<'a> {
     let node = dom.get(id);
@@ -2773,7 +2774,21 @@ fn style_node<'a>(
                 }
                 for (k, v) in p {
                     if k.starts_with("--") && !values.contains_key(k) {
+                        // @property 로 inherits:false 등록된 프로퍼티는 상속하지 않는다
+                        // (아래에서 initial-value 를 준다). 미등록·inherits:true 는 상속.
+                        if at_properties.get(k).map(|r| !r.inherits).unwrap_or(false) {
+                            continue;
+                        }
                         values.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            // @property 등록 프로퍼티가 설정·상속되지 않았으면 initial-value 를 적용한다
+            // (§CSS Properties & Values API). 루트 포함 항상.
+            for (name, reg) in at_properties {
+                if !values.contains_key(name) {
+                    if let Some(init) = &reg.initial {
+                        values.insert(name.clone(), Value::Keyword(init.clone()));
                     }
                 }
             }
@@ -2893,7 +2908,7 @@ fn style_node<'a>(
                         // 구조적 문맥에 포함하지 않고 스타일만 (기본 형제 문맥)
                         children.push(style_node(
                             dom, child, index, ancestors, anc_pos, Some(&values),
-                            &SiblingCtx::default(), vp, pseudo, keyframes, child_root_fs,
+                            &SiblingCtx::default(), vp, pseudo, keyframes, at_properties, child_root_fs,
                         ));
                         continue;
                     }
@@ -2912,7 +2927,7 @@ fn style_node<'a>(
                         has_children,
                         anchor: Some((dom, child)),
                     };
-                    children.push(style_node(dom, child, index, ancestors, anc_pos, Some(&values), &csib, vp, pseudo, keyframes, child_root_fs));
+                    children.push(style_node(dom, child, index, ancestors, anc_pos, Some(&values), &csib, vp, pseudo, keyframes, at_properties, child_root_fs));
                     prev_elems.push(ce);
                 } else {
                     children.push(style_node(
@@ -2926,6 +2941,7 @@ fn style_node<'a>(
                         vp,
                         pseudo,
                         keyframes,
+                        at_properties,
                         child_root_fs,
                     ));
                 }
@@ -2952,7 +2968,7 @@ fn style_node<'a>(
                 .children
                 .iter()
                 .map(|&child| {
-                    style_node(dom, child, index, ancestors, anc_pos, parent, &SiblingCtx::default(), vp, pseudo, keyframes, root_fs)
+                    style_node(dom, child, index, ancestors, anc_pos, parent, &SiblingCtx::default(), vp, pseudo, keyframes, at_properties, root_fs)
                 })
                 .collect(),
         },
