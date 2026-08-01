@@ -4121,11 +4121,18 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
         }
     };
     // 공간 좌표(채널별 배율로 환원 + 범위 클램프).
-    let coords = [
+    let mut coords = [
         clamp_channel(spec.space, 0, c0.get() / spec.scale[0]),
         clamp_channel(spec.space, 1, c1.get() / spec.scale[1]),
         clamp_channel(spec.space, 2, c2.get() / spec.scale[2]),
     ];
+    // hue 채널(lch/oklch/hsl/hwb)은 계산값에서 [0,360)로 정규화한다(§CSS Color 4) —
+    // lch(from lch(200 300 400) l c h) 의 h=400 → 40, 음수 -400 → 320. 색은 주기라 불변.
+    for i in 0..3 {
+        if spec.angle[i] && coords[i].is_finite() {
+            coords[i] = coords[i].rem_euclid(360.0);
+        }
+    }
     let (rr, gg, bb) = space_to_srgb(spec.space, coords)?;
     let a = alpha_frac(alpha);
     let rgba = Color { r: to_u8(rr), g: to_u8(gg), b: to_u8(bb), a: (a * 255.0).round() as u8 };
