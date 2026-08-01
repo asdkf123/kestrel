@@ -1,6 +1,41 @@
 use super::values::interpret_value;
 use super::{Color, Declaration, Unit, Value};
 
+// container-name 값이 유효한 <custom-ident>+ 인가(§CSS Containment 3). 공백 구분 토큰이
+// 하나 이상, 각 토큰이 유효 custom-ident(CSS 전역 키워드·none·and·or·not·default 는 예약).
+fn container_name_valid(s: &str) -> bool {
+    let tokens: Vec<&str> = s.split_whitespace().collect();
+    if tokens.is_empty() {
+        return false;
+    }
+    tokens.iter().all(|t| is_valid_container_ident(t))
+}
+
+fn is_valid_container_ident(t: &str) -> bool {
+    if t.is_empty() {
+        return false;
+    }
+    // 예약어(대소문자 무시): CSS 전역 키워드 + none + 쿼리 결합자.
+    let low = t.to_ascii_lowercase();
+    if matches!(
+        low.as_str(),
+        "none" | "and" | "or" | "not" | "default" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+    ) {
+        return false;
+    }
+    // 식별자 문법: 첫 글자는 숫자/붙임표 제약이 있으나, 여기선 실용적으로 [a-zA-Z_-]
+    // 또는 비ASCII 로 시작하고 이후 [a-zA-Z0-9_-]·비ASCII 만 허용(§CSS Syntax ident).
+    let mut chars = t.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '-' || (first as u32) >= 0x80) {
+        return false;
+    }
+    // `-` 로만 시작하고 두 번째도 숫자면 무효(예: -1)는 드묾 — 단순화: 나머지 문자 검사.
+    t.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-' || (c as u32) >= 0x80
+    })
+}
+
 // 수 값 파싱: 직접 파싱 실패 시 수학 함수(abs/sign/round/sqrt/…)를 interpret_value
 // 로 평가한다. z-index/order/opacity/flex-* 처럼 수를 직접 파싱하던 프로퍼티가
 // abs(1)/clamp(0,sign(1),1) 등을 받게 한다(수 반환 함수는 Length(_, Number)).
@@ -125,6 +160,68 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::scroll_snap_type_canonical(value_text)) }];
             }
             return Vec::new();
+        }
+        // container-type(§CSS Containment 3): normal | size | inline-size (단일 키워드).
+        "container-type" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if matches!(low.as_str(), "normal" | "size" | "inline-size") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            return Vec::new();
+        }
+        // container-name(§CSS Containment 3): none | <custom-ident>+.
+        "container-name" => {
+            let trimmed = value_text.trim();
+            let low = trimmed.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if container_name_valid(trimmed) {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(trimmed.to_string()) }];
+            }
+            return Vec::new();
+        }
+        // container(§CSS Containment 3 단축): <container-name> [ '/' <container-type> ]?.
+        "container" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { raw: String::new(), important: false, name: "container-name".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "container-type".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            let (name_part, type_part) = match value_text.split_once('/') {
+                Some((n, t)) => (n.trim(), Some(t.trim())),
+                None => (value_text.trim(), None),
+            };
+            // 이름부 검증: none 또는 <custom-ident>+.
+            let name_low = name_part.to_ascii_lowercase();
+            let name_val = if name_low == "none" {
+                "none".to_string()
+            } else if container_name_valid(name_part) {
+                name_part.to_string()
+            } else {
+                return Vec::new();
+            };
+            // 타입부(생략 시 normal): normal | size | inline-size.
+            let type_val = match type_part {
+                None => "normal".to_string(),
+                Some(t) => {
+                    let tl = t.to_ascii_lowercase();
+                    if matches!(tl.as_str(), "normal" | "size" | "inline-size") {
+                        tl
+                    } else {
+                        return Vec::new();
+                    }
+                }
+            };
+            return vec![
+                Declaration { raw: String::new(), important: false, name: "container-name".to_string(), value: Value::Keyword(name_val) },
+                Declaration { raw: String::new(), important: false, name: "container-type".to_string(), value: Value::Keyword(type_val) },
+            ];
         }
         // top/right/bottom/left(§CSS Position): <length-percentage> | auto. 각도·단위없는
         // 비영·기타 키워드 거부. 유효값은 interpret_value 로 저장(레이아웃 불변). inset
