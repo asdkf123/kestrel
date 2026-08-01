@@ -1411,8 +1411,10 @@ pub fn normalize_transform(v: &str) -> String {
         }
         let args: String = chars[args_start..i].iter().collect();
         i += 1; // ')' 소비
+        // 최상위 콤마로 분할(중첩 함수 clamp(0deg,45deg,90deg) 를 한 인자로 유지).
+        let arg_owned = split_top_commas_local(&args);
         let arg_strs: Vec<&str> =
-            args.split(',').map(|a| a.trim()).filter(|a| !a.is_empty()).collect();
+            arg_owned.iter().map(|a| a.trim()).filter(|a| !a.is_empty()).collect();
         // 함수별 인자 개수 검증(§CSS Transforms). 미지 함수/잘못된 개수는 무효.
         if !transform_arity_ok(&name, arg_strs.len()) {
             return String::new();
@@ -1500,6 +1502,31 @@ fn transform_arity_ok(func: &str, argc: usize) -> bool {
 
 // transform 함수 인자 하나 정규화. scale 계열 %→수, rotate/skew 계열 각도→도(맨수도
 // deg), 그 외(translate/matrix/perspective)는 원문.
+// 최상위(괄호 밖) 콤마로 분할. matrix(a,b,…) 는 나누고 clamp(x,y,z) 는 유지.
+fn split_top_commas_local(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for ch in s.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(ch);
+            }
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(ch),
+        }
+    }
+    out.push(cur);
+    out
+}
+
 fn norm_transform_arg(func: &str, a: &str) -> String {
     if func.starts_with("scale") {
         if let Some(p) = a.strip_suffix('%') {
