@@ -12817,7 +12817,15 @@ fn normalize_selector_head(
         }
         let c = chars[i];
         match c {
-            '>' | '+' | '~' | ',' | ' ' | '\t' | '\n' => {
+            ' ' | '\t' | '\n' => {
+                // 연속 공백을 단일 공백으로 축약(자손 결합자 정규화, §CSSOM).
+                while i < chars.len() && matches!(chars[i], ' ' | '\t' | '\n') {
+                    i += 1;
+                }
+                out.push(' ');
+                compound_start = true;
+            }
+            '>' | '+' | '~' | ',' => {
                 out.push(c);
                 i += 1;
                 compound_start = true;
@@ -12996,6 +13004,22 @@ pub(crate) fn serialize_selector_ns(
                         out.push_str(&canon_pseudo_arg(&name, &s[j + 1..k]));
                         out.push(')');
                         i = k + 1;
+                        copy_from = i;
+                        continue;
+                    }
+                }
+                // 레거시 단일콜론 의사요소(:before/:after/:first-letter/:first-line)는
+                // 이중콜론으로 직렬화한다(§CSSOM). 콜론 개수 = name_start - i.
+                if name_start - i == 1 {
+                    let nm = s[name_start..j].to_ascii_lowercase();
+                    if matches!(
+                        nm.as_str(),
+                        "before" | "after" | "first-letter" | "first-line"
+                    ) {
+                        out.push_str(&s[copy_from..i]);
+                        out.push_str("::");
+                        out.push_str(&nm);
+                        i = j;
                         copy_from = i;
                         continue;
                     }
