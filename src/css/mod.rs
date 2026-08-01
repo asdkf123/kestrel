@@ -198,6 +198,7 @@ pub(crate) use values::resolve_gradient_computed;
 pub(crate) use values::normalize_shape;
 pub(crate) use values::interpret_value;
 pub(crate) use shorthand::expand_declaration as expand_decl_pub;
+pub(crate) use shorthand::serialize_font_family;
 pub(crate) use shorthand::box_shadow_canonical;
 pub(crate) use shorthand::text_shadow_canonical;
 pub(crate) use shorthand::text_decoration_canonical;

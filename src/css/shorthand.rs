@@ -3012,10 +3012,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "font-family" => {
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
-            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
-                || font_family_valid(v)
-            {
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 vec![Declaration { raw: String::new(), important: false, name: "font-family".to_string(), value: Value::Keyword(v.to_string()) }]
+            } else if font_family_valid(v) {
+                // CSSOM 규칙으로 정규화해 저장(specified·computed 직렬화 동일).
+                vec![Declaration { raw: String::new(), important: false, name: "font-family".to_string(), value: Value::Keyword(serialize_font_family(v)) }]
             } else {
                 Vec::new()
             }
@@ -3757,6 +3758,50 @@ pub(crate) fn font_family_valid(value: &str) -> bool {
     !fams.is_empty() && fams.iter().all(|f| single_family_valid(f))
 }
 
+// font-family 단일 토큰이 따옴표를 강제하는 예약어인가: generic family 키워드,
+// CSS-wide 키워드, default. 이 이름들은 unquote 하면 키워드로 오인되므로 문자열이면
+// 따옴표를 유지한다(§CSSOM serialize a <family-name>). emoji/fangsong/-webkit-* 등은
+// generic 이 아니라 일반 이름 취급(따옴표 제거 가능).
+fn family_word_needs_quotes(word: &str) -> bool {
+    matches!(
+        word.to_ascii_lowercase().as_str(),
+        "serif" | "sans-serif" | "cursive" | "fantasy" | "monospace" | "system-ui" | "math"
+            | "ui-serif" | "ui-sans-serif" | "ui-monospace" | "ui-rounded"
+            | "initial" | "inherit" | "unset" | "revert" | "revert-layer" | "default"
+    )
+}
+
+// font-family 목록을 CSSOM 규칙대로 직렬화한다(specified·computed 동일):
+// 각 패밀리가 유효한 식별자 시퀀스이고 단일 예약어가 아니면 따옴표 없이, 아니면
+// 겹따옴표 문자열로. 따옴표 없던 이름은 공백만 정규화해 그대로 둔다.
+pub(crate) fn serialize_font_family(value: &str) -> String {
+    let fams = split_top_level_commas(value);
+    let out: Vec<String> = fams
+        .iter()
+        .map(|f| {
+            let f = f.trim();
+            let first = f.chars().next().unwrap_or(' ');
+            if first == '"' || first == '\'' {
+                // 따옴표 이름: 안쪽을 뽑아 unquote 가능하면 식별자 시퀀스로, 아니면 겹따옴표.
+                let inner = &f[first.len_utf8()..f.len().saturating_sub(first.len_utf8())];
+                let toks: Vec<&str> = inner.split_whitespace().collect();
+                let unquotable = !toks.is_empty()
+                    && toks.iter().all(|t| is_css_ident(t))
+                    && !(toks.len() == 1 && family_word_needs_quotes(toks[0]));
+                if unquotable {
+                    toks.join(" ")
+                } else {
+                    format!("\"{}\"", inner.replace('\\', "\\\\").replace('"', "\\\""))
+                }
+            } else {
+                // 따옴표 없던 이름: 이미 유효 식별자 시퀀스 — 공백만 정규화.
+                f.split_whitespace().collect::<Vec<_>>().join(" ")
+            }
+        })
+        .collect();
+    out.join(", ")
+}
+
 fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     let v = value_text.trim();
     if matches!(
@@ -3879,6 +3924,7 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     if !font_family_valid(&family) {
         return Vec::new();
     }
+    let family = serialize_font_family(&family);
     // line-height 있으면 유효성 검사(무효면 단축 전체 무효).
     let lh_decls = match &lh_str {
         Some(lh) => {
