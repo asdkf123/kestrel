@@ -488,7 +488,7 @@ pub(super) fn collect_elements(
                 // 구분하지 못했다.
                 if query == "*" {
                     true
-                } else if e.namespace.is_none() {
+                } else if e.is_html_ns() {
                     e.tag_name == query.to_ascii_lowercase()
                 } else {
                     e.tag_name == query
@@ -517,8 +517,8 @@ pub(super) fn collect_elements_ns(
     if !skip_self {
         if let crate::dom::NodeType::Element(e) = &dom.get(id).node_type {
             let ns_ok = ns == "*" || {
-                // 빈 문자열은 null 네임스페이스 → 우리 표현엔 null 네임스페이스 요소가
-                // 없으므로(HTML 기본), 그 외엔 namespaceURI 문자열과 정확 비교.
+                // 빈 문자열 질의는 null 네임스페이스 → null-ns 요소(ns()=="")와 매칭.
+                // 그 외엔 namespaceURI 문자열과 정확 비교(HTML 은 NS_HTML).
                 let el_ns = e.ns();
                 (ns.is_empty() && el_ns.is_empty()) || el_ns == ns
             };

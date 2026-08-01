@@ -1880,7 +1880,7 @@ impl Interp {
                 // 조회에서 null 이다(§DOM locate-a-namespace). HTML ns 를 주면 안 된다.
                 if prefix.is_empty()
                     && own_prefix.is_empty()
-                    && e.namespace.is_none()
+                    && e.is_html_ns()
                     && !matches!(e.tag_name.as_str(), "#document" | "#document-fragment")
                 {
                     return Ok(Some(crate::dom::NS_HTML.to_string()));
@@ -1933,7 +1933,7 @@ impl Interp {
         }
         let dom = self.dom_arena()?;
         let html_ns = matches!(&dom.get(id).node_type,
-            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+            crate::dom::NodeType::Element(e) if e.is_html_ns());
         Ok(if html_ns { raw.to_ascii_lowercase() } else { raw.to_string() })
     }
 
@@ -2578,7 +2578,7 @@ impl Interp {
             // 대문자로 만들면 다른 이름이 된다.
             "tagName" => match &dom.get(id).node_type {
                 crate::dom::NodeType::Element(e) => Ok(Value::Str(
-                    if e.namespace.is_none() {
+                    if e.is_html_ns() {
                         e.tag_name.to_ascii_uppercase()
                     } else {
                         e.tag_name.clone()
@@ -2592,7 +2592,10 @@ impl Interp {
                 _ => Value::Undefined,
             }),
             "namespaceURI" => Ok(match &dom.get(id).node_type {
-                crate::dom::NodeType::Element(e) => Value::Str(e.ns().to_string()),
+                // null 네임스페이스(None)는 null 을 반환한다(§DOM). HTML/SVG 등은 URI.
+                crate::dom::NodeType::Element(e) => {
+                    e.namespace.clone().map(Value::Str).unwrap_or(Value::Null)
+                }
                 _ => Value::Null,
             }),
             "prefix" => Ok(match &dom.get(id).node_type {
@@ -2632,7 +2635,7 @@ impl Interp {
                     "#document-fragment".to_string()
                 }
                 crate::dom::NodeType::Element(e) => {
-                    if e.namespace.is_none() {
+                    if e.is_html_ns() {
                         e.tag_name.to_ascii_uppercase()
                     } else {
                         e.tag_name.clone()

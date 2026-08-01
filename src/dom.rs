@@ -100,9 +100,10 @@ pub enum NodeType {
 pub struct ElementData {
     pub tag_name: String,
     pub attributes: AttrMap,
-    // 요소의 네임스페이스 (DOM §4.9). None = HTML 네임스페이스.
-    // 예전엔 아예 없어서 createElementNS 가 네임스페이스를 **버렸다** —
-    // SVG 의 <linearGradient> 를 만들어도 소문자 html 요소가 됐다.
+    // 요소의 네임스페이스 (DOM §4.9). None = **null 네임스페이스**(no namespace),
+    // Some(uri) = 그 URI. HTML 요소는 Some(NS_HTML) 를 갖는다 — null 과 HTML 은
+    // 서로 다르다(`createElementNS(null,"foo")` 는 null-ns → tagName 대문자화·isHTML
+    // 안 됨). 예전엔 None 이 HTML 과 null 을 **둘 다** 뜻해 혼동했다.
     pub namespace: Option<String>,
     // 접두사 (DOM §4.9). createElementNS 의 "validate and extract" 만 설정한다.
     // HTML createElement 는 접두사가 없고 콜론 포함 전체가 localName 이다
@@ -119,11 +120,17 @@ impl ElementData {
     // 필드가 늘어도 테스트가 안 깨지도록.
     #[cfg(test)]
     pub fn html(tag: &str, attributes: AttrMap) -> ElementData {
-        ElementData { tag_name: tag.to_string(), attributes, namespace: None, prefix: None }
+        ElementData { tag_name: tag.to_string(), attributes, namespace: Some(NS_HTML.to_string()), prefix: None }
     }
 
+    // 네임스페이스 문자열. null 네임스페이스는 빈 문자열("")로 본다(스펙 매칭용).
     pub fn ns(&self) -> &str {
-        self.namespace.as_deref().unwrap_or(NS_HTML)
+        self.namespace.as_deref().unwrap_or("")
+    }
+    // HTML 네임스페이스 요소인가. tagName/nodeName 대문자화·속성 이름 소문자화·
+    // isHTMLElement 판정의 기준(§DOM). null 네임스페이스(None)는 HTML 이 아니다.
+    pub fn is_html_ns(&self) -> bool {
+        self.namespace.as_deref() == Some(NS_HTML)
     }
     // 로컬 이름. 접두사가 있으면(createElementNS) 접두사를 뗀 부분, 없으면(HTML
     // createElement·파서) 콜론 포함 전체 tag_name 이 localName 이다(§DOM 4.9).
@@ -148,7 +155,7 @@ pub fn text(data: String) -> Node {
 pub fn elem(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
     Node {
         children,
-        node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None, prefix: None }),
+        node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: Some(NS_HTML.to_string()), prefix: None }),
     }
 }
 
@@ -458,7 +465,7 @@ impl Dom {
             node_type: NodeType::Element(ElementData {
                 tag_name: tag.to_ascii_lowercase(),
                 attributes: AttrMap::new(),
-                namespace: None,  // HTML 네임스페이스
+                namespace: Some(NS_HTML.to_string()),  // HTML createElement → HTML 네임스페이스
                 prefix: None,     // HTML createElement 는 접두사 없음(콜론도 localName)
             }),
         });
@@ -474,7 +481,6 @@ impl Dom {
         // createElementNS 는 qualifiedName 의 **대소문자를 보존**한다(§DOM) — HTML
         // 네임스페이스여도 소문자화하지 않는다. 소문자화는 createElement(비-NS)만.
         // (tagName getter 가 HTML 네임스페이스 요소를 대문자로 노출한다.)
-        let _ = ns.is_none() || ns == Some(NS_HTML);
         let tag_name = qname.to_string();
         // "validate and extract"(§DOM 4.9): 첫 콜론 앞이 접두사, 뒤가 localName.
         // 콜론이 없으면 접두사 없음. (검증은 dom_api 의 validate_and_extract 가 선행.)
@@ -485,7 +491,8 @@ impl Dom {
             node_type: NodeType::Element(ElementData {
                 tag_name,
                 attributes: AttrMap::new(),
-                namespace: ns.filter(|n| *n != NS_HTML).map(|n| n.to_string()),
+                // null/빈 문자열 네임스페이스 → None(null-ns). 그 외(HTML 포함)는 보존.
+                namespace: ns.filter(|n| !n.is_empty()).map(|n| n.to_string()),
                 prefix,
             }),
         });

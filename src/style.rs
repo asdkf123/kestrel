@@ -3440,7 +3440,7 @@ mod tests {
         let e = ElementData {
             tag_name: "div".into(),
             attributes: [("data-x".to_string(), "abc".to_string())].into_iter().collect(),
-            namespace: None,
+            namespace: Some(crate::dom::NS_HTML.to_string()),
             prefix: None,
         };
         assert_eq!(resolve_attr("attr(data-x)", &e), "abc");

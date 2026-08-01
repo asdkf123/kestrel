@@ -71,6 +71,11 @@
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
 > - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **dom nodes +25 (createElementNS +16 등)**: 요소 네임스페이스 인코딩 수정. 예전엔
+>   `namespace: None` 이 **HTML 과 null 네임스페이스를 둘 다** 뜻해, `createElementNS(null,"foo")`
+>   가 HTML 요소처럼 tagName 대문자화·namespaceURI=HTML 로 나왔다. 이제 None=null-ns,
+>   Some(NS_HTML)=HTML 로 분리(HTML 요소 생성부는 전부 Some(NS_HTML), 대문자화·attr
+>   소문자화·isHTML 은 `is_html_ns()` 기준). 이름 기준 dom fixed 25/regr 0, html/dom regr 0.
 > - **css-syntax +78 (68.7→87.1%)**: `unicode-range` 프로퍼티 `<urange>` 엄격 검증+캐논 직렬화
 >   (`U+a?`→`U+A0-AF`, 7자리·잘못된 `?` 위치·비hex·`>10FFFF` 무효). urange 특수 토큰화(주석은
 >   분리 없이 제거 — 공유 strip_comments 의 공백 치환과 달리 빈 문자열 제거). CSSOM setProperty
@@ -205,12 +210,12 @@
 
 | 서브트리 | 통과 / 전체 | % |
 |---|---|---|
-| **dom (전체)** | 3,983 / 6,811 | **58.5%** |
+| **dom (전체)** | 4,008 / 6,811 | **58.8%** |
 | abort | 0 / 2 | 0.0% |
 | collections | 17 / 48 | 35.4% |
 | events | 277 / 580 | 47.8% |
 | lists | 168 / 189 | 88.9% |
-| nodes | 3,381 / 5,748 | 58.8% |
+| nodes | 3,406 / 5,748 | 59.3% |
 | ranges | 17 / 68 | 25.0% |
 | traversal | 36 / 53 | 67.9% |
 
@@ -244,7 +249,7 @@
 
 | 영역 | 상태 | 비고 |
 |---|---|---|
-| dom | ✅ 측정됨 58.5% | 위 DOM 표 |
+| dom | ✅ 측정됨 58.8% | 위 DOM 표 |
 | html | ✅ 측정됨 75.2% | 위 HTML 표 |
 | domparsing (innerHTML/XML직렬화) | ◐ 미측정 | innerHTML 경로는 존재 |
 | shadow-dom | ✗ 미구현(0%) | 섀도우 트리/슬롯 없음 |

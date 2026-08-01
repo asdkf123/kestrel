@@ -95,7 +95,7 @@ fn parse_document(source: String) -> Node {
 }
 
 fn elem_node(name: String, attrs: AttrMap, children: Vec<Node>) -> Node {
-    Node { children, node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: None, prefix: None }) }
+    Node { children, node_type: NodeType::Element(ElementData { tag_name: name, attributes: attrs, namespace: Some(crate::dom::NS_HTML.to_string()), prefix: None }) }
 }
 
 // ── 토큰 ────────────────────────────────────────────────────────────
@@ -368,7 +368,7 @@ impl Sink {
                 node_type: NodeType::Element(ElementData {
                     tag_name: "#document".to_string(),
                     attributes: AttrMap::new(),
-                    namespace: None,
+                    namespace: None, // #document 는 요소가 아닌 컨테이너 sentinel — null-ns
                     prefix: None,
                 }),
                 children: vec![],
@@ -388,7 +388,7 @@ impl Sink {
     fn new_element(&mut self, name: &str, attrs: AttrMap) -> usize {
         let id = self.nodes.len();
         self.nodes.push(SinkNode {
-            node_type: NodeType::Element(ElementData { tag_name: name.to_string(), attributes: attrs, namespace: None, prefix: None }),
+            node_type: NodeType::Element(ElementData { tag_name: name.to_string(), attributes: attrs, namespace: Some(crate::dom::NS_HTML.to_string()), prefix: None }),
             children: vec![],
             parent: None,
         });
@@ -700,7 +700,7 @@ impl Builder {
         // 외래 콘텐츠(SVG/MathML)는 그 네임스페이스를 갖는다 (HTML §13.2.6.5)
         if let NodeType::Element(e) = &mut self.sink.nodes[id].node_type {
             e.namespace = match ns {
-                Ns::Html => None,
+                Ns::Html => Some(crate::dom::NS_HTML.to_string()),
                 Ns::Svg => Some(crate::dom::NS_SVG.to_string()),
                 Ns::Math => Some(crate::dom::NS_MATHML.to_string()),
             };
@@ -724,7 +724,7 @@ impl Builder {
         let id = self.sink.new_element(adjusted, attrs);
         if let NodeType::Element(e) = &mut self.sink.nodes[id].node_type {
             e.namespace = match ns {
-                Ns::Html => None,
+                Ns::Html => Some(crate::dom::NS_HTML.to_string()),
                 Ns::Svg => Some(crate::dom::NS_SVG.to_string()),
                 Ns::Math => Some(crate::dom::NS_MATHML.to_string()),
             };

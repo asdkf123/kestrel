@@ -6377,8 +6377,11 @@ impl Interp {
             }
             Native::CreateDocumentFragment => {
                 // 프래그먼트: 센티널 태그 컨테이너. appendChild 시 자식만 옮겨진다.
+                // create_element 는 HTML 네임스페이스를 찍으므로(요소용) 쓰면 안 된다 —
+                // 프래그먼트는 요소가 아니라 **null 네임스페이스** 컨테이너다(lookupNamespaceURI
+                // 가 null 이어야 한다). create_element_ns(None,..) 로 null-ns 로 만든다.
                 let dom = self.dom_arena()?;
-                Ok(Value::Dom(dom.create_element("#document-fragment")))
+                Ok(Value::Dom(dom.create_element_ns(None, "#document-fragment")))
             }
             // style.setProperty(name, value) / getPropertyValue(name) / removeProperty(name)
             Native::StyleSetProperty => {
@@ -8452,7 +8455,7 @@ impl Interp {
                     let name = {
                         let dom = self.dom_arena()?;
                         let html_ns = matches!(&dom.get(id).node_type,
-                            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+                            crate::dom::NodeType::Element(e) if e.is_html_ns());
                         if html_ns { raw.to_ascii_lowercase() } else { raw }
                     };
                     let dom = self.dom_arena()?;
@@ -8466,7 +8469,7 @@ impl Interp {
                     let name = {
                         let dom = self.dom_arena()?;
                         let html_ns = matches!(&dom.get(id).node_type,
-                            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+                            crate::dom::NodeType::Element(e) if e.is_html_ns());
                         if html_ns { raw.to_ascii_lowercase() } else { raw }
                     };
                     let dom = self.dom_arena()?;
@@ -11685,7 +11688,7 @@ impl Interp {
                     let name = {
                         let dom = self.dom_arena()?;
                         let html_ns = matches!(&dom.get(id).node_type,
-                            crate::dom::NodeType::Element(e) if e.namespace.is_none());
+                            crate::dom::NodeType::Element(e) if e.is_html_ns());
                         if html_ns { raw.to_ascii_lowercase() } else { raw }
                     };
                     let dom = self.dom_arena()?;
