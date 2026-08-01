@@ -167,7 +167,7 @@
 | css-rhythm | 72 / 155 | 46.5% |
 | css-inline | 288 / 635 | 45.4% |
 | css-lists | 362 / 852 | 42.5% |
-| css-borders | 457 / 1,151 | 39.7% |
+| css-borders | 464 / 1,151 | 40.3% |
 | css-overflow | 369 / 983 | 37.5% |
 | css-tables | 191 / 557 | 34.3% |
 | filter-effects | 833 / 2,452 | 34.0% |
