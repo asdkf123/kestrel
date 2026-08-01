@@ -83,7 +83,7 @@ css/css-cascade/layer-media-query.html	FAIL	C4 Reordering	promise_test: Unhandle
 css/css-cascade/layer-property-override.html	FAIL	@property override between layers	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
 css/css-cascade/layer-property-override.html	FAIL	@property override update with appended sheet 1	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
 css/css-cascade/layer-property-override.html	FAIL	@property override update with appended sheet 2	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
-css/css-cascade/layer-replaceSync-clears-stale.html	FAIL	replaceSync clears stale layer statements	Illegal constructor
+css/css-cascade/layer-replaceSync-clears-stale.html	FAIL	replaceSync clears stale layer statements	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
 css/css-cascade/layer-rules-cssom.html	FAIL	Basic layer block name	assert_implements: undefined
 css/css-cascade/layer-rules-cssom.html	FAIL	Anonymous layer block name	assert_implements: undefined
 css/css-cascade/layer-rules-cssom.html	FAIL	Basic layer statement name	assert_implements: undefined
@@ -97,7 +97,7 @@ css/css-cascade/layer-statement-before-import.html	FAIL	length and item	assert_e
 css/css-cascade/layer-statement-before-import.html	FAIL	insertRule before imports	promise_test: Unhandled rejection with value: object "SyntaxError: 규칙을 파싱할 수 없다"
 css/css-cascade/layer-statement-before-import.html	FAIL	insert other rules to preU+2dimport layer statements fails	assert_throws_dom: function "() => sheet.insertRule('#target { color: red !important; }', 0)" did not throw
 css/css-cascade/layer-statement-before-import.html	FAIL	deleteRule after imports	promise_test: Unhandled rejection with value: object "IndexSizeError: 규칙 인덱스가 범위를 벗어남"
-css/css-cascade/layer-stylesheet-multi-adoption.html	FAIL	layerU+2dstylesheetU+2dmultiU+2dadoption	Illegal constructor
+css/css-cascade/layer-stylesheet-multi-adoption.html	FAIL	layerU+2dstylesheetU+2dmultiU+2dadoption	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
 css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer; should be a valid layered import rule	규칙을 파싱할 수 없다
 css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A); should be a valid layered import rule	규칙을 파싱할 수 없다
 css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A.B); should be a valid layered import rule	규칙을 파싱할 수 없다
@@ -182,12 +182,12 @@ css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, implicit scope	style.she
 css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, root only	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
 css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, root and limit	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
 css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, limit only	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
-css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule is a CSSGroupingRule	CSSGroupingRule 은(는) 정의되지 않음
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule is a CSSGroupingRule	assert_true: expected true got false
 css/css-cascade/scope-declarations.html	FAIL	Scoped declarations apply to the scoping root	assert_equals: expected "1" but got "auto"
 css/css-cascade/scope-declarations.html	FAIL	Scoped declarations apply to implicit scoping root	assert_equals: expected "1" but got "auto"
 css/css-cascade/scope-declarations.html	FAIL	Scoped declarations apply with zero specificity	assert_equals: expected "2" but got "auto"
-css/css-cascade/scope-declarations.html	FAIL	Declarations are parsed into CSSNestedDeclarations, prelude=(.a)	Illegal constructor
-css/css-cascade/scope-declarations.html	FAIL	Declarations are parsed into CSSNestedDeclarations, prelude=	Illegal constructor
+css/css-cascade/scope-declarations.html	FAIL	Declarations are parsed into CSSNestedDeclarations, prelude=(.a)	assert_equals: expected 1 but got 0
+css/css-cascade/scope-declarations.html	FAIL	Declarations are parsed into CSSNestedDeclarations, prelude=	assert_equals: expected 1 but got 0
 css/css-cascade/scope-deep.html	FAIL	Deep @scope nesting	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
 css/css-cascade/scope-evaluation.html	FAIL	Single scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
 css/css-cascade/scope-evaluation.html	FAIL	Selecting self with :scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
@@ -272,7 +272,7 @@ css/css-cascade/scope-shadow.html	FAIL	@scope can match :host(...)	host_function
 css/css-cascade/scope-shadow.html	FAIL	:scope matches host via the scoping root	assert_equals: expected "1" but got "auto"
 css/css-cascade/scope-shadow.html	FAIL	:scope within :is() matches host via the scoping root	assert_equals: expected "1" but got "2"
 css/css-cascade/scope-shadow.html	FAIL	Implicit @scope as direct child of shadow root	host.shadowRoot.querySelector(…) — host.shadowRoot 이(가) null
-css/css-cascade/scope-shadow.html	FAIL	Implicit @scope in construted stylesheet	Illegal constructor
+css/css-cascade/scope-shadow.html	FAIL	Implicit @scope in construted stylesheet	Cannot set properties of null (setting 'adoptedStyleSheets')
 css/css-cascade/scope-shadow.html	FAIL	Matching :host via &, :scope (subject)	assert_equals: expected "1" but got "2"
 css/css-cascade/scope-shadow.html	FAIL	Matching :host via &, :scope (nonU+2dsubject)	host.shadowRoot.querySelector(…) — host.shadowRoot 이(가) null
 css/css-cascade/scope-shadow.html	FAIL	Matching :host via &, :scope (nonU+2dsubject, >)	host.shadowRoot.querySelector(…) — host.shadowRoot 이(가) null

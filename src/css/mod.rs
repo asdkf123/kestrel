@@ -1850,6 +1850,60 @@ pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String
     }
 }
 
+// CSS Nesting desugar: 중첩 선택자를 부모 기준 절대 선택자로. & 는 :is(부모)로
+// 치환하고, & 가 없으면 자손 결합자로 부모를 앞에 붙인다(§CSS Nesting). 콤마 목록은
+// 항목별로. 부모 특이도를 :is() 로 보존.
+fn desugar_nested(nested: &str, parent: &str) -> String {
+    let is_parent = format!(":is({})", parent.trim());
+    split_top_commas_str(nested)
+        .iter()
+        .map(|p| {
+            let p = p.trim();
+            if p.contains('&') {
+                p.replace('&', &is_parent)
+            } else {
+                format!("{} {}", is_parent, p)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// 최상위(괄호/따옴표 밖) 콤마로 분리.
+fn split_top_commas_str(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        if let Some(q) = quote {
+            cur.push(c);
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            '(' | '[' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' | ']' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
 // UA 기본 스타일시트. HTML 표준 §15 Rendering 을 근거로 함
 // (https://html.spec.whatwg.org/multipage/rendering.html). 표준은 폼 컨트롤을
 // appearance:auto(네이티브 위젯)로 두지만, 우리는 appearance 미구현이라 기본
@@ -1936,9 +1990,7 @@ impl Parser {
                 }
                 continue;
             }
-            if let Some(rule) = self.parse_rule() {
-                rules.push(rule);
-            }
+            rules.extend(self.parse_rule());
         }
         rules
     }
@@ -1965,9 +2017,7 @@ impl Parser {
                 }
                 Some('@') => self.skip_at_rule(), // 중첩 @rule 은 스킵
                 _ => {
-                    if let Some(r) = self.parse_rule() {
-                        inner.push(r);
-                    }
+                    inner.extend(self.parse_rule());
                 }
             }
         }
@@ -2036,9 +2086,7 @@ impl Parser {
                     }
                 }
                 _ => {
-                    if let Some(r) = self.parse_rule() {
-                        inner.push(r);
-                    }
+                    inner.extend(self.parse_rule());
                 }
             }
         }
@@ -2085,9 +2133,7 @@ impl Parser {
                     }
                 }
                 _ => {
-                    if let Some(r) = self.parse_rule() {
-                        inner.push(r);
-                    }
+                    inner.extend(self.parse_rule());
                 }
             }
         }
@@ -2123,9 +2169,7 @@ impl Parser {
                 }
                 Some('@') => self.skip_at_rule(),
                 _ => {
-                    if let Some(r) = self.parse_rule() {
-                        inner.push(r);
-                    }
+                    inner.extend(self.parse_rule());
                 }
             }
         }
@@ -2502,17 +2546,19 @@ impl Parser {
         }
     }
 
-    fn parse_rule(&mut self) -> Option<Rule> {
+    // 스타일 규칙 파싱. CSS Nesting(§CSS Nesting)을 파스시점에 desugar 해 flat 규칙들로
+    // 낸다 — 부모 규칙 + 중첩 규칙(선택자를 :is(부모)로 desugar). 반환은 Vec(부모 먼저).
+    fn parse_rule(&mut self) -> Vec<Rule> {
         let sel_start = self.pos;
         match self.parse_selectors() {
             Some(selectors) => {
-                // 선택자 원문: '{' 직전까지 (parse_selectors 가 '{' 를 소비한 상태)
                 let selector_text = self.input[sel_start..self.pos]
                     .trim_end_matches(|c: char| c == '{' || c.is_whitespace())
                     .trim()
                     .to_string();
-                let declarations = self.parse_declarations();
-                Some(Rule {
+                let (declarations, nested) = self.parse_style_body(&selector_text);
+                let mut out = Vec::with_capacity(1 + nested.len());
+                out.push(Rule {
                     selectors,
                     declarations,
                     selector_text,
@@ -2522,13 +2568,103 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                })
+                });
+                out.extend(nested);
+                out
             }
             None => {
                 self.skip_to_block_end();
-                None
+                Vec::new()
             }
         }
+    }
+
+    // 규칙 본문: 선언 + 중첩 규칙(desugar 후 flat). parent_sel 로 & 를 해석한다.
+    fn parse_style_body(&mut self, parent_sel: &str) -> (Vec<Declaration>, Vec<Rule>) {
+        let mut decls = Vec::new();
+        let mut nested = Vec::new();
+        loop {
+            self.consume_whitespace();
+            match self.peek() {
+                None => break,
+                Some('}') => {
+                    self.consume_char();
+                    break;
+                }
+                Some('@') => {
+                    // 중첩 @rule(@media 등)은 이 근사 desugar 에선 스킵(별도 작업).
+                    self.skip_at_rule();
+                }
+                _ => {
+                    if self.peek_is_nested_rule() {
+                        // 중첩 규칙: 선택자(위쪽 { 까지) → desugar → 재귀 파싱.
+                        let nsel = self.consume_while(|c| c != '{' && c != '}' && c != ';');
+                        if self.peek() != Some('{') {
+                            // 세미콜론 등으로 끝남 → 무효 조각, 버림.
+                            if self.peek() == Some(';') {
+                                self.consume_char();
+                            }
+                            continue;
+                        }
+                        self.consume_char(); // '{'
+                        let desugared = desugar_nested(nsel.trim(), parent_sel);
+                        let (cdecls, cnested) = self.parse_style_body(&desugared);
+                        if let Some(sels) = parse_selector_list(&desugared) {
+                            nested.push(Rule {
+                                selectors: sels,
+                                declarations: cdecls,
+                                selector_text: desugared,
+                                ua: false,
+                                layer: self.cur_layer.clone(),
+                                container: self.cur_container.clone(),
+                                at_property: None,
+                                at_media: None,
+                                at_custom_media: None,
+                            });
+                        }
+                        nested.extend(cnested);
+                    } else {
+                        decls.extend(self.parse_declaration());
+                    }
+                }
+            }
+        }
+        (decls, nested)
+    }
+
+    // 현재 위치의 문장이 중첩 규칙(selector { … })인가 선언(name: value;)인가.
+    // 최상위(괄호/따옴표 밖)에서 '{' 가 ';'·'}' 보다 먼저 오면 규칙. 커스텀 프로퍼티
+    // (--)는 값에 {}가 올 수 있어 선언으로 본다.
+    fn peek_is_nested_rule(&self) -> bool {
+        let rest = &self.input[self.pos..];
+        if rest.trim_start().starts_with("--") {
+            return false;
+        }
+        let bytes = rest.as_bytes();
+        let mut depth = 0i32;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' | b'[' => depth += 1,
+                b')' | b']' => depth -= 1,
+                b'"' | b'\'' => {
+                    let q = bytes[i];
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != q {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                b';' if depth == 0 => return false,
+                b'{' if depth == 0 => return true,
+                b'}' if depth == 0 => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
     }
 
     fn parse_selectors(&mut self) -> Option<Vec<Selector>> {
