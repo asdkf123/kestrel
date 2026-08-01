@@ -3667,10 +3667,13 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
             if let Some((nc, na)) = color_coords_none(in_fn, cs) {
                 let l = nc[0];
                 let conv = if matches!(space, "lch" | "oklch") {
-                    // 직교(lab)→극(lch): C=hypot(a,b), H=atan2(b,a)°.
+                    // 직교(lab)→극(lch): C=hypot(a,b), H=atan2(b,a)°. chroma 0(a=b=0)이면
+                    // hue 는 정의되지 않음 → None(§CSS Color 4: achromatic → hue missing).
                     let a = nc[1].unwrap_or(0.0);
                     let b = nc[2].unwrap_or(0.0);
-                    [l, Some((a * a + b * b).sqrt()), Some(b.atan2(a).to_degrees().rem_euclid(360.0))]
+                    let c = (a * a + b * b).sqrt();
+                    let h = if c == 0.0 { None } else { Some(b.atan2(a).to_degrees().rem_euclid(360.0)) };
+                    [l, Some(c), h]
                 } else {
                     // 극(lch)→직교(lab): a=C·cosH, b=C·sinH.
                     let c = nc[1].unwrap_or(0.0);
@@ -3738,7 +3741,14 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
     // 교차 공간: sRGB 를 거쳐 변환(none 없음).
     let f = srgb_float_of(&low)?;
     let co = srgb_to_space(space, f[0], f[1], f[2])?;
-    Some(([Some(co[0]), Some(co[1]), Some(co[2])], Some(f[3])))
+    // lch/oklch 로 변환 시 chroma 0(achromatic)이면 hue 는 정의되지 않음 → None
+    // (§CSS Color 4). color-mix(in lch, …, black) 등에서 both-none → 결과 hue none.
+    let hue = if matches!(space, "lch" | "oklch") && co[1].abs() < 1e-6 {
+        None
+    } else {
+        Some(co[2])
+    };
+    Some(([Some(co[0]), Some(co[1]), hue], Some(f[3])))
 }
 
 // 색 문자열 → float sRGB+알파. 모던 색함수는 float 로 직접(u8 양자화 회피),
