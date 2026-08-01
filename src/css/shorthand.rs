@@ -1384,6 +1384,18 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             return Vec::new();
         }
+        // 단일 코너(§CSS Borders 4): normal | [<corner-shape> && <length-percentage>{1,2}].
+        "corner-top-left" | "corner-top-right" | "corner-bottom-left" | "corner-bottom-right" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::corner_single_valid(value_text) {
+                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // corner-shape 계열(§CSS Borders 4): [<corner-shape-value>]{1,N}. N=4(corner-shape),
         // 2(변/논리 축 단축), 1(단일 코너 롱핸드). 유효값 원문 보존.
         "corner-shape"

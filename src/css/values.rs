@@ -4248,6 +4248,31 @@ pub fn corner_shape_value_valid(t: &str) -> bool {
     false
 }
 
+// 단일 코너(corner-top-left 등, §CSS Borders 4): normal | [ <corner-shape> &&
+// <length-percentage [0,∞]>{1,2} ]. shape 정확히 1개 + 반경 1~2개(둘 다 필수, 순서
+// 자유). "/"·shape 중복·shape 없음·반경 없음·음수·미지 토큰 거부.
+pub fn corner_single_valid(raw: &str) -> bool {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "normal") {
+        return true;
+    }
+    let toks = split_top_level(raw.trim());
+    if toks.is_empty() || toks.iter().any(|t| t == "/") {
+        return false;
+    }
+    let (mut nshape, mut nradius) = (0u32, 0u32);
+    for t in &toks {
+        if corner_shape_value_valid(t) {
+            nshape += 1;
+        } else if !t.trim().starts_with('-') && nonneg_length_percentage(t) {
+            nradius += 1;
+        } else {
+            return false;
+        }
+    }
+    nshape == 1 && (1..=2).contains(&nradius)
+}
+
 // corner-shape 계열 유효성(§CSS Borders 4): [<corner-shape-value>]{1,max}.
 pub fn corner_shape_list_valid(raw: &str, max: usize) -> bool {
     let toks = split_top_level(raw);
@@ -11332,6 +11357,13 @@ mod tests {
             assert!(!shape_func_valid(v), "should reject shape: {v}");
         }
         assert!(!ray_valid("ray(0 sides)")); // bare 0 각도
+        // corner-top-left(단일 코너) 문법.
+        for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
+            assert!(corner_single_valid(v), "should accept corner: {v}");
+        }
+        for v in ["auto", "none", "scoop", "3% normal", "round round", "-1px", "10px", "4px 12px", "4px / normal", "round / 4px"] {
+            assert!(!corner_single_valid(v), "should reject corner: {v}");
+        }
         // animation-range 문법.
         for v in [
             "normal", "normal normal", "cover", "entry, exit", "0% 100%",
