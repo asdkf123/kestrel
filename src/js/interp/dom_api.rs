@@ -235,6 +235,11 @@ impl Interp {
         if rl.starts_with("image-set(") || rl.starts_with("-webkit-image-set(") {
             return crate::css::normalize_image_set(raw);
         }
+        // calc-size()(§CSS Values 5) 지정값 캐논: basis 소문자, 내부 calc-sum 정규화
+        // (size * 2 → 2 * size 등). 세터가 원문 저장이라 게터에서 캐논 직렬화.
+        if rl.starts_with("calc-size(") {
+            return crate::css::calc_size_canonical(raw);
+        }
         // anchor-size()/anchor() 지정값 캐논(§css-anchor-1): name-first 순서, size/side
         // 소문자, fallback 재귀. 세터가 raw 저장이라 여기서 캐논 직렬화(flip-order 등).
         if rl.starts_with("anchor-size(") {

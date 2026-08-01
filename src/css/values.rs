@@ -1038,8 +1038,170 @@ pub fn calc_size_valid(value: &str, allow_auto: bool, allow_content: bool) -> bo
     calc_sum_size_valid(sum, !basis_is_any)
 }
 
+// 수치 계수 직렬화(정수는 정수로, 소수는 후행 0 제거). calc-sum 캐논용.
+fn canon_coeff(n: f64) -> String {
+    if n.fract() == 0.0 && n.is_finite() {
+        format!("{}", n as i64)
+    } else {
+        let s = format!("{:.6}", n);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+// term(곱셈식)을 최상위 */ 로 나눠 (연산자, 인자) 목록. 첫 인자의 연산자는 '*'.
+fn split_muldiv_terms(term: &str) -> Vec<(char, String)> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    let mut op = '*';
+    for ch in term.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                cur.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(ch);
+            }
+            '*' | '/' if depth == 0 => {
+                out.push((op, cur.trim().to_string()));
+                op = ch;
+                cur = String::new();
+            }
+            _ => cur.push(ch),
+        }
+    }
+    out.push((op, cur.trim().to_string()));
+    out
+}
+
+// term → (계수, 비수 피연산자?). 수 인자는 계수로 접고, 비수 피연산자는 하나만
+// 허용(나눗셈 피제수면 복잡 → None). "size / 2" → (0.5, "size"), "30px" → (1, "30px").
+fn normalize_product(term: &str) -> Option<(f64, Option<String>)> {
+    let mut coeff = 1.0f64;
+    let mut operand: Option<String> = None;
+    for (op, f) in split_muldiv_terms(term) {
+        if f.is_empty() {
+            return None;
+        }
+        // 괄호 벗기기(단일 그룹).
+        let inner = f.trim();
+        if let Ok(n) = inner.parse::<f64>() {
+            coeff = if op == '/' { coeff / n } else { coeff * n };
+        } else {
+            if operand.is_some() || op == '/' {
+                return None; // 피연산자 둘 또는 나눗셈 피제수 → 복잡
+            }
+            operand = Some(inner.to_string());
+        }
+    }
+    Some((coeff, operand))
+}
+
+// calc-sum 캐논 직렬화(§CSS Values 4 §10.13). 최상위 +/- term 을 정규화·정렬한다:
+// 수 < 퍼센트 < 길이 < size. 곱(계수*피연산자)은 다항 합 안에서 괄호. 계수는 앞.
+// 복잡한 식은 원문 유지(no 요행).
+fn canon_calc_sum(sum: &str) -> String {
+    // 최상위 +/- 분리(부호 유지). 첫 term 은 '+'.
+    let chars: Vec<char> = sum.trim().chars().collect();
+    let mut terms: Vec<(char, String)> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    let mut sign = '+';
+    let mut prev_op = true; // 직전이 연산자/시작이면 +/- 는 부호(term 경계 아님)
+    for &ch in &chars {
+        match ch {
+            '(' => {
+                depth += 1;
+                cur.push(ch);
+                prev_op = false;
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(ch);
+                prev_op = false;
+            }
+            '+' | '-' if depth == 0 && !prev_op => {
+                terms.push((sign, cur.trim().to_string()));
+                sign = ch;
+                cur = String::new();
+                prev_op = true;
+            }
+            c if c.is_whitespace() => {
+                cur.push(ch);
+            }
+            '*' | '/' if depth == 0 => {
+                cur.push(ch);
+                prev_op = true;
+            }
+            _ => {
+                cur.push(ch);
+                prev_op = false;
+            }
+        }
+    }
+    terms.push((sign, cur.trim().to_string()));
+
+    // 각 term 정규화 → (정렬키, 부호, 곱여부, 직렬화 조각).
+    struct T {
+        cat: u8,
+        sign: char,
+        is_product: bool,
+        body: String,
+    }
+    let mut items: Vec<T> = Vec::new();
+    for (sg, term) in &terms {
+        if term.is_empty() {
+            return sum.trim().to_string();
+        }
+        let Some((coeff, operand)) = normalize_product(term) else {
+            return sum.trim().to_string();
+        };
+        let (cat, is_product, body) = match operand {
+            None => (0u8, false, canon_coeff(coeff)), // 순수 수
+            Some(o) => {
+                let ol = o.to_ascii_lowercase();
+                let cat = if ol.ends_with('%') {
+                    1
+                } else if ol == "size" || ol.contains("size") {
+                    3
+                } else {
+                    2
+                };
+                if coeff == 1.0 {
+                    (cat, false, o)
+                } else {
+                    (cat, true, format!("{} * {}", canon_coeff(coeff), o))
+                }
+            }
+        };
+        items.push(T { cat, sign: *sg, is_product, body });
+    }
+    // 안정 정렬(카테고리 오름차순).
+    items.sort_by_key(|t| t.cat);
+
+    let multi = items.len() > 1;
+    let mut out = String::new();
+    for (i, t) in items.iter().enumerate() {
+        let piece = if multi && t.is_product { format!("({})", t.body) } else { t.body.clone() };
+        if i == 0 {
+            if t.sign == '-' {
+                out.push('-');
+            }
+            out.push_str(&piece);
+        } else {
+            out.push(' ');
+            out.push(t.sign);
+            out.push(' ');
+            out.push_str(&piece);
+        }
+    }
+    out
+}
+
 // calc-size() 캐논 직렬화. basis 키워드 소문자화, ", " 구분, 중첩 재귀. 내부
-// <calc-sum> 캐논(size*2→2*size 등)은 미구현 — 트림만(입력이 캐논이면 그대로).
+// <calc-sum> 캐논(size*2→2*size 등)을 canon_calc_sum 으로 정규화.
 pub fn calc_size_canonical(value: &str) -> String {
     let v = value.trim();
     let low = v.to_ascii_lowercase();
@@ -1064,7 +1226,7 @@ pub fn calc_size_canonical(value: &str) -> String {
     } else {
         basis.to_string()
     };
-    format!("calc-size({}, {})", basis_out, sum)
+    format!("calc-size({}, {})", basis_out, canon_calc_sum(sum))
 }
 
 // 단일 차원 리터럴(1s, -1ms, 1deg, 10px, 50% …)의 부호붙은 계수. 단위·퍼센트가
@@ -12616,6 +12778,15 @@ mod tests {
         assert_eq!(tm("5"), None); // 수는 시간 아님
         assert_eq!(tm("45deg"), None); // 각도는 시간 아님
         assert!((ang("calc(45deg / 2)").unwrap() - 22.5).abs() < 1e-6); // 각도/수
+        // calc-size 내부 calc-sum 캐논(§CSS Values §10.13).
+        assert_eq!(canon_calc_sum("size * 2"), "2 * size");
+        assert_eq!(canon_calc_sum("size / 2"), "0.5 * size");
+        assert_eq!(canon_calc_sum("30px + size / 2"), "30px + (0.5 * size)");
+        assert_eq!(canon_calc_sum("50% + size / 2"), "50% + (0.5 * size)");
+        assert_eq!(canon_calc_sum("50px + 30%"), "30% + 50px");
+        assert_eq!(canon_calc_sum("size"), "size");
+        assert_eq!(canon_calc_sum("25em"), "25em");
+        assert_eq!(canon_calc_sum("2 * size"), "2 * size");
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");
