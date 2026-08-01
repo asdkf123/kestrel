@@ -928,6 +928,43 @@ pub(crate) fn resolve_var(
     expand_declaration(name, substituted.trim())
 }
 
+// 두 인접 문자(앞 토큰의 끝, 뒤 토큰의 시작)가 붙으면 하나의 토큰으로 병합돼
+// 의미가 바뀌는가(§CSS Syntax serialize). var() 치환으로 인접한 토큰 사이에
+// 필요하면 주석(/**/)을 끼워 병합을 막는다.
+fn tokens_would_merge(a: char, b: char) -> bool {
+    let id = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_' || (c as u32) >= 0x80;
+    match (a, b) {
+        // ident/at-keyword/hash 끝 + ident-start·digit → ident 연장; + '(' → 함수 토큰.
+        (a, b) if id(a) && (id(b) || b == '(') => true,
+        // number/percentage/dimension 끝(digit) + ident·digit·'.'·'%'·'(' → 병합.
+        (a, b) if a.is_ascii_digit() && (id(b) || b == '.' || b == '%' || b == '(') => true,
+        ('.', b) if b.is_ascii_digit() => true,
+        // '+'/'-' + digit/'.'/ident → 부호있는 수·ident. '-' + '-'/'>' → CDC.
+        ('+', b) | ('-', b) if b.is_ascii_digit() || b == '.' || id(b) => true,
+        ('-', '>') => true,
+        ('@', b) | ('#', b) if id(b) => true,
+        ('/', '*') => true,      // 주석 시작
+        ('<', '!') => true,      // CDO
+        ('\\', b) if b != '\n' => true, // 이스케이프
+        // 매치 연산자(*=, ^=, $=, ~=, |=)·column(||).
+        ('*', '=') | ('^', '=') | ('$', '=') | ('~', '=') | ('|', '=') | ('|', '|') => true,
+        _ => false,
+    }
+}
+
+// 토큰 스트림 s 를 out 에 이어붙이되, 경계에서 병합이 일어나면 /**/ 를 끼운다.
+fn append_token_stream(out: &mut String, s: &str) {
+    if s.is_empty() {
+        return;
+    }
+    if let (Some(a), Some(b)) = (out.chars().last(), s.chars().next()) {
+        if tokens_would_merge(a, b) {
+            out.push_str("/**/");
+        }
+    }
+    out.push_str(s);
+}
+
 // 문자열 안의 var(--name[, fallback]) 을 커스텀 프로퍼티 값으로 치환 (중첩 8단계까지).
 fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>, depth: u32) -> String {
     if depth > 8 || !raw.contains("var(") {
@@ -936,7 +973,7 @@ fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>,
     let mut out = String::new();
     let mut rest = raw;
     while let Some(pos) = rest.find("var(") {
-        out.push_str(&rest[..pos]);
+        append_token_stream(&mut out, &rest[..pos]);
         let after = &rest[pos + 4..];
         // 괄호 짝 찾기
         let mut depth_p = 1i32;
@@ -974,10 +1011,10 @@ fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>,
                 }
             },
         };
-        out.push_str(&resolved);
+        append_token_stream(&mut out, &resolved);
         rest = &after[(end + 1).min(after.len())..];
     }
-    out.push_str(rest);
+    append_token_stream(&mut out, rest);
     out
 }
 
