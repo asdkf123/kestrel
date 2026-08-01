@@ -1172,7 +1172,7 @@ var __kIfaceNames = [
   'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
   'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSPropertyRule', 'CSSStyleDeclaration',
   'CSSMediaRule', 'CSSSupportsRule', 'CSSCustomMediaRule', 'CSSConditionRule', 'CSSGroupingRule',
-  'CSSNestedDeclarations',
+  'CSSNestedDeclarations', 'CSSScopeRule',
   'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot',
   'ProcessingInstruction', 'DocumentType'
 ];
@@ -1202,6 +1202,7 @@ for (var __i = 0; __i < __kIfaceNames.length; __i++) {
   chain('CSSSupportsRule', 'CSSConditionRule');
   chain('CSSPropertyRule', 'CSSRule');
   chain('CSSNestedDeclarations', 'CSSRule');
+  chain('CSSScopeRule', 'CSSGroupingRule');
 })();
 // CSSRule 타입 상수(§CSSOM CSSRule). 생성자와 프로토타입 양쪽에 노출 —
 // 테스트/코드가 `rule.type === CSSRule.MEDIA_RULE` 로 비교한다(예전엔 상수가

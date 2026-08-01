@@ -2063,7 +2063,12 @@ pub fn parse_scope_prelude(head: &str) -> Option<(Option<String>, Option<String>
     }
     let sel_ok = |inner: &str| -> bool {
         let s = inner.trim();
-        !s.is_empty() && !s.contains("::") && parse_selector_list(s).is_some()
+        if s.is_empty() || s.contains("::") {
+            return false;
+        }
+        // scope-start/end 는 &(스코프 root 참조)·선행 결합자 허용 → :scope 기준 desugar 후
+        // 검증(무효 선택자 `<>` 등은 여전히 거부).
+        parse_selector_list(&desugar_nested(s, ":scope")).is_some()
     };
     let inner_of = |idx: usize| h[groups[idx].0 + 1..groups[idx].1].trim().to_string();
     match groups.len() {

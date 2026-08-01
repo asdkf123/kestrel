@@ -6146,6 +6146,8 @@ impl Interp {
                                     "CSSMediaRule"
                                 } else if r.at_supports.is_some() {
                                     "CSSSupportsRule"
+                                } else if r.at_scope.is_some() {
+                                    "CSSScopeRule"
                                 } else if r.selector_text.is_empty() {
                                     // 빈 selector_text = 중첩 맨선언(§CSS Nesting).
                                     "CSSNestedDeclarations"
@@ -6165,6 +6167,9 @@ impl Interp {
                             "CSSCustomMediaRule" => vec!["CSSCustomMediaRule", "CSSRule"],
                             "CSSPropertyRule" => vec!["CSSPropertyRule", "CSSRule"],
                             "CSSNestedDeclarations" => vec!["CSSNestedDeclarations", "CSSRule"],
+                            "CSSScopeRule" => {
+                                vec!["CSSScopeRule", "CSSGroupingRule", "CSSRule"]
+                            }
                             // CSS Nesting: CSSStyleRule 은 CSSGroupingRule 를 상속.
                             _ => vec!["CSSStyleRule", "CSSGroupingRule", "CSSRule"],
                         }
