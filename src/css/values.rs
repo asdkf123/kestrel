@@ -534,7 +534,8 @@ fn scalar_factor(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
     }
     if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
         let istart = *p;
-        while t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        // 함수명은 숫자 포함(atan2). 첫 글자는 알파벳이므로 이후는 alphanumeric 허용.
+        while t.get(*p).is_some_and(|c| c.is_ascii_alphanumeric()) {
             *p += 1;
         }
         let ident: String = t[istart..*p].iter().collect::<String>().to_ascii_lowercase();
@@ -821,7 +822,8 @@ fn num_factor(t: &[char], p: &mut usize) -> Option<f64> {
     // 식별자: 함수 호출 또는 상수.
     if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
         let istart = *p;
-        while t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        // 함수명은 숫자 포함(atan2). 첫 글자는 알파벳이므로 이후는 alphanumeric 허용.
+        while t.get(*p).is_some_and(|c| c.is_ascii_alphanumeric()) {
             *p += 1;
         }
         let ident: String = t[istart..*p].iter().collect::<String>().to_ascii_lowercase();
@@ -12389,6 +12391,8 @@ mod tests {
         assert!((ang("calc(30deg + 60deg)").unwrap() - 90.0).abs() < 1e-6);
         assert!((ang("calc(2 * 45deg)").unwrap() - 90.0).abs() < 1e-6);
         assert!((ang("min(30deg, 45deg)").unwrap() - 30.0).abs() < 1e-6);
+        assert!((ang("atan2(37.320508075, 10)").unwrap() - 75.0).abs() < 1e-4, "atan2={:?}", ang("atan2(37.320508075, 10)"));
+        assert!((ang("calc(atan2(37.320508075, 10))").unwrap() - 75.0).abs() < 1e-4);
         assert_eq!(ang("5"), None); // 순수 수는 각도 아님
         assert_eq!(ang("cos(0)"), None); // 수 결과
         assert_eq!(ang("10px"), None); // 길이
