@@ -267,6 +267,7 @@ pub enum Native {
     GetAnimations,
     AttachShadow,
     InsertAdjacentHTML,
+    SetHtmlUnsafe,
     InsertAdjacentElement,
     ScrollTo,
     ScrollBy,

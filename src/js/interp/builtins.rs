@@ -8291,6 +8291,25 @@ impl Interp {
             }
             // el.insertAdjacentHTML(position, html) / insertAdjacentElement(position, el)
             // 예전엔 메서드가 없어 TypeError 로 스크립트 전체가 죽었다.
+            // element.setHTMLUnsafe(html): 조각을 파싱해 자식을 교체한다(살균 없이,
+            // innerHTML 세터와 동일 동작). html 인자는 필수(§HTML) — 없으면 TypeError.
+            Native::SetHtmlUnsafe => {
+                let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
+                if args.is_empty() {
+                    return Err(self.throw_error(
+                        "TypeError",
+                        "Failed to execute 'setHTMLUnsafe': 1 argument required, but only 0 present.".to_string(),
+                    ));
+                }
+                let html = args.first().map(to_display).unwrap_or_default();
+                let dom = self.dom_arena()?;
+                dom.clear_children(id);
+                for tree in crate::html::parse_fragment(html) {
+                    let sub = dom.insert_tree(tree, Some(id));
+                    dom.get_mut(id).children.push(sub);
+                }
+                Ok(Value::Undefined)
+            }
             Native::InsertAdjacentHTML | Native::InsertAdjacentElement => {
                 let Some(Value::Dom(id)) = recv else { return Ok(Value::Undefined) };
                 let pos = args.first().map(to_display).unwrap_or_default().to_ascii_lowercase();

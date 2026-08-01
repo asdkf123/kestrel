@@ -7340,6 +7340,7 @@ impl Interp {
                     "replaceWith" => Some(Native::NodeReplaceWith),
                     "insertBefore" => Some(Native::InsertBefore),
                     "insertAdjacentHTML" => Some(Native::InsertAdjacentHTML),
+                    "setHTMLUnsafe" => Some(Native::SetHtmlUnsafe),
                     "insertAdjacentElement" => Some(Native::InsertAdjacentElement),
                     "createTextNode" => Some(Native::CreateTextNode),
                     "remove" => Some(Native::RemoveElement),
