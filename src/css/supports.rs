@@ -138,7 +138,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "input-security", "overlay", "caret-animation", "object-view-box", "margin-trim",
     "flex-line-count", "interpolate-size", "scroll-initial-target", "offset", "mask", "-webkit-mask",
     "corner-top-left", "corner-top-right", "corner-bottom-left", "corner-bottom-right",
-    "corner", "corners", "corner-top", "corner-bottom", "corner-left", "corner-right",
+    "corner", "corner-top", "corner-bottom", "corner-left", "corner-right",
     "corner-block", "corner-inline",
     // UI/인터랙션/표/스크롤 키워드 프로퍼티 — 실제 CSS 프로퍼티라 계산값 노출.
     "cursor", "appearance", "user-select", "resize", "pointer-events", "touch-action",

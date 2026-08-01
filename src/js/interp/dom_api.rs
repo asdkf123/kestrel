@@ -881,7 +881,6 @@ impl Interp {
                     | "corner-bottom-left"
                     | "corner-bottom-right"
                     | "corner"
-                    | "corners"
                     | "corner-top"
                     | "corner-bottom"
                     | "corner-left"
