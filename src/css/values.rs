@@ -7073,6 +7073,25 @@ pub fn normalize_font_style(raw: &str) -> String {
 
 // font-variant 단축 토큰의 하위 카테고리(§CSS Fonts). 같은 카테고리 중복 금지.
 // 함수형 alternates(stylistic() 등)는 함수명으로 분류한다.
+// font-variant 하위 카테고리 → 소속 롱핸드 이름(§CSS Fonts).
+pub fn font_variant_longhand_of(tok: &str) -> Option<&'static str> {
+    font_variant_category(tok).map(|cat| {
+        if cat.starts_with("lig-") {
+            "font-variant-ligatures"
+        } else if cat == "caps" {
+            "font-variant-caps"
+        } else if cat.starts_with("num-") || cat == "ordinal" || cat == "slashed-zero" {
+            "font-variant-numeric"
+        } else if cat.starts_with("ea-") || cat == "ruby" {
+            "font-variant-east-asian"
+        } else if cat == "position" {
+            "font-variant-position"
+        } else {
+            "font-variant-alternates"
+        }
+    })
+}
+
 fn font_variant_category(tok: &str) -> Option<&'static str> {
     let low = tok.to_ascii_lowercase();
     if let Some(paren) = low.find('(') {

@@ -1222,16 +1222,51 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // font-variant 단축(§CSS Fonts): 하위 카테고리 충돌·중복·미인식 토큰 거부.
         // normal/none 단독만 허용. 유효값은 원문 보존(현행 동작 유지). CSS-wide 통과.
         "font-variant" => {
+            // font-variant 는 6 롱핸드 단축(§CSS Fonts): ligatures/caps/alternates/
+            // numeric/east-asian/position. normal→모두 normal, none→ligatures none 나머지
+            // normal, CSS-wide→모두 그 키워드, 그 외엔 토큰을 카테고리별 롱핸드로 분배.
+            let longhands = [
+                "font-variant-ligatures",
+                "font-variant-caps",
+                "font-variant-alternates",
+                "font-variant-numeric",
+                "font-variant-east-asian",
+                "font-variant-position",
+            ];
+            let mk = |vals: Vec<(&str, String)>| -> Vec<Declaration> {
+                vals.into_iter()
+                    .map(|(n, v)| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(v) })
+                    .collect()
+            };
             let low = value_text.trim().to_ascii_lowercase();
-            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
-            {
-                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return mk(longhands.iter().map(|n| (*n, low.clone())).collect());
             }
-            if crate::css::font_variant_valid(value_text) {
-                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
-            } else {
-                Vec::new()
+            if !crate::css::font_variant_valid(value_text) {
+                return Vec::new();
             }
+            if low == "normal" {
+                return mk(longhands.iter().map(|n| (*n, "normal".to_string())).collect());
+            }
+            if low == "none" {
+                return mk(longhands
+                    .iter()
+                    .map(|n| (*n, if *n == "font-variant-ligatures" { "none" } else { "normal" }.to_string()))
+                    .collect());
+            }
+            let mut buckets: std::collections::HashMap<&str, Vec<String>> = std::collections::HashMap::new();
+            for tok in split_top_level(value_text) {
+                if let Some(lh) = crate::css::font_variant_longhand_of(tok) {
+                    buckets.entry(lh).or_default().push(tok.trim().to_string());
+                }
+            }
+            mk(longhands
+                .iter()
+                .map(|n| {
+                    let v = buckets.get(n).map(|ts| ts.join(" ")).unwrap_or_else(|| "normal".to_string());
+                    (*n, v)
+                })
+                .collect())
         }
         // transition-property(§CSS Transitions): none | <custom-ident>#. 항목별 유효
         // 식별자 검증(none/CSS-wide/default 항목 거부). CSS-wide 전체값은 통과.
@@ -3804,12 +3839,21 @@ pub(crate) fn serialize_font_family(value: &str) -> String {
 
 fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     let v = value_text.trim();
+    // 시스템 폰트(menu 등)·CSS-wide 키워드: 개별 롱핸드로 펼치지 않고 단축 키를
+    // 그대로 보존한다(예전엔 드롭 → 검증 early-return 이 유효한 `font: menu` 를
+    // 무효로 오판했다). font 단축은 font-variant 등을 리셋하므로 style_set 이
+    // 이 단축 설정 시 관련 롱핸드를 지운다(§CSS Fonts).
     if matches!(
         v,
         "caption" | "icon" | "menu" | "message-box" | "small-caption" | "status-bar"
-            | "inherit" | "initial" | "unset"
+            | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
     ) {
-        return Vec::new();
+        return vec![Declaration {
+            raw: String::new(),
+            important: false,
+            name: "font".to_string(),
+            value: Value::Keyword(v.to_ascii_lowercase()),
+        }];
     }
     let tokens: Vec<&str> = split_top_level(v);
     // size 토큰: '/' 앞부분이 길이거나 크기 키워드(larger/smaller 포함)인 첫 토큰
@@ -6052,8 +6096,10 @@ mod tests {
         // 크기 키워드
         let d2 = expand_declaration("font", "large serif");
         assert_eq!(find(&d2, "font-size"), Some(&Value::Length(18.0, Unit::Px)));
-        // 시스템 폰트 키워드는 no-op
-        assert!(expand_declaration("font", "caption").is_empty());
+        // 시스템 폰트 키워드는 개별 롱핸드로 펼치지 않고 단축 키를 그대로 보존한다
+        // (예전엔 드롭 → 유효한 `font: menu/caption` 이 무효로 처리됐다; §CSS Fonts).
+        let dsys = expand_declaration("font", "caption");
+        assert_eq!(find(&dsys, "font"), Some(&Value::Keyword("caption".to_string())));
     }
 
     #[test]

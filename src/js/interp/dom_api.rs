@@ -189,6 +189,34 @@ impl Interp {
         order.into_iter().filter(|n| map.contains_key(n)).collect()
     }
 
+    // font-variant 6 롱핸드[ligatures,caps,alternates,numeric,east-asian,position]를
+    // 단축으로 접는다(§CSS Fonts serialize). 모두 normal→"normal", ligatures=none 나머지
+    // normal→"none", 모두 같은 CSS-wide→그 키워드, 그 외엔 non-normal 값 순서대로 연결.
+    // CSS-wide 혼재·none 혼재는 접을 수 없다(None).
+    fn font_variant_fold(v: [&str; 6]) -> Option<String> {
+        let cssw = |s: &str| matches!(s, "initial" | "inherit" | "unset" | "revert" | "revert-layer");
+        if v.iter().any(|x| cssw(x)) {
+            if v.iter().all(|x| *x == v[0]) && cssw(v[0]) {
+                return Some(v[0].to_string());
+            }
+            return None;
+        }
+        if v.iter().all(|x| *x == "normal") {
+            return Some("normal".to_string());
+        }
+        if v[0] == "none" && v[1..].iter().all(|x| *x == "normal") {
+            return Some("none".to_string());
+        }
+        if v.iter().any(|x| *x == "none") {
+            return None;
+        }
+        let parts: Vec<&str> = v.iter().filter(|x| **x != "normal").copied().collect();
+        if parts.is_empty() {
+            return Some("normal".to_string());
+        }
+        Some(parts.join(" "))
+    }
+
     pub(super) fn css_text(&mut self, id: crate::dom::NodeId) -> String {
         let (order, map) = self.style_decls(id);
         order
@@ -333,6 +361,34 @@ impl Interp {
                 consumed.insert(p.to_string());
             }
         }
+        // font-variant: 6 롱핸드가 모두 있고 같은 importance 면 접는다(§CSS Fonts).
+        let fv_lh = [
+            "font-variant-ligatures",
+            "font-variant-caps",
+            "font-variant-alternates",
+            "font-variant-numeric",
+            "font-variant-east-asian",
+            "font-variant-position",
+        ];
+        if fv_lh.iter().all(|p| map.contains_key(*p) && !consumed.contains(*p)) && same_imp(&fv_lh, map)
+        {
+            let vals = [
+                map[fv_lh[0]].0.as_str(),
+                map[fv_lh[1]].0.as_str(),
+                map[fv_lh[2]].0.as_str(),
+                map[fv_lh[3]].0.as_str(),
+                map[fv_lh[4]].0.as_str(),
+                map[fv_lh[5]].0.as_str(),
+            ];
+            if let Some(folded) = Self::font_variant_fold(vals) {
+                let first = order.iter().find(|n| fv_lh.contains(&n.as_str())).unwrap().clone();
+                let imp = map[fv_lh[0]].1;
+                sh_at_first.insert(first, ("font-variant".to_string(), folded, imp));
+                for p in fv_lh {
+                    consumed.insert(p.to_string());
+                }
+            }
+        }
         if sh_at_first.is_empty() {
             return;
         }
@@ -416,6 +472,31 @@ impl Interp {
                 let get = |n: &str| pairs.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone());
                 if let (Some(vx), Some(vy)) = (get(x), get(y)) {
                     return if vx == vy { vx } else { format!("{} {}", vx, vy) };
+                }
+            }
+        }
+        // font-variant: 6 롱핸드가 다 있으면 접는다(§CSS Fonts). 없으면 "".
+        if prop == "font-variant" {
+            let fv = [
+                "font-variant-ligatures",
+                "font-variant-caps",
+                "font-variant-alternates",
+                "font-variant-numeric",
+                "font-variant-east-asian",
+                "font-variant-position",
+            ];
+            let got: Vec<Option<String>> = fv
+                .iter()
+                .map(|n| pairs.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone()))
+                .collect();
+            if got.iter().all(|v| v.is_some()) {
+                let vals: Vec<String> = got.into_iter().map(|v| v.unwrap()).collect();
+                let arr = [
+                    vals[0].as_str(), vals[1].as_str(), vals[2].as_str(),
+                    vals[3].as_str(), vals[4].as_str(), vals[5].as_str(),
+                ];
+                if let Some(folded) = Self::font_variant_fold(arr) {
+                    return folded;
                 }
             }
         }
@@ -1517,6 +1598,21 @@ impl Interp {
             .collect();
         if !longhand_names.is_empty() {
             pairs.retain(|(k, _)| !longhand_names.contains(k));
+        }
+        // font 단축은 font-variant(6 롱핸드)를 리셋한다(§CSS Fonts). font_shorthand 는
+        // font-variant 를 개별 롱핸드로 펼치지 않으므로(시스템 폰트 등) 여기서 이전
+        // font-variant 롱핸드·단축 키를 지운다.
+        if prop == "font" {
+            let fv = [
+                "font-variant-ligatures",
+                "font-variant-caps",
+                "font-variant-alternates",
+                "font-variant-numeric",
+                "font-variant-east-asian",
+                "font-variant-position",
+                "font-variant",
+            ];
+            pairs.retain(|(k, _)| !fv.contains(&k.as_str()));
         }
         if !text_trimmed.is_empty() {
             // 인라인 스타일은 **지정값**을 보관한다 (계산값으로 접지 않는다).

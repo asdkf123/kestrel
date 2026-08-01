@@ -146,6 +146,7 @@ pub(crate) use values::{
     font_variation_settings_canonical, font_variation_settings_valid,
 };
 pub(crate) use values::font_variant_valid;
+pub(crate) use values::font_variant_longhand_of;
 pub(crate) use values::font_style_valid;
 pub(crate) use values::normalize_font_style;
 pub(crate) use values::text_transform_valid;
