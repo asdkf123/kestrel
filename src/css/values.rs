@@ -1038,6 +1038,30 @@ pub fn calc_size_valid(value: &str, allow_auto: bool, allow_content: bool) -> bo
     calc_sum_size_valid(sum, !basis_is_any)
 }
 
+// 절대 단위 길이(2in/1cm/12pt …)를 px 로 캐논화(§CSS calc 단순화, 96dpi). 상대
+// 단위(em/rem/vw/%)·px 는 그대로. 수 없거나 미지 단위면 원문.
+fn canon_length_operand(o: &str) -> String {
+    let low = o.trim().to_ascii_lowercase();
+    let unit_len = low.chars().rev().take_while(|c| c.is_ascii_alphabetic()).count();
+    if unit_len == 0 {
+        return o.trim().to_string();
+    }
+    let (num, unit) = low.split_at(low.len() - unit_len);
+    let Ok(n) = num.parse::<f64>() else {
+        return o.trim().to_string();
+    };
+    let factor = match unit {
+        "in" => 96.0,
+        "pc" => 16.0,
+        "pt" => 96.0 / 72.0,
+        "cm" => 96.0 / 2.54,
+        "mm" => 96.0 / 25.4,
+        "q" => 96.0 / (25.4 * 4.0),
+        _ => return o.trim().to_string(), // px·상대 단위는 그대로
+    };
+    format!("{}px", canon_coeff(n * factor))
+}
+
 // 수치 계수 직렬화(정수는 정수로, 소수는 후행 0 제거). calc-sum 캐논용.
 fn canon_coeff(n: f64) -> String {
     if n.fract() == 0.0 && n.is_finite() {
@@ -1169,6 +1193,8 @@ fn canon_calc_sum(sum: &str) -> String {
                 } else {
                     2
                 };
+                // 길이 피연산자는 절대 단위를 px 로 캐논화(size·%·상대 단위는 그대로).
+                let o = if cat == 2 { canon_length_operand(&o) } else { o };
                 if coeff == 1.0 {
                     (cat, false, o)
                 } else {
@@ -1224,7 +1250,7 @@ pub fn calc_size_canonical(value: &str) -> String {
     } else if basis_low.starts_with("calc-size(") {
         calc_size_canonical(basis)
     } else {
-        basis.to_string()
+        canon_calc_sum(basis) // basis 도 <calc-sum> — 절대단위 px 화 등
     };
     format!("calc-size({}, {})", basis_out, canon_calc_sum(sum))
 }
