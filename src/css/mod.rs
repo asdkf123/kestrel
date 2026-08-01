@@ -1927,6 +1927,24 @@ pub fn redesugar_nested_rules(rule: &mut Rule, parent_effective: &str) {
     }
 }
 
+// 중첩 규칙의 CSSOM selectorText 캐논 형태(§CSS Nesting). `&` 없는 상대 선택자에는
+// 암시적 `&` 를 명시한다: `.foo`→`& .foo`, `> .bar`→`& > .bar`. `&` 가 이미 있으면
+// 그대로. 각 콤마 항 별로 적용.
+pub fn nest_canonical_selector(nsel: &str) -> String {
+    split_top_commas_str(nsel)
+        .iter()
+        .map(|p| {
+            let p = p.trim();
+            if p.contains('&') {
+                p.to_string()
+            } else {
+                format!("& {}", p)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub fn desugar_nested(nested: &str, parent: &str) -> String {
     let is_parent = format!(":is({})", parent.trim());
     split_top_commas_str(nested)
@@ -2777,9 +2795,9 @@ impl Parser {
                             nested.push(Rule {
                                 selectors: sels,
                                 declarations: cdecls,
-                                // CSSOM selectorText 는 원본 상대 선택자(& .b). 매칭은 위
-                                // selectors(desugared)로 하므로 무영향.
-                                selector_text: nsel.trim().to_string(),
+                                // CSSOM selectorText 는 캐논 상대 선택자(암시적 & 명시:
+                                // `.b`→`& .b`). 매칭은 위 selectors(desugared)로 하므로 무영향.
+                                selector_text: nest_canonical_selector(nsel.trim()),
                                 ua: false,
                                 layer: self.cur_layer.clone(),
                                 container: self.cur_container.clone(),
