@@ -217,6 +217,17 @@ impl Interp {
         Some(parts.join(" "))
     }
 
+    // flex 3 롱핸드[grow,shrink,basis]가 모두 같은 CSS-wide 키워드면 그 키워드로 접는다
+    // (§CSS Flexbox serialize: `flex: initial` 등). 수치 조합(`flex: 0 1 0%`)의 축약 형태나
+    // 일부만 CSS-wide 인 혼재는 여기서 다루지 않는다(None → 롱핸드 유지).
+    fn flex_fold(v: [&str; 3]) -> Option<String> {
+        let cssw = |s: &str| matches!(s, "initial" | "inherit" | "unset" | "revert" | "revert-layer");
+        if cssw(v[0]) && v[1] == v[0] && v[2] == v[0] {
+            return Some(v[0].to_string());
+        }
+        None
+    }
+
     pub(super) fn css_text(&mut self, id: crate::dom::NodeId) -> String {
         let (order, map) = self.style_decls(id);
         order
@@ -385,6 +396,24 @@ impl Interp {
                 let imp = map[fv_lh[0]].1;
                 sh_at_first.insert(first, ("font-variant".to_string(), folded, imp));
                 for p in fv_lh {
+                    consumed.insert(p.to_string());
+                }
+            }
+        }
+        // flex: 3 롱핸드가 모두 같은 CSS-wide 키워드면 접는다(§CSS Flexbox, `flex: initial`).
+        let flex_lh = ["flex-grow", "flex-shrink", "flex-basis"];
+        if flex_lh.iter().all(|p| map.contains_key(*p) && !consumed.contains(*p)) && same_imp(&flex_lh, map)
+        {
+            let vals = [
+                map[flex_lh[0]].0.as_str(),
+                map[flex_lh[1]].0.as_str(),
+                map[flex_lh[2]].0.as_str(),
+            ];
+            if let Some(folded) = Self::flex_fold(vals) {
+                let first = order.iter().find(|n| flex_lh.contains(&n.as_str())).unwrap().clone();
+                let imp = map[flex_lh[0]].1;
+                sh_at_first.insert(first, ("flex".to_string(), folded, imp));
+                for p in flex_lh {
                     consumed.insert(p.to_string());
                 }
             }
