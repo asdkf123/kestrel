@@ -339,11 +339,16 @@ impl Interp {
         let mut new_order = Vec::new();
         for n in order.iter() {
             if let Some((sh, val, imp)) = sh_at_first.get(n) {
-                new_order.push(sh.clone());
+                // 롱핸드를 접어 만든 단축. 명시적으로 저장된 동명 단축 키(이중 저장:
+                // style_set 이 단축을 '키+롱핸드'로 둘 다 넣음)와 겹치면 한 번만 낸다.
+                if !new_order.contains(sh) {
+                    new_order.push(sh.clone());
+                }
                 map.insert(sh.clone(), (val.clone(), *imp));
             } else if consumed.contains(n) {
                 map.remove(n);
-            } else {
+            } else if !new_order.contains(n) {
+                // 이미 접힌 단축과 같은 이름의 명시 키는 건너뛴다(중복 방지).
                 new_order.push(n.clone());
             }
         }
