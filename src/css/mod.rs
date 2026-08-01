@@ -467,6 +467,10 @@ pub struct Declaration {
     pub name: String,
     pub value: Value,
     pub important: bool, // !important — 캐스케이드에서 일반 선언을 이긴다
+    // 지정값(specified) 원문. CSSOM cssText/getPropertyValue 는 계산값이 아니라 지정값을
+    // 돌려줘야 한다(`color: red` → `red`, computed 는 `rgb(255,0,0)`). 파스시점에만 채우며
+    // (롱핸드·커스텀 프로퍼티 1:1 인 경우), 비면 computed 직렬화로 폴백. 매칭·계산엔 무관.
+    pub raw: String,
 }
 
 // 값에서 후행 `!important`(대소문자 무시, `! important` 공백 허용)를 분리.
@@ -3196,6 +3200,12 @@ impl Parser {
         // 후행 !important (대소문자 무시, 공백 허용) 분리. 나머지가 실제 값.
         let (val, important) = split_important(value_text.trim());
         let mut decls = expand_declaration(&name, val);
+        // 지정값(specified) 원문 보존: 단축이 아닌 1:1 확장(롱핸드·커스텀 프로퍼티)일 때만
+        // 이 선언의 CSSOM 직렬화가 원문을 쓰도록 raw 를 채운다. 단축(여러 롱핸드로 확장)은
+        // 롱핸드별 원문이 없으니 빈 채로 두고 computed 직렬화로 폴백한다.
+        if decls.len() == 1 {
+            decls[0].raw = val.trim().to_string();
+        }
         if important {
             for d in &mut decls {
                 d.important = true;

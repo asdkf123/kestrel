@@ -5,13 +5,19 @@ use super::*;
 
 // CSS Nesting 중첩 규칙(.nested)을 읽기용 CSSOM 객체로 materialize(재귀). selectorText·
 // cssText·type·cssRules 를 노출한다(라이브 mutation·instanceof 은 별도 addressing 필요).
-// 규칙의 선언들을 `name: value;` 한 줄 목록으로.
+// 규칙의 선언들을 `name: value;` 한 줄 목록으로. CSSOM cssText 는 지정값(specified)이므로
+// raw 가 있으면 그것을(예: `red`), 없으면(단축 확장 등) computed 직렬화로 폴백.
 fn decls_line(rule: &crate::css::Rule) -> String {
     rule.declarations
         .iter()
         .map(|d| {
             let imp = if d.important { " !important" } else { "" };
-            format!("{}: {}{};", d.name, crate::style::computed_value_string(&d.value), imp)
+            let v = if d.raw.is_empty() {
+                crate::style::computed_value_string(&d.value)
+            } else {
+                d.raw.clone()
+            };
+            format!("{}: {}{};", d.name, v, imp)
         })
         .collect::<Vec<_>>()
         .join(" ")

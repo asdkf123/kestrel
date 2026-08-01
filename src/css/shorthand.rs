@@ -30,14 +30,14 @@ fn number_or_math(s: &str) -> Option<f32> {
 pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
     // 커스텀 프로퍼티(--*): 원문 보존, 사용 시점(var())에 해석.
     if name.starts_with("--") {
-        return vec![Declaration { important: false,
+        return vec![Declaration { raw: String::new(), important: false,
             name: name.to_string(),
             value: Value::Keyword(value_text.to_string()),
         }];
     }
     // var() 참조: 원문을 Var 로 보존, 스타일 계산 시 치환·재파싱.
     if value_text.contains("var(") {
-        return vec![Declaration { important: false, name: name.to_string(), value: Value::Var(value_text.to_string()) }];
+        return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Var(value_text.to_string()) }];
     }
     // @font-face 디스크립터: 값이 프로퍼티 문법이 아니다 (U+0-7F 는 색도 길이도 아니다).
     // 해석기에 넘기면 None → **선언이 통째로 버려진다**. 원문을 보존한다.
@@ -45,7 +45,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
     if matches!(name, "unicode-range" | "src" | "font-display" | "size-adjust" | "ascent-override"
         | "descent-override" | "line-gap-override")
     {
-        return vec![Declaration {
+        return vec![Declaration { raw: String::new(),
             important: false,
             name: name.to_string(),
             value: Value::Keyword(value_text.trim().to_string()),
@@ -119,10 +119,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "scroll-snap-type" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::scroll_snap_type_valid(value_text) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::scroll_snap_type_canonical(value_text)) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::scroll_snap_type_canonical(value_text)) }];
             }
             return Vec::new();
         }
@@ -133,7 +133,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             // anchor-size()/anchor()(§css-anchor-1): inset 프로퍼티에서 유효.
@@ -141,7 +141,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 if let Some(canon) = crate::css::anchor_size_canonical(toks[0])
                     .or_else(|| crate::css::anchor_canonical(toks[0]))
                 {
-                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }];
                 }
             }
             if toks.len() == 1 && crate::css::inset_length_valid(toks[0]) {
@@ -151,7 +151,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     Some(other) => other,
                     None => Value::Keyword(low),
                 };
-                return vec![Declaration { important: false, name: name.to_string(), value: v }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }];
             }
             return Vec::new();
         }
@@ -177,7 +177,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let sides = box_shorthand("", "", value_text); // "-top" 등 이름이 "-top" 형태
             return sides
                 .into_iter()
-                .map(|d| Declaration { important: false, name: d.name.trim_start_matches('-').to_string(), value: d.value })
+                .map(|d| Declaration { raw: String::new(), important: false, name: d.name.trim_start_matches('-').to_string(), value: d.value })
                 .collect();
         }
         _ => {}
@@ -214,7 +214,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 // 유효하나 box_shorthand 가 계산 못하는 calc 는 지정값 보존.
                 let expanded = box_shorthand(name, "", value_text);
                 if expanded.is_empty() {
-                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
                 }
                 return expanded;
             }
@@ -231,7 +231,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-radius" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                let d = |n: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) };
+                let d = |n: &str| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(low.clone()) };
                 return vec![
                     d("border-top-left-radius"),
                     d("border-top-right-radius"),
@@ -285,12 +285,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 }
             };
             vec![
-                Declaration { important: false, name: "border-top-left-radius".to_string(), value: corner(&h4[0], &v4[0]) },
-                Declaration { important: false, name: "border-top-right-radius".to_string(), value: corner(&h4[1], &v4[1]) },
-                Declaration { important: false, name: "border-bottom-right-radius".to_string(), value: corner(&h4[2], &v4[2]) },
-                Declaration { important: false, name: "border-bottom-left-radius".to_string(), value: corner(&h4[3], &v4[3]) },
+                Declaration { raw: String::new(), important: false, name: "border-top-left-radius".to_string(), value: corner(&h4[0], &v4[0]) },
+                Declaration { raw: String::new(), important: false, name: "border-top-right-radius".to_string(), value: corner(&h4[1], &v4[1]) },
+                Declaration { raw: String::new(), important: false, name: "border-bottom-right-radius".to_string(), value: corner(&h4[2], &v4[2]) },
+                Declaration { raw: String::new(), important: false, name: "border-bottom-left-radius".to_string(), value: corner(&h4[3], &v4[3]) },
                 // box-shadow 등 균일 근사용으로 border-radius 도 남긴다 (첫 코너의 가로).
-                Declaration { important: false, name: "border-radius".to_string(), value: h4[0].clone() },
+                Declaration { raw: String::new(), important: false, name: "border-radius".to_string(), value: h4[0].clone() },
             ]
         }
         // border-image 단축(§CSS Backgrounds):
@@ -307,7 +307,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return names
                     .iter()
-                    .map(|n| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) })
+                    .map(|n| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(low.clone()) })
                     .collect();
             }
             expand_border_image(value_text.trim()).unwrap_or_default()
@@ -321,12 +321,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = v.to_ascii_lowercase();
             let six = |tr: &str, tc: &str, ta: &str, ar: &str, ac: &str, af: &str| {
                 vec![
-                    Declaration { important: false, name: "grid-template-rows".to_string(), value: Value::Keyword(tr.to_string()) },
-                    Declaration { important: false, name: "grid-template-columns".to_string(), value: Value::Keyword(tc.to_string()) },
-                    Declaration { important: false, name: "grid-template-areas".to_string(), value: Value::Keyword(ta.to_string()) },
-                    Declaration { important: false, name: "grid-auto-rows".to_string(), value: Value::Keyword(ar.to_string()) },
-                    Declaration { important: false, name: "grid-auto-columns".to_string(), value: Value::Keyword(ac.to_string()) },
-                    Declaration { important: false, name: "grid-auto-flow".to_string(), value: Value::Keyword(af.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-template-rows".to_string(), value: Value::Keyword(tr.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-template-columns".to_string(), value: Value::Keyword(tc.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-template-areas".to_string(), value: Value::Keyword(ta.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-auto-rows".to_string(), value: Value::Keyword(ar.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-auto-columns".to_string(), value: Value::Keyword(ac.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-auto-flow".to_string(), value: Value::Keyword(af.to_string()) },
                 ]
             };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
@@ -403,9 +403,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = v.to_ascii_lowercase();
             let three = |r: &str, c: &str, a: &str| {
                 vec![
-                    Declaration { important: false, name: "grid-template-rows".to_string(), value: Value::Keyword(r.to_string()) },
-                    Declaration { important: false, name: "grid-template-columns".to_string(), value: Value::Keyword(c.to_string()) },
-                    Declaration { important: false, name: "grid-template-areas".to_string(), value: Value::Keyword(a.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-template-rows".to_string(), value: Value::Keyword(r.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-template-columns".to_string(), value: Value::Keyword(c.to_string()) },
+                    Declaration { raw: String::new(), important: false, name: "grid-template-areas".to_string(), value: Value::Keyword(a.to_string()) },
                 ]
             };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
@@ -419,15 +419,15 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // z-index: 정수 → Length(n, Px) 로 보존 (paint 가 스택 레벨로 읽음). auto 는 드롭.
         // z-index: <integer> | auto. 직접 파싱 실패 시 수학 함수(abs/sign/round/…) 평가.
         "z-index" if value_text.trim().eq_ignore_ascii_case("auto") => {
-            vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Keyword("auto".to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: "z-index".to_string(), value: Value::Keyword("auto".to_string()) }]
         }
         // <integer> 만(소수 거부). 괄호가 있으면 calc 등 수학 함수로 평가.
         "z-index" if value_text.trim().parse::<i64>().is_ok() => {
             let n = value_text.trim().parse::<i64>().unwrap() as f32;
-            vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }]
+            vec![Declaration { raw: String::new(), important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }]
         }
         "z-index" if value_text.contains('(') => match number_or_math(value_text) {
-            Some(n) => vec![Declaration { important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
+            Some(n) => vec![Declaration { raw: String::new(), important: false, name: "z-index".to_string(), value: Value::Length(n, Unit::Number) }],
             _ => Vec::new(),
         },
         "z-index" => Vec::new(),
@@ -439,7 +439,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             // bolder/lighter 는 부모 계산 weight 기준 상대값 — 키워드로 보존하고
             // 스타일 계산(style.rs)이 부모 weight 로 해석한다(§CSS Fonts 2.2.1).
             if matches!(v.as_str(), "bolder" | "lighter") {
-                return vec![Declaration { important: false, name: "font-weight".to_string(), value: Value::Keyword(v) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "font-weight".to_string(), value: Value::Keyword(v) }];
             }
             let n = match v.as_str() {
                 "bold" => 700.0,
@@ -449,7 +449,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 // 부모값으로 override 한다(요소가 자기 font-weight 를 가져도 inherit 이
                 // 이긴다). 예전엔 Vec::new 라 자기 선언이 있으면 override 못 했다.
                 "inherit" | "unset" | "revert" | "revert-layer" => {
-                    return vec![Declaration {
+                    return vec![Declaration { raw: String::new(),
                         important: false,
                         name: "font-weight".to_string(),
                         value: Value::Keyword(v.clone()),
@@ -468,7 +468,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                         // 수학 함수 — 결과가 순수 <number> 여야(길이/%/각도 거부). 계산
                         // 불가여도 지정값 보존(used value 에서 클램프).
                         if super::values::math_number_only_valid(other) {
-                            return vec![Declaration { important: false, name: "font-weight".to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                            return vec![Declaration { raw: String::new(), important: false, name: "font-weight".to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
                         } else {
                             return Vec::new();
                         }
@@ -477,7 +477,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     }
                 }
             };
-            vec![Declaration {
+            vec![Declaration { raw: String::new(),
                 important: false,
                 name: "font-weight".to_string(),
                 value: Value::Length(n, Unit::Number),
@@ -494,10 +494,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             // wide-keyword 해석(inherit→부모값 등)이 처리하게 한다(예전엔 거부→no-op 이라
             // text-indent: inherit 가 무시됐다).
             if matches!(vt.as_str(), "inherit" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Keyword(vt) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "text-indent".to_string(), value: Value::Keyword(vt) }];
             }
             if vt == "initial" {
-                return vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Length(0.0, Unit::Px) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "text-indent".to_string(), value: Value::Length(0.0, Unit::Px) }];
             }
             if !crate::css::text_indent_valid(value_text) {
                 return Vec::new();
@@ -510,9 +510,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 .and_then(|t| interpret_value(t));
             match len {
                 Some(v @ Value::Length(..)) if toks.len() == 1 => {
-                    vec![Declaration { important: false, name: "text-indent".to_string(), value: v }]
+                    vec![Declaration { raw: String::new(), important: false, name: "text-indent".to_string(), value: v }]
                 }
-                _ => vec![Declaration { important: false, name: "text-indent".to_string(), value: Value::Keyword(value_text.trim().to_string()) }],
+                _ => vec![Declaration { raw: String::new(), important: false, name: "text-indent".to_string(), value: Value::Keyword(value_text.trim().to_string()) }],
             }
         }
         // cursor(§CSS UI): [<url> [<x> <y>]?,]* <keyword>. 검증만(원문 보존). 무효
@@ -521,10 +521,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: "cursor".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "cursor".to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::cursor_valid(value_text) {
-                vec![Declaration { important: false, name: "cursor".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: "cursor".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -536,7 +536,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "fixed" | "content" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
             ) {
-                vec![Declaration { important: false, name: "field-sizing".to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: "field-sizing".to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -547,10 +547,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::timing_function_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -561,7 +561,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             if toks.len() == 1 {
@@ -569,14 +569,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     Some(Value::Length(n, u)) => {
                         // % 는 <length> 아님, 단위없는 수는 0 만 허용(0→0px 로 캐논화).
                         if u == Unit::Number && n == 0.0 {
-                            return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(0.0, Unit::Px) }];
+                            return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Length(0.0, Unit::Px) }];
                         }
                         if u != Unit::Percent && u != Unit::Number {
-                            return vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, u) }];
+                            return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Length(n, u) }];
                         }
                     }
                     Some(v @ (Value::Calc(..) | Value::MinMax(..))) => {
-                        return vec![Declaration { important: false, name: name.to_string(), value: v }];
+                        return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }];
                     }
                     _ => {}
                 }
@@ -589,7 +589,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             let canon: Option<String> = match toks.as_slice() {
@@ -604,7 +604,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => None,
             };
             match canon {
-                Some(c) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(c) }],
+                Some(c) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(c) }],
                 None => Vec::new(),
             }
         }
@@ -614,10 +614,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::contain_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::contain_canonical(value_text)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::contain_canonical(value_text)) }]
             } else {
                 Vec::new()
             }
@@ -628,10 +628,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::display_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::display_canonical(value_text)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::display_canonical(value_text)) }]
             } else {
                 Vec::new()
             }
@@ -640,10 +640,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "offset-path" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::offset_path_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -654,16 +654,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![
-                    Declaration { important: false, name: "animation-range-start".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "animation-range-end".to_string(), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: "animation-range-start".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "animation-range-end".to_string(), value: Value::Keyword(low) },
                 ];
             }
             // 단축은 start/end 롱핸드로 전개(§CSSOM — 관련 롱핸드만 설정). 기본 오프셋
             // 캐논(start 0%, end 100% 생략).
             match crate::css::animation_range_expand(value_text) {
                 Some((start, end)) => vec![
-                    Declaration { important: false, name: "animation-range-start".to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(&start, false)) },
-                    Declaration { important: false, name: "animation-range-end".to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(&end, true)) },
+                    Declaration { raw: String::new(), important: false, name: "animation-range-start".to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(&start, false)) },
+                    Declaration { raw: String::new(), important: false, name: "animation-range-end".to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(&end, true)) },
                 ],
                 None => Vec::new(),
             }
@@ -671,11 +671,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "animation-range-start" | "animation-range-end" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::animation_range_longhand_valid(value_text) {
                 let is_end = name == "animation-range-end";
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(value_text, is_end)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::animation_range_longhand_canonical(value_text, is_end)) }]
             } else {
                 Vec::new()
             }
@@ -683,7 +683,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // offset-rotate(§CSS Motion Path): [ auto | reverse ] || <angle>. 키워드·각도 각
         // ≤1, 최소 하나. bare 0(단위 없음)·none·키워드 중복 거부. 캐논: 키워드 먼저.
         "offset-rotate" => match offset_rotate_canonical(value_text) {
-            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            Some(canon) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }],
             None => Vec::new(),
         },
         // offset 단축(§CSS Motion Path): position? [path [distance || rotate]?]? [/ anchor]?.
@@ -692,7 +692,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "offset-distance" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             if toks.len() != 1
@@ -705,7 +705,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Some(other) => other,
                 None => Value::Keyword(value_text.trim().to_string()),
             };
-            return vec![Declaration { important: false, name: name.to_string(), value: v }];
+            return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }];
         }
         // offset-position(auto|normal|<position>) / offset-anchor(auto|<position>).
         "offset-position" | "offset-anchor" => {
@@ -713,10 +713,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
                 || (name == "offset-position" && low == "normal")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::position_valid(value_text.trim()) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -729,7 +729,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "numeric-only"
                     | "allow-keywords"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -741,7 +741,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none" | "nearest"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -753,14 +753,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "none"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
         }
         // grid-auto-flow(§CSS Grid): [row | column] || dense. row(초기값) 생략 캐논.
         "grid-auto-flow" => match grid_auto_flow_canonical(value_text) {
-            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            Some(canon) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }],
             None => Vec::new(),
         },
         // flex-line-count(§CSS Flexbox 자동 밸런싱): <integer [1,∞]>. auto·0·음수·
@@ -768,10 +768,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "flex-line-count" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::positive_integer_valid(&low) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -780,7 +780,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // block-start/block-end 중 1, inline/inline-start/inline-end 중 1) 최대 하나.
         // 축 중복("block block", "block block-start")·미지 토큰·none 혼합 거부.
         "margin-trim" => match margin_trim_canonical(value_text) {
-            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            Some(canon) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }],
             None => Vec::new(),
         },
         // content-visibility(§CSS Contain): visible | auto | hidden 단일 키워드만.
@@ -791,7 +791,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "visible" | "auto"
                     | "hidden"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -801,14 +801,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::single_color_valid(value_text.trim()) {
                 // 색은 Value 로 — serialize_decl 이 hex/함수 색을 rgb() 로 접고 명명·
                 // currentcolor 는 키워드로 유지한다.
                 let val = interpret_value(value_text.trim())
                     .unwrap_or_else(|| Value::Keyword(value_text.trim().to_string()));
-                vec![Declaration { important: false, name: name.to_string(), value: val }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: val }]
             } else {
                 Vec::new()
             }
@@ -818,10 +818,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::object_view_box_valid(value_text.trim()) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -843,7 +843,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     _ => false,
                 };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -854,11 +854,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = crate::css::split_ws_depth0(value_text.trim());
             if toks.len() == 2 && toks.iter().all(|t| crate::css::single_color_valid(t.trim())) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -871,7 +871,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "thin"
                     | "none"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -883,7 +883,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "inert"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -896,7 +896,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "normal"
                     | "space-all" | "space-first" | "trim-all" | "trim-both" | "trim-start"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -909,7 +909,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "normal"
                     | "keep-all" | "break-all" | "break-word" | "auto-phrase" | "manual"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -922,7 +922,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none" | "start"
                     | "end" | "left" | "right" | "center"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -932,10 +932,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::hanging_punctuation_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -945,10 +945,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::text_autospace_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_autospace_canonical(value_text)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_autospace_canonical(value_text)) }]
             } else {
                 Vec::new()
             }
@@ -957,8 +957,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 단축 → text-autospace + text-spacing-trim.
         "text-spacing" => match text_spacing_parse(value_text) {
             Some((a, t)) => vec![
-                Declaration { important: false, name: "text-autospace".to_string(), value: Value::Keyword(a) },
-                Declaration { important: false, name: "text-spacing-trim".to_string(), value: Value::Keyword(t) },
+                Declaration { raw: String::new(), important: false, name: "text-autospace".to_string(), value: Value::Keyword(a) },
+                Declaration { raw: String::new(), important: false, name: "text-spacing-trim".to_string(), value: Value::Keyword(t) },
             ],
             None => Vec::new(),
         },
@@ -967,7 +967,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "text-fit" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
-                return vec![Declaration { important: false, name: "text-fit".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "text-fit".to_string(), value: Value::Keyword(low) }];
             }
             // 순차 문법: [grow|shrink] [consistent|per-line|per-line-all]? <percentage>?.
             let toks: Vec<&str> = low.split_whitespace().collect();
@@ -1006,11 +1006,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if let Some(p) = pct {
                 parts.push(p);
             }
-            vec![Declaration { important: false, name: "text-fit".to_string(), value: Value::Keyword(parts.join(" ")) }]
+            vec![Declaration { raw: String::new(), important: false, name: "text-fit".to_string(), value: Value::Keyword(parts.join(" ")) }]
         }
         // overflow-clip-margin(§CSS Overflow 4): <visual-box> || <length [0,∞]>.
         "overflow-clip-margin" => match overflow_clip_margin_canonical(value_text) {
-            Some(c) => vec![Declaration { important: false, name: "overflow-clip-margin".to_string(), value: Value::Keyword(c) }],
+            Some(c) => vec![Declaration { raw: String::new(), important: false, name: "overflow-clip-margin".to_string(), value: Value::Keyword(c) }],
             None => Vec::new(),
         },
         // text-wrap-mode(§CSS Text 4): wrap | nowrap 만. 그 외(auto/normal/balance/
@@ -1021,7 +1021,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "wrap" | "nowrap"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1034,7 +1034,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "auto" | "balance"
                     | "stable" | "pretty"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1045,10 +1045,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::text_transform_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_transform_canonical(value_text)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_transform_canonical(value_text)) }]
             } else {
                 Vec::new()
             }
@@ -1059,10 +1059,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::font_style_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1073,10 +1073,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::font_variant_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1087,10 +1087,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::transition_property_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1101,11 +1101,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let allow_neg = name == "transition-delay";
             if crate::css::time_list_valid(value_text, allow_neg) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1124,7 +1124,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     | "revert"
                     | "revert-layer"
             ) {
-                vec![Declaration { important: false, name: "box-sizing".to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: "box-sizing".to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1136,7 +1136,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: "caret-color".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "caret-color".to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::caret_color_valid(value_text) {
                 return Vec::new();
@@ -1150,7 +1150,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 Value::Keyword(value_text.trim().to_string())
             };
-            vec![Declaration { important: false, name: "caret-color".to_string(), value }]
+            vec![Declaration { raw: String::new(), important: false, name: "caret-color".to_string(), value }]
         }
         // font-size-adjust(§CSS Fonts 5): none | [metric]? [from-font | <number>].
         // 검증·캐논(기본 ex-height 생략, calc 평가). 무효 거부. CSS-wide 통과.
@@ -1158,10 +1158,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: "font-size-adjust".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "font-size-adjust".to_string(), value: Value::Keyword(low) }];
             }
             match crate::css::normalize_font_size_adjust(value_text) {
-                Some(norm) => vec![Declaration { important: false, name: "font-size-adjust".to_string(), value: Value::Keyword(norm) }],
+                Some(norm) => vec![Declaration { raw: String::new(), important: false, name: "font-size-adjust".to_string(), value: Value::Keyword(norm) }],
                 None => Vec::new(),
             }
         }
@@ -1174,7 +1174,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::font_stretch_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1184,9 +1184,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "font-variant-alternates" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else if crate::css::font_variant_alternates_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1198,7 +1198,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (name == "font-variant-numeric" && crate::css::font_variant_numeric_valid(value_text))
                 || (name == "font-variant-east-asian" && crate::css::font_variant_east_asian_valid(value_text));
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1211,7 +1211,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let ok = matches!(low.as_str(), "auto" | "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || (name == "font-synthesis-style" && low == "oblique-only");
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1220,7 +1220,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // small-caps || position ] → 네 롱핸드로 전개.
         "font-synthesis" => {
             let low = value_text.trim().to_ascii_lowercase();
-            let d = |n: &str, v: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v.to_string()) };
+            let d = |n: &str, v: &str| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(v.to_string()) };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![
                     d("font-synthesis-weight", &low),
@@ -1256,7 +1256,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::font_variant_emoji_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1265,9 +1265,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "font-variation-settings" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else if crate::css::font_variation_settings_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::font_variation_settings_canonical(value_text)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::font_variation_settings_canonical(value_text)) }]
             } else {
                 Vec::new()
             }
@@ -1280,10 +1280,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "initial" | "inherit" | "unset" | "revert" | "revert-layer"
             ) {
-                return vec![Declaration { important: false, name: "text-wrap".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "text-wrap".to_string(), value: Value::Keyword(low) }];
             }
             match crate::css::normalize_text_wrap(value_text) {
-                Some(norm) => vec![Declaration { important: false, name: "text-wrap".to_string(), value: Value::Keyword(norm) }],
+                Some(norm) => vec![Declaration { raw: String::new(), important: false, name: "text-wrap".to_string(), value: Value::Keyword(norm) }],
                 None => Vec::new(),
             }
         }
@@ -1296,10 +1296,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "initial" | "inherit" | "unset" | "revert" | "revert-layer"
             ) {
-                return vec![Declaration { important: false, name: "white-space".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "white-space".to_string(), value: Value::Keyword(low) }];
             }
             match crate::css::normalize_white_space(value_text) {
-                Some(norm) => vec![Declaration { important: false, name: "white-space".to_string(), value: Value::Keyword(norm) }],
+                Some(norm) => vec![Declaration { raw: String::new(), important: false, name: "white-space".to_string(), value: Value::Keyword(norm) }],
                 None => Vec::new(),
             }
         }
@@ -1308,10 +1308,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "order" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: "order".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "order".to_string(), value: Value::Keyword(low) }];
             }
             match number_or_math(value_text) {
-                Some(n) if n.fract() == 0.0 && n.is_finite() => vec![Declaration { important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
+                Some(n) if n.fract() == 0.0 && n.is_finite() => vec![Declaration { raw: String::new(), important: false, name: "order".to_string(), value: Value::Length(n, Unit::Number) }],
                 _ => Vec::new(),
             }
         }
@@ -1319,7 +1319,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "flex-grow" | "flex-shrink" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             // <number [0,∞]>: 엄격(단위·공백·후행점·이중부호·불량지수 거부).
             let v = value_text.trim();
@@ -1328,7 +1328,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 && ["calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(", "sign(", "abs("].iter().any(|p| vlow.starts_with(p));
             let strict_num = !v.contains(char::is_whitespace) && !v.ends_with('.') && v.parse::<f32>().is_ok();
             match number_or_math(value_text) {
-                Some(n) if n >= 0.0 && (is_math || strict_num) => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
+                Some(n) if n >= 0.0 && (is_math || strict_num) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Length(n, Unit::Number) }],
                 _ => Vec::new(),
             }
         }
@@ -1337,8 +1337,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![
-                    Declaration { important: false, name: "contain-intrinsic-width".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "contain-intrinsic-height".to_string(), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: "contain-intrinsic-width".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "contain-intrinsic-height".to_string(), value: Value::Keyword(low) },
                 ];
             }
             if !crate::css::contain_intrinsic_valid(value_text, 2) {
@@ -1361,8 +1361,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let w = groups[0].clone();
             let h = groups.get(1).cloned().unwrap_or_else(|| w.clone());
             return vec![
-                Declaration { important: false, name: "contain-intrinsic-width".to_string(), value: Value::Keyword(w) },
-                Declaration { important: false, name: "contain-intrinsic-height".to_string(), value: Value::Keyword(h) },
+                Declaration { raw: String::new(), important: false, name: "contain-intrinsic-width".to_string(), value: Value::Keyword(w) },
+                Declaration { raw: String::new(), important: false, name: "contain-intrinsic-height".to_string(), value: Value::Keyword(h) },
             ];
         }
         "contain-intrinsic-width" | "contain-intrinsic-height"
@@ -1374,10 +1374,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::contain_intrinsic_valid(value_text, 1) {
-                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: Value::Keyword(low) }];
             }
             return Vec::new();
         }
@@ -1385,11 +1385,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "mask-position" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let layers = split_top_level_commas(value_text);
             if !layers.is_empty() && layers.iter().all(|l| crate::css::position_valid(l)) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
             }
             return Vec::new();
         }
@@ -1401,11 +1401,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "corner-block-start" | "corner-block-end" | "corner-inline-start" | "corner-inline-end" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let max = if name == "corner" { 4 } else { 2 };
             if crate::css::corner_slash_valid(value_text, max) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1414,10 +1414,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "corner-top-left" | "corner-top-right" | "corner-bottom-left" | "corner-bottom-right" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::corner_single_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1432,7 +1432,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "corner-inline-start-shape" | "corner-inline-end-shape" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let max = match name {
                 "corner-shape" => 4,
@@ -1441,7 +1441,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => 2, // 변(top/bottom/left/right)·논리 축·논리 모서리 단축은 2코너.
             };
             if crate::css::corner_shape_list_valid(value_text, max) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::corner_shape_canonical(value_text)) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::corner_shape_canonical(value_text)) }];
             }
             return Vec::new();
         }
@@ -1449,20 +1449,20 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "scale" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::scale_valid(value_text) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
             }
             return Vec::new();
         }
         "translate" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::translate_valid(value_text) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
             }
             return Vec::new();
         }
@@ -1471,10 +1471,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "rotate" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::rotate_valid(value_text) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }];
             }
             return Vec::new();
         }
@@ -1485,7 +1485,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "from-image" | "none"
             ) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             return Vec::new();
         }
@@ -1493,10 +1493,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "aspect-ratio" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::aspect_ratio_valid(value_text) {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::aspect_ratio_canonical(value_text)) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::aspect_ratio_canonical(value_text)) }];
             }
             return Vec::new();
         }
@@ -1507,19 +1507,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "border-top-width" | "border-right-width" | "border-bottom-width" | "border-left-width" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             if toks.len() != 1 || !is_line_width_tok(toks[0]) {
                 return Vec::new();
             }
             let v = interpret_value(toks[0]).unwrap_or(Value::Keyword(low));
-            return vec![Declaration { important: false, name: name.to_string(), value: v }];
+            return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }];
         }
         "width" | "height" | "min-width" | "min-height" | "max-width" | "max-height" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let is_max = name.starts_with("max-");
             let toks = split_top_level(value_text.trim());
@@ -1527,7 +1527,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             // 에선 무효(max-* 는 auto 를 안 받는다). 캐논 직렬화로 저장.
             if toks.len() == 1 && low.starts_with("calc-size(") {
                 if crate::css::calc_size_valid(toks[0], !is_max, false) {
-                    return vec![Declaration { important: false, name: name.to_string(),
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(),
                         value: Value::Keyword(crate::css::calc_size_canonical(toks[0])) }];
                 }
                 return Vec::new();
@@ -1535,7 +1535,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             // anchor-size()(§css-anchor-1): sizing 프로퍼티에서 유효. 캐논 직렬화로 저장.
             if toks.len() == 1 {
                 if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
-                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }];
                 }
             }
             if toks.len() != 1 || !crate::css::size_valid(toks[0], is_max, !is_max) {
@@ -1546,7 +1546,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Some(other) => other,
                 None => Value::Keyword(low),
             };
-            return vec![Declaration { important: false, name: name.to_string(), value: v }];
+            return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }];
         }
         // 정렬 프로퍼티(§CSS Box Alignment): 축(content/self)·auto·left·right·legacy 별 문법.
         "align-content" => return align_arm(name, value_text, true, false, false, false, true),
@@ -1563,7 +1563,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "row"
                     | "row-reverse" | "column" | "column-reverse"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1575,7 +1575,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "nowrap" | "wrap"
                     | "wrap-reverse"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1585,19 +1585,19 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "flex-basis" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             // calc-size()(§CSS Values 5): flex-basis 에서 유효(auto·content basis 허용).
             if toks.len() == 1 && low.starts_with("calc-size(") {
                 if crate::css::calc_size_valid(toks[0], true, true) {
-                    return vec![Declaration { important: false, name: name.to_string(),
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(),
                         value: Value::Keyword(crate::css::calc_size_canonical(toks[0])) }];
                 }
                 return Vec::new();
             }
             if toks.len() == 1 && crate::css::flex_basis_valid(toks[0]) {
-                return vec![Declaration { important: false, name: name.to_string(), value: parse_flex_basis(&low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: parse_flex_basis(&low) }];
             }
             return Vec::new();
         }
@@ -1612,7 +1612,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return ["flex-grow", "flex-shrink", "flex-basis"]
                     .iter()
-                    .map(|n| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) })
+                    .map(|n| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(low.clone()) })
                     .collect();
             }
             let (grow, shrink, basis): (f32, f32, Value) = if low == "none" {
@@ -1645,9 +1645,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 (grow, shrink, basis)
             };
             vec![
-                Declaration { important: false, name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Number) },
-                Declaration { important: false, name: "flex-shrink".to_string(), value: Value::Length(shrink, Unit::Number) },
-                Declaration { important: false, name: "flex-basis".to_string(), value: basis },
+                Declaration { raw: String::new(), important: false, name: "flex-grow".to_string(), value: Value::Length(grow, Unit::Number) },
+                Declaration { raw: String::new(), important: false, name: "flex-shrink".to_string(), value: Value::Length(shrink, Unit::Number) },
+                Declaration { raw: String::new(), important: false, name: "flex-basis".to_string(), value: basis },
             ]
         }
         // grid-auto-columns/rows(§CSS Grid): <track-size>+. 검증만, 유효 시 원문 보존.
@@ -1656,7 +1656,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::grid_auto_track_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1666,7 +1666,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 열 수, 각 셀은 <custom-ident> 또는 null(점만). 빈 문자열·열 불일치·none 혼합·
         // 비문자열 토큰 거부.
         "grid-template-areas" => match grid_template_areas_canonical(value_text) {
-            Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+            Some(canon) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }],
             None => Vec::new(),
         },
         // grid-template-columns/rows(§CSS Grid): none | <track-list> | <auto-track-list>.
@@ -1681,7 +1681,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 } else {
                     crate::css::grid_template_track_canonical(value_text)
                 };
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }]
             } else {
                 Vec::new()
             }
@@ -1694,8 +1694,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![
-                    Declaration { important: false, name: format!("grid-{axis}-start"), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: format!("grid-{axis}-end"), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: format!("grid-{axis}-start"), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: format!("grid-{axis}-end"), value: Value::Keyword(low) },
                 ];
             }
             if !crate::css::grid_line_shorthand_valid(value_text) {
@@ -1708,26 +1708,26 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 None if grid_line_is_bare_ident(&start) => start.clone(),
                 None => "auto".to_string(),
             };
-            let d = |n: String, v: String| Declaration { important: false, name: n, value: Value::Keyword(v) };
+            let d = |n: String, v: String| Declaration { raw: String::new(), important: false, name: n, value: Value::Keyword(v) };
             vec![d(format!("grid-{axis}-start"), start), d(format!("grid-{axis}-end"), end)]
         }
         // grid-line 롱핸드(§CSS Grid): 단일 <grid-line> 검증 + 캐논.
         "grid-row-start" | "grid-row-end" | "grid-column-start" | "grid-column-end" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::grid_line_valid(value_text.trim()) {
                 return Vec::new();
             }
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::grid_line_canonical(value_text.trim())) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::grid_line_canonical(value_text.trim())) }]
         }
         // grid-area(§CSS Grid): <grid-line> [/ <grid-line>]{0,3} →
         // row-start / column-start / row-end / column-end.
         "grid-area" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                let d = |n: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(low.clone()) };
+                let d = |n: &str| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(low.clone()) };
                 return vec![d("grid-row-start"), d("grid-column-start"), d("grid-row-end"), d("grid-column-end")];
             }
             if !crate::css::grid_area_valid(value_text) {
@@ -1747,7 +1747,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let col_end = parts.get(3).cloned().unwrap_or_else(|| {
                 if grid_line_is_bare_ident(&col_start) { col_start.clone() } else { "auto".to_string() }
             });
-            let d = |n: &str, v: String| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v) };
+            let d = |n: &str, v: String| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(v) };
             vec![
                 d("grid-row-start", row_start),
                 d("grid-column-start", col_start),
@@ -1774,8 +1774,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![
-                    Declaration { important: false, name: "row-gap".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "column-gap".to_string(), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: "row-gap".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "column-gap".to_string(), value: Value::Keyword(low) },
                 ];
             }
             let toks = split_top_level(value_text.trim());
@@ -1793,17 +1793,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let phys = name.strip_prefix("grid-").unwrap_or(name);
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: Value::Keyword(low) }];
             }
             let toks = split_top_level(value_text.trim());
             if toks.len() != 1 || !crate::css::gap_value_valid(toks[0]) {
                 return Vec::new();
             }
             if toks[0].eq_ignore_ascii_case("normal") {
-                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword("normal".to_string()) }];
+                return vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: Value::Keyword("normal".to_string()) }];
             }
             match interpret_value(toks[0]) {
-                Some(v) => vec![Declaration { important: false, name: phys.to_string(), value: v }],
+                Some(v) => vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: v }],
                 None => Vec::new(),
             }
         }
@@ -1819,10 +1819,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
-                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: Value::Keyword(low) }];
             }
             if matches!(low.as_str(), "visible" | "hidden" | "clip" | "scroll" | "auto") {
-                return vec![Declaration { important: false, name: phys.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: phys.to_string(), value: Value::Keyword(low) }];
             }
             return Vec::new();
         }
@@ -1833,8 +1833,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
                 return vec![
-                    Declaration { important: false, name: "overflow-x".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "overflow-y".to_string(), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: "overflow-x".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "overflow-y".to_string(), value: Value::Keyword(low) },
                 ];
             }
             let toks = split_top_level(value_text.trim());
@@ -1846,8 +1846,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => return Vec::new(),
             };
             vec![
-                Declaration { important: false, name: "overflow-x".to_string(), value: Value::Keyword(x) },
-                Declaration { important: false, name: "overflow-y".to_string(), value: Value::Keyword(y) },
+                Declaration { raw: String::new(), important: false, name: "overflow-x".to_string(), value: Value::Keyword(x) },
+                Declaration { raw: String::new(), important: false, name: "overflow-y".to_string(), value: Value::Keyword(y) },
             ]
         }
         // flex-flow: <flex-direction> || <flex-wrap> (순서 무관). 아예 미구현이었다.
@@ -1857,8 +1857,8 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![
-                    Declaration { important: false, name: "flex-direction".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "flex-wrap".to_string(), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: "flex-direction".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "flex-wrap".to_string(), value: Value::Keyword(low) },
                 ];
             }
             let (mut dir, mut wrap): (Option<String>, Option<String>) = (None, None);
@@ -1885,10 +1885,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
             let mut out = Vec::new();
             if let Some(d) = dir {
-                out.push(Declaration { important: false, name: "flex-direction".to_string(), value: Value::Keyword(d) });
+                out.push(Declaration { raw: String::new(), important: false, name: "flex-direction".to_string(), value: Value::Keyword(d) });
             }
             if let Some(w) = wrap {
-                out.push(Declaration { important: false, name: "flex-wrap".to_string(), value: Value::Keyword(w) });
+                out.push(Declaration { raw: String::new(), important: false, name: "flex-wrap".to_string(), value: Value::Keyword(w) });
             }
             out
         }
@@ -1901,7 +1901,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let t = value_text.trim();
             let low = t.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "background-size" | "mask-size" => crate::css::background_size_valid(t),
@@ -1909,7 +1909,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => crate::css::background_attachment_valid(t),
             };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
@@ -1919,7 +1919,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "text-fit" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks: Vec<&str> = low.split_whitespace().collect();
             let ok = (|| {
@@ -1938,7 +1938,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 i == toks.len()
             })();
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1948,14 +1948,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "scroll-axis-lock" | "scroll-target-group" | "scroll-marker-group" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "scroll-marker-group" => matches!(low.as_str(), "none" | "before" | "after"),
                 _ => matches!(low.as_str(), "auto" | "none"),
             };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1964,14 +1964,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "mask-type" | "clip-rule" | "fill-rule" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "mask-type" => matches!(low.as_str(), "luminance" | "alpha"),
                 _ => matches!(low.as_str(), "nonzero" | "evenodd"),
             };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -1984,23 +1984,23 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if matches!(low.as_str(), "normal" | "none") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if split_top_level(v).len() != 1 {
                 return Vec::new();
             }
             if let Some(pct) = v.strip_suffix('%') {
                 return match pct.trim().parse::<f32>() {
-                    Ok(n) if n >= 0.0 => vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }],
+                    Ok(n) if n >= 0.0 => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Length(n / 100.0, Unit::Em) }],
                     _ => Vec::new(),
                 };
             }
             if let Ok(n) = v.parse::<f32>() {
                 return if n >= 0.0 {
-                    vec![Declaration { important: false, name: name.to_string(), value: Value::Length(n, Unit::Lh) }]
+                    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Length(n, Unit::Lh) }]
                 } else {
                     Vec::new()
                 };
@@ -2008,7 +2008,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             // 비음수 길이 또는 calc.
             if crate::css::nonneg_lp_valid(v) {
                 let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()));
-                return vec![Declaration { important: false, name: name.to_string(), value }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }];
             }
             Vec::new()
         }
@@ -2018,13 +2018,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "text-decoration-line" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::text_decoration_line_valid(value_text) {
                 return Vec::new();
             }
             let canon = crate::css::normalize_text_decoration_line(value_text).unwrap_or(low);
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }]
         }
         "text-decoration" => {
             let is_shorthand = name == "text-decoration";
@@ -2091,16 +2091,16 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 return Vec::new();
             }
             let joined = lines.join(" ");
-            let mut out = vec![Declaration { important: false,
+            let mut out = vec![Declaration { raw: String::new(), important: false,
                 name: "text-decoration-line".to_string(),
                 value: Value::Keyword(if joined.is_empty() { "none".to_string() } else { joined }),
             }];
             // 단축은 나머지 longhand 를 **항상** 출력(리셋). 미지정은 초기값.
             if is_shorthand {
-                out.push(Declaration { important: false, name: "text-decoration-style".to_string(), value: Value::Keyword(style.unwrap_or_else(|| "solid".to_string())) });
-                out.push(Declaration { important: false, name: "text-decoration-color".to_string(),
+                out.push(Declaration { raw: String::new(), important: false, name: "text-decoration-style".to_string(), value: Value::Keyword(style.unwrap_or_else(|| "solid".to_string())) });
+                out.push(Declaration { raw: String::new(), important: false, name: "text-decoration-color".to_string(),
                     value: color.unwrap_or_else(|| Value::Keyword("currentcolor".to_string())) });
-                out.push(Declaration { important: false, name: "text-decoration-thickness".to_string(),
+                out.push(Declaration { raw: String::new(), important: false, name: "text-decoration-thickness".to_string(),
                     value: Value::Keyword(thickness.unwrap_or_else(|| "auto".to_string())) });
             }
             out
@@ -2124,7 +2124,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 v.to_string()
             };
-            vec![Declaration { important: false, name: "content".to_string(), value: Value::Keyword(unquoted) }]
+            vec![Declaration { raw: String::new(), important: false, name: "content".to_string(), value: Value::Keyword(unquoted) }]
         }
         // opacity: 0..1 수 또는 퍼센트(50%). 단위 없는 수(Number)로 저장.
         // opacity(§CSS Color): <number> | <percentage>. 무효(auto/길이/다값) 거부,
@@ -2133,7 +2133,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "opacity".to_string(), value: Value::Keyword(low) }];
             }
             // 순수 수(단위 없음) 또는 퍼센트만 계산. 단위 붙은 값(10px)은 거부.
             let n = if let Some(p) = v.strip_suffix('%') {
@@ -2142,7 +2142,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 v.parse::<f32>().ok()
             };
             match n {
-                Some(op) => vec![Declaration { important: false,
+                Some(op) => vec![Declaration { raw: String::new(), important: false,
                     name: "opacity".to_string(),
                     value: Value::Length(op.clamp(0.0, 1.0), Unit::Number),
                 }],
@@ -2155,11 +2155,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     // 단위가 섞여 못 접으면 원문 보존.
                     if let Some(x) = super::values::eval_math_number(&low) {
                         if x.is_finite() {
-                            return vec![Declaration { important: false, name: "opacity".to_string(),
+                            return vec![Declaration { raw: String::new(), important: false, name: "opacity".to_string(),
                                 value: Value::Length((x as f32).clamp(0.0, 1.0), Unit::Number) }];
                         }
                     }
-                    vec![Declaration { important: false, name: "opacity".to_string(), value: Value::Keyword(v.to_string()) }]
+                    vec![Declaration { raw: String::new(), important: false, name: "opacity".to_string(), value: Value::Keyword(v.to_string()) }]
                 }
                 None => Vec::new(),
             }
@@ -2172,7 +2172,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (name == "column-width" && crate::css::column_width_valid(value_text))
                 || (name == "column-rule-width" && crate::css::column_rule_width_valid(value_text));
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2192,7 +2192,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     _ => false,
                 };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2204,7 +2204,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::border_corner_radius_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2220,7 +2220,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::bg_position_axis_valid(value_text, edges)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2232,7 +2232,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (name == "background-clip" && crate::css::background_clip_valid(value_text))
                 || (name == "background-origin" && crate::css::box_list_valid(value_text, &["border-box", "padding-box", "content-box"]));
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2241,7 +2241,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 캐논(H/block/self-block 앞, span-all 드롭, center 슬롯). 예전엔 검증 없이 raw 수용.
         "position-area" => {
             match crate::css::position_area_canonical(value_text) {
-                Some(canon) => vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }],
+                Some(canon) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }],
                 None => Vec::new(),
             }
         }
@@ -2249,12 +2249,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "list-style-type" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::list_style_type_valid(value_text) {
                 return Vec::new();
             }
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::list_style_type_canonical(value_text)) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::list_style_type_canonical(value_text)) }]
         }
         // position/list-style-position/shape-margin/shape-image-threshold/
         // list-style-image(§여러 스펙): 단순 검증.
@@ -2262,7 +2262,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "list-style-image" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "position" => matches!(low.as_str(), "static" | "relative" | "absolute" | "fixed" | "sticky"),
@@ -2281,7 +2281,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 low
             };
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v) }]
         }
         // css-overflow 계열: text-overflow/continue/max-lines/block-ellipsis/
         // -webkit-line-clamp 검증.
@@ -2289,7 +2289,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "line-clamp" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "text-overflow" => crate::css::text_overflow_valid(value_text),
@@ -2311,24 +2311,24 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 low
             };
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v) }]
         }
         // text-decoration-inset(§CSS Text Decor 4): auto | <length>{1,2}.
         "text-decoration-inset" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::text_decoration_inset_valid(value_text) {
                 return Vec::new();
             }
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_decoration_inset_canonical(value_text)) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::text_decoration_inset_canonical(value_text)) }]
         }
         // text-decoration-style/color·text-emphasis-position(§CSS Text Decor) 검증.
         "text-decoration-style" | "text-decoration-color" | "text-emphasis-position" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "text-decoration-style" => matches!(low.as_str(), "solid" | "double" | "dotted" | "dashed" | "wavy"),
@@ -2346,7 +2346,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "text-emphasis-position" => Value::Keyword(crate::css::text_emphasis_position_canonical(value_text)),
                 _ => Value::Keyword(low),
             };
-            vec![Declaration { important: false, name: name.to_string(), value: val }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: val }]
         }
         // text-underline-position(§CSS Text Decor): auto | [from-font|under] || [left|right].
         "text-underline-position" => {
@@ -2354,7 +2354,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::text_underline_position_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2376,7 +2376,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 } else {
                     Value::Keyword(value_text.trim().to_string())
                 };
-                vec![Declaration { important: false, name: name.to_string(), value: val }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: val }]
             } else {
                 Vec::new()
             }
@@ -2387,13 +2387,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "page" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks: Vec<&str> = value_text.split_whitespace().collect();
             let ok = toks.len() == 1
                 && (low == "auto" || (low != "default" && crate::css::is_css_ident(toks[0])));
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2404,7 +2404,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::mask_composite_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2413,10 +2413,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "hyphenate-limit-chars" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::hyphenate_limit_chars_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::hyphenate_limit_chars_canonical(value_text)) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::hyphenate_limit_chars_canonical(value_text)) }]
             } else {
                 Vec::new()
             }
@@ -2427,7 +2427,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let single = split_top_level(v).len() == 1;
             let ok = single && match name {
@@ -2454,14 +2454,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()))
             };
-            vec![Declaration { important: false, name: name.to_string(), value }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
         }
         // hyphens: none|manual|auto. text-justify: auto|none|inter-word|inter-character.
         // 단일 키워드만 — 다중 토큰/무효값 거부.
         "hyphens" | "text-justify" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let ok = match name {
                 "hyphens" => matches!(low.as_str(), "none" | "manual" | "auto"),
@@ -2472,7 +2472,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 ),
             };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2481,7 +2481,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "word-space-transform" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "none") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let toks: Vec<&str> = low.split_whitespace().collect();
             let (mut sp, mut auto) = (0u32, 0u32);
@@ -2493,7 +2493,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 }
             }) && sp <= 1 && auto <= 1 && sp >= 1;
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2502,17 +2502,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "font-feature-settings" | "font-palette" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if name == "font-feature-settings" {
                 if crate::css::font_feature_settings_valid(value_text) {
-                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::font_feature_settings_canonical(value_text)) }];
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::font_feature_settings_canonical(value_text)) }];
                 }
                 return Vec::new();
             }
             // font-palette: 대소문자 보존(dashed-ident).
             if crate::css::font_palette_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2530,7 +2530,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 } else {
                     low
                 };
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v) }]
             } else {
                 Vec::new()
             }
@@ -2540,14 +2540,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if matches!(low.as_str(), "xx-small" | "x-small" | "small" | "medium" | "large" | "x-large" | "xx-large" | "xxx-large" | "larger" | "smaller" | "math" | "-webkit-xxx-large") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if split_top_level(v).len() == 1 && crate::css::nonneg_lp_valid(v) {
                 let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()));
-                return vec![Declaration { important: false, name: name.to_string(), value }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }];
             }
             Vec::new()
         }
@@ -2559,7 +2559,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (!low.ends_with('%') && split_top_level(v).len() == 1 && crate::css::nonneg_lp_valid(v));
             if ok {
                 let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(low));
-                vec![Declaration { important: false, name: name.to_string(), value }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
             } else {
                 Vec::new()
             }
@@ -2572,7 +2572,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (!low.ends_with('%') && split_top_level(v).len() == 1 && crate::css::nonneg_lp_valid(v));
             if ok {
                 let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(low));
-                vec![Declaration { important: false, name: name.to_string(), value }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
             } else {
                 Vec::new()
             }
@@ -2588,7 +2588,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (matches!(name, "overscroll-behavior-x" | "overscroll-behavior-y" | "overscroll-behavior-inline" | "overscroll-behavior-block") && crate::css::overscroll_valid(value_text, true))
                 || (name == "forced-color-adjust" && matches!(low.as_str(), "auto" | "none" | "preserve-parent-color"));
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2598,7 +2598,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let v = value_text.trim();
             let low = v.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "sub" | "super" | "top" | "center" | "bottom" | "baseline") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if split_top_level(v).len() != 1 {
                 return Vec::new();
@@ -2606,7 +2606,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             // margin_value_valid = auto|calc|<length-percentage>; auto 제외.
             if crate::css::margin_value_valid(v) && low != "auto" {
                 let value = interpret_value(v).unwrap_or_else(|| Value::Keyword(v.to_string()));
-                vec![Declaration { important: false, name: name.to_string(), value }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
             } else {
                 Vec::new()
             }
@@ -2666,7 +2666,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     _ => false,
                 };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2678,7 +2678,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (name == "view-transition-name" && crate::css::view_transition_name_valid(value_text))
                 || (name == "view-transition-class" && crate::css::view_transition_class_valid(value_text))
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2704,7 +2704,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 || (name == "image-resolution" && crate::css::image_resolution_valid(value_text));
             if ok {
                 let v = if name == "image-resolution" { value_text.trim().to_string() } else { low };
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v) }]
             } else {
                 Vec::new()
             }
@@ -2717,7 +2717,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::animation_longhand_valid(name, value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2726,7 +2726,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "text-decoration-skip-ink" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "auto" | "none" | "all" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2737,7 +2737,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::text_decoration_skip_spaces_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2748,7 +2748,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::positive_integer_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2759,7 +2759,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || crate::css::will_change_valid(value_text)
             {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2775,7 +2775,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if ok {
                 // 색은 원문 보존(대소문자·함수), 그 외 키워드는 소문자.
                 let v = if name == "column-rule-color" { value_text.trim().to_string() } else { low };
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v) }]
             } else {
                 Vec::new()
             }
@@ -2784,7 +2784,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 세 롱핸드로 전개.
         "column-rule" => {
             let low = value_text.trim().to_ascii_lowercase();
-            let d = |n: &str, v: String| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v) };
+            let d = |n: &str, v: String| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(v) };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![d("column-rule-width", low.clone()), d("column-rule-style", low.clone()), d("column-rule-color", low)];
             }
@@ -2810,7 +2810,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // columns 단축(§CSS Multicol): column-width/column-count 로 전개.
         "columns" => {
             let low = value_text.trim().to_ascii_lowercase();
-            let d = |n: &str, v: &str| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v.to_string()) };
+            let d = |n: &str, v: &str| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(v.to_string()) };
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
                 return vec![d("column-width", &low), d("column-count", &low)];
             }
@@ -2824,14 +2824,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "counter-reset" | "counter-increment" | "counter-set" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let allow_reversed = name == "counter-reset";
             if !crate::css::counter_list_valid(value_text, allow_reversed) {
                 return Vec::new();
             }
             let default_int = if name == "counter-increment" { 1 } else { 0 };
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::counter_list_canonical(value_text, default_int)) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::counter_list_canonical(value_text, default_int)) }]
         }
         // aspect-ratio: "w / h" 또는 단일 수 → 비율(w/h)을 Length(r, Px)로 저장.
         "aspect-ratio" => {
@@ -2845,7 +2845,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 v.parse::<f32>().ok()
             };
             match ratio {
-                Some(r) if r > 0.0 => vec![Declaration { important: false,
+                Some(r) if r > 0.0 => vec![Declaration { raw: String::new(), important: false,
                     name: "aspect-ratio".to_string(),
                     value: Value::Length(r, Unit::Px),
                 }],
@@ -2854,7 +2854,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // @font-face src: 원문 보존(다중 url()·format() 포함). font-face 파서가 해석.
         "src" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // font-family: 유효성 검증(무효 식별자 0simple 등은 선언 거부). 원문 보존.
         "font-family" => {
@@ -2863,7 +2863,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || font_family_valid(v)
             {
-                vec![Declaration { important: false, name: "font-family".to_string(), value: Value::Keyword(v.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: "font-family".to_string(), value: Value::Keyword(v.to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2875,10 +2875,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "transform" | "-webkit-transform" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "transform".to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::transform_valid(value_text) {
-                vec![Declaration { important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: "transform".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2887,7 +2887,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 정규화해 돌려준다 — collect_computed_styles 가 시간(ms→s)·목록 간격을 정규화).
         "transition-behavior"
         | "animation-composition" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // 키워드 값 프로퍼티(계산값 = 지정 키워드): UI/인터랙션/표/스크롤 등. 원문 보존.
         // 예전엔 interpret_value(키워드) 가 None 이라 선언이 통째로 드롭돼 getComputedStyle
@@ -2904,7 +2904,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                     | "searchfield" | "textarea" | "inherit" | "initial" | "unset" | "revert"
                     | "revert-layer"
             ) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -2945,7 +2945,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
         | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // border-image 수치 롱핸드: 문법 검증 후 원문 보존.
         "border-image-repeat" | "border-image-outset" | "border-image-width" | "border-image-slice" => {
@@ -2957,7 +2957,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 _ => crate::css::border_image_slice_valid(t),
             };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
@@ -2974,17 +2974,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 "auto" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
             ) || (name == "text-decoration-thickness" && low == "from-font");
             if kw_ok {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             // <length-percentage>: 단위 있는 길이·퍼센트·calc 만. 단위없는 수는 0 만
             // 허용(§CSS unitless zero), 정크 키워드·다중값은 거부.
             match interpret_value(t) {
                 Some(Value::Length(n, Unit::Number)) if n == 0.0 => {
-                    vec![Declaration { important: false, name: name.to_string(), value: Value::Length(0.0, Unit::Px) }]
+                    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Length(0.0, Unit::Px) }]
                 }
                 Some(Value::Length(_, Unit::Number)) => Vec::new(),
                 Some(v @ (Value::Length(..) | Value::Calc(_) | Value::MinMax(..))) => {
-                    vec![Declaration { important: false, name: name.to_string(), value: v }]
+                    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }]
                 }
                 _ => Vec::new(),
             }
@@ -2998,7 +2998,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 Some(v @ Value::Color(_)) => v,
                 _ => Value::Keyword(value_text.trim().to_string()),
             };
-            vec![Declaration { important: false, name: name.to_string(), value }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
         }
         // border-*-width/style 논리(§CSS Logical): 롱핸드 단일, -{block,inline}- 쌍은 {1,2}.
         "border-block-start-width" | "border-block-end-width" | "border-inline-start-width"
@@ -3007,7 +3007,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-inline-end-style" | "border-block-style" | "border-inline-style" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let is_style = name.ends_with("-style");
             let is_pair = name == "border-block-width" || name == "border-inline-width"
@@ -3020,7 +3020,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 toks.len() == 1 && item_ok(toks[0])
             };
             if ok {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -3032,7 +3032,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "border-block-color" | "border-inline-color" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let is_pair = name == "border-block-color" || name == "border-inline-color";
             let toks = split_top_level(value_text);
@@ -3050,7 +3050,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             } else {
                 Value::Keyword(value_text.trim().to_string())
             };
-            vec![Declaration { important: false, name: name.to_string(), value }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
         }
         // transform-origin: "0 0", "left top", "50% 50%" 같은 다중 토큰 값이다.
         // 일반 값 파서는 다중 토큰을 파싱하지 못해 None 을 돌려주고, 그러면 선언이
@@ -3059,28 +3059,28 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "transform-origin" | "-webkit-transform-origin" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "transform-origin".to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::transform_origin_valid(value_text) {
                 return Vec::new();
             }
-            vec![Declaration { important: false, name: "transform-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: "transform-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // perspective-origin: 다중 토큰 원문 보존(계산값은 resolve_origin 이 px 로).
         // perspective-origin(§CSS Transforms): <position>. 검증 후 원문 보존(캐논은 직렬화).
         "perspective-origin" | "-webkit-perspective-origin" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: "perspective-origin".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "perspective-origin".to_string(), value: Value::Keyword(low) }];
             }
             if !crate::css::position_valid(value_text) {
                 return Vec::new();
             }
-            vec![Declaration { important: false, name: "perspective-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: "perspective-origin".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
         "filter" | "-webkit-filter" => {
-            vec![Declaration { important: false, name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // animation 단축 → 롱핸드. 첫 시간=duration, 둘째=delay. 나머지는 키워드로 구분.
         "animation" | "-webkit-animation" => animation_shorthand(value_text),
@@ -3092,7 +3092,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 low.as_str(),
                 "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
             ) {
-                return vec![Declaration { important: false, name: "text-shadow".to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: "text-shadow".to_string(), value: Value::Keyword(low) }];
             }
             // §CSS Text Decor 문법 검증(inset·spread 없음, 길이 2~3, blur 음수·% 불가).
             // 무효면 거부. 유효값은 아래에서 항상 원문을 보존한다.
@@ -3127,12 +3127,12 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let mut decls = Vec::new();
             if lens.len() >= 2 {
                 let color = color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 128 }));
-                decls.push(Declaration { important: false, name: "text-shadow-x".to_string(), value: px(lens[0]) });
-                decls.push(Declaration { important: false, name: "text-shadow-y".to_string(), value: px(lens[1]) });
-                decls.push(Declaration { important: false, name: "text-shadow-color".to_string(), value: color });
+                decls.push(Declaration { raw: String::new(), important: false, name: "text-shadow-x".to_string(), value: px(lens[0]) });
+                decls.push(Declaration { raw: String::new(), important: false, name: "text-shadow-y".to_string(), value: px(lens[1]) });
+                decls.push(Declaration { raw: String::new(), important: false, name: "text-shadow-color".to_string(), value: color });
             }
             // 전체 원문 보존 — getComputedStyle 이 캐논 직렬화(색 우선)하고 보간에 쓴다.
-            decls.push(Declaration { important: false, name: "text-shadow".to_string(), value: Value::Keyword(v.to_string()) });
+            decls.push(Declaration { raw: String::new(), important: false, name: "text-shadow".to_string(), value: Value::Keyword(v.to_string()) });
             decls
         }
         // box-shadow: <dx> <dy> [blur] [spread] <color> (단일 그림자, outset 만)
@@ -3153,17 +3153,17 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let mut out = Vec::new();
             for tok in split_top_level(value_text) {
                 match tok {
-                    "inside" | "outside" => out.push(Declaration { important: false,
+                    "inside" | "outside" => out.push(Declaration { raw: String::new(), important: false,
                         name: "list-style-position".to_string(),
                         value: Value::Keyword(tok.to_string()),
                     }),
                     t if t.starts_with("url(") => {
                         if let Some(v) = interpret_value(t) {
-                            out.push(Declaration { important: false, name: "list-style-image".to_string(), value: v });
+                            out.push(Declaration { raw: String::new(), important: false, name: "list-style-image".to_string(), value: v });
                         }
                     }
                     // none 은 type/image 둘 다 될 수 있으나 마커 제거 목적상 type:none 로.
-                    t => out.push(Declaration { important: false,
+                    t => out.push(Declaration { raw: String::new(), important: false,
                         name: "list-style-type".to_string(),
                         value: Value::Keyword(t.to_string()),
                     }),
@@ -3180,10 +3180,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "object-position" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::position_valid(value_text) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -3192,11 +3192,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "background-position" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let layers = split_top_level_commas(value_text);
             if !layers.is_empty() && layers.iter().all(|l| crate::css::bg_position_valid(l)) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
             } else {
                 Vec::new()
             }
@@ -3207,22 +3207,22 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let t = value_text.trim();
             let low = t.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::clip_path_valid(t) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
         }
         "backdrop-filter" => {
-            vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // all(§CSS Cascade): CSS 전역 키워드만(initial|inherit|unset|revert|revert-layer).
         "all" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "initial" | "inherit" | "unset" | "revert" | "revert-layer") {
-                vec![Declaration { important: false, name: "all".to_string(), value: Value::Keyword(low) }]
+                vec![Declaration { raw: String::new(), important: false, name: "all".to_string(), value: Value::Keyword(low) }]
             } else {
                 Vec::new()
             }
@@ -3232,10 +3232,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let t = value_text.trim();
             let low = t.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::border_image_source_valid(t) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
@@ -3245,10 +3245,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let t = value_text.trim();
             let low = t.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::clip_valid(t) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
@@ -3258,10 +3258,10 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             let t = value_text.trim();
             let low = t.to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             if crate::css::shape_outside_valid(t) {
-                vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
             } else {
                 Vec::new()
             }
@@ -3280,9 +3280,9 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
             {
                 return vec![
-                    Declaration { important: false, name: "outline-width".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "outline-style".to_string(), value: Value::Keyword(low.clone()) },
-                    Declaration { important: false, name: "outline-color".to_string(), value: Value::Keyword(low) },
+                    Declaration { raw: String::new(), important: false, name: "outline-width".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "outline-style".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "outline-color".to_string(), value: Value::Keyword(low) },
                 ];
             }
             let (mut width, mut style, mut color) = (None, None, None);
@@ -3307,11 +3307,11 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 }
             }
             vec![
-                Declaration { important: false, name: "outline-width".to_string(),
+                Declaration { raw: String::new(), important: false, name: "outline-width".to_string(),
                     value: width.unwrap_or_else(|| Value::Keyword("medium".to_string())) },
-                Declaration { important: false, name: "outline-style".to_string(),
+                Declaration { raw: String::new(), important: false, name: "outline-style".to_string(),
                     value: style.unwrap_or_else(|| Value::Keyword("none".to_string())) },
-                Declaration { important: false, name: "outline-color".to_string(),
+                Declaration { raw: String::new(), important: false, name: "outline-color".to_string(),
                     value: color.unwrap_or_else(|| Value::Keyword("invert".to_string())) },
             ]
         }
@@ -3326,14 +3326,14 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "margin-top" | "margin-right" | "margin-bottom" | "margin-left" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let is_margin = name.starts_with("margin");
             let toks = split_top_level(value_text.trim());
             // anchor-size()(§css-anchor-1): margin 에서 유효(padding 은 아님).
             if is_margin && toks.len() == 1 {
                 if let Some(canon) = crate::css::anchor_size_canonical(toks[0]) {
-                    return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(canon) }];
+                    return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(canon) }];
                 }
             }
             let ok = toks.len() == 1
@@ -3342,7 +3342,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
                 return Vec::new();
             }
             let v = interpret_value(toks[0]).unwrap_or_else(|| Value::Keyword(value_text.trim().to_string()));
-            vec![Declaration { important: false, name: name.to_string(), value: v }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }]
         }
         // color(§CSS Color): <color>. CSS-wide 통과, 그 외는 실제 색만 수용(무효 명명/
         // 숫자/키워드 거부). 계산 불가하지만 문법 유효한 색 함수는 지정값 보존.
@@ -3350,25 +3350,25 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "color" | "background-color" => {
             let low = value_text.trim().to_ascii_lowercase();
             if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-                return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
             }
             let v = value_text.trim();
             match interpret_value(v) {
                 // 색(또는 색으로 해석되는 키워드)만 수용. Length/일반 Keyword 는 거부.
                 Some(value @ (Value::Color(..) | Value::ColorFn(..))) => {
-                    vec![Declaration { important: false, name: name.to_string(), value }]
+                    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }]
                 }
                 Some(Value::Keyword(k)) if crate::css::single_color_valid(&k) => {
-                    vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(k) }]
+                    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(k) }]
                 }
                 _ if crate::css::single_color_valid(v) || crate::css::color_syntax_valid(v) => {
-                    vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(v.to_string()) }]
+                    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v.to_string()) }]
                 }
                 _ => Vec::new(),
             }
         }
         _ => match interpret_value(value_text) {
-            Some(value) => vec![Declaration { important: false, name: name.to_string(), value }],
+            Some(value) => vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value }],
             None => Vec::new(),
         },
     }
@@ -3741,38 +3741,38 @@ fn font_shorthand(value_text: &str) -> Vec<Declaration> {
     // 전체 리셋 방출: 지정 안 된 성분은 초기값(normal → weight 400 등). 계산값
     // 재조립(getComputedStyle().font)이 개별 longhand 설정과 일치하도록 한다.
     let kw = |s: &str| Value::Keyword(s.to_string());
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "font-style".to_string(),
         value: style_v.unwrap_or_else(|| kw("normal")),
     });
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "font-variant-caps".to_string(),
         value: kw(if variant_scaps { "small-caps" } else { "normal" }),
     });
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "font-weight".to_string(),
         // 미지정 시 초기값 400(수치) — normal 키워드로 두면 계산값이 "normal" 로 새어
         // font-weight-computed 가 깨진다(계산 font-weight 는 수치, §CSS Fonts).
         value: weight_v.unwrap_or_else(|| Value::Length(400.0, Unit::Number)),
     });
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "font-stretch".to_string(),
         value: kw(stretch_v.as_deref().unwrap_or("normal")),
     });
-    out.push(Declaration { important: false, name: "font-size".to_string(), value: size_val });
+    out.push(Declaration { raw: String::new(), important: false, name: "font-size".to_string(), value: size_val });
     match lh_decls {
         Some(d) => out.extend(d),
-        None => out.push(Declaration {
+        None => out.push(Declaration { raw: String::new(),
             important: false,
             name: "line-height".to_string(),
             value: kw("normal"),
         }),
     }
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "font-family".to_string(),
         value: Value::Keyword(family),
@@ -3789,8 +3789,8 @@ fn place_shorthand(axis: &str, value_text: &str, ap: AlignParams, jp: AlignParam
     let low = value_text.trim().to_ascii_lowercase();
     if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
         return vec![
-            Declaration { important: false, name: format!("align-{}", axis), value: Value::Keyword(low.clone()) },
-            Declaration { important: false, name: format!("justify-{}", axis), value: Value::Keyword(low) },
+            Declaration { raw: String::new(), important: false, name: format!("align-{}", axis), value: Value::Keyword(low.clone()) },
+            Declaration { raw: String::new(), important: false, name: format!("justify-{}", axis), value: Value::Keyword(low) },
         ];
     }
     let toks: Vec<&str> = split_top_level(value_text.trim());
@@ -3821,8 +3821,8 @@ fn place_shorthand(axis: &str, value_text: &str, ap: AlignParams, jp: AlignParam
             continue;
         };
         return vec![
-            Declaration { important: false, name: format!("align-{}", axis), value: Value::Keyword(crate::css::alignment_canonical(&a_val)) },
-            Declaration { important: false, name: format!("justify-{}", axis), value: Value::Keyword(crate::css::alignment_canonical(&j_val)) },
+            Declaration { raw: String::new(), important: false, name: format!("align-{}", axis), value: Value::Keyword(crate::css::alignment_canonical(&a_val)) },
+            Declaration { raw: String::new(), important: false, name: format!("justify-{}", axis), value: Value::Keyword(crate::css::alignment_canonical(&j_val)) },
         ];
     }
     Vec::new()
@@ -3840,10 +3840,10 @@ fn align_arm(
 ) -> Vec<Declaration> {
     let low = value_text.trim().to_ascii_lowercase();
     if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-        return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+        return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
     }
     if crate::css::alignment_valid(value_text, is_content, allow_auto, allow_lr, allow_legacy, allow_baseline) {
-        vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(crate::css::alignment_canonical(&low)) }]
+        vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(crate::css::alignment_canonical(&low)) }]
     } else {
         Vec::new()
     }
@@ -3854,7 +3854,7 @@ fn align_arm(
 fn scroll_side(name: &str, value_text: &str, is_padding: bool) -> Vec<Declaration> {
     let low = value_text.trim().to_ascii_lowercase();
     if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
-        return vec![Declaration { important: false, name: name.to_string(), value: Value::Keyword(low) }];
+        return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
     }
     let toks = split_top_level(value_text.trim());
     if toks.len() != 1 {
@@ -3877,7 +3877,7 @@ fn scroll_side(name: &str, value_text: &str, is_padding: bool) -> Vec<Declaratio
             None => Value::Keyword(low),
         }
     };
-    vec![Declaration { important: false, name: name.to_string(), value: v }]
+    vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: v }]
 }
 
 // scroll-margin/scroll-padding 단축(§CSS Scroll Snap): 1~4 값 → 네 변.
@@ -3886,7 +3886,7 @@ fn scroll_box(prefix: &str, value_text: &str, is_padding: bool) -> Vec<Declarati
     if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
         return ["top", "right", "bottom", "left"]
             .iter()
-            .map(|s| Declaration { important: false, name: format!("{}-{}", prefix, s), value: Value::Keyword(low.clone()) })
+            .map(|s| Declaration { raw: String::new(), important: false, name: format!("{}-{}", prefix, s), value: Value::Keyword(low.clone()) })
             .collect();
     }
     let toks = split_top_level(value_text.trim());
@@ -4025,7 +4025,7 @@ fn space_top_level_slashes(text: &str) -> String {
 
 // animation 단축 → 여덟 롱핸드. 첫 시간=duration, 둘째=delay. 나머지는 키워드/수로.
 fn animation_shorthand(value_text: &str) -> Vec<Declaration> {
-    let kw = |name: &str, val: String| Declaration {
+    let kw = |name: &str, val: String| Declaration { raw: String::new(),
         important: false,
         name: name.to_string(),
         value: Value::Keyword(val),
@@ -4119,7 +4119,7 @@ fn animation_shorthand(value_text: &str) -> Vec<Declaration> {
 // transition 단축 → 다섯 롱핸드. 각 롱핸드는 콤마 목록. 첫 시간값=duration,
 // 둘째=delay. timing-function/behavior/property 는 키워드로 구분.
 fn transition_shorthand(value_text: &str) -> Vec<Declaration> {
-    let kw = |name: &str, val: String| Declaration {
+    let kw = |name: &str, val: String| Declaration { raw: String::new(),
         important: false,
         name: name.to_string(),
         value: Value::Keyword(val),
@@ -4721,11 +4721,11 @@ fn expand_border_image(value: &str) -> Option<Vec<Declaration>> {
     let source_str = source.unwrap_or_else(|| "none".to_string());
 
     Some(vec![
-        Declaration { important: false, name: "border-image-source".to_string(), value: Value::Keyword(source_str) },
-        Declaration { important: false, name: "border-image-slice".to_string(), value: Value::Keyword(slice_str) },
-        Declaration { important: false, name: "border-image-width".to_string(), value: Value::Keyword(width_str) },
-        Declaration { important: false, name: "border-image-outset".to_string(), value: Value::Keyword(outset_str) },
-        Declaration { important: false, name: "border-image-repeat".to_string(), value: Value::Keyword(repeat_str) },
+        Declaration { raw: String::new(), important: false, name: "border-image-source".to_string(), value: Value::Keyword(source_str) },
+        Declaration { raw: String::new(), important: false, name: "border-image-slice".to_string(), value: Value::Keyword(slice_str) },
+        Declaration { raw: String::new(), important: false, name: "border-image-width".to_string(), value: Value::Keyword(width_str) },
+        Declaration { raw: String::new(), important: false, name: "border-image-outset".to_string(), value: Value::Keyword(outset_str) },
+        Declaration { raw: String::new(), important: false, name: "border-image-repeat".to_string(), value: Value::Keyword(repeat_str) },
     ])
 }
 
@@ -4735,7 +4735,7 @@ fn expand_border_image(value: &str) -> Option<Vec<Declaration>> {
 // [ / <offset-anchor> ]?. 기본값: position normal, path none, distance 0px, rotate auto,
 // anchor auto.
 fn offset_shorthand(value_text: &str) -> Vec<Declaration> {
-    let mk = |n: &str, v: String| Declaration { important: false, name: n.to_string(), value: Value::Keyword(v) };
+    let mk = |n: &str, v: String| Declaration { raw: String::new(), important: false, name: n.to_string(), value: Value::Keyword(v) };
     let low = value_text.trim().to_ascii_lowercase();
     if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
         return ["offset-position", "offset-path", "offset-distance", "offset-rotate", "offset-anchor"]
@@ -4988,15 +4988,15 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
     }
     // 단축은 모든 롱핸드를 리셋한다 — 생략된 것은 초기값으로 채운다(§CSS Backgrounds).
     // origin/clip: 박스 하나면 둘 다, 둘이면 첫째=origin 둘째=clip. 없으면 각 초기값.
-    let kw = |name: &str, v: String| Declaration { important: false, name: name.to_string(), value: Value::Keyword(v) };
-    out.push(Declaration {
+    let kw = |name: &str, v: String| Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(v) };
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "background-image".to_string(),
         value: image.unwrap_or_else(|| Value::Keyword("none".to_string())),
     });
     out.push(kw("background-position", if pos_tokens.is_empty() { "0% 0%".to_string() } else { pos_tokens.join(" ") }));
     out.push(kw("background-size", if size_tokens.is_empty() { "auto".to_string() } else { size_tokens.join(" ") }));
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "background-repeat".to_string(),
         value: repeat.unwrap_or_else(|| Value::Keyword("repeat".to_string())),
@@ -5007,7 +5007,7 @@ fn background_shorthand(value_text: &str) -> Vec<Declaration> {
         "background-clip",
         boxes.get(1).or_else(|| boxes.first()).cloned().unwrap_or_else(|| "border-box".to_string()),
     ));
-    out.push(Declaration {
+    out.push(Declaration { raw: String::new(),
         important: false,
         name: "background-color".to_string(),
         value: color.unwrap_or(Value::Color(Color { r: 0, g: 0, b: 0, a: 0 })),
@@ -5578,12 +5578,12 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
     // 첫 그림자 longhand (inner-shadow 경로가 읽음) — dx,dy 있을 때만.
     let mut out = if lens.len() >= 2 {
         vec![
-            Declaration { important: false, name: "box-shadow-x".to_string(), value: px(lens[0]) },
-            Declaration { important: false, name: "box-shadow-y".to_string(), value: px(lens[1]) },
-            Declaration { important: false, name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
-            Declaration { important: false, name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
-            Declaration { important: false, name: "box-shadow-color".to_string(), value: color },
-            Declaration { important: false,
+            Declaration { raw: String::new(), important: false, name: "box-shadow-x".to_string(), value: px(lens[0]) },
+            Declaration { raw: String::new(), important: false, name: "box-shadow-y".to_string(), value: px(lens[1]) },
+            Declaration { raw: String::new(), important: false, name: "box-shadow-blur".to_string(), value: px(lens.get(2).copied().unwrap_or(0.0)) },
+            Declaration { raw: String::new(), important: false, name: "box-shadow-spread".to_string(), value: px(lens.get(3).copied().unwrap_or(0.0)) },
+            Declaration { raw: String::new(), important: false, name: "box-shadow-color".to_string(), value: color },
+            Declaration { raw: String::new(), important: false,
                 name: "box-shadow-inset".to_string(),
                 value: Value::Keyword(if inset { "inset" } else { "outset" }.to_string()),
             },
@@ -5592,7 +5592,7 @@ fn box_shadow_shorthand(value_text: &str) -> Vec<Declaration> {
         Vec::new()
     };
     // 전체 원문 보존 — paint 가 다중(콤마) 그림자를 모두 파싱해 발행한다.
-    out.push(Declaration { important: false,
+    out.push(Declaration { raw: String::new(), important: false,
         name: "box-shadow".to_string(),
         value: Value::Keyword(value_text.trim().to_string()),
     });
@@ -5631,7 +5631,7 @@ fn is_line_style_tok(t: &str) -> bool {
 // 생략된 컴포넌트는 초기값(width medium, style none, color currentcolor)으로 채운다.
 // 전체 border(4면)는 border-image 롱핸드도 초기값으로 리셋한다.
 fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
-    let kw = |name: &str, v: &str| Declaration {
+    let kw = |name: &str, v: &str| Declaration { raw: String::new(),
         important: false,
         name: name.to_string(),
         value: Value::Keyword(v.to_string()),
@@ -5700,9 +5700,9 @@ fn border_shorthand(sides: &[&str], value_text: &str) -> Vec<Declaration> {
     };
     let mut out = Vec::new();
     for &side in sides {
-        out.push(Declaration { important: false, name: format!("border-{}-width", side), value: width_val(wv) });
+        out.push(Declaration { raw: String::new(), important: false, name: format!("border-{}-width", side), value: width_val(wv) });
         out.push(kw(&format!("border-{}-style", side), sv));
-        out.push(Declaration { important: false, name: format!("border-{}-color", side), value: color_val(cv) });
+        out.push(Declaration { raw: String::new(), important: false, name: format!("border-{}-color", side), value: color_val(cv) });
     }
     reset_bi(&mut out, "");
     out
@@ -5745,7 +5745,7 @@ fn trbl_decls(names: [&str; 4], vals: &[Value]) -> Vec<Declaration> {
     names
         .iter()
         .zip(idx)
-        .map(|(n, i)| Declaration { important: false, name: n.to_string(), value: vals[i].clone() })
+        .map(|(n, i)| Declaration { raw: String::new(), important: false, name: n.to_string(), value: vals[i].clone() })
         .collect()
 }
 
@@ -5759,7 +5759,7 @@ fn box_shorthand(prefix: &str, suffix: &str, value_text: &str) -> Vec<Declaratio
         4 => (tokens[0].clone(), tokens[1].clone(), tokens[2].clone(), tokens[3].clone()),
         _ => return Vec::new(),
     };
-    let mk = |side: &str, value: Value| Declaration { important: false,
+    let mk = |side: &str, value: Value| Declaration { raw: String::new(), important: false,
         name: format!("{}-{}{}", prefix, side, suffix),
         value,
     };
