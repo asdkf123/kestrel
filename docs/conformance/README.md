@@ -125,12 +125,12 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | css-color | 7,930 / 9,399 | 84.4% |
+| cssom | 2,880 / 3,437 | 83.8% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,136 / 2,602 | 82.1% |
-| css-flexbox | 1,073 / 1,315 | 81.6% |
+| css-flexbox | 1,125 / 1,379 | 81.6% |
 | css-nesting | 95 / 117 | 81.2% |
-| cssom | 2,712 / 3,437 | 78.9% |
 | css-backgrounds | 3,788 / 4,914 | 77.1% |
 | css-anchor-position | 9,972 / 13,012 | 76.6% |
 | css-position | 1,078 / 1,412 | 76.3% |
