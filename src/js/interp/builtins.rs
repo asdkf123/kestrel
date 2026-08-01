@@ -4427,6 +4427,10 @@ impl Interp {
                             false
                         }
                     }
+                    // DOM 노드: 스크립트가 붙인 expando 만 own 프로퍼티다. 표준 인터페이스
+                    // 멤버(style/id/appendChild 등)는 prototype 소속이라 own 이 아니다
+                    // (§WebIDL). assert_idl_attribute(`!el.hasOwnProperty("style")`) 충족.
+                    Some(Value::Dom(id)) => self.dom_props.contains_key(&(*id, key.clone())),
                     _ => false,
                 };
                 Ok(Value::Bool(has))

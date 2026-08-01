@@ -77,6 +77,68 @@ enum LoopAct {
 
 // 구문상 익명 함수/클래스 식인가 (NamedEvaluation 의 조건).
 // `function(){}`, `() => {}`, `class {}` 만 해당한다. `makeFn()` 이나 `other` 는 아니다.
+// DOM 노드(EventTarget/Node/Element/HTMLElement)의 표준 인터페이스 멤버 이름인가.
+// `in` 연산자(has_property)와 hasOwnProperty 판정용 — member_get 이 지원하는 표준
+// 멤버 집합과 일관되게 유지한다(§DOM/§HTML). expando·on* 핸들러·Object.prototype 은
+// 호출부에서 따로 처리한다.
+// 모든 노드(EventTarget/Node)에 있는 멤버. Element 여부와 무관.
+fn node_member_name(key: &str) -> bool {
+    matches!(
+        key,
+        // EventTarget
+        "addEventListener" | "removeEventListener" | "dispatchEvent"
+        // Node
+        | "nodeType" | "nodeName" | "nodeValue" | "textContent" | "childNodes"
+        | "firstChild" | "lastChild" | "previousSibling" | "nextSibling" | "parentNode"
+        | "parentElement" | "ownerDocument" | "appendChild" | "removeChild" | "replaceChild"
+        | "insertBefore" | "cloneNode" | "contains" | "hasChildNodes" | "normalize"
+        | "isEqualNode" | "isSameNode" | "compareDocumentPosition" | "getRootNode"
+        | "isConnected" | "baseURI"
+        | "DOCUMENT_POSITION_DISCONNECTED"
+        | "DOCUMENT_POSITION_PRECEDING" | "DOCUMENT_POSITION_FOLLOWING"
+        | "DOCUMENT_POSITION_CONTAINS" | "DOCUMENT_POSITION_CONTAINED_BY"
+        | "DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC"
+        | "ELEMENT_NODE" | "TEXT_NODE" | "COMMENT_NODE" | "DOCUMENT_NODE"
+        | "DOCUMENT_FRAGMENT_NODE" | "DOCUMENT_TYPE_NODE" | "ATTRIBUTE_NODE"
+        | "PROCESSING_INSTRUCTION_NODE" | "CDATA_SECTION_NODE" | "ENTITY_REFERENCE_NODE"
+        | "ENTITY_NODE" | "NOTATION_NODE"
+    )
+}
+
+// Element/HTMLElement 인터페이스 전용 멤버. 요소 노드에서만 HasProperty 다(§DOM:
+// attributes/namespaceURI/prefix/localName/hasAttributes 는 Node 가 아니라 Element
+// 소속 — historical.html 이 Document/DocumentType/Text 에서 부재를 검증한다).
+fn element_member_name(key: &str) -> bool {
+    matches!(
+        key,
+        // Element
+        "tagName" | "id" | "className" | "classList" | "attributes" | "getAttribute"
+        | "setAttribute" | "removeAttribute" | "hasAttribute" | "hasAttributes"
+        | "getAttributeNames" | "toggleAttribute" | "getAttributeNode" | "setAttributeNode"
+        | "removeAttributeNode" | "getAttributeNS" | "setAttributeNS" | "removeAttributeNS"
+        | "hasAttributeNS" | "getAttributeNodeNS" | "querySelector" | "querySelectorAll"
+        | "getElementsByTagName" | "getElementsByTagNameNS" | "getElementsByClassName"
+        | "closest" | "matches" | "webkitMatchesSelector" | "before" | "after"
+        | "replaceWith" | "remove" | "prepend" | "append" | "replaceChildren"
+        | "insertAdjacentHTML" | "insertAdjacentElement" | "insertAdjacentText"
+        | "getBoundingClientRect" | "getClientRects" | "scrollIntoView" | "scroll"
+        | "scrollTo" | "scrollBy" | "innerHTML" | "outerHTML" | "setHTMLUnsafe"
+        | "children" | "firstElementChild" | "lastElementChild" | "previousElementSibling"
+        | "nextElementSibling" | "childElementCount" | "namespaceURI" | "prefix"
+        | "localName" | "slot" | "attachShadow" | "shadowRoot" | "part"
+        | "scrollTop" | "scrollLeft" | "scrollWidth" | "scrollHeight" | "clientWidth"
+        | "clientHeight" | "clientTop" | "clientLeft" | "lookupPrefix"
+        | "lookupNamespaceURI" | "isDefaultNamespace"
+        // HTMLElement
+        | "style" | "dataset" | "hidden" | "title" | "lang" | "dir" | "click" | "focus"
+        | "blur" | "tabIndex" | "accessKey" | "contentEditable" | "isContentEditable"
+        | "offsetParent" | "offsetTop" | "offsetLeft" | "offsetWidth" | "offsetHeight"
+        | "innerText" | "outerText" | "nonce" | "autofocus" | "translate" | "spellcheck"
+        | "draggable" | "inert" | "enterKeyHint" | "inputMode" | "popover"
+        | "animate" | "getAnimations" | "computedStyleMap" | "attributeStyleMap"
+    )
+}
+
 fn is_anonymous_fn_expr(e: &Expr) -> bool {
     match e {
         Expr::Func { name: None, .. } => true,
@@ -6412,6 +6474,25 @@ impl Interp {
                         | "parentRule"
                 ) || crate::css::is_known_property(&camel_to_dashed(key))
             }
+            // DOM 노드(Element/Node/EventTarget/HTMLElement): expando(스크립트가 붙인
+            // 임의 프로퍼티) + 표준 인터페이스 멤버 + Object.prototype 상속이 HasProperty
+            // (`in`)다(§WebIDL). 예전엔 arm 이 없어 `"appendChild" in el`·`"style" in el`
+            // 이 전부 false 였다(feature detection·assert_idl_attribute 실패).
+            Value::Dom(id) => {
+                let is_element = self
+                    .dom
+                    .map(|p| {
+                        matches!(
+                            unsafe { &(*p).get(*id).node_type },
+                            crate::dom::NodeType::Element(_)
+                        )
+                    })
+                    .unwrap_or(false);
+                self.dom_props.contains_key(&(*id, key.to_string()))
+                    || node_member_name(key)
+                    || (is_element && element_member_name(key))
+                    || (!is_internal_key(key) && self.proto_method("Object", key).is_some())
+            }
             // CSSOM 플랫폼 객체(CSSStyleSheet/CSSRule 계열/CSSStyleDeclaration of a rule):
             // 인터페이스 속성·메서드·CSSRule 타입 상수 + Object.prototype 상속 메서드가
             // HasProperty(`in`)다(§WebIDL). 예전엔 arm 이 없어 전부 false → assert_idl_attribute
@@ -7447,6 +7528,18 @@ impl Interp {
                         if !matches!(m, Value::Undefined) {
                             return Ok(m);
                         }
+                    }
+                }
+                // Object.prototype 상속 메서드(§WebIDL: 플랫폼 객체의 [[Prototype]] 체인
+                // 끝도 Object.prototype). hasOwnProperty/isPrototypeOf 등. toString 은
+                // 별도(brand) 처리라 여기서 제외.
+                if matches!(
+                    key,
+                    "hasOwnProperty" | "isPrototypeOf" | "propertyIsEnumerable"
+                        | "toLocaleString" | "valueOf"
+                ) {
+                    if let Some(m) = self.proto_method("Object", key) {
+                        return Ok(m);
                     }
                 }
                 Ok(Value::Undefined)
