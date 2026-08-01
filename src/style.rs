@@ -2808,6 +2808,20 @@ fn style_node<'a>(
             if let Some(r) = content_attr {
                 values.insert("content".to_string(), Value::Keyword(r));
             }
+            // if() 계산 시점 해석(§CSS Values 5): style() 조건을 요소의 커스텀 프로퍼티
+            // (custom)로 평가해 첫 참 분기 값으로 치환한다. var 해석 뒤에 처리.
+            let if_updates: Vec<(String, String)> = values
+                .iter()
+                .filter_map(|(k, v)| match v {
+                    Value::Keyword(s) if s.contains("if(") => {
+                        crate::css::substitute_if(s, &custom).map(|r| (k.clone(), r))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (k, r) in if_updates {
+                values.insert(k, Value::Keyword(r));
+            }
             // font-size 외 속성의 em/rem 을 px 로 확정한다 (computed value).
             // em 은 요소 자신의 font-size(fs), rem 은 루트 기준(DEFAULT_FONT_SIZE).
             // 퍼센트는 레이아웃(calculate_width)이 컨테이닝 블록 폭 기준으로 해석하므로 보존.

@@ -888,6 +888,123 @@ fn substitute_var(raw: &str, custom: &std::collections::HashMap<String, String>,
     out
 }
 
+// 최상위(괄호 밖) 구분자로 문자열 분리. if() clause(';')·cond:value(':') 파싱용.
+fn split_top_by(s: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c == sep && depth == 0 => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+// if() 의 style() 조건 평가(§CSS Values 5). custom: 요소의 계산된 커스텀 프로퍼티.
+// style(--name) = 존재, style(--name: V) = 값 일치(initial=미설정/빈값). media()/
+// supports() 는 미지원(None 반환해 조건 불성립 취급).
+fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>) -> Option<bool> {
+    let c = cond.trim();
+    if c.eq_ignore_ascii_case("else") {
+        return Some(true);
+    }
+    let low = c.to_ascii_lowercase();
+    if let Some(inner) = low
+        .strip_prefix("style(")
+        .and_then(|_| c.get(6..c.len().checked_sub(1)?))
+    {
+        // inner = "--name" 또는 "--name: value".
+        let (name, expected) = match split_top_by(inner, ':').as_slice() {
+            [n] => (n.trim().to_string(), None),
+            [n, v] => (n.trim().to_string(), Some(v.trim().to_string())),
+            _ => return None,
+        };
+        return Some(match expected {
+            None => custom.contains_key(&name), // 존재 여부
+            Some(exp) => {
+                let exp = exp.trim();
+                let cur = custom.get(&name).map(|s| s.trim());
+                if exp.eq_ignore_ascii_case("initial") {
+                    // initial = 미설정 또는 빈 값 또는 "initial".
+                    matches!(cur, None | Some("")) || exp.eq_ignore_ascii_case(cur.unwrap_or(""))
+                } else if exp.contains("var(") {
+                    false // guaranteed-invalid(미해석 var) → 불일치
+                } else {
+                    cur.map(|v| v.eq_ignore_ascii_case(exp)).unwrap_or(false)
+                }
+            }
+        });
+    }
+    None // media()/supports() 등 미지원
+}
+
+// if() 를 계산 시점에 해석(§CSS Values 5 §if-notation). 첫 참인 조건의 값으로
+// 치환한다. 값은 앞 공백만 다듬고 뒤는 보존(테스트 규약). 전체가 if(...) 하나가
+// 아니거나 미지원 조건뿐이면 None(호출부가 원문 유지/드롭).
+pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>) -> Option<String> {
+    let t = raw.trim();
+    let low = t.to_ascii_lowercase();
+    if !low.starts_with("if(") || !t.ends_with(')') {
+        return None;
+    }
+    // 전체가 if(...) 하나인지(첫 '(' 짝이 끝).
+    let ic: Vec<char> = t.chars().collect();
+    let mut d = 0i32;
+    for (j, &c) in ic.iter().enumerate().skip(2) {
+        match c {
+            '(' => d += 1,
+            ')' => {
+                d -= 1;
+                if d == 0 {
+                    if j != ic.len() - 1 {
+                        return None;
+                    }
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let inner = &t[3..t.len() - 1];
+    let mut saw_known = false;
+    for clause in split_top_by(inner, ';') {
+        let clause = clause.trim();
+        if clause.is_empty() {
+            continue; // 후행 ';'
+        }
+        let parts = split_top_by(clause, ':');
+        if parts.len() < 2 {
+            return None; // cond:value 형태 아님
+        }
+        let cond = &parts[0];
+        // value 는 첫 ':' 이후 전체(값 안의 ':' 보존).
+        let val_start = cond.len() + 1;
+        let value = &clause[val_start..];
+        match eval_if_condition(cond, custom) {
+            Some(true) => return Some(value.trim_start().to_string()),
+            Some(false) => saw_known = true,
+            None => return None, // 미지원 조건 → 통째 미해석
+        }
+    }
+    // 조건 다 거짓(else 없음): 빈 값(guaranteed-invalid → 커스텀 프로퍼티 빈값).
+    if saw_known {
+        Some(String::new())
+    } else {
+        None
+    }
+}
+
 // UA 기본 스타일시트. HTML 표준 §15 Rendering 을 근거로 함
 // (https://html.spec.whatwg.org/multipage/rendering.html). 표준은 폼 컨트롤을
 // appearance:auto(네이티브 위젯)로 두지만, 우리는 appearance 미구현이라 기본
@@ -1654,7 +1771,9 @@ impl Parser {
         }
         self.consume_char(); // ':'
         self.consume_whitespace();
-        let value_text = self.consume_while(|c| c != ';' && c != '}');
+        // 값은 최상위(괄호·따옴표 밖) ';'/'}' 에서 끝. if(a; b)·url(a;b) 안의 ';' 는
+        // 값의 일부다(예전엔 첫 ';' 에서 잘려 if()·일부 url 이 깨졌다).
+        let value_text = self.consume_value_balanced();
         if self.peek() == Some(';') {
             self.consume_char();
         }
@@ -1670,6 +1789,35 @@ impl Parser {
             }
         }
         decls
+    }
+
+    // 선언 값을 최상위에서 소비: 괄호 깊이·따옴표를 추적해 ';'/'}' 가 괄호·문자열
+    // 안이면 값에 포함한다(§CSS Syntax: 선언 값은 균형 잡힌 토큰 시퀀스).
+    fn consume_value_balanced(&mut self) -> String {
+        let mut depth = 0i32;
+        let mut quote: Option<char> = None;
+        let mut out = String::new();
+        while let Some(c) = self.peek() {
+            if let Some(q) = quote {
+                if c == q {
+                    quote = None;
+                }
+            } else {
+                match c {
+                    '"' | '\'' => quote = Some(c),
+                    '(' => depth += 1,
+                    ')' => {
+                        if depth > 0 {
+                            depth -= 1;
+                        }
+                    }
+                    ';' | '}' if depth == 0 => break,
+                    _ => {}
+                }
+            }
+            out.push(self.consume_char());
+        }
+        out
     }
 
     fn skip_to_decl_end(&mut self) {

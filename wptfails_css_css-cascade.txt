@@ -1,0 +1,555 @@
+css/css-cascade/all-prop-initial-xml.html	FAIL	setup	
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	a	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	abbr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	address	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	area	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	article	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	aside	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	audio	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	b	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	base	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	bdi	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	bdo	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	blockquote	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	body	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	br	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	button	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	canvas	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	caption	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	cite	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	code	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	col	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	colgroup	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	data	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	datalist	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	dd	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	del	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	details	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	dfn	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	dialog	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	div	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	dl	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	dt	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	em	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	embed	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	fieldset	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	figcaption	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	figure	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	footer	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	form	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	h1	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	h2	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	h3	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	h4	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	h5	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	h6	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	head	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	header	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	hr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	html	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	i	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	iframe	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	img	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	input	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	ins	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	kbd	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	label	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	legend	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	li	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	link	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	main	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	map	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	mark	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	math	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	menu	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	meta	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	meter	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	nav	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	noscript	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	object	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	ol	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	optgroup	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	option	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	output	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	p	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	param	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	pre	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	progress	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	q	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	rp	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	rt	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	ruby	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	s	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	samp	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	script	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	search	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	section	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	select	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	slot	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	small	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	source	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	span	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	strong	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	style	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	sub	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	summary	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	sup	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	svg	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	table	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	tbody	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	td	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	template	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	textarea	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	tfoot	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	th	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	thead	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	time	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	title	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	tr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	track	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	u	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	ul	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	var	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	video	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	wbr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-layer-noop.html	FAIL	zU+2dcustom	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	a	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	abbr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	address	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	area	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	article	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	aside	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	audio	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	b	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	base	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	bdi	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	bdo	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	blockquote	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	body	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	br	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	button	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	canvas	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	caption	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	cite	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	code	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	col	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	colgroup	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	data	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	datalist	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	dd	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	del	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	details	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	dfn	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	dialog	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	div	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	dl	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	dt	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	em	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	embed	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	fieldset	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	figcaption	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	figure	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	footer	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	form	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	h1	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	h2	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	h3	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	h4	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	h5	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	h6	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	head	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	header	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	hr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	html	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	i	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	iframe	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	img	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	input	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	ins	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	kbd	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	label	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	legend	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	li	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	link	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	main	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	map	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	mark	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	math	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	menu	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	meta	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	meter	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	nav	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	noscript	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	object	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	ol	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	optgroup	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	option	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	output	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	p	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	param	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	pre	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	progress	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	q	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	rp	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	rt	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	ruby	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	s	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	samp	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	script	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	search	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	section	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	select	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	slot	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	small	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	source	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	span	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	strong	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	style	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	sub	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	summary	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	sup	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	svg	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	table	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	tbody	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	td	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	template	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	textarea	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	tfoot	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	th	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	thead	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	time	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	title	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	tr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	track	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	u	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	ul	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	var	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	video	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	wbr	object 은(는) 반복 가능하지 않음
+css/css-cascade/all-prop-revert-noop.html	FAIL	zU+2dcustom	object 은(는) 반복 가능하지 않음
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a + .b) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a:hover) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a:hover, #b, div) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (:is(div, span)) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (.b) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a)to (.b) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (.b:hover, #c, div) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope to (.a) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (&) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (& > &) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (> .b) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (+ .b) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-parsing.html	FAIL	@scope (.a) to (~ .b) is valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest created by string valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope created by string valid	r.cssRules.length — r.cssRules 이(가) undefined (읽을 수 없음)
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest,@media screen created by string valid	assert_equals: expected 1 but got 0
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope,@media screen created by string valid	r.cssRules.length — r.cssRules 이(가) undefined (읽을 수 없음)
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest created by insertRule valid	규칙을 파싱할 수 없다
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope created by insertRule valid	insertRule(…) — current.insertRule 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in @scope,.nest,@media screen created by insertRule valid	규칙을 파싱할 수 없다
+css/css-cascade/at-scope-relative-syntax.html	FAIL	> .foo in .nest,@scope,@media screen created by insertRule valid	insertRule(…) — current.insertRule 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/idlharness.html	FAIL	idl_test setup	promise_test: Unhandled rejection with value: object "Error fetching /interfaces/cssU+2dcascade.idl."
+css/css-cascade/layer-basic.html	FAIL	A5 Anonymous layers	assert_equals: A5 Anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	A6 Anonymous layers	assert_equals: A6 Anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	A7 Anonymous layers	assert_equals: A7 Anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	A8 Anonymous layers	assert_equals: A8 Anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	A9 Anonymous layers	assert_equals: A9 Anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	B5 Named layers	assert_equals: B5 Named layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	B10 Named layers	assert_equals: B10 Named layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	C3 Named layers shorthand	assert_equals: C3 Named layers shorthand, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	C5 Named layers shorthand	assert_equals: C5 Named layers shorthand, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	D2 Mixed named and anonymous layers	assert_equals: D2 Mixed named and anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	D4 Mixed named and anonymous layers	assert_equals: D4 Mixed named and anonymous layers, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-basic.html	FAIL	E5 Statement syntax	assert_equals: E5 Statement syntax, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-cssom-order-reverse-at-property.html	FAIL	Insert layer invalidates @property	규칙을 파싱할 수 없다
+css/css-cascade/layer-cssom-order-reverse-at-property.html	FAIL	Delete layer invalidates @property	규칙 인덱스가 범위를 벗어남
+css/css-cascade/layer-cssom-order-reverse.html	FAIL	Insert layer invalidates style	promise_test: Unhandled rejection with value: object "SyntaxError: 규칙을 파싱할 수 없다"
+css/css-cascade/layer-cssom-order-reverse.html	FAIL	Delete layer invalidates style	promise_test: Unhandled rejection with value: object "IndexSizeError: 규칙 인덱스가 범위를 벗어남"
+css/css-cascade/layer-cssom-order-reverse.html	FAIL	Insert layer invalidates @fontU+2dface	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.load(…) — document.fonts 이(가) undefined"
+css/css-cascade/layer-cssom-order-reverse.html	FAIL	Delete layer invalidates @fontU+2dface	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.load(…) — document.fonts 이(가) undefined"
+css/css-cascade/layer-font-face-override.html	FAIL	@fontU+2dface unlayered overrides layered	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.load(…) — document.fonts 이(가) undefined"
+css/css-cascade/layer-font-face-override.html	FAIL	@fontU+2dface override between layers	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.load(…) — document.fonts 이(가) undefined"
+css/css-cascade/layer-font-face-override.html	FAIL	@fontU+2dface override update with appended sheet 1	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.load(…) — document.fonts 이(가) undefined"
+css/css-cascade/layer-font-face-override.html	FAIL	@fontU+2dface override update with appended sheet 2	promise_test: Unhandled rejection with value: object "TypeError: document.fonts.load(…) — document.fonts 이(가) undefined"
+css/css-cascade/layer-import.html	FAIL	A1 Layer rules with import	assert_equals: A1 Layer rules with import, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	A2 Layer rules with import	assert_equals: A2 Layer rules with import, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	A3 Layer rules with import	assert_equals: A3 Layer rules with import, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	A4 Layer rules with import	assert_equals: A4 Layer rules with import, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	B1 Anonymous imports	assert_equals: B1 Anonymous imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	B2 Anonymous imports	assert_equals: B2 Anonymous imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	B3 Anonymous imports	assert_equals: B3 Anonymous imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	B4 Anonymous imports	assert_equals: B4 Anonymous imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C1 Named imports	assert_equals: C1 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C2 Named imports	assert_equals: C2 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C3 Named imports	assert_equals: C3 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C4 Named imports	assert_equals: C4 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C5 Named imports	assert_equals: C5 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C6 Named imports	assert_equals: C6 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C7 Named imports	assert_equals: C7 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C8 Named imports	assert_equals: C8 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	C9 Named imports	assert_equals: C9 Named imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	D1 Layer statement with imports	assert_equals: D1 Layer statement with imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	D2 Layer statement with imports	assert_equals: D2 Layer statement with imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	D3 Layer statement with imports	assert_equals: D3 Layer statement with imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	D4 Layer statement with imports	assert_equals: D4 Layer statement with imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	D5 Layer statement with imports	assert_equals: D5 Layer statement with imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	D6 Layer statement with imports	assert_equals: D6 Layer statement with imports, target 'first' expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/layer-import.html	FAIL	E1 Named imports establish layer even with network errors	assert_equals: E1 Named imports establish layer even with network errors, target 'first' expected "rgb(0, 128, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/layer-keyframes-override.html	FAIL	@keyframes override between layers	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-keyframes-override.html	FAIL	@keyframes override update with appended sheet 1	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-keyframes-override.html	FAIL	@keyframes override update with appended sheet 2	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-media-query.html	FAIL	A1 Basic	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	A2 Basic	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	B1 Basic import	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	B2 Basic import	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	C1 Reordering	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	C2 Reordering	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	C3 Reordering	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-media-query.html	FAIL	C4 Reordering	promise_test: Unhandled rejection with value: object "TypeError: iframe.contentDocument.querySelector(…) — iframe.contentDocument 이(가) undefined"
+css/css-cascade/layer-property-override.html	FAIL	@property unlayered overrides layered	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-property-override.html	FAIL	@property override between layers	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-property-override.html	FAIL	@property override update with appended sheet 1	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-property-override.html	FAIL	@property override update with appended sheet 2	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/layer-replaceSync-clears-stale.html	FAIL	replaceSync clears stale layer statements	Illegal constructor
+css/css-cascade/layer-rules-cssom.html	FAIL	Basic layer block name	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Anonymous layer block name	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Basic layer statement name	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Layer statement with multiple names	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Nested layer block names	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Nested layer statement name lists	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Import into anonymous layer	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Import into named layer	assert_implements: undefined
+css/css-cascade/layer-rules-cssom.html	FAIL	Import without layer	assert_implements: undefined
+css/css-cascade/layer-statement-before-import.html	FAIL	length and item	assert_equals: expected 4 but got 2
+css/css-cascade/layer-statement-before-import.html	FAIL	insertRule before imports	promise_test: Unhandled rejection with value: object "SyntaxError: 규칙을 파싱할 수 없다"
+css/css-cascade/layer-statement-before-import.html	FAIL	insert other rules to preU+2dimport layer statements fails	assert_throws_dom: function "() => sheet.insertRule('#target { color: red !important; }', 0)" did not throw
+css/css-cascade/layer-statement-before-import.html	FAIL	deleteRule after imports	promise_test: Unhandled rejection with value: object "IndexSizeError: 규칙 인덱스가 범위를 벗어남"
+css/css-cascade/layer-stylesheet-multi-adoption.html	FAIL	layerU+2dstylesheetU+2dmultiU+2dadoption	Illegal constructor
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer; should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A); should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A.B); should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url(nonexist.css) layer; should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url(nonexist.css) layer(A); should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url(nonexist.css) layer(A.B); should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import "nonexist.css" layer; should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import "nonexist.css" layer(A); should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import "nonexist.css" layer(A.B); should be a valid layered import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(); should still be a valid import rule with an invalid layer declaration	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A B); should still be a valid import rule with an invalid layer declaration	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A . B); should still be a valid import rule with an invalid layer declaration	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer-import-parsing.html	FAIL	@import url("nonexist.css") layer(A, B, C); should still be a valid import rule with an invalid layer declaration	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer A; should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer A, B, C; should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer A.A; should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer A, B.C.D, C; should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer { } should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer A { } should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/layer.html	FAIL	@layer A.B { } should be a valid rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(display:block); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports((display:flex)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(not (display: flex)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports((display: flex) and (display: block)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports((display: flex) or (display: block)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports((display: flex) or (foo: bar)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(display: block !important); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") layer(A) supports((display: flex) or (foo: bar)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") layer(A.B) supports((display: flex) and (foo: bar)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(selector(a)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(selector(p a)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(selector(p > a)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(selector(p + a)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(fontU+2dtech(colorU+2dcolrv1)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports(fontU+2dformat(opentype)); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url(nonexist.css) supports(display:block); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import "nonexist.css" supports(display:block); should be a valid supports() import rule	규칙을 파싱할 수 없다
+css/css-cascade/parsing/supports-import-parsing.html	FAIL	@import url("nonexist.css") supports; should still be a valid import rule with an invalid supports() declaration	규칙을 파싱할 수 없다
+css/css-cascade/revert-layer-008.html	FAIL	'revertU+2dlayer' should revert fontU+2dsize to 20px and trigger a smooth transition	assert_equals: expected "15px" but got "16px"
+css/css-cascade/revert-rule-basic.html	FAIL	The revertU+2drule keyword rolls back to the previous rule	assert_true: expected true got false
+css/css-cascade/revert-rule-basic.html	FAIL	Cascade order determines the previous rule, not order of appearance	assert_true: expected true got false
+css/css-cascade/revert-rule-basic.html	FAIL	Reverting from style attribute reverts to regular rules	assert_true: expected true got false
+css/css-cascade/revert-rule-basic.html	FAIL	A chain of revertU+2drule works	assert_true: expected true got false
+css/css-cascade/revert-rule-custom-property.html	FAIL	revertU+2drule in a custom property	assert_true: expected true got false
+css/css-cascade/revert-rule-important.html	FAIL	revertU+2drule in !important declaration reverts to later normal rule if the !important rule comes first	assert_true: expected true got false
+css/css-cascade/revert-rule-layer.html	FAIL	The revertU+2drule keyword can cross layers	assert_true: expected true got false
+css/css-cascade/revert-rule-layer.html	FAIL	The revertU+2drule does not unconditionally cross layers	assert_true: expected true got false
+css/css-cascade/revert-rule-revert-layer.html	FAIL	Combination of revertU+2drule and revertU+2dlayer	assert_true: expected true got false
+css/css-cascade/revert-rule-revert-layer.html	FAIL	Combination of revertU+2dlayer and revertU+2drule	assert_true: expected true got false
+css/css-cascade/revert-rule-revert-layer.html	FAIL	Combination revertU+2drule/revertU+2drule/revertU+2dlayer	assert_true: expected true got false
+css/css-cascade/revert-rule-revert-layer.html	FAIL	Combination revertU+2dlayer/revertU+2drule/revertU+2dlayer	assert_true: expected true got false
+css/css-cascade/revert-rule-revert-layer.html	FAIL	Combination revertU+2drule/revertU+2dlayer/revertU+2drule	assert_true: expected true got false
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in document rule falls back to :host rule	assert_true: expected true got false
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in document rule falls back to ::slotted rule	slotted2 은(는) 정의되지 않음
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule with no shadow fallback falls through to unset (inherited)	assert_equals: expected "rgb(0, 0, 0)" but got "rgb(255, 0, 0)"
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in document rule falls back to the winning :host rule	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 0, 255)"
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule chain across document rule and :host rule	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 255)"
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in ::part() rule falls back to earlier ::part() rule	getElementById(…) — host7.shadowRoot.getElementById 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in ::part() rule falls back to shadowU+2dinternal rule	getElementById(…) — host8.shadowRoot.getElementById 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in shadowU+2dinternal rule has no effect when ::part() rule wins	getElementById(…) — host9.shadowRoot.getElementById 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in third ::part() rule falls back to second ::part() rule	getElementById(…) — host10.shadowRoot.getElementById 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule on host and ::part() rule on part are independent	assert_equals: expected "rgb(0, 0, 255)" but got "rgb(255, 0, 0)"
+css/css-cascade/revert-rule-shadow.html	FAIL	revertU+2drule in higherU+2dspecificity ::part() rule falls back to lowerU+2dspecificity ::part() rule	getElementById(…) — host12.shadowRoot.getElementById 이(가) undefined (함수 아님, 수신자=object)
+css/css-cascade/revert-val-003.html	FAIL	revert works with transitions	assert_not_equals: Margin mid transition got disallowed value "0px"
+css/css-cascade/revert-val-004.html	FAIL	The revert keyword works with the all property	assert_equals: expected "block" but got "inline"
+css/css-cascade/revert-val-005.html	FAIL	The revert keyword works with physical properties	assert_equals: expected "21.44px" but got "0px"
+css/css-cascade/revert-val-006.html	FAIL	The revert keyword works with @keyframes	assert_equals: expected "21.44px" but got "0px"
+css/css-cascade/revert-val-007.html	FAIL	A @keyframe animation with revert works when applied to multiple identical elements	assert_equals: expected "21.44px" but got "revert"
+css/css-cascade/revert-val-008.html	FAIL	The revert keyword works in the final frame of a web animation	assert_between_exclusive: expected a number greater than 21 and less than 42 but got 84
+css/css-cascade/revert-val-009.html	FAIL	The revert keyword works in implicit keyframes	assert_between_exclusive: expected a number greater than 21 and less than 42 but got 0
+css/css-cascade/revert-val-010.html	FAIL	The revert works when appearing in setKeyframes	assert_not_equals: got disallowed value 0
+css/css-cascade/scope-container.html	FAIL	Style rules within @container are scoped	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.cssText, implicit scope	style.sheet.rules[..].cssText — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.cssText, root only	style.sheet.rules[..].cssText — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.cssText, root and limit	style.sheet.rules[..].cssText — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.cssText, limit only	style.sheet.rules[..].cssText — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.start, implicit scope	style.sheet.rules[..].start — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.start, root only	style.sheet.rules[..].start — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.start, root and limit	style.sheet.rules[..].start — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.start, limit only	style.sheet.rules[..].start — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, implicit scope	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, root only	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, root and limit	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule.end, limit only	style.sheet.rules[..].end — style.sheet.rules[..] 이(가) undefined (읽을 수 없음)
+css/css-cascade/scope-cssom.html	FAIL	CSSScopeRule is a CSSGroupingRule	CSSGroupingRule 은(는) 정의되지 않음
+css/css-cascade/scope-declarations.html	FAIL	Scoped declarations apply to the scoping root	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-declarations.html	FAIL	Scoped declarations apply to implicit scoping root	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-declarations.html	FAIL	Scoped declarations apply with zero specificity	assert_equals: expected "2" but got "auto"
+css/css-cascade/scope-declarations.html	FAIL	Declarations are parsed into CSSNestedDeclarations, prelude=(.a)	Illegal constructor
+css/css-cascade/scope-declarations.html	FAIL	Declarations are parsed into CSSNestedDeclarations, prelude=	Illegal constructor
+css/css-cascade/scope-deep.html	FAIL	Deep @scope nesting	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Single scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Selecting self with :scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Single scope with limit	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Single scope, :scope pseudo in main selector	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Single scope, :scope pseudo in toU+2dselector	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Multiple scopes, :scope pseudo in toU+2dselector	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Inner @scope with :scope in fromU+2dselector	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Multiple scopes from same @scopeU+2drule, only one limited	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Nested scopes	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Nested scopes, with toU+2dselector	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	:scope selecting itself	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	The scoping limit is not in scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Simulated inclusive scoping limit	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Relative selector inside @scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Scope root with :has()	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-evaluation.html	FAIL	Any scope limit makes the element out of scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-focus.html	FAIL	:focus via :scope in subject	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
+css/css-cascade/scope-focus.html	FAIL	:focus via :scope in nonU+2dsubject	promise_test: Unhandled rejection with value: object "TypeError: contains(…) — elementDocument.contains 이(가) undefined (함수 아님, 수신자=object)"
+css/css-cascade/scope-focus.html	FAIL	:focus in limit, :scope in subject	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-focus.html	FAIL	:focus in intermediate limit, :scope in subject	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-hover.html	FAIL	:hover via :scope in subject	promise_test: Unhandled rejection with value: object "Error: action_sequence() is not implemented by testdriverU+2dvendor.js"
+css/css-cascade/scope-hover.html	FAIL	:hover via :scope in nonU+2dsubject	promise_test: Unhandled rejection with value: object "Error: action_sequence() is not implemented by testdriverU+2dvendor.js"
+css/css-cascade/scope-hover.html	FAIL	:hover in limit, :scope in subject	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-hover.html	FAIL	:hover in intermediate limit, :scope in subject	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit-external.html	FAIL	@scope with external stylesheet through link element	Test timed out
+css/css-cascade/scope-implicit-external.html	FAIL	@scope with external stylesheet through @import	
+css/css-cascade/scope-implicit.html	FAIL	@scope without prelude implicitly scopes to parent of owner node	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	:scope can style implicit root	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	@scope works with two identical stylesheets	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	Implicit @scope with inner relative selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	Implicit @scope with inner nesting selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	Implicit @scope with limit	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	Proximity calculation of multiple implicit @scope	assert_equals: expected "2" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	Implicit @scope sandwiched between nonU+2dimplicit scopes	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-implicit.html	FAIL	Implicit @scope sandwiched right under an explicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-import-implicit.html	FAIL	ScopeU+2dimported rule applies within implicit scope	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-inner-scope.html	FAIL	@scope within scopeU+2dimported stylesheet matches	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-multiple.html	FAIL	A stylesheet may be imported multiple times, and scoped differently	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-parent-pseudo.html	FAIL	The & selector matches the scoping root	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-parent-pseudo.html	FAIL	The & selector behaves like :scope	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-scope-end.html	FAIL	ScopeU+2dimported rule applies within scope, above limit	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-scope-pseudo.html	FAIL	The :scope pseudoU+2dclass works in imported stylesheets	assert_equals: expected "1" but got ""
+css/css-cascade/scope-import-scope-start.html	FAIL	ScopeU+2dimported rule applies within scope	assert_equals: expected "1" but got ""
+css/css-cascade/scope-layer.html	FAIL	Style rules within @layer are scoped	assert_equals: expected "1" but got "0"
+css/css-cascade/scope-media.html	FAIL	Style rules within @media are scoped	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-name-defining-rules.html	FAIL	@keyframes is unaffected by @scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/scope-name-defining-rules.html	FAIL	@keyframes is unaffected by nonU+2dmatching @scope	assert_equals: expected "rgb(0, 128, 0)" but got "rgba(0, 0, 0, 0)"
+css/css-cascade/scope-name-defining-rules.html	FAIL	@property is unaffected by @scope	assert_equals: expected "2px" but got ""
+css/css-cascade/scope-name-defining-rules.html	FAIL	@property is unaffected by nonU+2dmatching @scope	assert_equals: expected "2px" but got ""
+css/css-cascade/scope-nesting.html	FAIL	NestingU+2dselector in <scopeU+2dend>	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Implicit :scope in <scopeU+2dend>	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Relative selectors in <scopeU+2dend>	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Nested nestingU+2dselectors within scope's <stylesheet> select inclusive descendants of the scope root	assert_equals: expected "2" but got "auto"
+css/css-cascade/scope-nesting.html	FAIL	NestingU+2dselector within :scope rule	assert_equals: expected "2" but got "auto"
+css/css-cascade/scope-nesting.html	FAIL	NestingU+2dselector within :scope rule (double nested)	assert_equals: expected "2" but got "auto"
+css/css-cascade/scope-nesting.html	FAIL	@scope nested within style rule	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-nesting.html	FAIL	Parent pseudo class within scopeU+2dstart	assert_equals: expected "auto" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Parent pseudo class within body of nested @scope	assert_equals: matching: DIVa b c expected "1" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Implicit rule within nested @scope 	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Implicit rule within nested @scope (proximity)	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Nested :scope inside an :is	assert_equals: expected "auto" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	:scope within nested and scoped rule	assert_equals: expected "auto" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	:scope within nested and scoped rule (implied &)	assert_equals: expected "auto" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	:scope within nested and scoped rule (relative)	assert_equals: expected "auto" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Scoped nested group rule	assert_equals: expected "auto" but got "2"
+css/css-cascade/scope-nesting.html	FAIL	Scoped nested within another scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-nesting.html	FAIL	Insert a nested style rule within @scope, &	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
+css/css-cascade/scope-nesting.html	FAIL	Insert a nested style rule within @scope, :scope	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
+css/css-cascade/scope-nesting.html	FAIL	Insert a CSSNestedDeclarations rule directly in topU+2dlevel @scope	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
+css/css-cascade/scope-nesting.html	FAIL	Mutating selectorText on outer style rule causes correct inner specificity	assert_equals: expected "1" but got ""
+css/css-cascade/scope-nesting.html	FAIL	Modifying selectorText invalidates inner scoped rules	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-nesting.html	FAIL	Modifying selectorText invalidates inner scoped rules (nested declarations)	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-overlapping-has.html	FAIL	:has() with inner :scope works when scopes overlap	assert_equals: expected "rgb(255, 0, 0)" but got "rgb(0, 128, 0)"
+css/css-cascade/scope-proximity.html	FAIL	Alternating light/dark	assert_equals: expected "rgb(100, 100, 100)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-proximity.html	FAIL	Proximity wins over order of appearance	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-proximity.html	FAIL	Specificity wins over proximity	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-proximity.html	FAIL	Identical root with further proximity is not ignored	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-proximity.html	FAIL	Most proximate match wins under multiple scoping roots	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(0, 0, 0)"
+css/css-cascade/scope-shadow.html	FAIL	@scope can match :host	host_plain.shadowRoot.querySelector(…) — host_plain.shadowRoot 이(가) null
+css/css-cascade/scope-shadow.html	FAIL	@scope can match :host(...)	host_functional.shadowRoot.querySelector(…) — host_functional.shadowRoot 이(가) null
+css/css-cascade/scope-shadow.html	FAIL	:scope matches host via the scoping root	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-shadow.html	FAIL	:scope within :is() matches host via the scoping root	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-shadow.html	FAIL	Implicit @scope as direct child of shadow root	host.shadowRoot.querySelector(…) — host.shadowRoot 이(가) null
+css/css-cascade/scope-shadow.html	FAIL	Implicit @scope in construted stylesheet	Illegal constructor
+css/css-cascade/scope-shadow.html	FAIL	Matching :host via &, :scope (subject)	assert_equals: expected "1" but got "2"
+css/css-cascade/scope-shadow.html	FAIL	Matching :host via &, :scope (nonU+2dsubject)	host.shadowRoot.querySelector(…) — host.shadowRoot 이(가) null
+css/css-cascade/scope-shadow.html	FAIL	Matching :host via &, :scope (nonU+2dsubject, >)	host.shadowRoot.querySelector(…) — host.shadowRoot 이(가) null
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { .b {  } } and .b	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) to (.b) { .a {  } } and .a	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main, .foo, .bar) { #a {  } } and #a	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { div.b {  } } and div.b	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { :scope .b {  } } and .a .b	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { & .b {  } } and :where(#main) .b	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { div .b {  } } and div .b	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { @scope (.a) { .b {  } } } and .b	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { :scope .b {  } } and :scope .b	assert_not_equals: got disallowed value null
+css/css-cascade/scope-specificity.html	FAIL	@scope { & .b {  } } and :where(:scope) .b	assert_not_equals: got disallowed value null
+css/css-cascade/scope-specificity.html	FAIL	@scope (#main) { > .a {  } } and :where(#main) > .a	assert_equals: scoped rule expected "1" but got "auto"
+css/css-cascade/scope-starting-style.html	FAIL	Style rules within @startingU+2dstyle are scoped	assert_equals: expected "150px" but got "200px"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, second sibling exits scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, first sibling matches scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, first sibling enters scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, second sibling enters scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, first sibling has implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, second sibling has implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, second sibling exits implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, first sibling exits implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, first sibling enters scope with :has	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, second sibling enters scope with :has	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, first sibling enters scope with ID selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, second sibling enters scope with ID selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-001.html	FAIL	@scope with sibling style sharing, with child relative implicit scope selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, second sibling exits scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, first sibling exits scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, first sibling enters scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, second sibling enters scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, second sibling parent does not have implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, first sibling parent does not have implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, second sibling does not have implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, first sibling does not have implicit scope	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, first sibling enters scope with :has	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, second sibling enters scope with :has	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, first sibling enters scope ID selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, second sibling enters scope ID selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-style-sharing-002.html	FAIL	@scope with cousin style sharing, with child relative implicit scope selector	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-supports.html	FAIL	Style rules within @supports are scoped	assert_equals: expected "1" but got "auto"
+css/css-cascade/scope-visited-cssom.html	FAIL	:link as scoped selector	assert_equals: expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:not(:visited) as scoped selector	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:link as scoping root	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:not(:visited) as scoping root	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:link as scoping root, :scope	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:not(:visited) as scoping root, :scope	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:visited as scoping limit	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/scope-visited-cssom.html	FAIL	:not(:link) as scoping limit	assert_equals: visited expected "rgb(0, 128, 0)" but got "rgb(255, 255, 255)"
+css/css-cascade/unset-value-storage.html	FAIL	Storage of "unset" value	assert_equals: border is expected to be "unset" expected "unset" but got ""
