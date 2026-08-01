@@ -3150,7 +3150,30 @@ pub(crate) fn math_function_valid(text: &str) -> bool {
         return false;
     };
     let name = t[..open].trim().to_ascii_lowercase();
-    if !matches!(name.as_str(), "calc" | "min" | "max" | "clamp" | "round" | "mod" | "rem") {
+    if !matches!(
+        name.as_str(),
+        "calc"
+            | "min"
+            | "max"
+            | "clamp"
+            | "round"
+            | "mod"
+            | "rem"
+            | "abs"
+            | "sign"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+            | "sqrt"
+            | "exp"
+            | "pow"
+            | "log"
+            | "hypot"
+    ) {
         return false;
     }
     let mut depth = 0i32;
@@ -3181,9 +3204,19 @@ pub(crate) fn math_function_valid(text: &str) -> bool {
     if args.iter().any(|a| a.is_empty()) {
         return false; // 빈 인자(round(,) round(1, ) round(1,,2))
     }
+    // 인자 개수 검사(§CSS Values 4 §10). 각 인자는 math_expr 여야.
+    let args_ok = |n: usize| args.len() == n;
     match name.as_str() {
         "round" | "mod" | "rem" => round_family_valid(&name, &args),
-        // calc 는 인자 1개, min/max 는 1개 이상, clamp 는 3개(또는 none 포함). 구조만 검증.
+        // 1-인자: calc/abs/sign/삼각/역삼각/sqrt/exp.
+        "calc" | "abs" | "sign" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sqrt"
+        | "exp" => args_ok(1) && math_expr_valid(&args[0]),
+        // 2-인자: atan2/pow.
+        "atan2" | "pow" => args_ok(2) && args.iter().all(|a| math_expr_valid(a)),
+        // log: 1 또는 2 인자(밑 생략 = e).
+        "log" => (args_ok(1) || args_ok(2)) && args.iter().all(|a| math_expr_valid(a)),
+        // hypot: 1개 이상. min/max: 1개 이상. clamp: 3개(또는 none). 구조만 검증.
+        "hypot" | "min" | "max" => !args.is_empty() && args.iter().all(|a| math_expr_valid(a)),
         _ => args.iter().all(|a| math_expr_valid(a)),
     }
 }
