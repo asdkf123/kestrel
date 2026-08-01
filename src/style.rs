@@ -2837,6 +2837,26 @@ fn style_node<'a>(
             for (k, r) in if_updates {
                 values.insert(k, Value::Keyword(r));
             }
+            // 등록된 타입 커스텀 프로퍼티(<length> 등)는 계산값으로 — Keyword("14em")를
+            // typed Value 로 해석해 아래 resolve_units 가 px 로 확정하게 한다(§Properties
+            // & Values API: getComputedStyle 은 등록 프로퍼티의 계산값을 낸다).
+            let reg_updates: Vec<(String, Value)> = values
+                .iter()
+                .filter_map(|(k, v)| {
+                    if !k.starts_with("--") {
+                        return None;
+                    }
+                    let reg = at_properties.get(k)?;
+                    if let Value::Keyword(s) = v {
+                        crate::css::registered_computed_value(&reg.syntax, s).map(|tv| (k.clone(), tv))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (k, tv) in reg_updates {
+                values.insert(k, tv);
+            }
             // font-size 외 속성의 em/rem 을 px 로 확정한다 (computed value).
             // em 은 요소 자신의 font-size(fs), rem 은 루트 기준(DEFAULT_FONT_SIZE).
             // 퍼센트는 레이아웃(calculate_width)이 컨테이닝 블록 폭 기준으로 해석하므로 보존.

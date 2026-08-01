@@ -1134,6 +1134,24 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
 // if() 를 계산 시점에 해석(§CSS Values 5 §if-notation). 첫 참인 조건의 값으로
 // 치환한다. 값은 앞 공백만 다듬고 뒤는 보존(테스트 규약). 전체가 if(...) 하나가
 // 아니거나 미지원 조건뿐이면 None(호출부가 원문 유지/드롭).
+// 등록된 커스텀 프로퍼티의 값을 계산 가능한 typed Value 로 해석한다(syntax 에 차원
+// 타입이 있으면). resolve_units 가 em/vw/calc 를 px 로 확정하게 해 getComputedStyle
+// 이 계산값을 낸다. 문자열/custom-ident/* 등은 None(원문 유지).
+pub(crate) fn registered_computed_value(syntax: &str, value: &str) -> Option<Value> {
+    let low = syntax.to_ascii_lowercase();
+    if low.contains("<length")
+        || low.contains("<number")
+        || low.contains("<angle")
+        || low.contains("<time")
+        || low.contains("<percentage")
+        || low.contains("<integer")
+        || low.contains("<resolution")
+    {
+        return interpret_value(value.trim());
+    }
+    None
+}
+
 pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<String> {
     let t = raw.trim();
     let low = t.to_ascii_lowercase();
