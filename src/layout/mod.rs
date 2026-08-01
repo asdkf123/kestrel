@@ -472,24 +472,22 @@ impl<'a> LayoutBox<'a> {
     // 흐름/형제 배치에는 영향이 없으므로 나중에 옮겨도 결과는 같다.
     fn apply_relative(&mut self, cb: Rect) {
         if !self.anonymous && self.position() == "relative" {
-            // % 기준: 좌우는 컨테이닝 블록 폭, 상하는 그 높이 (CSS §9.4.3)
-            let dx = self.offset("left", "right", cb.width);
-            let dy = self.offset("top", "bottom", cb.height);
-            // over-constrained 축(양쪽 다 지정)은 계산값을 그대로 쓴다 (CSSOM).
-            let h_over = self.offset_len("left", cb.width).is_some()
-                && self.offset_len("right", cb.width).is_some();
-            let v_over = self.offset_len("top", cb.height).is_some()
-                && self.offset_len("bottom", cb.height).is_some();
-            if !h_over {
-                self.used_insets[3] = Some(dx); // left
-                self.used_insets[1] = Some(-dx); // right
-            }
-            if !v_over {
-                self.used_insets[0] = Some(dy); // top
-                self.used_insets[2] = Some(-dy); // bottom
-            }
-            if dx != 0.0 || dy != 0.0 {
-                self.translate(dx, dy);
+            // % 기준: 좌우는 컨테이닝 블록 폭, 상하는 그 높이 (CSS §9.4.3).
+            // resolved value(§CSSOM)는 네 면 각각의 **used value** 다: 양쪽 다 지정되면
+            // 각자 절대화, 한쪽만 auto 면 그 쪽은 반대쪽의 음수, 둘 다 auto 면 0.
+            // offset(prop,opp,base) 가 정확히 이 규칙이라 네 면을 독립으로 계산한다
+            // (relative 는 over-constrained 축소가 없다 — 각 면이 자기 값을 유지).
+            let top = self.offset("top", "bottom", cb.height);
+            let bottom = self.offset("bottom", "top", cb.height);
+            let left = self.offset("left", "right", cb.width);
+            let right = self.offset("right", "left", cb.width);
+            self.used_insets[0] = Some(top);
+            self.used_insets[1] = Some(right);
+            self.used_insets[2] = Some(bottom);
+            self.used_insets[3] = Some(left);
+            // 실제 시각적 이동은 top/left 가 이긴다(reduce-to-one, CSS §9.4.3).
+            if left != 0.0 || top != 0.0 {
+                self.translate(left, top);
             }
         }
         let my = self.dimensions.content;
