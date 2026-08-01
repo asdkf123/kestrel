@@ -4273,6 +4273,57 @@ pub fn corner_single_valid(raw: &str) -> bool {
     nshape == 1 && (1..=2).contains(&nradius)
 }
 
+// 단일 코너 값 캐논: 반경(length-percentage) 먼저, shape 나중("round 30%"→"30% round").
+fn corner_value_canon(v: &str) -> String {
+    let toks = split_top_level(v.trim());
+    let mut radii: Vec<String> = Vec::new();
+    let mut shape: Option<String> = None;
+    for t in &toks {
+        if corner_shape_value_valid(t) {
+            shape = Some(t.clone());
+        } else {
+            radii.push(t.clone());
+        }
+    }
+    let mut parts = radii;
+    if let Some(s) = shape {
+        parts.push(s);
+    }
+    parts.join(" ")
+}
+// 단일 코너 지정값 캐논(corner-top-left 등). normal/CSS-wide 는 그대로.
+pub fn corner_single_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "normal") {
+        return low;
+    }
+    corner_value_canon(raw)
+}
+// corner/변/축 단축 지정값 캐논: "/" 그룹마다 반경-먼저 캐논.
+pub fn corner_slash_canonical(raw: &str) -> String {
+    let low = raw.trim().to_ascii_lowercase();
+    if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+        return low;
+    }
+    let toks = split_top_level(raw.trim());
+    let mut groups: Vec<Vec<String>> = vec![Vec::new()];
+    for t in toks {
+        if t == "/" {
+            groups.push(Vec::new());
+        } else {
+            groups.last_mut().unwrap().push(t);
+        }
+    }
+    groups
+        .iter()
+        .map(|g| {
+            let s = g.join(" ");
+            if s.eq_ignore_ascii_case("normal") { s } else { corner_value_canon(&s) }
+        })
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 // corner/corner-top 등 단축(§CSS Borders 4): 단일 코너 값을 "/"로 1~max 개 구분(코너별
 // 배정, border-* 처럼). 각 그룹은 [<corner-shape> && <lp>{1,2}] | normal.
 pub fn corner_slash_valid(raw: &str, max: usize) -> bool {

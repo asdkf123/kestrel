@@ -435,6 +435,19 @@ impl Interp {
                 }
             }
         }
+        // 단일 코너(corner-top-left 등): 반경 먼저·shape 나중 캐논.
+        if matches!(prop, "corner-top-left" | "corner-top-right" | "corner-bottom-left" | "corner-bottom-right") {
+            return crate::css::corner_single_canonical(raw);
+        }
+        // corner/변/축 단축: "/" 그룹마다 반경-먼저 캐논.
+        if matches!(
+            prop,
+            "corner" | "corner-top" | "corner-bottom" | "corner-left" | "corner-right"
+                | "corner-block" | "corner-inline" | "corner-block-start" | "corner-block-end"
+                | "corner-inline-start" | "corner-inline-end"
+        ) {
+            return crate::css::corner_slash_canonical(raw);
+        }
         // offset-rotate(§CSS Motion Path): [auto|reverse] 먼저, <angle> 나중 캐논.
         if prop == "offset-rotate" {
             if let Some(s) = crate::css::offset_rotate_canonical(raw) {
