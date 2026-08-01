@@ -12382,7 +12382,9 @@ impl Interp {
                     // 무효면 아무것도 안 한다(no-op — 규격상 조용히 무시).
                     Value::CssRule(si, ri) => {
                         if key == "selectorText" {
-                            let text = to_display(&value);
+                            // §CSS Syntax 입력 전처리(NULL→U+FFFD·개행 정규화)를 저장
+                            // 원문에도 적용 — selectorText 게터가 전처리된 값을 직렬화한다.
+                            let text = crate::css::preprocess_input(&to_display(&value));
                             if let Some(sels) = crate::css::parse_selector_list(&text) {
                                 if let Some(sheets) = self.sheets() {
                                     if let Some(r) = sheets

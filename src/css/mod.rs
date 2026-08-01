@@ -759,6 +759,27 @@ pub fn parse(source: String) -> Stylesheet {
     parse_viewport(source, 1024.0)
 }
 
+// §CSS Syntax 3.3 입력 전처리: 개행 정규화(\r\n·\r·\f → \n)와 U+0000 NULL →
+// U+FFFD. 파서 진입 전에 적용한다(NULL 이 든 ident/선택자도 유효해진다).
+pub fn preprocess_input(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.push('\n');
+            }
+            '\u{000C}' => out.push('\n'), // form feed
+            '\u{0000}' => out.push('\u{FFFD}'),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 // CSS 주석 /* ... */ 제거. 문자열(따옴표) 안은 보존. 토큰 붙음 방지로 공백 치환.
 // 미압축 스타일시트(문서/개발 사이트)엔 주석이 흔해, 없으면 선언이 통째로 유실된다.
 pub fn strip_comments(s: &str) -> String {
@@ -801,7 +822,7 @@ pub fn strip_comments(s: &str) -> String {
 pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
     let mut parser = Parser {
         pos: 0,
-        input: strip_comments(&source),
+        input: strip_comments(&preprocess_input(&source)),
         viewport_width,
         font_faces: Vec::new(),
         keyframes: std::collections::HashMap::new(),
@@ -838,7 +859,7 @@ fn parse_nth(s: &str) -> Option<(i32, i32)> {
 pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
     let mut parser = Parser {
         pos: 0,
-        input: strip_comments(text),
+        input: strip_comments(&preprocess_input(text)),
         viewport_width: 0.0,
         font_faces: Vec::new(),
         keyframes: std::collections::HashMap::new(),
