@@ -429,7 +429,8 @@ impl CalcVal {
 #[derive(Clone, Copy, PartialEq)]
 enum SKind {
     Num,
-    Ang, // 값은 도(degree)
+    Ang,  // 값은 도(degree)
+    Time, // 값은 초(second)
 }
 
 fn deg_of_angle_unit(num: f64, unit: &str) -> Option<f64> {
@@ -440,6 +441,36 @@ fn deg_of_angle_unit(num: f64, unit: &str) -> Option<f64> {
         "turn" => Some(num * 360.0),
         _ => None,
     }
+}
+
+fn sec_of_time_unit(num: f64, unit: &str) -> Option<f64> {
+    match unit {
+        "s" => Some(num),
+        "ms" => Some(num / 1000.0),
+        _ => None,
+    }
+}
+
+// 리터럴 단위 → (값, 차원). 각도(도)·시간(초). 그 외 단위는 스칼라 평가 불가.
+fn scalar_unit(num: f64, unit: &str) -> Option<(f64, SKind)> {
+    if let Some(d) = deg_of_angle_unit(num, unit) {
+        return Some((d, SKind::Ang));
+    }
+    if let Some(s) = sec_of_time_unit(num, unit) {
+        return Some((s, SKind::Time));
+    }
+    None
+}
+
+pub(crate) fn eval_math_time_s(expr: &str) -> Option<f64> {
+    let chars: Vec<char> = expr.trim().chars().collect();
+    let mut p = 0usize;
+    let (v, k) = scalar_expr(&chars, &mut p)?;
+    skip_ws(&chars, &mut p);
+    if p != chars.len() || k != SKind::Time {
+        return None;
+    }
+    Some(v)
 }
 
 pub(crate) fn eval_math_angle_deg(expr: &str) -> Option<f64> {
@@ -487,21 +518,21 @@ fn scalar_term(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
         match op {
             '*' => match (kind, rk) {
                 (SKind::Num, SKind::Num) => acc *= rhs,
-                (SKind::Num, SKind::Ang) => {
+                (SKind::Num, d) => {
                     acc *= rhs;
-                    kind = SKind::Ang;
+                    kind = d; // 수 * 차원 = 차원
                 }
-                (SKind::Ang, SKind::Num) => acc *= rhs,
-                (SKind::Ang, SKind::Ang) => return None, // 각도*각도 무효
+                (_, SKind::Num) => acc *= rhs, // 차원 * 수 = 차원(kind 유지)
+                _ => return None,              // 차원 * 차원 무효
             },
             _ => match (kind, rk) {
                 (SKind::Num, SKind::Num) => acc /= rhs,
-                (SKind::Ang, SKind::Num) => acc /= rhs,
-                (SKind::Ang, SKind::Ang) => {
+                (_, SKind::Num) => acc /= rhs, // 차원 / 수 = 차원
+                (a, b) if a == b => {
                     acc /= rhs;
-                    kind = SKind::Num; // 각도/각도 = 수
+                    kind = SKind::Num; // 같은 차원끼리 나누면 수
                 }
-                (SKind::Num, SKind::Ang) => return None,
+                _ => return None, // 수/차원, 다른 차원끼리 무효
             },
         }
     }
@@ -598,7 +629,7 @@ fn scalar_factor(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
         return None;
     }
     let num: f64 = t[nstart..*p].iter().collect::<String>().parse().ok()?;
-    // 단위(각도만 허용, 그 외 단위는 실패).
+    // 단위(각도·시간만 허용, 그 외 단위는 실패).
     let ustart = *p;
     while t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
         *p += 1;
@@ -607,8 +638,8 @@ fn scalar_factor(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
         return Some((sign * num, SKind::Num));
     }
     let unit: String = t[ustart..*p].iter().collect::<String>().to_ascii_lowercase();
-    let deg = deg_of_angle_unit(num, &unit)?;
-    Some((sign * deg, SKind::Ang))
+    let (v, k) = scalar_unit(num, &unit)?;
+    Some((sign * v, k))
 }
 
 fn scalar_same(args: &[String]) -> Option<(Vec<f64>, SKind)> {
@@ -12428,6 +12459,18 @@ mod tests {
         assert_eq!(ang("cos(0)"), None); // 수 결과
         assert_eq!(ang("10px"), None); // 길이
         assert_eq!(ang("calc(45deg * 2deg)"), None); // 각도*각도
+        // 시간 수학식(eval_math_time_s).
+        let tm = |s: &str| eval_math_time_s(s);
+        assert!((tm("round(10s, 6s)").unwrap() - 12.0).abs() < 1e-9);
+        assert!((tm("mod(10s, 6s)").unwrap() - 4.0).abs() < 1e-9);
+        assert!((tm("rem(10s, 6s)").unwrap() - 4.0).abs() < 1e-9);
+        assert!((tm("round(10ms, 6ms)").unwrap() - 0.012).abs() < 1e-9); // ms→s
+        assert!((tm("calc(1s + 500ms)").unwrap() - 1.5).abs() < 1e-9);
+        assert!((tm("min(1s, 500ms)").unwrap() - 0.5).abs() < 1e-9);
+        assert!((tm("abs(-2s)").unwrap() - 2.0).abs() < 1e-9);
+        assert_eq!(tm("5"), None); // 수는 시간 아님
+        assert_eq!(tm("45deg"), None); // 각도는 시간 아님
+        assert!((ang("calc(45deg / 2)").unwrap() - 22.5).abs() < 1e-6); // 각도/수
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");

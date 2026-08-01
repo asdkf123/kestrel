@@ -47,6 +47,7 @@ pub(crate) use values::eval_calc_number;
 pub(crate) use values::flatten_nested_calc;
 pub(crate) use values::eval_math_number;
 pub(crate) use values::eval_math_angle_deg;
+pub(crate) use values::eval_math_time_s;
 pub(crate) use values::normalize_gradient_serial;
 pub(crate) use values::gradient_valid;
 pub(crate) use values::{background_image_layers_valid, border_image_source_valid, cross_fade_valid};

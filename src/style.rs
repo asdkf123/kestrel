@@ -1302,10 +1302,12 @@ pub type PseudoStyles = HashMap<NodeId, PropertyMap>;
 // 시간 값 → 초(f32). "500ms"→0.5, "2s"→2, "calc(2 * 3s)"→6, 무단위 0 허용.
 fn parse_time_s(s: &str) -> Option<f32> {
     let s = s.trim();
-    if let Some(inner) = s.strip_prefix("calc(").and_then(|x| x.strip_suffix(')')) {
-        // 시간 단위를 초 계수로: ms→e-3, 그 뒤 남은 s 제거 후 산술 평가.
-        let e = inner.replace("ms", "e-3s").replace('s', "");
-        return crate::css::eval_calc_number(&e);
+    // 시간 수학식(round(10s,6s)·mod/rem/min/max/clamp/abs·calc)을 초로 평가(§CSS
+    // Values 4 §10). ms→s 정규화 포함(10ms→0.01s).
+    if s.contains('(') {
+        if let Some(sec) = crate::css::eval_math_time_s(s) {
+            return Some(sec as f32);
+        }
     }
     if let Some(p) = s.strip_suffix("ms") {
         return p.trim().parse::<f32>().ok().map(|v| v / 1000.0);
@@ -1321,7 +1323,9 @@ fn parse_time_s(s: &str) -> Option<f32> {
 
 // transition/animation 시간 목록 계산값: 각 항목을 초로 정규화("0.5s, 6s").
 pub fn normalize_time_list(s: &str) -> String {
-    s.split(',')
+    // 최상위 콤마로 목록 분리(round(10s,6s) 안의 콤마는 보존).
+    split_top_commas_local(s)
+        .iter()
         .map(|t| match parse_time_s(t) {
             Some(sec) => format!("{}s", num_css(sec)),
             None => t.trim().to_string(),
