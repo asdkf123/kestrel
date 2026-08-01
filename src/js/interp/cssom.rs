@@ -40,8 +40,31 @@ fn is_empty_nested_decls(r: &crate::css::Rule) -> bool {
         && r.declarations.is_empty()
 }
 
+// @import 규칙 cssText 캐논 직렬화: `@import url("href") [layer|layer(name)]
+// [supports(cond)] [media];`. url 은 항상 큰따옴표.
+fn import_css_text(imp: &crate::css::ImportData) -> String {
+    let mut s = format!("@import url(\"{}\")", imp.href);
+    match &imp.layer {
+        Some(Some(name)) => s.push_str(&format!(" layer({})", name)),
+        Some(None) => s.push_str(" layer"),
+        None => {}
+    }
+    if let Some(sup) = &imp.supports {
+        s.push_str(&format!(" supports({})", sup));
+    }
+    if !imp.media.is_empty() {
+        s.push_str(&format!(" {}", imp.media));
+    }
+    s.push(';');
+    s
+}
+
 fn serialize_rule_full(rule: &crate::css::Rule) -> String {
     let dl = decls_line(rule);
+    // @import 규칙(statement, 블록 없음).
+    if let Some(imp) = &rule.at_import {
+        return import_css_text(imp);
+    }
     // @scope 규칙: `@scope (root) to (limit) {\n  <내부>\n}`(root/limit 없으면 생략).
     if let Some((root, limit)) = &rule.at_scope {
         let mut prelude = String::from("@scope");
@@ -462,6 +485,43 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @import 규칙(CSSImportRule §CSSOM). href/layerName/supportsText/media.
+                let ati = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| resolve_nested(s.sheet.rules.get(ri), &np))
+                    .and_then(|r| r.at_import.clone());
+                if let Some(imp) = ati {
+                    return match key {
+                        "href" => Ok(Value::Str(imp.href)),
+                        // layerName: 이름 없음=null, bare layer=""(익명), layer(name)=name.
+                        "layerName" => Ok(match imp.layer {
+                            None => Value::Null,
+                            Some(None) => Value::Str(String::new()),
+                            Some(Some(n)) => Value::Str(n),
+                        }),
+                        "supportsText" => Ok(imp.supports.map(Value::Str).unwrap_or(Value::Null)),
+                        "media" => {
+                            let mut m = ObjMap::new();
+                            m.insert("mediaText".to_string(), Value::Str(imp.media.clone()));
+                            m.insert(
+                                "length".to_string(),
+                                Value::Num(if imp.media.is_empty() {
+                                    0.0
+                                } else {
+                                    imp.media.split(',').count() as f64
+                                }),
+                            );
+                            Ok(Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m))))
+                        }
+                        "styleSheet" => Ok(Value::Null), // 로드 미구현
+                        "type" => Ok(Value::Num(3.0)),   // IMPORT_RULE
+                        "cssText" => Ok(Value::Str(self.rule_css_text(si, ri, &np))),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 // @scope 규칙(CSSScopeRule §CSS Cascade 6). start=root, end=limit.
                 let ats = self
                     .sheets()
@@ -725,7 +785,7 @@ impl Interp {
                 at_custom_media: None,
                 at_supports,
                 at_container: None,
-                at_scope: None,                nested,
+                at_scope: None, at_import: None,                nested,
             };
             let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
             let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };

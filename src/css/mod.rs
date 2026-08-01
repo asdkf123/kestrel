@@ -366,8 +366,20 @@ pub fn parse_unicode_range(s: &str) -> Vec<(u32, u32)> {
     out
 }
 
+// @import 규칙 데이터(§CSS Cascade, CSSImportRule). layer: None=layer 없음,
+// Some(None)=bare `layer`, Some(Some(name))=`layer(name)`. supports: supports() 조건 원문.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ImportData {
+    pub href: String,
+    pub layer: Option<Option<String>>,
+    pub supports: Option<String>,
+    pub media: String,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Rule {
+    // @import 규칙이면 데이터. CSSImportRule CSSOM 노출용(스타일 로드는 별개, styleSheet=null).
+    pub at_import: Option<ImportData>,
     pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
     // 이 규칙이 속한 @layer 이름 (없으면 레이어 밖).
@@ -956,7 +968,7 @@ pub fn parse_one_nested_rule(text: &str, parent_sel: &str, viewport_width: f32) 
             at_media: None,
             at_custom_media: None,
             at_supports: None,
-            at_container: None, at_scope: None,            nested: Vec::new(),
+            at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
         });
     }
     // 규칙 하나만 유효할 때. (여러 개거나 0개면 insertRule 규격상 하나가 아님 → None.)
@@ -2108,6 +2120,78 @@ pub fn parse_scope_prelude(head: &str) -> Option<(Option<String>, Option<String>
     }
 }
 
+// @import 프렐류드 파싱(§CSS Cascade): `<url> [layer|layer(name)]? [supports(cond)]?
+// [media]?`. 순서 고정. 무효(url 없음)면 None. url/layer/supports/media 추출.
+pub fn parse_import_prelude(s: &str) -> Option<ImportData> {
+    let s = s.trim();
+    let low = s.to_ascii_lowercase();
+    let unquote = |t: &str| -> String {
+        let t = t.trim();
+        if (t.starts_with('"') && t.ends_with('"') && t.len() >= 2)
+            || (t.starts_with('\'') && t.ends_with('\'') && t.len() >= 2)
+        {
+            t[1..t.len() - 1].to_string()
+        } else {
+            t.to_string()
+        }
+    };
+    // 최상위 짝 ')' 찾기(open 은 '(' 인덱스).
+    let matching = |txt: &str, open: usize| -> Option<usize> {
+        let b = txt.as_bytes();
+        let mut depth = 0i32;
+        let mut i = open;
+        while i < b.len() {
+            match b[i] {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    };
+    // 1) url(...) 또는 문자열.
+    let (href, mut rest) = if low.starts_with("url(") {
+        let close = matching(s, 3)?;
+        (unquote(s[4..close].trim()), s[close + 1..].trim())
+    } else if s.starts_with('"') || s.starts_with('\'') {
+        let q = s.as_bytes()[0];
+        let end = s[1..].find(q as char)? + 1;
+        (s[1..end].to_string(), s[end + 1..].trim())
+    } else {
+        return None;
+    };
+    // 2) layer / layer(name).
+    let mut layer = None;
+    let rl = rest.to_ascii_lowercase();
+    if rl.starts_with("layer(") {
+        let close = matching(rest, 5)?;
+        layer = Some(Some(rest[6..close].trim().to_string()));
+        rest = rest[close + 1..].trim();
+    } else if rl == "layer" {
+        layer = Some(None);
+        rest = "";
+    } else if rl.starts_with("layer") && rest[5..].starts_with(char::is_whitespace) {
+        layer = Some(None);
+        rest = rest[5..].trim();
+    }
+    // 3) supports(cond).
+    let mut supports = None;
+    let rs = rest.to_ascii_lowercase();
+    if rs.starts_with("supports(") {
+        let close = matching(rest, 8)?;
+        supports = Some(rest[9..close].trim().to_string());
+        rest = rest[close + 1..].trim();
+    }
+    // 4) media = 나머지.
+    Some(ImportData { href, layer, supports, media: rest.trim().to_string() })
+}
+
 pub fn desugar_nested(nested: &str, parent: &str) -> String {
     // 부모 선택자가 없으면(최상위 @media/@supports 안의 규칙) 상대화하지 않는다 —
     // 그 안의 스타일 규칙은 절대 선택자다(@media 는 중첩상 투명). 원문 그대로.
@@ -2256,6 +2340,12 @@ impl Parser {
                     if let Some(r) = self.parse_custom_media_rule() {
                         rules.push(r);
                     }
+                } else if ident == "import" {
+                    if let Some(r) = self.parse_import() {
+                        rules.push(r);
+                    } else {
+                        self.skip_to_semicolon();
+                    }
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -2311,7 +2401,7 @@ impl Parser {
             at_media: Some(cond),
             at_custom_media: None,
             at_supports: None,
-            at_container: None, at_scope: None,            nested: inner,
+            at_container: None, at_scope: None, at_import: None,            nested: inner,
         }]
     }
 
@@ -2451,7 +2541,7 @@ impl Parser {
             at_supports: None,
             at_container: Some(head.trim().to_string()),
             at_scope: None,
-            nested: inner,
+            at_import: None,            nested: inner,
         }]
     }
 
@@ -2512,7 +2602,7 @@ impl Parser {
             at_supports: None,
             at_container: None,
             at_scope: Some((root, limit)),
-            nested: inner,
+            at_import: None,            nested: inner,
         }]
     }
 
@@ -2563,7 +2653,7 @@ impl Parser {
             at_media: None,
             at_custom_media: None,
             at_supports: Some(cond.trim().to_string()),
-            at_container: None, at_scope: None,            nested: inner,
+            at_container: None, at_scope: None, at_import: None,            nested: inner,
         }]
     }
 
@@ -2716,6 +2806,32 @@ impl Parser {
         }
     }
 
+    // '@import <url> [layer|layer(name)]? [supports(cond)]? [media]? ;'. CSSImportRule 컨테이너로
+    // 보존(스타일 로드는 별개; styleSheet=null). 무효 프렐류드면 None.
+    fn parse_import(&mut self) -> Option<Rule> {
+        let prelude = self.consume_while(|c| c != ';' && c != '{' && c != '}');
+        if self.peek() == Some(';') {
+            self.consume_char();
+        }
+        let data = crate::css::parse_import_prelude(prelude.trim())?;
+        Some(Rule {
+            at_import: Some(data),
+            selectors: Vec::new(),
+            declarations: Vec::new(),
+            selector_text: String::new(),
+            ua: false,
+            layer: None,
+            container: None,
+            at_property: None,
+            at_media: None,
+            at_custom_media: None,
+            at_supports: None,
+            at_container: None,
+            at_scope: None,
+            nested: Vec::new(),
+        })
+    }
+
     // '@custom-media --name <media-query-list | true | false> ;' (§Media Queries 5).
     // 이름은 dashed-ident(--…), 이름과 쿼리 사이 공백 필수, 쿼리는 유효한 미디어
     // 쿼리 리스트여야 한다. CSSOM CSSCustomMediaRule 노출용(우리 엔진은 (--name)
@@ -2761,7 +2877,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: Some((name.to_string(), serialized)),
-            at_supports: None, at_container: None, at_scope: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
         })
     }
 
@@ -2863,7 +2979,7 @@ impl Parser {
             at_property: Some((name, reg)),
             at_media: None,
             at_custom_media: None,
-            at_supports: None, at_container: None, at_scope: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
         })
     }
 
@@ -2957,7 +3073,7 @@ impl Parser {
                     at_property: None,
                     at_media: None,
                     at_custom_media: None,
-                    at_supports: None, at_container: None, at_scope: None,                    nested,
+                    at_supports: None, at_container: None, at_scope: None, at_import: None,                    nested,
                 })
             }
             None => {
@@ -2988,7 +3104,7 @@ impl Parser {
             at_property: None,
             at_media: None,
             at_custom_media: None,
-            at_supports: None, at_container: None, at_scope: None,            nested: Vec::new(),
+            at_supports: None, at_container: None, at_scope: None, at_import: None,            nested: Vec::new(),
         };
         loop {
             self.consume_whitespace();
@@ -3054,7 +3170,7 @@ impl Parser {
                             at_custom_media: None,
                             at_supports,
                             at_container: None,
-                            at_scope: None,                            nested: cont,
+                            at_scope: None, at_import: None,                            nested: cont,
                         });
                         seen_nested = true;
                     } else {
@@ -3090,7 +3206,7 @@ impl Parser {
                                 at_property: None,
                                 at_media: None,
                                 at_custom_media: None,
-                                at_supports: None, at_container: None, at_scope: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
+                                at_supports: None, at_container: None, at_scope: None, at_import: None,                                nested: cnested, // 자식 중첩은 자식에 계층적으로 보관.
                             });
                         }
                         seen_nested = true;

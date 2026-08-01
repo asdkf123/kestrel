@@ -5302,7 +5302,9 @@ impl Interp {
             Native::SheetReplaceSync | Native::SheetReplace => {
                 let text = args.first().map(to_display).unwrap_or_default();
                 let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
-                let parsed = crate::css::parse_viewport(text, vw);
+                let mut parsed = crate::css::parse_viewport(text, vw);
+                // 생성 가능 시트(replace/replaceSync)는 @import 를 금지 → 파싱 후 제거(§CSSOM).
+                parsed.rules.retain(|r| r.at_import.is_none());
                 if let Some(Value::Sheet(si)) = &recv {
                     let si = *si;
                     if let Some(sheets) = self.sheets() {
