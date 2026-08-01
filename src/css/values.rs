@@ -12737,6 +12737,10 @@ fn parse_signed_int(s: &str) -> Option<i64> {
 }
 
 fn fmt_anb(a: i64, b: i64) -> String {
+    // A==0 이면 계수 없이 정수 B 만(§CSS Syntax serialize an+b): 0n+1 → 1.
+    if a == 0 {
+        return b.to_string();
+    }
     let coef = if a == 1 {
         "n".to_string()
     } else if a == -1 {
