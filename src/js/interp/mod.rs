@@ -2266,6 +2266,34 @@ impl Interp {
             // @@iterator 가 재정의된 배열은 빠른 경로를 건너뛰고 아래 반복자 프로토콜로.
             Value::Arr(a) if self.array_has_default_iterator(a) => a.borrow().clone(),
             Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
+            // CSSStyleDeclaration 은 인덱스 게터+length 를 가진 반복 가능 인터페이스
+            // (§Web IDL indexed properties) — for...of 는 프로퍼티 이름을 산출한다.
+            Value::ComputedStyle(id) => {
+                let id = *id;
+                self.ensure_layout();
+                self.computed_prop_names(id).into_iter().map(Value::Str).collect()
+            }
+            Value::Style(id) => {
+                let id = *id;
+                let attr = self.style_attr(id);
+                let mut seen = std::collections::HashSet::new();
+                let mut names = Vec::new();
+                for (prop, _) in style_pairs(&attr) {
+                    let name = prop.to_ascii_lowercase();
+                    if seen.insert(name.clone()) {
+                        names.push(Value::Str(name));
+                    }
+                }
+                names
+            }
+            Value::RuleStyle(si, ri) => {
+                let (si, ri) = (*si, *ri);
+                self.sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| s.sheet.rules.get(ri))
+                    .map(|r| r.declarations.iter().map(|d| Value::Str(d.name.clone())).collect())
+                    .unwrap_or_default()
+            }
             Value::SetVal(s) => s.borrow().clone(),
             Value::MapVal(m) => m
                 .borrow()
@@ -4284,7 +4312,8 @@ impl Interp {
                 }
                 // 유한한 내장 이터러블(문자열/Set/Map/재료화 반복자)은 재료화해 순회.
                 let finite = matches!(&target,
-                    Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_))
+                    Value::Arr(_) | Value::Str(_) | Value::SetVal(_) | Value::MapVal(_)
+                        | Value::ComputedStyle(_) | Value::Style(_) | Value::RuleStyle(_, _))
                     || matches!(&target, Value::Obj(o) if o.borrow().contains_key("\u{0}items"));
                 if !finite {
                     // 반복자 프로토콜(지연): 제너레이터/사용자 [Symbol.iterator] 이터러블/
