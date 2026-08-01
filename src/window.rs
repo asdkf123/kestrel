@@ -1123,7 +1123,7 @@ fn collect_computed_styles(
         }
         // rotate 프로퍼티 계산값: 각도→도, 각도 마지막.
         if let Some(v) = m.get("rotate") {
-            m.insert("rotate".to_string(), crate::style::normalize_rotate(v));
+            m.insert("rotate".to_string(), crate::style::normalize_rotate_computed(v));
         }
         // translate 프로퍼티 계산값: 후행 0 축약.
         if let Some(v) = m.get("translate") {

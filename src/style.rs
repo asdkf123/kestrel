@@ -1529,24 +1529,66 @@ fn norm_transform_arg(func: &str, a: &str) -> String {
 
 // rotate 프로퍼티 계산값 정규화(§CSS Transforms 2): 각도를 도로 변환하고 마지막에
 // 둔다(축/벡터 먼저). rotate: 400grad→"360deg", 400grad 1 2 3→"1 2 3 360deg".
+// rotate 프로퍼티 지정값(el.style) 직렬화. 수학 함수 각도는 calc()로 감싼다
+// (acos(1)→"calc(0deg)", calc(45deg)→"calc(45deg)"), 리터럴은 "45deg".
 pub fn normalize_rotate(v: &str) -> String {
+    normalize_rotate_impl(v, false)
+}
+// rotate 계산값 직렬화(getComputedStyle). 각도를 평가해 "Ndeg"(calc 래퍼 없음).
+pub fn normalize_rotate_computed(v: &str) -> String {
+    normalize_rotate_impl(v, true)
+}
+
+fn normalize_rotate_impl(v: &str, computed: bool) -> String {
     let v = v.trim();
     if v == "none" || v.is_empty() {
         return v.to_string();
     }
-    let mut angle: Option<f32> = None;
+    // 괄호 인지 분할(calc(30deg + 60deg) 을 한 토큰으로).
+    let toks = split_top_ws(v);
+    // 각도(리터럴 또는 수학식) 하나 + 나머지(축 키워드/수)로 분류.
+    let is_angle_expr =
+        |t: &str| angle_token_deg(t).is_some() || crate::css::eval_math_angle_deg(t).is_some();
+    let mut angle_tok: Option<&str> = None;
     let mut rest: Vec<&str> = Vec::new();
-    for t in v.split_whitespace() {
-        match angle_token_deg(t) {
-            Some(d) if angle.is_none() => angle = Some(d),
-            Some(_) => return v.to_string(), // 각도 둘 → 원문 보존
-            None => rest.push(t),
+    for t in &toks {
+        if is_angle_expr(t) {
+            if angle_tok.is_some() {
+                return v.to_string(); // 각도 둘 → 원문 보존
+            }
+            angle_tok = Some(t);
+        } else {
+            rest.push(t);
         }
     }
-    let Some(a) = angle else {
+    let Some(at) = angle_tok else {
         return v.to_string();
     };
-    let angle_str = format!("{}deg", num_css(a));
+    // 각도(도) 계산: 리터럴 우선, 아니면 각도 수학식 평가.
+    let deg: f64 = if let Some(d) = angle_token_deg(at) {
+        d as f64
+    } else if let Some(d) = crate::css::eval_math_angle_deg(at) {
+        d
+    } else {
+        return v.to_string();
+    };
+    let is_mathfn = at.contains('(');
+    let angle_str = if !deg.is_finite() {
+        // 비유한 각도: calc(NaN * 1deg)/calc(infinity * 1deg)/calc(-infinity * 1deg).
+        let n = if deg.is_nan() {
+            "NaN"
+        } else if deg > 0.0 {
+            "infinity"
+        } else {
+            "-infinity"
+        };
+        format!("calc({} * 1deg)", n)
+    } else if is_mathfn && !computed {
+        // 지정값 + 수학 함수 → calc() 유지.
+        format!("calc({}deg)", num_css(deg as f32))
+    } else {
+        format!("{}deg", num_css(deg as f32))
+    };
     if rest.is_empty() {
         angle_str
     } else {

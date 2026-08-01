@@ -422,6 +422,323 @@ impl CalcVal {
     }
 }
 
+// ── <angle>|<number> 타입 수학식 평가(§CSS Values 4 §10) ─────────────────────
+// number 와 angle(deg 로 저장) 두 타입을 추적하며 평가한다. rotate 등 각도 문맥에서
+// asin/acos/atan(수→각도)·각도 산술·min/max/clamp/round/abs(각도)를 계산값으로 접는다.
+// 길이·퍼센트·시간·해석불가(var)는 None. 반환 (값, is_angle).
+#[derive(Clone, Copy, PartialEq)]
+enum SKind {
+    Num,
+    Ang, // 값은 도(degree)
+}
+
+fn deg_of_angle_unit(num: f64, unit: &str) -> Option<f64> {
+    match unit {
+        "deg" => Some(num),
+        "grad" => Some(num * 0.9),
+        "rad" => Some(num.to_degrees()),
+        "turn" => Some(num * 360.0),
+        _ => None,
+    }
+}
+
+pub(crate) fn eval_math_angle_deg(expr: &str) -> Option<f64> {
+    let chars: Vec<char> = expr.trim().chars().collect();
+    let mut p = 0usize;
+    let (v, k) = scalar_expr(&chars, &mut p)?;
+    skip_ws(&chars, &mut p);
+    if p != chars.len() || k != SKind::Ang {
+        return None;
+    }
+    Some(v)
+}
+
+fn scalar_expr(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
+    let (mut acc, mut kind) = scalar_term(t, p)?;
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('+') => 1.0,
+            Some('-') => -1.0,
+            _ => break,
+        };
+        *p += 1;
+        let (rhs, rk) = scalar_term(t, p)?;
+        if rk != kind {
+            return None; // 덧뺄셈은 같은 타입만
+        }
+        acc += op * rhs;
+        kind = rk;
+    }
+    Some((acc, kind))
+}
+
+fn scalar_term(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
+    let (mut acc, mut kind) = scalar_factor(t, p)?;
+    loop {
+        skip_ws(t, p);
+        let op = match t.get(*p) {
+            Some('*') => '*',
+            Some('/') => '/',
+            _ => break,
+        };
+        *p += 1;
+        let (rhs, rk) = scalar_factor(t, p)?;
+        match op {
+            '*' => match (kind, rk) {
+                (SKind::Num, SKind::Num) => acc *= rhs,
+                (SKind::Num, SKind::Ang) => {
+                    acc *= rhs;
+                    kind = SKind::Ang;
+                }
+                (SKind::Ang, SKind::Num) => acc *= rhs,
+                (SKind::Ang, SKind::Ang) => return None, // 각도*각도 무효
+            },
+            _ => match (kind, rk) {
+                (SKind::Num, SKind::Num) => acc /= rhs,
+                (SKind::Ang, SKind::Num) => acc /= rhs,
+                (SKind::Ang, SKind::Ang) => {
+                    acc /= rhs;
+                    kind = SKind::Num; // 각도/각도 = 수
+                }
+                (SKind::Num, SKind::Ang) => return None,
+            },
+        }
+    }
+    Some((acc, kind))
+}
+
+fn scalar_factor(t: &[char], p: &mut usize) -> Option<(f64, SKind)> {
+    skip_ws(t, p);
+    let mut sign = 1.0f64;
+    while let Some(&c) = t.get(*p) {
+        if c == '+' {
+            *p += 1;
+        } else if c == '-' {
+            sign = -sign;
+            *p += 1;
+        } else {
+            break;
+        }
+        skip_ws(t, p);
+    }
+    if t.get(*p) == Some(&'(') {
+        *p += 1;
+        let (v, k) = scalar_expr(t, p)?;
+        skip_ws(t, p);
+        if t.get(*p) != Some(&')') {
+            return None;
+        }
+        *p += 1;
+        return Some((sign * v, k));
+    }
+    if t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        let istart = *p;
+        while t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+            *p += 1;
+        }
+        let ident: String = t[istart..*p].iter().collect::<String>().to_ascii_lowercase();
+        skip_ws(t, p);
+        if t.get(*p) == Some(&'(') {
+            let astart = *p + 1;
+            let mut depth = 0i32;
+            let mut k = *p;
+            while k < t.len() {
+                match t[k] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                k += 1;
+            }
+            if depth != 0 {
+                return None;
+            }
+            let inner: String = t[astart..k].iter().collect();
+            *p = k + 1;
+            let (v, kd) = scalar_func_eval(&ident, &inner)?;
+            return Some((sign * v, kd));
+        }
+        // 상수는 순수 수(pi/e/infinity/nan).
+        let c = match ident.as_str() {
+            "pi" => std::f64::consts::PI,
+            "e" => std::f64::consts::E,
+            "infinity" => f64::INFINITY,
+            "nan" => f64::NAN,
+            _ => return None,
+        };
+        return Some((sign * c, SKind::Num));
+    }
+    // 수 리터럴 + 선택적 각도 단위.
+    let nstart = *p;
+    while t.get(*p).is_some_and(|&c| c.is_ascii_digit() || c == '.') {
+        *p += 1;
+    }
+    if t.get(*p).is_some_and(|&c| c == 'e' || c == 'E') {
+        let save = *p;
+        *p += 1;
+        if t.get(*p).is_some_and(|&c| c == '+' || c == '-') {
+            *p += 1;
+        }
+        if t.get(*p).is_some_and(|c| c.is_ascii_digit()) {
+            while t.get(*p).is_some_and(|c| c.is_ascii_digit()) {
+                *p += 1;
+            }
+        } else {
+            *p = save;
+        }
+    }
+    if *p == nstart {
+        return None;
+    }
+    let num: f64 = t[nstart..*p].iter().collect::<String>().parse().ok()?;
+    // 단위(각도만 허용, 그 외 단위는 실패).
+    let ustart = *p;
+    while t.get(*p).is_some_and(|c| c.is_ascii_alphabetic()) {
+        *p += 1;
+    }
+    if ustart == *p {
+        return Some((sign * num, SKind::Num));
+    }
+    let unit: String = t[ustart..*p].iter().collect::<String>().to_ascii_lowercase();
+    let deg = deg_of_angle_unit(num, &unit)?;
+    Some((sign * deg, SKind::Ang))
+}
+
+fn scalar_same(args: &[String]) -> Option<(Vec<f64>, SKind)> {
+    let mut kind: Option<SKind> = None;
+    let mut vals = Vec::with_capacity(args.len());
+    for a in args {
+        if a.eq_ignore_ascii_case("none") {
+            vals.push(f64::NAN); // clamp none 자리표시(호출부에서 처리)
+            continue;
+        }
+        let chars: Vec<char> = a.trim().chars().collect();
+        let mut p = 0usize;
+        let (v, k) = scalar_expr(&chars, &mut p)?;
+        skip_ws(&chars, &mut p);
+        if p != chars.len() {
+            return None;
+        }
+        match kind {
+            None => kind = Some(k),
+            Some(pk) if pk == k => {}
+            _ => return None,
+        }
+        vals.push(v);
+    }
+    Some((vals, kind?))
+}
+
+fn scalar_func_eval(name: &str, inner: &str) -> Option<(f64, SKind)> {
+    let raw_args: Vec<String> =
+        split_top_commas(inner).iter().map(|a| a.trim().to_string()).collect();
+    if raw_args.iter().any(|a| a.is_empty()) {
+        return None;
+    }
+    match name {
+        "calc" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            let chars: Vec<char> = raw_args[0].chars().collect();
+            let mut p = 0usize;
+            let r = scalar_expr(&chars, &mut p)?;
+            skip_ws(&chars, &mut p);
+            if p != chars.len() {
+                return None;
+            }
+            Some(r)
+        }
+        // 역삼각: 순수 수 → 각도(deg).
+        "asin" => Some((eval_math_number(raw_args.first()?)?.asin().to_degrees(), SKind::Ang)),
+        "acos" => Some((eval_math_number(raw_args.first()?)?.acos().to_degrees(), SKind::Ang)),
+        "atan" => Some((eval_math_number(raw_args.first()?)?.atan().to_degrees(), SKind::Ang)),
+        "atan2" => {
+            if raw_args.len() != 2 {
+                return None;
+            }
+            let a = eval_math_number(&raw_args[0])?;
+            let b = eval_math_number(&raw_args[1])?;
+            Some((a.atan2(b).to_degrees(), SKind::Ang))
+        }
+        // 삼각/부호/지수 계열은 순수 수 결과 → number 평가기로.
+        "sin" | "cos" | "tan" | "sign" | "sqrt" | "exp" | "pow" | "log" | "progress" => {
+            eval_math_number(&format!("{}({})", name, inner)).map(|v| (v, SKind::Num))
+        }
+        "abs" => {
+            if raw_args.len() != 1 {
+                return None;
+            }
+            let chars: Vec<char> = raw_args[0].chars().collect();
+            let mut p = 0usize;
+            let (v, k) = scalar_expr(&chars, &mut p)?;
+            skip_ws(&chars, &mut p);
+            if p != chars.len() {
+                return None;
+            }
+            Some((v.abs(), k))
+        }
+        "min" => {
+            let (v, k) = scalar_same(&raw_args)?;
+            if v.is_empty() {
+                return None;
+            }
+            Some((v.iter().fold(f64::INFINITY, |a, &b| fmin_css(a, b)), k))
+        }
+        "max" => {
+            let (v, k) = scalar_same(&raw_args)?;
+            if v.is_empty() {
+                return None;
+            }
+            Some((v.iter().fold(f64::NEG_INFINITY, |a, &b| fmax_css(a, b)), k))
+        }
+        "hypot" => {
+            let (v, k) = scalar_same(&raw_args)?;
+            if v.is_empty() {
+                return None;
+            }
+            Some((v.iter().map(|x| x * x).sum::<f64>().sqrt(), k))
+        }
+        "clamp" => {
+            if raw_args.len() != 3 {
+                return None;
+            }
+            let (v, k) = scalar_same(&raw_args)?;
+            let lo = if raw_args[0].eq_ignore_ascii_case("none") { f64::NEG_INFINITY } else { v[0] };
+            let mid = v[1];
+            let hi = if raw_args[2].eq_ignore_ascii_case("none") { f64::INFINITY } else { v[2] };
+            Some((fmax_css(lo, fmin_css(mid, hi)), k))
+        }
+        "round" => {
+            let (strat, rest): (&str, Vec<String>) =
+                if raw_args.first().is_some_and(|a| is_rounding_strategy(a)) {
+                    (&raw_args[0].to_ascii_lowercase()[..], raw_args[1..].to_vec())
+                } else {
+                    ("nearest", raw_args.clone())
+                };
+            if rest.len() != 2 {
+                return None;
+            }
+            let (v, k) = scalar_same(&rest)?;
+            Some((css_round(strat, v[0], v[1]), k))
+        }
+        "mod" | "rem" => {
+            if raw_args.len() != 2 {
+                return None;
+            }
+            let (v, k) = scalar_same(&raw_args)?;
+            Some((if name == "mod" { css_mod(v[0], v[1]) } else { css_rem(v[0], v[1]) }, k))
+        }
+        _ => None,
+    }
+}
+
 // ── 순수 <number> 수학식 평가(§CSS Values 4 §10) ────────────────────────────
 // 단위 없는 수만 다룬다(각도는 삼각함수 인자 안에서만 허용). NaN/±infinity/부호
 // 있는 0 을 f64 로 그대로 전파한다(1/sign(-0) = -infinity 등). 단위·퍼센트·해석
@@ -12060,6 +12377,22 @@ mod tests {
         assert_eq!(ev("asin(1)"), None); // 각도 결과는 number 문맥 타입오류
         assert_eq!(ev("1 + "), None);
         assert_eq!(ev("var(--x)"), None);
+        // 각도 수학식 평가(eval_math_angle_deg).
+        let ang = |s: &str| eval_math_angle_deg(s);
+        assert!((ang("acos(1)").unwrap()).abs() < 1e-6);
+        assert!((ang("acos(-1)").unwrap() - 180.0).abs() < 1e-6);
+        assert!((ang("asin(1)").unwrap() - 90.0).abs() < 1e-6);
+        assert!((ang("calc(acos(1))").unwrap()).abs() < 1e-6);
+        assert!((ang("45deg").unwrap() - 45.0).abs() < 1e-6);
+        assert!((ang("100grad").unwrap() - 90.0).abs() < 1e-6);
+        assert!((ang("1turn").unwrap() - 360.0).abs() < 1e-6);
+        assert!((ang("calc(30deg + 60deg)").unwrap() - 90.0).abs() < 1e-6);
+        assert!((ang("calc(2 * 45deg)").unwrap() - 90.0).abs() < 1e-6);
+        assert!((ang("min(30deg, 45deg)").unwrap() - 30.0).abs() < 1e-6);
+        assert_eq!(ang("5"), None); // 순수 수는 각도 아님
+        assert_eq!(ang("cos(0)"), None); // 수 결과
+        assert_eq!(ang("10px"), None); // 길이
+        assert_eq!(ang("calc(45deg * 2deg)"), None); // 각도*각도
         // corner-top-left(단일 코너) 문법.
         for v in ["round 30%", "10px bevel", "normal", "4px 2% round", "superellipse(-0.5) 30% 10px"] {
             assert!(corner_single_valid(v), "should accept corner: {v}");
