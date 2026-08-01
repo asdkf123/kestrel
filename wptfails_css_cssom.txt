@@ -41,10 +41,10 @@ css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: Invalid CSS sele
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: Invalid CSS selector: #	assert_equals: expected ".style0" but got "#"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |ÇĞıİ| isMatch: false	assert_equals: expected "ÇĞıİ" but got ".style0"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |🤓| isMatch: false	assert_equals: expected "🤓" but got ".style0"
-css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*|div| isMatch: true	assert_equals: expected "div" but got ".style0"
-css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: ||div| isMatch: false	assert_equals: expected "|div" but got ".style0"
-css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*|a| isMatch: false	assert_equals: expected "a" but got ".style0"
-css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*|*| isMatch: true	assert_equals: expected "*" but got ".style0"
+css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*|div| isMatch: true	assert_equals: expected "div" but got "*|div"
+css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: ||div| isMatch: false	assert_equals: expected "rgb(255, 0, 255)" but got "rgb(0, 0, 255)"
+css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*|a| isMatch: false	assert_equals: expected "a" but got "*|a"
+css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*|*| isMatch: true	assert_equals: expected "*" but got "*|*"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |[*|lang]| isMatch: true	assert_equals: expected "[*|lang]" but got ".style0"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |[|lang]| isMatch: true	assert_equals: expected "[lang]" but got ".style0"
 css/cssom/CSSStyleRule-set-selectorText.html	FAIL	CSSStyleRule: selectorText value: |*:not(:active)| isMatch: true	assert_equals: expected ":not(:active)" but got "*:not(:active)"
@@ -938,7 +938,6 @@ css/cssom/selectorSerialize.html	FAIL	escaped character (\) in element name	shee
 css/cssom/selectorSerialize.html	FAIL	escaped character (\) in element name with any namespace without default	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
 css/cssom/selectorSerialize.html	FAIL	escaped character (\) in element name with any namespace with default	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
 css/cssom/selectorSerialize.html	FAIL	escaped character (\) in element name with no namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/selectorSerialize.html	FAIL	escaped character (*) in element prefix	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
 css/cssom/selectorText-modification-restyle-002.html	FAIL	Check that color changes correctly after shadow stylesheet selector and #container class is changed.	root.styleSheets.0 — root.styleSheets 이(가) undefined (읽을 수 없음)
 css/cssom/serialization-CSSDeclaration-with-important.html	FAIL	Inline style declaration with whitespace between '!' and 'important'.	assert_equals: expected "backgroundU+2dcolor: blue !important; color: red !important;" but got "backgroundU+2dcolor: rgb(0, 0, 255); color: rgb(255, 0, 0);"
 css/cssom/serialization-CSSDeclaration-with-important.html	FAIL	Style set dynamically via cssText without whitespace between '!' and 'important'.	assert_equals: expected "color: black !important;" but got "color: rgb(0, 0, 0);"
@@ -957,59 +956,35 @@ css/cssom/serialize-media-rule.html	FAIL	features U+2d no lexicographical sortin
 css/cssom/serialize-media-rule.html	FAIL	media query list	규칙을 파싱할 수 없다
 css/cssom/serialize-media-rule.html	FAIL	one rule	규칙을 파싱할 수 없다
 css/cssom/serialize-media-rule.html	FAIL	many rules	규칙을 파싱할 수 없다
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector without a namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector without a namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector without a namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector without a namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector without a namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector without a namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector without a namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace	assert_equals: expected "e" but got "*|e"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace	assert_equals: expected "*" but got "*|*"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by class	assert_equals: expected "e.c" but got "*|e.c"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by id	assert_equals: expected "e#id" but got "*|e#id"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by pseudo class	assert_equals: expected "e:hover" but got "*|e:hover"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by pseudo element	assert_equals: expected "e::before" but got "*|e::before"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with any namespace followed by attribute selector	assert_equals: expected "e[attr]" but got "*|e[attr]"
 css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector followed by class	assert_equals: expected ".c" but got "*.c"
 css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector followed by id	assert_equals: expected "#i" but got "*#i"
 css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector followed by pseudo class	assert_equals: expected ":hover" but got "*:hover"
 css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector followed by pseudo element	assert_equals: expected "::before" but got "*::before"
 css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector followed by attribute selector	assert_equals: expected "[attr]" but got "*[attr]"
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector without a namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector without a namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector without a namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector without a namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector without a namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by id	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by pseudo class	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by pseudo element	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
-css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by attribute selector	sheet.cssRules[..].selectorText — sheet.cssRules[..] 이(가) undefined (읽을 수 없음)
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by class	assert_equals: expected ".c" but got "*|*.c"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by id	assert_equals: expected "#id" but got "*|*#id"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by pseudo class	assert_equals: expected ":hover" but got "*|*:hover"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by pseudo element	assert_equals: expected "::before" but got "*|*::before"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector in any namespace followed by attribute selector	assert_equals: expected "[attr]" but got "*|*[attr]"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace	assert_equals: expected "e" but got "nsdefault|e"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace	assert_equals: expected "*" but got "nsdefault|*"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by class	assert_equals: expected "e.c" but got "nsdefault|e.c"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by id	assert_equals: expected "e#i" but got "nsdefault|e#i"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by pseudo class	assert_equals: expected "e:hover" but got "nsdefault|e:hover"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by pseudo element	assert_equals: expected "e::before" but got "nsdefault|e::before"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Type selector with namespace equal to default namespace followed by attribute selector	assert_equals: expected "e[attr]" but got "nsdefault|e[attr]"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by class	assert_equals: expected ".c" but got "nsdefault|*.c"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by id	assert_equals: expected "#i" but got "nsdefault|*#i"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by pseudo class	assert_equals: expected ":hover" but got "nsdefault|*:hover"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by pseudo element	assert_equals: expected "::before" but got "nsdefault|*::before"
+css/cssom/serialize-namespaced-type-selectors.html	FAIL	Universal selector with namespace equal to default namespace followed by attribute selector	assert_equals: expected "[attr]" but got "nsdefault|*[attr]"
 css/cssom/serialize-values.html	FAIL	listU+2dstyleU+2dimage: url(http://localhost/)	assert_equals: listU+2dstyleU+2dimage raw inline style declaration expected "url(\"http://localhost/\")" but got "url(http://localhost/)"
 css/cssom/serialize-values.html	FAIL	outlineU+2dcolor: invert	assert_equals: outlineU+2dcolor style property expected "invert" but got ""
 css/cssom/serialize-values.html	FAIL	zU+2dindex: inherit	assert_equals: zU+2dindex style property expected "inherit" but got ""

@@ -2374,6 +2374,34 @@ impl Parser {
             pseudo_element: None,
         };
         let mut any = false;
+        // 네임스페이스 접두(§Selectors §6.1): [<ident> | '*']? '|' <type|*>. 파서가
+        // 이걸 몰라 `|e`·`ns|e`·`*|e` 규칙을 통째로 드롭했다. 접두를 소비해 규칙을
+        // 보존한다(selector_text 는 원문 유지, serialize_selector 가 정규화). '||'
+        // (열 결합자)·'|='(속성 연산자)는 접두가 아니다.
+        {
+            let save = self.pos;
+            let pfx = match self.peek() {
+                Some('*') => {
+                    self.consume_char();
+                    true
+                }
+                Some(c) if valid_identifier_char(c) => {
+                    self.parse_identifier();
+                    true
+                }
+                Some('|') => true, // 접두 없는 '|e'(no-namespace)
+                _ => false,
+            };
+            let next = self.peek();
+            let after = self.input[self.pos..].chars().nth(1);
+            if pfx && next == Some('|') && after != Some('|') && after != Some('=') {
+                self.consume_char(); // '|'
+                any = true;
+                // 뒤따르는 타입/'*' 는 아래 메인 루프가 처리.
+            } else {
+                self.pos = save; // 네임스페이스 아님 → 되감기.
+            }
+        }
         while !self.eof() {
             match self.input[self.pos..].chars().next().unwrap() {
                 '#' => {
