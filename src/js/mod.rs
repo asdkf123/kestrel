@@ -1170,7 +1170,7 @@ var __kIfaceNames = [
   'HTMLTableCellElement', 'HTMLTemplateElement', 'HTMLTextAreaElement', 'HTMLTimeElement',
   'HTMLTitleElement', 'HTMLTableRowElement', 'HTMLTrackElement', 'HTMLUListElement',
   'HTMLVideoElement', 'SVGElement', 'SVGSVGElement',
-  'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSStyleDeclaration',
+  'CSSStyleSheet', 'StyleSheet', 'CSSStyleRule', 'CSSRule', 'CSSPropertyRule', 'CSSStyleDeclaration',
   'NodeList', 'HTMLCollection', 'NamedNodeMap', 'DOMTokenList', 'ShadowRoot',
   'ProcessingInstruction', 'DocumentType'
 ];

@@ -6077,7 +6077,20 @@ impl Interp {
                         vec!["Attr", "Node", "EventTarget"]
                     }
                     Some(Value::Sheet(_)) => vec!["CSSStyleSheet", "StyleSheet"],
-                    Some(Value::CssRule(_, _)) => vec!["CSSStyleRule", "CSSRule"],
+                    Some(Value::CssRule(si, ri)) => {
+                        // @property 규칙은 CSSPropertyRule, 그 외는 CSSStyleRule.
+                        let is_prop = self
+                            .sheets()
+                            .and_then(|s| s.get(*si))
+                            .and_then(|s| s.sheet.rules.get(*ri))
+                            .map(|r| r.at_property.is_some())
+                            .unwrap_or(false);
+                        if is_prop {
+                            vec!["CSSPropertyRule", "CSSRule"]
+                        } else {
+                            vec!["CSSStyleRule", "CSSRule"]
+                        }
+                    }
                     Some(Value::RuleStyle(_, _))
                     | Some(Value::Style(_))
                     | Some(Value::ComputedStyle(_)) => vec!["CSSStyleDeclaration"],
