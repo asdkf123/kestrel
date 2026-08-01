@@ -922,18 +922,18 @@ css/cssom/serialization-CSSDeclaration-with-important.html	FAIL	Inline style dec
 css/cssom/serialization-CSSDeclaration-with-important.html	FAIL	Style set dynamically via cssText with whitespace between '!' and 'important'.	assert_equals: expected "color: black !important;" but got "color: rgb(0, 0, 0);"
 css/cssom/serialize-all-longhands.html	FAIL	Specified style	assert_greater_than: Should have longhands expected a number but got a "string"
 css/cssom/serialize-custom-props.html	FAIL	zU+2dindex can take a 25U+2ddigit integer	assert_not_equals: got disallowed value "auto"
-css/cssom/serialize-media-rule.html	FAIL	empty media query list	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	type U+2d no features	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	type U+2d no features U+2d negation	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	type U+2d no features U+2d character case normalization	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	type U+2d omission of all	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	type U+2d inclusion of negated all	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	features U+2d character case normalization	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	features U+2d preservation of overspecified features	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	features U+2d no lexicographical sorting	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	media query list	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	one rule	규칙을 파싱할 수 없다
-css/cssom/serialize-media-rule.html	FAIL	many rules	규칙을 파싱할 수 없다
+css/cssom/serialize-media-rule.html	FAIL	empty media query list	assert_equals: expected "@media  {\n}" but got "@media  { }"
+css/cssom/serialize-media-rule.html	FAIL	type U+2d no features	assert_equals: expected "@media speech {\n}" but got "@media speech { }"
+css/cssom/serialize-media-rule.html	FAIL	type U+2d no features U+2d negation	assert_equals: expected "@media not speech {\n}" but got "@media not speech { }"
+css/cssom/serialize-media-rule.html	FAIL	type U+2d no features U+2d character case normalization	assert_equals: expected "@media speech {\n}" but got "@media speech { }"
+css/cssom/serialize-media-rule.html	FAIL	type U+2d omission of all	assert_equals: expected "@media (color) {\n}" but got "@media all and (color) { }"
+css/cssom/serialize-media-rule.html	FAIL	type U+2d inclusion of negated all	assert_equals: expected "@media not all and (color) {\n}" but got "@media not all and (color) { }"
+css/cssom/serialize-media-rule.html	FAIL	features U+2d character case normalization	assert_equals: expected "@media screen and (color) {\n}" but got "@media not all { }"
+css/cssom/serialize-media-rule.html	FAIL	features U+2d preservation of overspecified features	assert_equals: expected "@media print and (maxU+2dwidth: 23px) and (maxU+2dwidth: 45px) {\n}" but got "@media print and (maxU+2dwidth: 23px) and (maxU+2dwidth: 45px) { }"
+css/cssom/serialize-media-rule.html	FAIL	features U+2d no lexicographical sorting	assert_equals: expected "@media screen and (color) and (maxU+2dwidth: 0px) {\n}" but got "@media screen and (color) and (maxU+2dwidth: 0px) { }"
+css/cssom/serialize-media-rule.html	FAIL	media query list	assert_equals: expected "@media screen and (maxU+2dwidth: 0px), screen and (color) {\n}" but got "@media screen and (maxU+2dwidth: 0px), screen and (color) { }"
+css/cssom/serialize-media-rule.html	FAIL	one rule	assert_equals: expected "@media print {\n  #foo { zU+2dindex: 23; float: left; }\n}" but got "@media print { }"
+css/cssom/serialize-media-rule.html	FAIL	many rules	assert_equals: expected "@media print {\n  #bar { float: none; zU+2dindex: 45; }\n  #foo { zU+2dindex: 23; float: left; }\n}" but got "@media print { }"
 css/cssom/serialize-values.html	FAIL	listU+2dstyleU+2dimage: url(http://localhost/)	assert_equals: listU+2dstyleU+2dimage raw inline style declaration expected "url(\"http://localhost/\")" but got "url(http://localhost/)"
 css/cssom/serialize-values.html	FAIL	outlineU+2dcolor: invert	assert_equals: outlineU+2dcolor style property expected "invert" but got ""
 css/cssom/serialize-values.html	FAIL	zU+2dindex: inherit	assert_equals: zU+2dindex style property expected "inherit" but got ""

@@ -150,6 +150,38 @@ impl Interp {
                         _ => Ok(Value::Undefined),
                     };
                 }
+                // @media 규칙(CSSMediaRule §CSSOM) 전용 속성.
+                let atm = self
+                    .sheets()
+                    .and_then(|s| s.get(si))
+                    .and_then(|s| s.sheet.rules.get(ri))
+                    .and_then(|r| r.at_media.clone());
+                if let Some(cond) = atm {
+                    return match key {
+                        // .media 는 MediaList — .mediaText 를 가진 객체.
+                        "media" => {
+                            let mut m = ObjMap::new();
+                            m.insert("mediaText".to_string(), Value::Str(cond.clone()));
+                            m.insert("length".to_string(), Value::Num(
+                                if cond.is_empty() { 0.0 } else { cond.split(", ").count() as f64 },
+                            ));
+                            Ok(Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(m))))
+                        }
+                        "conditionText" => Ok(Value::Str(cond)),
+                        "type" => Ok(Value::Num(4.0)), // MEDIA_RULE
+                        "cssText" => Ok(Value::Str(format!("@media {} {{ }}", cond))),
+                        "cssRules" => {
+                            let arr = ArrayObj::new(Vec::new());
+                            arr.set_prop("item".to_string(), Value::Native(Native::ListItem));
+                            Ok(Value::Arr(arr))
+                        }
+                        "insertRule" => Ok(Value::Native(Native::SheetInsertRule)),
+                        "deleteRule" | "removeRule" => Ok(Value::Native(Native::SheetDeleteRule)),
+                        "parentStyleSheet" => Ok(Value::Sheet(si)),
+                        "parentRule" => Ok(Value::Null),
+                        _ => Ok(Value::Undefined),
+                    };
+                }
                 match key {
                     "selectorText" => Ok(Value::Str(
                         self.sheets()
@@ -248,6 +280,29 @@ impl Interp {
 
     pub(super) fn sheet_insert_rule(&mut self, si: usize, text: &str, index: usize) -> Result<Value, String> {
         let vw = self.layout_ctx.map(|c| c.vw).unwrap_or(1000.0);
+        // @media 는 파스시점 flatten 되어 규칙이 안 남는다 → CSSOM CSSMediaRule 로 컨테이너
+        // 를 만들어 삽입한다(조건만 보관; 빈 selectors 라 cascade 는 자연히 건너뛴다).
+        let trimmed = text.trim_start();
+        if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("@media") {
+            let query = trimmed[6..].split('{').next().unwrap_or("").trim().to_string();
+            let media = crate::css::serialize_media_query_list(&query);
+            let rule = crate::css::Rule {
+                selectors: Vec::new(),
+                declarations: Vec::new(),
+                layer: None,
+                container: None,
+                selector_text: String::new(),
+                ua: false,
+                at_property: None,
+                at_media: Some(media),
+            };
+            let Some(sheets) = self.sheets() else { return Ok(Value::Num(0.0)) };
+            let Some(entry) = sheets.get_mut(si) else { return Ok(Value::Num(0.0)) };
+            let idx = index.min(entry.sheet.rules.len());
+            entry.sheet.rules.insert(idx, rule);
+            self.css_epoch += 1;
+            return Ok(Value::Num(idx as f64));
+        }
         let parsed = crate::css::parse_viewport(text.to_string(), vw);
         let Some(rule) = parsed.rules.into_iter().next() else {
             return Err(self.throw_dom("SyntaxError", "규칙을 파싱할 수 없다"));

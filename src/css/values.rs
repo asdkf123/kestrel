@@ -13686,7 +13686,20 @@ fn serialize_one_media_query(q: &str) -> String {
                 i += 1;
             }
             let inner: String = chars[start + 1..end.min(chars.len())].iter().collect();
-            tokens.push(serialize_media_feature(inner.trim()));
+            let inner_t = inner.trim();
+            // 단순 특성(중첩 괄호·불리언 없음)은 유효성 검사 — 미지 특성/무효 값이면
+            // 쿼리 전체가 "not all". 복합/불리언은 여기선 통과(과잉 무효화 방지).
+            let low = inner_t.to_ascii_lowercase();
+            let simple = !inner_t.contains('(')
+                && !low.contains(" and ")
+                && !low.contains(" or ")
+                && !low.starts_with("not ")
+                && !inner_t.contains('<')
+                && !inner_t.contains('>');
+            if simple && !crate::css::media_feature_valid(inner_t) {
+                return "not all".to_string();
+            }
+            tokens.push(serialize_media_feature(inner_t));
         } else if c == ')' {
             return "not all".to_string(); // 떠도는 닫는 괄호 → 무효.
         } else {

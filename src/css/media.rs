@@ -30,6 +30,12 @@ pub(crate) fn media_matches_vp(query: &str, vw: f32, vh: f32) -> bool {
     q.split(',').any(|one| one_query_matches(one.trim(), vw, vh))
 }
 
+// 괄호 안 미디어 특성이 유효한가(미지 특성·무효 값·이산형에 min-max 면 무효).
+// 직렬화가 무효 쿼리를 "not all" 로 내는 데 쓴다. 뷰포트는 무관(유효성만 판정).
+pub fn media_feature_valid(inner: &str) -> bool {
+    feature_matches(inner.trim(), 1000.0, 800.0).is_some()
+}
+
 fn one_query_matches(q: &str, vw: f32, vh: f32) -> bool {
     let ql = q.to_ascii_lowercase();
     let ql = ql.trim();

@@ -3,7 +3,7 @@ mod shorthand;
 mod supports;
 mod values;
 
-pub(crate) use media::{container_matches, media_matches, media_matches_vp};
+pub(crate) use media::{container_matches, media_feature_valid, media_matches, media_matches_vp};
 pub(crate) use supports::SUPPORTED;
 
 // 단축(shorthand) → 롱핸드 이름들. 확장기에게 직접 물어본다 — 프로퍼티마다 목록을 손으로
@@ -370,6 +370,9 @@ pub struct Rule {
     pub ua: bool,
     // @property 규칙이면 (이름, 등록정보). CSSOM CSSPropertyRule 노출용. 셀렉터 규칙은 None.
     pub at_property: Option<(String, PropertyReg)>,
+    // @media 규칙이면 조건 텍스트(직렬화된 미디어 쿼리). CSSOM CSSMediaRule 노출용
+    // (insertRule 로 삽입된 @media). 셀렉터 규칙·파스시점 flatten @media 는 None.
+    pub at_media: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -2327,6 +2330,7 @@ impl Parser {
             layer: self.cur_layer.clone(),
             container: self.cur_container.clone(),
             at_property: Some((name, reg)),
+            at_media: None,
         })
     }
 
@@ -2416,6 +2420,7 @@ impl Parser {
                     layer: self.cur_layer.clone(),
                     container: self.cur_container.clone(),
                     at_property: None,
+                    at_media: None,
                 })
             }
             None => {
