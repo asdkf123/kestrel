@@ -130,8 +130,10 @@
 | css-conditional | 2,136 / 2,602 | 82.1% |
 | css-flexbox | 1,073 / 1,315 | 81.6% |
 | css-nesting | 95 / 117 | 81.2% |
+| cssom | 2,712 / 3,437 | 78.9% |
 | css-backgrounds | 3,788 / 4,914 | 77.1% |
 | css-anchor-position | 9,972 / 13,012 | 76.6% |
+| css-position | 1,078 / 1,412 | 76.3% |
 | css-viewport | 369 / 490 | 75.3% |
 | css-display | 287 / 384 | 74.7% |
 | css-break | 452 / 609 | 74.2% |
@@ -139,9 +141,7 @@
 | css-fonts | 5,571 / 7,565 | 73.6% |
 | selectors | 3,011 / 4,118 | 73.1% |
 | css-transforms | 2,886 / 3,969 | 72.7% |
-| cssom | 2,496 / 3,437 | 72.6% |
 | css-ruby | 52 / 73 | 71.2% |
-| css-position | 993 / 1,412 | 70.3% |
 | css-sizing | 2,237 / 3,212 | 69.6% |
 | css-syntax | 294 / 428 | 68.7% |
 | css-text | 2,078 / 3,029 | 68.6% |
