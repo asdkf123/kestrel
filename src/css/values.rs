@@ -1226,6 +1226,23 @@ fn canon_calc_sum(sum: &str) -> String {
     out
 }
 
+// 비유한 크기의 캐논 항(§CSS Values §10.13): 단위 없으면 NaN/infinity/-infinity,
+// 단위 있으면 "NaN * 1px" 처럼 1단위와의 곱으로.
+fn nonfinite_term(m: f64, u: &str) -> String {
+    let w = if m.is_nan() {
+        "NaN"
+    } else if m > 0.0 {
+        "infinity"
+    } else {
+        "-infinity"
+    };
+    if u.is_empty() {
+        w.to_string()
+    } else {
+        format!("{} * 1{}", w, u)
+    }
+}
+
 // 일반 calc() 평탄 합 캐논 직렬화(§CSS Values 4 §10.13). 최상위 +/- 항을 파싱해
 // 단위별로 계수를 합치고, 수 → % → 단위(알파벳순)으로 직렬화한다. 각 항은
 // [<수> *|/]* <수>[<단위>] 형태만(괄호·함수·다중 비수 인자면 None → 호출부가 원문
@@ -1283,6 +1300,14 @@ fn canon_flat_calc(inner: &str) -> Option<String> {
         };
         rank(&a.0).cmp(&rank(&b.0))
     });
+    // 비유한 항이 있으면 특수형(단일 항만): calc(NaN * 1px)/calc(infinity * 1px).
+    if acc.iter().any(|(_, m)| !m.is_finite()) {
+        if acc.len() != 1 {
+            return None; // 다중 항 + 비유한 → 원문
+        }
+        let (u, m) = &acc[0];
+        return Some(nonfinite_term(*m, u));
+    }
     // 직렬화.
     let mut out = String::new();
     for (i, (u, m)) in acc.iter().enumerate() {
@@ -1411,7 +1436,7 @@ fn canon_length_math(expr: &str) -> Option<String> {
     }
     let n = eval_math_number(&stripped)?;
     if !n.is_finite() {
-        return None;
+        return Some(nonfinite_term(n, &u));
     }
     Some(format!("{}{}", canon_coeff(n), u))
 }
