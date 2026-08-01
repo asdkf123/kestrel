@@ -2814,7 +2814,7 @@ fn style_node<'a>(
                 .iter()
                 .filter_map(|(k, v)| match v {
                     Value::Keyword(s) if s.contains("if(") => {
-                        crate::css::substitute_if(s, &custom).map(|r| (k.clone(), r))
+                        crate::css::substitute_if(s, &custom, vp.w, vp.h).map(|r| (k.clone(), r))
                     }
                     _ => None,
                 })

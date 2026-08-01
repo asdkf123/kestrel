@@ -941,7 +941,7 @@ fn split_top_kw<'a>(s: &'a str, kw: &str) -> Vec<&'a str> {
 
 // if() 조건 평가(§CSS Values 5). 불리언(and/or/not/괄호) + 리프(style/supports).
 // media() 는 viewport 필요 → None(호출부가 원문 유지). custom: 계산된 커스텀 프로퍼티.
-fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>) -> Option<bool> {
+fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<bool> {
     let c = cond.trim();
     if c.eq_ignore_ascii_case("else") {
         return Some(true);
@@ -951,7 +951,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
     if ors.len() > 1 {
         let mut any = false;
         for o in ors {
-            match eval_if_condition(o, custom) {
+            match eval_if_condition(o, custom, vw, vh) {
                 Some(true) => any = true,
                 Some(false) => {}
                 None => return None,
@@ -964,7 +964,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
     if ands.len() > 1 {
         let mut all = true;
         for a in ands {
-            match eval_if_condition(a, custom) {
+            match eval_if_condition(a, custom, vw, vh) {
                 Some(true) => {}
                 Some(false) => all = false,
                 None => return None,
@@ -975,7 +975,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
     // not.
     let low = c.to_ascii_lowercase();
     if let Some(rest) = low.strip_prefix("not ").map(|_| c[4..].trim()) {
-        return eval_if_condition(rest, custom).map(|b| !b);
+        return eval_if_condition(rest, custom, vw, vh).map(|b| !b);
     }
     // 괄호 그룹: 전체가 (…) 하나면 벗겨 재귀.
     if c.starts_with('(') && c.ends_with(')') {
@@ -998,7 +998,7 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
             let _ = k;
         }
         if ok && d == 0 {
-            return eval_if_condition(inner, custom);
+            return eval_if_condition(inner, custom, vw, vh);
         }
     }
     // style(<query>).
@@ -1029,13 +1029,24 @@ fn eval_if_condition(cond: &str, custom: &std::collections::HashMap<String, Stri
         let inner = c.get(9..c.len().checked_sub(1)?)?.trim();
         return Some(supports::supports_condition(inner));
     }
-    None // media() 등 미지원
+    // media(<query>): 기존 미디어 평가기 재사용. bare feature(min-width: 1px)는
+    // 괄호로 감싼다(media_matches 는 (feature: value) 형태를 기대).
+    if low.starts_with("media(") {
+        let inner = c.get(6..c.len().checked_sub(1)?)?.trim();
+        let wrapped = if inner.starts_with('(') || !inner.contains(':') && !inner.contains('<') && !inner.contains('>') && !inner.contains('=') {
+            inner.to_string()
+        } else {
+            format!("({})", inner)
+        };
+        return Some(media::media_matches_vp(&wrapped, vw, vh));
+    }
+    None // 그 외 미지원
 }
 
 // if() 를 계산 시점에 해석(§CSS Values 5 §if-notation). 첫 참인 조건의 값으로
 // 치환한다. 값은 앞 공백만 다듬고 뒤는 보존(테스트 규약). 전체가 if(...) 하나가
 // 아니거나 미지원 조건뿐이면 None(호출부가 원문 유지/드롭).
-pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>) -> Option<String> {
+pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String, String>, vw: f32, vh: f32) -> Option<String> {
     let t = raw.trim();
     let low = t.to_ascii_lowercase();
     if !low.starts_with("if(") || !t.ends_with(')') {
@@ -1074,7 +1085,7 @@ pub(crate) fn substitute_if(raw: &str, custom: &std::collections::HashMap<String
         // value 는 첫 ':' 이후 전체(값 안의 ':' 보존).
         let val_start = cond.len() + 1;
         let value = &clause[val_start..];
-        match eval_if_condition(cond, custom) {
+        match eval_if_condition(cond, custom, vw, vh) {
             Some(true) => return Some(value.trim_start().to_string()),
             Some(false) => saw_known = true,
             None => return None, // 미지원 조건 → 통째 미해석
