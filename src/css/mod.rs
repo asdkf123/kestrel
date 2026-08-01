@@ -207,6 +207,7 @@ pub(crate) use shorthand::{text_spacing_from_parts, text_spacing_parse};
 pub(crate) use shorthand::overflow_clip_margin_canonical;
 pub(crate) use values::normalize_rgb_legacy;
 pub(crate) use values::serialize_selector;
+pub(crate) use values::serialize_selector_ns;
 pub(crate) use values::split_ws_depth0;
 pub(crate) use values::background_position_computed;
 pub(crate) use shorthand::{grid_canonical, grid_template_canonical};
@@ -226,6 +227,9 @@ pub struct Stylesheet {
     // @property 등록(§CSS Properties & Values API): 이름 → 등록 정보. 커스텀 프로퍼티
     // 상속 제어(inherits:false)·초기값·구문에 쓴다.
     pub at_properties: std::collections::HashMap<String, PropertyReg>,
+    // @namespace(§CSSOM 셀렉터 직렬화): 기본 네임스페이스 URI, 접두→URI 맵.
+    pub default_namespace: Option<String>,
+    pub namespaces: std::collections::HashMap<String, String>,
 }
 
 // @property 규칙의 등록 정보.
@@ -260,6 +264,8 @@ impl Stylesheet {
             keyframes: std::collections::HashMap::new(),
             keyframes_ft: std::collections::HashMap::new(),
             at_properties: std::collections::HashMap::new(),
+            default_namespace: None,
+            namespaces: std::collections::HashMap::new(),
         }
     }
 
@@ -284,6 +290,12 @@ impl Stylesheet {
         self.font_faces.extend(other.font_faces);
         self.keyframes.extend(other.keyframes);
         self.keyframes_ft.extend(other.keyframes_ft);
+        if other.default_namespace.is_some() {
+            self.default_namespace = other.default_namespace;
+        }
+        for (k, v) in other.namespaces {
+            self.namespaces.insert(k, v);
+        }
     }
 }
 
@@ -790,6 +802,8 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
         cur_layer: None,
         anon_count: 0,
         at_properties: std::collections::HashMap::new(),
+        default_namespace: None,
+        namespaces: std::collections::HashMap::new(),
     };
     let rules = parser.parse_rules();
     Stylesheet {
@@ -799,6 +813,8 @@ pub fn parse_viewport(source: String, viewport_width: f32) -> Stylesheet {
         keyframes: parser.keyframes,
         keyframes_ft: parser.keyframes_ft,
         at_properties: parser.at_properties,
+        default_namespace: parser.default_namespace,
+        namespaces: parser.namespaces,
     }
 }
 
@@ -839,6 +855,8 @@ pub fn parse_inline_style(text: &str) -> Vec<Declaration> {
         cur_layer: None,
         anon_count: 0,
         at_properties: std::collections::HashMap::new(),
+        default_namespace: None,
+        namespaces: std::collections::HashMap::new(),
     };
     parser.parse_declarations()
 }
@@ -1820,6 +1838,9 @@ struct Parser {
     cur_layer: Option<String>,
     anon_count: usize,
     at_properties: std::collections::HashMap<String, PropertyReg>,
+    // @namespace: 기본 네임스페이스 URI(접두 없는 @namespace)와 접두→URI 맵.
+    default_namespace: Option<String>,
+    namespaces: std::collections::HashMap<String, String>,
 }
 
 impl Parser {
@@ -1853,6 +1874,8 @@ impl Parser {
                     if let Some(r) = self.parse_property_rule() {
                         rules.push(r);
                     }
+                } else if ident == "namespace" {
+                    self.parse_namespace_rule();
                 } else {
                     self.skip_at_rule(); // 그 외 @rule 은 스킵 (';' or {block})
                 }
@@ -2102,6 +2125,109 @@ impl Parser {
             return None;
         }
         Some(FontFace { family, srcs, unicode_range })
+    }
+
+    // '@namespace [<prefix>] [ <string> | url(<uri>) ] ;' (§CSSOM). 접두가 있으면
+    // namespaces[prefix]=uri, 없으면 default_namespace=uri. 셀렉터 직렬화에 쓴다.
+    fn parse_namespace_rule(&mut self) {
+        self.consume_whitespace();
+        // 접두(선택): url(/문자열 시작 전의 ident.
+        let mut prefix: Option<String> = None;
+        if let Some(c) = self.peek() {
+            if c != '"' && c != '\'' && valid_identifier_char(c) {
+                let id = self.parse_identifier();
+                // 'url' 자체는 접두가 아니라 url() 함수일 수 있다.
+                if self.peek() == Some('(') && id.eq_ignore_ascii_case("url") {
+                    // url(...) — 접두 없음. 되돌릴 수 없으니 아래에서 url 파싱 재현.
+                    self.consume_char(); // '('
+                    let uri = self.read_namespace_uri_paren();
+                    self.default_namespace = Some(uri);
+                    self.skip_to_semicolon();
+                    return;
+                }
+                prefix = Some(id);
+                self.consume_whitespace();
+            }
+        }
+        // URI: url(...) 또는 "..."/'...'.
+        let uri = match self.peek() {
+            Some('"') | Some('\'') => {
+                let q = self.consume_char();
+                let mut s = String::new();
+                while let Some(c) = self.peek() {
+                    self.consume_char();
+                    if c == q {
+                        break;
+                    }
+                    s.push(c);
+                }
+                s
+            }
+            Some(_) => {
+                let fn_id = self.parse_identifier();
+                if self.peek() == Some('(') && fn_id.eq_ignore_ascii_case("url") {
+                    self.consume_char(); // '('
+                    self.read_namespace_uri_paren()
+                } else {
+                    String::new()
+                }
+            }
+            None => String::new(),
+        };
+        match prefix {
+            Some(p) => {
+                self.namespaces.insert(p, uri);
+            }
+            None => {
+                self.default_namespace = Some(uri);
+            }
+        }
+        self.skip_to_semicolon();
+    }
+
+    // url( 뒤부터 ')' 까지를 URI 로(따옴표·공백 정리). ')' 를 소비한다.
+    fn read_namespace_uri_paren(&mut self) -> String {
+        self.consume_whitespace();
+        let uri = if let Some(q @ ('"' | '\'')) = self.peek() {
+            self.consume_char();
+            let mut s = String::new();
+            while let Some(c) = self.peek() {
+                self.consume_char();
+                if c == q {
+                    break;
+                }
+                s.push(c);
+            }
+            s
+        } else {
+            let mut s = String::new();
+            while let Some(c) = self.peek() {
+                if c == ')' {
+                    break;
+                }
+                self.consume_char();
+                s.push(c);
+            }
+            s.trim().to_string()
+        };
+        // 닫는 ')' 소비.
+        while let Some(c) = self.peek() {
+            self.consume_char();
+            if c == ')' {
+                break;
+            }
+        }
+        uri
+    }
+
+    // ';' 까지(포함) 소비.
+    fn skip_to_semicolon(&mut self) {
+        while let Some(c) = self.peek() {
+            self.consume_char();
+            if c == ';' {
+                break;
+            }
+        }
     }
 
     // '@property --name { syntax: "<t>"; inherits: true|false; initial-value: v; }'

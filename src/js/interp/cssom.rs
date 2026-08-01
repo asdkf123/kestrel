@@ -154,8 +154,16 @@ impl Interp {
                     "selectorText" => Ok(Value::Str(
                         self.sheets()
                             .and_then(|s| s.get(si))
-                            .and_then(|s| s.sheet.rules.get(ri))
-                            .map(|r| crate::css::serialize_selector(&r.selector_text))
+                            .and_then(|s| {
+                                let sh = &s.sheet;
+                                sh.rules.get(ri).map(|r| {
+                                    crate::css::serialize_selector_ns(
+                                        &r.selector_text,
+                                        sh.default_namespace.as_deref(),
+                                        &sh.namespaces,
+                                    )
+                                })
+                            })
                             .unwrap_or_default(),
                     )),
                     "cssText" => Ok(Value::Str(self.rule_css_text(si, ri))),

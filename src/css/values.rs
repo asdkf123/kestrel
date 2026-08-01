@@ -12710,24 +12710,112 @@ fn canon_pseudo_arg(name: &str, arg: &str) -> String {
 // CSSOM "serialize a selector"(§CSSOM)의 일부: 함수형 pseudo-class 인자의 공백을
 // 정규화하고 An+B 를 캐논화한다. 타입/클래스/id/결합자/속성선택자/문자열은 원문 그대로
 // 둔다(ASCII 구분자만 바이트 스캔 — UTF-8 안전). 세터가 원문 저장이라 getter 에서 캐논.
-// §CSSOM serialize a selector: 컴파운드에서 유일하지 않은 universal 타입 선택자(*)는
-// 생략한다(*.c → .c, *#i → #i, *:hover → :hover). 단독 * 는 유지. 네임스페이스
-// 접두(*|·ns|)는 건드리지 않는다(별도 @namespace 처리 필요). 속성/문자열/의사-인자
-// 안의 * 는 컴파운드 시작이 아니므로 영향 없다.
-fn drop_lone_universal(s: &str) -> String {
+fn is_sel_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii()
+}
+
+// §CSSOM serialize a selector 의 타입/네임스페이스 정규화(컴파운드 인식 pre-pass).
+// - universal(*) 타입은 컴파운드에 다른 단순선택자가 있고 접두가 비면 통째 생략.
+// - 네임스페이스 접두: `|`→`|`; `*|`→default 있으면 `*|` 없으면 삭제; `prefix|`
+//   (URI==default)→삭제, 아니면 `prefix|`. default_uri/prefixes 로 판정.
+// 속성/문자열/의사-인자 안은 컴파운드 시작이 아니라 영향 없다.
+fn normalize_selector_head(
+    s: &str,
+    default_uri: Option<&str>,
+    prefixes: &std::collections::HashMap<String, String>,
+) -> String {
     let chars: Vec<char> = s.chars().collect();
+    let has_default = default_uri.is_some();
     let mut out = String::with_capacity(s.len());
     let mut i = 0usize;
     let mut compound_start = true;
     while i < chars.len() {
-        let c = chars[i];
-        if compound_start && c == '*' {
-            if matches!(chars.get(i + 1), Some('.') | Some('#') | Some(':') | Some('[')) {
-                i += 1; // universal 생략
-                compound_start = false;
+        if compound_start {
+            let start = i;
+            // 네임스페이스 접두 파싱: [ident | '*']? '|'  ('||'/'|=' 은 제외).
+            let pfx: Option<String> = match chars.get(i) {
+                Some('*') => {
+                    i += 1;
+                    Some("*".to_string())
+                }
+                Some('|') => Some(String::new()),
+                Some(&c) if is_sel_ident_char(c) => {
+                    let mut id = String::new();
+                    while i < chars.len() && is_sel_ident_char(chars[i]) {
+                        id.push(chars[i]);
+                        i += 1;
+                    }
+                    Some(id)
+                }
+                _ => None,
+            };
+            let has_prefix = pfx.is_some()
+                && chars.get(i) == Some(&'|')
+                && chars.get(i + 1) != Some(&'|')
+                && chars.get(i + 1) != Some(&'=');
+            let sp: String = if !has_prefix {
+                i = start; // 접두 아님 → 되감기.
+                String::new()
+            } else {
+                i += 1; // '|' 소비.
+                let p = pfx.unwrap();
+                if p.is_empty() {
+                    "|".to_string()
+                } else if p == "*" {
+                    if has_default {
+                        "*|".to_string()
+                    } else {
+                        String::new()
+                    }
+                } else if prefixes.get(&p).map(|u| u.as_str()) == default_uri
+                    && default_uri.is_some()
+                {
+                    String::new() // 접두 URI == 기본 네임스페이스 → 삭제.
+                } else {
+                    format!("{}|", p)
+                }
+            };
+            // 타입: ident 또는 '*' (없을 수도 — 컴파운드가 .#:[ 로 시작).
+            let type_tok: Option<String> = match chars.get(i) {
+                Some('*') => {
+                    i += 1;
+                    Some("*".to_string())
+                }
+                Some(&c) if is_sel_ident_char(c) => {
+                    let mut id = String::new();
+                    while i < chars.len() && is_sel_ident_char(chars[i]) {
+                        id.push(chars[i]);
+                        i += 1;
+                    }
+                    Some(id)
+                }
+                _ => None,
+            };
+            let followed =
+                matches!(chars.get(i), Some('.') | Some('#') | Some(':') | Some('['));
+            match &type_tok {
+                Some(t) if t == "*" => {
+                    // universal: 접두 없이(sp 빈) 뒤에 더 있으면 통째 생략.
+                    if followed && sp.is_empty() {
+                        // 생략.
+                    } else {
+                        out.push_str(&sp);
+                        out.push('*');
+                    }
+                }
+                Some(t) => {
+                    out.push_str(&sp);
+                    out.push_str(t);
+                }
+                None => out.push_str(&sp),
+            }
+            compound_start = false;
+            if i != start {
                 continue;
             }
+            // 아무것도 소비 못 함(.#:[ 로 시작) → 아래 일반 복사로.
         }
+        let c = chars[i];
         match c {
             '>' | '+' | '~' | ',' | ' ' | '\t' | '\n' => {
                 out.push(c);
@@ -12796,7 +12884,15 @@ fn drop_lone_universal(s: &str) -> String {
 }
 
 pub(crate) fn serialize_selector(raw: &str) -> String {
-    let normalized = drop_lone_universal(raw.trim());
+    serialize_selector_ns(raw, None, &std::collections::HashMap::new())
+}
+
+pub(crate) fn serialize_selector_ns(
+    raw: &str,
+    default_uri: Option<&str>,
+    prefixes: &std::collections::HashMap<String, String>,
+) -> String {
+    let normalized = normalize_selector_head(raw.trim(), default_uri, prefixes);
     let s = normalized.as_str();
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
