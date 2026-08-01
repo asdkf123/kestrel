@@ -489,6 +489,14 @@ impl<'a> LayoutBox<'a> {
             if left != 0.0 || top != 0.0 {
                 self.translate(left, top);
             }
+        } else if !self.anonymous && self.position() == "sticky" {
+            // sticky 의 inset resolved value 는 각 면을 컨테이닝 블록 기준으로 절대화한
+            // 값이다(§CSSOM). auto 는 그대로 "auto" 로 남는다(offset_len → None →
+            // used_insets None → 계산값 유지). 스크롤 0 에서는 시각적 이동이 없다.
+            self.used_insets[0] = self.offset_len("top", cb.height);
+            self.used_insets[2] = self.offset_len("bottom", cb.height);
+            self.used_insets[3] = self.offset_len("left", cb.width);
+            self.used_insets[1] = self.offset_len("right", cb.width);
         }
         let my = self.dimensions.content;
         for c in &mut self.children {
