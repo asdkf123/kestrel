@@ -1151,8 +1151,10 @@ pub(crate) fn registered_computed_value(
     let low = syntax.to_ascii_lowercase();
     let has = |t: &str| low.contains(t);
     // <transform-function>/<transform-list>: 함수 구조 보존, 내부 상대 길이만 px 로.
+    // 내부 calc() 는 캐논 직렬화(수<%<길이 정렬)까지 적용(§CSS Values 4).
     if has("<transform") {
-        return Some(Value::Keyword(resolve_lengths_in_string(value.trim(), fs, root_fs, vp)));
+        let resolved = resolve_lengths_in_string(value.trim(), fs, root_fs, vp);
+        return Some(Value::Keyword(canon_calcs_in_string(&resolved)));
     }
     if !(has("<length") || has("<number") || has("<angle") || has("<time")
         || has("<percentage") || has("<integer") || has("<resolution") || has("<color"))
@@ -1230,6 +1232,46 @@ fn substitute_currentcolor(v: &str, cc: &str) -> String {
         if matches {
             out.push_str(cc);
             i = end;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+// 문자열 안의 각 최상위 calc(...) 를 캐논 직렬화한다(transform 함수 인자 안 calc 정렬용).
+fn canon_calcs_in_string(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let is_calc = chars[i..].len() >= 5
+            && chars[i..i + 5].iter().collect::<String>().eq_ignore_ascii_case("calc(")
+            && (i == 0 || !chars[i - 1].is_ascii_alphanumeric());
+        if is_calc {
+            let mut depth = 0i32;
+            let mut j = i;
+            while j < chars.len() {
+                match chars[j] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            j += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            let calc_str: String = chars[i..j].iter().collect();
+            match values::canon_calc_serialize(&calc_str) {
+                Some(c) => out.push_str(&c),
+                None => out.push_str(&calc_str),
+            }
+            i = j;
         } else {
             out.push(chars[i]);
             i += 1;

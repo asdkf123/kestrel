@@ -2860,8 +2860,22 @@ fn style_node<'a>(
                     }
                     let reg = at_properties.get(k)?;
                     if let Value::Keyword(s) = v {
+                        // 커스텀 프로퍼티는 항상 Keyword 로 저장돼 var_props 루프가 놓친다.
+                        // 등록 프로퍼티 값 안의 var() 를 계산된 커스텀 맵으로 먼저 치환한다.
+                        let resolved = if s.contains("var(") {
+                            crate::css::resolve_var(k, s, &custom)
+                                .into_iter()
+                                .find(|d| &d.name == k)
+                                .and_then(|d| match d.value {
+                                    Value::Keyword(r) => Some(r),
+                                    _ => None,
+                                })
+                                .unwrap_or_else(|| s.clone())
+                        } else {
+                            s.clone()
+                        };
                         crate::css::registered_computed_value(
-                            &reg.syntax, s, fs, root_fs, vp, &current_color,
+                            &reg.syntax, &resolved, fs, root_fs, vp, &current_color,
                         )
                         .map(|tv| (k.clone(), tv))
                     } else {
