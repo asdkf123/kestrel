@@ -901,6 +901,10 @@ fn num_angle_rad(s: &str) -> Option<f64> {
     if let Some(r) = parse_angle_rad(s.trim()) {
         return Some(r);
     }
+    // 각도 수학식(30deg + 60deg, calc(2*45deg) 등) → 도 → 라디안.
+    if let Some(d) = eval_math_angle_deg(s) {
+        return Some(d.to_radians());
+    }
     eval_math_number(s) // 단위 없는 수 = 라디안
 }
 
