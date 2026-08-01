@@ -1094,8 +1094,9 @@ fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>,
             let r = q[pos + op.len()..].trim();
             let lv = style_operand_scalar(l, custom, fs)?;
             let rv = style_operand_scalar(r, custom, fs)?;
-            // 같은 차원끼리만 비교.
-            if lv.1 != rv.1 {
+            // 같은 차원끼리만 비교. 단, 무단위 0 은 어떤 차원과도 호환(0 = 0px).
+            let zero = |s: &(f64, u8)| s.1 == 0 && s.0 == 0.0;
+            if lv.1 != rv.1 && !zero(&lv) && !zero(&rv) {
                 return Some(false);
             }
             let (a, b) = (lv.0, rv.0);
@@ -1120,7 +1121,9 @@ fn eval_style_query(q: &str, custom: &std::collections::HashMap<String, String>,
             let exp = exp.trim();
             let cur = custom.get(&name).map(|s| s.trim());
             if exp.eq_ignore_ascii_case("initial") {
-                matches!(cur, None | Some("")) || cur == Some("initial")
+                // 미설정(None)이거나 리터럴 "initial" 이면 initial. 빈 문자열('')은
+                // 유효한 빈 값이라 initial 이 아니다.
+                cur.is_none() || cur == Some("initial")
             } else if exp.contains("var(") {
                 false
             } else {
