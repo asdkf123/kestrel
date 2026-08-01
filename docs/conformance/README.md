@@ -137,9 +137,9 @@
 | css-break | 452 / 609 | 74.2% |
 | css-ui | 1,390 / 1,888 | 73.6% |
 | css-fonts | 5,571 / 7,565 | 73.6% |
+| selectors | 3,011 / 4,118 | 73.1% |
 | css-transforms | 2,886 / 3,969 | 72.7% |
-| cssom | 2,493 / 3,437 | 72.5% |
-| selectors | 2,968 / 4,118 | 72.1% |
+| cssom | 2,496 / 3,437 | 72.6% |
 | css-ruby | 52 / 73 | 71.2% |
 | css-position | 993 / 1,412 | 70.3% |
 | css-sizing | 2,237 / 3,212 | 69.6% |
@@ -148,9 +148,9 @@
 | css-scroll-snap | 458 / 690 | 66.4% |
 | css-properties-values-api | 611 / 923 | 66.2% |
 | css-shapes | 3,336 / 5,093 | 65.5% |
+| css-cascade | 457 / 717 | 63.7% |
 | css-multicol | 850 / 1,356 | 62.7% |
 | css-grid | 2,156 / 3,567 | 60.4% |
-| css-cascade | 430 / 717 | 60.0% |
 | css-env | 5 / 9 | 55.6% |
 | css-box | 529 / 957 | 55.3% |
 | css-animations | 574 / 1,059 | 54.2% |
