@@ -9890,18 +9890,48 @@ pub fn register_property_valid(syntax: &str, initial: Option<&str>) -> bool {
     }
 }
 
-// 한 대안(<type>|ident + 선택적 +/#)의 syntax 문법 유효성.
+// 한 대안(<type>|ident + 선택적 +/#)의 syntax 문법 유효성. 엄격:
+// 승수는 공백 없이 붙어야, <type> 은 정확한 소문자·닫힘·내부 공백 없음, transform-list
+// 는 승수 불가.
 fn syntax_component_valid(alt: &str) -> bool {
-    let comp = alt.trim_end_matches(['+', '#']).trim();
-    if comp.starts_with('<') && comp.ends_with('>') {
-        matches!(
-            &comp[1..comp.len() - 1],
+    let a = alt.trim();
+    if a.is_empty() {
+        return false;
+    }
+    let (comp, mult) = if let Some(c) = a.strip_suffix('+') {
+        (c, Some('+'))
+    } else if let Some(c) = a.strip_suffix('#') {
+        (c, Some('#'))
+    } else {
+        (a, None)
+    };
+    // "<length> +" 처럼 승수 앞 공백은 무효.
+    if mult.is_some() && comp.ends_with(|c: char| c.is_whitespace()) {
+        return false;
+    }
+    let comp = comp.trim();
+    if comp.starts_with('<') {
+        if !comp.ends_with('>') {
+            return false;
+        }
+        let ty = &comp[1..comp.len() - 1];
+        // 내부 공백·이스케이프 불가, 대소문자 정확(소문자).
+        let known = matches!(
+            ty,
             "length" | "number" | "percentage" | "length-percentage" | "color" | "image"
                 | "url" | "integer" | "angle" | "time" | "resolution" | "transform-function"
                 | "transform-list" | "custom-ident" | "string"
-        )
+        );
+        if !known {
+            return false;
+        }
+        // <transform-list> 는 승수를 못 받는다(이미 리스트).
+        if ty == "transform-list" && mult.is_some() {
+            return false;
+        }
+        true
     } else {
-        // custom-ident 키워드(--dashed 포함). CSS-wide 키워드·default 는 불가.
+        // custom-ident 키워드. 승수 허용(--foo+ 등).
         syntax_ident_valid(comp)
     }
 }

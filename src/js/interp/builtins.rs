@@ -5224,21 +5224,33 @@ impl Interp {
             // CSS.registerProperty({name, syntax, initialValue?, inherits}) — §Properties
             // & Values API. syntax·initialValue 유효성 검사 후 등록. 무효면 예외.
             Native::CssRegisterProperty => {
-                let Some(Value::Obj(o)) = args.first() else {
-                    return Err("TypeError: registerProperty expects an object".to_string());
+                let (name, syntax, initial) = {
+                    let Some(Value::Obj(o)) = args.first() else {
+                        return Err("TypeError: registerProperty expects an object".to_string());
+                    };
+                    let ob = o.borrow();
+                    let name = ob.get("name").map(to_display).unwrap_or_default();
+                    // 값 어디서든 CSS 주석 제거(§CSS Syntax).
+                    let syntax = crate::css::strip_comments(
+                        &ob.get("syntax").map(to_display).unwrap_or_default(),
+                    );
+                    let initial =
+                        ob.get("initialValue").map(|v| crate::css::strip_comments(&to_display(v)));
+                    (name, syntax, initial)
                 };
-                let ob = o.borrow();
-                let name = ob.get("name").map(to_display).unwrap_or_default();
-                let syntax = ob.get("syntax").map(to_display).unwrap_or_default();
-                let initial = ob.get("initialValue").map(|v| to_display(v));
+                // registerProperty 는 WebIDL DOMException(SyntaxError, code 12)을 던진다
+                // (JS SyntaxError 아님). 무효 name/syntax/값 → SyntaxError DOMException.
                 if !name.starts_with("--") || name.len() < 3 {
-                    return Err(format!("SyntaxError: invalid custom property name '{}'", name));
+                    return Err(self.throw_dom("SyntaxError", format!("invalid custom property name '{}'", name)));
                 }
                 if !crate::css::register_property_valid(&syntax, initial.as_deref()) {
-                    return Err("SyntaxError: invalid property definition".to_string());
+                    return Err(self.throw_dom("SyntaxError", "invalid property definition"));
                 }
                 if !self.registered_properties.insert(name.clone()) {
-                    return Err(format!("InvalidModificationError: '{}' already registered", name));
+                    return Err(self.throw_dom(
+                        "InvalidModificationError",
+                        format!("'{}' already registered", name),
+                    ));
                 }
                 Ok(Value::Undefined)
             }
