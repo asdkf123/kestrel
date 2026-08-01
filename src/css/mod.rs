@@ -2532,12 +2532,20 @@ impl Parser {
             match self.input[self.pos..].chars().next().unwrap() {
                 '#' => {
                     self.consume_char();
-                    selector.id = Some(self.parse_identifier());
+                    let id = self.parse_identifier();
+                    if id.is_empty() {
+                        return None; // '#' 뒤 이름 없음 → 무효.
+                    }
+                    selector.id = Some(id);
                     any = true;
                 }
                 '.' => {
                     self.consume_char();
-                    selector.class.push(self.parse_identifier());
+                    let cls = self.parse_identifier();
+                    if cls.is_empty() {
+                        return None; // '.' 뒤 이름 없음 → 무효.
+                    }
+                    selector.class.push(cls);
                     any = true;
                 }
                 '*' => {
@@ -2576,10 +2584,21 @@ impl Parser {
                     any = true;
                 }
                 c if valid_identifier_char(c) => {
+                    // 타입 선택자는 유효한 ident 여야(§CSS Syntax): 숫자·'-숫자' 로 시작
+                    // 불가, 단일 '-' 불가('123'·'-'·'-3' 무효 → 규칙/selectorText 거부).
+                    if c.is_ascii_digit() {
+                        return None;
+                    }
                     // HTML 의 타입 선택자는 ASCII 대소문자 구분이 없다(선택자 표준 §6.1).
                     // DOM 태그명은 소문자로 정규화돼 있으므로 여기서 소문자로 맞춘다.
-                    // 예전엔 `DIV SPAN { … }` 같은 규칙이 조용히 아무것도 매칭하지 않았다.
-                    selector.tag_name = Some(self.parse_identifier().to_ascii_lowercase());
+                    let tag = self.parse_identifier().to_ascii_lowercase();
+                    if tag == "-"
+                        || (tag.starts_with('-')
+                            && tag[1..].starts_with(|c: char| c.is_ascii_digit()))
+                    {
+                        return None;
+                    }
+                    selector.tag_name = Some(tag);
                     any = true;
                 }
                 _ => break,
@@ -2617,6 +2636,10 @@ impl Parser {
 
     fn parse_pseudo(&mut self) -> Option<Pseudo> {
         let name = self.parse_identifier().to_ascii_lowercase();
+        // 이름 없는 의사(`:`·`::`·`:::`)는 무효 선택자.
+        if name.is_empty() && self.peek() != Some('(') {
+            return None;
+        }
         // 함수형: 괄호 안 인자
         if self.peek() == Some('(') {
             self.consume_char();
