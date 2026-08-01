@@ -325,9 +325,61 @@ pub(super) fn style_pairs(attr: &str) -> Vec<(String, String)> {
                 return None;
             }
             let (k, v) = decl.split_once(':')?;
-            Some((k.trim().to_string(), v.trim().to_string()))
+            // 프로퍼티 이름은 CSS 이스케이프를 해석한다(§CSS Syntax §4.3.7): 스타일
+            // 문자열을 파싱할 때 `--\61 b` → `--ab`, `--\30 ` → `--0`. 값은 원문 유지.
+            // 이스케이프 없는 이름은 무비용(그대로).
+            Some((unescape_css_ident(k.trim()), v.trim().to_string()))
         })
         .collect()
+}
+
+// CSS 식별자 이스케이프 해석(§CSS Syntax §4.3.7 consume an escaped code point):
+// `\` + 1~6 hex → 그 코드포인트(뒤 공백 1개는 종료자로 흡수), `\` + 비-hex → 그 문자,
+// `\` + EOF/개행 → U+FFFD. 0·surrogate·범위초과는 U+FFFD.
+pub(super) fn unescape_css_ident(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            None => out.push('\u{FFFD}'),
+            Some(&h) if h.is_ascii_hexdigit() => {
+                let mut hex = String::new();
+                while hex.len() < 6 {
+                    match chars.peek() {
+                        Some(&d) if d.is_ascii_hexdigit() => {
+                            hex.push(d);
+                            chars.next();
+                        }
+                        _ => break,
+                    }
+                }
+                // 이스케이프를 끝내는 공백 1개는 흡수한다.
+                if matches!(chars.peek(), Some(' ') | Some('\t') | Some('\n') | Some('\r') | Some('\u{0C}')) {
+                    chars.next();
+                }
+                let cp = u32::from_str_radix(&hex, 16).unwrap_or(0xFFFD);
+                let cp = if cp == 0 || cp > 0x10FFFF || (0xD800..=0xDFFF).contains(&cp) {
+                    0xFFFD
+                } else {
+                    cp
+                };
+                out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+            }
+            Some(&'\n') => out.push('\u{FFFD}'),
+            Some(_) => {
+                let ch = chars.next().unwrap();
+                out.push(ch);
+            }
+        }
+    }
+    out
 }
 
 pub(super) fn style_serialize(pairs: &[(String, String)]) -> String {
