@@ -244,6 +244,72 @@ impl Interp {
                 }
             }
         }
+        // outline: color style width (셋 다 있으면). list-style: position type [image≠none].
+        // 값이 모두 있고 같은 importance 일 때만.
+        let combine_ordered =
+            |sh: &str,
+             lh: &[&str],
+             fmt: &dyn Fn(&std::collections::HashMap<String, (String, bool)>) -> String,
+             order: &Vec<String>,
+             map: &std::collections::HashMap<String, (String, bool)>,
+             consumed: &std::collections::HashSet<String>|
+             -> Option<(String, (String, String, bool))> {
+                if lh.iter().all(|p| map.contains_key(*p) && !consumed.contains(*p))
+                    && {
+                        let imps: Vec<bool> = lh.iter().map(|p| map[*p].1).collect();
+                        imps.iter().all(|&x| x == imps[0])
+                    }
+                {
+                    let first =
+                        order.iter().find(|n| lh.contains(&n.as_str())).unwrap().clone();
+                    Some((first, (sh.to_string(), fmt(map), map[lh[0]].1)))
+                } else {
+                    None
+                }
+            };
+        let outline_lh = ["outline-color", "outline-style", "outline-width"];
+        if let Some((first, v)) = combine_ordered(
+            "outline",
+            &outline_lh,
+            &|m| {
+                format!(
+                    "{} {} {}",
+                    m["outline-color"].0, m["outline-style"].0, m["outline-width"].0
+                )
+            },
+            order,
+            map,
+            &consumed,
+        ) {
+            sh_at_first.insert(first, v);
+            for p in outline_lh {
+                consumed.insert(p.to_string());
+            }
+        }
+        let ls_lh = ["list-style-position", "list-style-type", "list-style-image"];
+        if let Some((first, v)) = combine_ordered(
+            "list-style",
+            &ls_lh,
+            &|m| {
+                let img = &m["list-style-image"].0;
+                if img == "none" {
+                    format!("{} {}", m["list-style-position"].0, m["list-style-type"].0)
+                } else {
+                    format!(
+                        "{} {} {}",
+                        m["list-style-position"].0, m["list-style-type"].0, img
+                    )
+                }
+            },
+            order,
+            map,
+            &consumed,
+        ) {
+            sh_at_first.insert(first, v);
+            for p in ls_lh {
+                consumed.insert(p.to_string());
+            }
+        }
         if sh_at_first.is_empty() {
             return;
         }
