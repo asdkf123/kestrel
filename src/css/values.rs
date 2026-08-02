@@ -3810,6 +3810,18 @@ fn srgb_float_of(s: &str) -> Option<[f32; 4]> {
             return lab_family_srgb_f(name, &low);
         }
     }
+    // color(<space> …): 좌표를 space_to_srgb(확장 전달함수, 색역 밖 보존)로 변환한다 —
+    // paint_color(u8)로 가면 out-of-gamut 가 클램프된다(§CSS Color 4 계산값).
+    if low.starts_with("color(") && low.ends_with(')') {
+        let p = color_parts(&low[6..low.len() - 1]);
+        if p.len() == 4 || p.len() == 5 {
+            let sp = if p[0] == "xyz" { "xyz-d65" } else { p[0].as_str() };
+            let ch = |i: usize| -> Option<f32> { parse_comp(&p[i], 1.0).map(|c| c.get()) };
+            let (r, g, b) = space_to_srgb(sp, [ch(1)?, ch(2)?, ch(3)?])?;
+            let a = if p.len() == 5 { comp_opt(parse_alpha(Some(&p[4]))?).unwrap_or(1.0) } else { 1.0 };
+            return Some([r, g, b, a]);
+        }
+    }
     let c = interpret_value(&low).and_then(|v| v.paint_color())?;
     Some([
         c.r as f32 / 255.0,
@@ -3977,15 +3989,15 @@ fn srgb_to_space(space: &str, r: f32, g: f32, b: f32) -> Option<[f32; 3]> {
 fn space_to_srgb(space: &str, c: [f32; 3]) -> Option<(f32, f32, f32)> {
     Some(match space {
         "srgb" => (c[0], c[1], c[2]),
-        "srgb-linear" => (linear_to_srgb(c[0]), linear_to_srgb(c[1]), linear_to_srgb(c[2])),
+        "srgb-linear" => (linear_to_srgb_extended(c[0]), linear_to_srgb_extended(c[1]), linear_to_srgb_extended(c[2])),
         "oklab" => {
             let (lr, lg, lb) = oklab_to_lin_srgb(c[0], c[1], c[2]);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "oklch" => {
             let h = c[2].to_radians();
             let (lr, lg, lb) = oklab_to_lin_srgb(c[0], c[1] * h.cos(), c[1] * h.sin());
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "hsl" => {
             let (r, g, b) = hsl_to_rgb(c[0], c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0));
@@ -3997,21 +4009,21 @@ fn space_to_srgb(space: &str, c: [f32; 3]) -> Option<(f32, f32, f32)> {
         }
         "lab" => {
             let (lr, lg, lb) = lab_to_lin_srgb(c[0], c[1], c[2]);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "lch" => {
             let h = c[2].to_radians();
             let (lr, lg, lb) = lab_to_lin_srgb(c[0], c[1] * h.cos(), c[1] * h.sin());
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "xyz" | "xyz-d65" => {
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, c[0], c[1], c[2]);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "xyz-d50" => {
             let (x, y, z) = mat3(&BRADFORD_D50_D65, c[0], c[1], c[2]);
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "display-p3" | "display-p3-linear" => {
             let (pr, pg, pb) = if space == "display-p3-linear" {
@@ -4021,26 +4033,26 @@ fn space_to_srgb(space: &str, c: [f32; 3]) -> Option<(f32, f32, f32)> {
             };
             let (x, y, z) = mat3(&P3_TO_XYZ65, pr, pg, pb);
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "rec2020" => {
             let (a, b, cc) = (rec2020_decode(c[0]), rec2020_decode(c[1]), rec2020_decode(c[2]));
             let (x, y, z) = mat3(&REC2020_TO_XYZ65, a, b, cc);
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "a98-rgb" => {
             let (a, b, cc) = (a98_decode(c[0]), a98_decode(c[1]), a98_decode(c[2]));
             let (x, y, z) = mat3(&A98_TO_XYZ65, a, b, cc);
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         "prophoto-rgb" => {
             let (a, b, cc) = (prophoto_decode(c[0]), prophoto_decode(c[1]), prophoto_decode(c[2]));
             let (x, y, z) = mat3(&PROPHOTO_TO_XYZ50, a, b, cc);
             let (x, y, z) = mat3(&BRADFORD_D50_D65, x, y, z);
             let (lr, lg, lb) = mat3(&XYZ65_TO_LSRGB, x, y, z);
-            (linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb))
+            (linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb))
         }
         _ => return None,
     })
