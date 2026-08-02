@@ -240,19 +240,23 @@ fn start_transitions_on_style_change(
         Vec::new();
     // 목록에서 취소된(지속 0) 프로퍼티: 실행 중 전이가 있으면 없앤다.
     let mut cancels: Vec<(crate::dom::NodeId, String)> = Vec::new();
+    let mut hash_updates: Vec<(crate::dom::NodeId, (usize, u64))> = Vec::new();
     for (id, new_style) in &js.computed_styles {
         let Some(old_style) = prev.get(id) else { continue };
-        // 내용이 그대로면 이 요소는 스타일 변경이 없다 — 프로퍼티를 훑지 않는다.
-        if let Some(&(len, hash)) = js.computed_hashes.get(id) {
-            if len == new_style.len() && hash == style_content_hash(new_style) {
-                continue;
-            }
-        }
         let get = |m: &std::collections::HashMap<String, String>, k: &str, d: &str| -> String {
             m.get(k).cloned().unwrap_or_else(|| d.to_string())
         };
         let durations = crate::css::split_top_commas_pub(&get(new_style, "transition-duration", ""));
         if durations.iter().all(|d| time_ms(d) <= 0.0) {
+            continue;
+        }
+        // 여기까지 온 요소만 후보다(트랜지션이 걸린 소수). 후보의 계산값 내용이 그대로면
+        // 프로퍼티를 훑지 않는다. 해시를 **후보에만** 매기는 게 중요하다 — 전 요소를
+        // 매 재계산마다 해싱하면 스타일 재계산 자체보다 비싸진다(프로파일로 확인).
+        let sig = (new_style.len(), style_content_hash(new_style));
+        let unchanged = js.computed_hashes.get(id) == Some(&sig);
+        hash_updates.push((*id, sig));
+        if unchanged {
             continue;
         }
         let props = crate::css::split_top_commas_pub(&get(new_style, "transition-property", "all"));
@@ -317,6 +321,9 @@ fn start_transitions_on_style_change(
             starts.push((*id, name.clone(), from.clone(), to.clone(), dur, delay, easing));
         }
     }
+    for (id, sig) in hash_updates {
+        js.computed_hashes.insert(id, sig);
+    }
     for (id, prop) in cancels {
         if let Some(list) = js.element_animations.get_mut(&id) {
             list.retain(|a| !(a.is_transition && a.props.contains_key(&prop)));
@@ -354,12 +361,6 @@ fn fill_js_maps(
     let prev_styles = std::mem::take(&mut js.computed_styles);
     collect_computed_styles(style_root, &mut js.computed_styles);
     start_transitions_on_style_change(js, &prev_styles);
-    // 다음 재계산의 변경 감지용 해시를 갱신한다.
-    js.computed_hashes = js
-        .computed_styles
-        .iter()
-        .map(|(id, m)| (*id, (m.len(), style_content_hash(m))))
-        .collect();
     // 표준의 resolved value: 길이는 px 로 확정돼야 한다. %/em/무단위 배수는 스타일 맵에
     // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
     let mut metrics = std::collections::HashMap::new();
@@ -1563,11 +1564,19 @@ impl Page {
             }
             let is_frame = !self.js.raf_callbacks.is_empty()
                 && (self.js.next_frame_time() - next).abs() < f64::EPSILON;
+            // 시계 전진은 태스크다 — 트랜지션 이벤트를 쏘고 그 핸들러가 DOM 을 만진다.
+            // 그래서 enter_js 창 **안에서** 해야 한다(밖에서 하면 js.dom 이 없어
+            // 핸들러가 "document 를 사용할 수 없음" 으로 죽는다).
+            self.enter_js();
             self.js.advance_clock_to(next);
-            // 시계 전진은 태스크다(트랜지션 이벤트를 쏜다) — 태스크 뒤엔 마이크로태스크를
-            // 흘려야 한다(§HTML 이벤트 루프). 안 흘리면 이벤트로 이행된 프라미스의 .then 이
-            // 다음 타이머까지 밀려, 이벤트로 구동되는 하네스가 통째로 멈춘다.
+            // 태스크 뒤엔 마이크로태스크를 흘린다(§HTML 이벤트 루프). 안 흘리면 이벤트로
+            // 이행된 프라미스의 .then 이 다음 타이머까지 밀려, 이벤트로 구동되는 하네스가
+            // 통째로 멈춘다.
             self.js.drain_microtasks();
+            for line in self.js.console.drain(..) {
+                println!("[console] {}", line);
+            }
+            self.leave_js();
             // 프레임 시각이면 프레임 콜백을 먼저(§HTML: 렌더링 기회에서 실행),
             // 그다음 같은 시각에 만료된 타이머.
             let mut callbacks: Vec<(crate::js::interp::Value, u32)> = Vec::new();

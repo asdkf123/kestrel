@@ -2232,6 +2232,7 @@ impl Interp {
     fn fire_transition_events(&mut self) {
         let now = self.virtual_now_ms;
         let mut pending: Vec<(crate::dom::NodeId, &'static str, String, f64)> = Vec::new();
+        let mut finished = false;
         for anims in self.element_animations.values_mut() {
             for a in anims.iter_mut() {
                 if !a.is_transition {
@@ -2254,7 +2255,19 @@ impl Interp {
                     pending.push((a.node, "transitionend", prop, a.duration_ms / 1000.0));
                     a.event_phase = 3;
                 }
+                if a.event_phase == 3 {
+                    finished = true;
+                }
             }
+        }
+        // 끝난 트랜지션은 더 이상 활성이 아니다(§CSS Transitions: 완료 시 제거). 기저
+        // 계산값이 이미 목표값이므로 없애도 보이는 값은 같다. 안 치우면 슬라이스마다
+        // 쌓여, 경계 스캔과 이벤트 스캔이 애니메이션 수에 제곱으로 든다.
+        if finished {
+            for anims in self.element_animations.values_mut() {
+                anims.retain(|a| !(a.is_transition && a.event_phase == 3));
+            }
+            self.element_animations.retain(|_, v| !v.is_empty());
         }
         for (id, ty, prop, elapsed) in pending {
             let evt = self.make_transition_event(ty, id, &prop, elapsed);
