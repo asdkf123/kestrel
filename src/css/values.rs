@@ -3454,7 +3454,9 @@ fn comp_num(s: &str, pct_base: f32) -> Option<f32> {
     if let Some(p) = s.strip_suffix('%') {
         return Some(p.trim().parse::<f32>().ok()? / 100.0 * pct_base);
     }
-    s.parse::<f32>().ok()
+    // hwb W/B 의 벌거벗은 <number> 는 <percentage> 와 같은 스케일(30 = 30% = 0.30) —
+    // §CSS Color 4: number 는 percentage 상당값. 퍼센트와 동일하게 /100 * base.
+    s.parse::<f32>().ok().map(|n| n / 100.0 * pct_base)
 }
 
 // 각도 컴포넌트(deg/grad/rad/turn, 무단위=deg, none→0).
