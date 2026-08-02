@@ -12867,8 +12867,19 @@ fn rel_channel_valid(tok: &str, kw: &[&str], is_hue: bool) -> bool {
     if kw.contains(&low.as_str()) {
         return true;
     }
-    if col_is_num(tok) || col_is_none(tok) || col_is_calc(tok) {
+    if col_is_num(tok) || col_is_none(tok) {
         return true;
+    }
+    if col_is_calc(tok) {
+        // 채널 키워드를 수(1)로 치환 후 calc 타입 검사 — 채널은 <number>(hue 는 <angle> 도)
+        // 또는 <percentage> 만 허용. number+percentage/angle 혼합 등 타입 불일치는 무효
+        // (§CSS Color 5: calc(r + 1%)/calc(h + 1deg) 거부). 분석 불가(Wild)는 관대 수용.
+        let sub = subst_channels(tok, &|n: &str| if kw.contains(&n) { Some(1.0) } else { None });
+        return if is_hue {
+            math_number_only_valid(&sub) || math_angle_valid(&sub)
+        } else {
+            math_number_valid(&sub)
+        };
     }
     if is_hue {
         col_is_angle(tok)
