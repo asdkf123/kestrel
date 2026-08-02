@@ -2804,12 +2804,45 @@ fn normalize_image_set_item(item: &str) -> String {
     }
 }
 
+// background-image 지정값 캐논: 콤마 구분 레이어 각각을 정규화한다(url() 은 request
+// modifier 를 보존해 url("url" modifier) 로, Value::Url 은 modifier 를 못 담으므로 여기서
+// 직접 처리). gradient/cross-fade 등 함수형 레이어는 원문 유지.
+pub fn normalize_background_image(raw: &str) -> String {
+    split_top_commas(raw)
+        .iter()
+        .map(|layer| {
+            let l = layer.trim();
+            if l.to_ascii_lowercase().starts_with("url(") && l.ends_with(')') {
+                normalize_image_ref(l)
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 // url(x)/url("x")/url('x') 및 맨문자열 'x'/"x" → url("x"). 그 외(gradient 등)는 원문.
-fn normalize_image_ref(t: &str) -> String {
+pub(crate) fn normalize_image_ref(t: &str) -> String {
     let tl = t.to_ascii_lowercase();
     if tl.starts_with("url(") && t.ends_with(')') {
-        let inner = t[4..t.len() - 1].trim().trim_matches(|c| c == '"' || c == '\'');
-        return format!("url(\"{}\")", inner);
+        let inner = t[4..t.len() - 1].trim();
+        // 인용된 URL 뒤에 request modifier(crossorigin()/integrity()/referrer-policy())가
+        // 올 수 있다(§CSS Values 5). 닫는 따옴표까지가 URL, 나머지는 modifier 로 보존한다
+        // — 예전엔 전체를 URL 로 재인용해 `url("… modifier")` 처럼 따옴표가 새어 나왔다.
+        if let Some(q) = inner.chars().next().filter(|&c| c == '"' || c == '\'') {
+            if let Some(end) = inner[1..].find(q) {
+                let url = &inner[1..1 + end];
+                let modifiers = inner[1 + end + 1..].trim();
+                return if modifiers.is_empty() {
+                    format!("url(\"{}\")", url)
+                } else {
+                    format!("url(\"{}\" {})", url, modifiers)
+                };
+            }
+        }
+        let bare = inner.trim_matches(|c| c == '"' || c == '\'');
+        return format!("url(\"{}\")", bare);
     }
     if t.len() >= 2
         && ((t.starts_with('"') && t.ends_with('"'))

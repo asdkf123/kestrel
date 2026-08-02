@@ -1139,6 +1139,12 @@ impl Interp {
                 if rl.contains("cross-fade(") && !crate::css::cross_fade_valid(raw) {
                     return String::new();
                 }
+                // url() 레이어(request modifier 포함)는 여기서 직접 캐논화한다 — Value::Url 은
+                // modifier 를 못 담아 parse_inline_style 경로가 url("… modifier") 처럼 따옴표를
+                // 흘렸다(§CSS Values 5). gradient/cross-fade 는 위에서 이미 반환.
+                if rl.contains("url(") {
+                    return crate::css::normalize_background_image(raw);
+                }
             }
             _ => {}
         }
