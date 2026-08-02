@@ -12277,7 +12277,8 @@ fn serialize_mix_native(space: &str, mixed: &[f32; 3], none: &[bool; 3], a: Opti
         "oklch" => format!("oklch({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
         "lab" => format!("lab({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
         "lch" => format!("lch({} {} {}{})", cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap),
-        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "xyz" | "xyz-d65" | "xyz-d50" => {
+        "srgb" | "srgb-linear" | "display-p3" | "display-p3-linear" | "a98-rgb" | "prophoto-rgb"
+        | "rec2020" | "xyz" | "xyz-d65" | "xyz-d50" => {
             let sp = if space == "xyz" { "xyz-d65" } else { space };
             format!("color({} {} {} {}{})", sp, cp(0, 1.0, false), cp(1, 1.0, false), cp(2, 1.0, false), ap)
         }
