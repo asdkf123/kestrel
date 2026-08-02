@@ -5071,6 +5071,22 @@ impl Interp {
                                     if !u.is_empty() && u != "none" {
                                         *side = format!("{u} {side}");
                                     }
+                                } else if matches!(dash.as_str(), "filter" | "backdrop-filter")
+                                    && comp == "add"
+                                {
+                                    // §Filter Effects: 필터 리스트의 add 합성은 **이어붙이기**다
+                                    // (수치 합산이 아니다 — blur(10px)+blur(15px) 는
+                                    // blur(10px) blur(15px), blur(25px) 가 아니다).
+                                    // accumulate 는 함수별 누적이라 아래 compose_prop 로 간다.
+                                    if let Some(bv) = base.get(dash) {
+                                        if !bv.is_empty() && bv != "none" {
+                                            *side = if side.trim() == "none" {
+                                                bv.clone()
+                                            } else {
+                                                format!("{bv} {side}")
+                                            };
+                                        }
+                                    }
                                 } else if matches!(
                                     dash.as_str(),
                                     "box-shadow" | "text-shadow" | "-webkit-box-shadow"

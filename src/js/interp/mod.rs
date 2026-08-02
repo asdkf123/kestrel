@@ -10111,6 +10111,15 @@ impl Interp {
                     if !base.is_empty() && base != "none" {
                         *side = format!("{base} {side}");
                     }
+                } else if matches!(dash_prop, "filter" | "backdrop-filter") && comp == "add" {
+                    // §Filter Effects: 필터 리스트의 add 합성은 이어붙이기(수치 합산 아님).
+                    if !base.is_empty() && base != "none" {
+                        *side = if side.trim() == "none" {
+                            base.clone()
+                        } else {
+                            format!("{base} {side}")
+                        };
+                    }
                 } else if matches!(dash_prop, "box-shadow" | "text-shadow" | "-webkit-box-shadow") {
                     // 그림자 합성: 언더라이닝 그림자 리스트를 앞에 쉼표로 연결.
                     if !base.is_empty() && base != "none" {
