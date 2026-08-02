@@ -3628,7 +3628,7 @@ fn color_coords_none(space: &str, cs: &str) -> Option<([Option<f32>; 3], Option<
     // 상대색 입력(rgb(from …) 등)은 먼저 계산해 그 계산색(serial, none 보존)으로 좌표를
     // 뽑는다 — 예전엔 srgb_float_of 폴백에서 채널 none 이 0 으로 소실됐다(§CSS Color 5:
     // color-mix/상대색 origin 의 none 성분은 보간에서 다른 색 값으로 대체돼야 한다).
-    if low.contains("(from ") {
+    if low.contains("(from ") || low.starts_with("color-mix(") {
         if let Some(Value::ColorFn(_, serial)) = interpret_value(&low) {
             if serial.as_ref() != low.as_str() {
                 return color_coords_none(space, &serial);
