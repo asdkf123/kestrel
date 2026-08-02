@@ -11898,7 +11898,25 @@ pub fn normalize_color_layers(raw: &str) -> Option<String> {
         if !single_color_valid(ct) {
             return None;
         }
-        colors.push(serialize_mix_input_color(ct)?);
+        // 지정값은 내부 색의 지정형을 보존한다 — 상대색 rgb(from …)/color-mix 를 계산색으로
+        // 접지 않는다(§CSS Color 6 serialize: 각 <color> 는 자기 지정 직렬화를 유지).
+        let low = ct.to_ascii_lowercase();
+        let spec = if low.contains("(from ") {
+            normalize_relative_color(ct)
+        } else if low.starts_with("color-mix(") {
+            normalize_color_mix(ct)
+        } else if low.starts_with("color(") {
+            normalize_color_function(ct)
+        } else if low.starts_with("lab(")
+            || low.starts_with("lch(")
+            || low.starts_with("oklab(")
+            || low.starts_with("oklch(")
+        {
+            normalize_lab_like(ct)
+        } else {
+            None
+        };
+        colors.push(spec.or_else(|| serialize_mix_input_color(ct))?);
     }
     // 기본 normal 은 생략(§CSS Color 6 serialize), 그 외 모드는 유지.
     let prefix = match mode.as_deref() {

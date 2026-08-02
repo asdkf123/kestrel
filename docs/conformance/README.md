@@ -91,6 +91,9 @@
 > - **css-color +16 (alpha() computed 지원)**: `alpha` 를 @supports 함수 화이트리스트(FUNCS)에 추가 —
 >   CSS.supports("color", "alpha(...)")=true 로 alpha-color-computed 잠금 해제. 남은 16 은 computed 가
 >   origin 색공간 보존(`alpha(from color(srgb 1 0 0)/0.5)`→`color(srgb 1 0 0 / 0.5)`)을 요구(후속).
+> - **css-color +34 (color-layers 지정값 내부 색)**: `color-layers()` 지정값 직렬화가 각 레이어의
+>   지정형을 보존 — 상대색 `rgb(from black r g b / 0.5)`·`color-mix(…)` 를 계산색(rgba/color(srgb))으로
+>   접지 않고 normalize_relative_color/normalize_color_mix 등 지정 정규화기로 직렬화.
 > - **css-color +8 (alpha() computed 색공간 보존)**: origin 이 모던 함수(color/color-mix/lab/lch/oklab/
 >   oklch)면 그 계산 직렬화에 알파만 주입(set_alpha_on_serial), 레거시 srgb+none 알파는 color(srgb …) 폴백.
 >   rgb/hsl 및 이들 상대색은 rgba() 로. 남은 9 는 currentcolor 해석(cascade)·중첩 u8 알파 정밀도(후속).
@@ -165,7 +168,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 8,747 / 9,399 | 93.1% |
+| css-color | 8,781 / 9,399 | 93.4% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
