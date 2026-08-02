@@ -84,6 +84,8 @@
 >   만 시도해 레거시 `rgb(20%,40%,60%,80%)`/`hsl(120deg …)` origin 을 못 다뤄 원문을 냈다. 이제
 >   `serialize_mix_input_color` 폴백으로 색 파싱→계산색(`rgba(51, 102, 153, 0.8)` 등)으로 직렬화.
 >   남은 실패는 채널 calc 재정렬(`calc(g*2)`→`calc(2*g)`)·none-origin 엣지.
+> - **css-color +4 (상대색 hue calc)**: `oklch(from blue .5 .3 calc(pi * 1rad))` 등 hue 채널의
+>   calc 를 각도 인식 스칼라 평가기로 계산(rad/turn/grad/deg 혼합·pi·그룹). 기존 deg-strip 경로는 폴백 유지.
 > - **css-color +32 (color-function)**: `color(<space> …)` 지정값 직렬화가 성분 안 calc 를
 >   캐논화. 예전엔 `split_whitespace` 로 나눠 `calc(0.5 + 1)` 의 내부 공백에서 깨지고 `/`
 >   치환이 calc 내부 `/` 를 망가뜨려 통째로 bail(원문 반환)했다. 이제 괄호 균형 `color_parts`
@@ -153,7 +155,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 8,683 / 9,399 | 92.4% |
+| css-color | 8,687 / 9,399 | 92.4% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |

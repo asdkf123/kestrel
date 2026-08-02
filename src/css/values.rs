@@ -3552,10 +3552,21 @@ fn parse_comp_angle(s: &str) -> Option<Comp> {
     if s.eq_ignore_ascii_case("none") {
         return Some(Comp::None);
     }
-    // calc() 각도: deg 를 떼고(결과는 도 단위) 산술만 평가. 비유한/불가는 0.
+    // calc() 각도: 각도 단위(deg/rad/grad/turn)·pi·삼각함수를 도 단위로 평가.
+    // 순수 수는 도로 해석(hue). 각도/수 외(길이 등)는 폴백으로. 비유한/불가는 0.
     if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') {
-        let inner = s[5..s.len() - 1].replace("deg", "");
-        let n = match eval_calc(&inner) {
+        let inner = &s[5..s.len() - 1];
+        let chars: Vec<char> = inner.chars().collect();
+        let mut p = 0usize;
+        if let Some((v, k)) = scalar_expr(&chars, &mut p) {
+            skip_ws(&chars, &mut p);
+            if p == chars.len() && matches!(k, SKind::Ang | SKind::Num) {
+                return Some(Comp::Val(if v.is_finite() { v as f32 } else { 0.0 }));
+            }
+        }
+        // 폴백: deg 를 떼고 산술만 평가하는 기존 경로.
+        let stripped = inner.replace("deg", "");
+        let n = match eval_calc(&stripped) {
             Some(Value::Length(n, _)) if n.is_finite() => n,
             _ => 0.0,
         };
