@@ -61,6 +61,45 @@ fn number_or_math(s: &str) -> Option<f32> {
     }
 }
 
+// 필터 리스트의 **인자 생략** 형태를 각 함수의 기본값으로 채운다(§Filter Effects).
+// blur()=0px, grayscale()/invert()/sepia()=1, brightness()/contrast()/opacity()/
+// saturate()=1, hue-rotate()=0deg. 계산값이 이 형태여야 직렬화도 보간도 맞는다.
+fn normalize_filter_list(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() || t.eq_ignore_ascii_case("none") {
+        return t.to_string();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for tok in crate::css::split_ws_depth0(t) {
+        let Some(open) = tok.find('(') else {
+            out.push(tok.to_string());
+            continue;
+        };
+        if !tok.ends_with(')') {
+            out.push(tok.to_string());
+            continue;
+        }
+        let name = tok[..open].trim().to_ascii_lowercase();
+        let arg = tok[open + 1..tok.len() - 1].trim();
+        if !arg.is_empty() {
+            out.push(tok.to_string());
+            continue;
+        }
+        let default = match name.as_str() {
+            "blur" => "0px",
+            "grayscale" | "invert" | "sepia" | "brightness" | "contrast" | "opacity"
+            | "saturate" => "1",
+            "hue-rotate" => "0deg",
+            _ => {
+                out.push(tok.to_string());
+                continue;
+            }
+        };
+        out.push(format!("{name}({default})"));
+    }
+    out.join(" ")
+}
+
 // 선언 하나를 (경우에 따라 여러) longhand 선언으로 확장한다.
 pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaration> {
     // 커스텀 프로퍼티(--*): 원문 보존, 사용 시점(var())에 해석.
@@ -3582,7 +3621,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // filter: 색 변환 함수 목록 원문 보존 (paint 가 grayscale/brightness/invert/sepia/contrast 적용).
         "filter" | "-webkit-filter" => {
-            vec![Declaration { raw: String::new(), important: false, name: "filter".to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: "filter".to_string(), value: Value::Keyword(normalize_filter_list(value_text)) }]
         }
         // animation 단축 → 롱핸드. 첫 시간=duration, 둘째=delay. 나머지는 키워드로 구분.
         "animation" | "-webkit-animation" => animation_shorthand(value_text),
@@ -3718,7 +3757,7 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
         }
         "backdrop-filter" => {
-            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+            vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(normalize_filter_list(value_text)) }]
         }
         // all(§CSS Cascade): CSS 전역 키워드만(initial|inherit|unset|revert|revert-layer).
         "all" => {
