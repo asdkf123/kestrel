@@ -11546,7 +11546,20 @@ pub fn normalize_relative_color(raw: &str) -> Option<String> {
         "hsla" => "hsl",
         f => f,
     };
-    Some(format!("{cfunc}(from {origin_canon} {channels})"))
+    // color(from origin <space> c1 c2 c3) 의 target space 도 캐논화한다(소문자, xyz→
+    // xyz-d65) — origin 과 일관되게(§CSS Color 4). 다른 함수는 채널만이라 그대로.
+    let channels_out = if cfunc == "color" {
+        let mut it = channels.splitn(2, char::is_whitespace);
+        let sp = it.next().unwrap_or("").to_ascii_lowercase();
+        let sp = if sp == "xyz" { "xyz-d65".to_string() } else { sp };
+        match it.next() {
+            Some(rest) if !rest.is_empty() => format!("{} {}", sp, rest),
+            _ => sp,
+        }
+    } else {
+        channels.to_string()
+    };
+    Some(format!("{cfunc}(from {origin_canon} {channels_out})"))
 }
 
 // color-mix 지정값 캐논 직렬화(§CSS Color 5): 퍼센트를 색 뒤로, inner 색 정규화
@@ -11662,9 +11675,11 @@ pub fn normalize_color_function(raw: &str) -> Option<String> {
             }
         }
     };
+    // xyz 는 계산값에서 xyz-d65 로 캐논화된다(§CSS Color 4).
+    let space_out = if space == "xyz" { "xyz-d65" } else { space.as_str() };
     Some(format!(
         "color({} {} {} {}{})",
-        space, chans[0], chans[1], chans[2], alpha_part
+        space_out, chans[0], chans[1], chans[2], alpha_part
     ))
 }
 
