@@ -9641,6 +9641,47 @@ impl Interp {
                 }
             }
         }
+        // filter/backdrop-filter 리스트 보간(§Filter Effects 5.2): 짧은 쪽(또는 none)을
+        // 상대 리스트의 **중립값**으로 채워 길이를 맞춘 뒤 함수별로 보간한다.
+        // none↔blur(10px) 는 blur(0px)↔blur(10px) 로 본다.
+        if matches!(dash_prop, "filter" | "backdrop-filter") {
+            let pad = |a: &str, b: &str| -> Option<String> {
+                let at: Vec<&str> = if a.trim().eq_ignore_ascii_case("none") {
+                    Vec::new()
+                } else {
+                    Self::split_top_ws(a)
+                };
+                let bt: Vec<&str> = if b.trim().eq_ignore_ascii_case("none") {
+                    Vec::new()
+                } else {
+                    Self::split_top_ws(b)
+                };
+                if at.len() >= bt.len() {
+                    return Some(if at.is_empty() { "none".to_string() } else { at.join(" ") });
+                }
+                let mut out: Vec<String> = at.iter().map(|x| x.to_string()).collect();
+                for extra in &bt[at.len()..] {
+                    let name = extra.split('(').next()?.trim().to_ascii_lowercase();
+                    // 각 필터 함수의 항등값(§Filter Effects 5.2 interpolation).
+                    let neutral = match name.as_str() {
+                        "blur" => "0px",
+                        "brightness" | "contrast" | "opacity" | "saturate" => "1",
+                        "grayscale" | "invert" | "sepia" => "0",
+                        "hue-rotate" => "0deg",
+                        _ => return None, // drop-shadow/url 등은 근사하지 않는다
+                    };
+                    out.push(format!("{name}({neutral})"));
+                }
+                Some(out.join(" "))
+            };
+            if let (Some(f2), Some(g2)) = (pad(from, to), pad(to, from)) {
+                if f2 != from || g2 != to {
+                    if let Some(v) = Self::interp_css_value(&f2, &g2, eased) {
+                        return Some(v);
+                    }
+                }
+            }
+        }
         // transform 매칭 리스트 보간(rotate/translate/scale 함수별 인자 보간 → 행렬).
         if dash_prop == "transform" {
             if let Some(v) = Self::interp_transform(from, to, eased, w, h) {

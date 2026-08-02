@@ -189,7 +189,7 @@
 | css-conditional | 2,143 / 2,602 | 82.4% |
 | css-flexbox | 1,125 / 1,379 | 81.6% |
 | css-nesting | 95 / 117 | 81.2% |
-| css-backgrounds ★ | 4,959 / 6,181 | 80.2% |
+| css-backgrounds ★ | 4,991 / 6,181 | 80.7% |
 | css-anchor-position ★ | 10,462 / 13,180 | 79.4% |
 | css-position | 1,078 / 1,412 | 76.3% |
 | selectors | 3,143 / 4,118 | 76.3% |
@@ -228,7 +228,7 @@
 | css-borders ★ | 426 / 1,151 | 37.0% |
 | css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
-| filter-effects ★ | 907 / 2,452 | 37.0% |
+| filter-effects ★ | 1,051 / 2,452 | 42.9% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
@@ -422,7 +422,7 @@
 | css-multicol | 972 | 1,098 | +126 |
 | css-box | 546 | 618 | +72 |
 | css-logical | 669 | 689 | +20 |
-| filter-effects | 833 | 907 | +74 |
+| filter-effects | 833 | 1,051 | +218 |
 | 그 외(overflow/text-decor/ruby/images/backgrounds/display/dom/animations) | | | +38 |
 
 **주요 변경**
@@ -443,6 +443,9 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **필터 리스트 중립값 패딩**(§Filter Effects 5.2): `none` 또는 짧은 리스트를 상대
+  리스트의 항등값(blur(0px)/brightness(1)/grayscale(0)/hue-rotate(0deg) 등)으로 채워
+  길이를 맞춘 뒤 함수별 보간. none↔blur(10px) 가 blur(0px)↔blur(10px) 가 된다.
 - **함수 인자 보간(일반)**: `name(args)` 두 값의 이름이 같고 최상위 콤마 인자 수가 같으면
   인자별로 보간한다(blur(10px)→blur(40px), drop-shadow(...), grayscale(...)). 예전엔 함수
   토큰을 보간하지 못해 필터 리스트가 끝값에 머물렀다.
