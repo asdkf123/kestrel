@@ -131,6 +131,57 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         "padding-block" => return logical_pair("padding-top", "padding-bottom", value_text),
         "inset-inline" => return logical_pair("left", "right", value_text),
         "inset-block" => return logical_pair("top", "bottom", value_text),
+        // border 논리 → 물리 (§CSS Logical 4). 매핑 표에 통째로 빠져 있어서 CSS.supports
+        // 도 계산값도 안 됐다. margin/padding/inset 과 같은 방식(LTR·가로쓰기 기준).
+        "border-block-start" => return expand_declaration("border-top", value_text),
+        "border-block-end" => return expand_declaration("border-bottom", value_text),
+        "border-inline-start" => return expand_declaration("border-left", value_text),
+        "border-inline-end" => return expand_declaration("border-right", value_text),
+        "border-block-start-width" => return expand_declaration("border-top-width", value_text),
+        "border-block-end-width" => return expand_declaration("border-bottom-width", value_text),
+        "border-inline-start-width" => return expand_declaration("border-left-width", value_text),
+        "border-inline-end-width" => return expand_declaration("border-right-width", value_text),
+        "border-block-start-style" => return expand_declaration("border-top-style", value_text),
+        "border-block-end-style" => return expand_declaration("border-bottom-style", value_text),
+        "border-inline-start-style" => return expand_declaration("border-left-style", value_text),
+        "border-inline-end-style" => return expand_declaration("border-right-style", value_text),
+        "border-block-start-color" => return expand_declaration("border-top-color", value_text),
+        "border-block-end-color" => return expand_declaration("border-bottom-color", value_text),
+        "border-inline-start-color" => return expand_declaration("border-left-color", value_text),
+        "border-inline-end-color" => return expand_declaration("border-right-color", value_text),
+        // 양방향 (1~2 값 목록)
+        "border-block-width" => {
+            return logical_pair("border-top-width", "border-bottom-width", value_text)
+        }
+        "border-block-style" => {
+            return logical_pair("border-top-style", "border-bottom-style", value_text)
+        }
+        "border-block-color" => {
+            return logical_pair("border-top-color", "border-bottom-color", value_text)
+        }
+        "border-inline-width" => {
+            return logical_pair("border-left-width", "border-right-width", value_text)
+        }
+        "border-inline-style" => {
+            return logical_pair("border-left-style", "border-right-style", value_text)
+        }
+        "border-inline-color" => {
+            return logical_pair("border-left-color", "border-right-color", value_text)
+        }
+        // border-block/border-inline: 한 벌의 테두리를 양쪽 변에 적용한다.
+        "border-block" | "border-inline" => {
+            let (a, b) = if name == "border-block" {
+                ("border-top", "border-bottom")
+            } else {
+                ("border-left", "border-right")
+            };
+            let mut out = expand_declaration(a, value_text);
+            if out.is_empty() {
+                return Vec::new();
+            }
+            out.extend(expand_declaration(b, value_text));
+            return out;
+        }
         // scroll-margin/scroll-padding 논리 → 물리(수평 쓰기모드 기준).
         "scroll-margin-block-start" => return expand_declaration("scroll-margin-top", value_text),
         "scroll-margin-block-end" => return expand_declaration("scroll-margin-bottom", value_text),
@@ -3143,13 +3194,27 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         // 8차: 순수 키워드 롱핸드.
         | "anchor-name"
         // 9차: 개별 변환(translate 는 아래 arm 에서 검증; scale 도).
-        // 개별 border-*-style(solid/dashed 등 키워드).
-        | "border-top-style" | "border-right-style" | "border-bottom-style"
-        | "border-left-style"
         // 12차: 흩어진 프로퍼티(위치/shape/키워드 원문 보존).
         | "text-box-trim"
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
+        }
+        // 개별 border-*-style: <line-style> 키워드만(§CSS Backgrounds). 예전엔 원문 보존
+        // arm 에 있어 아무 문자열이나 통과했다 — 단축 border-style 은 이미 거부했으므로
+        // 롱핸드만 관대해 앞뒤가 안 맞았다.
+        "border-top-style" | "border-right-style" | "border-bottom-style"
+        | "border-left-style" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(
+                low.as_str(),
+                "none" | "hidden" | "dotted" | "dashed" | "solid" | "double" | "groove"
+                    | "ridge" | "inset" | "outset"
+                    | "inherit" | "initial" | "unset" | "revert" | "revert-layer"
+            ) {
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
         }
         // 키워드 집합이 명확한 롱핸드들 — 값을 실제로 검증한다(원문 보존 arm 과 달리
         // 아무 값이나 통과시키지 않는다).

@@ -399,6 +399,15 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-block-shape", "corner-inline-shape",
     // 11차: border-image 롱핸드(계산값 노출 — border-image 렌더는 별개).
     "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
+    // border 논리 롱핸드(§CSS Logical 4). expand_declaration 초입에서 물리로 바뀌므로
+    // 여기 등록 + 초기값만 있으면 계산값이 물리 롱핸드 값으로 채워진다.
+    // (단축 border-block/-inline/-block-start… 은 넣지 않는다 — 열거가 깨진다.)
+    "border-block-start-width", "border-block-end-width",
+    "border-inline-start-width", "border-inline-end-width",
+    "border-block-start-style", "border-block-end-style",
+    "border-inline-start-style", "border-inline-end-style",
+    "border-block-start-color", "border-block-end-color",
+    "border-inline-start-color", "border-inline-end-color",
     // 키워드/수 문법을 검증하는 롱핸드(§각 명세). stroke-color 는 아래 색 arm 에서.
     "baseline-source", "kerning", "color-adjust", "scroll-marker-group",
     "position-try-order", "position-visibility", "reading-flow", "anchor-scope",

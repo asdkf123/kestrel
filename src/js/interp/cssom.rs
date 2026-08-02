@@ -329,7 +329,17 @@ impl Interp {
             // 단축은 계산값 열거에서 제외 — 단 text-decoration 은 Chrome 이 계산값에
             // 노출하는 단축이라 포함(재조립됨). \0-접두 내부 키도 제외.
             .filter(|k| {
+                // 단축은 계산값 열거에서 제외 — 단 text-decoration 은 Chrome 이 계산값에
+                // 노출하는 단축이라 포함(재조립됨). \0-접두 내부 키도 제외.
+                //
+                // **논리 프로퍼티는 단축이 아니라 별칭이다**(margin-inline-start →
+                // margin-left, border-block-start-width → border-top-width). 확장 결과가
+                // 롱핸드 **하나**면 별칭이므로 열거에 남긴다. 예전엔 "다른 이름으로
+                // 확장되면 단축" 으로만 봐서 논리 이름이 통째로 열거에서 빠졌고,
+                // "지원한다면 계산 스타일에 있어야 한다"(getComputedStyle-listing)가 깨졌다.
+                let is_alias = sh.get(k.as_str()).is_some_and(|longs| longs.len() == 1);
                 (!sh.contains_key(k.as_str())
+                    || is_alias
                     || matches!(k.as_str(), "text-decoration" | "font" | "text-spacing"))
                     && !k.starts_with('\u{0}')
             })

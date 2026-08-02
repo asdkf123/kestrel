@@ -2363,7 +2363,12 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         | "overflow-clip-margin" => "0px",
         "border-style" | "outline-style" => "none",
         "border-top-width" | "border-right-width" | "border-bottom-width"
-        | "border-left-width" | "border-width" | "outline-width" => "medium", // = 3px
+        | "border-left-width" | "border-width" | "outline-width"
+        // border 논리 롱핸드(§CSS Logical 4) — 물리와 같은 초기값.
+        | "border-block-start-width" | "border-block-end-width"
+        | "border-inline-start-width" | "border-inline-end-width" => "medium", // = 3px
+        "border-block-start-style" | "border-block-end-style"
+        | "border-inline-start-style" | "border-inline-end-style" => "none",
         "box-sizing" => "content-box",
         "color" => "rgb(0, 0, 0)",
         "column-gap" | "row-gap" | "gap" | "letter-spacing" | "word-spacing" | "line-height" => {
