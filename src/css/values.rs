@@ -11759,9 +11759,137 @@ pub fn normalize_hyphenate_limit_chars(raw: &str) -> Option<String> {
     Some(comps.join(" "))
 }
 
+// calc 의 최상위 가법 항 분리(§CSS 문법: +/- 는 앞뒤 공백 필수). 각 항의 선행 부호를
+// bool 로. 빈 항이 있으면 None(무효).
+fn split_top_addsub(s: &str) -> Option<Vec<(bool, String)>> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut terms = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    let mut cur_neg = false;
+    for i in 0..chars.len() {
+        match chars[i] {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '+' | '-'
+                if depth == 0
+                    && i > 0
+                    && i + 1 < chars.len()
+                    && chars[i - 1].is_whitespace()
+                    && chars[i + 1].is_whitespace() =>
+            {
+                terms.push((cur_neg, chars[start..i].iter().collect::<String>().trim().to_string()));
+                cur_neg = chars[i] == '-';
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    terms.push((cur_neg, chars[start..].iter().collect::<String>().trim().to_string()));
+    if terms.iter().any(|(_, t)| t.is_empty()) {
+        return None;
+    }
+    Some(terms)
+}
+
+// 상대색 채널 calc 의 기호식 캐논 직렬화(§CSS Values 4 §calculation-tree serialize).
+// sum-of-products 로 보고 각 곱의 수 인자는 계수로 접고(나눗셈은 역수), 비수 인자(채널
+// keyword)는 문자열로 모은다. 곱은 계수 먼저(`g*2`→`2*g`), 합은 순수 수항 먼저(`l-20`→
+// `-20+l`), 다항 합의 곱항은 괄호. 함수/그룹/단위 등 복잡 형태는 None(원문 유지).
+fn canon_channel_calc_serial(tok: &str) -> Option<String> {
+    let t = tok.trim();
+    let low = t.to_ascii_lowercase();
+    if !low.starts_with("calc(") || !t.ends_with(')') {
+        return None;
+    }
+    let inner = t[5..t.len() - 1].trim();
+    let raw_terms = split_top_addsub(inner)?;
+    let mut terms: Vec<(f64, Vec<String>)> = Vec::new();
+    for (neg, term) in raw_terms {
+        let mut coeff = 1.0f64;
+        let mut syms: Vec<String> = Vec::new();
+        for (op, f) in split_muldiv_terms(&term) {
+            let f = f.trim();
+            if f.is_empty() {
+                return None;
+            }
+            if let Ok(n) = f.parse::<f64>() {
+                if op == '/' {
+                    coeff /= n;
+                } else {
+                    coeff *= n;
+                }
+            } else if !f.is_empty() && f.chars().all(|c| c.is_ascii_alphabetic()) {
+                // 단일 채널 keyword(r/g/b/l/a/…). 나눗셈 우변에 오는 기호는 처리 불가.
+                if op == '/' {
+                    return None;
+                }
+                syms.push(f.to_ascii_lowercase());
+            } else {
+                return None; // 함수/그룹/단위 등 → 원문 유지
+            }
+        }
+        terms.push((if neg { -coeff } else { coeff }, syms));
+    }
+    if terms.is_empty() {
+        return None;
+    }
+    let multi = terms.len() > 1;
+    // 순수 수항 먼저, 나머지 원순서.
+    let mut ordered: Vec<(f64, Vec<String>)> =
+        terms.iter().filter(|(_, s)| s.is_empty()).cloned().collect();
+    ordered.extend(terms.iter().filter(|(_, s)| !s.is_empty()).cloned());
+    let fmt = |v: f64| -> String {
+        let s = format!("{:.6}", v);
+        let s = s.trim_end_matches('0').trim_end_matches('.');
+        if s.is_empty() || s == "-0" { "0".to_string() } else { s.to_string() }
+    };
+    let mut out = String::new();
+    for (i, (coeff, syms)) in ordered.iter().enumerate() {
+        let neg = *coeff < 0.0;
+        let mag = coeff.abs();
+        let one = (mag - 1.0).abs() < 1e-12;
+        let body = if syms.is_empty() {
+            fmt(mag)
+        } else if one {
+            syms.join(" * ")
+        } else {
+            format!("{} * {}", fmt(mag), syms.join(" * "))
+        };
+        let is_product = !syms.is_empty() && (!one || syms.len() > 1);
+        let body = if is_product && multi { format!("({})", body) } else { body };
+        if i == 0 {
+            if neg {
+                out.push('-');
+            }
+            out.push_str(&body);
+        } else {
+            out.push_str(if neg { " - " } else { " + " });
+            out.push_str(&body);
+        }
+    }
+    Some(format!("calc({})", out))
+}
+
+// 상대색 채널 나열 문자열의 각 최상위 토큰 중 calc 를 캐논 직렬화하고 나머지는 유지.
+fn canon_channel_tokens(s: &str) -> String {
+    split_top_level(s)
+        .iter()
+        .map(|t| {
+            let tl = t.trim().to_ascii_lowercase();
+            if tl.starts_with("calc(") {
+                canon_channel_calc_serial(t).unwrap_or_else(|| t.trim().to_string())
+            } else {
+                t.trim().to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 // relative-color(rgb(from <origin> ...)) 지정값 캐논(§CSS Color 5): 레거시 함수명
 // rgba→rgb/hsla→hsl, origin 키워드 소문자화(currentColor→currentcolor), origin 이 색
-// 함수면 재귀 정규화. 채널 표현은 유지.
+// 함수면 재귀 정규화. 채널 calc 는 기호식 캐논 직렬화, 나머지 채널 표현은 유지.
 pub fn normalize_relative_color(raw: &str) -> Option<String> {
     let t = raw.trim();
     let open = t.find('(')?;
@@ -11815,6 +11943,10 @@ pub fn normalize_relative_color(raw: &str) -> Option<String> {
         "hsla" => "hsl",
         f => f,
     };
+    // var() 가 있으면 pending-substitution 값 — 전체가 verbatim 직렬화되므로 채널 calc 를
+    // 재정렬하지 않는다(§CSS Variables). 그 외에는 채널 calc 를 기호식 캐논 직렬화.
+    let has_var = raw.to_ascii_lowercase().contains("var(");
+    let canon_ch = |s: &str| if has_var { s.to_string() } else { canon_channel_tokens(s) };
     // color(from origin <space> c1 c2 c3) 의 target space 도 캐논화한다(소문자, xyz→
     // xyz-d65) — origin 과 일관되게(§CSS Color 4). 다른 함수는 채널만이라 그대로.
     let channels_out = if cfunc == "color" {
@@ -11822,11 +11954,11 @@ pub fn normalize_relative_color(raw: &str) -> Option<String> {
         let sp = it.next().unwrap_or("").to_ascii_lowercase();
         let sp = if sp == "xyz" { "xyz-d65".to_string() } else { sp };
         match it.next() {
-            Some(rest) if !rest.is_empty() => format!("{} {}", sp, rest),
+            Some(rest) if !rest.is_empty() => format!("{} {}", sp, canon_ch(rest)),
             _ => sp,
         }
     } else {
-        channels.to_string()
+        canon_ch(channels)
     };
     Some(format!("{cfunc}(from {origin_canon} {channels_out})"))
 }

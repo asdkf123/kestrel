@@ -97,6 +97,10 @@
 > - **css-color +8 (alpha() computed 색공간 보존)**: origin 이 모던 함수(color/color-mix/lab/lch/oklab/
 >   oklch)면 그 계산 직렬화에 알파만 주입(set_alpha_on_serial), 레거시 srgb+none 알파는 color(srgb …) 폴백.
 >   rgb/hsl 및 이들 상대색은 rgba() 로. 남은 9 는 currentcolor 해석(cascade)·중첩 u8 알파 정밀도(후속).
+> - **css-color +19 (상대색 채널 calc 직렬화 재정렬)**: `rgb(from … calc(g * 2) …)`→`calc(2 * g)`,
+>   `calc(a / 3)`→`calc(0.333333 * a)`, `calc(l - 20)`→`calc(-20 + l)`, `calc(g*.5 + g*.5)`→`calc((0.5 * g) + (0.5 * g))`
+>   등 채널 calc 를 §CSS Values 4 calc 직렬화(sum-of-products: 계수 먼저·순수 수항 먼저·다항 곱항 괄호)로
+>   캐논. 함수/그룹/단위 등 복잡형은 verbatim 폴백, var()(pending-substitution)는 재정렬 안 함. 격리 구현(css-values 무관).
 > - **css-color +21 (상대색 채널 calc 타입 검사)**: `rgb(from … calc(r + 1%) …)`·`hsl(from … calc(h + 1deg) …)`
 >   등 채널 keyword 를 수(1)로 치환 후 calc 타입 검사(mdim_of) — 채널은 number(hue 는 angle 도)|percentage
 >   만 허용, number+percentage/angle 혼합은 무효로 거부(§CSS Color 5). 예전엔 col_is_calc 로 무조건 수용.
@@ -177,7 +181,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 8,966 / 9,561 | 93.8% |
+| css-color | 8,944 / 9,521 | 93.9% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
