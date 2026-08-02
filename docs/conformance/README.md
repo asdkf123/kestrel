@@ -418,6 +418,18 @@
   black` 를 "지원 안 함"으로 거부(box-shadow-interpolation 등). box-shadow 길이 성분 검증에
   수학함수 허용 필요.
 
+## 측정 주의 (JS 예산 = 벽시계)
+
+WPT 통과 수가 실행마다 흔들리면 러너 병렬성이 아니라 **JS 실행 예산이 벽시계 기준**인지
+먼저 의심할 것. `SCRIPT_BUDGET_MS=5s`(스크립트/핸들러 하나), `TOTAL_BUDGET_MS=10s`(페이지
+전체)라 무거운 파일이 중간에 잘리고, 잘리는 지점이 머신 부하에 따라 달라진다. 같은
+바이너리로 같은 파일이 344~406 서브테스트를 오간 사례가 있다. 둘 다 환경변수
+(`KESTREL_SCRIPT_BUDGET_MS`, `KESTREL_TOTAL_BUDGET_MS`)로 조절되므로 **비교 측정은 넉넉한
+예산(30초/60초)에서** 하고 subprocess 타임아웃도 함께 올린다.
+
+**분모와 "하네스 못 돈 파일" 수를 통과 수와 함께 볼 것** — 분모가 줄면서 %가 오르는 건
+개선이 아니라 잘린 것이다.
+
 ## 측정 주의 (러너 과소보고)
 
 일부 WPT 파싱 테스트(예: `selectors/parsing/parse-is-where`, `parse-has` 등)는
