@@ -480,6 +480,13 @@ calc 로 표현한 형태**(예: `inset(-30px calc(100% - 0px) 90% -30%)`)라, �
 맞지 않고 inset 보간의 calc 처리까지 함께 있어야 한다. 부분 구현은 기존에 우연히 맞던
 불연속 결과를 깨서 net-negative 였다.
 
+**되돌린 시도 2(실증)**: 보간 결과의 calc 직렬화를 §CSS Values 4 캐논 순서(퍼센트→차원)
+로 바꾸고 음수 항을 `+ -X` 대신 `- X` 로 쓰도록 했다. shape()/offset 좌표는 맞아졌지만
+(motion +40) border-radius 계열이 깨져(backgrounds -32) 합계가 음수였다. 조건을 좁혀도
+(motion +8 / backgrounds -8 / masking -10), 부호 표기만 바꿔도(motion +8 / backgrounds -8 /
+masking -17) 마찬가지였다. **calc 항 순서·부호는 프로퍼티마다 기대가 달라 단일 규칙으로는
+안 된다** — 프로퍼티별 직렬화 규칙 표가 필요하다. 코드에 주석으로 실측치를 남겼다.
+
 **남은 큰 것**: 계산 스타일 요청 시 해석(최대 핫스팟 collect_computed_styles),
 Web Animations 객체 모델(Animation 상태기계·다중 키프레임), 보간 타입 레지스트리,
 미지 프로퍼티 57개(대부분 실험 기능).

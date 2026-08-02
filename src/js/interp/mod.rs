@@ -8646,6 +8646,12 @@ impl Interp {
         // 면 px 먼저(border-radius: 10px→100% ⇒ "calc(4px + 60%)"), 순수 % 면 % 먼저
         // (position: 10%→480px ⇒ "calc(0% + 480px)"). Chrome 계산값 형식과 일치.
         // (background-position edge-offset 은 px 먼저를 기대하나 property별 규칙이라 미해결.)
+        //
+        // ★되돌린 시도(실측): §CSS Values 4 캐논 순서(퍼센트→차원)로 바꾸면 motion +40 /
+        // backgrounds -32, 조건을 좁혀도 motion +8 / backgrounds -8 / masking -10.
+        // 음수 항을 "+ -X" 대신 "- X" 로만 바꿔도 motion +8 / backgrounds -8 / masking -17.
+        // calc 항 순서·부호 표기는 프로퍼티마다 기대가 달라 단일 규칙으로는 합계가 음수다.
+        // 제대로 하려면 프로퍼티별 직렬화 규칙(§각 명세)을 표로 갖춰야 한다.
         let px_first = fpx.is_some() && fpct.is_none();
         Some(match (has_px, has_pct) {
             // 0 항 접기(text-decoration-thickness/offset): px 가 0 이면 % 만(둘 다 0 이면
