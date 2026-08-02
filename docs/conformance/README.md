@@ -71,6 +71,8 @@
 >   재귀 평가**(not/and/or·중첩·범위 `100px<width<200px`·`=`·calc·단위, size 특성 게이트, 무효 쿼리 드롭),
 >   conditionText 캐논 직렬화.
 > - **mediaqueries 7.8→88.3%, cssom 69.1→72.5%, selectors 69.7→76.3%, css-syntax 18.9→87.1%**(이전 세션 포함).
+> - **★색 스윕 세션: css-color 84.4→92.4% (+753)**. 상대색(origin 계산색·중첩 origin 재귀·트리그/hsl bare 퍼센트/hue [0,360) 정규화·achromatic none-hue·lab↔lch·색역 밖 보존), color-mix(색공간 캐논 xyz-d65/oklab 생략·shorter hue 생략·none 운반·wide-gamut none 직렬화), color()·color-layers()(신규)·display-p3-linear·rgb calc 채널 등. 아래 개별 bullet 참조.
+> - **css-values url-modifiers (+51)**: `url("…" cross-origin()/integrity()/referrer-policy())` request modifier 를 background-image 에서 보존 직렬화(Value::Url 우회) + 유효성 검증(무효 modifier 거부).
 > - **css-color +136 (color-layers)**: `color-layers([<blend-mode>,]? <color>#)`(§CSS Color 6)
 >   파싱·직렬화 신규 구현. 기본 블렌드 `normal` 생략, 각 레이어 색 검증(임의 ident·후행 콤마
 >   거부)+직렬화. interpret_value/serialize_decl 배선. 남은 실패는 중첩 relative-color/color-mix
@@ -182,7 +184,7 @@
 | css-animations | 574 / 1,059 | 54.2% |
 | css-contain | 194 / 360 | 53.9% |
 | css-variables | 272 / 511 | 53.2% |
-| css-values | 4,113 / 7,764 | 53.0% |
+| css-values | 4,164 / 7,764 | 53.6% |
 | css-writing-modes | 188 / 356 | 52.8% |
 | css-overscroll-behavior | 51 / 97 | 52.6% |
 | css-page | 49 / 97 | 50.5% |
