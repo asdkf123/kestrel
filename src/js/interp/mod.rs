@@ -10850,8 +10850,40 @@ impl Interp {
             // 합성 입력도 계산값 형태로 정규화(키프레임은 파서를 안 거친다).
             let base = &crate::css::normalize_filter_list(base);
             let kf = &crate::css::normalize_filter_list(kf);
-            let bt = Self::split_top_ws(base);
-            let kt = Self::split_top_ws(kf);
+            // 길이가 다르면 짧은 쪽을 상대 리스트의 항등값으로 채운다(§Filter Effects).
+            // 예전엔 길이가 다르면 합성을 통째로 건너뛰어 언더라이닝이 빠졌다.
+            let neutral_for = |tok: &str| -> Option<String> {
+                let name = tok.split('(').next()?.trim().to_ascii_lowercase();
+                let v = match name.as_str() {
+                    "blur" => "0px",
+                    "brightness" | "contrast" | "opacity" | "saturate" => "1",
+                    "grayscale" | "invert" | "sepia" => "0",
+                    "hue-rotate" => "0deg",
+                    _ => return None,
+                };
+                Some(format!("{name}({v})"))
+            };
+            let pad = |short: &[&str], long: &[&str]| -> Option<Vec<String>> {
+                let mut out: Vec<String> = short.iter().map(|x| x.to_string()).collect();
+                for extra in &long[short.len()..] {
+                    out.push(neutral_for(extra)?);
+                }
+                Some(out)
+            };
+            let bt0 = Self::split_top_ws(base);
+            let kt0 = Self::split_top_ws(kf);
+            let (bt_owned, kt_owned) = if bt0.len() < kt0.len() {
+                (pad(&bt0, &kt0)?, kt0.iter().map(|x| x.to_string()).collect::<Vec<_>>())
+            } else if kt0.len() < bt0.len() {
+                (bt0.iter().map(|x| x.to_string()).collect::<Vec<_>>(), pad(&kt0, &bt0)?)
+            } else {
+                (
+                    bt0.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
+                    kt0.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
+                )
+            };
+            let bt: Vec<&str> = bt_owned.iter().map(|x| x.as_str()).collect();
+            let kt: Vec<&str> = kt_owned.iter().map(|x| x.as_str()).collect();
             if bt.len() == kt.len() && !bt.is_empty() {
                 let mut out: Vec<String> = Vec::with_capacity(bt.len());
                 for (b, k) in bt.iter().zip(kt.iter()) {
