@@ -399,6 +399,11 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-block-shape", "corner-inline-shape",
     // 11차: border-image 롱핸드(계산값 노출 — border-image 렌더는 별개).
     "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
+    // 키워드/수 문법을 검증하는 롱핸드(§각 명세). stroke-color 는 아래 색 arm 에서.
+    "baseline-source", "kerning", "color-adjust", "scroll-marker-group",
+    "position-try-order", "position-visibility", "reading-flow", "anchor-scope",
+    "view-transition-group", "flood-opacity", "stop-opacity", "reading-order",
+    "initial-letter", "stroke-color",
     // 검증 arm 은 있는데 등록이 빠져 있던 롱핸드들(README 경고: arm 추가 시 반드시 여기도).
     // 전부 롱핸드다 — 단축을 넣으면 계산값 열거(item/ownKeys)에 들어가 회귀한다.
     "clip", "text-decoration-inset", "text-decoration-skip-spaces", "text-align-all",

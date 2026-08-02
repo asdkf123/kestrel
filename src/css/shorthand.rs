@@ -3151,6 +3151,82 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         | "text-box-edge" | "text-box" | "white-space-trim" => {
             vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
+        // 키워드 집합이 명확한 롱핸드들 — 값을 실제로 검증한다(원문 보존 arm 과 달리
+        // 아무 값이나 통과시키지 않는다).
+        "baseline-source" | "kerning" | "color-adjust" | "scroll-marker-group"
+        | "position-try-order" | "position-visibility" | "reading-flow" | "anchor-scope"
+        | "view-transition-group" | "flood-opacity" | "stop-opacity" | "reading-order"
+        | "initial-letter" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let num_ok = |x: &str| x.parse::<f32>().is_ok();
+            let pct_ok = |x: &str| x.strip_suffix('%').is_some_and(num_ok);
+            let ok = match name {
+                // §CSS Inline 3
+                "baseline-source" => matches!(low.as_str(), "auto" | "first" | "last"),
+                // §SVG 1.1 presentation (auto | <length>)
+                // auto | <length> — 단위 있는 수만(맨수 거부). calc 은 관대 수용.
+                "kerning" => {
+                    low == "auto"
+                        || low.starts_with("calc(")
+                        || ["px", "em", "rem", "ex", "ch", "cm", "mm", "in", "pt", "pc", "q", "vw",
+                            "vh", "vmin", "vmax"]
+                            .iter()
+                            .any(|u| low.strip_suffix(u).is_some_and(|n| n.parse::<f32>().is_ok()))
+                }
+                // §CSS Color Adjust (print-color-adjust 의 레거시 별칭)
+                "color-adjust" => matches!(low.as_str(), "economy" | "exact"),
+                // §CSS Overflow 5
+                "scroll-marker-group" => matches!(low.as_str(), "none" | "before" | "after"),
+                // §css-anchor-position 2
+                "position-try-order" => matches!(
+                    low.as_str(),
+                    "normal" | "most-width" | "most-height" | "most-block-size" | "most-inline-size"
+                ),
+                "position-visibility" => {
+                    low == "always"
+                        || low.split_whitespace().all(|k| {
+                            matches!(k, "anchors-valid" | "anchors-visible" | "no-overflow")
+                        })
+                }
+                "anchor-scope" => {
+                    low == "none"
+                        || low == "all"
+                        || low.split(',').all(|p| p.trim().starts_with("--"))
+                }
+                // §CSS Display 4 reading order
+                "reading-flow" => matches!(
+                    low.as_str(),
+                    "normal" | "source-order" | "flex-visual" | "flex-flow" | "grid-rows"
+                        | "grid-columns" | "grid-order"
+                ),
+                "reading-order" => t.parse::<i32>().is_ok(),
+                // §CSS View Transitions 2 (normal | contain | nearest | <custom-ident>)
+                "view-transition-group" => {
+                    !t.is_empty() && !t.contains(char::is_whitespace) && !num_ok(t)
+                }
+                // <alpha-value> = <number> | <percentage> (§SVG/CSS Masking)
+                "flood-opacity" | "stop-opacity" => num_ok(t) || pct_ok(t),
+                // normal | <number> <integer>? (§CSS Inline 3)
+                _ => {
+                    low == "normal" || {
+                        let parts: Vec<&str> = t.split_whitespace().collect();
+                        !parts.is_empty()
+                            && parts.len() <= 2
+                            && num_ok(parts[0])
+                            && parts.get(1).is_none_or(|p| p.parse::<i32>().is_ok())
+                    }
+                }
+            };
+            if ok {
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         // border-image 수치 롱핸드: 문법 검증 후 원문 보존.
         // mask-border-* (§CSS Masking 1 §5): border-image-* 와 문법이 같다(source/slice/
         // width/outset/repeat). mask-border-mode 만 추가(luminance | alpha).

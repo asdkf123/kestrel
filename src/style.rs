@@ -2302,6 +2302,16 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "border-image-slice" => "100%",
         "border-image-width" => "1",
         "border-image-outset" => "0",
+        // 키워드/수 롱핸드 초기값(각 명세).
+        "baseline-source" | "kerning" | "position-try-order" => "auto",
+        "color-adjust" => "economy",
+        "scroll-marker-group" | "anchor-scope" => "none",
+        "position-visibility" => "always",
+        "reading-flow" => "normal",
+        "view-transition-group" => "normal",
+        "flood-opacity" | "stop-opacity" => "1",
+        "reading-order" => "0",
+        "initial-letter" => "normal",
         // 위 등록분의 초기값(각 명세).
         "clip" => "auto",
         "text-decoration-inset" => "auto",
