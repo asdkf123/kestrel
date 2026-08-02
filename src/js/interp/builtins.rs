@@ -1348,7 +1348,7 @@ impl Interp {
     // 유한성 검사로 NaN 이 되고, -0 은 TimeClip 이 +0 으로 만든다.
     fn make_date_from_args(&mut self, args: &[Value]) -> Result<Value, String> {
         let millis = match args.len() {
-            0 => now_millis(),
+            0 => self.wall_now(),
             1 => match &args[0] {
                 // [[DateValue]] 를 가진 Date → 그 시간값을 그대로(단, TimeClip).
                 Value::Obj(m) if is_date_obj(m) => {
@@ -5141,11 +5141,15 @@ impl Interp {
                 let rc = Rc::new(RefCell::new(m));
                 // 애니 등록(계산값 보간용). duration>0 이고 프로퍼티가 있을 때만.
                 if duration > 0.0 && !props.is_empty() {
-                    self.element_animations.entry(id).or_default().push((
-                        rc.clone(),
-                        duration,
+                    // start_time_ms=None: element.animate 는 아직 스크립트가 currentTime 을
+                    // 직접 모는 모델이다(보간 하네스가 pause 후 대입한다). 진짜 타임라인
+                    // 구동은 Web Animations 객체 모델(2/4)에서 붙인다.
+                    self.element_animations.entry(id).or_default().push(ActiveAnimation {
+                        obj: rc.clone(),
+                        start_time_ms: None,
+                        duration_ms: duration,
                         props,
-                    ));
+                    });
                 }
                 Ok(Value::Obj(rc))
             }
@@ -6841,7 +6845,7 @@ impl Interp {
                 self.xhr_fire(&obj, "loadend");
                 Ok(Value::Undefined)
             }
-            Native::DateNow => Ok(Value::Num(now_millis())),
+            Native::DateNow => Ok(Value::Num(self.wall_now())),
             // Date.parse(str) → 밀리초(파싱 불가 시 NaN)
             Native::DateParse => {
                 let millis = match args.first() {
@@ -6877,7 +6881,7 @@ impl Interp {
                 // §21.4.2.2: new 없이 Date(...) 를 부르면 인자를 무시하고 현재 시각의
                 // toString 문자열을 낸다 (typeof 는 "string").
                 if matches!(self.new_target, None | Some(Value::Undefined)) {
-                    return Ok(Value::Str(date_tostring(now_millis())));
+                    return Ok(Value::Str(date_tostring(self.wall_now())));
                 }
                 self.make_date_from_args(&args)
             }
@@ -11230,14 +11234,22 @@ impl Interp {
                 if !matches!(callback, Value::Fn(_) | Value::Native(_)) {
                     return Ok(Value::Num(0.0)); // 콜백 아니면 무시
                 }
-                let delay_ms = args.get(1).map(to_num).unwrap_or(0.0).max(0.0);
+                let raw = args.get(1).map(to_num).unwrap_or(0.0);
+                let raw = if raw.is_finite() { raw.max(0.0) } else { 0.0 };
+                // §HTML timer initialization steps: 중첩 레벨이 5를 넘으면 최소 4ms.
+                let nesting = self.timer_nesting + 1;
+                let delay_ms = if nesting > 5 { raw.max(4.0) } else { raw };
                 let id = self.next_timer_id;
                 self.next_timer_id += 1;
+                let seq = id;
                 self.timers.push(Timer {
                     id,
                     callback,
                     delay_ms,
                     repeat: n == Native::SetInterval,
+                    fire_at_ms: self.virtual_now_ms + delay_ms,
+                    seq,
+                    nesting,
                 });
                 Ok(Value::Num(id as f64))
             }
@@ -11249,6 +11261,28 @@ impl Interp {
                 }
                 Ok(Value::Undefined)
             }
+            // requestAnimationFrame — 타이머와 분리된 프레임 큐. 콜백은 프레임 경계에서
+            // 프레임 시각을 인자로 받아 실행된다(§HTML run the animation frame callbacks).
+            Native::RequestAnimationFrame => {
+                let callback = args.first().cloned().unwrap_or(Value::Undefined);
+                if !matches!(callback, Value::Fn(_) | Value::Native(_)) {
+                    return Ok(Value::Num(0.0));
+                }
+                let id = self.next_raf_id;
+                self.next_raf_id += 1;
+                self.raf_callbacks
+                    .push(crate::js::interp::natives::RafCallback { id, callback });
+                Ok(Value::Num(id as f64))
+            }
+            Native::CancelAnimationFrame => {
+                if let Some(id) = args.first().map(to_num) {
+                    let id = id as u64;
+                    self.raf_callbacks.retain(|r| r.id != id);
+                }
+                Ok(Value::Undefined)
+            }
+            // performance.now() — 가상 시계의 경과 ms. Date.now() 와 같은 시계다.
+            Native::PerformanceNow => Ok(Value::Num(self.virtual_now_ms)),
             // Promise(executor) (new 없이 호출) — 관대하게 생성자처럼
             Native::PromiseCtor => self.construct(Value::Native(Native::PromiseCtor), args),
             // executor 의 resolve(v): this(=promise)를 v 로 이행

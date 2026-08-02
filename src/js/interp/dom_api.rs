@@ -1729,11 +1729,11 @@ impl Interp {
         {
             return;
         }
+        // 시작 시각 = 지금 + delay. 음수 delay 는 과거에 시작한 것(이미 경과),
+        // 양수 delay 는 아직 시작 전이다(진행률 0 에서 대기 — 예전엔 통째로 버렸다).
         let delay = time_ms(&first(self.style_get(id, "transition-delay")));
-        let elapsed = -delay; // 음수 delay = 과거 시작(경과). 양수면 아직 미시작.
-        if elapsed < 0.0 {
-            return;
-        }
+        let start_time = self.virtual_now_ms + delay as f64;
+        let elapsed = self.virtual_now_ms - start_time; // = -delay
         // easing 은 원문(반올림 안 된 cubic-bezier 인자)으로 읽어야 진행률이 정확하다.
         let easing = first(self.style_get_raw(id, "transition-timing-function"));
         let easing = if easing.is_empty() { "ease".to_string() } else { easing };
@@ -1793,11 +1793,18 @@ impl Interp {
             }
         }
         let mut m = ObjMap::new();
-        m.insert("currentTime".to_string(), Value::Num(elapsed as f64));
+        m.insert("currentTime".to_string(), Value::Num(elapsed));
         let rc = std::rc::Rc::new(std::cell::RefCell::new(m));
         let mut props = std::collections::HashMap::new();
         props.insert(prop.to_string(), (from, to, easing));
-        self.element_animations.entry(id).or_default().push((rc, dur as f64, props));
+        // 트랜지션은 타임라인 구동이다 — start_time 을 주면 가상 시계가 전진할 때마다
+        // currentTime 이 따라 오르고, 콜백 안의 getComputedStyle 이 그 시각의 값을 본다.
+        self.element_animations.entry(id).or_default().push(ActiveAnimation {
+            obj: rc,
+            start_time_ms: Some(start_time),
+            duration_ms: dur as f64,
+            props,
+        });
     }
 
     // element.classList: class 속성을 공백 구분 토큰 목록으로

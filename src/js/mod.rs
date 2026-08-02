@@ -964,8 +964,8 @@ if (!window.performance) {
   var __kMarks = {};
   window.performance = {
     timeOrigin: __kT0,
-    now: function(){ return Date.now() - __kT0; },
-    mark: function(n){ __kMarks[n] = Date.now() - __kT0; },
+    now: __kPerfNow,
+    mark: function(n){ __kMarks[n] = __kPerfNow(); },
     measure: function(){ },
     getEntriesByName: function(){ return []; },
     getEntriesByType: function(){ return []; },

@@ -1359,28 +1359,93 @@ impl Page {
         self.leave_js();
     }
 
-    // 헤드리스: 대기 타이머를 지연 오름차순으로 실행 (interval 도 1회, 라운드 제한).
-    // setTimeout(fn, 0) 지연 초기화 등을 렌더 전에 반영한다.
+    // 헤드리스 기본 이벤트 루프. 기존 호출부가 쓰는 이름을 유지한다.
     pub fn flush_timers_headless(&mut self) {
+        self.run_event_loop(Self::default_virtual_deadline_ms());
+    }
+
+    // 가상 데드라인(ms). 이 시각을 넘는 이벤트는 실행하지 않는다.
+    // setInterval 은 큐가 절대 비지 않으므로 시각 상한이 종료 보장의 하나다.
+    //
+    // 넉넉히(5분) 잡는 이유: 가상 시간은 벽시계를 소모하지 않으므로 상한을 낮게 잡을
+    // 이유가 없고, 낮으면 긴 시나리오가 **중간에서 잘린다**. 실제로 30초로 잡았더니
+    // WPT 트랜지션 하네스(슬라이스마다 2초씩, 합계 40초 이상)가 완료 콜백에 도달하지
+    // 못해 결과를 한 줄도 못 냈다. 실제 종료는 콜백 횟수 상한과 JS 예산이 맡는다.
+    fn default_virtual_deadline_ms() -> f64 {
+        std::env::var("KESTREL_VIRTUAL_TIME_MS")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(300_000.0)
+    }
+
+    // 가상 시계 이벤트 루프. 가장 이른 타이머/프레임으로 **시계를 전진시킨 뒤** 콜백을
+    // 실행한다. 그래서 setTimeout(f, 2000) 안에서 부른 performance.now() 는 2000 이상이고,
+    // 진행 중인 트랜지션의 getComputedStyle 은 그 시각의 보간값을 돌려준다.
+    //
+    // 종료 조건 셋이 모두 필요하다: 가상 데드라인(반복 타이머), JS 예산(폭주 콜백),
+    // 콜백 횟수 상한(가상 시간은 싸게 흐르므로 시각 상한만으로는 병리 케이스를 못 막는다).
+    pub fn run_event_loop(&mut self, deadline_ms: f64) {
+        const MAX_CALLBACKS: u32 = 20_000;
+        // 프레임 상한. rAF 로 계속 자기를 다시 예약하는 애니메이션 루프는 데드라인까지
+        // 1,800 프레임을 돌 수 있다. 우리는 한 장을 렌더하는 배치 실행이므로 초반
+        // 몇 초분만 돌린다 — 시맨틱을 속이는 게 아니라 실행 구간을 자르는 것이다.
+        const MAX_FRAMES: u32 = 300;
         let mut last_version = self.dom.version();
-        for _round in 0..50 {
+        let mut fired: u32 = 0;
+        let mut frames: u32 = 0;
+        loop {
             // 페이지 전체 JS 예산이 바닥나면 더 돌리지 않는다. 개별 콜백 예산만 있으면
             // 폭주 콜백이 N개일 때 N × 예산이 든다 (fmkorea 에서 25초를 먹었다).
             if self.js.budget_exhausted() {
                 println!("[js] 타이머 중단 — 페이지 JS 예산 소진");
                 break;
             }
-            let mut pending = self.take_timers();
-            pending.retain(|t| !self.js.cleared.contains(&t.id));
-            if pending.is_empty() {
+            if fired >= MAX_CALLBACKS {
+                println!("[js] 타이머 중단 — 콜백 {MAX_CALLBACKS}회 상한");
                 break;
             }
-            pending.sort_by(|a, b| a.delay_ms.partial_cmp(&b.delay_ms).unwrap());
-            for t in pending {
-                if self.js.cleared.contains(&t.id) || self.js.budget_exhausted() {
+            let Some(next) = self.js.next_event_time() else { break };
+            if next > deadline_ms {
+                break;
+            }
+            let is_frame = !self.js.raf_callbacks.is_empty()
+                && (self.js.next_frame_time() - next).abs() < f64::EPSILON;
+            self.js.advance_clock_to(next);
+            // 프레임 시각이면 프레임 콜백을 먼저(§HTML: 렌더링 기회에서 실행),
+            // 그다음 같은 시각에 만료된 타이머.
+            let mut callbacks: Vec<(crate::js::interp::Value, u32)> = Vec::new();
+            if is_frame {
+                let frame_time = self.js.virtual_now_ms;
+                frames += 1;
+                if frames > MAX_FRAMES {
+                    // 남은 프레임 콜백은 버린다(다음 프레임을 영원히 기다리는 것과 같다).
+                    self.js.raf_callbacks.clear();
                     continue;
                 }
-                self.fire_timer_inner(t.callback);
+                for cb in self.js.take_frame_callbacks() {
+                    self.enter_js();
+                    self.js.run_callback_with_args(cb, vec![crate::js::interp::Value::Num(
+                        frame_time,
+                    )]);
+                    for line in self.js.console.drain(..) {
+                        println!("[console] {}", line);
+                    }
+                    self.leave_js();
+                    fired += 1;
+                }
+            }
+            callbacks.extend(self.js.take_due_timers());
+            for (cb, nesting) in callbacks {
+                if self.js.budget_exhausted() {
+                    break;
+                }
+                // 실행 중인 타이머의 중첩 레벨을 현재 레벨로 삼는다 — 이 콜백 안에서
+                // 등록되는 타이머는 여기에 1 을 더해 클램프를 판정한다(§HTML).
+                self.js.timer_nesting = nesting;
+                self.fire_timer_inner(cb);
+                self.js.timer_nesting = 0;
+                fired += 1;
             }
             // 이 라운드에서 DOM 이 실제로 바뀌었을 때만 다시 짓는다.
             // (레이아웃은 큰 페이지에서 수 초다 — 안 바뀌었는데 다시 지으면 순수 낭비다.)
@@ -2963,6 +3028,192 @@ mod tests {
         assert_eq!(text_of_id(&page.dom, "out").unwrap(), "before", "flush 전엔 미실행");
         page.flush_timers_headless();
         assert_eq!(text_of_id(&page.dom, "out").unwrap(), "deferred ran");
+    }
+
+    #[test]
+    fn timers_run_in_fire_time_order_not_registration_order() {
+        // 지연이 긴 타이머를 먼저 등록해도 실행은 발화 시각 순서다.
+        let mut page = make_page(
+            "<p id=\"out\"></p>\
+             <script>\
+             var o = document.getElementById('out');\
+             setTimeout(function() { o.textContent += 'c'; }, 300);\
+             setTimeout(function() { o.textContent += 'a'; }, 10);\
+             setTimeout(function() { o.textContent += 'b'; }, 100);\
+             </script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "abc");
+    }
+
+    #[test]
+    fn same_time_timers_run_in_registration_order() {
+        // 동시각이면 등록 순서(§HTML: 타이머 큐 순서).
+        let mut page = make_page(
+            "<p id=\"out\"></p>\
+             <script>\
+             var o = document.getElementById('out');\
+             setTimeout(function() { o.textContent += '1'; }, 50);\
+             setTimeout(function() { o.textContent += '2'; }, 50);\
+             setTimeout(function() { o.textContent += '3'; }, 50);\
+             </script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "123");
+    }
+
+    #[test]
+    fn virtual_clock_advances_to_timer_delay() {
+        // setTimeout(f, 2000) 의 콜백 안에서 본 시계는 2000ms 이상이어야 한다.
+        // 예전엔 지연을 무시하고 즉시 실행해 performance.now() 가 0 이었다.
+        let mut page = make_page(
+            "<p id=\"out\">?</p>\
+             <script>\
+             setTimeout(function() { \
+               document.getElementById('out').textContent = \
+                 (performance.now() >= 2000) + ',' + Math.round(performance.now()); \
+             }, 2000);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "true,2000");
+    }
+
+    #[test]
+    fn date_now_shares_the_virtual_clock() {
+        // Date.now() 와 performance.now() 가 같은 시계에서 나와야 경과 계산이 일관된다.
+        let mut page = make_page(
+            "<p id=\"out\">?</p>\
+             <script>\
+             var t0 = Date.now();\
+             setTimeout(function() { \
+               document.getElementById('out').textContent = String(Date.now() - t0); \
+             }, 1500);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "1500");
+    }
+
+    #[test]
+    fn set_interval_rearms_at_its_period() {
+        // 반복 타이머는 주기마다 다시 발화한다(예전 헤드리스 루프는 라운드당 1회 근사였다).
+        let mut page = make_page(
+            "<p id=\"out\"></p>\
+             <script>\
+             var n = 0;\
+             var id = setInterval(function() { \
+               n++; document.getElementById('out').textContent = n + '@' + Math.round(performance.now()); \
+               if (n === 3) clearInterval(id); \
+             }, 100);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "3@300");
+    }
+
+    #[test]
+    fn nested_timers_clamp_to_four_ms() {
+        // §HTML timer initialization steps: 중첩 5단계를 넘으면 지연 최소 4ms.
+        // 0ms 체인을 8단계 돌리면 5단계째부터 4ms 씩 붙는다.
+        let mut page = make_page(
+            "<p id=\"out\">?</p>\
+             <script>\
+             var n = 0;\
+             function tick() { \
+               n++; \
+               if (n === 8) { document.getElementById('out').textContent = String(Math.round(performance.now())); return; } \
+               setTimeout(tick, 0); \
+             }\
+             setTimeout(tick, 0);</script>",
+        );
+        page.flush_timers_headless();
+        // 중첩 6·7·8단계에서만 클램프 → 4ms × 3 = 12ms
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "12");
+    }
+
+    #[test]
+    fn raf_runs_on_frame_boundary_and_reschedules_to_next_frame() {
+        // rAF 는 60Hz 격자에서 실행되고, 콜백 인자로 프레임 시각을 받는다.
+        // 콜백 안에서 다시 등록한 rAF 는 **다음** 프레임으로 간다(즉시 재실행이면 무한 루프).
+        let mut page = make_page(
+            "<p id=\"out\"></p>\
+             <script>\
+             var n = 0;\
+             function frame(t) { \
+               n++; \
+               document.getElementById('out').textContent += Math.round(t) + ';'; \
+               if (n < 3) requestAnimationFrame(frame); \
+             }\
+             requestAnimationFrame(frame);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "17;33;50;");
+    }
+
+    #[test]
+    fn cancel_animation_frame_actually_cancels() {
+        // 예전엔 clearTimeout 별칭이라 rAF 큐를 건드리지 못해 취소가 무효였다.
+        let mut page = make_page(
+            "<p id=\"out\">none</p>\
+             <script>\
+             var id = requestAnimationFrame(function() { \
+               document.getElementById('out').textContent = 'ran'; \
+             });\
+             cancelAnimationFrame(id);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "none");
+    }
+
+    #[test]
+    fn event_loop_stops_at_virtual_deadline() {
+        // 데드라인을 넘는 이벤트는 실행하지 않는다. 반복 타이머의 유일한 종료 보장이다.
+        let mut page = make_page(
+            "<p id=\"out\">no</p>\
+             <script>setTimeout(function() { \
+               document.getElementById('out').textContent = 'yes'; \
+             }, 5000);</script>",
+        );
+        page.run_event_loop(1000.0);
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "no", "데드라인 밖 타이머는 미실행");
+        page.run_event_loop(10_000.0);
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "yes");
+    }
+
+    #[test]
+    fn clock_is_monotonic_across_loop_runs() {
+        // 과거 시각 타이머(이미 지난 0ms)가 시계를 되돌리면 안 된다.
+        let mut page = make_page(
+            "<p id=\"out\">?</p>\
+             <script>\
+             setTimeout(function() { \
+               setTimeout(function() { \
+                 document.getElementById('out').textContent = String(Math.round(performance.now())); \
+               }, 0); \
+             }, 4000);</script>",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "4000");
+        assert!(page.js.virtual_now_ms >= 4000.0);
+    }
+
+    #[test]
+    fn running_transition_advances_with_the_clock() {
+        // 트랜지션은 타임라인 구동이다 — 시계가 절반 지점까지 가면 getComputedStyle 이
+        // 중간값을 봐야 한다. 예전엔 시간이 안 흘러 언제 읽어도 시작값이었다.
+        let mut page = make_page(
+            "<div id=\"d\" style=\"transition: opacity 1000ms linear; opacity: 0\">x</div>\
+             <p id=\"out\">?</p>\
+             <script>\
+             var d = document.getElementById('d');\
+             getComputedStyle(d).opacity;\
+             d.style.opacity = '1';\
+             setTimeout(function() { \
+               document.getElementById('out').textContent = getComputedStyle(d).opacity; \
+             }, 500);</script>",
+        );
+        page.flush_timers_headless();
+        let got = text_of_id(&page.dom, "out").unwrap();
+        let n: f32 = got.parse().unwrap_or(-1.0);
+        assert!((n - 0.5).abs() < 0.02, "500ms 지점의 opacity 는 0.5 근처여야: {got}");
     }
 
     #[test]

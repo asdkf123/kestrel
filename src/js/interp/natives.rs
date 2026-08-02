@@ -379,6 +379,9 @@ pub enum Native {
     SetTimeout,
     SetInterval,
     ClearTimer,
+    RequestAnimationFrame,
+    CancelAnimationFrame,
+    PerformanceNow,
     // Promise/fetch
     PromiseCtor,          // new Promise(executor)
     PromiseSettleResolve, // executor 의 resolve (this=promise)
@@ -436,6 +439,21 @@ pub struct Timer {
     pub callback: Value,
     pub delay_ms: f64,
     pub repeat: bool,
+    // 가상 시계 기준 발화 시각(ms). 등록 시각 + 클램프된 지연(§HTML timer initialization steps).
+    pub fire_at_ms: f64,
+    // 동시각 타이 브레이커 — 같은 시각이면 등록 순서로 실행한다(§HTML: 큐 순서).
+    pub seq: u64,
+    // §HTML 타이머 중첩 레벨. 콜백 실행 중에 만든 타이머는 이 값이 1 크고,
+    // 5를 넘으면 지연이 최소 4ms 로 클램프된다. 레벨은 루프가 아니라 **타이머마다** 실린다
+    // — 콜백끼리 서로 중첩 호출되지 않으므로 루프 카운터로는 깊이를 셀 수 없다.
+    pub nesting: u32,
+}
+
+// requestAnimationFrame 으로 등록된 프레임 콜백. 타이머와 큐가 분리되어 있고
+// (§HTML "run the animation frame callbacks") 프레임 경계에서 한 번에 실행된다.
+pub struct RafCallback {
+    pub id: u64,
+    pub callback: Value,
 }
 
 // 원시 래퍼의 종류 (thisBooleanValue/thisNumberValue/thisStringValue 의 brand).
@@ -1018,6 +1036,9 @@ pub fn native_meta(n: &Native) -> Option<(&'static str, u32)> {
         SetTimeout => ("setTimeout", 2),
         SetInterval => ("setInterval", 2),
         ClearTimer => ("clearTimeout", 1),
+        RequestAnimationFrame => ("requestAnimationFrame", 1),
+        CancelAnimationFrame => ("cancelAnimationFrame", 1),
+        PerformanceNow => ("now", 0),
         QueueMicrotask => ("queueMicrotask", 1),
         StructuredClone => ("structuredClone", 1),
         // ── Promise 정적 ──

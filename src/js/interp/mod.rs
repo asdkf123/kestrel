@@ -245,6 +245,26 @@ fn callee_label(e: &Expr) -> String {
     }
 }
 
+// 프레임 간격(ms). 60Hz 를 가정한다 — requestAnimationFrame 의 프레임 경계 격자이자
+// 지연 0 인 setInterval 의 최소 간격이다.
+pub const FRAME_MS: f64 = 1000.0 / 60.0;
+
+// 요소에 걸린 활성 애니메이션 하나. element.animate 와 CSS 트랜지션이 같은 표현을 쓴다.
+//
+// 예전엔 이름 없는 3튜플이라 필드 의미가 위치로만 구분됐다. 시작 시각이 붙으면서
+// 이름 있는 구조체로 올린다 — 가상 시계가 전진할 때 currentTime 을 갱신하려면
+// "언제 시작했는지"를 항목마다 알아야 한다.
+pub struct ActiveAnimation {
+    // JS 가 보는 Animation 객체. currentTime 이 여기 살고, 스크립트가 직접 대입할 수도 있다.
+    pub obj: std::rc::Rc<std::cell::RefCell<ObjMap>>,
+    // 가상 시계 기준 시작 시각(ms). None 이면 시계가 건드리지 않는다 — 스크립트가
+    // currentTime 을 직접 모는 경우(WPT 보간 하네스가 그렇게 한다)를 깨뜨리지 않기 위해서다.
+    pub start_time_ms: Option<f64>,
+    pub duration_ms: f64,
+    // dash-prop → (from, to, easing)
+    pub props: HashMap<String, (String, String, String)>,
+}
+
 pub struct Interp {
     pub global: EnvRef,
     pub console: Vec<String>, // console.log 캡처 (호출측이 터미널에 출력)
@@ -316,17 +336,9 @@ pub struct Interp {
     // 계산된 스타일 (NodeId → 대시 프로퍼티명 → CSS 텍스트). 리빌드 후 호스트가 채움.
     // getComputedStyle 이 읽는다. 빈 맵이면 빈 문자열.
     pub computed_styles: std::collections::HashMap<crate::dom::NodeId, HashMap<String, String>>,
-    // 요소별 활성 애니메이션(element.animate). getComputedStyle 이 currentTime 에서 키프레임
-    // 을 보간해 계산값에 덮어쓴다. (Animation 객체 Rc[currentTime], 지속시간ms, 프로퍼티맵
-    // dash-prop→(from, to, from키프레임 easing)). 애니 있는 요소만 영향(additive).
-    pub element_animations: std::collections::HashMap<
-        crate::dom::NodeId,
-        Vec<(
-            std::rc::Rc<std::cell::RefCell<ObjMap>>,
-            f64,
-            HashMap<String, (String, String, String)>,
-        )>,
-    >,
+    // 요소별 활성 애니메이션(element.animate / CSS 트랜지션). getComputedStyle 이
+    // currentTime 에서 키프레임을 보간해 계산값에 덮어쓴다. 애니 있는 요소만 영향(additive).
+    pub element_animations: std::collections::HashMap<crate::dom::NodeId, Vec<ActiveAnimation>>,
     // <canvas> 2D 그리기 명령 (NodeId → ops). 호스트가 렌더 시 DisplayItem 으로 변환.
     // 캔버스 미지원 기능 경고 중복 방지
     canvas_warned: std::collections::HashSet<String>,
@@ -344,6 +356,20 @@ pub struct Interp {
     pub timers: Vec<Timer>,
     pub cleared: std::collections::HashSet<u64>,
     next_timer_id: u64,
+    // ── 가상 시계 ──
+    // 페이지 시작 이후 흐른 가상 시각(ms). JS 가 보는 유일한 시계다 — performance.now()
+    // 와 Date 계열이 여기서 나오고, 타이머 발화 시각과 애니메이션 currentTime 도 이걸 쓴다.
+    // 전진시키는 주체는 호스트의 이벤트 루프(window.rs run_event_loop)다. 인터프리터는
+    // 스스로 시각을 밀지 않는다 — 그래야 나중에 실시간 구동을 붙일 때 루프만 바꾸면 된다.
+    pub virtual_now_ms: f64,
+    // 페이지 시작 시각의 실제 벽시계(ms, epoch). Date.now()/new Date() 의 기준점.
+    time_origin_wall_ms: f64,
+    // §HTML 타이머 중첩 단계. 타이머 콜백 안에서 등록한 타이머는 단계가 1 오르고,
+    // 5를 넘으면 지연이 최소 4ms 로 클램프된다.
+    pub timer_nesting: u32,
+    // requestAnimationFrame 큐 + 다음 프레임 시각(가상 ms). 프레임 경계는 60Hz 격자.
+    pub raf_callbacks: Vec<crate::js::interp::natives::RafCallback>,
+    next_raf_id: u64,
     // Promise 마이크로태스크 큐: (핸들러, 값, 의존 promise, is_reject 반응). 핸들러가
     // 비함수면 값을 그대로 전파(is_reject 면 dep 거부, 아니면 이행). 스크립트/타이머 후 드레인.
     microtasks: std::collections::VecDeque<(Value, Value, Value, bool)>,
@@ -898,8 +924,11 @@ impl Interp {
         env_declare(&global, "setInterval", Value::Native(Native::SetInterval));
         env_declare(&global, "clearTimeout", Value::Native(Native::ClearTimer));
         env_declare(&global, "clearInterval", Value::Native(Native::ClearTimer));
-        env_declare(&global, "requestAnimationFrame", Value::Native(Native::SetTimeout));
-        env_declare(&global, "cancelAnimationFrame", Value::Native(Native::ClearTimer));
+        // performance.now() 의 실제 구현(프렐류드가 이 이름을 집어 쓴다). 가상 시계를
+        // 읽는 네이티브다 — 예전 프렐류드 구현은 벽시계라 항상 0 근처였다.
+        env_declare(&global, "__kPerfNow", Value::Native(Native::PerformanceNow));
+        env_declare(&global, "requestAnimationFrame", Value::Native(Native::RequestAnimationFrame));
+        env_declare(&global, "cancelAnimationFrame", Value::Native(Native::CancelAnimationFrame));
         // getComputedStyle — 리빌드 후 채워진 computed_styles 를 읽는 실제 계산 스타일.
         env_declare(&global, "getComputedStyle", Value::Native(Native::GetComputedStyle));
         // matchMedia — CSS 의 @media 와 같은 평가기를 쓴다. 예전엔 프렐류드가 항상
@@ -1140,8 +1169,14 @@ impl Interp {
         window.insert("scrollTo".to_string(), Value::Native(Native::ScrollTo));
         window.insert("scroll".to_string(), Value::Native(Native::ScrollTo));
         window.insert("scrollBy".to_string(), Value::Native(Native::ScrollBy));
-        window.insert("requestAnimationFrame".to_string(), Value::Native(Native::SetTimeout));
-        window.insert("cancelAnimationFrame".to_string(), Value::Native(Native::ClearTimer));
+        window.insert(
+            "requestAnimationFrame".to_string(),
+            Value::Native(Native::RequestAnimationFrame),
+        );
+        window.insert(
+            "cancelAnimationFrame".to_string(),
+            Value::Native(Native::CancelAnimationFrame),
+        );
         window.insert("setTimeout".to_string(), Value::Native(Native::SetTimeout));
         window.insert("setInterval".to_string(), Value::Native(Native::SetInterval));
         // 이벤트 인터페이스 생성자 (각자 자기 prototype 을 갖는다)
@@ -1635,6 +1670,11 @@ impl Interp {
             timers: Vec::new(),
             cleared: std::collections::HashSet::new(),
             next_timer_id: 1,
+            virtual_now_ms: 0.0,
+            time_origin_wall_ms: crate::js::interp::value::now_millis(),
+            timer_nesting: 0,
+            raf_callbacks: Vec::new(),
+            next_raf_id: 1,
             microtasks: std::collections::VecDeque::new(),
             fn_proto,
             async_fn_proto,
@@ -2110,6 +2150,90 @@ impl Interp {
             return (true, value);
         }
         (true, Value::Undefined)
+    }
+
+    // ── 가상 시계 ──
+
+    // JS 가 보는 벽시계(Date.now / new Date). 시작 시각 + 가상 경과.
+    // performance.now() 와 같은 시계에서 나와야 경과를 재는 코드가 일관된다.
+    pub fn wall_now(&self) -> f64 {
+        self.time_origin_wall_ms + self.virtual_now_ms
+    }
+
+    // 다음 프레임 경계(가상 ms). 60Hz 격자에서 현재 시각 **다음** 칸이다.
+    pub fn next_frame_time(&self) -> f64 {
+        let grid = (self.virtual_now_ms / FRAME_MS).floor() + 1.0;
+        grid * FRAME_MS
+    }
+
+    // 다음에 처리할 이벤트의 가상 시각(타이머와 프레임 중 이른 쪽). 없으면 None.
+    pub fn next_event_time(&self) -> Option<f64> {
+        let timer = self
+            .timers
+            .iter()
+            .filter(|t| !self.cleared.contains(&t.id))
+            .map(|t| t.fire_at_ms)
+            .fold(f64::INFINITY, f64::min);
+        let frame =
+            if self.raf_callbacks.is_empty() { f64::INFINITY } else { self.next_frame_time() };
+        let next = timer.min(frame);
+        next.is_finite().then_some(next)
+    }
+
+    // 시계를 t 로 전진시킨다. 뒤로는 가지 않는다(단조 증가).
+    pub fn advance_clock_to(&mut self, t: f64) {
+        if t > self.virtual_now_ms {
+            self.virtual_now_ms = t;
+        }
+        self.sync_animation_times();
+    }
+
+    // 시작 시각이 있는 애니메이션의 currentTime 을 현재 가상 시각에 맞춘다.
+    // start_time_ms 가 None 인 항목(스크립트가 currentTime 을 직접 모는 경우)은 건드리지 않는다.
+    fn sync_animation_times(&mut self) {
+        let now = self.virtual_now_ms;
+        for anims in self.element_animations.values() {
+            for a in anims {
+                if let Some(start) = a.start_time_ms {
+                    a.obj
+                        .borrow_mut()
+                        .insert("currentTime".to_string(), Value::Num(now - start));
+                }
+            }
+        }
+    }
+
+    // 현재 가상 시각에 발화할 타이머의 콜백들을 등록 순서로 꺼낸다.
+    // interval 은 다음 주기로 재장전하고, 한 번짜리는 목록에서 제거한다.
+    pub fn take_due_timers(&mut self) -> Vec<(Value, u32)> {
+        let now = self.virtual_now_ms;
+        let mut due: Vec<(u64, Value, u32)> = Vec::new();
+        let mut keep: Vec<Timer> = Vec::new();
+        for mut t in std::mem::take(&mut self.timers) {
+            if self.cleared.contains(&t.id) {
+                continue;
+            }
+            if t.fire_at_ms > now {
+                keep.push(t);
+                continue;
+            }
+            due.push((t.seq, t.callback.clone(), t.nesting));
+            if t.repeat {
+                // 다음 주기. 지연이 0 이면 프레임 격자만큼 띄워 무한 루프를 막는다.
+                let step = if t.delay_ms > 0.0 { t.delay_ms } else { FRAME_MS };
+                t.fire_at_ms = now + step;
+                keep.push(t);
+            }
+        }
+        self.timers = keep;
+        due.sort_by_key(|(seq, _, _)| *seq);
+        due.into_iter().map(|(_, cb, nesting)| (cb, nesting)).collect()
+    }
+
+    // 프레임 콜백을 전부 꺼낸다. 실행 **전에** 큐를 비우므로, 콜백 안에서 다시 등록한
+    // rAF 는 다음 프레임으로 간다(§HTML: 프레임 콜백 목록을 먼저 비우고 실행).
+    pub fn take_frame_callbacks(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.raf_callbacks).into_iter().map(|r| r.callback).collect()
     }
 
     pub fn drain_microtasks(&mut self) {
@@ -3685,8 +3809,13 @@ impl Interp {
     // 예전엔 안 비워서, 타이머 안에서 일어난 DOM 변경의 MutationObserver 배달과
     // 그 안에서 만든 Promise 의 .then 이 영영 안 돌았다 (조용히).
     pub fn run_callback(&mut self, cb: Value) {
+        self.run_callback_with_args(cb, Vec::new());
+    }
+
+    // 인자를 주는 콜백 실행 — requestAnimationFrame 이 프레임 시각을 넘길 때 쓴다.
+    pub fn run_callback_with_args(&mut self, cb: Value, args: Vec<Value>) {
         self.begin_unit();
-        if let Err(e) = self.call_value(cb, None, Vec::new()) {
+        if let Err(e) = self.call_value(cb, None, args) {
             println!("[js error] {}", e);
         }
         self.drain_microtasks();
@@ -3702,8 +3831,11 @@ impl Interp {
     // DOM 이 없는 순수 JS 실행용 (window 의 타이머 루프와 별개).
     pub fn run_event_loop(&mut self) {
         self.drain_microtasks();
-        // 타이머: 지연 오름차순으로 하나씩. 각 타이머 사이에 마이크로태스크를 흘린다.
-        // interval 은 무한이라 한 번만 (근사), 총 라운드는 상한을 둔다.
+        // 타이머: 발화 시각 오름차순으로 하나씩(동시각은 등록 순서). 꺼낼 때마다 시계를
+        // 그 시각으로 전진시킨다 — DOM 없는 순수 JS 실행에서도 시간은 흘러야 한다.
+        // interval 은 다음 주기로 재장전되므로 라운드 상한이 종료를 보장한다.
+        // 반복 타이머는 큐를 비우지 않으므로 가상 시간 상한이 필요하다(페이지 루프와 같은 원리).
+        const JS_DEADLINE_MS: f64 = 60_000.0;
         for _round in 0..100_000 {
             if self.timers.is_empty() {
                 break;
@@ -3711,15 +3843,36 @@ impl Interp {
             if self.budget_exhausted() {
                 break;
             }
-            // 지연이 가장 짧은 타이머를 꺼낸다 (동률이면 등록 순서)
             let mut best = 0usize;
             for i in 1..self.timers.len() {
-                if self.timers[i].delay_ms < self.timers[best].delay_ms {
+                let (a, b) = (&self.timers[i], &self.timers[best]);
+                if (a.fire_at_ms, a.seq) < (b.fire_at_ms, b.seq) {
                     best = i;
                 }
             }
             let timer = self.timers.remove(best);
             if self.cleared.contains(&timer.id) {
+                continue;
+            }
+            if timer.fire_at_ms > JS_DEADLINE_MS {
+                break;
+            }
+            self.advance_clock_to(timer.fire_at_ms);
+            self.timer_nesting = timer.nesting;
+            if timer.repeat {
+                // 다음 주기로 재장전. 가상 시간 상한이 종료를 보장한다(아래 데드라인).
+                let step = if timer.delay_ms > 0.0 { timer.delay_ms } else { FRAME_MS };
+                let cb = timer.callback.clone();
+                let mut next = timer;
+                next.fire_at_ms = self.virtual_now_ms + step;
+                self.timers.push(next);
+                self.begin_unit();
+                if let Err(e) = self.call_value(cb, None, Vec::new()) {
+                    if !e.starts_with(STEP_LIMIT_MSG) {
+                        println!("[js error] {}", e);
+                    }
+                }
+                self.drain_microtasks();
                 continue;
             }
             self.begin_unit();
@@ -8084,13 +8237,13 @@ impl Interp {
         // element.animate / CSS transition 스냅샷 우선.
         if let Some(anims) = self.element_animations.get(&id) {
             let mut result = None;
-            for (rc, duration, props) in anims {
-                if *duration <= 0.0 {
+            for a in anims {
+                if a.duration_ms <= 0.0 {
                     continue;
                 }
-                if let Some((from, to, easing)) = props.get(dash_prop) {
-                    let ct = rc.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
-                    let progress = (ct / duration).clamp(0.0, 1.0) as f32;
+                if let Some((from, to, easing)) = a.props.get(dash_prop) {
+                    let ct = a.obj.borrow().get("currentTime").map(to_num).unwrap_or(0.0);
+                    let progress = (ct / a.duration_ms).clamp(0.0, 1.0) as f32;
                     let eased = Self::eval_easing(easing, progress);
                     let from = Self::resolve_font_units(from, fs, rfs);
                     let to = Self::resolve_font_units(to, fs, rfs);
