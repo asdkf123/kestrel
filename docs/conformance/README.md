@@ -228,7 +228,7 @@
 | css-borders ★ | 426 / 1,151 | 37.0% |
 | css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
-| filter-effects ★ | 1,415 / 2,452 | 57.7% |
+| filter-effects ★ | 1,653 / 2,452 | 67.4% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
@@ -422,7 +422,7 @@
 | css-multicol | 972 | 1,098 | +126 |
 | css-box | 546 | 618 | +72 |
 | css-logical | 669 | 689 | +20 |
-| filter-effects | 833 | 1,415 | +582 |
+| filter-effects | 833 | 1,653 | +820 |
 | 그 외(overflow/text-decor/ruby/images/backgrounds/display/dom/animations) | | | +38 |
 
 **주요 변경**
@@ -443,6 +443,10 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **필터 범위 클램프 + accumulate 함수별 덧셈**: 보간·합성 결과가 범위를 벗어나던 것을
+  각 함수 정의대로 자른다(blur/brightness/contrast/saturate ≥ 0, grayscale/invert/sepia/
+  opacity 는 [0,1]). accumulate 합성은 같은 함수 순서일 때 인자를 함수별로 더하되
+  곱셈형(brightness/contrast/saturate/opacity)은 항등값 1 을 빼고 더한다(§Web Animations).
 - **각도 보간**: deg/rad/grad/turn 을 도로 환산해 보간(결과는 deg). hue-rotate 같은 함수
   인자가 이 경로를 탄다. **단, 그라디언트/이미지 함수는 일반 함수 보간에서 제외한다** —
   §CSS Images 의 보간은 스톱 위치 정규화·보간 색공간·캐논 직렬화를 요구해서 인자별 lerp

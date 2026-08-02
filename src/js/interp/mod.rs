@@ -9674,12 +9674,13 @@ impl Interp {
                 }
                 Some(out.join(" "))
             };
-            if let (Some(f2), Some(g2)) = (pad(from, to), pad(to, from)) {
-                if f2 != from || g2 != to {
-                    if let Some(v) = Self::interp_css_value(&f2, &g2, eased) {
-                        return Some(v);
-                    }
-                }
+            let (f2, g2) = (pad(from, to), pad(to, from));
+            let (f2, g2) = (
+                f2.unwrap_or_else(|| from.to_string()),
+                g2.unwrap_or_else(|| to.to_string()),
+            );
+            if let Some(v) = Self::interp_css_value(&f2, &g2, eased) {
+                return Some(Self::clamp_filter_list(&v));
             }
         }
         // transform 매칭 리스트 보간(rotate/translate/scale 함수별 인자 보간 → 행렬).
@@ -10510,6 +10511,58 @@ impl Interp {
         None
     }
 
+    // 필터 함수 인자를 각자의 허용 범위로 자른다(§Filter Effects 각 함수 정의).
+    // 보간·합성 결과가 범위를 벗어날 수 있다 — blur(-5px) 같은 값은 blur(0px) 이다.
+    fn clamp_filter_list(list: &str) -> String {
+        let mut out: Vec<String> = Vec::new();
+        for tok in Self::split_top_ws(list) {
+            let Some(open) = tok.find('(') else {
+                out.push(tok.to_string());
+                continue;
+            };
+            if !tok.ends_with(')') {
+                out.push(tok.to_string());
+                continue;
+            }
+            let name = tok[..open].trim().to_ascii_lowercase();
+            let arg = tok[open + 1..tok.len() - 1].trim();
+            // (하한, 상한) — None 은 무제한. hue-rotate/drop-shadow 는 범위 없음.
+            let range: Option<(f32, Option<f32>)> = match name.as_str() {
+                "blur" | "brightness" | "contrast" | "saturate" => Some((0.0, None)),
+                "grayscale" | "invert" | "sepia" | "opacity" => Some((0.0, Some(1.0))),
+                _ => None,
+            };
+            let Some((lo, hi)) = range else {
+                out.push(tok.to_string());
+                continue;
+            };
+            // 단위(px/%)를 떼고 수만 자른 뒤 되붙인다.
+            let (num_str, unit) = if let Some(n) = arg.strip_suffix("px") {
+                (n.trim(), "px")
+            } else if let Some(n) = arg.strip_suffix('%') {
+                (n.trim(), "%")
+            } else {
+                (arg, "")
+            };
+            let Ok(v) = num_str.parse::<f32>() else {
+                out.push(tok.to_string());
+                continue;
+            };
+            // 퍼센트는 상한이 100% 다(수 1.0 에 해당).
+            let (lo, hi) = if unit == "%" { (lo * 100.0, hi.map(|h| h * 100.0)) } else { (lo, hi) };
+            let c = match hi {
+                Some(h) => v.clamp(lo, h),
+                None => v.max(lo),
+            };
+            if (c - v).abs() < f32::EPSILON {
+                out.push(tok.to_string());
+            } else {
+                out.push(format!("{}({}{})", name, crate::style::num_css(c), unit));
+            }
+        }
+        out.join(" ")
+    }
+
     // name(args) 꼴 두 값의 인자별 보간. 이름이 같고 최상위 콤마 인자 수가 같아야 한다.
     fn interp_fn_args(f: &str, g: &str, t: f32) -> Option<String> {
         let split = |s: &str| -> Option<(String, String)> {
@@ -10665,6 +10718,50 @@ impl Interp {
     }
 
     pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        // filter/backdrop-filter 의 accumulate: 같은 함수 순서면 인자를 함수별로 더한다
+        // (§Web Animations 누적 + §Filter Effects). add 는 이어붙이기라 호출측이 처리한다.
+        if matches!(dash, "filter" | "backdrop-filter") {
+            let bt = Self::split_top_ws(base);
+            let kt = Self::split_top_ws(kf);
+            if bt.len() == kt.len() && !bt.is_empty() {
+                let mut out: Vec<String> = Vec::with_capacity(bt.len());
+                for (b, k) in bt.iter().zip(kt.iter()) {
+                    let (bo, ko) = (b.find('(')?, k.find('(')?);
+                    let (bn, kn) = (b[..bo].trim().to_ascii_lowercase(), k[..ko].trim().to_ascii_lowercase());
+                    if bn != kn || !b.ends_with(')') || !k.ends_with(')') {
+                        return None;
+                    }
+                    let (ba, ka) = (b[bo + 1..b.len() - 1].trim(), k[ko + 1..k.len() - 1].trim());
+                    let strip = |a: &str| -> Option<(f32, &'static str)> {
+                        if let Some(n) = a.strip_suffix("px") {
+                            n.trim().parse::<f32>().ok().map(|v| (v, "px"))
+                        } else if let Some(n) = a.strip_suffix('%') {
+                            n.trim().parse::<f32>().ok().map(|v| (v, "%"))
+                        } else if let Some(n) = a.strip_suffix("deg") {
+                            n.trim().parse::<f32>().ok().map(|v| (v, "deg"))
+                        } else {
+                            a.parse::<f32>().ok().map(|v| (v, ""))
+                        }
+                    };
+                    let (bv, bu) = strip(ba)?;
+                    let (kv, ku) = strip(ka)?;
+                    if bu != ku {
+                        return None;
+                    }
+                    // 곱셈형 함수(brightness/contrast/saturate/opacity 등)의 누적은
+                    // 항등값 1 을 빼고 더한다(§Web Animations: A + B - identity).
+                    let ident = match bn.as_str() {
+                        "brightness" | "contrast" | "saturate" | "opacity" => {
+                            if bu == "%" { 100.0 } else { 1.0 }
+                        }
+                        _ => 0.0,
+                    };
+                    out.push(format!("{}({}{})", bn, crate::style::num_css(bv + kv - ident), bu));
+                }
+                return Some(Self::clamp_filter_list(&out.join(" ")));
+            }
+            return None;
+        }
         // font-size: px/키워드(large 등)를 px 로 해석해 합산.
         if dash == "font-size" {
             let px = |s: &str| -> Option<f32> {
