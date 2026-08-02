@@ -81,21 +81,56 @@ fn normalize_filter_list(raw: &str) -> String {
         }
         let name = tok[..open].trim().to_ascii_lowercase();
         let arg = tok[open + 1..tok.len() - 1].trim();
-        if !arg.is_empty() {
-            out.push(tok.to_string());
+        // 인자 생략 시 각 함수의 기본값.
+        if arg.is_empty() {
+            let default = match name.as_str() {
+                "blur" => "0px",
+                "grayscale" | "invert" | "sepia" | "brightness" | "contrast" | "opacity"
+                | "saturate" => "1",
+                "hue-rotate" => "0deg",
+                _ => {
+                    out.push(tok.to_string());
+                    continue;
+                }
+            };
+            out.push(format!("{name}({default})"));
             continue;
         }
-        let default = match name.as_str() {
-            "blur" => "0px",
-            "grayscale" | "invert" | "sepia" | "brightness" | "contrast" | "opacity"
-            | "saturate" => "1",
-            "hue-rotate" => "0deg",
-            _ => {
-                out.push(tok.to_string());
+        // 수 인자 함수의 계산값은 <number> 다 — 퍼센트는 수로 바꾸고 calc 을 평가한다
+        // (§Filter Effects: brightness(300%) 의 계산값은 brightness(3)).
+        let numeric = matches!(
+            name.as_str(),
+            "grayscale" | "invert" | "sepia" | "brightness" | "contrast" | "opacity" | "saturate"
+        );
+        if numeric {
+            let inner = arg.strip_prefix("calc(").and_then(|x| x.strip_suffix(')')).unwrap_or(arg);
+            let v = if let Some(pct) = inner.strip_suffix('%') {
+                pct.trim().parse::<f32>().ok().map(|n| n / 100.0)
+            } else if let Ok(n) = inner.parse::<f32>() {
+                Some(n)
+            } else {
+                // calc 안이 % 식이면 수 식으로 평가되지 않으므로 순수 수식만 시도한다.
+                crate::css::eval_calc_number(inner)
+            };
+            if let Some(v) = v {
+                // 음수는 각 함수 정의상 무효 → 0 으로 자른다(상한은 clamp_filter_list 가).
+                let v = v.max(0.0);
+                out.push(format!("{}({})", name, crate::style::num_css(v)));
                 continue;
             }
-        };
-        out.push(format!("{name}({default})"));
+        } else if name == "blur" {
+            if let Some(inner) = arg.strip_prefix("calc(").and_then(|x| x.strip_suffix(')')) {
+                if let Some(px) = inner
+                    .strip_suffix("px")
+                    .and_then(|n| n.trim().parse::<f32>().ok())
+                    .or_else(|| crate::css::eval_calc_number(inner))
+                {
+                    out.push(format!("blur({}px)", crate::style::num_css(px.max(0.0))));
+                    continue;
+                }
+            }
+        }
+        out.push(tok.to_string());
     }
     out.join(" ")
 }
