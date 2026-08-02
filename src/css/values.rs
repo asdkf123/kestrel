@@ -3610,7 +3610,8 @@ fn lab_family_srgb_f(name: &str, text: &str) -> Option<[f32; 4]> {
             oklab_to_lin_srgb(l, a, b)
         }
     };
-    Some([linear_to_srgb(lr), linear_to_srgb(lg), linear_to_srgb(lb), alpha])
+    // 계산 좌표는 색역 밖 보존(§CSS Color 4) — 렌더용 클램프 대신 확장 전달함수.
+    Some([linear_to_srgb_extended(lr), linear_to_srgb_extended(lg), linear_to_srgb_extended(lb), alpha])
 }
 
 fn comp_opt(c: Comp) -> Option<f32> {
@@ -13587,6 +13588,15 @@ fn linear_to_srgb(c: f32) -> f32 {
     } else {
         1.055 * c.powf(1.0 / 2.4) - 0.055
     }
+}
+
+// 확장 sRGB 전달함수(클램프 없음): 색역 밖(음수·>1) 값을 보존한다(§CSS Color 4 —
+// 계산값은 gamut clamp 안 함). 상대색/color-mix 계산 좌표용. 렌더링(linear_to_srgb)은
+// 표시 가능 범위로 클램프하므로 별개.
+fn linear_to_srgb_extended(c: f32) -> f32 {
+    let sign = if c < 0.0 { -1.0 } else { 1.0 };
+    let a = c.abs();
+    sign * if a <= 0.0031308 { 12.92 * a } else { 1.055 * a.powf(1.0 / 2.4) - 0.055 }
 }
 
 fn to_u8(v: f32) -> u8 {
