@@ -10440,7 +10440,53 @@ impl Interp {
             let af = crate::style::num_css((al_f * 100.0).round() / 100.0);
             return Some(format!("rgba({}, {}, {}, {})", r, gg, bl, af));
         }
+        // 같은 이름의 함수 토큰은 인자를 짝지어 보간한다 — blur(10px)→blur(40px),
+        // drop-shadow(...), grayscale(0.2) 등. §Filter Effects 의 함수별 리스트 보간이
+        // 이 규칙에 기댄다(리스트 분해는 위 다중 토큰 경로가 이미 한다). 색 함수는
+        // 위에서 이미 처리되므로 여기 오지 않는다.
+        if let Some(v) = Self::interp_fn_args(f, g, t) {
+            return Some(v);
+        }
         None
+    }
+
+    // name(args) 꼴 두 값의 인자별 보간. 이름이 같고 최상위 콤마 인자 수가 같아야 한다.
+    fn interp_fn_args(f: &str, g: &str, t: f32) -> Option<String> {
+        let split = |s: &str| -> Option<(String, String)> {
+            let s = s.trim();
+            let open = s.find('(')?;
+            if !s.ends_with(')') || open == 0 {
+                return None;
+            }
+            let name = s[..open].trim().to_string();
+            if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return None;
+            }
+            Some((name, s[open + 1..s.len() - 1].to_string()))
+        };
+        let (fname, fargs) = split(f)?;
+        let (gname, gargs) = split(g)?;
+        if !fname.eq_ignore_ascii_case(&gname) {
+            return None;
+        }
+        let fp = crate::css::split_top_commas_pub(&fargs);
+        let gp = crate::css::split_top_commas_pub(&gargs);
+        if fp.len() != gp.len() {
+            return None;
+        }
+        let parts: Option<Vec<String>> = fp
+            .iter()
+            .zip(gp.iter())
+            .map(|(a, b)| {
+                let (a, b) = (a.trim(), b.trim());
+                if a == b {
+                    Some(a.to_string())
+                } else {
+                    Self::interp_css_value(a, b, t)
+                }
+            })
+            .collect();
+        Some(format!("{}({})", fname, parts?.join(", ")))
     }
 
     // scale 프로퍼티 보간(§CSS Transforms 2). "sx [sy] [sz]" 를 [x,y,z] 로 확장

@@ -228,7 +228,7 @@
 | css-borders ★ | 426 / 1,151 | 37.0% |
 | css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
-| filter-effects ★ | 869 / 2,452 | 35.4% |
+| filter-effects ★ | 907 / 2,452 | 37.0% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
@@ -422,7 +422,7 @@
 | css-multicol | 972 | 1,098 | +126 |
 | css-box | 546 | 618 | +72 |
 | css-logical | 669 | 689 | +20 |
-| filter-effects | 833 | 869 | +36 |
+| filter-effects | 833 | 907 | +74 |
 | 그 외(overflow/text-decor/ruby/images/backgrounds/display/dom/animations) | | | +38 |
 
 **주요 변경**
@@ -443,6 +443,9 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **함수 인자 보간(일반)**: `name(args)` 두 값의 이름이 같고 최상위 콤마 인자 수가 같으면
+  인자별로 보간한다(blur(10px)→blur(40px), drop-shadow(...), grayscale(...)). 예전엔 함수
+  토큰을 보간하지 못해 필터 리스트가 끝값에 머물렀다.
 - **성능**: StyledNode.specified_values 를 Rc 공유로, 트랜지션 감지를 Value 직접 비교로
   (문자열 포매팅·할당 제거). 계산 스타일 요청 시 해석은 설계만 완료
   (`docs/superpowers/specs/2026-08-02-kestrel-computed-style-on-demand-design.md`).
