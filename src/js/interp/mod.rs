@@ -8956,6 +8956,8 @@ impl Interp {
                 if c.eq_ignore_ascii_case("currentcolor") { cc.to_string() } else { c.to_string() }
             };
             let color = Self::interp_css_value(&rc(&ca), &rc(&cb), t)?;
+            // 성분 순서는 **색 먼저**다(Chrome 계산값 형식). 길이를 앞에 두도록 뒤집어
+            // 봤더니 box-shadow-interpolation 통과가 282 → 14 로 폭락해 되돌렸다.
             let mut s = color;
             let n = if spread { 4 } else { 3 };
             for i in 0..n {
