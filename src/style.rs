@@ -2307,7 +2307,8 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         // 키워드/수 롱핸드 초기값(각 명세).
         "baseline-source" | "kerning" | "position-try-order" => "auto",
         "color-adjust" => "economy",
-        "scroll-marker-group" | "anchor-scope" => "none",
+        "scroll-marker-group" | "anchor-scope" | "position-try-fallbacks" => "none",
+        "position-anchor" => "auto",
         "position-visibility" => "always",
         "reading-flow" => "normal",
         "view-transition-group" => "normal",

@@ -412,7 +412,7 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "baseline-source", "kerning", "color-adjust", "scroll-marker-group",
     "position-try-order", "position-visibility", "reading-flow", "anchor-scope",
     "view-transition-group", "flood-opacity", "stop-opacity", "reading-order",
-    "initial-letter", "stroke-color",
+    "initial-letter", "stroke-color", "position-anchor", "position-try-fallbacks",
     // 검증 arm 은 있는데 등록이 빠져 있던 롱핸드들(README 경고: arm 추가 시 반드시 여기도).
     // 전부 롱핸드다 — 단축을 넣으면 계산값 열거(item/ownKeys)에 들어가 회귀한다.
     "clip", "text-decoration-inset", "text-decoration-skip-spaces", "text-align-all",

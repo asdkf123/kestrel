@@ -3218,6 +3218,57 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // 키워드 집합이 명확한 롱핸드들 — 값을 실제로 검증한다(원문 보존 arm 과 달리
         // 아무 값이나 통과시키지 않는다).
+        // §css-anchor-position 2
+        "position-anchor" | "position-try-fallbacks" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = if name == "position-anchor" {
+                // auto | <dashed-ident>
+                low == "auto" || (t.starts_with("--") && !t.contains(char::is_whitespace))
+            } else {
+                // none | [[<dashed-ident> || <try-tactic>] | <'position-area'>]#
+                low == "none"
+                    || low.split(',').all(|item| {
+                        let item = item.trim();
+                        !item.is_empty()
+                            && item.split_whitespace().all(|tok| {
+                                tok.starts_with("--")
+                                    || matches!(tok, "flip-block" | "flip-inline" | "flip-start")
+                                    // position-area 키워드(§css-anchor-2)
+                                    || matches!(
+                                        tok,
+                                        "left" | "center" | "right" | "span-left" | "span-right"
+                                            | "x-start" | "x-end" | "span-x-start" | "span-x-end"
+                                            | "x-self-start" | "x-self-end"
+                                            | "span-x-self-start" | "span-x-self-end"
+                                            | "span-all" | "top" | "bottom" | "span-top"
+                                            | "span-bottom" | "y-start" | "y-end"
+                                            | "span-y-start" | "span-y-end" | "y-self-start"
+                                            | "y-self-end" | "span-y-self-start"
+                                            | "span-y-self-end" | "block-start" | "block-end"
+                                            | "span-block-start" | "span-block-end"
+                                            | "inline-start" | "inline-end"
+                                            | "span-inline-start" | "span-inline-end"
+                                            | "self-block-start" | "self-block-end"
+                                            | "span-self-block-start" | "span-self-block-end"
+                                            | "self-inline-start" | "self-inline-end"
+                                            | "span-self-inline-start" | "span-self-inline-end"
+                                            | "start" | "end" | "span-start" | "span-end"
+                                            | "self-start" | "self-end" | "span-self-start"
+                                            | "span-self-end"
+                                    )
+                            })
+                    })
+            };
+            if ok {
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         "baseline-source" | "kerning" | "color-adjust" | "scroll-marker-group"
         | "position-try-order" | "position-visibility" | "reading-flow" | "anchor-scope"
         | "view-transition-group" | "flood-opacity" | "stop-opacity" | "reading-order"
