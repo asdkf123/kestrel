@@ -207,7 +207,7 @@ fn style_content_hash(m: &std::collections::HashMap<String, String>) -> u64 {
 
 fn start_transitions_on_style_change(
     js: &mut crate::js::interp::Interp,
-    prev: &std::collections::HashMap<crate::dom::NodeId, std::collections::HashMap<String, String>>,
+    prev: &std::collections::HashMap<crate::dom::NodeId, std::rc::Rc<crate::style::PropertyMap>>,
 ) {
     if prev.is_empty() {
         return;
@@ -240,25 +240,20 @@ fn start_transitions_on_style_change(
         Vec::new();
     // 목록에서 취소된(지속 0) 프로퍼티: 실행 중 전이가 있으면 없앤다.
     let mut cancels: Vec<(crate::dom::NodeId, String)> = Vec::new();
-    let mut hash_updates: Vec<(crate::dom::NodeId, (usize, u64))> = Vec::new();
-    for (id, new_style) in &js.computed_styles {
+    for (id, new_style) in &js.computed_values {
         let Some(old_style) = prev.get(id) else { continue };
-        let get = |m: &std::collections::HashMap<String, String>, k: &str, d: &str| -> String {
-            m.get(k).cloned().unwrap_or_else(|| d.to_string())
+        // Rc 가 같은 할당을 가리키면 스타일이 그대로다 — 비교조차 필요 없다.
+        if std::rc::Rc::ptr_eq(new_style, old_style) {
+            continue;
+        }
+        let get = |m: &crate::style::PropertyMap, k: &str, d: &str| -> String {
+            m.get(k).map(crate::style::computed_value_string).unwrap_or_else(|| d.to_string())
         };
         let durations = crate::css::split_top_commas_pub(&get(new_style, "transition-duration", ""));
         if durations.iter().all(|d| time_ms(d) <= 0.0) {
             continue;
         }
-        // 여기까지 온 요소만 후보다(트랜지션이 걸린 소수). 후보의 계산값 내용이 그대로면
-        // 프로퍼티를 훑지 않는다. 해시를 **후보에만** 매기는 게 중요하다 — 전 요소를
-        // 매 재계산마다 해싱하면 스타일 재계산 자체보다 비싸진다(프로파일로 확인).
-        let sig = (new_style.len(), style_content_hash(new_style));
-        let unchanged = js.computed_hashes.get(id) == Some(&sig);
-        hash_updates.push((*id, sig));
-        if unchanged {
-            continue;
-        }
+
         let props = crate::css::split_top_commas_pub(&get(new_style, "transition-property", "all"));
         let delays = crate::css::split_top_commas_pub(&get(new_style, "transition-delay", "0s"));
         let easings =
@@ -299,11 +294,14 @@ fn start_transitions_on_style_change(
             new_style.keys().filter(|k| transitionable(k) && per_prop.contains_key(*k)).collect()
         };
         for name in candidates {
-            let Some(to) = new_style.get(name) else { continue };
-            let Some(from) = old_style.get(name) else { continue };
-            if from == to || is_currentcolor_both(name) {
+            let Some(to_v) = new_style.get(name) else { continue };
+            let Some(from_v) = old_style.get(name) else { continue };
+            // Value 비교 — 문자열로 굳히지 않는다(할당 없음).
+            if from_v == to_v || is_currentcolor_both(name) {
                 continue;
             }
+            let to = crate::style::computed_value_string(to_v);
+            let from = crate::style::computed_value_string(from_v);
             // 이 프로퍼티에 적용되는 항목: per_prop 과 all 중 목록에서 뒤에 온 쪽.
             let spec = match (per_prop.get(name.as_str()), &all_spec) {
                 (Some(p), Some(a)) => {
@@ -318,11 +316,8 @@ fn start_transitions_on_style_change(
                 cancels.push((*id, name.clone()));
                 continue;
             }
-            starts.push((*id, name.clone(), from.clone(), to.clone(), dur, delay, easing));
+            starts.push((*id, name.clone(), from, to, dur, delay, easing));
         }
-    }
-    for (id, sig) in hash_updates {
-        js.computed_hashes.insert(id, sig);
     }
     for (id, prop) in cancels {
         if let Some(list) = js.element_animations.get_mut(&id) {
@@ -358,9 +353,11 @@ fn fill_js_maps(
     // 시작한다. 유발 원인(인라인 style 쓰기, 클래스 토글, 시트 주입, 미디어 변화)을
     // 가리지 않는 게 표준이다 — 예전엔 el.style 쓰기만 가로채서 클래스로 바뀐 값은
     // 트랜지션이 아예 안 생겼다.
-    let prev_styles = std::mem::take(&mut js.computed_styles);
+    let prev_values = std::mem::take(&mut js.computed_values);
+    collect_computed_values(style_root, &mut js.computed_values);
+    js.computed_styles.clear();
     collect_computed_styles(style_root, &mut js.computed_styles);
-    start_transitions_on_style_change(js, &prev_styles);
+    start_transitions_on_style_change(js, &prev_values);
     // 표준의 resolved value: 길이는 px 로 확정돼야 한다. %/em/무단위 배수는 스타일 맵에
     // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
     let mut metrics = std::collections::HashMap::new();
@@ -946,6 +943,19 @@ fn canvas_display_items(
 
 // application/x-www-form-urlencoded (공백은 +)
 // 스타일 트리를 순회하며 요소별 계산 스타일을 CSS 텍스트 맵으로 수집(getComputedStyle 용).
+// 스타일 트리의 지정값 맵(Value)을 요소별로 모은다. Rc 복제라 사실상 공짜다.
+fn collect_computed_values(
+    node: &crate::style::StyledNode,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, std::rc::Rc<crate::style::PropertyMap>>,
+) {
+    if matches!(node.node.node_type, crate::dom::NodeType::Element(_)) {
+        out.insert(node.id, std::rc::Rc::clone(&node.specified_values));
+    }
+    for c in &node.children {
+        collect_computed_values(c, out);
+    }
+}
+
 fn collect_computed_styles(
     node: &crate::style::StyledNode,
     out: &mut std::collections::HashMap<crate::dom::NodeId, std::collections::HashMap<String, String>>,
@@ -953,7 +963,7 @@ fn collect_computed_styles(
     // 요소 노드(자식이 있거나 프로퍼티가 있는)만. 텍스트 노드는 건너뜀.
     if matches!(node.node.node_type, crate::dom::NodeType::Element(_)) {
         let mut m = std::collections::HashMap::with_capacity(node.specified_values.len());
-        for (k, v) in &node.specified_values {
+        for (k, v) in node.specified_values.iter() {
             m.insert(k.clone(), crate::style::computed_value_string(v));
         }
         // overflow 계산값(§CSS Overflow 3): 한 축이 스크롤(auto/scroll/hidden)인데 다른

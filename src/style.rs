@@ -91,7 +91,9 @@ pub struct StyledNode<'a> {
     pub node: &'a NodeData,
     // 아레나 NodeId — JS DOM 핸들과 같은 좌표계 (구조 변형에도 안정)
     pub id: NodeId,
-    pub specified_values: PropertyMap,
+    // 계산된 지정값. Rc 로 공유한다 — getComputedStyle 용 맵을 만들 때 통째로 복제하지
+    // 않고 참조만 넘기기 위해서다(요소당 프로퍼티가 350개 넘는다).
+    pub specified_values: std::rc::Rc<PropertyMap>,
     pub children: Vec<StyledNode<'a>>,
 }
 
@@ -3199,7 +3201,7 @@ fn style_node<'a>(
             }
             ancestors.pop();
             anc_pos.pop();
-            StyledNode { node, id, specified_values: values, children }
+            StyledNode { node, id, specified_values: std::rc::Rc::new(values), children }
         }
         // 코멘트: 스타일도 박스도 없다 (자식도 없다)
         // Comment/PI/DocumentType 는 렌더 박스를 만들지 않는다(빈 스타일 노드).
@@ -3208,13 +3210,13 @@ fn style_node<'a>(
         | NodeType::DocumentType { .. } => StyledNode {
             node,
             id,
-            specified_values: HashMap::new(),
+            specified_values: std::rc::Rc::new(HashMap::new()),
             children: Vec::new(),
         },
         NodeType::Text(_) => StyledNode {
             node,
             id,
-            specified_values: HashMap::new(),
+            specified_values: std::rc::Rc::new(HashMap::new()),
             children: node
                 .children
                 .iter()

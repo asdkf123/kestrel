@@ -348,6 +348,12 @@ pub struct Interp {
     // 요소"를 상수 시간에 건너뛰려고 둔다 — 이게 없으면 트랜지션을 가진 요소가 쌓인
     // 문서에서 재계산마다 요소×프로퍼티 전부를 훑어 JS 실행 한도를 넘긴다.
     pub computed_hashes: std::collections::HashMap<crate::dom::NodeId, (usize, u64)>,
+    // 요소별 계산 지정값(Value 그대로, 스타일 트리와 Rc 공유). 문자열로 굳히지 않으므로
+    // 재계산마다 통째로 복제하는 비용이 없다. 트랜지션의 전후 비교가 이걸 쓴다 —
+    // 문자열 맵(computed_styles)은 요소당 프로퍼티 350개를 매번 포매팅해 만들어야 해서
+    // 비교에 쓰면 스타일 재계산보다 비싸진다(sample 프로파일로 확인).
+    pub computed_values:
+        std::collections::HashMap<crate::dom::NodeId, std::rc::Rc<crate::style::PropertyMap>>,
     // 요소별 활성 애니메이션(element.animate / CSS 트랜지션). getComputedStyle 이
     // currentTime 에서 키프레임을 보간해 계산값에 덮어쓴다. 애니 있는 요소만 영향(additive).
     pub element_animations: std::collections::HashMap<crate::dom::NodeId, Vec<ActiveAnimation>>,
@@ -1677,6 +1683,7 @@ impl Interp {
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
             computed_hashes: std::collections::HashMap::new(),
+            computed_values: std::collections::HashMap::new(),
             element_animations: std::collections::HashMap::new(),
             canvas_warned: std::collections::HashSet::new(),
             canvas_cmds: std::collections::HashMap::new(),
