@@ -427,8 +427,8 @@ pub(crate) fn is_known_property(name: &str) -> bool {
     longhand_supported(name) || matches!(name, "text-decoration" | "font" | "text-spacing")
 }
 
-// 엔진이 실제로 계산하는 값 함수 전부. 여기 없는 함수(color-mix/oklch/lab/env/attr/
-// image-set …)는 파싱만 되고 무시되므로 지원한다고 하면 거짓말이다.
+// 엔진이 실제로 계산하는 값 함수 전부. 여기 없는 함수(env/attr/image-set/cross-fade/
+// light-dark …)는 파싱만 되고 값이 쓰이지 않으므로 지원한다고 하면 거짓말이다.
 // 프로퍼티별로 나누지 않고 합집합으로 본다 — 과소보고는 안전, 과다보고만 위험하다.
 const FUNCS: &[&str] = &[
     // 값 계산
@@ -437,7 +437,9 @@ const FUNCS: &[&str] = &[
     "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix",
     "alpha",
     // 이미지
+    // 이미지 — repeating-* 는 같은 파서에 반복 플래그만 다르고 페인트도 반복을 그린다.
     "url", "linear-gradient", "radial-gradient", "conic-gradient",
+    "repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient",
     // content
     "counter", "counters",
     // transform — 2D 함수 전부 (행렬로 합성해 서브트리를 실제로 변환한다)
