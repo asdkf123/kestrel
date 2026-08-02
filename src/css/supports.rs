@@ -449,8 +449,12 @@ const FUNCS: &[&str] = &[
     // filter / backdrop-filter
     "blur", "grayscale", "brightness", "invert", "contrast", "sepia", "saturate",
     "hue-rotate", "opacity",
-    // clip-path (inset 만 그린다)
-    "inset",
+    // basic-shape (§CSS Shapes). 전부 문법 검증 + 캐논 직렬화가 있고(basic_shape_valid /
+    // normalize_shape), clip-path 는 inset/circle/ellipse/polygon 을 실제로 그린다.
+    // path/shape/xywh/rect 는 offset-path 등에서 파싱·직렬화만 하고 렌더는 아직 없다 —
+    // 레이아웃에 영향 없는 시각 프로퍼티라 계산값 노출을 지원으로 보는 기존 선례
+    // (cursor/appearance/corner-shape)를 따른다.
+    "inset", "circle", "ellipse", "polygon", "path", "ray", "shape", "xywh", "rect",
     // grid 트랙
     "repeat", "minmax", "fit-content",
     // 이징 함수(transition/animation-timing-function) — 계산값 직렬화 지원
