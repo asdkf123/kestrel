@@ -186,6 +186,147 @@ fn container_sizes(
 }
 
 // 레이아웃 산출물 → JS 측정 맵(getBoundingClientRect/offset*, getComputedStyle).
+// 스타일 재계산 전후를 비교해 트랜지션을 시작한다(§CSS Transitions 4).
+//
+// 첫 재계산(이전 스냅샷 없음)에서는 전이하지 않는다 — 요소가 처음 스타일을 얻는 것은
+// 변경이 아니다. 비교 대상은 transition-duration 이 0 이 아닌 요소로 좁힌다(대부분의
+// 페이지에서 소수다).
+// 계산 스타일 맵의 내용 해시. HashMap 순회 순서가 불정이므로 항목별 해시를 XOR 로
+// 합쳐 순서 무관하게 만든다. 길이와 함께 비교한다.
+fn style_content_hash(m: &std::collections::HashMap<String, String>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut acc = 0u64;
+    for (k, v) in m {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        k.hash(&mut h);
+        v.hash(&mut h);
+        acc ^= h.finish();
+    }
+    acc
+}
+
+fn start_transitions_on_style_change(
+    js: &mut crate::js::interp::Interp,
+    prev: &std::collections::HashMap<crate::dom::NodeId, std::collections::HashMap<String, String>>,
+) {
+    if prev.is_empty() {
+        return;
+    }
+    // 콤마 목록의 i 번째 값. 목록이 짧으면 순환한다(§CSS Transitions: 목록 길이 맞춤).
+    fn nth(list: &[String], i: usize) -> &str {
+        if list.is_empty() {
+            ""
+        } else {
+            list[i % list.len()].trim()
+        }
+    }
+    fn time_ms(s: &str) -> f32 {
+        let s = s.trim();
+        if let Some(n) = s.strip_suffix("ms") {
+            n.trim().parse::<f32>().unwrap_or(0.0)
+        } else if let Some(n) = s.strip_suffix('s') {
+            n.trim().parse::<f32>().unwrap_or(0.0) * 1000.0
+        } else {
+            0.0
+        }
+    }
+    // 트랜지션 대상이 될 수 없는 이름: 트랜지션/애니메이션 자신과 내부 키.
+    fn transitionable(name: &str) -> bool {
+        !name.starts_with('\u{0}')
+            && !name.starts_with("transition")
+            && !name.starts_with("animation")
+    }
+    let mut starts: Vec<(crate::dom::NodeId, String, String, String, f32, f32, String)> =
+        Vec::new();
+    // 목록에서 취소된(지속 0) 프로퍼티: 실행 중 전이가 있으면 없앤다.
+    let mut cancels: Vec<(crate::dom::NodeId, String)> = Vec::new();
+    for (id, new_style) in &js.computed_styles {
+        let Some(old_style) = prev.get(id) else { continue };
+        // 내용이 그대로면 이 요소는 스타일 변경이 없다 — 프로퍼티를 훑지 않는다.
+        if let Some(&(len, hash)) = js.computed_hashes.get(id) {
+            if len == new_style.len() && hash == style_content_hash(new_style) {
+                continue;
+            }
+        }
+        let get = |m: &std::collections::HashMap<String, String>, k: &str, d: &str| -> String {
+            m.get(k).cloned().unwrap_or_else(|| d.to_string())
+        };
+        let durations = crate::css::split_top_commas_pub(&get(new_style, "transition-duration", ""));
+        if durations.iter().all(|d| time_ms(d) <= 0.0) {
+            continue;
+        }
+        let props = crate::css::split_top_commas_pub(&get(new_style, "transition-property", "all"));
+        let delays = crate::css::split_top_commas_pub(&get(new_style, "transition-delay", "0s"));
+        let easings =
+            crate::css::split_top_commas_pub(&get(new_style, "transition-timing-function", "ease"));
+        // §CSS Transitions 4: 같은 프로퍼티가 목록에 여러 번 나오면 **뒤 항목이 이긴다**.
+        // (transition: color 1s, color 0s → color 는 전이 없음.) all 과 개별 이름이 섞이면
+        // 목록에서 더 뒤에 온 쪽이 이긴다 — 그래서 등장 순서를 함께 기억한다.
+        let mut all_spec: Option<(usize, f32, f32, String)> = None;
+        let mut per_prop: std::collections::HashMap<String, (usize, f32, f32, String)> =
+            std::collections::HashMap::new();
+        for (i, pname) in props.iter().enumerate() {
+            let pname = pname.trim();
+            if pname == "none" || pname.is_empty() {
+                continue;
+            }
+            let entry = (i, time_ms(nth(&durations, i)), time_ms(nth(&delays, i)),
+                         nth(&easings, i).to_string());
+            if pname == "all" {
+                all_spec = Some(entry);
+            } else {
+                per_prop.insert(pname.to_string(), entry);
+            }
+        }
+        if all_spec.is_none() && per_prop.is_empty() {
+            continue;
+        }
+        // 이 요소에서 계산값이 currentcolor 인 프로퍼티(§CSS Color). color 만 바뀌었다면
+        // 이들의 계산값은 그대로다 — 전이 대상이 아니다.
+        let cc_now = get(new_style, "\u{0}cc-props", String::new().as_str());
+        let cc_prev = get(old_style, "\u{0}cc-props", String::new().as_str());
+        let is_currentcolor_both = |name: &str| -> bool {
+            cc_now.split(' ').any(|p| p == name) && cc_prev.split(' ').any(|p| p == name)
+        };
+        // 후보 이름: all 이면 바뀐 모든 프로퍼티, 아니면 명시된 이름들.
+        let candidates: Vec<&String> = if all_spec.is_some() {
+            new_style.keys().filter(|k| transitionable(k)).collect()
+        } else {
+            new_style.keys().filter(|k| transitionable(k) && per_prop.contains_key(*k)).collect()
+        };
+        for name in candidates {
+            let Some(to) = new_style.get(name) else { continue };
+            let Some(from) = old_style.get(name) else { continue };
+            if from == to || is_currentcolor_both(name) {
+                continue;
+            }
+            // 이 프로퍼티에 적용되는 항목: per_prop 과 all 중 목록에서 뒤에 온 쪽.
+            let spec = match (per_prop.get(name.as_str()), &all_spec) {
+                (Some(p), Some(a)) => {
+                    if p.0 >= a.0 { p } else { a }
+                }
+                (Some(p), None) => p,
+                (None, Some(a)) => a,
+                (None, None) => continue,
+            };
+            let (_, dur, delay, easing) = spec.clone();
+            if dur <= 0.0 {
+                cancels.push((*id, name.clone()));
+                continue;
+            }
+            starts.push((*id, name.clone(), from.clone(), to.clone(), dur, delay, easing));
+        }
+    }
+    for (id, prop) in cancels {
+        if let Some(list) = js.element_animations.get_mut(&id) {
+            list.retain(|a| !(a.is_transition && a.props.contains_key(&prop)));
+        }
+    }
+    for (id, prop, from, to, dur, delay, easing) in starts {
+        js.begin_transition(id, &prop, &from, &to, dur, delay, easing);
+    }
+}
+
 fn fill_js_maps(
     js: &mut crate::js::interp::Interp,
     style_root: &crate::style::StyledNode,
@@ -206,8 +347,19 @@ fn fill_js_maps(
     for (r, id, _) in &rects {
         js.layout_rects.insert(*id, (r.x, r.y, r.width, r.height));
     }
-    js.computed_styles.clear();
+    // §CSS Transitions 4 의 "스타일 변경 이벤트": 재계산 전후의 계산값을 비교해 전이를
+    // 시작한다. 유발 원인(인라인 style 쓰기, 클래스 토글, 시트 주입, 미디어 변화)을
+    // 가리지 않는 게 표준이다 — 예전엔 el.style 쓰기만 가로채서 클래스로 바뀐 값은
+    // 트랜지션이 아예 안 생겼다.
+    let prev_styles = std::mem::take(&mut js.computed_styles);
     collect_computed_styles(style_root, &mut js.computed_styles);
+    start_transitions_on_style_change(js, &prev_styles);
+    // 다음 재계산의 변경 감지용 해시를 갱신한다.
+    js.computed_hashes = js
+        .computed_styles
+        .iter()
+        .map(|(id, m)| (*id, (m.len(), style_content_hash(m))))
+        .collect();
     // 표준의 resolved value: 길이는 px 로 확정돼야 한다. %/em/무단위 배수는 스타일 맵에
     // 그대로 남아 있으므로(예: margin "10%"), 레이아웃이 확정한 used value 로 덮는다.
     let mut metrics = std::collections::HashMap::new();
@@ -1412,6 +1564,10 @@ impl Page {
             let is_frame = !self.js.raf_callbacks.is_empty()
                 && (self.js.next_frame_time() - next).abs() < f64::EPSILON;
             self.js.advance_clock_to(next);
+            // 시계 전진은 태스크다(트랜지션 이벤트를 쏜다) — 태스크 뒤엔 마이크로태스크를
+            // 흘려야 한다(§HTML 이벤트 루프). 안 흘리면 이벤트로 이행된 프라미스의 .then 이
+            // 다음 타이머까지 밀려, 이벤트로 구동되는 하네스가 통째로 멈춘다.
+            self.js.drain_microtasks();
             // 프레임 시각이면 프레임 콜백을 먼저(§HTML: 렌더링 기회에서 실행),
             // 그다음 같은 시각에 만료된 타이머.
             let mut callbacks: Vec<(crate::js::interp::Value, u32)> = Vec::new();
@@ -2183,6 +2339,17 @@ mod tests {
         );
     }
     use crate::dom::{Dom, NodeType};
+
+    // 문서 <style> 대신 시트를 명시로 넘기는 변형. make_page 는 문서의 <style> 을
+    // 시트에 넣지 않으므로(스크립트가 페이지 구축 전에 돈다) 시트 기반 동작을 볼 수 없다.
+    fn make_page_css(html: &str, css: &str) -> Page {
+        let mut page = make_page(html);
+        let extra = crate::css::parse(css.to_string());
+        page.sheet.merge(extra.clone());
+        page.css_base.merge(extra);
+        page.rebuild();
+        page
+    }
 
     fn make_page(html: &str) -> Page {
         let mut dom = crate::html::parse_dom(html.to_string());
@@ -3214,6 +3381,74 @@ mod tests {
         let got = text_of_id(&page.dom, "out").unwrap();
         let n: f32 = got.parse().unwrap_or(-1.0);
         assert!((n - 0.5).abs() < 0.02, "500ms 지점의 opacity 는 0.5 근처여야: {got}");
+    }
+
+    #[test]
+    fn class_change_starts_a_transition() {
+        // 트랜지션은 유발 원인을 가리지 않는다(§CSS Transitions 4: 스타일 변경 이벤트).
+        // 예전엔 el.style 쓰기만 가로채서 클래스 토글로 바뀐 값은 전이가 안 생겼다.
+        let mut page = make_page_css(
+            "<div id=\"d\">x</div><p id=\"out\">?</p>\
+             <script>\
+             setTimeout(function() { \
+               var d = document.getElementById('d');\
+               getComputedStyle(d).opacity;\
+               d.classList.add('to');\
+               getComputedStyle(d).opacity;\
+               setTimeout(function() { \
+                 document.getElementById('out').textContent = getComputedStyle(d).opacity; \
+               }, 500); \
+             }, 0);</script>",
+            "#d { transition: opacity 1000ms linear; opacity: 0 } #d.to { opacity: 1 }",
+        );
+        page.flush_timers_headless();
+        let got = text_of_id(&page.dom, "out").unwrap();
+        let n: f32 = got.parse().unwrap_or(-1.0);
+        assert!((n - 0.5).abs() < 0.02, "클래스로 유발한 전이도 500ms 에 0.5 여야: {got}");
+    }
+
+    #[test]
+    fn transition_events_fire_at_their_virtual_times() {
+        // §CSS Transitions 6: transitionrun(생성) → transitionstart(활성 진입, 지연 후)
+        // → transitionend(종료). elapsedTime 은 초 단위 활성 구간 길이(지연 제외).
+        let mut page = make_page_css(
+            "<div id=\"d\">x</div><p id=\"out\">?</p>\
+             <script>setTimeout(function() { \
+               var d = document.getElementById('d'), log = [];\
+               ['transitionrun','transitionstart','transitionend'].forEach(function(t) { \
+                 d.addEventListener(t, function(e) { \
+                   log.push(t + '@' + Math.round(performance.now()) + ':' + e.elapsedTime); \
+                 }); \
+               });\
+               getComputedStyle(d).opacity;\
+               d.classList.add('to');\
+               getComputedStyle(d).opacity;\
+               setTimeout(function() { \
+                 document.getElementById('out').textContent = log.join('|'); \
+               }, 2000); \
+             }, 0);</script>",
+            "#d { transition: opacity 1000ms linear 200ms; opacity: 0 } #d.to { opacity: 1 }",
+        );
+        page.flush_timers_headless();
+        assert_eq!(
+            text_of_id(&page.dom, "out").unwrap(),
+            "transitionrun@0:0|transitionstart@200:0|transitionend@1200:1"
+        );
+    }
+
+    #[test]
+    fn first_style_calculation_does_not_transition() {
+        // 요소가 처음 스타일을 얻는 것은 "변경"이 아니다 — 전이하지 않는다.
+        let mut page = make_page_css(
+            "<div id=\"d\">x</div><p id=\"out\">?</p>\
+             <script>setTimeout(function() { \
+               document.getElementById('out').textContent = \
+                 getComputedStyle(document.getElementById('d')).opacity; \
+             }, 0);</script>",
+            "#d { transition: opacity 1000ms linear; opacity: 1 }",
+        );
+        page.flush_timers_headless();
+        assert_eq!(text_of_id(&page.dom, "out").unwrap(), "1");
     }
 
     #[test]

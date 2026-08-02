@@ -504,7 +504,13 @@ impl std::fmt::Debug for Value {
 // 예전엔 그냥 "#x" 라는 이름의 필드였고, Object.keys(instance) 가 ["#x"] 를 냈다 —
 // JSON.stringify 로 private 데이터가 그대로 새어 나갔다.
 pub fn is_private_name(k: &str) -> bool {
-    k.starts_with('#')
+    // 렉서가 붙이는 NUL 접두가 있어야 private 이다(문자열 키로는 만들 수 없다).
+    k.starts_with("\u{0}#")
+}
+
+// 오류 메시지용 표기: 내부 NUL 접두를 뗀다.
+pub fn private_name_display(k: &str) -> &str {
+    k.strip_prefix('\u{0}').unwrap_or(k)
 }
 
 // 인스턴스 필드 조회/저장에 쓸 실제 키

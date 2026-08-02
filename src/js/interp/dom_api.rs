@@ -1729,11 +1729,7 @@ impl Interp {
         {
             return;
         }
-        // 시작 시각 = 지금 + delay. 음수 delay 는 과거에 시작한 것(이미 경과),
-        // 양수 delay 는 아직 시작 전이다(진행률 0 에서 대기 — 예전엔 통째로 버렸다).
         let delay = time_ms(&first(self.style_get(id, "transition-delay")));
-        let start_time = self.virtual_now_ms + delay as f64;
-        let elapsed = self.virtual_now_ms - start_time; // = -delay
         // easing 은 원문(반올림 안 된 cubic-bezier 인자)으로 읽어야 진행률이 정확하다.
         let easing = first(self.style_get_raw(id, "transition-timing-function"));
         let easing = if easing.is_empty() { "ease".to_string() } else { easing };
@@ -1760,9 +1756,35 @@ impl Interp {
         if from.is_empty() || from == new_value {
             return;
         }
+        self.begin_transition(id, prop, &from, new_value, dur, delay, easing);
+    }
+
+    // AnimationEffect 객체: {target, pseudoElement}. pseudoElement 는 요소면 null 이다.
+    pub(super) fn make_effect_obj(id: crate::dom::NodeId) -> Value {
+        let mut e = ObjMap::new();
+        e.insert("target".to_string(), Value::Dom(id));
+        e.insert("pseudoElement".to_string(), Value::Null);
+        Value::Obj(std::rc::Rc::new(std::cell::RefCell::new(e)))
+    }
+
+    // §CSS Transitions 4: 프로퍼티 하나의 전이를 시작한다. 유발 경로(인라인 style 쓰기,
+    // 클래스/시트 변경에 의한 스타일 재계산)와 무관하게 모든 트랜지션이 여기로 모인다.
+    pub fn begin_transition(
+        &mut self,
+        id: crate::dom::NodeId,
+        prop: &str,
+        from_in: &str,
+        to_in: &str,
+        dur_ms: f32,
+        delay_ms: f32,
+        easing: String,
+    ) {
+        if dur_ms <= 0.0 {
+            return;
+        }
         // CSS 전역 키워드(initial/inherit/unset) 해석.
-        let from = self.resolve_wide_keyword(id, prop, &from);
-        let to = self.resolve_wide_keyword(id, prop, new_value);
+        let from = self.resolve_wide_keyword(id, prop, from_in);
+        let to = self.resolve_wide_keyword(id, prop, to_in);
         // em/rem 을 px 로 해석 — 안 그러면 불연속 판정(interp_css_value 가 em 보간 못함)이
         // 부드러운 길이 전이를 불연속으로 오판해 캡처를 스킵한다(text-decoration-thickness
         // 1em→0em 등). transform 은 raw 각도 유지가 필요하므로 제외.
@@ -1792,18 +1814,35 @@ impl Interp {
                 return;
             }
         }
+        // 시작 시각 = 지금 + delay. 음수 delay 는 과거에 시작한 것(이미 경과),
+        // 양수 delay 는 아직 시작 전이다(진행률 0 에서 대기 — 예전엔 통째로 버렸다).
+        let start_time = self.virtual_now_ms + delay_ms as f64;
+        let elapsed = self.virtual_now_ms - start_time; // = -delay
+        let easing = if easing.trim().is_empty() { "ease".to_string() } else { easing };
         let mut m = ObjMap::new();
         m.insert("currentTime".to_string(), Value::Num(elapsed));
+        // AnimationEffect (§Web Animations): 어떤 요소/의사요소에 걸렸는지. 스크립트가
+        // a.effect.target 으로 리스너를 걸거나 대상을 찾는다.
+        m.insert("effect".to_string(), Self::make_effect_obj(id));
+        m.insert("transitionProperty".to_string(), Value::Str(prop.to_string()));
+        m.insert("playState".to_string(), Value::Str("running".to_string()));
         let rc = std::rc::Rc::new(std::cell::RefCell::new(m));
         let mut props = std::collections::HashMap::new();
         props.insert(prop.to_string(), (from, to, easing));
+        // 같은 프로퍼티의 실행 중 트랜지션은 새 전이가 대체한다(§CSS Transitions 4).
+        if let Some(list) = self.element_animations.get_mut(&id) {
+            list.retain(|a| !(a.is_transition && a.props.contains_key(prop)));
+        }
         // 트랜지션은 타임라인 구동이다 — start_time 을 주면 가상 시계가 전진할 때마다
         // currentTime 이 따라 오르고, 콜백 안의 getComputedStyle 이 그 시각의 값을 본다.
         self.element_animations.entry(id).or_default().push(ActiveAnimation {
             obj: rc,
             start_time_ms: Some(start_time),
-            duration_ms: dur as f64,
+            duration_ms: dur_ms as f64,
             props,
+            is_transition: true,
+            node: id,
+            event_phase: 0,
         });
     }
 

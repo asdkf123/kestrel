@@ -263,6 +263,14 @@ pub struct ActiveAnimation {
     pub duration_ms: f64,
     // dash-prop → (from, to, easing)
     pub props: HashMap<String, (String, String, String)>,
+    // CSS 트랜지션인가(element.animate 가 아니라). 같은 프로퍼티의 실행 중 트랜지션은
+    // 새 전이가 **대체**한다(§CSS Transitions 4) — 그 판별에 쓴다.
+    pub is_transition: bool,
+    // 이 애니메이션이 붙은 요소. 이벤트를 쏘려면 시계 쪽에서 타깃을 알아야 한다.
+    pub node: crate::dom::NodeId,
+    // 마지막으로 이벤트를 낸 단계. 경계를 넘을 때만 발화하도록 기억한다.
+    // 0=아직 없음(run 전), 1=run 냄(지연 구간), 2=start 냄(활성 구간), 3=end 냄.
+    pub event_phase: u8,
 }
 
 pub struct Interp {
@@ -336,6 +344,10 @@ pub struct Interp {
     // 계산된 스타일 (NodeId → 대시 프로퍼티명 → CSS 텍스트). 리빌드 후 호스트가 채움.
     // getComputedStyle 이 읽는다. 빈 맵이면 빈 문자열.
     pub computed_styles: std::collections::HashMap<crate::dom::NodeId, HashMap<String, String>>,
+    // 요소별 계산 스타일의 내용 해시. 스타일 변경 이벤트(트랜지션 생성)에서 "안 바뀐
+    // 요소"를 상수 시간에 건너뛰려고 둔다 — 이게 없으면 트랜지션을 가진 요소가 쌓인
+    // 문서에서 재계산마다 요소×프로퍼티 전부를 훑어 JS 실행 한도를 넘긴다.
+    pub computed_hashes: std::collections::HashMap<crate::dom::NodeId, (usize, u64)>,
     // 요소별 활성 애니메이션(element.animate / CSS 트랜지션). getComputedStyle 이
     // currentTime 에서 키프레임을 보간해 계산값에 덮어쓴다. 애니 있는 요소만 영향(additive).
     pub element_animations: std::collections::HashMap<crate::dom::NodeId, Vec<ActiveAnimation>>,
@@ -805,6 +817,10 @@ impl Interp {
             "implementation".to_string(),
             Value::Obj(Rc::new(RefCell::new(implementation))),
         );
+        // document.getAnimations() (§Web Animations): 문서의 모든 활성 애니메이션.
+        // 예전엔 아예 없어서 이걸 부르는 스크립트가 TypeError 로 죽었다(WPT 트랜지션
+        // 하네스가 정확히 이걸로 슬라이스를 구동한다).
+        document.insert("getAnimations".to_string(), Value::Native(Native::GetAnimations));
         env_declare(&global, "document", Value::Obj(Rc::new(RefCell::new(document))));
         // Math
         let mut math = ObjMap::new();
@@ -1660,6 +1676,7 @@ impl Interp {
             layout_version: None,
             layout_rects: std::collections::HashMap::new(),
             computed_styles: std::collections::HashMap::new(),
+            computed_hashes: std::collections::HashMap::new(),
             element_animations: std::collections::HashMap::new(),
             canvas_warned: std::collections::HashSet::new(),
             canvas_cmds: std::collections::HashMap::new(),
@@ -1959,7 +1976,7 @@ impl Interp {
 
     // 이 값이 그 private 이름을 갖는가 (#x in obj). 필드든 메서드든 접근자든 센다.
     fn has_private(&self, v: &Value, name: &str) -> bool {
-        let key = format!("#{}", name);
+        let key = format!("\u{0}#{}", name);
         match v {
             Value::Instance(i) => {
                 if i.fields.borrow().contains_key(&field_key(&key, self.priv_id)) {
@@ -2176,16 +2193,96 @@ impl Interp {
             .fold(f64::INFINITY, f64::min);
         let frame =
             if self.raf_callbacks.is_empty() { f64::INFINITY } else { self.next_frame_time() };
-        let next = timer.min(frame);
+        // 트랜지션의 다음 경계(활성 시작 = start_time, 종료 = start_time + duration).
+        // 여기서 시계를 멈춰야 transitionstart/transitionend 가 제 시각에 나간다.
+        let mut boundary = f64::INFINITY;
+        for anims in self.element_animations.values() {
+            for a in anims {
+                let Some(start) = a.start_time_ms else { continue };
+                if !a.is_transition {
+                    continue;
+                }
+                for t in [start, start + a.duration_ms] {
+                    if t > self.virtual_now_ms && t < boundary {
+                        boundary = t;
+                    }
+                }
+            }
+        }
+        let next = timer.min(frame).min(boundary);
         next.is_finite().then_some(next)
     }
 
     // 시계를 t 로 전진시킨다. 뒤로는 가지 않는다(단조 증가).
     pub fn advance_clock_to(&mut self, t: f64) {
+        // 전진 **전에** 현재 시각에서 이미 due 인 이벤트를 낸다. 지연 0 인 트랜지션의
+        // transitionrun/transitionstart 는 생성 시각(=지금)에 나가야 하는데, 전진 후에만
+        // 내면 다음 이벤트 시각(예: 종료 1000ms)으로 밀려 셋이 한꺼번에 나갔다.
+        self.fire_transition_events();
         if t > self.virtual_now_ms {
             self.virtual_now_ms = t;
         }
         self.sync_animation_times();
+        self.fire_transition_events();
+    }
+
+    // 트랜지션 단계 경계에서 §CSS Transitions 6 의 이벤트를 쏜다.
+    // 표준도 이 이벤트들을 태스크로 큐잉하므로(동기 발화가 아니다) 시계가 전진하는
+    // 시점에 내보내는 게 맞다 — 스타일 재계산 도중 동기 디스패치는 재진입을 부른다.
+    fn fire_transition_events(&mut self) {
+        let now = self.virtual_now_ms;
+        let mut pending: Vec<(crate::dom::NodeId, &'static str, String, f64)> = Vec::new();
+        for anims in self.element_animations.values_mut() {
+            for a in anims.iter_mut() {
+                if !a.is_transition {
+                    continue;
+                }
+                let Some(start) = a.start_time_ms else { continue };
+                let Some(prop) = a.props.keys().next().cloned() else { continue };
+                // 0 → transitionrun(생성됨, 지연 구간) → transitionstart(활성 진입)
+                //   → transitionend(종료). 각 경계를 한 번씩만 넘는다.
+                if a.event_phase == 0 {
+                    pending.push((a.node, "transitionrun", prop.clone(), 0.0));
+                    a.event_phase = 1;
+                }
+                if a.event_phase == 1 && now >= start {
+                    pending.push((a.node, "transitionstart", prop.clone(), 0.0));
+                    a.event_phase = 2;
+                }
+                if a.event_phase == 2 && now >= start + a.duration_ms {
+                    // elapsedTime 은 초 단위 활성 구간 길이(지연 제외, §CSS Transitions 6.1).
+                    pending.push((a.node, "transitionend", prop, a.duration_ms / 1000.0));
+                    a.event_phase = 3;
+                }
+            }
+        }
+        for (id, ty, prop, elapsed) in pending {
+            let evt = self.make_transition_event(ty, id, &prop, elapsed);
+            self.dispatch_event_value(id, ty, evt);
+        }
+    }
+
+    // TransitionEvent (§CSS Transitions 6.1): propertyName/elapsedTime/pseudoElement 를 더한 Event.
+    fn make_transition_event(
+        &self,
+        ty: &str,
+        target: crate::dom::NodeId,
+        prop: &str,
+        elapsed_s: f64,
+    ) -> Value {
+        let evt = self.make_event(ty, target);
+        if let Value::Obj(o) = &evt {
+            let mut b = o.borrow_mut();
+            if let Some(p) = self.event_proto("TransitionEvent") {
+                b.insert("__proto__".to_string(), p);
+            }
+            b.insert("propertyName".to_string(), Value::Str(prop.to_string()));
+            b.insert("elapsedTime".to_string(), Value::Num(elapsed_s));
+            b.insert("pseudoElement".to_string(), Value::Str(String::new()));
+            // 트랜지션 이벤트는 버블하지만 취소할 수 없다(§CSS Transitions 6).
+            b.insert("cancelable".to_string(), Value::Bool(false));
+        }
+        evt
     }
 
     // 시작 시각이 있는 애니메이션의 currentTime 을 현재 가상 시각에 맞춘다.
@@ -3858,6 +3955,7 @@ impl Interp {
                 break;
             }
             self.advance_clock_to(timer.fire_at_ms);
+            self.drain_microtasks();
             self.timer_nesting = timer.nesting;
             if timer.repeat {
                 // 다음 주기로 재장전. 가상 시간 상한이 종료를 보장한다(아래 데드라인).
@@ -5122,7 +5220,7 @@ impl Interp {
                 // 이라 평가하면 안 된다. 예전엔 평가해서 ReferenceError 가 났다.
                 if matches!(op, BinOp::In) {
                     if let Expr::Ident(name) = left.as_ref() {
-                        if let Some(priv_name) = name.strip_prefix('#') {
+                        if let Some(priv_name) = name.strip_prefix("\u{0}#") {
                             let r = self.eval(right, env)?;
                             return Ok(Value::Bool(self.has_private(&r, priv_name)));
                         }
@@ -6844,7 +6942,7 @@ impl Interp {
                     "TypeError",
                     format!(
                         "Cannot read private member {} from an object whose class did not declare it",
-                        key
+                        private_name_display(key)
                     ),
                 ));
             }
@@ -12500,7 +12598,10 @@ impl Interp {
                     if !ok {
                         return Err(self.throw_error(
                             "TypeError",
-                            format!("Cannot write private member {} to an object whose class did not declare it", key),
+                            format!(
+                                "Cannot write private member {} to an object whose class did not declare it",
+                                private_name_display(&key)
+                            ),
                         ));
                     }
                 }

@@ -2375,6 +2375,11 @@ pub fn desugar_nested(nested: &str, parent: &str) -> String {
 }
 
 // 최상위(괄호/따옴표 밖) 콤마로 분리.
+// 최상위 콤마 분리(괄호 안 콤마는 무시). 트랜지션/애니메이션 목록 프로퍼티가 쓴다.
+pub fn split_top_commas_pub(s: &str) -> Vec<String> {
+    split_top_commas_str(s)
+}
+
 fn split_top_commas_str(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0i32;

@@ -703,6 +703,11 @@ pub fn tokenize(src: &str) -> Result<(Vec<Tok>, Vec<bool>, Vec<(u32, u32)>), Str
         if is_id_start(c) || c == '#' || (c == '\\' && b.get(i + 1) == Some(&'u')) {
             let mut word = String::new();
             if c == '#' {
+                // private 이름은 **문자열 키로 위조될 수 없어야** 한다. 예전엔 그냥 "#x"
+                // 라 `o["#top"] = v` 같은 평범한 대입(CSS 선택자·URL 조각이 흔히 이렇다)이
+                // private 필드 쓰기로 오인돼 TypeError 가 났다. 소스에서 나올 수 없는
+                // NUL 을 앞에 둬 문법으로만 만들어지게 한다.
+                word.push('\u{0}');
                 word.push('#');
                 i += 1;
             }

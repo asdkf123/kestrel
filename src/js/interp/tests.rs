@@ -5101,6 +5101,25 @@ fn identifiers_allow_unicode_and_escapes() {
 }
 
 #[test]
+fn hash_prefixed_string_keys_are_ordinary_properties() {
+    // private 이름은 **문법으로만** 만들어진다. `o["#id"] = v` 처럼 # 로 시작하는
+    // 문자열 키는 평범한 프로퍼티다 — 예전엔 private 으로 오인해 TypeError 를 던져,
+    // CSS 선택자("#test-0.fixture")나 URL 조각을 키로 쓰는 코드가 통째로 죽었다.
+    assert_eq!(
+        prelude_str("var o = {}; var k = '#test-0.fixture'; o[k] = 'v'; o[k]"),
+        "v"
+    );
+    assert_eq!(prelude_str("var o = {'#a': 1}; o['#a']"), "1");
+    assert_eq!(prelude_str("var o = {}; o['#x'] = 3; Object.keys(o).join(',')"), "#x");
+    // 문자열 키는 private 저장소와 섞이지 않는다.
+    assert_eq!(
+        prelude_str("class C { #p = 7; static g(o) { return o.#p; } } \
+                     var c = new C(); c['#p'] = 'plain'; C.g(c) + ',' + c['#p']"),
+        "7,plain"
+    );
+}
+
+#[test]
 fn private_names_are_not_properties() {
     // §6.2.12: private 이름은 프로퍼티가 아니다. 예전엔 "#x" 라는 이름의 필드였고,
     // Object.keys(instance) 가 ["#x"] 를 냈다 — JSON.stringify 로 private 데이터가

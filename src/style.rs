@@ -3053,13 +3053,26 @@ fn style_node<'a>(
                 Some(Value::Color(c)) | Some(Value::ColorFn(c, _)) => *c,
                 _ => crate::css::Color { r: 0, g: 0, b: 0, a: 255 },
             };
+            // 어떤 프로퍼티가 currentcolor 였는지 남긴다. 계산값 자체는 여기서 rgb 로
+            // 해석되지만, **계산값 수준에서는 여전히 currentcolor 키워드**다(§CSS Color).
+            // 트랜지션은 계산값 변화로 시작하므로, color 만 바뀐 경우 이 프로퍼티들은
+            // 변한 게 아니다 — 이 표시가 없으면 색이 딸려 바뀐 것으로 보여 전이가 생긴다.
+            let mut cc_props: Vec<String> = Vec::new();
             for (k, v) in values.iter_mut() {
                 if k == "color" {
                     continue;
                 }
                 if matches!(v, Value::Keyword(s) if s.eq_ignore_ascii_case("currentcolor")) {
                     *v = Value::Color(cc);
+                    cc_props.push(k.clone());
                 }
+            }
+            if !cc_props.is_empty() {
+                cc_props.sort();
+                values.insert(
+                    "\u{0}cc-props".to_string(),
+                    Value::Keyword(cc_props.join(" ")),
+                );
             }
             // animation: @keyframes 최종(100%/to) 프레임을 적용 (정적 렌더 = 애니메이션 종료 근사).
             // 진입 애니메이션의 opacity:0/off-screen 초기상태로 콘텐츠가 안 보이던 문제를 완화.

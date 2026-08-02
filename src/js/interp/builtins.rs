@@ -5138,6 +5138,7 @@ impl Interp {
                           "addEventListener", "removeEventListener"] {
                     m.insert(k.to_string(), Value::Native(Native::Noop));
                 }
+                m.insert("effect".to_string(), Self::make_effect_obj(id));
                 let rc = Rc::new(RefCell::new(m));
                 // 애니 등록(계산값 보간용). duration>0 이고 프로퍼티가 있을 때만.
                 if duration > 0.0 && !props.is_empty() {
@@ -5149,6 +5150,9 @@ impl Interp {
                         start_time_ms: None,
                         duration_ms: duration,
                         props,
+                        is_transition: false,
+                        node: id,
+                        event_phase: 0,
                     });
                 }
                 Ok(Value::Obj(rc))
@@ -5204,7 +5208,34 @@ impl Interp {
                 Ok(Value::Undefined)
             }
             // getAnimations() — 정적 렌더에는 진행 중인 애니메이션이 없다(빈 목록).
-            Native::GetAnimations => Ok(Value::Arr(ArrayObj::new(Vec::new()))),
+            // getAnimations() (§Web Animations 3.5). document 면 문서 전체, 요소면 그 요소.
+            // 끝난 트랜지션은 더 이상 활성이 아니므로 제외한다.
+            Native::GetAnimations => {
+                let only: Option<crate::dom::NodeId> = match recv {
+                    Some(Value::Dom(id)) => Some(id),
+                    _ => None, // document (평범한 객체) → 전체
+                };
+                let now = self.virtual_now_ms;
+                let mut ids: Vec<crate::dom::NodeId> =
+                    self.element_animations.keys().copied().collect();
+                ids.sort(); // NodeId 는 문서 순서로 매겨진다 — §문서 순서 근사
+                let mut out: Vec<Value> = Vec::new();
+                for id in ids {
+                    if only.is_some_and(|o| o != id) {
+                        continue;
+                    }
+                    let Some(list) = self.element_animations.get(&id) else { continue };
+                    for a in list {
+                        if let Some(start) = a.start_time_ms {
+                            if now >= start + a.duration_ms {
+                                continue; // 이미 끝났다
+                            }
+                        }
+                        out.push(Value::Obj(a.obj.clone()));
+                    }
+                }
+                Ok(Value::Arr(ArrayObj::new(out)))
+            }
             // attachShadow({mode}) — 섀도 트리를 따로 두지 않고 요소 자신을 섀도 루트로
             // 돌려준다. shadowRoot.innerHTML 로 넣은 콘텐츠는 실제로 렌더된다.
             // 스타일 격리(:host, 캡슐화)는 없다 — 근사임을 문서화한다.
