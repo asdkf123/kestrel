@@ -1,6 +1,8 @@
 # Kestrel 표준 적합성 현황
 
-측정일: 2026-07-31 (CSS 표는 2026-08 CSSOM 스윕분 부분 갱신 — css-nesting/conditional/cssom/mediaqueries/syntax/borders/selectors/values/cascade/properties-values-api/color 행은 최신, 종합(축별) CSS 총계는 미갱신이라 실제보다 과소). 러너: 헤드리스 렌더 + WPT testharness / test262. WPT 는 testharness 기반 서브테스트 기준(reftest·수동 테스트 제외, 하네스 못 돈 파일은 분모에서 빠짐). test262 는 실행분(module/onlyStrict 건너뜀) 기준. % = 통과/전체.
+측정일: 2026-08-02 (아래 CSS 표 중 이번 세션에 재측정한 행은 최신 — 표에 ★ 표시. 나머지 행과 축별 종합은 2026-07-31 측정이라 현재보다 과소). 러너: 헤드리스 렌더 + WPT testharness / test262. WPT 는 testharness 기반 서브테스트 기준(reftest·수동 테스트 제외, 하네스 못 돈 파일은 분모에서 빠짐). test262 는 실행분(module/onlyStrict 건너뜀) 기준. % = 통과/전체.
+
+**★ 행의 분모가 예전보다 큰 이유**: JS 실행 예산을 넉넉히(스크립트 30초/페이지 60초) 주고 측정했다. 기본값(5초/10초)은 벽시계 기준이라 무거운 파일이 중간에 잘리고, 잘리는 지점이 머신 부하에 따라 달라져 같은 바이너리로 같은 파일이 344~406 서브테스트를 오갔다. 비교 측정은 반드시 같은 예산에서 하고, 통과 수와 함께 **분모와 "하네스 못 돈 파일" 수**를 봐야 한다 (분모가 줄면서 %가 오르는 건 개선이 아니라 잘린 것이다).
 
 > ⚠️ 이 수치는 **명세 적합성**(파싱/API 정확도)이지 시각적 렌더 완성도가 아니다. 상용 브라우저 대비가 아니라 스펙 스위트 대비 진척도다.
 
@@ -174,65 +176,65 @@
 | css-will-change | 173 / 173 | 100.0% |
 | css-align | 3,232 / 3,322 | 97.3% |
 | css-forced-color-adjust | 13 / 14 | 92.9% |
-| css-text-decor | 1,182 / 1,276 | 92.6% |
+| css-text-decor ★ | 1,203 / 1,276 | 94.3% |
 | CSS2 | 592 / 653 | 90.7% |
-| css-images | 3,225 / 3,580 | 90.1% |
+| css-images ★ | 3,319 / 3,580 | 92.7% |
 | mediaqueries | 272 / 308 | 88.3% |
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
-| cssom | 2,985 / 3,437 | 86.8% |
+| cssom ★ | 2,980 / 3,437 | 86.7% |
 | css-color | 8,944 / 9,521 | 93.9% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |
 | css-flexbox | 1,125 / 1,379 | 81.6% |
 | css-nesting | 95 / 117 | 81.2% |
-| css-backgrounds | 3,788 / 4,914 | 77.1% |
-| css-anchor-position | 9,972 / 13,012 | 76.6% |
+| css-backgrounds ★ | 4,959 / 6,181 | 80.2% |
+| css-anchor-position ★ | 10,462 / 13,180 | 79.4% |
 | css-position | 1,078 / 1,412 | 76.3% |
 | selectors | 3,143 / 4,118 | 76.3% |
 | css-viewport | 369 / 490 | 75.3% |
-| css-display | 287 / 384 | 74.7% |
+| css-display ★ | 284 / 384 | 74.0% |
 | css-break | 452 / 609 | 74.2% |
 | css-ui | 1,390 / 1,888 | 73.6% |
 | css-fonts | 5,571 / 7,565 | 73.6% |
 | css-transforms | 2,886 / 3,969 | 72.7% |
-| css-ruby | 52 / 73 | 71.2% |
+| css-ruby ★ | 54 / 76 | 71.1% |
 | css-sizing | 2,237 / 3,212 | 69.6% |
 | css-syntax | 373 / 428 | 87.1% |
 | css-text | 2,078 / 3,029 | 68.6% |
 | css-scroll-snap | 458 / 690 | 66.4% |
 | css-properties-values-api | 611 / 923 | 66.2% |
-| css-shapes | 3,336 / 5,093 | 65.5% |
+| css-shapes ★ | 4,689 / 6,149 | 76.3% |
 | css-cascade | 458 / 717 | 63.9% |
-| css-multicol | 850 / 1,356 | 62.7% |
+| css-multicol ★ | 1,098 / 1,543 | 71.2% |
 | css-grid | 2,156 / 3,567 | 60.4% |
 | css-env | 5 / 9 | 55.6% |
-| css-box | 529 / 957 | 55.3% |
-| css-animations | 574 / 1,059 | 54.2% |
+| css-box ★ | 618 / 957 | 64.6% |
+| css-animations ★ | 704 / 1,059 | 66.5% |
 | css-contain | 194 / 360 | 53.9% |
 | css-variables | 272 / 511 | 53.2% |
 | css-values | 4,164 / 7,764 | 53.6% |
 | css-writing-modes | 188 / 356 | 52.8% |
-| css-overscroll-behavior | 51 / 97 | 52.6% |
+| css-overscroll-behavior ★ | 63 / 97 | 64.9% |
 | css-page | 49 / 97 | 50.5% |
 | css-easing | 77 / 156 | 49.4% |
-| css-logical | 664 / 1,364 | 48.7% |
+| css-logical ★ | 689 / 1,364 | 50.5% |
 | css-counter-styles | 57 / 118 | 48.3% |
 | css-scrollbars | 22 / 46 | 47.8% |
 | css-rhythm | 72 / 155 | 46.5% |
-| css-inline | 288 / 635 | 45.4% |
-| css-lists | 362 / 852 | 42.5% |
-| css-borders | 464 / 1,151 | 40.3% |
-| css-overflow | 369 / 983 | 37.5% |
+| css-inline ★ | 425 / 635 | 66.9% |
+| css-lists ★ | 623 / 960 | 64.9% |
+| css-borders ★ | 426 / 1,151 | 37.0% |
+| css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
-| filter-effects | 833 / 2,452 | 34.0% |
+| filter-effects ★ | 835 / 2,452 | 34.1% |
 | css-layout-api | 4 / 13 | 30.8% |
-| css-transitions | 879 / 3,086 | 28.5% |
+| css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
-| motion | 1,053 / 3,775 | 27.9% |
+| motion ★ | 2,906 / 4,955 | 58.6% |
 | css-link-params | 6 / 25 | 24.0% |
-| css-masking | 831 / 4,312 | 19.3% |
+| css-masking ★ | 4,513 / 6,354 | 71.0% |
 | cssom-view | 300 / 1,827 | 16.4% |
 | css-scroll-anchoring | 13 / 84 | 15.5% |
 | css-pseudo | 77 / 532 | 14.5% |
@@ -257,7 +259,7 @@
 
 | 서브트리 | 통과 / 전체 | % |
 |---|---|---|
-| **dom (전체)** | 4,008 / 6,811 | **58.8%** |
+| **dom (전체)** ★ | 4,244 / 7,031 | **60.4%** |
 | abort | 0 / 2 | 0.0% |
 | collections | 17 / 48 | 35.4% |
 | events | 277 / 580 | 47.8% |
@@ -403,6 +405,50 @@
 | picture-in-picture / portals / fenced-frame | ✗ 미구현(0%) | |
 
 > 요약: 현재 kestrel 은 **렌더링 코어(HTML/CSS/DOM) + JS 언어(test262)** 에 집중. 나머지 대부분 영역(네트워킹/워커/저장소/미디어/디바이스/보안 API)은 미구현(0%)이며 이게 "브라우저 완성"까지의 실제 남은 로드맵이다. 우선순위는 렌더링 정확도(css) → 코어 API(events/URL/encoding/console) → 나머지 순으로 잡는다.
+
+## 2026-08-02 세션 (가상 시계 + CSS.supports 게이트)
+
+같은 예산·같은 분모로 전후를 직접 측정한 순증(기준선 커밋 `35155c8`):
+
+| 영역 | 기준선 | 현재 | 증감 |
+|---|---|---|---|
+| css-masking | 1,223 | 4,513 | +3,290 |
+| css/motion | 1,334 | 2,906 | +1,572 |
+| css-shapes | 3,510 | 4,689 | +1,179 |
+| css-anchor-position | 9,997 | 10,462 | +465 |
+| css-lists | 439 | 623 | +184 |
+| css-transitions | 886 | 1,069 | +183 |
+| css-inline | 282 | 425 | +143 |
+| css-multicol | 972 | 1,098 | +126 |
+| css-box | 546 | 618 | +72 |
+| css-logical | 669 | 689 | +20 |
+| 그 외(overflow/text-decor/ruby/images/backgrounds/display/filter/dom/animations) | | | +40 |
+
+**주요 변경**
+- **가상 시계 이벤트 루프**: 타이머가 지연을 지킨다(§HTML timer initialization steps —
+  발화 시각 순서, 동시각은 등록 순서, 중첩 5단계 초과 4ms 클램프). requestAnimationFrame
+  을 setTimeout 별칭에서 분리(60Hz 격자, 실행 전 큐 비움). cancelAnimationFrame 이 이제
+  실제로 취소한다. performance.now/Date.now/new Date 가 한 시계.
+- **트랜지션을 스타일 변경 이벤트로**(§CSS Transitions 4): 인라인 style 쓰기 훅이 아니라
+  재계산 전후 계산값 비교로 생성. 목록 뒤 항목 우선, currentcolor 예외,
+  transitionrun/start/end 발화, document/element.getAnimations() 실구현.
+- **★CSS.supports 게이트 해소가 최고 ROI**: 애니메이션/보간 테스트마다
+  `CSS.supports(prop, value)` 선행조건이 있어 한 줄의 미등록이 수천 하위테스트를 막는다.
+  basic-shape 함수 8종·repeating-*-gradient(FUNCS), mask-border-* 6종, 검증 arm 은 있는데
+  등록이 빠진 롱핸드 16종, 전역 키워드×단축(property_known), 키워드/수 롱핸드 14종,
+  border 논리 22종, position-anchor/position-try-fallbacks.
+- **논리 프로퍼티는 단축이 아니라 별칭**: 확장 결과가 롱핸드 하나면 계산값 열거에 남겨야
+  한다(빼면 getComputedStyle-listing 이 깨진다 — 실측 -10 회귀 후 정정).
+- **성능**: StyledNode.specified_values 를 Rc 공유로, 트랜지션 감지를 Value 직접 비교로
+  (문자열 포매팅·할당 제거). 계산 스타일 요청 시 해석은 설계만 완료
+  (`docs/superpowers/specs/2026-08-02-kestrel-computed-style-on-demand-design.md`).
+- **엔진 일반 버그**: private 이름을 "#x" 문자열로 표현해 `o["#sel"] = v` 같은 평범한
+  대입이 private 필드 쓰기로 오인됐다(CSS 선택자·URL 조각). 렉서가 NUL 접두를 붙여
+  문법으로만 만들어지게 수정.
+
+**남은 큰 것**: 계산 스타일 요청 시 해석(최대 핫스팟 collect_computed_styles),
+Web Animations 객체 모델(Animation 상태기계·다중 키프레임), 보간 타입 레지스트리,
+미지 프로퍼티 57개(대부분 실험 기능).
 
 ## 확인된 구체적 버그
 
