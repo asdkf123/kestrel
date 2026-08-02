@@ -435,6 +435,7 @@ const FUNCS: &[&str] = &[
     "var", "calc", "min", "max", "clamp",
     // 색 — 레거시 + 모던 색 함수(계산값 색공간 보존을 구현했으므로 정직하게 지원).
     "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix",
+    "alpha",
     // 이미지
     "url", "linear-gradient", "radial-gradient", "conic-gradient",
     // content
