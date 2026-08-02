@@ -11758,7 +11758,9 @@ pub fn normalize_lab_like(raw: &str) -> Option<String> {
             // calc 결과는 지정값에서 클램프하지 않는다(clamp 는 used-value 시점).
             return match eval_calc_number(&tok[5..tok.len() - 1]) {
                 Some(n) => Some(format!("calc({})", nc(n))),
-                None => Some(tok.to_string()), // % 등 문맥 의존 calc 은 원문 유지
+                // 평가 불가(0/0·% 등)는 canon_calc_serialize 로 캐논화 시도(calc(0/0)→
+                // calc(NaN) 등), 그래도 안 되면 원문 유지.
+                None => Some(canon_calc_serialize(tok).unwrap_or_else(|| tok.to_string())),
             };
         }
         let v = if let Some(p) = tok.strip_suffix('%') {
