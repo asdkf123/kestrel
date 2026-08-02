@@ -2302,6 +2302,13 @@ pub fn initial_value(prop: &str) -> Option<&'static str> {
         "border-image-slice" => "100%",
         "border-image-width" => "1",
         "border-image-outset" => "0",
+        // mask-border 롱핸드 초기값(§CSS Masking 1 §5).
+        "mask-border-source" => "none",
+        "mask-border-slice" => "0",
+        "mask-border-width" => "auto",
+        "mask-border-outset" => "0",
+        "mask-border-repeat" => "stretch",
+        "mask-border-mode" => "alpha",
         "border-top-left-radius" | "border-top-right-radius" | "border-bottom-left-radius"
         | "border-bottom-right-radius" => "0px",
         "border-top-style" | "border-right-style" | "border-bottom-style"

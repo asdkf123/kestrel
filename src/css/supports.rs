@@ -399,6 +399,9 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-block-shape", "corner-inline-shape",
     // 11차: border-image 롱핸드(계산값 노출 — border-image 렌더는 별개).
     "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
+    // mask-border 롱핸드(§CSS Masking 1) — border-image 와 같은 문법. 계산값 노출.
+    "mask-border-source", "mask-border-slice", "mask-border-width", "mask-border-outset",
+    "mask-border-repeat", "mask-border-mode",
     // border-radius 코너 롱핸드(border-radius 가 이들로 펼쳐짐 — CSS.supports/계산값).
     "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius",
     "border-bottom-right-radius",

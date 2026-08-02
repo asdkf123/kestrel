@@ -3152,6 +3152,46 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(value_text.trim().to_string()) }]
         }
         // border-image 수치 롱핸드: 문법 검증 후 원문 보존.
+        // mask-border-* (§CSS Masking 1 §5): border-image-* 와 문법이 같다(source/slice/
+        // width/outset/repeat). mask-border-mode 만 추가(luminance | alpha).
+        "mask-border-source" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            if crate::css::border_image_source_valid(t) {
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
+        "mask-border-mode" => {
+            let low = value_text.trim().to_ascii_lowercase();
+            if matches!(low.as_str(), "luminance" | "alpha" | "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }]
+            } else {
+                Vec::new()
+            }
+        }
+        "mask-border-repeat" | "mask-border-outset" | "mask-border-width" | "mask-border-slice" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(low) }];
+            }
+            let ok = match name {
+                "mask-border-repeat" => crate::css::border_image_repeat_valid(t),
+                "mask-border-outset" => crate::css::border_image_outset_valid(t),
+                "mask-border-width" => crate::css::border_image_width_valid(t),
+                _ => crate::css::border_image_slice_valid(t),
+            };
+            if ok {
+                vec![Declaration { raw: String::new(), important: false, name: name.to_string(), value: Value::Keyword(t.to_string()) }]
+            } else {
+                Vec::new()
+            }
+        }
         "border-image-repeat" | "border-image-outset" | "border-image-width" | "border-image-slice" => {
             let t = value_text.trim();
             let ok = match name {
