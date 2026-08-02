@@ -66,6 +66,7 @@ pub(crate) use values::offset_len_ok;
 pub(crate) use values::corner_single_valid;
 pub(crate) use values::corner_slash_valid;
 pub(crate) use values::{corner_single_canonical, corner_slash_canonical};
+pub(crate) use shorthand::normalize_filter_list;
 pub(crate) use values::{animation_range_valid, animation_range_longhand_valid, animation_range_expand, animation_range_longhand_canonical};
 pub(crate) use values::normalize_image_set;
 pub(crate) use values::normalize_color_mix;

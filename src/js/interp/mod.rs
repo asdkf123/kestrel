@@ -9664,6 +9664,12 @@ impl Interp {
         // 상대 리스트의 **중립값**으로 채워 길이를 맞춘 뒤 함수별로 보간한다.
         // none↔blur(10px) 는 blur(0px)↔blur(10px) 로 본다.
         if matches!(dash_prop, "filter" | "backdrop-filter") {
+            // 키프레임 값은 CSS 파서를 거치지 않으므로(element.animate 는 JS 문자열)
+            // 여기서 계산값 형태로 정규화한다 — grayscale(25%) → grayscale(0.25),
+            // blur() → blur(0px), calc 평가.
+            let from = &crate::css::normalize_filter_list(from);
+            let to = &crate::css::normalize_filter_list(to);
+            let (from, to) = (from.as_str(), to.as_str());
             let pad = |a: &str, b: &str| -> Option<String> {
                 let at: Vec<&str> = if a.trim().eq_ignore_ascii_case("none") {
                     Vec::new()
@@ -10841,6 +10847,9 @@ impl Interp {
         // filter/backdrop-filter 의 accumulate: 같은 함수 순서면 인자를 함수별로 더한다
         // (§Web Animations 누적 + §Filter Effects). add 는 이어붙이기라 호출측이 처리한다.
         if matches!(dash, "filter" | "backdrop-filter") {
+            // 합성 입력도 계산값 형태로 정규화(키프레임은 파서를 안 거친다).
+            let base = &crate::css::normalize_filter_list(base);
+            let kf = &crate::css::normalize_filter_list(kf);
             let bt = Self::split_top_ws(base);
             let kt = Self::split_top_ws(kf);
             if bt.len() == kt.len() && !bt.is_empty() {

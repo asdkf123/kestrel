@@ -64,7 +64,7 @@ fn number_or_math(s: &str) -> Option<f32> {
 // 필터 리스트의 **인자 생략** 형태를 각 함수의 기본값으로 채운다(§Filter Effects).
 // blur()=0px, grayscale()/invert()/sepia()=1, brightness()/contrast()/opacity()/
 // saturate()=1, hue-rotate()=0deg. 계산값이 이 형태여야 직렬화도 보간도 맞는다.
-fn normalize_filter_list(raw: &str) -> String {
+pub(crate) fn normalize_filter_list(raw: &str) -> String {
     let t = raw.trim();
     if t.is_empty() || t.eq_ignore_ascii_case("none") {
         return t.to_string();

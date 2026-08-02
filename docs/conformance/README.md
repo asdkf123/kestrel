@@ -228,7 +228,7 @@
 | css-borders ★ | 822 / 1,151 | 71.4% |
 | css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
-| filter-effects ★ | 1,880 / 2,452 | 76.7% |
+| filter-effects ★ | 1,945 / 2,452 | 79.3% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
@@ -423,7 +423,7 @@
 | css-box | 546 | 618 | +72 |
 | css-borders | 426 | 822 | +396 |
 | css-logical | 669 | 689 | +20 |
-| filter-effects | 833 | 1,880 | +1,047 |
+| filter-effects | 833 | 1,945 | +1,112 |
 | 그 외(overflow/text-decor/ruby/images/backgrounds/display/dom/animations) | | | +38 |
 
 **주요 변경**
@@ -444,6 +444,9 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **애니메이션 경로의 필터 정규화**: `element.animate` 키프레임은 CSS 파서를 거치지
+  않으므로(JS 문자열) 보간·합성 입력에서 계산값 형태로 정규화한다
+  (grayscale(25%) → grayscale(0.25), blur() → blur(0px), calc 평가).
 - **corner-shape 보간**(§CSS Borders 4): superellipse 파라미터를 **정규화 half-corner
   공간 [0,1]** 으로 옮겨 선형 보간한 뒤 되돌린다 — `v = 0.5^(1/2^|s|)`(s<0 이면 1-v),
   역변환은 `c = max(v,1-v)`, `k = ln(0.5)/ln(c)`, `s = log2(k)`(v<0.5 면 부호 반전).
