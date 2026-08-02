@@ -399,6 +399,13 @@ pub(crate) const SUPPORTED: &[&str] = &[
     "corner-block-shape", "corner-inline-shape",
     // 11차: border-image 롱핸드(계산값 노출 — border-image 렌더는 별개).
     "border-image-source", "border-image-slice", "border-image-width", "border-image-outset",
+    // 검증 arm 은 있는데 등록이 빠져 있던 롱핸드들(README 경고: arm 추가 시 반드시 여기도).
+    // 전부 롱핸드다 — 단축을 넣으면 계산값 열거(item/ownKeys)에 들어가 회귀한다.
+    "clip", "text-decoration-inset", "text-decoration-skip-spaces", "text-align-all",
+    "text-group-align", "block-ellipsis", "max-lines", "image-resolution",
+    "font-variant-emoji", "ruby-merge", "ruby-overhang", "scroll-target-group",
+    "list-style-image", "alignment-baseline",
+    "overscroll-behavior-block", "overscroll-behavior-inline",
     // mask-border 롱핸드(§CSS Masking 1) — border-image 와 같은 문법. 계산값 노출.
     "mask-border-source", "mask-border-slice", "mask-border-width", "mask-border-outset",
     "mask-border-repeat", "mask-border-mode",
