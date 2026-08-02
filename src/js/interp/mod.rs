@@ -10718,6 +10718,47 @@ impl Interp {
     }
 
     pub(super) fn compose_prop(dash: &str, base: &str, kf: &str, accumulate: bool) -> Option<String> {
+        // 기본 도형(clip-path/shape-outside/offset-path)의 add/accumulate 합성:
+        // 같은 도형 함수면 수 성분을 짝지어 더한다(§Web Animations 합성 + §CSS Shapes).
+        // circle(50px at 10px 20px) + circle(50px at 10px 20px) = circle(100px at 20px 40px).
+        // 키워드 토큰(at/closest-side/round …)은 양쪽이 같아야 하고 그대로 둔다.
+        if matches!(dash, "clip-path" | "shape-outside" | "offset-path") {
+            let split = |v: &str| -> Option<(String, Vec<String>)> {
+                let v = v.trim();
+                let open = v.find('(')?;
+                if !v.ends_with(')') {
+                    return None;
+                }
+                let name = v[..open].trim().to_ascii_lowercase();
+                let args = &v[open + 1..v.len() - 1];
+                Some((name, Self::split_top_ws(args).iter().map(|x| x.to_string()).collect()))
+            };
+            let (bn, ba) = split(base)?;
+            let (kn, ka) = split(kf)?;
+            if bn != kn || ba.len() != ka.len() {
+                return None;
+            }
+            let num = |t: &str| -> Option<(f32, String)> {
+                for u in ["px", "%", "em", "rem", "deg"] {
+                    if let Some(n) = t.strip_suffix(u) {
+                        return n.trim().parse::<f32>().ok().map(|v| (v, u.to_string()));
+                    }
+                }
+                t.parse::<f32>().ok().map(|v| (v, String::new()))
+            };
+            let mut out: Vec<String> = Vec::with_capacity(ba.len());
+            for (b, k) in ba.iter().zip(ka.iter()) {
+                match (num(b), num(k)) {
+                    (Some((bv, bu)), Some((kv, ku))) if bu == ku => {
+                        out.push(format!("{}{}", crate::style::num_css(bv + kv), bu));
+                    }
+                    (None, None) if b.eq_ignore_ascii_case(k) => out.push(b.clone()),
+                    _ => return None, // 단위 불일치·키워드 불일치는 합성 불가
+                }
+            }
+            let _ = accumulate; // add 와 accumulate 가 같다(성분별 덧셈)
+            return Some(format!("{}({})", bn, out.join(" ")));
+        }
         // filter/backdrop-filter 의 accumulate: 같은 함수 순서면 인자를 함수별로 더한다
         // (§Web Animations 누적 + §Filter Effects). add 는 이어붙이기라 호출측이 처리한다.
         if matches!(dash, "filter" | "backdrop-filter") {

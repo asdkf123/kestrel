@@ -205,7 +205,7 @@
 | css-text | 2,078 / 3,029 | 68.6% |
 | css-scroll-snap | 458 / 690 | 66.4% |
 | css-properties-values-api | 611 / 923 | 66.2% |
-| css-shapes ★ | 4,909 / 6,149 | 79.8% |
+| css-shapes ★ | 4,969 / 6,149 | 80.8% |
 | css-cascade | 458 / 717 | 63.9% |
 | css-multicol ★ | 1,098 / 1,543 | 71.2% |
 | css-grid | 2,156 / 3,567 | 60.4% |
@@ -232,9 +232,9 @@
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
-| motion ★ | 2,906 / 4,955 | 58.6% |
+| motion ★ | 3,256 / 4,955 | 65.7% |
 | css-link-params | 6 / 25 | 24.0% |
-| css-masking ★ | 5,260 / 6,354 | 82.8% |
+| css-masking ★ | 5,320 / 6,354 | 83.7% |
 | cssom-view | 300 / 1,827 | 16.4% |
 | css-scroll-anchoring | 13 / 84 | 15.5% |
 | css-pseudo | 77 / 532 | 14.5% |
@@ -412,9 +412,9 @@
 
 | 영역 | 기준선 | 현재 | 증감 |
 |---|---|---|---|
-| css-masking | 1,223 | 5,260 | +4,037 |
-| css/motion | 1,334 | 2,906 | +1,572 |
-| css-shapes | 3,510 | 4,909 | +1,399 |
+| css-masking | 1,223 | 5,320 | +4,097 |
+| css/motion | 1,334 | 3,256 | +1,922 |
+| css-shapes | 3,510 | 4,969 | +1,459 |
 | css-anchor-position | 9,997 | 10,462 | +465 |
 | css-lists | 439 | 623 | +184 |
 | css-transitions | 886 | 1,069 | +183 |
@@ -443,6 +443,10 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **기본 도형 합성**: clip-path/shape-outside/offset-path 의 add/accumulate 합성이
+  같은 도형 함수의 수 성분을 짝지어 더한다(circle(50px at 10px 20px) 둘을 합성하면
+  circle(100px at 20px 40px)). 키워드 토큰(at/closest-side 등)은 양쪽이 같을 때만 유지하고,
+  단위가 다르면 합성하지 않는다.
 - **필터 수 인자 계산값**: 수 인자 함수(brightness/contrast/saturate/opacity/grayscale/
   invert/sepia)의 계산값은 `<number>` 다 — 퍼센트를 수로 바꾸고(300% → 3) calc 을
   평가하며 음수는 0 으로 자른다. blur 의 calc 도 px 로 평가.
