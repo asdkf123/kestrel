@@ -25,6 +25,13 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
             break;
         }
     }
+    // alpha(from <origin> [/ <alpha>]) — 상대 알파(§CSS Color 5 §relative-alpha).
+    if lower.starts_with("alpha(") {
+        if !alpha_color_valid(&lower) {
+            return None;
+        }
+        return parse_alpha_color(&lower).map(Value::Color);
+    }
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
         if !rgb_valid(&lower) {
             return None;
@@ -4263,6 +4270,43 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
         serialize_mix(spec.space, &coords, rr, gg, bb, alpha_out)
     };
     Some((rgba, serial.into_boxed_str()))
+}
+
+// alpha(from <origin> [/ <alpha>]) 계산(§CSS Color 5 §relative-alpha) — origin 색의
+// rgb 를 유지하고 알파만 교체한다. 알파 생략 시 origin 알파 유지, `alpha` 키워드는
+// origin 알파를 참조, calc 안에서도 alpha 를 치환한다. text 는 소문자 가정.
+fn parse_alpha_color(text: &str) -> Option<Color> {
+    let inner = func_inner(text)?;
+    let after = inner.trim().strip_prefix("from ")?.trim();
+    let slash = split_top_slash(after);
+    if slash.is_empty() || slash.len() > 2 {
+        return None;
+    }
+    let origin = slash[0].trim();
+    let rgba = srgb_float_of(origin)?;
+    let oalpha = rgba[3];
+    let a_frac = match slash.get(1) {
+        None => oalpha, // 알파 생략 → origin 알파 유지
+        Some(a) => {
+            let a = a.trim();
+            if a.eq_ignore_ascii_case("none") {
+                0.0
+            } else if a.eq_ignore_ascii_case("alpha") {
+                oalpha
+            } else {
+                let subbed = subst_channels(a, &|name: &str| {
+                    if name == "alpha" { Some(oalpha) } else { None }
+                });
+                comp_opt(parse_comp(&subbed, 1.0)?).unwrap_or(0.0)
+            }
+        }
+    };
+    Some(Color {
+        r: to_u8(rgba[0]),
+        g: to_u8(rgba[1]),
+        b: to_u8(rgba[2]),
+        a: (a_frac.clamp(0.0, 1.0) * 255.0).round() as u8,
+    })
 }
 
 // text-decoration-line 캐논: 표준 순서(underline overline line-through blink)로 재정렬.
@@ -11716,6 +11760,49 @@ pub fn normalize_relative_color(raw: &str) -> Option<String> {
     Some(format!("{cfunc}(from {origin_canon} {channels_out})"))
 }
 
+// alpha(from <origin> [/ <alpha>]) 지정값 캐논(§CSS Color 5 §relative-alpha): origin 을
+// relative-color 와 동일하게 캐논화(키워드 소문자, 색 함수 재귀), 알파 토큰은 유지한다.
+pub fn normalize_alpha_color(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    let open = t.find('(')?;
+    let close = t.rfind(')')?;
+    if close <= open || !t[..open].eq_ignore_ascii_case("alpha") {
+        return None;
+    }
+    let inner = t[open + 1..close].trim();
+    if inner.len() < 5 || !inner[..5].eq_ignore_ascii_case("from ") {
+        return None;
+    }
+    let after = inner[5..].trim();
+    let slash = split_top_slash(after);
+    if slash.is_empty() || slash.len() > 2 {
+        return None;
+    }
+    let origin = slash[0].trim();
+    if origin.is_empty() {
+        return None;
+    }
+    let origin_canon = if origin.contains('(') {
+        normalize_relative_color(origin)
+            .or_else(|| normalize_color_function(origin))
+            .or_else(|| normalize_lab_like(origin))
+            .or_else(|| normalize_color_mix(origin))
+            .or_else(|| serialize_mix_input_color(origin))
+            .unwrap_or_else(|| origin.to_string())
+    } else {
+        origin.to_ascii_lowercase()
+    };
+    if let Some(a) = slash.get(1) {
+        let a = a.trim();
+        let a_low = a.to_ascii_lowercase();
+        // none/alpha 키워드는 소문자, 그 외(number/percentage/calc)는 그대로 유지.
+        let a_out = if a_low == "none" || a_low == "alpha" { a_low } else { a.to_string() };
+        Some(format!("alpha(from {origin_canon} / {a_out})"))
+    } else {
+        Some(format!("alpha(from {origin_canon})"))
+    }
+}
+
 // color-mix 지정값 캐논 직렬화(§CSS Color 5): 퍼센트를 색 뒤로, inner 색 정규화
 // (키워드 유지, 함수→rgb), 기본 50%(한쪽만) 생략. 파싱 불가는 None.
 // color(<space> c1 c2 c3 [/ a]) 지정값 캐논 직렬화(§CSS Color 4). 채널 %→0-1 수,
@@ -12771,10 +12858,71 @@ pub fn relative_color_valid(func: &str, lower: &str) -> bool {
     true
 }
 
+// alpha() 문법 검증(§CSS Color 5 §relative-alpha): alpha( from <origin> [/ <alpha>]? ).
+// origin 은 단일 색, 알파는 number/percentage/none/`alpha` 키워드/calc.
+pub fn alpha_color_valid(lower: &str) -> bool {
+    let inner = match func_inner(lower) {
+        Some(i) => i.trim().to_string(),
+        None => return false,
+    };
+    let low_inner = inner.to_ascii_lowercase();
+    if !low_inner.starts_with("from ") || top_level_has(&inner, ',') {
+        return false;
+    }
+    let after = inner[5..].trim();
+    let slash = split_top_slash(after);
+    if slash.is_empty() || slash.len() > 2 {
+        return false;
+    }
+    let main = split_top_level(slash[0].trim());
+    if main.len() != 1 || !rel_origin_valid(&main[0]) {
+        return false;
+    }
+    if slash.len() == 2 {
+        let a = slash[1].trim();
+        if a.is_empty() || !rel_channel_valid(a, &["alpha"], false) {
+            return false;
+        }
+        // calc 는 alpha 외 채널 키워드(r/g/b/h/s/l/w/c/x/y/z)를 참조할 수 없다 —
+        // alpha() 는 alpha 채널만 노출한다(§relative-alpha).
+        if col_is_calc(a) && !calc_only_alpha_channel(a) {
+            return false;
+        }
+    }
+    true
+}
+
+// calc 표현식이 alpha 외의 채널 키워드(단일 문자 r/g/b/h/s/l/w/c/x/y/z 및 벌거벗은 a)를
+// 참조하지 않는지 검사. `alpha` 는 통째 낱말이라 허용, 수학 함수/sibling-* 등은 무관.
+fn calc_only_alpha_channel(a: &str) -> bool {
+    let low = a.to_ascii_lowercase();
+    let bytes = low.as_bytes();
+    const FORBIDDEN: [&str; 12] =
+        ["r", "g", "b", "h", "s", "l", "w", "c", "x", "y", "z", "a"];
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphabetic() {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-') {
+                i += 1;
+            }
+            if FORBIDDEN.contains(&&low[start..i]) {
+                return false;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    true
+}
+
 // 색 함수 문법 유효성 디스패처(계산 가능 여부와 무관, 파싱 유효성만).
 // interpret_value 가 계산 실패로 None 을 줘도, 문법이 유효하면 지정값을 보존한다.
 pub fn color_syntax_valid(raw: &str) -> bool {
     let lower = raw.trim().to_ascii_lowercase();
+    if lower.starts_with("alpha(") {
+        return alpha_color_valid(&lower);
+    }
     // 상대 색: <func>(from ...).
     for f in ["rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color"] {
         if lower.starts_with(f) && lower[f.len()..].starts_with('(') {

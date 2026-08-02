@@ -596,6 +596,12 @@ impl Interp {
                 return s;
             }
         }
+        // alpha(from ...) 지정값 캐논(§CSS Color 5 §relative-alpha): origin 캐논 + 알파 유지.
+        if rl.starts_with("alpha(") {
+            if let Some(s) = crate::css::normalize_alpha_color(raw) {
+                return s;
+            }
+        }
         // relative-color(rgb(from ...)) 지정값 캐논: rgba→rgb, origin 키워드 소문자 등.
         if rl.contains("(from ") {
             if let Some(s) = crate::css::normalize_relative_color(raw) {
