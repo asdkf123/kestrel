@@ -562,6 +562,29 @@ fn longhand_decl_supported(prop: &str, value: &str) -> bool {
 // 선언을 longhand 로 확장한 뒤, 확장 결과가 전부 우리가 실제로 해석하는 프로퍼티여야
 // 참이다. 예전엔 "파싱만 되면 지원" 이라 subgrid 같은 미구현 기능도
 // 지원한다고 거짓말했다(과다보고 → 사이트가 못 그리는 레이아웃을 보냄).
+// 이 이름을 엔진이 아는 CSS 프로퍼티로 취급하는가. 롱핸드는 SUPPORTED 목록으로,
+// **단축은 확장이 되는지로** 판정한다 — 단축은 SUPPORTED(롱핸드 목록)에 넣으면
+// 계산값 열거(item/ownKeys)에 섞여 회귀하므로 거기 둘 수 없다.
+//
+// 전역 키워드(initial/inherit/unset/…)는 알려진 프로퍼티 **전부**에 유효하므로
+// (§CSS Cascade) CSS.supports("margin", "initial") 은 참이어야 한다. 예전엔 롱핸드
+// 목록만 봐서 단축이 전부 거짓이었다.
+fn property_known(prop: &str) -> bool {
+    if is_known_property(prop) {
+        return true;
+    }
+    // 확장 판정용 대표값들. 하나라도 "확장되고 그 롱핸드가 전부 지원" 이면 아는 이름이다.
+    // 미지 프로퍼티는 catch-all 이 자기 이름 그대로 내므로 롱핸드 검사에서 걸러진다.
+    const PROBES: [&str; 8] =
+        ["0px", "none", "auto", "red", "1", "1px solid red", "normal", "2"];
+    PROBES.iter().any(|v| {
+        let ex = expand_declaration(prop, v);
+        !ex.is_empty()
+            && ex.iter().any(|d| d.name != prop)
+            && ex.iter().all(|d| longhand_supported(&d.name))
+    })
+}
+
 fn declaration_supported(atom: &str) -> bool {
     let Some(colon) = atom.find(':') else { return false };
     let prop = atom[..colon].trim();
@@ -588,7 +611,7 @@ fn declaration_supported(atom: &str) -> bool {
         value.to_ascii_lowercase().as_str(),
         "initial" | "inherit" | "unset" | "revert" | "revert-layer"
     ) {
-        return is_known_property(prop);
+        return property_known(prop);
     }
     // gradient 는 문법 검증(빈 세그먼트/무효 스톱/hint 배치)이 필요 — 파서가 관대해서
     // 무효 형태도 파싱하므로 gradient_valid 로 걸러 CSS.supports 가 정확히 false.
