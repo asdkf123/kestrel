@@ -9647,6 +9647,19 @@ impl Interp {
                 }
             }
         }
+        // corner-*-shape 보간(§CSS Borders 4 corner-shape-interpolation): superellipse
+        // 파라미터를 **정규화된 half-corner 공간 [0,1]** 으로 옮겨 선형 보간한 뒤 되돌린다.
+        //   s → v:  v = 0.5^(1/2^|s|),  s<0 이면 v = 1 - v   (±무한대는 1 / 0)
+        //   v → s:  c = v>0.5 ? v : 1-v,  k = ln(0.5)/ln(c),  s = log2(k),  v<0.5 면 -s
+        if dash_prop.starts_with("corner-") && dash_prop.ends_with("-shape") {
+            if let (Some(a), Some(b)) =
+                (Self::corner_shape_param(from), Self::corner_shape_param(to))
+            {
+                let (va, vb) = (Self::corner_param_to_v(a), Self::corner_param_to_v(b));
+                let v = va + (vb - va) * eased;
+                return Some(Self::corner_shape_serialize(Self::corner_v_to_param(v)));
+            }
+        }
         // filter/backdrop-filter 리스트 보간(§Filter Effects 5.2): 짧은 쪽(또는 none)을
         // 상대 리스트의 **중립값**으로 채워 길이를 맞춘 뒤 함수별로 보간한다.
         // none↔blur(10px) 는 blur(0px)↔blur(10px) 로 본다.
@@ -10515,6 +10528,66 @@ impl Interp {
             return Some(v);
         }
         None
+    }
+
+    // corner-shape 값 → superellipse 파라미터(§CSS Borders 4). 키워드도 받는다.
+    fn corner_shape_param(v: &str) -> Option<f32> {
+        let t = v.trim().to_ascii_lowercase();
+        match t.as_str() {
+            "round" => return Some(1.0),
+            "squircle" => return Some(2.0),
+            "bevel" => return Some(0.0),
+            "scoop" => return Some(-1.0),
+            "square" => return Some(f32::INFINITY),
+            "notch" => return Some(f32::NEG_INFINITY),
+            _ => {}
+        }
+        let inner = t.strip_prefix("superellipse(")?.strip_suffix(')')?.trim().to_string();
+        match inner.as_str() {
+            "infinity" => Some(f32::INFINITY),
+            "-infinity" => Some(f32::NEG_INFINITY),
+            _ => inner.parse::<f32>().ok(),
+        }
+    }
+
+    // 파라미터 → 정규화 half-corner 값 [0,1].
+    fn corner_param_to_v(s: f32) -> f32 {
+        if s.is_infinite() {
+            return if s > 0.0 { 1.0 } else { 0.0 };
+        }
+        let c = 0.5f32.powf(1.0 / 2f32.powf(s.abs()));
+        if s < 0.0 { 1.0 - c } else { c }
+    }
+
+    // 정규화 값 → 파라미터.
+    fn corner_v_to_param(v: f32) -> f32 {
+        if v <= 0.0 {
+            return f32::NEG_INFINITY;
+        }
+        if v >= 1.0 {
+            return f32::INFINITY;
+        }
+        if (v - 0.5).abs() < 1e-9 {
+            return 0.0;
+        }
+        let c = if v < 0.5 { 1.0 - v } else { v };
+        let k = 0.5f32.ln() / c.ln();
+        let s = k.log2();
+        if v < 0.5 { -s } else { s }
+    }
+
+    // 보간 결과 직렬화: 항상 superellipse(N)(소수 둘째 자리). 무한대는 infinity 표기.
+    // (키워드로 접지 않는다 — 보간 결과의 계산값은 함수형이다.)
+    fn corner_shape_serialize(s: f32) -> String {
+        if s.is_infinite() {
+            return if s > 0.0 {
+                "superellipse(infinity)".into()
+            } else {
+                "superellipse(-infinity)".into()
+            };
+        }
+        let r = (s * 100.0).round() / 100.0;
+        format!("superellipse({})", crate::style::num_css(r))
     }
 
     // 필터 함수 인자를 각자의 허용 범위로 자른다(§Filter Effects 각 함수 정의).

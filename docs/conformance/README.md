@@ -225,7 +225,7 @@
 | css-rhythm | 72 / 155 | 46.5% |
 | css-inline ★ | 425 / 635 | 66.9% |
 | css-lists ★ | 623 / 960 | 64.9% |
-| css-borders ★ | 426 / 1,151 | 37.0% |
+| css-borders ★ | 822 / 1,151 | 71.4% |
 | css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
 | filter-effects ★ | 1,880 / 2,452 | 76.7% |
@@ -421,6 +421,7 @@
 | css-inline | 282 | 425 | +143 |
 | css-multicol | 972 | 1,098 | +126 |
 | css-box | 546 | 618 | +72 |
+| css-borders | 426 | 822 | +396 |
 | css-logical | 669 | 689 | +20 |
 | filter-effects | 833 | 1,880 | +1,047 |
 | 그 외(overflow/text-decor/ruby/images/backgrounds/display/dom/animations) | | | +38 |
@@ -443,6 +444,12 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **corner-shape 보간**(§CSS Borders 4): superellipse 파라미터를 **정규화 half-corner
+  공간 [0,1]** 으로 옮겨 선형 보간한 뒤 되돌린다 — `v = 0.5^(1/2^|s|)`(s<0 이면 1-v),
+  역변환은 `c = max(v,1-v)`, `k = ln(0.5)/ln(c)`, `s = log2(k)`(v<0.5 면 부호 반전).
+  키워드(round/bevel/scoop/notch/square/squircle)는 파라미터로 매핑해 함께 보간하고,
+  결과는 항상 `superellipse(N)`(무한대는 infinity)로 직렬화한다.
+  corner-shape-interpolation 478개 **전부 통과**(이전 실패 396).
 - **기본 도형 합성**: clip-path/shape-outside/offset-path 의 add/accumulate 합성이
   같은 도형 함수의 수 성분을 짝지어 더한다(circle(50px at 10px 20px) 둘을 합성하면
   circle(100px at 20px 40px)). 키워드 토큰(at/closest-side 등)은 양쪽이 같을 때만 유지하고,
