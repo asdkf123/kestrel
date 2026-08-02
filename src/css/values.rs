@@ -11784,7 +11784,10 @@ pub fn normalize_lab_like(raw: &str) -> Option<String> {
         } else if s.to_ascii_lowercase().starts_with("calc(") {
             norm(s.as_str(), 1.0, None)?
         } else {
-            nc(crate::style::angle_token_deg(s).or_else(|| s.parse::<f32>().ok())?)
+            // 각도→도 후 [0,360)로 정규화(§CSS Color 4): lch(10 20 380deg)→lch(10 20 20),
+            // -340deg→20, 740deg→20.
+            let deg = crate::style::angle_token_deg(s).or_else(|| s.parse::<f32>().ok())?;
+            nc(deg.rem_euclid(360.0))
         }
     } else {
         norm(toks[2].as_str(), mid_scale, None)?
