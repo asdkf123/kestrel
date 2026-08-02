@@ -11881,15 +11881,16 @@ pub fn normalize_color_mix(raw: &str) -> Option<String> {
     // 보간법 `in <space> [<hue-method> hue]`. 기본 hue-method 인 `shorter` 는 생략한다
     // (§CSS Color 5 serialize — `in hsl shorter hue` → `in hsl`). longer/increasing/
     // decreasing 은 유지.
-    let space_toks: Vec<&str> = parts[0].split_whitespace().collect();
-    let space = if space_toks.len() >= 4
-        && space_toks[space_toks.len() - 1] == "hue"
-        && space_toks[space_toks.len() - 2] == "shorter"
-    {
-        space_toks[..space_toks.len() - 2].join(" ")
-    } else {
-        space_toks.join(" ")
-    };
+    let mut st: Vec<String> = parts[0].split_whitespace().map(|s| s.to_string()).collect();
+    // 후행 기본 hue-method `shorter` 제거.
+    if st.len() >= 4 && st[st.len() - 1] == "hue" && st[st.len() - 2] == "shorter" {
+        st.truncate(st.len() - 2);
+    }
+    // 색공간 캐논: xyz → xyz-d65(§CSS Color 4). `in xyz` → `in xyz-d65`.
+    if st.len() >= 2 && st[0] == "in" && st[1] == "xyz" {
+        st[1] = "xyz-d65".to_string();
+    }
+    let space = st.join(" ");
     let (c1, p1) = split_mix_part(&parts[1]);
     let (c2, p2) = split_mix_part(&parts[2]);
     let c1s = serialize_mix_input_color(&c1)?;
