@@ -30,7 +30,7 @@ pub(crate) fn interpret_value(text: &str) -> Option<Value> {
         if !alpha_color_valid(&lower) {
             return None;
         }
-        return parse_alpha_color(&lower).map(Value::Color);
+        return parse_alpha_color(&lower);
     }
     if lower.starts_with("rgb(") || lower.starts_with("rgba(") {
         if !rgb_valid(&lower) {
@@ -4272,10 +4272,12 @@ fn parse_relative_color(func: &str, text: &str) -> Option<(Color, Box<str>)> {
     Some((rgba, serial.into_boxed_str()))
 }
 
-// alpha(from <origin> [/ <alpha>]) 계산(§CSS Color 5 §relative-alpha) — origin 색의
-// rgb 를 유지하고 알파만 교체한다. 알파 생략 시 origin 알파 유지, `alpha` 키워드는
-// origin 알파를 참조, calc 안에서도 alpha 를 치환한다. text 는 소문자 가정.
-fn parse_alpha_color(text: &str) -> Option<Color> {
+// alpha(from <origin> [/ <alpha>]) 계산(§CSS Color 5 §relative-alpha) — origin 색을
+// 그 색공간 그대로 유지하고 알파만 교체한다. 알파 생략 시 origin 알파 유지, `alpha`
+// 키워드는 origin 알파를 참조, calc 안에서도 alpha 를 치환한다. text 는 소문자 가정.
+// 계산값 직렬화는 origin 의 색공간을 보존한다(color()/lab/oklch → 그대로, 레거시 srgb →
+// 알파가 none 이면 color(srgb …) 폴백, 아니면 rgb()/rgba()).
+fn parse_alpha_color(text: &str) -> Option<Value> {
     let inner = func_inner(text)?;
     let after = inner.trim().strip_prefix("from ")?.trim();
     let slash = split_top_slash(after);
@@ -4285,28 +4287,77 @@ fn parse_alpha_color(text: &str) -> Option<Color> {
     let origin = slash[0].trim();
     let rgba = srgb_float_of(origin)?;
     let oalpha = rgba[3];
-    let a_frac = match slash.get(1) {
-        None => oalpha, // 알파 생략 → origin 알파 유지
+    let (a_frac, a_none) = match slash.get(1) {
+        None => (oalpha, false), // 알파 생략 → origin 알파 유지
         Some(a) => {
             let a = a.trim();
             if a.eq_ignore_ascii_case("none") {
-                0.0
+                (0.0, true)
             } else if a.eq_ignore_ascii_case("alpha") {
-                oalpha
+                (oalpha, false)
             } else {
                 let subbed = subst_channels(a, &|name: &str| {
                     if name == "alpha" { Some(oalpha) } else { None }
                 });
-                comp_opt(parse_comp(&subbed, 1.0)?).unwrap_or(0.0)
+                (comp_opt(parse_comp(&subbed, 1.0)?).unwrap_or(0.0), false)
             }
         }
     };
-    Some(Color {
+    let color = Color {
         r: to_u8(rgba[0]),
         g: to_u8(rgba[1]),
         b: to_u8(rgba[2]),
         a: (a_frac.clamp(0.0, 1.0) * 255.0).round() as u8,
-    })
+    };
+    // origin 이 문법적으로 모던 색공간 함수(color()/color-mix/lab/lch/oklab/oklch)면 그
+    // 계산 직렬화(색공간 보존)에 알파만 주입한다. rgb/hsl/hwb/명명색/hex 와 이들의 상대색
+    // (rgb(from …) 등)은 레거시 형태로 계산되므로(rgb()/rgba()) 아래 경로로 보낸다 —
+    // 우리 상대색 직렬화가 color(srgb …)를 내더라도 alpha() 계산값은 rgba() 여야 한다.
+    let origin_modern = origin.starts_with("color(")
+        || origin.starts_with("color-mix(")
+        || origin.starts_with("lab(")
+        || origin.starts_with("lch(")
+        || origin.starts_with("oklab(")
+        || origin.starts_with("oklch(");
+    if origin_modern {
+        if let Some(Value::ColorFn(_, os)) = interpret_value(origin) {
+            return Some(Value::ColorFn(color, set_alpha_on_serial(&os, a_none, a_frac).into()));
+        }
+    }
+    // 레거시/명명 색 origin + 알파 none → color(srgb …) 폴백(레거시엔 none 표기 없음).
+    if a_none {
+        let ser = format!(
+            "color(srgb {} {} {} / none)",
+            csnum(rgba[0]),
+            csnum(rgba[1]),
+            csnum(rgba[2])
+        );
+        return Some(Value::ColorFn(color, ser.into_boxed_str()));
+    }
+    Some(Value::Color(color))
+}
+
+// 계산 색 직렬화(모던 형태)의 알파 슬롯을 교체한다. base 는 `/` 앞 좌표, 알파가 none 이면
+// `/ none`, 1 이면 생략, 그 외 csnum. 레거시 rgb()/rgba() 는 대상 아님(호출부가 거른다).
+fn set_alpha_on_serial(serial: &str, a_none: bool, a_frac: f32) -> String {
+    let (open, close) = match (serial.find('('), serial.rfind(')')) {
+        (Some(o), Some(c)) if c > o => (o, c),
+        _ => return serial.to_string(),
+    };
+    let func = &serial[..open];
+    let inner = &serial[open + 1..close];
+    let base = split_top_slash(inner)
+        .into_iter()
+        .next()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| inner.trim().to_string());
+    if a_none {
+        format!("{func}({base} / none)")
+    } else if (a_frac - 1.0).abs() < 1e-6 {
+        format!("{func}({base})")
+    } else {
+        format!("{func}({base} / {})", csnum(a_frac))
+    }
 }
 
 // text-decoration-line 캐논: 표준 순서(underline overline line-through blink)로 재정렬.
