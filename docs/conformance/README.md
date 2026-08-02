@@ -205,7 +205,7 @@
 | css-text | 2,078 / 3,029 | 68.6% |
 | css-scroll-snap | 458 / 690 | 66.4% |
 | css-properties-values-api | 611 / 923 | 66.2% |
-| css-shapes ★ | 4,689 / 6,149 | 76.3% |
+| css-shapes ★ | 4,909 / 6,149 | 79.8% |
 | css-cascade | 458 / 717 | 63.9% |
 | css-multicol ★ | 1,098 / 1,543 | 71.2% |
 | css-grid | 2,156 / 3,567 | 60.4% |
@@ -234,7 +234,7 @@
 | fill-stroke | 104 / 371 | 28.0% |
 | motion ★ | 2,906 / 4,955 | 58.6% |
 | css-link-params | 6 / 25 | 24.0% |
-| css-masking ★ | 4,513 / 6,354 | 71.0% |
+| css-masking ★ | 5,260 / 6,354 | 82.8% |
 | cssom-view | 300 / 1,827 | 16.4% |
 | css-scroll-anchoring | 13 / 84 | 15.5% |
 | css-pseudo | 77 / 532 | 14.5% |
@@ -412,9 +412,9 @@
 
 | 영역 | 기준선 | 현재 | 증감 |
 |---|---|---|---|
-| css-masking | 1,223 | 4,513 | +3,290 |
+| css-masking | 1,223 | 5,260 | +4,037 |
 | css/motion | 1,334 | 2,906 | +1,572 |
-| css-shapes | 3,510 | 4,689 | +1,179 |
+| css-shapes | 3,510 | 4,909 | +1,399 |
 | css-anchor-position | 9,997 | 10,462 | +465 |
 | css-lists | 439 | 623 | +184 |
 | css-transitions | 886 | 1,069 | +183 |
@@ -469,6 +469,12 @@
 - **엔진 일반 버그**: private 이름을 "#x" 문자열로 표현해 `o["#sel"] = v` 같은 평범한
   대입이 private 필드 쓰기로 오인됐다(CSS 선택자·URL 조각). 렉서가 NUL 접두를 붙여
   문법으로만 만들어지게 수정.
+
+**되돌린 시도(실증)**: rect()/xywh() 를 계산값에서 inset() 으로 변환(§CSS Shapes 2)을
+구현했으나 css-masking -98 회귀로 되돌렸다. 기대값이 단순 변환이 아니라 **보간 결과를
+calc 로 표현한 형태**(예: `inset(-30px calc(100% - 0px) 90% -30%)`)라, 변환만으로는
+맞지 않고 inset 보간의 calc 처리까지 함께 있어야 한다. 부분 구현은 기존에 우연히 맞던
+불연속 결과를 깨서 net-negative 였다.
 
 **남은 큰 것**: 계산 스타일 요청 시 해석(최대 핫스팟 collect_computed_styles),
 Web Animations 객체 모델(Animation 상태기계·다중 키프레임), 보간 타입 레지스트리,
