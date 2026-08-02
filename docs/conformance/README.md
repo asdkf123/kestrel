@@ -97,6 +97,9 @@
 > - **css-color +8 (alpha() computed 색공간 보존)**: origin 이 모던 함수(color/color-mix/lab/lch/oklab/
 >   oklch)면 그 계산 직렬화에 알파만 주입(set_alpha_on_serial), 레거시 srgb+none 알파는 color(srgb …) 폴백.
 >   rgb/hsl 및 이들 상대색은 rgba() 로. 남은 9 는 currentcolor 해석(cascade)·중첩 u8 알파 정밀도(후속).
+> - **css-color +6 (hsl/hwb hue calc)**: `hsl(calc(infinity) 100% 50%)`·`hwb(calc(0/0) …)` 등 hue 채널의
+>   calc 를 comp_angle 에 각도 인식 평가기로 추가(비유한 ±inf/NaN → 0 = red). parse_hsl_func 가 hue 를
+>   조잡한 `trim("deg")` 대신 comp_angle 사용 → grad/rad/turn/calc 도 처리.
 > - **css-color +6 (hwb bare number)**: `hwb(120 30 50)` 의 벌거벗은 whiteness/blackness `<number>`
 >   를 `<percentage>` 와 같은 스케일(30 = 30% = 0.30)로 해석(comp_num). 예전엔 30 을 raw 로 써
 >   w+b>1 정규화로 회색이 됐다. §CSS Color 4: number 는 percentage 상당값.
@@ -171,7 +174,7 @@
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
 | cssom | 2,985 / 3,437 | 86.8% |
-| css-color | 8,787 / 9,399 | 93.5% |
+| css-color | 8,793 / 9,399 | 93.6% |
 | css-content | 176 / 211 | 83.4% |
 | css-size-adjust | 170 / 207 | 82.1% |
 | css-conditional | 2,143 / 2,602 | 82.4% |

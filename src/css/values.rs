@@ -3459,11 +3459,29 @@ fn comp_num(s: &str, pct_base: f32) -> Option<f32> {
     s.parse::<f32>().ok().map(|n| n / 100.0 * pct_base)
 }
 
-// 각도 컴포넌트(deg/grad/rad/turn, 무단위=deg, none→0).
+// 각도 컴포넌트(deg/grad/rad/turn, 무단위=deg, none→0, calc()).
 fn comp_angle(s: &str) -> Option<f32> {
     let s = s.trim();
     if s.eq_ignore_ascii_case("none") {
         return Some(0.0);
+    }
+    // calc() 각도/수 → deg. rad/turn/grad·pi·그룹 지원. 비유한(±inf/NaN)은 0 —
+    // §CSS Color 4 hue: hsl(calc(infinity) …)→rgb(255,0,0)(hue 0). 각도/수 외는 폴백.
+    if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') {
+        let inner = &s[5..s.len() - 1];
+        let chars: Vec<char> = inner.chars().collect();
+        let mut p = 0usize;
+        if let Some((v, k)) = scalar_expr(&chars, &mut p) {
+            skip_ws(&chars, &mut p);
+            if p == chars.len() && matches!(k, SKind::Ang | SKind::Num) {
+                return Some(if v.is_finite() { v as f32 } else { 0.0 });
+            }
+        }
+        let stripped = inner.replace("deg", "");
+        return match eval_calc(&stripped) {
+            Some(Value::Length(n, _)) if n.is_finite() => Some(n),
+            _ => Some(0.0),
+        };
     }
     for (suf, mul) in [("deg", 1.0), ("grad", 0.9), ("turn", 360.0)] {
         if let Some(p) = s.strip_suffix(suf) {
@@ -13810,7 +13828,7 @@ fn parse_hsl_func(text: &str) -> Option<Color> {
     if parts.len() != 3 && parts.len() != 4 {
         return None;
     }
-    let h = parts[0].trim_end_matches("deg").trim().parse::<f32>().ok()?;
+    let h = comp_angle(&parts[0])?;
     let s = parts[1].trim_end_matches('%').trim().parse::<f32>().ok()? / 100.0;
     let l = parts[2].trim_end_matches('%').trim().parse::<f32>().ok()? / 100.0;
     let a = if parts.len() == 4 { alpha_val(&parts[3])? } else { 255 };
