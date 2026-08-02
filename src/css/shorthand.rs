@@ -2832,13 +2832,13 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
             }
         }
         // color-scheme·overscroll-behavior·forced-color-adjust(§여러 스펙) 검증.
-        "color-scheme" | "overscroll-behavior" | "overscroll-behavior-x"
+        // (overscroll-behavior 자신은 아래에서 -x/-y 로 펼친다 — 단축이다.)
+        "color-scheme" | "overscroll-behavior-x"
         | "overscroll-behavior-y" | "overscroll-behavior-inline" | "overscroll-behavior-block"
         | "forced-color-adjust" => {
             let low = value_text.trim().to_ascii_lowercase();
             let ok = matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer")
                 || (name == "color-scheme" && crate::css::color_scheme_valid(value_text))
-                || (name == "overscroll-behavior" && crate::css::overscroll_valid(value_text, false))
                 || (matches!(name, "overscroll-behavior-x" | "overscroll-behavior-y" | "overscroll-behavior-inline" | "overscroll-behavior-block") && crate::css::overscroll_valid(value_text, true))
                 || (name == "forced-color-adjust" && matches!(low.as_str(), "auto" | "none" | "preserve-parent-color"));
             if ok {
@@ -3218,6 +3218,72 @@ pub(crate) fn expand_declaration(name: &str, value_text: &str) -> Vec<Declaratio
         }
         // 키워드 집합이 명확한 롱핸드들 — 값을 실제로 검증한다(원문 보존 arm 과 달리
         // 아무 값이나 통과시키지 않는다).
+        // overscroll-behavior(§CSS Overscroll): [contain|none|auto]{1,2} → -x/-y.
+        "overscroll-behavior" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { raw: String::new(), important: false, name: "overscroll-behavior-x".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "overscroll-behavior-y".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            if !crate::css::overscroll_valid(value_text, false) {
+                return Vec::new();
+            }
+            let parts: Vec<&str> = low.split_whitespace().collect();
+            if parts.is_empty() || parts.len() > 2 {
+                return Vec::new();
+            }
+            let x = parts[0].to_string();
+            let y = parts.get(1).unwrap_or(&parts[0]).to_string();
+            vec![
+                Declaration { raw: String::new(), important: false, name: "overscroll-behavior-x".to_string(), value: Value::Keyword(x) },
+                Declaration { raw: String::new(), important: false, name: "overscroll-behavior-y".to_string(), value: Value::Keyword(y) },
+            ]
+        }
+        // text-emphasis(§CSS Text Decor 4): <'text-emphasis-style'> || <'text-emphasis-color'>.
+        "text-emphasis" => {
+            let t = value_text.trim();
+            let low = t.to_ascii_lowercase();
+            if matches!(low.as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer") {
+                return vec![
+                    Declaration { raw: String::new(), important: false, name: "text-emphasis-style".to_string(), value: Value::Keyword(low.clone()) },
+                    Declaration { raw: String::new(), important: false, name: "text-emphasis-color".to_string(), value: Value::Keyword(low) },
+                ];
+            }
+            // 색 토큰 하나를 골라내고 나머지를 style 로 본다(순서 자유).
+            let toks: Vec<&str> = crate::css::split_ws_depth0(t);
+            if toks.is_empty() || toks.len() > 3 {
+                return Vec::new();
+            }
+            let mut color: Option<String> = None;
+            let mut style_toks: Vec<&str> = Vec::new();
+            for tok in &toks {
+                if color.is_none() && matches!(interpret_value(tok), Some(Value::Color(_)) | Some(Value::ColorFn(_, _))) {
+                    color = Some((*tok).to_string());
+                } else {
+                    style_toks.push(tok);
+                }
+            }
+            let style = if style_toks.is_empty() { "none".to_string() } else { style_toks.join(" ") };
+            // style 은 none | [filled|open] || [dot|circle|double-circle|triangle|sesame] | <string>
+            let sl = style.to_ascii_lowercase();
+            let style_ok = sl == "none"
+                || (style.starts_with('"') && style.ends_with('"') && style.len() >= 2)
+                || sl.split_whitespace().all(|k| {
+                    matches!(k, "filled" | "open" | "dot" | "circle" | "double-circle"
+                        | "triangle" | "sesame")
+                });
+            if !style_ok {
+                return Vec::new();
+            }
+            let mut out = vec![Declaration { raw: String::new(), important: false, name: "text-emphasis-style".to_string(), value: Value::Keyword(style) }];
+            if let Some(c) = color {
+                out.extend(expand_declaration("text-emphasis-color", &c));
+            }
+            out
+        }
         // §css-anchor-position 2
         "position-anchor" | "position-try-fallbacks" => {
             let t = value_text.trim();
