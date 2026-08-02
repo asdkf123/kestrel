@@ -10444,6 +10444,25 @@ impl Interp {
         ) {
             return Some(format!("{}%", crate::style::num_css(lerp(a, b))));
         }
+        // <angle> — deg/rad/grad/turn 을 도로 환산해 보간하고 deg 로 낸다(§CSS Values).
+        // hue-rotate(-180deg)↔hue-rotate(180deg) 같은 함수 인자가 이 경로를 탄다.
+        // (transform 의 회전은 위 interp_transform 이 먼저 처리한다.)
+        {
+            let ang = |s: &str| -> Option<f32> {
+                let s = s.trim();
+                for (u, k) in
+                    [("deg", 1.0f32), ("grad", 0.9), ("turn", 360.0), ("rad", 180.0 / std::f32::consts::PI)]
+                {
+                    if let Some(n) = s.strip_suffix(u) {
+                        return n.trim().parse::<f32>().ok().map(|v| v * k);
+                    }
+                }
+                None
+            };
+            if let (Some(a), Some(b)) = (ang(f), ang(g)) {
+                return Some(format!("{}deg", crate::style::num_css(lerp(a, b))));
+            }
+        }
         // px ↔ % (또는 calc 혼합): calc() 로 보간(§CSS Values). 순수 px/% 는 위에서
         // 처리됐으므로 여기 도달하는 length-percentage 는 단위 혼합이다.
         if (f.ends_with('%') || f.ends_with("px") || f.starts_with("calc("))
@@ -10508,6 +10527,13 @@ impl Interp {
         let (fname, fargs) = split(f)?;
         let (gname, gargs) = split(g)?;
         if !fname.eq_ignore_ascii_case(&gname) {
+            return None;
+        }
+        // 그라디언트/이미지 함수는 인자별 lerp 로는 맞지 않는다 — §CSS Images 의 보간은
+        // 색 스톱 위치 정규화·보간 색공간·캐논 직렬화를 요구한다. 그 규칙을 구현하기
+        // 전까지는 보간하지 않는다(틀린 값을 내느니 불연속이 낫다).
+        let lname = fname.to_ascii_lowercase();
+        if lname.ends_with("gradient") || matches!(lname.as_str(), "image-set" | "cross-fade" | "image") {
             return None;
         }
         let fp = crate::css::split_top_commas_pub(&fargs);

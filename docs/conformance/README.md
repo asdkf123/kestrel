@@ -178,7 +178,7 @@
 | css-forced-color-adjust | 13 / 14 | 92.9% |
 | css-text-decor ★ | 1,203 / 1,276 | 94.3% |
 | CSS2 | 592 / 653 | 90.7% |
-| css-images ★ | 3,319 / 3,580 | 92.7% |
+| css-images ★ | 3,344 / 3,580 | 93.4% |
 | mediaqueries | 272 / 308 | 88.3% |
 | css-color-adjust | 137 / 157 | 87.3% |
 | compositing | 144 / 167 | 86.2% |
@@ -198,7 +198,7 @@
 | css-break | 452 / 609 | 74.2% |
 | css-ui | 1,390 / 1,888 | 73.6% |
 | css-fonts | 5,571 / 7,565 | 73.6% |
-| css-transforms | 2,886 / 3,969 | 72.7% |
+| css-transforms ★ | 4,039 / 5,130 | 78.7% |
 | css-ruby ★ | 54 / 76 | 71.1% |
 | css-sizing | 2,237 / 3,212 | 69.6% |
 | css-syntax | 373 / 428 | 87.1% |
@@ -228,7 +228,7 @@
 | css-borders ★ | 426 / 1,151 | 37.0% |
 | css-overflow ★ | 469 / 986 | 47.6% |
 | css-tables | 191 / 557 | 34.3% |
-| filter-effects ★ | 1,051 / 2,452 | 42.9% |
+| filter-effects ★ | 1,415 / 2,452 | 57.7% |
 | css-layout-api | 4 / 13 | 30.8% |
 | css-transitions ★(큰 파일 3개는 실행되나 러너 타임아웃 초과로 분모 제외) | 1,069 / 1,406 | 76.0% |
 | fill-stroke | 104 / 371 | 28.0% |
@@ -422,7 +422,7 @@
 | css-multicol | 972 | 1,098 | +126 |
 | css-box | 546 | 618 | +72 |
 | css-logical | 669 | 689 | +20 |
-| filter-effects | 833 | 1,051 | +218 |
+| filter-effects | 833 | 1,415 | +582 |
 | 그 외(overflow/text-decor/ruby/images/backgrounds/display/dom/animations) | | | +38 |
 
 **주요 변경**
@@ -443,6 +443,10 @@
 - **필터 리스트 add 합성**: §Filter Effects 상 filter/backdrop-filter 의 `add` 합성은
   리스트 **이어붙이기**인데 수치 합산을 하고 있었다(blur(10px)+blur(15px) 가
   blur(25px) 로). accumulate 는 함수별 누적이라 기존 경로 유지.
+- **각도 보간**: deg/rad/grad/turn 을 도로 환산해 보간(결과는 deg). hue-rotate 같은 함수
+  인자가 이 경로를 탄다. **단, 그라디언트/이미지 함수는 일반 함수 보간에서 제외한다** —
+  §CSS Images 의 보간은 스톱 위치 정규화·보간 색공간·캐논 직렬화를 요구해서 인자별 lerp
+  로는 틀린 값이 나온다(실측 -46 회귀 후 제외로 정정). 틀린 값보다 불연속이 낫다.
 - **필터 리스트 중립값 패딩**(§Filter Effects 5.2): `none` 또는 짧은 리스트를 상대
   리스트의 항등값(blur(0px)/brightness(1)/grayscale(0)/hue-rotate(0deg) 등)으로 채워
   길이를 맞춘 뒤 함수별 보간. none↔blur(10px) 가 blur(0px)↔blur(10px) 가 된다.

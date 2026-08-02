@@ -960,6 +960,15 @@ fn collect_computed_styles(
     node: &crate::style::StyledNode,
     out: &mut std::collections::HashMap<crate::dom::NodeId, std::collections::HashMap<String, String>>,
 ) {
+    collect_computed_styles_rec(node, out, "", false)
+}
+
+fn collect_computed_styles_rec(
+    node: &crate::style::StyledNode,
+    out: &mut std::collections::HashMap<crate::dom::NodeId, std::collections::HashMap<String, String>>,
+    parent_display: &str,
+    ancestor_none: bool,
+) {
     // 요소 노드(자식이 있거나 프로퍼티가 있는)만. 텍스트 노드는 건너뜀.
     if matches!(node.node.node_type, crate::dom::NodeType::Element(_)) {
         let mut m = std::collections::HashMap::with_capacity(node.specified_values.len());
@@ -1370,10 +1379,35 @@ fn collect_computed_styles(
         if let Some(v) = m.get("translate") {
             m.insert("translate".to_string(), crate::style::normalize_translate(v));
         }
+        // min-width/min-height:auto resolved value(§CSS Sizing 3): 기본 0px 로 확정.
+        // 예외로 'auto' 유지: 박스를 생성하는 flex/grid 항목이나 non-default aspect-ratio.
+        // 단 박스 미생성(display:none 자신/조상)이면 항상 0px("resolves to zero when no
+        // box is generated").
+        {
+            let self_display = m.get("display").map(|s| s.as_str()).unwrap_or("");
+            let generates_box = !(ancestor_none || self_display == "none");
+            let flex_grid_item =
+                matches!(parent_display, "flex" | "inline-flex" | "grid" | "inline-grid");
+            let has_aspect_ratio = m.get("aspect-ratio").map(|v| v != "auto").unwrap_or(false);
+            let preserve_auto = generates_box && (flex_grid_item || has_aspect_ratio);
+            if !preserve_auto {
+                for p in ["min-width", "min-height"] {
+                    if m.get(p).map(|v| v == "auto").unwrap_or(false) {
+                        m.insert(p.to_string(), "0px".to_string());
+                    }
+                }
+            }
+        }
         out.insert(node.id, m);
     }
+    let self_disp = out
+        .get(&node.id)
+        .and_then(|m| m.get("display"))
+        .cloned()
+        .unwrap_or_default();
+    let child_none = ancestor_none || self_disp == "none";
     for child in &node.children {
-        collect_computed_styles(child, out);
+        collect_computed_styles_rec(child, out, &self_disp, child_none);
     }
 }
 
