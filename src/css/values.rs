@@ -9325,8 +9325,92 @@ pub fn background_image_layers_valid(raw: &str) -> bool {
             return single_color_valid(inner)
                 || (inner.to_ascii_lowercase().starts_with("light-dark(") && inner.ends_with(')'));
         }
+        if ll.starts_with("url(") {
+            return url_layer_valid(lt);
+        }
         true
     })
+}
+
+// url(<url> <modifier>*) 유효성(§CSS Values 5). URL 은 인용(그 뒤 modifier 허용) 또는
+// 인용 없음(modifier 불가). modifier: cross-origin()/integrity()/referrer-policy(),
+// 각 최대 1회, URL 뒤에만.
+fn url_layer_valid(lt: &str) -> bool {
+    let inner = lt[4..lt.len() - 1].trim();
+    if inner.is_empty() {
+        return false;
+    }
+    if let Some(q) = inner.chars().next().filter(|&c| c == '"' || c == '\'') {
+        let Some(end) = inner[1..].find(q) else { return false };
+        return url_modifiers_valid(inner[1 + end + 1..].trim());
+    }
+    !inner.contains('(')
+}
+
+fn url_modifiers_valid(rest: &str) -> bool {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return true;
+    }
+    // 괄호 depth 0 공백으로 modifier 분리.
+    let mut mods: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in rest.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            c if c.is_whitespace() && depth == 0 => {
+                if !cur.trim().is_empty() {
+                    mods.push(cur.trim().to_string());
+                }
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        mods.push(cur.trim().to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for m in &mods {
+        let ml = m.to_ascii_lowercase();
+        let Some(open) = ml.find('(') else { return false };
+        if !ml.ends_with(')') {
+            return false;
+        }
+        let name = ml[..open].to_string();
+        if !seen.insert(name.clone()) {
+            return false;
+        }
+        let arg = ml[open + 1..ml.len() - 1].trim();
+        let ok = match name.as_str() {
+            "cross-origin" => matches!(arg, "anonymous" | "use-credentials"),
+            "integrity" => arg.len() >= 2 && arg.starts_with('"') && arg.ends_with('"'),
+            "referrer-policy" => matches!(
+                arg,
+                "no-referrer"
+                    | "no-referrer-when-downgrade"
+                    | "same-origin"
+                    | "origin"
+                    | "strict-origin"
+                    | "origin-when-cross-origin"
+                    | "strict-origin-when-cross-origin"
+                    | "unsafe-url"
+            ),
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 // cross-fade(§CSS Images 4): cross-fade( [ <percentage [0,100]>? && <image|color> ]# ).
