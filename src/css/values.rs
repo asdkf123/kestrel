@@ -3365,6 +3365,13 @@ fn chan_val(s: &str) -> Option<u8> {
     if s.eq_ignore_ascii_case("none") {
         return Some(0);
     }
+    // 순수 수 calc(infinity/-infinity/NaN 포함)은 평가해 [0,255] 클램프(NaN→0, §CSS
+    // Color 4). rgb(calc(infinity),0,0)→rgb(255,0,0), calc(-infinity)→0, calc(NaN)→0.
+    if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') && !s.contains('%') {
+        let n = eval_math_number(&s[5..s.len() - 1])? as f32;
+        let n = if n.is_nan() { 0.0 } else { n };
+        return Some(n.clamp(0.0, 255.0).round() as u8);
+    }
     if let Some(p) = s.strip_suffix('%') {
         return Some((p.trim().parse::<f32>().ok()? / 100.0 * 255.0).clamp(0.0, 255.0).round() as u8);
     }
@@ -3377,6 +3384,12 @@ fn alpha_val(s: &str) -> Option<u8> {
     let s = s.trim();
     if s.eq_ignore_ascii_case("none") {
         return Some(0);
+    }
+    // 순수 수 calc(infinity/NaN 포함)은 평가해 [0,1] 클램프(NaN→0).
+    if s.to_ascii_lowercase().starts_with("calc(") && s.ends_with(')') && !s.contains('%') {
+        let n = eval_math_number(&s[5..s.len() - 1])? as f32;
+        let n = if n.is_nan() { 0.0 } else { n };
+        return Some((n.clamp(0.0, 1.0) * 255.0).round() as u8);
     }
     if let Some(p) = s.strip_suffix('%') {
         return Some((p.trim().parse::<f32>().ok()? / 100.0 * 255.0).clamp(0.0, 255.0).round() as u8);
